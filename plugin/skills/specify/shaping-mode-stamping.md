@@ -116,7 +116,7 @@ promoted via /specify — {date}\n\n` to it, write the result to this run's sess
 `IssueComment` type, same mutation shape):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" "NEEDS_DECISION_RESOLVED_BODY=needs-decision-resolved-{n}-{found-id}.md")"
+NEEDS_DECISION_RESOLVED_BODY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "needs-decision-resolved-{n}-{found-id}.md")"
 gh api graphql -f query='mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}' \
   -f id="{found-id}" -F body=@"$NEEDS_DECISION_RESOLVED_BODY"
 ```

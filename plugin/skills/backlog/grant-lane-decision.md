@@ -109,7 +109,7 @@ not through `refine-mode.md`'s own whole-queue Needs-decision lane — the two a
 resolution paths (this file's own header names both callers).
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" "BACKLOG_NEEDS_DECISION=backlog-needs-decision-${ISSUE}.md")"
+BACKLOG_NEEDS_DECISION="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "backlog-needs-decision-${ISSUE}.md")"
 if gh issue edit "$ISSUE" --add-label needs:decision; then
   gh issue comment "$ISSUE" --body-file "$BACKLOG_NEEDS_DECISION" || echo "label applied but comment post failed for #$ISSUE — retry the comment write"
 else

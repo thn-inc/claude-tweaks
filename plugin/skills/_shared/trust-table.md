@@ -75,15 +75,14 @@ every path below once, before running anything else, via the CLI wrapper — sev
 that convention's three-file cutoff for preferring it to the inline `node -e` form:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" \
-  PARENT_ISSUES=trust-table-parent-issues.json \
-  SUB_ISSUES=trust-table-sub-issues.json \
-  SUB_ISSUES_BATCH=trust-table-sub-issues-batch.json \
-  GIT_LOG=trust-table-git-log.txt \
-  RECORDS=trust-table-records.json \
-  SUB_ISSUE_NUMBERS=trust-table-sub-issue-numbers.jsonl \
-  SUB_ISSUE_FAILURES=trust-table-sub-issue-failures.txt)"
-echo "$PARENT_ISSUES|$SUB_ISSUES|$SUB_ISSUES_BATCH|$GIT_LOG|$RECORDS|$SUB_ISSUE_NUMBERS|$SUB_ISSUE_FAILURES"
+PARENT_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-parent-issues.json)"
+SUB_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-sub-issues.json)"
+SUB_ISSUES_BATCH="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-sub-issues-batch.json)"
+COMMIT_LOG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-git-log.txt)"
+RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-records.json)"
+SUB_ISSUE_NUMBERS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-sub-issue-numbers.jsonl)"
+SUB_ISSUE_FAILURES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-sub-issue-failures.txt)"
+echo "$PARENT_ISSUES|$SUB_ISSUES|$SUB_ISSUES_BATCH|$COMMIT_LOG|$RECORDS|$SUB_ISSUE_NUMBERS|$SUB_ISSUE_FAILURES"
 ```
 
 Substitute the seven printed absolute paths for `{tmp-parent-issues}`, `{tmp-sub-issues}`,

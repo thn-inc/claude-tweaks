@@ -13,7 +13,7 @@ Every temp file this mode writes below resolves through `bin/lib/session-tmp.js`
 Fetch and facet-parse the full open-issue queue per `_shared/record-queue-fetch.md`, same as `refine-mode.md`'s priority/Related fetch (`{tmp-records-file}` = `session-scoped backlog-overview-open.json`, `{tmp-faceted-file}` = `session-scoped backlog-overview-faceted.json`) — reading through the session-scoped record snapshot, shared with `/capture`/`/specify`/`/help`/`/tidy`/`/visualize` and, within this run, with `refine-mode.md`'s own fetch below. Step 3's recommendation pass needs every candidate's `body` (for `rankNextToBuild`'s internal `parseDependencies` call) — the snapshot's union field set always carries `body`, no `{EXTRA_FIELDS}` request needed, so every candidate's unblocks-count computes correctly rather than silently reading 0 and quietly corrupting the bare-mode recommendation's tie-break order. Under `work-backend: github-issues`, also fold in `unsynced: true` local fallback records the same way (port the retired `/claude-tweaks:review-backlog` skill's old Step 1 unsynced fold-in verbatim):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_OVERVIEW_UNSYNCED=backlog-overview-unsynced.json)"
+ST_BACKLOG_OVERVIEW_UNSYNCED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-unsynced.json)"
 node -e "
   const { queryRecords } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
   const records = queryRecords('specs', { unsynced: true });
@@ -22,7 +22,10 @@ node -e "
 ```
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_OVERVIEW_UNSYNCED=backlog-overview-unsynced.json ST_BACKLOG_OVERVIEW_UNSYNCED_DATED=backlog-overview-unsynced-dated.json ST_BACKLOG_OVERVIEW_FACETED=backlog-overview-faceted.json ST_BACKLOG_OVERVIEW_FACETED_MERGED=backlog-overview-faceted-merged.json)"
+ST_BACKLOG_OVERVIEW_UNSYNCED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-unsynced.json)"
+ST_BACKLOG_OVERVIEW_UNSYNCED_DATED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-unsynced-dated.json)"
+ST_BACKLOG_OVERVIEW_FACETED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-faceted.json)"
+ST_BACKLOG_OVERVIEW_FACETED_MERGED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-faceted-merged.json)"
 node -e "
   const { deriveCreatedAtFromGit } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/backlog.js');
   const records = require('$ST_BACKLOG_OVERVIEW_UNSYNCED');
@@ -64,7 +67,7 @@ The verdict vocabulary is read verbatim from `bin/lib/issues/trust.js`'s row ver
 `_shared/trust-table.md` defines them — nothing new is invented here.
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_OVERVIEW_TRUST_ROWS=backlog-overview-trust-rows.json)"
+ST_BACKLOG_OVERVIEW_TRUST_ROWS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-trust-rows.json)"
 ```
 
 Capture the Fetch script's printed rows to `"$ST_BACKLOG_OVERVIEW_TRUST_ROWS"` — the consequence
@@ -86,7 +89,8 @@ On `work-links: native`: check field availability via `capabilities-probe.js`'s 
 The funnel-computation script below then reads `all` with these `r.blockedBy` values already attached — `funnelBuckets`'s existing `blockersOf` precedence (top-level `r.blockedBy` first) buckets a now-attached record into `granted` instead of `dispatchable` with no further change.
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_OVERVIEW_FACETED=backlog-overview-faceted.json ST_BACKLOG_OVERVIEW_VIEWS=backlog-overview-views.json)"
+ST_BACKLOG_OVERVIEW_FACETED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-faceted.json)"
+ST_BACKLOG_OVERVIEW_VIEWS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-views.json)"
 node -e "
   const bl = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/backlog.js');
   const all = require('$ST_BACKLOG_OVERVIEW_FACETED');
@@ -202,7 +206,8 @@ since the two subsets are not identical (see Step 2's pre-attach note for why). 
   - **`unsynced: true` fallback records** (any driver): attach nothing, and their own `facets.blockedBy` is deliberately not consulted — those ids live in the local-record namespace and must never cross-match GitHub issue numbers in the merged set (parent #512 promise F1; `funnelBuckets` applies the same rule).
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_OVERVIEW_CANDIDATES=backlog-overview-candidates.json ST_BACKLOG_OVERVIEW_RANKED=backlog-overview-ranked.json)"
+ST_BACKLOG_OVERVIEW_CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-candidates.json)"
+ST_BACKLOG_OVERVIEW_RANKED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-ranked.json)"
 node -e "
   const { rankNextToBuild, findUnresolvedDependencyProse } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/ranking.js');
   const candidates = require('$ST_BACKLOG_OVERVIEW_CANDIDATES'); // [{id, facets, body, keyFiles, hasPlan, blockedBy?}]
@@ -258,7 +263,8 @@ stays drainable from one report instead of truncating at an arbitrary top-*k*, t
 per-record terminal architecture had to).
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_OVERVIEW_VIEWS=backlog-overview-views.json ST_BACKLOG_OVERVIEW_SHAPE=backlog-overview-shape.json)"
+ST_BACKLOG_OVERVIEW_VIEWS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-views.json)"
+ST_BACKLOG_OVERVIEW_SHAPE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-shape.json)"
 node -e "
   const { priorityBandOf } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/ranking.js');
   const prioritized = require('$ST_BACKLOG_OVERVIEW_VIEWS').funnel.prioritized;
@@ -335,7 +341,8 @@ ties by id.
 as the Shape stage.
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_OVERVIEW_VIEWS=backlog-overview-views.json ST_BACKLOG_OVERVIEW_SIGNOFF=backlog-overview-signoff.json)"
+ST_BACKLOG_OVERVIEW_VIEWS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-views.json)"
+ST_BACKLOG_OVERVIEW_SIGNOFF="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-signoff.json)"
 node -e "
   const { priorityBandOf } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/ranking.js');
   const parents = require('$ST_BACKLOG_OVERVIEW_VIEWS').funnel.parents;

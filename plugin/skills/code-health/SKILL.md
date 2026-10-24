@@ -87,7 +87,8 @@ If the path does not exist, stop and report the error. Set `AREA` and `ROOT` for
 Collect existing `by:code-health`-labelled issues so the engine can skip/reopen/suppress correctly. Session-scoped (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" CH_ISSUES_RAW=ch-issues-raw.json CH_OPEN=ch-open.json)"
+CH_ISSUES_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value ch-issues-raw.json)"
+CH_OPEN="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value ch-open.json)"
 gh issue list --label by:code-health --state all --json number,state,labels,body --limit 500 > "$CH_ISSUES_RAW"
 ```
 
@@ -104,7 +105,7 @@ A matched issue carrying the `wontfix` label is a standing suppression decision,
 If `focus=<vertical>` was provided, skip this step entirely — `focus-mode.md`'s Step F3 reads every candidate file under this same 60 KB read-budget discipline, restated there rather than here. Otherwise, stamp a freshness marker before reading anything, so Step 7.5 can later detect whether the slice changed underneath this run — a concurrent fix pass, another parallel code-health sweep, or an ordinary human edit landing between this read and eventual filing. Re-resolve:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" CH_MARKER=ch-marker)"
+CH_MARKER="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value ch-marker)"
 touch "$CH_MARKER"
 ```
 
@@ -234,7 +235,8 @@ The verify gate above judges whether a finding is *correct*. This step is a sepa
 For every finding still in the candidate set after Step 7, check its anchor file — and every entry in `relatedAnchors`, when present, since a changed sibling occurrence stales the whole bundled finding — against the Step 3 marker. Re-resolve:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" CH_MARKER=ch-marker CH_FINDINGS=ch-findings.json)"
+CH_MARKER="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value ch-marker)"
+CH_FINDINGS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value ch-findings.json)"
 ANCHOR_FILE="${ROOT}/${anchor%%#*}"
 if [ ! -e "$ANCHOR_FILE" ]; then
   echo "possibly-stale: anchor file deleted since read"
@@ -252,7 +254,8 @@ This check is cheap and mechanical — one `find -newer` per anchor — so run i
 **Step 8 — VALIDATE, FINGERPRINT, DEDUP.** Re-resolve:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" CH_FINDINGS=ch-findings.json CH_PAYLOADS=ch-payloads.json)"
+CH_FINDINGS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value ch-findings.json)"
+CH_PAYLOADS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value ch-payloads.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/code-health.js" validate-findings "$CH_FINDINGS" \
   --root "${ROOT:-$PWD}" \
   --slice "${SLICE_ID}" \

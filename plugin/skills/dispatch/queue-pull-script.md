@@ -13,42 +13,31 @@ Referenced by `skills/dispatch/SKILL.md` Step 2. Run this verbatim — it produc
 One further reason, `firing`, is never written by this script — it is appended incrementally by `SKILL.md`'s Loop between successive re-runs of this script within one firing (`firing-exclusion.md`), which is exactly why this script's own truncation step preserves it rather than dropping it.
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" <<NODE_EVAL_EOF
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  const os = require('os'); const path = require('path');
-  const files = {
-    DISPATCH_QUEUE_RAW: 'dispatch-queue-raw.json',
-    DISPATCH_OPEN_NUMBERS: 'dispatch-open-numbers.json',
-    DISPATCH_ELIGIBLE_PRE_DEP: 'dispatch-eligible-pre-dep.json',
-    DISPATCH_UNRESOLVED_DEPS: 'dispatch-unresolved-deps.json',
-    DISPATCH_VERIFIED_OPEN_DEPS: 'dispatch-verified-open-deps.txt',
-    DISPATCH_ELIGIBLE: 'dispatch-eligible.json',
-    DISPATCH_BLOCKED_EXCLUDED_BODY: 'dispatch-blocked-excluded-body.json',
-    DISPATCH_NATIVE_DEPS: 'dispatch-native-deps.json',
-    DISPATCH_NATIVE_DEPS_TMP: 'dispatch-native-deps.tmp.json',
-    DISPATCH_NATIVE_DEPS_ERR: 'dispatch-native-deps.err',
-    DISPATCH_GROUPS: 'dispatch-groups.json',
-    DISPATCH_EXCLUSIONS: 'dispatch-exclusions.json',
-    DISPATCH_FASTLANE_BUNDLES: 'dispatch-fastlane-bundles.json',
-    DISPATCH_IN_FLIGHT_RAW: 'dispatch-in-flight-raw.json',
-    DISPATCH_IN_FLIGHT_CLAIMS: 'dispatch-in-flight-claims.json',
-    DISPATCH_DEP_FRESHNESS: 'dispatch-dep-freshness.json',
-    DISPATCH_OPEN_PRS: 'dispatch-open-prs.json',
-    DISPATCH_CROSSPR_OVERLAP: 'dispatch-crosspr-overlap.json',
-    DISPATCH_NEAR_DUP_PAIRS: 'dispatch-near-dup-pairs.json',
-    DISPATCH_LINKED_PRS: 'dispatch-linked-prs.json',
-    DISPATCH_LINKED_PRS_ERR: 'dispatch-linked-prs.err',
-    DISPATCH_NAMED_TARGETS: 'dispatch-named-targets.json',
-    DISPATCH_SHIPPED_PROBE_PRS: 'dispatch-shipped-probe-prs.json',
-    DISPATCH_SHIPPED_PR_FILES: 'dispatch-shipped-pr-files.jsonl',
-    DISPATCH_SHAPE_GATE_ERR: 'dispatch-shape-gate.err',
-  };
-  for (const [varName, filename] of Object.entries(files)) {
-    const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-    console.log(varName + '=' + JSON.stringify(p));
-  }
-NODE_EVAL_EOF
-)"
+DISPATCH_QUEUE_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-queue-raw.json)"
+DISPATCH_OPEN_NUMBERS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-open-numbers.json)"
+DISPATCH_ELIGIBLE_PRE_DEP="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-eligible-pre-dep.json)"
+DISPATCH_UNRESOLVED_DEPS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-unresolved-deps.json)"
+DISPATCH_VERIFIED_OPEN_DEPS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-verified-open-deps.txt)"
+DISPATCH_ELIGIBLE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-eligible.json)"
+DISPATCH_BLOCKED_EXCLUDED_BODY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-blocked-excluded-body.json)"
+DISPATCH_NATIVE_DEPS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-native-deps.json)"
+DISPATCH_NATIVE_DEPS_TMP="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-native-deps.tmp.json)"
+DISPATCH_NATIVE_DEPS_ERR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-native-deps.err)"
+DISPATCH_GROUPS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-groups.json)"
+DISPATCH_EXCLUSIONS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-exclusions.json)"
+DISPATCH_FASTLANE_BUNDLES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-fastlane-bundles.json)"
+DISPATCH_IN_FLIGHT_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-in-flight-raw.json)"
+DISPATCH_IN_FLIGHT_CLAIMS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-in-flight-claims.json)"
+DISPATCH_DEP_FRESHNESS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-dep-freshness.json)"
+DISPATCH_OPEN_PRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-open-prs.json)"
+DISPATCH_CROSSPR_OVERLAP="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-crosspr-overlap.json)"
+DISPATCH_NEAR_DUP_PAIRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-near-dup-pairs.json)"
+DISPATCH_LINKED_PRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-linked-prs.json)"
+DISPATCH_LINKED_PRS_ERR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-linked-prs.err)"
+DISPATCH_NAMED_TARGETS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-named-targets.json)"
+DISPATCH_SHIPPED_PROBE_PRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shipped-probe-prs.json)"
+DISPATCH_SHIPPED_PR_FILES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shipped-pr-files.jsonl)"
+DISPATCH_SHAPE_GATE_ERR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shape-gate.err)"
 
 # #1752: truncate this run's session-scoped dispatch-exclusions.json, keeping
 # only 'firing'-reason entries -- those are appended incrementally by

@@ -120,21 +120,10 @@ numbered sequence instead of skipped.
    Resolve this run's session-scoped temp paths first (`_shared/session-tmp-root.md`) — these carry the existing `${ISSUE}` suffix, since two different records settling concurrently (a dispatch loop over a bundle group's members) still need per-record disjoint files even within one session, exactly as `_shared/session-tmp-root.md`'s "Record-suffixed callers keep both suffixes" section states:
 
    ```bash
-   eval "$(node -e "
-     const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-     const os = require('os'); const path = require('path');
-     const issue = process.argv[1];
-     const files = {
-       DISPATCH_COMMENTS: 'dispatch-comments-' + issue + '.json',
-       DISPATCH_LINKED_PRS: 'dispatch-linked-prs-' + issue + '.json',
-       DISPATCH_PR_COMMENTS_DIR: 'dispatch-pr-comments-' + issue,
-       ATTEMPT_INFO: 'attempt-info-' + issue + '.json',
-     };
-     for (const [varName, filename] of Object.entries(files)) {
-       const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-       console.log(varName + '=' + JSON.stringify(p));
-     }
-   " "$ISSUE")"
+   DISPATCH_COMMENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "dispatch-comments-${ISSUE}.json")"
+   DISPATCH_LINKED_PRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "dispatch-linked-prs-${ISSUE}.json")"
+   DISPATCH_PR_COMMENTS_DIR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "dispatch-pr-comments-${ISSUE}")"
+   ATTEMPT_INFO="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "attempt-info-${ISSUE}.json")"
    DISPATCH_RETRY_CEILING=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-retry-ceiling)
    gh api "repos/{owner}/{repo}/issues/${ISSUE}/comments?per_page=100" > "$DISPATCH_COMMENTS"
    gh pr list --repo {owner}/{repo} --state all --json number,closingIssuesReferences --limit 200 \
@@ -175,19 +164,8 @@ numbered sequence instead of skipped.
    # this marker back from the record's comments as known-bad evidence for the record's class
    # (see its "Operational outcome evidence" section and _shared/autonomy-ceiling.md's
    # Revocation section for the full semantics).
-   eval "$(node -e "
-     const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-     const os = require('os'); const path = require('path');
-     const issue = process.argv[1];
-     const files = {
-       ATTEMPT_INFO: 'attempt-info-' + issue + '.json',
-       ATTEMPT_COMMENT_BODY: 'attempt-comment-body-' + issue + '.md',
-     };
-     for (const [varName, filename] of Object.entries(files)) {
-       const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-       console.log(varName + '=' + JSON.stringify(p));
-     }
-   " "$ISSUE")"
+   ATTEMPT_INFO="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "attempt-info-${ISSUE}.json")"
+   ATTEMPT_COMMENT_BODY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "attempt-comment-body-${ISSUE}.md")"
    node -e "
      const { attemptFailedCommentBody } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/retry.js');
      const { attemptNumber, ceilingHit } = require(process.argv[1]);
@@ -215,16 +193,7 @@ numbered sequence instead of skipped.
    them down.
 
    ```bash
-   eval "$(node -e "
-     const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-     const os = require('os'); const path = require('path');
-     const issue = process.argv[1];
-     const files = { FAILURE_POINTER: 'failure-pointer-' + issue + '.md' };
-     for (const [varName, filename] of Object.entries(files)) {
-       const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-       console.log(varName + '=' + JSON.stringify(p));
-     }
-   " "$ISSUE")"
+   FAILURE_POINTER="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "failure-pointer-${ISSUE}.md")"
    printf '<!-- run-comment: failure -->\n\nAttempt failed — see the full comment on #%s.\n' "$ISSUE" > "$FAILURE_POINTER"
    # find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=failure
    gh pr close {pr-number} --repo {owner}/{repo}

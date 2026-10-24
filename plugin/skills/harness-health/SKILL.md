@@ -163,7 +163,8 @@ Apply `_shared/harness-health-analysis.md`'s new-skill gap detection over commit
 Resolve this run's session-scoped temp paths first, per `_shared/session-tmp-root.md` (cited throughout this file rather than restated):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" HARNESS_HEALTH_ISSUES_RAW=harness-health-issues-raw.json HARNESS_HEALTH_ISSUES=harness-health-issues.json)"
+HARNESS_HEALTH_ISSUES_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-issues-raw.json)"
+HARNESS_HEALTH_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-issues.json)"
 gh issue list --label by:harness-health --state all --json number,title,state,labels,body --limit 500 > "$HARNESS_HEALTH_ISSUES_RAW"
 ```
 
@@ -180,7 +181,8 @@ A matched issue carrying the `wontfix` label is a standing suppression decision:
 Resolve this run's session-scoped payloads path first (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit an earlier fence's shell variables) — `$FINDINGS_FILE` itself is assumed still set from Step 3's resolution, the same assumption this command already makes for `$TARGET_ID`/`$TARGET_KIND`/`$GAP_SCAN_RAN`/`$MIN_CONFIDENCE`/`$DRY_RUN`:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" HARNESS_HEALTH_PAYLOADS=harness-health-payloads.json HARNESS_HEALTH_FINDINGS=harness-health-findings.json)"
+HARNESS_HEALTH_PAYLOADS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-payloads.json)"
+HARNESS_HEALTH_FINDINGS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-findings.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health.js" validate-findings "${FINDINGS_FILE:-$HARNESS_HEALTH_FINDINGS}" \
   --root "${ROOT:-$PWD}" \
   ${ISSUES_FILE:+--issues "$ISSUES_FILE"} \

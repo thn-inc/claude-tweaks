@@ -104,7 +104,7 @@ carries it:
 Resolve this fence's session-scoped destination path first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" CAPTURE_TRUST_RECORDS=capture-trust-records.json)"
+CAPTURE_TRUST_RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value capture-trust-records.json)"
 {Session-scoped record snapshot's read-fresh-or-fetch block, with {tmp-records-file} =
  $CAPTURE_TRUST_RECORDS}
 ```
@@ -119,16 +119,16 @@ The destination this fence writes to is this run's own session-scoped path, re-r
 is a session-wide snapshot rather than this skill's own working copy:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" CAPTURE_TRUST_GIT_LOG=capture-trust-git-log.txt)"
+CAPTURE_TRUST_COMMIT_LOG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value capture-trust-git-log.txt)"
 GITLOG=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').gitLogPath(process.env.CLAUDE_CODE_SESSION_ID) || '')")
 if [ -n "$GITLOG" ] && node -e "
   const { isFresh } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
   process.exit(isFresh(process.argv[1], Number(process.argv[2])) ? 0 : 1)
 " "$GITLOG" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
-  cp "$GITLOG" "$CAPTURE_TRUST_GIT_LOG"
+  cp "$GITLOG" "$CAPTURE_TRUST_COMMIT_LOG"
 else
-  git log "{integration-branch}" --format='%H%x1f%B%x1e' > "$CAPTURE_TRUST_GIT_LOG"
-  [ -n "$GITLOG" ] && cp "$CAPTURE_TRUST_GIT_LOG" "$GITLOG"
+  git log "{integration-branch}" --format='%H%x1f%B%x1e' > "$CAPTURE_TRUST_COMMIT_LOG"
+  [ -n "$GITLOG" ] && cp "$CAPTURE_TRUST_COMMIT_LOG" "$GITLOG"
 fi
 ```
 
@@ -136,16 +136,15 @@ Re-resolve both session-scoped paths this fence needs (a fresh bash invocation d
 either prior fence's shell variables, `_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" \
-  CAPTURE_TRUST_RECORDS=capture-trust-records.json \
-  CAPTURE_TRUST_GIT_LOG=capture-trust-git-log.txt)"
+CAPTURE_TRUST_RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value capture-trust-records.json)"
+CAPTURE_TRUST_COMMIT_LOG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value capture-trust-git-log.txt)"
 node -e "
   const fs = require('fs');
   const root = '${CLAUDE_PLUGIN_ROOT}';
   const { trustRows, parseGitLog } = require(root + '/bin/lib/issues/trust.js');
   const { resolveCeiling, permittedGrants } = require(root + '/bin/lib/issues/autonomy.js');
   const issues = require('$CAPTURE_TRUST_RECORDS').map((i) => ({ ...i, labels: i.labels.map((l) => l.name) }));
-  const gitLog = parseGitLog(fs.readFileSync('$CAPTURE_TRUST_GIT_LOG', 'utf8'));
+  const gitLog = parseGitLog(fs.readFileSync('$CAPTURE_TRUST_COMMIT_LOG', 'utf8'));
   const policy = { 'trust-revert-window-days': process.argv[1] };
   // This skill's own class. A fresh capture carries by:capture and no risk
   // score, and riskBand() bands an unscored record 'elevated' — so that is the
