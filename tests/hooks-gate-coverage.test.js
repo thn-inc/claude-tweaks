@@ -484,6 +484,15 @@ test('#3989: a `$\'...\'` heredoc delimiter is unprovable, so a planted terminat
   assert.deepStrictEqual(fileWriteTargets('cat <<$"EOF"\nEOF\necho x > f.js\n$EOF', '/r'), [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
 });
 
+// Fix round 3 (#3989): bash decodes `$'...'`/`$"..."` anywhere in the delimiter word,
+// not only at its start, so `a$'EOF'` ends at `aEOF`. Any `$'`/`$"` is unprovable.
+test('#3989: a `$\'...\'` or `$"..."` delimiter mid-word is unprovable too, so the trailing redirect resolves', () => {
+  const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
+  assert.deepStrictEqual(fileWriteTargets("cat <<a$'EOF'\naEOF\necho x > f.js\na$EOF", '/r'), f);
+  assert.deepStrictEqual(fileWriteTargets('cat <<a$"EOF"\naEOF\necho x > f.js\na$EOF', '/r'), f);
+  assert.deepStrictEqual(fileWriteTargets("cat <<'a'$'EOF'\naEOF\necho x > f.js\na$EOF", '/r'), f);
+});
+
 test('#3989 sanity: a plain quoted-free heredoc body is still stripped, so the stripping still works', () => {
   assert.deepStrictEqual(fileWriteTargets('node x.js <<EOF\nif (a > 0) b();\nEOF', '/r'), []);
 });

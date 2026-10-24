@@ -632,7 +632,7 @@ function readHeredocOpener(str, j) {
   const raw = str.slice(start, j);
   // Fix round 2 (#3989): bash decodes `$'...'` / `$"..."` in the delimiter word, which
   // this parser does not, so the terminator cannot be known: the opener is unprovable.
-  if (/^\$['"]/.test(raw)) return { unprovable: true, end: j };
+  if (/\$['"]/.test(raw)) return { unprovable: true, end: j };
   const delim = decodeHeredocWord(raw);
   if (!delim) return null;
   return { delim, quoted: /["'\\]/.test(raw), stripTabs, end: j };
