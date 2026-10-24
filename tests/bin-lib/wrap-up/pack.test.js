@@ -676,18 +676,22 @@ test('gatherPack: --only runs only the named probes and still carries inputs/gen
   assert.deepStrictEqual(Object.keys(pack).sort(), ['durationMs', 'generatedAt', 'inputs', 'pr', 'residue']);
 });
 
-test('gatherPack runs the probes concurrently — eight 200 ms probes finish well under 2 s (#1930 AC4)', async () => {
+test('gatherPack runs the probes concurrently — the slowed probes overlap (#1930 AC4)', async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const tracked = async (body) => {
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    try { await sleep(200); return await body(); } finally { inFlight -= 1; }
+  };
   const slow = okDeps({
-    execFile: async (cmd, args) => { await sleep(200); return okDeps().execFile(cmd, args); },
-    computeBlastRadius: async () => { await sleep(200); return { summary: {} }; },
-    readClaimBlob: async () => { await sleep(200); return { content: null, failure: null, absent: true }; },
+    execFile: (cmd, args) => tracked(() => okDeps().execFile(cmd, args)),
+    computeBlastRadius: () => tracked(async () => ({ summary: {} })),
+    readClaimBlob: () => tracked(async () => ({ content: null, failure: null, absent: true })),
   });
-  const t0 = Date.now();
-  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps: slow });
-  const wall = Date.now() - t0;
-  assert.ok(wall < 600, `wall ${wall} ms`);
-  assert.ok(pack.durationMs < 600, `pack.durationMs ${pack.durationMs}`);
+  await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps: slow });
+  assert.strictEqual(maxInFlight, 7, 'seven of the nine slowed calls run at once; a serial pack reads 1');
 });
 
 test('gatherPack: a probe that never settles is bounded by deps.probeTimeoutMs rather than hanging the pack (#1930 review I3)', async () => {

@@ -2487,31 +2487,28 @@ test('reconcile(): skipCacheStamp=true does not disturb a real pass\'s residueSu
 
 // AC1: reconcile() degrades within ~2s via the preflight when GitHub is
 // unreachable, instead of accumulating every check's own 5-10s timeout.
-test('AC1: a preflight failure resolves in well under the old per-check-timeout sum', async () => {
+test('AC1: a preflight failure skips the gh-dependent checks and still runs the mirror check', async () => {
   const { seedDir, mainDir } = pairedFixture();
   writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\n');
   const preflight = require('../plugin/bin/lib/reconcile/preflight');
   const original = preflight.ghHealthCheck;
   preflight.ghHealthCheck = () => ({ ok: false, reason: 'github-unreachable' });
-  const start = Date.now();
   let r;
   try {
     r = await reconcile({ cwd: mainDir, checks: ['mirror', 'release', 'remote-prune', 'console'] });
   } finally {
     preflight.ghHealthCheck = original;
   }
-  const elapsed = Date.now() - start;
   // Functional assertion: preflight gate produces exactly the expected skip
   // entry — mirror is excluded (pure git, no `gh` dependency) and still runs.
+  // The timing bound lives in perf/reconcile-time-bounds.test.js.
   assert.deepEqual(r.skipped, [{ check: 'release,remote-prune,console', reason: 'preflight-github-unreachable' }]);
   assert.deepEqual(r.mirror, { state: 'current', action: 'none' });
-  // Secondary timing assertion: the preflight-gated failure resolves quickly
-  assert.ok(elapsed < 2500, `preflight-gated failure took ${elapsed}ms, expected well under 2.5s`);
 });
 
 // AC2: total wall-clock time is bounded by the explicit budget regardless
 // of how much stale state exists.
-test('AC2: an exhausted budget bounds total reconcile() time regardless of remaining check count', async () => {
+test('AC2: an exhausted budget skips every remaining check as budget-exceeded', async () => {
   const { mainDir } = pairedFixture();
   fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
@@ -2524,12 +2521,13 @@ test('AC2: an exhausted budget bounds total reconcile() time regardless of remai
   const budgetMod = require('../plugin/bin/lib/reconcile/budget');
   const original = budgetMod.createBudget;
   budgetMod.createBudget = () => ({ exceeded: () => true, remainingMs: () => 0 });
-  const start = Date.now();
+  let r;
   try {
-    await reconcile({ cwd: mainDir, checks: require('../plugin/bin/lib/reconcile').ALL_CHECKS });
+    r = await reconcile({ cwd: mainDir, checks: require('../plugin/bin/lib/reconcile').ALL_CHECKS });
   } finally {
     budgetMod.createBudget = original;
     preflight.ghHealthCheck = originalHealth;
   }
-  assert.ok(Date.now() - start < 1000, 'a pre-exhausted budget must skip every check near-instantly');
+  // The near-instant bound lives in perf/reconcile-time-bounds.test.js; here, the budget skip it guards.
+  assert.deepEqual(r.skipped, [{ check: 'mirror,red-tip,console,release,archive,archive-branches,remote-prune,ledger-residue,reap', reason: 'budget-exceeded' }]);
 });

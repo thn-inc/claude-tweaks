@@ -173,3 +173,14 @@ test('agents never write the stamp: no redirect into claude-tweaks-verify-pass r
   assert.ok(!/git rev-parse HEAD > /.test(DOC), 'the agent-side stamp write command remains');
   assert.ok(DOC.includes('run_in_background'), 'the foreground rule must name run_in_background');
 });
+
+test('AC1.1: the execute block itself tells a pipeline site to append the baseline flags and where the form lives (#3933)', () => {
+  const start = DOC.indexOf('**Not skipped — execute.**');
+  const end = DOC.indexOf('### Reading the result');
+  assert.ok(start !== -1 && end > start, 'execute block bounds must exist');
+  const block = DOC.slice(start, end);
+  assert.ok(block.includes('With `$PIPELINE_RUN_DIR` set'), 'names the pipeline-site condition');
+  assert.ok(block.includes('`--baseline`/`--baseline-cmd`'), 'names both baseline flags');
+  assert.ok(block.includes('`retry.{check}` template'), 'names the retry-template precondition');
+  assert.ok(block.includes('exact form under Baseline adjudication below'), 'points at the section holding the exact form');
+});
