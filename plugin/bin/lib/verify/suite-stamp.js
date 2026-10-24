@@ -8,7 +8,10 @@
 //
 // One JSON file per checkout (`claude-tweaks-verify-suites.json`, beside the
 // pass stamp in the checkout's own git dir), keyed by declared check name:
-// { "<name>": { sha, dirty, at, reportPath } }. A record only ever means
+// { "<name>": { sha, dirty, at, reportPath[, generatedExempt] } } — the
+// optional `generatedExempt` lists declared-generated paths that were dirty
+// when the record was written (#2987), so `dirty: false` stays auditable. A
+// record only ever means
 // "this check passed, on this sha, with this tree state" — composing reads
 // every field itself rather than trusting a caller's summary, the same
 // fail-toward-absence posture stamp.js's readStamp applies to the single

@@ -198,6 +198,15 @@ test('a generated glob that would cover the declaration file itself is refused, 
   }
 });
 
+test('a generated glob covering a declaration read from a non-default path is refused too (#2987)', () => {
+  const text = JSON.stringify({ checks: { tests: 'x' }, rules: [], generated: ['ci/**'] });
+  const custom = readDeclaration('/d.json', fakeFs({ '/d.json': text }), { selfPath: 'ci/scope.json' });
+  assert.strictEqual(custom.ok, false, 'ci/** covers the declaration actually read');
+  assert.match(custom.errors.join('\n'), /"ci\/\*\*" would also cover ci\/scope\.json itself/);
+  const atDefault = readDeclaration('/d.json', fakeFs({ '/d.json': text }));
+  assert.strictEqual(atDefault.ok, true, 'the same glob is fine when the declaration lives at the default path');
+});
+
 test('a declaration with no checks.tests is valid — bookkeeping-only rules, zero suites (#1924)', () => {
   const r = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { lint: 'eslint .' }, rules: [{ match: 'docs/plans/*-ledger.md', suites: [], static: false }, { match: 'src/**', suites: '*', static: true }] }) }));
   assert.strictEqual(r.ok, true, JSON.stringify(r.errors));

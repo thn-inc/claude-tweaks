@@ -124,6 +124,22 @@ function resolveScopePath(scope, scopeCwd) {
   return path.join(scopeRoot, scope);
 }
 
+// #2987: the repo-relative form of a resolved --scope path, so
+// readDeclaration can refuse a `generated` glob covering the declaration
+// actually read, not only the default location. null when it can't be
+// proven inside this checkout — a file outside it never shows in this
+// tree's dirty set anyway.
+function scopeSelfPath(resolvedPath, scopeCwd) {
+  try {
+    const root = fs.realpathSync(realGit(scopeCwd).repoRoot());
+    const rel = path.relative(root, fs.realpathSync(resolvedPath));
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+    return rel.split(path.sep).join('/');
+  } catch {
+    return null;
+  }
+}
+
 // #2987: the dirty paths a declared `generated` glob list exempts — every one
 // of them (sorted, deduplicated) when ALL match a glob, else null: any other
 // dirty path still disqualifies. A failed status read (null) or an empty list
@@ -161,13 +177,17 @@ function stampStatus(parsed) {
   // live-dirty exemption directly below and the per-suite composition
   // further down — read here rather than twice.
   const scopePath = parsed.scope && !foreignGitDir ? resolveScopePath(parsed.scope, process.cwd()) : null;
-  const scopeRead = scopePath !== null ? readDeclaration(scopePath) : null;
+  const scopeRead = scopePath !== null
+    ? readDeclaration(scopePath, undefined, { selfPath: scopeSelfPath(scopePath, process.cwd()) })
+    : null;
   const scopeDecl = scopeRead && scopeRead.ok ? scopeRead.decl : null;
   // Status is data, never a failure (exit 0 stays), but a --scope that could
-  // not be read is reported rather than looking exactly like "no --scope
-  // given" — the check run treats the same input as a usage error (#3017).
+  // not be read — or was ignored because --git-dir names another checkout —
+  // is reported rather than looking exactly like "no --scope given"; the
+  // check run treats an unreadable one as a usage error (#3017).
   let scopeError = null;
-  if (scopeRead && !scopeRead.ok) scopeError = scopeRead.errors.join('; ');
+  if (parsed.scope && foreignGitDir) scopeError = '--scope: ignored — --git-dir names another checkout, whose declaration and per-suite records are never read as this one\'s';
+  else if (scopeRead && !scopeRead.ok) scopeError = scopeRead.errors.join('; ');
   else if (scopeRead && scopeRead.missing) scopeError = `--scope: no declaration at ${scopePath}`;
   // #2987: the SAME generated-path exemption bin/verify.js's own stamp-write
   // gate applies, re-derived here against the LIVE tree rather than trusted
@@ -406,7 +426,9 @@ async function main() {
 
     const resolvedScopePath = resolveScopePath(parsed.scope, parsed.cwd || process.cwd());
 
-    const read = readDeclaration(resolvedScopePath);
+    const read = readDeclaration(resolvedScopePath, undefined, {
+      selfPath: scopeSelfPath(resolvedScopePath, parsed.cwd || process.cwd()),
+    });
     if (!read.ok) {
       scopeUsageExit(read.errors.join('\n'));
       return;

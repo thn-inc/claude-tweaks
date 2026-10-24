@@ -1585,6 +1585,48 @@ test('--stamp-status --scope naming a missing declaration reports scopeError ins
   assert.strictEqual(ok.scopeError, null);
 });
 
+test('--stamp-status --scope naming an unparseable declaration reports scopeError', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'broken.json'), '{ not json');
+  const status = JSON.parse((await runCli(['--stamp-status', '--scope', '.claude-tweaks/broken.json'], { cwd: r.repo })).stdout);
+  assert.match(status.scopeError, /could not parse JSON/);
+  assert.strictEqual(status.suiteComposed, null);
+});
+
+test('--stamp-status --scope under a foreign --git-dir reports the ignored --scope in scopeError', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const other = tmpGitRepo();
+  const status = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath, '--git-dir', other.gitDir], { cwd: r.repo })).stdout);
+  assert.match(status.scopeError, /--scope: ignored — --git-dir names another checkout/);
+  assert.strictEqual(status.suiteComposed, null);
+});
+
+test('a --scope declaration at a non-default path whose generated glob covers itself is a usage error (#2987)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const decl = JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8'));
+  commitFile(r, 'ci/scope.json', JSON.stringify({ ...decl, generated: ['ci/**'] }));
+  const run = await runCli(['--scope', 'ci/scope.json', '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`], { cwd: r.repo });
+  assert.strictEqual(run.code, 2, run.stdout);
+  assert.match(run.stderr, /"ci\/\*\*" would also cover ci\/scope\.json itself/);
+});
+
+test('a --stamp-suite chunk whose HEAD moves mid-run writes no record and says why (#3002)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const chunk = await runStampSuiteChunk(r, 'unit=git commit -q --allow-empty -m mid-run && node -e 0');
+  assert.strictEqual(chunk.code, 0, chunk.stderr);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-suites.json')), 'no per-suite record for a moved tree');
+  assert.match(chunk.stdout, /CAVEAT: --stamp-suite recorded no per-suite pass this run — the tree moved during the run/);
+});
+
+test('a --stamp-suite chunk whose record write fails says so instead of passing silently (#3002)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  // A directory where the records file belongs makes the atomic rename fail.
+  fs.mkdirSync(path.join(r.gitDir, 'claude-tweaks-verify-suites.json'));
+  const chunk = await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  assert.strictEqual(chunk.code, 0, chunk.stderr);
+  assert.match(chunk.stdout, /CAVEAT: --stamp-suite recorded no per-suite pass this run — the record write failed: /);
+});
+
 test('--changed-files prints {base, files} = committed-since-anchor ∪ working tree, anchored on the stamp fullSha (#1923 AC2)', async () => {
   const r = tmpGitRepo();
   const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
