@@ -1,8 +1,9 @@
 'use strict';
 const vm = require('node:vm');
 // Shared literal-aware comment stripper for the source-scan conformance tests
-// (#3536, #3585): the windows-hide, git-status, path-guard, path-containment, exit-code
-// and wall-clock-budget (#3491, in `literals: 'blank'` mode) scans call it per file. Comments are blanked, never deleted: every non-newline
+// (#3536, #3585): the windows-hide, git-status, path-guard, path-containment,
+// porcelain-cwd-compare, staged-id producers, exit-code and wall-clock-budget (#3491, in
+// `literals: 'blank'` mode) scans call it per file. Comments are blanked, never deleted: every non-newline
 // character of a comment becomes a space, so offsets and line numbers stay stable.
 //
 // One left-to-right scanner models string literals, template literals (their

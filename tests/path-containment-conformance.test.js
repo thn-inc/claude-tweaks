@@ -135,9 +135,9 @@ test('scanHandRolled flags the idiom in code but not in a comment', () => {
 
 // Every plugin/bin file's hits from `scan`, after confirming the comment
 // stripper parsed the file cleanly.
-function scanBinTree(scan) {
+function scanBinTree(scan, entries = binSources()) {
   const hits = [];
-  for (const { rel, raw } of binSources()) {
+  for (const { rel, raw } of entries) {
     const verdict = stripperVerdict(raw);
     assert.equal(verdict, 'ok', `${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
     hits.push(...scan(raw, rel));
@@ -147,6 +147,16 @@ function scanBinTree(scan) {
 
 test('AC1.1: no plugin/bin JS file hand-rolls a startsWith(... path.sep) containment test', () => {
   assert.deepEqual(scanBinTree(scanHandRolled), []);
+});
+
+test('a comment-stripper mis-parse is reported, not passed as a file with no hits', () => {
+  // The path-guard scan's documented mis-parse: the regex after `)` is read as division,
+  // so the stripped text leaves an unterminated string and no longer compiles.
+  const planted = { rel: 'plugin/bin/lib/planted.js', raw: 'if (b) /"/.test(b); const c = "//"; fs.existsSync(c);' };
+  assert.equal(stripperVerdict(planted.raw), 'misparsed');
+  const expected = (err) => err.message.includes(planted.rel) && err.message.includes(STRIPPER_VERDICT_MESSAGES.misparsed);
+  assert.throws(() => scanBinTree(scanHandRolled, [planted]), expected);
+  assert.throws(() => assertNoRelDotDot([planted]), expected);
 });
 
 test('#3892 scanVariableHandRolled flags each variable-mediated binding shape at its startsWith line', () => {
