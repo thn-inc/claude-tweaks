@@ -2529,5 +2529,5 @@ test('AC2: an exhausted budget skips every remaining check as budget-exceeded', 
     preflight.ghHealthCheck = originalHealth;
   }
   // The near-instant bound lives in perf/reconcile-time-bounds.test.js; here, the budget skip it guards.
-  assert.deepEqual(r.skipped, [{ check: 'mirror,red-tip,console,release,archive,archive-branches,remote-prune,reap', reason: 'budget-exceeded' }]);
+  assert.deepEqual(r.skipped, [{ check: 'mirror,red-tip,console,release,archive,archive-branches,remote-prune,ledger-residue,reap', reason: 'budget-exceeded' }]);
 });
