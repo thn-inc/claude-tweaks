@@ -26,7 +26,7 @@ const { escalateResidue } = require('./escalate-residue');
 const { isWorktreeAlwaysOn } = require('../policy');
 const { repoSlugOf, prClosesIssue } = require('./release-merged');
 const { closeRunState } = require('../hooks/close-run-state');
-const { checkRunIntegrity, fallbackBranch } = require('../hooks/run-integrity');
+const { checkRunIntegrity, fallbackBranch, worktreeListStdout } = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
 
@@ -1938,9 +1938,11 @@ function archiveMergedRun({
 
 // The parsed `git worktree list --porcelain` for `root`; [] when git cannot
 // answer (archiveMerged and prefetchArchivePrStates both read it once per pass).
-function listWorktreesOrEmpty(root) {
-  const wtList = runGit(['worktree', 'list', '--porcelain'], root);
-  return wtList.failure ? [] : parseWorktreeList(wtList.stdout);
+// #4032: `cache` (run-integrity.js's opt-in `{ worktreeList, integrationBranch }`
+// shape, optional) makes that read the same one every per-dir `checkRunIntegrity`
+// shares; absent, it spawns fresh exactly as before.
+function listWorktreesOrEmpty(root, cache) {
+  return parseWorktreeList(worktreeListStdout(root, cache));
 }
 
 // The branch a main-loop run dir is joined to: its stamped worktree's live
@@ -1961,8 +1963,8 @@ function runDirBranch(root, dir, state, worktrees) {
 // the branch of every dir whose number is absent or came back `null` (the only
 // case resolveRunPrState falls through to the branch lookup). Includes the
 // `status: 'clean'` sweep dirs, whose branch is `fallbackBranch` directly.
-async function prefetchArchivePrStates(root, prStates) {
-  const worktrees = listWorktreesOrEmpty(root);
+async function prefetchArchivePrStates(root, prStates, { cache } = {}) {
+  const worktrees = listWorktreesOrEmpty(root, cache);
   const entries = [];
   for (const { dir, state } of iterRunDirsWithState(root)) {
     entries.push({ state, branch: runDirBranch(root, dir, state, worktrees) });
@@ -1986,7 +1988,7 @@ async function prefetchArchivePrStates(root, prStates) {
 }
 
 function archiveMerged({
-  cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration, prStates,
+  cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration, prStates, cache,
 } = {}) {
   const archived = [];
   const skipped = [];
@@ -2000,7 +2002,11 @@ function archiveMerged({
   // (pr-first is GitHub-backed by construction).
   const recordCheckApplies = readWorkBackend(root) !== 'local-files';
 
-  const worktrees = listWorktreesOrEmpty(root);
+  // #4032: `cache`, when given, is the pass-shared run-integrity cache — the
+  // loop's own list and every per-dir checkRunIntegrity below read it through
+  // one entry. Safe because nothing in this function changes the worktree set
+  // (archiveRunDir moves run dirs only); reap, which does, runs after archive.
+  const worktrees = listWorktreesOrEmpty(root, cache);
 
   // #1235: one read before both loops below, one write after — instead of
   // one read-modify-write per archived/skipped/stuck item. See cache.js's
@@ -2073,7 +2079,7 @@ function archiveMerged({
     // (adhoc-superseded) exactly as the pre-consolidation `&&`-chained
     // early-return did, via one small follow-up classify call scoped to just
     // that remaining kind.
-    if (kind === 'abandoned-interrupted' && checkRunIntegrity(dir).state !== 'shipped-unclosed') {
+    if (kind === 'abandoned-interrupted' && checkRunIntegrity(dir, { cache }).state !== 'shipped-unclosed') {
       kind = classifyRunDir({ dir, state, worktrees, kinds: ['adhoc-superseded'] }).kind;
     }
 

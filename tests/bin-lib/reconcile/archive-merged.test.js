@@ -21,6 +21,7 @@ const {
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure } = require('../../../plugin/bin/lib/reconcile/cache');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
 const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
+const { createTimings, withTimings, summarizeTimings } = require('../../../plugin/bin/lib/reconcile/timing');
 const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
 const { readText } = require('../../helpers/read-skill');
 
@@ -4701,4 +4702,72 @@ test('archiveMerged: prStates answers the branch lookup of a status: clean sweep
   assert.deepStrictEqual(result.archived, [runDir], `expected the clean sweep to archive, got ${JSON.stringify(result)}`);
   assert.deepStrictEqual(asked, ['feat-clean-branch']);
   assert.equal(fs.existsSync(failing.marker), false, 'a branch lookup that bypassed prStates would have called the failing gh');
+});
+
+// #4032: run-integrity.js's opt-in `{ worktreeList, integrationBranch }` cache,
+// threaded through archiveMerged. The per-dir `checkRunIntegrity` of every
+// abandoned-interrupted candidate used to re-spawn `git worktree list` (measured:
+// 53 spawns in one archive pass); with a shared cache the whole phase reads it once.
+function newPassCache() {
+  return { worktreeList: new Map(), integrationBranch: new Map() };
+}
+
+// A repo with three torn-down, shipped, abandoned-interrupted runs plus two
+// ordinary branch-joined runs (stamped worktree gone, branch recoverable).
+function multiRunWorktreeFixture() {
+  const base = fixtureAbandonedShippedRun({ runId: '2026-08-01T090000-cache-int1' });
+  const pipelines = path.join(base.root, '.claude-tweaks', 'pipelines');
+  const seedEvent = '{"skill":"claude-tweaks:build","ts":"2020-01-01T09:05:00.000Z","type":"skill_invoked"}\n';
+  for (const name of ['cache-int2', 'cache-int3']) {
+    const d = path.join(pipelines, `2026-08-01T090000-${name}`);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'run-state.json'), JSON.stringify({ status: 'interrupted', worktree: base.wt, pr: { branch: 'feat-branch' } }));
+    fs.writeFileSync(path.join(d, 'events.jsonl'), seedEvent);
+  }
+  for (const name of ['cache-ord1', 'cache-ord2']) {
+    const d = path.join(pipelines, `2026-08-01T090000-${name}`);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'config.yml'), 'x: 1\n');
+    fs.writeFileSync(path.join(d, 'run-state.json'), JSON.stringify({
+      status: 'active', worktree: path.join(base.root, '.claude', 'worktrees', `gone-${name}`), pr: { branch: 'feat-branch' },
+    }));
+  }
+  return base;
+}
+
+function worktreeListSpawns(timings) {
+  return Object.values(summarizeTimings(timings).phases)
+    .reduce((n, p) => n + (p.subprocesses['git worktree'] || { count: 0 }).count, 0);
+}
+
+test('archiveMerged: a shared cache spawns git worktree list once per pass (#4032)', { skip: PATH_STUB_SKIP }, () => {
+  const { root } = multiRunWorktreeFixture();
+  const wrapper = installGhWrapper([]);
+  try {
+    const uncachedTimings = createTimings();
+    const uncached = withTimings(uncachedTimings, () => archiveMerged({ cwd: root, dryRun: true }));
+    const cache = newPassCache();
+    const cachedTimings = createTimings();
+    const cached = withTimings(cachedTimings, () => archiveMerged({ cwd: root, dryRun: true, cache }));
+    assert.ok(uncached.archived.length >= 3, `control must reach checkRunIntegrity for each abandoned run, got ${JSON.stringify(uncached)}`);
+    assert.ok(worktreeListSpawns(uncachedTimings) > 1, 'without a cache every per-dir checkRunIntegrity re-spawns the list');
+    assert.equal(worktreeListSpawns(cachedTimings), 1, 'with a shared cache the whole archive phase lists worktrees once');
+    assert.deepStrictEqual(cached, uncached, 'the cache must not change what is archived or skipped');
+    assert.equal(cache.worktreeList.size, 1, 'the one list is cached under the main checkout root');
+  } finally { wrapper.restore(); }
+});
+
+test('archiveMerged: a cache shared with prefetchArchivePrStates keeps the pass at one worktree list (#4032)', { skip: PATH_STUB_SKIP }, async () => {
+  const { root } = multiRunWorktreeFixture();
+  const wrapper = installGhWrapper([]);
+  try {
+    const cache = newPassCache();
+    const prStates = createPrStateResolver({ root, deps: { byNumberAsync: async () => null, byBranchAsync: async () => null, byBranch: () => null } });
+    const timings = createTimings();
+    await withTimings(timings, async () => {
+      await prefetchArchivePrStates(root, prStates, { cache });
+      archiveMerged({ cwd: root, dryRun: true, cache, prStates });
+    });
+    assert.equal(worktreeListSpawns(timings), 1);
+  } finally { wrapper.restore(); }
 });

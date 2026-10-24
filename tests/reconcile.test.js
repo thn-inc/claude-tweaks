@@ -1920,6 +1920,63 @@ test('reconcile(): creates exactly one issue-list cache per pass and passes its 
   }
 });
 
+// #4032 — reconcile() hands archiveMerged one run-integrity cache per pass (the
+// caller's own when it passed one, as session-start does), so the archive loop
+// and its per-dir checkRunIntegrity calls list worktrees once. Same module-wiring
+// level as the issue-list-cache test above; the spawn count itself is proven in
+// archive-merged.test.js. reapMerged must NOT get it: reap removes worktrees.
+test('reconcile(): passes one run-integrity cache per pass to archiveMerged — the caller\'s own when given, never to reapMerged (#4032)', async () => {
+  const archiveMergedModule = require('../plugin/bin/lib/reconcile/archive-merged');
+  const reapMergedModule = require('../plugin/bin/lib/reconcile/reap-merged');
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+
+  const originalArchive = archiveMergedModule.archiveMerged;
+  const originalReap = reapMergedModule.reapMerged;
+  const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
+
+  const archiveCaches = [];
+  let reapOpts;
+  archiveMergedModule.archiveMerged = (opts) => {
+    archiveCaches.push(opts.cache);
+    return { archived: [], skipped: [] };
+  };
+  reapMergedModule.reapMerged = (opts) => {
+    reapOpts = opts;
+    return { reaped: [], skipped: [], portsRelease: [] };
+  };
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+
+  try {
+    delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
+    const { reconcile: reconcileFresh } = require('../plugin/bin/lib/reconcile/index');
+    const { mainDir } = pairedFixture();
+    const run = (extra = {}) => reconcileFresh({
+      cwd: mainDir, checks: ['archive', 'reap'], resolveIntegrationModel: () => 'pr-first', mcpReachable: true, ...extra,
+    });
+
+    await run();
+    await run();
+    const [first, second] = archiveCaches;
+    for (const c of [first, second]) {
+      assert.ok(c && c.worktreeList instanceof Map && c.integrationBranch instanceof Map, 'archiveMerged must receive a run-integrity-shaped cache');
+    }
+    assert.notEqual(first, second, 'each pass gets its own cache — nothing survives across passes');
+
+    const callerCache = { worktreeList: new Map(), integrationBranch: new Map() };
+    await run({ cache: callerCache });
+    assert.equal(archiveCaches[2], callerCache, 'a caller-supplied cache is used, not replaced');
+    assert.ok(!('cache' in reapOpts), 'reapMerged must not share the worktree-list cache');
+  } finally {
+    archiveMergedModule.archiveMerged = originalArchive;
+    reapMergedModule.reapMerged = originalReap;
+    preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
+    delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
+  }
+});
+
 // #820 Task 10's exact regression shape, re-applied to this new mechanism: a
 // `lastRunAt` stamp from an unrelated pass must never be misread as preflight
 // freshness — the two fields are deliberately independent (cache.js's own

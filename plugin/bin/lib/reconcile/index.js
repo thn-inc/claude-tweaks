@@ -345,6 +345,14 @@ async function reconcileInner(opts) {
   // A prefetch only warms the memo: a throw here must never break the pass,
   // the sequential lookups that follow simply fall back to live calls.
   const warm = async (prefetch) => { try { await prefetch(root, prStates); } catch { /* best-effort */ } };
+  // #4032 — one run-integrity cache per pass (run-integrity.js's opt-in
+  // `{ worktreeList, integrationBranch }` shape; the caller's own when it passed
+  // one, as session-start does), so archive's loop and every per-dir
+  // checkRunIntegrity under it spawn `git worktree list` once between them.
+  // Filled lazily, at archive's first read — after mirror/fetch have run — and
+  // handed to archive only: `reap` removes worktrees and lists afresh itself,
+  // and nothing before it in the dispatch order changes the worktree set.
+  const runIntegrityCache = opts.cache || { worktreeList: new Map(), integrationBranch: new Map() };
   const DISPATCH_ORDER = ['mirror', 'red-tip', 'console', 'release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
   function overBudget(remainingFromHere) {
     if (!budget.exceeded()) return false;
@@ -457,9 +465,10 @@ async function reconcileInner(opts) {
   if (overBudget(DISPATCH_ORDER.slice(4))) return result;
   if (checks.includes('archive')) {
     const r = await timePhase('archive', async () => {
-      await warm(prefetchArchivePrStates);
+      await warm((r, states) => prefetchArchivePrStates(r, states, { cache: runIntegrityCache }));
       return archiveMerged({
         cwd: root, dryRun, sessionId: opts.sessionId, runner: issueListCache.runner, integration, prStates,
+        cache: runIntegrityCache,
       });
     });
     result.runs = r.archived.map((d) => ({ runDir: d, action: 'archived' }))
