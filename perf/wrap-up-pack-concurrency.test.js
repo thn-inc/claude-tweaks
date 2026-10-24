@@ -4,11 +4,11 @@
 //
 // gatherPack runs its probes concurrently, so the slowed probes (200 ms each) must finish under 600 ms.
 // Nine slowed calls make a serial run take 1.8 s; two of them are chained, so the concurrent ideal is
-// about 400 ms. Two timings share that one budget on the same run: `wall` is measured
-// by the test, `pack.durationMs` by gatherPack itself. The scan misses the second (its known limit 1),
-// but it flakes under the same load, so it moves with `wall` (Deliverable 3 of #3939). Lives outside
-// tests/ because a wall-clock assertion flakes under sibling-suite load; the deterministic half (the
-// probes overlap, counted in flight) stays in tests/bin-lib/wrap-up/pack.test.js.
+// about 400 ms. Two timings share that one budget on the same run: `wall` is measured by the test,
+// `pack.durationMs` by gatherPack itself. The scan misses the second (its known limit 1), but it
+// flakes under the same load, so it moves with `wall` (Deliverable 3 of #3939). Lives outside tests/
+// because a wall-clock assertion flakes under sibling-suite load; the deterministic half (the probes
+// overlap, counted in flight) stays in tests/bin-lib/wrap-up/pack.test.js.
 'use strict';
 
 const { test } = require('node:test');

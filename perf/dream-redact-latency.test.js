@@ -5,7 +5,7 @@
 // redact() caps its input before the secret regexes run. Uncapped, SECRET_NAME's unbounded runs
 // backtrack quadratically on a keyword-bearing tool output (~2 s at 120k chars), so a 120k-char
 // input must redact under 500 ms. Lives outside tests/ because a wall-clock assertion flakes under
-// sibling-suite load; the functional half (the output still starts with TOKEN) stays in
+// sibling-suite load; the functional half (the output is capped to PRE_REDACT_CHARS) stays in
 // tests/bin-lib/dream/scan.test.js.
 'use strict';
 
