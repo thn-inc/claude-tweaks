@@ -49,7 +49,9 @@ function nodeCmd(script, ...args) {
   const scriptBad = script.match(/["$`\\%]/);
   if (scriptBad) throw new Error(`nodeCmd: script contains ${JSON.stringify(scriptBad[0])}, which /bin/sh or cmd.exe interprets; pass the value as an argument instead`);
   for (const arg of args) {
-    const argBad = arg.match(/["$`%]/);
+    // A doubled backslash collapses to one inside /bin/sh double quotes but
+    // stays doubled in cmd.exe's argv, so it is refused like the rest.
+    const argBad = arg.match(/["$`%]|\\\\/);
     if (argBad || arg.endsWith('\\')) throw new Error(`nodeCmd: argument ${JSON.stringify(arg)} contains ${argBad ? JSON.stringify(argBad[0]) : 'a trailing backslash'}, which /bin/sh or cmd.exe interprets`);
   }
   return [`node -e "${script}"`, ...args.map((a) => `"${a}"`)].join(' ');
@@ -3466,13 +3468,20 @@ test('--baseline: a SIGINT mid-run removes the scratch worktree and exits 130, l
 });
 
 test('#4177 AC1/AC3: no fixture command uses the POSIX-only single-quoted node -e form — cmd.exe gives \' no meaning', () => {
-  const lines = readText(__filename).split('\n');
-  const offenders = lines.map((l, i) => [i + 1, l]).filter(([, l]) => /node -e \\?'/.test(l)).map(([n]) => n);
+  // Whole-text scan, so a run of spaces or a line break between the tokens
+  // still counts; offenders are reported as line numbers.
+  const src = readText(__filename);
+  const offenders = [...src.matchAll(/node\s+-e\s+\\?'/g)].map((m) => src.slice(0, m.index).split('\n').length);
   assert.deepStrictEqual(offenders, [], 'build the command with nodeCmd(script, ...args) instead');
 });
 
 test('#4177 AC4: nodeCmd refuses a script or argument whose meaning differs between /bin/sh and cmd.exe', () => {
   assert.strictEqual(nodeCmd("console.log(process.argv[1])", 'C:\\x\\y.txt'), 'node -e "console.log(process.argv[1])" "C:\\x\\y.txt"');
-  for (const bad of ['a"b', 'a$b', 'a`b', 'a\\b', 'a%b']) assert.throws(() => nodeCmd(bad), /nodeCmd/);
-  for (const bad of ['a"b', 'a$b', 'a`b', 'a%b', 'C:\\dir\\']) assert.throws(() => nodeCmd('0', bad), /nodeCmd/);
+  for (const [bad, ch] of [['a"b', '"'], ['a$b', '$'], ['a`b', '`'], ['a\\b', '\\'], ['a%b', '%']]) {
+    assert.throws(() => nodeCmd(bad), (e) => e.message.startsWith(`nodeCmd: script contains ${JSON.stringify(ch)},`), `script ${bad} names ${ch}`);
+  }
+  for (const [bad, ch] of [['a"b', '"'], ['a$b', '$'], ['a`b', '`'], ['a%b', '%'], ['C:\\a\\\\b', '\\\\']]) {
+    assert.throws(() => nodeCmd('0', bad), (e) => e.message.endsWith(`contains ${JSON.stringify(ch)}, which /bin/sh or cmd.exe interprets`), `argument ${bad} names ${ch}`);
+  }
+  assert.throws(() => nodeCmd('0', 'C:\\dir\\'), (e) => e.message.endsWith('contains a trailing backslash, which /bin/sh or cmd.exe interprets'));
 });
