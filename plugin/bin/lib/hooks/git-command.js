@@ -249,10 +249,12 @@ function substituteVars(tokens, vars, singleQuoted) {
 // sees them — one shared point so a future fix to either cd-resolution or
 // assignment-substitution can never land in one caller's copy of this
 // preamble and not the other's.
+//
+// #4149: it walks the same groups and lone `&` cuts as forEachShellSegment (walkShellChunk,
+// without heredoc splitting), so a `cd` behind `(`/`{` is read with the same scope rules and
+// `handler` may run once per cwd for a segment, its fourth argument true on a repeat visit.
 function forEachCommandSegment(command, cwd, handler) {
-  let effCwd = cwd || '.'; // string, or null meaning UNKNOWN
-  const vars = new Map(); // name -> literal value, same-command only, no chaining
-  for (const { text } of segmentSpans(command)) effCwd = visitSegment(text, effCwd, vars, handler);
+  walkShellChunk(String(command || ''), [cwd || '.'], new Map(), handler, 0, false);
 }
 
 // One segment of forEachCommandSegment's walk: updates `vars`, calls `handler`
@@ -441,9 +443,13 @@ const PLUMBING_WRITE_SUBCOMMANDS = new Set(['mv', 'rm', 'update-ref', 'apply']);
 // ignorant of which subcommand pre-tool-use.js's callers each care about.
 function resolvedGitSegments(command, cwd) {
   const segments = [];
-  forEachCommandSegment(command, cwd, (t, effCwd) => {
+  let pieceStart = 0; // where the current piece's first-cwd visit began pushing
+  forEachCommandSegment(command, cwd, (t, effCwd, _leadQuoted, again) => {
+    if (!again) pieceStart = segments.length;
     const resolved = resolveGitCommand(t, effCwd);
     if (!resolved) return;
+    // A repeat visit under another cwd (after a brace group) that resolves to the same dir adds nothing.
+    if (again && segments.slice(pieceStart).some((s) => s.dir === resolved.dir && s.index === resolved.index)) return;
     segments.push({ tokens: t, index: resolved.index, dir: resolved.dir });
   });
   return segments;
@@ -648,20 +654,27 @@ function splitOnLoneAmpersand(seg) {
   return pieces;
 }
 
+// True when the command sets the configuration of the git at `tokens[p]`: a -c/--config-env
+// global flag before its subcommand (at `sub`), or a NAME=value assignment ahead of it (`assigned`,
+// e.g. GIT_CONFIG_COUNT/KEY/VALUE). Configuration can make any subcommand run a command that reads
+// stdin (`git -c core.fsmonitor='sh -s' commit -F -` runs the body), so such a git is neither an
+// inert neighbour nor a data reader.
+function gitIsConfigured(tokens, p, sub, assigned) {
+  return assigned || tokens.slice(p + 1, sub).some((t) => t === '-c' || t.startsWith('--config-env'));
+}
+
 // True when the program at `tokens[p]` neither reads stdin nor runs an argument, in a segment with
-// no command substitution: an INERT_NEIGHBOUR_WORDS program, or `git add` (past git's global flags)
-// without --pathspec-from-file (its abbreviations included), which reads pathspecs from stdin.
-// Configuration can make `git add` run a command that reads stdin (`git -c core.fsmonitor='sh -s'
-// add` runs the body), so `git add` is no neighbour behind a `-c`/`--config-env` flag or a
-// NAME=value assignment (GIT_CONFIG_*).
+// no command substitution: an INERT_NEIGHBOUR_WORDS program, or `git add` (past git's global flags,
+// and not configured by the command: gitIsConfigured) without --pathspec-from-file (its
+// abbreviations included), which reads pathspecs from stdin.
 function isInertNeighbour(tokens, p, seg) {
   if (p >= tokens.length || !isBareOrAbsoluteProgram(tokens[p]) || /\$\(|`/.test(seg)) return false;
   const names = programNames(tokens[p]);
   if (names.every((n) => INERT_NEIGHBOUR_WORDS.has(n))) return true;
-  if (p > 0 || !names.every((n) => n === 'git')) return false;
+  if (!names.every((n) => n === 'git')) return false;
   const sub = skipGlobalFlags(tokens, p + 1, '/').index;
   return tokens[sub] === 'add'
-    && !tokens.slice(p + 1, sub).some((t) => t === '-c' || t.startsWith('--config-env'))
+    && !gitIsConfigured(tokens, p, sub, p > 0)
     && !tokens.some((t) => t.startsWith('--pathspec-f'));
 }
 
@@ -675,7 +688,9 @@ function isInertNeighbour(tokens, p, seg) {
 // the program slot and fails, and an `env` program-choosing flag (-S, -P) fails; the program word
 // must then resolve ($NAME and backticks do not), be a bare name or an absolute path,
 // and every spelling the parser can read from it must be a reader; `git` is a reader
-// only for a data subcommand (GIT_DATA_SUBCOMMANDS), found past its global flags. The
+// only for a data subcommand (GIT_DATA_SUBCOMMANDS), found past its global flags, and only
+// when the command does not configure it (gitIsConfigured; an assignment behind a wrapper
+// counts too, as in `env GIT_CONFIG_COUNT=1 git commit`). The
 // group check reads the segment with its quoted spans removed (tokenize has already
 // dropped the quotes), so a quoted `(.a)` is data, not a group. Fails closed, so the
 // body stays visible to the scan.
@@ -688,18 +703,23 @@ function lineFeedsOnlyDataReaders(lineText) {
     let p = 0;
     while (p < tokens.length && SIMPLE_ASSIGNMENT_RE.test(tokens[p])) p += 1;
     if (isInertNeighbour(tokens, p, seg)) continue;
+    let assigned = p > 0;
     while (p < tokens.length && isBareOrAbsoluteProgram(tokens[p]) && programNames(tokens[p]).every((n) => READER_WRAPPER_WORDS.has(n))) {
       const isEnv = programNames(tokens[p]).includes('env');
       p += 1;
       while (p < tokens.length && (tokens[p].startsWith('-') || SIMPLE_ASSIGNMENT_RE.test(tokens[p]))) {
         if (isEnv && ENV_PROGRAM_FLAG_RE.test(tokens[p])) return false;
+        if (SIMPLE_ASSIGNMENT_RE.test(tokens[p])) assigned = true;
         p += 1;
       }
     }
     if (p >= tokens.length || /[$`]/.test(tokens[p]) || !isBareOrAbsoluteProgram(tokens[p])) return false;
     const names = programNames(tokens[p]);
     if (!names.every((n) => DATA_READER_WORDS.has(n))) return false;
-    if (names.includes('git') && !GIT_DATA_SUBCOMMANDS.has(tokens[skipGlobalFlags(tokens, p + 1, '/').index])) return false;
+    if (names.includes('git')) {
+      const sub = skipGlobalFlags(tokens, p + 1, '/').index;
+      if (gitIsConfigured(tokens, p, sub, assigned) || !GIT_DATA_SUBCOMMANDS.has(tokens[sub])) return false;
+    }
   }
   return true;
 }
@@ -1068,8 +1088,9 @@ const MAX_HEREDOC_NESTING = 8;
 
 // Group structure of one segment, for walkShellChunk (#4149): a `(` or `{` at command position
 // opens a group and the `)` or `}` that matches it closes it, so a `cd` behind `(`/`{` is read as
-// a `cd` scoped to its group. Returns the segment as { text } pieces and { open } / { close }
-// events, in order; `g.stack` carries the open groups and nesting parens across segments. Any
+// a `cd` scoped to its group. Returns the segment as { text } pieces and { open } / { close } /
+// { bg } events, in order ({ bg } at a lone `&`, which backgrounds the and-or list before it);
+// `g.stack` carries the open groups and nesting parens across segments. Any
 // other `(` (`$(`, `$((`, `<(`, an array, a glob) only nests until its `)`. A `)` while a `case` is
 // open in the innermost group is a pattern's, and a `)` that matches nothing (a group this walk
 // never saw open, as in `if (…)`): either one closes nothing but cuts the text, so the command
@@ -1114,8 +1135,14 @@ function groupEvents(seg, g) {
       let j = i + 1;
       while (j < seg.length && /[<>&|]/.test(seg[j])) j += 1;
       if (c !== '&' && j === i + 1 && seg[j] === '(') { nest(1, true); i = j + 1; continue; }
-      if (c === '&' && j === i + 1) atCmd = true; // a lone `&` ends a command
-      else redirTarget = true;
+      if (c === '&' && j === i + 1) {
+        // A lone `&` ends the and-or list before it and runs it in the background. When it starts
+        // the segment it is the `&` of `|&` (segmentSpans has cut the `|`), which pipes on: it is
+        // dropped from the text, with no background. In a `$( )`/`<( )` it ends that subshell's
+        // own list, so it is left alone.
+        if (top().kind !== 'p') cut(i, i > 0 ? { bg: true } : null);
+        atCmd = true;
+      } else redirTarget = true;
       i = j;
       continue;
     }
@@ -1165,12 +1192,14 @@ function groupEvents(seg, g) {
 }
 
 // visitSegment for each cwd the walk may be in (a list, as after a brace group), deduplicated.
+// `handler` gets a fourth argument, true on every visit of the piece after the first, so a
+// consumer can drop a target that does not depend on the cwd (`git -C /x`) the second time.
 function visitUnderEach(text, cwds, vars, handler) {
   const next = [];
-  for (const c of cwds) {
-    const n = visitSegment(text, c, vars, handler);
+  cwds.forEach((c, k) => {
+    const n = visitSegment(text, c, vars, k === 0 ? handler : (t, effCwd, lq) => handler(t, effCwd, lq, true));
     if (!next.includes(n)) next.push(n);
-  }
+  });
   return next;
 }
 
@@ -1184,7 +1213,9 @@ function visitUnderEach(text, cwds, vars, handler) {
 // inner opener planned. Each segment is walked through its groups (groupEvents): a cwd set
 // inside a subshell ends at its `)`; after a brace group's `}` (whose `cd` persists unless the
 // group is piped, so its scope end cannot be placed) the walk continues under both the inner and
-// the outer cwd, so `handler` may run once per cwd for a segment.
+// the outer cwd, so `handler` may run once per cwd for a segment (visitUnderEach). A lone `&`
+// backgrounds the and-or list before it, which runs in a subshell: the cwd returns to what it was
+// where that list began (after the last `;`, newline, `&` or group opener).
 function forEachShellSegment(command, cwd, handler) {
   walkShellChunk(String(command || ''), [cwd || '.'], new Map(), handler, 0, true);
 }
@@ -1193,6 +1224,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan) {
   const { outer, bodies } = plan && depth < MAX_HEREDOC_NESTING ? stripHeredocBodies(text) : { outer: text, bodies: [] };
   const g = { root: { kind: 'root', caseDepth: 0 }, stack: [] };
   let cur = cwds;
+  let listStart = cwds; // the cwds where the current and-or list began
   let b = 0;
   const runBodies = (until, bodyCwds) => {
     for (; b < bodies.length && bodies[b].at < until; b += 1) {
@@ -1203,13 +1235,20 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan) {
   for (const span of segmentSpans(outer)) {
     const before = cur;
     for (const ev of groupEvents(span.text, g)) {
-      if (ev.open) ev.open.saved = cur;
-      else if (ev.close) {
+      if (ev.open) {
+        ev.open.saved = cur;
+        ev.open.savedList = listStart;
+        listStart = cur;
+      } else if (ev.close) {
         const { saved } = ev.close;
         cur = ev.close.kind === '(' ? saved : [...saved, ...cur.filter((c) => !saved.includes(c))];
-      } else cur = visitUnderEach(ev.text, cur, vars, handler);
+        listStart = ev.close.savedList;
+      } else if (ev.bg) cur = listStart;
+      else cur = visitUnderEach(ev.text, cur, vars, handler);
     }
     runBodies(span.end, before);
+    // `&&`, `||` and `|` continue the and-or list; `;`, a newline or the end start a new one.
+    if (outer[span.end] !== '&' && outer[span.end] !== '|') listStart = cur;
   }
   runBodies(Infinity, cur);
 }
@@ -1525,12 +1564,15 @@ function fileWriteTargets(command, cwd) {
 const MKDIR_VALUE_FLAGS = new Set(['-m', '--mode']);
 function mkdirTargets(command, cwd) {
   const targets = [];
-  forEachCommandSegment(command, cwd, (t, effCwd) => {
+  let pieceStart = 0; // where the current piece's first-cwd visit began pushing
+  forEachCommandSegment(command, cwd, (t, effCwd, _leadQuoted, again) => {
+    if (!again) pieceStart = targets.length;
     if (t[0] !== 'mkdir') return;
     const { positionals } = partitionArgs(t.slice(1), MKDIR_VALUE_FLAGS);
     for (const arg of positionals) {
       const file = resolveWriteTarget(effCwd, arg);
-      if (file) targets.push({ action: 'mkdir', file });
+      // A repeat visit under another cwd (after a brace group) adds an absolute path only once.
+      if (file && !(again && targets.slice(pieceStart).some((x) => x.file === file))) targets.push({ action: 'mkdir', file });
     }
   });
   return targets;

@@ -606,3 +606,30 @@ test('an unrelated command, and a bare powershell invocation with no opaque flag
 test('an abbreviated flag form (-Com) is a deliberate, documented miss — not matched', () => {
   assert.strictEqual(powershellOpaqueCommand('powershell -Com "git push"', '/repo'), false);
 });
+
+// #4149 round 2: gitTargets and mkdirTargets read a `cd` behind `(` or `{` the way the write walk does.
+// A subshell's cwd ends at its `)`; after a brace group's `}` both cwds stand (its `cd` persists
+// unless the group is piped). A lone `&` ends a command and backgrounds it, so its `cd` does not move
+// the cwd. Each case was checked against real git and mkdir under bash 3.2 and 5.
+for (const [label, cmd, expected] of [
+  ['(cd … && git commit)', '(cd /main && git commit -m x)', [{ action: 'commit', dir: path.resolve('/main') }]],
+  ['{ cd … && git commit; }', '{ cd /main && git commit -m x; }', [{ action: 'commit', dir: path.resolve('/main') }]],
+  ['a commit after a subshell cd closes', '(cd /main && true); git commit -m x', [{ action: 'commit', dir: '/wt' }]],
+  ['a commit after a brace group cd closes (both cwds)', '{ cd /main; }; git commit -m x', [{ action: 'commit', dir: '/wt' }, { action: 'commit', dir: path.resolve('/main') }]],
+  ['a commit after a backgrounded cd', 'cd /main & git commit -m x', [{ action: 'commit', dir: '/wt' }]],
+  ['a commit after a backgrounded command', 'cd /main; true & git commit -m x', [{ action: 'commit', dir: path.resolve('/main') }]],
+]) {
+  test(`#4149 round 2: gitTargets reads ${label} as bash runs it`, () => {
+    assert.deepStrictEqual(gitTargets(cmd, '/wt'), expected);
+  });
+}
+
+test('#4149 round 2: an absolute -C after a brace group is reported once', () => {
+  assert.deepStrictEqual(gitTargets('{ cd /main; }; git -C /x commit -m x', '/wt'), [{ action: 'commit', dir: path.resolve('/x') }]);
+});
+
+test('#4149 round 2: mkdirTargets reads a cd behind ( or {', () => {
+  assert.deepStrictEqual(mkdirTargets('(cd /main && mkdir d)', '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
+  assert.deepStrictEqual(mkdirTargets('(cd /main && true); mkdir d', '/wt'), [{ action: 'mkdir', file: path.resolve('/wt/d') }]);
+  assert.deepStrictEqual(mkdirTargets('{ cd /main; }; mkdir /x', '/wt'), [{ action: 'mkdir', file: path.resolve('/x') }]);
+});

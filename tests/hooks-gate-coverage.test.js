@@ -547,6 +547,14 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['git add with a -c config flag (git -c core.fsmonitor=… add)', "cat <<'EOF' | git -c core.fsmonitor=x add .\necho x > f.js\nEOF", f],
     ['git add with a --config-env flag', "cat <<'EOF' | git --config-env=core.fsmonitor=V add .\necho x > f.js\nEOF", f],
     ['git add after an assignment (GIT_CONFIG_COUNT=1 git add)', "cat <<'EOF' | GIT_CONFIG_COUNT=1 git add .\necho x > f.js\nEOF", f],
+    // Round 2 (#4149): configuration can make any git subcommand run a command that reads stdin
+    // (bash + git: `git -c core.fsmonitor='sh -s' commit -F -` runs the body), so git behind a
+    // -c/--config-env flag or a NAME=value prefix is no reader, commit included.
+    ['git commit with a -c config flag, piped', "cat <<'EOF' | git -c core.fsmonitor='sh -s' commit -F -\necho x > f.js\nEOF", f],
+    ['git commit with a -c config flag', "git -c core.fsmonitor='sh -s' commit -F - <<'EOF'\necho x > f.js\nEOF", f],
+    ['git commit with a --config-env flag', "git --config-env=core.fsmonitor=V commit -F - <<'EOF'\necho x > f.js\nEOF", f],
+    ['git commit after an assignment (GIT_CONFIG_COUNT=1 git commit)', "GIT_CONFIG_COUNT=1 git commit -F - <<'EOF'\necho x > f.js\nEOF", f],
+    ['git commit after an assignment behind env (env GIT_CONFIG_COUNT=1 git commit)', "env GIT_CONFIG_COUNT=1 git commit -F - <<'EOF'\necho x > f.js\nEOF", f],
   ];
   for (const [label, cmd, expected] of keepCases) {
     test(`#4149: a body fed to ${label} stays visible`, () => {
@@ -827,6 +835,29 @@ for (const [label, cmd] of [
     const targets = fileWriteTargets('{ cd /main; }; cp a f.js', '/r').map((t) => t.file);
     assert.ok(targets.includes('/main/f.js') && targets.includes(path.resolve('/r', 'f.js')), JSON.stringify(targets));
   });
+}
+
+// Round 2 (#4149, lone `&`): the write walk cuts at an unquoted lone `&`, so the command after it is
+// read as a command; the backgrounded and-or list runs in a subshell, so its `cd` does not move the
+// cwd for what follows. `&&`, `&>`, `>&`, `<&`, `|&` and an `&` inside `$( )` are not cuts.
+{
+  const main = (action) => ({ action, file: '/main/f.js' });
+  const here = (action) => ({ action, file: path.resolve('/r', 'f.js') });
+  for (const [label, cmd, expected] of [
+    ['a write after a backgrounded command (true & cp)', 'true & cp /etc/hosts /main/f.js', [main('copy')]],
+    ['a write after a backgrounded cd (cd /tmp & cp)', 'cd /tmp & cp a f.js', [here('copy')]],
+    ['a write after a backgrounded and-or list (cd /tmp && true & cp)', 'cd /tmp && true & cp a f.js', [here('copy')]],
+    ['a write after |&, which pipes on', 'cd /main && echo |& cp a f.js', [main('copy')]],
+    ['a write after an & inside $( )', 'cd /main && echo $(true & true) && cp a f.js', [main('copy')]],
+    ['a write after an & inside a subshell, from the subshell cwd', 'cd /main && (true & cp a f.js)', [main('copy')]],
+    ['a write after &>', 'cd /main && true &>/dev/null && cp a f.js', [main('copy')]],
+    ['a write after >&', 'cd /main && true >&2 && cp a f.js', [main('copy')]],
+    ['a write after <&', 'cd /main && true <&0 && cp a f.js', [main('copy')]],
+  ]) {
+    test(`#4149 lone & walk: ${label} resolves as bash runs it`, () => {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
+    });
+  }
 }
 
 // Residual fix (#4149, redirect tokens): a redirection (`>/dev/null`, `2>&1`, `>>f`, `<in`, or an
