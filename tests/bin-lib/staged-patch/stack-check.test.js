@@ -385,12 +385,16 @@ test('#3997: gitEnv drops env-carried config (GIT_CONFIG_PARAMETERS/COUNT/KEY_n/
     GIT_CONFIG_VALUE_0: 'true',
     GIT_CONFIG_KEY_1: 'diff.noprefix',
     GIT_CONFIG_VALUE_1: 'true',
+    GIT_CONFIG_KEY_10: 'x',
+    GIT_CONFIG_VALUE_10: 'y',
+    GIT_CONFIG_KEY_X: 'keep',
   };
   const before = { ...input };
   const env = gitEnv({ platform: 'linux', devNull: '/dev/null', env: input });
-  for (const k of ['GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1']) assert.ok(!(k in env), k);
+  for (const k of ['GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1', 'GIT_CONFIG_KEY_10', 'GIT_CONFIG_VALUE_10']) assert.ok(!(k in env), k);
   assert.strictEqual(env.PATH, '/bin');
   assert.strictEqual(env.GIT_AUTHOR_NAME, 'Author');
+  assert.strictEqual(env.GIT_CONFIG_KEY_X, 'keep');
   assert.deepStrictEqual(input, before);
 });
 
