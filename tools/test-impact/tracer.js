@@ -152,9 +152,10 @@ function install() {
     const r = relOf(abs);
     if (r === null) return;
     if (kind === 'auto') {
-      // Only cp/cpSync: Node copies the tree internally, never through the patched fs reads, so a
-      // directory copy is a content dependence on everything beneath it — a `d` listing would miss a
-      // modified file inside the copied tree.
+      // Only cp/cpSync: Node 22 copies the tree internally, not through the patched fs reads (Node 20
+      // lists directories through readdirSync, which adds a `d` record too), so a directory copy is a
+      // content dependence on everything beneath it — a `d` listing alone would miss a modified file
+      // inside the copied tree.
       const st = statSync(abs, { throwIfNoEntry: false });
       kind = st && st.isDirectory() ? 'c' : 'f';
     }

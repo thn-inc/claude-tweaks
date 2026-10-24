@@ -108,7 +108,8 @@ test('readdir records a d entry', () => {
 test('a recursive directory copy records a c prefix, so a file inside the copied tree selects the test', () => {
   const a = recordsOf('a.test.js');
   assert.ok(a.has(rec('c', 'docs/copied')), 'cpSync of docs/copied records c docs/copied');
-  assert.ok(!a.has(rec('d', 'docs/copied')), 'a copy is a content dependence, not a directory listing');
+  // Whether a `d docs/copied` record also appears depends on the Node version (20 lists the directory
+  // through the patched readdirSync, 22 copies it natively), so only the `c` record is pinned.
 });
 
 test('existsSync records s', () => {
