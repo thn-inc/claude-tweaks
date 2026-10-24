@@ -837,6 +837,22 @@ function patchWithOwnerBlock(patch, sessionId, { replacesSessionId = false } = {
   return (current) => ({ ...patch, ...ownerStampPatch(current, sessionId, block, { replacesSessionId }) });
 }
 
+// Whether the process an owner block stamped is provably still running here. A failed
+// start-time probe (null) is unknown, never dead: only a probed start time that differs
+// from the stamped one is pid reuse. A probe that throws reads as alive (fail safe: never
+// take the block over on a question that could not be asked).
+function stampedOwnerProvablyAlive(owner, { hostname, aliveFn, startFn }) {
+  try {
+    const sameHostAlive = owner.host === hostname() && Number.isInteger(owner.pid) && aliveFn(owner.pid);
+    if (!sameHostAlive) return false;
+    if (owner.pidStartedAt == null) return true;
+    const startedAt = startFn(owner.pid);
+    return startedAt === null || startedAt === undefined || startedAt === owner.pidStartedAt;
+  } catch {
+    return true;
+  }
+}
+
 // #3973: the owner's own hooks keep the owner block fresh. Same pid as stamped: a
 // heartbeat, at most one write per HEARTBEAT_THROTTLE_MS. A different pid with the
 // stamped process provably gone (a `claude --resume` under a new process, or a pid
@@ -863,18 +879,12 @@ function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}
     let result;
     if (cur.pid !== owner.pid) {
       if (!Number.isInteger(cur.pid)) return null;
-      const aliveFn = deps.isPidAlive || isPidAlive;
       const startFn = deps.pidStartTime || processProbe.pidStartTime;
-      let provablyAlive;
-      try {
-        provablyAlive = owner.host === hostname() && Number.isInteger(owner.pid) && aliveFn(owner.pid);
-        if (provablyAlive && owner.pidStartedAt != null) {
-          // A failed start-time probe (null) is unknown, never dead: only a probed start
-          // time that differs from the stamped one is pid reuse.
-          const startedAt = startFn(owner.pid);
-          provablyAlive = startedAt === null || startedAt === undefined || startedAt === owner.pidStartedAt;
-        }
-      } catch { provablyAlive = true; }
+      const provablyAlive = stampedOwnerProvablyAlive(owner, {
+        hostname,
+        aliveFn: deps.isPidAlive || isPidAlive,
+        startFn,
+      });
       if (provablyAlive) return null;
       fields = {
         pid: cur.pid,

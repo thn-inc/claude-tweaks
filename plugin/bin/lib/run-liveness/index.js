@@ -27,12 +27,16 @@ const LIVE_PROBES = ['owner-pid', 'heartbeat', 'worktree-lock', 'last-commit'];
 // not a death witness.
 const MAX_PID = 2 ** 31 - 1;
 
+function errorMessage(err) {
+  return err && err.message ? err.message : String(err);
+}
+
 // Run a probe; tag the outcome so a throw is "could not ask", never "no".
 function call(fn, ...args) {
   try {
     return { ok: true, value: fn(...args) };
   } catch (err) {
-    return { ok: false, message: err && err.message ? err.message : String(err) };
+    return { ok: false, message: errorMessage(err) };
   }
 }
 
@@ -56,13 +60,13 @@ function readState(runDir) {
     raw = fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8');
   } catch (err) {
     if (err && err.code === 'ENOENT') return { state: {} };
-    return { unreadable: err && err.message ? err.message : String(err) };
+    return { unreadable: errorMessage(err) };
   }
   try {
     const parsed = JSON.parse(raw);
     return isPlainObject(parsed) ? { state: parsed } : { unreadable: 'run-state.json is not a JSON object' };
   } catch (err) {
-    return { unreadable: err && err.message ? err.message : String(err) };
+    return { unreadable: errorMessage(err) };
   }
 }
 
@@ -171,8 +175,12 @@ function gatherEvidence(runDir, { now = Date.now(), probes = {} } = {}) {
   // the worktree or the status — every probe that depends on it could not be asked.
   const unreadable = { result: 'error', detail: 'unreadable-run-state' };
 
-  const pid = read.unreadable ? unreadable : mismatch ? mismatched : probeOwnerPid(owner, p);
-  const heartbeat = read.unreadable ? unreadable : mismatch ? mismatched : probeHeartbeat(owner, now);
+  let ownerUnaskable = null;
+  if (read.unreadable) ownerUnaskable = unreadable;
+  else if (mismatch) ownerUnaskable = mismatched;
+
+  const pid = ownerUnaskable || probeOwnerPid(owner, p);
+  const heartbeat = ownerUnaskable || probeHeartbeat(owner, now);
   const lock = read.unreadable ? unreadable : probeLock(target, p);
   const commit = read.unreadable ? unreadable : probeCommit(target, p, now);
   const events = probeOwnEvents(runDir, p, now, owner ? (owner.sessionId ?? null) : undefined);
@@ -218,7 +226,7 @@ function runLiveness(runDir, opts) {
     const gathered = gatherEvidence(runDir, { now, probes });
     return { verdict: decideVerdict(gathered), evidence: gathered.evidence };
   } catch (err) {
-    const detail = err && err.message ? err.message : String(err);
+    const detail = errorMessage(err);
     return { verdict: 'unknown', evidence: PROBE_ORDER.map((probe) => ({ probe, result: 'error', detail })) };
   }
 }
