@@ -338,6 +338,10 @@ function validateCheckRun(raw) {
   // Per-suite records key on the invoking cwd's own HEAD, so an explicit
   // --git-dir (logs and count stamp elsewhere) would write nothing at all.
   if (raw.stampSuite && raw.gitDir) throw new UsageError('--stamp-suite cannot be combined with --git-dir (per-suite records are written only to this checkout\'s own git dir)');
+  // A chunk is a partial --cmd set by construction, and --stamp-suite skips the
+  // every-selected-check guard --scope otherwise applies — without --no-stamp,
+  // one passing chunk would write the single `scope: full` pass stamp.
+  if (raw.stampSuite && !raw.noStamp) throw new UsageError('--stamp-suite requires --no-stamp (a chunk is a partial set and must never write the full pass stamp)');
   return toResult(raw);
 }
 

@@ -40,6 +40,13 @@ If a spec number was provided, read the spec file and verify the implementation 
    real external validator/schema/tool — **a structural or syntax check alone (e.g. "the config
    parses," "the file exists") is necessary but not sufficient; the value itself must be confirmed
    against ground truth**, not merely well-formed. Mark each as `verified` or `unresolved`.
+5. **Current-State outcome reach** — when the spec's `## Current State` names the callers, gates,
+   or user-visible outcome the change exists to fix, confirm the diff reaches at least one of them
+   (a named caller now consumes the new behavior, or a test drives the named gate), or that the
+   spec's `## Gotchas` names the follow-up record that wires them. If neither holds, mark the
+   outcome `partial` even when every criterion is `met` — it counts toward the Gate below like a
+   partial deliverable. #3002 met every criterion while the three gates its Current State named
+   still read bare `--stamp-status`.
 
 ### Gate:
 

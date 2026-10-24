@@ -453,7 +453,7 @@ test('#2806: in a check run, a duplicate --cmd-timeout wins over an undeclared -
 // #3002
 test('--stamp-suite requires --scope in a check run', () => {
   assert.throws(() => parseArgs(['--cmd', 'tests=x', '--stamp-suite']), /--stamp-suite requires --scope/);
-  const p = parseArgs(['--cmd', 'tests=x', '--scope', 's.json', '--stamp-suite']);
+  const p = parseArgs(['--cmd', 'tests=x', '--scope', 's.json', '--no-stamp', '--stamp-suite']);
   assert.strictEqual(p.stampSuite, true);
   assert.strictEqual(parseArgs(['--cmd', 'tests=x', '--scope', 's.json']).stampSuite, false);
 });
@@ -461,6 +461,13 @@ test('--stamp-suite requires --scope in a check run', () => {
 test('--stamp-suite keeps the --cmd floor that --scope alone relaxes (#3022)', () => {
   assert.doesNotThrow(() => parseArgs(['--scope', 's.json']));
   assert.throws(() => parseArgs(['--scope', 's.json', '--stamp-suite']), /--stamp-suite requires at least one --cmd/);
+});
+
+test('--stamp-suite without --no-stamp is a usage error — a chunk must never write the full pass stamp', () => {
+  assert.throws(
+    () => parseArgs(['--cmd', 'tests=x', '--scope', 's.json', '--stamp-suite']),
+    /--stamp-suite requires --no-stamp/,
+  );
 });
 
 test('--stamp-suite with --git-dir is a usage error rather than a silent no-op', () => {
