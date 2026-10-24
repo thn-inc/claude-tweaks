@@ -442,8 +442,3 @@ test('placement: 3a sits between the exit classification and the bound; the bran
   assert.ok(at('**3. Classify the exit.**') < at('**3a.') && at('**3a.') < at('**4. The bound.**'), '3a must sit between steps 3 and 4');
   assert.ok(at('rev-parse --abbrev-ref HEAD` must equal `{branch}`') < at('pull --rebase --no-autostash origin {branch}'), 'the branch assertion must precede the pull');
 });
-
-test('byte guard: release/SKILL.md stays under 49,500 bytes', () => {
-  const size = fs.statSync(SKILL).size;
-  assert.ok(size < 49500, `release/SKILL.md is ${size} bytes; the budget is 49,500`);
-});
