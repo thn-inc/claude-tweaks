@@ -16,10 +16,9 @@ const { readText } = require('./helpers/read-skill');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const ROOT = path.join(__dirname, '..');
-// pluginRootFor(root, pathImpl): the plugin root as it is spliced into the command text,
-// forward-slashed so no backslash reaches the shell. `ROOT` itself stays native for readText.
-const pluginRootFor = (root, pathImpl = path) => toPosix(pathImpl.join(root, 'plugin'), pathImpl.sep);
-const PLUGIN = pluginRootFor(ROOT);
+// PLUGIN: the plugin root as it is spliced into the command text, forward-slashed so no backslash
+// reaches the shell. `ROOT` itself stays native for readText.
+const PLUGIN = toPosix(path.join(ROOT, 'plugin'), path.sep);
 const read = (...p) => readText(path.join(ROOT, ...p));
 
 const DISPATCH = read('plugin', 'skills', 'build', 'dispatch.md');
@@ -78,13 +77,13 @@ test('AC2.1: ceremony-derivation.md names the diff-facts command once and carrie
 });
 
 test('AC2.1 go-red: each fact fails alone on a doctored copy of the live text', () => {
-  const doctored = (text) => {
-    assert.notEqual(text, CEREMONY, 'doctoring left the live text unchanged');
-    return text;
+  const replaced = (from, to) => {
+    const doctored = CEREMONY.replace(from, to);
+    assert.notEqual(doctored, CEREMONY, `doctoring matched nothing: ${from}`);
+    return doctored;
   };
-  const replaced = (from, to) => doctored(CEREMONY.replace(from, to));
   assert.deepStrictEqual(
-    commandFactsMissing(doctored(`${CEREMONY}\ngit merge-base HEAD origin/main\n`)),
+    commandFactsMissing(`${CEREMONY}\ngit merge-base HEAD origin/main\n`),
     [NO_MERGE_BASE],
   );
   assert.deepStrictEqual(
@@ -92,7 +91,7 @@ test('AC2.1 go-red: each fact fails alone on a doctored copy of the live text', 
     [ONE_COMMAND],
   );
   assert.deepStrictEqual(
-    commandFactsMissing(doctored(`${CEREMONY}\n\`bin/diff-facts.js\`\n`)),
+    commandFactsMissing(`${CEREMONY}\n\`bin/diff-facts.js\`\n`),
     [ONE_COMMAND],
   );
 });
