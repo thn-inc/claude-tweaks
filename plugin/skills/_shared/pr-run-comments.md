@@ -139,15 +139,28 @@ plugin's PR-comment surface that edits rather than always-appends.
    `OWNER/REPO` handed to `--repo` is resolved by `gh` against its default host, `github.com`,
    unless the value carries the host as `HOST/OWNER/REPO`).
 
+   Before either route below, resolve the payload and body paths as one plain call with no `eval`
+   (`_shared/session-tmp-root.md`):
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" COMMENTS={kind}-comments-{n}.json BODY={kind}-comment-{n}.md
+   ```
+
+   It prints `COMMENTS="{path}"` and `BODY="{path}"`. Substitute each printed literal path for its
+   placeholder: `{comments-path}` for the payload (the worktree-safe fetch below), `{body-path}` for
+   the body (steps 2 and 3; a worktree session refuses a runtime variable path,
+   `_shared/scratch-worktree.md` §7). The caller writes the comment body to `{body-path}`, marker as
+   its first line, before step 2 or 3.
+
    In a worktree-isolated session, use the worktree-safe form; it also runs outside one. Each block
    is its own plain Bash call, with no chain, no `--jq`, and no host in `--repo`:
 
    ```bash
-   gh pr view {pr-number} --repo {owner}/{repo} --json comments > /tmp/{kind}-comments-{n}.json
+   gh pr view {pr-number} --repo {owner}/{repo} --json comments > "{comments-path}"
    ```
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/find-run-comment.js" --comments-file /tmp/{kind}-comments-{n}.json --kind {kind}
+   node "${CLAUDE_PLUGIN_ROOT}/bin/find-run-comment.js" --comments-file "{comments-path}" --kind {kind}
    ```
 
    It prints one JSON line, `{kind, id, ids, skipped}`. `id` is the first trusted marker comment's GraphQL node ID, or `null` when none is found. `ids` lists every trusted match, for the race case below. `skipped` holds one skip-notice line per untrusted marker comment; relay them in the output. It applies the same first-line marker `startswith` test and **Trusted authors** rule as the jq shortcut below, through `bin/lib/issues/comment-trust.js`.
@@ -189,13 +202,13 @@ plugin's PR-comment surface that edits rather than always-appends.
 
    ```bash
    gh api graphql --hostname {host} -f query='mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}' \
-     -f id="{found-id}" -F body=@/tmp/{kind}-comment-{n}.md
+     -f id="{found-id}" -F body=@"{body-path}"
    ```
 
 3. **Not found → create**, body file already carries the kind's marker as its first line:
 
    ```bash
-   gh pr comment {pr-number} --repo {host}/{owner}/{repo} --body-file /tmp/{kind}-comment-{n}.md
+   gh pr comment {pr-number} --repo {host}/{owner}/{repo} --body-file "{body-path}"
    ```
 
 **MCP transport (no `gh`, #3131).** The find and update steps above are `gh`-only, and there is no
