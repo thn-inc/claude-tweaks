@@ -35,6 +35,16 @@ function withTimings(timings, fn) {
   return storage.run(timings, fn);
 }
 
+// Best-effort for the same reason as recordSubprocess below: runs in a `finally`.
+function endPhase(t, name, prev, start) {
+  t.current = prev;
+  try {
+    phaseOf(t, name).ms += performance.now() - start;
+  } catch {
+    /* best-effort */
+  }
+}
+
 function timePhaseSync(name, fn) {
   const t = storage.getStore();
   if (!t) return fn();
@@ -44,8 +54,7 @@ function timePhaseSync(name, fn) {
   try {
     return fn();
   } finally {
-    phaseOf(t, name).ms += performance.now() - start;
-    t.current = prev;
+    endPhase(t, name, prev, start);
   }
 }
 
@@ -58,8 +67,7 @@ async function timePhase(name, fn) {
   try {
     return await fn();
   } finally {
-    phaseOf(t, name).ms += performance.now() - start;
-    t.current = prev;
+    endPhase(t, name, prev, start);
   }
 }
 
@@ -68,6 +76,9 @@ const GH_VALUE_FLAGS = new Set([
   '-X', '--method', '-H', '--header', '-q', '--jq', '-t', '--template',
   '-f', '--raw-field', '-F', '--field', '--input', '--hostname', '--cache', '-R', '--repo',
 ]);
+
+// git global options that take their value as the NEXT token.
+const GIT_VALUE_GLOBALS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env']);
 
 // First `n` positional (non-flag) tokens, skipping a value-taking flag's value.
 function positionals(args, n) {
@@ -89,9 +100,19 @@ function commandFamily(file, args) {
   const argv = Array.isArray(args) ? args : [];
   const exe = path.basename(String(file));
   if (exe === 'git') {
+    // The subcommand is the first token after git's global options: the
+    // value-taking ones (`-C <p>`, `-c <k=v>`, and `--git-dir <p>`-style in
+    // their space-separated form) skip their value too; every other leading
+    // `-…` token (`--no-optional-locks`, `--no-pager`, `--git-dir=<p>`) is a
+    // bare flag. All current callers put `--no-optional-locks` before the subcommand.
     let i = 0;
-    while ((argv[i] === '-C' || argv[i] === '-c') && i + 1 < argv.length) i += 2;
-    return argv[i] && !String(argv[i]).startsWith('-') ? `git ${argv[i]}` : 'git';
+    while (i < argv.length) {
+      const a = String(argv[i]);
+      if (GIT_VALUE_GLOBALS.has(a)) i += 2;
+      else if (a.startsWith('-')) i += 1;
+      else break;
+    }
+    return i < argv.length ? `git ${argv[i]}` : 'git';
   }
   if (exe === 'gh') {
     if (argv[0] === 'api') {
@@ -109,16 +130,23 @@ function commandFamily(file, args) {
   return exe;
 }
 
+// Never throws: this runs in the `finally` of every timed spawn, where a throw
+// would replace the call's own result or error. Measurement is best-effort; a
+// dropped sample is the whole cost of a bug here (never-break-a-session).
 function recordSubprocess(file, args, ms) {
-  const t = storage.getStore();
-  if (!t) return;
-  const family = commandFamily(file, args);
-  const buckets = phaseOf(t, t.current).subprocesses;
-  const b = buckets.get(family) || { count: 0, ms: 0, maxMs: 0 };
-  b.count += 1;
-  b.ms += ms;
-  if (ms > b.maxMs) b.maxMs = ms;
-  buckets.set(family, b);
+  try {
+    const t = storage.getStore();
+    if (!t) return;
+    const family = commandFamily(file, args);
+    const buckets = phaseOf(t, t.current).subprocesses;
+    const b = buckets.get(family) || { count: 0, ms: 0, maxMs: 0 };
+    b.count += 1;
+    b.ms += ms;
+    if (ms > b.maxMs) b.maxMs = ms;
+    buckets.set(family, b);
+  } catch {
+    /* best-effort — a recorder fault must not mask the spawn's outcome */
+  }
 }
 
 // Drop-in for cp.execFileSync that records its own duration — failures included,

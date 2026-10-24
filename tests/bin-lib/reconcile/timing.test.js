@@ -99,6 +99,56 @@ test('execFileSyncTimed records a failing call and rethrows', () => {
   assert.equal(summarizeTimings(t).phases.x.subprocesses['git definitely-not-a-subcommand'].count, 1);
 });
 
+test('commandFamily: git skips --no-optional-locks and other bare global flags before the subcommand', () => {
+  assert.equal(commandFamily('git', ['-C', '/x', '--no-optional-locks', 'status', '--porcelain']), 'git status');
+  assert.equal(commandFamily('git', ['--no-pager', '-C', '/x', 'log']), 'git log');
+  assert.equal(commandFamily('git', ['--git-dir', '/g', '--work-tree', '/w', 'rev-parse']), 'git rev-parse');
+  assert.equal(commandFamily('git', ['--git-dir=/g', 'rev-parse']), 'git rev-parse');
+  assert.equal(commandFamily('git', ['-C', '/x']), 'git', 'no subcommand at all');
+});
+
+// A recorder fault must never replace the call's own result or error: these
+// run in a `finally`, on the never-break-a-session path.
+function throwingTimings() {
+  const t = createTimings();
+  const boom = () => { throw new Error('recorder fault'); };
+  t.phases = { get: boom, set: boom };
+  return t;
+}
+
+test('a throwing recorder does not mask a successful execFileSyncTimed result', () => {
+  const out = withTimings(throwingTimings(), () => execFileSyncTimed('git', ['--version'], { encoding: 'utf8' }));
+  assert.match(out, /^git version/);
+});
+
+test('a throwing recorder does not replace the original spawn error', () => {
+  withTimings(throwingTimings(), () => {
+    assert.throws(
+      () => execFileSyncTimed('git', ['definitely-not-a-subcommand'], { stdio: 'ignore' }),
+      (e) => !/recorder fault/.test(e.message) && typeof e.status === 'number',
+    );
+  });
+});
+
+test('a throwing recorder does not mask execFileAsyncTimed or a timed phase result', async () => {
+  const { execFileAsyncTimed } = require('../../../plugin/bin/lib/reconcile/timing');
+  const out = await withTimings(throwingTimings(), () => timePhase('p', async () => {
+    const { stdout } = await execFileAsyncTimed('git', ['--version'], { encoding: 'utf8' });
+    return stdout;
+  }));
+  assert.match(out, /^git version/);
+  assert.equal(withTimings(throwingTimings(), () => timePhaseSync('p', () => 7)), 7);
+});
+
+test('runGit under a store with a throwing recorder still returns git\'s answer', async () => {
+  const { runGit, runGitAsync } = require('../../../plugin/bin/lib/hooks/git-exec');
+  const sync = withTimings(throwingTimings(), () => runGit(['--version'], process.cwd()));
+  assert.equal(sync.failure, null);
+  assert.match(sync.stdout, /^git version/);
+  const asyncR = await withTimings(throwingTimings(), () => runGitAsync(['--version'], process.cwd()));
+  assert.equal(asyncR.failure, null);
+});
+
 test('execFileSyncTimed outside a store runs the command and returns its output', () => {
   const out = execFileSyncTimed('git', ['--version'], { encoding: 'utf8', windowsHide: true });
   assert.match(out, /^git version/);
