@@ -29,7 +29,10 @@ function sliceSection(text, heading, nextMarker) {
   const start = text.indexOf(heading);
   if (start === -1) return '';
   const next = text.indexOf(nextMarker, start + heading.length);
-  return text.slice(start, next === -1 ? undefined : next);
+  // A missing end anchor would widen the slice to the rest of the file, so a presence assertion
+  // could match later text and stay green after the real section lost its sentence.
+  assert.notEqual(next, -1, `end anchor ${JSON.stringify(nextMarker)} not found after ${JSON.stringify(heading)}`);
+  return text.slice(start, next);
 }
 
 function assertRedTeamStep(text) {
@@ -91,6 +94,12 @@ function mutateSection(text, from, to) {
   assert.ok(body.includes(from), `control premise: the section holds ${JSON.stringify(from)}`);
   return text.replace(body, body.replace(from, to));
 }
+
+test('sliceSection refuses a section whose end anchor is missing instead of widening to end of file', () => {
+  const intact = '## A\nbody\n## B\nrest';
+  assert.equal(sliceSection(intact, '## A', '\n## '), '## A\nbody');
+  assert.throws(() => sliceSection('## A\nbody and no later heading', '## A', '\n## '), /end anchor/);
+});
 
 test('AC1.1 go-red: removing the red-team section fails the same assertion', () => {
   const body = sliceSection(RED_TEAM, HEADING, '\n## ');
