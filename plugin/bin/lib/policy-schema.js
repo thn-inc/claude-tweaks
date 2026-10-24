@@ -226,6 +226,9 @@ const POLICY_KEYS = [
   // of the string type's whitespace rule via allowWhitespace.
   { key: 'release-hook', type: 'string', allowWhitespace: true, summary: "Names the command the local release engine runs once its tag lands — publish, mirror, or deploy; ignored under pr-first.", category: 'housekeeping', tier: 'advanced' },
   { key: 'release-train', type: 'boolean', default: false, summary: "Lets the unattended release train cut minor and patch releases on its own; honored only when autonomy resolves unattended.", category: 'housekeeping', tier: 'advanced' },
+  // release-tip-moves (#4041): /claude-tweaks:release Step 5 reads it when origin/{branch} has
+  // moved past the tip Step 3 reviewed. Not a Manifesto lever.
+  { key: 'release-tip-moves', type: 'integer', min: 0, default: 2, summary: "Caps how many times the integration branch may move between a release's review and its merge before the release is held.", category: 'merge-safety', tier: 'advanced' },
 ];
 
 const SCHEMA_BY_KEY = new Map(POLICY_KEYS.map((entry) => [entry.key, entry]));

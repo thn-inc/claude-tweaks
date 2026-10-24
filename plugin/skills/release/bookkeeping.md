@@ -12,7 +12,7 @@ Read by `/claude-tweaks:release` Step 7. For each record in the shipped set, com
 
 **Runs whenever the tag landed** — on origin, or locally under local-merge in a repository with no `origin` remote at all (execute.md's local-merge tag probe keys that choice on `git -C "$RUN_ROOT" remote get-url origin` failing) — even when Step 6 otherwise reported `PARTIAL` — a missing/draft GitHub Release, a missing/still-running/failed `release: published` hook (pr-first), or a `release-hook` exit `5` (local-merge, hook failed after the tag was final). The tag existing is what makes the shipped set's work actually released; Step 8's summary names the partial state alongside the bookkeeping result, never in place of it.
 
-**Never reached under `HELD`.** A HARD-GATE fires at Step 4, before Step 5 ever runs — in any mode, not only under `--train` — so there is no Step 6 or Step 7 to reach.
+**Never reached under `HELD`.** A Step 4 HARD-GATE, or one of Step 5's stops that merge nothing (`execute.md`: the `gh`-absent Transport stop, delta 5's re-render to a major, the reviewed-tip comparison's two stops), fires before anything is merged — in any mode, not only under `--train` — so there is no Step 6 or Step 7 to reach.
 
 ## Inputs
 
