@@ -18,7 +18,9 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 - **`ALL_CHECKS` is the requested-subset default, not the iteration order.** `index.js`'s own
   `DISPATCH_ORDER` constant is what's actually walked; `ALL_CHECKS` only lists membership.
 - **An explicit `--checks` subset runs without the wall-clock budget (#3026).** `budget.js`'s 18 s
-  ceiling bounds the SessionStart, background, and unscoped passes. The `hooks.js reconcile` CLI
+  ceiling bounds the SessionStart and unscoped passes; the detached `reconcile-background` pass runs under
+  its own `BACKGROUND_BUDGET_MS` (120 s, still bounded and under the 5-minute stale-lock window) because
+  the hot-path ceiling would skip its last three checks every pass (#4032). The `hooks.js reconcile` CLI
   passes `budgetMs: Infinity` into `reconcile()` whenever `--checks` names a subset, so a named
   check such as `reap`, dispatched last, is never skipped as `budget-exceeded`; it also passes
   `skipCacheStamp`, so a subset never marks the SessionStart freshness cache as fresh (the #644

@@ -7,6 +7,15 @@
 
 const DEFAULT_BUDGET_MS = 18000;
 
+// The detached `reconcile-background` pass is off the session's hot path, so
+// the 18 s hot-path ceiling would starve it: release + archive +
+// archive-branches alone take ~19 s in steady state, leaving remote-prune,
+// ledger-residue and reap skipped as budget-exceeded on every pass (#4032). It
+// stays bounded (never Infinity — #820 D4), just above the ~45 s measured
+// steady state and under background-lock.js's 5-minute STALE_LOCK_MS, so a
+// running pass is never reclaimed as a stale lock.
+const BACKGROUND_BUDGET_MS = 120000;
+
 // nowFn is injectable — no Date.now() call baked into exceeded()/remainingMs()
 // themselves — matching cache.js's isFresh() purity convention for this same
 // feature (#820 review): a test can pass a fake clock instead of sleeping on
@@ -19,4 +28,4 @@ function createBudget(ms = DEFAULT_BUDGET_MS, nowFn = Date.now) {
   };
 }
 
-module.exports = { createBudget, DEFAULT_BUDGET_MS };
+module.exports = { createBudget, DEFAULT_BUDGET_MS, BACKGROUND_BUDGET_MS };

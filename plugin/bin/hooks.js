@@ -1693,6 +1693,7 @@ async function main(argv) {
     const { reconcile } = require('./lib/reconcile');
     const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
     const { isFresh } = require('./lib/reconcile/cache');
+    const { BACKGROUND_BUDGET_MS } = require('./lib/reconcile/budget');
     const { QUIET_SKIP_REASONS } = require('./lib/hooks/worktree-reap');
     const { QUIET_SKIP_REASONS: LEDGER_RESIDUE_QUIET_SKIP_REASONS } = require('./lib/reconcile/ledger-residue');
     const root = mainCheckoutRoot(cwd) || cwd;
@@ -1750,7 +1751,7 @@ async function main(argv) {
 
     let summary = {};
     try {
-      const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId });
+      const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
       summary = {
         released: (r.claims || []).filter((c) => c.action === 'released').length,
         archived: (r.runs || []).filter((x) => x.action === 'archived').length,

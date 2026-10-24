@@ -2220,14 +2220,14 @@ test('explicit --checks output has no background key (#4032)', async () => {
   assert.deepEqual(outputs[0].skipped, []);
 });
 
-test('AC4.1: SessionStart and background reconcile call sites pass no budgetMs (default budget)', () => {
+test('AC4.1: SessionStart passes no budgetMs (default budget); the background pass passes only its own BACKGROUND_BUDGET_MS (#4032)', () => {
   const sessionStart = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'session-start.js'));
   assert.equal(sessionStart.includes('budgetMs'), false);
   const hooksSrc = readText(path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js'));
-  assert.equal(hooksSrc.split('budgetMs').length - 1, 1, 'budgetMs occurs once in hooks.js — the reconcile CLI branch');
+  assert.equal(hooksSrc.split('budgetMs').length - 1, 2, 'budgetMs occurs twice in hooks.js — the reconcile CLI branch and the background call site');
   const bgLine = hooksSrc.split('\n').find((l) => l.includes('checks: BACKGROUND_CHECKS'));
   assert.ok(bgLine, 'background reconcile call site found');
-  assert.equal(bgLine.includes('budgetMs'), false);
+  assert.ok(bgLine.includes('budgetMs: BACKGROUND_BUDGET_MS'), 'the background pass runs under its own ceiling, not the 18 s hot-path default');
 });
 
 // --- shared fetch (#820 D2): mirror and remote-prune merge into one fetch ---
