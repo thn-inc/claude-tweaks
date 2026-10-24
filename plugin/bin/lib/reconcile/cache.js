@@ -219,8 +219,10 @@ function ownedPathExists(target) {
   // Listed paths come from an editable issue body, so only an absolute, already-normalized path
   // strictly inside the pipelines dir is judged. Only a missing leaf is gone; an unreadable one
   // stays listed.
-  return (p) => !(path.isAbsolute(p) && path.normalize(p) === p && isPathContained(p, pipelinesDir))
-    || lstatType(p).type !== 'missing';
+  return (p) => {
+    const judged = path.isAbsolute(p) && path.normalize(p) === p && isPathContained(p, pipelinesDir);
+    return !judged || lstatType(p).type !== 'missing';
+  };
 }
 
 // #2724: drop a tracked entry for a path that is no longer stuck, and — only
