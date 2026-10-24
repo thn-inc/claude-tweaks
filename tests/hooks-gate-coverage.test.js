@@ -18,7 +18,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { GATE_COVERAGE } = require('../plugin/bin/lib/hooks/pre-tool-use');
-const { WRITE_SHAPES, fileWriteTargets, gitTargets } = require('../plugin/bin/lib/hooks/git-command');
+const { WRITE_SHAPES, fileWriteTargets, gitTargets, stripHeredocBodies } = require('../plugin/bin/lib/hooks/git-command');
 const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 
 const runsFull = (event, command) => shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } });
@@ -358,6 +358,58 @@ test('#3080: a `>` inside a quoted string is not mistaken for a redirection', ()
   assert.deepStrictEqual(fileWriteTargets('echo "a > b"', '/r'), []);
 });
 
+// #3989: a heredoc body is data for the reading program, not shell — its `>`
+// is not a redirection. The opener line and whatever follows the closing
+// delimiter still are scanned.
+test('#3989: a heredoc body is not scanned for redirections (bare, quoted, and tab-stripped delimiters)', () => {
+  // The trailing redirect proves the body ended at its closing delimiter: an
+  // unterminated body (run to end of string) would also resolve no body target.
+  const after = [{ action: 'write', file: path.resolve('/r', 'after.js') }];
+  assert.deepStrictEqual(fileWriteTargets('node x.js <<EOF\nif (a.length > 0) b();\nEOF\necho x > after.js', '/r'), after);
+  for (const opener of ["<<'EOF'", '<<"EOF"']) {
+    assert.deepStrictEqual(fileWriteTargets(`node x.js ${opener}\nif (a.length > 0) b();\nEOF\necho x > after.js`, '/r'), after, opener);
+  }
+  assert.deepStrictEqual(fileWriteTargets('node x.js <<-EOF\nif (a.length > 0) b();\n\tEOF\necho x > after.js', '/r'), after, '<<- with a tab-indented closing delimiter');
+});
+
+test('#3989: the opener-line redirect survives, the body redirect does not', () => {
+  assert.deepStrictEqual(fileWriteTargets('node x.js > out.js <<EOF\nif (a > 0) b();\nEOF', '/r'),
+    [{ action: 'write', file: path.resolve('/r', 'out.js') }]);
+});
+
+test('#3989: commands after the closing delimiter are still scanned', () => {
+  assert.deepStrictEqual(fileWriteTargets('node x.js <<EOF\na > b\nEOF\necho x > after.js', '/r'),
+    [{ action: 'write', file: path.resolve('/r', 'after.js') }]);
+});
+
+test('#3989: a CRLF closing delimiter still ends the body, and two openers on one line consume their bodies in order', () => {
+  const after = [{ action: 'write', file: path.resolve('/r', 'after.js') }];
+  assert.deepStrictEqual(fileWriteTargets('node x.js <<EOF\na > b\r\nEOF\r\necho x > after.js', '/r'), after);
+  assert.deepStrictEqual(fileWriteTargets('node x.js <<A <<B\nx > a\nA\ny > b\nB\necho x > after.js', '/r'), after);
+});
+
+test('#3989: a body fed to a shell is still scanned (bash, pipe into sh, unresolvable program word)', () => {
+  const expected = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
+  assert.deepStrictEqual(fileWriteTargets('bash <<EOF\necho x > f.js\nEOF', '/r'), expected);
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF | sh\necho x > f.js\nEOF', '/r'), expected);
+  assert.deepStrictEqual(fileWriteTargets('$SHELL <<EOF\necho x > f.js\nEOF', '/r'), expected);
+});
+
+test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment are not heredoc openers', () => {
+  const expected = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
+  assert.deepStrictEqual(fileWriteTargets('cat <<< "a > b"', '/r'), []);
+  assert.deepStrictEqual(fileWriteTargets('cat <<<x > f.js', '/r'), expected);
+  assert.deepStrictEqual(fileWriteTargets('echo $((1<<2))\necho x > f.js', '/r'), expected);
+  assert.deepStrictEqual(fileWriteTargets('echo "<<EOF"\necho x > f.js', '/r'), expected);
+  assert.deepStrictEqual(fileWriteTargets('echo "<<EOF x"\necho x > f.js', '/r'), expected, 'a complete word inside double quotes is still not an opener');
+  assert.deepStrictEqual(fileWriteTargets('echo hi # <<EOF\necho x > f.js', '/r'), expected);
+});
+
+test('#3989: stripHeredocBodies keeps the opener line and its newline, and drops the body and closing delimiter', () => {
+  assert.strictEqual(stripHeredocBodies('A <<EOF\nbody\nEOF\nB'), 'A <<EOF\nB');
+  assert.strictEqual(stripHeredocBodies('cat <<<x'), 'cat <<<x');
+});
+
 test('e2e #3080: bare redirection from a worktree-always main checkout is DENIED, matching cp/tee', () => {
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
@@ -380,4 +432,24 @@ test('e2e #3080: bare redirection from a worktree-always main checkout is DENIED
   for (const command of ['echo x > /dev/null', 'cmd 2>&1']) {
     assert.notStrictEqual(decisionFor(command), 'deny', command);
   }
+});
+
+test('e2e #3989: a `>` in a heredoc body from a worktree-always main checkout is ALLOWED; a top-level redirect after the delimiter is DENIED', () => {
+  const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
+  const os = require('os');
+  const { execFileSync } = require('child_process');
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3989-main-'));
+  execFileSync('git', ['-C', main, 'init', '-q']);
+  fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
+  const decisionFor = (command) => {
+    const out = preToolUse.run({
+      input: { tool_name: 'Bash', tool_input: { command }, cwd: main },
+      runDir: null, runState: null, ownedRun: {}, cwd: main,
+    });
+    return out.json && out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision;
+  };
+
+  assert.notStrictEqual(decisionFor('node x.js <<EOF\nif (openIds.length > 0) b();\nEOF'), 'deny');
+  assert.strictEqual(decisionFor('node x.js <<EOF\nif (openIds.length > 0) b();\nEOF\necho x > tracked-file.js'), 'deny');
 });

@@ -1014,6 +1014,81 @@ test('#3080 AC: /dev/null, fd duplication, a gitignored target, and a pipeline-b
   assert.doesNotMatch(pipelineResult.stdout, /"permissionDecision":"deny"/, 'a .claude-tweaks/pipelines/ redirection target must be allowed');
 });
 
+// #3989: the queue-pull grouping snippet, frozen from
+// plugin/skills/dispatch/queue-pull-script.md lines 212-256. Its heredoc body
+// holds `openIds.length > 0`, a `>` the pre-#3989 scan read as a redirection to
+// a target named `0)`. Only the path substitutions differ from the doc:
+// `${CLAUDE_PLUGIN_ROOT}` becomes @ROOT@ and each `"$DISPATCH_*"` argument
+// becomes a file under @DIR@, both filled in from os.tmpdir() by frozenSnippet.
+const FROZEN_SNIPPET_LINES = [
+  `node "@ROOT@/bin/node-eval-file.js" "@DIR@/eligible.json" "@DIR@/native-deps.json" "@DIR@/blocked-excluded-body.json" "@DIR@/exclusions.json" "@DIR@/group-size-guard.txt" "@DIR@/fastlane-bundle-cap.txt" "@DIR@/fastlane-bundles.json" > "@DIR@/groups.json" <<NODE_EVAL_EOF`,
+  `  const fs = require('fs');`,
+  `  const { extractKeyFiles, expectsKeyFilesSection, buildDispatchGroups, partitionGroupsBySizeGuard } = require('@ROOT@/bin/lib/issues/grouping.js');`,
+  `  const { appendExclusion } = require('@ROOT@/bin/lib/dispatch/exclusions.js');`,
+  `  const eligible = require(process.argv[1]);`,
+  `  const nativeDeps = require(process.argv[2]);`,
+  `  const finalEligible = [];`,
+  `  const excludedNative = [];`,
+  `  for (const c of eligible) {`,
+  `    const dep = nativeDeps[c.number];`,
+  `    const openIds = (dep && Array.isArray(dep.openBlockerIds)) ? dep.openBlockerIds : [];`,
+  `    if (openIds.length > 0) excludedNative.push({ number: c.number, blockedBy: openIds });`,
+  `    else finalEligible.push(c);`,
+  `  }`,
+  `  const items = finalEligible.map((i) => ({ id: i.number, keyFiles: extractKeyFiles(i) }));`,
+  `  const byId = new Map(finalEligible.map((i) => [i.number, i]));`,
+  `  for (const item of items) {`,
+  `    if (item.keyFiles.length === 0 && expectsKeyFilesSection(byId.get(item.id))) {`,
+  `      console.error('Warning: eligible record #' + item.id + ' has no ### Key Files subsection — overlap detection disabled for it.');`,
+  `    }`,
+  `  }`,
+  `  // Grouping is per-record (#3278): one group per record, fast-lane bundles`,
+  `  // (#1910) kept disjoint, before the size guard -- a bundle tops out at`,
+  `  // bundleCap (default 3), always well under the size guard's own default of`,
+  `  // 10, so ordering here never interacts with that gate.`,
+  `  const bundleCap = parseInt(process.argv[6], 10);`,
+  `  const { groups, bundles } = buildDispatchGroups(finalEligible, { bundleCap });`,
+  `  console.log(JSON.stringify(groups));`,
+  `  fs.writeFileSync(process.argv[7], JSON.stringify(bundles));`,
+  `  const excludedBody = require(process.argv[3]);`,
+  `  for (const e of [...excludedBody, ...excludedNative]) {`,
+  `    appendExclusion(process.argv[4], { reason: 'blocked', records: [e.number], detail: { blockedBy: e.blockedBy } });`,
+  `  }`,
+  `  // Size guard (#1228): flagged, never removed from DISPATCH_GROUPS -- bare`,
+  `  // and #N/#N,#M still resolve an oversized group normally (a human present,`,
+  `  // explicitly naming/picking it, is itself the required surfacing). Only`,
+  `  // the drain's ranking script (Step 3 — bare, or its deprecated next`,
+  `  // alias) excludes an oversized group from its own candidate pool, since`,
+  `  // nobody is present there to see a table row or answer a prompt.`,
+  `  const groupSizeGuard = parseInt(process.argv[5], 10);`,
+  `  const { oversized, threshold } = partitionGroupsBySizeGuard(groups, { groupSizeGuard });`,
+  `  for (const g of oversized) {`,
+  `    appendExclusion(process.argv[4], { reason: 'oversized', records: g.map((i) => i.number), detail: { size: g.length, threshold } });`,
+  `  }`,
+  `NODE_EVAL_EOF`,
+];
+
+function frozenSnippet(root, dir) {
+  return FROZEN_SNIPPET_LINES.map((l) => l.split('@ROOT@').join(root).split('@DIR@').join(dir)).join('\n');
+}
+
+test('#3989 AC1: the frozen queue-pull grouping snippet (a `>` inside its heredoc body) is NOT denied', () => {
+  const { project } = policyRepoWithRun();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3989-queue-'));
+  const result = runBashPreToolUse(frozenSnippet(path.join(tmp, 'plugin'), tmp), project);
+  assert.strictEqual(result.code, 0);
+  assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/, 'the body is not a redirection; its only write target is under the temp dir');
+});
+
+test('#3989 AC2: the same snippet with a real top-level redirect into the repo after the delimiter IS denied', () => {
+  const { project } = policyRepoWithRun();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3989-queue-'));
+  const command = `${frozenSnippet(path.join(tmp, 'plugin'), tmp)}\necho x > ${path.join(project, 'tracked-file.js')}`;
+  const result = runBashPreToolUse(command, project);
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /"permissionDecision":"deny"/, 'a redirect after the closing delimiter must still be scanned');
+});
+
 // #1270 regression: the #1130 fix (`PIPELINE_RUN_DIR: ''` in runHook's spread,
 // proven above at 'record-pr does not resolve against an ambient
 // PIPELINE_RUN_DIR...') guards run-state.json field writes. This is the sibling

@@ -549,6 +549,155 @@ function matchRedirectOperator(tok) {
   return m ? m[2] : null;
 }
 
+// #3989: a heredoc body is data for the program it is fed to, not shell text,
+// so a `>` inside it is not a redirection and its newlines are not command
+// boundaries. stripHeredocBodies returns the command with each body and its
+// closing-delimiter line removed. The opener line keeps its newline, so
+// whatever follows the closing delimiter starts its own segment. A body fed to
+// a shell is kept whole, since that text is executed and its redirects are real.
+// Any internal failure returns the input unchanged (the pre-#3989 scan).
+const SHELL_INTERPRETER_WORDS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash', 'fish', 'busybox', 'eval', 'source', '.']);
+
+// The opener's logical line feeds its body to a shell when a token on it names a
+// shell interpreter, or a segment's program word (the first token after NAME=value
+// assignments) is unresolvable ($NAME, $(...), a backtick): that word may be a
+// shell. Fails closed, so the body stays visible to the scan.
+function bodyRunsAsShell(lineText) {
+  for (const seg of splitSegments(lineText)) {
+    const { tokens } = tokenize(seg.trim());
+    let p = 0;
+    while (p < tokens.length && SIMPLE_ASSIGNMENT_RE.test(tokens[p])) p += 1;
+    if (p < tokens.length && /[$`]/.test(tokens[p])) return true;
+    for (const tok of tokens) {
+      const cut = Math.max(tok.lastIndexOf('/'), tok.lastIndexOf('\\'));
+      const base = (cut >= 0 ? tok.slice(cut + 1) : tok).replace(/["']/g, '').replace(/\.exe$/i, '').toLowerCase();
+      if (SHELL_INTERPRETER_WORDS.has(base)) return true;
+    }
+  }
+  return false;
+}
+
+// Reads a heredoc operand starting just after `<<`: an optional `-`, blanks, then
+// the delimiter word. The word ends at unquoted whitespace or a shell metachar.
+// Returns { delim, stripTabs, end }, or null when the operand is empty or its
+// quoting is unterminated (not an opener).
+function readHeredocOpener(str, j) {
+  let stripTabs = false;
+  if (str[j] === '-') { stripTabs = true; j += 1; }
+  while (str[j] === ' ' || str[j] === '\t') j += 1;
+  const start = j;
+  let quote = null;
+  while (j < str.length) {
+    const c = str[j];
+    if (quote === "'") { if (c === "'") quote = null; j += 1; continue; }
+    if (c === '\\' && j + 1 < str.length) { j += 2; continue; }
+    if (quote === '"') { if (c === '"') quote = null; j += 1; continue; }
+    if (c === '"' || c === "'") { quote = c; j += 1; continue; }
+    if (/[\s;&|<>()]/.test(c)) break;
+    j += 1;
+  }
+  if (quote !== null) return null;
+  const delim = str.slice(start, j).replace(/["'\\]/g, '');
+  if (delim === '') return null;
+  return { delim, stripTabs, end: j };
+}
+
+// Consumes one heredoc body starting at index p: every line up to and including
+// the one equal to the delimiter (leading tabs ignored for `<<-`, one trailing
+// `\r` ignored). An unterminated body runs to end of string, as bash does.
+function skipHeredocBody(str, p, h) {
+  while (p < str.length) {
+    let end = str.indexOf('\n', p);
+    if (end === -1) end = str.length;
+    let line = str.slice(p, end);
+    if (line.endsWith('\r')) line = line.slice(0, -1);
+    if (h.stripTabs) line = line.replace(/^\t+/, '');
+    p = end + 1;
+    if (line === h.delim) break;
+  }
+  return Math.min(p, str.length);
+}
+
+// The single char-level pass behind stripHeredocBodies. Quote, escape, and comment
+// handling mirror splitSegments, so a `<<` inside quotes or after a word-boundary
+// `#` is never an opener.
+function scanHeredocs(str) {
+  const out = [];
+  let quote = null;
+  let parenDepth = 0; // unclosed `((` on the current logical line
+  let pending = []; // heredocs opened on the current logical line, in order
+  let lineStart = 0;
+  let i = 0;
+  while (i < str.length) {
+    const ch = str[i];
+    if (quote === "'") {
+      out.push(ch);
+      if (ch === "'") quote = null;
+      i += 1;
+    } else if (ch === '\\' && i + 1 < str.length) {
+      out.push(ch, str[i + 1]);
+      i += 2;
+    } else if (quote === '"') {
+      out.push(ch);
+      if (ch === '"') quote = null;
+      i += 1;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      out.push(ch);
+      i += 1;
+    } else if (ch === '#' && (i === 0 || /[\s;&|]/.test(str[i - 1]))) {
+      let j = str.indexOf('\n', i);
+      if (j === -1) j = str.length;
+      out.push(str.slice(i, j));
+      i = j;
+    } else if (ch === '\n') {
+      i += 1;
+      out.push(ch);
+      if (pending.length && !bodyRunsAsShell(str.slice(lineStart, i - 1))) {
+        for (const h of pending) i = skipHeredocBody(str, i, h);
+      }
+      pending = [];
+      parenDepth = 0;
+      lineStart = i;
+    } else if (ch === '(' && str[i + 1] === '(') {
+      parenDepth += 1;
+      out.push('((');
+      i += 2;
+    } else if (ch === ')' && str[i + 1] === ')' && parenDepth > 0) {
+      parenDepth -= 1;
+      out.push('))');
+      i += 2;
+    } else if (ch === '<' && str[i + 1] === '<' && str[i + 2] === '<') {
+      out.push('<<<'); // a here-string is never a heredoc
+      i += 3;
+    } else if (ch === '<' && str[i + 1] === '<') {
+      // A `<<` inside an open `((...))` is an arithmetic shift, not an opener.
+      const h = parenDepth === 0 ? readHeredocOpener(str, i + 2) : null;
+      if (h) {
+        out.push(str.slice(i, h.end));
+        pending.push(h);
+        i = h.end;
+      } else {
+        out.push('<<');
+        i += 2;
+      }
+    } else {
+      out.push(ch);
+      i += 1;
+    }
+  }
+  return out.join('');
+}
+
+function stripHeredocBodies(command) {
+  if (typeof command !== 'string') return command;
+  try {
+    return scanHeredocs(command);
+  } catch {
+    return command;
+  }
+}
+
 // Redirection-target scan (#3080): unlike fileWriteTargets' other shapes, a
 // redirection carries no command word — `echo`, `printf`, `cat`, or nothing
 // at all can precede it — so this runs over the WHOLE token list regardless
@@ -558,10 +707,10 @@ function matchRedirectOperator(tok) {
 // resolves to no target, never a guess. `>(...)` process substitution and fd
 // duplications (`>&2`, `2>&1`) are not file targets either.
 //
-// Known limit: a `>` inside a heredoc body (after `<<EOF`) sits in its own
-// splitSegments segment once the newline breaks it out, and this scan cannot
-// distinguish that from a real redirection — same class of limit as the rest
-// of this parser's text-only, no-real-shell approach.
+// Heredoc bodies (#3989): fileWriteTargets scans stripHeredocBodies' output, so
+// a `>` inside a body fed to a non-shell program is not a redirection. A body
+// fed to a shell keeps its redirects visible, because that text runs as shell
+// (see stripHeredocBodies for the carve-out).
 function redirectWriteTargets(t, effCwd) {
   const out = [];
   for (let i = 0; i < t.length; i += 1) {
@@ -681,7 +830,7 @@ function inPlaceEditTargets(rest, valueFlags, scriptFlags) {
 
 function fileWriteTargets(command, cwd) {
   const targets = [];
-  forEachCommandSegment(command, cwd, (t, effCwd) => {
+  forEachCommandSegment(stripHeredocBodies(command), cwd, (t, effCwd) => {
     // Redirection has no command word, so it runs for every segment
     // regardless of t[0] — never gated by the WRITE_SHAPES check below (#3080).
     for (const file of redirectWriteTargets(t, effCwd)) targets.push({ action: 'write', file });
@@ -834,5 +983,5 @@ function mkdirTargets(command, cwd) {
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies,
 };
