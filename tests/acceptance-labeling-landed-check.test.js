@@ -5,6 +5,7 @@
 // text, with a negative control proving the live-state pins can go red.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
 const path = require('path');
 
 const { readText } = require('./helpers/read-skill');
@@ -130,5 +131,28 @@ test('AC6.1: negative control — a caller restating the clause fails the pin', 
   ), assert.AssertionError);
 });
 
-// Kept referenced so Task 4's appended tests find it defined.
-void [SKILL_GRAPH];
+test('AC8.1: skill-graph names the contract on the dispatch and tidy edges', () => {
+  const edge = /\| `_shared\/acceptance-labeling-landed\.md` \|/;
+  assert.match(slice(SKILL_GRAPH, '## dispatch', '## docs-health'), edge);
+  assert.match(slice(SKILL_GRAPH, '## tidy', '## visual-review'), edge);
+});
+
+test("AC7.1: no citation names close-out step 3 as the rule's home", () => {
+  // plans and the incident log are historical records, not live citations.
+  const excluded = (rel) => rel.startsWith(path.join('docs', 'superpowers', 'plans') + path.sep)
+    || rel.startsWith(path.join('docs', 'plans') + path.sep)
+    || rel === path.join('docs', 'incident-log.md');
+  const stale = /close-out\.md` step 3's (acceptance-labeling )?landed rule|live-state precheck/;
+  const offenders = [];
+  let scanned = 0;
+  for (const dir of ['plugin', 'docs']) {
+    for (const entry of fs.readdirSync(path.join(ROOT, dir), { recursive: true })) {
+      const rel = path.join(dir, entry);
+      if (!rel.endsWith('.md') || excluded(rel)) continue;
+      scanned++;
+      if (stale.test(readText(path.join(ROOT, rel)).replace(/\s+/g, ' '))) offenders.push(rel);
+    }
+  }
+  assert.ok(scanned > 100, 'the walk must reach the plugin and docs trees');
+  assert.deepStrictEqual(offenders, []);
+});

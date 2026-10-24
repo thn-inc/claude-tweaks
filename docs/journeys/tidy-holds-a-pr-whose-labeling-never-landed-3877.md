@@ -32,7 +32,7 @@ files:
 - **Should feel:** checked against evidence, not assumed from a green rollup.
 - **Should understand:**
   - Landed means every file's `acceptance-labeling` row is `pass`/`skip`.
-  - If it isn't landed, or no run dir resolves, the action falls back to `dispatch/close-out.md` step 3's live-state precheck. If every `Fixes` record carries `demo:pending`, or a trusted `brief`/`try-it` run comment exists, labeling still counts as landed.
+  - If it isn't landed, or no run dir resolves, the action falls back to the contract's live-state tier (`_shared/acceptance-labeling-landed.md`). If every `Fixes` record carries `demo:pending`, or a trusted `brief`/`try-it` run comment exists, labeling still counts as landed.
   - On the no-run-dir branch tidy deliberately departs from close-out. Close-out stops that candidate; tidy needs no run dir, because it never runs labeling itself.
   - A marker whose run-id fails `flow/claim-targets.md`'s validation counts as no marker. The `demo:pending` check needs at least one `Fixes` record and a successful label read for each. An empty `Fixes` set, or a failed read of `verify.json`, the labels or the run comments, holds the PR and never passes it.
 - **Red flags:** an untrusted comment counted as landed; a housekeeping-marker PR put through this check (it links no record).
@@ -56,4 +56,5 @@ files:
 - **Red flags:** a hold that ever turns into an arm with no labeling evidence.
 
 ## Origin
-- Created during build of #3877, which guards tidy's Arm ready PR on acceptance labeling. It is the third caller of `pr-first-merge.md` Step 1's landed rule, after `dispatch/close-out.md` step 3 (#3783).
+- Created during build of #3877, which guards tidy's Arm ready PR on acceptance labeling. It is the third caller of the landed rule that began in `pr-first-merge.md` Step 1 and `dispatch/close-out.md` step 3 (#3783), now the `_shared/acceptance-labeling-landed.md` contract.
+- Updated during build of #4045: the landed rule now lives in _shared/acceptance-labeling-landed.md, cited by pr-first-merge Step 1, close-out step 3 and tidy.

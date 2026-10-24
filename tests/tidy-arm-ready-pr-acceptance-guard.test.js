@@ -121,8 +121,8 @@ test("pr-first-merge Step 1's not-landed sentence names no caller", () => {
   assert.match(sentence[0], /acceptance-labeling-landed\.md/);
 });
 
-test('skill-graph records the tidy → dispatch/close-out.md edge', () => {
-  assert.match(slice(SKILL_GRAPH, '## tidy', '## visual-review'), /\| `dispatch\/close-out\.md` \| [^|]*## Arm ready PR/);
+test('skill-graph records the tidy → _shared/acceptance-labeling-landed.md edge', () => {
+  assert.match(slice(SKILL_GRAPH, '## tidy', '## visual-review'), /\| `_shared\/acceptance-labeling-landed\.md` \| [^|]*## Arm ready PR/);
 });
 
 test('final review: both "identical execution" claims name the labeling-guard exception', () => {
