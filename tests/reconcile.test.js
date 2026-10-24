@@ -2531,3 +2531,49 @@ test('AC2: an exhausted budget skips every remaining check as budget-exceeded', 
   // The near-instant bound lives in perf/reconcile-time-bounds.test.js; here, the budget skip it guards.
   assert.deepEqual(r.skipped, [{ check: 'mirror,red-tip,console,release,archive,archive-branches,remote-prune,ledger-residue,reap', reason: 'budget-exceeded' }]);
 });
+
+// --- per-check timings (#4032) ---
+
+test('AC2.1: reconcile() attaches timings on an early no-remote return', async () => {
+  const dir = noRemoteFixture('ct-recon-timings-early-');
+  const r = await reconcile({ cwd: dir, dryRun: true });
+  assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }]);
+  assert.equal(typeof r.timings.totalMs, 'number');
+  assert.ok(r.timings.totalMs >= 0);
+  assert.ok(r.timings.phases.setup, 'the early return still reports its setup phase');
+});
+
+test('AC2.1: reconcile() times each dispatched check', async () => {
+  const { mainDir } = pairedFixture();
+  // Same forcing as the D2 shared-fetch test: committed pr-first policy keeps
+  // mirror's `git status` clean so it reaches its dispatch.
+  fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
+  git(['add', '.claude-tweaks/policy.yml'], mainDir);
+  git(['commit', '-q', '-m', 'policy'], mainDir);
+
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+  const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+  let r;
+  try {
+    r = await reconcile({ cwd: mainDir, checks: ['mirror'], dryRun: true });
+  } finally {
+    preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
+  }
+  const names = Object.keys(r.timings.phases);
+  for (const want of ['setup', 'mirror', 'finalize']) assert.ok(names.includes(want), `${want} in ${names}`);
+  assert.equal(typeof r.timings.phases.mirror.ms, 'number');
+  assert.ok(
+    Object.values(r.timings.phases).some((p) => Object.keys(p.subprocesses).some((k) => k.startsWith('git '))),
+    JSON.stringify(r.timings),
+  );
+});
+
+test('reconcile verb: the reconcile-threw fallback carries timings: null (#4032)', () => {
+  const src = readText(HOOKS);
+  assert.match(src, /reason: 'reconcile-threw' \}\], timings: null \}/);
+});

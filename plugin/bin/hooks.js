@@ -1586,7 +1586,7 @@ async function main(argv) {
     try {
       out = await require('./lib/reconcile').reconcile(opts);
     } catch {
-      out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }] };
+      out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
     }
     if (jsonOut) {
       // Unchanged from before #638 — byte-for-byte, so bin/lib/reconcile's
