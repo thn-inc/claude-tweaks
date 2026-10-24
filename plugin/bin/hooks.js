@@ -725,16 +725,9 @@ async function main(argv) {
         }
       }
       // #3973: the owner block, only with a session id (record-worktree is the adoption
-      // path, so it replaces another session's block). It spawns `ps`, so it is computed
-      // before the lock; a failure degrades to no owner block and never stops the record.
-      const ownerSessionId = process.env.CLAUDE_CODE_SESSION_ID;
-      let block = null;
-      if (ownerSessionId) {
-        try { block = ctxLib.ownerBlock({ sessionId: ownerSessionId }); } catch { /* degrade: record without an owner block */ }
-      }
-      const result = ctxLib.writeRunState(runDir, block
-        ? (current) => ({ ...patch, ...ctxLib.ownerStampPatch(current, ownerSessionId, block, { replacesSessionId: true }) })
-        : patch);
+      // path, so it replaces another session's block).
+      const result = ctxLib.writeRunState(runDir,
+        ctxLib.patchWithOwnerBlock(patch, process.env.CLAUDE_CODE_SESSION_ID, { replacesSessionId: true }));
       if (result) {
         process.stdout.write(`claude-tweaks: worktree recorded for ${path.basename(runDir)}\n`);
       } else {

@@ -827,6 +827,16 @@ function ownerStampPatch(existing, sessionId, block, { replacesSessionId = false
   return { owner: block };
 }
 
+// `patch` as the `patchOrFn` argument of writeRunState, extended with an owner stamp
+// for `sessionId`. The owner block spawns `ps`, so it is built here, before the lock;
+// a failure (or no session id) degrades to the bare `patch` and never costs the stamp.
+function patchWithOwnerBlock(patch, sessionId, { replacesSessionId = false } = {}) {
+  if (typeof sessionId !== 'string' || sessionId === '') return patch;
+  let block;
+  try { block = ownerBlock({ sessionId }); } catch { return patch; }
+  return (current) => ({ ...patch, ...ownerStampPatch(current, sessionId, block, { replacesSessionId }) });
+}
+
 // #3973: the owner's own hooks keep the owner block fresh. Same pid as stamped: a
 // heartbeat, at most one write per HEARTBEAT_THROTTLE_MS. A different pid with the
 // stamped process provably gone (a `claude --resume` under a new process, or a pid
@@ -964,14 +974,8 @@ function stampAdHocRunDirForDenial(ctx) {
     // stampAdHocRunDir's identical guard).
     const existing = readRunState(result.path);
     if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return null;
-    // #3973: the owner block spawns `ps`, so it is computed before the lock; a failure
-    // degrades to "no owner block" and never costs the stamp below.
-    let block = null;
-    try { block = ownerBlock({ sessionId }); } catch { /* degrade: stamp without an owner block */ }
     const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ownerPidPatch(process.env) };
-    const written = writeRunState(result.path, block
-      ? (current) => ({ ...todaysPatch, ...ownerStampPatch(current, sessionId, block, { replacesSessionId: false }) })
-      : todaysPatch);
+    const written = writeRunState(result.path, patchWithOwnerBlock(todaysPatch, sessionId));
     if (!written) { rollbackMint(result.path); return null; }
     return result.path;
   } catch { return null; }
@@ -1052,5 +1056,5 @@ module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
-  claudePid, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, refreshOwnerBlock,
+  claudePid, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, patchWithOwnerBlock, refreshOwnerBlock,
 };
