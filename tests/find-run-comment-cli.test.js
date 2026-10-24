@@ -91,6 +91,11 @@ test('a trusted match with no id is dropped from ids', () => {
   assert.deepEqual(findRunComments({ comments }, 'verdict'), { kind: 'verdict', id: null, ids: [], skipped: [] });
 });
 
+test('null and primitive list elements are skipped, not thrown on', () => {
+  const comments = [null, 7, 'text', undefined, ['<!-- run-comment: verdict -->'], C[0]];
+  assert.deepEqual(findRunComments({ comments }, 'verdict'), { kind: 'verdict', id: 'IC_member', ids: ['IC_member'], skipped: [] });
+});
+
 test('no marker comment at all: id null, empty ids and skipped', () => {
   const comments = [{ id: 'z', authorAssociation: 'MEMBER', body: 'hello' }];
   assert.deepEqual(findRunComments({ comments }, 'verdict'), { kind: 'verdict', id: null, ids: [], skipped: [] });
@@ -157,6 +162,8 @@ test('run: malformed invocations exit 2 without reading the file', () => {
     ['--comments-file', 'f', '--kind', 'verdict -->'],
     ['--comments-file', 'f', '--kind', 'a b'],
     ['--comments-file', 'f', '--kind', 'verdict', '--bogus'],
+    ['--comments-file', 'f', '--comments-file', 'g', '--kind', 'verdict'],
+    ['--comments-file', 'f', '--kind', 'verdict', '--kind', 'brief'],
   ];
   for (const argv of invocations) {
     const deps = fakeDeps(() => JSON.stringify({ comments: C }));

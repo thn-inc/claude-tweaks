@@ -31,6 +31,7 @@ function parseArgs(argv) {
     if (!Object.hasOwn(FLAGS, a)) return { error: `unknown argument: ${a}` };
     const v = argv[i + 1];
     if (v === undefined || v === '' || v.startsWith('--')) return { error: `${a} needs a value` };
+    if (Object.hasOwn(o, FLAGS[a])) return { error: `${a} given more than once` };
     o[FLAGS[a]] = v;
     i++;
   }

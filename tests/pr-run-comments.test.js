@@ -409,13 +409,17 @@ test("AC1.1: the Find step's worktree-safe form is a plain fetch plus bin/find-r
 test('AC2.1: the worktree-safe form says it applies the same marker and Trusted authors test and relays skipped', () => {
   const find = collapse(findStep());
   assert.match(find, /comment-trust\.js/);
-  assert.match(find, /Trusted authors/);
+  const sameRule = /applies the same first-line marker `startswith` test and \*\*Trusted authors\*\* rule/;
+  assert.match(find, sameRule);
   assert.match(find, /`skipped`/);
   assert.match(find, /exit 1/);
   assert.match(find, /exit 2/);
   const pre = collapse(PRE_CHANGE_FIND_STEP);
   assert.doesNotMatch(pre, /comment-trust\.js/, 'go-red: the pre-change step does not name comment-trust.js');
+  assert.doesNotMatch(pre, sameRule, 'go-red: the pre-change step does not state the same-rule claim');
   assert.ok(!pre.includes('`skipped`'), 'go-red: the pre-change step does not name the skipped output');
+  assert.doesNotMatch(pre, /exit 1/, 'go-red: the pre-change step names no exit 1');
+  assert.doesNotMatch(pre, /exit 2/, 'go-red: the pre-change step names no exit 2');
 });
 
 test('the Find step forbids chaining an unquoted $? onto the jq shortcut and cites scratch-worktree.md §7', () => {

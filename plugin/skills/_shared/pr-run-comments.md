@@ -137,11 +137,10 @@ plugin's PR-comment surface that edits rather than always-appends.
 1. **Find.** Resolve `{host}`/`{owner}`/`{repo}` once (`gh repo view --json nameWithOwner,url` —
    `{owner}/{repo}` from `nameWithOwner`, `{host}` from the returned `url`'s authority; a bare
    `OWNER/REPO` handed to `--repo` is resolved by `gh` against its default host, `github.com`,
-   unless the value carries the host as `HOST/OWNER/REPO` — so every `--repo` in the shortcut below
-   is the host-qualified form).
+   unless the value carries the host as `HOST/OWNER/REPO`).
 
-   Run the worktree-safe form first. Each block is its own plain Bash call, with no chain, no
-   `--jq`, and no host in `--repo`:
+   In a worktree-isolated session, use the worktree-safe form; it also runs outside one. Each block
+   is its own plain Bash call, with no chain, no `--jq`, and no host in `--repo`:
 
    ```bash
    gh pr view {pr-number} --repo {owner}/{repo} --json comments > /tmp/{kind}-comments-{n}.json
@@ -157,7 +156,7 @@ plugin's PR-comment surface that edits rather than always-appends.
    - A bare `{owner}/{repo}` resolves against `gh`'s default host, `github.com`. On another host, pass `{host}/{owner}/{repo}` as in the shortcut.
    - A failed find is exit 1 (the payload is unreadable or not a comments list, e.g. an empty file left by a failed fetch) or exit 2 (a malformed invocation). Route it to **On failure** below.
 
-   The jq shortcut below is for a run outside a worktree-isolated session. It still applies **Trusted authors**. Run each fence as one plain command, and never chain an unquoted `$?` onto one (`; echo exit=$?`): the worktree guard refuses that shape (`_shared/scratch-worktree.md` §7).
+   Outside a worktree-isolated session, the jq shortcut below does the same lookup, with every `--repo` host-qualified (`{host}/{owner}/{repo}`). It also applies **Trusted authors**. Inside one, each fence passes the worktree guard as a lone command, but chaining an unquoted `$?` onto it (`; echo exit=$?`) is refused (`_shared/scratch-worktree.md` §7), so run each fence as one plain command or use the worktree-safe form.
 
    ```bash
    gh pr view {pr-number} --repo {host}/{owner}/{repo} --json comments \
