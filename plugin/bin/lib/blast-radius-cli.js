@@ -7,6 +7,11 @@
 // the retired prose choreography could silently read `git diff ""..HEAD` as an
 // empty diff and clear every auto-merge threshold.
 //
+// Two consumers share gatherDiffFiles (the merge-base + numstat gather):
+// computeBlastRadius here (blast-radius.js, #888) adds policy config and
+// classification, and bin/diff-facts.js (#3955) feeds the same file list to
+// computeDiffFacts.
+//
 // Injectable seams (deps.git, deps.readFile) follow the same fake-runner test
 // convention as the gh-shelling modules (see the gh-api-module-pattern skill).
 const fs = require('fs');
@@ -99,10 +104,12 @@ function resolveMergeBase(git, { base, integrationBranch }) {
   }
 }
 
-function computeBlastRadius(opts = {}, deps = {}) {
+// The merge-base + numstat gather both consumers share: no policy-config read,
+// no classification. Returns {mergeBase, files} with files in parseNumstatZ's
+// [{path, additions, deletions}] shape.
+function gatherDiffFiles(opts = {}, deps = {}) {
   const git = deps.git || defaultGit;
-  const readFile = deps.readFile || defaultReadFile;
-  const { base, integrationBranch, runDir = null } = opts;
+  const { base, integrationBranch } = opts;
 
   if (!base && !integrationBranch) {
     throw new BlastRadiusError('one of --base or --integration-branch is required');
@@ -119,12 +126,20 @@ function computeBlastRadius(opts = {}, deps = {}) {
   } catch (err) {
     throw new BlastRadiusError(`git diff --numstat failed: ${err.message}`);
   }
-  const files = parseNumstatZ(diffRaw);
+  return { mergeBase, files: parseNumstatZ(diffRaw) };
+}
+
+function computeBlastRadius(opts = {}, deps = {}) {
+  const git = deps.git || defaultGit;
+  const readFile = deps.readFile || defaultReadFile;
+  const { runDir = null } = opts;
+
+  const { mergeBase, files } = gatherDiffFiles(opts, deps);
   const config = resolveConfig({ git, readFile, runDir });
   const summary = blastRadiusSummary(classifyDiffFiles(files, config.mergeSensitivePaths));
   return { mergeBase, config, summary };
 }
 
 module.exports = {
-  computeBlastRadius, BlastRadiusError, preferOriginRef,
+  computeBlastRadius, gatherDiffFiles, BlastRadiusError, preferOriginRef,
 };

@@ -123,7 +123,7 @@ test('AC4.1: no live dispatch-claim reference survives in plugin/ or docs/skill-
   };
   walk(path.join(ROOT, 'plugin'));
   files.push(path.join(ROOT, 'docs/skill-graph.md'));
-  const hits = files.filter((f) => /dispatch-claim/i.test(fs.readFileSync(f, 'utf8')));
+  const hits = files.filter((f) => /dispatch-claim/i.test(readText(f)));
   assert.deepStrictEqual(hits.map((f) => path.relative(ROOT, f)), []);
   assert.doesNotMatch(readText(path.join(ROOT, 'plugin/skills/flow/SKILL.md')), /pre-existing gap/);
 });

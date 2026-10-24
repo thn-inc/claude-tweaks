@@ -84,6 +84,32 @@ test('#3845: stampAdHocRunDirForDenial stamps ownerPid from CLAUDE_PID and omits
   }
 });
 
+test('AC1.1/AC1.2: stampAdHocRunDirForDenial writes the owner block', () => {
+  const prior = process.env.CLAUDE_PID;
+  try {
+    process.env.CLAUDE_PID = String(process.pid);
+    const stamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-owner-block-denial-a' }, cwd: gitRepo(), ownedRun: {} });
+    const { owner } = ctxLib.readRunState(stamped);
+    assert.strictEqual(owner.sessionId, 'sess-owner-block-denial-a');
+    assert.strictEqual(owner.host, os.hostname());
+    assert.strictEqual(owner.pid, process.pid);
+    assert.strictEqual(owner.pidSource, 'env');
+    if (process.platform !== 'win32') assert.strictEqual(typeof owner.pidStartedAt, 'string');
+    assert.ok(!Number.isNaN(Date.parse(owner.heartbeatAt)));
+
+    // A pid that is gone: a short child that has already exited.
+    const dead = require('child_process').spawnSync(process.execPath, ['-e', ''], { windowsHide: true }).pid;
+    process.env.CLAUDE_PID = String(dead);
+    const deadStamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-owner-block-denial-b' }, cwd: gitRepo(), ownedRun: {} });
+    const deadOwner = ctxLib.readRunState(deadStamped).owner;
+    assert.strictEqual(deadOwner.pid, dead);
+    assert.strictEqual(deadOwner.pidStartedAt, null, 'a pid that is gone has no start time');
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_PID;
+    else process.env.CLAUDE_PID = prior;
+  }
+});
+
 function seed(main, name, state) {
   const dir = path.join(main, '.claude-tweaks', 'pipelines', name);
   fs.mkdirSync(dir, { recursive: true });

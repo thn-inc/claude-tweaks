@@ -26,25 +26,13 @@ full `standard` ceremony for a `size:low` single-module fix — 12 minutes of fu
 currently reads `standard`, the header-fold default (`flow/manifesto.md`'s Ceremony profile
 computation), so there is nothing here to clobber:
 
-1. Compute this run's diff facts: parse `git diff --numstat -z` against the run's own merge-base with
-   `parseNumstatZ` (`bin/lib/git-z.js`), then pass the parsed `{path, additions, deletions}[]`
-   array — never the raw string — to `computeDiffFacts` in `bin/lib/dispatch/ceremony-derive.js` (the same facts
-   shape `blast-radius-cli.js`'s `computeBlastRadius` already derives for the merge-check verdict —
-   reuse `classifyDiffFiles`/`blastRadiusSummary`, don't re-derive). Two separate Bash calls, never
-   one (substitute the run's integration branch for `origin/main`) — first print the merge-base:
+1. Compute this run's diff facts with one command, run from the worktree. It resolves the merge-base of `HEAD` against the integration branch (preferring `origin/{branch}`), parses `git diff --numstat -z` with `parseNumstatZ` (`bin/lib/git-z.js`), and prints `computeDiffFacts`'s JSON (`bin/lib/dispatch/ceremony-derive.js`) — the same gather `blast-radius.js` runs for merge-check, so the two read one diff. It counts committed work only (`merge-base..HEAD`): an uncommitted edit is not in the facts. Resolve `{integration-branch}` per `_shared/integration-branch.md`, then substitute it, and the literal plugin root (the skill's `Base directory` minus `skills/{name}`) for `${CLAUDE_PLUGIN_ROOT}`, before running it: a worktree-isolated session refuses `node` with a runtime variable as the script operand (`_shared/scratch-worktree.md` §7):
 
    ```bash
-   git merge-base HEAD origin/main
+   node "${CLAUDE_PLUGIN_ROOT}/bin/diff-facts.js" --integration-branch {integration-branch}
    ```
 
-   then paste the printed sha in for `{merge-base}` and the literal plugin root (the skill's
-   `Base directory` minus `skills/{name}`) in for `${CLAUDE_PLUGIN_ROOT}`: a worktree-isolated
-   session refuses a `$(git …)` substitution, and a runtime variable inside the `node -e` text of a
-   command that runs `git` (`_shared/scratch-worktree.md` §7). It prints the diff-facts JSON:
-
-   ```bash
-   git diff --numstat -z {merge-base} | node -e "const { parseNumstatZ } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/git-z.js'); const { computeDiffFacts } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/ceremony-derive.js'); console.log(JSON.stringify(computeDiffFacts(parseNumstatZ(require('fs').readFileSync(0, 'utf8')))))"
-   ```
+   A non-zero exit prints nothing on stdout: derive nothing, leave `config.yml` untouched (the header-fold `standard` stands), and log `SKIP {time} — Ceremony profile derivation (skipped): the diff-facts command exited {n} ({stderr line}) → fallback: header-fold default kept. Reversibility: n/a.` via `log-decision.js --status SKIP`, per `_shared/auto-decision-log.md`'s Degrade-trace rule.
 2. When the diff touches zero production/implementation files — any mix of test and/or docs files
    only (`deriveCeremonyProfile`'s `lowSurface` classification; a test file plus a small amount of
    production code stays disqualified — a real behavioral change riding along with its own
