@@ -46,7 +46,7 @@ const { globToRegExp } = require('./lib/issues/blast-radius');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
-const { canonicalRealpath } = require('./lib/path-guard');
+const { canonicalRealpath, resolveWithin } = require('./lib/path-guard');
 
 const KNOWN_SCOPES = new Set(['full', 'scoped', 'none', 'static-only', 'tool-scoped']);
 
@@ -130,14 +130,16 @@ function resolveScopePath(scope, scopeCwd) {
 // proven inside this checkout — a file outside it never shows in this
 // tree's dirty set anyway.
 function scopeSelfPath(resolvedPath, scopeCwd) {
+  let root;
   try {
-    const root = fs.realpathSync(realGit(scopeCwd).repoRoot());
-    const rel = path.relative(root, fs.realpathSync(resolvedPath));
-    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
-    return rel.split(path.sep).join('/');
+    root = realGit(scopeCwd).repoRoot();
   } catch {
     return null;
   }
+  const leaf = resolveWithin(resolvedPath, root);
+  const rootReal = leaf === null ? null : canonicalRealpath(root);
+  if (rootReal === null) return null;
+  return path.relative(rootReal, leaf).split(path.sep).join('/') || null;
 }
 
 // #2987: the dirty paths a declared `generated` glob list exempts — every one
