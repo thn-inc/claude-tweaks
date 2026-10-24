@@ -403,7 +403,7 @@ If no notable learnings emerged, state: "No key learnings — straightforward re
 ## Important Notes
 
 - Spec compliance is the first gate — incomplete specs go back to `/claude-tweaks:build`, not through code review
-- Test passing is a hard gate — broken code blocks the entire review. Run `/claude-tweaks:test` to verify.
+- Test passing is a hard gate — broken code blocks the entire review. Run `/claude-tweaks:test --source review` to verify.
 - Implementation Hindsight is an action gate — "change now" items must be fixed before passing
 - Code simplification runs on changed files only — never expand scope to unrelated code
 - Skip review lenses that don't apply to the type of change

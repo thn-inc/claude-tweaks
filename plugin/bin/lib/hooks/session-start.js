@@ -29,7 +29,7 @@ function advisoryBanner(header, lines, trailer) {
 // The fast/background split (#820, D8, corrected): SessionStart's own
 // process runs only the cheap read/detect checks inline — everything
 // write-only and janitorial (release/archive/archive-branches/remote-prune/
-// reap) is deferred to a detached `reconcile-background` child process (see
+// ledger-residue/reap) is deferred to a detached `reconcile-background` child process (see
 // bin/hooks.js's `reconcile-background` subcommand), whose result is
 // surfaced on a LATER SessionStart firing via the status-file read below.
 // This corrects the original issue's premise (hooks.json's `async: true`
@@ -223,7 +223,7 @@ async function run(ctx) {
     // for the shared trunk). FAST_CHECKS restricts this inline call to the
     // cheap read/detect checks only (mirror, red-tip, console) — the
     // write-only janitorial checks (release/archive/archive-branches/
-    // remote-prune/reap) run in a detached background process instead (see
+    // remote-prune/ledger-residue/reap) run in a detached background process instead (see
     // the spawn block below), and their results are surfaced on a LATER
     // SessionStart firing via the status-file read below, not here (#820,
     // D8, corrected).
@@ -324,6 +324,14 @@ async function run(ctx) {
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);
         if (s.archivedBranches) lines.push(`${s.archivedBranches} local branch(es) archived/deleted`);
         if (s.prunedRemote) lines.push(`${s.prunedRemote} merged remote branch(es) deleted on origin`);
+        if (s.ledgerResiduePrOpened) lines.push(`${s.ledgerResiduePrOpened} residue-ledger removal PR(s) opened on origin`);
+        // Residue ledgers left on the integration branch and why — pre-filtered
+        // by the background CLI through ledger-residue.js's QUIET_SKIP_REASONS.
+        if (Array.isArray(s.notableLedgerResidue) && s.notableLedgerResidue.length) {
+          lines.push(
+            `residue ledger(s) left on the integration branch: ${s.notableLedgerResidue.map((e) => `${path.basename(e.path)} (${e.reason}${e.prNumber ? ` #${e.prNumber}` : ''})`).join(', ')}`,
+          );
+        }
         // Individually-named worktrees left in place and why — the same
         // granular signal the pre-#820-D8 inline block used to render,
         // pre-filtered by the background CLI through QUIET_SKIP_REASONS so

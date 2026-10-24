@@ -910,7 +910,7 @@ test('reconcile: local-merge project falls back to the legacy ancestry reap, ski
   const r = await reconcile({ cwd: dir });
   assert.strictEqual(r.mirror, null);
   assert.deepStrictEqual(r.worktrees, []); // legacy reap ran, found zero worktrees to consider
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
 });
 
 test('reconcile: local-merge with no resolvable integration branch at all resolves no-remote, never crashes', async () => {
@@ -1059,7 +1059,7 @@ test('reconcile: fresh clone with no origin/HEAD repairs it and resolves the int
   const r = await reconcile({ cwd: mainDir, checks: ['mirror'] });
 
   assert.ok(!r.skipped.some((s) => s.reason === 'no-remote'), `expected no no-remote skip, got ${JSON.stringify(r.skipped)}`);
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
   assert.deepStrictEqual(r.originHeadRepair, { outcome: 'repaired', branch: 'main' });
   assert.strictEqual(git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mainDir).trim(), 'refs/remotes/origin/main');
 });
@@ -1151,7 +1151,7 @@ test('reconcile: a concurrent-winner origin/HEAD still resolves even under a rec
   const r = await reconcile({ cwd: mainDir, checks: ['mirror'], cache });
 
   assert.deepStrictEqual(r.originHeadRepair, { outcome: 'skipped', reason: 'recent-failure', branch: 'main' });
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
 });
 
 test('reconcile: no origin remote keeps the no-remote skip unchanged and attempts no repair (#3132)', async () => {
@@ -1221,7 +1221,7 @@ test('reconcile: checks filter excludes reap -> local-merge project runs nothing
   const r = await reconcile({ cwd: dir, checks: ['mirror'] });
   // 'mirror' was requested but has no local-merge equivalent — nothing runs.
   assert.strictEqual(r.worktrees, null);
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
 });
 
 test('reconcile: reap dispatches strictly after release and archive in source order (load-bearing, not incidental — #408)', () => {

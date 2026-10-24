@@ -17,7 +17,7 @@ check (pr-first only, alongside `mirror`/`release`/`archive`; `local-merge` neve
 the primary comment (`gh pr view --json comments,body`, gh-CLI-only — same constraint every other
 reconcile check states, no MCP fallback in Node; a gh-absent environment reports that reason, same
 as `mirror`/`release`/`archive`), parse the Resolve checkbox and every `<!-- console-item: {id} -->`
-row's tick state, and report `{ action: 'ready', runDir, prNumber, commentIds, items, mergeCheckVerdict, mergeGrantGap }`
+row's tick state, and report `{ action: 'ready', runDir, prNumber, commentIds, items, mergeCheckVerdict, mergeGrantGap, rulingGateGaps }`
 only when Resolve is ticked — an unresolved console (Resolve unticked) is reported as
 `skip: not-resolved-yet`, not surfaced as work. The returned `items` carry each item's `approved`
 boolean (its parsed tick), its declared `kind`, its `stagedHash` from `console.json`, and (for the
@@ -195,22 +195,32 @@ result's own `mergeGrantGap` field instead: `null` means every member is granted
 floor-clearing on this axis); `{ member, reason }` names the first ungranted (or
 unreadable/unresolvable) member and withholds.
 
+**Third narrower exception (#3880):** an `isRulingRow: true` item named in the ready result's
+`rulingGateGaps` (`[{ id, reason }]`, computed in code by `decideConsoleExecute` from each ruling
+row's staged file, read via the item's `stagedPath` — `_shared/console-on-pr.md`) is **not**
+floor-clearing: its box and Resolve stay unticked and the console stays pending for a human, the
+same posture as the merge row. It mirrors `console-resolve.js`'s `pending — sdd-ruling-*`
+resolution (`wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet) for the reconciler-side
+trigger point. `rulingGateGaps: []` — every ruling row's header shows it safe — leaves each ruling
+row floor-clearing, unchanged.
+
 **Auto-resolution performs real comment edits.** It ticks the floor-clearing boxes on the PR
 comment (via `_shared/console-on-pr.md`'s post-or-update procedure) *before* executing — the same
 comment-edit history a human's own ticks would leave, flagged in the reply comment and in
 `decisions.md` as `AUTO`, never presented as if a human ticked it. The Resolve box is ticked only
 when every item in the console is floor-clearing; a console with a genuinely non-floor item —
 today, exactly the `isMergeRow: true` item under either exception above (a persisted `needs-human`
-verdict, or a live-refetched member lacking `auto:merge`) — gets its floor items ticked and
-executed, but that one item and Resolve both stay unticked and the console stays pending for a
-human. Log one `AUTO {time} — Console execution: auto-resolved {item}
+verdict, or a live-refetched member lacking `auto:merge`) and a ruling row named in
+`rulingGateGaps` — gets its floor items ticked and executed, but each such item and Resolve stay
+unticked and the console stays pending for a human. Log one `AUTO {time} — Console execution: auto-resolved {item}
 on PR #{n}. Reversibility: {…}.` line per item actually resolved, per
 `_shared/autonomy-ceiling.md`'s Logging convention — and, when the merge row was withheld, one
 further line naming which exception fired: `AUTO {time} — Console execution: withheld branch-finish/merge on PR #{n} — persisted
 mergeCheckVerdict: needs-human. Reversibility: n/a (declined to act).` for the first exception, or
 `AUTO {time} — Console execution: withheld branch-finish/merge on PR #{n} — member #{m} lacks
 auto:merge. Reversibility: n/a (declined to act).` for the second (#1802) — naming the specific
-member `{m}` whose live labels lacked the grant.
+member `{m}` whose live labels lacked the grant. A withheld ruling row (third exception) logs
+`AUTO {time} — Console execution: withheld ratify of {item} on PR #{n} — {reason}. Reversibility: n/a (declined to act).`
 
 ## Comment-tick trust boundary
 

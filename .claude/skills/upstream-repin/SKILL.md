@@ -57,7 +57,7 @@ The re-pin is done when the drift run reports assertions `ok` with every asserti
 
 ### The `claude-code` entry: a floor pin whose assertions live in code
 
-`claude-code` is drift-only: `version-mode: floor`, `contract-paths: []`, `fixtures: []`, and its `root` command resolves the installed binary file itself, so every `upstream-path` is `"."` and `checkAssertions` reads the binary as raw bytes (#3304). A re-pin moves `pinned` and nothing else, because Claude Code ships near daily and no other site holds its version. The assertions are the part that must not move on their own:
+`claude-code` is drift-only: `version-mode: floor`, `report-upgrades: false`, `contract-paths: []`, `fixtures: []`, and its `root` command resolves the installed binary file itself, so every `upstream-path` is `"."` and `checkAssertions` reads the binary as raw bytes (#3304). A re-pin moves `pinned` and nothing else, because Claude Code ships near daily and no other site holds its version. The assertions are the part that must not move on their own:
 
 - The first three `must-match` values mirror `REFUSAL_FRAGMENTS` in `plugin/bin/lib/hooks/harness-refusal.js`. Change a fragment there and in the manifest in the same commit; `tests/harness-refusal-drift-pin.test.js` fails until they agree.
 - The last two are anchors unique to the matched refusal templates. The one with a dash spells it as the six-character backslash-u2014 escape, because that is how the minified source holds it. Before re-pinning, run `checkAssertions` on the claude-code entry against the new install and count each literal. A bundler change that emits a raw em dash makes the anchor go `unmatched` for a reason that is not a rewording.
