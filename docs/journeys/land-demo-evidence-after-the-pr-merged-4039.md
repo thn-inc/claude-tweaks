@@ -35,8 +35,8 @@ files:
 - **URL:** Step 4's **Guard** sentence
 - **Action:** the session is on `{integration-branch}`, in a detached HEAD, or outside the worktree that `run-state.json` records, which `git rev-parse --show-toplevel` checks against the recorded path. So the current-branch route is unavailable.
 - **Should feel:** safe by construction, with no push to `main` whatever the read said.
-- **Should understand:** an open run PR only takes the commit-and-push route when the session is actually on the run's own branch.
-- **Red flags:** a `no-pr` result on `main` treated as "commit and push"; an in-place `git switch` in the shared main checkout.
+- **Should understand:** an open run PR only takes the commit-and-push route when the session is actually on the run's own branch. If that push fails, the brief goes out without embedded screenshots and says why. A branch name that does not match `^[A-Za-z0-9._/-]+$` (one carrying `$`, quotes or a backtick) also takes the evidence-PR route, so the name never reaches a command. With no `worktree` recorded (a standalone wrap-up), the run's own branch is the current branch itself, still under the guard.
+- **Red flags:** a `no-pr` result on `main` treated as "commit and push"; an in-place `git switch` in the shared main checkout; a branch name carrying `$` or a backtick pasted into a git command.
 
 ### 3. The evidence lands through its own PR
 - **URL:** Step 4's merged-or-closed bullet → `_shared/scratch-worktree.md` §2–§3, residue-sweep's `pr-first` landing shape
@@ -50,10 +50,14 @@ files:
   - It is left open for a human and never auto-merged.
   - The embed uses this evidence commit's SHA.
   - The scratch worktree is torn down with `discard_changes: true` only after `git ls-remote` shows the SHA on `origin`.
+  - If provisioning, the commit or the push fails, nothing reached `origin`: the brief goes out without embedded screenshots and says why, and the worktree is torn down. When the teardown's ancestry check refuses an unpushed commit, the worktree is kept and its path named in the brief and the summary.
+  - If the push succeeded but the PR create failed, the embeds stay. The brief and the summary name the pushed branch and the failure in place of the PR link, for a human to open the PR.
+  - If `git ls-remote` does not return the recorded SHA, the worktree is never discarded: it is kept and its path named in the brief and the summary.
 - **Red flags:**
   - Unrelated Phase 4 edits in the evidence PR.
   - A closing keyword that closes the record a second time.
   - Screenshots silently missing from the brief without a sentence saying why.
+  - A scratch worktree discarded without the ls-remote proof, or a pushed `demo-evidence/` branch with no PR that the summary never mentions.
 
 ### 4. A gh-absent sandbox doesn't open a second PR for nothing
 - **URL:** Step 4's unreadable-state bullet
