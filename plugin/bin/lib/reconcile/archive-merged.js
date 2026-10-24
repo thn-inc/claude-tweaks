@@ -13,6 +13,7 @@ const { splitNul } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
+const { canonicalRealpath, resolveLeaf } = require('../path-guard');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
@@ -110,9 +111,11 @@ function isAdHocIntrinsicSkip(dir, reason) {
   // never reads a main-checkout stamp as linked. A recorded worktree that no
   // longer exists cannot be the main checkout, which holds this dir; any other
   // unprovable path fails closed (not exempt).
-  let mainRoot;
-  try { mainRoot = fs.realpathSync(path.resolve(dir, '..', '..', '..')); } catch { return false; }
-  try { return fs.realpathSync(state.worktree) !== mainRoot; } catch (e) { return !!(e && e.code === 'ENOENT'); }
+  const mainRoot = canonicalRealpath(path.resolve(dir, '..', '..', '..'));
+  if (!mainRoot) return false;
+  const leaf = resolveLeaf(state.worktree);
+  if (leaf.state === 'resolved') return leaf.path !== mainRoot;
+  return leaf.state === 'missing';
 }
 
 // #1604: the "swept once genuinely superseded" half of #1117's own design
