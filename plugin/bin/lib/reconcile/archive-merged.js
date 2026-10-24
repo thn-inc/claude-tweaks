@@ -518,7 +518,8 @@ function hasStagedItems(runDir) {
 // `Review Console: terminal decision` line that turns the signal off. The gate pattern is
 // built from dispatch/merge-verdict.js's marker, the module that owns that text, so the
 // two cannot drift.
-const BUNDLE_GATE_PASS_RE = new RegExp(`${escapeRegExp(verdictMarker(VERDICT_STEPS.gate, 'N')).replace('#N', '#\\d+')}\\.`);
+const BUNDLE_GATE_MARKER_PATTERN = escapeRegExp(verdictMarker(VERDICT_STEPS.gate, 'N')).replace('#N', '#\\d+');
+const BUNDLE_GATE_PASS_RE = new RegExp(`${BUNDLE_GATE_MARKER_PATTERN}\\.`);
 function consoleReplacedByAutoMerge(runDir) {
   let raw;
   try { raw = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch (err) { return !(err && err.code === 'ENOENT'); }
@@ -1788,8 +1789,9 @@ function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = esc
 // #3503: this sweep is exempt from the merged-partial record check — wrap-up
 // already closed a `clean` run, so no record is still being built. #3668: this
 // loop tracks only console-never-rendered-staged-pending skips of auto-merge
-// runs (the short-circuit, or since #3740 the dispatch bundle gate), plus (#3945) the two tiebreak reasons, which a closed run
-// can never converge on its own (see the clean loop's onSkip). close-run has already run,
+// runs (the short-circuit, or since #3740 the dispatch bundle gate), plus (#3945)
+// the two tiebreak reasons, which a closed run can never converge on its own (see
+// the clean loop's onSkip). close-run has already run,
 // so no later step renders a console or applies those staged items, and
 // archive-run refuses exactly that subset — an untracked skip would freeze the
 // dir silently. Other closed no-console staged-pending runs stay untracked:
