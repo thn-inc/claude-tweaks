@@ -11,7 +11,10 @@
 //
 // Roots default to the "test" script's set (`tests`, `tools/upstream-drift/tests`); pass one or
 // more repo-relative root paths as CLI positional args to override — `test:perf` invokes this as
-// `node tools/run-tests.js perf`.
+// `node tools/run-tests.js perf`. `--files-from <list>` instead runs exactly the files the list
+// names, one repo-relative path per line (blank lines ignored, resolved against the repo root
+// whatever the caller's cwd) — verify.js's impact-selected subset (#4024). An empty list, a
+// missing file or a non-`*.test.js` entry exits 1, never handing `node --test` zero files.
 //
 // Elsewhere the explicit file list goes to `node --test`; on Windows (Node >= 22) the root globs
 // go instead, because ~780 paths overflow the 32,767-char command line (#3316).
@@ -25,7 +28,9 @@
 // CT_TEST_SUITE_SLOTS (simultaneous suites, default 1), CT_TEST_CONCURRENCY (files at once,
 // default half the cores, or cores - 1 when CI is set), CT_TEST_SUITE_SLOT_DIR (where the slot
 // locks live, default under the real tmpdir), CT_TEST_SUITE_SLOT_HELD (=1 set for the child so a
-// nested run skips the slot).
+// nested run skips the slot). A `--files-from` subset takes its slot from a separate lane
+// (`<slot dir>/subset`, CT_TEST_SUBSET_SLOTS, default 1): a seconds-long impact subset must not
+// queue behind a sibling's full suite, and two subsets still never run at once (#4024).
 
 const fs = require('fs');
 const os = require('os');
@@ -76,6 +81,28 @@ function listTestFiles(cwd, roots) {
   return files;
 }
 
+// The entries of a `--files-from` list: one path per line, CRs stripped, blank lines and repeats
+// dropped, order kept. Throws (naming the entry) on a non-`*.test.js` entry, a path that is not
+// repo-relative (leading `-`, absolute, a `..` segment), or one `exists` says is not a file, and on a
+// list naming nothing — so a subset run can never reach `node --test` empty.
+function readFileList(text, { exists }) {
+  const entries = [];
+  for (const raw of String(text).split('\n')) {
+    const entry = raw.replace(/\r$/, '');
+    if (entry.trim() === '' || entries.includes(entry)) continue;
+    if (!entry.endsWith('.test.js')) throw new Error(`listed entry ${JSON.stringify(entry)} is not a *.test.js file`);
+    // A repo-relative path only: a leading `-` would reach `node --test` as an option, and an absolute
+    // or `..` path would run a file from outside this checkout.
+    if (entry.startsWith('-') || path.isAbsolute(entry) || /^[A-Za-z]:/.test(entry) || entry.split(/[\\/]/).includes('..')) {
+      throw new Error(`listed entry ${JSON.stringify(entry)} is not a repo-relative path`);
+    }
+    if (!exists(entry)) throw new Error(`listed test file ${JSON.stringify(entry)} does not exist`);
+    entries.push(entry);
+  }
+  if (entries.length === 0) throw new Error('the list names no test files');
+  return entries;
+}
+
 // Matches a positive integer with no sign, fraction, or leading zero — the shape both
 // `CT_TEST_CONCURRENCY` and `CT_TEST_SUITE_SLOTS` accept.
 const POSITIVE_INT = /^[1-9]\d*$/;
@@ -95,13 +122,23 @@ function resolveConcurrency(env, cpus) {
 
 // How many full suites may run at once across processes (the slot semaphore). Defaults to 1;
 // `CT_TEST_SUITE_SLOTS` overrides with a positive integer. An invalid value falls back to 1 and
-// says so once through `log`, so a typo is visible instead of silently changing the cap.
-function resolveSlots(env, log) {
-  const raw = env.CT_TEST_SUITE_SLOTS;
+// says so once through `log`, so a typo is visible instead of silently changing the cap. `key`
+// names the variable read — `CT_TEST_SUBSET_SLOTS` for the subset lane, same rules.
+function resolveSlots(env, log, key = 'CT_TEST_SUITE_SLOTS') {
+  const raw = env[key];
   if (raw === undefined) return 1;
   if (typeof raw === 'string' && POSITIVE_INT.test(raw)) return Number(raw);
-  log(`run-tests.js: ignoring invalid CT_TEST_SUITE_SLOTS=${JSON.stringify(raw)} (want a positive integer) — using 1 slot.`);
+  log(`run-tests.js: ignoring invalid ${key}=${JSON.stringify(raw)} (want a positive integer) — using 1 slot.`);
   return 1;
+}
+
+// The slot lane a run waits in: a `--files-from` subset (`roots === null`) uses its own
+// `subset/` directory and `CT_TEST_SUBSET_SLOTS`; every other run the full-suite lane.
+// Pure: `baseDir` and `subset` are parameters.
+function slotLane(baseDir, subset) {
+  return subset
+    ? { dir: path.join(baseDir, 'subset'), slotsVar: 'CT_TEST_SUBSET_SLOTS' }
+    : { dir: baseDir, slotsVar: 'CT_TEST_SUITE_SLOTS' };
 }
 
 // Returns the argv (after the node binary) for `node --test`. The explicit file list is the
@@ -109,13 +146,15 @@ function resolveSlots(env, log) {
 // the 32,767-char command line (#3316), so there it passes the root globs, which needs Node >= 22.
 // `--test-concurrency=<n>` follows `--test` on both branches (#3969); `concurrency` must be a
 // positive integer, checked before the win32/Node<22 error so that error keeps its own message.
+// `roots === null` is an explicit `--files-from` subset, which has no root globs to fall back to:
+// its file list is passed on every platform.
 // Pure: `platform`, `nodeMajor` and `concurrency` are parameters, never read from `process`.
 function buildTestArgs(files, roots, { platform, nodeMajor, concurrency }) {
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw new Error(`buildTestArgs: concurrency must be a positive integer (got ${String(concurrency)}).`);
   }
   const head = ['--test', `--test-concurrency=${concurrency}`];
-  if (platform !== 'win32') return [...head, ...files];
+  if (platform !== 'win32' || roots === null) return [...head, ...files];
   if (nodeMajor < 22) {
     throw new Error(
       'the Windows command line cannot hold the explicit test-file list, and `node --test` ' +
@@ -265,7 +304,7 @@ function ensureOwnDir(dir) {
 // `isAlive`, `now`, `sleep` and `log` are parameters so tests never touch real processes or time.
 // A lock naming our own `pid` is stale by definition — a prior run that crashed and whose pid the
 // OS then reused for this one — so it is reclaimed rather than waited on forever.
-function acquireSlot({ dir, slots, pid, cwd, isAlive: isPidLive, now, sleep, log, pollMs = 2000, staleUnparseableMs = 600000, staleReclaimMs = 30000 }) {
+function acquireSlot({ dir, slots, pid, cwd, isAlive: isPidLive, now, sleep, log, pollMs = 2000, staleUnparseableMs = 600000, staleReclaimMs = 30000, slotsVar = 'CT_TEST_SUITE_SLOTS' }) {
   const isAlive = (holderPid) => holderPid !== pid && isPidLive(holderPid);
   ensureOwnDir(dir);
   let logged = false;
@@ -289,7 +328,7 @@ function acquireSlot({ dir, slots, pid, cwd, isAlive: isPidLive, now, sleep, log
       // unrelated long-lived process (isAlive cannot tell it from the run that took the slot).
       log(
         `run-tests.js: waiting for a test-suite slot — held by pid ${blocker.pid} (cwd ${blocker.cwd}) ` +
-          `since ${blocker.startedAt}; set CT_TEST_SUITE_SLOTS to raise the limit (lock: ${blocker.lockPath})`,
+          `since ${blocker.startedAt}; set ${slotsVar} to raise the limit (lock: ${blocker.lockPath})`,
       );
     }
     sleep(pollMs);
@@ -341,19 +380,44 @@ function sweepStaleRoots({ dir, isAlive }) {
 
 module.exports = {
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots,
-  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots,
+  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
 };
 
 if (require.main === module) {
-  const argRoots = process.argv.slice(2);
-  const roots = argRoots.length ? argRoots : DEFAULT_ROOTS;
-  const files = listTestFiles(REPO_ROOT, roots).map((f) => path.relative(REPO_ROOT, f));
+  const argv = process.argv.slice(2);
+  let roots;
+  let files;
+  if (argv.includes('--files-from')) {
+    // A subset plus roots would be ambiguous (which wins?), so the flag stands alone.
+    if (argv.length !== 2 || argv[0] !== '--files-from') {
+      console.error('run-tests.js: --files-from <list> takes exactly one list file and no root arguments.');
+      process.exit(1);
+    }
+    try {
+      const isFile = (entry) => {
+        try {
+          return fs.statSync(path.resolve(REPO_ROOT, entry)).isFile();
+        } catch (_) {
+          return false;
+        }
+      };
+      files = readFileList(fs.readFileSync(argv[1], 'utf8'), { exists: isFile })
+        .map((entry) => path.relative(REPO_ROOT, path.resolve(REPO_ROOT, entry)));
+    } catch (err) {
+      console.error(`run-tests.js: --files-from ${argv[1]}: ${err.message}`);
+      process.exit(1);
+    }
+    roots = null;
+  } else {
+    roots = argv.length ? argv : DEFAULT_ROOTS;
+    files = listTestFiles(REPO_ROOT, roots).map((f) => path.relative(REPO_ROOT, f));
+  }
 
   // `node --test` with zero file arguments falls back to its own default-pattern
   // auto-discovery and can exit 0 having run nothing — "the suite gets quieter, not
   // redder" (docs/incident-log.md:421). A rename/typo of a root must fail loudly here,
   // not degrade into a silently-green `npm test`/`npm run test:perf`.
-  if (files.length === 0) {
+  if (roots !== null && files.length === 0) {
     console.error(
       `run-tests.js: found zero *.test.js files under ${roots.join(', ')} — refusing to run ` +
         "`node --test` with no explicit files (it would silently discover its own defaults " +
@@ -386,9 +450,11 @@ if (require.main === module) {
   // the suite that already holds the slot, and must not wait on it.
   let lockPath = null;
   if (process.env.CT_TEST_SUITE_SLOT_HELD !== '1') {
+    const lane = slotLane(process.env.CT_TEST_SUITE_SLOT_DIR || path.join(os.tmpdir(), 'ct-test-suite-slots'), roots === null);
     lockPath = acquireSlot({
-      dir: process.env.CT_TEST_SUITE_SLOT_DIR || path.join(os.tmpdir(), 'ct-test-suite-slots'),
-      slots: resolveSlots(process.env, console.error),
+      dir: lane.dir,
+      slotsVar: lane.slotsVar,
+      slots: resolveSlots(process.env, console.error, lane.slotsVar),
       pid: process.pid,
       cwd: REPO_ROOT,
       isAlive: isPidAlive,

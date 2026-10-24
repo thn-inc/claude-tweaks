@@ -53,6 +53,62 @@ test('changedFiles with a clean tree and no commits since base is an empty set, 
   assert.deepStrictEqual(changedFiles({ base: FULL, execImpl: exec }), { base: FULL, files: [] });
 });
 
+// #4024: withStatus adds a per-path A/M/D map so test-impact selection can
+// tell a content edit (M) from an addition or deletion (A/D).
+function statusExec(diffZ, statusZ) {
+  return fakeExec({
+    [`diff --name-status -z --end-of-options ${FULL}..HEAD`]: diffZ,
+    '--no-optional-locks status --porcelain -z --untracked-files=all': statusZ,
+  });
+}
+
+test('withStatus maps diff statuses (#4024)', () => {
+  const diffZ = 'A\0new.js\0M\0mod.js\0D\0gone.js\0R100\0old.js\0ren.js\0C090\0src.js\0copy.js\0T\0type.js\0';
+  const r = changedFiles({ base: FULL, execImpl: statusExec(diffZ, ''), withStatus: true });
+  assert.deepStrictEqual(r.statuses, {
+    'new.js': 'A', 'mod.js': 'M', 'gone.js': 'D', 'old.js': 'D', 'ren.js': 'A', 'copy.js': 'A', 'type.js': 'M',
+  });
+  // files is untouched by the flag, and statuses covers exactly its entries.
+  assert.deepStrictEqual(r.files, changedFiles({ base: FULL, execImpl: statusExec(diffZ, '') }).files);
+  assert.deepStrictEqual(Object.keys(r.statuses).sort(), r.files);
+});
+
+test('withStatus maps porcelain statuses (#4024)', () => {
+  const statusZ = '?? u.js\0 M w.js\0 D x.js\0A  y.js\0R  n.js\0o.js\0';
+  const r = changedFiles({ base: FULL, execImpl: statusExec('', statusZ), withStatus: true });
+  assert.deepStrictEqual(r.statuses, {
+    'u.js': 'A', 'w.js': 'M', 'x.js': 'D', 'y.js': 'A', 'n.js': 'A', 'o.js': 'D',
+  });
+  assert.deepStrictEqual(Object.keys(r.statuses).sort(), r.files);
+});
+
+test('withStatus maps unmerged and combined porcelain codes (#4024)', () => {
+  // Selection only tells M (content readers) from A/D (existence probes too), so the pin that matters
+  // is "any code that changes a path's existence is not M"; UU, a path present on both sides, stays M.
+  const statusZ = 'UU uu.js\0AA aa.js\0DU du.js\0UD ud.js\0AU au.js\0UA ua.js\0DD dd.js\0AD ad.js\0MD md.js\0AM am.js\0RM ren.js\0was.js\0C  cp.js\0src.js\0';
+  const r = changedFiles({ base: FULL, execImpl: statusExec('', statusZ), withStatus: true });
+  assert.deepStrictEqual(r.statuses, {
+    'uu.js': 'M', 'aa.js': 'A', 'du.js': 'D', 'ud.js': 'D', 'au.js': 'A', 'ua.js': 'A', 'dd.js': 'D', 'ad.js': 'D', 'md.js': 'D',
+    'am.js': 'A', 'ren.js': 'A', 'was.js': 'D', 'cp.js': 'A',
+  });
+  assert.ok(!('src.js' in r.statuses), "a copy's source is untouched");
+  assert.deepStrictEqual(Object.keys(r.statuses).sort(), r.files);
+});
+
+test('withStatus: an existence change wins over M (#4024)', () => {
+  const diffM = changedFiles({ base: FULL, execImpl: statusExec('M\0p.js\0', '?? p.js\0'), withStatus: true });
+  assert.deepStrictEqual(diffM.statuses, { 'p.js': 'A' });
+  const diffA = changedFiles({ base: FULL, execImpl: statusExec('A\0p.js\0', ' M p.js\0'), withStatus: true });
+  assert.deepStrictEqual(diffA.statuses, { 'p.js': 'A' });
+});
+
+test('withStatus off keeps the old shape (#4024)', () => {
+  const r = changedFiles({ base: FULL, execImpl: statusExec('M\0p.js\0', '') });
+  assert.deepStrictEqual(r, { base: FULL, files: ['p.js'] });
+  assert.strictEqual('statuses' in r, false);
+  assert.strictEqual('statuses' in changedFiles({ base: FULL, execImpl: statusExec('', ''), withStatus: false }), false);
+});
+
 test('changedFiles reports each file in a new untracked directory individually, not the directory (finding 8)', () => {
   const statusZ = ['?? new/x.js', '?? new/y.js', ''].join('\0');
   const exec = fakeExec({

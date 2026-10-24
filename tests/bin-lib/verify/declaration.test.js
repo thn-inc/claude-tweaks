@@ -229,3 +229,118 @@ test('generatedExemption exempts a dirty set only when every path matches a decl
   assert.strictEqual(generatedExemption([], ['dist/**']), null);
   assert.strictEqual(generatedExemption(null, ['dist/**']), null);
 });
+
+// #4024: the `impact` block and the impact rule kind.
+const IMPACT = { suite: 'tests', command: 'run {files}', tests: ['tests/**/*.test.js'] };
+function readJson(obj) { return readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify(obj) })); }
+
+test('a valid impact block parses (#4024)', () => {
+  const r = readJson({ checks: { tests: 'npm test' }, impact: IMPACT, rules: [{ match: 'src/**', impact: true, static: true }] });
+  assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
+  assert.deepStrictEqual(r.decl.impact, { suite: 'tests', command: 'run {files}', tests: ['tests/**/*.test.js'], maxAgeCommits: 200, map: null, fetch: null });
+  assert.deepStrictEqual(r.decl.rules[0], { match: 'src/**', suites: null, impact: true, static: true });
+});
+
+test('a fully declared impact block keeps every optional field; a map-form suite name is accepted (#4024)', () => {
+  const full = { suite: 'api', command: 'pnpm vitest {files}', tests: ['apps/api/**/*.test.ts', 'packages/**/*.test.ts'], maxAgeCommits: 50, map: '{git-common-dir}/maps/impact.json', fetch: 'node fetch-map.js' };
+  const r = readJson({ checks: { tests: { api: 'pnpm --filter api test', web: 'x' } }, impact: full, rules: [{ match: 'apps/api/**', impact: true, static: false }, { match: 'apps/web/**', suites: ['web'], static: true }] });
+  assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
+  assert.deepStrictEqual(r.decl.impact, full);
+  assert.deepStrictEqual(r.decl.rules[0], { match: 'apps/api/**', suites: null, impact: true, static: false });
+  assert.deepStrictEqual(r.decl.rules[1], { match: 'apps/web/**', suites: ['web'], static: true }, 'a non-impact rule carries no impact key');
+  const rel = readJson({ checks: { tests: 'npm test' }, impact: { ...IMPACT, map: '.cache/impact.json' }, rules: [] });
+  assert.strictEqual(rel.ok, true, JSON.stringify(rel.errors));
+  assert.strictEqual(rel.decl.impact.map, '.cache/impact.json');
+});
+
+test('every invalid impact field is named (#4024)', () => {
+  const r = readJson({
+    checks: { tests: 'npm test' },
+    impact: { suite: 'nope', command: 'run', tests: [], maxAgeCommits: 0, map: '../x', fetch: '' },
+    rules: [],
+  });
+  assert.strictEqual(r.ok, false);
+  const joined = r.errors.join('\n');
+  assert.match(joined, /impact\.suite: unknown suite "nope" \(declared: tests\)/);
+  assert.match(joined, /impact\.command: .*\{files\}/);
+  assert.match(joined, /impact\.tests: /);
+  assert.match(joined, /impact\.maxAgeCommits: /);
+  assert.match(joined, /impact\.map: .*\{git-common-dir\}\//);
+  assert.match(joined, /impact\.fetch: /);
+  assert.strictEqual(r.errors.length, 6, joined);
+});
+
+test('impact.map refuses absolute paths, .. segments anywhere, and a misplaced {git-common-dir} (#4024)', () => {
+  for (const map of ['/abs/map.json', 'C:\\maps\\m.json', 'a/../../m.json', 'a\\..\\m.json', '{git-common-dir}/../m.json', '{git-common-dir}/', '{git-common-dir}//abs.json', 'cache/{git-common-dir}/m.json', '', 7]) {
+    const r = readJson({ checks: { tests: 'npm test' }, impact: { ...IMPACT, map }, rules: [] });
+    assert.strictEqual(r.ok, false, `${JSON.stringify(map)} was accepted`);
+    assert.match(r.errors.join('\n'), /impact\.map: /);
+  }
+});
+
+test('impact field types: non-object block, wrong-typed fields, non-integer maxAgeCommits, unknown keys (#4024)', () => {
+  const notObj = readJson({ checks: { tests: 'npm test' }, impact: 'yes', rules: [] });
+  assert.strictEqual(notObj.ok, false);
+  assert.match(notObj.errors.join('\n'), /impact: must be an object/);
+  const bad = readJson({ checks: { tests: 'npm test' }, impact: { suite: 7, command: 7, tests: ['ok', ''], maxAgeCommits: 1.5, fetch: 3, extra: 1, other: 2 }, rules: [] });
+  assert.strictEqual(bad.ok, false);
+  const joined = bad.errors.join('\n');
+  assert.match(joined, /impact\.suite: /);
+  assert.match(joined, /impact\.command: /);
+  assert.match(joined, /impact\.tests: /);
+  assert.match(joined, /impact\.maxAgeCommits: /);
+  assert.match(joined, /impact\.fetch: /);
+  assert.match(joined, /impact: unknown key\(s\) "extra", "other"/);
+  const missing = readJson({ checks: { tests: 'npm test' }, impact: {}, rules: [] });
+  assert.strictEqual(missing.ok, false);
+  assert.match(missing.errors.join('\n'), /impact\.suite: /);
+  assert.match(missing.errors.join('\n'), /impact\.command: /);
+  assert.match(missing.errors.join('\n'), /impact\.tests: /);
+});
+
+test('an impact rule needs the impact block (#4024)', () => {
+  const r = readJson({ checks: { tests: 'npm test' }, rules: [{ match: 'src/**', impact: true, static: true }] });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.errors.join('\n'), /rules\[0\]\.impact: .*impact block/);
+  const invalid = readJson({ checks: { tests: 'npm test' }, impact: { ...IMPACT, command: 'run' }, rules: [{ match: 'src/**', impact: true, static: true }] });
+  assert.strictEqual(invalid.ok, false);
+  assert.match(invalid.errors.join('\n'), /rules\[0\]\.impact: .*impact block/);
+});
+
+test('an impact rule may not also carry suites, except the "*" legacy fallback (#4024)', () => {
+  const r = readJson({ checks: { tests: 'npm test' }, impact: IMPACT, rules: [{ match: 'src/**', impact: true, suites: ['tests'], static: true }] });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.errors.join('\n'), /rules\[0\]\.suites: .*impact rule/);
+  // "*" is what a reader built before `impact` existed needs to read the rule (as: every suite).
+  const legacy = readJson({ checks: { tests: 'npm test' }, impact: IMPACT, rules: [{ match: 'src/**', impact: true, suites: '*', static: true }] });
+  assert.strictEqual(legacy.ok, true, JSON.stringify(legacy.errors));
+  assert.deepStrictEqual(legacy.decl.rules[0], { match: 'src/**', suites: null, impact: true, static: true }, 'a current reader ignores the fallback');
+});
+
+test('rules[i].impact must be the boolean true when present; an impact rule still needs a boolean static (#4024)', () => {
+  for (const impact of [false, 'true', 1, null]) {
+    const r = readJson({ checks: { tests: 'npm test' }, impact: IMPACT, rules: [{ match: 'src/**', impact, suites: '*', static: true }] });
+    assert.strictEqual(r.ok, false, `${JSON.stringify(impact)} was accepted`);
+    assert.match(r.errors.join('\n'), /rules\[0\]\.impact: must be true/);
+  }
+  const noStatic = readJson({ checks: { tests: 'npm test' }, impact: IMPACT, rules: [{ match: 'src/**', impact: true }] });
+  assert.strictEqual(noStatic.ok, false);
+  assert.match(noStatic.errors.join('\n'), /rules\[0\]\.static: must be a boolean/);
+});
+
+test('impact with a tool-scoped tests command is refused (#4024)', () => {
+  const r = readJson({ checks: { tests: 'pnpm vitest --changed {base}' }, impact: IMPACT, rules: [] });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.errors.join('\n'), /impact: .*\{base\}/);
+});
+
+test('no impact block → decl.impact is null and rules keep exactly {match, suites, static} (#4024)', () => {
+  const r = readJson(EXAMPLE);
+  assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
+  assert.strictEqual(r.decl.impact, null);
+  assert.deepStrictEqual(r.decl.rules[2], { match: 'packages/shared/**', suites: '*', static: true });
+  assert.ok(r.decl.rules.every((rule) => !('impact' in rule)), 'a non-impact rule must carry no impact key');
+  const zero = readJson({ checks: {}, rules: [] });
+  assert.strictEqual(zero.ok, true);
+  assert.strictEqual(zero.decl.impact, null);
+});

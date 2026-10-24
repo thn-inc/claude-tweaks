@@ -18,8 +18,22 @@ const { globToRegExp } = require('../issues/blast-radius');
 const DECLARATION_PATH = '.claude-tweaks/verify-scope.json';
 const DEFAULT_MAX_RETRIES = 1;
 const MAX_RETRIES_CEILING = 2;
+const DEFAULT_MAX_AGE_COMMITS = 200;
+const GIT_COMMON_DIR_TOKEN = '{git-common-dir}';
+const IMPACT_KEYS = ['suite', 'command', 'tests', 'maxAgeCommits', 'map', 'fetch'];
 
 function isPlainObject(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }
+
+// impact.map (#4024): a relative path (either separator) with no `..`
+// segment, optionally behind a leading `{git-common-dir}/` — the token is
+// expanded only there, so it may not appear anywhere else.
+function isSafeMapPath(p) {
+  if (typeof p !== 'string' || p === '') return false;
+  const rest = p.startsWith(`${GIT_COMMON_DIR_TOKEN}/`) ? p.slice(GIT_COMMON_DIR_TOKEN.length + 1) : p;
+  if (rest === '' || rest.includes(GIT_COMMON_DIR_TOKEN)) return false;
+  if (rest.startsWith('/') || rest.startsWith('\\') || /^[A-Za-z]:/.test(rest)) return false;
+  return !rest.split(/[\\/]/).includes('..');
+}
 
 // `selfPath` (optional): the repo-relative path of the file actually read,
 // when the caller knows it — a `--scope` naming a declaration outside the
@@ -95,6 +109,40 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     }
   }
 
+  // impact (#4024): test-impact selection for one declared suite — a rule
+  // `{match, impact: true, static}` runs only the test files (the `tests`
+  // globs) a traced map says read a changed path, via `command`'s {files}.
+  // `map` null means the default `{git-common-dir}/` + impact.js's
+  // DEFAULT_MAP_NAME. Incompatible with a tool-scoped command ({base}): that
+  // tool already selects its own tests.
+  let impact = null;
+  if (raw.impact !== undefined) {
+    const before = errors.length;
+    const blk = raw.impact;
+    if (!isPlainObject(blk)) {
+      errors.push('impact: must be an object of {suite, command, tests, maxAgeCommits?, map?, fetch?}');
+    } else {
+      const unknown = Object.keys(blk).filter((k) => !IMPACT_KEYS.includes(k));
+      if (unknown.length) errors.push(`impact: unknown key(s) ${unknown.map((k) => JSON.stringify(k)).join(', ')} (allowed: ${IMPACT_KEYS.join(', ')})`);
+      if (toolScoped) errors.push('impact: cannot combine with a tool-scoped checks.tests command ({base}) — that tool selects its own tests');
+      if (typeof blk.suite !== 'string' || blk.suite === '') errors.push('impact.suite: must be a declared suite name');
+      else if (!declared.has(blk.suite)) errors.push(`impact.suite: unknown suite "${blk.suite}" (declared: ${suites.join(', ') || 'none'})`);
+      if (typeof blk.command !== 'string' || !blk.command.includes('{files}')) errors.push('impact.command: must be a string containing {files}');
+      if (!Array.isArray(blk.tests) || blk.tests.length === 0 || blk.tests.some((g) => typeof g !== 'string' || g === '')) errors.push('impact.tests: must be a non-empty array of non-empty test-file glob strings');
+      if (blk.maxAgeCommits !== undefined && (!Number.isInteger(blk.maxAgeCommits) || blk.maxAgeCommits < 1)) errors.push('impact.maxAgeCommits: must be a positive integer');
+      if (blk.map !== undefined && !isSafeMapPath(blk.map)) errors.push(`impact.map: must be a repo-relative path with no .. segment, or start with ${GIT_COMMON_DIR_TOKEN}/ followed by such a path`);
+      if (blk.fetch !== undefined && (typeof blk.fetch !== 'string' || blk.fetch.trim() === '')) errors.push('impact.fetch: must be a non-empty command string when present');
+      if (errors.length === before) {
+        impact = {
+          suite: blk.suite, command: blk.command, tests: blk.tests,
+          maxAgeCommits: blk.maxAgeCommits === undefined ? DEFAULT_MAX_AGE_COMMITS : blk.maxAgeCommits,
+          map: blk.map === undefined ? null : blk.map,
+          fetch: blk.fetch === undefined ? null : blk.fetch,
+        };
+      }
+    }
+  }
+
   // rules
   const rules = [];
   if (!Array.isArray(raw.rules)) {
@@ -104,6 +152,19 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
       const where = `rules[${i}]`;
       if (!isPlainObject(rule)) { errors.push(`${where}: must be an object`); return; }
       if (typeof rule.match !== 'string' || rule.match === '') errors.push(`${where}.match: must be a non-empty glob string`);
+      if (rule.impact === true) {
+        // An impact rule (#4024): its suite is impact.suite. It may carry `"suites": "*"` as the
+        // expand-contract legacy fallback: a reader built before `impact` existed rejects a rule with
+        // no `suites`, but reads this one as "every suite" (full) and ignores `impact`. Current readers
+        // never read it. Removal condition: drop it from the committed declaration once no installed
+        // plugin build older than the release that shipped `impact` can read it.
+        if (rule.suites !== undefined && rule.suites !== '*') errors.push(`${where}.suites: an impact rule may carry only "suites": "*" (the legacy fallback); it runs impact.suite`);
+        if (!impact) errors.push(`${where}.impact: needs a valid top-level impact block`);
+        if (typeof rule.static !== 'boolean') errors.push(`${where}.static: must be a boolean`);
+        rules.push({ match: rule.match, suites: null, impact: true, static: rule.static });
+        return;
+      }
+      if (rule.impact !== undefined) errors.push(`${where}.impact: must be true when present`);
       let ruleSuites;
       if (rule.suites === '*') {
         ruleSuites = '*';
@@ -191,7 +252,7 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     ok: true,
     decl: {
       checks: { types: typeof checks.types === 'string' ? checks.types : null, lint: typeof checks.lint === 'string' ? checks.lint : null, tests },
-      suites, toolScoped, retry, rules, flaky, preExisting, generated,
+      suites, toolScoped, retry, rules, flaky, preExisting, generated, impact,
     },
   };
 }
@@ -207,4 +268,6 @@ function generatedExemption(dirtyPaths, generated) {
   return allGenerated ? [...new Set(dirtyPaths)].sort() : null;
 }
 
-module.exports = { readDeclaration, generatedExemption, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING };
+module.exports = {
+  readDeclaration, generatedExemption, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING, DEFAULT_MAX_AGE_COMMITS, GIT_COMMON_DIR_TOKEN,
+};
