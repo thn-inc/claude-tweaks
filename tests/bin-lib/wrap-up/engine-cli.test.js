@@ -182,6 +182,7 @@ function withLinkedWorktree(fn) {
       path.join(mainDir, 'docs', 'journeys', 'j1.md'),
       ['---', 'title: Journey 1', 'files:', '  - src-a.js', '---', '', '# Journey 1', ''].join('\n'),
     );
+    fs.writeFileSync(path.join(mainDir, 'docs', 'guide.md'), '# Guide\n');
     git(['add', '.'], mainDir);
     git(['commit', '-q', '-m', 'base'], mainDir);
     const baseSha = git(['rev-parse', 'HEAD'], mainDir);
@@ -238,6 +239,33 @@ test('AC2: plan run from a linked worktree still appends telemetry to the main c
     assert.strictEqual(r.status, 0, r.stderr);
     assert.ok(fs.existsSync(path.join(mainDir, '.claude-tweaks', 'wrap-up-outcomes.tsv')));
     assert.strictEqual(fs.existsSync(path.join(wtDir, '.claude-tweaks', 'wrap-up-outcomes.tsv')), false);
+  });
+});
+
+// #3925: the references row's renamed/deleted candidates come from the same
+// facts root — a rename committed on main after the branch point must not
+// leak into a plan run from the worktree.
+test('AC1.1: plan run from a linked worktree reports only the worktree branch renames after main moves on (#3925)', () => {
+  withLinkedWorktree(({ mainDir, wtDir, baseSha }) => {
+    git(['mv', 'docs/guide.md', 'docs/guide-wt.md'], wtDir);
+    git(['commit', '-q', '-m', 'wt rename'], wtDir);
+    git(['mv', 'docs/journeys/j1.md', 'docs/journeys/j1-main.md'], mainDir);
+    git(['commit', '-q', '-m', 'main moves on'], mainDir);
+
+    const runDir = fs.mkdtempSync(path.join(mainDir, 'rundir-'));
+    const r = run(['plan', '--run-dir', runDir, '--base', baseSha, '--dry-run'], { cwd: wtDir });
+    assert.strictEqual(r.status, 0, r.stderr);
+    const rows = JSON.parse(r.stdout).rows;
+
+    const referencesRow = rows.find((row) => row.id === 'references');
+    assert.strictEqual(referencesRow.gate, 'open');
+    assert.deepStrictEqual(
+      referencesRow.scope.candidates,
+      [{ status: 'R', oldPath: 'docs/guide.md', newPath: 'docs/guide-wt.md' }],
+    );
+
+    const journeysRow = rows.find((row) => row.id === 'journeys');
+    assert.deepStrictEqual(journeysRow.scope.candidates, ['docs/journeys/j1.md', 'docs/journeys/j2.md']);
   });
 });
 
