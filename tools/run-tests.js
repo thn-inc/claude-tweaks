@@ -11,7 +11,10 @@
 //
 // Roots default to the "test" script's set (`tests`, `tools/upstream-drift/tests`); pass one or
 // more repo-relative root paths as CLI positional args to override — `test:perf` invokes this as
-// `node tools/run-tests.js perf`.
+// `node tools/run-tests.js perf`. `--files-from <list>` instead runs exactly the files the list
+// names, one repo-relative path per line (blank lines ignored, resolved against the repo root
+// whatever the caller's cwd) — verify.js's impact-selected subset (#4024). An empty list, a
+// missing file or a non-`*.test.js` entry exits 1, never handing `node --test` zero files.
 //
 // Elsewhere the explicit file list goes to `node --test`; on Windows (Node >= 22) the root globs
 // go instead, because ~780 paths overflow the 32,767-char command line (#3316).
@@ -76,6 +79,22 @@ function listTestFiles(cwd, roots) {
   return files;
 }
 
+// The entries of a `--files-from` list: one path per line, CRs stripped, blank lines and repeats
+// dropped, order kept. Throws (naming the entry) on a non-`*.test.js` entry or one `exists` says is
+// not a file, and on a list naming nothing — so a subset run can never reach `node --test` empty.
+function readFileList(text, { exists }) {
+  const entries = [];
+  for (const raw of String(text).split('\n')) {
+    const entry = raw.replace(/\r$/, '');
+    if (entry.trim() === '' || entries.includes(entry)) continue;
+    if (!entry.endsWith('.test.js')) throw new Error(`listed entry ${JSON.stringify(entry)} is not a *.test.js file`);
+    if (!exists(entry)) throw new Error(`listed test file ${JSON.stringify(entry)} does not exist`);
+    entries.push(entry);
+  }
+  if (entries.length === 0) throw new Error('the list names no test files');
+  return entries;
+}
+
 // Matches a positive integer with no sign, fraction, or leading zero — the shape both
 // `CT_TEST_CONCURRENCY` and `CT_TEST_SUITE_SLOTS` accept.
 const POSITIVE_INT = /^[1-9]\d*$/;
@@ -109,13 +128,15 @@ function resolveSlots(env, log) {
 // the 32,767-char command line (#3316), so there it passes the root globs, which needs Node >= 22.
 // `--test-concurrency=<n>` follows `--test` on both branches (#3969); `concurrency` must be a
 // positive integer, checked before the win32/Node<22 error so that error keeps its own message.
+// `roots === null` is an explicit `--files-from` subset, which has no root globs to fall back to:
+// its file list is passed on every platform.
 // Pure: `platform`, `nodeMajor` and `concurrency` are parameters, never read from `process`.
 function buildTestArgs(files, roots, { platform, nodeMajor, concurrency }) {
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw new Error(`buildTestArgs: concurrency must be a positive integer (got ${String(concurrency)}).`);
   }
   const head = ['--test', `--test-concurrency=${concurrency}`];
-  if (platform !== 'win32') return [...head, ...files];
+  if (platform !== 'win32' || roots === null) return [...head, ...files];
   if (nodeMajor < 22) {
     throw new Error(
       'the Windows command line cannot hold the explicit test-file list, and `node --test` ' +
@@ -341,19 +362,44 @@ function sweepStaleRoots({ dir, isAlive }) {
 
 module.exports = {
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots,
-  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots,
+  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList,
 };
 
 if (require.main === module) {
-  const argRoots = process.argv.slice(2);
-  const roots = argRoots.length ? argRoots : DEFAULT_ROOTS;
-  const files = listTestFiles(REPO_ROOT, roots).map((f) => path.relative(REPO_ROOT, f));
+  const argv = process.argv.slice(2);
+  let roots;
+  let files;
+  if (argv.includes('--files-from')) {
+    // A subset plus roots would be ambiguous (which wins?), so the flag stands alone.
+    if (argv.length !== 2 || argv[0] !== '--files-from') {
+      console.error('run-tests.js: --files-from <list> takes exactly one list file and no root arguments.');
+      process.exit(1);
+    }
+    try {
+      const isFile = (entry) => {
+        try {
+          return fs.statSync(path.resolve(REPO_ROOT, entry)).isFile();
+        } catch (_) {
+          return false;
+        }
+      };
+      files = readFileList(fs.readFileSync(argv[1], 'utf8'), { exists: isFile })
+        .map((entry) => path.relative(REPO_ROOT, path.resolve(REPO_ROOT, entry)));
+    } catch (err) {
+      console.error(`run-tests.js: --files-from ${argv[1]}: ${err.message}`);
+      process.exit(1);
+    }
+    roots = null;
+  } else {
+    roots = argv.length ? argv : DEFAULT_ROOTS;
+    files = listTestFiles(REPO_ROOT, roots).map((f) => path.relative(REPO_ROOT, f));
+  }
 
   // `node --test` with zero file arguments falls back to its own default-pattern
   // auto-discovery and can exit 0 having run nothing — "the suite gets quieter, not
   // redder" (docs/incident-log.md:421). A rename/typo of a root must fail loudly here,
   // not degrade into a silently-green `npm test`/`npm run test:perf`.
-  if (files.length === 0) {
+  if (roots !== null && files.length === 0) {
     console.error(
       `run-tests.js: found zero *.test.js files under ${roots.join(', ')} — refusing to run ` +
         "`node --test` with no explicit files (it would silently discover its own defaults " +
