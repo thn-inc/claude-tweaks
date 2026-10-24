@@ -74,22 +74,25 @@ const ROWS = [
   ['AC2.1: behind origin by run-dir-only commits stops', (fx) => pushRunDirUpstream(fx), false],
   ['AC2.2: a commit outside run dirs stops', (fx) => { runDirCommit(fx, 1); fx.commit(fx.work, 'src.txt'); }, false],
   ['AC2.1: wrong branch stops', (fx) => fx.run(fx.work, ['switch', '-c', 'feature']), false],
+  // origin unreachable: the fetch fails, and the check must stop rather than compare stale refs.
+  ['AC2.1: a failed fetch stops', (fx) => fx.run(fx.work, ['remote', 'set-url', 'origin', path.join(fx.root, 'missing.git')]), false],
 ];
 
-test('AC1.1/AC2.1/AC2.2: Step 3 check passes exactly when the review tree is acceptable', () => {
-  const fence = checkFence(stepThreeOf(readText(SKILL)));
-  for (const [label, arrange, passes] of ROWS) {
+// One test per row, so a failing row does not hide the rest.
+for (const [label, arrange, passes] of ROWS) {
+  test(label, () => {
+    const fence = checkFence(stepThreeOf(readText(SKILL)));
     const fx = originWithTwoClones('release-review-tree-');
     try {
       arrange(fx);
       const status = runCheck(fence, fx);
-      if (passes) assert.equal(status, 0, `${label}: expected exit 0, got ${status}`);
-      else assert.notEqual(status, 0, `${label}: expected a non-zero exit, got 0`);
+      if (passes) assert.equal(status, 0, `expected exit 0, got ${status}`);
+      else assert.notEqual(status, 0, 'expected a non-zero exit, got 0');
     } finally {
       fs.rmSync(fx.root, { recursive: true, force: true });
     }
-  }
-});
+  });
+}
 
 test('AC3.1: go-red: dropping the pathspec exclusion stops the run-dir-only row', () => {
   const fence = checkFence(stepThreeOf(readText(SKILL)));
@@ -128,6 +131,10 @@ const STOP_FACTS = [
   [/bare .git push origin \{branch\}./, 'the recovery pushes from the main checkout with a bare git push'],
   [/rev-list --left-right --count HEAD\.\.\.origin\/\{branch\}/, 'the counts come from rev-list --left-right --count'],
   [/switch \{branch\}/, 'the wrong-branch recovery switches back to {branch}'],
+  [/review tree is not origin\/\{branch\} \(on \{current\}\)/, 'the wrong-branch stop line names the current branch'],
+  [/review tree is not origin\/\{branch\} \(\{ahead\} ahead, 0 behind — changes outside run dirs\)/, 'the tree-differs stop line names the changes outside run dirs'],
+  [/git -C "\$RUN_ROOT" diff --name-only origin\/\{branch\} HEAD -- ':!\.claude-tweaks\/pipelines'/, 'the tree-differs case lists the changed files with diff --name-only'],
+  [/A failed fetch reports git's stderr verbatim/,'a failed fetch reports git stderr verbatim, not the counts line'],
 ];
 const missingStopFacts = (text) => STOP_FACTS.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
 
@@ -151,9 +158,8 @@ test('AC2.3/AC3.1: each stop-line fact can actually go red on its own (discrimin
 
 test('marker line keeps {k} and adds the two-sha clause', () => {
   const stepThree = stepThreeOf(readText(SKILL));
-  assert.ok(stepThree.includes('## /review marker: {k} existing lines'), 'Step 3 marker line must keep "## /review marker: {k} existing lines"');
   assert.ok(
-    stepThree.includes('review tree HEAD {head-sha} is origin/{branch} {tip-sha} plus run-dir-only commits'),
-    'Step 3 marker line must add the "review tree HEAD {head-sha} is origin/{branch} {tip-sha} plus run-dir-only commits" clause',
+    stepThree.includes('## /review marker: {k} existing lines{; review tree HEAD {head-sha} is origin/{branch} {tip-sha} plus run-dir-only commits}. Reversibility: n/a (marker).'),
+    'Step 3 marker line must keep "## /review marker: {k} existing lines" and add the optional "{; review tree HEAD {head-sha} is origin/{branch} {tip-sha} plus run-dir-only commits}" clause',
   );
 });
