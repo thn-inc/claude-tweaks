@@ -225,7 +225,7 @@ function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveR
     return { cleared: true, resolved: null };
   }
   let resolved;
-  try { resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why }); } catch { return { cleared: false, resolved: null }; }
+  try { resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why, pathExists: fs.existsSync }); } catch { return { cleared: false, resolved: null }; }
   if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) return { cleared: false, resolved };
   recordResidueSuccess(target, reason, targetPath);
   return { cleared: true, resolved };
@@ -250,7 +250,7 @@ function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError,
   try {
     escalate({
       repo: repoSlug, reason, targetPath,
-      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner,
+      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner, pathExists: fs.existsSync,
     });
   } catch { /* best-effort — never let escalation turn a residue-tracking call into a thrown error */ }
 }
@@ -295,7 +295,7 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
     delete failures[key];
     changed = true;
     if (entry && entry.escalated) {
-      try { resolve({ repo: repoSlug, reason, targetPath, runner }); } catch { /* best-effort */ }
+      try { resolve({ repo: repoSlug, reason, targetPath, runner, pathExists: fs.existsSync }); } catch { /* best-effort */ }
     }
   }
   if (changed) writeCache(root, { ...cache, residueFailures: failures });

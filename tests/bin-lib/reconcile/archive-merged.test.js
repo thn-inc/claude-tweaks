@@ -19,6 +19,7 @@ const {
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure, cachePath } = require('../../../plugin/bin/lib/reconcile/cache');
+const { structurallyStuckBody, parseStuckPaths } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
 const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
 const { readText } = require('../../helpers/read-skill');
@@ -1802,6 +1803,49 @@ test('trackArchiveResult: a success clears a prior failure streak for the same d
   trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'move-failed' });
   assert.equal(listResidueFailures(root).length, 1);
   trackArchiveResult(root, 'o/r', dir, { ok: true, movedEntries: [] });
+  assert.deepEqual(listResidueFailures(root), []);
+});
+
+// #4202: a dir reconcile itself archives must come off the consolidated
+// stuck-paths record, not just drop its cache entry.
+function archivedStuckDirFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4202-'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-1');
+  const live = path.join(root, 'live');
+  fs.mkdirSync(live);
+  recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck at no-pr', threshold: 1 });
+  return { root, dir, live };
+}
+
+test('#4202 AC1.1 AC1.2: trackArchiveResult: archive success resolves an escalated structurally-stuck entry off the consolidated record', () => {
+  const { root, dir, live } = archivedStuckDirFixture();
+  let edited = null;
+  const runner = (argv) => {
+    if (argv[1] === 'list') return JSON.stringify([{ number: 2724, title: 't', body: structurallyStuckBody([dir, live]), createdAt: '2024-01-01T00:00:00Z', state: 'OPEN' }]);
+    if (argv[1] === 'edit') { edited = argv[argv.indexOf('--body') + 1]; return ''; }
+    return '';
+  };
+  trackArchiveResult(root, 'o/r', dir, { ok: true, movedEntries: [] }, { runner });
+  assert.deepEqual(parseStuckPaths(edited), [live]);
+  assert.deepEqual(listResidueFailures(root), []);
+});
+
+test('#4202 AC2.1: trackArchiveResult: a failed resolve keeps the structurally-stuck entry for the next pass', () => {
+  const { root, dir } = archivedStuckDirFixture();
+  const runner = (argv) => {
+    if (argv[1] === 'list') return JSON.stringify([{ number: 2724, title: 't', body: structurallyStuckBody([dir]), createdAt: '2024-01-01T00:00:00Z', state: 'OPEN' }]);
+    throw new Error('gh edit failed');
+  };
+  trackArchiveResult(root, 'o/r', dir, { ok: true, movedEntries: [] }, { runner });
+  assert.deepEqual(listResidueFailures(root).map((e) => e.reason), ['structurally-stuck']);
+});
+
+test('#4202 trackArchiveResult: an unescalated structurally-stuck entry is cleared with no gh call', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4202-unescalated-'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-2');
+  recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck at no-pr' });
+  const runner = () => { throw new Error('gh must not be called'); };
+  assert.doesNotThrow(() => trackArchiveResult(root, 'o/r', dir, { ok: true, movedEntries: [] }, { runner }));
   assert.deepEqual(listResidueFailures(root), []);
 });
 
