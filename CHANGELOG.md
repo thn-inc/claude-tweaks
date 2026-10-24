@@ -53,6 +53,19 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.154.0](https://github.com/thn-inc/claude-tweaks/compare/v6.153.0...v6.154.0) (2026-10-24)
+
+
+### Features
+
+* give every Review Console item a final outcome and backfill the console backlog ([#3992](https://github.com/thn-inc/claude-tweaks/issues/3992)) ([6510874](https://github.com/thn-inc/claude-tweaks/commit/6510874174729159ee6f724f746a5c5dd208843a)), closes [#3816](https://github.com/thn-inc/claude-tweaks/issues/3816) [#3946](https://github.com/thn-inc/claude-tweaks/issues/3946) [#3949](https://github.com/thn-inc/claude-tweaks/issues/3949) [#3950](https://github.com/thn-inc/claude-tweaks/issues/3950)
+
+
+### Bug Fixes
+
+* reflect's integration-branch probe reads a failed fetch… ([#4069](https://github.com/thn-inc/claude-tweaks/issues/4069)) ([bddfa50](https://github.com/thn-inc/claude-tweaks/commit/bddfa50bbacec82a8887edb0684b6a5095c13b74))
+* staged-patch gitEnv leaks env-injected git config… ([#3997](https://github.com/thn-inc/claude-tweaks/issues/3997)) ([d36f5f6](https://github.com/thn-inc/claude-tweaks/commit/d36f5f6a54367f74e589527555a81ab403ba3058))
+
 ## [6.153.0](https://github.com/thn-inc/claude-tweaks/compare/v6.152.0...v6.153.0) (2026-10-24)
 
 
