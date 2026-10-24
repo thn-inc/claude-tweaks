@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/issues/comment-trust.js
+  - plugin/bin/find-run-comment.js
   - plugin/skills/_shared/pr-run-comments.md
   - plugin/skills/demo/entry-paths.md
   - plugin/bin/lib/wrap-up/engine-verify.js
@@ -74,9 +75,17 @@ files:
 - **Should understand:** The pasted filter reads either spelling (`(.authorAssociation // .author_association)`), so the REST and MCP shape is judged exactly like the `gh` shape. The skip line names the REST comment by its `url` (or `html_url`, then `id`) and its author by `user.login`, the same text `untrustedSkipNote()` prints.
 - **Red flags:** Every marker comment, the maintainer's included, reads as untrusted on a `gh`-absent run (the failure before #3823: the jq keyed on `authorAssociation` only). A skip line reading `by unknown (no association)` for a REST comment that does carry `user.login` and `author_association`.
 
+### 8. Find a run comment from inside a dispatched worktree session — `bin/find-run-comment.js`
+- **URL:** `_shared/pr-run-comments.md`'s Find step, worktree-safe form. First `gh pr view {n} --repo {owner}/{repo} --json comments > {file}`, then `node {plugin-root}/bin/find-run-comment.js --comments-file {file} --kind verdict`.
+- **Action:** A pipeline agent in a worktree-isolated session looks up the run's `verdict` comment. The PR also carries a stranger's copy of the same marker.
+- **Should feel:** The same as the jq shortcut. One JSON line comes back, `{kind, id, ids, skipped}`. `id` is the maintainer's comment, and `skipped` holds the stranger's skip line, ready to relay.
+- **Should understand:** The CLI judges trust through `comment-trust.js`'s `isTrustedComment`/`untrustedSkipNote`, the same rule the jq filter pastes. A test pins parity with that jq. An empty file left by a failed fetch, or a `{"message":"Not Found"}` body, is exit 1 (a failed find), never "not found".
+- **Red flags:** The stranger's comment id returned as `id`. A skipped comment missing from `skipped`. A failed fetch read as "no comment yet", which would make the run post a duplicate.
+
 ## Origin
 - Created during build of #3358 (filter run-comment marker reads by the posting identity, not the marker alone)
 - Steps 1-5 built in this session
 - Step 6 added during build of #3766 (digest dedup and the tidy digest sweep trust only owner/member/collaborator comments)
 - Step 7 added, and step 1's association wording updated, during build of #3823 (trusted-author jq reads both association spellings, so it works on the REST/MCP transport)
+- Step 8 added during build of #3936 (the Find step's worktree-safe form, `bin/find-run-comment.js`, applies the same trust rule to a fetched comments file)
 - Related specs: #3358, #3766, #3823, #2821 (the try-it walkthrough demo reads back), #309 (pending-grant maturation)

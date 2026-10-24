@@ -137,8 +137,26 @@ plugin's PR-comment surface that edits rather than always-appends.
 1. **Find.** Resolve `{host}`/`{owner}`/`{repo}` once (`gh repo view --json nameWithOwner,url` —
    `{owner}/{repo}` from `nameWithOwner`, `{host}` from the returned `url`'s authority; a bare
    `OWNER/REPO` handed to `--repo` is resolved by `gh` against its default host, `github.com`,
-   unless the value carries the host as `HOST/OWNER/REPO` — so every `--repo` below is the
-   host-qualified form), then:
+   unless the value carries the host as `HOST/OWNER/REPO`).
+
+   In a worktree-isolated session, use the worktree-safe form; it also runs outside one. Each block
+   is its own plain Bash call, with no chain, no `--jq`, and no host in `--repo`:
+
+   ```bash
+   gh pr view {pr-number} --repo {owner}/{repo} --json comments > /tmp/{kind}-comments-{n}.json
+   ```
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/find-run-comment.js" --comments-file /tmp/{kind}-comments-{n}.json --kind {kind}
+   ```
+
+   It prints one JSON line, `{kind, id, ids, skipped}`. `id` is the first trusted marker comment's GraphQL node ID, or `null` when none is found. `ids` lists every trusted match, for the race case below. `skipped` holds one skip-notice line per untrusted marker comment; relay them in the output. It applies the same first-line marker `startswith` test and **Trusted authors** rule as the jq shortcut below, through `bin/lib/issues/comment-trust.js`.
+
+   - Substitute the literal plugin root for `${CLAUDE_PLUGIN_ROOT}`. A variable script operand is refused in a worktree session (`_shared/scratch-worktree.md` §7).
+   - A bare `{owner}/{repo}` resolves against `gh`'s default host, `github.com`. On another host, pass `{host}/{owner}/{repo}` as in the shortcut.
+   - A failed find is exit 1 (the payload is unreadable or not a comments list, e.g. an empty file left by a failed fetch) or exit 2 (a malformed invocation). Route it to **On failure** below.
+
+   Outside a worktree-isolated session, the jq shortcut below does the same lookup, with every `--repo` host-qualified (`{host}/{owner}/{repo}`). It also applies **Trusted authors**. Inside one, each fence passes the worktree guard as a lone command, but chaining an unquoted `$?` onto it (`; echo exit=$?`) is refused (`_shared/scratch-worktree.md` §7), so run each fence as one plain command or use the worktree-safe form.
 
    ```bash
    gh pr view {pr-number} --repo {host}/{owner}/{repo} --json comments \
@@ -159,9 +177,10 @@ plugin's PR-comment surface that edits rather than always-appends.
    GraphQL mutation rather than a REST PATCH to `issues/comments/{id}`, which would need the
    numeric ID this command doesn't return.
 
-   Zero or one result is the expected case. More than one (a race between two concurrent
-   posts of the same kind) is a hedge, not the normal path — take the **first** and log the
-   anomaly; do not attempt to reconcile or delete the extra here.
+   Zero or one result is the expected case. More than one (`ids` has more than one entry, or the
+   shortcut prints more than one id; a race between two concurrent posts of the same kind) is a
+   hedge, not the normal path — take the **first** and log the anomaly; do not attempt to reconcile
+   or delete the extra here.
 
 2. **Found → update in place**, preserving the comment's identity (same GraphQL id, no new
    comment created, no reordering in the thread). `--hostname {host}` is required here even
