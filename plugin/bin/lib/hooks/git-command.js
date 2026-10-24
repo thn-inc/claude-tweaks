@@ -566,10 +566,13 @@ const WRAPPER_WORDS = new Set(['sudo', 'doas', 'env', 'exec', 'command', 'nohup'
 
 // The program names one raw token may stand for, lowercased, with quotes and
 // backslashes removed: `bas\h`, `'/bin/bash'`, `C:\bin\sh.exe` each yield a name.
+// Fix round 2 (#3989): a leading group or process-substitution opener (`(`, `{`,
+// `>(`, `<(`) is dropped, then a glued redirection (`sh<<EOF`), then a trailing
+// group closer (`bash)`, `bash;`, `}`), before the basename lookup.
 function programNames(tok) {
-  const noQuotes = tok.replace(/["']/g, '');
-  const bySlash = noQuotes.split('/').pop().replace(/\\/g, '');
-  const byBackslash = noQuotes.split(/[\\/]/).pop();
+  const s = tok.replace(/["']/g, '').replace(/^(?:[({]|[<>]\()+/, '').replace(/[<>].*$/, '').replace(/[);}]+$/, '');
+  const bySlash = s.split('/').pop().replace(/\\/g, '');
+  const byBackslash = s.split(/[\\/]/).pop();
   return [bySlash, byBackslash].map((n) => n.replace(/\.exe$/i, '').toLowerCase());
 }
 
@@ -607,8 +610,9 @@ function bodyRunsAsShell(lineText) {
 
 // Reads a heredoc operand starting just after `<<`: an optional `-`, blanks, then
 // the delimiter word. The word ends at unquoted whitespace or a shell metachar.
-// Returns { delim, quoted, stripTabs, end }, or null when the operand is empty
-// or its quoting is unterminated (not an opener).
+// Returns { delim, quoted, stripTabs, end }, { unprovable: true, end } for a
+// `$'...'`/`$"..."` delimiter, or null when the operand is empty or its quoting
+// is unterminated (not an opener).
 function readHeredocOpener(str, j) {
   let stripTabs = false;
   if (str[j] === '-') { stripTabs = true; j += 1; }
@@ -626,6 +630,9 @@ function readHeredocOpener(str, j) {
   }
   if (quote !== null) return null;
   const raw = str.slice(start, j);
+  // Fix round 2 (#3989): bash decodes `$'...'` / `$"..."` in the delimiter word, which
+  // this parser does not, so the terminator cannot be known: the opener is unprovable.
+  if (/^\$['"]/.test(raw)) return { unprovable: true, end: j };
   const delim = decodeHeredocWord(raw);
   if (!delim) return null;
   return { delim, quoted: /["'\\]/.test(raw), stripTabs, end: j };
@@ -767,6 +774,10 @@ function scanHeredocs(str) {
     } else if (ch === '<' && str[i + 1] === '<') {
       // A `<<` inside an open `((...))` is an arithmetic shift, not an opener.
       const h = parenDepth === 0 ? readHeredocOpener(str, i + 2) : null;
+      if (h && h.unprovable) {
+        out.push(str.slice(i));
+        break;
+      }
       if (h) {
         out.push(str.slice(i, h.end));
         pending.push(h);

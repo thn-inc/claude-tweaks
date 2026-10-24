@@ -459,6 +459,35 @@ test('#3989: the shell carve-out covers su, tcsh, versioned shells, backslash-es
   assert.deepStrictEqual(fileWriteTargets('sudo node x.js <<EOF\nif (a > 0) b();\nEOF', '/r'), [], 'a wrapper running a non-shell program is not widened');
 });
 
+// Fix round 2 (#3989): a shell reader the carve-out must still recognize, in the shapes
+// a glued operator, a group, or a process substitution gives it. Each body runs as
+// shell in bash, so its `echo x > f.js` must still resolve.
+test('#3989: a shell glued to its heredoc operator (`sh<<EOF`, `bash<<-EOF`) keeps its body visible', () => {
+  const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
+  assert.deepStrictEqual(fileWriteTargets('sh<<EOF\necho x > f.js\nEOF', '/r'), f);
+  assert.deepStrictEqual(fileWriteTargets('bash<<-EOF\necho x > f.js\nEOF', '/r'), f);
+});
+
+test('#3989: a shell in a group or process substitution (`(bash)`, `| (bash)`, `tee >(bash)`) keeps its body visible', () => {
+  const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
+  assert.deepStrictEqual(fileWriteTargets('(bash) <<EOF\necho x > f.js\nEOF', '/r'), f);
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF | (bash)\necho x > f.js\nEOF', '/r'), f);
+  // `tee` names every non-flag argument as a file, so the `>(bash)` word also
+  // resolves, as it did before #3989; the body's real write must be among them.
+  assert.ok(fileWriteTargets('cat <<EOF | tee >(bash)\necho x > f.js\nEOF', '/r').some((t) => t.file === path.resolve('/r', 'f.js')));
+});
+
+// Fix round 2 (#3989): bash decodes `$'...'`/`$"..."`, which this parser does not, so
+// a terminator here is unprovable. The text from the opener on stays visible.
+test('#3989: a `$\'...\'` heredoc delimiter is unprovable, so a planted terminator cannot strip a real command', () => {
+  assert.deepStrictEqual(fileWriteTargets("cat <<$'EOF'\nEOF\necho x > f.js\n$EOF", '/r'), [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
+  assert.deepStrictEqual(fileWriteTargets('cat <<$"EOF"\nEOF\necho x > f.js\n$EOF', '/r'), [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
+});
+
+test('#3989 sanity: a plain quoted-free heredoc body is still stripped, so the stripping still works', () => {
+  assert.deepStrictEqual(fileWriteTargets('node x.js <<EOF\nif (a > 0) b();\nEOF', '/r'), []);
+});
+
 test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment are not heredoc openers', () => {
   const expected = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
   assert.deepStrictEqual(fileWriteTargets('cat <<< "a > b"', '/r'), []);
