@@ -75,6 +75,8 @@ const ROWS = [
   ['absent file', 'absent', null, 1],
   ['not json', 'notjson', 'not json', 1],
   ["clean in a dir named o'brien run", "o'brien run", '{"status":"clean"}', 0],
+  ['no status key', 'nostatus', '{}', 1],
+  ['non-string status', 'numstatus', '{"status":5}', 1],
 ];
 
 test('AC1.1: Step 0 guard classifies run-state status', () => {
@@ -93,12 +95,76 @@ test('AC2.1: Step 0 guard go-red: a flipped predicate adopts a clean dir', () =>
   assert.equal(runGuard(flipped, fixture('active-flipped', '{"status":"active"}')).status, 0, 'the flipped predicate must refuse (exit 0) an active dir');
 });
 
+// The mint line of the same fence: `resolve-run-dir --standalone release --create`.
+function extractMintLine(stepZero) {
+  const line = resolveFence(stepZero).split('\n').find((l) => l.includes('--standalone release --create'));
+  assert.ok(line, 'extraction pattern is out of sync: no Step 0 fence line carries "--standalone release --create"');
+  return line.trim();
+}
+
+// A real repo whose only run directory is a finished release run — the shape #3898 reproduced.
+const FINISHED_RUN_ID = '2026-10-01T100000-release-standalone';
+function finishedRunRepo(name) {
+  const repo = path.join(scratch, name);
+  fs.mkdirSync(repo, { recursive: true });
+  const init = spawnSync('git', ['init', '-q'], { cwd: repo, encoding: 'utf8' });
+  assert.equal(init.status, 0, `repo init failed: ${init.stderr}`);
+  const finished = path.join(repo, '.claude-tweaks', 'pipelines', FINISHED_RUN_ID);
+  fs.mkdirSync(finished, { recursive: true });
+  fs.writeFileSync(path.join(finished, 'run-state.json'), '{"status":"clean"}');
+  return { repo, finished, pipelines: path.dirname(finished) };
+}
+
+function runInRepo(repo, script) {
+  const env = { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT };
+  delete env.PIPELINE_RUN_DIR;
+  delete env.RUN_DIR;
+  return spawnSync('bash', ['-c', script], { cwd: repo, env, encoding: 'utf8' });
+}
+
+// After the guard refuses the finished dir, the mint line must produce a different, newly created dir.
+function assertMintIsFresh(mintLine, label) {
+  const { repo, finished, pipelines } = finishedRunRepo(label);
+  const result = runInRepo(repo, `${mintLine}\necho "$RUN_DIR"`);
+  assert.equal(result.status, 0, `${label}: mint exited ${result.status} (stderr: ${result.stderr})`);
+  const minted = fs.realpathSync(result.stdout.trim());
+  assert.notEqual(minted, fs.realpathSync(finished), `${label}: the mint re-adopted the finished run dir it was supposed to replace (#3898)`);
+  assert.equal(path.dirname(minted), fs.realpathSync(pipelines), `${label}: the minted dir must sit under the fixture's pipelines root`);
+  assert.ok(fs.statSync(minted).isDirectory(), `${label}: the minted dir must exist`);
+}
+
+test('AC1.1: Step 0 mint after a refusal creates a new dir instead of re-adopting the finished one', () => {
+  assertMintIsFresh(extractMintLine(STEP_ZERO), 'mint-fresh');
+});
+
+test('AC1.1: Step 0 mint go-red: re-inserting --spec-slug re-adopts the finished dir', () => {
+  const mintLine = extractMintLine(STEP_ZERO);
+  const reinserted = mintLine.replace('--standalone release', '--spec-slug release --standalone release');
+  assert.notEqual(reinserted, mintLine, 'anchor text "--standalone release" not found in the mint line — proof cannot discriminate');
+  assert.throws(() => assertMintIsFresh(reinserted, 'mint-reinserted'), /re-adopted the finished run dir/);
+});
+
+test('AC1.1: Step 0 fence end to end: a finished release run is refused, a fresh dir minted, status printed', () => {
+  const { repo, finished, pipelines } = finishedRunRepo('fence-e2e');
+  const result = runInRepo(repo, resolveFence(STEP_ZERO));
+  assert.equal(result.status, 0, `the fence must exit 0 (stderr: ${result.stderr})`);
+  const lines = result.stdout.trim().split('\n');
+  assert.equal(lines.length, 2, `the fence must print the run dir and one refused line, got: ${result.stdout}`);
+  const minted = fs.realpathSync(lines[0]);
+  assert.notEqual(minted, fs.realpathSync(finished), 'the run dir must not be the finished one');
+  assert.equal(path.dirname(minted), fs.realpathSync(pipelines), 'the minted dir must sit under the fixture pipelines root');
+  const refused = /^refused: (.*) \(status clean\)$/.exec(lines[1]);
+  assert.ok(refused, `the second line must be "refused: {dir} (status clean)", got: ${lines[1]}`);
+  assert.equal(fs.realpathSync(refused[1]), fs.realpathSync(finished), 'the second line must name the refused dir');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(minted, 'run-state.json'), 'utf8')).createdBy, 'release-standalone', 'the fresh dir carries the release-standalone stamp');
+});
+
 // The load-bearing prose facts of the refusal. The patterns match exactly once in Step 0, so
 // removing the one match turns exactly that fact red.
 const REQUIRED = [
   [/\[ -z "\$PIPELINE_RUN_DIR" \]/, 'the guard is skipped for a $PIPELINE_RUN_DIR-supplied directory'],
   [/finished release run \(status \{status\}\) — not adopted; minted \{run-dir\}/, 'the refusal log line names the refused dir, its status and the minted dir'],
-  [/status is terminal[\s\S]{0,200}\*\*created\*\*/, 'a terminal step-2 directory is refused and the run is created'],
+  [/status is terminal[\s\S]{0,300}\*\*created\*\*/, 'a terminal step-2 directory is refused and the run is created'],
 ];
 const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
 const missingFacts = missingFactsOf(REQUIRED);
