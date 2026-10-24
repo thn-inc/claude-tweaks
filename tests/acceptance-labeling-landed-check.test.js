@@ -60,7 +60,8 @@ function assertLive(text) {
 }
 
 test('AC1.2 (live-state tier): the live-state rule lives in the contract', () => {
-  assertLive(CONTRACT);
+  // The section, not the whole file: the intro names `demo:pending` too.
+  assertLive(slice(CONTRACT, '## Live-state tier', '## Outcomes'));
 });
 
 test('AC1.2 (live-state tier): negative control — the contract before its Live-state tier fails the pins', () => {
@@ -147,17 +148,18 @@ test('AC8.1: skill-graph names the contract on the dispatch and tidy edges', () 
 });
 
 test("AC7.1: no citation names close-out step 3 as the rule's home", () => {
-  // plans and the incident log are historical records, not live citations.
+  // plans and the incident log are historical records, not live citations; this file holds the pattern.
   const excluded = (rel) => rel.startsWith(path.join('docs', 'superpowers', 'plans') + path.sep)
     || rel.startsWith(path.join('docs', 'plans') + path.sep)
-    || rel === path.join('docs', 'incident-log.md');
+    || rel === path.join('docs', 'incident-log.md')
+    || rel === path.join('tests', path.basename(__filename));
   const stale = /close-out\.md` step 3's (acceptance-labeling )?landed rule|live-state precheck/;
   const offenders = [];
   let scanned = 0;
-  for (const dir of ['plugin', 'docs']) {
+  for (const dir of ['plugin', 'docs', 'tests']) {
     for (const entry of fs.readdirSync(path.join(ROOT, dir), { recursive: true })) {
       const rel = path.join(dir, entry);
-      if (!rel.endsWith('.md') || excluded(rel)) continue;
+      if (!/\.(md|js)$/.test(rel) || excluded(rel)) continue;
       scanned++;
       if (stale.test(readText(path.join(ROOT, rel)).replace(/\s+/g, ' '))) offenders.push(rel);
     }
