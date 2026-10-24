@@ -1547,10 +1547,27 @@ test('pr probe: unparseable pr-checks.js output is ci read-failed (#3469)', asyn
 test('resolveWorktreeBase returns the merge base against origin/{integration-branch} when one resolves (#3686)', () => {
   const deps = {
     resolvePolicy: policyFake(DEFAULT_POLICY),
-    git: (args) => (args[0] === 'merge-base' && args[2] === 'origin/main' ? 'abc123\n' : ''),
+    git: (args) => {
+      if (args[0] === 'merge-base' && args[2] === 'origin/main') return 'abc123\n';
+      if (args[0] === 'merge-base' && args[2] === 'main') return 'local999\n';
+      return '';
+    },
     ghSync: () => { throw new Error('no gh'); },
   };
   assert.strictEqual(resolveWorktreeBase('/w/tree', deps), 'abc123');
+});
+
+test('resolveWorktreeBase falls back to the local integration branch when origin/{branch} has no merge base (#3686)', () => {
+  const deps = {
+    resolvePolicy: policyFake(DEFAULT_POLICY),
+    git: (args) => {
+      if (args[0] === 'merge-base' && args[2] === 'origin/main') throw new Error('unknown revision origin/main');
+      if (args[0] === 'merge-base' && args[2] === 'main') return 'local999\n';
+      return '';
+    },
+    ghSync: () => { throw new Error('no gh'); },
+  };
+  assert.strictEqual(resolveWorktreeBase('/w/tree', deps), 'local999');
 });
 
 test('resolveWorktreeBase returns null when git fails (#3686)', () => {

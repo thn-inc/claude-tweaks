@@ -63,21 +63,7 @@ test('delete-ledger: falls back to the single docs/plans/*-ledger.md candidate w
   assert.ok(!fs.existsSync(ledgerPath));
 });
 
-test('delete-ledger: an inherited docs/plans ledger committed on main is not deleted', () => {
-  const root = gitRoot();
-  const runDir = runDirFixture(root);
-  fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
-  const inherited = path.join(root, 'docs', 'plans', '2026-08-14-old-ledger.md');
-  fs.writeFileSync(inherited, '# Open Items\n');
-  git(['add', 'docs/plans/2026-08-14-old-ledger.md'], root);
-  git(['commit', '-q', '-m', 'inherited ledger'], root);
-  git(['checkout', '-q', '-b', 'feature'], root);
-  const result = runHook(['delete-ledger', '--run', runDir], { cwd: root });
-  assert.match(result.stdout, /not found/);
-  assert.ok(fs.existsSync(inherited));
-});
-
-test('delete-ledger: inherited-only docs/plans ledgers are named in the not-found report', () => {
+test('delete-ledger: an inherited docs/plans ledger committed on main is not deleted, and the not-found report names it (#3686)', () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
@@ -89,6 +75,22 @@ test('delete-ledger: inherited-only docs/plans ledgers are named in the not-foun
   const result = runHook(['delete-ledger', '--run', runDir], { cwd: root });
   assert.match(result.stdout, /only inherited ledgers found: .*2026-08-14-old-ledger\.md/);
   assert.match(result.stdout, /not found/);
+  assert.ok(fs.existsSync(inherited));
+});
+
+test('delete-ledger: an explicit --ledger naming a missing file keeps the plain not-found line (no inherited diagnostic)', () => {
+  const root = gitRoot();
+  const runDir = runDirFixture(root);
+  fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
+  const inherited = path.join(root, 'docs', 'plans', '2026-08-14-old-ledger.md');
+  fs.writeFileSync(inherited, '# Open Items\n');
+  git(['add', 'docs/plans/2026-08-14-old-ledger.md'], root);
+  git(['commit', '-q', '-m', 'inherited ledger'], root);
+  git(['checkout', '-q', '-b', 'feature'], root);
+  const missing = path.join(root, 'docs', 'plans', 'missing-ledger.md');
+  const result = runHook(['delete-ledger', '--run', runDir, '--ledger', missing], { cwd: root });
+  assert.match(result.stdout, /not found/);
+  assert.doesNotMatch(result.stdout, /inherited/);
   assert.ok(fs.existsSync(inherited));
 });
 
