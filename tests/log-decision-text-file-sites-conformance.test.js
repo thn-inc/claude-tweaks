@@ -24,6 +24,8 @@ const SITES = [
   { id: 'W3', file: 'plugin/skills/flow/multispec-parallel-waves.md', content: '#{N} conflicted at merge-back ({paths}); re-run sequentially.' },
   { id: 'W4', file: 'plugin/skills/flow/multispec-parallel-waves.md', content: 'condition: per-spec worktree unavailable ({reason}) → fallback: sequential' },
   { id: 'G1', file: 'plugin/skills/flow/steps-and-gates.md', content: 'the filled note line' },
+  { id: 'D1', file: 'plugin/skills/dispatch/two-call-gate.md', content: 'Artifact check failed: {message}' },
+  { id: 'T1', file: 'plugin/skills/tidy/release-note-repair.md', content: '{ref}: {stderr reason} → not written' },
 ];
 
 const collapse = (text) => text.replace(/\s+/g, ' ');

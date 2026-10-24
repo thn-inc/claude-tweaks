@@ -83,7 +83,7 @@ item runs the Auto path with that line and sha.
 3. **Branch on the exit.** Every skip/failure branch below reports two things, never one: a report
    line (a Step 7.5 checklist line for exit 5, a Yours row for every other branch, as each branch
    names), and — whenever a run directory resolved — a `decisions.md` SKIP entry
-   (`node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --section "/tidy" --status SKIP --step "Step 7 Fill Release Note (skipped)" --text "{ref}: {stderr reason} → not written"`); nothing is silent.
+   (`node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --section "/tidy" --status SKIP --step "Step 7 Fill Release Note (skipped)" --text-file "{text-file}"`, `{text-file}` holding `{ref}: {stderr reason} → not written` per `_shared/auto-decision-log.md`'s Text from git or a user paragraph); nothing is silent.
    - 0: continue to Step 4.
    - 4: recompose once (`## Compose the line` above). A second exit 4 routes exactly like exit 6 —
      Yours **review** row keyed `/claude-tweaks:specify {ref}`, plus the SKIP entry.
