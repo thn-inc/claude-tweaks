@@ -58,9 +58,9 @@ test('AC10.2: verification.md, review Step 1.5 and two-call-gate.md name the com
 
 test('AC10.2 go-red control: the assertions throw on text with suiteComposed removed', () => {
   const strip = (t) => t.replace(/suiteComposed/g, 'REMOVED');
-  assert.throws(() => assertComposedVerdictNamed(strip(VER), STEP15, TCG));
-  assert.throws(() => assertComposedVerdictNamed(VER, strip(STEP15), TCG));
-  assert.throws(() => assertComposedVerdictNamed(VER, STEP15, strip(TCG)));
+  assert.throws(() => assertComposedVerdictNamed(strip(VER), STEP15, TCG), { message: /verification\.md must name the composed verdict/ });
+  assert.throws(() => assertComposedVerdictNamed(VER, strip(STEP15), TCG), { message: /code-mode-steps\.md Step 1\.5 must name the composed verdict/ });
+  assert.throws(() => assertComposedVerdictNamed(VER, STEP15, strip(TCG)), { message: /two-call-gate\.md must name the composed verdict/ });
 });
 
 test('AC10.2: a generated-only dirty tree is not listed as no recent pass in Step 1.5 or the consumer rule', () => {
@@ -70,9 +70,9 @@ test('AC10.2: a generated-only dirty tree is not listed as no recent pass in Ste
 test('AC10.2 go-red control: the dirty-tree assertion throws when either gate lists dirty as no recent pass', () => {
   const stepWithDirty = STEP15.replace('- **`verifiedHead: false`**', '- **`verifiedHead: false` or `dirty: true`**');
   assert.notEqual(stepWithDirty, STEP15);
-  assert.throws(() => assertDirtyNotNoRecentPass(VER, stepWithDirty));
+  assert.throws(() => assertDirtyNotNoRecentPass(VER, stepWithDirty), { message: /must not list `dirty: true` as no recent pass/ });
   const verWithDirty = VER.replace('treat `verifiedHead: false` as', 'treat `verifiedHead: false` or a dirty tree as');
   assert.notEqual(verWithDirty, VER);
-  assert.throws(() => assertDirtyNotNoRecentPass(verWithDirty, STEP15));
-  assert.throws(() => assertDirtyNotNoRecentPass(VER, STEP15.replace(/liveGeneratedExempt/g, 'REMOVED')));
+  assert.throws(() => assertDirtyNotNoRecentPass(verWithDirty, STEP15), { message: /the consumer rule must not list a dirty tree as no recent pass/ });
+  assert.throws(() => assertDirtyNotNoRecentPass(VER, STEP15.replace(/liveGeneratedExempt/g, 'REMOVED')), { message: /must name the generated-only dirty tree as verified HEAD/ });
 });
