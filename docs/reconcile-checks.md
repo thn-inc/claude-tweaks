@@ -309,7 +309,7 @@ main loop, landed via #1962/#2226/#2228/#2231):
   and drops it from the record. The clean-status sweep (`iterCleanRunDirs`) feeds this reason too
   since #3668, but only for a closed run whose `decisions.md` carries an auto-merge path's own log
   line — the wrap-up short-circuit's, or the dispatch bundle Auto-merge gate's per-member verdict or
-  local-merge group line (`consoleReplacedByAutoMergeShortCircuit`, #3740) — the same subset
+  local-merge group line (`consoleReplacedByAutoMerge`, #3740) — the same subset
   `hooks.js archive-run` refuses; every other clean-loop skip stays untracked. The body's
   `merged-partial` remedy line reads: For a `merged-partial` directory, the records the run's merged PR
   was meant to close (the closing-keyword links on that PR) are still open: ship them in a later PR, or

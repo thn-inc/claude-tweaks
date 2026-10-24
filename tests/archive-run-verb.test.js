@@ -271,6 +271,15 @@ test('#3740 bundle gate: archive-run still archives a terminal bundle run with n
   assert.ok(fs.existsSync(path.join(archiveDir, 'config.yml')));
 });
 
+test('#3740 bundle gate: archive-run still archives a terminal bundle run that has no staged/ directory at all', () => {
+  const { root, runDir, runId } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), BUNDLE_GATE);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'config.yml')));
+});
+
 test('#3740 bundle gate: archive-run refuses a local-merge group-line run with a pending staged/ item', () => {
   const { root, runDir } = runDirFixture('clean');
   fs.writeFileSync(path.join(runDir, 'decisions.md'), BUNDLE_GROUP);

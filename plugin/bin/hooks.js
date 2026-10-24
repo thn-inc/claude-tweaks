@@ -1182,7 +1182,7 @@ async function main(argv) {
   }
   if (cmd === 'archive-run') {
     const {
-      archiveRunDir, readConsoleState, listSpecDirs, listStagedItems, consoleReplacedByAutoMergeShortCircuit,
+      archiveRunDir, readConsoleState, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
       TIEBREAK_COVERAGE_HINT,
     } = require('./lib/reconcile/archive-merged');
     const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
@@ -1228,7 +1228,7 @@ async function main(argv) {
       process.stdout.write('claude-tweaks: archival refused — console-unresolved (console.json rendered but not resolved; answer or resolve the console first)\n');
       return 0;
     }
-    if (consoleState === 'none' && consoleReplacedByAutoMergeShortCircuit(runDir)) {
+    if (consoleState === 'none' && consoleReplacedByAutoMerge(runDir)) {
       const pending = listStagedItems(runDir);
       if (pending.length) {
         process.stdout.write(`claude-tweaks: archival refused — console-never-rendered-staged-pending (an auto-merge path — the wrap-up short-circuit or the dispatch bundle Auto-merge gate — rendered no console; pending: ${pending.join(', ')}) — apply or delete the pending staged/ items (and any spec-*/staged/), or write a resolved console.json, then re-run archive-run\n`);
