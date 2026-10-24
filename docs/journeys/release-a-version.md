@@ -56,6 +56,17 @@ files:
 - **Should understand:** Only a parent pipeline's directory, handed in through `$PIPELINE_RUN_DIR` (for example by `/claude-tweaks:wrap-up`), is ever inherited. An inherited directory is never closed, archived or disposed of by release; its parent owns it.
 - **Red flags:** Today's `## /review` verdict read from yesterday's lines; a standalone run that skipped its ceiling pin or suppressed its Next Actions; a second, stray directory minted mid-run because a later step re-ran the Step 0 fence.
 
+### 6. Release from a main checkout reconcile has touched
+- **URL:** `/claude-tweaks:release` while local `main` carries unpushed `[reconcile] archive run …` commits from earlier pipeline archival
+- **Action:** Step 3 fetches and runs its review-tree check. The checkout is on `main`, 0 commits behind `origin/main`, and its tree differs only under `.claude-tweaks/pipelines/`, so the whole-branch review runs. Because `HEAD` and `origin/main` differ, the marker line records both shas. A checkout that fails the check stops before the console. Every stop line starts `review tree is not origin/main`, and each gets one recovery chosen by what failed:
+  - Behind: the line names the ahead/behind counts, and the recovery is `git -C "$RUN_ROOT" pull --rebase origin main`, then a bare `git push origin main`.
+  - Wrong branch: the line names the current branch, and the recovery is `git -C "$RUN_ROOT" switch main`.
+  - Changes outside run dirs: the line lists the files that differ and points to a PR, with no push command.
+  - A failed fetch: git's own stderr (#4012).
+- **Should feel:** Archive bookkeeping never blocks a release; a real divergence stops it with the one command that fixes it.
+- **Should understand:** Commits ahead are fine only when they touch nothing outside run directories. The review's test gate runs against the tree it stands in, so that tree must match the range being tagged everywhere that ships.
+- **Red flags:** A release refused over `[reconcile] archive run` commits alone; a checkout behind `origin/main` let through; a stop line advising `git push` for local commits that change shipped files; a review run after a fetch that failed.
+
 ## Origin
 - Created during build of #2256 (record: The `/claude-tweaks:release` skill)
 - Steps 1-4 built in this session
@@ -63,3 +74,4 @@ files:
 - Related specs: #2254 (local engine), #2255 (preflight pack), #2258 (release train Routine), #2250 (design)
 - Step 1 red flags updated for #3040 (the preflight pack's publish-hook probe now reads CRLF workflow files)
 - Steps 2-3 updated and Step 5 added for #3898 (release run-dir lifecycle: Step 0 refuses a prior release's directory, every exit closes out, Step 8 disposes of staged findings and archives the created directory)
+- Step 6 added for #4012 (Step 3's review-tree check accepts run-dir-only commits ahead, stops on a failed fetch, and names counts plus a recovery chosen by the failing clause)
