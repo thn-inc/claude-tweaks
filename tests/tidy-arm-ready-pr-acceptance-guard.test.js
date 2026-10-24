@@ -37,23 +37,18 @@ function armWithoutGuard() {
 
 const GUARD_PINS = [
   /verify\.json/,
-  /`acceptance-labeling` row/,
-  /pass.{0,12}skip/,
-  /read every `spec-\*\/verify\.json`/,
-  /dispatch\/close-out\.md` step 3/,
-  /every file read exists/,
-  /validating the run-id as `flow\/claim-targets\.md` validates it/,
-  /an empty `Fixes` set or a failed read shows nothing/,
+  /acceptance-labeling-landed\.md/,
+  /acceptance-labeling: \{result\}/,
   /log-decision\.js.{0,200}--status SKIP/,
   /Never put an unvalidated marker value or a `verify\.json` string that is not a bare word/,
   /unreadable: \{verify\.json \| labels \| comments\}/,
 ];
 
-test("AC1.1: Arm ready PR names verify.json's acceptance-labeling row before its Step 3 call", () => {
+test('AC1.1: Arm ready PR cites the acceptance-labeling Landed check before its Step 3 call', () => {
   for (const re of GUARD_PINS) assert.match(arm, re);
-  const guardAt = arm.indexOf('`acceptance-labeling` row');
+  const guardAt = arm.indexOf('acceptance-labeling-landed.md');
   const stepThreeAt = arm.indexOf("run `_shared/pr-first-merge.md`'s Step 3");
-  assert.ok(guardAt >= 0 && stepThreeAt >= 0, 'both the labeling row and the Step 3 call must exist');
+  assert.ok(guardAt >= 0 && stepThreeAt >= 0, 'both the contract citation and the Step 3 call must exist');
   assert.ok(guardAt < stepThreeAt, 'the labeling guard must come before the Step 3 call');
 });
 
@@ -69,10 +64,7 @@ test('AC2.1: the "never touches Step 1 … preconditions already hold" claim is 
 
 const HELD_PINS = [
   /demo:pending/,
-  /<!-- run-comment: brief -->/,
-  /<!-- run-comment: try-it -->/,
-  /Trusted authors/,
-  /no valid marker or run dir resolves/,
+  /even when (it|the check) resolves `no run dir`/,
   /is held, not armed/,
   /never run labeling from a tidy sweep/,
   /not armed — acceptance labeling not landed/,
@@ -91,6 +83,21 @@ test('AC3.1: negative control — the held outcome is gone once the guard paragr
   assert.doesNotMatch(stripped, /Otherwise do not run Step 3/);
 });
 
+test('AC4.1: Arm ready PR cites the contract and no longer restates the predicate', () => {
+  assert.match(arm, /acceptance-labeling-landed\.md/);
+  assert.doesNotMatch(arm, /run-comment: brief/);
+  assert.doesNotMatch(arm, /run-comment: try-it/);
+  assert.doesNotMatch(arm, /spec-\*\/verify\.json/);
+});
+
+test('AC4.2 + AC5.2: tidy keeps its deltas', () => {
+  // The rest of the deltas are pinned by GUARD_PINS, HELD_PINS and the tests below.
+  assert.match(arm, /A `landed` outcome continues to Step 3 below\. Otherwise do not run Step 3/);
+  assert.match(arm, /not armed — acceptance labeling not landed \(\{reason\}\)/);
+  // AC5.4: a landed PR still reaches Step 3.
+  assert.match(arm, /run `_shared\/pr-first-merge\.md`'s Step 3/);
+});
+
 test('housekeeping-marker flavor is exempt from the guard', () => {
   assert.match(arm, /housekeeping-marker flavor .{0,120}skips this check/);
 });
@@ -99,16 +106,20 @@ test('Step 7.5 verification template lists the held outcome', () => {
   assert.match(TIDY_SKILL, /Held \(not armed\): PR #\{n\} — acceptance labeling not landed/);
 });
 
-test("pr-first-merge Step 1 names tidy's Arm ready PR as a caller that holds instead of labeling", () => {
+test("pr-first-merge Step 1's not-landed sentence names no caller", () => {
   const step1 = slice(PR_FIRST_MERGE, '## Step 1:', '## Step 1.5');
-  assert.match(step1, /tidy's Arm ready PR holds rather than runs this step/);
   const sentence = step1.match(/Labeling has not landed when.*?reached this merge\./);
   assert.ok(sentence, 'the Step 1 "Labeling has not landed when … reached this merge." sentence must exist');
-  assert.match(sentence[0], /tidy's Arm ready PR holds rather than runs this step/);
+  assert.doesNotMatch(sentence[0], /tidy|close-out/);
+  assert.match(sentence[0], /acceptance-labeling-landed\.md/);
 });
 
-test('skill-graph records the tidy → dispatch/close-out.md edge', () => {
-  assert.match(slice(SKILL_GRAPH, '## tidy', '## visual-review'), /\| `dispatch\/close-out\.md` \| [^|]*## Arm ready PR/);
+test('skill-graph records the tidy → _shared/acceptance-labeling-landed.md edge', () => {
+  assert.match(slice(SKILL_GRAPH, '## tidy', '## visual-review'), /\| `_shared\/acceptance-labeling-landed\.md` \| [^|]*## Arm ready PR/);
+});
+
+test('skill-graph keeps a slim dispatch/close-out.md row under tidy for the recommendation command', () => {
+  assert.match(slice(SKILL_GRAPH, '## tidy', '## visual-review'), /\| `dispatch\/close-out\.md` \|[^|]*close-out #\{record\}/);
 });
 
 test('final review: both "identical execution" claims name the labeling-guard exception', () => {

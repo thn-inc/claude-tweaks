@@ -99,6 +99,21 @@ test('substituteFile: a template that wraps {file} in quotes has that wrapper re
     { ok: true, command: 'node --test "tests/a&b.test.js"' });
 });
 
+test('substituteFile: the placeholder token is configurable, and the default stays {file} (#4024)', () => {
+  assert.deepStrictEqual(substituteFile('run {files}', '/a b/l.txt', { platform: 'linux', token: '{files}' }),
+    { ok: true, command: "run '/a b/l.txt'" });
+  assert.deepStrictEqual(substituteFile('run "{files}"', '/a b/l.txt', { platform: 'win32', token: '{files}' }),
+    { ok: true, command: 'run "/a b/l.txt"' });
+  assert.deepStrictEqual(substituteFile('run {files}', '/a/l.txt', { platform: 'linux', token: '{files}' }),
+    { ok: true, command: 'run /a/l.txt' });
+  // With a custom token, a bare {file} is ordinary template text.
+  assert.deepStrictEqual(substituteFile('run {file} {files}', '/a/l.txt', { platform: 'linux', token: '{files}' }),
+    { ok: true, command: 'run {file} /a/l.txt' });
+  assert.deepStrictEqual(substituteFile('run ${files}', '/a b/l.txt', { platform: 'linux', token: '{files}' }),
+    { ok: false, reason: 'template-quotes' });
+  assert.deepStrictEqual(substituteFile('run {file}', '/a b/l.txt', LINUX), { ok: true, command: "run '/a b/l.txt'" });
+});
+
 test('substituteFile: the quoted command runs as one literal word under a real sh', { skip: process.platform === 'win32' }, () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'file-template-'));
   try {

@@ -1,0 +1,84 @@
+# Post-merge test-impact map refresh (#4024).
+#
+# The refresh path for the map verify.js's impact selection reads, and never a
+# merge gate: test.yml's full `npm test` stays the gate, and a red or missing
+# map only makes a local `verify.js --scope` run its full suite. Each push to
+# main runs the suite once under the read tracer (tools/test-impact.js trace)
+# and uploads the commit-stamped map as the `test-impact-map` artifact;
+# `node tools/test-impact.js fetch` downloads the newest successful main run's
+# map whose commit is an ancestor of the local HEAD. The pull_request trigger
+# covers only PRs that change the tracing machinery itself, proving it on a
+# real runner before merge; fetch reads main runs only, so a PR's map is never
+# served.
+#
+# trace runs without --allow-dirty: a fresh checkout is clean, so a refusal
+# here means CI dirtied a tracked file, and that should fail visibly. trace
+# exits 0 whenever it wrote a map — a failing suite still writes one,
+# recording its exit code — so the upload runs `if: always()` (a missing map
+# fails the upload too), and the last step fails the job when the recorded
+# exit code is not 0: a red-suite run is never a `success` run, so fetch's
+# `--status success` listing skips it for an older green map.
+#
+# On push and dispatch the concurrency group is keyed on the commit sha, not
+# the ref: GitHub keeps at most one pending run per group and replaces it with
+# a newer one even when in-progress runs are never cancelled, so a per-ref
+# group would skip intermediate commits and leave a gap in the maps fetch can
+# choose from. A PR's map is never served, so PR runs group per ref and a new
+# push cancels the stale run.
+name: test-impact-map
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - tools/test-impact/**
+      - tools/test-impact.js
+      - tools/run-tests.js
+      - .github/workflows/test-impact-map.yml
+
+concurrency:
+  group: test-impact-map-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Several suites build git fixtures that commit; CI runners have no git identity.
+      GIT_AUTHOR_NAME: ci
+      GIT_AUTHOR_EMAIL: ci@invalid.example
+      GIT_COMMITTER_NAME: ci
+      GIT_COMMITTER_EMAIL: ci@invalid.example
+      # reconcile()'s GitHub-health preflight (plugin/bin/lib/reconcile/preflight.js,
+      # #820) shells to `gh api rate_limit` before any dispatch that doesn't stub
+      # it — an unauthenticated `gh` reads as "GitHub unreachable" and skips the
+      # whole pass, which is exactly what happened here without a token.
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history, as in test.yml: the traced suite must read what the
+          # gating suite reads, and some tests walk origin/main's history.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # No install step: the plugin ships zero npm deps, and node --test is built in.
+      - name: Trace the suite into a test-impact map
+        run: node tools/test-impact.js trace --out "$RUNNER_TEMP/test-impact-map.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-impact-map
+          path: ${{ runner.temp }}/test-impact-map.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Fail the run when the traced suite failed
+        run: |
+          node -e "const m = require(process.argv[1]); if (m.exitCode !== 0) { console.error('the traced suite exited ' + m.exitCode + ', so this map will not be served'); process.exit(1); }" "$RUNNER_TEMP/test-impact-map.json"
