@@ -5,7 +5,7 @@ const path = require('node:path');
 
 const { readText } = require('../helpers/read-skill');
 const { DETECTORS, UNDETECTED_ROWS, detectShapes } = require('../../tools/guard-refusals/shapes');
-const { shellFences } = require('../../tools/guard-refusals/fences');
+const { shellFences, malformedFences } = require('../../tools/guard-refusals/fences');
 
 // #4028: tools/guard-refusals/shapes.js holds one static detector per refused
 // row of scratch-worktree.md section 7. Each detector names the row it covers by
@@ -102,6 +102,8 @@ test('normalizePlaceholders makes a ${CLAUDE_PLUGIN_ROOT} script operand clean a
 });
 
 test('AC2.1: a fixture holding each banned shape fails the scan', () => {
+  // An unclosed fence would swallow every fence after it.
+  assert.deepStrictEqual(malformedFences(FIXTURE), []);
   const lines = FIXTURE.split('\n');
   const fences = shellFences(FIXTURE);
   const seen = new Set();
@@ -127,4 +129,47 @@ test('keyword detectors ignore a single-quoted span', () => {
   assert.deepStrictEqual(detectShapes(`echo 'eval complete'`), []);
   assert.deepStrictEqual(detectShapes(`echo 'evaluate'`), []);
   assert.deepStrictEqual(detectShapes('echo evaluate completed'), []);
+});
+
+// An apostrophe in a `#` comment or inside "…" is not a quote. Pairing quotes
+// with a regex let it pair with a later quote and hide the commands between.
+const DONT = "# Don't run this from main\n";
+
+test('an apostrophe in a # comment does not hide an eval', () => {
+  assert.deepStrictEqual(detectShapes(`${DONT}eval "$(node /abs/env.js)"\necho 'done'`), ['eval-token']);
+});
+
+test('an apostrophe inside double quotes does not hide a complete token', () => {
+  assert.deepStrictEqual(detectShapes(`gh pr comment 1 --body "don't"; echo complete; echo 'x'`), ['complete-token']);
+});
+
+test('an apostrophe in a # comment does not hide a sed variable path', () => {
+  assert.deepStrictEqual(detectShapes(`${DONT}sed -n '1,2p' "$P/README.md"\necho 'x'`), ['sed-var-path']);
+});
+
+test('an apostrophe in a # comment does not hide a chained heredoc write', () => {
+  assert.deepStrictEqual(detectShapes(`${DONT}cd /wt && cat > f <<'EOF'\nx\nEOF`), ['chained-heredoc-write']);
+});
+
+test('an apostrophe in a # comment does not hide a redirect to a variable path', () => {
+  // The live-corpus shape (init/bootstrap/step-14-cloud-routine-parity.md):
+  // a comment apostrophe above a quoted git mention and a "$VAR" redirect.
+  const text = `# isn't a repo root\nREPO=$(find "$R" -name .git)\nclaude plugin list --json > "$OUT" || echo '[]'`;
+  assert.deepStrictEqual(detectShapes(text), ['json-git-redirect-var']);
+});
+
+test('a # comment that mentions a banned shape is not flagged', () => {
+  assert.deepStrictEqual(detectShapes('# never use eval here\necho done'), []);
+  assert.deepStrictEqual(detectShapes("echo done # don't eval, it is complete"), []);
+  assert.deepStrictEqual(detectShapes('# cd /wt && cat > f <<EOF'), []);
+});
+
+test('chained-heredoc-write: &> and &>> count as a file redirect', () => {
+  assert.deepStrictEqual(detectShapes('cd /wt && cat <<EOF &>f\nx\nEOF'), ['chained-heredoc-write']);
+  assert.deepStrictEqual(detectShapes('cd /wt && cat <<EOF &>>f\nx\nEOF'), ['chained-heredoc-write']);
+});
+
+test('a heredoc on its own line after a command-substitution line passes; chained with && it is refused', () => {
+  assert.deepStrictEqual(detectShapes(`A=$(pwd)\ncat > /abs/f <<'EOF'\nx\nEOF`), []);
+  assert.deepStrictEqual(detectShapes(`A=$(pwd) && cat > /abs/f <<'EOF'\nx\nEOF`), ['chained-heredoc-write']);
 });

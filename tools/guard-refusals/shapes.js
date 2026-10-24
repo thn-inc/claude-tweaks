@@ -15,16 +15,62 @@ const VAR = String.raw`\$\{?[A-Za-z_]`;
 // A command word boundary: the word is not part of a path, flag or longer name.
 const CMD = String.raw`(?<![\w./-])`;
 
-// Literal text inside single quotes never expands, so keyword and variable
-// detectors judge the text with those spans emptied.
-function stripSingle(text) {
-  return text.replace(/'[^']*'/g, "''");
+// One left-to-right shell-lexing pass: the state of each char of `text`, one of
+// 'plain', 'delim' (a quote char that opens or closes a span), 'single',
+// 'double' or 'comment'. Pairing quotes with a regex instead lets an apostrophe
+// in a `#` comment or inside "…" pair with a later quote and hide the commands
+// between them. Outside quotes a backslash escapes the next char; inside "…" a
+// backslash escape does not close the quote; inside '…' nothing escapes. `#`
+// at word start, outside quotes, opens a comment that runs to end of line. A
+// quote left open at end of line stays open across the newline, as in shell.
+function lexShell(text) {
+  const kinds = new Array(text.length);
+  let state = 'plain';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (state === 'single') {
+      if (c === "'") { kinds[i] = 'delim'; state = 'plain'; } else kinds[i] = 'single';
+    } else if (state === 'double') {
+      if (c === '\\' && i + 1 < text.length) { kinds[i] = 'double'; kinds[++i] = 'double'; } else if (c === '"') { kinds[i] = 'delim'; state = 'plain'; } else kinds[i] = 'double';
+    } else if (state === 'comment') {
+      if (c === '\n') { kinds[i] = 'plain'; state = 'plain'; } else kinds[i] = 'comment';
+    } else if (c === '\\' && i + 1 < text.length) {
+      kinds[i] = 'plain'; kinds[++i] = 'plain';
+    } else if (c === "'" || c === '"') {
+      kinds[i] = 'delim'; state = c === "'" ? 'single' : 'double';
+    } else if (c === '#' && (i === 0 || /[\s;&|()<>]/.test(text[i - 1]))) {
+      kinds[i] = 'comment'; state = 'comment';
+    } else kinds[i] = 'plain';
+  }
+  return kinds;
 }
 
-// Every quoted span collapsed to Q, for detectors that judge shell structure
-// (operators, redirects, unquoted tokens) rather than argument content.
+// `text` with every char whose lexed state is in `states` blanked to a space,
+// line breaks kept, so length and line structure survive.
+function blankStates(text, states) {
+  const kinds = lexShell(text);
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    out += states.has(kinds[i]) && c !== '\n' && c !== '\r' ? ' ' : c;
+  }
+  return out;
+}
+
+// Literal text inside single quotes never expands and comment text never runs,
+// so keyword and variable detectors judge the text with those emptied.
+// Double-quoted content stays: a "$VAR" operand is what several detectors key on.
+const SINGLE_AND_COMMENT = new Set(['single', 'comment']);
+function stripSingle(text) {
+  return blankStates(text, SINGLE_AND_COMMENT);
+}
+
+// Every quoted span's content (and comment text) emptied, for detectors that
+// judge shell structure (operators, redirects, unquoted tokens) rather than
+// argument content.
+const QUOTED_AND_COMMENT = new Set(['single', 'double', 'comment']);
 function stripQuoted(text) {
-  return text.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, 'Q');
+  return blankStates(text, QUOTED_AND_COMMENT);
 }
 
 function keyword(word) {
@@ -40,7 +86,8 @@ const REDIRECT_TO_VAR = new RegExp(`(?<![<>&\\d])>>?\\s*"?${VAR}`);
 const GIT_COMMAND = /(?:^|[\s;&|(])git\s+[a-z]/m;
 const NODE_EVAL_SCRIPT_VAR = new RegExp(`${CMD}node\\s+(?:-e|-p|--eval|--print)\\s+"[^"]*${VAR}`);
 const HEREDOC = /(?<!<)<<(?!<)-?\s*['"]?[A-Za-z_]\w*/;
-const STDOUT_FILE_REDIRECT = /(?<![<>&\d])>>?(?!&)\s*\S/;
+// `>file`, `>>file`, and bash's `&>file` / `&>>file` (stdout and stderr).
+const STDOUT_FILE_REDIRECT = /(?:&|(?<![<>&\d]))>>?(?!&)\s*\S/;
 
 function chainedHeredocWrite(text) {
   return stripQuoted(text).split(/\r?\n/).some((line) => {
