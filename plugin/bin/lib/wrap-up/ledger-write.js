@@ -7,7 +7,8 @@
 // a `|` inside a cell is escaped as `\|`. Used by wrap-up-engine.js's
 // `finish-console` (#2546) and bin/hooks.js's `delete-ledger` subcommand;
 // describeRunLedgers/formatLedgerReport (#3897) are the read side, for bin/hooks.js's
-// `resolve-ledger` subcommand.
+// `resolve-ledger` subcommand; describeRunLedgers also backs `delete-ledger`'s
+// inherited-only not-found report (#3686).
 'use strict';
 
 const fs = require('fs');
