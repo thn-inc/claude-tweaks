@@ -239,8 +239,8 @@ When mechanizing a prose heuristic into a deterministic check:
    path closes the run first, so in the real flow the disk check never fired. Every test passed
    because each fixture hand-wrote a run state with `worktree` still set, a state `closeRunState`
    never writes. Whole-branch review caught it by running the real `closeRunState` and then
-   `runVerify`. `5c8e2a2e0` (#3023) made the close keep the prior path as `worktreeAtClose` and added a
-   test that builds the state through the real `closeRunState`. When a terminal transition clears
+   `runVerify`. `5c8e2a2e0` (#3023) made the close keep the prior path as `worktreeAtClose` and
+   added a test that builds the state through the real `closeRunState`. When a terminal transition clears
    a field your check reads, keep a copy at that transition, and produce the check's input in at
    least one test by calling the real writer, never by hand-writing its JSON.
 13. **A not-found answer means "absent" only when every input to the request resolved.** A
