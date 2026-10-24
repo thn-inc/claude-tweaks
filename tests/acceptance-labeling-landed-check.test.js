@@ -105,5 +105,30 @@ test('AC2.1: pr-first-merge does not grow (merge bundle headroom)', () => {
   assert.ok(Buffer.byteLength(readText(MERGE_PATH)) <= 38412, 'pr-first-merge.md must stay <= 38412 bytes');
 });
 
-// Kept referenced so Tasks 3-4's appended tests find them defined.
-void [CLOSE_OUT, TIDY, SKILL_GRAPH];
+// The files (by key, in insertion order) that define the live-state clause: they
+// name both a run comment and the demo:pending label.
+function restaters(files) {
+  return Object.keys(files).filter((k) => /run-comment: try-it/.test(files[k]) && /demo:pending/.test(files[k]));
+}
+
+test('AC6.1: the live-state clause is defined only in the contract', () => {
+  assert.deepStrictEqual(
+    restaters({ contract: CONTRACT, 'pr-first-merge': MERGE, 'close-out': CLOSE_OUT, tidy: TIDY }),
+    ['contract'],
+  );
+});
+
+test('AC6.1: negative control — a caller restating the clause fails the pin', () => {
+  assert.throws(() => assert.deepStrictEqual(
+    restaters({
+      contract: CONTRACT,
+      'pr-first-merge': MERGE,
+      'close-out': CLOSE_OUT + ' `demo:pending` <!-- run-comment: try-it -->',
+      tidy: TIDY,
+    }),
+    ['contract'],
+  ), assert.AssertionError);
+});
+
+// Kept referenced so Task 4's appended tests find it defined.
+void [SKILL_GRAPH];

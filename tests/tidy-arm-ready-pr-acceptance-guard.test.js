@@ -37,23 +37,18 @@ function armWithoutGuard() {
 
 const GUARD_PINS = [
   /verify\.json/,
-  /`acceptance-labeling` row/,
-  /pass.{0,12}skip/,
-  /read every `spec-\*\/verify\.json`/,
-  /dispatch\/close-out\.md` step 3/,
-  /every file read exists/,
-  /validating the run-id as `flow\/claim-targets\.md` validates it/,
-  /an empty `Fixes` set or a failed read shows nothing/,
+  /acceptance-labeling-landed\.md/,
+  /acceptance-labeling: \{result\}/,
   /log-decision\.js.{0,200}--status SKIP/,
   /Never put an unvalidated marker value or a `verify\.json` string that is not a bare word/,
   /unreadable: \{verify\.json \| labels \| comments\}/,
 ];
 
-test("AC1.1: Arm ready PR names verify.json's acceptance-labeling row before its Step 3 call", () => {
+test('AC1.1: Arm ready PR cites the acceptance-labeling Landed check before its Step 3 call', () => {
   for (const re of GUARD_PINS) assert.match(arm, re);
-  const guardAt = arm.indexOf('`acceptance-labeling` row');
+  const guardAt = arm.indexOf('acceptance-labeling-landed.md');
   const stepThreeAt = arm.indexOf("run `_shared/pr-first-merge.md`'s Step 3");
-  assert.ok(guardAt >= 0 && stepThreeAt >= 0, 'both the labeling row and the Step 3 call must exist');
+  assert.ok(guardAt >= 0 && stepThreeAt >= 0, 'both the contract citation and the Step 3 call must exist');
   assert.ok(guardAt < stepThreeAt, 'the labeling guard must come before the Step 3 call');
 });
 
@@ -69,10 +64,7 @@ test('AC2.1: the "never touches Step 1 … preconditions already hold" claim is 
 
 const HELD_PINS = [
   /demo:pending/,
-  /<!-- run-comment: brief -->/,
-  /<!-- run-comment: try-it -->/,
-  /Trusted authors/,
-  /no valid marker or run dir resolves/,
+  /even when (it|the check) resolves `no run dir`/,
   /is held, not armed/,
   /never run labeling from a tidy sweep/,
   /not armed — acceptance labeling not landed/,
@@ -89,6 +81,27 @@ test('AC3.1: negative control — the held outcome is gone once the guard paragr
   assert.doesNotMatch(stripped, /is held, not armed/);
   assert.doesNotMatch(stripped, /not armed — acceptance labeling not landed/);
   assert.doesNotMatch(stripped, /Otherwise do not run Step 3/);
+});
+
+test('AC4.1: Arm ready PR cites the contract and no longer restates the predicate', () => {
+  assert.match(arm, /acceptance-labeling-landed\.md/);
+  assert.doesNotMatch(arm, /run-comment: brief/);
+  assert.doesNotMatch(arm, /run-comment: try-it/);
+  assert.doesNotMatch(arm, /spec-\*\/verify\.json/);
+});
+
+test('AC4.2 + AC5.2: tidy keeps its deltas', () => {
+  assert.match(arm, /even when (it|the check) resolves `no run dir`/);
+  assert.match(arm, /never run labeling from a tidy sweep/);
+  assert.match(arm, /not armed — acceptance labeling not landed \(\{reason\}\)/);
+  assert.match(arm, /close-out stops on the same missing run dir/);
+  assert.match(arm, /\/claude-tweaks:demo #\{record\}/);
+  assert.match(arm, /--status SKIP/);
+  assert.match(arm, /Never put an unvalidated marker value/);
+  assert.match(arm, /is held, not armed/);
+  assert.match(arm, /housekeeping-marker flavor .{0,120}skips this check/);
+  // AC5.4: a landed PR still reaches Step 3.
+  assert.match(arm, /run `_shared\/pr-first-merge\.md`'s Step 3/);
 });
 
 test('housekeeping-marker flavor is exempt from the guard', () => {
