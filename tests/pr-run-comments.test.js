@@ -392,7 +392,7 @@ node "\${CLAUDE_PLUGIN_ROOT}/bin/find-run-comment.js" --comments-file /tmp/{kind
 \`\`\`
 `;
 
-const PRE_CHANGE_TOMBSTONE_ROW = `|\`CLOSED\` (unmerged) — check for the tombstone marker: \`gh pr view {pr-number} --json comments --jq '.comments[] \\| select(.body \\| startswith("<!-- run-comment: failure -->")) \\| select((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR")'\` (trusted authors only; name each skipped one per \`_shared/pr-run-comments.md\`'s skip notice) | **Non-empty result → tombstoned.** Keep — same as \`bin/lib/reconcile/reap-merged.js\`'s own \`pr-closed-unmerged\` skip decision. Recommendation: \`Keep (tombstoned — retry via /claude-tweaks:dispatch or /claude-tweaks:flow, PR #{number})\`. **Empty result → abandoned**, not tombstoned — a human closed the draft without the run ever reaching the failure path. Recommendation: \`Keep (abandoned — closed PR #{number} carries no failure marker; manual review before removing worktree)\`. Never auto-remove either case — \`/tidy\` never escalates a "manual review" row to a destructive delete on its own. |`;
+const PRE_CHANGE_TOMBSTONE_ROW = `| \`CLOSED\` (unmerged) — check for the tombstone marker: \`gh pr view {pr-number} --json comments --jq '.comments[] \\| select(.body \\| startswith("<!-- run-comment: failure -->")) \\| select((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR")'\` (trusted authors only; name each skipped one per \`_shared/pr-run-comments.md\`'s skip notice) | **Non-empty result → tombstoned.** Keep — same as \`bin/lib/reconcile/reap-merged.js\`'s own \`pr-closed-unmerged\` skip decision. Recommendation: \`Keep (tombstoned — retry via /claude-tweaks:dispatch or /claude-tweaks:flow, PR #{number})\`. **Empty result → abandoned**, not tombstoned — a human closed the draft without the run ever reaching the failure path. Recommendation: \`Keep (abandoned — closed PR #{number} carries no failure marker; manual review before removing worktree)\`. Never auto-remove either case — \`/tidy\` never escalates a "manual review" row to a destructive delete on its own. |`;
 
 const findStep = () => between(COMMENTS, '1. **Find.**', '2. **Found');
 const collapse = (s) => s.replace(/\s+/g, ' ');
@@ -417,6 +417,13 @@ test("AC1.1: the Find step's worktree-safe form is a plain fetch plus bin/find-r
   for (const bad of ['--jq', 'github.com', '$?', ';', '&&']) {
     assert.ok(!fetchLine.includes(bad), `the fetch line must not contain ${bad}`);
   }
+  const resolveAt = find.indexOf('session-tmp-resolve.js');
+  assert.ok(
+    resolveAt >= 0 && resolveAt < find.indexOf('In a worktree-isolated session') && resolveAt < find.indexOf('Outside a worktree-isolated session'),
+    'the resolver call precedes both the worktree-safe route and the jq-shortcut route',
+  );
+  assert.ok(COMMENTS.includes('-F body=@"{body-path}"'), 'the step 2 update writes its body from {body-path}');
+  assert.ok(COMMENTS.includes('--body-file "{body-path}"'), 'the step 3 create writes its body from {body-path}');
   assert.ok(fs.existsSync(path.join(ROOT, 'plugin', 'bin', 'find-run-comment.js')));
   assert.ok(!PRE_CHANGE_FIND_FENCES.includes('session-tmp-resolve.js'), 'go-red: the pre-change fences do not resolve through session-tmp-resolve.js');
   assert.ok(!PRE_CHANGE_FIND_FENCES.includes('{comments-path}'), 'go-red: the pre-change fences carry no {comments-path} placeholder');
