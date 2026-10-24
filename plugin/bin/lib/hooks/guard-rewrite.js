@@ -27,7 +27,8 @@
 // Residual risk the text cannot show: a function or alias from the user's
 // shell snapshot that sets an uppercase variable at runtime (`nvm use`, `conda
 // activate`, a zsh `chpwd` hook) between an assignment and its reference: a
-// plain command word can name such a function. Code run from the command text
+// plain command word can name such a function, and so can a zsh glob qualifier
+// (`*(e/fn/)`, `*(+fn)`), which runs it in the current shell. Code run from the command text
 // itself (`source`, `.`, `eval`, `trap`, an expansion as the command word) makes
 // rules 1 and 2 decline: every command word must be a plain literal outside the
 // runner set (commandWordsPlain).

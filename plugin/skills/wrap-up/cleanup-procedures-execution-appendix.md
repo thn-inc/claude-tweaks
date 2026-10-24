@@ -42,7 +42,7 @@ git rev-parse --show-toplevel
 # exists to save is still inside the worktree. resolve-run-dir --root-only
 # already returns a realpath'd MAIN, so it needs no separate pwd -P here.
 WT=$(cd "{worktree-root}" && pwd -P)
-MAIN=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only)
+MAIN=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only) || exit 1
 RUN_REAL=$(cd "$RUN_DIR" 2>/dev/null && pwd -P)
 case "${RUN_REAL:+$RUN_REAL/}" in
   "$WT"/*)
