@@ -2,3 +2,8 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | diff-facts.js rethrows a non-BlastRadiusError — exit 1/empty stdout holds but stderr becomes a multi-line stack (gatherDiffFiles wraps every git call; header wording softened) | deferred | Origin: SDD Task 1 review minor (#3955). Files: plugin/bin/diff-facts.js. Trigger: revisit if gatherDiffFiles gains an unwrapped call or a caller parses diff-facts stderr. |
+| 2 | build | tests/diff-facts-cli-e2e.test.js fixtures never remove their mkdtemp dirs (matches sibling blast-radius-cli-e2e.test.js) | deferred | Origin: SDD Task 1 review minor (#3955). Files: tests/diff-facts-cli-e2e.test.js, tests/blast-radius-cli-e2e.test.js. Trigger: revisit when either e2e suite's fixtures are next touched. |
+| 3 | build | SDD ruling — accept "the diff-facts command exited" rewording of ceremony-derivation.md's SKIP line (plan text named diff-facts.js, contradicting AC2.1's once-only rule): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
+| 4 | build | tests/diff-facts-parse-numstat-conformance.test.js: pluginRootFor keeps a vestigial pathImpl param; doctored/replaced helper pair could be one mutate() | deferred | Origin: SDD Task 2 review minor (#3955). Files: tests/diff-facts-parse-numstat-conformance.test.js. Trigger: revisit when the conformance test is next edited. |
+| 5 | build | ceremony-derivation.md step 1 does not state that uncommitted working-tree edits are not counted (diff range mergeBase..HEAD) | deferred | Origin: SDD Task 2 review minor (#3955). Files: plugin/skills/wrap-up/ceremony-derivation.md. Trigger: revisit if wrap-up ever runs with uncommitted production edits. |
