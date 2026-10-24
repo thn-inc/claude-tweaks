@@ -549,15 +549,8 @@ function matchRedirectOperator(tok) {
   return m ? m[2] : null;
 }
 
-// #3989: a heredoc body is data for the program it is fed to, not shell text,
-// so a `>` inside it is not a redirection and its newlines are not command
-// boundaries. stripHeredocBodies returns the command with each body and its
-// closing-delimiter line removed. The opener line keeps its newline, so
-// whatever follows the closing delimiter starts its own segment. Whatever the
-// scan cannot prove is data stays visible (a body fed to a shell, an unquoted
-// body that expands, an unterminated body, a continuation line): see
-// planHeredocBodies. Any internal failure returns the input unchanged (the
-// pre-#3989 scan).
+// #3989 heredoc-body stripping (see stripHeredocBodies below). Program words
+// that run their input as shell text:
 const SHELL_INTERPRETER_WORDS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash', 'fish', 'busybox', 'eval', 'source', '.', 'su', 'csh', 'tcsh', 'rbash', 'pwsh', 'powershell']);
 // A versioned shell (`bash5`, `zsh5.9`, `sh4`) runs the same interpreter.
 const VERSIONED_SHELL_RE = /^(ba|z|k|da|mk|a|c|tc|rba)?sh\d[\d.]*$/;
@@ -566,9 +559,9 @@ const WRAPPER_WORDS = new Set(['sudo', 'doas', 'env', 'exec', 'command', 'nohup'
 
 // The program names one raw token may stand for, lowercased, with quotes and
 // backslashes removed: `bas\h`, `'/bin/bash'`, `C:\bin\sh.exe` each yield a name.
-// Fix round 2 (#3989): a leading group or process-substitution opener (`(`, `{`,
-// `>(`, `<(`) is dropped, then a glued redirection (`sh<<EOF`), then a trailing
-// group closer (`bash)`, `bash;`, `}`), before the basename lookup.
+// A leading group or process-substitution opener (`(`, `{`, `>(`, `<(`) is
+// dropped, then a glued redirection (`sh<<EOF`), then a trailing group closer
+// (`bash)`, `bash;`, `}`), before the basename lookup.
 function programNames(tok) {
   const s = tok.replace(/["']/g, '').replace(/^(?:[({]|[<>]\()+/, '').replace(/[<>].*$/, '').replace(/[);}]+$/, '');
   const bySlash = s.split('/').pop().replace(/\\/g, '');
@@ -630,8 +623,8 @@ function readHeredocOpener(str, j) {
   }
   if (quote !== null) return null;
   const raw = str.slice(start, j);
-  // Fix round 2 (#3989): bash decodes `$'...'` / `$"..."` in the delimiter word, which
-  // this parser does not, so the terminator cannot be known: the opener is unprovable.
+  // Bash decodes `$'...'` / `$"..."` in the delimiter word, which this parser
+  // does not, so the terminator cannot be known: the opener is unprovable.
   if (/\$['"]/.test(raw)) return { unprovable: true, end: j };
   const delim = decodeHeredocWord(raw);
   if (!delim) return null;
@@ -794,6 +787,14 @@ function scanHeredocs(str) {
   return out.join('');
 }
 
+// A heredoc body is data for the program it is fed to, not shell text, so a `>`
+// inside it is not a redirection and its newlines are not command boundaries.
+// Returns the command with each body and its closing-delimiter line removed. The
+// opener line keeps its newline, so whatever follows the closing delimiter starts
+// its own segment. Whatever the scan cannot prove is data stays visible (a body
+// fed to a shell, an unquoted body that expands, an unterminated body, a
+// continuation line): see planHeredocBodies. Any internal failure returns the
+// input unchanged (the pre-#3989 scan).
 function stripHeredocBodies(command) {
   if (typeof command !== 'string') return command;
   try {
