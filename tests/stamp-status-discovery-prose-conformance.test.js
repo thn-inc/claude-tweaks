@@ -23,6 +23,8 @@ function step15(text) {
   return text.slice(start, end);
 }
 
+const STEP15 = step15(CMS);
+
 function assertComposedVerdictNamed(ver, step, tcg) {
   for (const [name, text] of [['verification.md', ver], ['code-mode-steps.md Step 1.5', step], ['two-call-gate.md', tcg]]) {
     assert.match(text, /suiteComposed/, `${name} must name the composed verdict`);
@@ -51,26 +53,26 @@ test('AC10.1: stamp-composition.md no longer says bare --stamp-status never comp
 });
 
 test('AC10.2: verification.md, review Step 1.5 and two-call-gate.md name the composed verdict as verified HEAD', () => {
-  assertComposedVerdictNamed(VER, step15(CMS), TCG);
+  assertComposedVerdictNamed(VER, STEP15, TCG);
 });
 
 test('AC10.2 go-red control: the assertions throw on text with suiteComposed removed', () => {
   const strip = (t) => t.replace(/suiteComposed/g, 'REMOVED');
-  assert.throws(() => assertComposedVerdictNamed(strip(VER), step15(CMS), TCG));
-  assert.throws(() => assertComposedVerdictNamed(VER, strip(step15(CMS)), TCG));
-  assert.throws(() => assertComposedVerdictNamed(VER, step15(CMS), strip(TCG)));
+  assert.throws(() => assertComposedVerdictNamed(strip(VER), STEP15, TCG));
+  assert.throws(() => assertComposedVerdictNamed(VER, strip(STEP15), TCG));
+  assert.throws(() => assertComposedVerdictNamed(VER, STEP15, strip(TCG)));
 });
 
 test('AC10.2: a generated-only dirty tree is not listed as no recent pass in Step 1.5 or the consumer rule', () => {
-  assertDirtyNotNoRecentPass(VER, step15(CMS));
+  assertDirtyNotNoRecentPass(VER, STEP15);
 });
 
 test('AC10.2 go-red control: the dirty-tree assertion throws when either gate lists dirty as no recent pass', () => {
-  const stepWithDirty = step15(CMS).replace('- **`verifiedHead: false`**', '- **`verifiedHead: false` or `dirty: true`**');
-  assert.notEqual(stepWithDirty, step15(CMS));
+  const stepWithDirty = STEP15.replace('- **`verifiedHead: false`**', '- **`verifiedHead: false` or `dirty: true`**');
+  assert.notEqual(stepWithDirty, STEP15);
   assert.throws(() => assertDirtyNotNoRecentPass(VER, stepWithDirty));
   const verWithDirty = VER.replace('treat `verifiedHead: false` as', 'treat `verifiedHead: false` or a dirty tree as');
   assert.notEqual(verWithDirty, VER);
-  assert.throws(() => assertDirtyNotNoRecentPass(verWithDirty, step15(CMS)));
-  assert.throws(() => assertDirtyNotNoRecentPass(VER, step15(CMS).replace(/liveGeneratedExempt/g, 'REMOVED')));
+  assert.throws(() => assertDirtyNotNoRecentPass(verWithDirty, STEP15));
+  assert.throws(() => assertDirtyNotNoRecentPass(VER, STEP15.replace(/liveGeneratedExempt/g, 'REMOVED')));
 });

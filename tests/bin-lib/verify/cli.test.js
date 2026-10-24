@@ -1548,18 +1548,10 @@ test('a plain --no-stamp partial run with no --stamp-suite writes no per-suite r
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-suites.json')));
 });
 
-test('bare --stamp-status discovers the default declaration and composes per-suite records (#4006 inverts #3002\'s no-scope pin)', async () => {
-  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
-  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
-  await runStampSuiteChunk(r, 'other=node -e 0');
-  const status = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo })).stdout);
-  assert.strictEqual(status.suiteComposed.complete, true);
-  assert.strictEqual(status.verifiedHead, true, 'no full stamp was ever written — the composed per-suite records are what verify HEAD');
-});
-
 // #4006: bare --stamp-status discovers .claude-tweaks/verify-scope.json at the
 // checkout root, so every gate that reads bare status sees the composed and
-// generated-exempt verdicts without having to pass --scope.
+// generated-exempt verdicts without having to pass --scope. (Inverts #3002's
+// pin that a bare --stamp-status never looks at per-suite records.)
 async function bareStatus(r, cwd = r.repo) {
   return JSON.parse((await runCli(['--stamp-status'], { cwd })).stdout);
 }
@@ -1569,7 +1561,7 @@ test('AC1.1: bare --stamp-status composes two chunked per-suite records via the 
   await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
   await runStampSuiteChunk(r, 'other=node -e 0');
   const s = await bareStatus(r);
-  assert.strictEqual(s.verifiedHead, true);
+  assert.strictEqual(s.verifiedHead, true, 'no full stamp was ever written — the composed per-suite records are what verify HEAD');
   assert.strictEqual(s.suiteComposed.complete, true);
   assert.strictEqual(s.match, false);
   assert.strictEqual(s.present, false);
@@ -1669,7 +1661,8 @@ test('AC7.1: a foreign --git-dir with no --scope skips discovery silently', asyn
 });
 
 test('AC9.1: review Step 1.5\'s literal stamp-status command reads verifiedHead:true on composed records', async () => {
-  const steps = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'review', 'code-mode-steps.md'));
+  const pluginRoot = path.join(__dirname, '..', '..', '..', 'plugin');
+  const steps = readText(path.join(pluginRoot, 'skills', 'review', 'code-mode-steps.md'));
   const section = steps.split('### Standalone (outside `/claude-tweaks:flow`):')[1];
   assert.ok(section, 'the Standalone heading exists in code-mode-steps.md');
   const block = section.match(/```bash\n([^\n]+)\n```/);
@@ -1679,7 +1672,6 @@ test('AC9.1: review Step 1.5\'s literal stamp-status command reads verifiedHead:
   const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
   await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
   await runStampSuiteChunk(r, 'other=node -e 0');
-  const pluginRoot = path.join(__dirname, '..', '..', '..', 'plugin');
   const out = spawnSync('sh', ['-c', cmd], { cwd: r.repo, encoding: 'utf8', env: { ...process.env, CLAUDE_PLUGIN_ROOT: pluginRoot } });
   assert.strictEqual(out.status, 0, out.stderr);
   assert.strictEqual(JSON.parse(out.stdout).verifiedHead, true);
