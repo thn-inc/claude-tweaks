@@ -12,3 +12,5 @@
 | 8 | review | 3f low (direct-verified): the gate pattern's trailing dot keeps it off auto-merge-pending but no test asserted it; the nothing-pending verb test covered only a .DS_Store dotfile | fixed | Added the auto-merge-pending negative to the detector test and a no-staged/ archive case to tests/archive-run-verb.test.js |
 | 9 | review | 3a low (unconfirmed): dispatchGateTemplates and detectsDispatchTemplate near-copy the existing short-circuit test helpers | open | Staged as review-unconfirmed-1 for the Review Console |
 | 10 | review | 3f low (unconfirmed): bundle log-line literals are hand-copied in tests/archive-run-verb.test.js and again in the detector test | open | Staged as review-unconfirmed-2 for the Review Console |
+| 11 | wrap-up | pr — PR #4053 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | Open by design until the Review Console decides merge, arm, or park |
+| 12 | wrap-up | suite — residue probe skipped via --no-suite | observation | Suite state comes from the runner stamp instead: full pass at 4bce651a7 (tests 15751, pass 15749, fail 0) |
