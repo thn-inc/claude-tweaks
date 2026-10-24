@@ -100,15 +100,17 @@ test('AC2.1: parity with the documented jq', (t) => {
   const probe = spawnSync('jq', ['--version'], { encoding: 'utf8' });
   if (probe.error) return t.skip('jq not found in this environment');
   const payload = JSON.stringify({ comments: C.filter((c) => c.body !== null) });
-  const idJq = `.comments[] | select(.body | startswith("<!-- run-comment: verdict -->")) | ${trustedJqSelect()} | .id`;
-  const noteJq = `.comments[] | select(.body | startswith("<!-- run-comment: verdict -->")) | ${untrustedJqNote()}`;
-  const jqIds = spawnSync('jq', ['-r', idJq], { input: payload, encoding: 'utf8' });
-  const jqNotes = spawnSync('jq', ['-r', noteJq], { input: payload, encoding: 'utf8' });
-  assert.equal(jqIds.status, 0, jqIds.stderr);
-  assert.equal(jqNotes.status, 0, jqNotes.stderr);
+  const markerJq = '.comments[] | select(.body | startswith("<!-- run-comment: verdict -->"))';
+  const jqLines = (filter) => {
+    const r = spawnSync('jq', ['-r', filter], { input: payload, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.split('\n').filter(Boolean);
+  };
+  const jqIds = jqLines(`${markerJq} | ${trustedJqSelect()} | .id`);
+  const jqNotes = jqLines(`${markerJq} | ${untrustedJqNote()}`);
   const found = findRunComments(JSON.parse(payload), 'verdict');
-  assert.deepEqual(found.ids, jqIds.stdout.split('\n').filter(Boolean));
-  assert.deepEqual(found.skipped, jqNotes.stdout.split('\n').filter(Boolean));
+  assert.deepEqual(found.ids, jqIds);
+  assert.deepEqual(found.skipped, jqNotes);
 });
 
 test('findRunComments returns null for a non-list payload', () => {
