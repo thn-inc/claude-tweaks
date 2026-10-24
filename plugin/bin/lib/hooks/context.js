@@ -896,7 +896,14 @@ function stampAdHocRunDirForDenial(ctx) {
     // stampAdHocRunDir's identical guard).
     const existing = readRunState(result.path);
     if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return null;
-    const written = writeRunState(result.path, { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ownerPidPatch(process.env) });
+    // #3973: the owner block spawns `ps`, so it is computed before the lock; a failure
+    // degrades to "no owner block" and never costs the stamp below.
+    let block = null;
+    try { block = ownerBlock({ sessionId }); } catch { /* degrade: stamp without an owner block */ }
+    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ownerPidPatch(process.env) };
+    const written = writeRunState(result.path, block
+      ? (current) => ({ ...todaysPatch, ...ownerStampPatch(current, sessionId, block, { replacesSessionId: false }) })
+      : todaysPatch);
     if (!written) { rollbackMint(result.path); return null; }
     return result.path;
   } catch { return null; }

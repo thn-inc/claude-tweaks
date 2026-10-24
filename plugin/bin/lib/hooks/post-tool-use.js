@@ -327,7 +327,14 @@ function stampAdHocRunDir(ctx) {
     // silently reassign the dir mid-session.
     const existing = ctxLib.readRunState(result.path);
     if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return;
-    const written = ctxLib.writeRunState(result.path, { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ctxLib.ownerPidPatch(process.env) });
+    // #3973: the owner block spawns `ps`, so it is computed before the lock; a failure
+    // degrades to "no owner block" and never costs the stamp below.
+    let block = null;
+    try { block = ctxLib.ownerBlock({ sessionId }); } catch { /* degrade: stamp without an owner block */ }
+    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ctxLib.ownerPidPatch(process.env) };
+    const written = ctxLib.writeRunState(result.path, block
+      ? (current) => ({ ...todaysPatch, ...ctxLib.ownerStampPatch(current, sessionId, block, { replacesSessionId: false }) })
+      : todaysPatch);
     if (!written) {
       // writeRunState failed (I/O error). The mint above already touched
       // decisions.md, which isUnadoptedMint (context.js) treats as evidence
