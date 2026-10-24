@@ -59,6 +59,13 @@ const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', '
 // not the other.
 const BACKGROUND_CHECKS = ['release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
 
+// The janitorial checks an UNSCOPED `reconcile` CLI call hands to the detached
+// background pass instead of running inline (#4032) — the three whose cost
+// (an all-refs fetch, per-branch PR lookups, residue-ledger scans) dominated
+// the CLI's wall time. A subset of BACKGROUND_CHECKS; an explicit `--checks`
+// call is never deferred.
+const CLI_DEFERRED_CHECKS = ['archive-branches', 'remote-prune', 'ledger-residue'];
+
 // String-literal per-event requires — not a computed `require('./lib/hooks/' +
 // event)` — so every `bin/lib/hooks/*.js` module resolves statically inside
 // `plugin/` (payload-boundary test #419, assertion (b): a dynamic require() is
@@ -1569,7 +1576,12 @@ async function main(argv) {
       dryRun: args.includes('--dry-run'),
       cwd: process.cwd(),
       mcpReachable: args.includes('--mcp-reachable'),
-      checks: checksList.length ? checksList : undefined,
+      // Unscoped: run everything except the janitorial checks deferred to the
+      // background pass (#4032); FAST_CHECKS stays inside the inline set, so the
+      // freshness stamp below is still truthful.
+      checks: checksList.length
+        ? checksList
+        : require('./lib/reconcile').ALL_CHECKS.filter((c) => !CLI_DEFERRED_CHECKS.includes(c)),
       // An explicit --checks subset is the caller naming which checks must
       // run (plus any prerequisite reconcile() adds, #3630) — don't let the
       // SessionStart hot-path time ceiling (#820 D4) skip them; an unscoped
@@ -1587,6 +1599,29 @@ async function main(argv) {
       out = await require('./lib/reconcile').reconcile(opts);
     } catch {
       out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
+    }
+    if (!checksList.length) {
+      // #4032: report the deferral, and hand the deferred checks to the
+      // detached background pass (TTL-gated by its own status file) — but only
+      // when this pass converged: a no-repo/no-remote/local-merge/threw result
+      // (a `check: 'all'` skip) already says why nothing ran, and a dry run
+      // must never spawn a mutating child.
+      const converged = !(out.skipped || []).some((s) => s && s.check === 'all');
+      let background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
+      if (converged) {
+        out.skipped = [...(out.skipped || []), { check: CLI_DEFERRED_CHECKS.join(','), reason: 'deferred-to-background' }];
+        background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'dry-run' };
+        if (!opts.dryRun) {
+          const cwd = process.cwd();
+          const r = require('./lib/reconcile/background-spawn').spawnBackgroundIfStale({
+            root: wtDetect.mainCheckoutRoot(cwd),
+            cwd,
+            sessionId: process.env.CLAUDE_CODE_SESSION_ID || undefined,
+          });
+          background = { checks: CLI_DEFERRED_CHECKS, spawned: r.spawned, reason: r.reason };
+        }
+      }
+      out.background = background;
     }
     if (jsonOut) {
       // Unchanged from before #638 — byte-for-byte, so bin/lib/reconcile's
@@ -1841,4 +1876,4 @@ if (require.main === module) {
 // USAGE exported so tests/hooks-help-guard.test.js's table-driven suite
 // iterates the SAME verb list this dispatcher's --help/-h guard checks
 // membership against, rather than a second, driftable copy of it.
-module.exports = { main, BACKGROUND_CHECKS, USAGE };
+module.exports = { main, BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, USAGE };

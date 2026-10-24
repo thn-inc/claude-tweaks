@@ -2091,29 +2091,94 @@ test('AC2.1: reconcile(): no opts.budgetMs passes undefined to createBudget, so 
   });
 });
 
-test('AC3.1/AC3.2: hooks.js reconcile: an explicit --checks subset runs unbounded; an unscoped pass keeps the default budget', async () => {
+// Runs hooks.js's `main` in-process with `reconcile` and the background spawn
+// stubbed (no GitHub, no real child), capturing the JSON stdout of each call.
+async function runReconcileVerbStubbed(argvs, { reconcileResult = () => ({ skipped: [] }), spawnResult = { spawned: true, reason: 'spawned' } } = {}) {
   const { main } = require('../plugin/bin/hooks');
   const reconcileMod = require('../plugin/bin/lib/reconcile');
+  const spawnMod = require('../plugin/bin/lib/reconcile/background-spawn');
   const originalReconcile = reconcileMod.reconcile;
+  const originalSpawn = spawnMod.spawnBackgroundIfStale;
   const originalWrite = process.stdout.write;
   const calls = [];
-  reconcileMod.reconcile = async (opts) => { calls.push(opts); return { skipped: [] }; };
-  process.stdout.write = () => true;
+  const spawnCalls = [];
+  const outputs = [];
+  reconcileMod.reconcile = async (opts) => { calls.push(opts); return reconcileResult(calls.length - 1); };
+  spawnMod.spawnBackgroundIfStale = (args) => { spawnCalls.push(args); return spawnResult; };
+  process.stdout.write = (chunk) => { outputs.push(String(chunk)); return true; };
   try {
-    await main(['node', 'hooks.js', 'reconcile', '--checks', 'reap', '--json']);
-    await main(['node', 'hooks.js', 'reconcile', '--json']);
+    for (const argv of argvs) await main(['node', 'hooks.js', ...argv]);
   } finally {
     reconcileMod.reconcile = originalReconcile;
+    spawnMod.spawnBackgroundIfStale = originalSpawn;
     process.stdout.write = originalWrite;
   }
+  return { calls, spawnCalls, outputs: outputs.map((o) => JSON.parse(o)) };
+}
+
+const INLINE_UNSCOPED_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'archive', 'console'];
+const DEFERRED_CHECKS = ['archive-branches', 'remote-prune', 'ledger-residue'];
+
+test('AC3.1/AC3.2: hooks.js reconcile: an explicit --checks subset runs unbounded; an unscoped pass keeps the default budget', async () => {
+  const { calls } = await runReconcileVerbStubbed([
+    ['reconcile', '--checks', 'reap', '--json'],
+    ['reconcile', '--json'],
+  ]);
   assert.equal(calls.length, 2);
   assert.equal(calls[0].budgetMs, Infinity);
   assert.deepEqual(calls[0].checks, ['reap']);
   assert.equal(calls[1].budgetMs, undefined);
-  assert.equal(calls[1].checks, undefined);
+  // The unscoped CLI names its inline set: ALL_CHECKS minus the three checks
+  // deferred to the background pass (#4032).
+  assert.deepEqual(calls[1].checks, INLINE_UNSCOPED_CHECKS);
   // An explicit subset never stamps the shared freshness key; an unscoped pass still does.
   assert.equal(calls[0].skipCacheStamp, true);
   assert.equal(calls[1].skipCacheStamp, undefined);
+});
+
+test('unscoped CLI defers three checks and spawns the background pass (#4032)', async () => {
+  const { calls, spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']]);
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(outputs[0].skipped, [{ check: 'archive-branches,remote-prune,ledger-residue', reason: 'deferred-to-background' }]);
+  assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: true, reason: 'spawned' });
+});
+
+test('unscoped CLI reports the helper reason when the background pass is fresh (#4032)', async () => {
+  const { outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], { spawnResult: { spawned: false, reason: 'fresh' } });
+  assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: false, reason: 'fresh' });
+});
+
+test('unscoped CLI never spawns under --dry-run or on a no-remote fixture (#4032)', async () => {
+  const dir = noRemoteFixture('ct-recon-bg-noremote-');
+  const r = runHook(['reconcile', '--dry-run', '--json'], { cwd: dir });
+  assert.strictEqual(r.code, 0);
+  const parsed = JSON.parse(r.stdout);
+  assert.deepStrictEqual(parsed.background, { checks: DEFERRED_CHECKS, spawned: false, reason: 'not-converged' });
+  assert.deepStrictEqual(parsed.skipped, [{ check: 'all', reason: 'no-remote' }]);
+
+  const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--dry-run', '--json']]);
+  assert.equal(spawnCalls.length, 0);
+  assert.equal(outputs[0].background.spawned, false);
+  assert.equal(outputs[0].background.reason, 'dry-run');
+  assert.deepEqual(outputs[0].skipped, [{ check: 'archive-branches,remote-prune,ledger-residue', reason: 'deferred-to-background' }]);
+});
+
+test('unscoped CLI never spawns when reconcile() throws (#4032)', async () => {
+  const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], {
+    reconcileResult: () => { throw new Error('boom'); },
+  });
+  assert.equal(spawnCalls.length, 0);
+  assert.deepEqual(outputs[0].skipped, [{ check: 'all', reason: 'reconcile-threw' }]);
+  assert.equal(outputs[0].timings, null);
+  assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: false, reason: 'not-converged' });
+});
+
+test('explicit --checks output has no background key (#4032)', async () => {
+  const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--checks', 'reap', '--json']]);
+  assert.equal(spawnCalls.length, 0);
+  assert.equal('background' in outputs[0], false);
+  assert.deepEqual(outputs[0].skipped, []);
 });
 
 test('AC4.1: SessionStart and background reconcile call sites pass no budgetMs (default budget)', () => {

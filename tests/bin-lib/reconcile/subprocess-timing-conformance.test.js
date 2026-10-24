@@ -15,7 +15,10 @@ const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('.
 // the wrappers, so only direct exec call tokens (bare, `cp.`-qualified or
 // destructured) and a direct `require('child_process')` are offenders here.
 const RECONCILE_DIR = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'reconcile');
-const EXEMPT = new Set(['timing.js']);
+// background-spawn.js starts the detached, unref'd `reconcile-background` child
+// and never waits on it — there is no duration to attribute to a phase, so it
+// has no timed-wrapper equivalent.
+const EXEMPT = new Set(['timing.js', 'background-spawn.js']);
 
 const DIRECT_CALL = /\b(execFileSync|execFileAsync|execFile|execSync|spawnSync|spawn)\s*\(/g;
 const CP_REQUIRE = /require\(\s*['"](?:node:)?child_process['"]\s*\)/g;
