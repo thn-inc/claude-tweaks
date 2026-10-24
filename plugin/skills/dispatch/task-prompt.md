@@ -237,8 +237,11 @@ Exit 0 is required. On exit 1, run each `missing` entry's `remedy` (substituting
 not a missing bookend: correct the `--run`/`--targets` arguments and re-run, never report `DONE`
 on it.
 A `verify-run-bookends: degraded —` stderr line (exit 0; the run's `config.yml` carries no valid
-`integration-model` pin) is logged as a `SKIP` decision via `log-decision.js --status SKIP`,
-never treated as a failure or a missing bookend.
+`integration-model` pin) is logged as a `SKIP` decision via
+`log-decision.js --status SKIP --text-file "{text-file}"`, where `{text-file}` holds
+`condition: {stderr line} → fallback: PR-bookend check not run` per
+`_shared/auto-decision-log.md`'s Text from git or a user paragraph (the stderr line interpolates
+the config path), never treated as a failure or a missing bookend.
 
 OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 

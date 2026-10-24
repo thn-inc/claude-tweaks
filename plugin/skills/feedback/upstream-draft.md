@@ -79,7 +79,10 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
   --reversibility high
 ```
 
-`{text-file}` holds one line, `Unresolved target: {the raw value}. Kept placeholder; no AskUserQuestion in {mode}.`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — the raw value is user-supplied, so it never passes through shell quoting. The entry makes the unresolved target surface at the Review Console rather than vanishing silently. **Append a
+`{text-file}` holds one line, `Unresolved target: {the raw value}. Kept placeholder; no
+AskUserQuestion in {mode}.`, written per `_shared/auto-decision-log.md`'s Text from git or a user
+paragraph — the raw value is user-supplied, so it never passes through shell quoting. The entry
+makes the unresolved target surface at the Review Console rather than vanishing silently. **Append a
 stage path to the `{text-file}` line only when `--dry-run` was not also passed** — `... AskUserQuestion in
 {mode}. Stage path: staged/upstream-draft-{N}.md.` — since Step D's `--dry-run` branch never
 persists that file; a logged stage path pointing at a file that will never exist is exactly the
