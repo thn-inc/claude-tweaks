@@ -320,34 +320,36 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
   // than reading as "nothing to check".
   let mergeGrantGap = null;
   const hasMergeRow = items.some((item) => item.isMergeRow === true);
-  if (hasMergeRow && (typeof ctx.prBody !== 'string' || !ctx.memberGrants || typeof ctx.memberGrants !== 'object')) {
-    mergeGrantGap = { member: null, reason: 'grant-context-missing' };
-  } else if (hasMergeRow) {
-    const members = parseFixesMembers(ctx.prBody);
-    if (!members.length) {
-      // A merge row exists but no `Fixes #{n}` line could be parsed — the
-      // same fail-closed posture as resolve.js's own 'members-unresolved':
-      // a withheld grant is a human decision, never silently assumed clear
-      // for want of a membership list this session could not determine.
-      mergeGrantGap = { member: null, reason: 'members-unresolved' };
+  if (hasMergeRow) {
+    if (typeof ctx.prBody !== 'string' || !ctx.memberGrants || typeof ctx.memberGrants !== 'object') {
+      mergeGrantGap = { member: null, reason: 'grant-context-missing' };
     } else {
-      for (const n of members) {
-        const grant = ctx.memberGrants[n];
-        if (!grant) { mergeGrantGap = { member: n, reason: 'grant-unreadable' }; break; }
-        const mat = evaluateMaturation({
-          hasMergeLabel: (grant.labels || []).includes('auto:merge'),
-          hasPendingLabel: (grant.labels || []).includes('auto:merge-pending'),
-          pendingSince: grant.pendingSince || null,
-          vetoWindowHours: ctx.vetoWindowHours,
-          now: ctx.now !== undefined ? ctx.now : now,
-        });
-        if (!mat.mature) {
-          // #3358: a grant left unmatured while untrusted marker comments were
-          // passed over names them, so the withhold is not mistaken for "nobody
-          // ever granted" -- the planted comment is what the operator should see.
-          const passedOver = Array.isArray(grant.skippedUntrusted) ? grant.skippedUntrusted : [];
-          mergeGrantGap = { member: n, reason: passedOver.length ? `${mat.reason} — ${passedOver.join('; ')}` : mat.reason };
-          break;
+      const members = parseFixesMembers(ctx.prBody);
+      if (!members.length) {
+        // A merge row exists but no `Fixes #{n}` line could be parsed — the
+        // same fail-closed posture as resolve.js's own 'members-unresolved':
+        // a withheld grant is a human decision, never silently assumed clear
+        // for want of a membership list this session could not determine.
+        mergeGrantGap = { member: null, reason: 'members-unresolved' };
+      } else {
+        for (const n of members) {
+          const grant = ctx.memberGrants[n];
+          if (!grant) { mergeGrantGap = { member: n, reason: 'grant-unreadable' }; break; }
+          const mat = evaluateMaturation({
+            hasMergeLabel: (grant.labels || []).includes('auto:merge'),
+            hasPendingLabel: (grant.labels || []).includes('auto:merge-pending'),
+            pendingSince: grant.pendingSince || null,
+            vetoWindowHours: ctx.vetoWindowHours,
+            now: ctx.now !== undefined ? ctx.now : now,
+          });
+          if (!mat.mature) {
+            // #3358: a grant left unmatured while untrusted marker comments were
+            // passed over names them, so the withhold is not mistaken for "nobody
+            // ever granted" -- the planted comment is what the operator should see.
+            const passedOver = Array.isArray(grant.skippedUntrusted) ? grant.skippedUntrusted : [];
+            mergeGrantGap = { member: n, reason: passedOver.length ? `${mat.reason} — ${passedOver.join('; ')}` : mat.reason };
+            break;
+          }
         }
       }
     }
@@ -405,9 +407,9 @@ async function consoleExecuteDetect(opts = {}) {
   // Every such candidate's memberGrants entry is seeded to {} BEFORE any
   // fetch resolves (not only on a successful one) — decideConsoleExecute
   // treats a member missing from memberGrants as 'grant-unreadable' and
-  // withholds, so a candidate whose fetches all fail still fails closed
-  // instead of silently falling back to ctx: {} (which would read as "no
-  // merge row to check" and let the row through unchecked).
+  // withholds, so a candidate whose fetches all fail still fails closed with
+  // the specific per-member reason instead of falling back to ctx: {} (which
+  // would only yield the generic 'grant-context-missing', #4048).
   const grantJobs = [];
   const mergeRowCandidateIndices = new Set();
   candidates.forEach((c, i) => {
