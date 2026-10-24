@@ -53,19 +53,23 @@ Then resolve the run directory per `_shared/run-dir-resolution.md` (steps 1-2: `
 
 ```bash
 RUN_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug release 2>/dev/null)
+REFUSED_DIR=
+# A step-2 directory (no PIPELINE_RUN_DIR) whose run-state.json status is terminal is a finished run — refuse it (#3898).
+if [ -n "$RUN_DIR" ] && [ -z "$PIPELINE_RUN_DIR" ] && PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" node -e 'const { NON_TERMINAL } = require(process.env.PLUGIN_ROOT + "/bin/lib/hooks/run-integrity.js"); const s = JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")).status; process.exit(typeof s === "string" && !NON_TERMINAL.has(s) ? 0 : 1)' "$RUN_DIR" 2>/dev/null; then REFUSED_DIR=$RUN_DIR; RUN_DIR=; fi
 if [ -z "$RUN_DIR" ]; then
-  # Steps 1-2 found nothing (or step 1's adoption-time anchoring check rejected a
-  # worktree-trapped PIPELINE_RUN_DIR, [IL-127]) — clear it for this second call so a
-  # rejected value is never re-consulted, then mint the standalone fallback.
+  # Steps 1-2 found nothing, or the guard above refused a finished run's directory (or step 1's
+  # adoption-time anchoring check rejected a worktree-trapped PIPELINE_RUN_DIR, [IL-127]) — clear
+  # PIPELINE_RUN_DIR for this second call so a rejected value is never re-consulted, then mint the standalone fallback.
   RUN_DIR=$(PIPELINE_RUN_DIR= node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug release --standalone release --create)
   printf '{"status":"active","createdBy":"release-standalone"}\n' > "$RUN_DIR/run-state.json"
 fi
 echo "$RUN_DIR"
+[ -z "$REFUSED_DIR" ] || echo "refused: $REFUSED_DIR"
 ```
 
 `$RUN_ROOT` is the main checkout, never a worktree cwd — a bare relative path silently shadows the main copy (`[IL-127]`). An `export` inside this snippet does not survive into the next Bash call; re-resolve with the same snippet in any later step that needs the path, and carry the resolved path as a fact of this run.
 
-**Determine inherited-vs-created here, once.** At this point — and only here — record which of the two branches above ran: `$PIPELINE_RUN_DIR` was already set at invocation, or an existing directory resolved at step 2 (whatever its `createdBy` — a prior standalone release run's directory counts) → **inherited**; this run minted the directory and wrote the `createdBy: "release-standalone"` stamp above → **created**. Carry that verdict as a run-scoped fact alongside the run dir path itself and **never re-read it from disk later** — the directory can be archived out from under a re-read, exactly as `wrap-up/SKILL.md`'s identical rule records.
+**Determine inherited-vs-created here, once.** At this point — and only here — record which of the two branches above ran: `$PIPELINE_RUN_DIR` was already set at invocation (never subject to the status check above), or an existing directory resolved at step 2 whose `run-state.json` status is non-terminal (`active` or `interrupted`) → **inherited**; this run minted the directory and wrote the `createdBy: "release-standalone"` stamp above → **created**. A step-2 directory whose status is terminal (#3898: a finished release run, which a later release must never reuse) is refused — the fence prints `refused: {dir}` as a second stdout line, the fallback mints a fresh directory, and the run is **created**. Once the new directory exists, log `AUTO {HH:MM:SS} — Step 0: {refused-dir} is a finished release run (status {status}) — not adopted; minted {run-dir}. Reversibility: n/a.` through the writer below. Carry that verdict as a run-scoped fact alongside the run dir path itself and **never re-read it from disk later** — the directory can be archived out from under a re-read, exactly as `wrap-up/SKILL.md`'s identical rule records.
 
 **Pin the review's auto-apply ceiling to `none`, here.** Step 3 reviews history that is already merged, so it has nothing to fix in place: a finding applied automatically there would land an unreviewed commit on the integration branch between the gate and the bump, and ship in the very release the gate exists to hold. For a **created** run directory, write the lever once:
 
