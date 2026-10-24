@@ -1,15 +1,27 @@
 // plugin/bin/lib/verify/impact.js — the test-impact map format and the pure
-// selection over it (#4024). No fs, no git: a map produced by a traced
-// full-suite run records, per test file, the repo-relative POSIX paths it
-// read, by kind — f content reads, s existence probes, d directory listings,
-// c content prefixes ('' = repo root). On disk the map is interned: one sorted
-// `paths` table, per-test index lists (sorted, empty kinds omitted).
+// selection over it (#4024). A map produced by a traced full-suite run
+// records, per test file, the repo-relative POSIX paths it read, by kind — f
+// content reads, s existence probes, d directory listings, c content prefixes
+// ('' = repo root). On disk the map is interned: one sorted `paths` table,
+// per-test index lists (sorted, empty kinds omitted).
 //
 // Selection fails CLOSED: a changed non-test path no traced read covers makes
 // selectImpactTests return {ok:false}, and mapProblem names why a map must not
 // be used at all — the caller then runs the full suite. What counts as a test
 // file is the caller's predicate; this module never guesses.
+//
+// The codec and selection are pure. The I/O helpers at the bottom
+// (gitLocations, loadImpactContext) read the map file, the test files present
+// at HEAD and the map commit's ancestry, every git call through an injectable
+// execImpl; they never throw — an unreadable input is a named problem.
 'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
+const { globToRegExp } = require('../issues/blast-radius');
+const { GIT_COMMON_DIR_TOKEN } = require('./declaration');
+const { lstatType } = require('../path-guard');
 
 const IMPACT_MAP_VERSION = 1;
 const DEFAULT_MAP_NAME = 'claude-tweaks-test-impact.json';
@@ -122,11 +134,101 @@ function mapProblem({ parsed, isAncestor, distance, maxAgeCommits }) {
   if (!parsed.ok) return `map-invalid: ${parsed.reason}`;
   if (parsed.map.exitCode !== 0) return 'map-from-failing-suite';
   if (!isAncestor) return 'map-not-ancestor';
+  // An unknown age (a failed rev-list) is never read as fresh.
+  if (!Number.isInteger(distance)) return `map-stale: unknown commits > ${maxAgeCommits}`;
   if (distance > maxAgeCommits) return `map-stale: ${distance} commits > ${maxAgeCommits}`;
   return null;
+}
+
+function git(execImpl, cwd, args) {
+  return String(execImpl('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
+}
+
+// The checkout's root and its git common dir (shared by every worktree, so a
+// map fetched once serves them all). null when git cannot answer.
+function gitLocations({ cwd, execImpl = execFileSync }) {
+  try {
+    const repoRoot = git(execImpl, cwd, ['rev-parse', '--show-toplevel']).trim();
+    const commonDir = git(execImpl, cwd, ['rev-parse', '--git-common-dir']).trim();
+    if (repoRoot === '' || commonDir === '') return null;
+    return { repoRoot, commonDir: path.resolve(cwd, commonDir) };
+  } catch {
+    return null;
+  }
+}
+
+function resolveMapPath({ decl, commonDir, repoRoot }) {
+  const m = decl.impact.map;
+  if (m === null || m === undefined) return path.join(commonDir, DEFAULT_MAP_NAME);
+  const prefix = `${GIT_COMMON_DIR_TOKEN}/`;
+  return m.startsWith(prefix) ? path.join(commonDir, m.slice(prefix.length)) : path.join(repoRoot, m);
+}
+
+// Every test file at HEAD the impact globs name — tracked, or untracked and not
+// ignored — still on disk (only a definite `missing` drops one: an unreadable
+// entry stays, which can only select more). null when git cannot list them.
+function listHeadTests({ decl, repoRoot, execImpl, fsImpl }) {
+  let out;
+  try {
+    out = git(execImpl, repoRoot, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
+  } catch {
+    return null;
+  }
+  const patterns = decl.impact.tests.map((g) => globToRegExp(g));
+  return sortedUnique(out.split('\0').filter((p) => p !== ''
+    && patterns.some((re) => re.test(p)) && lstatType(path.join(repoRoot, p), { fsImpl }).type !== 'missing'));
+}
+
+function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl }) {
+  let parsed;
+  try {
+    parsed = parseImpactMap(fsImpl.readFileSync(mapPath, 'utf8'));
+  } catch (err) {
+    // A directory, a permission error, ...: present but unusable.
+    parsed = err && err.code === 'ENOENT' ? null : { ok: false, reason: 'unreadable' };
+  }
+  let isAncestor = false;
+  let distance = null;
+  if (parsed && parsed.ok) {
+    const commit = parsed.map.commit;
+    try {
+      git(execImpl, repoRoot, ['merge-base', '--is-ancestor', '--end-of-options', commit, 'HEAD']);
+      isAncestor = true;
+    } catch { /* not an ancestor, or not a commit here */ }
+    if (isAncestor) {
+      try {
+        const count = git(execImpl, repoRoot, ['rev-list', '--count', '--end-of-options', `${commit}..HEAD`]).trim();
+        if (/^\d+$/.test(count)) distance = Number(count);
+      } catch { /* unknown age — mapProblem reads it as stale */ }
+    }
+  }
+  return {
+    map: parsed && parsed.ok ? parsed.map : null,
+    mapCommit: parsed && parsed.ok ? parsed.map.commit : null,
+    distance,
+    problem: mapProblem({ parsed, isAncestor, distance, maxAgeCommits: decl.impact.maxAgeCommits }),
+  };
+}
+
+// The impact context scope.js's selectScope reads, plus what the report shows.
+// A map problem with a declared impact.fetch runs `runFetch(command)` once
+// (→ {ran, exitCode, durationMs}); only a fetch that exits 0 reloads the map,
+// so a failed fetch leaves the original problem standing.
+function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync, fsImpl = fs, runFetch = null }) {
+  const mapPath = resolveMapPath({ decl, commonDir, repoRoot });
+  let state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl });
+  let fetch = null;
+  if (state.problem && decl.impact.fetch && runFetch) {
+    fetch = runFetch(decl.impact.fetch);
+    if (fetch.exitCode === 0) state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl });
+  }
+  const headTests = listHeadTests({ decl, repoRoot, execImpl, fsImpl });
+  const problem = state.problem || (headTests === null ? 'head-tests-unreadable' : null);
+  return { ...state, problem, headTests: headTests || [], mapPath, fetch };
 }
 
 module.exports = {
   IMPACT_MAP_VERSION, DEFAULT_MAP_NAME, KINDS,
   encodeImpactMap, parseImpactMap, under, selectImpactTests, mapProblem,
+  gitLocations, resolveMapPath, loadImpactContext,
 };

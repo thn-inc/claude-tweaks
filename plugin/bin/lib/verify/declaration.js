@@ -264,4 +264,6 @@ function generatedExemption(dirtyPaths, generated) {
   return allGenerated ? [...new Set(dirtyPaths)].sort() : null;
 }
 
-module.exports = { readDeclaration, generatedExemption, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING, DEFAULT_MAX_AGE_COMMITS };
+module.exports = {
+  readDeclaration, generatedExemption, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING, DEFAULT_MAX_AGE_COMMITS, GIT_COMMON_DIR_TOKEN,
+};

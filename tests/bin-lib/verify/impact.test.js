@@ -6,6 +6,7 @@ const path = require('path');
 const {
   IMPACT_MAP_VERSION, DEFAULT_MAP_NAME, KINDS,
   encodeImpactMap, parseImpactMap, under, selectImpactTests, mapProblem,
+  resolveMapPath, gitLocations, loadImpactContext,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 
 const SHA = '0123456789abcdef0123456789abcdef01234567';
@@ -232,4 +233,154 @@ test('mapProblem', () => {
   for (const [input, expected] of cases) {
     assert.strictEqual(mapProblem(input), expected, JSON.stringify(input));
   }
+});
+
+test('mapProblem: a distance that is not an integer never reads as fresh', () => {
+  const ok = parseImpactMap(JSON.stringify(encodeImpactMap({ commit: SHA, tracedAt: 't', exitCode: 0, node: 'v', tests: {} })));
+  for (const distance of [undefined, null, NaN, 1.5, '3']) {
+    assert.strictEqual(mapProblem({ parsed: ok, isAncestor: true, distance, maxAgeCommits: 50 }), 'map-stale: unknown commits > 50', String(distance));
+  }
+});
+
+// I/O helpers (#4024): a fake git runner keyed on the subcommand, and a fake fs.
+const ROOT = path.join(path.sep, 'repo');
+const COMMON = path.join(ROOT, '.git');
+const MAP_PATH = path.join(COMMON, DEFAULT_MAP_NAME);
+const declOf = (impact = {}) => ({
+  impact: { suite: 'tests', command: 'run {files}', tests: ['tests/**/*.test.js'], maxAgeCommits: 5, map: null, fetch: null, ...impact },
+});
+const mapText = (extra = {}) => JSON.stringify(encodeImpactMap({
+  commit: SHA, tracedAt: 't', exitCode: 0, node: 'v', tests: { 'tests/a.test.js': { f: ['src/x.js'] } }, ...extra,
+}));
+
+function fakeGit(overrides = {}) {
+  const calls = [];
+  const handlers = {
+    'ls-files': () => 'tests/a.test.js\0tests/b.test.js\0src/x.js\0tests/gone.test.js\0tests/a.test.js\0',
+    'merge-base': () => '',
+    'rev-list': () => '2\n',
+    ...overrides,
+  };
+  const execImpl = (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    const h = handlers[args[0]];
+    if (!h) throw new Error(`unexpected git ${args.join(' ')}`);
+    return h(args);
+  };
+  return { execImpl, calls };
+}
+
+function fakeFs(files) {
+  return {
+    readFileSync(p) {
+      if (Object.hasOwn(files, p)) {
+        if (files[p] instanceof Error) throw files[p];
+        return files[p];
+      }
+      throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+    },
+    // Only a.test.js and b.test.js are on disk; gone.test.js is tracked but deleted.
+    lstatSync(p) {
+      if (!p.endsWith('a.test.js') && !p.endsWith('b.test.js')) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+      return { isSymbolicLink: () => false, isFile: () => true, isDirectory: () => false };
+    },
+  };
+}
+
+test('resolveMapPath: default, {git-common-dir}/ expansion, and a repo-relative path', () => {
+  assert.strictEqual(resolveMapPath({ decl: declOf(), commonDir: COMMON, repoRoot: ROOT }), MAP_PATH);
+  assert.strictEqual(resolveMapPath({ decl: declOf({ map: '{git-common-dir}/maps/m.json' }), commonDir: COMMON, repoRoot: ROOT }), path.join(COMMON, 'maps', 'm.json'));
+  assert.strictEqual(resolveMapPath({ decl: declOf({ map: 'build/m.json' }), commonDir: COMMON, repoRoot: ROOT }), path.join(ROOT, 'build', 'm.json'));
+});
+
+test('gitLocations: resolves a relative common dir against the cwd; null when git fails', () => {
+  const { execImpl, calls } = fakeGit({ 'rev-parse': (args) => (args.includes('--show-toplevel') ? `${ROOT}\n` : '.git\n') });
+  assert.deepStrictEqual(gitLocations({ cwd: ROOT, execImpl }), { repoRoot: ROOT, commonDir: COMMON });
+  for (const c of calls) {
+    assert.deepStrictEqual(c.opts.stdio, ['ignore', 'pipe', 'pipe']);
+    assert.strictEqual(c.opts.windowsHide, true);
+    assert.strictEqual(c.opts.cwd, ROOT);
+  }
+  const failing = fakeGit({ 'rev-parse': () => { throw new Error('not a repo'); } });
+  assert.strictEqual(gitLocations({ cwd: ROOT, execImpl: failing.execImpl }), null);
+});
+
+test('loadImpactContext: a fresh map loads, with every matching test present at HEAD', () => {
+  const { execImpl, calls } = fakeGit();
+  const ctx = loadImpactContext({ decl: declOf(), repoRoot: ROOT, commonDir: COMMON, execImpl, fsImpl: fakeFs({ [MAP_PATH]: mapText() }) });
+  assert.strictEqual(ctx.problem, null);
+  assert.strictEqual(ctx.map.commit, SHA);
+  assert.deepStrictEqual(ctx.headTests, ['tests/a.test.js', 'tests/b.test.js'], 'glob-filtered, on disk, deduplicated');
+  assert.strictEqual(ctx.mapPath, MAP_PATH);
+  assert.strictEqual(ctx.mapCommit, SHA);
+  assert.strictEqual(ctx.distance, 2);
+  assert.strictEqual(ctx.fetch, null);
+  const byCmd = Object.fromEntries(calls.map((c) => [c.args[0], c]));
+  assert.deepStrictEqual(byCmd['ls-files'].args, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
+  assert.deepStrictEqual(byCmd['merge-base'].args, ['merge-base', '--is-ancestor', '--end-of-options', SHA, 'HEAD']);
+  assert.deepStrictEqual(byCmd['rev-list'].args, ['rev-list', '--count', '--end-of-options', `${SHA}..HEAD`]);
+  for (const c of calls) {
+    assert.strictEqual(c.opts.cwd, ROOT);
+    assert.strictEqual(c.opts.windowsHide, true);
+  }
+});
+
+test('loadImpactContext: missing, unreadable, invalid, non-ancestor, stale and unknown-distance maps', () => {
+  const run = (files, overrides = {}, impact = {}) => loadImpactContext({
+    decl: declOf(impact), repoRoot: ROOT, commonDir: COMMON, execImpl: fakeGit(overrides).execImpl, fsImpl: fakeFs(files),
+  });
+  assert.strictEqual(run({}).problem, 'map-missing');
+  assert.strictEqual(run({}).map, null);
+  const eisdir = Object.assign(new Error('EISDIR'), { code: 'EISDIR' });
+  assert.strictEqual(run({ [path.join(ROOT, '.')]: eisdir }, {}, { map: '.' }).problem, 'map-invalid: unreadable');
+  assert.strictEqual(run({ [MAP_PATH]: '{' }).problem, 'map-invalid: unparseable');
+  assert.strictEqual(run({ [MAP_PATH]: mapText({ exitCode: 1 }) }).problem, 'map-from-failing-suite');
+  const notAncestor = run({ [MAP_PATH]: mapText() }, { 'merge-base': () => { throw new Error('exit 1'); } });
+  assert.strictEqual(notAncestor.problem, 'map-not-ancestor');
+  assert.strictEqual(notAncestor.mapCommit, SHA);
+  assert.strictEqual(run({ [MAP_PATH]: mapText() }, { 'rev-list': () => '9\n' }).problem, 'map-stale: 9 commits > 5');
+  const garbled = run({ [MAP_PATH]: mapText() }, { 'rev-list': () => '2 extra\n' });
+  assert.strictEqual(garbled.problem, 'map-stale: unknown commits > 5');
+  assert.strictEqual(garbled.distance, null);
+  assert.strictEqual(run({ [MAP_PATH]: mapText() }, { 'rev-list': () => { throw new Error('bad'); } }).problem, 'map-stale: unknown commits > 5');
+});
+
+test('loadImpactContext: an unreadable test listing fails closed, never an empty headTests', () => {
+  const ctx = loadImpactContext({
+    decl: declOf(), repoRoot: ROOT, commonDir: COMMON,
+    execImpl: fakeGit({ 'ls-files': () => { throw new Error('boom'); } }).execImpl, fsImpl: fakeFs({ [MAP_PATH]: mapText() }),
+  });
+  assert.strictEqual(ctx.problem, 'head-tests-unreadable');
+});
+
+test('loadImpactContext: the fetch runs once on a problem and the map is reloaded', () => {
+  const files = {};
+  const commands = [];
+  const runFetch = (command) => { commands.push(command); files[MAP_PATH] = mapText(); return { ran: true, exitCode: 0, durationMs: 4 }; };
+  const ctx = loadImpactContext({
+    decl: declOf({ fetch: 'get-map' }), repoRoot: ROOT, commonDir: COMMON, execImpl: fakeGit().execImpl, fsImpl: fakeFs(files), runFetch,
+  });
+  assert.deepStrictEqual(commands, ['get-map']);
+  assert.strictEqual(ctx.problem, null);
+  assert.deepStrictEqual(ctx.fetch, { ran: true, exitCode: 0, durationMs: 4 });
+});
+
+test('loadImpactContext: a failed fetch keeps the original problem; no problem or no fetch command never fetches', () => {
+  const commands = [];
+  const failing = (command) => { commands.push(command); return { ran: true, exitCode: 3, durationMs: 1 }; };
+  const failed = loadImpactContext({
+    decl: declOf({ fetch: 'get-map', maxAgeCommits: 1 }), repoRoot: ROOT, commonDir: COMMON, execImpl: fakeGit().execImpl, fsImpl: fakeFs({ [MAP_PATH]: mapText() }), runFetch: failing,
+  });
+  assert.strictEqual(failed.problem, 'map-stale: 2 commits > 1');
+  assert.deepStrictEqual(failed.fetch, { ran: true, exitCode: 3, durationMs: 1 });
+  assert.strictEqual(commands.length, 1);
+  const fresh = loadImpactContext({
+    decl: declOf({ fetch: 'get-map' }), repoRoot: ROOT, commonDir: COMMON, execImpl: fakeGit().execImpl, fsImpl: fakeFs({ [MAP_PATH]: mapText() }), runFetch: failing,
+  });
+  assert.strictEqual(fresh.fetch, null);
+  const noCommand = loadImpactContext({
+    decl: declOf(), repoRoot: ROOT, commonDir: COMMON, execImpl: fakeGit().execImpl, fsImpl: fakeFs({}), runFetch: failing,
+  });
+  assert.strictEqual(noCommand.fetch, null);
+  assert.strictEqual(commands.length, 1);
 });
