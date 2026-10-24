@@ -337,7 +337,9 @@ main loop, landed via #1962/#2226/#2228/#2231):
   directory B is still genuinely stuck. Escalate and resolve edits also drop listed paths inside
   this checkout's own `.claude-tweaks/pipelines/` that are gone from disk (#4202) — paths from
   other checkouts are never judged, since every checkout of a repo appends to the same record —
-  and the record closes when that converged list empties.
+  and the record closes when that converged list empties. Only an absolute, normalized listed path
+  is judged; the list is editable issue text. A resolve whose edit emptied the list but whose
+  comment or close failed leaves an open record with nothing listed, and the retry closes it.
 
 ## gh-absent preflight: accepted MCP gap (#2523)
 
