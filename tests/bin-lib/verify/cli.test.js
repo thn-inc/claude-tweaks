@@ -1518,6 +1518,26 @@ test('a failing chunk clears that check\'s own per-suite record (#3002 Deliverab
   assert.deepStrictEqual(after.suiteComposed.missing, ['unit']);
 });
 
+test('a failing chunk with preExisting declared still clears its record, with no crash (#4040)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }], { preExisting: ['tests/known-shallow.test.js'] });
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  const complete = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(complete.verifiedHead, true);
+  // A failure whose output names a file, so the pre-existing adjudication
+  // reaches its new/fixed split. Inside .git/ so the tree stays clean and the
+  // run is allowed to clear the record.
+  const tap = ['not ok 1 - a new failure', '  ---', '  stack: |-', '    at TestContext.<anonymous> (tests/new-break.test.js:12:5)', '  ...', '# tests 1', '# pass 0', '# fail 1'].join('\n');
+  const failScript = path.join(r.gitDir, 'fail.js');
+  fs.writeFileSync(failScript, `process.stdout.write(${JSON.stringify(tap)} + '\\n'); process.exit(1);\n`);
+  const failing = await runStampSuiteChunk(r, `unit=node ${JSON.stringify(failScript)}`);
+  assert.strictEqual(failing.code, 1, failing.stderr);
+  assert.doesNotMatch(failing.stderr, /TypeError/);
+  const after = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(after.verifiedHead, false);
+  assert.deepStrictEqual(after.suiteComposed.missing, ['unit']);
+});
+
 test('a plain --no-stamp partial run with no --stamp-suite writes no per-suite records at all (#3002 AC4)', async () => {
   const r = tmpGitRepo();
   const run = await runCli(['--no-stamp', '--cmd', 'tests=node -e 0'], { cwd: r.repo });
