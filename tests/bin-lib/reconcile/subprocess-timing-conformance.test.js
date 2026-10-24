@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
+const { readText } = require('../../helpers/read-skill');
 
 // #4032: every subprocess under plugin/bin/lib/reconcile/ is timed, so the
 // per-phase `timings` a reconcile pass reports can say where its time went. The
@@ -41,7 +42,7 @@ function reconcileFiles() {
   return fs.readdirSync(RECONCILE_DIR)
     .filter((f) => f.endsWith('.js') && !EXEMPT.has(f))
     .sort()
-    .map((f) => ({ rel: `plugin/bin/lib/reconcile/${f}`, raw: fs.readFileSync(path.join(RECONCILE_DIR, f), 'utf8') }));
+    .map((f) => ({ rel: `plugin/bin/lib/reconcile/${f}`, raw: readText(path.join(RECONCILE_DIR, f)) }));
 }
 
 // Offender strings for `entries`: a direct spawn, or a file the stripper mis-parsed.

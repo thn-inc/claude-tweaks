@@ -457,7 +457,7 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
 
 ## Timing contract (#4032)
 
-An unscoped `hooks.js reconcile` call took about 52 s; the contract below is what brings it under
+An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is what brings it under
 10 s, and what lets the next regression be found by reading the JSON instead of guessing.
 
 - **`timings` rides on every `reconcile()` result** — every return path, early ones included — as
@@ -503,9 +503,10 @@ An unscoped `hooks.js reconcile` call took about 52 s; the contract below is wha
   stays bounded. The reuse skips only the contents read — classification and the PR/issue join
   re-run every pass — and a stale sha can only make the conditional tombstone write fail
   (`release-write-failed`), never release the wrong claim. `release` also `prefetch`es its
-  by-number lookups before the per-item calls.
+  by-number and then its branch-join lookups before the per-item calls.
 - **Residue marker index** (`issue-list-cache.js`, `residueIssueIndex` key,
-  `{ "{repo}\n{marker}": issueNumber }`). `ledger-residue`'s dedup lookup becomes one
+  `{ "{repo}\n{marker}": issueNumber }`). The residue-escalation dedup lookup
+  (`escalate-residue.js`'s `findResidueDuplicate`, reached from `archive` and `reap`) becomes one
   `gh issue view` instead of a full-repo `gh issue list`; it falls back to the list whenever this
   pass already holds the list, the index has no entry, or the viewed issue no longer carries the
   marker (that entry is dropped). **Documented divergence:** with duplicates, the indexed issue
@@ -516,8 +517,8 @@ An unscoped `hooks.js reconcile` call took about 52 s; the contract below is wha
   loop and every per-dir `checkRunIntegrity` spawn `git worktree list` once between them. `reap`
   lists afresh itself, since it removes worktrees.
 - **CLI deferral.** The unscoped `hooks.js reconcile` runs `ALL_CHECKS` minus `CLI_DEFERRED_CHECKS`
-  (`archive-branches`, `remote-prune`, `ledger-residue` — an all-refs fetch, per-branch PR lookups
-  and residue scans dominated its wall time) and hands those to the detached `reconcile-background`
+  (`archive-branches`, `remote-prune`, `ledger-residue` — `archive-branches`' and `remote-prune`'s
+  per-branch GraphQL lookups measured 14.8 s and 20.4 s, and `remote-prune` needs the all-refs fetch) and hands those to the detached `reconcile-background`
   pass through `background-spawn.js`'s `spawnBackgroundIfStale`, gated by that pass's own status
   file, as SessionStart does. The JSON gains `background: { checks, spawned, reason }`
   (`reason`: `spawned`, `fresh`, `spawn-failed`, `no-root`, `dry-run`, `not-converged`) and a
