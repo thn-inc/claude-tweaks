@@ -627,8 +627,9 @@ function removeQuotedSpans(str) {
 }
 
 // `seg` cut at every unquoted lone `&`, which ends the command before it and backgrounds it. `&&`,
-// `&>`, `>&`, `<&` and `|&` are not cut. A blank piece before a cut (a leading `&`, which a `|&`
-// leaves once splitSegments has cut its `|`) comes back as null: no command this check can read.
+// `&>`, `>&` and `<&` are not cut. The `&` of a `|&` (stdout and stderr piped on) starts the segment
+// once splitSegments has cut its `|`, so its blank left piece is skipped and the piped-to program
+// is what gets checked.
 function splitOnLoneAmpersand(seg) {
   const pieces = [];
   let start = 0;
@@ -640,8 +641,7 @@ function splitOnLoneAmpersand(seg) {
     if (quote === '"') { if (c === '"') quote = null; continue; }
     if (c === '"' || c === "'") { quote = c; continue; }
     if (c !== '&' || seg[i + 1] === '&' || seg[i + 1] === '>' || /[&<>|]/.test(seg[i - 1] || '')) continue;
-    const piece = seg.slice(start, i);
-    pieces.push(piece.trim() === '' ? null : piece);
+    pieces.push(seg.slice(start, i));
     start = i + 1;
   }
   pieces.push(seg.slice(start));
@@ -681,7 +681,6 @@ function isInertNeighbour(tokens, p, seg) {
 // body stays visible to the scan.
 function lineFeedsOnlyDataReaders(lineText) {
   for (const seg of splitSegments(lineText).flatMap(splitOnLoneAmpersand)) {
-    if (seg === null) return false;
     if (seg.trim() === '') continue;
     const unquoted = removeQuotedSpans(seg).split(/\s+/);
     if (unquoted.some((t) => /^[({]/.test(t) || t === '}' || /[<>]\(/.test(t))) return false;

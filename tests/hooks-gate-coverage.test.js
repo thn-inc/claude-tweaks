@@ -571,6 +571,8 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['a reader after a cd neighbour (cd x && node)', 'cd x && node y.js <<EOF\nif (a > 0) b();\nEOF'],
     ['a reader after a cd neighbour (cd x && node, quoted delimiter)', "cd x && node <<'EOF'\na > b\nEOF"],
     ['a reader after true, printf, echo and : neighbours', "true && printf x && echo y && : && cat <<'EOF'\na > b\nEOF"],
+    // Residual fix (#4149, lone `&`): the `&` of `|&` pipes on, so the program after it is the one checked.
+    ['a reader piped on with |& (cat |& cat)', "cat <<'EOF' |& cat\na > b\nEOF"],
   ];
   for (const [label, cmd] of stripCases) {
     test(`#4149: a body fed to ${label} is still stripped`, () => {
@@ -805,6 +807,11 @@ for (const [label, cmd] of [
     ['( cd … && cp a f.js ) with separate parens', '( cd /main && cp a f.js )', [main('copy')]],
     ['a nested subshell that closes before the outer write', '(cd /main && (cd /tmp && true) && cp a f.js)', [main('copy')]],
     ['a subshell whose case pattern `)` closes nothing', 'cd /main; (case x in x) cd /tmp;; esac; true); cp a f.js', [main('copy')]],
+    ['a subshell whose $( … ) closes nothing', 'cd /main; (x=$(pwd); cd /tmp && true); cp a f.js', [main('copy')]],
+    // The `)` of a case pattern cuts the text, so the arm's command is read as a command.
+    ['a case arm', 'case x in x) cp a /main/f.js;; esac', [main('copy')]],
+    // The body feeds the subshell, so a shell inside it runs the body from the subshell's cwd.
+    ['a body fed to a subshell running a shell', "(cd /main; bash) <<'EOF'\necho x > f.js\nEOF", [main('write')]],
   ]) {
     test(`#4149 group cd: ${label} reports the main-checkout write`, () => {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
@@ -831,6 +838,8 @@ for (const [label, cmd, expected] of [
   ['cp a /main/f.js 2>&1', 'cp a /main/f.js 2>&1', [{ action: 'copy', file: '/main/f.js' }]],
   ['cp a /main/f.js > /dev/null', 'cp a /main/f.js > /dev/null', [{ action: 'copy', file: '/main/f.js' }]],
   ['cp a /main/f.js <in', 'cp a /main/f.js <in', [{ action: 'copy', file: '/main/f.js' }]],
+  // A process substitution is a file argument (bash copies `<(…)`), never a redirection to drop.
+  ['cp <(true) /main/f.js', 'cp <(true) /main/f.js', [{ action: 'copy', file: '/main/f.js' }]],
 ]) {
   test(`#4149 redirect tokens: \`${label}\` reads no redirection as a positional`, () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
@@ -845,14 +854,15 @@ test('#4149 m6: a make recipe heredoc inside a kept make body is scanned whole',
 });
 
 // ...while its planned reading is kept too, so an odd quote in an inner body cannot swallow a later
-// line of a body whose consumer may be a shell after all (`"$BASH"`, a group piped to bash).
+// line of a body whose consumer may be a shell after all (`"$BASH"`, a group piped to bash). The
+// later line is a `cp`: a swallowed `>` would still surface through tokenize's `\S+` fallback.
 for (const [label, cmd] of [
-  ['a shell named by a variable ("$BASH")', `"$BASH" <<'EOF'\ncat <<'X'\ndon't\nX\necho x > f.js\nEOF`],
-  ['a brace group piped to bash', "{\ncat <<'EOF'\ncat <<'X'\ndon't\nX\necho x > f.js\nEOF\n} | bash"],
+  ['a shell named by a variable ("$BASH")', `"$BASH" <<'EOF'\ncat <<'X'\ndon't\nX\ncp a f.js\nEOF`],
+  ['a brace group piped to bash', "{\ncat <<'EOF'\ncat <<'X'\ndon't\nX\ncp a f.js\nEOF\n} | bash"],
 ]) {
   test(`#4149 m6: an inner apostrophe in a body fed to ${label} does not hide a later line`, () => {
     const targets = fileWriteTargets(cmd, '/r');
-    assert.ok(targets.some((t) => t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
+    assert.ok(targets.some((t) => t.action === 'copy' && t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
   });
 }
 
