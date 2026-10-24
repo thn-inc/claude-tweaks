@@ -46,7 +46,7 @@ test('flake-handling.md: flaky.files entries may be globs, reusing the same engi
 test('AC3.1: verification.md keeps only a pointer stub at the moved heading (#4059)', () => {
   const v = read('plugin/skills/test/verification.md');
   assert.ok(v.includes('### Flake handling (tests check only)'));
-  assert.ok(v.includes('read `flake-handling.md` in this skill\'s directory'));
+  assert.ok(v.includes("read `flake-handling.md` in this skill's directory"));
   const start = v.indexOf('### Flake handling (tests check only)');
   const end = v.indexOf('### Gate behavior');
   assert.ok(start !== -1 && end > start);
