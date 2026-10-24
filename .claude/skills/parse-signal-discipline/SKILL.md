@@ -200,6 +200,15 @@ When mechanizing a prose heuristic into a deterministic check:
    review round each: its probe first read `$DISPATCH_EXCLUSIONS` from an earlier call
    (`aab721418` made it resolve the session-tmp path itself), and then it had no branch for a
    failed probe (`39129d212` added one that reports "exclusion reason unknown").
+   `plugin/skills/reflect/SKILL.md`'s integration-branch probe (#3987) slipped on the same split
+   a third way (#4069, PR #4160). Its could-not-run list named only a missing `origin` and a file
+   outside the repository, so a failed `git fetch` left a stale `origin/{integration-branch}` that
+   the next `git grep` or `git log -S` read as "absent", and a `git grep` exit 128 was never split
+   from exit 1. A refresh step whose failure leaves old data is a could-not-run for every probe
+   after it. Name each tool's own no-match signal as well: `git grep` exits 1, but `git log -S`
+   exits 0 with no output, so an exit-code branch alone cannot call that one.
+   `tests/reflect-integration-branch-probe.test.js` pins the clause, and removing either the fetch
+   clause or the `-e` form turns it red.
 10. **A helper's can't-tell answer is safe only for the caller it was written for.** A new caller
    that reads the same answer in the opposite direction has to guard the input itself.
    `plugin/bin/lib/issues/claims.js`'s `isStale` answers `false` whenever it cannot tell. An
