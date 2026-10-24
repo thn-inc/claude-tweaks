@@ -41,6 +41,7 @@ const SITES = [
   { id: 'R2', file: 'plugin/skills/build/plan-audit.md', content: 'amended plan for {N} unlisted spec path(s) — listed {paths}; waived {paths}' },
   { id: 'D2', file: 'plugin/skills/dispatch/two-call-gate.md', content: 'condition: {stderr line} → fallback: PR-bookend check not run' },
   { id: 'B1', file: 'plugin/skills/dispatch/task-prompt.md', content: 'condition: {stderr line} → fallback: PR-bookend check not run' },
+  { id: 'B2', file: 'plugin/skills/backlog/refine-record.md', content: 'Backlog refine #{n}: {choice(s)} — {labels/state changed}' },
   { id: 'C1', file: 'plugin/skills/flow/claim-targets.md', content: 'condition: {stderr line} → fallback: PR-bookend check not run' },
   { id: 'E1', file: 'plugin/skills/_shared/pr-early-run-lifecycle.md', content: 'holding that one line' },
   { id: 'Q1', file: 'plugin/skills/build/plan-authoring-checks.md', content: 'holding one line carrying the criterion it covers' },
@@ -102,7 +103,7 @@ for (const site of SITES) {
 // whose argument interpolates a `{placeholder}` naming git- or user-supplied text.
 // `\bfile` (word boundary on `file` only): `ceremony-profile` is not a file name. `path` stays
 // unbounded so `{worktreePath}` still matches.
-const GIT_TEXT = /reason|paths?\b|path|message|branch|names|\bfile|error|detail|raw|stderr|output|note|title|subject|label|target|url|value|command/i;
+const GIT_TEXT = /reason|paths?\b|path|message|branch|names|\bfile|error|detail|raw|stderr|output|note|title|subject|label|target|url|value|command|choice/i;
 
 // On `collapse(text)`: every quoted `--text "…"` / `--text '…'` argument, and inside it every
 // `{name}` (not a shell `${VAR}`) whose name reads as git- or user-supplied text. The two
@@ -134,7 +135,6 @@ const ALLOW = [
   { file: 'plugin/skills/tidy/actions-github-issues.md', placeholder: 'command', fragment: 'recommended {command}', why: '`{command}` is the recommendation the skill itself composes (`/claude-tweaks:dispatch close-out #{record}` or `/claude-tweaks:demo #{record}`), not git or user text' },
   { file: 'plugin/skills/build/micro-plan.md', placeholder: 'plan-path', fragment: 'micro-plan composed directly at {plan-path}', why: '`{plan-path}` is an agent-composed `docs/superpowers/plans/...` path, not git or user text' },
   { file: 'plugin/skills/build/plan-review.md', placeholder: 'ceremony-profile=fast-lane (roster tag plan-review) | trivial plan: fewer than 3 file references and no Scope keywords: | resumed build: plan already reviewed this run, spec and plan unchanged since', fragment: 'ceremony-profile=fast-lane (roster tag plan-review)', why: 'the braces enumerate literal skip conditions the agent picks from, not a substituted value (the placeholder only matches the file pattern through the words "file references")' },
-  { file: 'plugin/skills/backlog/refine-record.md', placeholder: 'labels/state changed', fragment: 'Backlog refine #{n}: {choice(s)}', why: '`{labels/state changed}` is composed from Step 4\'s write table: the fixed label names (`auto:build`, `parked`, `ready`, `bot:blocked`) and the word `closed`, never a user-typed value (a park trigger goes to the record body, not this line)' },
 ];
 
 function listSkillFiles(dir) {
@@ -193,6 +193,11 @@ test('AC1.1 go-red: the widened GIT_TEXT names flag, and `ceremony-profile` does
   }
   assert.strictEqual(scanQuotedGitText('--text "{worktreePath} left"').length, 1);
   assert.deepStrictEqual(scanQuotedGitText('--text "skipped: {ceremony-profile=fast-lane | trivial plan}"'), []);
+});
+
+// `{choice(s)}` carries a human's free-text override (backlog refine-record's Step 3 gate).
+test('AC1.1 go-red: scanQuotedGitText flags a {choice(s)} placeholder', () => {
+  assert.deepStrictEqual(scanQuotedGitText('--text "Backlog refine #{n}: {choice(s)} — done"').map((h) => h.placeholder), ['choice(s)']);
 });
 
 test('AC1.1: every ALLOW entry still matches a live hit (file, placeholder, fragment)', () => {
