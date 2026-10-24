@@ -670,6 +670,15 @@ test('AC8.1: a single stamp whose reportPath is gone is still report-missing', (
   assert.deepEqual(result, { verified: false, reason: 'report-missing', status });
 });
 
+test('a complete composition supersedes the single stamp\'s missing reportPath', () => {
+  const status = { present: true, verifiedHead: true, reportPath: '/missing.json', suiteComposed: { complete: true } };
+  const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
+    stampStatus: stampStub(status).fn,
+    exists: () => false,
+  });
+  assert.deepEqual(result, { verified: true, reason: null, status });
+});
+
 test('an incomplete composition does not bypass the single-stamp checks', () => {
   const status = { present: false, verifiedHead: true, reportPath: null, suiteComposed: { complete: false } };
   const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
