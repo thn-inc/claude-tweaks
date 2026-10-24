@@ -347,3 +347,13 @@ Expected: PASS — the 3 pre-existing perf files plus the 9 new ones (AC2.1).
 | AC3.1 — each tests/ file still passes and still asserts the behaviour the budget guarded | 1-7 Step 4; new deterministic assertions in Tasks 1, 5, 6, 7 |
 
 Waived go-red for Tasks 5-6's overlap counters: they can only go red on a `Promise.all` → sequential regression in the module source, and a scratch source edit is out of scope for a test relocation; the counts were probed against the real modules (3 and 7, serial reads 1).
+
+## Architecture alignment (build, Common Step 4.5)
+
+Both deviations below are classified Beneficial and kept as built:
+
+1. **Five deterministic tests/ assertions, not four.** The whole-branch review found that the dream redact test's remaining `startsWith('TOKEN')` cannot detect the cap being removed. It now also asserts `out.length === 2048`, the uncapped run was confirmed to fail (`1de1777f8`), and its title now names the cap. Go-red checks also ran for the Task 5/6 counters, in scratch copies (`1 !== 3`, `1 !== 7`), which supersedes the waiver above.
+2. **Work beyond the deliverable list, done in the same pass.**
+   - `docs/journeys/act-on-a-red-wall-clock-budget-scan-3491.md` now describes the post-move state: ALLOWLIST is empty, the floor is `MOVED_TO_PERF`, and a pin is only for a timing that is inseparable from its assertion.
+   - Seven tests/ titles that promised timing were reworded to say what each test now asserts.
+   - The `MOVED_TO_PERF` failure message names the map it pins (`1de1777f8`).
