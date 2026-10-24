@@ -37,6 +37,7 @@ const path = require('path');
 const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, TIERS, ROLE_PATTERNS } = require('./lib/timing/derive');
 const { locateTranscripts, readUsage, subagentsDirFor, readDispatches } = require('./lib/timing/transcript');
 const { readManifest } = require('./lib/flow/manifest');
+const { TURN_CLASSES } = require('./lib/timing/turn-class');
 
 const USAGE = 'usage: phase-timing.js --run <dir> [--json] [--markdown] [--transcript <path> ...] [--auto-transcript]\n';
 
@@ -119,6 +120,19 @@ function renderCollapsedSummary(tokens, notes, guard) {
   return lines.join('\n') + '\n';
 }
 
+// #4029: the run-wide turn-class and context lines, from a joinTokens totals
+// bucket. Per-phase values stay in timing.json.
+function renderTurnLines(totals) {
+  const k = (n) => (typeof n === 'number' ? `${(n / 1000).toFixed(1)}k` : '—');
+  const classes = TURN_CLASSES.map((c) => `${c} ${totals.turnClasses[c]}`).join(' · ');
+  const share = typeof totals.ceremonyShare === 'number' ? `${Math.round(totals.ceremonyShare * 100)}%` : '—';
+  const models = Object.entries(totals.modelMix).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([m, n]) => `${m} ×${n}`).join(', ') || '—';
+  return [
+    `Turn classes (tool calls): ${classes} — ceremony share ${share}`,
+    `Context per turn: p50 ${k(totals.context.p50)} · p90 ${k(totals.context.p90)} tokens over ${totals.context.turns} turns · models: ${models} · subagents: ${totals.subagents}`,
+  ];
+}
+
 // out: derivePhases result; tokens: joinTokens result or null (no transcript
 // requested); notes: lines printed before the table.
 function renderMarkdown(out, tokens = null, guard = null, notes = []) {
@@ -147,6 +161,7 @@ function renderMarkdown(out, tokens = null, guard = null, notes = []) {
   if (guard) {
     lines.push('', `Guard denials: ${guard.gateDenial} gate · ${guard.wdAmbiguous} wd-ambiguous · ${guard.wdDeny} wd-deny`);
     lines.push('Tokens (in/out) sum the transcript\'s raw input_tokens/output_tokens; cache reads and creation are separate fields in timing.json.');
+    if (tokens) lines.push(...renderTurnLines(tokens.totals));
   }
   return lines.join('\n') + '\n';
 }
@@ -303,6 +318,7 @@ async function main(argv) {
     timing.totals.tokens = tokens.totals.tokens;
     timing.totals.procedureBytes = tokens.totals.procedureBytes;
     timing.totals.toolRoundTrips = tokens.totals.toolRoundTrips;
+    for (const k of ['turnClasses', 'context', 'modelMix', 'subagents', 'ceremonyShare']) timing.totals[k] = tokens.totals[k];
     timing.totals.guard = guard;
     timing.transcripts = transcripts;
     if (notes.length) timing.notes = notes;

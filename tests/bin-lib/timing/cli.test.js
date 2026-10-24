@@ -375,3 +375,51 @@ test('#3375: a late worktree-reaped event does not stretch the run window over t
   assert.deepEqual(d.items.map((i) => i.agentId), ['a1', 'a2']);
   assert.match(r.stdout, /^dispatches: 1 outside the run window excluded$/m);
 });
+
+// --- #4029 turn-class telemetry -----------------------------------------------
+const TC_FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'turn-classes');
+const TC_HAND = { edit: 1, read: 1, explore: 1, procedure: 1, bookkeeping: 1, orientation: 2, verify: 1, 'guard-refusal': 1, dispatch: 1, other: 1 };
+function tcRun() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-'));
+  fs.copyFileSync(path.join(TC_FIX, 'events.jsonl'), path.join(dir, 'events.jsonl'));
+  return dir;
+}
+
+test('#4029 AC1.1: timing.json for the turn-classes fixture carries the class breakdown matching the hand count', () => {
+  const dir = tcRun();
+  const r = run(['--run', dir, '--transcript', path.join(TC_FIX, 'session.jsonl'), '--markdown']);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(dir);
+  assert.deepEqual(t.totals.turnClasses, TC_HAND);
+  assert.deepEqual(t.phases.find((p) => p.phase === 'build').turnClasses, TC_HAND);
+  assert.equal(t.totals.toolRoundTrips, 10);
+  assert.deepEqual(t.totals.context, { turns: 10, p50: 5050, p90: 9090 });
+  assert.deepEqual(t.totals.modelMix, { 'claude-opus-5-5': 9, 'claude-sonnet-5': 1 });
+  assert.equal(t.totals.subagents, 1);
+  assert.equal(t.totals.ceremonyShare, 0.455);
+  assert.equal(t.totals.verifyMinutes, 2);
+  assert.equal(t.totals.procedureBytes, 100);
+  const lines = r.stdout.split('\n');
+  assert.ok(lines.includes('Turn classes (tool calls): edit 1 · read 1 · explore 1 · procedure 1 · bookkeeping 1 · orientation 2 · verify 1 · guard-refusal 1 · dispatch 1 · other 1 — ceremony share 46%'), r.stdout);
+  assert.ok(lines.includes('Context per turn: p50 5.0k · p90 9.1k tokens over 10 turns · models: claude-opus-5-5 ×9, claude-sonnet-5 ×1 · subagents: 1'), r.stdout);
+});
+
+test('#4029: without a transcript timing.json totals gain verifyMinutes only, and no class lines render', () => {
+  const dir = tcRun();
+  const r = run(['--run', dir, '--markdown']);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(dir);
+  assert.equal(t.totals.verifyMinutes, 2);
+  for (const k of ['turnClasses', 'context', 'modelMix', 'subagents', 'ceremonyShare']) assert.equal(k in t.totals, false, k);
+  assert.doesNotMatch(r.stdout, /Turn classes|Context per turn/);
+});
+
+test('#4029: a transcript with no tool calls and no assistant turns renders the class lines with zeros and dashes', () => {
+  const dir = tcRun();
+  const bare = path.join(dir, 'bare.jsonl');
+  fs.writeFileSync(bare, '{"type":"user","timestamp":"2026-10-24T10:02:00.000Z","message":{"role":"user","content":"hello"}}\n');
+  const r = run(['--run', dir, '--transcript', bare, '--markdown']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^Turn classes \(tool calls\): edit 0 · read 0 · explore 0 · procedure 0 · bookkeeping 0 · orientation 0 · verify 0 · guard-refusal 0 · dispatch 0 · other 0 — ceremony share —$/m);
+  assert.match(r.stdout, /^Context per turn: p50 — · p90 — tokens over 0 turns · models: — · subagents: 0$/m);
+});
