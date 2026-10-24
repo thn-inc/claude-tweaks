@@ -4,7 +4,9 @@
 // CLOSED to {suites: '*', static: true} ([IL-120]: a markdown edit tripped a
 // size-ceiling test in an unrelated suite — only declared paths get cheaper).
 // The anchoring invariant lives here: every non-full mode's base is the
-// stamp's fullSha, never a prior scoped sha, so scoped runs never chain.
+// stamp's fullSha (or, for an impact declaration with no stamp, the caller's
+// CI-verified fallbackBase), never a prior scoped sha, so scoped runs never
+// chain.
 //
 // Test-impact selection (#4024), gated on decl.impact: a file matched by an
 // impact rule goes to impact.js's selectImpactTests, so impact.suite runs only
@@ -24,17 +26,22 @@ function impactResult(suite, fields = {}) {
 }
 
 // `ctx` is the caller's {map, problem, headTests}; a missing context or map
-// fails closed as 'map-missing'. Never called with an empty `paths`.
+// fails closed as 'map-missing'.
+function contextProblem(ctx) {
+  return !ctx ? 'map-missing' : ctx.problem || (ctx.map ? null : 'map-missing');
+}
+
+// Never called with an empty `paths`.
 function resolveImpact(decl, paths, statuses, ctx) {
   const suite = decl.impact.suite;
-  const problem = !ctx ? 'map-missing' : ctx.problem || (ctx.map ? null : 'map-missing');
+  const problem = contextProblem(ctx);
   if (problem) return impactResult(suite, { fallback: problem });
   const patterns = decl.impact.tests.map((g) => globToRegExp(g));
   // A path with no recorded status reads as 'A' — added/deleted reaches
   // existence probes and directory listings too, the broader match — so a
   // missing status can only select more tests, never fewer (fail-conservative).
   const changed = paths.map((p) => ({ path: p, status: (statuses && statuses[p]) || 'A' }));
-  const r = selectImpactTests({ map: ctx.map, changed, headTests: ctx.headTests, isTestFile: (p) => patterns.some((re) => re.test(p)) });
+  const r = selectImpactTests({ map: ctx.map, changed, headTests: ctx.headTests || [], isTestFile: (p) => patterns.some((re) => re.test(p)) });
   if (!r.ok) return impactResult(suite, { fallback: r.reason });
   return impactResult(suite, { files: r.tests, selected: r.tests.length, changedTests: r.changedTests, untracedTests: r.untracedTests });
 }
@@ -46,8 +53,9 @@ function selectScope({ decl, files, stamp, statuses = null, impact = null, fallb
   // first run IS the anchor everything later diffs against, so it is full too.
   if (!decl || base === null) {
     const full = { mode: 'full', suites: '*', static: true, base, unmatched: [], matched: [] };
-    // Unanchored, the impact suite runs full like every other suite.
-    if (decl && decl.impact) full.impact = impactResult(decl.impact.suite, { superseded: true });
+    // Unanchored, the impact suite runs full like every other suite: a
+    // context problem names why when there is one, else 'no-anchor'.
+    if (decl && decl.impact) full.impact = impactResult(decl.impact.suite, { fallback: contextProblem(impact) || 'no-anchor' });
     return full;
   }
   const matched = [];
@@ -80,7 +88,9 @@ function selectScope({ decl, files, stamp, statuses = null, impact = null, fallb
   if (decl.impact) {
     const suite = decl.impact.suite;
     if (all || selected.has(suite)) imp = impactResult(suite, { superseded: true });
-    else if (impactPaths.length === 0) imp = impactResult(suite);
+    // Nothing selected it: the empty subset, so `files null` keeps meaning
+    // "runs its full command".
+    else if (impactPaths.length === 0) imp = impactResult(suite, { files: [], selected: 0 });
     else {
       imp = resolveImpact(decl, impactPaths, statuses, impact);
       // A full run (files null) or a non-empty subset selects the suite; an

@@ -135,8 +135,9 @@ const MAP = parseImpactMap(JSON.stringify(encodeImpactMap({
 }))).map;
 const HEAD = ['tests/a.test.js', 'tests/b.test.js', 'tests/p.test.js'];
 const CTX = { map: MAP, problem: null, headTests: HEAD };
-const NOT_SELECTED = { suite: 'tests', files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], superseded: false };
-const SUPERSEDED = { ...NOT_SELECTED, superseded: true };
+const FULL_RUN = { suite: 'tests', files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], superseded: false };
+const NOT_SELECTED = { ...FULL_RUN, files: [], selected: 0 };
+const SUPERSEDED = { ...FULL_RUN, superseded: true };
 const isel = (files, statuses, impact = CTX, extra = {}) => selectScope({ decl: IMPACT, files, stamp: STAMP, statuses, impact, ...extra });
 
 test('impact subset → scoped, only the tests that read the changed path', () => {
@@ -161,7 +162,7 @@ test('fallback names its reason and runs the impact suite full', () => {
   let r = isel(['src/x.js'], { 'src/x.js': 'M' }, ctx);
   assert.strictEqual(r.mode, 'scoped');
   assert.deepStrictEqual(r.suites, ['tests']);
-  assert.deepStrictEqual(r.impact, { ...NOT_SELECTED, fallback: 'map-stale: 300 commits > 200' });
+  assert.deepStrictEqual(r.impact, { ...FULL_RUN, fallback: 'map-stale: 300 commits > 200' });
   r = isel(['src/x.js', 'docs/a.md'], { 'src/x.js': 'M', 'docs/a.md': 'M' }, ctx);
   assert.strictEqual(r.mode, 'full');
   assert.strictEqual(r.suites, '*');
@@ -183,7 +184,14 @@ test('a missing impact context (or a null map) reads as map-missing', () => {
 test('untraced path fails closed', () => {
   const r = isel(['src/x.js', 'src/nobody.js'], { 'src/x.js': 'M', 'src/nobody.js': 'M' });
   assert.deepStrictEqual(r.suites, ['tests']);
-  assert.deepStrictEqual(r.impact, { ...NOT_SELECTED, fallback: 'untraced-path: src/nobody.js' });
+  assert.deepStrictEqual(r.impact, { ...FULL_RUN, fallback: 'untraced-path: src/nobody.js' });
+});
+
+test('a context with a map but no headTests reads as headTests [] (never a TypeError)', () => {
+  const r = isel(['src/x.js'], { 'src/x.js': 'M' }, { map: MAP, problem: null });
+  assert.deepStrictEqual(r.impact, { ...FULL_RUN, fallback: 'untraced-path: src/x.js' });
+  const t = isel(['tests/gone.test.js'], { 'tests/gone.test.js': 'D' }, { map: MAP, problem: null });
+  assert.deepStrictEqual(t.impact, NOT_SELECTED);
 });
 
 test('an unmatched path supersedes the impact subset', () => {
@@ -208,7 +216,7 @@ test('a "*" rule or an explicit rule naming the impact suite also supersedes; fa
   assert.deepStrictEqual(r.impact, SUPERSEDED);
 });
 
-test('no impact-rule file and the impact suite unselected: impact is the not-selected shape', () => {
+test('no impact-rule file and the impact suite unselected: impact is the empty subset (files [], selected 0)', () => {
   const r = isel(['docs/a.md'], { 'docs/a.md': 'M' });
   assert.strictEqual(r.mode, 'scoped');
   assert.deepStrictEqual(r.suites, ['docs']);
@@ -231,7 +239,7 @@ test('an empty subset drops the impact suite', () => {
   const r = isel(['tests/gone.test.js'], { 'tests/gone.test.js': 'D' });
   assert.strictEqual(r.mode, 'none');
   assert.deepStrictEqual(r.suites, []);
-  assert.deepStrictEqual(r.impact, { ...NOT_SELECTED, files: [], selected: 0 });
+  assert.deepStrictEqual(r.impact, NOT_SELECTED);
   const s = isel(['tests/gone.test.js', 'docs/a.md'], { 'tests/gone.test.js': 'D', 'docs/a.md': 'M' });
   assert.strictEqual(s.mode, 'scoped');
   assert.deepStrictEqual(s.suites, ['docs']);
@@ -259,7 +267,13 @@ test('no stamp + fallbackBase anchors on the merge-base; no stamp + no fallbackB
   assert.strictEqual(r.mode, 'full');
   assert.strictEqual(r.suites, '*');
   assert.strictEqual(r.base, null);
-  assert.deepStrictEqual(r.impact, SUPERSEDED);
+  assert.deepStrictEqual(r.impact, { ...FULL_RUN, fallback: 'no-anchor' });
+  // A context problem still wins as the unanchored run's fallback reason.
+  r = selectScope({ decl: IMPACT, files: ['src/x.js'], stamp: null, statuses: { 'src/x.js': 'M' }, impact: { ...CTX, problem: 'map-not-ancestor' } });
+  assert.deepStrictEqual(r.impact, { ...FULL_RUN, fallback: 'map-not-ancestor' });
+  r = selectScope({ decl: IMPACT, files: [], stamp: null });
+  assert.strictEqual(r.mode, 'full');
+  assert.deepStrictEqual(r.impact, { ...FULL_RUN, fallback: 'map-missing' });
 });
 
 test('no impact block is unchanged: no impact key, fallbackBase ignored', () => {
