@@ -147,6 +147,15 @@ test('AC7.1 legacy run silent 73 hours, commit 73 hours old, no lock is dead', (
   assert.strictEqual(res.verdict, 'dead');
 });
 
+test('AC7.1 legacy run silent 73 hours with a last commit only 11 hours old is unknown', () => {
+  const res = verdictOf(fixture({
+    state: {},
+    probes: { ownEventAt: () => ({ lastOwnMs: NOW - 73 * HOUR, lastSessionEndMs: null }), lastCommitAt: () => NOW - 11 * HOUR },
+  }));
+  assert.strictEqual(entry(res, 'last-commit').result, 'negative');
+  assert.strictEqual(res.verdict, 'unknown');
+});
+
 test('AC7.2 legacy run with 71 hours of event silence is unknown', () => {
   const res = verdictOf(fixture({
     state: {},
@@ -212,7 +221,10 @@ test('AC8.2 alive pid with a null start time and status active is unknown', () =
 
 test('AC9.1 a fail-open variant (probe error mapped to dead) fails the probe-error assertions', () => {
   const failOpen = (g) => (g.evidence.some((e) => e.result === 'error') ? 'dead' : decideVerdict(g));
-  assert.throws(() => assertProbeErrorsYieldUnknown(failOpen));
+  assert.throws(
+    () => assertProbeErrorsYieldUnknown(failOpen),
+    (err) => err instanceof assert.AssertionError && /a throwing probe yields unknown/.test(err.message),
+  );
 });
 
 // ---- AC11 ----
@@ -299,6 +311,80 @@ test('AC14.2 a run id with no timestamp and no events is an error (no-reference-
   assert.strictEqual(res.verdict, 'unknown');
 });
 
+// ---- unreadable / non-directory worktree is unknown evidence, never absent ----
+const LEGACY_SILENT = { ownEventAt: () => ({ lastOwnMs: NOW - 73 * HOUR, lastSessionEndMs: null }) };
+
+test('an unreadable worktree path is error for lock and commit: a legacy death witness plus in-use lock stays unknown, not dead', () => {
+  const res = verdictOf(fixture({
+    state: {},
+    probes: { ...LEGACY_SILENT, pathType: () => ({ type: 'unreadable', code: 'EACCES' }), lockInUse: () => true, lastCommitAt: () => NOW - MIN },
+  }));
+  assert.strictEqual(entry(res, 'worktree-lock').result, 'error');
+  assert.strictEqual(entry(res, 'last-commit').result, 'error');
+  assert.match(entry(res, 'worktree-lock').detail, /unreadable.*EACCES/);
+  assert.strictEqual(res.verdict, 'unknown');
+});
+
+test('an unreadable worktree path plus a pid death witness is unknown', () => {
+  const res = verdictOf(fixture({ state: { owner: owner() }, probes: { pathType: () => ({ type: 'unreadable', code: 'EIO' }) } }));
+  assert.strictEqual(entry(res, 'owner-pid').detail, 'gone');
+  assert.strictEqual(entry(res, 'worktree-lock').result, 'error');
+  assert.strictEqual(res.verdict, 'unknown');
+});
+
+test('a worktree path that is a file, or a type lookup that throws, is error for lock and commit', () => {
+  for (const pathType of [() => ({ type: 'file', code: null }), () => ({ type: 'other', code: null }), boom]) {
+    const res = verdictOf(fixture({ state: { owner: owner() }, probes: { pathType } }));
+    assert.strictEqual(entry(res, 'worktree-lock').result, 'error');
+    assert.strictEqual(entry(res, 'last-commit').result, 'error');
+    assert.strictEqual(res.verdict, 'unknown');
+  }
+});
+
+test('a worktree path the type lookup reports missing is the no-worktree negative; a symlink is probed', () => {
+  const gone = verdictOf(fixture({ state: { owner: owner() }, probes: { pathType: () => ({ type: 'missing', code: 'ENOENT' }) } }));
+  assert.strictEqual(entry(gone, 'worktree-lock').detail, 'no-worktree');
+  assert.strictEqual(gone.verdict, 'dead');
+  const link = verdictOf(fixture({ state: { owner: owner() }, probes: { pathType: () => ({ type: 'symlink', code: null }), lockInUse: () => true } }));
+  assert.strictEqual(entry(link, 'worktree-lock').result, 'positive');
+  assert.strictEqual(link.verdict, 'live');
+});
+
+test('a real chmod 000 parent makes the default type lookup unreadable, not absent', { skip: process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0) }, () => {
+  const parent = tmp('ct-liveness-locked-');
+  const wt = path.join(parent, 'wt');
+  fs.mkdirSync(wt);
+  fs.chmodSync(parent, 0o000);
+  try {
+    const res = verdictOf(fixture({
+      state: { worktree: wt },
+      probes: { ...LEGACY_SILENT, lockInUse: () => true, lastCommitAt: () => NOW - MIN },
+    }));
+    assert.strictEqual(entry(res, 'worktree-lock').result, 'error');
+    assert.strictEqual(entry(res, 'last-commit').result, 'error');
+    assert.strictEqual(res.verdict, 'unknown');
+  } finally {
+    fs.chmodSync(parent, 0o700);
+  }
+});
+
+// ---- non-finite probe values are errors ----
+test('a NaN lastOwnMs, NaN lastSessionEndMs or non-numeric event time is an owner-events error, verdict unknown', () => {
+  for (const bad of [{ lastOwnMs: NaN, lastSessionEndMs: null }, { lastOwnMs: null, lastSessionEndMs: NaN }, { lastOwnMs: 'x', lastSessionEndMs: null }, { lastOwnMs: Infinity, lastSessionEndMs: null }]) {
+    const res = verdictOf(fixture({ state: { owner: owner() }, probes: { ownEventAt: () => bad } }));
+    assert.strictEqual(entry(res, 'owner-events').result, 'error', JSON.stringify(bad));
+    assert.strictEqual(res.verdict, 'unknown');
+  }
+});
+
+test('a NaN or non-numeric lastCommitAt is a last-commit error, never a clean negative', () => {
+  for (const bad of [NaN, Infinity, 'x', undefined]) {
+    const res = verdictOf(fixture({ state: { owner: owner() }, probes: { lastCommitAt: () => bad } }));
+    assert.strictEqual(entry(res, 'last-commit').result, 'error', String(bad));
+    assert.strictEqual(res.verdict, 'unknown');
+  }
+});
+
 // ---- AC15 ----
 test('AC15.2 an owner with a null pid is no-pid and never dead through the PID row', () => {
   const res = verdictOf(fixture({ state: { status: 'active', owner: owner({ pid: null, pidSource: null }) } }));
@@ -323,6 +409,16 @@ test('AC3.1 a re-stamped owner block for the running process reads live through 
 });
 
 // ---- never throws ----
+test('runLiveness never throws for any second argument', () => {
+  const fx = fixture({ state: { owner: owner() } });
+  for (const opts of [null, undefined, 'x', 42, [], { probes: null }, { now: undefined, probes: undefined }]) {
+    let res;
+    assert.doesNotThrow(() => { res = runLiveness(fx.runDir, opts); }, String(opts));
+    assert.ok(['live', 'dead', 'unknown'].includes(res.verdict));
+    assert.deepStrictEqual(res.evidence.map((e) => e.probe), PROBE_ORDER);
+  }
+});
+
 test('runLiveness never throws, even for a missing run directory', () => {
   const res = runLiveness(path.join(os.tmpdir(), 'ct-liveness-missing-dir-xyz'), { now: NOW, probes: baseProbes() });
   assert.ok(['live', 'dead', 'unknown'].includes(res.verdict));

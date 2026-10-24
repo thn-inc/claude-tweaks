@@ -11,9 +11,9 @@
 //
 // Precedence (decideVerdict): any positive among the four live probes -> live;
 // else any error -> unknown; else any death witness -> dead; else unknown.
-const fs = require('fs');
 const path = require('path');
 const ctxLib = require('../hooks/context');
+const { lstatType } = require('../path-guard');
 const { DEFAULT_PROBES } = require('./probes');
 const { LIVE_WINDOW_MS, LEGACY_DEAD_MS } = require('./constants');
 
@@ -77,18 +77,36 @@ function probeHeartbeat(owner, now) {
     : { result: 'negative', detail: 'stale' };
 }
 
-function probeLock(worktree, p) {
-  if (!worktree) return { result: 'negative', detail: 'no-worktree' };
-  const r = call(p.lockInUse, worktree);
+// What the run-state's recorded worktree is on disk: { kind: 'none' } (nothing
+// recorded, or provably absent), { kind: 'error', detail } (the type could not be
+// established, or it is not a directory/symlink — never read as absent), or
+// { kind: 'ok', path }.
+function worktreeTarget(state, p) {
+  if (typeof state.worktree !== 'string' || !state.worktree) return { kind: 'none' };
+  const t = call(p.pathType, state.worktree);
+  if (!t.ok) return { kind: 'error', detail: t.message };
+  const type = t.value && t.value.type;
+  if (type === 'missing') return { kind: 'none' };
+  if (type === 'directory' || type === 'symlink') return { kind: 'ok', path: state.worktree };
+  const code = t.value && t.value.code ? ` (${t.value.code})` : '';
+  return { kind: 'error', detail: `worktree path is ${type || 'unclassified'}${code}` };
+}
+
+function probeLock(target, p) {
+  if (target.kind === 'none') return { result: 'negative', detail: 'no-worktree' };
+  if (target.kind === 'error') return { result: 'error', detail: target.detail };
+  const r = call(p.lockInUse, target.path);
   if (!r.ok) return { result: 'error', detail: r.message };
   return r.value ? { result: 'positive', detail: 'in-use' } : { result: 'negative', detail: 'free' };
 }
 
-function probeCommit(worktree, p, now) {
-  if (!worktree) return { result: 'negative', detail: 'no-worktree', absentOrOld: true };
-  const r = call(p.lastCommitAt, worktree);
+function probeCommit(target, p, now) {
+  if (target.kind === 'none') return { result: 'negative', detail: 'no-worktree', absentOrOld: true };
+  if (target.kind === 'error') return { result: 'error', detail: target.detail };
+  const r = call(p.lastCommitAt, target.path);
   if (!r.ok) return { result: 'error', detail: r.message };
-  if (r.value === null || r.value === undefined) return { result: 'negative', detail: 'no-commits', absentOrOld: true };
+  if (r.value === null) return { result: 'negative', detail: 'no-commits', absentOrOld: true };
+  if (!Number.isFinite(r.value)) return { result: 'error', detail: 'invalid last-commit time' };
   const age = now - r.value;
   if (age < LIVE_WINDOW_MS) return { result: 'positive', detail: 'recent' };
   return { result: 'negative', detail: `age:${age}`, absentOrOld: age >= LEGACY_DEAD_MS };
@@ -98,8 +116,12 @@ function probeOwnEvents(runDir, p, now) {
   const r = call(p.ownEventAt, runDir);
   if (!r.ok) return { entry: { result: 'error', detail: r.message }, lastSessionEndMs: null };
   const { lastOwnMs, lastSessionEndMs } = r.value || {};
-  const sessionEnd = typeof lastSessionEndMs === 'number' ? lastSessionEndMs : null;
-  const ref = typeof lastOwnMs === 'number' ? lastOwnMs : runIdMs(runDir);
+  const bad = (v) => v !== null && v !== undefined && !Number.isFinite(v);
+  if (bad(lastOwnMs) || bad(lastSessionEndMs)) {
+    return { entry: { result: 'error', detail: 'invalid event time' }, lastSessionEndMs: null };
+  }
+  const sessionEnd = lastSessionEndMs ?? null;
+  const ref = lastOwnMs ?? runIdMs(runDir);
   if (ref === null) return { entry: { result: 'error', detail: 'no-reference-time' }, lastSessionEndMs: sessionEnd };
   return {
     entry: now - ref < LEGACY_DEAD_MS ? { result: 'positive', detail: 'recent' } : { result: 'negative', detail: 'silent' },
@@ -110,7 +132,7 @@ function probeOwnEvents(runDir, p, now) {
 // -> { evidence: [{ probe, result, detail }] (always all five, PROBE_ORDER),
 //      witnesses: ('pid' | 'session-end' | 'legacy')[] }
 function gatherEvidence(runDir, { now = Date.now(), probes = {} } = {}) {
-  const p = { ...DEFAULT_PROBES, ...probes };
+  const p = { pathType: (wt) => lstatType(wt), ...DEFAULT_PROBES, ...probes };
   let state = {};
   try {
     const s = ctxLib.readRunState(runDir);
@@ -118,17 +140,12 @@ function gatherEvidence(runDir, { now = Date.now(), probes = {} } = {}) {
   } catch { /* unreadable run-state reads as legacy */ }
   const owner = isPlainObject(state.owner) ? state.owner : null;
 
-  let worktree = null;
-  if (typeof state.worktree === 'string' && state.worktree) {
-    let onDisk = false;
-    try { onDisk = fs.existsSync(state.worktree); } catch { /* treat as absent */ }
-    if (onDisk) worktree = state.worktree;
-  }
+  const target = worktreeTarget(state, p);
 
   const pid = probeOwnerPid(owner, p);
   const heartbeat = probeHeartbeat(owner, now);
-  const lock = probeLock(worktree, p);
-  const commit = probeCommit(worktree, p, now);
+  const lock = probeLock(target, p);
+  const commit = probeCommit(target, p, now);
   const events = probeOwnEvents(runDir, p, now);
 
   const results = [pid, heartbeat, lock, commit, events.entry];
@@ -161,8 +178,9 @@ function decideVerdict({ evidence, witnesses }) {
 }
 
 // Never throws: any internal failure reads as `unknown` with every probe an error.
-function runLiveness(runDir, { now = Date.now(), probes = {} } = {}) {
+function runLiveness(runDir, opts) {
   try {
+    const { now = Date.now(), probes = {} } = isPlainObject(opts) ? opts : {};
     const gathered = gatherEvidence(runDir, { now, probes });
     return { verdict: decideVerdict(gathered), evidence: gathered.evidence };
   } catch (err) {
