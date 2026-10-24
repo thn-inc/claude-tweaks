@@ -47,7 +47,7 @@ files:
 - **Action:** Read the ruling row's resolution:
   - `apply` means it ratified: either `Defers: no` with no reason line, or a deferral with exactly one valid reason.
   - `pending — sdd-ruling-deferral-no-defer-reason` means a deferral with a missing, invalid or duplicated reason.
-  - `pending — sdd-ruling-unclassified` means no `Defers:` line, more than one, or a value other than yes/no. This also covers a ruling staged before #3880. `pending — sdd-ruling-unreadable` means the staged file could not be read at all — no `stagedPath`, a path rejected for leaving the run dir, a missing file, or a failed read (#4049).
+  - `pending — sdd-ruling-unclassified` means no `Defers:` line, more than one, or a value other than yes/no. This also covers a ruling staged before #3880. `pending — sdd-ruling-unreadable` means the staged file could not be read at all — on the console-resolve path a failed read; on the reconciler path no `stagedPath`, a path rejected for leaving the run dir, a missing file, or a failed read (#4049).
 - **Should feel:** Trustworthy. Unattended means nobody clicked, not that nobody checked.
 - **Should understand:**
   - Both trigger points apply the same gate. `bin/lib/console/resolve.js`'s `sddRulingDeferralReason` does it for the live session. On the reconciler side, `console-execute.js` reads each ruling row's `stagedPath` from `console.json` and lists the unsafe ones in `rulingGateGaps`. Those rows and Resolve stay unticked.

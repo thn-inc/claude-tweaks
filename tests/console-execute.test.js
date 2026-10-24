@@ -666,6 +666,36 @@ test('readRulingTexts: reads only ruling rows, and names why each unreadable sta
   assert.deepStrictEqual(readRulingTexts(runDir, undefined), { texts: {}, errors: {} });
 });
 
+test('AC3.4: readRulingTexts: a run dir that cannot be canonicalized is read-failed for every ruling item with a valid relative stagedPath (injected realpath)', () => {
+  const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-rrt-root-')));
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), RULING_TEXT_DEFERS_NO);
+  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-2.md'), RULING_TEXT_DEFERS_NO);
+  const realpath = () => { throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }); };
+  const result = readRulingTexts(runDir, [
+    { id: 'one', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
+    { id: 'two', isRulingRow: true, stagedPath: 'staged/sdd-ruling-2.md' },
+  ], { realpath });
+  assert.deepStrictEqual(result, { texts: {}, errors: { one: 'read-failed', two: 'read-failed' } });
+});
+
+test('AC3.4: readRulingTexts: a leaf that exists but will not resolve is read-failed, not not-found (injected realpath and lstat)', () => {
+  const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-rrt-leaf-')));
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  const leafPath = path.join(runDir, 'staged', 'sdd-ruling-1.md');
+  fs.writeFileSync(leafPath, RULING_TEXT_DEFERS_NO);
+  const eacces = () => Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+  const realpath = (p) => {
+    if (p === leafPath) throw eacces();
+    return fs.realpathSync.native(p);
+  };
+  const fsImpl = { ...fs, lstatSync: (p, ...rest) => { if (p === leafPath) throw eacces(); return fs.lstatSync(p, ...rest); } };
+  const result = readRulingTexts(runDir, [
+    { id: 'one', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
+  ], { realpath, fsImpl });
+  assert.deepStrictEqual(result, { texts: {}, errors: { one: 'read-failed' } });
+});
+
 test('AC3.2: consoleExecuteDetect never follows a stagedPath symlink (leaf or directory segment) pointing outside the run dir -> unreadable gap', { skip: process.platform === 'win32' }, async () => {
   const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-symout-')));
   fs.writeFileSync(path.join(outside, 'safe.md'), RULING_TEXT_DEFERS_NO);

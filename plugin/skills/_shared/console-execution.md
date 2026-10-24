@@ -196,13 +196,13 @@ floor-clearing on this axis); `{ member, reason }` names the first ungranted (or
 unreadable/unresolvable) member and withholds.
 
 **Third narrower exception (#3880):** an `isRulingRow: true` item named in the ready result's
-`rulingGateGaps` (`[{ id, reason, detail? }]`, computed in code by `decideConsoleExecute` from each ruling
-row's staged file, read via the item's `stagedPath` — `_shared/console-on-pr.md`) is **not**
+`rulingGateGaps` (`[{ id, reason, detail? }]`, computed in code by `decideConsoleExecute` from each
+ruling row's staged file, read via the item's `stagedPath` — `_shared/console-on-pr.md`) is **not**
 floor-clearing: its box and Resolve stay unticked and the console stays pending for a human, the
-same posture as the merge row. It mirrors `console-resolve.js`'s `pending — sdd-ruling-*`
-resolution (`wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet) for the reconciler-side
-trigger point. `rulingGateGaps: []` — every ruling row's header shows it safe — leaves each ruling
-row floor-clearing, unchanged.
+same posture as the merge row. It mirrors `console-resolve.js`'s `pending — sdd-ruling-*` resolution
+(`wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet) for the reconciler-side trigger
+point. `rulingGateGaps: []` — every ruling row's header shows it safe — leaves each ruling row
+floor-clearing, unchanged.
 
 **Auto-resolution performs real comment edits.** It ticks the floor-clearing boxes on the PR
 comment (via `_shared/console-on-pr.md`'s post-or-update procedure) *before* executing — the same

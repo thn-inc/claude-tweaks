@@ -221,13 +221,15 @@ function resolveVetoWindowHours(runDir, repoRoot) {
 // are no-staged-path, path-rejected, not-found and read-failed; decideConsoleExecute
 // withholds every one as sdd-ruling-unreadable (#4049), so no read failure
 // reaches sddRulingDeferralReason as a silently-unclassified null.
-function readRulingTexts(runDir, items) {
+// `opts` ({ fsImpl, realpath }) is path-guard's injectable seam, threaded through so a test can
+// model a run dir or leaf that will not resolve; production callers pass nothing.
+function readRulingTexts(runDir, items, opts = {}) {
   const texts = {};
   const errors = {};
   const base = path.resolve(runDir);
   for (const item of Array.isArray(items) ? items : []) {
     if (!item || item.isRulingRow !== true) continue;
-    const read = readInsideRunDir(base, item.stagedPath);
+    const read = readInsideRunDir(base, item.stagedPath, opts);
     if (read.error) errors[item.id] = read.error;
     else texts[item.id] = read.text;
   }
@@ -235,13 +237,13 @@ function readRulingTexts(runDir, items) {
 }
 
 // -> { text } | { error: 'no-staged-path' | 'path-rejected' | 'not-found' | 'read-failed' }
-function readInsideRunDir(base, rel) {
+function readInsideRunDir(base, rel, opts = {}) {
   if (typeof rel !== 'string' || rel === '') return { error: 'no-staged-path' };
   if (path.isAbsolute(rel)) return { error: 'path-rejected' };
   if (rel.split(/[\\/]/).includes('..')) return { error: 'path-rejected' };
-  const rootReal = canonicalRealpath(base);
+  const rootReal = canonicalRealpath(base, opts);
   if (rootReal === null) return { error: 'read-failed' };
-  const leaf = resolveLeaf(path.resolve(base, rel));
+  const leaf = resolveLeaf(path.resolve(base, rel), opts);
   if (leaf.state === 'missing' || leaf.state === 'dangling') return { error: 'not-found' };
   if (leaf.state !== 'resolved') return { error: 'read-failed' };
   // IL-161: the leaf's realpath follows a symlink in every segment, so a link planted

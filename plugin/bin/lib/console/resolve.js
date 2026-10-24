@@ -218,7 +218,9 @@ function parseCategory(text) {
 // never counts. Prose twin: wrap-up/review-console-appendix.md's sdd-ruling-*
 // bullet. Returns null when the item may resolve as today, else the reason it
 // resolves pending under.
-// `UNREADABLE` is decided by the callers that attempted the read (`stagedItems` here, `decideConsoleExecute` in `reconcile/console-execute.js`), never by `sddRulingDeferralReason`, which only ever sees text (#4049).
+// `UNREADABLE` is decided by the callers that attempted the read (`stagedItems` here,
+// `decideConsoleExecute` in `reconcile/console-execute.js`), never by
+// `sddRulingDeferralReason`, which only ever sees text (#4049).
 const SDD_RULING_REASONS = Object.freeze({
   NO_DEFER_REASON: 'sdd-ruling-deferral-no-defer-reason',
   UNCLASSIFIED: 'sdd-ruling-unclassified',

@@ -818,7 +818,7 @@ test('build-deviation-unaffected: a non-ruling Pending-review item with no Defer
   assert.strictEqual(item.resolution, 'apply');
 });
 
-test('AC1.1 AC2.1: SDD_RULING_REASONS gains UNREADABLE; sddRulingDeferralReason(null|undefined) stays unclassified (#4049)', () => {
+test('AC1.1 AC2.1: SDD_RULING_REASONS gains UNREADABLE; sddRulingDeferralReason(null|undefined) stays unclassified, and Defers: matches case-insensitively (#4049)', () => {
   assert.strictEqual(sddRulingDeferralReason(null), 'sdd-ruling-unclassified');
   assert.strictEqual(sddRulingDeferralReason(undefined), 'sdd-ruling-unclassified');
   assert.strictEqual(sddRulingDeferralReason('Defers: YES\nDefer-reason: blocked-dependency\n\nx'), null);
