@@ -397,7 +397,18 @@ function resolveStructurallyStuck({
     runner,
     onHit: (hit) => {
       const existingPaths = parseStuckPaths(hit.body);
-      if (!existingPaths.includes(targetPath)) return { status: 'not-found' };
+      if (!existingPaths.includes(targetPath)) {
+        // #4202: an earlier resolve that emptied the list but failed to close leaves an OPEN
+        // record with nothing stuck; its retry lands here, so finish the close.
+        if (hit.state === 'CLOSED' || existingPaths.length > 0) return { status: 'not-found' };
+        try {
+          runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body', 'The stuck-paths list is empty. Closing.']);
+          runner(['issue', 'close', String(hit.number), '--repo', repo]);
+          return { status: 'closed', number: hit.number };
+        } catch (err) {
+          return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+        }
+      }
       if (hit.state === 'CLOSED') return { status: 'already-closed', number: hit.number };
       const { kept, dropped } = convergePaths(existingPaths, targetPath, pathExists);
       const remaining = kept.filter((p) => p !== targetPath);

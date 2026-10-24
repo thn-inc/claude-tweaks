@@ -514,6 +514,7 @@ test('#4202 escalate: reopening a CLOSED record drops gone paths from the re-ren
   const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-new', count: 3, runner, pathExists });
   assert.deepEqual(result, { status: 'reopened', number: 2724 });
   assert.equal(seen.edited, structurallyStuckBody(['/x/run-a', '/x/run-new']));
+  assert.equal(seen.commented, 'Reconcile is seeing `/x/run-new` stuck at structurally-stuck again — reopening rather than filing a duplicate (dropped 1 path(s) no longer on disk: `/x/gone-1`).');
 });
 
 test('#4202 AC3.1 AC3.2: resolve: removing a path also drops gone paths and closes when nothing live remains', () => {
@@ -534,6 +535,16 @@ test('#4202 resolve: a CRLF body with a gone path stays CRLF and keeps live path
   const result = resolveResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', runner, pathExists });
   assert.deepEqual(result, { status: 'path-removed', number: 2724 });
   assert.equal(seen.edited, SHAPED(renderStuckPathsBlock(['/x/run-b'])).replace(/\n/g, '\r\n'));
+  assert.equal(seen.commented, '`/x/run-a` no longer exists on disk — resolved by other means, removed from the stuck-paths list (1 path(s) still stuck) (dropped 1 path(s) no longer on disk: `/x/gone-1`).');
+});
+
+test('#4202 resolve: an OPEN record whose list an earlier failed resolve already emptied is closed by the retry', () => {
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock([])));
+  const result = resolveResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', runner });
+  assert.deepEqual(result, { status: 'closed', number: 2724 });
+  assert.equal(seen.edited, null);
+  assert.equal(seen.commented, 'The stuck-paths list is empty. Closing.');
+  assert.ok(seen.calls.some((c) => c[0] === 'issue' && c[1] === 'close'));
 });
 
 test('#4202 escalate: an already-named path on an OPEN record stays a plain dedup-hit even with gone paths listed', () => {

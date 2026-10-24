@@ -18,7 +18,7 @@ const {
   isClosedSlugStuck, recordNumbersFromSlug, refusal, unclosedRecords, runRecordSet, inFlightRecords,
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
-const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure, cachePath } = require('../../../plugin/bin/lib/reconcile/cache');
+const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure, cachePath, beginCacheBatch, commitCacheBatch } = require('../../../plugin/bin/lib/reconcile/cache');
 const { structurallyStuckBody, parseStuckPaths } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
 const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
@@ -1821,13 +1821,14 @@ function stuckRecordListing(paths) {
   return JSON.stringify([{ number: 2724, title: 't', body: structurallyStuckBody(paths), createdAt: '2024-01-01T00:00:00Z', state: 'OPEN' }]);
 }
 
-// A gh runner over one open stuck-paths record that captures the edited body and every gh verb.
+// A gh runner over one open stuck-paths record that captures the edited body, the comment and every gh verb.
 function stuckRecordRunner(paths) {
-  const seen = { edited: null, verbs: [] };
+  const seen = { edited: null, commented: null, verbs: [] };
   const runner = (argv) => {
     seen.verbs.push(argv[1]);
     if (argv[1] === 'list') return stuckRecordListing(paths);
     if (argv[1] === 'edit') seen.edited = argv[argv.indexOf('--body') + 1];
+    if (argv[1] === 'comment') seen.commented = argv[argv.indexOf('--body') + 1];
     return '';
   };
   return { runner, seen };
@@ -1848,6 +1849,19 @@ test('#4202 trackArchiveResult: a path from another checkout survives the resolv
   trackArchiveResult(root, 'o/r', dir, { ok: true, movedEntries: [] }, { runner });
   assert.deepEqual(parseStuckPaths(seen.edited), [foreign], 'only this checkout\'s archived dir is resolved; the foreign path stays listed');
   assert.ok(!seen.verbs.includes('close'), 'the record must stay open while another checkout\'s path is listed');
+  assert.deepEqual(listResidueFailures(root), []);
+});
+
+test('#4202 trackArchiveResult: under the batch handle archiveMerged passes, an own-checkout orphan is dropped and a foreign path kept', () => {
+  const { root, dir } = archivedStuckDirFixture();
+  const orphan = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-3');
+  const foreign = '/other-machine/repo/.claude-tweaks/pipelines/2026-01-01T000000-record-9';
+  const { runner, seen } = stuckRecordRunner([dir, orphan, foreign]);
+  const batch = beginCacheBatch(root);
+  trackArchiveResult(batch, 'o/r', dir, { ok: true, movedEntries: [] }, { runner });
+  commitCacheBatch(batch);
+  assert.deepEqual(parseStuckPaths(seen.edited), [foreign], 'the archived dir and this checkout\'s gone orphan both leave the list');
+  assert.ok(seen.commented.includes(`dropped 1 path(s) no longer on disk: \`${orphan}\``), seen.commented);
   assert.deepEqual(listResidueFailures(root), []);
 });
 

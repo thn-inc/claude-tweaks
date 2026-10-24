@@ -263,6 +263,9 @@ function assertOwnedPathPredicate(pathExists, root) {
   assert.equal(pathExists(path.join(pipelines, 'missing-run')), false, 'a missing path under this checkout\'s pipelines dir is gone');
   assert.equal(pathExists(present), true, 'an existing path under this checkout\'s pipelines dir is present');
   assert.equal(pathExists('/other-machine/repo/.claude-tweaks/pipelines/x'), true, 'a path outside this checkout\'s pipelines dir is never judged');
+  assert.equal(pathExists(pipelines), true, 'the pipelines dir itself is never judged');
+  assert.equal(pathExists('missing-run'), true, 'a relative listed path is never judged');
+  assert.equal(pathExists(`${pipelines}/missing-run/../present-run`), true, 'an un-normalized listed path is never judged');
 }
 
 test('#4202 trackResidue: passes a checkout-scoped pathExists into the escalate call', () => {
