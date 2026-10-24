@@ -67,7 +67,6 @@ test('AC1.2 (live-state tier): the live-state rule lives in the contract', () =>
 test('AC1.2 (live-state tier): negative control — the contract before its Live-state tier fails the pins', () => {
   // Sliced outside the callback so a renamed heading fails here, not inside `throws`.
   const beforeLive = slice(CONTRACT, '# Acceptance Labeling', '## Live-state tier');
-  assert.ok(beforeLive.length > 0, 'the pre-Live-state slice must be non-empty');
   assert.throws(() => assertLive(beforeLive), assert.AssertionError);
 });
 

@@ -43,8 +43,8 @@ neither check shows landed.
 ## Outcomes
 
 `landed`, or one not-landed outcome. An `unreadable: …` outcome from any tier takes precedence over
-the other not-landed outcomes — a read failure is never masked; otherwise the outcome is the run-dir / verify.json
-tier's:
+the other not-landed outcomes — a read failure is never masked; otherwise the outcome is the
+run-dir / verify.json tier's:
 
 - `no run dir`
 - `verify.json missing`
