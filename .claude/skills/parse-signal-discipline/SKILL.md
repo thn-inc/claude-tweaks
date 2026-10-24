@@ -403,23 +403,6 @@ When mechanizing a prose heuristic into a deterministic check:
     control removes, so the control proves each pin can go red: the first version's pins named the
     rule and none of its edges (`GUARD_PINS` in
     `tests/tidy-arm-ready-pr-acceptance-guard.test.js`).
-21. **Failing closed does not excuse folding "could not read" into "read, but unclassifiable".
-    The reason a withheld item carries is what the human acts on.**
-    `plugin/bin/lib/reconcile/console-execute.js`'s `readInsideRunDir` (#3880) returned one `null`
-    for a missing `stagedPath`, a rejected path, a missing file and a failed read, and
-    `plugin/bin/lib/console/resolve.js`'s `readSnapshot` did the same through `readText`. Both fed
-    that `null` to `sddRulingDeferralReason`, which maps it to `sdd-ruling-unclassified`, the reason
-    for a header with no valid `Defers:` line. Every row was still withheld, so nothing unsafe
-    shipped, but a reviewer told to fix the header could be facing a missing file or a planted
-    symlink escaping the run dir. A review's can't-tell finding became #4049, which added
-    `sdd-ruling-unreadable`. `readInsideRunDir` now returns `{ text } | { error }` with one of four
-    causes, `readRulingTexts` puts each id in exactly one of `texts` or `errors`, and `readSnapshot`
-    sets `readError` only on an attempted read that threw. Each caller checks the error before it
-    calls the classifier, which still sees text only (`sddRulingDeferralReason(null)` still returns
-    `sdd-ruling-unclassified`). Decide a read failure in the caller that attempted the read, never
-    inside the pure classifier, let a recorded read error outrank any text for the same id, and pin
-    each cause on each path with its own assertion.
-
 21. **A shared reader that already folded "could not ask" into its answer shape hands that fold to
     every wrapper, so a verdict built on tagged probes must distrust the readers under them.**
     `plugin/bin/lib/run-liveness/` (#3973) tags every probe positive, negative or error so that an
@@ -439,6 +422,22 @@ When mechanizing a prose heuristic into a deterministic check:
     evidence, and throw on a lookup miss the caller's own precondition says cannot happen. Pin
     each with a fixture the pre-fix code fails (`tests/bin-lib/run-liveness/index.test.js`,
     `probes.test.js`).
+22. **Failing closed does not excuse folding "could not read" into "read, but unclassifiable".
+    The reason a withheld item carries is what the human acts on.**
+    `plugin/bin/lib/reconcile/console-execute.js`'s `readInsideRunDir` (#3880) returned one `null`
+    for a missing `stagedPath`, a rejected path, a missing file and a failed read, and
+    `plugin/bin/lib/console/resolve.js`'s `readSnapshot` did the same through `readText`. Both fed
+    that `null` to `sddRulingDeferralReason`, which maps it to `sdd-ruling-unclassified`, the reason
+    for a header with no valid `Defers:` line. Every row was still withheld, so nothing unsafe
+    shipped, but a reviewer told to fix the header could be facing a missing file or a planted
+    symlink escaping the run dir. A review's can't-tell finding became #4049, which added
+    `sdd-ruling-unreadable`. `readInsideRunDir` now returns `{ text } | { error }` with one of four
+    causes, `readRulingTexts` puts each id in exactly one of `texts` or `errors`, and `readSnapshot`
+    sets `readError` only on an attempted read that threw. Each caller checks the error before it
+    calls the classifier, which still sees text only (`sddRulingDeferralReason(null)` still returns
+    `sdd-ruling-unclassified`). Decide a read failure in the caller that attempted the read, never
+    inside the pure classifier, let a recorded read error outrank any text for the same id, and pin
+    each cause on each path with its own assertion.
 
 ## When to use
 
