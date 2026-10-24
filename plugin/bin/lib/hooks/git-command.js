@@ -535,11 +535,12 @@ function resolveWriteTarget(effCwd, raw) {
 }
 
 // A redirection's RHS that is a file-descriptor duplication (`>&2`, `2>&1`),
-// never a file target — distinct from resolveWriteTarget's unresolvable set
-// because the shape (a bare `&` followed by digits) is specific to redirection
-// syntax and would otherwise read as a plausible-looking relative path.
+// or an fd close/move (`>&-`, `>&3-`), never a file target — distinct from
+// resolveWriteTarget's unresolvable set because the shape (a bare `&` followed
+// by digits or `-`) is specific to redirection syntax and would otherwise read
+// as a plausible-looking relative path.
 function isFdDupTarget(raw) {
-  return /^&\d+$/.test(raw);
+  return /^&(\d+-?|-)$/.test(raw);
 }
 
 // Matches a write-redirection operator at the START of a token, optionally
@@ -553,10 +554,12 @@ const AMP_REDIRECT_OP_RE = /^&(>>|>)(.*)$/;
 
 // #4015: bash ends a word at an unquoted `>`, so `echo foo>x` redirects exactly
 // like `echo foo > x`. The prefix excludes quotes, backslash, `$` and backtick
-// because each can make the `>` literal or put it inside an expansion; ambiguity
-// resolves to no target. Used only on a token the start-anchored scan above did
-// not match, and only when the caller's quoting flags say the token was bare.
-const GLUED_REDIRECT_RE = /^[^"'\\$`>]+(>>|>\||>)(.*)$/;
+// because each can make the `>` literal or put it inside an expansion, and `(`
+// because an unquoted `(` inside a bare word is only arithmetic (`((i>0))`, where
+// `>` is a comparison), `$(`, `<(` or extglob syntax; ambiguity resolves to no
+// target. Used only on a token the start-anchored scan above did not match, and
+// only when the caller's quoting flags say the token was bare.
+const GLUED_REDIRECT_RE = /^[^"'\\$`>(]+(>>|>\||>)(.*)$/;
 
 function matchRedirectOperator(tok) {
   const m = REDIRECT_OP_RE.exec(tok) || AMP_REDIRECT_OP_RE.exec(tok);

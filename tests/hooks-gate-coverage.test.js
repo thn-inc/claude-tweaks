@@ -365,6 +365,7 @@ test('AC1.1 AC2.1 #4015: a redirect glued to a preceding unquoted word resolves 
   for (const [command, file] of [
     ['echo foo>x', 'x'], ['cat a.txt>b.txt', 'b.txt'], ['echo foo>>x', 'x'], ['echo foo>|x', 'x'],
     ['echo foo&>x', 'x'], ['echo foo2>x', 'x'], ['echo foo> x', 'x'], ['WT=/w; echo foo>$WT/x', '/w/x'],
+    ['(cd sub; ls)>out.txt', 'out.txt'], // a group's redirect runs in the outer cwd, not the inner `cd`'s
   ]) {
     assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
   }
@@ -374,6 +375,8 @@ test('AC1.2 AC2.1 #4015: a `>` that is quoted, escaped, expanded, an fd dup, a s
   for (const command of [
     'echo "foo>x"', "echo 'foo>x'", 'echo foo\\>x', 'echo foo">"x', 'node -e "x>y"', 'git commit -m "a>b"',
     'V="a>b"; echo $V', 'echo foo>&2', 'echo foo>/dev/null', 'node x.js <<EOF\nif (a>0) b();\nEOF',
+    '((i>0))', 'if ((n>0)); then echo hi; fi', 'while ((i>0)); do echo x; done',
+    'exec 3>&-', 'cmd >&-', 'echo foo>&-',
   ]) {
     assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
   }
