@@ -1125,10 +1125,13 @@ async function main(argv) {
         process.stdout.write(`claude-tweaks: delete-ledger: cannot attribute docs/plans ledgers to ${path.basename(runDir)} (${resolved.detail}) — pass --ledger <path> explicitly; ledger not deleted\n`);
       } else if (!resolved.ok) {
         // #3686: with no --ledger, an inherited-only docs/plans set is named here.
-        const view = ledgerArg ? null : describeRunLedgers({ runDir, worktree });
-        const inherited = view && view.report === 'none' && view.others.length > 0
-          ? ` — only inherited ledgers found: ${view.others.join(', ')}`
-          : '';
+        let inherited = '';
+        if (!ledgerArg) {
+          const { report, others } = describeRunLedgers({ runDir, worktree });
+          if (report === 'none' && others.length > 0) {
+            inherited = ` — only inherited ledgers found: ${others.join(', ')}`;
+          }
+        }
         process.stdout.write(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)}${inherited} — not found\n`);
       } else {
         try {
