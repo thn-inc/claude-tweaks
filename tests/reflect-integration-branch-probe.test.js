@@ -42,6 +42,7 @@ test('the could-not-run rule names the failed fetch and the grep or log exits th
   assert.ok(p.includes('`git fetch` exits non-zero'), 'the paragraph must name a failed fetch as could-not-run (could-not-run rule)');
   assert.ok(p.includes('exits other than 0 or 1'), 'the paragraph must treat grep or log exits other than 0 or 1 as could-not-run (could-not-run rule)');
   assert.ok(p.includes('never that the content is absent'), 'the paragraph must forbid reading a could-not-run probe as absence (could-not-run rule)');
+  assert.ok(p.includes('`git log -S` exiting 0 with no output'), 'the paragraph must say how an empty git log -S result reads (could-not-run rule)');
 });
 
 test('the probe pins the -e grep form and the single-quoting rule for the phrase', () => {
