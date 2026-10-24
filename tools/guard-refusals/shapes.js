@@ -177,13 +177,140 @@ function wholeWord(word) {
 const GH_JQ_PIPE = new RegExp(`${CMD}gh\\s[^\\n]*--jq[\\s=]+(?:'[^']*\\|[^']*'|"[^"]*\\|[^"]*")`);
 const GH_REPO_URL = new RegExp(`${CMD}gh\\s[^\\n]*--repo[\\s=]+["']?(?:https?://)?github\\.com/`);
 const GH_CHAINED_STATUS = new RegExp(`${CMD}gh\\s[^\\n]*?(?:;|&&)[^\\n]*\\$\\?`);
-const QUOTED_GIT = /'[^']*(?<![\w-])git(?![\w-])[^']*'|"[^"]*(?<![\w-])git(?![\w-])[^"]*"/;
-const REDIRECT_TO_VAR = new RegExp(`(?<![<>&\\d])>>?\\s*"?${VAR}`);
 const GIT_COMMAND = /(?:^|[\s;&|(])git\s+[a-z]/m;
 const NODE_EVAL_SCRIPT_VAR = new RegExp(`${CMD}node\\s+(?:-e|-p|--eval|--print)\\s+"[^"]*${VAR}`);
-const HEREDOC = /(?<!<)<<(?!<)-?\s*['"]?[A-Za-z_]\w*/;
 // `>file`, `>>file`, and bash's `&>file` / `&>>file` (stdout and stderr).
 const STDOUT_FILE_REDIRECT = /(?:&|(?<![<>&\d]))>>?(?!&)\s*\S/;
+
+// Two same-length views of one Bash call, backslash-newline continuations
+// joined: `bare` (quoted, comment and heredoc text blanked: shell structure)
+// and `args` (single-quoted, comment and heredoc text blanked: what expands).
+function views(text) {
+  const join = (s) => s.replace(/\\\r?\n/g, (m) => ' '.repeat(m.length));
+  return { bare: join(stripQuoted(text)), args: join(stripSingle(text)) };
+}
+
+// [start, end) of each simple command whose command word is `word`: the word
+// at command position (line start, after ; & | ( !, or after a then/do/else/
+// if/while/until keyword) in `bare`, through the next ; & | ) or line end.
+function commandSegments(bare, word) {
+  const re = new RegExp(`(?:^|[;&|(!]|\\b(?:then|do|else|if|while|until)\\s)[ \\t]*${word}(?=[ \\t]|$)`, 'gm');
+  const out = [];
+  for (const m of bare.matchAll(re)) {
+    const start = m.index + m[0].length - word.length;
+    const stop = bare.slice(start).search(/[;&|)\n]/);
+    out.push([start, stop === -1 ? bare.length : start + stop]);
+  }
+  return out;
+}
+
+// The segment's `args` text with each output redirect (`>`, `>>`, `2>`, `&>`
+// and its target) blanked: an output path is not an operand.
+function operandText(bare, args, start, end) {
+  const seg = args.slice(start, end).split('');
+  for (let i = start; i < end; i++) {
+    if (bare[i] !== '>') continue;
+    const len = /^>>?[ \t]*(?:"[^"\n]*"|[^\s;&|]+)?/.exec(args.slice(i, end))[0].length;
+    for (let j = 0; j < len; j++) seg[i - start + j] = ' ';
+    i += len - 1;
+  }
+  return seg.join('');
+}
+
+// Names the guard resolves statically: every assignment to the name in the
+// call is a literal (`N=5`, `N="a b"`, `N='x'`, a `for N in` list with no `$`
+// or backtick). Live 2026-10-24 (#4028): `L=1; gh … --limit "$L"`, `for n in
+// 4028; do gh issue view "$n" …`, `W="/abs/wt"; git -C "$W" …` and
+// `A=/abs/p.txt; echo digit > "$A"` all ran. A name assigned from `$(…)` or
+// `read`, or never assigned in the call (the environment), is runtime-computed.
+const LITERAL_VALUE = /^(?:'[^']*'|"[^"$`\\]*"|[^\s;&|()<>$`'"\\]*)(?=[\s;&|)]|$)/;
+const ASSIGN_CONTEXT = /(?:^|[;&|(]|\b(?:then|do|else|export|local|readonly)|[A-Za-z_]\w*=(?:"[^"\n]*"|'[^'\n]*'|\S*))[ \t]*$/;
+function staticNames(text) {
+  const kinds = lexShell(text);
+  const bare = stripQuoted(text);
+  const literal = new Map();
+  const mark = (name, ok) => literal.set(name, (literal.get(name) ?? true) && ok);
+  const lineBefore = (at) => bare.slice(bare.lastIndexOf('\n', at - 1) + 1, at);
+  for (const m of text.matchAll(/(?<![\w$-])([A-Za-z_]\w*)=/g)) {
+    if (kinds[m.index] !== 'plain' || !ASSIGN_CONTEXT.test(lineBefore(m.index))) continue;
+    mark(m[1], LITERAL_VALUE.test(text.slice(m.index + m[0].length)));
+  }
+  for (const m of bare.matchAll(/(?<![\w-])for[ \t]+([A-Za-z_]\w*)[ \t]+in[ \t]([^;\n]*)/g)) {
+    mark(m[1], !/[$`]/.test(text.slice(m.index, m.index + m[0].length)));
+  }
+  for (const m of bare.matchAll(/(?<![\w-])read[ \t]+(?:-\w+[ \t]+)*([A-Za-z_]\w*(?:[ \t]+[A-Za-z_]\w*)*)/g)) {
+    for (const name of m[1].split(/[ \t]+/)) mark(name, false);
+  }
+  return new Set([...literal].filter(([, ok]) => ok).map(([name]) => name));
+}
+
+// Whether `s` references a runtime-computed variable: a name not in `known`.
+function computedRefs(s, known) {
+  return [...s.matchAll(/\$\{?([A-Za-z_]\w*)/g)].some((m) => !known.has(m[1]));
+}
+
+function hasVarOperand(text, word) {
+  const { bare, args } = views(text);
+  const known = staticNames(text);
+  return commandSegments(bare, word).some(([s, e]) => computedRefs(operandText(bare, args, s, e), known));
+}
+
+// More than one command: two non-blank lines, or a ; && || | outside quotes
+// (`2>&1` and `&>` are redirects, not separators).
+function isCompound(bare) {
+  if (bare.split(/\r?\n/).filter((l) => l.trim()).length > 1) return true;
+  return /;|&&|\|/.test(bare.replace(/\d*>&\d*|&>>?/g, ''));
+}
+
+// gh given a runtime variable as an argument or `<` stdin, in a compound call.
+// Comment and heredoc text is data here, never a gh command.
+function ghComputedInput(text) {
+  return isCompound(views(text).bare) && hasVarOperand(text, 'gh');
+}
+
+// The guard matches `git` as a case-insensitive substring of the whole call
+// text, comments and heredoc bodies included (live: `# digit` then a variable
+// redirect was refused), so the substring test reads the raw text. The
+// redirect itself must be an unquoted `>` whose target is a runtime variable.
+function gitTextRedirectVar(text) {
+  if (!/git/i.test(text)) return false;
+  const { bare, args } = views(text);
+  const known = staticNames(text);
+  const target = /^>>?[ \t]*"?\$\{?([A-Za-z_]\w*)/;
+  for (let i = 0; i < bare.length; i++) {
+    const m = bare[i] === '>' && target.exec(args.slice(i, i + 64));
+    if (m && !known.has(m[1])) return true;
+  }
+  return false;
+}
+
+// Whole-word `git` the way the guard reads node script text: `digit` and
+// `git-z.js` ran, `"git log"`, `'git'` and `// the git index` were refused.
+const GIT_WORD = /(?<![\w-])git(?![\w-])/i;
+const NODE_EVAL_SCRIPT = new RegExp(`${CMD}node\\s+(?:-[\\w-]+(?:=\\S*)?\\s+)*?(?:-e|-p|--eval|--print)\\s+('[^']*'|"(?:[^"\\\\]|\\\\.)*")`, 'g');
+const NODE_WORD = new RegExp(`${CMD}node(?![\\w.-])`);
+
+// The script text node is fed: each -e/-p operand of a node command outside
+// quotes, comments and heredoc bodies, and each heredoc body opened on a line
+// whose command is node. The body is read whole, comments included.
+function nodeGitText(text) {
+  const kinds = lexShell(text);
+  for (const m of text.matchAll(NODE_EVAL_SCRIPT)) {
+    if (kinds[m.index] === 'plain' && GIT_WORD.test(m[1])) return true;
+  }
+  const bare = stripQuoted(text);
+  let at = 0;
+  for (const line of bare.split('\n')) {
+    const end = at + line.length;
+    if (NODE_WORD.test(line) && /(?<!<)<<(?!<)/.test(line)) {
+      let body = '';
+      for (let j = end + 1; j < text.length && (kinds[j] === 'heredoc' || text[j] === '\n' || text[j] === '\r'); j++) body += text[j];
+      if (GIT_WORD.test(body)) return true;
+    }
+    at = end + 1;
+  }
+  return false;
+}
 
 function chainedHeredocWrite(text) {
   return stripQuoted(text).split(/\r?\n/).some((line) => {
@@ -225,9 +352,9 @@ const DETECTORS = [
     test: (t) => (GH_JQ_PIPE.test(t) || GH_REPO_URL.test(t)) && GH_CHAINED_STATUS.test(stripQuoted(t)),
   },
   {
-    id: 'json-git-redirect-var',
-    row: "`printf '%s' '[{\"finding\":\"the git index\"}]' > \"$CTX/f.json\"`",
-    test: (t) => QUOTED_GIT.test(t) && REDIRECT_TO_VAR.test(stripSingle(t)),
+    id: 'git-text-redirect-var',
+    row: "`printf '%s' '[{\"finding\":\"the git index\"}]' > \"$CTX/f.json\"`; `A=\"$(node \"/lit/bin/session-tmp-resolve.js\" --value a.txt)\"` then `echo digit > \"$A\"`",
+    test: gitTextRedirectVar,
   },
   {
     id: 'git-in-substitution',
@@ -235,9 +362,19 @@ const DETECTORS = [
     test: (t) => /\$\(\s*git\s/.test(t),
   },
   {
+    id: 'git-var-operand',
+    row: "`git -C \"$PWD\" status --short`; `W=\"$(node -e 'console.log(process.cwd())')\"` then `git -C \"$W\" status --short`",
+    test: (t) => hasVarOperand(t, 'git'),
+  },
+  {
     id: 'node-eval-script-var-with-git',
     row: "`git diff --numstat -z {sha} \\| node -e \"require('${CLAUDE_PLUGIN_ROOT}/bin/lib/git-z.js')\"`",
     test: (t) => GIT_COMMAND.test(t) && NODE_EVAL_SCRIPT_VAR.test(t),
+  },
+  {
+    id: 'node-git-text',
+    row: "`node -e 'console.log(\"git log is a word here\")'`; `node - <<'EOF'` with `// the git index` in the body",
+    test: nodeGitText,
   },
   {
     id: 'sed-var-path',
@@ -265,9 +402,9 @@ const DETECTORS = [
     test: keyword('eval'),
   },
   {
-    id: 'heredoc-gh-body-file-var',
-    row: "`cat > \"$TMPDIR/x.md\" <<'EOF' … EOF` then `gh pr comment N --body-file \"$TMPDIR/x.md\"`",
-    test: (t) => HEREDOC.test(t) && new RegExp(`${CMD}gh\\s[^\\n]*--body-file[\\s=]+"?${VAR}`).test(t),
+    id: 'gh-computed-input',
+    row: "`cat > \"$TMPDIR/x.md\" <<'EOF' … EOF` then `gh pr comment N --body-file \"$TMPDIR/x.md\"`; `A=\"$(node \"/lit/bin/session-tmp-resolve.js\" --value a.txt)\"` then `gh issue view \"$A\" --repo o/r --json number`, or `gh issue view N --repo o/r --json number < \"$A\"`",
+    test: ghComputedInput,
   },
   // The general chained-heredoc row and the older mkdir -p row it generalizes
   // share one detector.

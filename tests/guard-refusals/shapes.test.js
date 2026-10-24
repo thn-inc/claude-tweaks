@@ -155,7 +155,7 @@ test('an apostrophe in a # comment does not hide a redirect to a variable path',
   // The live-corpus shape (init/bootstrap/step-14-cloud-routine-parity.md):
   // a comment apostrophe above a quoted git mention and a "$VAR" redirect.
   const text = `# isn't a repo root\nREPO=$(find "$R" -name .git)\nclaude plugin list --json > "$OUT" || echo '[]'`;
-  assert.deepStrictEqual(detectShapes(text), ['json-git-redirect-var']);
+  assert.deepStrictEqual(detectShapes(text), ['git-text-redirect-var']);
 });
 
 test('a # comment that mentions a banned shape is not flagged', () => {
@@ -231,10 +231,90 @@ test('github-url-with-var: a github.com in a comment, a single-quoted span or a 
   assert.deepStrictEqual(detectShapes('# see github.com/o/r\necho "$HOME"'), []);
   assert.deepStrictEqual(detectShapes(`node -e 'const u = "https://github.com/o/r"' -- "$HOME"`), []);
   assert.deepStrictEqual(detectShapes(`node - "$HOME" <<'EOF'\nconsole.log("https://github.com/o/r")\nEOF`), []);
-  assert.deepStrictEqual(detectShapes('gh pr view 1 --repo "github.com/o/r" --json url > "$OUT"'), ['github-url-with-var']);
+  // The "git" in github.com plus the "$OUT" redirect is the git-text row's shape too.
+  assert.deepStrictEqual(detectShapes('gh pr view 1 --repo "github.com/o/r" --json url > "$OUT"'), ['github-url-with-var', 'git-text-redirect-var']);
 });
 
 test('a heredoc on its own line after a command-substitution line passes; chained with && it is refused', () => {
   assert.deepStrictEqual(detectShapes(`A=$(pwd)\ncat > /abs/f <<'EOF'\nx\nEOF`), []);
   assert.deepStrictEqual(detectShapes(`A=$(pwd) && cat > /abs/f <<'EOF'\nx\nEOF`), ['chained-heredoc-write']);
+});
+
+// #4028 Task 6b: shapes live-verified 2026-10-24 (Claude Code 2.1.302, a
+// guard-isolated worktree session). Each positive case is a probed command;
+// RES stands for the probes' literal session-tmp-resolve.js assignment line.
+const RES = 'A="$(node "/lit/bin/session-tmp-resolve.js" --value probe-a.txt)"';
+
+test('gh-computed-input: gh given a runtime variable as an argument or as stdin, in a multi-command call', () => {
+  assert.deepStrictEqual(detectShapes(`${RES}\ngh issue view "$A" --repo o/r --json number`), ['gh-computed-input']);
+  assert.deepStrictEqual(detectShapes(`${RES}\ngh issue view 4028 --repo o/r --json number < "$A"`), ['gh-computed-input']);
+});
+
+test('gh-computed-input: gh output redirected to the variable, a single gh call, and gh text in a comment or heredoc body are not flagged', () => {
+  // Live: `gh … > "$A"` after the assignment passes (§7), and a single `gh … "$HOME/x"` call ran.
+  assert.deepStrictEqual(detectShapes(`${RES}\ngh issue list --repo o/r --json number > "$A"\necho done`), []);
+  assert.deepStrictEqual(detectShapes('gh pr comment 1 --body-file "$HOME/x.md"'), []);
+  // Detector choice (lexer): a comment and a heredoc body are data, not a gh command.
+  assert.deepStrictEqual(detectShapes(`# gh issue view "$A"\n${RES}`), []);
+  assert.deepStrictEqual(detectShapes(`cat > /abs/f.md <<'EOF'\ngh issue view "$A"\nEOF\necho "$HOME"`), []);
+});
+
+test('git-text-redirect-var: the text git anywhere, any case, in a comment or heredoc body too, plus a redirect to a variable path', () => {
+  assert.deepStrictEqual(detectShapes(`${RES}\necho digit > "$A"`), ['git-text-redirect-var']);
+  assert.deepStrictEqual(detectShapes('echo DIGIT > "$TMPDIR/x"'), ['git-text-redirect-var']);
+  assert.deepStrictEqual(detectShapes('# digit\necho x > "$TMPDIR/x"'), ['git-text-redirect-var']);
+  assert.deepStrictEqual(detectShapes(`cat > "$TMPDIR/x" <<'EOF'\nthe git index\nEOF`), ['git-text-redirect-var']);
+  assert.deepStrictEqual(detectShapes('ls -d .git > "$TMPDIR/x"'), ['git-text-redirect-var']);
+});
+
+test('git-text-redirect-var: no git text, a literal redirect target, or a > inside quotes is not flagged', () => {
+  assert.deepStrictEqual(detectShapes('echo x > "$TMPDIR/x"'), []);
+  assert.deepStrictEqual(detectShapes('echo digit "$HOME" > /literal/x'), []);
+  // Detector choice (lexer): a > inside double quotes is not a redirect.
+  assert.deepStrictEqual(detectShapes('echo "digit > $HOME"'), []);
+});
+
+test('git-var-operand: git given a runtime-variable operand, computed in the call or not', () => {
+  assert.deepStrictEqual(detectShapes(`W="$(node -e 'console.log(process.cwd())')"\ngit -C "$W" status --short`), ['git-var-operand']);
+  assert.deepStrictEqual(detectShapes('git -C "$PWD" status --short'), ['git-var-operand']);
+  assert.deepStrictEqual(detectShapes('R=$(pwd); git -C "$R" rev-parse --show-toplevel'), ['git-var-operand']);
+});
+
+test('git-var-operand: a literal operand, git in a comment, and a git output redirect are not flagged by it', () => {
+  assert.deepStrictEqual(detectShapes('git status --short'), []);
+  assert.deepStrictEqual(detectShapes('# git -C "$W" status\necho ok'), []);
+  // The redirect target is the git-text row's shape, not an operand.
+  assert.deepStrictEqual(detectShapes('git log -1 > "$TMPDIR/x"'), ['git-text-redirect-var']);
+});
+
+test('node-git-text: node script text naming the whole word git, as -e or a heredoc body', () => {
+  assert.deepStrictEqual(detectShapes(`node -e 'console.log("git log is a word here")'`), ['node-git-text']);
+  assert.deepStrictEqual(detectShapes(`node -e "console.log('the git index')"`), ['node-git-text']);
+  assert.deepStrictEqual(detectShapes(`node - <<'EOF'\n// the git index\nEOF`), ['node-git-text']);
+  assert.deepStrictEqual(detectShapes(`node /abs/bin/node-eval-file.js a <<NODE_EVAL_EOF\nconst a = ['git'];\nNODE_EVAL_EOF`), ['node-git-text']);
+});
+
+test('node-git-text: digit, a git-z.js path, and git outside the node script are not flagged', () => {
+  assert.deepStrictEqual(detectShapes(`node -e 'console.log("digit")'`), []);
+  assert.deepStrictEqual(detectShapes(`node -e "require('/lit/bin/lib/git-z.js')"`), []);
+  // §7: piping git output into node -e passes.
+  assert.deepStrictEqual(detectShapes(`git log -1 | node -e 'process.stdin.pipe(process.stdout)'`), []);
+});
+
+// Live 2026-10-24 (#4028): the guard resolves a literally assigned variable and
+// a literal-list loop variable statically. `L=1; gh … --limit "$L"`, `for n in
+// 4028; do gh issue view "$n" …; done`, `W="/abs/wt"; git -C "$W" status
+// --short` and `A=/abs/p.txt; echo digit > "$A"` all ran.
+test('a literally assigned or literal-loop variable is not runtime-computed', () => {
+  assert.deepStrictEqual(detectShapes('L=1; gh issue list --repo o/r --limit "$L" --json number'), []);
+  assert.deepStrictEqual(detectShapes('for n in 4028; do gh issue view "$n" --repo o/r --json number; done'), []);
+  assert.deepStrictEqual(detectShapes('W="/abs/wt"; git -C "$W" status --short'), []);
+  assert.deepStrictEqual(detectShapes('A=/abs/p.txt; echo digit > "$A"'), []);
+});
+
+test('a variable assigned from $(…), read, a loop over $(…), or a later computed reassignment stays runtime-computed', () => {
+  assert.deepStrictEqual(detectShapes('L=1; L=$(cat /abs/n); gh issue list --limit "$L"'), ['gh-computed-input']);
+  assert.deepStrictEqual(detectShapes('gh label list | while read -r OLD; do gh label delete "$OLD" --yes; done'), ['gh-computed-input']);
+  assert.deepStrictEqual(detectShapes('for n in $(cat /abs/ns); do gh issue view "$n"; done'), ['gh-computed-input']);
+  assert.deepStrictEqual(detectShapes('W="$HOME/wt"; git -C "$W" status'), ['git-var-operand']);
 });
