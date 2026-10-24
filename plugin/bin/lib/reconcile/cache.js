@@ -52,16 +52,27 @@ function cachePath(root) {
 //      residueFailures: {[reason:path]: {count, firstFailedAt, lastError, escalated}},
 //      lastHealthCheckOkAt: number|null, lastOriginHeadRepairFailedAt: number|null,
 //      prStates: {['n:N'|'b:branch']: {v, at}},  (#4032, pr-state-cache.js owns the shape)
-//      claimBlobs: {[blobSha]: content} }  (#4032, release-merged.js: active claims' content by blob sha)
+//      claimBlobs: {[blobSha]: content},  (#4032, release-merged.js: active claims' content by blob sha)
+//      residueIssueIndex: {['repo\nmarker']: issueNumber} }  (#4032, issue-list-cache.js: residue marker -> issue)
 // Absent file or corrupt JSON both fail closed to empty defaults — a cache
 // is pure optimization; never let a bad read block or skew reconcile().
 // Only the keys parsed below survive a read, and writers persist
 // `{ ...readCache(root), … }` — a new cache key must be added here too, or
 // the next unrelated write silently drops it (#3132).
+// Plain object, each value a positive integer; a bad entry is dropped, not fatal.
+function parseResidueIssueIndex(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [key, n] of Object.entries(raw)) {
+    if (Number.isInteger(n) && n > 0) out[key] = n;
+  }
+  return out;
+}
+
 function readCache(root) {
   const empty = {
     lastRunAt: null, claimShas: {}, residueFailures: {}, lastHealthCheckOkAt: null,
-    lastOriginHeadRepairFailedAt: null, prStates: {}, claimBlobs: {},
+    lastOriginHeadRepairFailedAt: null, prStates: {}, claimBlobs: {}, residueIssueIndex: {},
   };
   let raw;
   try {
@@ -79,6 +90,7 @@ function readCache(root) {
       lastOriginHeadRepairFailedAt: typeof parsed.lastOriginHeadRepairFailedAt === 'number' ? parsed.lastOriginHeadRepairFailedAt : null,
       prStates: (parsed.prStates && typeof parsed.prStates === 'object' && !Array.isArray(parsed.prStates)) ? parsed.prStates : {},
       claimBlobs: (parsed.claimBlobs && typeof parsed.claimBlobs === 'object' && !Array.isArray(parsed.claimBlobs)) ? parsed.claimBlobs : {},
+      residueIssueIndex: parseResidueIssueIndex(parsed.residueIssueIndex),
     };
   } catch {
     return empty;

@@ -334,7 +334,9 @@ async function reconcileInner(opts) {
   // reused across every stuck dir/path archive+reap escalate or resolve in
   // THIS pass — created fresh every reconcile() call (never a module-level
   // singleton), so nothing here survives across passes or processes.
-  const issueListCache = createIssueListCache();
+  // #4032: the persisted marker index lets a residue dedup lookup cost one
+  // `gh issue view` instead of the full list; written back in `finalize`.
+  const issueListCache = createIssueListCache({ index: readCache(root).residueIssueIndex });
   // #4032 — one PR-state resolver per pass, shared by release, archive and
   // reap (they ask `gh` about the same PRs). Created here, after the preflight
   // narrowing, and through the module object so a test's
@@ -591,6 +593,7 @@ async function reconcileInner(opts) {
       const update = { ...cache };
       if (!opts.skipCacheStamp) update.lastRunAt = Date.now();
       if (healthJustSucceeded) update.lastHealthCheckOkAt = now;
+      update.residueIssueIndex = issueListCache.index;
       writeCache(root, update);
     }
 
