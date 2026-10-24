@@ -20,15 +20,15 @@
   "rules": [
     { "match": "tools/run-tests.js", "suites": "*", "static": true },
     { "match": "tools/test-impact/**", "suites": "*", "static": true },
-    { "match": "plugin/**", "impact": true, "static": true },
-    { "match": "tests/**", "impact": true, "static": true },
-    { "match": "tools/**", "impact": true, "static": true },
+    { "match": "plugin/**", "impact": true, "suites": "*", "static": true },
+    { "match": "tests/**", "impact": true, "suites": "*", "static": true },
+    { "match": "tools/**", "impact": true, "suites": "*", "static": true },
     { "match": "docs/journeys/**", "suites": ["journeys"], "static": false },
     { "match": "docs/plans/*-ledger.md", "suites": [], "static": false },
     { "match": ".claude-tweaks/pipelines/**", "suites": [], "static": false },
     { "match": "docs/superpowers/plans/**", "suites": [], "static": false },
     { "match": "docs/superpowers/specs/**", "suites": [], "static": false },
-    { "match": "docs/**", "impact": true, "static": true },
-    { "match": "*.md", "impact": true, "static": true }
+    { "match": "docs/**", "impact": true, "suites": "*", "static": true },
+    { "match": "*.md", "impact": true, "suites": "*", "static": true }
   ]
 }

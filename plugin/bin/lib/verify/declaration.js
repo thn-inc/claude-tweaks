@@ -153,8 +153,12 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
       if (!isPlainObject(rule)) { errors.push(`${where}: must be an object`); return; }
       if (typeof rule.match !== 'string' || rule.match === '') errors.push(`${where}.match: must be a non-empty glob string`);
       if (rule.impact === true) {
-        // An impact rule (#4024): its suite is impact.suite, never `suites`.
-        if (rule.suites !== undefined) errors.push(`${where}.suites: an impact rule may not also carry suites (it runs impact.suite)`);
+        // An impact rule (#4024): its suite is impact.suite. It may carry `"suites": "*"` as the
+        // expand-contract legacy fallback: a reader built before `impact` existed rejects a rule with
+        // no `suites`, but reads this one as "every suite" (full) and ignores `impact`. Current readers
+        // never read it. Removal condition: drop it from the committed declaration once no installed
+        // plugin build older than the release that shipped `impact` can read it.
+        if (rule.suites !== undefined && rule.suites !== '*') errors.push(`${where}.suites: an impact rule may carry only "suites": "*" (the legacy fallback); it runs impact.suite`);
         if (!impact) errors.push(`${where}.impact: needs a valid top-level impact block`);
         if (typeof rule.static !== 'boolean') errors.push(`${where}.static: must be a boolean`);
         rules.push({ match: rule.match, suites: null, impact: true, static: rule.static });

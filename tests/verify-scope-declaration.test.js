@@ -61,6 +61,17 @@ test('this repo declares its own verify scope and it passes readDeclaration (#19
   assert.ok(r.decl.impact.fetch.includes('tools/test-impact.js fetch'), r.decl.impact.fetch);
 });
 
+// #4024 expand-contract: the installed plugin build reads this committed file with code that predates
+// `impact`, and that reader rejects any rule lacking `suites` (a usage error, not a full-run fallback).
+// Every impact rule therefore also carries `"suites": "*"` — older readers run full, current ones ignore it.
+// Removal condition: once no installed build older than the release shipping `impact` can read this file.
+test('every impact rule also carries the "*" legacy fallback an older reader needs (#4024 expand-contract)', () => {
+  const raw = JSON.parse(fs.readFileSync(DECL, 'utf8'));
+  const impactRules = raw.rules.filter((rule) => rule.impact === true);
+  assert.ok(impactRules.length > 0, 'no impact rules found');
+  for (const rule of impactRules) assert.strictEqual(rule.suites, '*', `${rule.match} lacks the legacy suites fallback`);
+});
+
 test('a ledger-row delta resolves to none; a skill-prose delta is impact-selected, else its suite runs full (#1924 AC5, #4024)', () => {
   const { decl } = readDeclaration(DECL);
   const sel = (files, impact = null) => selectScope({ decl, files, stamp: STAMP, impact });

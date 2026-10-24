@@ -15,7 +15,7 @@ A declaration's `impact` block narrows one suite to the test files a test-impact
 | `map` | Where the map lives: a repo-relative path with no `..` segment, optionally behind a leading `{git-common-dir}/`. Default: `{git-common-dir}/claude-tweaks-test-impact.json`, which every worktree of the checkout shares. |
 | `fetch` | Optional command that downloads a ready map. It never traces. |
 
-No other key is accepted. `impact` cannot be combined with a tool-scoped `checks.tests` command (`{base}`), since that tool selects its own tests. An impact rule is `{ "match": "<glob>", "impact": true, "static": <bool> }`. It carries no `suites`, because its suite is `impact.suite`, and it needs a valid top-level `impact` block. Rules still match first-wins, so a path that changes how every test runs (the test runner, the map builder) goes in a `"suites": "*"` rule placed above the impact rules.
+No other key is accepted. `impact` cannot be combined with a tool-scoped `checks.tests` command (`{base}`), since that tool selects its own tests. An impact rule is `{ "match": "<glob>", "impact": true, "static": <bool> }`. Its suite is `impact.suite`, so it takes no `suites` of its own, and it needs a valid top-level `impact` block. The one allowed `suites` is `"*"`, the legacy fallback: a plugin build older than `impact` rejects a rule without `suites` (a usage error that stops every verify), but reads `"*"` as every suite and ignores `impact`, so a declaration committed to a repo whose installed plugin lags the release keeps working. Current readers ignore it. Drop it once no installed build older than the release shipping `impact` reads the file. Rules still match first-wins, so a path that changes how every test runs (the test runner, the map builder) goes in a `"suites": "*"` rule placed above the impact rules.
 
 **`{files}` quoting.** A plain list path substitutes as is. Any other path, for example one with a space anywhere in the log dir's path, is shell-quoted for the platform. In that case:
 
@@ -34,8 +34,8 @@ The map is JSON: `{version: 1, commit, tracedAt, exitCode, node, paths, tests}`.
 |------|---------|
 | `f` | content reads: file reads and opens, copy sources, `stat`/`lstat`, module loads |
 | `s` | existence probes: `exists`, `access`, `realpath`, `readlink`, a `require`'s resolution candidates |
-| `d` | directory listings: `readdir`, `opendir`, the source directory of a copy |
-| `c` | content prefixes: a non-node child's in-repo directory argument, or a content-reading `git` subcommand's cwd or pathspec prefix |
+| `d` | directory listings: `readdir`, `opendir` |
+| `c` | content prefixes: the source directory of a recursive copy, a non-node child's in-repo directory argument, or a content-reading `git` subcommand's cwd or pathspec prefix |
 
 A prefix covers a path when `prefix === ''` (the repo root), `p === prefix`, or `p` starts with `prefix + '/'`.
 

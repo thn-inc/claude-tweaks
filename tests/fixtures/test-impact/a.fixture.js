@@ -5,6 +5,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { execFileSync } = require('child_process');
 const x = require('./lib/x');
 
@@ -18,6 +20,16 @@ test('readdir, exists and stat', () => {
   assert.strictEqual(fs.existsSync('docs/probe.md'), true);
   assert.strictEqual(fs.existsSync('.git/HEAD'), true);
   assert.ok(fs.statSync('docs/stat.md').isFile());
+});
+
+test('recursive copy of a directory', () => {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-copied-'));
+  try {
+    fs.cpSync('docs/copied', path.join(dest, 'out'), { recursive: true });
+    assert.strictEqual(fs.readFileSync(path.join(dest, 'out', 'inner.md'), 'utf8'), 'copied\n');
+  } finally {
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
 });
 
 test('git content command without a path argument', () => {

@@ -14,7 +14,7 @@
 // unpatched appendFileSync. JSON, not tab-separated, because fixture paths hold tabs and newlines.
 // Kinds: f content read (read/open/copy source/stat/lstat/module load/cp of a file), s existence probe
 // (exists/access/realpath/readlink, and every resolution candidate of a relative or absolute require),
-// d directory listing (readdir/opendir/cp of a directory), c content prefix (a non-node child's in-repo
+// d directory listing (readdir/opendir), c content prefix (a cp of a directory, a non-node child's in-repo
 // directory argument, or a content-reading git subcommand — its cwd, or a pathspec's literal prefix). Paths
 // under `.git/` and outside the root are dropped; `''` is the root itself.
 //
@@ -152,8 +152,11 @@ function install() {
     const r = relOf(abs);
     if (r === null) return;
     if (kind === 'auto') {
+      // Only cp/cpSync: Node copies the tree internally, never through the patched fs reads, so a
+      // directory copy is a content dependence on everything beneath it — a `d` listing would miss a
+      // modified file inside the copied tree.
       const st = statSync(abs, { throwIfNoEntry: false });
-      kind = st && st.isDirectory() ? 'd' : 'f';
+      kind = st && st.isDirectory() ? 'c' : 'f';
     }
     emit(kind, r);
   }

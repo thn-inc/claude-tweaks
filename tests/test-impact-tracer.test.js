@@ -105,6 +105,12 @@ test('readdir records a d entry', () => {
   assert.ok(recordsOf('a.test.js').has(rec('d', 'docs/listed')));
 });
 
+test('a recursive directory copy records a c prefix, so a file inside the copied tree selects the test', () => {
+  const a = recordsOf('a.test.js');
+  assert.ok(a.has(rec('c', 'docs/copied')), 'cpSync of docs/copied records c docs/copied');
+  assert.ok(!a.has(rec('d', 'docs/copied')), 'a copy is a content dependence, not a directory listing');
+});
+
 test('existsSync records s', () => {
   const a = recordsOf('a.test.js');
   assert.ok(a.has(rec('s', 'docs/probe.md')));

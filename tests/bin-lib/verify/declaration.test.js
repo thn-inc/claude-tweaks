@@ -307,10 +307,14 @@ test('an impact rule needs the impact block (#4024)', () => {
   assert.match(invalid.errors.join('\n'), /rules\[0\]\.impact: .*impact block/);
 });
 
-test('an impact rule may not also carry suites (#4024)', () => {
+test('an impact rule may not also carry suites, except the "*" legacy fallback (#4024)', () => {
   const r = readJson({ checks: { tests: 'npm test' }, impact: IMPACT, rules: [{ match: 'src/**', impact: true, suites: ['tests'], static: true }] });
   assert.strictEqual(r.ok, false);
   assert.match(r.errors.join('\n'), /rules\[0\]\.suites: .*impact rule/);
+  // "*" is what a reader built before `impact` existed needs to read the rule (as: every suite).
+  const legacy = readJson({ checks: { tests: 'npm test' }, impact: IMPACT, rules: [{ match: 'src/**', impact: true, suites: '*', static: true }] });
+  assert.strictEqual(legacy.ok, true, JSON.stringify(legacy.errors));
+  assert.deepStrictEqual(legacy.decl.rules[0], { match: 'src/**', suites: null, impact: true, static: true }, 'a current reader ignores the fallback');
 });
 
 test('rules[i].impact must be the boolean true when present; an impact rule still needs a boolean static (#4024)', () => {
