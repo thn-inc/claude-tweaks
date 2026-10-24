@@ -46,7 +46,7 @@ const {
   changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
-const { gitLocations, loadImpactContext } = require('./lib/verify/impact');
+const { gitLocations, loadImpactContext, lazyImpactContext } = require('./lib/verify/impact');
 const { substituteFile, describePath } = require('./lib/verify/file-template');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
@@ -121,6 +121,7 @@ function runImpactFetch(command, cwd) {
 // #4024: the stdout line under `Scope:` for an impact declaration.
 function impactLine(imp, ctx) {
   if (imp.files === null) return `Impact: full ${imp.suite} — ${imp.superseded ? 'superseded by a full-suite rule' : imp.fallback}`;
+  if (!ctx.loaded) return `Impact: ${imp.selected} of the ${imp.suite} test file(s) selected — no impact-rule path changed, map not read`;
   const commit = ctx.mapCommit ? ctx.mapCommit.slice(0, 9) : 'none';
   const age = Number.isInteger(ctx.distance) ? ctx.distance : '?';
   return `Impact: ${imp.selected} of ${ctx.headTests.length} test file(s) selected (map ${commit}, ${age} commit(s) old)`;
@@ -574,16 +575,17 @@ async function main() {
         }
       }
       // Test-impact selection (#4024): load the map (one impact.fetch when it
-      // has a problem), select, and for a non-empty subset run impact.command
-      // with {files} = a list file in the log dir. A list that cannot be handed
-      // over re-selects with that reason, so the suite runs its full command.
-      // With no usable stamp anchor, the --integration-branch merge-base
-      // anchors; an explicit --base never does (it runs full, as before).
+      // has a problem) — lazily, only if selection reads it — select, and for a
+      // non-empty subset run impact.command with {files} = a list file in the
+      // log dir. A list that cannot be handed over re-selects with that reason,
+      // so the suite runs its full command. With no usable stamp anchor, the
+      // --integration-branch merge-base anchors; an explicit --base never does
+      // (it runs full, as before).
       if (decl.impact) {
         const where = gitLocations({ cwd: parsed.cwd || process.cwd() });
-        impactCtx = where === null
+        impactCtx = lazyImpactContext(() => (where === null
           ? { map: null, problem: 'map-unlocatable', headTests: [], mapPath: null, mapCommit: null, distance: null, fetch: null }
-          : loadImpactContext({ decl, ...where, runFetch: (command) => runImpactFetch(command, where.repoRoot) });
+          : loadImpactContext({ decl, ...where, runFetch: (command) => runImpactFetch(command, where.repoRoot) })));
       }
       const fallbackBase = !anchorSha && parsed.integrationBranch && !parsed.base ? resolvedBase : null;
       const select = (impact) => selectScope({ decl, files, stamp: anchorSha ? priorStamp : null, statuses, impact, fallbackBase });
@@ -970,12 +972,14 @@ async function main() {
 
   // #4024: present only for an impact declaration — selection plus the map
   // and list it ran from.
+  // The map fields read the lazily loaded context only when selection loaded it.
+  const mapRead = impactCtx !== null && impactCtx.loaded;
   const impactReport = sel && sel.impact ? {
     ...sel.impact,
-    mapPath: impactCtx.mapPath,
-    mapCommit: impactCtx.mapCommit,
-    mapAgeCommits: impactCtx.distance,
-    fetch: impactCtx.fetch,
+    mapPath: mapRead ? impactCtx.mapPath : null,
+    mapCommit: mapRead ? impactCtx.mapCommit : null,
+    mapAgeCommits: mapRead ? impactCtx.distance : null,
+    fetch: mapRead ? impactCtx.fetch : null,
     listPath: impactSubset ? impactSubset.listPath : null,
     selectedFiles: impactSubset ? impactSubset.files : null,
   } : null;

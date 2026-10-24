@@ -22,6 +22,7 @@ const { execFileSync } = require('child_process');
 const { globToRegExp } = require('../issues/blast-radius');
 const { GIT_COMMON_DIR_TOKEN } = require('./declaration');
 const { lstatType } = require('../path-guard');
+const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 
 const IMPACT_MAP_VERSION = 1;
 const DEFAULT_MAP_NAME = 'claude-tweaks-test-impact.json';
@@ -145,8 +146,10 @@ function mapProblem({ parsed, isAncestor, distance, maxAgeCommits }) {
   return null;
 }
 
+// maxBuffer is the shared list-dump ceiling: `ls-files` over a large checkout overflows the 1 MiB default,
+// which would turn every impact run into a `head-tests-unreadable` full run.
 function git(execImpl, cwd, args) {
-  return String(execImpl('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
+  return String(execImpl('git', args, { cwd, encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
 }
 
 // The checkout's root and its git common dir (shared by every worktree, so a
@@ -228,12 +231,39 @@ function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync,
     if (fetch.exitCode === 0) state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl });
   }
   const headTests = listHeadTests({ decl, repoRoot, execImpl, fsImpl });
-  const problem = state.problem || (headTests === null ? 'head-tests-unreadable' : null);
+  // A listing that succeeded but names no test file (a sparse checkout, a pathspec oddity) would make
+  // every reader "absent at HEAD" and a changed test select nothing — it fails closed like a failed one.
+  let headProblem = null;
+  if (headTests === null) headProblem = 'head-tests-unreadable';
+  else if (headTests.length === 0) headProblem = 'head-tests-empty';
+  const problem = state.problem || headProblem;
   return { ...state, problem, headTests: headTests || [], mapPath, fetch };
+}
+
+// The same context, loaded on first read instead of up front: selectScope only reads it when an
+// impact rule actually selected something (or the run is unanchored), so a change no impact rule
+// matches never pays the map read, the HEAD test listing or the up-to-120 s `impact.fetch`.
+// `loaded` says whether anything read it — the report prints map fields only then.
+function lazyImpactContext(load) {
+  let ctx = null;
+  const get = () => {
+    if (ctx === null) ctx = load();
+    return ctx;
+  };
+  return {
+    get loaded() { return ctx !== null; },
+    get map() { return get().map; },
+    get problem() { return get().problem; },
+    get headTests() { return get().headTests; },
+    get mapPath() { return get().mapPath; },
+    get mapCommit() { return get().mapCommit; },
+    get distance() { return get().distance; },
+    get fetch() { return get().fetch; },
+  };
 }
 
 module.exports = {
   IMPACT_MAP_VERSION, DEFAULT_MAP_NAME, KINDS,
   encodeImpactMap, parseImpactMap, under, selectImpactTests, mapProblem,
-  gitLocations, resolveMapPath, loadImpactContext,
+  gitLocations, resolveMapPath, loadImpactContext, lazyImpactContext,
 };

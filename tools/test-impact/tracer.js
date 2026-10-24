@@ -129,13 +129,15 @@ function install() {
   function emit(kind, r) {
     const line = JSON.stringify([kind, r]);
     if (seen.has(line)) return;
-    seen.add(line);
     try {
       if (!headerWritten) {
         appendFileSync(out, `${JSON.stringify(['T', test])}\n`);
         headerWritten = true;
       }
       appendFileSync(out, `${line}\n`);
+      // Remembered only once written: a transient failure (EMFILE, ENOSPC) must not make this read
+      // look recorded, so the next identical read retries it instead of being deduped away.
+      seen.add(line);
     } catch (_) {
       // never break the traced process
     }
@@ -329,10 +331,15 @@ function install() {
   };
   const existing = (abs) => (abs === null ? null : statSync(abs, { throwIfNoEntry: false }) || null);
 
+  // The git subcommands whose output depends on the content (or the listing) of tracked files — the
+  // ones that are recorded as `c` prefixes. Writers and ref-only commands (add, commit, checkout,
+  // rev-parse, ...) are absent on purpose: they do not make a test's result depend on a file's bytes.
   const GIT_CONTENT = new Set(['ls-files', 'grep', 'show', 'cat-file', 'ls-tree', 'archive', 'diff', 'log', 'status', 'blame']);
   const GIT_VALUE_OPTS = new Set(['-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env']);
 
   const GLOB_CHARS = /[*?[]/;
+  // The repo top for `:/` and `top` pathspec magic: the realpath form when it differs from the given
+  // one (`roots` pushes it last above), because git reports and resolves against the real path.
   const TOP = roots[roots.length - 1];
 
   // git's global options before the subcommand: { cwd (absolute; undefined = the process cwd), sub (the

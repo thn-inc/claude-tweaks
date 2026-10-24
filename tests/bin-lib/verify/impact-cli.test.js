@@ -6,7 +6,7 @@
 // clean) — scripts rather than `node -e` one-liners because substituteFile
 // refuses a quote-bearing template once the list path needs quoting (the
 // space-in-path test below).
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
@@ -16,9 +16,14 @@ const { execFile, execFileSync } = require('child_process');
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 const { encodeImpactMap, DEFAULT_MAP_NAME } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 
+const TMP_DIRS = [];
+after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true }); });
+
 function tmpDir(prefix = 'verify-impact-cli-') {
   // realpath: macOS's os.tmpdir() is a symlink the child sees resolved.
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  TMP_DIRS.push(dir);
+  return dir;
 }
 
 function runCli(args, cwd) {
@@ -298,6 +303,21 @@ test('a full-suite rule supersedes the subset', async () => {
   assert.strictEqual(r.marker(), 'FULL');
   assert.strictEqual(r.report().scope.impact.superseded, true);
   assert.match(run.stdout, /^Impact: full tests — superseded by a full-suite rule$/m);
+});
+
+test('a change no impact rule matches never reads the map or runs the declared fetch', async () => {
+  const r = impactRepo(declOf({ fetch: 'node scripts/fetch.js' }));
+  // No map at all: an eager load would run the fetch (and report map-missing) before the full-suite rule won.
+  commitFile(r, 'scripts/extra.js', '\n');
+  const run = await runCli(ARGS, r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(r.marker(), 'FULL');
+  const imp = r.report().scope.impact;
+  assert.strictEqual(imp.superseded, true);
+  assert.strictEqual(imp.mapPath, null);
+  assert.strictEqual(imp.mapCommit, null);
+  assert.strictEqual(imp.fetch, null);
+  assert.strictEqual(fs.existsSync(path.join(r.gitDir, 'fetch-count')), false, 'the fetch never ran');
 });
 
 test('no impact block → no scope.impact key', async () => {

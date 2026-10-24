@@ -47,14 +47,15 @@ A prefix covers a path when `prefix === ''` (the repo root), `p === prefix`, or 
 | Fallback | Cause |
 |----------|-------|
 | `map-missing` | No map file at the resolved path. |
-| `map-invalid: {reason}` | Unparseable JSON, a bad shape, the wrong version, a bad commit, or the file is unreadable. |
+| `map-invalid: {reason}` | `{reason}` is `unparseable` (not JSON), `bad-shape`, `wrong-version`, `bad-commit`, or `unreadable` (the file exists but cannot be read). |
 | `map-from-failing-suite` | The traced run's `exitCode` was not 0. |
 | `map-not-ancestor` | The map's commit is not an ancestor of HEAD. |
 | `map-stale: {n} commits > {max}` | The map trails HEAD by more than `maxAgeCommits`. An age git cannot count reads as stale. |
 | `untraced-path: {p}` | A changed non-test path that no traced read covers. |
 | `head-tests-unreadable` | git could not list the test files at HEAD. |
+| `head-tests-empty` | The listing succeeded but named no test file (a sparse checkout, say), so no selection could be trusted. |
 | `map-unlocatable` | git could not name the checkout root or common dir. |
-| `files-list-unquotable: {reason}` | `{files}` could not be substituted safely. |
+| `files-list-unquotable: {reason}` | `{files}` could not be substituted safely. `{reason}` is `leading-dash` or `control-character` (the log dir's list path itself), `cmd-unquotable` (win32 `cmd`), or `template-quotes` (other quoting left in `command`). |
 | `files-list-unwritable: line break in {path}` | A selected path holds a line break, so the list file cannot carry it. |
 | `no-anchor` | No usable stamp anchor and no `--integration-branch` merge-base to diff against (an explicit `--base` never anchors). |
 
@@ -68,14 +69,15 @@ Changed paths are diffed from the stamp's `fullSha`, as every scoped run is. Wit
 
 ## Report
 
-`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, superseded, mapPath, mapCommit, mapAgeCommits, fetch, listPath, selectedFiles}`. `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. Under `Scope:`, stdout prints one of:
+`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, superseded, mapPath, mapCommit, mapAgeCommits, fetch, listPath, selectedFiles}`. `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. The map is read only when selection needs it, so a delta no impact rule matches (or that a full-suite rule already supersedes) never reads the map or runs `fetch`: `mapPath`, `mapCommit`, `mapAgeCommits` and `fetch` are then `null`. Under `Scope:`, stdout prints one of:
 
 - `Impact: {selected} of {n} test file(s) selected (map {commit9}, {age} commit(s) old)`
+- `Impact: {selected} of the {suite} test file(s) selected — no impact-rule path changed, map not read`
 - `Impact: full {suite} — {fallback | superseded by a full-suite rule}`
 
 ## Refresh
 
-The map is built outside the runner by a traced full-suite run: a read tracer preloaded into every node process of the suite records each test file's reads. The usual refresh path is a post-merge CI job that uploads the map, with `fetch` downloading the newest one whose commit is an ancestor of HEAD. Verify never traces. CI's full suite stays the merge gate. Impact selection only shortens local verification.
+The map is built outside the runner by a traced full-suite run: a read tracer preloaded into every node process of the suite records each test file's reads. The usual refresh path is a post-merge CI job that uploads the map, with `fetch` downloading the newest one from a `push` or dispatch run on main (never a pull-request run) whose commit is an ancestor of HEAD. Verify never traces. CI's full suite stays the merge gate. Impact selection only shortens local verification.
 
 **Known limits — what a map can miss:**
 

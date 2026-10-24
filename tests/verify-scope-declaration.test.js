@@ -145,6 +145,26 @@ test('every rule with suites:[] is one of the bookkeeping-only globs — no sour
   }
 });
 
+// #4024: impact.tests names the test files an impact run may select, and tools/run-tests.js's default
+// roots name the files the full suite runs (and so the files a trace records). A root added to one and
+// not the other makes a traced test unselectable, or a selectable test one the full suite never ran.
+test('impact.tests globs and tools/run-tests.js default roots name the same test files (#4024)', () => {
+  const { execFileSync } = require('node:child_process');
+  const { globToRegExp } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'issues', 'blast-radius.js'));
+  const { listTestFiles } = require(path.join(REPO_ROOT, 'tools', 'run-tests.js'));
+  const { decl } = readDeclaration(DECL);
+  const patterns = decl.impact.tests.map((g) => globToRegExp(g));
+  const ran = listTestFiles().map((f) => path.relative(REPO_ROOT, f).split(path.sep).join('/'));
+  assert.ok(ran.length > 0, 'the default roots list no test files');
+  for (const f of ran) assert.ok(patterns.some((re) => re.test(f)), `${f} runs in the full suite but no impact.tests glob names it`);
+  const tracked = execFileSync('git', ['ls-files', '-z', '--', '*.test.js'], { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, windowsHide: true })
+    .split('\0').filter(Boolean);
+  const ranSet = new Set(ran);
+  for (const f of tracked) {
+    if (patterns.some((re) => re.test(f))) assert.ok(ranSet.has(f), `${f} matches impact.tests but the full suite's default roots never run it`);
+  }
+});
+
 test('init/SKILL.md lists Step 6.6 and its sub-file exists (#1924)', () => {
   const skill = readText(path.join(REPO_ROOT, 'plugin', 'skills', 'init', 'SKILL.md'));
   assert.ok(skill.includes('### Step 6.6: Verify-Scope Starter'));

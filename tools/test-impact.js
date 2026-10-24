@@ -142,6 +142,11 @@ function trace(args, deps) {
     traceDir = deps.fs.mkdtempSync(path.join(deps.tmpdir || os.tmpdir(), 'ct-test-impact-trace-'));
     const realRoot = deps.fs.realpathSync(root);
     const req = `--require "${path.join(root, 'tools', 'test-impact', 'tracer.js')}"`;
+    // Inherited CT_TRACE_* is dropped first: the tracer leaves a child alone when its env names a
+    // different CT_TRACE_ROOT (a nested trace, tools/test-impact/tracer.js injectEnv), so a stale root
+    // from an outer traced session would otherwise mix two repos' reads into this map. `req` keeps the
+    // literal quotes because NODE_OPTIONS is split on spaces and the checkout path may hold one —
+    // the same quoting is why tracing is POSIX-only (plugin/skills/test/impact-selection.md, Known limits).
     const env = {};
     for (const [k, v] of Object.entries(deps.env)) if (!k.startsWith('CT_TRACE_')) env[k] = v;
     env.CT_TRACE_ROOT = realRoot;
@@ -193,7 +198,7 @@ function fetch(args, deps) {
   let runs;
   try {
     runs = JSON.parse(deps.gh(['run', 'list', '--workflow', WORKFLOW, '--branch', 'main', '--status', 'success',
-      '--limit', '30', '--json', 'databaseId,headSha', ...repoArgs], { cwd: root }));
+      '--limit', '30', '--json', 'databaseId,headSha,event', ...repoArgs], { cwd: root }));
   } catch (e) {
     deps.err(`test-impact.js fetch: listing ${WORKFLOW} runs failed: ${errText(e)}`);
     return 1;
@@ -204,6 +209,10 @@ function fetch(args, deps) {
   }
   const chosen = runs.find((r) => {
     if (!r || !Number.isInteger(r.databaseId) || typeof r.headSha !== 'string' || !SHA_RE.test(r.headSha)) return false;
+    // `--branch main` matches a run's head branch, so a pull_request run from a fork branch named
+    // `main` would list here too — and its artifact is built by that PR's own code. Only the runs
+    // the workflow makes from this repo's main (push, dispatch) are trusted.
+    if (r.event !== 'push' && r.event !== 'workflow_dispatch') return false;
     try {
       deps.git(['merge-base', '--is-ancestor', '--end-of-options', r.headSha, 'HEAD'], { cwd: root });
       return true;

@@ -6,7 +6,7 @@ const path = require('path');
 const {
   IMPACT_MAP_VERSION, DEFAULT_MAP_NAME, KINDS,
   encodeImpactMap, parseImpactMap, under, selectImpactTests, mapProblem,
-  resolveMapPath, gitLocations, loadImpactContext,
+  resolveMapPath, gitLocations, loadImpactContext, lazyImpactContext,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 
 const SHA = '0123456789abcdef0123456789abcdef01234567';
@@ -389,6 +389,37 @@ test('loadImpactContext: an unreadable test listing fails closed, never an empty
     execImpl: fakeGit({ 'ls-files': () => { throw new Error('boom'); } }).execImpl, fsImpl: fakeFs({ [MAP_PATH]: mapText() }),
   });
   assert.strictEqual(ctx.problem, 'head-tests-unreadable');
+});
+
+test('lazyImpactContext: nothing loads until a field is read, then it loads once', () => {
+  let loads = 0;
+  const ctx = lazyImpactContext(() => { loads += 1; return { map: null, problem: 'map-missing', headTests: ['tests/a.test.js'], mapPath: '/m', mapCommit: null, distance: null, fetch: null }; });
+  assert.strictEqual(ctx.loaded, false);
+  assert.strictEqual(loads, 0);
+  assert.strictEqual(ctx.problem, 'map-missing');
+  assert.deepStrictEqual(ctx.headTests, ['tests/a.test.js']);
+  assert.strictEqual(ctx.mapPath, '/m');
+  assert.strictEqual(ctx.loaded, true);
+  assert.strictEqual(loads, 1);
+  assert.strictEqual({ ...ctx, problem: 'x' }.mapPath, '/m', 'a spread copies the loaded values');
+});
+
+test('loadImpactContext: a listing that names no test file fails closed instead of selecting nothing', () => {
+  const ctx = loadImpactContext({
+    decl: declOf(), repoRoot: ROOT, commonDir: COMMON,
+    execImpl: fakeGit({ 'ls-files': () => '' }).execImpl, fsImpl: fakeFs({ [MAP_PATH]: mapText() }),
+  });
+  assert.strictEqual(ctx.problem, 'head-tests-empty');
+});
+
+test('loadImpactContext: git reads carry the shared large maxBuffer', () => {
+  const seen = [];
+  const { execImpl } = fakeGit();
+  loadImpactContext({
+    decl: declOf(), repoRoot: ROOT, commonDir: COMMON,
+    execImpl: (cmd, args, opts) => { seen.push(opts.maxBuffer); return execImpl(cmd, args, opts); }, fsImpl: fakeFs({ [MAP_PATH]: mapText() }),
+  });
+  assert.ok(seen.length > 0 && seen.every((b) => b === 64 * 1024 * 1024), JSON.stringify(seen));
 });
 
 test('loadImpactContext: the fetch runs once on a problem and the map is reloaded', () => {

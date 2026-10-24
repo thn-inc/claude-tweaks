@@ -98,6 +98,12 @@ test('readFileList refuses an empty list, a missing file and a non-test entry', 
   assert.throws(() => readFileList('tests/a.test.js\nlib/x.js\n', { exists: () => true }), /lib\/x\.js.*\.test\.js|\.test\.js.*lib\/x\.js/);
 });
 
+test('readFileList refuses an entry that is not a repo-relative path', () => {
+  for (const entry of ['-x.test.js', '../x.test.js', 'tests/../../x.test.js', '/abs/x.test.js', 'C:\\x.test.js', 'tests\\..\\x.test.js']) {
+    assert.throws(() => readFileList(`${entry}\n`, { exists: () => true }), /not a repo-relative path/, entry);
+  }
+});
+
 test('buildTestArgs with null roots (an explicit subset) passes the file list on every platform', () => {
   assert.deepStrictEqual(
     buildTestArgs(['tests/a.test.js'], null, { platform: 'win32', nodeMajor: 20, concurrency: 2 }),

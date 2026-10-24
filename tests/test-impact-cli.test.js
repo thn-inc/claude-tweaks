@@ -197,12 +197,13 @@ test('trace and fetch reject unknown arguments with exit 2', () => {
 
 // ---- fetch ----
 
-// A fake gh: `runs` answers `run list`; `download` maps a run id to the map text it extracts.
+// A fake gh: `runs` answers `run list` (each run is a push run unless it names its own `event`);
+// `download` maps a run id to the map text it extracts.
 function fakeGh({ runs, download = {} }) {
   const calls = [];
   const gh = (args) => {
     calls.push(args);
-    if (args[0] === 'run' && args[1] === 'list') return JSON.stringify(runs);
+    if (args[0] === 'run' && args[1] === 'list') return JSON.stringify(runs.map((r) => ({ event: 'push', ...r })));
     if (args[0] === 'run' && args[1] === 'download') {
       const dir = args[args.indexOf('--dir') + 1];
       fs.writeFileSync(path.join(dir, 'claude-tweaks-test-impact.json'), download[args[2]]);
@@ -223,7 +224,7 @@ test('fetch downloads the newest successful main map that is an ancestor of HEAD
     assert.strictEqual(run({ argv: ['fetch', '--repo', 'o/r', '--out', out], deps }), 0);
     assert.strictEqual(fs.readFileSync(out, 'utf8'), mapText(SHA_A));
     assert.deepStrictEqual(gh.calls[0], ['run', 'list', '--workflow', 'test-impact-map.yml', '--branch', 'main', '--status', 'success',
-      '--limit', '30', '--json', 'databaseId,headSha', '--repo', 'o/r']);
+      '--limit', '30', '--json', 'databaseId,headSha,event', '--repo', 'o/r']);
     assert.strictEqual(gh.calls[1][2], '6');
     assert.deepStrictEqual(gh.calls[1].slice(3, 5), ['--name', 'test-impact-map']);
     assert.deepStrictEqual(gh.calls[1].slice(-2), ['--repo', 'o/r']);
@@ -232,6 +233,21 @@ test('fetch downloads the newest successful main map that is an ancestor of HEAD
     assert.strictEqual(lines.length, 1);
     assert.match(lines[0], /^fetch: /);
     assert.deepStrictEqual(fs.readdirSync(dir), ['map.json'], 'no temp file is left beside the map');
+  });
+});
+
+test('fetch skips a pull_request run even when its head branch is named main and it is an ancestor of HEAD', () => {
+  withTempDir((dir) => {
+    const git = fakeGit({ root: dir, ancestors: [SHA_A, SHA_B] });
+    const gh = fakeGh({
+      runs: [{ databaseId: 7, headSha: SHA_B, event: 'pull_request' }, { databaseId: 6, headSha: SHA_A, event: 'workflow_dispatch' }],
+      download: { 6: mapText(SHA_A), 7: mapText(SHA_B) },
+    });
+    const out = path.join(dir, 'map.json');
+    const { deps } = makeDeps({ git, gh, cwd: dir });
+    assert.strictEqual(run({ argv: ['fetch', '--out', out], deps }), 0);
+    assert.strictEqual(fs.readFileSync(out, 'utf8'), mapText(SHA_A), 'the dispatch run is chosen over the newer pull_request run');
+    assert.strictEqual(gh.calls[1][2], '6');
   });
 });
 

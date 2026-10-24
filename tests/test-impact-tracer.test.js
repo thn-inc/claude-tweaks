@@ -63,8 +63,11 @@ before(() => {
   tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct trace-')));
   root = path.join(tmp, 'fixture root');
   copyFixture(FIXTURE, root);
-  fs.writeFileSync(path.join(root, 'docs', 'we\nird.md'), 'newline\n');
-  fs.writeFileSync(path.join(root, 'docs', 'ta\tb.md'), 'tab\n');
+  // A newline or tab cannot be in a Windows file name, so the two odd-name files exist only elsewhere.
+  if (process.platform !== 'win32') {
+    fs.writeFileSync(path.join(root, 'docs', 'we\nird.md'), 'newline\n');
+    fs.writeFileSync(path.join(root, 'docs', 'ta\tb.md'), 'tab\n');
+  }
   const init = spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8', env: traceEnv(root, tmp) });
   assert.strictEqual(init.status, 0, init.stderr);
   const dir = path.join(tmp, 'traces');
@@ -200,8 +203,10 @@ test('absolute path never consults process.cwd', { skip: process.platform === 'w
 
 test('paths with newline round-trip', () => {
   const c = recordsOf('c.test.js');
-  assert.ok(c.has(rec('f', 'docs/we\nird.md')));
-  assert.ok(c.has(rec('f', 'docs/ta\tb.md')));
+  if (process.platform !== 'win32') {
+    assert.ok(c.has(rec('f', 'docs/we\nird.md')));
+    assert.ok(c.has(rec('f', 'docs/ta\tb.md')));
+  }
   for (const set of readTraces(run.dir).values()) {
     for (const r of set) assert.doesNotMatch(JSON.parse(r)[1], /^(\/|\.\.)/, 'paths outside the root are dropped');
   }

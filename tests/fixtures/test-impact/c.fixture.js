@@ -43,7 +43,7 @@ test('deleted cwd still throws', { skip: process.platform === 'win32' && 'win32:
 });
 
 // The two files are created by the outer test (a newline or tab cannot live in a Windows checkout).
-test('paths with a newline and a tab', () => {
+test('paths with a newline and a tab', { skip: process.platform === 'win32' && 'win32: no newline or tab in a file name' }, () => {
   assert.strictEqual(fs.readFileSync(path.join(__dirname, 'docs', 'we\nird.md'), 'utf8'), 'newline\n');
   assert.strictEqual(fs.readFileSync(path.join(__dirname, 'docs', 'ta\tb.md'), 'utf8'), 'tab\n');
 });

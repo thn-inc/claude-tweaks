@@ -80,14 +80,20 @@ function listTestFiles(cwd, roots) {
 }
 
 // The entries of a `--files-from` list: one path per line, CRs stripped, blank lines and repeats
-// dropped, order kept. Throws (naming the entry) on a non-`*.test.js` entry or one `exists` says is
-// not a file, and on a list naming nothing — so a subset run can never reach `node --test` empty.
+// dropped, order kept. Throws (naming the entry) on a non-`*.test.js` entry, a path that is not
+// repo-relative (leading `-`, absolute, a `..` segment), or one `exists` says is not a file, and on a
+// list naming nothing — so a subset run can never reach `node --test` empty.
 function readFileList(text, { exists }) {
   const entries = [];
   for (const raw of String(text).split('\n')) {
     const entry = raw.replace(/\r$/, '');
     if (entry.trim() === '' || entries.includes(entry)) continue;
     if (!entry.endsWith('.test.js')) throw new Error(`listed entry ${JSON.stringify(entry)} is not a *.test.js file`);
+    // A repo-relative path only: a leading `-` would reach `node --test` as an option, and an absolute
+    // or `..` path would run a file from outside this checkout.
+    if (entry.startsWith('-') || path.isAbsolute(entry) || /^[A-Za-z]:/.test(entry) || entry.split(/[\\/]/).includes('..')) {
+      throw new Error(`listed entry ${JSON.stringify(entry)} is not a repo-relative path`);
+    }
     if (!exists(entry)) throw new Error(`listed test file ${JSON.stringify(entry)} does not exist`);
     entries.push(entry);
   }
