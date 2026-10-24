@@ -20,6 +20,7 @@
 const { execFileSync } = require('child_process');
 const { preferOriginRef } = require('../blast-radius-cli.js');
 const { anchorOf } = require('./stamp');
+const { parseNameStatusZ, parseStatusPorcelainZ } = require('../git-z');
 
 class ChangedFilesError extends Error {
   constructor(message) { super(message); this.name = 'ChangedFilesError'; }
@@ -95,22 +96,16 @@ function resolveBase({
 // also carries each path's A/M/D status: a rename's old path is D and its new
 // path A, a copy's new path A, and every other non-A/D letter (M, T, U) is M.
 function parseDiffNameStatusPairsZ(raw) {
-  const tokens = raw.split('\0');
   const pairs = [];
-  let i = 0;
-  while (i < tokens.length) {
-    const status = tokens[i];
-    if (status === '') { i += 1; continue; }
+  for (const { status, paths } of parseNameStatusZ(raw)) {
     if (status[0] === 'R' || status[0] === 'C') {
-      if (status[0] === 'R') pairs.push([tokens[i + 1], 'D']);
-      pairs.push([tokens[i + 2], 'A']);
-      i += 3;
+      if (status[0] === 'R') pairs.push([paths[0], 'D']);
+      pairs.push([paths[1], 'A']);
     } else {
-      pairs.push([tokens[i + 1], status[0] === 'A' || status[0] === 'D' ? status[0] : 'M']);
-      i += 2;
+      pairs.push([paths[0], status[0] === 'A' || status[0] === 'D' ? status[0] : 'M']);
     }
   }
-  return pairs;
+  return pairs.filter(([p]) => p !== undefined);
 }
 
 // The A/M/D status of a porcelain record's path (#4024): A for `??`, D when XY
@@ -130,21 +125,15 @@ function porcelainStatus(xy) {
 // is changed too; a copy's is not. The pairs form (#4024) carries each path's
 // status per porcelainStatus; a rename's old path is D.
 function parseStatusPorcelainPairsZ(raw) {
-  const tokens = raw.split('\0');
   const pairs = [];
-  let i = 0;
-  while (i < tokens.length) {
-    const entry = tokens[i];
-    if (entry === '') { i += 1; continue; }
-    const xy = entry.slice(0, 2);
-    pairs.push([entry.slice(3), porcelainStatus(xy)]);
-    if (xy.includes('R')) pairs.push([tokens[i + 1], 'D']);
-    i += (xy.includes('R') || xy.includes('C')) ? 2 : 1;
+  for (const { xy, path, origPath } of parseStatusPorcelainZ(raw)) {
+    pairs.push([path, porcelainStatus(xy)]);
+    if (xy.includes('R') && origPath !== undefined) pairs.push([origPath, 'D']);
   }
   return pairs;
 }
 
-function parseStatusPorcelainZ(raw) {
+function statusPorcelainPaths(raw) {
   return parseStatusPorcelainPairsZ(raw).map(([p]) => p);
 }
 
@@ -205,7 +194,7 @@ function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileS
   const own = new Set(parseNameOnlyZ(differs));
   const status = tryGit(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
   if (status === null) return null;
-  for (const f of parseStatusPorcelainZ(status)) own.add(f);
+  for (const f of statusPorcelainPaths(status)) own.add(f);
   const mb = tryGit(execImpl, ['merge-base', '--end-of-options', anchor, ref]);
   if (mb === null || mb.trim() === '') return null;
   const ownAsOfAnchor = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', mb.trim(), anchor]);
