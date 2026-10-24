@@ -111,7 +111,7 @@ git commit -m "Name a failed staged-file read sdd-ruling-unreadable on the conso
 
 **Interfaces:**
 - Consumes: `SDD_RULING_REASONS.UNREADABLE` from Task 1 (`require('../console/resolve')`); `canonicalRealpath(p)`, `resolveLeaf(p)` → `{state: 'resolved', path} | {state: 'dangling'} | {state: 'missing', code} | {state: 'unreadable', code}`, `isAncestorOrSelf(ancestor, candidate)` from `plugin/bin/lib/path-guard` (all already exported).
-- Produces: `readRulingTexts(runDir, items) -> { texts: {[itemId]: string}, errors: {[itemId]: 'no-staged-path'|'path-rejected'|'not-found'|'read-failed'} }` (ruling rows only; each ruling id lands in exactly one of the two maps). `decideConsoleExecute`'s `ctx` gains `rulingReadErrors?: {[itemId]: cause}`. A `rulingGateGaps` element is `{ id, reason }` or, for an unreadable row, `{ id, reason: 'sdd-ruling-unreadable', detail: cause }`.
+- Produces: `readRulingTexts(runDir, items, opts = {}) -> { texts: {[itemId]: string}, errors: {[itemId]: 'no-staged-path'|'path-rejected'|'not-found'|'read-failed'} }` — `opts` (`{ fsImpl, realpath }`, threaded to path-guard's `canonicalRealpath`/`resolveLeaf`) was added in the final-review fix wave (52a8a97ec) as a test seam for the `read-failed` branches; production callers pass nothing (architecture alignment: Beneficial) (ruling rows only; each ruling id lands in exactly one of the two maps). `decideConsoleExecute`'s `ctx` gains `rulingReadErrors?: {[itemId]: cause}`. A `rulingGateGaps` element is `{ id, reason }` or, for an unreadable row, `{ id, reason: 'sdd-ruling-unreadable', detail: cause }`.
 
 - [ ] **Step 1: Write the failing tests**
 
