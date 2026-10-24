@@ -456,6 +456,9 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `_shared/integration-branch.md` | Step 1's fact pack (`bin/lib/release-preflight/pack.js`) resolves the release-target branch and tip ref through this ladder (#2422): the `integration-branch` policy key first, else rank 5's git inference — `git symbolic-ref --short refs/remotes/origin/HEAD`, then `git remote show origin`'s "HEAD branch:" line, then the current branch only for a repo with no `origin` at all. Unresolved degrades the whole pack rather than guessing `main`; that file's own per-consumer table carries the reciprocal row. |
 | `_shared/pr-first-merge.md` | Step 5's release-PR merge delegates the Merge-verification gate (Step 2.5) wholesale — same four-field read, same head-run `gh run list --commit` read (#3405), same classification, same bounded watch — and states only five deltas: `MERGED` is resumable, red is `failed` and parks nothing, `--auto` is never armed, `mergeStateStatus` is classification-only, `title` is read and the bump re-gated on it. |
 | `_shared/autonomy-ceiling.md` | `--train` reads the `train` row — merge/tag minor and patch at `unattended`; never a major, a blocking review, or past a hook failure. |
+| `review/step3-routing.md` | Step 8's disposition (`release/disposition.md`) files each confirmed review finding through its Defer branch (`specShapedBody`, `recordPayload`, born-ready) — a release reviews merged history, so the reason is `pre-existing-outside-diff`. |
+| `_shared/materiality-floor.md` | Step 8's disposition routes a below-floor finding to the digest container instead of an ordinary record, and surfaces the digest comment URL and count in its own output. |
+| `bin/hooks.js archive-run` | Step 8 archives the run directory it created once disposition reported `0 failed`; Step 0 refuses a terminal step-2 directory so a later release never adopts a finished one (#3898). |
 
 ## research
 

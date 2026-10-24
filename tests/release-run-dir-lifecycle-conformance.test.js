@@ -193,3 +193,136 @@ test('AC2.1: Step 0 prose: the "prior standalone release run counts" clause is g
   assert.match(PRE_CHANGE_STEP0, ADOPT_ANY, 'the frozen pre-change excerpt must carry the retired clause — the pattern cannot discriminate otherwise');
   assert.doesNotMatch(STEP_ZERO, ADOPT_ANY, 'Step 0 must no longer say a prior standalone release run\'s directory is adopted (#3898)');
 });
+
+// --- Step 8: dispose of staged findings, then archive the created directory (#3898) -----------------
+// The prose is new in this change, so each fact's go-red proof strips the one live match in memory
+// (assertEachPatternGoesRed) rather than diffing against frozen pre-change bytes.
+const DISPOSITION = path.join(ROOT, 'plugin', 'skills', 'release', 'disposition.md');
+function readDisposition() {
+  assert.ok(fs.existsSync(DISPOSITION), 'plugin/skills/release/disposition.md is missing — Step 8 reads it before the summary (#3898)');
+  return readText(DISPOSITION);
+}
+
+function stepEightOf(text) {
+  const start = text.indexOf('\n## Step 8');
+  assert.notEqual(start, -1, 'extraction pattern is out of sync: release/SKILL.md has no "## Step 8" heading');
+  const next = text.indexOf('\n## Next Actions', start + 1);
+  assert.notEqual(next, -1, 'extraction pattern is out of sync: release/SKILL.md has no "## Next Actions" heading after Step 8');
+  return text.slice(start, next);
+}
+
+const DISPOSITION_SCOPE = [
+  [/\*\*created\*\* run director/, 'disposition covers a created run directory only'],
+  [/inherited[\s\S]{0,200}parent's Review Console/, 'an inherited directory is left to the parent\'s Review Console'],
+  [/staged\/review-\{n\}\.\{md,patch\}/, 'inventory: confirmed findings, staged/review-{n}.{md,patch}'],
+  [/staged\/review-unconfirmed-\{n\}\.md/, 'inventory: unconfirmed entries'],
+  [/staged\/review-contested-\{n\}\.md/, 'inventory: contested findings'],
+  [/staged\/review-debate-\{n\}\.md/, 'inventory: debate findings'],
+  [/unrecognised[\s\S]{0,200}not archived/, 'an unrecognised staged/review-* file fails closed: the run is not archived'],
+  [/release-held\.md[\s\S]{0,160}not a finding/, 'release-held.md is not a finding'],
+];
+
+const DISPOSITION_ROUTING = [
+  [/review\/step3-routing\.md[\s\S]{0,120}Defer/, 'confirmed findings route through step3-routing.md\'s Defer bullet'],
+  [/pre-existing-outside-diff/, 'the Defer-reason is pre-existing-outside-diff'],
+  [/_shared\/materiality-floor\.md/, 'the materiality floor is cited'],
+  [/Digest — below floor/, 'a below-floor finding is Digest — below floor'],
+  [/unconfirmed[\s\S]{0,80}critical\/high[\s\S]{0,80}Defer/, 'an unconfirmed critical/high finding takes the same Defer'],
+  [/declined \(unconfirmed: one reproduction agent of the pair\)/, 'an unconfirmed medium/low/info finding is declined, naming the pair'],
+  [/declined \(contested: \{verdicts\}\)/, 'a contested finding is declined, naming the verdicts'],
+  [/covered by #\{n\}/, 'a finding an open record already covers is declined'],
+];
+
+const DISPOSITION_APPROVAL = [
+  [/AskUserQuestion/, 'a present human is asked once'],
+  [/Apply all \(Recommended\)/, 'the question offers Apply all (Recommended)'],
+  [/unattended[\s\S]{0,200}AUTO-RESOLVED/, 'under unattended the table renders with rows stamped AUTO-RESOLVED'],
+  [/consoleAutoResolve/, 'the unattended shape is consoleAutoResolve\'s'],
+  // Anchored on the AUTO prefix: the FAILED line also begins "Step 8 disposition: {staged path}".
+  [/AUTO \{HH:MM:SS\} — Step 8 disposition: \{staged path\}/, 'the per-finding log line'],
+  [/exactly one/, 'exactly one log line per finding'],
+  [/FAILED \{HH:MM:SS\} — Step 8 disposition:/, 'a failed write is a hand-composed FAILED line'],
+  [/skip[\s\S]{0,60}archiv/, 'any failure skips archival'],
+  [/--dry-run[\s\S]{0,160}still runs/, 'disposition still runs under --dry-run'],
+];
+
+for (const [name, patterns] of [
+  ['AC3.1: disposition.md states the scope and inventory', DISPOSITION_SCOPE],
+  ['AC3.1: disposition.md routing table', DISPOSITION_ROUTING],
+  ['AC3.1: disposition.md approval and logging', DISPOSITION_APPROVAL],
+]) {
+  test(name, () => {
+    const text = readDisposition();
+    const missingOf = missingFactsOf(patterns);
+    assert.deepEqual(missingOf(text), [], `${name} must state every fact (#3898)`);
+    assertEachPatternGoesRed(text, patterns, missingOf);
+  });
+}
+
+const STEP8_WIRING = [
+  [/disposition\.md/, 'Step 8 reads disposition.md'],
+  [/findings: \{f\} filed, \{d\} digest, \{x\} declined/, 'the summary block carries the findings: line'],
+  [/hooks\.js" archive-run --run "\{run-dir\}"/, 'Step 8 runs archive-run on the run dir'],
+  // Grouped: an ungrouped `a|Step 0` alternation would match any "Step 0" in the section and could never go red.
+  [/archive-run refused[\s\S]{0,200}(?:not adopted|Step 0)/, 'a refusal is non-fatal because Step 0 never adopts a terminal directory'],
+];
+
+// An ordering claim: each marker must exist, and positions must increase.
+function requireOrder(text, markers) {
+  let last = -1;
+  for (const marker of markers) {
+    const idx = text.indexOf(marker);
+    assert.notStrictEqual(idx, -1, `ordering marker missing: ${marker}`);
+    assert.ok(idx > last, `ordering marker out of order: ${marker} must come after the previous marker`);
+    last = idx;
+  }
+}
+const STEP8_ORDER = ['disposition.md', 'close-run --run', 'archive-run --run'];
+
+// Swaps the two blank-line-delimited paragraphs holding `a` and `b`, asserting exactly one holds each.
+function swapParagraphs(text, a, b) {
+  const paragraphs = text.split(/\r?\n\r?\n/);
+  const ia = paragraphs.flatMap((p, i) => (p.includes(a) ? [i] : []));
+  const ib = paragraphs.flatMap((p, i) => (p.includes(b) ? [i] : []));
+  assert.equal(ia.length, 1, `exactly one paragraph must hold "${a}", found ${ia.length}`);
+  assert.equal(ib.length, 1, `exactly one paragraph must hold "${b}", found ${ib.length}`);
+  [paragraphs[ia[0]], paragraphs[ib[0]]] = [paragraphs[ib[0]], paragraphs[ia[0]]];
+  return paragraphs.join('\n\n');
+}
+
+test('AC2.1/AC3.1: Step 8 wires disposition, summary line, and archival in order', () => {
+  const stepEight = stepEightOf(readText(SKILL));
+  const missingOf = missingFactsOf(STEP8_WIRING);
+  assert.deepEqual(missingOf(stepEight), [], 'Step 8 must wire disposition.md, the findings: line and archive-run (#3898)');
+  assertEachPatternGoesRed(stepEight, STEP8_WIRING, missingOf);
+  requireOrder(stepEight, STEP8_ORDER);
+});
+
+test('AC2.1/AC3.1: Step 8 ordering go-red: permuting the live paragraphs trips the same requireOrder', () => {
+  const stepEight = stepEightOf(readText(SKILL));
+  const archiveAboveClose = swapParagraphs(stepEight, 'close-run --run', 'archive-run --run');
+  assert.notEqual(archiveAboveClose, stepEight, 'the archive/close permutation changed nothing — proof cannot discriminate');
+  assert.throws(() => requireOrder(archiveAboveClose, STEP8_ORDER), /out of order: archive-run --run/);
+  const closeAboveDisposition = swapParagraphs(stepEight, 'disposition.md', 'close-run --run');
+  assert.notEqual(closeAboveDisposition, stepEight, 'the close/disposition permutation changed nothing — proof cannot discriminate');
+  assert.throws(() => requireOrder(closeAboveDisposition, STEP8_ORDER), /out of order: close-run --run/);
+});
+
+const STEP8_INHERITED = [
+  [/An \*\*inherited\*\* directory is never closed/, 'an inherited directory is never closed'],
+  [/inherited[\s\S]{0,120}never archived/, 'an inherited directory is never archived'],
+];
+const DISPOSITION_INHERITED = [
+  [/condition: inherited run directory → fallback: the parent's Review Console owns staged\//, 'an inherited directory is never disposed: the SKIP line'],
+];
+
+test('AC4.1: an inherited run directory is never closed, archived or disposed', () => {
+  const stepEight = stepEightOf(readText(SKILL));
+  const stepEightMissing = missingFactsOf(STEP8_INHERITED);
+  assert.deepEqual(stepEightMissing(stepEight), [], 'Step 8 must leave an inherited directory unclosed and unarchived');
+  assertEachPatternGoesRed(stepEight, STEP8_INHERITED, stepEightMissing);
+  const text = readDisposition();
+  const dispositionMissing = missingFactsOf(DISPOSITION_INHERITED);
+  assert.deepEqual(dispositionMissing(text), [], 'disposition.md must write the SKIP line for an inherited directory');
+  assertEachPatternGoesRed(text, DISPOSITION_INHERITED, dispositionMissing);
+});

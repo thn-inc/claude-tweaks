@@ -211,12 +211,15 @@ Read `bookkeeping.md` in this skill's directory now: for each record in the ship
 
 ## Step 8: Summary and Next Actions
 
+**Dispose of the staged findings first, when this run created its run directory.** Read `disposition.md` in this skill's directory now and run it before rendering anything below, in every outcome and under `--dry-run`: Step 3's review staged its findings into this directory, and the archival at the end of this step would otherwise move them out of reach unread (#3898). It files, digests or declines each finding and supplies the summary's `findings:` line.
+
 Render one summary block:
 
 ```
 release: {version} — {released | dry-run | HELD | PARTIAL | failed}
 engine:  {pr-first | local-merge}
 records: {n} {shipped | would ship}{, m unattributed commits}
+{findings: {f} filed, {d} digest, {x} declined{, k failed}, when disposition inventoried any finding}
 {bookkeeping: {k} of {n} failed — #a (read), #b (close), when Step 7 reported k > 0}
 {partial state and recovery command, when the outcome is PARTIAL}
 {gate and staged path, when the outcome is HELD}
@@ -230,6 +233,8 @@ The `records:` line varies with the outcome, because "shipped" is only true when
 - `failed` — `records: 0 shipped`. Nothing landed, so there is no set to name.
 
 **The `bookkeeping:` line renders only when `{k} > 0`, and is omitted entirely when `{k}` is `0`.** Its `{k}`, `{n}` and per-record entries come from Step 7's own tally — `bookkeeping.md`'s `{n} records commented, {m} closed, {k} failed` summary line and its per-record `FAILED` lines — with each failed record named by number and by the verb from its `FAILED` line (`read`, `comment`, `close`, `shipped`, or the step-level `commit`). Without it a run whose every record failed to book still renders `released` and nothing else, and the unbooked records are discoverable only by reading `decisions.md`.
+
+**The `findings:` line renders only when disposition inventoried a finding, and names every failed staged path when any failed.** A run with a failed path is not archived below, so the line is where that finding is named for the reader.
 
 The five outcomes are distinct and never folded together:
 
@@ -248,6 +253,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "{run-dir}"
 ```
 
 Always pass the explicit `--run` with the run *directory* — `close-run` rejects a file path outright, so never the `decisions.md` inside it. An **inherited** directory is never closed here: it is the parent pipeline's to close, and closing it mid-pipeline would stop the parent's own event logging (`docs/hooks.md`'s Ownership section). This runs in every outcome, `HELD` and `failed` included — a held run is still a finished run.
+
+**Archive the run directory when this run created it and disposition reported `0 failed`.** A closed directory left in the live pipelines tree is what a later release adopted before #3898, so a **created** one is moved out once it is closed:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "{run-dir}"
+```
+
+`archive-run` exits `0` on a refusal as well and prints `claude-tweaks: archival refused — {reason}` on stdout, so a refusal is read from that line, never from the exit code. Log it verbatim as `AUTO {HH:MM:SS} — Step 8: archive-run refused — {reason line}. Reversibility: n/a.` and carry on: it is not an error, because the closed, unarchived directory is safe — Step 0 never adopts a terminal one. A gitignored release directory moves with plain renames and no commit (`archiveRunDir` commits only a tracked `work/`). When disposition reported any failure, this archival does not run. An **inherited** directory is never archived either: the parent pipeline owns that too.
 
 ## Next Actions
 
@@ -314,3 +327,4 @@ Direct invocation may pass `--source <parent-skill>` as an explicit fallback whe
 | Reading `integration-model` afresh instead of the pack's `engine` field | Recreates the ambient per-call-site inference `_shared/integration-model.md` exists to replace, and lets a transient `gh` failure split one release across two engines mid-run |
 | Reporting a landed-but-unverified release as `HELD` | `HELD` asserts nothing was merged or tagged. Applied to a released tag it is a false statement about the repo, and it implies re-running the train — the wrong action for a tag that already exists |
 | Continuing past a degraded `engine`, `unreleased` or `proposedVersion` field | These three are the facts every later step renders from. Proceeding on a guess produces a console that looks authoritative and is not |
+| Leaving a finished release's directory in place | The next release adopted it, along with its `## /review` marker and its ceiling pin (#3898). Step 8 closes and archives a created directory, and Step 0 refuses a terminal one |
