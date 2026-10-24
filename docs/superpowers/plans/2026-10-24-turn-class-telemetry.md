@@ -110,6 +110,7 @@ Expected: PASS
 
 **Files:**
 - Modify: `plugin/bin/lib/timing/transcript.js` (`readUsage`)
+- Create: `tests/fixtures/timing/turn-classes/events.jsonl`, `tests/fixtures/timing/turn-classes/session.jsonl` — exactly to Task 3's "Fixture (hand count)" spec, which Task 3 reuses. Rendering rules referenced there: `{k}` = `(tokens/1000).toFixed(1)` and `{pct}` = `Math.round(ceremonyShare*100)`.
 - Test: `tests/bin-lib/timing/transcript.test.js`. The exact-shape `assert.deepEqual(assistants[0], {…})` near line 177 widens with the three new fields. This is the plan-authoring return-shape-widening hit; no other test deep-equals a usage row (grep `deepEqual(assistants` / `deepEqual(users`).
 
 **Interfaces:**
@@ -135,7 +136,7 @@ Approach: keep a `Map` from tool_use id to `{ name, input }`, filled from assist
 ### Task 3: Aggregate per phase into `timing.json` and render it
 
 **Files:**
-- Create: `tests/fixtures/timing/turn-classes/events.jsonl`, `tests/fixtures/timing/turn-classes/session.jsonl`
+- Uses: `tests/fixtures/timing/turn-classes/events.jsonl` and `session.jsonl`, created in Task 2 to the fixture spec below
 - Modify: `plugin/bin/lib/timing/derive.js` — `joinTokens`, plus `totals.verifyMinutes` in `derivePhases`
 - Modify: `plugin/bin/phase-timing.js` — the `timing.totals` copy and the render
 - Modify: `tests/fixtures/timing/subagents-golden-auto.md` — regenerate from the CLI; the diff must show only the two new lines
@@ -183,7 +184,7 @@ Approach: keep a `Map` from tool_use id to `{ name, input }`, filled from assist
 
 - [ ] **Step 1: Write the failing tests**
   - In `derive.test.js`: `test('#4029: joinTokens aggregates turn classes, context percentiles, model mix and ceremony share per phase', …)` builds the rows inline and asserts the hand-count numbers on `build` and `totals`; `test('#4029: an empty bucket has zero-filled classes and null percentiles', …)`.
-  - In `cli.test.js`: `test('#4029 AC1.1: timing.json for the turn-classes fixture carries the class breakdown matching the hand count', …)` runs `phase-timing.js --run {tmp copy of fixture dir} --transcript {session.jsonl}` and deepEquals `timing.totals.turnClasses` and the build phase's `turnClasses` against the hand count. It also asserts `totals.toolRoundTrips === 10`, `totals.context`, `totals.ceremonyShare === 0.455` and `totals.verifyMinutes === 2`. A second assertion in the same test checks that `--markdown` stdout contains both lines exactly: `Turn classes (tool calls): edit 1 · read 1 · explore 1 · procedure 1 · bookkeeping 1 · orientation 2 · verify 1 · guard-refusal 1 · dispatch 1 · other 1 — ceremony share 45%` and `Context per turn: p50 5.1k · p90 9.1k tokens over 10 turns · models: claude-opus-5-5 ×9, claude-sonnet-5 ×1 · subagents: 1`.
+  - In `cli.test.js`: `test('#4029 AC1.1: timing.json for the turn-classes fixture carries the class breakdown matching the hand count', …)` runs `phase-timing.js --run {tmp copy of fixture dir} --transcript {session.jsonl}` and deepEquals `timing.totals.turnClasses` and the build phase's `turnClasses` against the hand count. It also asserts `totals.toolRoundTrips === 10`, `totals.context`, `totals.ceremonyShare === 0.455` and `totals.verifyMinutes === 2`. A second assertion in the same test checks that `--markdown` stdout contains both lines exactly: `Turn classes (tool calls): edit 1 · read 1 · explore 1 · procedure 1 · bookkeeping 1 · orientation 2 · verify 1 · guard-refusal 1 · dispatch 1 · other 1 — ceremony share 46%` and `Context per turn: p50 5.0k · p90 9.1k tokens over 10 turns · models: claude-opus-5-5 ×9, claude-sonnet-5 ×1 · subagents: 1`.
 - [ ] **Step 2: Run** `node --test tests/bin-lib/timing/derive.test.js tests/bin-lib/timing/cli.test.js`. Expected: FAIL on the new tests.
 - [ ] **Step 3: Implement.** Finalize each bucket so the internal context samples never reach the output. Then regenerate both goldens. Then add one paragraph to `timing-render.md`'s Phase table section saying the two lines render verbatim after the footnote, that per-phase values live in `timing.json`, that the class total counts tool calls (which can exceed Tool RTs when calls are batched), and what the ceremony share is.
 - [ ] **Step 4: Run** `node --test tests/bin-lib/timing/ tests/timing-prose-conformance.test.js`. Expected: PASS
