@@ -65,6 +65,7 @@ const ROWS = [
   // guard refusals
   ['worktree isolation refusal', bash('git -C /r commit', { isError: true, resultText: 'This session is isolated in the worktree /r, but …' }), 'guard-refusal'],
   ['permission denied refusal', { name: 'Write', input: {}, isError: true, resultText: 'Permission to use Write has been denied because …' }, 'guard-refusal'],
+  ['permission denied refusal quoting a long command', bash('node x', { isError: true, resultText: `Permission to use Bash with command node ${'a'.repeat(400)} has been denied.` }), 'guard-refusal'],
   ['PreToolUse hook refusal', bash('git push', { isError: true, resultText: 'PreToolUse:Bash hook error: claude-tweaks: …' }), 'guard-refusal'],
   ['plain exit code error classifies by tool', bash('grep x', { isError: true, resultText: 'Exit code 1' }), 'explore'],
   ['refusal text without isError is not a refusal', bash('git status', { isError: false, resultText: 'This session is isolated in the worktree /r' }), 'orientation'],

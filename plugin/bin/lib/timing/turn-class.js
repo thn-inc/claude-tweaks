@@ -17,8 +17,9 @@ const CEREMONY_CLASSES = Object.freeze(['procedure', 'bookkeeping', 'orientation
 // All three lead the result, so classifyToolCall matches only its first
 // REFUSAL_SCAN_CHARS, and the quantifiers are bounded: an is_error tool result
 // is externally sized, and an unbounded `\S+.*` backtracked quadratically on
-// one ([IL-162]).
-const GUARD_REFUSAL_RE = /This session is isolated in the worktree|PreToolUse:\S{1,64} hook error|Permission to use \S{1,64}[^\n]{0,300}has been denied/;
+// one ([IL-162]). The permission text quotes the denied command before "has
+// been denied", so its gap is sized to the scan window, not to a short command.
+const GUARD_REFUSAL_RE = /This session is isolated in the worktree|PreToolUse:\S{1,64} hook error|Permission to use \S{1,64}[^\n]{0,1500}has been denied/;
 const REFUSAL_SCAN_CHARS = 2048;
 
 // A Read counts as procedure loading when it targets a skill file — the
@@ -110,7 +111,7 @@ function isVerifyRun(tokens) {
 }
 
 const GIT_BOOKKEEPING = new Set(['add', 'commit', 'push', 'pull', 'fetch', 'merge', 'tag', 'rebase', 'cherry-pick', 'reset', 'checkout', 'switch', 'stash']);
-const GIT_ORIENTATION = new Set(['status', 'rev-parse', 'remote', 'config']);
+const GIT_ORIENTATION = new Set(['rev-parse', 'status', 'remote', 'config']);
 const GIT_EXPLORE = new Set(['log', 'show', 'diff', 'grep', 'blame', 'ls-files', 'ls-tree', 'cat-file', 'ls-remote']);
 const ORIENTATION_HEADS = new Set(['pwd', 'whoami', 'hostname', 'date', 'printenv', 'env', 'which', 'echo']);
 const EXPLORE_HEADS = new Set(['grep', 'rg', 'ugrep', 'find', 'ls', 'cat', 'head', 'tail', 'sed', 'awk', 'wc', 'tree', 'jq', 'stat', 'file', 'diff']);
