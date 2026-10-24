@@ -16,8 +16,14 @@ function runCli(cwd, args) {
   return spawnSync('node', [CLI, ...args], { cwd, encoding: 'utf8' });
 }
 
+const fixtureDirs = [];
+test.after(() => {
+  fixtureDirs.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true }));
+});
+
 function initRepo(prefix) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  fixtureDirs.push(dir);
   git(dir, 'init', '-b', 'main');
   git(dir, 'config', 'user.email', 'test@example.invalid');
   git(dir, 'config', 'user.name', 'Test');
