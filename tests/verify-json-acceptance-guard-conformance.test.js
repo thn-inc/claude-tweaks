@@ -28,23 +28,16 @@ const closeOutStep3 = slice(CLOSE_OUT, '3. **Convert draft to ready', '4. **Conf
 const mergeStep1 = slice(MERGE, '## Step 1:', '## Step 1.5');
 
 const CLOSE_OUT_PINS = [
-  /verify\.json/,
-  /acceptance-labeling/,
-  /claude-tweaks-run:/,
+  // The Landed check is single-sourced: step 3 cites the contract, it does not restate it.
+  /acceptance-labeling-landed\.md/,
   /pr-first-merge\.md.{0,40}Step 1/,
   // Anchored on "Step 1": the Mark-ready sentence already says "before the confirmation gate".
   /Step 1 before the confirmation gate/,
   // No run dir resolves -> stop the candidate, never guess (and never run Step 1 blind).
-  /no valid .{0,40}marker.{0,80}stop this candidate/i,
+  /`no run dir`.{0,160}stop this candidate/,
   /stopped: acceptance labeling unverifiable — no run dir/,
-  // Multi-spec: the marker names the parent; every member's spec-*/verify.json is read.
-  /read every `spec-\*\/verify\.json`/,
-  /pass.{0,12}skip/,
-  // Live forge state is checked before re-running the non-idempotent brief.
-  /demo:pending/,
-  /<!-- run-comment: brief -->/,
-  /<!-- run-comment: try-it -->/,
-  /Trusted authors/,
+  // close-out's own choice on `no run dir`: the contract leaves the live-state tier to consumers.
+  /without (running )?the live-state tier/,
   // The re-run gets verification-brief.md's inputs.
   /`PIPELINE_RUN_DIR` = the resolved run/,
   /`CLOSING_SUB_ISSUES` = the PR's `Fixes` record numbers/,
@@ -58,9 +51,15 @@ const RESIDUE_PIN = /console-residue\.js" --run "\$(PIPELINE_RUN_DIR|MULTISPEC_P
 const CLOSE_OUT_ADDED = /\*\*Acceptance labeling first\*\*.*?`MULTISPEC_PARENT_DIR` = the parent\./;
 const MERGE_ADDED = /Labeling has not landed when.*?reached this merge\./;
 
-test('AC2.1: close-out step 3 reads verify.json and runs Step 1 before the gate when labeling has not landed', () => {
+test('AC3.1 + AC5.3: close-out step 3 cites the contract, keeps the no-run-dir stop and the Step 1 wiring', () => {
   for (const re of CLOSE_OUT_PINS) assert.match(closeOutStep3, re);
   assert.doesNotMatch(closeOutStep3, /needs no separate run here/);
+});
+
+test('AC3.2: close-out step 3 no longer restates the live-state tier', () => {
+  assert.doesNotMatch(closeOutStep3, /run-comment: brief/);
+  assert.doesNotMatch(closeOutStep3, /run-comment: try-it/);
+  assert.doesNotMatch(closeOutStep3, /read every `spec-\*\/verify\.json`/);
 });
 
 test('AC2.1: negative control — close-out step 3 without the added rule fails each pin', () => {
