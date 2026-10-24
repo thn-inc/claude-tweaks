@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, detectCrossPRFileOverlap, directOverlaps, findInFlightNeighbours, buildDispatchGroups } = require('../../../plugin/bin/lib/issues/grouping');
+const { readText } = require('../../helpers/read-skill');
 
 // ── groupByFileOverlap ──────────────────────────────────────────────────────
 
@@ -662,10 +663,7 @@ test('#146 and #150 real bodies land in ONE bundle of two, not two singletons', 
   // returned [] for both and /dispatch would have built them in two separate
   // worktrees, each editing those same two files.
   const readFixture = (n) =>
-    require('node:fs').readFileSync(
-      require('node:path').join(__dirname, 'fixtures', `record-${n}-body.md`),
-      'utf8',
-    );
+    readText(require('node:path').join(__dirname, 'fixtures', `record-${n}-body.md`));
   const issue146 = { id: 146, labels: SPECIFY_SUB_ISSUE_LABELS, body: readFixture(146) };
   const issue150 = { id: 150, labels: SPECIFY_SUB_ISSUE_LABELS, body: readFixture(150) };
 

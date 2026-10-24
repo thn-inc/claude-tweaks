@@ -5,13 +5,13 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
-const fs = require('node:fs');
 
 const {
   TERMINAL_STATUSES, resolveLedgerPath, parseLedgerTable, flipLedgerRow,
   describeRunLedgers, formatLedgerReport,
 } = require('../../../plugin/bin/lib/wrap-up/ledger-write');
 const { splitLedgerRow, ledgerRowCells } = require('../../../plugin/bin/lib/wrap-up/ledger-cells');
+const { readText } = require('../../helpers/read-skill');
 
 const SAMPLE = [
   '# Open Items — Sample',
@@ -226,10 +226,10 @@ test('TERMINAL_STATUSES matches ledger-format.md\'s closed five-value enum', () 
 // #3566: wrap-up's prose re-counts the ledger through the ledger probe, never a
 // bare docs/plans glob that also matches ledgers inherited from the base branch.
 test('wrap-up prose re-counts the ledger via the ledger probe, not a glob (#3566)', () => {
-  const skill = fs.readFileSync(path.join(__dirname, '../../../plugin/skills/wrap-up/SKILL.md'), 'utf8');
+  const skill = readText(path.join(__dirname, '../../../plugin/skills/wrap-up/SKILL.md'));
   assert.match(skill, /re-count after the sweep by re-running the ledger probe/);
   assert.match(skill, /wrap-up-pack\.js" --run "\$PIPELINE_RUN_DIR" --print ledger --json/);
-  const sweep = fs.readFileSync(path.join(__dirname, '../../../plugin/skills/wrap-up/residue-sweep.md'), 'utf8');
+  const sweep = readText(path.join(__dirname, '../../../plugin/skills/wrap-up/residue-sweep.md'));
   assert.match(sweep, /pack\.ledger.{0,80}files/s);
   assert.match(sweep, /unattributedFiles/);
 });

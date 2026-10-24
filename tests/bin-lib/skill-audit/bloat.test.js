@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('../../helpers/read-skill');
 
 const {
   ROW_LENGTH_MULTIPLE,
@@ -169,7 +170,7 @@ for (const { id, bloat, legit } of PROVENANCE_CASES) {
 // the *code under test*'s pre-existing behavior; a looser pattern turns three
 // real instructions into noise, and nothing else in this suite would notice.
 test('does not flag /build\'s legitimate "pre-existing behavior" instructions', () => {
-  const buildSkill = fs.readFileSync(path.join(REPO, 'plugin', 'skills', 'build', 'SKILL.md'), 'utf8');
+  const buildSkill = readText(path.join(REPO, 'plugin', 'skills', 'build', 'SKILL.md'));
   const hits = findProvenance(buildSkill);
   assert.deepStrictEqual(
     hits.map((h) => `L${h.line} ${h.id}`),
@@ -485,14 +486,8 @@ test('size outlier: suppression with { sizeOutlier: false } prints no size-outli
 });
 
 test('prose-twin conformance: both prose files list the same signals and guard', () => {
-  const harnessProse = fs.readFileSync(
-    path.join(REPO, 'plugin', 'skills', '_shared', 'harness-health-analysis.md'),
-    'utf8',
-  );
-  const judgeProse = fs.readFileSync(
-    path.join(REPO, 'plugin', 'skills', 'harness-health', 'judge-procedure.md'),
-    'utf8',
-  );
+  const harnessProse = readText(path.join(REPO, 'plugin', 'skills', '_shared', 'harness-health-analysis.md'));
+  const judgeProse = readText(path.join(REPO, 'plugin', 'skills', 'harness-health', 'judge-procedure.md'));
 
   // Extract signal-list sentences: "It reports [number] signals: ..."
   const signalListRegex = /It reports (\w+) signals: ([^.]+)\./i;
@@ -557,7 +552,7 @@ test('prose signal list names exactly the signals auditText returns', () => {
   const codeSignals = Object.keys(auditText('', { bytes: 0, rowMedian: null, sizeThreshold: 0 }))
     .filter((k) => k !== 'bytes');
   for (const rel of [['_shared', 'harness-health-analysis.md'], ['harness-health', 'judge-procedure.md']]) {
-    const got = proseSignalCount(fs.readFileSync(path.join(REPO, 'plugin', 'skills', ...rel), 'utf8'));
+    const got = proseSignalCount(readText(path.join(REPO, 'plugin', 'skills', ...rel)));
     assert.ok(got, `${rel.join('/')} must contain a signal-list sentence`);
     assert.strictEqual(got.stated, codeSignals.length, `${rel.join('/')} states the wrong signal count`);
     assert.strictEqual(got.items, codeSignals.length, `${rel.join('/')} lists the wrong number of signals`);
@@ -569,7 +564,7 @@ test('prose signal list names exactly the signals auditText returns', () => {
 
 test('both bloat-scan call sites suppress size outliers only for non-skill targets, and carry no ceiling option (#3311)', () => {
   for (const rel of [['_shared', 'harness-health-analysis.md'], ['harness-health', 'judge-procedure.md']]) {
-    const text = fs.readFileSync(path.join(REPO, 'plugin', 'skills', ...rel), 'utf8');
+    const text = readText(path.join(REPO, 'plugin', 'skills', ...rel));
     const label = rel.join('/');
     assert.match(text, /kind === 'skill' \? \{\} : \{ sizeOutlier: false \}/, `${label}: bloat call must pick options by kind`);
     assert.doesNotMatch(text, /ceiling: Infinity/, `${label}: no ceiling option`);
@@ -578,10 +573,10 @@ test('both bloat-scan call sites suppress size outliers only for non-skill targe
     assert.doesNotMatch(text, /\*\*Over the ceiling\.\*\*/, `${label}: guard bullet must be the rail bullet`);
     assert.match(text, /- \*\*Over the rail\.\*\* /, `${label}: rail guard bullet`);
   }
-  const analysis = fs.readFileSync(path.join(REPO, 'plugin', 'skills', '_shared', 'harness-health-analysis.md'), 'utf8');
+  const analysis = readText(path.join(REPO, 'plugin', 'skills', '_shared', 'harness-health-analysis.md'));
   assert.match(analysis, /composedRailViolations/, 'check 10 must go through rail.js');
   assert.doesNotMatch(analysis, /overComposedCeiling|CEILING_BYTES|COMPOSED_STEP_EXCEPTIONS/);
-  const skill = fs.readFileSync(path.join(REPO, 'plugin', 'skills', 'harness-health', 'SKILL.md'), 'utf8');
+  const skill = readText(path.join(REPO, 'plugin', 'skills', 'harness-health', 'SKILL.md'));
   assert.doesNotMatch(skill, /overComposedCeiling/);
   assert.match(skill, /`rail:` suite/);
 });

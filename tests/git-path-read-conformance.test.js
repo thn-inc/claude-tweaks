@@ -13,6 +13,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const BIN_DIR = path.join(__dirname, '..', 'plugin', 'bin');
 const SHARED_DIR = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
@@ -106,7 +107,7 @@ function findUnzippedReads(files) {
 // one violation. Throws when the mutation does not turn the line red.
 function assertGoesRed(relFile, needle, replacement) {
   const file = path.join(BIN_DIR, relFile);
-  const live = fs.readFileSync(file, 'utf8');
+  const live = readText(file);
   assert.ok(live.includes(needle), `${relFile} contains ${needle}`);
   assert.equal(findUnzippedReads([{ path: file, text: live }]).length, 0, `${relFile} is clean as shipped`);
   const broken = live.replace(needle, replacement);
@@ -147,7 +148,7 @@ test('AC2.1: no plugin/bin git argv carries --name-only/--name-status without -z
 
 test('AC2.1 go-red: removing -z from a real reader line is a violation', () => {
   const file = path.join(BIN_DIR, 'lib', 'hooks', 'pre-tool-use.js');
-  const live = fs.readFileSync(file, 'utf8');
+  const live = readText(file);
   const needle = "'--name-status', '-z'";
   assert.ok(live.includes(needle), 'the live reader line is present');
   const broken = live.replace(needle, "'--name-status'");
@@ -241,7 +242,7 @@ test('every plugin/bin path-list argv that takes a ref also passes --end-of-opti
 
 test('--end-of-options go-red: removing it from a real reader line is a violation', () => {
   const file = path.join(BIN_DIR, 'lib', 'wrap-up', 'facts.js');
-  const live = fs.readFileSync(file, 'utf8');
+  const live = readText(file);
   const needle = "'-z', '--end-of-options', `${base}...HEAD`], { trim: false }));";
   assert.ok(live.includes(needle), 'the live reader line is present');
   const broken = live.replace(needle, "'-z', `${base}...HEAD`], { trim: false }));");
@@ -250,7 +251,7 @@ test('--end-of-options go-red: removing it from a real reader line is a violatio
 });
 
 test('AC3.1: the _shared contract states the rule and names the reference implementations', () => {
-  const contract = fs.readFileSync(path.join(SHARED_DIR, 'git-path-read.md'), 'utf8');
+  const contract = readText(path.join(SHARED_DIR, 'git-path-read.md'));
   const tokens = [
     '-z', '--end-of-options', 'changed-files.js', 'compose-subject.js', 'git-z.js',
     'parseNumstatZ', 'parseStatusPorcelainZ', 'parseLsTreeZ', 'unquoteCPath', 'git-path-read: not a path list',
@@ -258,6 +259,6 @@ test('AC3.1: the _shared contract states the rule and names the reference implem
   for (const token of tokens) {
     assert.ok(contract.includes(token), `git-path-read.md mentions ${token}`);
   }
-  const discipline = fs.readFileSync(path.join(SHARED_DIR, 'git-discipline.md'), 'utf8');
+  const discipline = readText(path.join(SHARED_DIR, 'git-discipline.md'));
   assert.ok(discipline.includes('git-path-read.md'), 'git-discipline.md points at git-path-read.md');
 });

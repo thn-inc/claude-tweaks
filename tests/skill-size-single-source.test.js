@@ -24,6 +24,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SINGLE_SOURCE = 'plugin/bin/lib/skill-audit/budgets.js';
@@ -133,7 +134,7 @@ test('AC3.1: no file under tests/ or plugin/bin/ other than budgets.js defines o
   for (const abs of [...walkJs(path.join(ROOT, 'tests')), ...walkJs(path.join(ROOT, 'plugin', 'bin'))]) {
     const rel = path.relative(ROOT, abs).split(path.sep).join('/');
     if (rel === SINGLE_SOURCE || ALLOWLIST.has(rel)) continue;
-    const r = scanText(fs.readFileSync(abs, 'utf8'));
+    const r = scanText(readText(abs));
     for (const v of r.violations) violations.push(`${rel}:${v.line} (rule ${v.rule}): ${v.text}`);
     for (const u of r.unclassified) unclassified.push(`${rel}:${u.line} [${u.operand}]: ${u.text}`);
   }

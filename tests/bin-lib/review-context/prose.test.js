@@ -7,25 +7,16 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 
 const { PER_FILE_CAP_BYTES } = require('../../../plugin/bin/lib/review-context/build');
+const { readText } = require('../../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 
-const EFFORT_DERIVATION = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'review', 'review-effort-derivation.md'),
-  'utf8',
-);
-const LENS_DISPATCH = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'review', 'step3-lens-dispatch.md'),
-  'utf8',
-);
-const DEBATE_AND_REFUTATION = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'review', 'step3-debate-and-refutation.md'),
-  'utf8',
-);
+const EFFORT_DERIVATION = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'review-effort-derivation.md'));
+const LENS_DISPATCH = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-lens-dispatch.md'));
+const DEBATE_AND_REFUTATION = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-debate-and-refutation.md'));
 
 test('review-effort-derivation.md names the JSON shape mint prints by default', () => {
   assert.match(EFFORT_DERIVATION, /\{"dir":\s*"…"\}/);
@@ -51,7 +42,7 @@ test('step3-lens-dispatch.md defines {ctx-dir} before using it as a bare path in
 });
 
 test('AC7.1-AC7.2: step3-lens-dispatch.md and docs/plugin-structure.md both name oversizeSections', () => {
-  const plugStructure = fs.readFileSync(path.join(ROOT, 'docs', 'plugin-structure.md'), 'utf8');
+  const plugStructure = readText(path.join(ROOT, 'docs', 'plugin-structure.md'));
   assert.ok(LENS_DISPATCH.includes('oversizeSections'), 'step3-lens-dispatch.md must name oversizeSections');
   assert.ok(plugStructure.includes('oversizeSections'), 'docs/plugin-structure.md must name oversizeSections');
   assert.match(LENS_DISPATCH, /\{dir, contextPath, bytes, files, emptySections, oversizeSections, baselinePath, listenersPath\}/);
@@ -117,4 +108,14 @@ test('2956: the Agent-scratch cleanup check no longer excludes lens-*.json or fi
 test('3713: step3-lens-dispatch.md names the markdown stub and where the diff ends', () => {
   assert.ok(LENS_DISPATCH.includes('every readable markdown file'), 'must name the readable-markdown stub rule');
   assert.ok(LENS_DISPATCH.includes('The diff ends at the first `===== {path} =====` line'), 'must say where the diff ends');
+});
+
+test('3744 AC: review-effort-derivation.md pipes the record labels on stdin and writes no {ctx-dir}/record-{n}.json', () => {
+  assert.ok(!/>\s*"?(?:\{ctx-dir\}|\$\{?CTX_DIR\}?)\//.test(EFFORT_DERIVATION), 'no redirect into {ctx-dir}/ or $CTX_DIR/ may remain');
+  assert.ok(!EFFORT_DERIVATION.includes('record-{n}.json'), 'no record-{n}.json file may be written or read');
+  assert.match(
+    EFFORT_DERIVATION,
+    /gh issue view \{n\} --json labels \| node -e "[^\n]*readFileSync\(0\)[^\n]*parseRecordFacets/,
+    'the github-issues label read must pipe into a node -e that reads stdin and calls parseRecordFacets',
+  );
 });

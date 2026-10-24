@@ -29,8 +29,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const PR_EARLY_PATH = path.join(REPO_ROOT, 'plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
@@ -38,7 +38,7 @@ const PR_CHECKLIST_REFRESH_PATH = path.join(REPO_ROOT, 'plugin', 'skills', '_sha
 const REVIEW_CONSOLE_PATH = path.join(REPO_ROOT, 'plugin', 'skills', 'flow', 'multispec-review-console.md');
 const PR_FIRST_MERGE_PATH = path.join(REPO_ROOT, 'plugin', 'skills', '_shared', 'pr-first-merge.md');
 
-function read(p) { return fs.readFileSync(p, 'utf8'); }
+function read(p) { return readText(p); }
 function norm(s) { return s.replace(/\s+/g, ' '); }
 
 test('#2015: pr-early-run-lifecycle.md Step 3 template wraps Fixes in fixes-start/fixes-end markers (dual-marker scheme)', () => {

@@ -4,9 +4,10 @@ const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const { readText } = require('../../helpers/read-skill');
 
 const {
-  gatherPack, resolveInputs, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger,
+  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
@@ -675,18 +676,22 @@ test('gatherPack: --only runs only the named probes and still carries inputs/gen
   assert.deepStrictEqual(Object.keys(pack).sort(), ['durationMs', 'generatedAt', 'inputs', 'pr', 'residue']);
 });
 
-test('gatherPack runs the probes concurrently — eight 200 ms probes finish well under 2 s (#1930 AC4)', async () => {
+test('gatherPack runs the probes concurrently — the slowed probes overlap (#1930 AC4)', async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const tracked = async (body) => {
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    try { await sleep(200); return await body(); } finally { inFlight -= 1; }
+  };
   const slow = okDeps({
-    execFile: async (cmd, args) => { await sleep(200); return okDeps().execFile(cmd, args); },
-    computeBlastRadius: async () => { await sleep(200); return { summary: {} }; },
-    readClaimBlob: async () => { await sleep(200); return { content: null, failure: null, absent: true }; },
+    execFile: (cmd, args) => tracked(() => okDeps().execFile(cmd, args)),
+    computeBlastRadius: () => tracked(async () => ({ summary: {} })),
+    readClaimBlob: () => tracked(async () => ({ content: null, failure: null, absent: true })),
   });
-  const t0 = Date.now();
-  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps: slow });
-  const wall = Date.now() - t0;
-  assert.ok(wall < 600, `wall ${wall} ms`);
-  assert.ok(pack.durationMs < 600, `pack.durationMs ${pack.durationMs}`);
+  await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps: slow });
+  assert.strictEqual(maxInFlight, 7, 'seven of the nine slowed calls run at once; a serial pack reads 1');
 });
 
 test('gatherPack: a probe that never settles is bounded by deps.probeTimeoutMs rather than hanging the pack (#1930 review I3)', async () => {
@@ -1284,7 +1289,7 @@ test('the release probe is gone — pre-merge it is a constant and its consumer 
 // merge-size prediction, from the pack or from the CLI.
 test('no merge-size probe anywhere in the pre-merge refresh (#1930 fix round 4, #3310)', () => {
   assert.ok(!PROBE_NAMES.includes('mergeSize'));
-  const refresh = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-checklist-refresh.md'), 'utf8');
+  const refresh = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-checklist-refresh.md'));
   assert.ok(!refresh.includes('pack.mergeSize'), 'the pre-merge step reads no pack-fed merge size');
   assert.doesNotMatch(refresh, /merge-size-probe/, 'the pre-merge step no longer runs the probe CLI');
   const section = refresh.slice(refresh.indexOf('## Pre-merge title/description refresh'), refresh.indexOf('## Merge-time gh-absent degrade'));
@@ -1541,4 +1546,48 @@ test('pr probe: unparseable pr-checks.js output is ci read-failed (#3469)', asyn
   const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['pr'], deps });
   assert.strictEqual(pack.pr.ok, true);
   assert.strictEqual(pack.pr.value.ci.state, 'read-failed');
+});
+
+test('resolveWorktreeBase returns the merge base against origin/{integration-branch} when one resolves (#3686)', () => {
+  const deps = {
+    resolvePolicy: policyFake(DEFAULT_POLICY),
+    git: (args) => {
+      if (args[0] === 'merge-base' && args[2] === 'origin/main') return 'abc123\n';
+      if (args[0] === 'merge-base' && args[2] === 'main') return 'local999\n';
+      return '';
+    },
+    ghSync: () => { throw new Error('no gh'); },
+  };
+  assert.strictEqual(resolveWorktreeBase('/w/tree', deps), 'abc123');
+});
+
+test('resolveWorktreeBase falls back to the local integration branch when origin/{branch} has no merge base (#3686)', () => {
+  const deps = {
+    resolvePolicy: policyFake(DEFAULT_POLICY),
+    git: (args) => {
+      if (args[0] === 'merge-base' && args[2] === 'origin/main') throw new Error('unknown revision origin/main');
+      if (args[0] === 'merge-base' && args[2] === 'main') return 'local999\n';
+      return '';
+    },
+    ghSync: () => { throw new Error('no gh'); },
+  };
+  assert.strictEqual(resolveWorktreeBase('/w/tree', deps), 'local999');
+});
+
+test('resolveWorktreeBase returns null when git fails (#3686)', () => {
+  const deps = {
+    resolvePolicy: policyFake(DEFAULT_POLICY),
+    git: () => { throw new Error('git failed'); },
+    ghSync: () => { throw new Error('no gh'); },
+  };
+  assert.strictEqual(resolveWorktreeBase('/w/tree', deps), null);
+});
+
+test('resolveWorktreeBase returns null when the policy read throws (#3686)', () => {
+  const deps = {
+    resolvePolicy: () => { throw new Error('policy unreadable'); },
+    git: () => 'abc123\n',
+    ghSync: () => { throw new Error('no gh'); },
+  };
+  assert.strictEqual(resolveWorktreeBase('/w/tree', deps), null);
 });

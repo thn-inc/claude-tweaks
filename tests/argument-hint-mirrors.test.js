@@ -23,6 +23,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { extractArgumentHint, inputSectionBody } = require('../plugin/bin/lib/skill-audit/argument-hint');
 const { listSkillDirs } = require('../plugin/bin/lib/skill-audit/skill-catalog');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const ENUMERATION = 'docs/skill-authoring.md';
@@ -32,7 +33,7 @@ const CANONICAL = 'frontmatter';
 const PRESENCE = ['required', 'when-present'];
 const SKILLS = listSkillDirs(path.join(ROOT, 'plugin'));
 
-const readRepoFile = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const readRepoFile = (rel) => readText(path.join(ROOT, rel));
 
 // Split a markdown table row on unescaped `|` only -- a `\|` inside a cell
 // is the markdown escape for a literal pipe (every alternation in a Takes

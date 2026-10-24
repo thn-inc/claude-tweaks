@@ -191,7 +191,7 @@ function checkB(scopeKeywords, plannedPaths, repoRoot) {
 }
 
 // ── Premise-refs — Upstream-schema premise citation check ──────────────────
-// plan-authoring-checks.md's Upstream-schema premise check (#2575): a plan
+// plan-authoring-boundary-checks.md's Upstream-schema premise check (#2575): a plan
 // may declare `Premise-refs: {path or URL}` lines naming what it claims to
 // have read to prove a claimed semantic about a schema this project does
 // not own. This reports any *local path* that does not resolve to an

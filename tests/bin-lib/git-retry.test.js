@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { withIndexLockRetry, isIndexLockFailure } = require('../../plugin/bin/lib/git-retry');
+const { readText } = require('../helpers/read-skill');
 
 const LOCK_ERR_MSG = "fatal: Unable to create '/repo/.git/index.lock': File exists.";
 
@@ -84,7 +85,7 @@ test('withIndexLockRetry: a { failure, stderr }-returning runner does not retry 
 test('withIndexLockRetry: the module never references unlinking a lock file', () => {
   const fs = require('fs');
   const path = require('path');
-  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'git-retry.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'git-retry.js'));
   assert.doesNotMatch(src, /\bunlinkSync\(|\bfs\.unlink\(|\bfs\.rm\(/);
 });
 
@@ -98,16 +99,13 @@ test('withIndexLockRetry: bounded — a runner that always fails on index.lock e
     err.stderr = LOCK_ERR_MSG;
     throw err;
   };
-  const start = Date.now();
   const retrying = withIndexLockRetry(runner, { attempts: 4, sleep: fakeSleep(sleeps) });
   assert.throws(
     () => retrying(['commit', '-m', 'x']),
     (err) => /index\.lock/.test(err.stderr),
   );
-  const elapsed = Date.now() - start;
   assert.equal(callCount, 4, 'expected exactly `attempts` calls, no more');
   assert.equal(sleeps.length, 3, 'expected attempts-1 sleeps between attempts');
-  assert.ok(elapsed < 1000, `injected sleep must make this instant, took ${elapsed}ms`);
 });
 
 test('isIndexLockFailure: matches both documented signatures, rejects an unrelated error', () => {
@@ -133,7 +131,7 @@ test('conformance: every named commit call site routes through withIndexLockRetr
     path.join(root, 'bin', 'release-local.js'),
   ];
   for (const file of sites) {
-    const src = fs.readFileSync(file, 'utf8');
+    const src = readText(file);
     assert.match(src, /withIndexLockRetry/, `${file} must import/use withIndexLockRetry`);
     // Every line that issues a ['commit', ...] git call must not be a bare
     // runGit(...)/deps.git(...) invocation — it must go through the

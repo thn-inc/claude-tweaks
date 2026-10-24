@@ -57,7 +57,7 @@ const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', '
 // export) so a test can assert the two lists partition ALL_CHECKS exactly —
 // no overlap, nothing silently dropped when a check is added to one list and
 // not the other.
-const BACKGROUND_CHECKS = ['release', 'archive', 'archive-branches', 'remote-prune', 'reap'];
+const BACKGROUND_CHECKS = ['release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
 
 // String-literal per-event requires — not a computed `require('./lib/hooks/' +
 // event)` — so every `bin/lib/hooks/*.js` module resolves statically inside
@@ -1099,7 +1099,8 @@ async function main(argv) {
     // ownership not computable) it can't disambiguate on its own. The
     // fallback only considers the docs/plans ledger this branch owns
     // (merge-base diff or untracked, #3566) — an inherited one is never
-    // deleted from here.
+    // deleted from here. #3686: the not-found report names those inherited
+    // ledgers (read-only, via describeRunLedgers) so "not found" says why.
     const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
     const {
       runDir, invalidRunArg, rest, worktreeLocalFallback, candidates,
@@ -1113,7 +1114,7 @@ async function main(argv) {
     } else if (!runDir) {
       process.stdout.write('claude-tweaks: no pipeline run dir found — ledger not deleted\n');
     } else {
-      const { resolveLedgerPath } = require('./lib/wrap-up/ledger-write');
+      const { resolveLedgerPath, describeRunLedgers } = require('./lib/wrap-up/ledger-write');
       const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
       const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg || null });
       if (!resolved.ok && resolved.reason === 'ambiguous') {
@@ -1123,7 +1124,15 @@ async function main(argv) {
       } else if (!resolved.ok && resolved.reason === 'unattributable') {
         process.stdout.write(`claude-tweaks: delete-ledger: cannot attribute docs/plans ledgers to ${path.basename(runDir)} (${resolved.detail}) — pass --ledger <path> explicitly; ledger not deleted\n`);
       } else if (!resolved.ok) {
-        process.stdout.write(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)} — not found\n`);
+        // #3686: with no --ledger, an inherited-only docs/plans set is named here.
+        let inherited = '';
+        if (!ledgerArg) {
+          const { report, others } = describeRunLedgers({ runDir, worktree });
+          if (report === 'none' && others.length > 0) {
+            inherited = ` — only inherited ledgers found: ${others.join(', ')}`;
+          }
+        }
+        process.stdout.write(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)}${inherited} — not found\n`);
       } else {
         try {
           fs.unlinkSync(resolved.path);
@@ -1574,7 +1583,7 @@ async function main(argv) {
     try {
       out = await require('./lib/reconcile').reconcile(opts);
     } catch {
-      out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }] };
+      out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }] };
     }
     if (jsonOut) {
       // Unchanged from before #638 — byte-for-byte, so bin/lib/reconcile's
@@ -1592,7 +1601,7 @@ async function main(argv) {
     // #644 Deliverable 3 — the plain one-line residue summary
     // `/claude-tweaks:flow`'s closing report shells out for. Composed
     // without re-running the background checks (release/archive/
-    // archive-branches/remote-prune/reap already ran off the hot path via
+    // archive-branches/remote-prune/ledger-residue/reap already ran off the hot path via
     // `reconcile-background`, most recently under `session-start.js`) —
     // this reads that persisted `summary.archived` count plus the residue
     // cache both `archive`/`reap` already maintain (Deliverable 2), and
@@ -1645,6 +1654,7 @@ async function main(argv) {
     const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
     const { isFresh } = require('./lib/reconcile/cache');
     const { QUIET_SKIP_REASONS } = require('./lib/hooks/worktree-reap');
+    const { QUIET_SKIP_REASONS: LEDGER_RESIDUE_QUIET_SKIP_REASONS } = require('./lib/reconcile/ledger-residue');
     const root = mainCheckoutRoot(cwd) || cwd;
     // #1687: session-start.js's spawn site now threads the spawning session's
     // id into this dedicated env var (never `CLAUDE_CODE_SESSION_ID` — see
@@ -1665,7 +1675,7 @@ async function main(argv) {
     // also stamps it moments before this process starts — reusing it here
     // would make this process (and the spawn-gate that decided to launch it)
     // see a false "fresh" from a pass that never touched
-    // release/archive/archive-branches/remote-prune/reap, and the
+    // release/archive/archive-branches/remote-prune/ledger-residue/reap, and the
     // background checks would never run. Caught by task review against a
     // real pr-first remote (#820 Task 10 fix-up); reconcile()'s own
     // lastRunAt/cache.js contract is untouched by this fix.
@@ -1706,6 +1716,13 @@ async function main(argv) {
         archived: (r.runs || []).filter((x) => x.action === 'archived').length,
         archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,
         prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,
+        // Distinct removal PRs opened this pass (#3812) — at most one today.
+        ledgerResiduePrOpened: new Set((r.ledgerResidue || []).filter((e) => e.action === 'pr-opened').map((e) => e.prNumber)).size,
+        // Residue ledgers left on the integration branch and why, minus the
+        // expected/transient reasons ledger-residue.js keeps quiet.
+        notableLedgerResidue: (r.ledgerResidue || [])
+          .filter((e) => e.action === 'skip' && !LEDGER_RESIDUE_QUIET_SKIP_REASONS.has(e.reason))
+          .map((e) => (e.prNumber !== undefined ? { path: e.path, reason: e.reason, prNumber: e.prNumber } : { path: e.path, reason: e.reason })),
         reaped: (r.worktrees || []).filter((w) => w.action === 'reaped').length,
         // Individually-named worktrees left in place and why — a more
         // granular signal than the check-level `skipped` array below.

@@ -20,6 +20,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', 'plugin', 'skills');
 
@@ -84,7 +85,7 @@ const LITERAL_TMP_RE = /\/tmp\/(?!ct-)[a-z](?:[a-z0-9-]|\{[a-zA-Z0-9]+\})*-(?:[a
 
 test('every migrated file cites _shared/session-tmp-root.md', () => {
   for (const rel of MIGRATED_FILES) {
-    const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const text = readText(path.join(ROOT, rel));
     assert.match(text, /session-tmp-root\.md/, `${rel} must cite _shared/session-tmp-root.md`);
   }
 });
@@ -99,7 +100,7 @@ test('every migrated file cites _shared/session-tmp-root.md', () => {
 test('no migrated file retains a literal unscoped /tmp/{prefix}-*.{ext} path', () => {
   const offenders = [];
   for (const rel of MIGRATED_FILES) {
-    const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const text = readText(path.join(ROOT, rel));
     const m = text.match(LITERAL_TMP_RE);
     if (m) offenders.push(`${rel}: ${m[0]}`);
   }
@@ -144,15 +145,12 @@ test('LITERAL_TMP_RE still rejects legitimate session-scoped and ct-prefixed pat
 });
 
 test('_shared/session-tmp-root.md documents the degrade rule and the record-suffix composition rule', () => {
-  const text = fs.readFileSync(path.join(ROOT, '_shared', 'session-tmp-root.md'), 'utf8');
+  const text = readText(path.join(ROOT, '_shared', 'session-tmp-root.md'));
   assert.match(text, /Degrade rule/, 'must document the no-session-id fallback');
   assert.match(text, /Record-suffixed callers keep both suffixes/, 'must document combining session root with an existing record suffix');
 });
 
 test('bin/lib/session-tmp.js is a pure module (no gh/MCP/network calls)', () => {
-  const text = fs.readFileSync(
-    path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'session-tmp.js'),
-    'utf8',
-  );
+  const text = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'session-tmp.js'));
   assert.doesNotMatch(text, /execFileSync|execSync|spawn|fetch\(/, 'must stay pure filesystem helpers, no network/process calls');
 });

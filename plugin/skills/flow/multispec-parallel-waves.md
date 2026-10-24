@@ -33,8 +33,9 @@ Validation step 3's `preflight-records.js` call adds `--waves` when `parallel` i
 
 **No plan.** If step 3's call exits 1 (a fetch failed), `parallel` falls back to a sequential run: re-run step 3's call without `--waves`, so the sequential path still gets its records, overlap groups and merge-gate result. That re-run is step 3's single retry (`multispec-preflight-failure.md`); if it also exits non-zero, step 3's STOP applies. Exit 2 (malformed, or a `--waves` dependency cycle) never re-runs: dropping `--waves` cannot fix it, so step 3's STOP applies at once. Once the parent run directory exists after the exit-1 fallback, write one `SKIP` entry (`$PIPELINE_RUN_DIR` is the parent here, as in `multispec-merge-gate.md`):
 ```
-node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 1 parallel waves (skipped)" --text "condition: preflight-records.js --waves exited non-zero ({stderr reason}) → fallback: sequential run." --reversibility n/a
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 1 parallel waves (skipped)" --reversibility n/a --text-file "{text-file}"
 ```
+`{text-file}` holds one line, `condition: preflight-records.js --waves exited non-zero ({stderr reason}) → fallback: sequential run.`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — the stderr reason is tool-supplied, so it never passes through shell quoting.
 
 **"Keep my order."** When Dependency-aware ordering's "Keep my order" option was chosen, the waves still follow the DAG only: a parallel run cannot honor a non-topological manual order. Log one `AUTO` line saying so:
 ```
@@ -56,12 +57,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sec
    - Fold the member's ledger (below), and commit. The fold runs before the worktree is removed, because the member's ledger may live inside it.
    - After a clean merge, run `git worktree remove {worktreePath}`, then `git branch -D {worktreeBranch}`. Never `--force`: if the removal is refused (for example, a dependency install left modified or untracked files), leave the worktree and its branch in place, and name the path in the Pipeline Summary for manual cleanup. Log:
      ```
-     node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$MULTISPEC_PARENT_DIR" --section "/flow" --status AUTO --step "Parallel waves merge-back" --reversibility high --text "#{N} merged; git worktree remove refused ({reason}); {worktreePath} and {worktreeBranch} left for manual cleanup."
+     node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$MULTISPEC_PARENT_DIR" --section "/flow" --status AUTO --step "Parallel waves merge-back" --reversibility high --text-file "{text-file}"
      ```
+     `{text-file}` holds one line, `#{N} merged; git worktree remove refused ({reason}); {worktreePath} and {worktreeBranch} left for manual cleanup.`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — the refusal reason and the branch name are git-supplied, so they never pass through shell quoting.
    - **On a merge conflict:** run `git merge --abort` to restore the clean tree, run `git worktree remove {worktreePath}`, keep the branch, and re-run that record's build and test sequentially in the shared worktree after the rest of the wave has merged. Before the re-run, rename an unfolded `{parent}/spec-{N}/ledger.md` to `ledger.abandoned.md`, so the re-run starts a fresh active ledger rather than reading the abandoned attempt's rows. A passing re-run supersedes the kept branch, so delete it; a failing one keeps it (Failure handling). A Key Files miss is the expected cause, since Key Files are only a proxy for what a build touches. Log:
      ```
-     node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$MULTISPEC_PARENT_DIR" --section "/flow" --status AUTO --step "Parallel waves merge-back" --reversibility high --text "#{N} conflicted at merge-back ({paths}); re-run sequentially."
+     node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$MULTISPEC_PARENT_DIR" --section "/flow" --status AUTO --step "Parallel waves merge-back" --reversibility high --text-file "{text-file}"
      ```
+     `{text-file}` holds one line, `#{N} conflicted at merge-back ({paths}); re-run sequentially.`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — git accepts `"`, `$`, backtick and `\` in file names, so the paths never pass through shell quoting.
    - Once the wave's last member has merged, do the phase exit the members skipped: push the shared branch and flip the PR checklist's `build` row (`_shared/git-discipline.md`'s Phase-exit push section, `_shared/pr-checklist-refresh.md`'s Phase-checklist update section). The `test` row flips at step 4, when review re-runs `/claude-tweaks:test` on the merged tree.
 4. **Review, polish and wrap-up** run for each merged member one at a time, in run order, in the shared worktree. Phase-exit pushes go to the shared branch only. A `built-tested` member hands review `TEST_PASSED=true`, as the sequential `test` → `review` hand-off does. **The merged tree's re-verification is load-bearing.** A member's tests passed on its own branch, never on the merged tree. Review's Step 1.5 stamp check (`review/code-mode-steps.md`, "In `/claude-tweaks:flow` pipeline") finds that the runner stamp does not verify the merged HEAD, and it re-triggers `/claude-tweaks:test` there before any review. Never bypass that check for a merged member: it is the only verification the merged tree gets.
 
@@ -139,5 +142,6 @@ Each unmerged member's row names its kept branch as `(branch {name})`. Never `gi
 
 Any worktree such a member did leave is removed, and its branch kept, as for a failed member. With no `worktreePath` metadata, take the path from the member's `WORKTREE:` line. If that is missing too, a `.claude/worktrees/agent-*` entry in `git worktree list` that cannot be attributed to this member is left in place and named in the Pipeline Summary. Before the sequential re-run, rename an unfolded `{parent}/spec-{N}/ledger.md` to `ledger.abandoned.md`, as on a merge conflict. Write one `SKIP` entry per member:
 ```
-node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$MULTISPEC_PARENT_DIR" --section "/flow" --status SKIP --step "Parallel waves member #{N}" --text "condition: per-spec worktree unavailable ({reason}) → fallback: sequential" --reversibility n/a
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$MULTISPEC_PARENT_DIR" --section "/flow" --status SKIP --step "Parallel waves member #{N}" --reversibility n/a --text-file "{text-file}"
 ```
+`{text-file}` holds one line, `condition: per-spec worktree unavailable ({reason}) → fallback: sequential`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — the reason is git- and tool-supplied, so it never passes through shell quoting.

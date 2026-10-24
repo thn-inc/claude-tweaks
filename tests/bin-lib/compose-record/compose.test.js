@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { composeBody, validateShaped, splitSections } = require('../../../plugin/bin/lib/compose-record/compose');
 const { shapeGate, PLACEHOLDER_PATTERNS } = require('../../../plugin/bin/lib/issues/materialize-format');
+const { readText } = require('../../helpers/read-skill');
 
 const SHAPED = [
   '## Current State',
@@ -180,7 +181,7 @@ test('PLACEHOLDER_PATTERNS union equals the gate\'s existing combined regex', ()
 });
 
 test('compose.js declares no section or placeholder list of its own (#2827)', () => {
-  const src = require('fs').readFileSync(require('path').join(__dirname, '../../../plugin/bin/lib/compose-record/compose.js'), 'utf8');
+  const src = readText(require('path').join(__dirname, '../../../plugin/bin/lib/compose-record/compose.js'));
   assert.doesNotMatch(src, /REQUIRED_SECTIONS\s*=/);
   assert.doesNotMatch(src, /PLACEHOLDER_MARKERS\s*=/);
   assert.doesNotMatch(src, /ORIGINAL_REQUEST_RE\s*=/);

@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { startServer, resolveSafe } = require('../../../plugin/bin/lib/visual-decide/server');
+const { readText } = require('../../helpers/read-skill');
 
 function mkTmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -253,10 +254,7 @@ test('review fix: unauthenticated requests never reset the idle timer', async ()
 });
 
 test('AC8: module has zero non-builtin imports', () => {
-  const src = fs.readFileSync(
-    path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'visual-decide', 'server.js'),
-    'utf8',
-  );
+  const src = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'visual-decide', 'server.js'));
   const requires = [...src.matchAll(/require\(['"]([^'"]+)['"]\)/g)].map((m) => m[1]);
   assert.ok(requires.length > 0, 'expected at least one require');
   for (const spec of requires) {

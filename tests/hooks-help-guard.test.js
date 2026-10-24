@@ -20,6 +20,7 @@ const os = require('os');
 const path = require('path');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
 const { USAGE } = require('../plugin/bin/hooks.js');
+const { readText } = require('./helpers/read-skill');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -120,7 +121,7 @@ test('#1143: AC2 — the documented state-mutating verbs named in the issue each
 // branch, so they're correctly excluded by construction, not by an allowlist
 // that could itself drift.
 test('#1143: every cmd === \'...\' dispatch branch in main() has a matching USAGE entry (guard coverage cannot silently regress)', () => {
-  const source = fs.readFileSync(HOOKS, 'utf8');
+  const source = readText(HOOKS);
   const mainStart = source.indexOf('async function main(');
   assert.ok(mainStart !== -1, 'main() not found in hooks.js — has it been renamed?');
   const mainEnd = source.indexOf('\nif (require.main === module)', mainStart);

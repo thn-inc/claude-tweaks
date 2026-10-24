@@ -38,7 +38,7 @@ files:
 - **Red flags:** A singleton relayed as `ready-to-merge` that the dispatching session then refuses with `=0` despite a pass line being present — the two paths have drifted on the marker text.
 
 ### 3b. Not confirmed — the run refuses and falls through to the console
-- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" … --text "#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}{detail}) — treated as needs-human, Review Console renders normally"`
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" … --text-file "{text-file}"`, `{text-file}` holding `#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}{detail}) — treated as needs-human, Review Console renders normally` (`{detail}` can carry an error message, so the text goes through a file, never shell quoting)
 - **Action:** The run logs the refusal (and does not also write a fabricated `assess-agent-autonomy verdict needs-human` line), skips acceptance labeling, ledger deletion, and the merge, and renders the Review Console normally.
 - **Should feel:** Safe and legible — the record is exactly where a real `needs-human` would have left it, and the refusal line says why.
 - **Should understand:** The refusal line carries both `merge-check` and `needs-human`, so `bin/console-resolve.js`'s `needsHumanVerdict` resolves the merge half to `leave-open` even under `consoleAutoResolve`. `{detail}` is `, error: {error}` when `decisions.md` was unreadable, `, snippet exited {code} with no output` when the check crashed, and empty otherwise — so the morning reader can tell a broken path or a crash from a Layer 2 that never ran.

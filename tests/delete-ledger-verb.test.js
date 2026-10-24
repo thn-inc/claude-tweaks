@@ -63,7 +63,7 @@ test('delete-ledger: falls back to the single docs/plans/*-ledger.md candidate w
   assert.ok(!fs.existsSync(ledgerPath));
 });
 
-test('delete-ledger: an inherited docs/plans ledger committed on main is not deleted', () => {
+test('delete-ledger: an inherited docs/plans ledger committed on main is not deleted, and the not-found report names it (#3686)', () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
@@ -73,8 +73,39 @@ test('delete-ledger: an inherited docs/plans ledger committed on main is not del
   git(['commit', '-q', '-m', 'inherited ledger'], root);
   git(['checkout', '-q', '-b', 'feature'], root);
   const result = runHook(['delete-ledger', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /only inherited ledgers found: .*2026-08-14-old-ledger\.md/);
   assert.match(result.stdout, /not found/);
   assert.ok(fs.existsSync(inherited));
+});
+
+test('delete-ledger: an explicit --ledger naming a missing file keeps the plain not-found line (no inherited diagnostic)', () => {
+  const root = gitRoot();
+  const runDir = runDirFixture(root);
+  fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
+  const inherited = path.join(root, 'docs', 'plans', '2026-08-14-old-ledger.md');
+  fs.writeFileSync(inherited, '# Open Items\n');
+  git(['add', 'docs/plans/2026-08-14-old-ledger.md'], root);
+  git(['commit', '-q', '-m', 'inherited ledger'], root);
+  git(['checkout', '-q', '-b', 'feature'], root);
+  const missing = path.join(root, 'docs', 'plans', 'missing-ledger.md');
+  const result = runHook(['delete-ledger', '--run', runDir, '--ledger', missing], { cwd: root });
+  assert.match(result.stdout, /not found/);
+  assert.doesNotMatch(result.stdout, /inherited/);
+  assert.ok(fs.existsSync(inherited));
+});
+
+test('delete-ledger: unattributable arm — a non-git run-state worktree prints "cannot attribute" and keeps the ledger', () => {
+  const root = gitRoot();
+  const runDir = runDirFixture(root);
+  const nonGit = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-nongit-')));
+  fs.mkdirSync(path.join(nonGit, 'docs', 'plans'), { recursive: true });
+  const ledger = path.join(nonGit, 'docs', 'plans', '2026-08-14-x-ledger.md');
+  fs.writeFileSync(ledger, '# Open Items\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: nonGit }));
+  const result = runHook(['delete-ledger', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /cannot attribute docs\/plans ledgers to 2026-08-14T120000-spec-999/);
+  assert.match(result.stdout, /ledger not deleted/);
+  assert.ok(fs.existsSync(ledger));
 });
 
 test('delete-ledger: running it again on an already-deleted ledger reports not-found, not a crash', () => {
@@ -84,7 +115,8 @@ test('delete-ledger: running it again on an already-deleted ledger reports not-f
   runHook(['delete-ledger', '--run', runDir], { cwd: root });
   const second = runHook(['delete-ledger', '--run', runDir], { cwd: root });
   assert.strictEqual(second.code, 0);
-  assert.match(second.stdout, /not found/);
+  assert.match(second.stdout, /no ledger found for 2026-08-14T120000-spec-999 — not found\n$/);
+  assert.doesNotMatch(second.stdout, /inherited/);
 });
 
 test('delete-ledger: 2+ docs/plans/*-ledger.md candidates refuses to guess, naming all candidates', () => {

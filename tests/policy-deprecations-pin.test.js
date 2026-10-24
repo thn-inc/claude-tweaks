@@ -9,14 +9,14 @@
 // closed the gap (#629).
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { RENAMED_KEYS } = require('../plugin/bin/lib/policy-schema');
+const { readText } = require('./helpers/read-skill');
 
 const DEPRECATIONS_MD_PATH = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-deprecations.md');
 const ALIASES_MD_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'deprecated-aliases.md');
-const deprecationsMd = fs.readFileSync(DEPRECATIONS_MD_PATH, 'utf8');
-const aliasesMd = fs.readFileSync(ALIASES_MD_PATH, 'utf8');
+const deprecationsMd = readText(DEPRECATIONS_MD_PATH);
+const aliasesMd = readText(ALIASES_MD_PATH);
 
 // Extract every `## \`{key}\`` heading's leading backtick-quoted token.
 function headingKeys(text) {

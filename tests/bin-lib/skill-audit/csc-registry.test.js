@@ -32,17 +32,17 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { sectionIndex } = require('../health-core/skill-md-house-checks');
 const { listSkillDirs, KNOWN_SKILLS } = require('../../../plugin/bin/lib/skill-audit/skill-catalog.js');
+const { readText } = require('../../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 const SKILLS_DIR = path.join(ROOT, 'plugin', 'skills');
 // listSkillDirs takes the plugin payload root (`skills/` sits directly beneath it).
 const SKILLS = listSkillDirs(path.join(ROOT, 'plugin'));
 
-const readSkill = (name) => fs.readFileSync(path.join(SKILLS_DIR, name, 'SKILL.md'), 'utf8');
+const readSkill = (name) => readText(path.join(SKILLS_DIR, name, 'SKILL.md'));
 
 // house-structure.test.js's NO_NEXT_ACTIONS, mirrored: skills genuinely
 // exempt from carrying a Component-Skill Contract section at all.

@@ -15,9 +15,10 @@ const fs = require('fs');
 const path = require('path');
 const { gitRepo } = require('./helpers/git-fixtures');
 const { readManifest } = require('../plugin/bin/lib/flow/manifest');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.resolve(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 const collapse = (s) => s.replace(/\s+/g, ' ');
 
 function sectionBetween(text, startRe, endRe) {

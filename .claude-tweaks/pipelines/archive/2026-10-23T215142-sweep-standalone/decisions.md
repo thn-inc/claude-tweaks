@@ -1,0 +1,66 @@
+## /tidy
+- AUTO 00:00:33 — Step 7: deleted 38 orphaned plans (related records closed, no repo citation; re-verified fresh against origin/main before each delete) and 1 orphaned ledger (docs/plans/2026-10-20-skill-description-trim-audit-ledger.md — no open row, run 2799 archived), one commit each on worktree-tidy-sweep-2026-10-23 (5c364edf3..4a6d5b45b). Reversibility: med. [lever: tidy-aggressiveness=moderate (default)]
+- AUTO 00:01:26 — Step 7.5: PR #3994 opened and armed --auto (housekeeping-auto-merge: explicit) — merged immediately (no required checks pending), squash 5c8cf4fee. Reversibility: med. [lever: housekeeping-auto-merge=true (policy)]
+- STAGED 00:02:53 — Step 6: promote proposal for parked #3686 (trigger met by 5914ef11b, problem unresolved). Stage path: staged/tidy-promote-1.md. Reversibility: n/a. [lever: tidy-aggressiveness=moderate (default)]
+- AUTO 00:03:57 — Archival: compacted 2026-09-19T210012-record-2405 (age: 34 days, status: interrupted) into index-2026-09.md (archive is additive, nothing deleted). Reversibility: high.
+- AUTO 00:03:57 — Archival: compacted 2026-09-19T213024-record-2598 (age: 34 days, status: interrupted) into index-2026-09.md (archive is additive, nothing deleted). Reversibility: high.
+- SKIP 10:22:28 — log-decision: tidy --approve: tidy-promote-1 (#3686 Promote: remove parked, re-shape via /specify) stale — skipped; #3686 re-read live 2026-10-24: no parked label, now ready+auto:build+auto:merge (shaped by this sweep's own specify step). Approve set empty after re-verify; nothing applied. Reversibility: n/a.
+## /specify
+- AUTO 00:13:52 — Release: released claim on #3898 (shaped: #3898); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:13:53 — Shape: shaped #3898 headlessly — framing guard: open; ceremony-check: standard; framing-check (shaped): open; stamped ready, shaped:headless, risk:medium, size:medium, ceremony:standard, type:bug; Surface: infra; near-dup: none; read-back OK. Reversibility: high.
+- AUTO 00:16:20 — Release: released claim on #3931 (shaped: #3931); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:16:21 — Shape: shaped #3931 headlessly — framing guard: open; ceremony-check: fast-lane; framing-check (shaped): open; stamped ready, shaped:headless, risk:low, size:low, ceremony:fast-lane, type:bug; Surface: infra; near-dup: none; read-back OK. Reversibility: high.
+- AUTO 00:18:23 — Release: released claim on #3900 (shaped: #3900); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:18:23 — Shape: shaped #3900 headlessly — framing guard: open; ceremony-check: standard; framing-check (shaped): open; stamped ready, shaped:headless, risk:medium, size:medium, ceremony:standard (type:task present); Surface: infra; near-dup: #3901-#3904 score 1 title-similarity (surfaced in Related, no refusal); read-back OK. Reversibility: high.
+- AUTO 00:19:59 — Release: released claim on #3901 (shaped: #3901); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:19:59 — Shape: shaped #3901 headlessly — framing guard: open; ceremony-check: fast-lane; framing-check (shaped): open; premise check: all 3 digest items already resolved on origin/main (#3024, #3870, report split) — shaped as verify-and-close; stamped ready, shaped:headless, risk:low, size:low, ceremony:fast-lane; near-dup: #3900,#3902-#3904 score 1 (Related only); read-back OK. Reversibility: high.
+- AUTO 00:21:24 — Release: released claim on #3902 (shaped: #3902); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:21:24 — Shape: shaped #3902 headlessly — framing guard: open; ceremony-check: fast-lane; framing-check (shaped): open; premise check: all 4 cited ledgers already deleted on origin/main — shaped as verify-and-close; stamped ready, shaped:headless, risk:low, size:low, ceremony:fast-lane; near-dup: digest siblings score 1 (Related only); read-back OK. Reversibility: high.
+- AUTO 00:23:12 — Release: released claim on #3903 (shaped: #3903); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:23:12 — Shape: shaped #3903 headlessly — framing guard: open; ceremony-check: standard; framing-check (shaped): open; 3 mechanical fixes + 6 staged-decision items (5 needs-human-decision rulings to stage at Review Console); stamped ready, shaped:headless, risk:low, size:medium, ceremony:standard; near-dup: digest siblings score 1 (Related only); read-back OK. Reversibility: high.
+- AUTO 00:24:47 — Release: released claim on #3904 (shaped: #3904); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:24:47 — Shape: shaped #3904 headlessly — framing guard: open; ceremony-check: standard; framing-check (shaped): open; item 2 defers to open #3467's needs:decision; stamped ready, shaped:headless, risk:medium, size:low, ceremony:standard; near-dup: digest siblings score 1 (Related only); read-back OK. Reversibility: high.
+- AUTO 00:26:15 — Release: released claim on #3905 (shaped: #3905); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:26:15 — Shape: shaped #3905 headlessly — framing guard: open; ceremony-check: fast-lane; framing-check (shaped): open; stamped ready, shaped:headless, risk:low, size:low, ceremony:fast-lane (type:bug present); near-dup: none; read-back OK. Reversibility: high.
+- AUTO 00:28:28 — Release: released claim on #3953 (shaped: #3953); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:28:28 — Shape: shaped #3953 headlessly — framing guard: open; ceremony-check: fast-lane; framing-check (shaped): open; root cause reproduced via CRLF preload on origin/main d02483933 (12 pass/2 fail, raw read at test line 49); stamped ready, shaped:headless, risk:low, size:low, ceremony:fast-lane; near-dup: Windows-regression siblings score 1 (Related only); read-back OK. Reversibility: high.
+- AUTO 00:29:56 — Release: released claim on #3982 (shaped: #3982); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:29:56 — Shape: shaped #3982 headlessly — framing guard: open; ceremony-check: fast-lane; framing-check (shaped): open; root cause: reconcile.test.js:501 expected path built with path.join vs git's / output (path-separator class); stamped ready, shaped:headless, risk:low, size:low, ceremony:fast-lane; near-dup: Windows siblings score 1 (Related only); read-back OK. Reversibility: high.
+- AUTO 00:32:40 — Release: released claim on #3983 (shaped: #3983); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:32:40 — Shape: shaped #3983 headlessly — framing guard: open; ceremony-check: fast-lane; framing-check (shaped): open; premise check: Windows verify-report at d02483933 (run 40030935846) omits hooks-denial-run-dir from failingFiles — likely fixed by #3811; shaped as verify-and-close; stamped ready, shaped:headless, risk:low, size:low, ceremony:fast-lane; read-back OK. Reversibility: high.
+- AUTO 00:35:52 — Release: released claim on #3990 (shaped: #3990); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:35:52 — Shape: specify drain: shaped #3990 (gh-token hard stop; transport ruling staged in body) — ready, risk:medium size:low ceremony:standard. Reversibility: high.
+- AUTO 00:37:25 — Release: released claim on #3993 (shaped: #3993); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:37:25 — Shape: specify drain: shaped #3993 as confirm-only duplicate of #3982 (same reconcile.test.js:501 separator diff; native blocked-by #3982) — ready, risk:low size:low ceremony:fast-lane. Reversibility: high.
+- AUTO 00:39:26 — Release: released claim on #3995 (shaped: #3995); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 00:39:26 — Shape: specify drain: shaped #3995 (native jq CRLF stdout; scope widened to unfiled comment-trust-conformance.test.js, same root cause, shim-reproduced 2+2 failures) — ready, risk:low size:low ceremony:fast-lane. Reversibility: high.
+## /backlog
+- AUTO 00:42:47 — Labeling lanes: Backlog refine: labeling-lanes batch auto-applied (headless posture, refineAutoApply) — 18 priority rows (run-dir cleanup cluster #3972-#3977 + #3990 high; #3978/#3979/#3982/#3989/#3995 medium; rest low), 0 Related, 0 flag-back, 0 dependency-repair (123 open non-parent records scanned, native blockers resolved for all). Reversibility: high.
+- AUTO 00:42:52 — apply-refine-labels: #3972: applied +priority:high. Reversibility: high.
+- AUTO 00:42:55 — apply-refine-labels: #3973: applied +priority:high. Reversibility: high.
+- AUTO 00:42:59 — apply-refine-labels: #3974: applied +priority:high. Reversibility: high.
+- AUTO 00:43:03 — apply-refine-labels: #3975: applied +priority:high. Reversibility: high.
+- AUTO 00:43:07 — apply-refine-labels: #3976: applied +priority:high. Reversibility: high.
+- AUTO 00:43:11 — apply-refine-labels: #3977: applied +priority:high. Reversibility: high.
+- AUTO 00:43:15 — apply-refine-labels: #3978: applied +priority:medium. Reversibility: high.
+- AUTO 00:43:19 — apply-refine-labels: #3979: applied +priority:medium. Reversibility: high.
+- AUTO 00:43:23 — apply-refine-labels: #3980: applied +priority:low. Reversibility: high.
+- AUTO 00:43:27 — apply-refine-labels: #3982: applied +priority:medium. Reversibility: high.
+- AUTO 00:43:31 — apply-refine-labels: #3983: applied +priority:low. Reversibility: high.
+- AUTO 00:43:34 — apply-refine-labels: #3986: applied +priority:low. Reversibility: high.
+- AUTO 00:43:38 — apply-refine-labels: #3987: applied +priority:low. Reversibility: high.
+- AUTO 00:43:42 — apply-refine-labels: #3988: applied +priority:low. Reversibility: high.
+- AUTO 00:43:46 — apply-refine-labels: #3989: applied +priority:medium. Reversibility: high.
+- AUTO 00:43:49 — apply-refine-labels: #3990: applied +priority:high. Reversibility: high.
+- AUTO 00:43:53 — apply-refine-labels: #3993: applied +priority:low. Reversibility: high.
+- AUTO 00:43:57 — apply-refine-labels: #3995: applied +priority:medium. Reversibility: high.
+- AUTO 00:45:27 — Grant chain: Backlog grant: zero-eligible short-circuit — 7 candidate(s), 0 needing grant-check: needs-label: 4, trust: 3. Reversibility: high.
+- AUTO 00:45:37 — Grant chain: Backlog grant: skipped #3990 — trust: class producer:dispatch|elevated verdict is insufficient-evidence — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 00:45:37 — Grant chain: Backlog grant: skipped #3915 — needs-label: record carries needs:decision — a headless unit is waiting on a human decision; see the record's newest unresolved decision comment. Reversibility: high.
+- AUTO 00:45:37 — Grant chain: Backlog grant: skipped #3905 — trust: class producer:capture|low verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 00:45:37 — Grant chain: Backlog grant: skipped #3847 — needs-label: record carries needs:decision — a headless unit is waiting on a human decision; see the record's newest unresolved decision comment. Reversibility: high.
+- AUTO 00:45:37 — Grant chain: Backlog grant: skipped #3706 — needs-label: record carries needs:decision — a headless unit is waiting on a human decision; see the record's newest unresolved decision comment. Reversibility: high.
+- AUTO 00:45:37 — Grant chain: Backlog grant: skipped #3690 — trust: class producer:capture|elevated verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 00:45:37 — Grant chain: Backlog grant: skipped #3256 — needs-label: record carries needs:decision — a headless unit is waiting on a human decision; see the record's newest unresolved decision comment. Reversibility: high.
+## /sweep
+- AUTO 00:46:48 — Close-out: Sweep summary: tidy {applied: 42, staged: 1, yours: 55, clean: 14}; specify {shaped: 14, routed: 0, failed: 0}; refine {granted: 0, re-authorized: 0, needs-decision: 0, skipped: 7 (trust 3, needs-label 4); labeling 18 priority, 0 Related, 0 flag-back, 0 dependency-repair}; attention 63 rows. Reversibility: n/a.

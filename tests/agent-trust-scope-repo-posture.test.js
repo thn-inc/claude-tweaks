@@ -9,10 +9,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scanAgentTrustScope } = require('../plugin/bin/lib/code-health/candidates-agent-trust-scope.js');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const settings = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude', 'settings.json'), 'utf8'));
-const autonomy = (fs.readFileSync(path.join(ROOT, '.claude-tweaks', 'policy.yml'), 'utf8').match(/^autonomy:\s*["']?([a-z-]+)["']?\s*$/m) || [])[1];
+const autonomy = (readText(path.join(ROOT, '.claude-tweaks', 'policy.yml')).match(/^autonomy:\s*["']?([a-z-]+)["']?\s*$/m) || [])[1];
 
 function kindsOf(dir) {
   return scanAgentTrustScope(dir).candidates.map((c) => c.kind);
@@ -44,7 +45,7 @@ test('ADR 0022 records the network-egress accepted risk and the uses that need i
   const dir = path.join(ROOT, 'docs', 'decisions');
   const file = fs.readdirSync(dir).find((f) => /^0022-.*\.md$/.test(f));
   assert.ok(file, 'docs/decisions/0022-*.md missing');
-  const text = fs.readFileSync(path.join(dir, file), 'utf8');
+  const text = readText(path.join(dir, file));
   for (const needle of ['network-egress', 'WebFetch', '/claude-tweaks:research', 'curl', '**Status:** accepted']) {
     assert.ok(text.includes(needle), `ADR 0022 does not mention ${needle}`);
   }

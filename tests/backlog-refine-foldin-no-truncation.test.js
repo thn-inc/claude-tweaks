@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execSync, spawnSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 const DOC = path.join(__dirname, '..', 'plugin', 'skills', 'backlog', 'refine-mode.md');
 // Forward slashes: the snippet interpolates ${CLAUDE_PLUGIN_ROOT} into a JS string literal
@@ -38,7 +39,7 @@ const FENCE_ANCHOR =
 function extractFoldInSnippet() {
   // LF-normalized: a core.autocrlf checkout reads fences as ```bash\r\n, and the \r
   // would also ride into the snippet bash executes.
-  const doc = fs.readFileSync(DOC, 'utf8').replace(/\r\n/g, '\n');
+  const doc = readText(DOC);
   const match = FENCE_ANCHOR.exec(doc);
   assert.ok(match, 'extraction pattern is out of sync with refine-mode.md — update this test');
   return match[1];
