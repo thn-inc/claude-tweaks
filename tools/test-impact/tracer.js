@@ -1,0 +1,404 @@
+'use strict';
+// tools/test-impact/tracer.js — the test-impact read tracer (#4024).
+//
+// A `--require` preload carried by NODE_OPTIONS into every node process of a traced `node --test`
+// run. It records which repo paths each test file reads, for tools/test-impact.js to fold into a
+// test-impact map. Inert unless CT_TRACE_ROOT (realpath of the repo) and CT_TRACE_DIR are set.
+//
+// Attribution: CT_TRACE_TEST, else — when NODE_TEST_CONTEXT is set (a `node --test` worker) and
+// process.argv[1] is under the root — the repo-relative test path, then exported as CT_TRACE_TEST so
+// children inherit it. An unattributed process patches nothing.
+//
+// Output: each attributed process appends JSON lines to `{CT_TRACE_DIR}/{pid}-{ms}-{rand}.trace` —
+// `["T", test]` first, then `[kind, relPath]` once per unique pair, written immediately with the
+// unpatched appendFileSync. JSON, not tab-separated, because fixture paths hold tabs and newlines.
+// Kinds: f content read (read/open/copy source/stat/lstat/module load/cp of a file), s existence probe
+// (exists/access/realpath/readlink), d directory listing (readdir/opendir/cp of a directory), c content
+// prefix (a non-node child's in-repo directory argument, or a content-reading git subcommand). Paths
+// under `.git/` and outside the root are dropped; `''` is the root itself.
+//
+// Children: a child_process call with an explicit `env` gets CT_TRACE_* and the CT_TRACE_REQUIRE token
+// (`--require "{abs tracer}"`) appended to its NODE_OPTIONS, so a test spawning node with a clean env
+// is still traced; an env already naming a different CT_TRACE_ROOT is a nested trace and left alone.
+// Node children trace themselves; for other children the in-repo path arguments are recorded here.
+//
+// Invariants (each one broke the full suite in the spike): wrapped functions copy the original's own
+// property descriptors (util.promisify.custom — `promisify(execFile)` must keep resolving
+// {stdout, stderr}); the tracer never calls process.cwd() — Node caches the cwd, so an eager call
+// changes what a later one answers once the cwd is deleted — it reads the cwd through the unpatched
+// realpathSync.native('.') only when a path is relative; it is silent and never throws into the host.
+
+const ROOT_ENV = process.env.CT_TRACE_ROOT;
+const DIR_ENV = process.env.CT_TRACE_DIR;
+if (ROOT_ENV && DIR_ENV) {
+  try {
+    install();
+  } catch (_) {
+    // never break the traced process
+  }
+}
+
+function install() {
+  const fs = require('fs');
+  const path = require('path');
+  const util = require('util');
+  const cp = require('child_process');
+  const Module = require('module');
+  const { fileURLToPath } = require('url');
+
+  // Unpatched originals the tracer itself uses.
+  const appendFileSync = fs.appendFileSync;
+  const statSync = fs.statSync;
+  const realpathNative = fs.realpathSync.native;
+
+  const stripSep = (p) => (p.length > 1 && (p.endsWith('/') || p.endsWith(path.sep)) ? p.slice(0, -1) : p);
+
+  // The current cwd without process.cwd() (whose cache would change the host's own later calls), or
+  // null when it cannot be read (deleted).
+  function currentCwd() {
+    try {
+      return realpathNative('.');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function toPathString(p) {
+    if (typeof p === 'string') return p;
+    if (Buffer.isBuffer(p)) return p.toString();
+    if (p && typeof p === 'object' && p.protocol === 'file:' && typeof p.href === 'string') return fileURLToPath(p);
+    return null;
+  }
+
+  // Absolute path of `s` against `base` (an absolute dir; undefined = the process cwd, read lazily), or null.
+  function toAbs(s, base) {
+    if (typeof s !== 'string') return null;
+    if (path.isAbsolute(s)) return stripSep(path.normalize(s));
+    let b = base;
+    if (b === undefined) b = currentCwd();
+    if (!b) return null;
+    return stripSep(path.join(b, s));
+  }
+
+  if (!path.isAbsolute(ROOT_ENV) || !path.isAbsolute(DIR_ENV)) return;
+  const roots = [stripSep(path.normalize(ROOT_ENV))];
+  try {
+    const real = stripSep(realpathNative(ROOT_ENV));
+    if (!roots.includes(real)) roots.push(real);
+  } catch (_) {
+    // root not resolvable: compare against the given form only
+  }
+
+  // Repo-relative POSIX path of absolute `abs`, or null when outside the root or under `.git/`.
+  function relOf(abs) {
+    if (typeof abs !== 'string') return null;
+    for (const root of roots) {
+      let r = null;
+      if (abs === root) r = '';
+      else {
+        const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+        if (abs.startsWith(prefix)) r = abs.slice(prefix.length);
+      }
+      if (r === null) continue;
+      r = r.split(path.sep).join('/');
+      if (r === '.git' || r.startsWith('.git/')) return null;
+      return r;
+    }
+    return null;
+  }
+
+  let test = process.env.CT_TRACE_TEST || null;
+  if (!test && process.env.NODE_TEST_CONTEXT && typeof process.argv[1] === 'string') {
+    const r = relOf(toAbs(process.argv[1], undefined));
+    if (r) {
+      test = r;
+      process.env.CT_TRACE_TEST = test;
+    }
+  }
+  if (!test) return;
+
+  const out = path.join(DIR_ENV, `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.trace`);
+  const seen = new Set();
+  let headerWritten = false;
+  function emit(kind, r) {
+    const line = JSON.stringify([kind, r]);
+    if (seen.has(line)) return;
+    seen.add(line);
+    try {
+      if (!headerWritten) {
+        appendFileSync(out, `${JSON.stringify(['T', test])}\n`);
+        headerWritten = true;
+      }
+      appendFileSync(out, `${line}\n`);
+    } catch (_) {
+      // never break the traced process
+    }
+  }
+
+  // Records `p` (a path argument, relative to `base`) as `kind`; 'auto' picks d/f by what is on disk.
+  function record(kind, p, base) {
+    const s = toPathString(p);
+    if (s === null) return;
+    const abs = toAbs(s, base);
+    const r = relOf(abs);
+    if (r === null) return;
+    if (kind === 'auto') {
+      const st = statSync(abs, { throwIfNoEntry: false });
+      kind = st && st.isDirectory() ? 'd' : 'f';
+    }
+    emit(kind, r);
+  }
+
+  const CUSTOM = util.promisify.custom;
+  // A wrapper that runs `before(arguments)` (guarded) and then the original, carrying the original's
+  // own properties; a promisify.custom implementation is wrapped the same way, since it calls the
+  // unwrapped original directly.
+  function wrapFn(orig, before) {
+    const wrapped = function traced() {
+      try {
+        before(arguments);
+      } catch (_) {
+        // never break the traced process
+      }
+      return orig.apply(this, arguments);
+    };
+    try {
+      Object.defineProperties(wrapped, Object.getOwnPropertyDescriptors(orig));
+    } catch (_) {
+      // a non-configurable property: keep what was copied
+    }
+    const custom = orig[CUSTOM];
+    if (typeof custom === 'function') {
+      try {
+        Object.defineProperty(wrapped, CUSTOM, {
+          value: wrapFn(custom, before), writable: true, configurable: true, enumerable: false,
+        });
+      } catch (_) {
+        // keep the copied original
+      }
+    }
+    return wrapped;
+  }
+  function patch(obj, name, before) {
+    if (!obj || typeof obj[name] !== 'function') return;
+    const orig = obj[name];
+    const wrapped = wrapFn(orig, before);
+    if (typeof orig.native === 'function') wrapped.native = wrapFn(orig.native, before);
+    obj[name] = wrapped;
+  }
+  const first = (kind) => (args) => record(kind, args[0]);
+
+  const FS_KINDS = {
+    f: ['readFileSync', 'readFile', 'openSync', 'open', 'createReadStream', 'copyFileSync', 'copyFile',
+      'statSync', 'stat', 'lstatSync', 'lstat'],
+    s: ['existsSync', 'exists', 'accessSync', 'access', 'realpathSync', 'realpath', 'readlinkSync', 'readlink'],
+    d: ['readdirSync', 'readdir', 'opendirSync', 'opendir'],
+    auto: ['cpSync', 'cp'],
+  };
+  const PROMISE_KINDS = {
+    f: ['readFile', 'open', 'copyFile', 'stat', 'lstat'],
+    s: ['access', 'realpath', 'readlink'],
+    d: ['readdir', 'opendir'],
+    auto: ['cp'],
+  };
+  for (const [kind, names] of Object.entries(FS_KINDS)) for (const n of names) patch(fs, n, first(kind));
+  for (const [kind, names] of Object.entries(PROMISE_KINDS)) for (const n of names) patch(fs.promises, n, first(kind));
+
+  for (const ext of ['.js', '.json', '.cjs']) {
+    const orig = Module._extensions[ext];
+    if (typeof orig !== 'function') continue;
+    Module._extensions[ext] = function tracedExtension(module, filename) {
+      try {
+        record('f', filename);
+      } catch (_) {
+        // never break the traced process
+      }
+      return orig.apply(this, arguments);
+    };
+  }
+
+  // ---- child processes ----
+
+  const REQ = process.env.CT_TRACE_REQUIRE || '';
+  function injectEnv(env) {
+    if (env.CT_TRACE_ROOT !== undefined && env.CT_TRACE_ROOT !== ROOT_ENV) return env;
+    const next = { ...env, CT_TRACE_ROOT: ROOT_ENV, CT_TRACE_DIR: DIR_ENV, CT_TRACE_TEST: test };
+    if (REQ) {
+      next.CT_TRACE_REQUIRE = REQ;
+      const opts = typeof next.NODE_OPTIONS === 'string' ? next.NODE_OPTIONS : '';
+      if (!opts.includes(REQ)) next.NODE_OPTIONS = opts ? `${opts} ${REQ}` : REQ;
+    }
+    return next;
+  }
+
+  // Splits a shell command line into its simple commands' words: quotes and backslashes are honoured,
+  // `| ; & ( )` and newlines end a command, and a redirection's target is dropped (it is not an argument).
+  function shellCommands(str) {
+    const cmds = [[]];
+    let word = null;
+    let skipNext = false;
+    const endWord = () => {
+      if (word === null) return;
+      if (skipNext) skipNext = false;
+      else cmds[cmds.length - 1].push(word);
+      word = null;
+    };
+    for (let i = 0; i < str.length;) {
+      const ch = str[i];
+      if (ch === "'") {
+        const end = str.indexOf("'", i + 1);
+        const stop = end === -1 ? str.length : end;
+        word = (word || '') + str.slice(i + 1, stop);
+        i = stop + 1;
+      } else if (ch === '"') {
+        let j = i + 1;
+        let s = '';
+        while (j < str.length && str[j] !== '"') {
+          if (str[j] === '\\' && j + 1 < str.length) { s += str[j + 1]; j += 2; } else s += str[j++];
+        }
+        word = (word || '') + s;
+        i = j + 1;
+      } else if (ch === '\\' && i + 1 < str.length) {
+        word = (word || '') + str[i + 1];
+        i += 2;
+      } else if (ch === '\n' || ch === '|' || ch === ';' || ch === '&' || ch === '(' || ch === ')') {
+        endWord();
+        cmds.push([]);
+        i++;
+      } else if (/\s/.test(ch)) {
+        endWord();
+        i++;
+      } else if (ch === '>' || ch === '<') {
+        if (word !== null && /^\d+$/.test(word)) word = null;
+        else endWord();
+        i++;
+        while (str[i] === '>' || str[i] === '&') i++;
+        skipNext = true;
+      } else {
+        word = (word || '') + ch;
+        i++;
+      }
+    }
+    endWord();
+    return cmds.filter((c) => c.length > 0);
+  }
+
+  const isNode = (cmd) => {
+    const base = path.basename(cmd).toLowerCase();
+    return cmd === process.execPath || base === 'node' || base === 'node.exe';
+  };
+  const isGit = (cmd) => {
+    const base = path.basename(cmd).toLowerCase();
+    return base === 'git' || base === 'git.exe';
+  };
+  const existing = (abs) => (abs === null ? null : statSync(abs, { throwIfNoEntry: false }) || null);
+
+  const GIT_CONTENT = new Set(['ls-files', 'grep', 'show', 'cat-file', 'ls-tree', 'archive', 'diff', 'log', 'status', 'blame']);
+  const GIT_VALUE_OPTS = new Set(['-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env']);
+
+  // The git rule: a content subcommand run inside the root records its in-repo path arguments (or
+  // `<rev>:<path>` paths), else `c` for its cwd's prefix. Returns false when the rule does not apply.
+  function recordGit(args, base) {
+    let gitCwd = base;
+    let i = 0;
+    for (; i < args.length; i++) {
+      const t = args[i];
+      if (t === '-C') {
+        gitCwd = toAbs(args[++i], gitCwd);
+        if (!gitCwd) return false;
+      } else if (GIT_VALUE_OPTS.has(t)) i++;
+      else if (!t.startsWith('-')) break;
+    }
+    if (!GIT_CONTENT.has(args[i])) return false;
+    const cwdAbs = gitCwd === undefined ? currentCwd() : gitCwd;
+    const prefix = relOf(cwdAbs);
+    if (prefix === null) return false;
+    let found = false;
+    let pathsOnly = false;
+    for (let j = i + 1; j < args.length; j++) {
+      const t = args[j];
+      if (t === '') continue;
+      if (!pathsOnly && t === '--') { pathsOnly = true; continue; }
+      if (!pathsOnly && t.startsWith('-')) continue;
+      const abs = toAbs(t, cwdAbs);
+      const r = relOf(abs);
+      if (r !== null) {
+        const st = existing(abs);
+        if (st || pathsOnly) {
+          emit(st && st.isDirectory() ? 'c' : 'f', r);
+          found = true;
+          continue;
+        }
+      }
+      const colon = pathsOnly ? -1 : t.indexOf(':');
+      if (colon === -1 || colon === t.length - 1) continue;
+      // `<rev>:<path>` is relative to the repo top unless it starts with ./ or ../ — counted only when it
+      // exists now, so an option value that merely holds a colon never hides the cwd-wide prefix.
+      const p = t.slice(colon + 1);
+      const pAbs = /^\.\.?[\\/]/.test(p) ? toAbs(p, cwdAbs) : toAbs(p, roots[roots.length - 1]);
+      const pr = relOf(pAbs);
+      const pst = pr === null ? null : existing(pAbs);
+      if (pst) {
+        emit(pst.isDirectory() ? 'c' : 'f', pr);
+        found = true;
+      }
+    }
+    if (!found) emit('c', prefix);
+    return true;
+  }
+
+  // One child command (its words) run from `base` (absolute; undefined = the process cwd).
+  function recordCommand(words, base) {
+    const cmd = words[0];
+    if (isNode(cmd)) return;
+    if (isGit(cmd) && recordGit(words.slice(1), base)) return;
+    for (let k = 0; k < words.length; k++) {
+      const t = words[k];
+      if (t === '' || t.startsWith('-')) continue;
+      if (k === 0 && !t.includes('/') && !t.includes('\\')) continue;
+      const abs = toAbs(t, base);
+      const r = relOf(abs);
+      if (r === null) continue;
+      const st = existing(abs);
+      if (st) emit(st.isDirectory() ? 'c' : 'f', r);
+    }
+  }
+
+  const optionsIndex = (args) => {
+    for (let k = 1; k < args.length; k++) {
+      const v = args[k];
+      if (v && typeof v === 'object' && !Array.isArray(v)) return k;
+    }
+    return -1;
+  };
+
+  function beforeChild(name) {
+    return (args) => {
+      const k = optionsIndex(args);
+      const opts = k === -1 ? null : args[k];
+      if (opts && opts.env && typeof opts.env === 'object') args[k] = { ...opts, env: injectEnv(opts.env) };
+      if (name === 'fork') return;
+      let base;
+      if (opts && opts.cwd != null) {
+        base = toAbs(toPathString(opts.cwd), undefined);
+        if (!base) return;
+      }
+      let commands;
+      if (name === 'exec' || name === 'execSync') commands = shellCommands(String(args[0]));
+      else {
+        const words = [String(args[0])].concat(Array.isArray(args[1]) ? args[1].map(String) : []);
+        commands = opts && opts.shell ? shellCommands(words.join(' ')) : [words];
+      }
+      for (const words of commands) recordCommand(words, base);
+    };
+  }
+  for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync', 'fork']) {
+    patch(cp, name, beforeChild(name));
+  }
+
+  try {
+    Module.syncBuiltinESMExports();
+  } catch (_) {
+    // ESM named imports keep the unwrapped functions
+  }
+}
