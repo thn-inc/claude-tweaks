@@ -578,6 +578,7 @@ const ENV_PROGRAM_FLAG_RE = /^-(?:[^-]*[SP]|-s)/;
 // Programs that neither read stdin nor run an argument. They pass the reader check only as a
 // stand-alone neighbour segment's own program (never behind a wrapper), and only in a segment
 // with no command substitution, which could read the body (`cat <<EOF | echo $(bash)`).
+// `git add` passes the same way (see isInertNeighbour).
 const INERT_NEIGHBOUR_WORDS = new Set(['cd', 'mkdir', 'true', ':', 'echo', 'printf']);
 // `git` reads its body as data only for these subcommands. Any other can run its
 // arguments as a program (`git bisect run sh`, `git rebase -x sh`) and so is no reader.
@@ -625,10 +626,50 @@ function removeQuotedSpans(str) {
   return out + span;
 }
 
+// `seg` cut at every unquoted lone `&`, which ends the command before it and backgrounds it. `&&`,
+// `&>`, `>&`, `<&` and `|&` are not cut. A blank piece before a cut (a leading `&`, which a `|&`
+// leaves once splitSegments has cut its `|`) comes back as null: no command this check can read.
+function splitOnLoneAmpersand(seg) {
+  const pieces = [];
+  let start = 0;
+  let quote = null;
+  for (let i = 0; i < seg.length; i += 1) {
+    const c = seg[i];
+    if (quote === "'") { if (c === "'") quote = null; continue; }
+    if (c === '\\') { i += 1; continue; }
+    if (quote === '"') { if (c === '"') quote = null; continue; }
+    if (c === '"' || c === "'") { quote = c; continue; }
+    if (c !== '&' || seg[i + 1] === '&' || seg[i + 1] === '>' || /[&<>|]/.test(seg[i - 1] || '')) continue;
+    const piece = seg.slice(start, i);
+    pieces.push(piece.trim() === '' ? null : piece);
+    start = i + 1;
+  }
+  pieces.push(seg.slice(start));
+  return pieces;
+}
+
+// True when the program at `tokens[p]` neither reads stdin nor runs an argument, in a segment with
+// no command substitution: an INERT_NEIGHBOUR_WORDS program, or `git add` (past git's global flags)
+// without --pathspec-from-file (its abbreviations included), which reads pathspecs from stdin.
+// Configuration can make `git add` run a command that reads stdin (`git -c core.fsmonitor='sh -s'
+// add` runs the body), so `git add` is no neighbour behind a `-c`/`--config-env` flag or a
+// NAME=value assignment (GIT_CONFIG_*).
+function isInertNeighbour(tokens, p, seg) {
+  if (p >= tokens.length || !isBareOrAbsoluteProgram(tokens[p]) || /\$\(|`/.test(seg)) return false;
+  const names = programNames(tokens[p]);
+  if (names.every((n) => INERT_NEIGHBOUR_WORDS.has(n))) return true;
+  if (p > 0 || !names.every((n) => n === 'git')) return false;
+  const sub = skipGlobalFlags(tokens, p + 1, '/').index;
+  return tokens[sub] === 'add'
+    && !tokens.slice(p + 1, sub).some((t) => t === '-c' || t.startsWith('--config-env'))
+    && !tokens.some((t) => t.startsWith('--pathspec-f'));
+}
+
 // True when every command on the opener's logical line is a known data reader, so
-// the body it receives is data. Per segment: a group or process-substitution token
+// the body it receives is data. The line is cut into commands at segment separators and at
+// every lone `&` (splitOnLoneAmpersand). Per command: a group or process-substitution token
 // (`(`, `{`, `}`, `>(`, `<(`) fails (its consumer may sit on a later line or inside
-// the substitution); after NAME=value assignments, an inert neighbour (INERT_NEIGHBOUR_WORDS)
+// the substitution); after NAME=value assignments, an inert neighbour (isInertNeighbour)
 // passes; reader wrappers (sudo, env, ...) are skipped together with the flags and
 // assignments that follow a wrapper, so a wrapper option's value (`sudo -u bob`) lands on
 // the program slot and fails, and an `env` program-choosing flag (-S, -P) fails; the program word
@@ -639,16 +680,15 @@ function removeQuotedSpans(str) {
 // dropped the quotes), so a quoted `(.a)` is data, not a group. Fails closed, so the
 // body stays visible to the scan.
 function lineFeedsOnlyDataReaders(lineText) {
-  for (const seg of splitSegments(lineText)) {
+  for (const seg of splitSegments(lineText).flatMap(splitOnLoneAmpersand)) {
+    if (seg === null) return false;
     if (seg.trim() === '') continue;
-    // ANSI-C quoting (`$'...'`) honours `\'`, which removeQuotedSpans does not parse: fail closed.
-    if (seg.includes("$'")) return false;
     const unquoted = removeQuotedSpans(seg).split(/\s+/);
     if (unquoted.some((t) => /^[({]/.test(t) || t === '}' || /[<>]\(/.test(t))) return false;
     const { tokens } = tokenize(seg.trim());
     let p = 0;
     while (p < tokens.length && SIMPLE_ASSIGNMENT_RE.test(tokens[p])) p += 1;
-    if (p < tokens.length && isBareOrAbsoluteProgram(tokens[p]) && programNames(tokens[p]).every((n) => INERT_NEIGHBOUR_WORDS.has(n)) && !/\$\(|`/.test(seg)) continue;
+    if (isInertNeighbour(tokens, p, seg)) continue;
     while (p < tokens.length && isBareOrAbsoluteProgram(tokens[p]) && programNames(tokens[p]).every((n) => READER_WRAPPER_WORDS.has(n))) {
       const isEnv = programNames(tokens[p]).includes('env');
       p += 1;
@@ -865,10 +905,15 @@ function lineLeavesStructureOpen(line) {
   return stack.length > 0 || open.fi > 0 || open.done > 0 || open.esac > 0;
 }
 
+// Shells whose script is one bash-like program: a kept body on a line naming one of these has its
+// own heredoc openers planned and nothing more (see walkShellChunk).
+const KNOWN_SHELL_WORDS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash']);
+
 // Plans one logical line's heredoc bodies, which start at index `start`:
 //   rest  - a body is unterminated: the text from `start` on is kept as written;
-//   keep  - each body is returned as its own chunk ({ at, text }, `at` being its
-//           opener's index in the outer text), because a structure is open (`lineOpen`:
+//   keep  - each body is returned as its own chunk ({ at, text, shell }, `at` being its
+//           opener's index in the outer text, `shell` whether a token on the line names a
+//           KNOWN_SHELL_WORDS program), because a structure is open (`lineOpen`:
 //           left open on an earlier line or on this one), the line feeds them to
 //           something other than a known data reader, the line continues, or an
 //           unquoted body expands `$(` or a backtick; `end` is the index after the last;
@@ -884,7 +929,10 @@ function planHeredocBodies(str, start, pending, lineText, lineOpen) {
   }
   const keep = lineOpen || CONTINUATION_RE.test(lineText) || !lineFeedsOnlyDataReaders(lineText);
   const expands = bodies.some(({ h, text }) => !h.quoted && /\$\(|`/.test(text));
-  if (keep || expands) return { kind: 'keep', end: p, bodies: bodies.map(({ h, text }) => ({ at: h.at, text })) };
+  if (keep || expands) {
+    const shell = tokenize(lineText).tokens.some((tok) => programNames(tok).some((n) => KNOWN_SHELL_WORDS.has(n)));
+    return { kind: 'keep', end: p, bodies: bodies.map(({ h, text }) => ({ at: h.at, text, shell })) };
+  }
   return { kind: 'strip', end: p };
 }
 
@@ -897,11 +945,11 @@ function scanHeredocs(str) {
   const out = [];
   let outLen = 0;
   const emit = (s) => { out.push(s); outLen += s.length; };
-  const bodies = []; // kept bodies, { at, text }, in order
+  const bodies = []; // kept bodies, { at, text, shell }, in order
   let quote = null;
-  // Unclosed `((` on the current logical line. It resets at the newline: bash also reads
-  // `((` as two nested subshells (`((cd x && ls) | cat)`), and a `((` left open across a
-  // line sets `sticky` below, which keeps every later body anyway.
+  // Parens left open by a `((` or `$((`: `((` opens two and every single paren inside counts, so
+  // `((cd x && ls) | cat)` (bash's nested-subshell reading) closes at its final `)`. It spans
+  // lines, as a multi-line `((`/`$((` does in bash, so a `<<` on a later line inside it is a shift.
   let parenDepth = 0;
   let bracketDepth = 0; // unclosed `$[`; arithmetic only, so it spans lines as bash's does
   let pending = []; // heredocs opened on the current logical line, in order
@@ -945,7 +993,6 @@ function scanHeredocs(str) {
         i = plan.end;
       }
       pending = [];
-      parenDepth = 0;
       lineStart = i;
     } else if (ch === '$' && str[i + 1] === '[') {
       bracketDepth += 1;
@@ -959,14 +1006,15 @@ function scanHeredocs(str) {
       bracketDepth -= 1;
       emit(ch);
       i += 1;
-    } else if (ch === '(' && str[i + 1] === '(') {
-      parenDepth += 1;
-      emit('((');
-      i += 2;
-    } else if (ch === ')' && str[i + 1] === ')' && parenDepth > 0) {
+    } else if (ch === '(' && (parenDepth > 0 || str[i + 1] === '(')) {
+      const n = parenDepth > 0 ? 1 : 2;
+      parenDepth += n;
+      emit(str.slice(i, i + n));
+      i += n;
+    } else if (ch === ')' && parenDepth > 0) {
       parenDepth -= 1;
-      emit('))');
-      i += 2;
+      emit(ch);
+      i += 1;
     } else if (ch === '<' && str[i + 1] === '<' && str[i + 2] === '<') {
       emit('<<<'); // a here-string is never a heredoc
       i += 3;
@@ -998,8 +1046,9 @@ function scanHeredocs(str) {
 // prove are data. Returns { outer, bodies }: `outer` is the command with every
 // terminated body and its closing-delimiter line removed (the opener line keeps its
 // newline, so whatever follows the delimiter starts its own segment); `bodies` lists
-// each kept body as { at, text }, `at` being the index of its `<<` in `outer` and `text`
-// the body without its closing line. A body fed to a known data reader is dropped; any
+// each kept body as { at, text, shell }, `at` being the index of its `<<` in `outer`, `text`
+// the body without its closing line and `shell` whether its opener line names a known
+// shell (planHeredocBodies). A body fed to a known data reader is dropped; any
 // other (fed to another program, an unquoted body that expands, a continuation line, a
 // structure left open) is kept: see planHeredocBodies. An unterminated body leaves the
 // text from its opener on in `outer` as written. Any internal failure returns the input
@@ -1018,31 +1067,152 @@ function stripHeredocBodies(command) {
 // passes over the input.
 const MAX_HEREDOC_NESTING = 8;
 
+// Group structure of one segment, for walkShellChunk (#4149): a `(` or `{` at command position
+// opens a group and the `)` or `}` that matches it closes it, so a `cd` behind `(`/`{` is read as
+// a `cd` scoped to its group. Returns the segment as { text } pieces and { open } / { close }
+// events, in order; `g.stack` carries the open groups and nesting parens across segments. Any
+// other `(` (`$(`, `$((`, `<(`, an array, a glob) only nests until its `)`. A `)` while a `case` is
+// open in the innermost group is a pattern's, and a `)` that matches nothing (a group this walk
+// never saw open, as in `if (…)`): either one closes nothing but cuts the text, so the command
+// after it is a piece of its own and a glued closer (`f.js)`) is not part of a word.
+function groupEvents(seg, g) {
+  const events = [];
+  let start = 0;
+  let atCmd = true; // the next word is at command position
+  let redirTarget = false; // the next word is a redirection's target
+  const top = () => g.stack[g.stack.length - 1] || g.root;
+  const cut = (at, ev) => {
+    if (at > start) events.push({ text: seg.slice(start, at) });
+    if (ev) events.push(ev);
+    start = at + 1;
+  };
+  const nest = (n, cmd) => {
+    for (let k = 0; k < n; k += 1) g.stack.push({ kind: 'p', caseDepth: 0 });
+    atCmd = cmd;
+  };
+  let i = 0;
+  while (i < seg.length) {
+    const c = seg[i];
+    if (c === ' ' || c === '\t' || c === '\r' || c === '\n') { i += 1; continue; }
+    if (c === '(') {
+      if (atCmd) {
+        const frame = { kind: '(', caseDepth: 0 };
+        g.stack.push(frame);
+        cut(i, { open: frame });
+      } else nest(1, false);
+      i += 1;
+      continue;
+    }
+    if (c === ')') {
+      const t = top();
+      if (t.caseDepth === 0 && t.kind === 'p') { g.stack.pop(); atCmd = false; }
+      else if (t.caseDepth === 0 && t.kind === '(') { g.stack.pop(); cut(i, { close: t }); atCmd = false; }
+      else { cut(i, null); atCmd = true; }
+      i += 1;
+      continue;
+    }
+    if (c === '<' || c === '>' || c === '&') {
+      let j = i + 1;
+      while (j < seg.length && /[<>&|]/.test(seg[j])) j += 1;
+      if (c !== '&' && j === i + 1 && seg[j] === '(') { nest(1, true); i = j + 1; continue; }
+      if (c === '&' && j === i + 1) atCmd = true; // a lone `&` ends a command
+      else redirTarget = true;
+      i = j;
+      continue;
+    }
+    const wStart = i;
+    let w = '';
+    let plain = true;
+    let subst = 0; // 1 for `$(`, 2 for `$((`
+    while (i < seg.length && !/[\s()<>&;|]/.test(seg[i])) {
+      const ch = seg[i];
+      if (ch === '\\') { i += 2; plain = false; continue; }
+      if (ch === "'") {
+        const close = seg.indexOf("'", i + 1);
+        i = close === -1 ? seg.length : close + 1;
+        plain = false;
+        continue;
+      }
+      if (ch === '"' || ch === '`' || (ch === '$' && seg[i + 1] === "'")) {
+        const q = ch === '$' ? "'" : ch;
+        let j = ch === '$' ? i + 2 : i + 1;
+        while (j < seg.length && seg[j] !== q) j += seg[j] === '\\' ? 2 : 1;
+        i = j + 1;
+        plain = false;
+        continue;
+      }
+      if (ch === '$' && seg[i + 1] === '(') { subst = seg[i + 2] === '(' ? 2 : 1; break; }
+      w += ch;
+      i += 1;
+    }
+    if (subst) { nest(subst, subst === 1); i += 1 + subst; continue; }
+    if (i === wStart) { i += 1; continue; } // a stray separator character: never a word
+    if (redirTarget) { redirTarget = false; continue; }
+    if (!plain || !atCmd) { atCmd = false; continue; }
+    const t = top();
+    if (w === '{') {
+      const frame = { kind: '{', caseDepth: 0 };
+      g.stack.push(frame);
+      cut(wStart, { open: frame });
+      continue; // still at command position
+    }
+    if (w === '}' && t.kind === '{') { g.stack.pop(); cut(wStart, { close: t }); atCmd = false; continue; }
+    if (w === 'case') t.caseDepth += 1;
+    else if (w === 'esac') t.caseDepth = Math.max(0, t.caseDepth - 1);
+    atCmd = COMMAND_PREFIX_WORDS.has(w);
+  }
+  if (seg.length > start) events.push({ text: seg.slice(start) });
+  return events;
+}
+
+// visitSegment for each cwd the walk may be in (a list, as after a brace group), deduplicated.
+function visitUnderEach(text, cwds, vars, handler) {
+  const next = [];
+  for (const c of cwds) {
+    const n = visitSegment(text, c, vars, handler);
+    if (!next.includes(n)) next.push(n);
+  }
+  return next;
+}
+
 // forEachCommandSegment over every piece of text the shell may run (#3989/#4149): the
 // outer text, then each kept heredoc body as its own chunk, right after the segment
 // that holds its opener. A chunk starts from fresh quote state, the cwd in effect at
 // its opener and a copy of the outer assignments; whatever cwd or assignment it changes
 // is discarded, so the outer walk resumes after the delimiter with its own state. A
-// chunk's own openers are planned within the chunk.
+// chunk's own openers are planned within the chunk; a chunk whose opener line names no
+// known shell (make, at, ...) may not run as one script, so it is also walked whole, with no
+// inner opener planned. Each segment is walked through its groups (groupEvents): a cwd set
+// inside a subshell ends at its `)`; after a brace group's `}` (whose `cd` persists unless the
+// group is piped, so its scope end cannot be placed) the walk continues under both the inner and
+// the outer cwd, so `handler` may run once per cwd for a segment.
 function forEachShellSegment(command, cwd, handler) {
-  walkShellChunk(String(command || ''), cwd || '.', new Map(), handler, 0);
+  walkShellChunk(String(command || ''), [cwd || '.'], new Map(), handler, 0, true);
 }
 
-function walkShellChunk(text, cwd, vars, handler, depth) {
-  const { outer, bodies } = depth < MAX_HEREDOC_NESTING ? stripHeredocBodies(text) : { outer: text, bodies: [] };
-  let effCwd = cwd;
+function walkShellChunk(text, cwds, vars, handler, depth, plan) {
+  const { outer, bodies } = plan && depth < MAX_HEREDOC_NESTING ? stripHeredocBodies(text) : { outer: text, bodies: [] };
+  const g = { root: { kind: 'root', caseDepth: 0 }, stack: [] };
+  let cur = cwds;
   let b = 0;
-  const runBodies = (until, bodyCwd) => {
+  const runBodies = (until, bodyCwds) => {
     for (; b < bodies.length && bodies[b].at < until; b += 1) {
-      walkShellChunk(bodies[b].text, bodyCwd, new Map(vars), handler, depth + 1);
+      walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, true);
+      if (!bodies[b].shell) walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, false);
     }
   };
   for (const span of segmentSpans(outer)) {
-    const before = effCwd;
-    effCwd = visitSegment(span.text, effCwd, vars, handler);
+    const before = cur;
+    for (const ev of groupEvents(span.text, g)) {
+      if (ev.open) ev.open.saved = cur;
+      else if (ev.close) {
+        const { saved } = ev.close;
+        cur = ev.close.kind === '(' ? saved : [...saved, ...cur.filter((c) => !saved.includes(c))];
+      } else cur = visitUnderEach(ev.text, cur, vars, handler);
+    }
     runBodies(span.end, before);
   }
-  runBodies(Infinity, effCwd);
+  runBodies(Infinity, cur);
 }
 
 // Redirection-target scan (#3080): unlike fileWriteTargets' other shapes, a
@@ -1175,15 +1345,29 @@ function inPlaceEditTargets(rest, valueFlags, scriptFlags) {
   return programSupplied ? positionals : positionals.slice(1);
 }
 
-// Drops heredoc (`<<EOF`, `<<-EOF`) and here-string (`<<<x`) operator tokens, and the
-// word after a bare `<<`/`<<-`/`<<<`, so they are not read as a write shape's files.
-// A token that begins with a quoted span (`'<<'`) is a literal argument, not an
-// operator, and stays (`leadQuoted`, from tokenize).
-function dropHeredocOperators(tokens, leadQuoted) {
+// A redirection operator at the start of a token, optionally fd- or `&`-prefixed: `>f`, `2>&1`,
+// `>>f`, `>|f`, `&>f`, `<in`, `<&3`, `<>f`. A heredoc or here-string (`<<`) and a process
+// substitution (`<(…)`, `>(…)`, which is a file argument) do not match.
+const REDIRECTION_TOKEN_RE = /^(?:\d+|&)?(?:>>|>\||>&|<>|<&|>|<)(?![<(])/;
+
+// Drops heredoc (`<<EOF`, `<<-EOF`) and here-string (`<<<x`) operator tokens and every
+// redirection token (REDIRECTION_TOKEN_RE), each with the word after it when the operator
+// stands alone (`<< EOF`, `> /dev/null`), so none is read as a write shape's files; the
+// redirection's own target is reported by redirectWriteTargets. A token that begins with a
+// quoted span (`'<<'`, `'>f'`) is a literal argument, not an operator, and stays
+// (`leadQuoted`, from tokenize).
+function dropRedirections(tokens, leadQuoted) {
   const out = [];
   for (let i = 0; i < tokens.length; i += 1) {
-    if (!tokens[i].startsWith('<<') || (leadQuoted && leadQuoted[i])) { out.push(tokens[i]); continue; }
-    if (/^<<<?-?$/.test(tokens[i])) i += 1;
+    const tok = tokens[i];
+    if (leadQuoted && leadQuoted[i]) { out.push(tok); continue; }
+    if (tok.startsWith('<<')) {
+      if (/^<<<?-?$/.test(tok)) i += 1;
+      continue;
+    }
+    const m = REDIRECTION_TOKEN_RE.exec(tok);
+    if (!m) { out.push(tok); continue; }
+    if (tok.length === m[0].length) i += 1;
   }
   return out;
 }
@@ -1194,8 +1378,9 @@ function fileWriteTargets(command, cwd) {
     // Redirection has no command word, so it runs for every segment
     // regardless of t[0] — never gated by the WRITE_SHAPES check below (#3080).
     for (const file of redirectWriteTargets(tokens, effCwd)) targets.push({ action: 'write', file });
-    // A heredoc/here-string operator is input, never a file the shape writes.
-    const t = dropHeredocOperators(tokens, leadQuoted);
+    // A heredoc/here-string operator is input and a redirection is reported above, so
+    // neither is a file the shape writes.
+    const t = dropRedirections(tokens, leadQuoted);
     if (!WRITE_SHAPES.includes(t[0])) return;
     if (t[0] === 'tee') {
       // tee genuinely writes to EVERY non-flag argument, not just the
@@ -1319,7 +1504,15 @@ function fileWriteTargets(command, cwd) {
       return;
     }
   });
-  return targets;
+  // forEachShellSegment may visit a segment under two cwds, or a kept body twice (planned and
+  // whole), so the same target can come back more than once: report each one once.
+  const seen = new Set();
+  return targets.filter(({ action, file }) => {
+    const key = `${action}\0${file}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 // mkdir target parser — deliberately separate from WRITE_SHAPES/fileWriteTargets

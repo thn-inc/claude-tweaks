@@ -171,6 +171,15 @@ test('#4149: hasFileRedirection reads the outer text and every kept body chunk',
   assert.strictEqual(hasFileRedirection("git commit -F - <<'EOF'\na > /main/x\nEOF"), false);
 });
 
+// Residual fix (#4149): a lone `&` ends the inert neighbour's command, so the backgrounded shell's
+// body is kept and its redirect sends the call down the full path; a body kept for a non-shell
+// consumer is also read whole, so an inner recipe heredoc cannot hide a redirect.
+test('#4149: hasFileRedirection sees a body behind a lone & and inside a make recipe heredoc', () => {
+  assert.strictEqual(hasFileRedirection("echo hi & bash <<'EOF'\necho x > f.js\nEOF\nwait"), true);
+  assert.strictEqual(hasFileRedirection("make -s -f - <<'EOF'\nall:\n\tcat <<-X\n\techo x > f.js\n\tX\nEOF"), true);
+  assert.strictEqual(hasFileRedirection("git add -A && git commit -F - <<'EOF'\na > /main/x\nEOF"), false);
+});
+
 test('fails open to "run" on anything it cannot read', () => {
   for (const event of ['pre-tool-use', 'post-tool-use']) {
     assert.strictEqual(shouldRunFull(event, null), true);
