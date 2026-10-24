@@ -416,13 +416,14 @@ fi
 # tree may lag, and a dirty tree must not hide a deletion.
 DISPATCH_STANDALONE_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug "dispatch-standalone")
 # {integration-branch} resolution follows _shared/integration-branch.md's ladder
-# rank 3 (policy.yml) with a rank-6 git-remote fallback (this call site has no
+# rank 3 (policy.yml) with a rank-6 GitHub-default fallback (this call site has no
 # use for ranks 4-5's CLAUDE.md-prose/current-branch checks — a queue-pull
 # script has no human present to disambiguate a current-vs-default mismatch,
 # the same reasoning settle-and-merge.md's own citation of this file states).
+# gh, not git: the worktree guard refuses git inside $(...) (scratch-worktree.md §7).
 INTEGRATION_BRANCH=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch)
 if [ -z "$INTEGRATION_BRANCH" ]; then
-  INTEGRATION_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')
+  INTEGRATION_BRANCH=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
 fi
 INTEGRATION_REF="origin/$INTEGRATION_BRANCH"
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_NAMED_TARGETS" <<NODE_EVAL_EOF

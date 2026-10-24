@@ -292,9 +292,8 @@ nobody develops on (#132).
 just resolved:
 
 ```bash
-CURRENT=$(git branch --show-current)
-if [ "$CURRENT" != "{integration-branch}" ]; then
-  echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+if ! git branch --show-current | grep -qxF '{integration-branch}'; then
+  echo "Main checkout is not on '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
   exit 1
 fi
 node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag {tag} --range {integration-branch}...{branch} --out-dir "{subject-dir}" || exit 1
@@ -327,9 +326,8 @@ intercepts.
 concurrent session may have switched the checkout since:
 
 ```bash
-CURRENT=$(git branch --show-current)
-if [ "$CURRENT" != "{integration-branch}" ]; then
-  echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+if ! git branch --show-current | grep -qxF '{integration-branch}'; then
+  echo "Main checkout is not on '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
   exit 1
 fi
 git merge --no-ff {branch} -F "{subject-dir}/message.txt"

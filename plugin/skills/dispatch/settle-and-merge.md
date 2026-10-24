@@ -356,9 +356,8 @@ The two commands resolve `{integration-branch}`: the resolver's output when non-
 **Pre-merge checks — from the main checkout, nothing mutated.** `{integration-branch}` and `{branch}` are the values just read:
 
 ```bash
-CURRENT=$(git branch --show-current)
-if [ "$CURRENT" != "{integration-branch}" ]; then
-  echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+if ! git branch --show-current | grep -qxF '{integration-branch}'; then
+  echo "Main checkout is not on '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
   exit 1
 fi
 node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --tag auto-merge --range {integration-branch}...{branch} --out-dir "{subject-dir}" || exit 1
@@ -378,9 +377,8 @@ That only satisfies E1. Under `worktree-always: true` the run-independent `check
 **Merge — from the main checkout.** The guard repeats as the race backstop (a concurrent session may have switched the checkout since):
 
 ```bash
-CURRENT=$(git branch --show-current)
-if [ "$CURRENT" != "{integration-branch}" ]; then
-  echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+if ! git branch --show-current | grep -qxF '{integration-branch}'; then
+  echo "Main checkout is not on '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
   exit 1
 fi
 git merge --no-ff {branch} -F "{subject-dir}/message.txt"

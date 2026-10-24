@@ -97,9 +97,8 @@ it literally into the next call; never carry it in a shell variable across calls
    (`[IL-05]`) — then compose the subject and predict the merge:
 
    ```bash
-   CURRENT=$(git branch --show-current)
-   if [ "$CURRENT" != "{base-branch}" ]; then
-     echo "Main checkout is on '$CURRENT', not '{base-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+   if ! git branch --show-current | grep -qxF '{base-branch}'; then
+     echo "Main checkout is not on '{base-branch}' — a concurrent session switched it. Abort, do not merge." >&2
      exit 1
    fi
    node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --range {base-branch}...{feature-branch} --out-dir "{subject-dir}" || exit 1
@@ -114,8 +113,8 @@ it literally into the next call; never carry it in a shell variable across calls
    run — this is not a distinct third outcome, it is the same unmergeable state the Park branch
    below handles. Log it via the Park branch's `log-decision.js` call, with
    `{conflict|failed verification}` replaced by
-   `main checkout switched to '{current-branch}' underfoot` (`{current-branch}` is the branch name the
-   guard's stderr printed, substituted literally — the shell's `$CURRENT` does not survive), and report `pending-review` to the caller —
+   `main checkout switched to '{current-branch}' underfoot` (`{current-branch}` is what
+   `git branch --show-current` prints, run as its own call and substituted literally), and report `pending-review` to the caller —
    never a bare non-zero exit with no logged outcome, per this file's own invariant that every run
    ends in an explicit, logged outcome.
 
@@ -157,9 +156,8 @@ it literally into the next call; never carry it in a shell variable across calls
    concurrent session may have switched the checkout since step 3:
 
    ```bash
-   CURRENT=$(git branch --show-current)
-   if [ "$CURRENT" != "{base-branch}" ]; then
-     echo "Main checkout is on '$CURRENT', not '{base-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+   if ! git branch --show-current | grep -qxF '{base-branch}'; then
+     echo "Main checkout is not on '{base-branch}' — a concurrent session switched it. Abort, do not merge." >&2
      exit 1
    fi
    git merge --no-ff {feature-branch} -F "{subject-dir}/message.txt"

@@ -114,21 +114,26 @@ its value for `{integration-branch}` below. The git-log dump follows the same se
 freshness rule as the record snapshot (`_shared/record-queue-fetch.md`'s Session-scoped record
 snapshot section) — reuse `/tmp/ct-gitlog-{session-id}.txt`
 (`record-snapshot.js`'s `gitLogPath($CLAUDE_CODE_SESSION_ID)`) when fresh, else regenerate it.
-The destination this fence writes to is this run's own session-scoped path, re-resolved here
-(`_shared/session-tmp-root.md`) — distinct from the `$GITLOG` cache-freshness path above, which
-is a session-wide snapshot rather than this skill's own working copy:
+The destination this fence writes to is this run's own session-scoped path
+(`_shared/session-tmp-root.md`) — distinct from the `$COMMITLOG` cache-freshness path below, which
+is a session-wide snapshot rather than this skill's own working copy. Resolve it as its own call and
+paste the printed path for `{tmp-capture-commit-log}` — the worktree guard refuses a redirect onto
+a runtime-variable path in a call that names `git` (`_shared/scratch-worktree.md` §7):
 
 ```bash
-CAPTURE_TRUST_COMMIT_LOG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value capture-trust-git-log.txt)"
-GITLOG=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').gitLogPath(process.env.CLAUDE_CODE_SESSION_ID) || '')")
-if [ -n "$GITLOG" ] && node -e "
+node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value capture-trust-git-log.txt
+```
+
+```bash
+COMMITLOG=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').gitLogPath(process.env.CLAUDE_CODE_SESSION_ID) || '')")
+if [ -n "$COMMITLOG" ] && node -e "
   const { isFresh } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
   process.exit(isFresh(process.argv[1], Number(process.argv[2])) ? 0 : 1)
-" -- "$GITLOG" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
-  cp "$GITLOG" "$CAPTURE_TRUST_COMMIT_LOG"
+" -- "$COMMITLOG" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
+  cp "$COMMITLOG" "{tmp-capture-commit-log}"
 else
-  git log "{integration-branch}" --format='%H%x1f%B%x1e' > "$CAPTURE_TRUST_COMMIT_LOG"
-  [ -n "$GITLOG" ] && cp "$CAPTURE_TRUST_COMMIT_LOG" "$GITLOG"
+  git log "{integration-branch}" --format='%H%x1f%B%x1e' > "{tmp-capture-commit-log}"
+  [ -n "$COMMITLOG" ] && cp "{tmp-capture-commit-log}" "$COMMITLOG"
 fi
 ```
 

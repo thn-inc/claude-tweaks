@@ -185,10 +185,13 @@ plugin's PR-comment surface that edits rather than always-appends.
 2. **Found → update in place**, preserving the comment's identity (same GraphQL id, no new
    comment created, no reordering in the thread). `--hostname {host}` is required here even
    though `--repo` is host-qualified elsewhere — the two flags are independent in `gh`, and
-   `gh api graphql` targets `github.com` unless `--hostname` is given:
+   `gh api graphql` targets `github.com` unless `--hostname` is given. Write the mutation
+   `mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}`
+   to `/tmp/{kind}-comment-mutation-{n}.graphql` with the `Write` tool and pass it by file — the
+   worktree guard refuses it inline (`_shared/scratch-worktree.md` §7, the multi-variable mutation row):
 
    ```bash
-   gh api graphql --hostname {host} -f query='mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}' \
+   gh api graphql --hostname {host} -F query=@/tmp/{kind}-comment-mutation-{n}.graphql \
      -f id="{found-id}" -F body=@/tmp/{kind}-comment-{n}.md
    ```
 

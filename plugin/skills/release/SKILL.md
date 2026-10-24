@@ -42,11 +42,10 @@ usage: /claude-tweaks:release [--dry-run] [--train] [--as <version>] [--allow-bl
 
 Under `--train`, read `## --train semantics` first — its two policy levers are checked here, before anything else, and a refusal is logged from this step.
 
-**Resolve `$RUN_ROOT` first.** Every later command in this skill that names it — `git -C "$RUN_ROOT"`, `--root "$RUN_ROOT"` — re-resolves it with exactly these two lines, because an `export` does not survive into the next Bash call. This is `_shared/pipeline-run-dir.md`'s Anchoring snippet, verbatim:
+**Resolve `$RUN_ROOT` first.** Every later command in this skill that names it — `git -C "$RUN_ROOT"`, `--root "$RUN_ROOT"` — re-resolves it with exactly this line, because an `export` does not survive into the next Bash call. This is `_shared/pipeline-run-dir.md`'s Anchoring snippet, verbatim:
 
 ```bash
-RUN_ROOT=$(git rev-parse --git-common-dir)
-RUN_ROOT=$(cd "$(dirname "$RUN_ROOT")" && pwd)
+RUN_ROOT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only)
 ```
 
 Then resolve the run directory per `_shared/run-dir-resolution.md` (steps 1-2: `PIPELINE_RUN_DIR`, then the most-recent matching directory), anchored to that `$RUN_ROOT`. When neither resolves, create the standalone fallback and stamp it — `release` has its own every-mode clause under that file's step 4, the same shape as wrap-up's and not the `auto`-gated allowlist (which is why the snippet below omits `--mode`), and this stamp is the second of the two direct `run-state.json` writes it names:
@@ -145,7 +144,7 @@ Resolve the base, then invoke:
 
 - `lastTag.ok` → base is `{lastTag.value.tag}`.
 - `lastTag` degraded, but `proposedVersion.value.baseSource` is `manifest` → the project has released before without tagging, so the root commit would put its whole history under review. Base is the first-parent commit that last set the manifest to `{proposedVersion.value.base}` — `git log -1 --first-parent --format=%H -S'"version": "{base}"' {tipRef} -- {manifest path}`, the path the pack's own manifest probe read. Empty output falls through to the root commit below.
-- `lastTag` degraded with no manifest version either (no `v*` tag reachable; `unreleased.value.since` is `null`) → base is the root commit: `$(git rev-list --max-parents=0 origin/{branch} | tail -1)`, where `{branch}` is the pack's own `branch` field.
+- `lastTag` degraded with no manifest version either (no `v*` tag reachable; `unreleased.value.since` is `null`) → base is the root commit: the last line `git rev-list --max-parents=0 origin/{branch}` prints, run as its own call, where `{branch}` is the pack's own `branch` field.
 
 Log which of the three resolved, and why — the review's scope is never a silent choice.
 
@@ -155,8 +154,8 @@ Invoke `/claude-tweaks:review base:{base}` (Input rule 9 — a whole-branch scop
 
 ```bash
 git -C "$RUN_ROOT" fetch origin {branch} \
-  && [ "$(git -C "$RUN_ROOT" rev-parse --abbrev-ref HEAD)" = "{branch}" ] \
-  && [ "$(git -C "$RUN_ROOT" rev-list --count HEAD..origin/{branch})" = 0 ] \
+  && git -C "$RUN_ROOT" rev-parse --abbrev-ref HEAD | grep -qxF '{branch}' \
+  && git -C "$RUN_ROOT" rev-list --count HEAD..origin/{branch} | grep -qx 0 \
   && git -C "$RUN_ROOT" diff --quiet origin/{branch} HEAD -- ':!.claude-tweaks/pipelines'
 ```
 

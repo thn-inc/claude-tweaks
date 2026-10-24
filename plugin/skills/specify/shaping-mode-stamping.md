@@ -113,12 +113,20 @@ promoted via /specify — {date}\n\n` to it, write the result to this run's sess
 (`_shared/session-tmp-root.md`), and edit the comment in place — the identical
 `updateIssueComment` GraphQL mutation `_shared/pr-run-comments.md`'s Post-or-update procedure Step
 2 uses for PR comments, applied here to an issue comment's node ID instead of a PR's (same
-`IssueComment` type, same mutation shape):
+`IssueComment` type, same mutation shape). The worktree guard refuses that mutation inline, and a
+`gh` argument held in a runtime variable (`_shared/scratch-worktree.md` §7), so both files go by
+literal path. This prints the two session-scoped paths, one `NAME="path"` line each:
 
 ```bash
-NEEDS_DECISION_RESOLVED_BODY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "needs-decision-resolved-{n}-{found-id}.md")"
-gh api graphql -f query='mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}' \
-  -f id="{found-id}" -F body=@"$NEEDS_DECISION_RESOLVED_BODY"
+node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" BODY="needs-decision-resolved-{n}-{found-id}.md" QUERY=update-issue-comment.graphql
+```
+
+Write the resolved body to `BODY`'s path and
+`mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}`
+to `QUERY`'s, each with the `Write` tool, then pass them as `{body-file}` and `{query-file}`:
+
+```bash
+gh api graphql -F query=@"{query-file}" -f id="{found-id}" -F body=@"{body-file}"
 ```
 
 Do this for every unresolved comment found — a record refused by both `backlog-refine` and

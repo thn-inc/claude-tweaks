@@ -277,15 +277,15 @@ The git-log dump follows the same session-scoped freshness rule as the record sn
 when fresh, else regenerate it:
 
 ```bash
-GITLOG=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').gitLogPath(process.env.CLAUDE_CODE_SESSION_ID) || '')")
-if [ -n "$GITLOG" ] && node -e "
+COMMITLOG=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').gitLogPath(process.env.CLAUDE_CODE_SESSION_ID) || '')")
+if [ -n "$COMMITLOG" ] && node -e "
   const { isFresh } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
   process.exit(isFresh(process.argv[1], Number(process.argv[2])) ? 0 : 1)
-" -- "$GITLOG" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
-  cp "$GITLOG" "{tmp-git-log}"
+" -- "$COMMITLOG" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
+  cp "$COMMITLOG" "{tmp-git-log}"
 else
   git log "{integration-branch}" --format='%H%x1f%B%x1e' > "{tmp-git-log}"
-  [ -n "$GITLOG" ] && cp "{tmp-git-log}" "$GITLOG"
+  [ -n "$COMMITLOG" ] && cp "{tmp-git-log}" "$COMMITLOG"
 fi
 ```
 
