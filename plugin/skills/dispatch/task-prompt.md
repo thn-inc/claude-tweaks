@@ -219,7 +219,7 @@ CRITICAL: before reporting `DONE`/`build-test-ok`, confirm your own claim agains
 you just produced -- this call is the producer, not a second call distrusting someone else's
 prior claim, so there is no earlier report to check here, only your own freshly written result.
 The actual artifact is the runner-written pass stamp verifying HEAD (`verify.js --stamp-status`
-reports `verifiedHead: true`) and its `report.json`, which exist only when the test phase runs
+reports `verifiedHead: true`) and its `report.json` -- or a complete `suiteComposed` verdict (`suiteComposed.complete: true`), whose per-suite records carry their own report paths and are the same artifact -- which exist only when the test phase runs
 through `/claude-tweaks:test`. A raw `npm test` log is not that artifact: it leaves no stamp, and
 the second call then re-runs the full suite (#3661). Never report a result from narrative or
 memory of an earlier pass in this same call -- if the stamp is absent or does not verify HEAD,
