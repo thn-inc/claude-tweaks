@@ -857,8 +857,13 @@ function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}
       const startFn = deps.pidStartTime || processProbe.pidStartTime;
       let provablyAlive;
       try {
-        provablyAlive = owner.host === hostname() && Number.isInteger(owner.pid) && aliveFn(owner.pid)
-          && (owner.pidStartedAt == null || startFn(owner.pid) === owner.pidStartedAt);
+        provablyAlive = owner.host === hostname() && Number.isInteger(owner.pid) && aliveFn(owner.pid);
+        if (provablyAlive && owner.pidStartedAt != null) {
+          // A failed start-time probe (null) is unknown, never dead: only a probed start
+          // time that differs from the stamped one is pid reuse.
+          const startedAt = startFn(owner.pid);
+          provablyAlive = startedAt === null || startedAt === undefined || startedAt === owner.pidStartedAt;
+        }
       } catch { provablyAlive = true; }
       if (provablyAlive) return null;
       fields = {

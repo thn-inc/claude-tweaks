@@ -509,6 +509,13 @@ test('a pid-reused owner (alive, different start time) is re-stamped', () => {
   assert.strictEqual(ownerOf(fx).pidStartedAt, 'T200');
 });
 
+test('a failed start-time probe on a live owner is unknown, never dead — a nested claude -p does not take over', () => {
+  const fx = refreshFixture();
+  const deps = refreshDeps({ cur: 200, alive: true, startOf: { 200: 'T200' } }); // pidStartTime(100) -> null
+  assert.strictEqual(refresh(fx, { now: RT0 + 61_000, deps }), null);
+  assert.deepStrictEqual(ownerOf(fx), { sessionId: 's', host: 'h', pid: 100, pidSource: 'env', pidStartedAt: 'T100', heartbeatAt: RT0_ISO });
+});
+
 test('an owner stamped on another host is re-stamped (its pid proves nothing here)', () => {
   const fx = refreshFixture({ host: 'elsewhere' });
   assert.strictEqual(refresh(fx, { deps: refreshDeps({ cur: 200, alive: true }) }), 'restamp');

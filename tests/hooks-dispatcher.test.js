@@ -596,6 +596,20 @@ test('AC3.1 #3845: hooks.js session-end from a nested claude process (same sessi
   assert.strictEqual(readRunState(run).status, 'interrupted', 'the owner process ending still stamps interrupted');
 });
 
+test('#3973: the dispatcher refreshes the owner block on a non-session-start event (heartbeat through hooks.js)', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  const env = { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) };
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env });
+  const stale = new Date(Date.now() - 10 * 60_000).toISOString();
+  const state = readRunState(run);
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ ...state, owner: { ...state.owner, heartbeatAt: stale } }));
+  runHook(['session-end'], { cwd: project, input: JSON.stringify({ session_id: 'owner', reason: 'other', cwd: project }), env });
+  const owner = readRunState(run).owner;
+  assert.ok(Date.parse(owner.heartbeatAt) > Date.parse(stale) + 9 * 60_000, `heartbeatAt advanced, got ${owner.heartbeatAt}`);
+  assert.strictEqual(owner.pid, process.pid, 'a heartbeat leaves the pid alone');
+});
+
 test('close-run without --run REFUSES to close a run recorded by another (still-active) session, stays silent for the owner (finding regression)', () => {
   // Previously, a cross-session mismatch reached via the implicit fallback
   // (no --run) was only ever NOTED via a printed message but still
