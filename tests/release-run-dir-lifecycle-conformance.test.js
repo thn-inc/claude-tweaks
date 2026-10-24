@@ -51,11 +51,17 @@ function extractGuard(stepZero) {
 
 const STEP_ZERO = stepZeroOf(readText(SKILL));
 
-// Runs the guard against a fixture dir; PIPELINE_RUN_DIR is deleted so the caller's env never decides.
-function runGuard(guard, dir) {
-  const env = { ...process.env, RUN_DIR: dir, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT };
+// PIPELINE_RUN_DIR and RUN_DIR are deleted so the caller's env never decides; `overrides` sets what the run needs.
+function scriptEnv(overrides) {
+  const env = { ...process.env };
   delete env.PIPELINE_RUN_DIR;
-  return spawnSync('bash', ['-c', guard], { env, encoding: 'utf8' });
+  delete env.RUN_DIR;
+  return { ...env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, ...overrides };
+}
+
+// Runs the guard against a fixture dir.
+function runGuard(guard, dir) {
+  return spawnSync('bash', ['-c', guard], { env: scriptEnv({ RUN_DIR: dir }), encoding: 'utf8' });
 }
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'release-run-dir-lifecycle-'));
@@ -124,13 +130,18 @@ function extractMintLine(stepZero) {
   return line.trim();
 }
 
-// A real repo whose only run directory is a finished release run — the shape #3898 reproduced.
-const FINISHED_RUN_ID = '2026-10-01T100000-release-standalone';
-function finishedRunRepo(name) {
+function initRepo(name) {
   const repo = path.join(scratch, name);
   fs.mkdirSync(repo, { recursive: true });
   const init = spawnSync('git', ['init', '-q'], { cwd: repo, encoding: 'utf8' });
-  assert.equal(init.status, 0, `repo init failed: ${init.stderr}`);
+  assert.equal(init.status, 0, `${name}: repo init failed: ${init.stderr}`);
+  return repo;
+}
+
+// A real repo whose only run directory is a finished release run — the shape #3898 reproduced.
+const FINISHED_RUN_ID = '2026-10-01T100000-release-standalone';
+function finishedRunRepo(name) {
+  const repo = initRepo(name);
   const finished = path.join(repo, '.claude-tweaks', 'pipelines', FINISHED_RUN_ID);
   fs.mkdirSync(finished, { recursive: true });
   fs.writeFileSync(path.join(finished, 'run-state.json'), '{"status":"clean"}');
@@ -138,10 +149,7 @@ function finishedRunRepo(name) {
 }
 
 function runInRepo(repo, script) {
-  const env = { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT };
-  delete env.PIPELINE_RUN_DIR;
-  delete env.RUN_DIR;
-  return spawnSync('bash', ['-c', script], { cwd: repo, env, encoding: 'utf8' });
+  return spawnSync('bash', ['-c', script], { cwd: repo, env: scriptEnv(), encoding: 'utf8' });
 }
 
 // After the guard refuses the finished dir, the mint line must produce a different, newly created dir.
@@ -192,10 +200,7 @@ function waitForNextSecond() {
 // The reviewer's scenario: the fence runs twice with no close-run between them. The second run must
 // refuse the first run's still-active directory and mint a different one.
 function assertSecondRunRefusesFirst(fence, label) {
-  const repo = path.join(scratch, label);
-  fs.mkdirSync(repo, { recursive: true });
-  const init = spawnSync('git', ['init', '-q'], { cwd: repo, encoding: 'utf8' });
-  assert.equal(init.status, 0, `${label}: repo init failed: ${init.stderr}`);
+  const repo = initRepo(label);
   const first = runInRepo(repo, fence);
   assert.equal(first.status, 0, `${label}: first run exited ${first.status} (stderr: ${first.stderr})`);
   const firstLines = first.stdout.trim().split('\n');
@@ -240,6 +245,13 @@ function assertEachPatternGoesRed(text, patterns, missingOf) {
     assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
     assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
   }
+}
+
+// Every fact present in `text`, and each one able to go red on its own.
+function assertFactsAndGoRed(text, patterns, message) {
+  const missingOf = missingFactsOf(patterns);
+  assert.deepEqual(missingOf(text), [], message);
+  assertEachPatternGoesRed(text, patterns, missingOf);
 }
 
 test('AC1.1/AC2.1: Step 0 prose: terminal step-2 dir is refused, run is created', () => {
@@ -331,10 +343,7 @@ for (const [name, patterns] of [
   ['AC3.1: disposition.md approval and logging', DISPOSITION_APPROVAL],
 ]) {
   test(name, () => {
-    const text = readDisposition();
-    const missingOf = missingFactsOf(patterns);
-    assert.deepEqual(missingOf(text), [], `${name} must state every fact (#3898)`);
-    assertEachPatternGoesRed(text, patterns, missingOf);
+    assertFactsAndGoRed(readDisposition(), patterns, `${name} must state every fact (#3898)`);
   });
 }
 
@@ -378,9 +387,7 @@ function swapParagraphs(text, a, b) {
 
 test('AC2.1/AC3.1: Step 8 wires disposition, summary line, and archival in order', () => {
   const stepEight = stepEightOf(readText(SKILL));
-  const missingOf = missingFactsOf(STEP8_WIRING);
-  assert.deepEqual(missingOf(stepEight), [], 'Step 8 must wire disposition.md, the findings: line and archive-run (#3898)');
-  assertEachPatternGoesRed(stepEight, STEP8_WIRING, missingOf);
+  assertFactsAndGoRed(stepEight, STEP8_WIRING, 'Step 8 must wire disposition.md, the findings: line and archive-run (#3898)');
   requireOrder(stepEight, STEP8_ORDER);
 });
 
@@ -403,14 +410,8 @@ const DISPOSITION_INHERITED = [
 ];
 
 test('AC4.1: an inherited run directory is never closed, archived or disposed', () => {
-  const stepEight = stepEightOf(readText(SKILL));
-  const stepEightMissing = missingFactsOf(STEP8_INHERITED);
-  assert.deepEqual(stepEightMissing(stepEight), [], 'Step 8 must leave an inherited directory unclosed and unarchived');
-  assertEachPatternGoesRed(stepEight, STEP8_INHERITED, stepEightMissing);
-  const text = readDisposition();
-  const dispositionMissing = missingFactsOf(DISPOSITION_INHERITED);
-  assert.deepEqual(dispositionMissing(text), [], 'disposition.md must write the SKIP line for an inherited directory');
-  assertEachPatternGoesRed(text, DISPOSITION_INHERITED, dispositionMissing);
+  assertFactsAndGoRed(stepEightOf(readText(SKILL)), STEP8_INHERITED, 'Step 8 must leave an inherited directory unclosed and unarchived');
+  assertFactsAndGoRed(readDisposition(), DISPOSITION_INHERITED, 'disposition.md must write the SKIP line for an inherited directory');
 });
 
 // --- Early stops point at Step 8's close-out (#3898 final review C1b) ---------------------------------
@@ -433,10 +434,7 @@ const EARLY_STOPS = [
 
 for (const [from, to, patterns] of EARLY_STOPS) {
   test(`AC2.1: ${from} carries its Step 8 close-out facts (with go-red)`, () => {
-    const slice = sliceBetween(readText(SKILL), from, to);
-    const missingOf = missingFactsOf(patterns);
-    assert.deepEqual(missingOf(slice), [], `${from} must state every close-out fact (#3898)`);
-    assertEachPatternGoesRed(slice, patterns, missingOf);
+    assertFactsAndGoRed(sliceBetween(readText(SKILL), from, to), patterns, `${from} must state every close-out fact (#3898)`);
   });
 }
 
@@ -447,7 +445,5 @@ const CEILING_FACTS = [[/Three sanctioned callers[\s\S]{0,600}`release\/disposit
 test('AC3.1: autonomy-ceiling.md registers release/disposition.md as a consoleAutoResolve caller (with go-red)', () => {
   const row = readText(CEILING).split('\n').find((l) => l.startsWith('| `consoleAutoResolve` |'));
   assert.ok(row, 'extraction pattern is out of sync: autonomy-ceiling.md has no consoleAutoResolve row');
-  const missingOf = missingFactsOf(CEILING_FACTS);
-  assert.deepEqual(missingOf(row), [], 'the consoleAutoResolve row must name release/disposition.md as a sanctioned caller');
-  assertEachPatternGoesRed(row, CEILING_FACTS, missingOf);
+  assertFactsAndGoRed(row, CEILING_FACTS, 'the consoleAutoResolve row must name release/disposition.md as a sanctioned caller');
 });
