@@ -472,3 +472,22 @@ test('#2724 resolveResidue: structurally-stuck with a why text uses it in place 
   assert.deepEqual(result, { status: 'path-removed', number: 2724 });
   assert.equal(seen.commented, '`/x/run-a` is exempt here — removed from the stuck-paths list (1 path(s) still stuck).');
 });
+
+test('#2724 resolveResidue: a why text on the last remaining path closes the record with that wording', () => {
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a'])));
+  const result = resolveResidue({
+    repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', runner, why: 'is exempt here',
+  });
+  assert.deepEqual(result, { status: 'closed', number: 2724 });
+  assert.equal(seen.edited, SHAPED(renderStuckPathsBlock([])));
+  assert.equal(seen.commented, '`/x/run-a` is exempt here — the last remaining stuck path. Closing.');
+  assert.ok(seen.calls.some((c) => c[0] === 'issue' && c[1] === 'close'));
+});
+
+test('#2724 escalate: an OPEN record whose body lost its block gets the block appended, keeping the shaped text', () => {
+  const shaped = `## Current State\n\nShaped by a human.\n\n${structurallyStuckMarker()}\n`;
+  const { runner, seen } = stuckRecordRunner(shaped);
+  const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', count: 3, runner });
+  assert.deepEqual(result, { status: 'appended', number: 2724 });
+  assert.equal(seen.edited, `${shaped.trimEnd()}\n\n${renderStuckPathsBlock(['/x/run-a'])}\n`);
+});
