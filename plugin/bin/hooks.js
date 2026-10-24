@@ -1814,6 +1814,11 @@ async function main(argv) {
       fs.writeSync(2, `attribution: no run dir attributed — no fallback run dir matches ${cwd}; skipped ${ownedRun.dropped.join(', ')}\n`);
     } catch { /* diagnostics never break a session */ }
   }
+  // #3973: the owner's own events keep the run's owner block fresh. session-start
+  // refreshes it itself, before its reconcile spawn.
+  if (cmd !== 'session-start') {
+    try { ctxLib.refreshOwnerBlock({ input, ownedRun }); } catch { /* never breaks a session */ }
+  }
   const out = (await mod.run({ input, runDir, runState, ownedRun, cwd })) || {};
   if (out.json) fs.writeSync(1, JSON.stringify(out.json));
   return typeof out.exit === 'number' ? out.exit : 0;

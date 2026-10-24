@@ -412,6 +412,137 @@ test('AC2.4: ownerStampPatch never replaces another session\'s owner block', () 
   assert.deepStrictEqual(ctx.ownerStampPatch({}, 'b', block, { replacesSessionId: false }), { owner: block });
 });
 
+// #3973: refreshOwnerBlock — heartbeat and re-stamp from the owner's own hooks.
+const RT0 = Date.parse('2026-10-24T06:00:00Z');
+const RT0_ISO = new Date(RT0).toISOString();
+function refreshFixture(ownerOver = {}, { attribution = 'session', noOwner = false } = {}) {
+  const project = tmpProject();
+  const state = { sessionId: 's' };
+  if (!noOwner) {
+    state.owner = { sessionId: 's', host: 'h', pid: 100, pidSource: 'env', pidStartedAt: 'T100', heartbeatAt: RT0_ISO, ...ownerOver };
+  }
+  const dir = mkRun(project, '2026-07-01T090000-spec-1', state);
+  return { dir, ownedRun: { dir, attribution } };
+}
+// Probes injected so no test depends on a real process: pid 100 / 200 start at 'T100' / 'T200'.
+function refreshDeps({ cur = 100, alive = true, startOf = { 100: 'T100', 200: 'T200' } } = {}) {
+  return {
+    resolveOwnerPid: () => ({ pid: cur, pidSource: cur === null ? null : 'env' }),
+    pidStartTime: (pid) => startOf[pid] ?? null,
+    isPidAlive: () => alive,
+    hostname: () => 'h',
+  };
+}
+const refresh = (fx, { sessionId = 's', now = RT0, deps = refreshDeps() } = {}) =>
+  ctx.refreshOwnerBlock({ input: { session_id: sessionId }, ownedRun: fx.ownedRun }, { now, env: {}, deps });
+const ownerOf = (fx) => ctx.readRunState(fx.dir).owner;
+
+test('AC2.1: a second owner event 30 s later leaves heartbeatAt unchanged', () => {
+  const fx = refreshFixture();
+  refresh(fx, { now: RT0 });
+  assert.strictEqual(refresh(fx, { now: RT0 + 30_000 }), null);
+  assert.strictEqual(ownerOf(fx).heartbeatAt, RT0_ISO);
+});
+
+test('AC2.2: an owner event 61 s after the first advances heartbeatAt', () => {
+  const fx = refreshFixture();
+  assert.strictEqual(refresh(fx, { now: RT0 + 61_000 }), 'heartbeat');
+  const owner = ownerOf(fx);
+  assert.strictEqual(owner.heartbeatAt, new Date(RT0 + 61_000).toISOString());
+  assert.strictEqual(owner.pid, 100, 'a heartbeat leaves the rest of the block alone');
+  assert.strictEqual(owner.pidStartedAt, 'T100');
+});
+
+test('a heartbeat whose stored heartbeatAt does not parse is rewritten', () => {
+  const fx = refreshFixture({ heartbeatAt: 'garbage' });
+  assert.strictEqual(refresh(fx, { now: RT0 }), 'heartbeat');
+  assert.strictEqual(ownerOf(fx).heartbeatAt, RT0_ISO);
+});
+
+test('AC2.3: a fallback-attributed event never changes the owner block', () => {
+  const fx = refreshFixture({}, { attribution: 'fallback' });
+  assert.strictEqual(refresh(fx, { now: RT0 + 61_000 }), null);
+  assert.strictEqual(ownerOf(fx).heartbeatAt, RT0_ISO);
+});
+
+test('AC2.4: a hook from another session id never changes the owner block', () => {
+  const fx = refreshFixture();
+  assert.strictEqual(refresh(fx, { sessionId: 'other', now: RT0 + 61_000 }), null);
+  assert.strictEqual(ownerOf(fx).heartbeatAt, RT0_ISO);
+});
+
+test('nested claude -p sharing the session id does not re-stamp or heartbeat', () => {
+  const fx = refreshFixture();
+  assert.strictEqual(refresh(fx, { now: RT0 + 61_000, deps: refreshDeps({ cur: 200, alive: true }) }), null);
+  assert.deepStrictEqual(ownerOf(fx), { sessionId: 's', host: 'h', pid: 100, pidSource: 'env', pidStartedAt: 'T100', heartbeatAt: RT0_ISO });
+});
+
+test('AC3.1: a resumed session re-stamps pid and pidStartedAt together', () => {
+  const fx = refreshFixture();
+  const realRename = fs.renameSync;
+  let runStateRenames = 0;
+  fs.renameSync = (from, to) => {
+    if (String(to).endsWith('run-state.json')) runStateRenames++;
+    return realRename(from, to);
+  };
+  let result;
+  try {
+    result = refresh(fx, { now: RT0 + 5_000, deps: refreshDeps({ cur: 200, alive: false }) });
+  } finally {
+    fs.renameSync = realRename;
+  }
+  assert.strictEqual(result, 'restamp');
+  const owner = ownerOf(fx);
+  assert.strictEqual(owner.pid, 200);
+  assert.strictEqual(owner.pidStartedAt, 'T200');
+  assert.strictEqual(owner.pidSource, 'env');
+  assert.strictEqual(owner.host, 'h');
+  assert.strictEqual(owner.heartbeatAt, new Date(RT0 + 5_000).toISOString());
+  assert.strictEqual(runStateRenames, 1, 'pid and pidStartedAt land in one write');
+});
+
+test('a pid-reused owner (alive, different start time) is re-stamped', () => {
+  const fx = refreshFixture();
+  const deps = refreshDeps({ cur: 200, alive: true, startOf: { 100: 'other', 200: 'T200' } });
+  assert.strictEqual(refresh(fx, { deps }), 'restamp');
+  assert.strictEqual(ownerOf(fx).pid, 200);
+  assert.strictEqual(ownerOf(fx).pidStartedAt, 'T200');
+});
+
+test('an owner stamped on another host is re-stamped (its pid proves nothing here)', () => {
+  const fx = refreshFixture({ host: 'elsewhere' });
+  assert.strictEqual(refresh(fx, { deps: refreshDeps({ cur: 200, alive: true }) }), 'restamp');
+  assert.strictEqual(ownerOf(fx).host, 'h');
+});
+
+test('a throwing liveness probe counts as alive — no re-stamp', () => {
+  const fx = refreshFixture();
+  const deps = { ...refreshDeps({ cur: 200 }), isPidAlive: () => { throw new Error('probe'); } };
+  assert.strictEqual(refresh(fx, { deps }), null);
+  assert.strictEqual(ownerOf(fx).pid, 100);
+});
+
+test('a missing CLAUDE_PID never re-stamps', () => {
+  const fx = refreshFixture();
+  assert.strictEqual(refresh(fx, { now: RT0 + 61_000, deps: refreshDeps({ cur: null, alive: false }) }), null);
+  assert.strictEqual(ownerOf(fx).pid, 100);
+  assert.strictEqual(ownerOf(fx).heartbeatAt, RT0_ISO);
+});
+
+test('a legacy run (no owner block) is never given one by a heartbeat', () => {
+  const fx = refreshFixture({}, { noOwner: true });
+  assert.strictEqual(refresh(fx, { now: RT0 + 61_000 }), null);
+  assert.ok(!('owner' in ctx.readRunState(fx.dir)));
+});
+
+test('refreshOwnerBlock never throws', () => {
+  const fx = refreshFixture();
+  const deps = { ...refreshDeps(), resolveOwnerPid: () => { throw new Error('probe'); } };
+  assert.strictEqual(refresh(fx, { now: RT0 + 61_000, deps }), null);
+  assert.strictEqual(ctx.refreshOwnerBlock(undefined), null);
+  assert.strictEqual(ctx.refreshOwnerBlock({ input: null, ownedRun: null }), null);
+});
+
 test('appendEvent writes one JSON line per call, never throws on bad dir', () => {
   const project = tmpProject();
   const run = mkRun(project, '2026-07-01T090000-spec-1');

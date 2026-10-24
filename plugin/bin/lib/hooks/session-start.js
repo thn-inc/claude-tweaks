@@ -121,6 +121,8 @@ async function run(ctx) {
   // land, instead of two reads that can drift.
   const pluginRootEnv = process.env.CLAUDE_PLUGIN_ROOT;
   try { restampOwnerPidOnResume(ctx); } catch { /* best-effort */ }
+  // #3973: re-stamp the owner block (a resume runs under a new process) before anything below spawns.
+  try { ctxLib.refreshOwnerBlock(ctx); } catch { /* best-effort */ }
   try { parts.push(...deps.collect()); } catch { /* best-effort */ }
   try {
     const buildLine = resolveBuildLine({ CLAUDE_PLUGIN_ROOT: pluginRootEnv });

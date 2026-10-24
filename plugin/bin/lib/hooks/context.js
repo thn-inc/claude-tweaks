@@ -11,6 +11,7 @@ const runDirResolve = require('./run-dir-resolve');
 const { classifyDecisions } = require('../log-decision/claim-log');
 const { canonicalRealpath } = require('../path-guard');
 const processProbe = require('../run-liveness/process-probe');
+const { HEARTBEAT_THROTTLE_MS } = require('../run-liveness/constants');
 const { claudePid } = processProbe;
 
 function readStdin() {
@@ -826,6 +827,68 @@ function ownerStampPatch(existing, sessionId, block, { replacesSessionId = false
   return { owner: block };
 }
 
+// #3973: the owner's own hooks keep the owner block fresh. Same pid as stamped: a
+// heartbeat, at most one write per HEARTBEAT_THROTTLE_MS. A different pid with the
+// stamped process provably gone (a `claude --resume` under a new process, or a pid
+// that was reused): re-stamp pid, pidSource, pidStartedAt, host and heartbeatAt in
+// ONE write, so the pid and its start time never describe two different processes.
+// A different pid with the stamped process still provably alive is a nested
+// `claude -p` sharing the session id — it must neither heartbeat nor take the block
+// over. Never gives a legacy run (no owner block) one, never acts on a `fallback`
+// guess or another session's run, and never throws (it runs on every hook event).
+// Returns 'heartbeat' | 'restamp' | null (null: nothing written).
+function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {} } = {}) {
+  try {
+    const owned = ctx && ctx.ownedRun;
+    if (!isTrustedOwnedRun(owned)) return null;
+    const sessionId = ctx.input && ctx.input.session_id;
+    if (typeof sessionId !== 'string' || sessionId === '') return null;
+    const state = readRunState(owned.dir);
+    const owner = state && state.owner;
+    if (!owner || typeof owner !== 'object' || owner.sessionId !== sessionId) return null;
+
+    const hostname = deps.hostname || os.hostname;
+    const cur = (deps.resolveOwnerPid || processProbe.resolveOwnerPid)(env);
+    let fields;
+    let result;
+    if (cur.pid !== owner.pid) {
+      if (!Number.isInteger(cur.pid)) return null;
+      const aliveFn = deps.isPidAlive || isPidAlive;
+      const startFn = deps.pidStartTime || processProbe.pidStartTime;
+      let provablyAlive;
+      try {
+        provablyAlive = owner.host === hostname() && Number.isInteger(owner.pid) && aliveFn(owner.pid)
+          && (owner.pidStartedAt == null || startFn(owner.pid) === owner.pidStartedAt);
+      } catch { provablyAlive = true; }
+      if (provablyAlive) return null;
+      fields = {
+        pid: cur.pid,
+        pidSource: cur.pidSource,
+        pidStartedAt: startFn(cur.pid),
+        host: hostname(),
+        heartbeatAt: new Date(now).toISOString(),
+      };
+      result = 'restamp';
+    } else {
+      const last = Date.parse(owner.heartbeatAt);
+      if (Number.isFinite(last) && now - last < HEARTBEAT_THROTTLE_MS) return null;
+      fields = { heartbeatAt: new Date(now).toISOString() };
+      result = 'heartbeat';
+    }
+
+    let applied = false;
+    const written = writeRunState(owned.dir, (existing) => {
+      const o = existing && existing.owner;
+      if (!o || o.sessionId !== owner.sessionId || o.pid !== owner.pid) return null;
+      applied = true;
+      return { owner: { ...o, ...fields } };
+    });
+    return applied && written !== null ? result : null;
+  } catch {
+    return null;
+  }
+}
+
 function isNestedSession(runState, env, { isAlive = isPidAlive } = {}) {
   const owner = runState && runState.ownerPid;
   if (!Number.isInteger(owner) || owner <= 0) return false;
@@ -984,5 +1047,5 @@ module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
-  claudePid, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch,
+  claudePid, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, refreshOwnerBlock,
 };
