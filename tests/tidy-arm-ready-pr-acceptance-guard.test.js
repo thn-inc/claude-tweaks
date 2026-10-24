@@ -92,6 +92,7 @@ test('AC4.1: Arm ready PR cites the contract and no longer restates the predicat
 
 test('AC4.2 + AC5.2: tidy keeps its deltas', () => {
   assert.match(arm, /even when (it|the check) resolves `no run dir`/);
+  assert.match(arm, /A `landed` outcome continues to Step 3 below\. Otherwise do not run Step 3/);
   assert.match(arm, /never run labeling from a tidy sweep/);
   assert.match(arm, /not armed — acceptance labeling not landed \(\{reason\}\)/);
   assert.match(arm, /close-out stops on the same missing run dir/);

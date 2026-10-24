@@ -86,12 +86,12 @@ acceptance labeling (`demo:pending`, the Try it walkthrough) landed, and the mer
 record. For a PR carrying the `claude-tweaks-run:` marker, apply `_shared/acceptance-labeling-landed.md`
 before arming, running its live-state tier even when it resolves `no run dir`: tidy departs from
 `dispatch/close-out.md` step 3, which stops that candidate there, because tidy never runs Step 1 and so
-needs no run dir. Otherwise do not run Step 3, and never run
-labeling from a tidy sweep: `wrap-up/verification-brief.md` needs the run's own inputs. Hold the PR for
-a human instead, and never as a silent no-op; an `unreadable` outcome holds the PR too, never passes
-it. Report `PR #{n} not armed — acceptance labeling not
-landed ({reason})`, with `{reason}` the contract's not-landed outcome (`verify.json missing`,
-`acceptance-labeling: {result}`, `no run dir`, or `unreadable: {verify.json | labels | comments}`), and recommend
+needs no run dir. A `landed` outcome continues to Step 3 below. Otherwise do not run Step 3, and never
+run labeling from a tidy sweep: `wrap-up/verification-brief.md` needs the run's own inputs. Hold the PR
+for a human instead, and never as a silent no-op; an `unreadable` outcome holds the PR too, never
+passes it. Report `PR #{n} not armed — acceptance labeling not landed ({reason})`, with `{reason}` the
+contract's not-landed outcome (`verify.json missing`, `acceptance-labeling: {result}`, `no run dir`, or
+`unreadable: {verify.json | labels | comments}`), and recommend
 `/claude-tweaks:dispatch close-out #{record}` ({record} = one of the PR's `Fixes` records), which runs
 `_shared/pr-first-merge.md` Step 1 before it merges. For `no run dir`, close-out stops on the same
 missing run dir, so the recommendation instead names running that command from the checkout that holds
