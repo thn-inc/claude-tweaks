@@ -32,7 +32,7 @@ const fs = require('fs');
 const ctxLib = require('./context');
 const { parseWorktreeList, lockVerdict } = require('./worktree-reap');
 const { mainCheckoutRoot, safeReal } = require('./worktree-detect');
-const { runGit } = require('./git-exec');
+const { runGit, FAILURE } = require('./git-exec');
 
 // "On the order of minutes" (the spec's own phrasing): long enough that a
 // burst of commits from a single working session's normal cadence doesn't
@@ -118,4 +118,24 @@ function checkResumeFreshness(runDir, opts = {}) {
   return { safe: true, verdict: 'stale' };
 }
 
-module.exports = { checkResumeFreshness, RESUME_FRESHNESS_THRESHOLD_MS };
+// Last-commit time of `worktree` in ms, as a raw probe for the run-liveness
+// verdict module (#3973): null when the repo has no commit yet, THROWS when the
+// answer could not be obtained (not a repo, timeout, unparseable value) so the
+// caller can tell "no evidence" from "could not ask". `checkResumeFreshness`
+// above keeps its own inline read — that function is frozen until #3979.
+function lastCommitMs(worktree) {
+  const { stdout, failure } = runGit(['log', '-1', '--format=%ct'], worktree);
+  if (failure) {
+    // A repo with no commit yet also fails `git log`; tell it from a non-repo by
+    // asking whether git can resolve a git dir there at all (locale-independent,
+    // unlike matching git's "does not have any commits yet" message).
+    if (failure === FAILURE.GIT_ERROR && !runGit(['rev-parse', '--git-dir'], worktree).failure) return null;
+    throw new Error(`could not read the last commit time of ${worktree}: git ${failure}`);
+  }
+  if (!stdout) return null;
+  const ms = Number(stdout) * 1000;
+  if (!Number.isFinite(ms)) throw new Error(`could not parse the last commit time of ${worktree}: ${stdout}`);
+  return ms;
+}
+
+module.exports = { checkResumeFreshness, lastCommitMs, RESUME_FRESHNESS_THRESHOLD_MS };
