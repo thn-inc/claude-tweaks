@@ -40,7 +40,7 @@ const {
 } = require('./lib/verify/count-stamp');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { composeStamp, writeStamp, readStamp: readVerifyStamp, anchorOf } = require('./lib/verify/stamp');
-const { readDeclaration, generatedExemption } = require('./lib/verify/declaration');
+const { readDeclaration, generatedExemption, DECLARATION_PATH } = require('./lib/verify/declaration');
 const { readSuiteStamps, writeSuiteStamps, composeSuiteCoverage } = require('./lib/verify/suite-stamp');
 const {
   changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
@@ -143,14 +143,17 @@ function statusOf(check) {
 // --stamp-status's own --scope (#3002/#2987).
 function resolveScopePath(scope, scopeCwd) {
   if (path.isAbsolute(scope)) return scope;
-  let scopeRoot = scopeCwd;
+  return path.join(checkoutRoot(scopeCwd), scope);
+}
+
+// The git toplevel from scopeCwd — or, outside a git work tree, scopeCwd
+// itself; every other git call the caller makes fails the same way.
+function checkoutRoot(scopeCwd) {
   try {
-    scopeRoot = realGit(scopeCwd).repoRoot();
+    return realGit(scopeCwd).repoRoot();
   } catch {
-    // Not inside a git work tree from scopeCwd — fall back to scopeCwd
-    // itself; every other git call the caller makes fails the same way.
+    return scopeCwd;
   }
-  return path.join(scopeRoot, scope);
 }
 
 // #2987: the repo-relative form of a resolved --scope path, so
@@ -202,15 +205,27 @@ function stampStatus(parsed) {
   // --stamp-status — what every re-verify gate runs — sees the same composed
   // and generated-exempt verdicts a --scope call would. No discovery under a
   // foreign --git-dir (that checkout's declaration is never read as this one's).
-  const defaultScope = '.claude-tweaks/verify-scope.json';
+  // A discovered declaration is trusted only when it really lies inside this
+  // checkout: one that resolves outside it (a symlink to an untracked or
+  // out-of-tree file) can change without dirtying the tree, widening
+  // `generated` or shrinking the declared suites under a verdict that still
+  // reads verified — so it, and a dangling one, is reported, never read. An
+  // unreadable leaf is read anyway, so its error reaches scopeError.
   let scopePath = null;
   let discovered = false;
+  let discoveryError = null;
   if (!foreignGitDir) {
     if (parsed.scope) {
       scopePath = resolveScopePath(parsed.scope, process.cwd());
     } else {
-      const candidate = resolveScopePath(defaultScope, process.cwd());
-      if (lstatType(candidate).type !== 'missing') { scopePath = candidate; discovered = true; }
+      const candidate = resolveScopePath(DECLARATION_PATH, process.cwd());
+      const leaf = lstatType(candidate).type;
+      if (leaf === 'unreadable' || (leaf !== 'missing' && resolveWithin(candidate, checkoutRoot(process.cwd())) !== null)) {
+        scopePath = candidate;
+        discovered = true;
+      } else if (leaf !== 'missing') {
+        discoveryError = `${DECLARATION_PATH}: ignored — it does not resolve to a path inside this checkout (dangling, or a symlink to a target outside it)`;
+      }
     }
   }
   const scopeRead = scopePath !== null
@@ -226,6 +241,7 @@ function stampStatus(parsed) {
   // to the single stamp.
   let scopeError = null;
   if (parsed.scope && foreignGitDir) scopeError = '--scope: ignored — --git-dir names another checkout, whose declaration and per-suite records are never read as this one\'s';
+  else if (discoveryError) scopeError = discoveryError;
   else if (scopeRead && !scopeRead.ok) scopeError = scopeRead.errors.join('; ');
   else if (scopeRead && scopeRead.missing && !discovered) scopeError = `--scope: no declaration at ${scopePath}`;
   // #2987: the SAME generated-path exemption bin/verify.js's own stamp-write

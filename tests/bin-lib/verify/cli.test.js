@@ -1631,8 +1631,56 @@ test('AC5.1: an unreadable default declaration reports scopeError, exits 0, and 
   const run2 = await runCli(['--stamp-status'], { cwd: r2.repo });
   assert.strictEqual(run2.code, 0);
   const s2 = JSON.parse(run2.stdout);
-  assert.notStrictEqual(s2.scopeError, null);
+  assert.match(s2.scopeError, /generated: "\*\*" would also cover \.claude-tweaks\/verify-scope\.json itself/);
   assert.strictEqual(s2.suiteComposed, null);
+});
+
+// #4006 review: a discovered declaration is trusted only when it resolves
+// inside the checkout — one reached through a symlink to an out-of-tree file
+// could change without dirtying the tree under a verdict that reads verified.
+const SYMLINK_SKIP = { skip: process.platform === 'win32' && 'win32: creating a symlink needs extra privileges' };
+
+// Replace the committed declaration with a committed symlink to `target`.
+function symlinkDeclaration(r, target) {
+  fs.rmSync(path.join(r.repo, r.declPath));
+  fs.symlinkSync(target, path.join(r.repo, r.declPath));
+  r.git('add', r.declPath);
+  r.git('commit', '-q', '-m', 'declaration via symlink');
+}
+
+test('a discovered declaration symlinked to a file outside the checkout is reported, never composed', SYMLINK_SKIP, async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const outside = path.join(tmpDir(), 'verify-scope.json');
+  fs.copyFileSync(path.join(r.repo, r.declPath), outside);
+  symlinkDeclaration(r, outside);
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  const s = await bareStatus(r);
+  assert.match(s.scopeError, /does not resolve to a path inside this checkout/);
+  assert.strictEqual(s.suiteComposed, null, 'an out-of-tree declaration never feeds composition');
+  assert.strictEqual(s.verifiedHead, false, 'both chunks recorded passes, but only against an untrusted declaration');
+});
+
+test('a dangling discovered declaration symlink is reported, not silent', SYMLINK_SKIP, async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  symlinkDeclaration(r, path.join(r.repo, '.claude-tweaks', 'nowhere.json'));
+  const s = await bareStatus(r);
+  assert.match(s.scopeError, /does not resolve to a path inside this checkout/);
+  assert.strictEqual(s.suiteComposed, null);
+});
+
+test('a discovered declaration symlinked to a file inside the checkout composes as usual', SYMLINK_SKIP, async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const inside = '.claude-tweaks/verify-scope.real.json';
+  fs.copyFileSync(path.join(r.repo, r.declPath), path.join(r.repo, inside));
+  r.git('add', inside);
+  symlinkDeclaration(r, 'verify-scope.real.json');
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  const s = await bareStatus(r);
+  assert.strictEqual(s.scopeError, null);
+  assert.strictEqual(s.suiteComposed.complete, true);
+  assert.strictEqual(s.verifiedHead, true);
 });
 
 test('AC6.1: an explicit --scope composes against that path, not the default file', async () => {
