@@ -426,8 +426,13 @@ test('#4029: a transcript with no tool calls and no assistant turns renders the 
 
 // --check-budgets (#4029): a tmp checkout (.git dir) with a policy.yml and a run dir under
 // .claude-tweaks/pipelines/, run with cwd = the checkout so the staging anchor resolves to it.
-function budgetTree({ config = 'ceremony-profile: fast-lane\n', policy = 'fast-lane-run-round-trip-ceiling: 5\n', git = true } = {}) {
+// A stub `gh` first on PATH answers the open-record lookup (`[]` unless `ghAnswer` is given),
+// so no test reaches real gh. On win32 a bare executable stub is not launchable: the lookup
+// then fails open, which every test here tolerates except the one that skips win32.
+function budgetTree({ config = 'ceremony-profile: fast-lane\n', policy = 'fast-lane-run-round-trip-ceiling: 5\n', git = true, ghAnswer = '[]' } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-budget-cli-')));
+  fs.mkdirSync(path.join(root, 'stub-bin'));
+  fs.writeFileSync(path.join(root, 'stub-bin', 'gh'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(ghAnswer)});\n`, { mode: 0o755 });
   if (git) fs.mkdirSync(path.join(root, '.git'));
   fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines'), { recursive: true });
   if (policy !== null) fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), policy);
@@ -438,7 +443,7 @@ function budgetTree({ config = 'ceremony-profile: fast-lane\n', policy = 'fast-l
   if (config !== null) fs.writeFileSync(path.join(dir, 'config.yml'), config);
   return { root, dir, id };
 }
-const runIn = (cwd, args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', cwd });
+const runIn = (cwd, args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', cwd, env: { ...process.env, PATH: `${path.join(cwd, 'stub-bin')}${path.delimiter}${process.env.PATH}` } });
 const TC_SESSION = path.join(TC_FIX, 'session.jsonl');
 const stagedFiles = (dir) => (fs.existsSync(path.join(dir, 'staged')) ? fs.readdirSync(path.join(dir, 'staged')) : []);
 
@@ -449,7 +454,8 @@ test('#4029 AC2.1: a budget-breach fixture produces a staged item', () => {
   const staged = path.join(dir, 'staged', `efficiency-budget-${id}.md`);
   assert.ok(fs.existsSync(staged), r.stderr);
   const text = fs.readFileSync(staged, 'utf8');
-  assert.ok(text.startsWith(`Title: Efficiency budget breached on run ${id} (fast-lane)`), text);
+  assert.ok(text.startsWith('Title: Efficiency budget: fast-lane runs over the round-trips ceiling\n'), text);
+  assert.ok(text.includes(`Run \`${id}\``), 'the run id stays in the body');
   const decisions = fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8');
   const stagedLine = decisions.split('\n').find((l) => l.startsWith('- STAGED'));
   assert.ok(stagedLine, decisions);
@@ -470,6 +476,19 @@ test('#4029 AC2.1: a budget-breach fixture produces a staged item', () => {
   assert.equal(again.status, 0, again.stderr);
   assert.deepEqual(stagedFiles(dir).filter((f) => f.startsWith('efficiency-budget-')), [`efficiency-budget-${id}.md`]);
   assert.equal(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8').split('\n').filter((l) => l.startsWith('- STAGED')).length, 1);
+});
+
+test('#4029 I3: through the real CLI, an open record carrying the fingerprint folds the breach (stub gh)', { skip: process.platform === 'win32' && 'win32: a bare executable stub is not a launchable gh' }, () => {
+  const { budgetFingerprint } = require('../../../plugin/bin/lib/timing/budget');
+  const fp = budgetFingerprint('fast-lane');
+  const { root, dir } = budgetTree({ ghAnswer: JSON.stringify([{ number: 4242, body: `x\n\n<!-- work-fingerprint: ${fp} -->\nwork-fingerprint: ${fp}` }]) });
+  const r = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(stagedFiles(dir), []);
+  const t = readTiming(dir);
+  assert.equal(t.budget.trackedBy, 4242);
+  assert.equal(t.budget.staged, null);
+  assert.match(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), /^- AUTO [^\n]*already tracked by #4242 — not re-staged\./m);
 });
 
 test('#4029: no transcript leaves round-trip and procedure budgets unmeasured', () => {
@@ -503,7 +522,7 @@ test('#4029: a config.yml without ceremony-profile falls back to standard with a
   assert.equal(t.budget.profileSource, 'fallback');
   // the standard ceiling (5) is what breached, not fast-lane's
   assert.equal(t.budget.checks.find((c) => c.metric === 'round-trips').status, 'breach');
-  assert.ok(fs.readFileSync(path.join(dir, 'staged', `efficiency-budget-${path.basename(dir)}.md`), 'utf8').includes('(standard)'));
+  assert.ok(fs.readFileSync(path.join(dir, 'staged', `efficiency-budget-${path.basename(dir)}.md`), 'utf8').startsWith('Title: Efficiency budget: standard runs over'));
 });
 
 test('#4029: a ceiling of 0 disables its budget and a disabled budget stages nothing', () => {

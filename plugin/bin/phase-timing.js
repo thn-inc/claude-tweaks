@@ -41,7 +41,11 @@
 // `Budget (...)` line last (no line under --json, whose `budget` key carries
 // it). Round trips and procedure KB need a transcript; without one they read
 // `unmeasured`. A breach stages an `efficiency-budget-{run-id}` proposal for the
-// Review Console's Queue writes section and logs it STAGED; a staging failure
+// Review Console's Queue writes section and logs it STAGED (a multi-spec run's
+// spec-N dir stages into the parent, keyed on the parent id), unless an open
+// record already carries the profile's work fingerprint: then `budget.trackedBy`
+// names it and the decision is logged AUTO (a failed gh lookup fails open, with
+// a `budget.notes` line). A staging failure
 // goes to stderr and `budget.stageError`, and the exit code stays 0. A breach
 // left unstaged and any unmeasured metric each also append a SKIP line to the
 // run's decisions.md (the Degrade-trace rule). Without the flag the output and

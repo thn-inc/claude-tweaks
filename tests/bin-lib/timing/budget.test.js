@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { evaluateBudgets, formatBudgetLine, budgetProposal, repoRootOf, readCeremonyProfile, checkBudgets } = require('../../../plugin/bin/lib/timing/budget');
+const { evaluateBudgets, formatBudgetLine, budgetProposal, repoRootOf, readCeremonyProfile, checkBudgets, budgetFingerprint } = require('../../../plugin/bin/lib/timing/budget');
+const { extractFingerprint } = require('../../../plugin/bin/lib/issues/record-fingerprint');
 
 const CEILINGS = { roundTrips: 5, procedureKb: 560, verifyMinutes: 21 };
 const TOTALS = { toolRoundTrips: 10, procedureBytes: 100, verifyMinutes: 2 };
@@ -48,7 +49,9 @@ test('#4029: budgetProposal is a staged-file text with the Title/Type/Labels/Def
   const checks = evaluateBudgets({ totals, ceilings: CEILINGS });
   const text = budgetProposal({ runId: 'run-x', profile: 'fast-lane', checks, totals });
   const lines = text.split('\n');
-  assert.equal(lines[0], 'Title: Efficiency budget breached on run run-x (fast-lane)');
+  assert.equal(lines[0], 'Title: Efficiency budget: fast-lane runs over the round-trips ceiling');
+  // the run id stays in Current State, not the title
+  assert.match(text, /Run `run-x` \(ceremony profile `fast-lane`\)/);
   assert.equal(lines[1], 'Type: task');
   assert.equal(lines[2], 'Labels: none');
   assert.equal(lines[3], 'Defer-reason: needs-human-decision');
@@ -161,4 +164,120 @@ test('#4029 I2(b): no .claude-tweaks ancestor keeps budget.skipped plus the stde
   assert.deepEqual(r.budget, { skipped: 'no .claude-tweaks ancestor' });
   assert.deepEqual(r.stderr, ['budget: skipped — no .claude-tweaks ancestor']);
   assert.equal(fs.existsSync(path.join(dir, 'decisions.md')), false);
+});
+
+// --- I3: stable identity and the open-record fold ------------------------------
+test('#4029 I3: the proposal title is stable across runs and the body carries the per-profile work fingerprint', () => {
+  const checks = evaluateBudgets({ totals: { toolRoundTrips: 10, verifyMinutes: 30 }, ceilings: CEILINGS });
+  const a = budgetProposal({ runId: '2026-10-24T100000-record-1', profile: 'fast-lane', checks, totals: {} });
+  const b = budgetProposal({ runId: '2026-10-25T090000-record-2', profile: 'fast-lane', checks, totals: {} });
+  assert.equal(a.split('\n')[0], b.split('\n')[0]);
+  // metrics in check order, joined by ", "
+  assert.equal(a.split('\n')[0], 'Title: Efficiency budget: fast-lane runs over the round-trips, verify-minutes ceiling');
+  const fp = budgetFingerprint('fast-lane');
+  assert.match(fp, /^efficiencybudget-[0-9a-f]{8}$/);
+  assert.equal(extractFingerprint(a), fp);
+  assert.equal(extractFingerprint(b), fp);
+  assert.ok(a.includes(`<!-- work-fingerprint: ${fp} -->`) && a.includes(`\nwork-fingerprint: ${fp}`));
+  // one open record per profile: the other profile keys differently
+  assert.notEqual(budgetFingerprint('standard'), fp);
+});
+
+// A fake gh that records each call and answers `issue list` with `rows` (or throws `fail`).
+function fakeGh({ rows = [], fail = null, raw = null } = {}) {
+  const calls = [];
+  const gh = (args, opts) => {
+    calls.push({ args, opts });
+    if (args[0] !== 'issue' || args[1] !== 'list') throw new Error('unexpected gh ' + args.join(' '));
+    if (fail) throw fail;
+    return raw !== null ? raw : JSON.stringify(rows);
+  };
+  return { gh, calls };
+}
+const trackedBody = (fp) => `## Current State\n\nx\n\n<!-- work-fingerprint: ${fp} -->\nwork-fingerprint: ${fp}`;
+
+test('#4029 I3: a confirmed open record with the fingerprint folds the breach — no staged file, an AUTO line, budget.trackedBy', () => {
+  const root = checkout();
+  const dir = runDirIn(root, 'r-tracked');
+  const fp = budgetFingerprint('fast-lane');
+  const { gh, calls } = fakeGh({ rows: [{ number: 12, body: 'mentions it but no marker' }, { number: 77, body: trackedBody(fp) }] });
+  const r = checkBudgets({ runDir: dir, totals: TOTALS, deps: { cwd: root, gh } });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args, ['issue', 'list', '--state', 'open', '--search', `${fp} in:body`, '--json', 'number,body', '--limit', '50']);
+  assert.equal(calls[0].opts.cwd, root);
+  assert.equal(calls[0].opts.timeout, 5000, 'readGhTimeoutMs default');
+  assert.deepEqual(stagedIn(dir), []);
+  assert.equal(r.budget.staged, null);
+  assert.equal(r.budget.trackedBy, 77);
+  const lines = decisionLines(dir);
+  assert.equal(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], /^- AUTO \d{2}:\d{2}:\d{2} — efficiency budget: efficiency budget breach \(fast-lane: round-trips 10\/5\) already tracked by #77 — not re-staged\. Reversibility: n\/a\.$/);
+});
+
+test('#4029 I3: the gh timeout comes from policy.yml gh-timeout-ms', () => {
+  const root = checkout({ policy: 'fast-lane-run-round-trip-ceiling: 5\ngh-timeout-ms: 12000\n' });
+  const dir = runDirIn(root, 'r-timeout');
+  const { gh, calls } = fakeGh();
+  checkBudgets({ runDir: dir, totals: TOTALS, deps: { cwd: root, gh } });
+  assert.equal(calls[0].opts.timeout, 12000);
+});
+
+test('#4029 I3: a search hit whose body lacks the fingerprint is not a match — the breach is staged', () => {
+  const root = checkout();
+  const dir = runDirIn(root, 'r-fuzzy');
+  const { gh } = fakeGh({ rows: [{ number: 5, body: `talks about ${budgetFingerprint('fast-lane')} in prose` }, { number: 6, body: trackedBody(budgetFingerprint('standard')) }] });
+  const r = checkBudgets({ runDir: dir, totals: TOTALS, deps: { cwd: root, gh } });
+  assert.equal(r.budget.trackedBy, undefined);
+  assert.deepEqual(stagedIn(dir), ['efficiency-budget-r-fuzzy.md']);
+  assert.equal(r.budget.notes, undefined);
+});
+
+test('#4029 I3: a gh failure or an unparseable answer fails open — staged as before, plus a note and a stderr line', () => {
+  for (const [label, opts] of [['throw', { fail: Object.assign(new Error('spawnSync gh ENOENT'), { code: 'ENOENT' }) }], ['garbage', { raw: 'not json' }]]) {
+    const root = checkout();
+    const dir = runDirIn(root, `r-ghfail-${label}`);
+    const { gh } = fakeGh(opts);
+    const r = checkBudgets({ runDir: dir, totals: TOTALS, deps: { cwd: root, gh } });
+    assert.deepEqual(stagedIn(dir), [`efficiency-budget-r-ghfail-${label}.md`], label);
+    assert.equal(r.budget.staged, `staged/efficiency-budget-r-ghfail-${label}.md`, label);
+    assert.equal(r.budget.notes.length, 1, label);
+    assert.match(r.budget.notes[0], /^open-record fold skipped \(.+\) — staged without it$/, label);
+    assert.ok(r.stderr.some((l) => l === `budget: ${r.budget.notes[0]}`), `${label}: ${r.stderr.join('\n')}`);
+    assert.equal(decisionLines(dir).filter((l) => l.startsWith('- STAGED')).length, 1, label);
+  }
+});
+
+test('#4029 I3: a spec-N run dir under a multi-spec parent stages into the parent, keyed on the parent id', () => {
+  const root = checkout();
+  const parent = runDirIn(root, '2026-10-24T100000-multi');
+  fs.writeFileSync(path.join(parent, 'manifest.yml'), 'specs: []\n');
+  const spec = runDirIn(root, '2026-10-24T100000-multi', ['spec-41']);
+  const r = checkBudgets({ runDir: spec, totals: TOTALS, deps: { cwd: root, gh: ghNone } });
+  assert.deepEqual(stagedIn(spec), []);
+  assert.deepEqual(stagedIn(parent), ['efficiency-budget-2026-10-24T100000-multi.md']);
+  assert.equal(r.budget.staged, '../staged/efficiency-budget-2026-10-24T100000-multi.md');
+  assert.deepEqual(decisionLines(spec), []);
+  const staged = decisionLines(parent).filter((l) => l.startsWith('- STAGED'));
+  assert.equal(staged.length, 1);
+  assert.ok(staged[0].includes('Stage path: staged/efficiency-budget-2026-10-24T100000-multi.md.'), staged[0]);
+  // the body still names the spec run it came from
+  assert.match(fs.readFileSync(path.join(parent, 'staged', 'efficiency-budget-2026-10-24T100000-multi.md'), 'utf8'), /Run `2026-10-24T100000-multi\/spec-41`/);
+});
+
+test('#4029 I3: two spec dirs of one multi-spec run leave exactly one staged item', () => {
+  const root = checkout();
+  const parent = runDirIn(root, 'p-two');
+  fs.writeFileSync(path.join(parent, 'manifest.yml'), 'specs: []\n');
+  for (const n of ['spec-1', 'spec-2']) checkBudgets({ runDir: runDirIn(root, 'p-two', [n]), totals: TOTALS, deps: { cwd: root, gh: ghNone } });
+  assert.deepEqual(stagedIn(parent), ['efficiency-budget-p-two.md']);
+  assert.equal(decisionLines(parent).filter((l) => l.startsWith('- STAGED')).length, 1);
+  for (const n of ['spec-1', 'spec-2']) assert.deepEqual(stagedIn(path.join(parent, n)), [], n);
+});
+
+test('#4029 I3: a spec-N dir whose parent holds no manifest.yml stages in its own dir', () => {
+  const root = checkout();
+  const spec = runDirIn(root, 'p-nomanifest', ['spec-3']);
+  const r = checkBudgets({ runDir: spec, totals: TOTALS, deps: { cwd: root, gh: ghNone } });
+  assert.deepEqual(stagedIn(spec), ['efficiency-budget-spec-3.md']);
+  assert.equal(r.budget.staged, 'staged/efficiency-budget-spec-3.md');
 });
