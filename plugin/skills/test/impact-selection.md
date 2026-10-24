@@ -17,7 +17,13 @@ A declaration's `impact` block narrows one suite to the test files a test-impact
 
 No other key is accepted. `impact` cannot be combined with a tool-scoped `checks.tests` command (`{base}`), since that tool selects its own tests. An impact rule is `{ "match": "<glob>", "impact": true, "static": <bool> }`. It carries no `suites`, because its suite is `impact.suite`, and it needs a valid top-level `impact` block. Rules still match first-wins, so a path that changes how every test runs (the test runner, the map builder) goes in a `"suites": "*"` rule placed above the impact rules.
 
-`{files}` is shell-quoted for the platform. A command holding its own quote, backtick or backslash refuses the substitution whenever the list path needs quoting (a space anywhere in the log dir's path counts), so keep `command` free of those characters.
+**`{files}` quoting.** A plain list path substitutes as is. Any other path, for example one with a space anywhere in the log dir's path, is shell-quoted for the platform. In that case:
+
+- A `"{files}"` wrapper (or `'{files}'` on POSIX) is replaced by that quoting.
+- Anything else left in `command` that could nest with that quoting refuses the substitution. On POSIX that is any other quote, backtick or backslash, or `${files}`. On win32 it is any other quote, or `^`.
+- A refusal runs the suite full with `files-list-unquotable: {reason}`.
+
+Keep `command` free of those characters.
 
 ## The map
 
@@ -80,4 +86,8 @@ The map is built outside the runner by a traced full-suite run: a read tracer pr
 
 ## Full mode
 
-Build Common Step 5 runs the scoped invocation from `verification.md`'s Re-verify scoping when the declaration declares `impact` (`--run` only when `$PIPELINE_RUN_DIR` is set), so the impact suite runs its selected subset. Standalone `/claude-tweaks:test` passes no `--scope` and is the explicit full mode: every suite runs its full command.
+`verification.md`'s "Standalone is always full" still governs. Build Common Step 5 is impact-selected only when it is scoped-eligible, meaning `$PIPELINE_RUN_DIR` is set or a parent passed `--source`, and the declaration declares `impact`. It then runs the scoped invocation from that file's Re-verify scoping, so the impact suite runs its selected subset. Otherwise it runs full, as does a standalone `/build`.
+
+An impact-selected run writes a `scoped` stamp, never a full one. `--stamp-status` then reads `verifiedHead: true` and `match: false`.
+
+Standalone `/claude-tweaks:test` passes no `--scope` and is the explicit full mode: every suite runs its full command.

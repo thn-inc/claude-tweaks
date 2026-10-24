@@ -14,13 +14,17 @@
 # trace runs without --allow-dirty: a fresh checkout is clean, so a refusal
 # here means CI dirtied a tracked file, and that should fail visibly. trace
 # exits 0 whenever it wrote a map — a failing suite still writes one,
-# recording its exit code, which fetch then refuses — so the upload runs
-# `if: always()` and a missing map fails the upload too.
+# recording its exit code — so the upload runs `if: always()` (a missing map
+# fails the upload too), and the last step fails the job when the recorded
+# exit code is not 0: a red-suite run is never a `success` run, so fetch's
+# `--status success` listing skips it for an older green map.
 #
-# The concurrency group is keyed on the commit sha, not the ref: GitHub keeps at
-# most one pending run per group and replaces it with a newer one even when
-# in-progress runs are never cancelled, so a per-ref group would skip
-# intermediate commits and leave a gap in the maps fetch can choose from.
+# On push and dispatch the concurrency group is keyed on the commit sha, not
+# the ref: GitHub keeps at most one pending run per group and replaces it with
+# a newer one even when in-progress runs are never cancelled, so a per-ref
+# group would skip intermediate commits and leave a gap in the maps fetch can
+# choose from. A PR's map is never served, so PR runs group per ref and a new
+# push cancels the stale run.
 name: test-impact-map
 
 on:
@@ -35,8 +39,8 @@ on:
       - .github/workflows/test-impact-map.yml
 
 concurrency:
-  group: test-impact-map-${{ github.sha }}
-  cancel-in-progress: false
+  group: test-impact-map-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -75,3 +79,6 @@ jobs:
           path: ${{ runner.temp }}/test-impact-map.json
           retention-days: 7
           if-no-files-found: error
+      - name: Fail the run when the traced suite failed
+        run: |
+          node -e "const m = require(process.argv[1]); if (m.exitCode !== 0) { console.error('the traced suite exited ' + m.exitCode + ', so this map will not be served'); process.exit(1); }" "$RUNNER_TEMP/test-impact-map.json"

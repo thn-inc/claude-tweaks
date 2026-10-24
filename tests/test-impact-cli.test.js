@@ -346,13 +346,16 @@ test('trace under a path with a space: the real CLI maps lib/x.js to the test th
 
 // Workflow shape — .github/workflows/test-impact-map.yml builds the map `fetch` downloads (the
 // workflow and artifact names fetch passes to gh are pinned above): main and PR triggers, one run
-// per commit, a clean-tree trace, and an upload that survives a red suite. Read through readText,
+// per commit (per ref for PRs), a clean-tree trace, an upload that survives a red suite, and a red
+// suite failing the run so fetch's `--status success` listing skips it. Read through readText,
 // as tests/windows-regression-file-issue.test.js does, so a CRLF checkout parses like CI's LF one.
 const WORKFLOW_FACTS = {
   'push to main': /^on:\n {2}push:\n {4}branches: \[main\]\n/m,
   'workflow_dispatch': /^ {2}workflow_dispatch: \{\}\n/m,
   'pull_request on the tracer paths': /^ {2}pull_request:\n {4}paths:\n {6}- tools\/test-impact\/\*\*\n/m,
-  'one run per commit': /^concurrency:\n {2}group: test-impact-map-\$\{\{ github\.sha \}\}\n {2}cancel-in-progress: false\n/m,
+  'one run per commit, PR runs per ref': new RegExp('^concurrency:\\n {2}group: test-impact-map-\\$\\{\\{ github\\.event_name == \'pull_request\' && github\\.ref \\|\\| github\\.sha \\}\\}\\n'
+    + ' {2}cancel-in-progress: \\$\\{\\{ github\\.event_name == \'pull_request\' \\}\\}\\n', 'm'),
+  'a red suite fails the run': /^ {6}- name: Fail the run when the traced suite failed\n {8}run: \|\n {10}node -e "const m = require\(process\.argv\[1\]\); if \(m\.exitCode !== 0\) \{ [^\n]*process\.exit\(1\); \}" "\$RUNNER_TEMP\/test-impact-map\.json"\n/m,
   'read-only token': /^permissions:\n {2}contents: read\n/m,
   'clean-tree trace': /^ {8}run: node tools\/test-impact\.js trace --out "\$RUNNER_TEMP\/test-impact-map\.json"\n/m,
   'upload even on failure': /^ {8}if: always\(\)\n {8}with:\n {10}name: test-impact-map\n {10}path: \$\{\{ runner\.temp \}\}\/test-impact-map\.json\n/m,
@@ -363,6 +366,20 @@ test('the test-impact-map workflow uploads the artifact fetch downloads, traced 
   const text = readText(path.join(ROOT, '.github', 'workflows', 'test-impact-map.yml'));
   assert.deepStrictEqual(missingWorkflowFacts(text), []);
   assert.doesNotMatch(text, /^\s*run:.*--allow-dirty/m, 'CI traces a fresh checkout; --allow-dirty would hide a dirtied tree');
+  // The exit-code check runs after the upload, so a red-suite map is still uploaded for inspection.
+  assert.ok(text.indexOf('uses: actions/upload-artifact@v4') < text.indexOf('- name: Fail the run when the traced suite failed'),
+    'the exit-code check must follow the upload');
+  // Run the check's own command line: exit 0 for a green map, 1 for a red one.
+  const line = text.split('\n').find((l) => /^ {10}node -e "const m = require/.test(l)).trim();
+  if (process.platform !== 'win32') {
+    withTempDir((tmp) => {
+      for (const [exitCode, want] of [[0, 0], [1, 1]]) {
+        fs.writeFileSync(path.join(tmp, 'test-impact-map.json'), JSON.stringify({ exitCode }));
+        const r = spawnSync('sh', ['-c', line], { env: { ...process.env, RUNNER_TEMP: tmp }, encoding: 'utf8' });
+        assert.strictEqual(r.status, want, `exitCode ${exitCode}: ${r.stderr}`);
+      }
+    });
+  }
   // Each fact goes red on its own: strip only its match and the predicate names exactly it.
   for (const [fact, re] of Object.entries(WORKFLOW_FACTS)) {
     const doctored = text.replace(re, '');

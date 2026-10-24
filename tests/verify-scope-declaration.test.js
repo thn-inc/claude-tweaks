@@ -46,6 +46,16 @@ test('this repo declares its own verify scope and it passes readDeclaration (#19
   for (const m of [...EVERY_SUITE, 'plugin/**', 'tests/**', 'tools/**']) assert.ok(matches.includes(m), `missing rule ${m}`);
   for (const m of EVERY_SUITE) assert.ok(matches.indexOf(m) < matches.indexOf('tools/**'), `${m} must precede tools/** (first match wins)`);
   assert.ok(!matches.includes('plugin/skills/**'), 'plugin/skills/** is covered by plugin/**');
+  // Root markdown and docs go through the map too; docs/** sits below every
+  // specific docs rule so those keep winning, and nothing catches everything.
+  for (const m of ['docs/**', '*.md']) {
+    const rule = r.decl.rules[matches.indexOf(m)];
+    assert.ok(rule && rule.impact === true, `${m} must be an impact rule`);
+  }
+  for (const m of matches.filter((x) => x.startsWith('docs/') && x !== 'docs/**')) {
+    assert.ok(matches.indexOf(m) < matches.indexOf('docs/**'), `${m} must precede docs/** (first match wins)`);
+  }
+  assert.ok(!matches.includes('**'), 'no catch-all rule — an unknown path fails closed to full');
   assert.strictEqual(r.decl.impact.suite, 'tests');
   assert.ok(r.decl.impact.command.includes('--files-from {files}'), r.decl.impact.command);
   assert.ok(r.decl.impact.fetch.includes('tools/test-impact.js fetch'), r.decl.impact.fetch);
@@ -56,8 +66,11 @@ test('a ledger-row delta resolves to none; a skill-prose delta is impact-selecte
   const sel = (files, impact = null) => selectScope({ decl, files, stamp: STAMP, impact });
   assert.strictEqual(sel(['docs/plans/2026-09-05-spec-1921-ledger.md']).mode, 'none');
   assert.strictEqual(sel(['.claude-tweaks/pipelines/2026-09-05T193518-x/spec-1/work/1-spec.md']).mode, 'none');
-  assert.strictEqual(sel(['docs/skill-graph.md']).mode, 'full');
-  assert.deepStrictEqual(sel(['docs/skill-graph.md']).unmatched, ['docs/skill-graph.md']);
+  // No catch-all: a path no rule names (a workflow, package.json) fails closed to full.
+  for (const p of ['.github/workflows/x.yml', 'package.json', '.claude-tweaks/verify-scope.json']) {
+    assert.strictEqual(sel([p]).mode, 'full', p);
+    assert.deepStrictEqual(sel([p]).unmatched, [p]);
+  }
 
   // A fixture map: one test reads the skill file, one reads verify.js.
   const parsed = parseImpactMap(JSON.stringify(encodeImpactMap({
@@ -81,6 +94,30 @@ test('a ledger-row delta resolves to none; a skill-prose delta is impact-selecte
   // A changed test runner is never impact-selected: every suite runs.
   assert.strictEqual(sel(['tools/run-tests.js'], ctx).mode, 'full');
   assert.strictEqual(sel(['tools/test-impact/tracer.js'], ctx).mode, 'full');
+});
+
+test('the spec AC1 pair — a skill template plus root CLAUDE.md — is impact-selected, not forced full (#4024)', () => {
+  const { decl } = readDeclaration(DECL);
+  const parsed = parseImpactMap(JSON.stringify(encodeImpactMap({
+    commit: 'b'.repeat(40), tracedAt: '2026-10-24T00:00:00Z', exitCode: 0, node: 'v20.0.0',
+    tests: {
+      'tests/c.test.js': { f: ['plugin/skills/init/claude-md-template.md', 'CLAUDE.md'] },
+      'tests/d.test.js': { f: ['plugin/bin/verify.js'] },
+    },
+  })));
+  assert.strictEqual(parsed.ok, true);
+  const ctx = { map: parsed.map, problem: null, headTests: ['tests/c.test.js', 'tests/d.test.js'] };
+  const files = ['plugin/skills/init/claude-md-template.md', 'CLAUDE.md'];
+  const statuses = { [files[0]]: 'M', [files[1]]: 'M' };
+  const sel = selectScope({ decl, files, stamp: STAMP, statuses, impact: ctx });
+  assert.strictEqual(sel.mode, 'scoped');
+  assert.deepStrictEqual(sel.unmatched, []);
+  assert.deepStrictEqual(sel.suites, ['tests']);
+  assert.deepStrictEqual(sel.impact.files, ['tests/c.test.js']);
+  // A docs file that is not a journey also goes through the map.
+  const docs = selectScope({ decl, files: ['docs/skill-graph.md'], stamp: STAMP, impact: ctx });
+  assert.deepStrictEqual(docs.unmatched, []);
+  assert.strictEqual(docs.impact.fallback, 'untraced-path: docs/skill-graph.md');
 });
 
 test('a journey-only delta runs only the journeys suite; a mixed delta stays full (#3337)', () => {

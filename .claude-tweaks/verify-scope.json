@@ -27,6 +27,8 @@
     { "match": "docs/plans/*-ledger.md", "suites": [], "static": false },
     { "match": ".claude-tweaks/pipelines/**", "suites": [], "static": false },
     { "match": "docs/superpowers/plans/**", "suites": [], "static": false },
-    { "match": "docs/superpowers/specs/**", "suites": [], "static": false }
+    { "match": "docs/superpowers/specs/**", "suites": [], "static": false },
+    { "match": "docs/**", "impact": true, "static": true },
+    { "match": "*.md", "impact": true, "static": true }
   ]
 }
