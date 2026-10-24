@@ -15,6 +15,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { gitRepo, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
 
 const ROOT = path.join(__dirname, '..');
 const SKILL = path.join(ROOT, 'plugin', 'skills', 'release', 'SKILL.md');
@@ -39,7 +40,7 @@ function resolveFence(stepZero) {
 }
 
 // The guard command: from `PLUGIN_ROOT=` on the guard line to just before that line's LAST `; then`.
-const GUARD_LINE_PREFIX = 'if [ -n "$RUN_DIR" ] && [ -z "$PIPELINE_RUN_DIR" ] &&';
+const GUARD_LINE_PREFIX = 'if [ -n "$RUN_DIR" ] && PLUGIN_ROOT=';
 function extractGuard(stepZero) {
   const line = resolveFence(stepZero).split('\n').find((l) => l.startsWith(GUARD_LINE_PREFIX));
   assert.ok(line, `extraction pattern is out of sync: no Step 0 fence line starts with ${GUARD_LINE_PREFIX}`);
@@ -130,31 +131,28 @@ function extractMintLine(stepZero) {
   return line.trim();
 }
 
-function initRepo(name) {
-  const repo = path.join(scratch, name);
-  fs.mkdirSync(repo, { recursive: true });
-  const init = spawnSync('git', ['init', '-q'], { cwd: repo, encoding: 'utf8' });
-  assert.equal(init.status, 0, `${name}: repo init failed: ${init.stderr}`);
-  return repo;
+// Every fixture repo lands under `scratch`, which the exit hook above removes.
+function initRepo() {
+  return gitRepo({ parent: scratch });
 }
 
 // A real repo whose only run directory is a finished release run — the shape #3898 reproduced.
 const FINISHED_RUN_ID = '2026-10-01T100000-release-standalone';
-function finishedRunRepo(name) {
-  const repo = initRepo(name);
+function finishedRunRepo() {
+  const repo = initRepo();
   const finished = path.join(repo, '.claude-tweaks', 'pipelines', FINISHED_RUN_ID);
   fs.mkdirSync(finished, { recursive: true });
   fs.writeFileSync(path.join(finished, 'run-state.json'), '{"status":"clean"}');
   return { repo, finished, pipelines: path.dirname(finished) };
 }
 
-function runInRepo(repo, script) {
-  return spawnSync('bash', ['-c', script], { cwd: repo, env: scriptEnv(), encoding: 'utf8' });
+function runInRepo(repo, script, envOverrides) {
+  return spawnSync('bash', ['-c', script], { cwd: repo, env: scriptEnv(envOverrides), encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS });
 }
 
 // After the guard refuses the finished dir, the mint line must produce a different, newly created dir.
 function assertMintIsFresh(mintLine, label) {
-  const { repo, finished, pipelines } = finishedRunRepo(label);
+  const { repo, finished, pipelines } = finishedRunRepo();
   const result = runInRepo(repo, `${mintLine}\necho "$RUN_DIR"`);
   assert.equal(result.status, 0, `${label}: mint exited ${result.status} (stderr: ${result.stderr})`);
   const minted = fs.realpathSync(result.stdout.trim());
@@ -175,7 +173,7 @@ test('AC1.1: Step 0 mint go-red: re-inserting --spec-slug re-adopts the finished
 });
 
 test('AC1.1: Step 0 fence end to end: a finished release run is refused, a fresh dir minted, status printed', () => {
-  const { repo, finished, pipelines } = finishedRunRepo('fence-e2e');
+  const { repo, finished, pipelines } = finishedRunRepo();
   const result = runInRepo(repo, resolveFence(STEP_ZERO));
   assert.equal(result.status, 0, `the fence must exit 0 (stderr: ${result.stderr})`);
   const lines = result.stdout.trim().split('\n');
@@ -189,6 +187,73 @@ test('AC1.1: Step 0 fence end to end: a finished release run is refused, a fresh
   assert.equal(JSON.parse(fs.readFileSync(path.join(minted, 'run-state.json'), 'utf8')).createdBy, 'release-standalone', 'the fresh dir carries the release-standalone stamp');
 });
 
+// --- PIPELINE_RUN_DIR: only the directory the resolver actually returned from it is exempt (#3898) ---
+// The exemption is keyed on the resolved dir BEING the step-1 PIPELINE_RUN_DIR directory, so a stale value
+// (a missing dir, an archived run-id) that falls through to step 2 is checked like any step-2 directory.
+const pipelineEntries = (pipelines) => fs.readdirSync(pipelines).sort();
+
+function assertPipelineRunDirExemption(fence) {
+  const { repo, pipelines } = finishedRunRepo();
+  // Case (a): an existing, anchored, terminal release-standalone dir that PIPELINE_RUN_DIR names is inherited.
+  const supplied = path.join(pipelines, '2026-10-02T100000-supplied');
+  fs.mkdirSync(supplied);
+  fs.writeFileSync(path.join(supplied, 'run-state.json'), '{"status":"clean","createdBy":"release-standalone"}');
+  const before = pipelineEntries(pipelines);
+  const result = runInRepo(repo, fence, { PIPELINE_RUN_DIR: supplied });
+  assert.equal(result.status, 0, `exempt: the fence must exit 0 (stderr: ${result.stderr})`);
+  const lines = result.stdout.trim().split('\n');
+  assert.equal(lines.length, 1, `exempt: a PIPELINE_RUN_DIR directory must print only itself, with no refused: line, got: ${result.stdout}`);
+  assert.equal(fs.realpathSync(lines[0]), fs.realpathSync(supplied), 'exempt: the fence must keep the PIPELINE_RUN_DIR directory');
+  assert.deepEqual(pipelineEntries(pipelines), before, 'exempt: no directory may be minted');
+}
+
+function assertStalePipelineRunDirIsChecked(fence) {
+  const { repo, finished, pipelines } = finishedRunRepo();
+  // Case (b): PIPELINE_RUN_DIR names a missing path, so step 2 returns the prior clean release dir.
+  const stale = path.join(pipelines, '2026-10-03T100000-never-created');
+  const result = runInRepo(repo, fence, { PIPELINE_RUN_DIR: stale });
+  assert.equal(result.status, 0, `stale: the fence must exit 0 (stderr: ${result.stderr})`);
+  const lines = result.stdout.trim().split('\n');
+  const refused = /^refused: (.*) \(status clean\)$/.exec(lines[1] || '');
+  assert.ok(refused, `stale: a stale PIPELINE_RUN_DIR must still refuse the prior release dir the resolver falls through to, got: ${result.stdout}`);
+  assert.equal(fs.realpathSync(refused[1]), fs.realpathSync(finished), 'stale: the refused line must name the prior dir');
+  const minted = fs.realpathSync(lines[0]);
+  assert.notEqual(minted, fs.realpathSync(finished), 'stale: a fresh dir must be minted');
+  assert.equal(pipelineEntries(pipelines).length, 2, 'stale: exactly one new directory is minted');
+}
+
+test('AC4.1: Step 0 fence: a PIPELINE_RUN_DIR directory the resolver returns is inherited, never refused', () => {
+  assertPipelineRunDirExemption(resolveFence(STEP_ZERO));
+});
+
+test('AC4.1: Step 0 fence: a stale PIPELINE_RUN_DIR falls through to step 2 and the prior release dir is refused', () => {
+  assertStalePipelineRunDirIsChecked(resolveFence(STEP_ZERO));
+});
+
+// The pre-fix form: skip the guard whenever PIPELINE_RUN_DIR is non-empty.
+function revertToEmptinessExemption(fence) {
+  const from = '[ -n "$RUN_DIR" ] && PLUGIN_ROOT=';
+  const mutated = fence.replace(from, '[ -n "$RUN_DIR" ] && [ -z "$PIPELINE_RUN_DIR" ] && PLUGIN_ROOT=');
+  assert.notEqual(mutated, fence, `anchor text "${from}" not found — proof cannot discriminate`);
+  return mutated;
+}
+
+// The exemption removed: the guard applies to every resolved directory.
+function dropExemption(fence) {
+  const from = ' if (e !== null && e === real(process.argv[1])) process.exit(1);';
+  const mutated = fence.replace(from, '');
+  assert.notEqual(mutated, fence, `anchor text "${from.trim()}" not found — proof cannot discriminate`);
+  return mutated;
+}
+
+test('AC4.1: PIPELINE_RUN_DIR go-red: the emptiness-keyed exemption adopts a prior release dir behind a stale value', () => {
+  assert.throws(() => assertStalePipelineRunDirIsChecked(revertToEmptinessExemption(resolveFence(STEP_ZERO))), /stale: a stale PIPELINE_RUN_DIR must still refuse/);
+});
+
+test('AC4.1: PIPELINE_RUN_DIR go-red: without the exemption a supplied terminal dir is refused', () => {
+  assert.throws(() => assertPipelineRunDirExemption(dropExemption(resolveFence(STEP_ZERO))), /exempt: a PIPELINE_RUN_DIR directory must print only itself/);
+});
+
 // Waits until the wall clock enters a new second: the standalone mint names its dir by the second,
 // so two mints inside one second would name the same directory.
 function waitForNextSecond() {
@@ -200,7 +265,7 @@ function waitForNextSecond() {
 // The reviewer's scenario: the fence runs twice with no close-run between them. The second run must
 // refuse the first run's still-active directory and mint a different one.
 function assertSecondRunRefusesFirst(fence, label) {
-  const repo = initRepo(label);
+  const repo = initRepo();
   const first = runInRepo(repo, fence);
   assert.equal(first.status, 0, `${label}: first run exited ${first.status} (stderr: ${first.stderr})`);
   const firstLines = first.stdout.trim().split('\n');
@@ -227,7 +292,10 @@ test('AC1.1: Step 0 fence run twice go-red: without the release-standalone disju
 // The load-bearing prose facts of the refusal. The patterns match exactly once in Step 0, so
 // removing the one match turns exactly that fact red.
 const REQUIRED = [
-  [/\[ -z "\$PIPELINE_RUN_DIR" \]/, 'the guard is skipped for a $PIPELINE_RUN_DIR-supplied directory'],
+  [/ENV_RUN_DIR="\$PIPELINE_RUN_DIR"/, 'the guard compares the resolved dir with the directory PIPELINE_RUN_DIR names, handed to node through the environment'],
+  [/the only directory never subject to the status check above/, 'only the directory the resolver returned from PIPELINE_RUN_DIR is exempt from the status check'],
+  [/an archived run-id, falls through to step 2 and is checked like any step-2 directory\)/, 'a stale or archived PIPELINE_RUN_DIR falls through to step 2 and is checked like any step-2 directory'],
+  [/except the `FAILED` lines `bookkeeping\.md` and `disposition\.md` hand-compose/, 'the never-hand-appended rule carves out the FAILED lines bookkeeping.md and disposition.md hand-compose'],
   [/prior release run's directory \(status \{status\}\) — not adopted; minted \{run-dir\}/, 'the refusal log line names the refused dir, its status and the minted dir'],
   // Split in two so neither span contains the other: the refusal triggers, then the created verdict.
   [/status is terminal, or that carries `createdBy: "release-standalone"` whatever its status/, 'a terminal or release-standalone step-2 directory is refused whatever its status'],
@@ -300,6 +368,8 @@ const DISPOSITION_SCOPE = [
   [/only the lines after Step 3's carried marker `\{k\}`/, 'inventory: decisions.md is read only after Step 3\'s marker'],
   [/`STAGED` line whose stage path is absent or names no existing file/, 'inventory: a decisions.md-only STAGED line is a finding'],
   [/counted once by its stage path/, 'inventory: a STAGED line naming a listed file is de-duplicated by stage path'],
+  [/An absent or empty `staged\/` means no staged files/, 'inventory: an absent or empty staged/ means no staged files'],
+  [/When Step 3 logged no `## \/review` marker this run[\s\S]{0,200}read no `decisions\.md` line at all/, 'inventory: with no Step 3 marker, no decisions.md line is read'],
   [/`staged\/reflect-\*`, `staged\/simplify-\*` and `staged\/deepen-\*`/, 'inventory: reflect, simplify and deepen files'],
 ];
 
@@ -352,7 +422,8 @@ const STEP8_WIRING = [
   [/findings: \{f\} filed, \{d\} digest, \{x\} declined\{, k failed — \{paths\}\}/, 'the summary block carries the findings: line, failed paths included'],
   [/hooks\.js" archive-run --run "\{run-dir\}"/, 'Step 8 runs archive-run on the run dir'],
   // Grouped: an ungrouped `a|Step 0` alternation would match any "Step 0" in the section and could never go red.
-  [/archive-run did not archive[\s\S]{0,200}(?:not adopted|Step 0)/, 'a non-archival is non-fatal because Step 0 refuses the closed directory'],
+  [/Step 8 archival \(skipped\): condition: archive-run printed[\s\S]{0,200}(?:Step 0 refuses it|not adopted)/, 'a non-archival is a degrade-trace SKIP, non-fatal because Step 0 refuses the closed directory'],
+  [/Step 8 archival \(skipped\): condition: disposition reported \{k\} failed → fallback: archival not run; closed directory kept with its findings in staged\//, 'a disposition failure that blocks archival is a degrade-trace SKIP'],
   [/the success line `claude-tweaks: archived \{run-id\}`/, 'archival is keyed on the success line'],
   [/Any other output[\s\S]{0,200}means not archived/, 'any other archive-run output means not archived'],
   [/archive\/\{run-id\}\/staged\/release-held\.md/, 'HELD names the archived release-held.md once archived'],
@@ -446,4 +517,31 @@ test('AC3.1: autonomy-ceiling.md registers release/disposition.md as a consoleAu
   const row = readText(CEILING).split('\n').find((l) => l.startsWith('| `consoleAutoResolve` |'));
   assert.ok(row, 'extraction pattern is out of sync: autonomy-ceiling.md has no consoleAutoResolve row');
   assertFactsAndGoRed(row, CEILING_FACTS, 'the consoleAutoResolve row must name release/disposition.md as a sanctioned caller');
+});
+
+// --- FAILED is hand-composed by four writers; the skill graph names what disposition.md reads (#3898 review) ---
+const DECISION_LOG = path.join(ROOT, 'plugin', 'skills', '_shared', 'auto-decision-log.md');
+const FAILED_WRITER_FACTS = [
+  [/hand-composed by its four writers \(see the `STATUS` row below\)/, 'the schema intro counts four FAILED writers'],
+  [/hand-composed by `backlog\/refine-mode\.md`, `apply-refine-labels\.js`, `release\/bookkeeping\.md` and `release\/disposition\.md` rather than/, 'the STATUS row names all four FAILED writers'],
+  [/Hand-composed by its four writers \(see the `STATUS` row above\)/, 'the FAILED outcome row counts four writers'],
+];
+
+test('AC3.1: auto-decision-log.md names every FAILED writer, release/bookkeeping.md and release/disposition.md included (with go-red)', () => {
+  assertFactsAndGoRed(readText(DECISION_LOG), FAILED_WRITER_FACTS, 'auto-decision-log.md must name all four hand-composing FAILED writers');
+  assert.doesNotMatch(readText(DECISION_LOG), /its two writers/, 'no stale "two writers" count may remain');
+});
+
+const GRAPH = path.join(ROOT, 'docs', 'skill-graph.md');
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const GRAPH_ROWS = [
+  'review/step3-lens-dispatch.md',
+  'review/step3-tiebreak.md',
+  'review/step3-debate-and-refutation.md',
+  'review/code-mode-steps.md',
+  '_shared/multi-agent-coordination.md',
+].map((target) => [new RegExp(`\\| \`${escapeRe(target)}\` \\| Step 8's disposition`), `the release table has a row for ${target}`]);
+
+test('AC3.1: docs/skill-graph.md release table lists every review contract disposition.md reads (with go-red)', () => {
+  assertFactsAndGoRed(sliceBetween(readText(GRAPH), '## release', '## research'), GRAPH_ROWS, 'the ## release table must carry a row per staged-file contract disposition.md reads');
 });

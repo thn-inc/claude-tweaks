@@ -457,6 +457,11 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `_shared/pr-first-merge.md` | Step 5's release-PR merge delegates the Merge-verification gate (Step 2.5) wholesale — same four-field read, same head-run `gh run list --commit` read (#3405), same classification, same bounded watch — and states only five deltas: `MERGED` is resumable, red is `failed` and parks nothing, `--auto` is never armed, `mergeStateStatus` is classification-only, `title` is read and the bump re-gated on it. |
 | `_shared/autonomy-ceiling.md` | `--train` reads the `train` row — merge/tag minor and patch at `unattended`; never a major, a blocking review, or past a hook failure. Step 8's disposition (`release/disposition.md`) is a sanctioned `consoleAutoResolve` caller at `unattended`. |
 | `review/step3-routing.md` | Step 8's disposition (`release/disposition.md`) files each confirmed review finding through its Defer branch (`specShapedBody`, `recordPayload`, born-ready) — a release reviews merged history, so the reason is `pre-existing-outside-diff`. |
+| `review/step3-lens-dispatch.md` | Step 8's disposition (`release/disposition.md`) inventories its `not reproduced` `STAGED` lines in `decisions.md` as findings with no `staged/` file. |
+| `review/step3-tiebreak.md` | Step 8's disposition inventories the `console`-outcome line a tiebreak leaves standing in `decisions.md`, and a failed tiebreak's line. |
+| `review/step3-debate-and-refutation.md` | Step 8's disposition inventories `staged/review-contested-{n}.md` and `staged/review-debate-{n}.md` — both verdicts side by side — and routes each. |
+| `review/code-mode-steps.md` | Step 8's disposition inventories the `staged/reflect-*` and `staged/simplify-*` files its Steps 4-5 produce. |
+| `_shared/multi-agent-coordination.md` | Step 8's disposition inventories each entry of `staged/review-unconfirmed-{n}.md` as a finding the tiebreak left unconfirmed. |
 | `_shared/materiality-floor.md` | Step 8's disposition routes a below-floor finding to the digest container instead of an ordinary record, and surfaces the digest comment URL and count in its own output. |
 | `bin/hooks.js archive-run` | Step 8 archives the run directory it created once disposition reported `0 failed`; Step 0 refuses a terminal step-2 directory so a later release never adopts a finished one (#3898). |
 
