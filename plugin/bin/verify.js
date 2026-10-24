@@ -559,7 +559,7 @@ async function main() {
       }
 
       // #4024: an impact declaration also needs each changed path's A/M/D status.
-      const changed = changedFiles({ base: resolvedBase, ...(decl.impact ? { withStatus: true } : {}) });
+      const changed = changedFiles({ base: resolvedBase, withStatus: Boolean(decl.impact) });
       files = changed.files;
       let statuses = changed.statuses || null;
       // #3072: anchored on a full pass and asked about an integration branch the
@@ -586,9 +586,7 @@ async function main() {
           : loadImpactContext({ decl, ...where, runFetch: (command) => runImpactFetch(command, where.repoRoot) });
       }
       const fallbackBase = !anchorSha && parsed.integrationBranch && !parsed.base ? resolvedBase : null;
-      const select = (impact) => selectScope({
-        decl, files, stamp: anchorSha ? priorStamp : null, ...(decl.impact ? { statuses, impact, fallbackBase } : {}),
-      });
+      const select = (impact) => selectScope({ decl, files, stamp: anchorSha ? priorStamp : null, statuses, impact, fallbackBase });
       sel = select(impactCtx);
       if (sel.impact && sel.impact.files && sel.impact.files.length) {
         const listPath = path.resolve(logDir, 'impact-files.txt');

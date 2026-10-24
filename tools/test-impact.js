@@ -87,6 +87,10 @@ function locate(deps) {
   return gitLocations({ cwd: deps.cwd, execImpl });
 }
 
+function resolveOut(outArg, loc, deps) {
+  return outArg ? path.resolve(deps.cwd, outArg) : path.join(loc.commonDir, DEFAULT_MAP_NAME);
+}
+
 function writeMap(deps, out, text) {
   writeFileAtomic(out, text, {
     writeFile: deps.fs.writeFileSync, rename: deps.fs.renameSync, unlink: deps.fs.unlinkSync,
@@ -131,7 +135,7 @@ function trace(args, deps) {
     deps.err(`test-impact.js trace: HEAD is not a commit (${JSON.stringify(commit)})`);
     return 1;
   }
-  const out = parsed.opts['--out'] ? path.resolve(deps.cwd, parsed.opts['--out']) : path.join(loc.commonDir, DEFAULT_MAP_NAME);
+  const out = resolveOut(parsed.opts['--out'], loc, deps);
 
   let traceDir = null;
   try {
@@ -184,7 +188,7 @@ function fetch(args, deps) {
   }
   const root = loc.repoRoot;
   const repoArgs = parsed.opts['--repo'] ? ['--repo', parsed.opts['--repo']] : [];
-  const out = parsed.opts['--out'] ? path.resolve(deps.cwd, parsed.opts['--out']) : path.join(loc.commonDir, DEFAULT_MAP_NAME);
+  const out = resolveOut(parsed.opts['--out'], loc, deps);
 
   let runs;
   try {

@@ -113,21 +113,22 @@ function parseDiffNameStatusPairsZ(raw) {
   return pairs;
 }
 
-// `git status --porcelain -z`: each record is "XY path\0" — the space
-// between the two-letter status and the path survives (only the trailing
-// newline/rename-arrow separator is replaced by NUL) — except a rename or
-// copy (R/C anywhere in XY), which is "XY new\0old\0": the NEW path comes
-// first in -z mode, reversed from the "old -> new" order of the default
-// (non-z) porcelain format. As in parseDiffNameStatusPairsZ, a rename's old path
-// is changed too; a copy's is not. The pairs form (#4024) maps the record's
-// path to A for `??`, D when XY contains D, A when it contains A, R or C, else
-// M; a rename's old path is D.
+// The A/M/D status of a porcelain record's path (#4024): A for `??`, D when XY
+// contains D, A when it contains A, R or C, else M.
 function porcelainStatus(xy) {
   if (xy === '??') return 'A';
   if (xy.includes('D')) return 'D';
   return /[ARC]/.test(xy) ? 'A' : 'M';
 }
 
+// `git status --porcelain -z`: each record is "XY path\0" — the space
+// between the two-letter status and the path survives (only the trailing
+// newline/rename-arrow separator is replaced by NUL) — except a rename or
+// copy (R/C anywhere in XY), which is "XY new\0old\0": the NEW path comes
+// first in -z mode, reversed from the "old -> new" order of the default
+// (non-z) porcelain format. As in parseDiffNameStatusPairsZ, a rename's old path
+// is changed too; a copy's is not. The pairs form (#4024) carries each path's
+// status per porcelainStatus; a rename's old path is D.
 function parseStatusPorcelainPairsZ(raw) {
   const tokens = raw.split('\0');
   const pairs = [];
