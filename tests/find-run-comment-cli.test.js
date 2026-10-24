@@ -164,6 +164,8 @@ test('run: malformed invocations exit 2 without reading the file', () => {
     ['--comments-file', 'f', '--kind', 'verdict', '--bogus'],
     ['--comments-file', 'f', '--comments-file', 'g', '--kind', 'verdict'],
     ['--comments-file', 'f', '--kind', 'verdict', '--kind', 'brief'],
+    ['constructor', 'x', '--comments-file', 'f', '--kind', 'verdict'],
+    ['--comments-file', 'f', '--kind', 'verdict', 'toString'],
   ];
   for (const argv of invocations) {
     const deps = fakeDeps(() => JSON.stringify({ comments: C }));
