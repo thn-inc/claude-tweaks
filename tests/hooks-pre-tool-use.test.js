@@ -1631,3 +1631,31 @@ test('#3712: a malformed autonomy value in config.yml resolves supervised and al
 test('#3712: REVIEW_CONSOLE_HEADER is exported as the pinned string', () => {
   assert.strictEqual(pre.REVIEW_CONSOLE_HEADER, 'Review Console');
 });
+
+// #4028: a full-path Bash call (an assignment plus a $ reference always skips the
+// prefilter) gets the guard normalizer's updatedInput on every allow outcome —
+// warn notes kept — and never alongside a deny or any permissionDecision.
+test('run() merges updatedInput on an allow path and never on a deny', () => {
+  const { main, wt } = mainAndWorktree();
+  const tool_input = { command: 'P=/x/y; node $P/z.js', description: 'd' };
+  const allow = pre.run({ input: { tool_name: 'Bash', tool_input, cwd: wt }, runDir: null, runState: null, cwd: wt });
+  assert.deepStrictEqual(allow, {
+    exit: 0,
+    json: { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { command: 'P=/x/y; node /x/y/z.js', description: 'd' } } },
+  });
+
+  const warned = pre.run({ input: bashInput('P=/x/y; node $P/z.js; git stash', wt), runDir: null, runState: null, cwd: wt });
+  assert.match(warned.json.systemMessage, /git stash is repository-wide/);
+  assert.deepStrictEqual(warned.json.hookSpecificOutput, { hookEventName: 'PreToolUse', updatedInput: { command: 'P=/x/y; node /x/y/z.js; git stash' } });
+
+  // E1 deny: this run is assigned to wt, the commit targets main.
+  const { run, state } = mkRun(wt);
+  const denyCommand = `P=/x/y; node $P/z.js; git -C "${main}" commit -m x`;
+  const denied = pre.run({ input: bashInput(denyCommand, wt), runDir: run, runState: state, cwd: wt });
+  assert.strictEqual(denied.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.ok(!('updatedInput' in denied.json.hookSpecificOutput), 'a deny never carries a rewrite');
+
+  // Outside a linked worktree, and for a non-Bash tool, nothing is merged.
+  assert.deepStrictEqual(pre.run({ input: bashInput('P=/x/y; node $P/z.js', main), runDir: null, runState: null, cwd: main }), {});
+  assert.deepStrictEqual(pre.run({ input: { tool_name: 'Write', tool_input: { file_path: path.join(wt, 'f'), command: 'P=/x; node $P' }, cwd: wt }, runDir: null, runState: null, cwd: wt }), {});
+});

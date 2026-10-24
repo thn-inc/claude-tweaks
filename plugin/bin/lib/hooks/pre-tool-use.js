@@ -43,6 +43,8 @@ const { hasClaimLogFor } = require('../log-decision/claim-log');
 const { readWorkBackend } = require('../work-backend');
 // Every realpath resolution in this file goes through canonicalRealpath (#3682); lexical containment checks (isPipelineBookkeeping) resolve nothing.
 const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
+// Read as `guardRewrite.rewriteForGuard` at call time, never destructured (#4028).
+const guardRewrite = require('./guard-rewrite');
 
 function pluginRoot() {
   return process.env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
@@ -2289,13 +2291,25 @@ function run(ctx, deps = {}) {
       + `If this project requires an isolated worktree, verify manually.`,
     );
   }
-  if (!notes.length) return out;
+  if (!notes.length) return withGuardRewrite(ctx, out);
 
   const json = { ...(out.json || {}) };
   json.systemMessage = json.systemMessage ? [json.systemMessage, ...notes].join(' ') : notes.join(' ');
   // exit stays 0 on every path, deny included — the deny signal is the stdout
   // JSON's permissionDecision, never the exit code (see this file's header).
-  return { ...out, exit: 0, json };
+  return withGuardRewrite(ctx, { ...out, exit: 0, json });
+}
+
+// #4028: an outcome with no hookSpecificOutput (no deny, no other decision)
+// carries the guard normalizer's updatedInput, any systemMessage kept. Never a
+// permissionDecision: the harness guard re-checks the rewritten command, and an
+// `allow` here would skip the permission prompt for it. A full-path Bash call
+// reaches here because bash-prefilter.js's own rewrite runs only on its skip path.
+function withGuardRewrite(ctx, out) {
+  if (out.json && out.json.hookSpecificOutput) return out;
+  const hookSpecificOutput = guardRewrite.guardRewriteOutput(ctx && ctx.input, guardRewrite.rewriteForGuard);
+  if (!hookSpecificOutput) return out;
+  return { ...out, exit: 0, json: { ...(out.json || {}), hookSpecificOutput } };
 }
 
 module.exports = {
