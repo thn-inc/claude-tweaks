@@ -9,7 +9,8 @@ A split turns one `plugin/bin/lib/` module into a thin facade plus sub-modules. 
 wrong, and a build's own tests catch neither:
 
 - The move was not pure. A declaration changed in transit, or a sub-module requires the facade
-  and creates a cycle. The existing tests still pass because they only exercise the exports.
+  and creates a cycle. Tests typically exercise only the exports, so they can stay green through
+  either.
 - Prose and code that describe where things live now lie. #2805 split
   `plugin/bin/lib/issues/record.js` into four sub-modules (PR #2822). The build's own docs
   curation updated one file. The review then found 15 stale claims across 16 files, fixed in
@@ -37,8 +38,9 @@ For #2805 the fan-in was 75 files, 17 of them under `plugin/skills/` as skill-pr
 git grep -lE "issues/record['\"]|issues/record\.js['\"]|require\(['\"]\./record['\"]\)" -- plugin tests | wc -l
 ```
 
-Migrating 75 call sites, including prose an installed build executes, would have broken the
-expand-contract rule for no gain. The facade's header comment says new code may require a
+Migrating the 75 call sites is step 2 of expand-contract. What breaks the rule is removing the old
+path while an installed build, including the prose it executes, still reads it. A facade keeps
+that path alive, so nothing has to be migrated at once. The facade's header comment says new code may require a
 sub-module directly (`plugin/bin/lib/issues/record.js` lines 7-16). A facade does not forbid
 migration. It lets it happen later and one consumer at a time.
 
@@ -170,7 +172,8 @@ split so you know the checks bite on your module too.
 - **Check 2 is why an export comparison is not enough.** An internal-constant drift is a
   behavior change that no export comparison can see.
 - **Check 3 is why a green test suite is not enough.** Node resolves a require cycle silently
-  with a partial `module.exports`, so checks 1 and 2 and the existing tests all pass.
+  with a partial `module.exports`, so checks 1 and 2 stay green. Tests typically exercise only
+  the exports, so they can stay green too.
 - **Check 3 strips whole-line `//` comments before matching `require(`.** Without that it
   false-positived on `record.js`'s own header comment, which quotes `require('./record')`.
 
@@ -200,7 +203,7 @@ ever does `require('{facade}')`?**
 
 | Class | Holds after the split? | Action | #2805 example |
 |---|---|---|---|
-| Import-path reference: an exported symbol obtained through the facade | Yes | Keep | `plugin/skills/specify/record-creation-linking.md:61`: "`record.js`'s `parseDependencyAssumptions` reads the trailing text ...". It is re-exported, so the facade still hands it to you. 31cf39c0e left it unchanged on the very line where it repointed `DEP_RE`. The "the pairs live in `record.js`'s `TYPE_LABELS`" lines in capture, code-health, harness-health, journey-health, and specify were kept for the same reason |
+| Import-path reference: an exported symbol obtained through the facade | Yes | Keep | `plugin/skills/specify/record-creation-linking.md:61`: "`record.js`'s `parseDependencyAssumptions` reads the trailing text ...". It is re-exported, so the facade still hands it to you. 31cf39c0e left it unchanged on the very line where it repointed `DEP_RE`. The "the pairs live in `record.js`'s `TYPE_LABELS`" lines (for example in capture, code-health, harness-health, journey-health, and specify, among others such as `_shared/health-finding-shapes.md:18`) were kept for the same reason |
 | Definition-location claim: a claim about the file's own text (its requires, comments, docs, internals, or "a function in this file") | No | Repoint | `autonomy.js:17`: "record.js requires only ./facet-shape" (the facade now requires the four sub-modules). And "`record.js`'s `DEP_RE`": `DEP_RE` is not exported and now lives in `record-dependencies.js` |
 
 Repointing every hit to a sub-module is the opposite error. It churns correct import advice and
@@ -276,7 +279,7 @@ read, not a verdict. Apply the import-path vs definition-location test to each l
 ### 3. Skill bullets and doc pointers stating a definition location
 
 ```
-git grep -nE "(function|doc|comment|builder|header|lives?) (in|here)|record\.js`?'s own|same `?record\.js`? file" -- plugin .claude docs/plugin-structure.md | grep -F "record.js"
+git grep -nE "(function|doc|comment|builder|header|lives?) (in|here)|record\.js\`?'s own|same \`?record\.js\`? file" -- plugin .claude docs/plugin-structure.md | grep -F "record.js"
 ```
 
 On `31cf39c0e^` it surfaced, all fixed:
