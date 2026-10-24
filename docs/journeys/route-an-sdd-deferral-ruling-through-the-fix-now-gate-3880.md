@@ -57,4 +57,5 @@ files:
 ## Origin
 - Created during the build of #3880 (SDD deferral rulings skip the fix-now test and are auto-ratified at unattended), run `2026-10-22T062405-record-3880`.
 - All steps were built in this session. Step 2's per-site destinations and step 4's reconciler trigger point came from the build's final whole-branch review.
+- Step 4 revised by #4049, run `2026-10-24T110929-spec-4049`: a staged file that cannot be read is now `pending — sdd-ruling-unreadable` (the reconciler names the cause: `no-staged-path`, `path-rejected`, `not-found`, `read-failed`) instead of `sdd-ruling-unclassified`; such rows are still withheld.
 - Related: `docs/journeys/ratify-or-reverse-an-sdd-ruling-at-the-review-console-3401.md` (what a human does with the ruling row once it reaches the console); `docs/journeys/carry-a-build-review-finding-with-a-defer-reason-3004.md` (the sibling gate for review minors); `docs/journeys/resolve-the-unattended-console-in-one-process-1932.md` (the unattended console this gate sits inside).
