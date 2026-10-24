@@ -126,7 +126,7 @@ test('tidy/scan-procedures.md Step 4.5 routes a non-empty console.ready through 
 
 test('autonomy-ceiling.md names console-execution.md as a second consoleAutoResolve caller', () => {
   assert.match(AUTONOMY_CEILING, /_shared\/console-execution\.md/);
-  assert.match(AUTONOMY_CEILING, /Two sanctioned callers/);
+  assert.match(AUTONOMY_CEILING, /Three sanctioned callers/);
 });
 
 // --- context.js exemption ---

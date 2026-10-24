@@ -3,7 +3,8 @@
 // later release inherited a finished release run's directory (status clean/closed) — and the new run's
 // decisions, config and staged proposals landed in a directory already archived or closed out. Step 0
 // now refuses a step-2 directory whose status is terminal (anything outside run-integrity.js's
-// NON_TERMINAL), mints a fresh one, and classifies the run as created. The guard is extracted from the
+// NON_TERMINAL) or that a prior release run stamped createdBy: "release-standalone" (an early stop leaves
+// it active), mints a fresh one, and classifies the run as created. The guard is extracted from the
 // live SKILL.md fence and executed against fixture directories (extract-and-run form), and the prose
 // facts around it are pinned with go-red proofs.
 'use strict';
@@ -77,14 +78,35 @@ const ROWS = [
   ["clean in a dir named o'brien run", "o'brien run", '{"status":"clean"}', 0],
   ['no status key', 'nostatus', '{}', 1],
   ['non-string status', 'numstatus', '{"status":5}', 1],
+  // A prior release run's own directory is refused whatever its status (#3898 final review C1).
+  ['active, release-standalone', 'active-release', '{"status":"active","createdBy":"release-standalone"}', 0],
+  ['interrupted, release-standalone', 'interrupted-release', '{"status":"interrupted","createdBy":"release-standalone"}', 0],
+  ['active, created by flow', 'active-flow', '{"status":"active","createdBy":"flow"}', 1],
+  ['no status, release-standalone', 'nostatus-release', '{"createdBy":"release-standalone"}', 0],
 ];
 
-test('AC1.1: Step 0 guard classifies run-state status', () => {
-  const guard = extractGuard(STEP_ZERO);
+// One assertion for the whole table; the go-red controls below run this same function.
+function assertGuardRows(guard, tag) {
   for (const [label, name, runState, expected] of ROWS) {
-    const result = runGuard(guard, fixture(name, runState));
+    const result = runGuard(guard, fixture(`${tag}-${name}`, runState));
     assert.equal(result.status, expected, `${label}: expected exit ${expected}, got ${result.status} (stderr: ${result.stderr})`);
   }
+}
+
+test('AC1.1: Step 0 guard classifies run-state status', () => {
+  assertGuardRows(extractGuard(STEP_ZERO), 'live');
+});
+
+// The release-standalone half of the predicate, removed: the gap #3898's final review reproduced.
+const CREATED_BY_DISJUNCT = ' || r.createdBy === "release-standalone"';
+function dropCreatedByDisjunct(text) {
+  const mutated = text.replace(CREATED_BY_DISJUNCT, '');
+  assert.notEqual(mutated, text, `anchor text "${CREATED_BY_DISJUNCT.trim()}" not found — proof cannot discriminate`);
+  return mutated;
+}
+
+test('AC1.1: Step 0 guard go-red: without the release-standalone disjunct an active release dir is adopted', () => {
+  assert.throws(() => assertGuardRows(dropCreatedByDisjunct(extractGuard(STEP_ZERO)), 'nodisjunct'), /active, release-standalone: expected exit 0, got 1/);
 });
 
 test('AC2.1: Step 0 guard go-red: a flipped predicate adopts a clean dir', () => {
@@ -159,12 +181,55 @@ test('AC1.1: Step 0 fence end to end: a finished release run is refused, a fresh
   assert.equal(JSON.parse(fs.readFileSync(path.join(minted, 'run-state.json'), 'utf8')).createdBy, 'release-standalone', 'the fresh dir carries the release-standalone stamp');
 });
 
+// Waits until the wall clock enters a new second: the standalone mint names its dir by the second,
+// so two mints inside one second would name the same directory.
+function waitForNextSecond() {
+  const start = Math.floor(Date.now() / 1000);
+  const cell = new Int32Array(new SharedArrayBuffer(4));
+  while (Math.floor(Date.now() / 1000) === start) Atomics.wait(cell, 0, 0, 50);
+}
+
+// The reviewer's scenario: the fence runs twice with no close-run between them. The second run must
+// refuse the first run's still-active directory and mint a different one.
+function assertSecondRunRefusesFirst(fence, label) {
+  const repo = path.join(scratch, label);
+  fs.mkdirSync(repo, { recursive: true });
+  const init = spawnSync('git', ['init', '-q'], { cwd: repo, encoding: 'utf8' });
+  assert.equal(init.status, 0, `${label}: repo init failed: ${init.stderr}`);
+  const first = runInRepo(repo, fence);
+  assert.equal(first.status, 0, `${label}: first run exited ${first.status} (stderr: ${first.stderr})`);
+  const firstLines = first.stdout.trim().split('\n');
+  assert.equal(firstLines.length, 1, `${label}: the first run must print only its minted dir, got: ${first.stdout}`);
+  const firstDir = fs.realpathSync(firstLines[0]);
+  waitForNextSecond();
+  const second = runInRepo(repo, fence);
+  assert.equal(second.status, 0, `${label}: second run exited ${second.status} (stderr: ${second.stderr})`);
+  const lines = second.stdout.trim().split('\n');
+  const refused = /^refused: (.*) \(status active\)$/.exec(lines[1] || '');
+  assert.ok(refused, `${label}: the second run did not refuse the first run's directory, got: ${second.stdout}`);
+  assert.equal(fs.realpathSync(refused[1]), firstDir, `${label}: the refused line must name the first run's directory`);
+  assert.notEqual(fs.realpathSync(lines[0]), firstDir, `${label}: the second run must mint a different directory`);
+}
+
+test('AC1.1: Step 0 fence run twice without a close: the second run refuses the first run\'s active dir', () => {
+  assertSecondRunRefusesFirst(resolveFence(STEP_ZERO), 'twice-live');
+});
+
+test('AC1.1: Step 0 fence run twice go-red: without the release-standalone disjunct the second run re-adopts', () => {
+  assert.throws(() => assertSecondRunRefusesFirst(dropCreatedByDisjunct(resolveFence(STEP_ZERO)), 'twice-nodisjunct'), /did not refuse the first run's directory/);
+});
+
 // The load-bearing prose facts of the refusal. The patterns match exactly once in Step 0, so
 // removing the one match turns exactly that fact red.
 const REQUIRED = [
   [/\[ -z "\$PIPELINE_RUN_DIR" \]/, 'the guard is skipped for a $PIPELINE_RUN_DIR-supplied directory'],
-  [/finished release run \(status \{status\}\) — not adopted; minted \{run-dir\}/, 'the refusal log line names the refused dir, its status and the minted dir'],
-  [/status is terminal[\s\S]{0,300}\*\*created\*\*/, 'a terminal step-2 directory is refused and the run is created'],
+  [/prior release run's directory \(status \{status\}\) — not adopted; minted \{run-dir\}/, 'the refusal log line names the refused dir, its status and the minted dir'],
+  // Split in two so neither span contains the other: the refusal triggers, then the created verdict.
+  [/status is terminal, or that carries `createdBy: "release-standalone"` whatever its status/, 'a terminal or release-standalone step-2 directory is refused whatever its status'],
+  [/is refused — the fence prints `refused:[\s\S]{0,200}the run is \*\*created\*\*/, 'a refused directory is replaced by a fresh mint and the run is created'],
+  [/neither terminal nor stamped by a release run/, 'a step-2 directory is inherited only while non-terminal and not release-standalone-created'],
+  [/step 2 already skips an `interrupted` one/, 'step 2 never hands over an interrupted directory to inherit'],
+  [/carried `\{run-dir\}` path[\s\S]{0,200}mint a stray one/, 'later steps use the carried run dir and never re-run the fence'],
 ];
 const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
 const missingFacts = missingFactsOf(REQUIRED);
@@ -219,7 +284,11 @@ const DISPOSITION_SCOPE = [
   [/staged\/review-contested-\{n\}\.md/, 'inventory: contested findings'],
   [/staged\/review-debate-\{n\}\.md/, 'inventory: debate findings'],
   [/unrecognised[\s\S]{0,200}not archived/, 'an unrecognised staged/review-* file fails closed: the run is not archived'],
-  [/release-held\.md[\s\S]{0,160}not a finding/, 'release-held.md is not a finding'],
+  [/every file in it except `release-held\.md`, which is not a finding/, 'inventory: every file in staged/ except release-held.md, which is not a finding'],
+  [/only the lines after Step 3's carried marker `\{k\}`/, 'inventory: decisions.md is read only after Step 3\'s marker'],
+  [/`STAGED` line whose stage path is absent or names no existing file/, 'inventory: a decisions.md-only STAGED line is a finding'],
+  [/counted once by its stage path/, 'inventory: a STAGED line naming a listed file is de-duplicated by stage path'],
+  [/`staged\/reflect-\*`, `staged\/simplify-\*` and `staged\/deepen-\*`/, 'inventory: reflect, simplify and deepen files'],
 ];
 
 const DISPOSITION_ROUTING = [
@@ -231,6 +300,12 @@ const DISPOSITION_ROUTING = [
   [/declined \(unconfirmed: one reproduction agent of the pair\)/, 'an unconfirmed medium/low/info finding is declined, naming the pair'],
   [/declined \(contested: \{verdicts\}\)/, 'a contested finding is declined, naming the verdicts'],
   [/covered by #\{n\}/, 'a finding an open record already covers is declined'],
+  [/`decisions\.md`-only `STAGED` line at critical\/high \| The same Defer/, 'a decisions.md-only critical/high line takes the same Defer'],
+  [/declined \(unconfirmed: \{the line's own reason/, 'any other decisions.md-only line is declined with its own reason'],
+  [/`reflect-\*`, `simplify-\*` or `deepen-\*` file \| The same Defer path and Defer-reason/, 'reflect/simplify/deepen files take the same Defer path'],
+  [/else treated as medium for the floor test/, 'a severity-less reflect/simplify/deepen file is medium for the floor'],
+  [/Any other staged file \| No route/, 'any other staged file has no route'],
+  [/_shared\/github-write-transport\.md/, 'filing and the covered-by lookup go through the write transport'],
 ];
 
 const DISPOSITION_APPROVAL = [
@@ -244,6 +319,10 @@ const DISPOSITION_APPROVAL = [
   [/FAILED \{HH:MM:SS\} — Step 8 disposition:/, 'a failed write is a hand-composed FAILED line'],
   [/skip[\s\S]{0,60}archiv/, 'any failure skips archival'],
   [/--dry-run[\s\S]{0,160}still runs/, 'disposition still runs under --dry-run'],
+  [/Below `unattended`, a human reachable in the session/, 'below unattended with a human reachable, the table renders and one question is asked'],
+  [/_shared\/auto-mode-contract\.md`'s never-silenced list/, 'auto permits the question: work-record creation is never silenced'],
+  [/SKIP \{HH:MM:SS\} — Step 8 disposition \(degraded\): condition: no human present below autonomy unattended → fallback: \{n\} findings left staged at \{paths\}/, 'headless below unattended: the degraded SKIP line'],
+  [/counts as undisposed — a failure for archival purposes/, 'a headless undisposed finding blocks archival'],
 ];
 
 for (const [name, patterns] of [
@@ -261,10 +340,17 @@ for (const [name, patterns] of [
 
 const STEP8_WIRING = [
   [/disposition\.md/, 'Step 8 reads disposition.md'],
-  [/findings: \{f\} filed, \{d\} digest, \{x\} declined/, 'the summary block carries the findings: line'],
+  [/findings: \{f\} filed, \{d\} digest, \{x\} declined\{, k failed — \{paths\}\}/, 'the summary block carries the findings: line, failed paths included'],
   [/hooks\.js" archive-run --run "\{run-dir\}"/, 'Step 8 runs archive-run on the run dir'],
   // Grouped: an ungrouped `a|Step 0` alternation would match any "Step 0" in the section and could never go red.
-  [/archive-run refused[\s\S]{0,200}(?:not adopted|Step 0)/, 'a refusal is non-fatal because Step 0 never adopts a terminal directory'],
+  [/archive-run did not archive[\s\S]{0,200}(?:not adopted|Step 0)/, 'a non-archival is non-fatal because Step 0 refuses the closed directory'],
+  [/the success line `claude-tweaks: archived \{run-id\}`/, 'archival is keyed on the success line'],
+  [/Any other output[\s\S]{0,200}means not archived/, 'any other archive-run output means not archived'],
+  [/archive\/\{run-id\}\/staged\/release-held\.md/, 'HELD names the archived release-held.md once archived'],
+  [/`HELD`'s staged path prints last, after the archival/, 'HELD\'s staged path prints after the archival'],
+  [/\*\*Every exit runs the close-out\.\*\*/, 'every exit after Step 0\'s mint runs the close-out'],
+  [/Step 1's terminal stops, Step 2's nothing-to-release, Step 3's stops/, 'the close-out names the early stops'],
+  [/Step 2 keeps its single printed line/, 'an early stop renders nothing more; Step 2 keeps its one line'],
 ];
 
 // An ordering claim: each marker must exist, and positions must increase.
@@ -313,7 +399,7 @@ const STEP8_INHERITED = [
   [/inherited[\s\S]{0,120}never archived/, 'an inherited directory is never archived'],
 ];
 const DISPOSITION_INHERITED = [
-  [/condition: inherited run directory → fallback: the parent's Review Console owns staged\//, 'an inherited directory is never disposed: the SKIP line'],
+  [/Step 8 disposition \(skipped\): condition: inherited run directory → fallback: the parent's Review Console owns staged\//, 'an inherited directory is never disposed: the (skipped) SKIP line'],
 ];
 
 test('AC4.1: an inherited run directory is never closed, archived or disposed', () => {
@@ -325,4 +411,43 @@ test('AC4.1: an inherited run directory is never closed, archived or disposed', 
   const dispositionMissing = missingFactsOf(DISPOSITION_INHERITED);
   assert.deepEqual(dispositionMissing(text), [], 'disposition.md must write the SKIP line for an inherited directory');
   assertEachPatternGoesRed(text, DISPOSITION_INHERITED, dispositionMissing);
+});
+
+// --- Early stops point at Step 8's close-out (#3898 final review C1b) ---------------------------------
+function sliceBetween(text, from, to) {
+  const start = text.indexOf(`\n${from}`);
+  assert.notEqual(start, -1, `extraction pattern is out of sync: release/SKILL.md has no "${from}" heading`);
+  const end = text.indexOf(`\n${to}`, start + 1);
+  assert.notEqual(end, -1, `extraction pattern is out of sync: release/SKILL.md has no "${to}" heading after "${from}"`);
+  return text.slice(start, end);
+}
+
+const POINTER = [[/Step 8's close-out still runs for a created directory/, 'the stop points at Step 8\'s close-out']];
+const EARLY_STOPS = [
+  ['## Step 1', '## Step 2', [...POINTER, [/Every \*\*Stop\*\* in the table below also ends with Step 8's close-out/, 'every table Stop ends with the close-out']]],
+  ['## Step 2', '## Step 3', POINTER],
+  ['## Step 3', '## Step 4', POINTER],
+  ['## --train semantics', '## Component-Skill Contract', POINTER],
+  ['## Input', '## Step 0', [[/Step 8's disposition still files, digests or declines the review's findings/, 'a dry run still disposes the findings']]],
+];
+
+for (const [from, to, patterns] of EARLY_STOPS) {
+  test(`AC2.1: ${from} carries its Step 8 close-out facts (with go-red)`, () => {
+    const slice = sliceBetween(readText(SKILL), from, to);
+    const missingOf = missingFactsOf(patterns);
+    assert.deepEqual(missingOf(slice), [], `${from} must state every close-out fact (#3898)`);
+    assertEachPatternGoesRed(slice, patterns, missingOf);
+  });
+}
+
+// --- release/disposition.md is a registered consoleAutoResolve caller (#3898 final review I5) ---------
+const CEILING = path.join(ROOT, 'plugin', 'skills', '_shared', 'autonomy-ceiling.md');
+const CEILING_FACTS = [[/Three sanctioned callers[\s\S]{0,600}`release\/disposition\.md`'s Approval section/, 'autonomy-ceiling.md registers release/disposition.md as a consoleAutoResolve caller']];
+
+test('AC3.1: autonomy-ceiling.md registers release/disposition.md as a consoleAutoResolve caller (with go-red)', () => {
+  const row = readText(CEILING).split('\n').find((l) => l.startsWith('| `consoleAutoResolve` |'));
+  assert.ok(row, 'extraction pattern is out of sync: autonomy-ceiling.md has no consoleAutoResolve row');
+  const missingOf = missingFactsOf(CEILING_FACTS);
+  assert.deepEqual(missingOf(row), [], 'the consoleAutoResolve row must name release/disposition.md as a sanctioned caller');
+  assertEachPatternGoesRed(row, CEILING_FACTS, missingOf);
 });

@@ -24,7 +24,7 @@ Lifecycle: `/claude-tweaks:wrap-up` → **`/claude-tweaks:release`** (on demand,
 
 | Flag | Effect |
 |------|--------|
-| `--dry-run` | Step 5 is a no-op — nothing is merged, nothing is tagged, no `Release-As:` commit is pushed. Step 3's whole-branch review **still runs** and still stages its findings (a dry run must surface what a real run would block on), and Step 4 still renders the console. Step 6 does **not** run either — there is no tag, Release or hook run to look for, and probing for one would render a false partial state. Step 7's bookkeeping does **not** run — nothing shipped, so there is nothing to book. Step 8's summary reads `dry-run`. |
+| `--dry-run` | Step 5 is a no-op — nothing is merged, nothing is tagged, no `Release-As:` commit is pushed. Step 3's whole-branch review **still runs** and still stages its findings (a dry run must surface what a real run would block on), and Step 4 still renders the console. Step 6 does **not** run either — there is no tag, Release or hook run to look for, and probing for one would render a false partial state. Step 7's bookkeeping does **not** run — nothing shipped, so there is nothing to book. Step 8's disposition still files, digests or declines the review's findings, because they are real whether or not anything ships. Step 8's summary reads `dry-run`. |
 | `--train` | The unattended path (see `## --train semantics`). Step 4's console is never interactive. The two HARD-GATEs — `review: blocking`, or a major bump on the effective version — stage `release-held.md` in the run directory before Step 5 and exit `HELD`. Refused unless policy `release-train` resolves `true` **and** `autonomy` resolves `unattended`; a refused `--train` behaves exactly as an on-demand invocation, never as an accepted one. |
 | `--as <version>` | The `Release-As:` override. Validated against `^\d+\.\d+\.\d+$` — a strict three-part semver, no `v` prefix, no pre-release or build suffix; anything else is a usage error, printed and exited before Step 1. **Both engines.** Under pr-first the value becomes a pushed `Release-As:` commit release-please re-renders; under local-merge (#2326, ledger row 90 closed) it is passed straight through as `bin/release-local.js --release-as {version}`, which validates it is ahead of the derived base and exits `2` (naming both versions) if it is not. Either way the value becomes the **effective version** for every gate and render up to Step 5: Step 4's console row, the major-bump HARD-GATE, Step 5's engine invocation. Steps 6 and 7 use the **shipped** version the engine actually produced (Step 5's "Two versions, reconciled once") — under `--as` the two are expected to agree, and a disagreement is `PARTIAL`, never a `Shipped in` comment carrying the override. |
 | `--allow-blocking` | A human who has read the finding overrides a `review: blocking` verdict from Step 3. It never skips the review — Step 3 runs, its findings stage, and the override is logged with the finding paths it overrode. **Never honoured under `--train`**: an unattended run has no human to have read anything, so the pair is an override without a reader. |
@@ -54,10 +54,10 @@ Then resolve the run directory per `_shared/run-dir-resolution.md` (steps 1-2: `
 ```bash
 RUN_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug release 2>/dev/null)
 REFUSED_DIR=
-# A step-2 directory (no PIPELINE_RUN_DIR) whose run-state.json status is terminal is a finished run — refuse it (#3898).
-if [ -n "$RUN_DIR" ] && [ -z "$PIPELINE_RUN_DIR" ] && PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" node -e 'const { NON_TERMINAL } = require(process.env.PLUGIN_ROOT + "/bin/lib/hooks/run-integrity.js"); const s = JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")).status; process.exit(typeof s === "string" && !NON_TERMINAL.has(s) ? 0 : 1)' "$RUN_DIR" 2>/dev/null; then REFUSED_DIR=$RUN_DIR; RUN_DIR=; fi
+# A step-2 directory (no PIPELINE_RUN_DIR) that is terminal, or is a prior release run's own, is refused (#3898).
+if [ -n "$RUN_DIR" ] && [ -z "$PIPELINE_RUN_DIR" ] && PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" node -e 'const { NON_TERMINAL } = require(process.env.PLUGIN_ROOT + "/bin/lib/hooks/run-integrity.js"); const r = JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")); const s = r.status; process.exit((typeof s === "string" && !NON_TERMINAL.has(s)) || r.createdBy === "release-standalone" ? 0 : 1)' "$RUN_DIR" 2>/dev/null; then REFUSED_DIR=$RUN_DIR; RUN_DIR=; fi
 if [ -z "$RUN_DIR" ]; then
-  # Steps 1-2 found nothing, or the guard above refused a finished run's directory (or step 1's
+  # Steps 1-2 found nothing, or the guard above refused a prior release run's directory (or step 1's
   # adoption-time anchoring check rejected a worktree-trapped PIPELINE_RUN_DIR, [IL-127]) — clear
   # PIPELINE_RUN_DIR for this second call so a rejected value is never re-consulted, then mint the standalone fallback.
   RUN_DIR=$(PIPELINE_RUN_DIR= node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --standalone release --create)
@@ -67,9 +67,9 @@ echo "$RUN_DIR"
 [ -z "$REFUSED_DIR" ] || echo "refused: $REFUSED_DIR (status $(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")).status))' "$REFUSED_DIR"))"
 ```
 
-`$RUN_ROOT` is the main checkout, never a worktree cwd — a bare relative path silently shadows the main copy (`[IL-127]`). An `export` inside this snippet does not survive into the next Bash call; re-resolve with the same snippet in any later step that needs the path, and carry the resolved path as a fact of this run.
+`$RUN_ROOT` is the main checkout, never a worktree cwd — a bare relative path silently shadows the main copy (`[IL-127]`). Later steps use the carried `{run-dir}` path, a fact of this run, and never re-run the fence above: re-running it would now refuse this run's own directory and mint a stray one. The two-line `$RUN_ROOT` snippet keeps its own re-resolve rule.
 
-**Determine inherited-vs-created here, once.** At this point — and only here — record which of the two branches above ran: `$PIPELINE_RUN_DIR` was already set at invocation (never subject to the status check above), or an existing directory resolved at step 2 whose `run-state.json` status is non-terminal (`active` or `interrupted`) → **inherited**; this run minted the directory and wrote the `createdBy: "release-standalone"` stamp above → **created**. A step-2 directory whose status is terminal (#3898: a finished release run, which a later release must never reuse) is refused — the fence prints `refused: {dir} (status {status})` as a second stdout line, the fallback mints a fresh directory, and the run is **created**. The mint call omits `--spec-slug` on purpose: with it, `resolve-run-dir` re-runs step 2 and re-adopts the very directory just refused. Once the new directory exists, log `AUTO {HH:MM:SS} — Step 0: {refused-dir} is a finished release run (status {status}) — not adopted; minted {run-dir}. Reversibility: n/a.` through the writer below. Carry that verdict as a run-scoped fact alongside the run dir path itself and **never re-read it from disk later** — the directory can be archived out from under a re-read, exactly as `wrap-up/SKILL.md`'s identical rule records.
+**Determine inherited-vs-created here, once.** At this point — and only here — record which of the two branches above ran: `$PIPELINE_RUN_DIR` was already set at invocation (never subject to the status check above), or an existing directory resolved at step 2 that is neither terminal nor stamped by a release run — its `run-state.json` is `active` (step 2 already skips an `interrupted` one), missing or unreadable, and carries no `createdBy: "release-standalone"` → **inherited**; this run minted the directory and wrote the `createdBy: "release-standalone"` stamp above → **created**. A step-2 directory whose status is terminal, or that carries `createdBy: "release-standalone"` whatever its status (#3898: a prior release run's own directory, which a later release must never reuse — one that stopped early is still `active`), is refused — the fence prints `refused: {dir} (status {status})` as a second stdout line, the fallback mints a fresh directory, and the run is **created**. The mint call omits `--spec-slug` on purpose: with it, `resolve-run-dir` re-runs step 2 and re-adopts the very directory just refused. Once the new directory exists, log `AUTO {HH:MM:SS} — Step 0: {refused-dir} is a prior release run's directory (status {status}) — not adopted; minted {run-dir}. Reversibility: n/a.` through the writer below. Carry that verdict as a run-scoped fact alongside the run dir path itself and **never re-read it from disk later** — the directory can be archived out from under a re-read, exactly as `wrap-up/SKILL.md`'s identical rule records.
 
 **Pin the review's auto-apply ceiling to `none`, here.** Step 3 reviews history that is already merged, so it has nothing to fix in place: a finding applied automatically there would land an unreviewed commit on the integration branch between the gate and the bump, and ship in the very release the gate exists to hold. For a **created** run directory, write the lever once:
 
@@ -95,7 +95,7 @@ Run the fact pack once, anchored to the run directory:
 node "${CLAUDE_PLUGIN_ROOT}/bin/release-preflight.js" --run "{run-dir}"
 ```
 
-Exit **2** (malformed invocation) or **3** (the run directory does not resolve under the main checkout, or the cwd is not inside a git checkout) is terminal: report the CLI's own stderr line verbatim and stop. Nothing is rendered, no console, no review — there are no facts to render from. Exit **1** (the pack crashed before it could decide) is terminal the same way. Exit **0** means the pack was produced; a degraded field inside it is data to act on, not a failure. Read `{run-dir}/release-preflight.json` and act on each field's `{ok, value | error}` envelope.
+Exit **2** (malformed invocation) or **3** (the run directory does not resolve under the main checkout, or the cwd is not inside a git checkout) is terminal: report the CLI's own stderr line verbatim and stop; Step 8's close-out still runs for a created directory. Nothing is rendered, no console, no review — there are no facts to render from. Exit **1** (the pack crashed before it could decide) is terminal the same way. Every **Stop** in the table below also ends with Step 8's close-out for a created directory. Exit **0** means the pack was produced; a degraded field inside it is data to act on, not a failure. Read `{run-dir}/release-preflight.json` and act on each field's `{ok, value | error}` envelope.
 
 | Field | Value when `ok: true` | When `ok: false` |
 |-------|----------------------|------------------|
@@ -116,7 +116,7 @@ AUTO {HH:MM:SS} — Step 1: pack at {run-dir}/release-preflight.json: engine {va
 
 ## Step 2: Nothing to release
 
-Take this path when `unreleased.value.commits` is empty, or when `proposedVersion.error` begins with `nothing to release`. Print exactly one line, log it, and stop. **No console renders** — there is no version to gate, nothing to review toward a bump, and nothing to book:
+Take this path when `unreleased.value.commits` is empty, or when `proposedVersion.error` begins with `nothing to release`. Print exactly one line, log it, and stop; Step 8's close-out still runs for a created directory. **No console renders** — there is no version to gate, nothing to review toward a bump, and nothing to book:
 
 ```
 release: nothing to release since {lastTag|the first commit} ({n} commit(s), none feat/fix/breaking{; N unconventional})
@@ -175,7 +175,7 @@ A critical finding's line carries **no** stage-path clause — it is surfaced in
 | `review: findings (n medium/low, staged)` | No such line, but they contain any other routed finding — a `Step 3 Routing:` line at `medium-severity finding` or `applied low-severity` |
 | `review: clean` | They contain no `Step 3 Routing:` line at all |
 
-A `## /review` block that is absent, empty, unparseable, or carrying no new lines at all after the marker is **not** `review: clean` — it means the review did not complete, which is a stop, not a pass. Report which of the three it was and stop before Step 4.
+A `## /review` block that is absent, empty, unparseable, or carrying no new lines at all after the marker is **not** `review: clean` — it means the review did not complete, which is a stop, not a pass. Report which of the three it was and stop before Step 4; Step 8's close-out still runs for a created directory.
 
 Log the verdict, and log the override separately when one applies:
 
@@ -219,10 +219,10 @@ Render one summary block:
 release: {version} — {released | dry-run | HELD | PARTIAL | failed}
 engine:  {pr-first | local-merge}
 records: {n} {shipped | would ship}{, m unattributed commits}
-{findings: {f} filed, {d} digest, {x} declined{, k failed}, when disposition inventoried any finding}
+{findings: {f} filed, {d} digest, {x} declined{, k failed — {paths}}, when disposition inventoried any finding}
 {bookkeeping: {k} of {n} failed — #a (read), #b (close), when Step 7 reported k > 0}
 {partial state and recovery command, when the outcome is PARTIAL}
-{gate and staged path, when the outcome is HELD}
+{gate and staged path, when the outcome is HELD — printed last, after the archival below}
 {the engine's or forge's own error line, when the outcome is failed}
 ```
 
@@ -260,7 +260,11 @@ Always pass the explicit `--run` with the run *directory* — `close-run` reject
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "{run-dir}"
 ```
 
-`archive-run` exits `0` on a refusal as well and prints `claude-tweaks: archival refused — {reason}` on stdout, so a refusal is read from that line, never from the exit code. Log it verbatim as `AUTO {HH:MM:SS} — Step 8: archive-run refused — {reason line}. Reversibility: n/a.` and carry on: it is not an error, because the closed, unarchived directory is safe — Step 0 never adopts a terminal one. A gitignored release directory moves with plain renames and no commit (`archiveRunDir` commits only a tracked `work/`). When disposition reported any failure, this archival does not run. An **inherited** directory is never archived either: the parent pipeline owns that too.
+`archive-run` exits `0` whatever happens, so its outcome is read from stdout, never from the exit code: the directory is archived only when the output carries the success line `claude-tweaks: archived {run-id}`. Any other output — `archival refused — {reason}`, `not archived; run close-run first`, `archival deferred`, `no pipeline run dir found`, `could not resolve the main checkout root` — means not archived. Log that line verbatim as `AUTO {HH:MM:SS} — Step 8: archive-run did not archive — {line}. Reversibility: n/a.` and carry on: it is not an error, because the closed, unarchived directory is safe — Step 0 refuses it (terminal, and stamped `release-standalone`). A gitignored release directory moves with plain renames and no commit (`archiveRunDir` commits only a tracked `work/`). When disposition reported any failure, this archival does not run. An **inherited** directory is never archived either: the parent pipeline owns that too.
+
+**`HELD`'s staged path prints last, after the archival.** When `archive-run` printed its success line, the line names `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/staged/release-held.md`, where `archiveRunDir` moved the directory; otherwise `{run-dir}/staged/release-held.md`. A path printed before the move would name a file gone seconds later.
+
+**Every exit runs the close-out.** Disposition, the close, then the archival, in that order, run for a **created** directory on every exit after Step 0's mint, not only on a run that reaches this step's summary: Step 1's terminal stops, Step 2's nothing-to-release, Step 3's stops, a refused `--train` with no human present, and any other stop. A release directory records no owning session, so session end never marks it `interrupted`: left alone, it stays `active`. Where the stopping step says it renders nothing, the close-out renders nothing either — no summary block, no `## Next Actions`; Step 2 keeps its single printed line.
 
 ## Next Actions
 
@@ -298,7 +302,7 @@ It lands at `{run-dir}/staged/release-held.md`. The run then **exits 0** with `H
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values release-train autonomy
 ```
 
-`--train` is accepted only when `release-train` resolves `true` **and** `autonomy` resolves `unattended`. Otherwise it is refused: log the exact line and, **when a human is present** (interactive or hybrid mode), **continue as an ordinary on-demand invocation** — interactive console, HARD-GATEs presented to a human rather than staged. **When no human is present** — `auto` mode, or a Routine firing with no mode signal (the kernel's unattended-firing constraint) — a refused `--train` stops here, before Step 1: the outcome is `failed` with the refusal line as its reason, nothing is read and nothing moves, and the firing reports it as blocked. Without this stop a refused train whose history happens to trip no HARD-GATE would sail through Step 5 exactly as an accepted one — the console gates only what a gate catches. A refused `--train` must never proceed as though it had been accepted.
+`--train` is accepted only when `release-train` resolves `true` **and** `autonomy` resolves `unattended`. Otherwise it is refused: log the exact line and, **when a human is present** (interactive or hybrid mode), **continue as an ordinary on-demand invocation** — interactive console, HARD-GATEs presented to a human rather than staged. **When no human is present** — `auto` mode, or a Routine firing with no mode signal (the kernel's unattended-firing constraint) — a refused `--train` stops here, before Step 1: the outcome is `failed` with the refusal line as its reason, nothing is read and nothing moves, and the firing reports it as blocked; Step 8's close-out still runs for a created directory. Without this stop a refused train whose history happens to trip no HARD-GATE would sail through Step 5 exactly as an accepted one — the console gates only what a gate catches. A refused `--train` must never proceed as though it had been accepted.
 
 ```
 AUTO {HH:MM:SS} — Step 0: train: refused — autonomy {value}. {Proceeding as an on-demand invocation | Stopped before Step 1: no human present}. Reversibility: n/a. [lever: autonomy={value} ({source})]
