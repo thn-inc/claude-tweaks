@@ -142,6 +142,13 @@ function renderCollapsedSummary(tokens, notes, guard) {
   return lines.join('\n') + '\n';
 }
 
+// [name, count] entries: highest count first, ties by name in code-unit order.
+function byCountThenName([nameA, countA], [nameB, countB]) {
+  if (countA !== countB) return countB - countA;
+  if (nameA < nameB) return -1;
+  return nameA > nameB ? 1 : 0;
+}
+
 // #4029: the run-wide turn-class and context lines, from a joinTokens totals
 // bucket. Per-phase values stay in timing.json.
 function renderTurnLines(totals) {
@@ -151,7 +158,7 @@ function renderTurnLines(totals) {
   const calls = TURN_CLASSES.reduce((sum, c) => sum + totals.turnClasses[c], 0);
   const ceremony = CEREMONY_CLASSES.reduce((sum, c) => sum + totals.turnClasses[c], 0);
   const share = calls > 0 ? `${Math.round((ceremony * 100) / calls)}%` : '—';
-  const models = Object.entries(totals.modelMix).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([m, n]) => `${m} ×${n}`).join(', ') || '—';
+  const models = Object.entries(totals.modelMix).sort(byCountThenName).map(([m, n]) => `${m} ×${n}`).join(', ') || '—';
   const turns = `${totals.context.turns} ${totals.context.turns === 1 ? 'turn' : 'turns'}`;
   return [
     `Turn classes (tool calls): ${classes} — ceremony share ${share}`,

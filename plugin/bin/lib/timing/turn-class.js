@@ -67,7 +67,7 @@ function tokenize(segment) {
   const tokens = [];
   const re = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
   let m;
-  while ((m = re.exec(segment)) !== null) tokens.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+  while ((m = re.exec(segment)) !== null) tokens.push(m[1] ?? m[2] ?? m[3]);
   return tokens;
 }
 
@@ -92,7 +92,10 @@ const VERIFY_TOOLS = new Set(['tsc', 'eslint', 'jest', 'vitest', 'pytest']);
 // tokens of one segment -> true when it runs a test/verify tool.
 function isVerifyRun(tokens) {
   const head = (tokens[0] || '').replace(/^.*\//, '');
-  if (head === 'npm') return tokens[1] === 'run' ? /^test\b/.test(tokens[2] || '') : /^test\b/.test(tokens[1] || '');
+  if (head === 'npm') {
+    const script = tokens[1] === 'run' ? tokens[2] : tokens[1];
+    return /^test\b/.test(script || '');
+  }
   if (head === 'node') {
     const rest = tokens.slice(1);
     const at = rest.findIndex((t) => !t.startsWith('-'));

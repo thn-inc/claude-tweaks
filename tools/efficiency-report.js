@@ -118,13 +118,10 @@ function collectRuns(archiveDir, fsImpl) {
       if (!isMissing(e)) skipped += 1;
       continue;
     }
-    let t;
+    let t = null;
     try {
       t = JSON.parse(text);
-    } catch (_) {
-      skipped += 1;
-      continue;
-    }
+    } catch (_) { /* malformed: counted as skipped below */ }
     if (!t || typeof t !== 'object' || Array.isArray(t)) {
       skipped += 1;
       continue;
