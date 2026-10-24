@@ -489,6 +489,12 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResol
   // This module has no stuck escalation of its own: the stale stamp surfaces
   // through archive-merged for the same run dir.
   const byNumberCands = candidates.filter((c) => c.prNumber);
+  // The pass resolver batches these lookups into one aliased GraphQL read
+  // (pr-state-cache.js `prefetch`); the per-item calls below then hit its memo.
+  // Warming only — a throw never changes a verdict, the calls below stay as is.
+  if (prStateResolver) {
+    try { await prStateResolver.prefetch({ numbers: byNumberCands.map((c) => c.prNumber) }); } catch { /* warm-up only */ }
+  }
   const prStatesByNumber = await runWithConcurrency(
     byNumberCands,
     (c) => (prStateResolver ? prStateResolver.byNumberAsync(c.prNumber) : resolvePrStateByNumberAsync(root, c.prNumber)),
@@ -516,6 +522,9 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResol
   // not settle: no stamped number, or a by-number null. Candidates whose
   // prState is already set (object or failure string) are not re-probed.
   const needPrState = candidates.filter((c) => c.joinFailure === null && c.prState === null);
+  if (prStateResolver) {
+    try { await prStateResolver.prefetch({ branches: needPrState.map((c) => c.branch) }); } catch { /* warm-up only */ }
+  }
   const prStates = await runWithConcurrency(
     needPrState,
     (c) => (prStateResolver ? prStateResolver.byBranchAsync(c.branch) : resolvePrStateAsync(root, c.branch)),

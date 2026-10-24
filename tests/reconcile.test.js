@@ -2853,10 +2853,13 @@ test('reconcile(): release, archive and reap all use the pass\'s one resolver (#
   const { r, instances, events } = await reconcileWithRecordedResolver({ full: true });
   assert.equal(instances.length, 1);
   assert.ok(!r.skipped.some((s) => s.check === 'release'), `release must have run, got ${JSON.stringify(r.skipped)}`);
-  const firstPrefetch = events.findIndex(([m]) => m === 'prefetch');
-  // release runs before archive's prefetch, so its direct by-number lookup comes first.
+  // release runs first: it warms the stamped number in one prefetch (#4032), then its
+  // direct by-number lookup follows. archive's own prefetch comes after both.
   const releaseCall = events.findIndex(([m, id]) => m === 'byNumberAsync' && id === 42);
-  assert.ok(releaseCall !== -1 && releaseCall < firstPrefetch, `release Phase 1.5 must call the resolver first, events: ${JSON.stringify(events)}`);
+  const isNumberPrefetch = ([m, a]) => m === 'prefetch' && a.numbers && a.numbers.includes(42);
+  const releasePrefetch = events.findIndex(isNumberPrefetch);
+  assert.ok(releasePrefetch !== -1 && releasePrefetch < releaseCall, `release Phase 1.5 must warm the resolver before its lookup, events: ${JSON.stringify(events)}`);
+  assert.ok(releaseCall !== -1 && events.findIndex((e, i) => i > releaseCall && isNumberPrefetch(e)) !== -1, `release Phase 1.5 must call the resolver before archive's prefetch, events: ${JSON.stringify(events)}`);
   // archive's prefetch warms the stamped number; a branch is only asked of unanswered dirs, so this one is reap's.
   const prefetched = events.filter(([m]) => m === 'prefetch').map(([, a]) => a);
   assert.ok(prefetched.some((a) => a.numbers && a.numbers.includes(42)), `archive must prefetch the stamped number, got ${JSON.stringify(prefetched)}`);

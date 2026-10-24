@@ -1422,6 +1422,9 @@ test('releaseMerged: prStates async answers replace live lookups (#4032)', { ski
   const prStates = createPrStateResolver({
     root: subject.root,
     deps: {
+      // release now warms the resolver via prefetch; decline the batched read
+      // so the per-item twins below answer and the failing gh is never reached.
+      fetchBatch: async () => null,
       byNumberAsync: async (n) => { asked.numbers.push(n); return closing(4032042, 11); },
       byBranchAsync: async (b) => { asked.branches.push(b); return closing(4032043, 12); },
     },
@@ -1435,4 +1438,85 @@ test('releaseMerged: prStates async answers replace live lookups (#4032)', { ski
   assert.equal(fs.existsSync(marker), false, 'a lookup that bypassed prStates would have called the failing gh');
   const byIssue = Object.fromEntries(subjectResult.released.map((r) => [r.issueNumber, r.prNumber]));
   assert.deepStrictEqual(byIssue, { 11: 4032042, 12: 4032043 }, 'the resolver\'s sentinel PRs must reach the released entries');
+});
+
+// #4032: releaseMerged warms the pass resolver in one batch per phase. Three
+// live claims: #11 stamps pr.number 42 (answered by number), #13 stamps 77
+// (by-number probe answers null, so the branch join decides), #12 has no stamp
+// (branch join). The branch phase must therefore ask for #13's and #12's
+// branches but not #11's — the by-number loop settles that one first.
+function prefetchScenario(prefetch) {
+  const closing = (n, issue) => ({
+    number: n, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    closingIssuesReferences: [{ number: issue, repository: { name: 'w', owner: { login: 'acme' } } }],
+  });
+  const liveContent = JSON.stringify({
+    runId: 'run-x', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-prefetch-')));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+  const runs = [['run-num', { pr: { number: 42 } }], ['run-br', {}], ['run-null', { pr: { number: 77 } }]];
+  for (const [run, state] of runs) {
+    const wtPath = path.join(root, '.worktrees', `wt-${run}`);
+    execFileSync('git', ['worktree', 'add', '-q', '-b', `${run}-branch`, wtPath], { cwd: root });
+    const runDir = path.join(root, '.claude-tweaks', 'pipelines', run);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wtPath, ...state }));
+  }
+  const runByIssue = { 11: 'run-num', 12: 'run-br', 13: 'run-null' };
+  const ghApi = (args) => {
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [11, 12, 13].map((n) => ({ name: `issue-${n}.json`, sha: `s${n}` })) }), failure: null, status: null };
+    }
+    const m = /\/contents\/claims\/issue-(\d+)\.json/.exec(args[0]);
+    if (m) return { stdout: JSON.stringify({ content: liveContent.replace('run-x', runByIssue[m[1]]), sha: `s${m[1]}` }), failure: null, status: null };
+    if (args.some((a) => a.includes('/labels/'))) return { stdout: '', failure: null, status: null };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  const prStates = {
+    prefetch,
+    byNumberAsync: async (n) => (n === 42 ? closing(42, 11) : null),
+    byBranchAsync: async (b) => (b === 'run-br-branch' ? closing(43, 12) : b === 'run-null-branch' ? closing(44, 13) : null),
+  };
+  // Only the tombstone write reaches the real gh; every PR lookup is the resolver's.
+  const ghDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-prefetch-gh-'));
+  fs.writeFileSync(path.join(ghDir, 'gh'), '#!/bin/sh\ncase "$*" in\n  *"api --method PUT"*) exit 0 ;;\nesac\nexit 1\n');
+  fs.chmodSync(path.join(ghDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  return { root, ghApi, prStates, ghDir };
+}
+
+async function runPrefetchScenario(prefetch) {
+  const fx = prefetchScenario(prefetch);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${fx.ghDir}${path.delimiter}${originalPath}`;
+  try {
+    const result = await releaseMerged({ cwd: fx.root, ghApi: fx.ghApi, prStates: fx.prStates });
+    return { released: result.released, skipped: result.skipped };
+  } finally {
+    process.env.PATH = originalPath;
+  }
+}
+
+test('releaseMerged warms the resolver once per phase', { skip: PATH_STUB_SKIP }, async () => {
+  const calls = [];
+  const warmed = await runPrefetchScenario(async (arg) => { calls.push(arg); });
+  assert.deepStrictEqual(calls, [
+    { numbers: [42, 77] },
+    { branches: ['run-br-branch', 'run-null-branch'] },
+  ], 'by-number candidates first, then only the candidates the by-number loop left for the branch join');
+  assert.deepStrictEqual(warmed.released.map((r) => r.issueNumber).sort(), [11, 12, 13]);
+
+  const baseline = await runPrefetchScenario(async () => {});
+  assert.deepStrictEqual(warmed, baseline, 'prefetch only warms — every decision matches a no-op prefetch');
+});
+
+test('a throwing prefetch never changes release\'s verdicts', { skip: PATH_STUB_SKIP }, async () => {
+  let attempts = 0;
+  const thrown = await runPrefetchScenario(async () => { attempts += 1; throw new Error('batch exploded'); });
+  assert.equal(attempts, 2, 'both phases still attempt the warm-up');
+  const baseline = await runPrefetchScenario(async () => {});
+  assert.deepStrictEqual(thrown, baseline);
+  assert.equal(thrown.released.length, 3);
 });
