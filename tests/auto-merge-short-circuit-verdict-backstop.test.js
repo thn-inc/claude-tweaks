@@ -66,10 +66,12 @@ test('the Verdict backstop re-reads decisions.md through the shared module', () 
 });
 
 test('the refusal line resolves the console to leave-open (run through resolveAll, not a copy of its matcher)', (t) => {
-  const step = FLAT.match(/--step "([^"]+)" --reversibility n\/a --text-file "\{text-file\}"/);
-  const body = FLAT.match(/`(#\{n\} merge-check verdict not confirmed[^`]*)`/);
-  assert.ok(step && body, 'refusal log line missing');
-  const m = [null, step[1], body[1]];
+  // One match for the fence and the clause that holds its text-file line, so the `--step` captured
+  // is the one whose fence is followed by the refusal line, never an earlier `--text-file` site's.
+  const m = FLAT.match(
+    /--step "([^"]+)" --reversibility n\/a --text-file "\{text-file\}" ``` `\{text-file\}` holds one line, `(#\{n\} merge-check verdict not confirmed[^`]*)`/,
+  );
+  assert.ok(m, 'refusal log line missing');
   assert.doesNotMatch(PRE_CHANGE, /merge-check verdict not confirmed/);
   const text = m[2].replace('{n}', '7').replace('{latest}', 'none').replace('{detail}', '');
   const consoleDeps = {
