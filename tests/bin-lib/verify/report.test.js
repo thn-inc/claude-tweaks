@@ -132,9 +132,22 @@ test('dirtyFilePaths parses -z porcelain output, one record per changed/untracke
   assert.deepStrictEqual(dirtyFilePaths(fake), ['a.js', 'dir/b.js']);
 });
 
-test('dirtyFilePaths resolves a rename/copy record to the NEW path only (#2987)', () => {
-  const fake = () => 'R  new.js\0old.js\0';
-  assert.deepStrictEqual(dirtyFilePaths(fake), ['new.js']);
+test('dirtyFilePaths reports both paths of a rename — the deleted source still counts as dirty (#2987)', () => {
+  const fake = () => 'R  dist/a.js\0src/a.js\0';
+  assert.deepStrictEqual(dirtyFilePaths(fake), ['dist/a.js', 'src/a.js']);
+});
+
+test('dirtyFilePaths reports only the new path of a copy — its source is unchanged (#2987)', () => {
+  const fake = () => 'C  dist/a.js\0src/a.js\0';
+  assert.deepStrictEqual(dirtyFilePaths(fake), ['dist/a.js']);
+});
+
+test('dirtyFilePaths asks git to expand untracked directories into files (#2987)', () => {
+  let argv = null;
+  const fake = (cmd, args) => { argv = args; return ''; };
+  dirtyFilePaths(fake);
+  assert.ok(argv.includes('--untracked-files=all'), `argv was ${JSON.stringify(argv)}`);
+  assert.ok(argv.includes('-z'), `argv was ${JSON.stringify(argv)}`);
 });
 
 test('dirtyFilePaths returns [] on a clean tree (#2987)', () => {

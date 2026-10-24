@@ -187,6 +187,17 @@ test('generated must be an array of strings — a non-array or a non-string entr
   assert.match(badEntry.errors.join('\n'), /generated: must be an array of path glob strings/);
 });
 
+test('a generated glob that would cover the declaration file itself is refused, naming the glob (#2987)', () => {
+  for (const glob of ['**', '**/*', '*/**', '.claude-tweaks/**']) {
+    const res = readDeclaration('/d.json', fakeFs({
+      '/d.json': JSON.stringify({ checks: { tests: 'x' }, rules: [], generated: ['next-env.d.ts', glob] }),
+    }));
+    assert.strictEqual(res.ok, false, `${glob} was accepted`);
+    assert.match(res.errors.join('\n'), /would also cover \.claude-tweaks\/verify-scope\.json itself/);
+    assert.ok(res.errors.join('\n').includes(JSON.stringify(glob)), `error does not name ${glob}`);
+  }
+});
+
 test('a declaration with no checks.tests is valid — bookkeeping-only rules, zero suites (#1924)', () => {
   const r = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { lint: 'eslint .' }, rules: [{ match: 'docs/plans/*-ledger.md', suites: [], static: false }, { match: 'src/**', suites: '*', static: true }] }) }));
   assert.strictEqual(r.ok, true, JSON.stringify(r.errors));

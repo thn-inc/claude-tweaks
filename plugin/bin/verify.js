@@ -161,6 +161,12 @@ function stampStatus(parsed) {
   // further down — read here rather than twice.
   const scopeRead = parsed.scope && !foreignGitDir ? readDeclaration(resolveScopePath(parsed.scope, process.cwd())) : null;
   const scopeDecl = scopeRead && scopeRead.ok ? scopeRead.decl : null;
+  // Status is data, never a failure (exit 0 stays), but a --scope that could
+  // not be read is reported rather than looking exactly like "no --scope
+  // given" — the check run treats the same input as a usage error (#3017).
+  let scopeError = null;
+  if (scopeRead && !scopeRead.ok) scopeError = scopeRead.errors.join('; ');
+  else if (scopeRead && scopeRead.missing) scopeError = `--scope: no declaration at ${resolveScopePath(parsed.scope, process.cwd())}`;
   // #2987: the SAME generated-path exemption bin/verify.js's own stamp-write
   // gate applies, re-derived here against the LIVE tree rather than trusted
   // from the stored stamp — a tree a declared check regenerates every run
@@ -246,6 +252,7 @@ function stampStatus(parsed) {
     // stamp recorded (a different generated file dirty now than at write time).
     generatedExempt: present && Array.isArray(stamp.generatedExempt) ? stamp.generatedExempt : null,
     liveGeneratedExempt,
+    scopeError,
   };
   process.stdout.write(`${JSON.stringify(status)}\n`);
   process.exitCode = 0;
@@ -978,6 +985,23 @@ async function main() {
   // that as a usage error), never let it stamp — an empty run proves
   // nothing about the checks that mode claims to have covered.
   const emptyNonNoneRun = results.length === 0 && mode !== 'none';
+  // #2987: a dirty tree never disqualifies the pass stamp, nor a per-suite
+  // record (#3002), when every dirty path matches a declared
+  // `.claude-tweaks/verify-scope.json` `generated` glob (a check that
+  // regenerates a tracked file — e.g. a build rewriting `next-env.d.ts`).
+  // Computed once so both writers below apply the same dirty rule. `decl` is
+  // only ever non-null when --scope named a readable declaration; a run with
+  // no declaration, or one with no `generated` entries, computes nothing.
+  // report.json's own `dirty` (git.dirty, already written) is never touched.
+  // #3757: both reads must have succeeded — one clean read never vouches for
+  // a read that failed.
+  let generatedExempt = null;
+  if (decl && decl.generated.length && git.dirty === true && startGit.dirty !== null && endGit.dirty !== null) {
+    const endDirtyPaths = endGit.dirty === true ? dirtyFilePaths() : [];
+    if (startDirtyPaths !== null && endDirtyPaths !== null) {
+      generatedExempt = generatedExemption([...startDirtyPaths, ...endDirtyPaths], decl.generated);
+    }
+  }
   // An explicit --git-dir redirects logs and the count stamp only; the pass
   // stamp keys on the invoking cwd's HEAD, which may not be that repo's.
   // #3757: a moved tree (treeMoved above) writes neither the JSON stamp nor the
@@ -987,24 +1011,6 @@ async function main() {
     && !unchangedHeadNoop && !emptyNonNoneRun && !treeMoved
   ) {
     const suitesRun = results.filter((c) => c.name !== 'types' && c.name !== 'lint').map((c) => c.name);
-    // #2987: a dirty tree never disqualifies the pass stamp when every dirty
-    // path matches a declared `.claude-tweaks/verify-scope.json` `generated`
-    // glob (a check that regenerates a tracked file — e.g. a build rewriting
-    // `next-env.d.ts`). `decl` is only ever non-null when --scope named a
-    // readable declaration (same gate `generated` is parsed under); a run
-    // with no declaration, or a declaration with no `generated` entries,
-    // computes nothing here and behaves exactly as before. report.json's
-    // own `dirty` (git.dirty, already written) is never touched — only the
-    // stamp's copy is affected, via composeStamp's `generatedExempt` param.
-    // #3757: both reads must have succeeded — one clean read never vouches
-    // for a read that failed.
-    let generatedExempt = null;
-    if (decl && decl.generated.length && git.dirty === true && startGit.dirty !== null && endGit.dirty !== null) {
-      const endDirtyPaths = endGit.dirty === true ? dirtyFilePaths() : [];
-      if (startDirtyPaths !== null && endDirtyPaths !== null) {
-        generatedExempt = generatedExemption([...startDirtyPaths, ...endDirtyPaths], decl.generated);
-      }
-    }
     const stamp = composeStamp({
       report, scope: mode,
       fullSha: mode === 'full' ? git.sha : sel.base,
@@ -1049,23 +1055,34 @@ async function main() {
   // `fullSet`/`--no-stamp`. This is exactly what lets a chunked run earn
   // partial credit: each chunk's own `--cmd` checks that passed get a record
   // of their own, composed later by `--stamp-status --scope <path>`. Never
-  // written against a dirty tree or without a resolvable sha/gitDir — same
-  // fail-toward-nothing posture the full stamp's own write-gate applies
-  // (`!git.dirty` rather than silently stamping a tree that doesn't match
-  // what it claims to describe). A check this run did NOT include is simply
-  // left alone (composeSuiteCoverage treats "no record" as "not covered");
-  // a check this run ran and FAILED has its existing record cleared, since a
-  // fresh failure at this HEAD is more current information than a stale pass.
-  // A moved tree (#3757's treeMoved) writes no record either, same as the stamp.
-  if (parsed.stampSuite && gitDir && git.sha && git.dirty === false && !parsed.gitDir && !treeMoved) {
-    const updates = {};
-    for (const check of results) {
-      if (check.skipped) continue;
-      updates[check.name] = check.exitCode === 0
-        ? { sha: git.sha, dirty: false, at: new Date().toISOString(), reportPath: path.resolve(jsonPath) }
-        : null;
+  // written against a dirty tree — unless every dirty path is a declared
+  // `generated` one (the same exemption the pass stamp applies, so #2987 and
+  // #3002 compose) — nor without a resolvable sha/gitDir. A check this run did
+  // NOT include is simply left alone (composeSuiteCoverage treats "no record"
+  // as "not covered"); a check this run ran and FAILED has its existing record
+  // cleared, since a fresh failure at this HEAD is more current information
+  // than a stale pass. A moved tree (#3757's treeMoved) writes no record
+  // either, same as the stamp. A run that writes nothing says why, in a
+  // CAVEAT line, so a chunk never passes silently with no record behind it.
+  let suiteStampSkipped = null;
+  if (parsed.stampSuite) {
+    if (!gitDir || !git.sha) suiteStampSkipped = 'no git checkout or HEAD sha resolved';
+    else if (treeMoved) suiteStampSkipped = 'the tree moved during the run';
+    else if (git.dirty === null) suiteStampSkipped = 'git status could not be read';
+    else if (git.dirty === true && generatedExempt === null) suiteStampSkipped = 'the working tree is dirty outside any declared `generated` path';
+    else {
+      const updates = {};
+      for (const check of results) {
+        if (check.skipped) continue;
+        updates[check.name] = check.exitCode === 0
+          ? {
+            sha: git.sha, dirty: false, at: new Date().toISOString(), reportPath: path.resolve(jsonPath),
+            ...(generatedExempt !== null ? { generatedExempt } : {}),
+          }
+          : null;
+      }
+      try { writeSuiteStamps(gitDir, updates); } catch (err) { suiteStampSkipped = `the record write failed: ${err.message}`; }
     }
-    try { writeSuiteStamps(gitDir, updates); } catch { /* best-effort; next --stamp-status simply sees no record for these checks */ }
   }
 
   const lines = [];
@@ -1121,6 +1138,7 @@ async function main() {
     }
   }
   if (testCountRegression) lines.push('', caveatLine(testCountRegression));
+  if (suiteStampSkipped) lines.push('', `CAVEAT: --stamp-suite recorded no per-suite pass this run — ${suiteStampSkipped}`);
   // #1837: a tests check whose counts didn't parse (with a count stamp in
   // play) silently disabled the regression comparison before this line
   // existed — make the skip visible instead of a fabricated non-regression.

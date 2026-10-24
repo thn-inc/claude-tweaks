@@ -53,7 +53,7 @@ test('writeSuiteStamps merges over the existing file and writes atomically', () 
     lint: { sha: SHA_A, dirty: false, at: 't2' },
   });
   assert.deepStrictEqual(JSON.parse(fsImpl.files[path.join('/g', SUITE_STAMP_NAME)]), merged);
-  assert.ok(!Object.keys(fsImpl.files).some((p) => p.endsWith('.tmp')), 'no bare tmp files left behind');
+  assert.ok(!Object.keys(fsImpl.files).some((p) => p.includes('.tmp-')), 'no pid-suffixed tmp file left behind');
 });
 
 test('writeSuiteStamps with a null update clears that check\'s record, leaving the others (#3002 Deliverable 3)', () => {

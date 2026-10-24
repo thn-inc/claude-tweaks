@@ -335,6 +335,9 @@ function validateCheckRun(raw) {
   // declared-command selection under --stamp-suite), so the --scope
   // relaxation of the --cmd floor above does not apply to it.
   if (raw.stampSuite && raw.cmds.length === 0) throw new UsageError('--stamp-suite requires at least one --cmd (the checks this chunk runs)');
+  // Per-suite records key on the invoking cwd's own HEAD, so an explicit
+  // --git-dir (logs and count stamp elsewhere) would write nothing at all.
+  if (raw.stampSuite && raw.gitDir) throw new UsageError('--stamp-suite cannot be combined with --git-dir (per-suite records are written only to this checkout\'s own git dir)');
   return toResult(raw);
 }
 

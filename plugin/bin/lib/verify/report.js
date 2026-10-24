@@ -10,6 +10,7 @@
 const { execFileSync } = require('child_process');
 const path = require('path');
 const { writeFileAtomic } = require('../atomic-write');
+const { parseStatusPorcelainZ } = require('../git-z');
 
 // #2987: the individual dirty paths behind gitInfo's boolean `dirty` —
 // `--untracked-files=all` so an untracked directory expands to its files
@@ -18,7 +19,10 @@ const { writeFileAtomic } = require('../atomic-write');
 // exemption in bin/verify.js; `gitInfo` below stays the general-purpose
 // sha+boolean-dirty read every other caller already relies on. Fails toward
 // null on a git error, same posture as gitInfo — never a fabricated empty
-// list standing in for "could not check".
+// list standing in for "could not check". A rename contributes BOTH paths:
+// its source is deleted from the tree relative to HEAD, so a non-generated
+// file renamed into a generated path must still disqualify the stamp. A
+// copy's source is unchanged, so only its new path counts.
 function dirtyFilePaths(execImpl = execFileSync) {
   let out;
   try {
@@ -26,18 +30,10 @@ function dirtyFilePaths(execImpl = execFileSync) {
   } catch {
     return null;
   }
-  const tokens = out.split('\0');
   const files = [];
-  let i = 0;
-  while (i < tokens.length) {
-    const entry = tokens[i];
-    if (entry === '') { i += 1; continue; }
-    const xy = entry.slice(0, 2);
-    files.push(entry.slice(3));
-    // A rename/copy record is "XY new\0old\0" in -z mode (new path first) —
-    // same shape plugin/bin/lib/verify/changed-files.js's parser already
-    // relies on; skip the extra old-path token.
-    i += (xy.includes('R') || xy.includes('C')) ? 2 : 1;
+  for (const record of parseStatusPorcelainZ(out)) {
+    files.push(record.path);
+    if (record.origPath !== undefined && record.xy.includes('R')) files.push(record.origPath);
   }
   return files;
 }

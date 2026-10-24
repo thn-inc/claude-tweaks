@@ -13,7 +13,9 @@
 'use strict';
 
 const fs = require('fs');
+const { globToRegExp } = require('../issues/blast-radius');
 
+const DECLARATION_PATH = '.claude-tweaks/verify-scope.json';
 const DEFAULT_MAX_RETRIES = 1;
 const MAX_RETRIES_CEILING = 2;
 
@@ -160,12 +162,21 @@ function readDeclaration(filePath, fsImpl = fs) {
   // never the general report's own `dirty` (other readers rely on that one
   // meaning "the tree has any uncommitted change"). Same shape as
   // `preExisting` just above: an array of path/glob strings, default [].
+  // A glob that covers the declaration file itself is refused: an
+  // uncommitted edit adding a catch-all (`**`) would otherwise exempt both
+  // every dirty source path and the edit that declared it, letting the same
+  // run stamp clean.
   let generated = [];
   if (raw.generated !== undefined) {
     if (!Array.isArray(raw.generated) || raw.generated.some((f) => typeof f !== 'string')) {
       errors.push('generated: must be an array of path glob strings');
     } else {
-      generated = raw.generated;
+      const selfCovering = raw.generated.filter((g) => globToRegExp(g).test(DECLARATION_PATH));
+      if (selfCovering.length) {
+        errors.push(`generated: ${selfCovering.map((g) => JSON.stringify(g)).join(', ')} would also cover ${DECLARATION_PATH} itself — name only the files the checks regenerate`);
+      } else {
+        generated = raw.generated;
+      }
     }
   }
 

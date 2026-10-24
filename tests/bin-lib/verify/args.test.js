@@ -463,6 +463,13 @@ test('--stamp-suite keeps the --cmd floor that --scope alone relaxes (#3022)', (
   assert.throws(() => parseArgs(['--scope', 's.json', '--stamp-suite']), /--stamp-suite requires at least one --cmd/);
 });
 
+test('--stamp-suite with --git-dir is a usage error rather than a silent no-op', () => {
+  assert.throws(
+    () => parseArgs(['--cmd', 'tests=x', '--scope', 's.json', '--stamp-suite', '--git-dir', '/elsewhere/.git']),
+    /--stamp-suite cannot be combined with --git-dir/,
+  );
+});
+
 test('--stamp-suite is rejected in the two read-only modes', () => {
   assert.throws(() => parseArgs(['--stamp-status', '--scope', 's.json', '--stamp-suite']), /--stamp-suite applies only to a check run/);
   assert.throws(() => parseArgs(['--changed-files', '--stamp-suite']), /--stamp-suite applies only to a check run/);
