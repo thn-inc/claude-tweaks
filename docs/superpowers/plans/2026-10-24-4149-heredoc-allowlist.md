@@ -19,6 +19,9 @@
 - Every existing #3989 test in `tests/hooks-gate-coverage.test.js`, `tests/hooks-bash-prefilter.test.js` and `tests/hooks-dispatcher.test.js` (the frozen queue-pull snippet, AC1/AC2) stays green, except the one deliberate rewrite in Task 1 Step 1.
 - `plugin/skills/_shared/policy-schema-coverage.md` is 22,438 B against the 52,500 B `RAIL_BYTES` rail; Task 3's paragraph rewrite is net-neutral to ±600 B, leaving >29 KB headroom.
 
+Waived AC4.1: the full `npm test` suite runs once at `/claude-tweaks:build` Common Step 5 (`verify.js`), centrally, not per task.
+Waived tests/hooks-git-command.test.js: corrected premise — the #3989 heredoc cases live in `tests/hooks-gate-coverage.test.js`; this file is not touched.
+
 ## Review Focus
 
 1. **Real reader shapes must keep stripping**, or #3989's false-positive denial comes back: `node "$ROOT/bin/node-eval-file.js" … > out <<NODE_EVAL_EOF` (the frozen dispatcher snippet), `git commit -F - <<EOF`, `gh pr create --body-file - <<EOF`, `python3 - <<EOF`, `cat <<EOF > file` — Task 1 pins `git commit -F -` and `gh … --body-file -` alongside the existing node cases.
@@ -43,7 +46,7 @@
 - Consumes: `splitSegments`, `tokenize`, `SIMPLE_ASSIGNMENT_RE`, `programNames` (all already in `git-command.js`).
 - Produces: `DATA_READER_WORDS: Set<string>` = `cat, tee, git, gh, read, node, python, python3, jq, wc`; `READER_WRAPPER_WORDS: Set<string>` = `sudo, doas, env, nice, time, nohup, command, exec`; `lineFeedsOnlyDataReaders(lineText: string) -> boolean`. `planHeredocBodies` keeps its signature and return shape.
 
-- [ ] **Step 1: Write the failing tests** in `tests/hooks-gate-coverage.test.js`, one `test('#4149: …')` per group, with `f = [{ action: 'write', file: path.resolve('/r', 'f.js') }]`:
+- [ ] **Step 1: Write the failing tests** (AC1.1 for the executor/glob-name/later-pipe cases, AC2.1 for the data-only `cat` case) in `tests/hooks-gate-coverage.test.js`, one `test('#4149: …')` per group, with `f = [{ action: 'write', file: path.resolve('/r', 'f.js') }]`:
   - `'#4149: a body fed to a non-shell executor or a glob-named shell stays visible'` — `fileWriteTargets(cmd, '/r')` deep-equals `f` for `'make -f - <<EOF\nall:\n\techo x > f.js\nEOF'`, `'at now <<EOF\necho x > f.js\nEOF'`, `'/bin/ba[s]h <<EOF\necho x > f.js\nEOF'`, `'xargs sh -c x <<EOF\necho x > f.js\nEOF'`.
   - `'#4149: a group opened on the opener line keeps its body (consumer on a later line)'` — deep-equals `f` for `'{ cat <<EOF\necho x > f.js\nEOF\n} | sh'` and `'(cat <<EOF\necho x > f.js\nEOF\n) | sh'`.
   - `'#4149: a wrapper is followed to the program it runs, failing closed on an option value'` — `'sudo node x.js <<EOF\nif (a > 0) b();\nEOF'` and `'env FOO=1 node x.js <<EOF\nif (a > 0) b();\nEOF'` deep-equal `[]`; `'sudo -u bob node x.js <<EOF\necho x > f.js\nEOF'` deep-equals `f`.
@@ -53,7 +56,7 @@
   - Rewrite the `stripHeredocBodies('A <<EOF\nbody\nEOF\nB')` assertion (:512) to `stripHeredocBodies('cat <<EOF\nbody\nEOF\nB')` → `'cat <<EOF\nB'`, and add `assert.strictEqual(stripHeredocBodies('A <<EOF\nbody\nEOF\nB'), 'A <<EOF\nbody\nEOF\nB')` (an unknown program keeps its body).
   - In `tests/hooks-bash-prefilter.test.js`'s #3989 test, add `assert.strictEqual(hasFileRedirection('make -f - <<EOF\nall:\n\techo x > f.js\nEOF'), true);`.
 
-- [ ] **Step 2: Run to verify the new cases fail**
+- [ ] **Step 2: Run to verify the new cases fail (AC3.1)**
 
 Run: `node --test tests/hooks-gate-coverage.test.js tests/hooks-bash-prefilter.test.js`
 Expected: FAIL — the `make -f -`/`at now`/`/bin/ba[s]h`/both group/`ca\t`/`sudo -u bob`/`cd x &&` cases return `[]`, the unknown-program `A <<EOF` assertion gets the stripped text, and the prefilter assertion is `false` (probed at 7070c0b8a). Already passing, kept as regression guards: `xargs sh -c` (the old denylist sees `sh`), the reader shapes, and `sudo node`/`env FOO=1 node`.
@@ -91,12 +94,12 @@ git commit -m "Strip a heredoc body only for an allowlisted data reader — clos
 - Consumes: the heredoc record `h = { delim, quoted, stripTabs }` from `readHeredocOpener`.
 - Produces: `scanHeredocBody(str, p, h)` unchanged signature and return shape `{ end, terminated, text }`.
 
-- [ ] **Step 1: Write the failing test** `'#4149: an unquoted heredoc joins a backslash-continued line before matching the delimiter'`:
+- [ ] **Step 1: Write the failing test** (AC1.1, backslash-joined delimiter) in `tests/hooks-gate-coverage.test.js`: `'#4149: an unquoted heredoc joins a backslash-continued line before matching the delimiter'`:
   - `fileWriteTargets('cat <<EOF\nE\\\nOF\necho x > f.js\nEOF', '/r')` deep-equals `f` (bash ends the body at the joined `EOF`, so the next line runs).
   - `fileWriteTargets("cat <<'EOF'\nE\\\nOF\necho x > f.js\nEOF", '/r')` deep-equals `[]` (quoted: no continuation, the whole body is data).
   - `fileWriteTargets('cat <<EOF\nE\\\\\nOF\necho x > f.js\nEOF', '/r')` deep-equals `[]` (`E\\` is a literal backslash, not a continuation).
 
-- [ ] **Step 2: Run to verify it fails**
+- [ ] **Step 2: Run to verify it fails (AC3.1)**
 
 Run: `node --test tests/hooks-gate-coverage.test.js`
 Expected: FAIL on the first assertion (returns `[]`); the other two already pass.
@@ -123,16 +126,16 @@ git commit -m "Join a backslash-continued unquoted heredoc line before matching 
 - Modify: `plugin/bin/lib/hooks/git-command.js:713-788` (`scanHeredocs`)
 - Modify: `plugin/skills/_shared/policy-schema-coverage.md:27` (the "The scan keeps a body in the text, failing closed, …" sentences)
 - Modify: `docs/hooks.md:15` ("heredoc bodies that a non-shell program reads")
-- Modify: `docs/journeys/run-a-heredoc-node-script-from-the-main-checkout-3989.md:13,22` and `docs/journeys/run-shell-loops-without-a-hook-storm-3074.md:30` ("non-shell program" phrasings)
+- Modify: `docs/journeys/run-a-heredoc-node-script-from-the-main-checkout-3989.md` (lines 13 and 22) and `docs/journeys/run-shell-loops-without-a-hook-storm-3074.md:30` ("non-shell program" phrasings)
 - Test: `tests/hooks-gate-coverage.test.js`
 
 **Interfaces:**
 - Consumes: Task 1's allowlist rule (its wording for the prose).
 - Produces: nothing new.
 
-- [ ] **Step 1: Write the failing test** `'#4149: \`<<\` inside \`$[ … ]\` arithmetic is not a heredoc opener, even on a reader line'` — `fileWriteTargets('cat $[1<<3]\necho x > f.js\n3]', '/r')` deep-equals `f`.
+- [ ] **Step 1: Write the failing test** in `tests/hooks-gate-coverage.test.js`: `'#4149: \`<<\` inside \`$[ … ]\` arithmetic is not a heredoc opener, even on a reader line'` — `fileWriteTargets('cat $[1<<3]\necho x > f.js\n3]', '/r')` deep-equals `f`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [ ] **Step 2: Run to verify it fails (AC3.1)**
 
 Run: `node --test tests/hooks-gate-coverage.test.js`
 Expected: FAIL (returns `[]`).
