@@ -10,10 +10,11 @@
 // Usage: diff-facts.js (--base <ref> | --integration-branch <branch>)
 // Success: exit 0, one JSON object {fileCount, testFiles, docsFiles, implFiles,
 // totalLines, testOnly, docsOnly, lowSurface} on stdout.
-// Any failure — unknown flag, missing value, neither flag, unresolvable base,
-// git error — exits 1 with one stderr line and NO stdout: a failed gather must
-// never be readable as an empty diff, the same silent-approval hazard
-// blast-radius.js guards against.
+// The documented failures — unknown flag, missing value, neither flag, and a
+// BlastRadiusError (unresolvable base, git error) — exit 1 with one stderr line
+// and NO stdout: a failed gather must never be readable as an empty diff, the
+// same silent-approval hazard blast-radius.js guards against. Any other thrown
+// error is rethrown (stack trace on stderr) and still exits 1 with NO stdout.
 'use strict';
 const { gatherDiffFiles, BlastRadiusError } = require('./lib/blast-radius-cli.js');
 const { computeDiffFacts } = require('./lib/dispatch/ceremony-derive.js');
