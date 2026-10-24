@@ -390,7 +390,7 @@ test('referencing record: an open record naming the ledger path keeps it — ski
   assert.deepStrictEqual(originRefs(origin), ['refs/heads/main']);
 });
 
-test('the open-record list is fetched at most once per pass, and not at all when every ledger is kept locally', () => {
+test('the open-record list is fetched once per pass, however many ledgers reach the record scan', () => {
   const LEDGER2 = 'docs/plans/2026-10-21-second-ledger.md';
   const { dir } = makeRepo({ ledgers: { [LEDGER]: ledgerText(), [LEDGER2]: ledgerText({ heading: '# Open Items — #14' }) } });
   let loads = 0;
@@ -399,25 +399,6 @@ test('the open-record list is fetched at most once per pass, and not at all when
     listOpenRecords: () => { loads += 1; return []; },
   });
   assert.strictEqual(loads, 1);
-
-  const OPEN = 'docs/plans/2026-10-20-open-ledger.md';
-  const ODD = 'docs/plans/2026-10-20-odd-ledger.md';
-  const LIVE = 'docs/plans/2026-10-20-live-ledger.md';
-  const FAKE = 'docs/plans/2026-10-20-fake-ledger.md';
-  const local = makeRepo({
-    ledgers: {
-      [OPEN]: ledgerText({ heading: '# Open Items — #11', rows: [['1', 'review', 'x', 'open', '—']] }),
-      [ODD]: ledgerText({ heading: '# Open Items — #12', rows: [['1', 'review', 'x', 'pending', '—']] }),
-      [LIVE]: ledgerText({ heading: '# Open Items — #13' }),
-      [FAKE]: '# Not a ledger\n',
-    },
-  });
-  const r = ledgerResidue({
-    cwd: local.dir, integration: 'main', listRunDirs: () => ['2026-10-20T000000-record-13'],
-    listRemovalPrs: mustNotCall('listRemovalPrs'), refExists: mustNotCall('refExists'), createPr: mustNotCall('createPr'),
-    listOpenRecords: mustNotCall('listOpenRecords'),
-  });
-  assert.strictEqual(r.entries.length, 4);
 });
 
 test('tidy alignment: an open-row ledger, an unrecognized-status ledger, a live run and a non-ledger are kept, never pushed', () => {
@@ -434,7 +415,7 @@ test('tidy alignment: an open-row ledger, an unrecognized-status ledger, a live 
     },
   });
   const r = ledgerResidue({
-    cwd: dir, integration: 'main', listRunDirs: () => ['2026-10-20T000000-record-13'],
+    cwd: dir, integration: 'main', listRunDirs: () => ['2026-10-20T000000-record-13'], listOpenRecords: mustNotCall('listOpenRecords'),
     listRemovalPrs: mustNotCall('listRemovalPrs'), refExists: mustNotCall('refExists'), createPr: mustNotCall('createPr'),
   });
   assert.strictEqual(r.failure, null);
