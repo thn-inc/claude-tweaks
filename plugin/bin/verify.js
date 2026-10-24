@@ -40,7 +40,7 @@ const {
 } = require('./lib/verify/count-stamp');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { composeStamp, writeStamp, readStamp: readVerifyStamp, anchorOf } = require('./lib/verify/stamp');
-const { readDeclaration, generatedExemption } = require('./lib/verify/declaration');
+const { readDeclaration, generatedExemption, DECLARATION_PATH } = require('./lib/verify/declaration');
 const { readSuiteStamps, writeSuiteStamps, composeSuiteCoverage } = require('./lib/verify/suite-stamp');
 const {
   changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
@@ -51,7 +51,7 @@ const { substituteFile, describePath } = require('./lib/verify/file-template');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
-const { canonicalRealpath, resolveWithin } = require('./lib/path-guard');
+const { canonicalRealpath, lstatType, resolveWithin } = require('./lib/path-guard');
 
 const KNOWN_SCOPES = new Set(['full', 'scoped', 'none', 'static-only', 'tool-scoped']);
 // A --stamp-suite chunk runs a caller-chosen subset; kept out of KNOWN_SCOPES so --stamp-status is unchanged.
@@ -145,14 +145,17 @@ function statusOf(check) {
 // --stamp-status's own --scope (#3002/#2987).
 function resolveScopePath(scope, scopeCwd) {
   if (path.isAbsolute(scope)) return scope;
-  let scopeRoot = scopeCwd;
+  return path.join(checkoutRoot(scopeCwd), scope);
+}
+
+// The git toplevel from scopeCwd — or, outside a git work tree, scopeCwd
+// itself; every other git call the caller makes fails the same way.
+function checkoutRoot(scopeCwd) {
   try {
-    scopeRoot = realGit(scopeCwd).repoRoot();
+    return realGit(scopeCwd).repoRoot();
   } catch {
-    // Not inside a git work tree from scopeCwd — fall back to scopeCwd
-    // itself; every other git call the caller makes fails the same way.
+    return scopeCwd;
   }
-  return path.join(scopeRoot, scope);
 }
 
 // #2987: the repo-relative form of a resolved --scope path, so
@@ -196,10 +199,37 @@ function stampStatus(parsed) {
   const resolvedOwnGitDir = ownGitDir ? canonicalRealpath(ownGitDir) : null;
   const foreignGitDir = Boolean(parsed.gitDir)
     && (requestedGitDir === null || resolvedOwnGitDir === null || requestedGitDir !== resolvedOwnGitDir);
-  // --scope read once (#3002/#2987): feeds both the generated-path
+  // Declaration read once (#3002/#2987): feeds both the generated-path
   // live-dirty exemption directly below and the per-suite composition
-  // further down — read here rather than twice.
-  const scopePath = parsed.scope && !foreignGitDir ? resolveScopePath(parsed.scope, process.cwd()) : null;
+  // further down — read here rather than twice. An explicit --scope always
+  // wins; with none given, the default `.claude-tweaks/verify-scope.json` at
+  // the checkout root is discovered when it exists (#4006), so a bare
+  // --stamp-status — what every re-verify gate runs — sees the same composed
+  // and generated-exempt verdicts a --scope call would. No discovery under a
+  // foreign --git-dir (that checkout's declaration is never read as this one's).
+  // A discovered declaration is trusted only when it really lies inside this
+  // checkout: one that resolves outside it (a symlink to an untracked or
+  // out-of-tree file) can change without dirtying the tree, widening
+  // `generated` or shrinking the declared suites under a verdict that still
+  // reads verified — so it, and a dangling one, is reported, never read. An
+  // unreadable leaf is read anyway, so its error reaches scopeError.
+  let scopePath = null;
+  let discovered = false;
+  let discoveryError = null;
+  if (!foreignGitDir) {
+    if (parsed.scope) {
+      scopePath = resolveScopePath(parsed.scope, process.cwd());
+    } else {
+      const candidate = resolveScopePath(DECLARATION_PATH, process.cwd());
+      const leaf = lstatType(candidate).type;
+      if (leaf === 'unreadable' || (leaf !== 'missing' && resolveWithin(candidate, checkoutRoot(process.cwd())) !== null)) {
+        scopePath = candidate;
+        discovered = true;
+      } else if (leaf !== 'missing') {
+        discoveryError = `${DECLARATION_PATH}: ignored — it does not resolve to a path inside this checkout (dangling, or a symlink to a target outside it)`;
+      }
+    }
+  }
   const scopeRead = scopePath !== null
     ? readDeclaration(scopePath, undefined, { selfPath: scopeSelfPath(scopePath, process.cwd()) })
     : null;
@@ -207,20 +237,25 @@ function stampStatus(parsed) {
   // Status is data, never a failure (exit 0 stays), but a --scope that could
   // not be read — or was ignored because --git-dir names another checkout —
   // is reported rather than looking exactly like "no --scope given"; the
-  // check run treats an unreadable one as a usage error (#3017).
+  // check run treats an unreadable one as a usage error (#3017). A missing
+  // default file is silent (no declaration is a legitimate project shape); an
+  // unreadable discovered one reports its errors and the verdict falls back
+  // to the single stamp.
   let scopeError = null;
   if (parsed.scope && foreignGitDir) scopeError = '--scope: ignored — --git-dir names another checkout, whose declaration and per-suite records are never read as this one\'s';
+  else if (discoveryError) scopeError = discoveryError;
   else if (scopeRead && !scopeRead.ok) scopeError = scopeRead.errors.join('; ');
-  else if (scopeRead && scopeRead.missing) scopeError = `--scope: no declaration at ${scopePath}`;
+  else if (scopeRead && scopeRead.missing && !discovered) scopeError = `--scope: no declaration at ${scopePath}`;
   // #2987: the SAME generated-path exemption bin/verify.js's own stamp-write
   // gate applies, re-derived here against the LIVE tree rather than trusted
   // from the stored stamp — a tree a declared check regenerates every run
   // (a build rewriting `next-env.d.ts`) stays "dirty" forever in the working
   // copy, so without this, `match`/`verifiedHead` below would never read
   // true again after the one run that earned the exemption at write time.
-  // Only computed when the caller named a declaration (--scope) carrying a
-  // `generated` list; `effectiveDirty` falls back to the live boolean
-  // otherwise — no behavior change for a project that doesn't declare one.
+  // Only computed when a declaration was named (--scope) or discovered
+  // (#4006) and carries a `generated` list; `effectiveDirty` falls back to
+  // the live boolean otherwise — no behavior change for a project that
+  // doesn't declare one.
   const liveGeneratedExempt = scopeDecl && scopeDecl.generated.length && gitDir && git.dirty === true
     ? generatedExemption(dirtyFilePaths(), scopeDecl.generated)
     : null;
@@ -258,8 +293,9 @@ function stampStatus(parsed) {
   // in a project's verify-scope.json has its own passing per-suite record at
   // this exact clean HEAD, composed from one or more chunked `--stamp-suite`
   // runs rather than one single full-set pass. Only computed when the caller
-  // named a declaration (--scope); omitted (null) otherwise, same as every
-  // other --scope-gated field in this codebase. Never consulted for a
+  // named (--scope) or the checkout carries a default declaration (#4006);
+  // null otherwise, same as every other declaration-gated field in this
+  // codebase. Never consulted for a
   // foreign --git-dir, same rule the single stamp's own match/verifiedHead
   // already apply above.
   let suiteComposed = null;
@@ -1162,7 +1198,8 @@ async function main() {
   // require `--scope`, so `decl` is always non-null here), regardless of
   // `fullSet`/`--no-stamp`. This is exactly what lets a chunked run earn
   // partial credit: each chunk's own `--cmd` checks that passed get a record
-  // of their own, composed later by `--stamp-status --scope <path>`. Never
+  // of their own, composed later by `--stamp-status` (an explicit --scope, or
+  // the discovered default declaration, #4006). Never
   // written against a dirty tree — unless every dirty path is a declared
   // `generated` one (the same exemption the pass stamp applies, so #2987 and
   // #3002 compose) — nor without a resolvable sha/gitDir. A check this run did

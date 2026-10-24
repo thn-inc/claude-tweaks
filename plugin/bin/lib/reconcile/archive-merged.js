@@ -13,6 +13,7 @@ const { splitNul } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
+const { canonicalRealpath, resolveLeaf } = require('../path-guard');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
@@ -20,15 +21,16 @@ const {
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
 const {
-  recordResidueSuccess, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
+  recordResidueSuccess, clearResidue, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 } = require('./cache');
-const { escalateResidue } = require('./escalate-residue');
+const { escalateResidue, resolveResidue } = require('./escalate-residue');
 const { isWorktreeAlwaysOn } = require('../policy');
 const { repoSlugOf, prClosesIssue } = require('./release-merged');
 const { closeRunState } = require('../hooks/close-run-state');
 const { checkRunIntegrity, fallbackBranch } = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
+const { readRunResidue } = require('../console/residue');
 
 // Orphan case introduced by the dispatch/flow run-identity unification:
 // dispatch mints an empty, anchored run directory (mkdir only, no
@@ -81,9 +83,40 @@ function isStaleDir(dir, ttlMs, now = Date.now()) {
 // through to the ordinary isOrphanedMint mtime sweep instead, same as any
 // other malformed mint.
 function isAdHocStandaloneMint(dir) {
-  if (!isAdHocRunDir(dir)) return false;
+  return !!readAdHocState(dir);
+}
+
+// The run-state of a genuine ad-hoc mint (the test above), or null — one read,
+// so a caller that needs the state too never re-reads a file that can vanish.
+function readAdHocState(dir) {
+  if (!isAdHocRunDir(dir)) return null;
   const state = readRunState(dir);
-  return !!(state && typeof state.worktree === 'string' && state.worktree);
+  return state && typeof state.worktree === 'string' && state.worktree ? state : null;
+}
+
+// #2724: an ad-hoc dir is a session friction log, "not a pipeline run"
+// (docs/hooks.md), so having no branch, worktree or PR is its normal state —
+// not stuckness — and `adhoc-superseded` archives it once its linked worktree is
+// no longer registered and ADHOC_SUPERSEDED_TTL_MS has passed.
+// That sweep only ever claims a dir whose recorded worktree is a linked
+// worktree, though: a dir stamped with the main checkout can never be
+// superseded, so it stays tracked and keeps escalating.
+const ADHOC_INTRINSIC_STUCK_REASONS = new Set(['no-branch', 'no-worktree', 'no-pr']);
+const ADHOC_EXEMPT_WHY = 'is an ad-hoc session directory: no branch, worktree or PR is its normal state, and the adhoc-superseded sweep archives it once its session has ended';
+
+function isAdHocIntrinsicSkip(dir, reason) {
+  if (!ADHOC_INTRINSIC_STUCK_REASONS.has(reason)) return false;
+  const state = readAdHocState(dir);
+  if (!state) return false;
+  // Compare real paths, so a dir reached through a symlink (/var vs /private/var)
+  // never reads a main-checkout stamp as linked. A recorded worktree that no
+  // longer exists cannot be the main checkout, which holds this dir; any other
+  // unprovable path fails closed (not exempt).
+  const mainRoot = canonicalRealpath(path.resolve(dir, '..', '..', '..'));
+  if (!mainRoot) return false;
+  const leaf = resolveLeaf(state.worktree);
+  if (leaf.state === 'resolved') return leaf.path !== mainRoot;
+  return leaf.state === 'missing';
 }
 
 // #1604: the "swept once genuinely superseded" half of #1117's own design
@@ -157,7 +190,7 @@ function isOrphanedMint(dir, now = Date.now()) {
 // `work-twin-resolve-failed`/`work-twin-resolve-failed-partial-revert`
 // refusals (hint set from `lastError` when present) carry one today.
 // Not used by `decideArchive`'s pure `{ action: 'skip', reason }` skip path
-// (`gh-absent`/`network-failure`/`console-unresolved`/`console-never-rendered*`,
+// (`gh-absent`/`network-failure`/`console-unresolved`/`console-residue`/`console-never-rendered*`,
 // further down this file) — a different shape, consumed inside the
 // reconcile loop rather than by `hooks.js`'s `archive-run` verb; left alone
 // deliberately.
@@ -356,6 +389,8 @@ function decideArchiveCore(prState, consoleState, hasStagedPending, recordCheck,
     return { action: 'skip', reason: prState.state === 'OPEN' ? 'pr-open' : 'pr-closed-unmerged' };
   }
   if (consoleState === 'unresolved') return { action: 'skip', reason: 'console-unresolved' };
+  // #3949: a resolved console can still hold an item no human has reviewed — block until acknowledged.
+  if (consoleState === 'residue') return { action: 'skip', reason: 'console-residue' };
   // #1130: this sweep's population is non-terminal runs only
   // (iterRunDirsWithState skips status:'clean'), so an absent console.json
   // here always means wrap-up never rendered a console for this run — never
@@ -425,7 +460,19 @@ function decideArchive(prState, consoleState) {
 // so either counts. console-execute.js's preFetchSkipReason applies the
 // same acceptance rule — keep the two readers agreeing, or an executed
 // console classifies 'resolved' here while re-detecting as `ready` there.
+//
+// #3949: a 'resolved' or 'none' top-level state becomes 'residue' when the run
+// holds an unresolved item (pending / keep-staged) no human has acknowledged —
+// in console.json or any spec-*/console.json — or a console.json that cannot be
+// read (fails closed). 'unresolved' keeps precedence. An item whose staged file
+// is gone is `missing`, not residue (residue.js's readRunResidue).
 function readConsoleState(runDir) {
+  const base = readTopLevelConsoleState(runDir);
+  if (base === 'unresolved') return base;
+  return hasConsoleResidue(runDir) ? 'residue' : base;
+}
+
+function readTopLevelConsoleState(runDir) {
   let raw;
   try { raw = fs.readFileSync(path.join(runDir, 'console.json'), 'utf8'); } catch { return 'none'; }
   try {
@@ -436,6 +483,19 @@ function readConsoleState(runDir) {
   } catch {
     return 'unresolved'; // unparseable console state fails closed — never silently archived
   }
+}
+
+// The unacknowledged-residue evidence for a run: the item count across
+// unacknowledged consoles and the console.json paths that could not be read.
+function consoleResidue(runDir) {
+  const { consoles, unreadable } = readRunResidue(runDir);
+  const open = consoles.filter((c) => !c.acknowledged);
+  return { items: open.reduce((n, c) => n + c.items.length, 0), unreadable };
+}
+
+function hasConsoleResidue(runDir) {
+  const { items, unreadable } = consoleResidue(runDir);
+  return items > 0 || unreadable.length > 0;
 }
 
 // #3249: whether this run's staged/ directory holds any staged item —
@@ -1570,7 +1630,7 @@ const STRUCTURALLY_STUCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Skip reasons that might indicate a run dir stuck without external help,
 // as opposed to a benign, transient in-flight state. 'console-unresolved'/
-// 'console-never-rendered'/'local-behind-merge'/'merge-commit-unknown' are
+// 'console-residue' (#3949; a human acknowledges it)/'console-never-rendered'/'local-behind-merge'/'merge-commit-unknown' are
 // deliberately excluded — each already has its own clear resolution path
 // (a human answering a console, a local fetch catching up) that doesn't
 // need this generic staleness backstop. 'console-never-rendered-pr-closed'
@@ -1697,7 +1757,8 @@ function classifyRunDir(ctx, now = Date.now()) {
         return { kind: 'none', ttlMs: null, evidence: { skipReason: decision.reason } };
       }
     } else if (kind === 'structurally-stuck') {
-      if (skipReason && STRUCTURALLY_STUCK_REASONS.has(skipReason) && isStaleDir(dir, STRUCTURALLY_STUCK_TTL_MS, now)) {
+      if (skipReason && STRUCTURALLY_STUCK_REASONS.has(skipReason) && !isAdHocIntrinsicSkip(dir, skipReason)
+          && isStaleDir(dir, STRUCTURALLY_STUCK_TTL_MS, now)) {
         return { kind: 'structurally-stuck', ttlMs: STRUCTURALLY_STUCK_TTL_MS, evidence: {} };
       }
     }
@@ -1716,7 +1777,13 @@ function classifyRunDir(ctx, now = Date.now()) {
 // unchanged) or a `beginCacheBatch` handle (#1235 — batched across
 // `archiveMerged`'s item loops); see cache.js's own comment on the two
 // shapes.
-function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalateResidue, runner } = {}) {
+function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalateResidue, resolve = resolveResidue, runner, dryRun = false } = {}) {
+  if (isAdHocIntrinsicSkip(dir, reason)) {
+    // #2724: clearing resolves a real GitHub record, so it sits behind the same dry-run guard as pruneResidueFailures.
+    if (dryRun) return;
+    clearResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { resolve, runner, why: ADHOC_EXEMPT_WHY });
+    return;
+  }
   if (!isStructurallyStuck(dir, reason)) return;
   trackResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { failed: true, lastError: `stuck at ${reason}` }, { escalate, runner });
 }
@@ -2182,8 +2249,8 @@ function archiveMerged({
             }
           }
           const consoleState = readConsoleState(dir);
-          if (consoleState === 'unresolved') {
-            skipped.push({ runDir: dir, reason: 'console-unresolved' });
+          if (consoleState === 'unresolved' || consoleState === 'residue') {
+            skipped.push({ runDir: dir, reason: consoleState === 'residue' ? 'console-residue' : 'console-unresolved' });
             continue;
           }
           if (consoleState === 'none') {
@@ -2199,7 +2266,7 @@ function archiveMerged({
               const guard = byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug);
               if (guard) {
                 skipped.push(skippedEntry(dir, guard));
-                trackStuckSkip(cacheBatch, repoSlug, dir, guard.reason, { runner });
+                trackStuckSkip(cacheBatch, repoSlug, dir, guard.reason, { runner, dryRun });
                 continue;
               }
               finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
@@ -2219,14 +2286,14 @@ function archiveMerged({
             // its own tracked reason too.
             const consoleReason = byNumber.state === 'CLOSED' ? 'console-never-rendered-pr-closed' : 'console-never-rendered-staged-pending';
             skipped.push({ runDir: dir, reason: consoleReason });
-            trackStuckSkip(cacheBatch, repoSlug, dir, consoleReason, { runner });
+            trackStuckSkip(cacheBatch, repoSlug, dir, consoleReason, { runner, dryRun });
             continue;
           }
           if (byNumber.state === 'MERGED') {
             const guard = byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug);
             if (guard) {
               skipped.push(skippedEntry(dir, guard));
-              trackStuckSkip(cacheBatch, repoSlug, dir, guard.reason, { runner });
+              trackStuckSkip(cacheBatch, repoSlug, dir, guard.reason, { runner, dryRun });
               continue;
             }
           }
@@ -2235,14 +2302,14 @@ function archiveMerged({
         }
       }
       skipped.push({ runDir: dir, reason: skipReason });
-      trackStuckSkip(cacheBatch, repoSlug, dir, skipReason, { runner });
+      trackStuckSkip(cacheBatch, repoSlug, dir, skipReason, { runner, dryRun });
       continue;
     }
 
     const runResult = archiveMergedRun({
       root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
       recordCheck: { records, repoSlug },
-      onSkip: (reason) => trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner }),
+      onSkip: (reason) => trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun }),
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
     skipped.push(skippedEntry(dir, runResult));
@@ -2268,8 +2335,8 @@ function archiveMerged({
     const runResult = archiveMergedRun({
       root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
       onSkip: (reason) => {
-        if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner });
-        if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid') trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner });
+        if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun });
+        if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid') trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun });
       },
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
@@ -2295,9 +2362,9 @@ function archiveMerged({
 }
 
 module.exports = {
-  archiveMerged, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, archiveRunDir, listSpecDirs,
+  archiveMerged, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, archiveRunDir, listSpecDirs,
   isStaleDir, classifyRunDir,
-  isOrphanedMint, isAdHocStandaloneMint, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
+  isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
   isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,

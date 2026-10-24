@@ -298,6 +298,23 @@ test('decideConsoleExecute: isRulingRow forwarded onto the resolved item when tr
   assert.strictEqual('isRulingRow' in withoutRow.items[0], false);
 });
 
+test('decideConsoleExecute: findingItem forwarded onto the resolved item when a non-empty string, omitted otherwise (#3949)', () => {
+  const withRow = decideConsoleExecute(
+    mergeRowConsoleJson({ items: [{ id: 'staged-1', kind: 'staged', summary: 'finding', findingItem: 'tiebreak:3f2a9c1b7d04' }] }),
+    RESOLVED_COMMENTS,
+    Date.now(),
+  );
+  assert.strictEqual(withRow.items[0].findingItem, 'tiebreak:3f2a9c1b7d04');
+  for (const findingItem of [undefined, '', true]) {
+    const withoutRow = decideConsoleExecute(
+      mergeRowConsoleJson({ items: [{ id: 'staged-1', kind: 'staged', summary: 'x', findingItem }] }),
+      RESOLVED_COMMENTS,
+      Date.now(),
+    );
+    assert.strictEqual('findingItem' in withoutRow.items[0], false, String(findingItem));
+  }
+});
+
 test('decideConsoleExecute: no isMergeRow item at all -> mergeGrantGap null regardless of ctx', () => {
   const consoleJson = { resolved: false, commentIds: ['IC_1'], prNumber: 42, items: [] };
   const result = decideConsoleExecute(consoleJson, RESOLVED_COMMENTS, Date.now(), {

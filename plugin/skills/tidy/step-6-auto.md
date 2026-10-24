@@ -83,8 +83,10 @@ Auto-applied items are committed. Staged items surface at the Wrap-Up Review Con
 sidecar (`--json`) — never two independent writes:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "{run-dir}" --id "{id}" --file "{md-path}" --json "{json-path}"
+node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "{run-dir}" --id "tidy-{action}-{n}" --file "{md-path}" --json "{json-path}"
 ```
+
+`{action}` is the Stage-tier row's kebab-case action (`absorb`, `claim-releases`, …), a digest cluster proposal passes `--id "digest-promotion-{n}"` instead (`digest-sweep.md`), and Fill Release Note keys its id on the record, not a counter: `release-note-repair.md` stages `tidy-release-note-{id}`.
 
 `{json-path}` holds a JSON array, one object per Approve-section row this staged item
 represents (usually one; a batched proposal like a multi-issue claim-release sweep emits several

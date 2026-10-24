@@ -39,13 +39,16 @@ Every renderable row gets a stable id: `{kind}-{n}` where `{kind}` is one of `st
 section from Auto-applied through Cleanup actions — reusing the console's own global `#` sequence
 as `{n}`), `q` (Queue writes, `{n}` = the `Q#` number), `m` (Memory updates, `{n}` = the `M#`
 number), `u` (Upstream feedback, `{n}` = the `U#` number), or `r` (Reflection insights, `{n}` =
-the `R#` number). The multi-spec console qualifies
+the `R#` number). Low-confidence and Contested rows are `staged` rows, built from
+`console-filings.js --list` (Row shape below). The multi-spec console qualifies
 every id with its spec slug — `{spec-slug}-{kind}-{n}` — so ids stay unique across every spec's
 rows sharing one comment set. One further id, always present, always last: `resolve`.
 
 **Auto-applied rows are never checkboxes** — they already happened (see `console-template.md`);
 render them as the same plain table the chat console already uses, informational only, no id, no
-tick.
+tick. **Dismissed duplicates** rows (a `.shadow-dup` copy byte-identical to its anchor) are the
+same: informational, they execute nothing, no id, no tick — the anchor is its own item with its
+own id.
 
 ## Row shape
 
@@ -81,6 +84,16 @@ also carries `"stagedPath"` (#3880) — the staged file's path relative to the r
 (`staged/sdd-ruling-{N}.md`, or `spec-{N}/staged/sdd-ruling-{N}.md` on a multi-spec console), which
 the reconciler's detection reads to gate the row; omitted on every other item.
 
+**A Low-confidence or Contested row** (#3949) comes from `console-filings.js --run "{item-run-dir}" --list`
+(`wrap-up/review-console.md` step 7) — one row per printed entry, never derived by hand from
+`decisions.md`. An entry with `cantTell: true` is a can't-tell finding: its label carries
+`— tick = file · untick = drop` after the source reference, and it renders **pre-ticked** when
+the entry's `resolution` (its Approve-all default) is `filed` and unticked when it is `dropped`. It
+carries `"findingItem": "{id}"` (the entry's `id`) on its `console.json` item object — omitted on
+every other item, never empty — which detection forwards and `resolve-console` reads to record an
+unticked or `--decline`d row as `dropped`, never `declined`. An entry with `cantTell: false` (a
+legacy row, or a staged file a tiebreak already settled) renders as an ordinary row.
+
 ## Legend (verbatim — AC4)
 
 Render this block, unmodified, immediately before the final Resolve checkbox:
@@ -92,14 +105,18 @@ Render this block, unmodified, immediately before the final Resolve checkbox:
 - **Unticked when Resolve console is ticked** = declined.
 - **Exception — an SDD ruling row** (`sdd-ruling-*`): ticked = ratify; unticked when Resolve
   console is ticked = **reverse** (a reversal record is filed), never a bare decline.
+- **Exception — a finding row** (`tick = file · untick = drop`): ticked = file it as a backlog
+  record; unticked when Resolve console is ticked = **drop** (nothing is filed). A finding row
+  may arrive pre-ticked (its default is to file) — untick it to drop it.
 - Tick every item you approve, then tick **Resolve console** last to confirm — a half-ticked
   list is never read as an answer on its own.
 - **The PR itself needs no checkbox**: mark it ready and merge it = "merge"; close it =
   "discard"; leave it as-is = "keep parked".
 ```
 
-The SDD-ruling bullet is the one exception to the declined rule: the executing session performs the
-ratify or reverse write-back per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet
+The SDD-ruling and finding-row bullets are the two exceptions to the declined rule: the executing
+session performs the ratify or reverse write-back per `wrap-up/review-console-appendix.md`'s
+`sdd-ruling-*` bullet, and the file or drop per `wrap-up/review-console.md` step 7
 (`_shared/console-execution.md`'s Execution routing).
 
 ## Resolve checkbox
@@ -118,7 +135,7 @@ ratify or reverse write-back per `wrap-up/review-console-appendix.md`'s `sdd-rul
   included — read-modify-write per "Edit-idempotence" below.
 - **Unresolved, item set changed** (a resumed run whose `decisions.md`/`staged/` gained or lost
   rows since the last render): preserve ticks on items whose id survives; drop ticks whose item is
-  gone; new items arrive unticked; **un-tick Resolve** even if it was ticked, and append directly
+  gone; new items arrive unticked (a `filed`-default finding row, pre-ticked); **un-tick Resolve** even if it was ticked, and append directly
   below the Resolve row: `_(items changed since your Resolve tick — re-tick to confirm)_`.
   Approval always refers to the list as it is currently rendered — a Resolve tick made against a
   stale item set must never be read as approving items the human never saw.
@@ -188,7 +205,9 @@ fourth kind, `console`, and one addition that mechanism's other three kinds don'
 tick-preservation across the read-modify-write.
 
 1. **No existing `console.json` for this run** (first render): compose the full comment body
-   (all sections, all rows unticked, legend, Resolve checkbox unticked), post via
+   (all sections, all rows unticked — except a finding row whose default is `filed`, which
+   renders pre-ticked per "A Low-confidence or Contested row" above — legend, Resolve checkbox
+   unticked), post via
    `gh pr comment`, write `console.json` with the new comment id, every item's `stagedHash`, and
    — when this run's group had a merge-check verdict already computed this session (see
    `mergeCheckVerdict` above) — that field.
@@ -198,7 +217,7 @@ tick-preservation across the read-modify-write.
    the same kind), parse each `<!-- console-item: {id} -->` row's tick state by regex against the
    line immediately following the marker (`- \[x\]` vs `- \[ \]`), then recompose: matching ids
    keep their parsed tick, ids no longer in the current item set are dropped, new ids from the
-   current item set arrive unticked, `resolve`'s tick is preserved unless the item set changed
+   current item set arrive unticked (a `filed`-default finding row arrives pre-ticked), `resolve`'s tick is preserved unless the item set changed
    (see "Resolve checkbox" above). **Re-fetch immediately before writing** and re-merge if the
    body changed underneath since the first fetch — the residual fetch-to-write race window past
    that second fetch is accepted and documented, not eliminated; a human ticking a box in the

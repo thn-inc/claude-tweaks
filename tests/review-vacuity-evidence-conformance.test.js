@@ -53,17 +53,18 @@ test('the Reproduction dispatch section downgrades an unevidenced lens 3f vacuit
   assert.match(bullet, /categorise-reproduction/);
   assert.match(bullet, /`unconfirmed`/);
   assert.match(bullet, /reproduction agreement overridden, no execution evidence/);
-  assert.match(bullet, /Direct-verification override does not lift/);
+  assert.match(bullet, /Reading source alone never lifts this downgrade: the only way back/);
   assert.match(bullet, /re-confirmed by executed run: \{command\} → \{observed output\}\. Confirmed\./);
   const onlyOne = lines.findIndex((l) => /^> - Findings present in only one agent's output/.test(l));
   assert.ok(onlyOne !== -1 && onlyOne < idx, 'the downgrade bullet must follow the reproduction bullets');
 });
 
-test('the Direct-verification override excludes lens 3f vacuity findings from every unconfirmed source', () => {
+test('the retired Direct-verification override paragraph is gone; the downgrade bullet alone keeps lens 3f vacuity findings on an executed run', () => {
   const para = lensDispatch.split('\n').find((l) => l.startsWith('> **Direct-verification override.**'));
-  assert.ok(para, 'Direct-verification override paragraph must exist');
-  assert.match(para, /A lens 3f vacuity finding is the exception, however it became `unconfirmed`/);
-  assert.match(para, /reading source never re-confirms it/);
+  assert.equal(para, undefined, 'the Direct-verification override paragraph must stay retired');
+  assert.doesNotMatch(lensDispatch, /direct[- ]verification/i);
+  const bullet = lensDispatch.split('\n').find((l) => /^> - \*\*Lens 3f vacuity findings need execution evidence/.test(l));
+  assert.match(bullet, /re-confirmed by executed run/);
 });
 
 test('step3-routing lists the lens 3f no-execution-evidence source among unconfirmed sources', () => {

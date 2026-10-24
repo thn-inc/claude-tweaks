@@ -184,7 +184,7 @@ Rules:
 - No agent-side write exists — do not run `git rev-parse HEAD` into either stamp file. A failing run, a fail-fast skip, or a `--no-stamp` run leaves both files untouched (#1784: an agent-written stamp once recorded a `pass: false` run as a pass). So does a run whose HEAD moved while it ran (a commit landed mid-run), even on exit 0 — the runner prints `tree moved during the run (HEAD {start} -> {end}); no pass stamp written`; present it verbatim in Step 3 and re-run to stamp the new HEAD (#3757). A dirty tree alone never withholds the stamp.
 - A targeted or partial run passes `--no-stamp` (Step 2 above) and therefore never stamps.
 - The stamp asserts verification only — QA story outcomes are tracked separately (the QA ledger), and consumers that care about QA consult that as they already do.
-- Consumers read it only through `verify.js --stamp-status` (Skip-if-recent above; `/claude-tweaks:review` Step 1.5) and treat `present: false`, `verifiedHead: false`, or a dirty tree as "no recent pass" and re-run — fail-open. A stale stamp is never a reason to trust a skip.
+- Consumers read it only via `verify.js --stamp-status` (Skip-if-recent; `/claude-tweaks:review` Step 1.5) and treat `verifiedHead: false` as "no recent pass": re-run, fail-open. `true` covers a complete `suiteComposed` or a generated-only dirty tree (`liveGeneratedExempt`).
 
 **Generated paths, `--cmd` wrappers, chunked runs:** read `stamp-composition.md` in this skill's directory.
 

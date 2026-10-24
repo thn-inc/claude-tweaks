@@ -33,6 +33,8 @@ fails toward filing an ordinary issue, never toward the digest.
 - [{area}] {one-line finding} — {file refs} — Defer-reason: {value} — {provenance} <!-- materiality-fingerprint: {fp} -->
 ```
 
+A line console backfill writes for a finding (`tidy/console-backfill.md`) carries one more marker after the materiality marker, `<!-- consolebackfill-item: {fp} -->`, so its next pass finds the line after a claim-heuristic change; `{provenance}` stays the bare run id.
+
 `{area}` is the subsystem the finding belongs to, written as a stable, low-cardinality, lowercase
 token: the skill name (`tidy`, `review`), the `bin/lib/` module (`issues`, `hooks`), or the
 top-level tree (`docs`, `tests`) the `{file refs}` sit under — never a sentence and never a
@@ -47,6 +49,8 @@ no-run-dir routing is never unlogged.
 `{fp}` is the entry's dedup fingerprint (`materialityFingerprint` in
 `bin/lib/health-core/materiality-digest.js`), a stable hash of `{area}` + the finding text
 (whitespace/case-normalized) + the file refs (order-independent) — see "Dedup" below.
+The Review Console's can't-tell finding filings reuse the same `fingerprintFromBasis`, prefix
+`consolefinding` (`bin/lib/console/finding-filing.js`: lens, path, normalized claim, no line number).
 
 ### Dedup
 
@@ -100,6 +104,18 @@ or `info`, is the resolver's `digest` outcome. `/claude-tweaks:review`'s Step 3.
 finding never failed fix-now, so no gate reason describes it. Its routing comes from the
 resolver's severity split, not from the three-axis floor above. Dedup and Digest URL and count
 surfacing apply unchanged.
+
+### Console backfill values
+
+`/claude-tweaks:tidy --console-backfill` (`tidy/console-backfill.md`) settles the unresolved items
+closed runs left in their Review Consoles, and digests three kinds with a value of its own:
+`console-backfill-no-claim` (a stored line with no recoverable claim),
+`console-backfill-unmapped-kind` (a staged file no filing shape fits), and
+`console-backfill-confirmed-low` (a tiebreak-confirmed finding at severity `low` or `info`). A
+can't-tell finding digests as `tiebreak-cant-tell`, above. All three are Entry-format values only,
+like the two before them. Deliberately **not** in `DEFER_REASONS`: none is a fix-now failure.
+Dedup and Digest URL and count surfacing apply unchanged; `bin/lib/console/backfill-dispose.js`
+owns the table.
 
 ### Digest URL and count surfacing
 

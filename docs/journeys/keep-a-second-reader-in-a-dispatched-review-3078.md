@@ -35,7 +35,7 @@ files:
 - **Should understand:** an abandoned child no longer counts as outstanding, so the reviewer's final reply still ends with `STATUS: {WORD}`. `INTERIM_STATUS:` is only for a turn that ends while a wait is still in progress. A child result that arrives after its lens was self-judged is ignored and never changes the verdict. An abandoned child cannot be stopped (`TaskStop` refuses a nested child), so it keeps running, and the harness may hold the reviewer's final result until it finishes: the bound caps the wait, not the delivery.
 - **Red flags:**
   - a final reply ending in `INTERIM_STATUS:` after the bound expired, which `/dispatch` reads as BLOCKED;
-  - a self-judged finding promoted to `confirmed` without direct verification or a Step 3.7 tiebreak verdict (`get-a-verdict-on-every-unverified-review-finding-3947.md`);
+  - a self-judged finding promoted to `confirmed` without a Step 3.7 tiebreak verdict (`get-a-verdict-on-every-unverified-review-finding-3947.md`);
   - a missing downgrade line in `decisions.md`;
   - a downgrade logged in `decisions.md` with no **Coverage caveat:** line in the summary or the PR verdict comment.
 

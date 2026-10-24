@@ -1386,12 +1386,15 @@ test('a dirty path matching a declared `generated` glob never disqualifies the p
   const stamp = stampOf(r.gitDir);
   assert.strictEqual(stamp.dirty, false, 'the stamp itself reads clean despite the dirty generated path');
   assert.deepStrictEqual(stamp.generatedExempt, ['dist/bundle.js']);
-  // Bare --stamp-status (no --scope) never re-derives the generated
-  // exemption against the live tree — same posture as before this field
-  // existed, and `effectiveDirty` simply falls back to the raw boolean.
+  // Bare --stamp-status (no --scope) discovers the default declaration
+  // (#4006, inverting this pin's pre-#4006 "never re-derives" posture) and
+  // re-derives the SAME generated exemption against the live tree, so every
+  // gate that reads bare status sees match/verifiedHead true here too.
   const bare = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo })).stdout);
-  assert.strictEqual(bare.dirty, true);
-  assert.strictEqual(bare.match, false, 'bare --stamp-status cannot know dist/** is a declared generated path');
+  assert.strictEqual(bare.dirty, true, 'the LIVE tree is still genuinely dirty — only the verdict is exempted');
+  assert.deepStrictEqual(bare.liveGeneratedExempt, ['dist/bundle.js']);
+  assert.strictEqual(bare.match, true, 'the discovered declaration makes dist/** a declared generated path');
+  assert.strictEqual(bare.verifiedHead, true);
   // --stamp-status --scope re-derives the SAME exemption against the live
   // tree, so match/verifiedHead stay true for as long as the only dirty
   // path is the declared-generated one (#2987's whole point: a build that
@@ -1548,13 +1551,218 @@ test('a plain --no-stamp partial run with no --stamp-suite writes no per-suite r
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-suites.json')));
 });
 
-test('--stamp-status with no --scope never looks at per-suite records (suiteComposed: null)', async () => {
+// #4006: bare --stamp-status discovers .claude-tweaks/verify-scope.json at the
+// checkout root, so every gate that reads bare status sees the composed and
+// generated-exempt verdicts without having to pass --scope. (Inverts #3002's
+// pin that a bare --stamp-status never looks at per-suite records.)
+async function bareStatus(r, cwd = r.repo) {
+  return JSON.parse((await runCli(['--stamp-status'], { cwd })).stdout);
+}
+
+test('AC1.1: bare --stamp-status composes two chunked per-suite records via the discovered default declaration', async () => {
   const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
   await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
   await runStampSuiteChunk(r, 'other=node -e 0');
-  const status = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo })).stdout);
-  assert.strictEqual(status.suiteComposed, null);
-  assert.strictEqual(status.verifiedHead, false, 'with no --scope, the single-stamp path is all there is, and no full stamp was ever written');
+  const s = await bareStatus(r);
+  assert.strictEqual(s.verifiedHead, true, 'no full stamp was ever written — the composed per-suite records are what verify HEAD');
+  assert.strictEqual(s.suiteComposed.complete, true);
+  assert.strictEqual(s.match, false);
+  assert.strictEqual(s.present, false);
+  assert.strictEqual(s.scopeError, null);
+});
+
+test('AC2.1: bare --stamp-status with one of two chunks names the uncovered check', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  const s = await bareStatus(r);
+  assert.strictEqual(s.verifiedHead, false);
+  assert.deepStrictEqual(s.suiteComposed.missing, ['other']);
+  assert.strictEqual(s.scopeError, null);
+});
+
+test('AC3.1: bare --stamp-status re-derives the generated exemption from the discovered declaration', async () => {
+  const r = scopedRepo(
+    [{ match: 'src/**', suites: ['unit'], static: true }],
+    { generated: ['dist/**'] },
+  );
+  commitFile(r, 'dist/bundle.js', 'v1');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.strictEqual(stampOf(r.gitDir).dirty, false, 'a clean full stamp at this HEAD');
+  fs.writeFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'v2-regenerated'); // dirtied after the stamp
+  const s = await bareStatus(r);
+  assert.strictEqual(s.dirty, true);
+  assert.strictEqual(s.verifiedHead, true);
+  assert.deepStrictEqual(s.liveGeneratedExempt, ['dist/bundle.js']);
+});
+
+test('AC4.1: bare --stamp-status in a repo with no declaration is unchanged', async () => {
+  const r = tmpGitRepo();
+  const run = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const s = await bareStatus(r);
+  assert.strictEqual(s.suiteComposed, null);
+  assert.strictEqual(s.liveGeneratedExempt, null);
+  assert.strictEqual(s.scopeError, null, 'a missing default file is silent — never reported as a scopeError');
+  assert.strictEqual(s.verifiedHead, true);
+  assert.strictEqual(s.match, true);
+  assert.deepStrictEqual(Object.keys(s), [
+    'present', 'sha', 'head', 'dirty', 'scope', 'fullSha', 'match', 'verifiedHead', 'baselineAdjudicated',
+    'preExistingAdjudicated', 'reportPath', 'legacy', 'suiteComposed', 'generatedExempt', 'liveGeneratedExempt', 'scopeError',
+  ]);
+});
+
+test('AC5.1: an unreadable default declaration reports scopeError, exits 0, and keeps the single-stamp verdict', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  // Unparseable JSON: commit it, then one unscoped full pass so a clean single
+  // stamp exists at the new HEAD for the verdict to fall back on.
+  fs.writeFileSync(path.join(r.repo, r.declPath), '{ not json');
+  r.git('add', r.declPath);
+  r.git('commit', '-q', '-m', 'break the declaration');
+  const full = await runCli(['--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(full.code, 0, full.stderr);
+  const run = await runCli(['--stamp-status'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, 'status is data — still exit 0');
+  const s = JSON.parse(run.stdout);
+  assert.match(s.scopeError, /could not parse JSON/);
+  assert.strictEqual(s.suiteComposed, null);
+  assert.strictEqual(s.verifiedHead, true, 'falls back to the single full stamp');
+  assert.strictEqual(s.match, true);
+
+  // Valid JSON the declaration reader still refuses: a generated glob covering the declaration itself.
+  const r2 = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }], { generated: ['**'] });
+  const run2 = await runCli(['--stamp-status'], { cwd: r2.repo });
+  assert.strictEqual(run2.code, 0);
+  const s2 = JSON.parse(run2.stdout);
+  assert.match(s2.scopeError, /generated: "\*\*" would also cover \.claude-tweaks\/verify-scope\.json itself/);
+  assert.strictEqual(s2.suiteComposed, null);
+});
+
+// #4006 review: a discovered declaration is trusted only when it resolves
+// inside the checkout — one reached through a symlink to an out-of-tree file
+// could change without dirtying the tree under a verdict that reads verified.
+const SYMLINK_SKIP = { skip: process.platform === 'win32' && 'win32: creating a symlink needs extra privileges' };
+
+// Replace the committed declaration with a committed symlink to `target`.
+function symlinkDeclaration(r, target) {
+  fs.rmSync(path.join(r.repo, r.declPath));
+  fs.symlinkSync(target, path.join(r.repo, r.declPath));
+  r.git('add', r.declPath);
+  r.git('commit', '-q', '-m', 'declaration via symlink');
+}
+
+test('a discovered declaration symlinked to a file outside the checkout is reported, never composed', SYMLINK_SKIP, async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const outside = path.join(tmpDir(), 'verify-scope.json');
+  fs.copyFileSync(path.join(r.repo, r.declPath), outside);
+  symlinkDeclaration(r, outside);
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  const s = await bareStatus(r);
+  assert.match(s.scopeError, /does not resolve to a path inside this checkout/);
+  assert.strictEqual(s.suiteComposed, null, 'an out-of-tree declaration never feeds composition');
+  assert.strictEqual(s.verifiedHead, false, 'both chunks recorded passes, but only against an untrusted declaration');
+});
+
+test('a dangling discovered declaration symlink is reported, not silent', SYMLINK_SKIP, async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  symlinkDeclaration(r, path.join(r.repo, '.claude-tweaks', 'nowhere.json'));
+  const s = await bareStatus(r);
+  assert.match(s.scopeError, /does not resolve to a path inside this checkout/);
+  assert.strictEqual(s.suiteComposed, null);
+});
+
+test('a discovered declaration symlinked to a file inside the checkout composes as usual', SYMLINK_SKIP, async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const inside = '.claude-tweaks/verify-scope.real.json';
+  fs.copyFileSync(path.join(r.repo, r.declPath), path.join(r.repo, inside));
+  r.git('add', inside);
+  symlinkDeclaration(r, 'verify-scope.real.json');
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  const s = await bareStatus(r);
+  assert.strictEqual(s.scopeError, null);
+  assert.strictEqual(s.suiteComposed.complete, true);
+  assert.strictEqual(s.verifiedHead, true);
+});
+
+test('AC6.1: an explicit --scope composes against that path, not the default file', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  commitFile(r, '.claude-tweaks/other.json', JSON.stringify({
+    checks: { tests: { unit: 'placeholder' } },
+    rules: [{ match: 'src/**', suites: ['unit'], static: true }],
+  }));
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  const explicit = JSON.parse((await runCli(['--stamp-status', '--scope', '.claude-tweaks/other.json'], { cwd: r.repo })).stdout);
+  assert.deepStrictEqual(explicit.suiteComposed.declared, ['unit']);
+  assert.strictEqual(explicit.suiteComposed.complete, true);
+  const bare = await bareStatus(r);
+  assert.strictEqual(bare.suiteComposed.complete, false, 'the default file declares `other` too, which has no record');
+});
+
+test('AC7.1: a foreign --git-dir with no --scope skips discovery silently', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  const other = tmpGitRepo();
+  const s = JSON.parse((await runCli(['--stamp-status', '--git-dir', other.gitDir], { cwd: r.repo })).stdout);
+  assert.strictEqual(s.suiteComposed, null);
+  assert.strictEqual(s.scopeError, null);
+  assert.strictEqual(s.verifiedHead, false);
+});
+
+test('AC9.1: review Step 1.5\'s literal stamp-status command reads verifiedHead:true on composed records', async () => {
+  const pluginRoot = path.join(__dirname, '..', '..', '..', 'plugin');
+  const steps = readText(path.join(pluginRoot, 'skills', 'review', 'code-mode-steps.md'));
+  const section = steps.split('### Standalone (outside `/claude-tweaks:flow`):')[1];
+  assert.ok(section, 'the Standalone heading exists in code-mode-steps.md');
+  const block = section.match(/```bash\n([^\n]+)\n```/);
+  assert.ok(block, 'a bash block follows the Standalone heading');
+  const cmd = block[1];
+  assert.strictEqual(cmd, 'node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status');
+  // The /flow pipeline branch runs its read inline, not in a fenced block — pin it to the
+  // same command so a flag added there (a --git-dir, say) cannot silently skip discovery.
+  const flowBranch = steps.split('### Standalone (outside `/claude-tweaks:flow`):')[0];
+  const inline = flowBranch.match(/read of the runner's own artifact \(#1921\) — `([^`]+)`/);
+  assert.ok(inline, 'the /flow branch names its inline stamp-status read');
+  assert.strictEqual(inline[1], cmd, 'the /flow branch runs the same bare stamp-status command');
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  const out = spawnSync('sh', ['-c', cmd], { cwd: r.repo, encoding: 'utf8', env: { ...process.env, CLAUDE_PLUGIN_ROOT: pluginRoot } });
+  assert.strictEqual(out.status, 0, out.stderr);
+  assert.strictEqual(JSON.parse(out.stdout).verifiedHead, true);
+});
+
+test('#4006: discovery resolves from a subdirectory of the checkout', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  const sub = path.join(r.repo, 'src');
+  fs.mkdirSync(sub);
+  const s = await bareStatus(r, sub);
+  assert.strictEqual(s.suiteComposed.complete, true);
+  assert.strictEqual(s.scopeError, null);
+});
+
+test('#4006: discovery never counts a stale-sha per-suite record', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  commitFile(r, 'src/a.js', '1'); // HEAD moves — both records now name a stale sha
+  const s = await bareStatus(r);
+  assert.strictEqual(s.verifiedHead, false);
+  assert.deepStrictEqual(s.suiteComposed.missing, ['unit', 'other']);
+});
+
+test('#4006: discovery with a non-generated dirty path stays unverified', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  fs.writeFileSync(path.join(r.repo, 'notes.txt'), 'uncommitted');
+  const s = await bareStatus(r);
+  assert.strictEqual(s.verifiedHead, false);
+  assert.strictEqual(s.suiteComposed.complete, false);
 });
 
 test('a check that regenerates a declared generated file from a clean start still earns a clean stamp — the end-of-run read carries the exemption (#2987)', async () => {
