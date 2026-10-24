@@ -26,7 +26,7 @@ function segmentSpans(command) {
   const segments = [];
   let current = '';
   const cut = (at) => { segments.push({ text: current, end: at }); current = ''; };
-  let quote = null; // null | '"' | "'"
+  let quote = null; // null | "'" (a double-quoted span is consumed whole below)
   for (let i = 0; i < str.length; i++) {
     const ch = str[i];
     if (quote === "'") {
@@ -35,22 +35,25 @@ function segmentSpans(command) {
       if (ch === "'") quote = null;
       continue;
     }
-    // Not inside single quotes (unquoted or inside double quotes): a
-    // backslash escapes the next character, so `\"` never toggles quote
-    // state and `\\` is a literal backslash — matching bash semantics.
+    // Unquoted: a backslash escapes the next character, so `\"` opens no
+    // quote and `\\` is a literal backslash — matching bash semantics.
     if (ch === '\\' && i + 1 < str.length) {
       current += ch + str[i + 1];
       i += 1;
       continue;
     }
-    if (quote === '"') {
-      current += ch;
-      if (ch === '"') quote = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
+    if (ch === "'") {
       quote = ch;
       current += ch;
+      continue;
+    }
+    // A double-quoted span, or an unquoted `${ … }`, is one piece of a word, with the nesting
+    // bash gives it (skipDoubleQuoted): nothing inside it cuts a segment (#4149).
+    const nested = ch === '"' ? skipDoubleQuoted(str, i + 1)
+      : ch === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2) : null;
+    if (nested && (ch === '"' || nested.closed)) {
+      current += str.slice(i, nested.end);
+      i = nested.end - 1;
       continue;
     }
     if (ch === '&' && str[i + 1] === '&') { cut(i); i += 1; continue; }
@@ -76,6 +79,132 @@ function segmentSpans(command) {
   }
   cut(str.length);
   return segments;
+}
+
+// #4149: the nesting bash applies inside a double-quoted span and an unquoted `${ … }`, shared by
+// every scanner that skips quoted text (segmentSpans, splitOnLoneAmpersand, removeQuotedSpans,
+// lineLeavesStructureOpen, scanHeredocs, groupEvents). Inside double quotes, `$( … )`, a backtick
+// and `${ … }` nest, and a quote inside `$( … )` opens a fresh quoting context, so no `&`, `;`,
+// `(`, `)` or newline inside them is structural. Each skipper takes the index just past its
+// opener and returns { end, closed }: `end` is the index just past the construct (the input's
+// length when it runs off the end) and `closed` says whether its closer was found.
+
+// A double-quoted span. When a construct nested in it never closes, the span falls back to ending
+// at the first unescaped `"` (the reading before #4149), so a nesting this scan cannot follow
+// never swallows the rest of the command.
+function skipDoubleQuoted(str, i) {
+  const start = i;
+  while (i < str.length) {
+    const c = str[i];
+    if (c === '\\') { i += 2; continue; }
+    if (c === '"') return { end: i + 1, closed: true };
+    const r = c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2)
+      : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2)
+        : c === '`' ? skipBacktick(str, i + 1) : null;
+    if (r && !r.closed) return plainDoubleQuoteEnd(str, start);
+    i = r ? r.end : i + 1;
+  }
+  return { end: str.length, closed: false };
+}
+
+function plainDoubleQuoteEnd(str, i) {
+  while (i < str.length) {
+    if (str[i] === '\\') { i += 2; continue; }
+    if (str[i] === '"') return { end: i + 1, closed: true };
+    i += 1;
+  }
+  return { end: str.length, closed: false };
+}
+
+// A `$( … )` (or `$(( … ))`) body, read as its own command text: quotes, nested substitutions and
+// parens nest, a word-initial `#` comments to the end of the line, and a heredoc's body (opened by
+// `<<` outside arithmetic) is skipped raw through its delimiter line, as bash reads it, so an
+// apostrophe or `)` in heredoc prose closes nothing. Known limit: a `case` pattern's `)` closes the
+// substitution early (inside double quotes the span still ends at its own `"`).
+function skipCommandSubstitution(str, i) {
+  const arith = str[i] === '(';
+  let depth = 0;
+  let pending = [];
+  let wordStart = true;
+  while (i < str.length) {
+    const c = str[i];
+    if (c === '\\') { i += 2; wordStart = false; continue; }
+    if (c === "'") {
+      const close = str.indexOf("'", i + 1);
+      if (close === -1) return { end: str.length, closed: false };
+      i = close + 1;
+      wordStart = false;
+      continue;
+    }
+    const r = c === '"' ? skipDoubleQuoted(str, i + 1)
+      : c === '`' ? skipBacktick(str, i + 1)
+        : c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2)
+          : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2) : null;
+    if (r) {
+      if (!r.closed) return r;
+      i = r.end;
+      wordStart = false;
+      continue;
+    }
+    if (c === '#' && wordStart && !arith) {
+      while (i < str.length && str[i] !== '\n') i += 1;
+      continue;
+    }
+    if (c === '<' && str[i + 1] === '<' && !arith) {
+      if (str[i + 2] === '<') { i += 3; wordStart = false; continue; }
+      const h = readHeredocOpener(str, i + 2);
+      if (h && !h.unprovable) pending.push(h);
+      i = h ? h.end : i + 2;
+      wordStart = false;
+      continue;
+    }
+    if (c === '\n' && pending.length) {
+      i += 1;
+      for (const h of pending) {
+        const body = scanHeredocBody(str, i, h);
+        if (!body.terminated) return { end: str.length, closed: false };
+        i = body.end;
+      }
+      pending = [];
+      wordStart = true;
+      continue;
+    }
+    if (c === '(') depth += 1;
+    else if (c === ')') {
+      if (depth === 0) return { end: i + 1, closed: true };
+      depth -= 1;
+    }
+    wordStart = /[\s;&|()<>]/.test(c);
+    i += 1;
+  }
+  return { end: str.length, closed: false };
+}
+
+// A `${ … }` body: double quotes, substitutions, backticks and inner `${` nest; it ends at the first
+// other `}`. Single quotes are taken literally (inside double quotes they quote nothing).
+function skipParamExpansion(str, i) {
+  while (i < str.length) {
+    const c = str[i];
+    if (c === '\\') { i += 2; continue; }
+    if (c === '}') return { end: i + 1, closed: true };
+    const r = c === '"' ? skipDoubleQuoted(str, i + 1)
+      : c === '`' ? skipBacktick(str, i + 1)
+        : c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2)
+          : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2) : null;
+    if (r && !r.closed) return r;
+    i = r ? r.end : i + 1;
+  }
+  return { end: str.length, closed: false };
+}
+
+// A backtick substitution: it ends at the next unescaped backtick.
+function skipBacktick(str, i) {
+  while (i < str.length) {
+    if (str[i] === '\\') { i += 2; continue; }
+    if (str[i] === '`') return { end: i + 1, closed: true };
+    i += 1;
+  }
+  return { end: str.length, closed: false };
 }
 
 function stripQuotes(s) {
@@ -250,11 +379,12 @@ function substituteVars(tokens, vars, singleQuoted) {
 // assignment-substitution can never land in one caller's copy of this
 // preamble and not the other's.
 //
-// #4149: it walks the same groups and lone `&` cuts as forEachShellSegment (walkShellChunk,
-// without heredoc splitting), so a `cd` behind `(`/`{` is read with the same scope rules and
-// `handler` may run once per cwd for a segment, its fourth argument true on a repeat visit.
+// #4149: it is the same walk as forEachShellSegment: groups and lone `&` cuts, so a `cd` behind
+// `(`/`{` is read with the same scope rules and `handler` may run once per cwd for a segment (its
+// fourth argument true on a repeat visit); and heredoc bodies, so a data body's text (a commit
+// message line like `1) a`) never reaches the group depth, while a kept body walks as its own chunk.
 function forEachCommandSegment(command, cwd, handler) {
-  walkShellChunk(String(command || ''), [cwd || '.'], new Map(), handler, 0, false);
+  walkShellChunk(String(command || ''), [cwd || '.'], new Map(), handler, 0, true);
 }
 
 // One segment of forEachCommandSegment's walk: updates `vars`, calls `handler`
@@ -610,7 +740,8 @@ function programNames(tok) {
 
 // `str` with its quoted spans removed, read the way splitSegments reads quotes: outside
 // quotes and inside double quotes a backslash escapes the next character (an escaped
-// quote opens or closes nothing), and single quotes have no escapes. An escaped pair
+// quote opens or closes nothing), a double-quoted span nests as skipDoubleQuoted reads it,
+// and single quotes have no escapes. An escaped pair
 // outside quotes is kept as written. An unterminated span is kept, so text the shell
 // might still run stays visible.
 function removeQuotedSpans(str) {
@@ -621,12 +752,18 @@ function removeQuotedSpans(str) {
     const ch = str[i];
     if (quote === null) {
       if (ch === '\\' && i + 1 < str.length) { out += ch + str[i + 1]; i += 1; continue; }
-      if (ch === '"' || ch === "'") { quote = ch; span = ch; continue; }
+      if (ch === '"') {
+        // Nested as bash reads it (skipDoubleQuoted); an unterminated span is kept.
+        const r = skipDoubleQuoted(str, i + 1);
+        if (!r.closed) return out + str.slice(i);
+        i = r.end - 1;
+        continue;
+      }
+      if (ch === "'") { quote = ch; span = ch; continue; }
       out += ch;
       continue;
     }
     span += ch;
-    if (quote === '"' && ch === '\\' && i + 1 < str.length) { span += str[i + 1]; i += 1; continue; }
     if (ch === quote) { quote = null; span = ''; }
   }
   return out + span;
@@ -644,8 +781,10 @@ function splitOnLoneAmpersand(seg) {
     const c = seg[i];
     if (quote === "'") { if (c === "'") quote = null; continue; }
     if (c === '\\') { i += 1; continue; }
-    if (quote === '"') { if (c === '"') quote = null; continue; }
-    if (c === '"' || c === "'") { quote = c; continue; }
+    if (c === "'") { quote = c; continue; }
+    // A double-quoted span or an unquoted `${ … }` nests as bash reads it (skipDoubleQuoted).
+    const nested = c === '"' ? skipDoubleQuoted(seg, i + 1) : c === '$' && seg[i + 1] === '{' ? skipParamExpansion(seg, i + 2) : null;
+    if (nested && (c === '"' || nested.closed)) { i = nested.end - 1; continue; }
     if (c !== '&' || seg[i + 1] === '&' || seg[i + 1] === '>' || /[&<>|]/.test(seg[i - 1] || '')) continue;
     pieces.push(seg.slice(start, i));
     start = i + 1;
@@ -881,7 +1020,16 @@ function lineLeavesStructureOpen(line) {
   for (let i = 0; i < line.length; i += 1) {
     const c = line[i];
     if (c === '\\') { word += c + (line[i + 1] || ''); plain = false; i += 1; continue; }
-    if (c === "'" || c === '"' || c === '`') {
+    if (c === '"') {
+      // Nested as bash reads it (skipDoubleQuoted), so a `)` inside a quoted "$( )" closes nothing.
+      const r = skipDoubleQuoted(line, i + 1);
+      if (!r.closed) return true;
+      word += line.slice(i, r.end);
+      plain = false;
+      i = r.end - 1;
+      continue;
+    }
+    if (c === "'" || c === '`') {
       let j = i + 1;
       while (j < line.length && line[j] !== c) j += c !== "'" && line[j] === '\\' ? 2 : 1;
       if (j >= line.length) return true;
@@ -965,7 +1113,7 @@ function scanHeredocs(str) {
   let outLen = 0;
   const emit = (s) => { out.push(s); outLen += s.length; };
   const bodies = []; // kept bodies, { at, text, shell }, in order
-  let quote = null;
+  let quote = null; // null | "'" (a double-quoted span is emitted whole, nested as skipDoubleQuoted reads it)
   // Parens left open by a `((` or `$((`: `((` opens two and every single paren inside counts, so
   // `((cd x && ls) | cat)` (bash's nested-subshell reading) closes at its final `)`. It spans
   // lines, as a multi-line `((`/`$((` does in bash, so a `<<` on a later line inside it is a shift.
@@ -984,11 +1132,11 @@ function scanHeredocs(str) {
     } else if (ch === '\\' && i + 1 < str.length) {
       emit(ch + str[i + 1]);
       i += 2;
-    } else if (quote === '"') {
-      emit(ch);
-      if (ch === '"') quote = null;
-      i += 1;
-    } else if (ch === '"' || ch === "'") {
+    } else if (ch === '"') {
+      const end = skipDoubleQuoted(str, i + 1).end;
+      emit(str.slice(i, end));
+      i = end;
+    } else if (ch === "'") {
       quote = ch;
       emit(ch);
       i += 1;
@@ -1160,7 +1308,15 @@ function groupEvents(seg, g) {
         plain = false;
         continue;
       }
-      if (ch === '"' || ch === '`' || (ch === '$' && seg[i + 1] === "'")) {
+      // A double-quoted span or an unquoted `${ … }` nests as bash reads it (skipDoubleQuoted), so an
+      // `&` or `)` inside it is no background and closes no group.
+      const nested = ch === '"' ? skipDoubleQuoted(seg, i + 1) : ch === '$' && seg[i + 1] === '{' ? skipParamExpansion(seg, i + 2) : null;
+      if (nested && (ch === '"' || nested.closed)) {
+        i = nested.end;
+        plain = false;
+        continue;
+      }
+      if (ch === '`' || (ch === '$' && seg[i + 1] === "'")) {
         const q = ch === '$' ? "'" : ch;
         let j = ch === '$' ? i + 2 : i + 1;
         while (j < seg.length && seg[j] !== q) j += seg[j] === '\\' ? 2 : 1;

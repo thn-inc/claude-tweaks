@@ -628,6 +628,25 @@ test('#4149 round 2: an absolute -C after a brace group is reported once', () =>
   assert.deepStrictEqual(gitTargets('{ cd /main; }; git -C /x commit -m x', '/wt'), [{ action: 'commit', dir: path.resolve('/x') }]);
 });
 
+// #4149 round 3: a quoted body inside "$( )" nests, so an & in its prose is no background; and
+// group depth skips a heredoc body (data, or a kept body walked as its own chunk), so a body line
+// like `1) a` closes no outer `(`. Checked against bash 3.2 and 5 with a logging git stub.
+for (const [label, cmd, expected] of [
+  ['a push after an & inside a quoted "$( )" body', "cd /main && gh issue comment 1 --body \"$(cat <<'EOF'\nThe \"Q&A\" page\nEOF\n)\" && git push", [{ action: 'push', dir: path.resolve('/main') }]],
+  ['a commit message with an & inside "$( )", then a push', "cd /main && git commit -m \"$(cat <<'EOF'\nUse \"R&D\" term\nEOF\n)\" && git push", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }]],
+  ['a push after a commit body line `1) a`, inside a subshell', "(cd /main && git commit -F - <<'EOF'\n1) a\nEOF\ngit push)", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }]],
+  ['a push after a commit body line `fix: a)`, inside a subshell', "(cd /main && git commit -F - <<'EOF'\nfix: a)\nEOF\ngit push)", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }]],
+  ['a push inside a kept shell body, walked as its own chunk', "bash <<'EOF'\ncd /main && git push\nEOF", [{ action: 'push', dir: path.resolve('/main') }]],
+]) {
+  test(`#4149 round 3: gitTargets reads ${label} as bash runs it`, () => {
+    assert.deepStrictEqual(gitTargets(cmd, '/wt'), expected);
+  });
+}
+
+test('#4149 round 3: mkdirTargets skips a heredoc body when tracking group depth', () => {
+  assert.deepStrictEqual(mkdirTargets("(cd /main && cat <<'EOF'\n1) a\nEOF\nmkdir d)", '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
+});
+
 test('#4149 round 2: mkdirTargets reads a cd behind ( or {', () => {
   assert.deepStrictEqual(mkdirTargets('(cd /main && mkdir d)', '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
   assert.deepStrictEqual(mkdirTargets('(cd /main && true); mkdir d', '/wt'), [{ action: 'mkdir', file: path.resolve('/wt/d') }]);

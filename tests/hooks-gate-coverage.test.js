@@ -863,6 +863,57 @@ for (const [label, cmd] of [
   }
 }
 
+// Round 3 (#4149, nesting): inside a double-quoted span, `$( … )`, backticks and `${ … }` nest as in
+// bash, and a quote inside `$(` starts a fresh quoting context; an unquoted `${ … }` nests too. So no
+// `&`, `;`, `(`, `)` or newline inside them is structural, and an earlier `cd` survives. Every case
+// was checked under bash 3.2 and 5 (bash 3.2 cannot parse the odd-quote heredoc one).
+{
+  const main = (action) => ({ action, file: '/main/f.js' });
+  const B = "<<'EOF'";
+  for (const [label, cmd, expected] of [
+    ['an & in a quoted string inside "$( )"', 'cd /main && echo "$(echo "a&b")" && cp a f.js', [main('copy')]],
+    ['... followed by ; cp', 'cd /main && echo "$(echo "a&b")"; cp a f.js', [main('copy')]],
+    ['... followed by a newline and cp', 'cd /main && echo "$(echo "a&b")"\ncp a f.js', [main('copy')]],
+    ['... with a redirect after it', 'cd /main && echo "$(echo "a&b")" > f.js', [main('write')]],
+    ['an & in a URL inside an assigned "$( )"', 'cd /main && X="$(printf %s "http://h/?a=1&b=2")" && cp a f.js', [main('copy')]],
+    ['an & inside "$( )" ahead of a tee file', 'echo hi | tee "$(echo "x&y")" /main/f.js >/dev/null', [main('write')]],
+    ['an & in a backtick inside double quotes', 'cd /main && echo "`echo "a&b"`" && cp a f.js', [main('copy')]],
+    ['an & two "$( )" levels deep', 'cd /main && echo "$(echo "$(echo "a&b")")" && cp a f.js', [main('copy')]],
+    ['an unquoted ${ } holding an &', 'x=a; cd /main && echo ${x//&/y} && cp a f.js', [main('copy')]],
+    ['a heredoc body with an apostrophe inside "$( )"', `cd /main && gh pr create --body "$(cat ${B}\nIt's the "Q&A" page\nEOF\n)" && cp a f.js`, [main('copy')]],
+    ['a heredoc body with an odd double quote inside "$( )"', `cd /main && gh pr create --body "$(cat ${B}\nA 5" screen & more\nEOF\n)" && cp a f.js`, [main('copy')]],
+    // One pin per skipper rule.
+    ['a quoted ${ } default holding an & inside double quotes', 'x=; cd /main && echo "${x:-"a&b"}" && cp a f.js', [main('copy')]],
+    ['a single-quoted ) inside "$( )"', "cd /main && echo \"$(echo ')\"&\"')\" && cp a f.js", [main('copy')]],
+    ['a comment holding a quote inside "$( )"', 'cd /main && echo "$(echo a # say "hi\n)" && cp a f.js', [main('copy')]],
+    ['an ANSI-C quote inside "$( )", which falls back to the plain quote end', "cd /main && echo \"$(echo $'a\\'b')\" && cp a f.js", [main('copy')]],
+    // One pin per scanner seam.
+    ['a ; inside quotes inside "$( )" (segmentSpans)', 'cp "$(echo "a;b" | tr -d ";b")" /main/f.js', [main('copy')]],
+    ['a ; inside an unquoted ${ } (segmentSpans)', "x='a;'; cp ${x//;/} /main/f.js", [main('copy')]],
+    ['an odd quote in a heredoc body inside "$( )", before a later body (scanHeredocs)', "cd /main && echo \"$(cat <<'X'\n5\" x\nX\n)\" && cat <<'EOF'\ndon't\nEOF\ncp a f.js", [main('copy')]],
+  ]) {
+    test(`#4149 nesting: ${label} keeps the earlier cd`, () => {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
+    });
+  }
+
+  // lineLeavesStructureOpen: a `)` inside a quoted "$( )" closes no subshell, so the later body stays kept.
+  test('#4149 nesting: a ) inside a quoted "$( )" leaves the subshell open (lineLeavesStructureOpen)', () => {
+    const targets = fileWriteTargets("( echo \"$(echo \")\")\" >/dev/null\ncat <<'EOF'\necho x > f.js\nEOF\n) | bash", '/r');
+    assert.ok(targets.some((t) => t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
+  });
+
+  // The reader check reads a quoted "$( )" whole, so data bodies still strip.
+  for (const [label, cmd] of [
+    ['an & inside it (splitOnLoneAmpersand)', "cat <<'EOF' | jq \"$(echo \"a&b\")\"\na > b\nEOF"],
+    ['a ( inside it (removeQuotedSpans)', "cat <<'EOF' | jq \"$(echo \"(a)\")\"\na > b\nEOF"],
+  ]) {
+    test(`#4149 nesting: a reader whose argument is a quoted "$( )" with ${label} still strips its body`, () => {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), []);
+    });
+  }
+}
+
 // Residual fix (#4149, redirect tokens): a redirection (`>/dev/null`, `2>&1`, `>>f`, `<in`, or an
 // operator and its target word) is never a write shape's positional; its own target is still
 // reported by the redirection scan.
