@@ -55,11 +55,23 @@ function pushUpstream(fx) {
   fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
 }
 
+// Advances origin/{BRANCH} with a run-dir-only commit (origin's own archive commit, pushed from another
+// machine). The pathspec-excluded tree diff is empty here, so only the behind-count clause can stop `work`.
+function pushRunDirUpstream(fx) {
+  const dir = path.join(fx.other, '.claude-tweaks', 'pipelines', 'archive', 'r2');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'y.md'), 'upstream archive\n');
+  fx.run(fx.other, ['add', '.claude-tweaks/pipelines']);
+  fx.run(fx.other, ['commit', '-q', '-m', '[reconcile] archive run r2']);
+  fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
+}
+
 const ROWS = [
   ['AC1.1: equal to origin passes', () => {}, true],
   ['AC1.1: run-dir-only commits ahead, 0 behind, passes', (fx) => { runDirCommit(fx, 1); runDirCommit(fx, 2); }, true],
   ['AC2.1: behind origin stops', (fx) => pushUpstream(fx), false],
   ['AC2.1: diverged run-dir-only stops', (fx) => { runDirCommit(fx, 1); pushUpstream(fx); }, false],
+  ['AC2.1: behind origin by run-dir-only commits stops', (fx) => pushRunDirUpstream(fx), false],
   ['AC2.2: a commit outside run dirs stops', (fx) => { runDirCommit(fx, 1); fx.commit(fx.work, 'src.txt'); }, false],
   ['AC2.1: wrong branch stops', (fx) => fx.run(fx.work, ['switch', '-c', 'feature']), false],
 ];
@@ -89,6 +101,21 @@ test('AC3.1: go-red: dropping the pathspec exclusion stops the run-dir-only row'
     runDirCommit(fx, 1);
     runDirCommit(fx, 2);
     assert.notEqual(runCheck(doctored, fx), 0, 'without the pathspec exclusion the run-dir-only row must stop (non-zero exit)');
+  } finally {
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('AC3.1: go-red: dropping the behind-count clause passes the run-dir-only-behind row', () => {
+  const fence = checkFence(stepThreeOf(readText(SKILL)));
+  const countClause = `[ "$(git -C "$RUN_ROOT" rev-list --count HEAD..origin/${BRANCH})" = 0 ] \\\n  && `;
+  assert.ok(fence.includes(countClause), 'anchor text for the behind-count clause not found — proof cannot discriminate');
+  const doctored = fence.replace(countClause, '');
+  assert.notEqual(doctored, fence, 'dropping the behind-count clause must change the fence');
+  const fx = originWithTwoClones('release-review-tree-nocount-');
+  try {
+    pushRunDirUpstream(fx);
+    assert.equal(runCheck(doctored, fx), 0, 'without the behind-count clause the run-dir-only-behind row must pass (exit 0)');
   } finally {
     fs.rmSync(fx.root, { recursive: true, force: true });
   }
