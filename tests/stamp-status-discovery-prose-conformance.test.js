@@ -25,12 +25,22 @@ function step15(text) {
 
 const STEP15 = step15(CMS);
 
+// Each gate must name a complete composed verdict on its verified side, sentence by sentence and
+// per Step 1.5 branch, so a mention in a negated or unrelated sentence, or in one branch only,
+// does not satisfy the pin.
 function assertComposedVerdictNamed(ver, step, tcg) {
-  for (const [name, text] of [['verification.md', ver], ['code-mode-steps.md Step 1.5', step], ['two-call-gate.md', tcg]]) {
-    assert.match(text, /suiteComposed/, `${name} must name the composed verdict`);
+  const standaloneAt = step.indexOf('### Standalone');
+  const checks = [
+    ['verification.md', ver, /`true` covers a complete `suiteComposed`/],
+    ['code-mode-steps.md Step 1.5 flow branch', step.slice(0, standaloneAt), /`verifiedHead: true` \([^)]*complete per-suite records, `suiteComposed`/],
+    ['code-mode-steps.md Step 1.5 standalone branch', step.slice(standaloneAt), /\*\*`verifiedHead: true`\*\* \([^\n]*complete per-suite records `suiteComposed`/],
+    ['two-call-gate.md', tcg, /`verified: true` \([^)]*a complete `suiteComposed` verdict/],
+  ];
+  for (const [name, text, pattern] of checks) {
+    assert.match(text, pattern, `${name} must name the composed verdict as verified HEAD`);
   }
   assert.doesNotMatch(ver, /treat `present: false`, `verifiedHead: false`/);
-  assert.match(tcg, /no runner pass stamp verifies the first call/);
+  assert.match(tcg, /no runner pass stamp verifies the first call/, 'two-call-gate.md must keep its no-stamp note fragment');
 }
 
 // A generated-only dirty tree reads `verifiedHead: true` with a live `dirty: true` (#4006), so a
@@ -56,11 +66,22 @@ test('AC10.2: verification.md, review Step 1.5 and two-call-gate.md name the com
   assertComposedVerdictNamed(VER, STEP15, TCG);
 });
 
-test('AC10.2 go-red control: the assertions throw on text with suiteComposed removed', () => {
-  const strip = (t) => t.replace(/suiteComposed/g, 'REMOVED');
-  assert.throws(() => assertComposedVerdictNamed(strip(VER), STEP15, TCG), { message: /verification\.md must name the composed verdict/ });
-  assert.throws(() => assertComposedVerdictNamed(VER, strip(STEP15), TCG), { message: /code-mode-steps\.md Step 1\.5 must name the composed verdict/ });
-  assert.throws(() => assertComposedVerdictNamed(VER, STEP15, strip(TCG)), { message: /two-call-gate\.md must name the composed verdict/ });
+test('AC10.2 go-red control: the assertions throw when any one gate, branch or fragment drops the composed verdict', () => {
+  const mutate = (text, from, to) => {
+    const out = text.replaceAll(from, to);
+    assert.notEqual(out, text, `control mutation must change the text: ${from}`);
+    return out;
+  };
+  assert.throws(() => assertComposedVerdictNamed(mutate(VER, '`true` covers a complete', '`true` never covers a complete'), STEP15, TCG),
+    { message: /verification\.md must name the composed verdict/ });
+  assert.throws(() => assertComposedVerdictNamed(VER, mutate(STEP15, 'records, `suiteComposed`', 'records, REMOVED'), TCG),
+    { message: /Step 1\.5 flow branch must name the composed verdict/ });
+  assert.throws(() => assertComposedVerdictNamed(VER, mutate(STEP15, 'records `suiteComposed`', 'records REMOVED'), TCG),
+    { message: /Step 1\.5 standalone branch must name the composed verdict/ });
+  assert.throws(() => assertComposedVerdictNamed(VER, STEP15, mutate(TCG, 'a complete `suiteComposed` verdict', 'REMOVED')),
+    { message: /two-call-gate\.md must name the composed verdict/ });
+  assert.throws(() => assertComposedVerdictNamed(VER, STEP15, mutate(TCG, 'no runner pass stamp verifies the first call', 'REMOVED')),
+    { message: /two-call-gate\.md must keep its no-stamp note fragment/ });
 });
 
 test('AC10.2: a generated-only dirty tree is not listed as no recent pass in Step 1.5 or the consumer rule', () => {
