@@ -20,3 +20,4 @@
 | 16 | build | Final review minor: prose SKIP sites with no text form (build/dispatch.md:17, flow/manifesto.md:167, flow/steps-and-gates.md:15) | accepted | Controller checked: fixed literal text, no git/user placeholder |
 | 17 | build | plugin/skills/build/plan-authoring-checks.md at 52404/52500 B (96 B headroom, pre-existing near the Read-limit rail) | observation | Next editor must cut bytes or move a lazy section out before adding text |
 | 18 | build | Prose commit ea1415845 alone leaves new SITES rows and the AC-evidence pin red until d6ad83063 | observation | Bisect-only concern; the PR squash-merges |
+| 19 | build/skill | Extends `.claude/skills/skill-prose-conformance-tests` with a table-driven per-site pin + go-red through one shared `checkSite`, and a sweep guard whose allowlist keys on (file, placeholder, fragment) with a staleness test standing in for the skill's "take the sweep root as a parameter" walker proof | open | — |
