@@ -317,7 +317,6 @@ function evaluate(files, allowlist) {
 // The audit record: each file's pinned budget texts, and a reason an author judged by
 // reading the sites. A new, changed or removed budget fails the scan until this is updated.
 const ALLOWLIST = {
-  'tests/reconcile.test.js': { sites: ['elapsed < 2500', 'Date.now() - start < 1000'], reason: 'bounded-time checks: a preflight-gated reconcile under 2.5 s and a pre-exhausted budget under 1 s, both doing no real work with generous margins; candidates to move to perf/.' },
 };
 
 // Fixtures are single-quoted string arrays, never template literals.
