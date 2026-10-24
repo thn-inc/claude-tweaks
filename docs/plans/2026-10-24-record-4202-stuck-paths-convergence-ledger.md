@@ -2,3 +2,9 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | `convergePaths` runs outside the `try` in both `onHit` bodies (`escalate-residue.js`) — a throwing injected `pathExists` would escape as a thrown error instead of `escalation-failed`/`resolution-failed` | deferred | Whole-branch review triage: fine to defer — the production predicate (`ownedPathExists`, built on `fs.existsSync`) never throws and every production caller wraps the escalate/resolve call in try/catch. |
+| 2 | build | An OPEN record already naming `targetPath` returns `dedup-hit` without converging, so gone paths linger until a different-path edit | deferred | Deliberate per the spec's "next edit" wording and the plan's Review Focus #4; pinned by the `#4202 … stays a plain dedup-hit` test. |
+| 3 | build | `escalateResidue`/`resolveResidue` wrappers carry no `#4202` header note of their own | deferred | Cosmetic — the contract is documented on the inner `escalateStructurallyStuck`/`resolveStructurallyStuck` functions the wrappers forward to. |
+| 4 | build | Prune comment (`archive-merged.js` ~2357) described the same-pass retry but not the drop | fixed | 8d6d1a7af — "and then drops the entry whatever that retry returns"; the underlying prune drop-on-failed-retry semantics are staged as a follow-up record (staged/ledger-record-1.md). |
+| 5 | build | No test pins the dry-run guard ahead of `trackArchiveResult`'s new gh-capable resolve | deferred | Whole-branch review verified the guard holds structurally at all three callers (`finishArchiveAttempt`, `archiveMergedRun`, the abandoned-interrupted branch). |
+| 6 | build | A symlinked checkout root vs stored absolute paths makes `ownedPathExists` treat an own path as foreign, keeping it listed | deferred | Fails safe (the record stays open rather than dropping a live path); run dirs are derived from the same root, so unlikely in practice. |
