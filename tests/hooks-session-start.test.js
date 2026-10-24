@@ -656,6 +656,43 @@ test('SessionStart surfaces a prior background reconcile pass exactly once (#820
   }
 });
 
+// Characterization of the per-check lines the prior-pass summary renders,
+// prunedRemote included (the pattern the ledger-residue lines follow).
+test('SessionStart renders a prior background pass\'s reaped/branch/remote-prune lines', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(), surfaced: false, summary: { reaped: 1, archivedBranches: 2, prunedRemote: 3 },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    out.json.hookSpecificOutput.additionalContext,
+    /background reconcile \(from a prior session\) — 1 finished worktree\(s\) removed \(already merged\); 2 local branch\(es\) archived\/deleted; 3 merged remote branch\(es\) deleted on origin\./,
+  );
+});
+
+test('SessionStart renders a prior background pass\'s ledger-residue PR count and notable residue (#3812)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(),
+    surfaced: false,
+    summary: {
+      prunedRemote: 1,
+      ledgerResiduePrOpened: 1,
+      notableLedgerResidue: [
+        { path: 'docs/plans/2026-10-20-x-ledger.md', reason: 'ledger-has-open-rows' },
+        { path: 'docs/plans/2026-10-20-y-ledger.md', reason: 'removal-pr-open', prNumber: 88 },
+      ],
+    },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    out.json.hookSpecificOutput.additionalContext,
+    /1 merged remote branch\(es\) deleted on origin; 1 residue-ledger removal PR\(s\) opened on origin; residue ledger\(s\) left on the integration branch: 2026-10-20-x-ledger\.md \(ledger-has-open-rows\), 2026-10-20-y-ledger\.md \(removal-pr-open #88\)\./,
+  );
+});
+
 // Task 10 review Critical finding: the spawn gate must key off the
 // `reconcile-background-status.json` file's OWN `completedAt`, never
 // reconcile()'s shared `reconcile-cache.json` `lastRunAt` stamp — that stamp

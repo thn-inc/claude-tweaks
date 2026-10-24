@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 // #771: local-merge + auto mode had no auto-mode-aware finish path —
 // `wrap-up/cleanup-procedures-execution.md` Section C called
@@ -15,7 +16,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const FILE = path.join(ROOT, 'plugin', 'skills', '_shared', 'local-merge-auto-finish.md');
-const read = () => fs.readFileSync(FILE, 'utf8');
+const read = () => readText(FILE);
 
 test('the file exists', () => {
   assert.ok(fs.existsSync(FILE), 'plugin/skills/_shared/local-merge-auto-finish.md must exist');
@@ -65,10 +66,7 @@ test('interactive/standalone runs fall back to the unmodified finishing-a-develo
 
 // --- Task 2: cleanup-procedures-execution.md Section C routing ---
 
-const EXEC = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'cleanup-procedures-execution.md'),
-  'utf8',
-);
+const EXEC = readText(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'cleanup-procedures-execution.md'));
 
 function localMergeSection() {
   const localMergeStart = EXEC.indexOf('**`integration-model: local-merge`:**');
@@ -96,14 +94,8 @@ test('Section C maps the new pending-review outcome onto the same posture as kep
 
 // --- Task 3: review-console.md + auto-mode-contract.md accuracy fixes ---
 
-const CONSOLE = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'review-console.md'),
-  'utf8',
-);
-const CONTRACT = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', '_shared', 'auto-mode-contract.md'),
-  'utf8',
-);
+const CONSOLE = readText(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'review-console.md'));
+const CONTRACT = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'auto-mode-contract.md'));
 
 test('review-console.md no longer claims local-merge cleanup runs "unchanged" — it cites the auto-finish path', () => {
   assert.doesNotMatch(CONSOLE, /Under `local-merge`, cleanup runs unchanged/);
@@ -119,7 +111,7 @@ test('auto-mode-contract.md\'s "What auto silences" table lists the local-merge 
 
 // --- Task 4: skill-graph.md edge ---
 
-const SKILL_GRAPH = fs.readFileSync(path.join(ROOT, 'docs', 'skill-graph.md'), 'utf8');
+const SKILL_GRAPH = readText(path.join(ROOT, 'docs', 'skill-graph.md'));
 
 test('skill-graph.md documents the new local-merge-auto-finish.md edge(s)', () => {
   assert.match(SKILL_GRAPH, /local-merge-auto-finish\.md/);

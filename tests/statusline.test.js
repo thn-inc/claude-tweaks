@@ -10,6 +10,7 @@ const { pathToFileURL } = require('node:url');
 const STATUSLINE = path.join(__dirname, '..', 'plugin', 'bin', 'claude-tweaks-statusline.js');
 const sl = require('../plugin/bin/claude-tweaks-statusline.js');
 const color = require('../plugin/bin/lib/color');
+const { readText } = require('./helpers/read-skill');
 
 // The project segment wraps text in OSC 8 hyperlinks (\x1b]8;;URL\x07text\x1b]8;;\x07).
 // Assertions about segment order/content strip those wrappers first; the link
@@ -760,7 +761,7 @@ test('findOpenLedger skips a ledger file raced out between readdir and readFileS
 // mechanical link back to this assumption, the statusline's ledger segment
 // would silently break or miscount — this test fails loudly instead.
 test('findOpenLedger cells[4] assumption matches the documented ledger table shape in skills/ledger/SKILL.md', () => {
-  const skillDoc = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'ledger', 'SKILL.md'), 'utf8');
+  const skillDoc = readText(path.join(__dirname, '..', 'plugin', 'skills', 'ledger', 'SKILL.md'));
   const headerLine = skillDoc.split('\n').find((l) => {
     const t = l.trim();
     return t.startsWith('| #') && t.includes('Status');

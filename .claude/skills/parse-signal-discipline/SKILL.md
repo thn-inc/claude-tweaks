@@ -239,8 +239,8 @@ When mechanizing a prose heuristic into a deterministic check:
    path closes the run first, so in the real flow the disk check never fired. Every test passed
    because each fixture hand-wrote a run state with `worktree` still set, a state `closeRunState`
    never writes. Whole-branch review caught it by running the real `closeRunState` and then
-   `runVerify`. `a7790fbed` made the close keep the prior path as `worktreeAtClose` and added a
-   test that builds the state through the real `closeRunState`. When a terminal transition clears
+   `runVerify`. `5c8e2a2e0` (#3023) made the close keep the prior path as `worktreeAtClose` and
+   added a test that builds the state through the real `closeRunState`. When a terminal transition clears
    a field your check reads, keep a copy at that transition, and produce the check's input in at
    least one test by calling the real writer, never by hand-writing its JSON.
 13. **A not-found answer means "absent" only when every input to the request resolved.** A
@@ -287,8 +287,9 @@ When mechanizing a prose heuristic into a deterministic check:
 15. **A transform in front of a scanner owes its own could-not-parse verdict.** A scan over
     transformed text reads whatever the transform wrongly removed as "nothing here", so a
     transform that mis-parses produces a clean scan. `tests/helpers/strip-comments.js`'s
-    `stripComments` blanks comments to spaces before the path-guard, windows-hide, git-status and
-    exit-code conformance scans count tokens. It models regex literals (#3585); its residual
+    `stripComments` blanks comments to spaces before the windows-hide, git-status, path-guard,
+    path-containment, porcelain-cwd-compare, staged-id producer, exit-code and wall-clock-budget
+    conformance scans count tokens. It models regex literals (#3585); its residual
     ambiguity is a regex right after `)` or `}`, which it reads as division. In
     `if (b) /"/.test(b); const c = "//"; fs.existsSync(c);` the quote inside the regex pairs with a
     later string, the `//` after it opens a line comment, and the guarded call counted as zero.
@@ -296,7 +297,9 @@ When mechanizing a prose heuristic into a deterministic check:
     compiles both the raw file and the stripped text under a CommonJS wrapper with `vm.Script`. A
     blanked comment never breaks syntax, but blanked code cuts a literal short. So "raw compiles,
     stripped does not" is `misparsed`, and a raw file that does not compile at all (an ESM file) is
-    `unparseable`, its own outcome and never `ok`. Each scan reports either one as an offender.
+    `unparseable`, its own outcome and never `ok`. Every scan except exit-code reports either one
+    as an offender. The exit-code scan never calls `stripperVerdict`; it reports a `require.main`
+    guard the stripper blanked, through its own `guardBlankedByStripper(raw, stripped)` detector.
     State what the oracle cannot see, as the helper's header does: a mis-parse whose stripped text
     still compiles passes unseen. Pin the planted mis-parse through every scan that calls the
     verdict, not only through the helper's own tests.

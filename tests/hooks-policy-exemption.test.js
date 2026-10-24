@@ -15,6 +15,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
+const { readText } = require('./helpers/read-skill');
 const { isPolicyOnlyCommit, POLICY_COMMIT_ALLOWLIST, isDeleteOnlyPush, DELETE_ONLY_PUSH_ALLOWLIST } = pre;
 
 // Sibling suites contending for the same machine can push a plain git init/
@@ -297,7 +298,7 @@ test('AC1.1: the staged-file read uses -z', () => {
   // isPolicyOnlyCommit returns only a boolean, so the unquoted-path proof for
   // this read is parseNameStatusZ's real-repo test over the same argv; here we
   // pin that the argv actually carries -z.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'));
   const line = src.split('\n').find((l) => l.includes("'--cached'") && l.includes("'--name-status'"));
   assert.ok(line, "pre-tool-use.js has a line naming '--cached' and '--name-status'");
   assert.ok(line.includes("'-z'"), `the staged-file read must pass -z: ${line.trim()}`);

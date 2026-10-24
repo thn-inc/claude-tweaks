@@ -19,6 +19,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { FRICTION_EVENT_TYPES } = require('../plugin/bin/lib/friction-lens-vocab');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const FULL_MODE_PATH = path.join(ROOT, 'plugin', 'skills', 'reflect', 'full-mode.md');
@@ -33,7 +34,7 @@ const END = '<!-- friction-lens-vocab:end -->';
 const EVENT_TYPES = FRICTION_EVENT_TYPES;
 
 function vocabBlock() {
-  const text = fs.readFileSync(FULL_MODE_PATH, 'utf8');
+  const text = readText(FULL_MODE_PATH);
   const start = text.indexOf(BEGIN);
   const end = text.indexOf(END);
   assert.ok(start !== -1 && end !== -1 && end > start,
@@ -56,7 +57,7 @@ function liveCallSites() {
   const sites = {};
   for (const file of fs.readdirSync(HOOKS_DIR)) {
     if (!file.endsWith('.js')) continue;
-    const src = fs.readFileSync(path.join(HOOKS_DIR, file), 'utf8');
+    const src = readText(path.join(HOOKS_DIR, file));
     const re = /appendEvent\([^,]+,\s*'([a-zA-Z-]+)'/g;
     let m;
     while ((m = re.exec(src))) {

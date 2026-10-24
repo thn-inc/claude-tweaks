@@ -1,11 +1,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 // #2424: an interactive, human-present bare `/dispatch` invocation triggered an
 // AskUserQuestion despite the skill's own contract stating bare invocation

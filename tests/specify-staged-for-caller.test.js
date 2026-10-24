@@ -6,10 +6,10 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => readText(path.join(__dirname, '..', rel));
 const CLOSEOUT = read('plugin/skills/specify/decomposition-mode-closeout.md');
 const HANDOFF = read('plugin/skills/specify/mechanical-handoff.md');
 const DECOMPOSITION = read('plugin/skills/specify/decomposition-mode.md');

@@ -13,13 +13,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 // #1346 split record-creation.md at the Step 3/Step 4 boundary; Step 4's Linking
 // section (this file's whole subject) landed in record-creation-linking.md.
 const FILE = path.join(__dirname, '..', 'plugin', 'skills', 'specify', 'record-creation-linking.md');
-const text = fs.readFileSync(FILE, 'utf8');
+const text = readText(FILE);
 
 test('native linking cites bin/link-records.js with its argument shape', () => {
   assert.match(text, /bin\/link-records\.js/, 'record-creation.md must cite the helper');

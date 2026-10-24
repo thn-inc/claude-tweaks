@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
+const { readText } = require('./helpers/read-skill');
 
 // New filesystem-check code under plugin/bin/ routes through the shared
 // plugin/bin/lib/path-guard/ module (lstatType / resolveLeaf /
@@ -254,7 +255,7 @@ test('AC2.1: the three named call sites import path-guard', () => {
 });
 
 test("AC4.1: docs/donts.md's IL-150 and IL-161 lines name the helper", () => {
-  const lines = fs.readFileSync(DONTS, 'utf8').split('\n');
+  const lines = readText(DONTS).split('\n');
   for (const tag of ['[IL-150]', '[IL-161]']) {
     const tagged = lines.filter((l) => l.includes(tag));
     assert.ok(tagged.length > 0, `docs/donts.md has no line carrying ${tag}`);

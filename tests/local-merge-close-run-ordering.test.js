@@ -75,7 +75,7 @@ const SITES = [
     label: 'local-merge-auto-finish.md',
     file: 'plugin/skills/_shared/local-merge-auto-finish.md',
     readsWorktree: true,
-    logNeedle: 'carry it into the `--text`',
+    logNeedle: 'carry it into the log call\'s `{text-file}`',
     worktreeVar: 'worktree-path',
     vars: {
       'base-branch': 'main',

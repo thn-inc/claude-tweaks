@@ -1,6 +1,6 @@
 // bin/lib/reconcile/format-summary.js — compact, human-readable rendering of
 // reconcile()'s return object (index.js's `{ mirror, redTip, worktrees,
-// claims, runs, branches, remoteBranches, console, skipped }`), for
+// claims, runs, branches, remoteBranches, ledgerResidue, console, skipped }`), for
 // `bin/hooks.js reconcile`'s new default output (#638). Pure presentation
 // layer — takes exactly the object reconcile() already returns; no changes
 // to reconcile()/its per-check modules, and no I/O of its own.
@@ -54,6 +54,7 @@ const CATEGORIES = [
   { key: 'branches', unit: 'branch', verb: 'archived', takenActions: ['delete', 'tag-and-delete'], skipActions: ['skip'], kindFilter: (e) => e.kind !== 'tag' },
   { key: 'branches', unit: 'tag', verb: 'aged out', takenActions: ['aged-out'], skipActions: ['skip'], kindFilter: (e) => e.kind === 'tag' },
   { key: 'remoteBranches', unit: 'remote branch', verb: 'pruned', takenActions: ['delete'], skipActions: ['skip'] },
+  { key: 'ledgerResidue', unit: 'residue ledger', verb: 'removal PR opened', takenActions: ['pr-opened'], skipActions: ['skip'] },
 ];
 
 function scopedEntries(cat, arr) {

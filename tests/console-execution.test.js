@@ -160,5 +160,5 @@ test('reconcile/index.js registers console in ALL_CHECKS and the pr-first dispat
 });
 
 test('reconcile/index.js\'s local-merge skip line includes console alongside mirror/release/archive', () => {
-  assert.match(INDEX_JS, /check: 'mirror,release,archive,archive-branches,remote-prune,console'/);
+  assert.match(INDEX_JS, /check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console'/);
 });

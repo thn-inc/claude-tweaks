@@ -8,6 +8,7 @@ const { execFileSync: realExecFileSync } = require('node:child_process');
 const { renderVerifyTable, runVerify, registerCheck, resolvePrNumber, resolveArchivedRunDir, resolvedIssueNumbers } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
 const { resolveRecords } = require('../../../plugin/bin/lib/wrap-up/pack');
 const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
+const { readText } = require('../../helpers/read-skill');
 
 function makeTmpDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -2702,7 +2703,7 @@ test('#3595 AC3.1: carrier-commit matches Fixes/Closes and rejects Refs through 
   assert.strictEqual(verifyWithLog('x\n\nFixes #900\n').result, 'pass');
   assert.strictEqual(verifyWithLog('x\n\nCloses #900\n').result, 'pass');
   assert.strictEqual(verifyWithLog('x\n\nRefs #900\n').result, 'fail');
-  const source = fs.readFileSync(path.join(__dirname, '../../../plugin/bin/lib/wrap-up/engine-verify.js'), 'utf8');
+  const source = readText(path.join(__dirname, '../../../plugin/bin/lib/wrap-up/engine-verify.js'));
   assert.match(source, /\{[^}]*\bCLOSING_KEYWORD_ALTERNATION\b[^}]*\}\s*=\s*require\('\.\.\/issue-branch-tracking'\)/);
   assert.doesNotMatch(source, /CLOSING_KEYWORDS_PATTERN/);
 });

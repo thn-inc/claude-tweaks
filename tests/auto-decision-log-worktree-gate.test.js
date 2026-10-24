@@ -90,7 +90,7 @@ test('no plugin/skills/**/*.md file prescribes a >>/<< append to decisions.md un
   const skillsDir = path.join(ROOT, 'plugin', 'skills');
   const offenders = [];
   for (const file of findSkillFiles(skillsDir)) {
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     let idx = text.indexOf('decisions.md');
     while (idx !== -1) {
       const windowStart = Math.max(0, idx - 120);

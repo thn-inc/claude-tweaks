@@ -1,11 +1,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 // #1781: residue-sweep.md states the pr-first disposition for a run's own
 // recorded PR explicitly — an `observation` row naming Phase 4's merge

@@ -53,6 +53,60 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.152.0](https://github.com/thn-inc/claude-tweaks/compare/v6.151.1...v6.152.0) (2026-10-24)
+
+
+### Features
+
+* bin/verify.js pass stamp: reads dirty when a check… ([#2987](https://github.com/thn-inc/claude-tweaks/issues/2987)) ([18b8f49](https://github.com/thn-inc/claude-tweaks/commit/18b8f4912f074b9b118df0b570a494de55c845b3)), closes [#3002](https://github.com/thn-inc/claude-tweaks/issues/3002)
+* Plan and review should enumerate failure branches of a… ([#3965](https://github.com/thn-inc/claude-tweaks/issues/3965)) ([af27439](https://github.com/thn-inc/claude-tweaks/commit/af27439f1980e61d1afb6a9f5cf29cf83ef36653))
+* Review lens dispatch has no documented path for a… ([#3817](https://github.com/thn-inc/claude-tweaks/issues/3817)) ([f007f1c](https://github.com/thn-inc/claude-tweaks/commit/f007f1c32b1b74e1f4958dfe28eed687430bfbfa)), closes [#3926](https://github.com/thn-inc/claude-tweaks/issues/3926) [#3945](https://github.com/thn-inc/claude-tweaks/issues/3945) [#3947](https://github.com/thn-inc/claude-tweaks/issues/3947)
+
+
+### Bug Fixes
+
+* _shared/pr-run-comments.md: the Find step's gh --jq shape… ([#3936](https://github.com/thn-inc/claude-tweaks/issues/3936)) ([9d81321](https://github.com/thn-inc/claude-tweaks/commit/9d8132196681b60abc888fbb10cfa0aa142b1824))
+* Guard tidy's Arm ready PR on acceptance labeling… ([#3877](https://github.com/thn-inc/claude-tweaks/issues/3877)) ([c008a8d](https://github.com/thn-inc/claude-tweaks/commit/c008a8d9a7d02361aadc104aae6519a85fbed7b0))
+* Keep a run's ledger off main when its PR is merged… ([#3812](https://github.com/thn-inc/claude-tweaks/issues/3812)) ([a6117a5](https://github.com/thn-inc/claude-tweaks/commit/a6117a575dd163afaece3c5af6daf20b4a70f1dd))
+* qa-agent: replace the old backend's `set viewport` call… ([#3843](https://github.com/thn-inc/claude-tweaks/issues/3843)) ([d47cd98](https://github.com/thn-inc/claude-tweaks/commit/d47cd98d535a558a9249de26a15f0952f481cd1c))
+* review: Step 2.5 record-label read writes… ([#3744](https://github.com/thn-inc/claude-tweaks/issues/3744)) ([4f3376b](https://github.com/thn-inc/claude-tweaks/commit/4f3376b06b839be84724076551ca28cc6a3d0ea9))
+* SDD deferral rulings skip the fix-now test and are… ([#3880](https://github.com/thn-inc/claude-tweaks/issues/3880)) ([35e253b](https://github.com/thn-inc/claude-tweaks/commit/35e253bade574391a2495cbd91dc860d84d0a2bc))
+* verify.js --stamp-suite: a failing chunk with preExisting… ([#4040](https://github.com/thn-inc/claude-tweaks/issues/4040)) ([0028844](https://github.com/thn-inc/claude-tweaks/commit/002884405ae04d59b10c9d96e9623e0abaafec91))
+* wrap-up-engine.js plan reads its git facts from the main… ([#3925](https://github.com/thn-inc/claude-tweaks/issues/3925)) ([104e97d](https://github.com/thn-inc/claude-tweaks/commit/104e97d31c24e9e8367e9763a797e2bc1dd70499))
+
+### Highlights
+* A failing chunk in a chunked `verify.js --stamp-suite` run no longer crashes or leaves the suite marked as verified.
+* No user-visible change.
+* No user-visible change.
+* A fix that adds an early guard now has to show that the checks after it are still tested.
+* No user-visible change.
+* Wrap-up's curation plan now judges the worktree's own diff, so the references and journeys rows no longer open or close on another branch's changes.
+* Review's effort derivation no longer fails in worktree-isolated sessions.
+* The browse skill documents the viewport command the Playwright CLI actually supports.
+* No user-visible change.
+* No user-visible change.
+* Reflect no longer files a record for a gap that is already fixed on the main branch.
+* Verification can now earn a passing stamp when a check regenerates a declared generated file, instead of forcing a second run.
+* No user-visible change.
+* No user-visible change.
+* No user-visible change beyond the generated CLAUDE.md citing a path that resolves for the consumer.
+* Shaping and review now check that a fail-closed rule written in skill prose says what happens on empty, unreadable and malformed input.
+* `issues/record.js` split into cohesive sub-modules for maintainability; no behavior change.
+* Subagent-driven builds now fix a deferred review finding that qualifies for an immediate fix instead of handing it to the console as a follow-up.
+* Wrap-up ledgers no longer reach main when a run's PR is merged before the run finishes.
+* None - internal conformance test only.
+* No user-facing change.
+* QA stories in the legacy format now set the browser viewport with the command the Playwright CLI actually supports.
+* No user-visible change — agent harness reliability fix.
+* `/tidy` no longer arms auto-merge on a record-linked PR whose acceptance labeling never landed.
+* No user-visible change.
+* Review lens agents no longer trip the worktree guard when they write a throwaway probe file.
+* Closed a gap in the worktree-isolated Bash guidance where a documented skill's own canonical one-liner collided with the harness's compound-command refusal.
+* No user-facing change.
+* Marker-comment trust checks written as jq in skill prose now work on the GitHub REST and MCP transports, not just the `gh` CLI.
+* Scheduled routines now default to Claude Sonnet 5.5 (claude-sonnet-5-5). Existing routines report Drifted in /claude-tweaks:routine status until you run /claude-tweaks:routine update on each.
+* A review run by a dispatched agent now names its single-reader fallback at every effort tier, and the review summary and PR verdict comment show a coverage caveat whenever a lens fell back to one reader.
+
 ## [6.151.1](https://github.com/thn-inc/claude-tweaks/compare/v6.151.0...v6.151.1) (2026-10-22)
 
 

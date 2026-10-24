@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { detectIntegrationModel, resolvePolicyKeys, POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
+const { readText } = require('./helpers/read-skill');
 
 const RESOLVE_POLICY = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 const REPO_ROOT = path.join(__dirname, '..');
@@ -154,7 +155,7 @@ test('CLI: this repo resolves a valid enum value regardless of policy.yml state 
 
 test('CLI: this repo pins integration-model: pr-first in policy.yml — resolves without shelling out to git/gh (AC1)', () => {
   const policyPath = path.join(REPO_ROOT, '.claude-tweaks', 'policy.yml');
-  const policyRaw = fs.readFileSync(policyPath, 'utf8');
+  const policyRaw = readText(policyPath);
   assert.match(policyRaw, /^integration-model:\s*pr-first\s*$/m, '.claude-tweaks/policy.yml must pin integration-model: pr-first');
   const out = runResolvePolicy(['--values', 'integration-model'], { cwd: REPO_ROOT });
   assert.strictEqual(out.trim(), 'pr-first');
@@ -228,7 +229,7 @@ test('every file naming integration-model cites the shared fragment or is allowl
   const offenders = [];
   for (const file of walk(SKILLS_DIR)) {
     const rel = path.relative(SKILLS_DIR, file);
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     if (!TOKEN.test(text)) continue;
     if (ALLOWLIST.has(rel)) continue;
     if (text.includes(FRAGMENT)) continue;
@@ -242,7 +243,7 @@ test('the allowlist has no stale entries', () => {
   for (const rel of ALLOWLIST.keys()) {
     const full = path.join(SKILLS_DIR, rel);
     if (!fs.existsSync(full)) { stale.push(`${rel} (file no longer exists)`); continue; }
-    const text = fs.readFileSync(full, 'utf8');
+    const text = readText(full);
     if (!TOKEN.test(text)) { stale.push(`${rel} (no longer mentions integration-model — drop the entry)`); continue; }
     if (text.includes(FRAGMENT)) stale.push(`${rel} (cites ${FRAGMENT} — the entry is redundant, drop it)`);
   }

@@ -197,6 +197,71 @@ test('reconcile-background: the same abandoned interrupted run IS archived when 
   assert.equal(state.status, 'clean');
 });
 
+// The status file's `summary` is built from reconcile()'s result. Drives the
+// real `reconcile-background` branch of main() in-process with reconcile()
+// stubbed (the same module-object stub tests/reconcile.test.js's AC3.1 uses),
+// so no git remote or `gh` is involved. process.cwd() is what that branch
+// reads, so the test switches into the fixture repo and back.
+async function backgroundSummaryFor(result) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-summary-'));
+  git(['init', '-q', '--initial-branch=main'], dir);
+  const { main } = require('../../../plugin/bin/hooks');
+  const reconcileMod = require('../../../plugin/bin/lib/reconcile');
+  const originalReconcile = reconcileMod.reconcile;
+  const originalWrite = process.stdout.write;
+  const originalCwd = process.cwd();
+  reconcileMod.reconcile = async () => result;
+  process.stdout.write = () => true;
+  try {
+    process.chdir(dir);
+    assert.equal(await main(['node', 'hooks.js', 'reconcile-background']), 0);
+  } finally {
+    process.chdir(originalCwd);
+    reconcileMod.reconcile = originalReconcile;
+    process.stdout.write = originalWrite;
+  }
+  return JSON.parse(fs.readFileSync(path.join(dir, '.claude-tweaks', 'reconcile-background-status.json'), 'utf8')).summary;
+}
+
+test('reconcile-background summary: counts each check\'s taken entries (characterization, incl. prunedRemote)', async () => {
+  const summary = await backgroundSummaryFor({
+    claims: [{ action: 'released' }, { action: 'skipped' }],
+    runs: [{ action: 'archived' }],
+    branches: [{ kind: 'branch', action: 'delete' }, { kind: 'branch', action: 'tag-and-delete' }, { kind: 'tag', action: 'delete' }],
+    remoteBranches: [{ action: 'delete' }, { action: 'delete' }, { action: 'skip' }],
+    worktrees: [{ action: 'reaped' }, { action: 'skipped', path: '/w/a', reason: 'pr-open' }, { action: 'skipped', path: '/w/b', reason: 'in use by a live session' }],
+    skipped: [{ check: 'release', reason: 'x' }],
+  });
+  assert.equal(summary.released, 1);
+  assert.equal(summary.archived, 1);
+  assert.equal(summary.archivedBranches, 2);
+  assert.equal(summary.prunedRemote, 2);
+  assert.equal(summary.reaped, 1);
+  assert.deepEqual(summary.notableWorktrees, [{ path: '/w/a', reason: 'pr-open' }]);
+  assert.deepEqual(summary.skipped, [{ check: 'release', reason: 'x' }]);
+});
+
+test('reconcile-background summary: ledger-residue PRs opened and notable per-path skips (#3812)', async () => {
+  const summary = await backgroundSummaryFor({
+    ledgerResidue: [
+      { path: 'docs/plans/a-ledger.md', action: 'pr-opened', reason: 'removal-pr-opened', prNumber: 90 },
+      { path: 'docs/plans/b-ledger.md', action: 'pr-opened', reason: 'removal-pr-opened', prNumber: 90 },
+      { path: 'docs/plans/c-ledger.md', action: 'skip', reason: 'ledger-has-open-rows' },
+      { path: 'docs/plans/d-ledger.md', action: 'skip', reason: 'removal-pr-open', prNumber: 88 },
+      { path: 'docs/plans/e-ledger.md', action: 'skip', reason: 'run-live' },
+      { path: 'docs/plans/f-ledger.md', action: 'skip', reason: 'removal-pr-declined', prNumber: 70 },
+    ],
+  });
+  assert.equal(summary.ledgerResiduePrOpened, 1, 'two paths in one PR count as one PR opened');
+  assert.deepEqual(summary.notableLedgerResidue, [
+    { path: 'docs/plans/c-ledger.md', reason: 'ledger-has-open-rows' },
+    { path: 'docs/plans/d-ledger.md', reason: 'removal-pr-open', prNumber: 88 },
+  ]);
+  const empty = await backgroundSummaryFor({});
+  assert.equal(empty.ledgerResiduePrOpened, 0);
+  assert.deepEqual(empty.notableLedgerResidue, []);
+});
+
 // Task 10 review Important #3: pin the FAST_CHECKS/BACKGROUND_CHECKS
 // partition invariant — a future check added to reconcile/index.js's
 // ALL_CHECKS that isn't also added to exactly one of these two lists must

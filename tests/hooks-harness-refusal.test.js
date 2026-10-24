@@ -3,9 +3,9 @@
 // and both hook consumers derive from it.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict } = require('./helpers/strip-comments');
+const { readText } = require('./helpers/read-skill');
 const {
   REFUSAL_FRAGMENTS,
   HARNESS_ISOLATION_REFUSAL_RE,
@@ -38,7 +38,7 @@ test('harness-refusal: post-tool-use-failure re-exports the same RegExp object',
 
 test('harness-refusal: neither hook module spells the refusal text itself (one-place change)', () => {
   for (const file of ['post-tool-use-failure.js', 'bash-prefilter.js']) {
-    const raw = fs.readFileSync(path.join(HOOKS_DIR, file), 'utf8');
+    const raw = readText(path.join(HOOKS_DIR, file));
     const stripped = stripComments(raw);
     assert.strictEqual(stripperVerdict(raw, stripped), 'ok', `${file}: comment stripper must parse cleanly`);
     // Shorter respellings too: a partial copy ('Refusing to run') must not slip through either.

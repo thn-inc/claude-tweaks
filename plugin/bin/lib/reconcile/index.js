@@ -19,6 +19,7 @@ const { releaseMerged } = require('./release-merged');
 const { archiveMerged } = require('./archive-merged');
 const { archiveBranches } = require('./archive-branches');
 const { pruneRemote } = require('./prune-remote');
+const { ledgerResidue } = require('./ledger-residue');
 const { consoleExecuteDetect } = require('./console-execute');
 const { sharedFetch, sharedFetchAsync } = require('./shared-fetch');
 const { repairOriginHead } = require('./origin-head');
@@ -29,14 +30,14 @@ const {
 const { formatReconcileSummary, archivedCountFromRunsResult } = require('./residue-summary');
 
 // Execution order (mirror, red-tip, console, release, archive,
-// archive-branches, remote-prune, reap) is significant — see the ordering
+// archive-branches, remote-prune, ledger-residue, reap) is significant — see the ordering
 // comment above the release/archive/archive-branches/reap dispatch below.
 // red-tip runs immediately after mirror specifically so it reads the ref the
 // shared fetch (shared-fetch.js, #820 D2 — formerly mirror-ff.js's own
 // fetch) just refreshed, rather than fetching a second time (#561). This
 // array is the requested-subset default only; it is never iterated to
 // determine dispatch order.
-const ALL_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'archive', 'archive-branches', 'remote-prune', 'console'];
+const ALL_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'console'];
 
 // Checks that read state another check produces (#3630). A requested check
 // whose `check` is neither requested itself nor covered by a `satisfiedBy`
@@ -74,7 +75,7 @@ function expandChecks(checks) {
 }
 
 // opts: { dryRun?: boolean, checks?: string[], cwd?: string, sessionId?: string, budgetMs?: number }
-// -> { mirror, worktrees, claims, runs, branches, console, skipped }
+// -> { mirror, redTip, worktrees, claims, runs, branches, remoteBranches, ledgerResidue, console, skipped }
 // `sessionId`, when the caller has one, threads through to archiveMerged's
 // own `isAbandonedInterrupted` ownership check (archive-merged.js) — omitted
 // (undefined), archiveMerged falls back to its own
@@ -89,7 +90,7 @@ async function reconcile(opts = {}) {
   const requestedChecks = Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS;
   let checks = expandChecks(requestedChecks);
   const cwd = opts.cwd || process.cwd();
-  const result = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: [] };
+  const result = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, skipped: [] };
 
   // Declined-learning store prune (#1399) — local, gitignored bookkeeping unrelated to git/
   // GitHub reachability, so it runs unconditionally on every reconcile pass regardless of
@@ -202,7 +203,7 @@ async function reconcile(opts = {}) {
         result.skipped.push({ check: 'reap', reason: 'deferred', count: legacy.deferred });
       }
     }
-    result.skipped.push({ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' });
+    result.skipped.push({ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' });
     return result;
   }
 
@@ -296,7 +297,7 @@ async function reconcile(opts = {}) {
   // timeout. Created once here via require(...).createBudget() rather than a
   // module-load-time destructure, so a test's
   // `require('./budget').createBudget = fn` monkeypatch reaches this call
-  // site. Checked before each of the 8 dispatch blocks below, in dispatch
+  // site. Checked before each of the 9 dispatch blocks below, in dispatch
   // order; each guard's slice is "every requested check from here on",
   // so a budget exhausted mid-pass reports the whole remainder in one
   // `skipped` entry and returns immediately rather than running a partial
@@ -311,7 +312,7 @@ async function reconcile(opts = {}) {
   // THIS pass — created fresh every reconcile() call (never a module-level
   // singleton), so nothing here survives across passes or processes.
   const issueListCache = createIssueListCache();
-  const DISPATCH_ORDER = ['mirror', 'red-tip', 'console', 'release', 'archive', 'archive-branches', 'remote-prune', 'reap'];
+  const DISPATCH_ORDER = ['mirror', 'red-tip', 'console', 'release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
   function overBudget(remainingFromHere) {
     if (!budget.exceeded()) return false;
     const notYetRun = remainingFromHere.filter((c) => checks.includes(c));
@@ -463,7 +464,22 @@ async function reconcile(opts = {}) {
     }
   }
 
+  // Opens one removal PR for docs/plans/*-ledger.md residue on
+  // origin/{integration} (#3812). Sits after remote-prune because it reads the
+  // origin/{integration} ref the shared fetch just refreshed, and before reap,
+  // which stays last. Not gated on `sharedFetchOk`: when the shared fetch did
+  // not run or failed, `skipFetch` is false and the check fetches for itself.
   if (overBudget(DISPATCH_ORDER.slice(7))) return result;
+  if (checks.includes('ledger-residue')) {
+    const r = ledgerResidue({ cwd: root, integration, dryRun, skipFetch: fetchRan && sharedFetchOk });
+    if (r.failure) {
+      result.skipped.push({ check: 'ledger-residue', reason: r.failure });
+    } else {
+      result.ledgerResidue = r.entries;
+    }
+  }
+
+  if (overBudget(DISPATCH_ORDER.slice(8))) return result;
   if (checks.includes('reap')) {
     // #644 review fix: pass the caller's actual `cwd`, not the already-
     // resolved `root` every other dispatch line above uses. reapMerged's own

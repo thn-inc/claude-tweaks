@@ -2,7 +2,6 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 
 const {
@@ -12,6 +11,7 @@ const {
   compareTables,
 } = require('../../../plugin/bin/lib/skill-audit/anti-patterns.js');
 const { listSkillDirs, KNOWN_SKILLS } = require('../../../plugin/bin/lib/skill-audit/skill-catalog.js');
+const { readText } = require('../../helpers/read-skill');
 
 const SAMPLE = [
   '# Some skill',
@@ -129,7 +129,7 @@ test('every shipped skill has a parseable Anti-Patterns table', () => {
 
   let total = 0;
   for (const name of names) {
-    const md = fs.readFileSync(path.join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const md = readText(path.join(skillsDir, name, 'SKILL.md'));
     const rows = extractAntiPatternRows(md);
     assert.ok(rows.length > 0, `${name}/SKILL.md has no Anti-Pattern rows`);
     for (const row of rows) {

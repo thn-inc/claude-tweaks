@@ -1,8 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 // #1851: a docs-health record's `**Doc:**` field and title now render a
 // resolvable repo-relative path (docs/{id}.md), with the bare registry id
@@ -12,8 +12,8 @@ const path = require('path');
 // exemption, so a builder reads "ls it" rather than "grep for it".
 
 const ROOT = path.join(__dirname, '..');
-const SKILL = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'docs-health', 'SKILL.md'), 'utf8');
-const MATERIALIZE = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'flow', 'materialize.md'), 'utf8');
+const SKILL = readText(path.join(ROOT, 'plugin', 'skills', 'docs-health', 'SKILL.md'));
+const MATERIALIZE = readText(path.join(ROOT, 'plugin', 'skills', 'flow', 'materialize.md'));
 
 test('docs-health/SKILL.md Step 6 states the Doc:/Id: field split', () => {
   assert.match(SKILL, /`\*\*Doc:\*\*` field is a repo-relative path/);

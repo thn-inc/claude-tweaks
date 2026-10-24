@@ -149,6 +149,17 @@ test('shouldRunFull ORs hasFileRedirection into pre-tool-use only, never post-to
     'post-tool-use never consumes fileWriteTargets, so widening it here would cost every redirecting post-tool-use call for nothing');
 });
 
+// #3989: the prefilter applies the parser's heredoc-body stripping, so a `>`
+// inside a body never sends a call down the full path, while a redirect after
+// the closing delimiter, or one inside a shell-fed body, still does.
+test('#3989: hasFileRedirection ignores a heredoc body but sees a redirect after the delimiter or inside a shell-fed body', () => {
+  assert.strictEqual(hasFileRedirection('node x.js <<EOF\nif (a > 0) b();\nEOF'), false);
+  assert.strictEqual(hasFileRedirection('bash <<EOF\necho x > f.js\nEOF'), true);
+  assert.strictEqual(hasFileRedirection('node x.js <<EOF\na\nEOF\necho x > f.js'), true);
+  // Fix round 1 (#3989): an unterminated body keeps the text from its opener on.
+  assert.strictEqual(hasFileRedirection('node x.js <<EOF\nbody\necho x > f.js'), true);
+});
+
 test('fails open to "run" on anything it cannot read', () => {
   for (const event of ['pre-tool-use', 'post-tool-use']) {
     assert.strictEqual(shouldRunFull(event, null), true);

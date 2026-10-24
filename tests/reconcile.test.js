@@ -17,6 +17,7 @@ const { isWorktreeLocked } = require('../plugin/bin/lib/hooks/worktree-reap');
 const { reconcile, PREREQUISITES } = require('../plugin/bin/lib/reconcile');
 const { gitRepo } = require('./helpers/git-fixtures');
 const { skipUnderRoot } = require('./helpers/root');
+const { readText } = require('./helpers/read-skill');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -910,7 +911,7 @@ test('reconcile: local-merge project falls back to the legacy ancestry reap, ski
   const r = await reconcile({ cwd: dir });
   assert.strictEqual(r.mirror, null);
   assert.deepStrictEqual(r.worktrees, []); // legacy reap ran, found zero worktrees to consider
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
 });
 
 test('reconcile: local-merge with no resolvable integration branch at all resolves no-remote, never crashes', async () => {
@@ -1059,7 +1060,7 @@ test('reconcile: fresh clone with no origin/HEAD repairs it and resolves the int
   const r = await reconcile({ cwd: mainDir, checks: ['mirror'] });
 
   assert.ok(!r.skipped.some((s) => s.reason === 'no-remote'), `expected no no-remote skip, got ${JSON.stringify(r.skipped)}`);
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
   assert.deepStrictEqual(r.originHeadRepair, { outcome: 'repaired', branch: 'main' });
   assert.strictEqual(git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mainDir).trim(), 'refs/remotes/origin/main');
 });
@@ -1151,7 +1152,7 @@ test('reconcile: a concurrent-winner origin/HEAD still resolves even under a rec
   const r = await reconcile({ cwd: mainDir, checks: ['mirror'], cache });
 
   assert.deepStrictEqual(r.originHeadRepair, { outcome: 'skipped', reason: 'recent-failure', branch: 'main' });
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
 });
 
 test('reconcile: no origin remote keeps the no-remote skip unchanged and attempts no repair (#3132)', async () => {
@@ -1177,7 +1178,7 @@ test('reconcile: a policy-configured integration branch never triggers the origi
 });
 
 test('resolveIntegrationBranch stays offline: no fetch, ls-remote, or remote set-head in worktree-reap.js (#3132)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'worktree-reap.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'worktree-reap.js'));
   const start = src.indexOf('function resolveIntegrationBranch(');
   assert.ok(start >= 0, 'resolveIntegrationBranch not found');
   const end = src.indexOf('\n}\n', start);
@@ -1221,7 +1222,7 @@ test('reconcile: checks filter excludes reap -> local-merge project runs nothing
   const r = await reconcile({ cwd: dir, checks: ['mirror'] });
   // 'mirror' was requested but has no local-merge equivalent — nothing runs.
   assert.strictEqual(r.worktrees, null);
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
 });
 
 test('reconcile: reap dispatches strictly after release and archive in source order (load-bearing, not incidental — #408)', () => {
@@ -1232,7 +1233,7 @@ test('reconcile: reap dispatches strictly after release and archive in source or
   // Pinned structurally, the same way tests/hooks-gate-coverage.test.js
   // pins prose to code — a real ordering regression here has no other test
   // that would catch it without fabricating live PR/claim state.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'));
   const releaseIdx = src.indexOf("checks.includes('release')");
   const archiveIdx = src.indexOf("checks.includes('archive')");
   const reapIdx = src.lastIndexOf("checks.includes('reap')"); // the pr-first dispatch, not the local-merge fallback above it
@@ -1248,7 +1249,7 @@ test('reconcile: ALL_CHECKS includes red-tip immediately after mirror', () => {
 });
 
 test('reconcile: red-tip dispatches immediately after mirror in source order (load-bearing — reads the ref mirror-ff just fetched)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'));
   const mirrorIdx = src.indexOf("checks.includes('mirror')");
   const redTipIdx = src.indexOf("checks.includes('red-tip')");
   const consoleIdx = src.indexOf("checks.includes('console')");
@@ -1335,7 +1336,7 @@ test('expandChecks (#3630): adds mirror ahead of archive/red-tip and widens noth
 // The doc table is a hand-kept restatement of PREREQUISITES that every editor of
 // the table is told to follow, so it is pinned row for row to the exported object.
 test('docs/reconcile-checks.md prerequisite table matches PREREQUISITES row for row (#3630)', () => {
-  const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'reconcile-checks.md'), 'utf8');
+  const doc = readText(path.join(__dirname, '..', 'docs', 'reconcile-checks.md'));
   const rows = doc.split('\n').map((line) => /^\s*\| `([^`]+)` \| `([^`]+)` \| ((?:`[^`]+`(?:, )?)+) \|/.exec(line)).filter(Boolean);
   const fromDoc = {};
   for (const [, check, prerequisite, satisfiedBy] of rows) {
@@ -2059,9 +2060,9 @@ test('AC3.1/AC3.2: hooks.js reconcile: an explicit --checks subset runs unbounde
 });
 
 test('AC4.1: SessionStart and background reconcile call sites pass no budgetMs (default budget)', () => {
-  const sessionStart = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'session-start.js'), 'utf8');
+  const sessionStart = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'session-start.js'));
   assert.equal(sessionStart.includes('budgetMs'), false);
-  const hooksSrc = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js'), 'utf8');
+  const hooksSrc = readText(path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js'));
   assert.equal(hooksSrc.split('budgetMs').length - 1, 1, 'budgetMs occurs once in hooks.js — the reconcile CLI branch');
   const bgLine = hooksSrc.split('\n').find((l) => l.includes('checks: BACKGROUND_CHECKS'));
   assert.ok(bgLine, 'background reconcile call site found');
@@ -2486,31 +2487,28 @@ test('reconcile(): skipCacheStamp=true does not disturb a real pass\'s residueSu
 
 // AC1: reconcile() degrades within ~2s via the preflight when GitHub is
 // unreachable, instead of accumulating every check's own 5-10s timeout.
-test('AC1: a preflight failure resolves in well under the old per-check-timeout sum', async () => {
+test('AC1: a preflight failure skips the gh-dependent checks and still runs the mirror check', async () => {
   const { seedDir, mainDir } = pairedFixture();
   writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\n');
   const preflight = require('../plugin/bin/lib/reconcile/preflight');
   const original = preflight.ghHealthCheck;
   preflight.ghHealthCheck = () => ({ ok: false, reason: 'github-unreachable' });
-  const start = Date.now();
   let r;
   try {
     r = await reconcile({ cwd: mainDir, checks: ['mirror', 'release', 'remote-prune', 'console'] });
   } finally {
     preflight.ghHealthCheck = original;
   }
-  const elapsed = Date.now() - start;
   // Functional assertion: preflight gate produces exactly the expected skip
   // entry — mirror is excluded (pure git, no `gh` dependency) and still runs.
+  // The timing bound lives in perf/reconcile-time-bounds.test.js.
   assert.deepEqual(r.skipped, [{ check: 'release,remote-prune,console', reason: 'preflight-github-unreachable' }]);
   assert.deepEqual(r.mirror, { state: 'current', action: 'none' });
-  // Secondary timing assertion: the preflight-gated failure resolves quickly
-  assert.ok(elapsed < 2500, `preflight-gated failure took ${elapsed}ms, expected well under 2.5s`);
 });
 
 // AC2: total wall-clock time is bounded by the explicit budget regardless
 // of how much stale state exists.
-test('AC2: an exhausted budget bounds total reconcile() time regardless of remaining check count', async () => {
+test('AC2: an exhausted budget skips every remaining check as budget-exceeded', async () => {
   const { mainDir } = pairedFixture();
   fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
@@ -2523,12 +2521,13 @@ test('AC2: an exhausted budget bounds total reconcile() time regardless of remai
   const budgetMod = require('../plugin/bin/lib/reconcile/budget');
   const original = budgetMod.createBudget;
   budgetMod.createBudget = () => ({ exceeded: () => true, remainingMs: () => 0 });
-  const start = Date.now();
+  let r;
   try {
-    await reconcile({ cwd: mainDir, checks: require('../plugin/bin/lib/reconcile').ALL_CHECKS });
+    r = await reconcile({ cwd: mainDir, checks: require('../plugin/bin/lib/reconcile').ALL_CHECKS });
   } finally {
     budgetMod.createBudget = original;
     preflight.ghHealthCheck = originalHealth;
   }
-  assert.ok(Date.now() - start < 1000, 'a pre-exhausted budget must skip every check near-instantly');
+  // The near-instant bound lives in perf/reconcile-time-bounds.test.js; here, the budget skip it guards.
+  assert.deepEqual(r.skipped, [{ check: 'mirror,red-tip,console,release,archive,archive-branches,remote-prune,ledger-residue,reap', reason: 'budget-exceeded' }]);
 });
