@@ -5,7 +5,12 @@ const path = require('path');
 const childProcess = require('child_process');
 
 const MAX_ANCESTOR_HOPS = 8;
-const PS_OPTS = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000, windowsHide: true };
+// `ps -o lstart=` prints in the caller's TZ and locale; the stored start time is compared by
+// equality across different processes, so pin both (a TZ/locale difference would otherwise
+// make a live owner look like pid reuse).
+function psEnv() {
+  return { ...process.env, LC_ALL: 'C', TZ: 'UTC' };
+}
 
 // #3845: Claude Code sets CLAUDE_PID to its own pid in every process it spawns
 // (its Bash tool and its hooks alike). Moved here from hooks/context.js, which
@@ -25,7 +30,8 @@ function pidStartTime(pid, deps = {}) {
     if ((deps.platform || process.platform) === 'win32') return null;
     if (!Number.isInteger(pid) || pid <= 0) return null;
     const run = deps.execFileSync || childProcess.execFileSync;
-    const out = run('ps', ['-o', 'lstart=', '-p', String(pid)], PS_OPTS);
+    const out = run('ps', ['-o', 'lstart=', '-p', String(pid)],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000, windowsHide: true, env: psEnv() });
     const text = typeof out === 'string' ? out.trim() : '';
     return text === '' ? null : text;
   } catch {
@@ -43,7 +49,8 @@ function ancestorClaudePid(deps = {}) {
     let pid = deps.ppid ?? process.ppid;
     for (let hop = 0; hop < MAX_ANCESTOR_HOPS; hop++) {
       if (!Number.isInteger(pid) || pid <= 0) return null;
-      const out = run('ps', ['-o', 'ppid=,comm=', '-p', String(pid)], PS_OPTS);
+      const out = run('ps', ['-o', 'ppid=,comm=', '-p', String(pid)],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000, windowsHide: true, env: psEnv() });
       const m = /^\s*(\d+)\s+(.+?)\s*$/.exec(typeof out === 'string' ? out : '');
       if (!m) return null;
       if (path.basename(m[2]) === 'claude') return pid;

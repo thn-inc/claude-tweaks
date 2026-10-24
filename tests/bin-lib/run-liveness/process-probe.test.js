@@ -51,6 +51,20 @@ test('pidStartTime: trims the ps output', () => {
     'Sat Oct 24 08:08:15 2026');
 });
 
+test('pidStartTime and ancestorClaudePid pin LC_ALL=C and TZ=UTC for ps, keeping the rest of the environment', () => {
+  const seen = [];
+  const runner = (cmd, args, opts) => { seen.push(opts); return args.includes('lstart=') ? 'Sat Oct 24 08:08:15 2026\n' : '1 claude\n'; };
+  pidStartTime(7, { platform: 'linux', execFileSync: runner });
+  ancestorClaudePid({ ppid: 7, platform: 'linux', execFileSync: runner });
+  assert.strictEqual(seen.length, 2);
+  for (const opts of seen) {
+    assert.strictEqual(opts.env.LC_ALL, 'C');
+    assert.strictEqual(opts.env.TZ, 'UTC');
+    assert.strictEqual(opts.env.PATH, process.env.PATH);
+    assert.strictEqual(opts.windowsHide, true);
+  }
+});
+
 test('AC15.1: resolveOwnerPid prefers env', () => {
   assert.deepStrictEqual(
     resolveOwnerPid({ CLAUDE_PID: '4242' }, { ancestorClaudePid: () => 999 }),
