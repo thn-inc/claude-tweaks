@@ -58,11 +58,11 @@ files:
 
 ### 6. Release from a main checkout reconcile has touched
 - **URL:** `/claude-tweaks:release` while local `main` carries unpushed `[reconcile] archive run …` commits from earlier pipeline archival
-- **Action:** Step 3 fetches and runs its review-tree check. The checkout is on `main`, 0 commits behind `origin/main`, and its tree differs only under `.claude-tweaks/pipelines/`, so the whole-branch review runs. Because `HEAD` and `origin/main` differ, the marker line records both shas. A checkout that fails the check stops before the console. Every stop line starts `review tree is not origin/main`, and each gets one recovery chosen by what failed:
-  - Behind: the line names the ahead/behind counts, and the recovery is `git -C "$RUN_ROOT" pull --rebase origin main`, then a bare `git push origin main`.
+- **Action:** Step 3 fetches and runs its review-tree check. The checkout is on `main`, 0 commits behind `origin/main`, and its tree differs only under `.claude-tweaks/pipelines/`, so the whole-branch review runs. Because `HEAD` and `origin/main` differ, the marker line records both shas. A checkout that fails the check stops before the console with a line starting `stopped before the console: review tree is not origin/main`, and one recovery chosen by what failed:
+  - Behind: the line names the ahead/behind counts, and the recovery is `git -C "$RUN_ROOT" pull --rebase origin main`, then a bare `git push origin main` only once nothing outside run dirs is still ahead.
   - Wrong branch: the line names the current branch, and the recovery is `git -C "$RUN_ROOT" switch main`.
   - Changes outside run dirs: the line lists the files that differ and points to a PR, with no push command.
-  - A failed fetch: git's own stderr (#4012).
+  - A failed fetch, or another git error: git's own stderr in place of that line (#4012).
 - **Should feel:** Archive bookkeeping never blocks a release; a real divergence stops it with the one command that fixes it.
 - **Should understand:** Commits ahead are fine only when they touch nothing outside run directories. The review's test gate runs against the tree it stands in, so that tree must match the range being tagged everywhere that ships.
 - **Red flags:** A release refused over `[reconcile] archive run` commits alone; a checkout behind `origin/main` let through; a stop line advising `git push` for local commits that change shipped files; a review run after a fetch that failed.

@@ -134,9 +134,18 @@ const STOP_FACTS = [
   [/switch \{branch\}/, 'the wrong-branch recovery switches back to {branch}'],
   [/review tree is not origin\/\{branch\} \(on \{current\}\)/, 'the wrong-branch stop line names the current branch'],
   [/review tree is not origin\/\{branch\} \(\{ahead\} ahead, 0 behind — changes outside run dirs\)/, 'the tree-differs stop line names the changes outside run dirs'],
-  [/git -C "\$RUN_ROOT" diff --name-only origin\/\{branch\} HEAD -- ':!\.claude-tweaks\/pipelines'/, 'the tree-differs case lists the changed files with diff --name-only'],
-  [/A failed fetch reports git's stderr verbatim/,'a failed fetch reports git stderr verbatim, not the counts line'],
+  [/list the files with `git -C "\$RUN_ROOT" diff --name-only origin\/\{branch\} HEAD -- ':!\.claude-tweaks\/pipelines'`/, 'the tree-differs case lists the changed files with diff --name-only'],
+  [/Print no push command for this case/, 'the tree-differs case prints no push command'],
+  [/the push only once `git -C "\$RUN_ROOT" diff --name-only origin\/\{branch\} HEAD -- ':!\.claude-tweaks\/pipelines'` prints nothing after the rebase/, 'the behind case pushes only when nothing outside run dirs is ahead after the rebase'],
+  [/A failed fetch, or any other git error the check prints to stderr[\s\S]{0,80}reports that stderr verbatim/, 'a failed fetch or other git error reports git stderr verbatim, not the counts line'],
 ];
+
+// The tree-differs bullet itself, from its stop line to the end of that list item.
+function treeDiffersBullet(stepThree) {
+  const m = stepThree.match(/^- Nothing behind[^\n]*$/m);
+  if (!m) throw new Error('extraction pattern is out of sync: no "- Nothing behind" bullet in Step 3');
+  return m[0];
+}
 
 function missingStopFacts(text) {
   return STOP_FACTS.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
@@ -158,6 +167,14 @@ test('AC2.3/AC3.1: each stop-line fact can actually go red on its own (discrimin
     assert.notEqual(doctored, stepThree, `anchor text for "${fact}" not found — proof cannot discriminate`);
     assert.deepEqual(missingStopFacts(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
   }
+});
+
+test('AC2.3: the tree-differs recovery carries no push command', () => {
+  const bullet = treeDiffersBullet(stepThreeOf(readText(SKILL)));
+  assert.doesNotMatch(bullet, /git push/, 'the changes-outside-run-dirs recovery must not tell anyone to push them');
+  const doctored = bullet.replace('Print no push command for this case.', 'Then publish them with a bare `git push origin {branch}`.');
+  assert.notEqual(doctored, bullet, 'go-red anchor "Print no push command for this case." not found');
+  assert.match(doctored, /git push/, 'go-red: a push added to the bullet must be visible to the assertion');
 });
 
 test('marker line keeps {k} and adds the two-sha clause', () => {
