@@ -640,3 +640,41 @@ test('the default stampStatus spawns verify.js with the recorded worktree as cwd
   assert.equal(result.status.head, head);
   assert.notEqual(git(['rev-parse', 'HEAD'], process.cwd()), head, 'control: the test process cwd is a different repo');
 });
+
+// ---- #4006: a complete composed per-suite verdict stands in for the single stamp ----
+
+test('AC8.1: a complete composed verdict with no single stamp verifies HEAD', () => {
+  const status = { present: false, verifiedHead: true, reportPath: null, suiteComposed: { complete: true } };
+  const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
+    stampStatus: stampStub(status).fn,
+    exists: () => false,
+  });
+  assert.deepEqual(result, { verified: true, reason: null, status });
+});
+
+test('AC8.1: no stamp and no composition is still stamp-absent', () => {
+  const status = { present: false, verifiedHead: false, reportPath: null, suiteComposed: null };
+  const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
+    stampStatus: stampStub(status).fn,
+    exists: () => true,
+  });
+  assert.deepEqual(result, { verified: false, reason: 'stamp-absent', status });
+});
+
+test('AC8.1: a single stamp whose reportPath is gone is still report-missing', () => {
+  const status = { present: true, verifiedHead: true, reportPath: '/r.json', suiteComposed: null };
+  const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
+    stampStatus: stampStub(status).fn,
+    exists: () => false,
+  });
+  assert.deepEqual(result, { verified: false, reason: 'report-missing', status });
+});
+
+test('an incomplete composition does not bypass the single-stamp checks', () => {
+  const status = { present: false, verifiedHead: false, reportPath: null, suiteComposed: { complete: false } };
+  const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
+    stampStatus: stampStub(status).fn,
+    exists: () => true,
+  });
+  assert.deepEqual(result, { verified: false, reason: 'stamp-absent', status });
+});
