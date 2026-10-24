@@ -556,6 +556,15 @@ function matchRedirectOperator(tok) {
 const DATA_READER_WORDS = new Set(['cat', 'tee', 'git', 'gh', 'read', 'node', 'python', 'python3', 'jq', 'wc']);
 // Commands that run what follows them: followed to the program they run.
 const READER_WRAPPER_WORDS = new Set(['sudo', 'doas', 'env', 'nice', 'time', 'nohup', 'command', 'exec']);
+// `git` reads its body as data only for these subcommands. Any other can run its
+// arguments as a program (`git bisect run sh`, `git rebase -x sh`) and so is no reader.
+const GIT_DATA_SUBCOMMANDS = new Set(['commit', 'tag', 'notes', 'apply', 'am', 'hash-object', 'interpret-trailers', 'update-ref', 'cat-file']);
+
+// A program token names its program unambiguously only as a bare word or an absolute
+// path; `./cat` and `bin/cat` run whatever file sits there, not the reader `cat`.
+function isBareOrAbsoluteProgram(tok) {
+  return !tok.includes('/') || /^(?:\/|[A-Za-z]:\/)/.test(tok);
+}
 
 // The program names one raw token may stand for, lowercased, with quotes and
 // backslashes removed: `bas\h`, `'/bin/bash'`, `C:\bin\sh.exe` each yield a name.
@@ -575,21 +584,28 @@ function programNames(tok) {
 // the substitution); NAME=value assignments and reader wrappers (sudo, env, ...) are
 // skipped together with the flags and assignments that follow a wrapper, so a wrapper
 // option's value (`sudo -u bob`) lands on the program slot and fails; the program word
-// must then resolve ($NAME and backticks do not) and every spelling the parser can read
-// from it must be a reader. Fails closed, so the body stays visible to the scan.
+// must then resolve ($NAME and backticks do not), be a bare name or an absolute path,
+// and every spelling the parser can read from it must be a reader; `git` is a reader
+// only for a data subcommand (GIT_DATA_SUBCOMMANDS), found past its global flags. The
+// group check reads the segment with its quoted spans removed (tokenize has already
+// dropped the quotes), so a quoted `(.a)` is data, not a group. Fails closed, so the
+// body stays visible to the scan.
 function lineFeedsOnlyDataReaders(lineText) {
   for (const seg of splitSegments(lineText)) {
     if (seg.trim() === '') continue;
+    const unquoted = seg.replace(/"[^"]*"|'[^']*'/g, '').split(/\s+/);
+    if (unquoted.some((t) => /^[({]/.test(t) || t === '}' || /[<>]\(/.test(t))) return false;
     const { tokens } = tokenize(seg.trim());
-    if (tokens.some((t) => /^[({]/.test(t) || t === '}' || /[<>]\(/.test(t))) return false;
     let p = 0;
     while (p < tokens.length && SIMPLE_ASSIGNMENT_RE.test(tokens[p])) p += 1;
-    while (p < tokens.length && programNames(tokens[p]).every((n) => READER_WRAPPER_WORDS.has(n))) {
+    while (p < tokens.length && isBareOrAbsoluteProgram(tokens[p]) && programNames(tokens[p]).every((n) => READER_WRAPPER_WORDS.has(n))) {
       p += 1;
       while (p < tokens.length && (tokens[p].startsWith('-') || SIMPLE_ASSIGNMENT_RE.test(tokens[p]))) p += 1;
     }
-    if (p >= tokens.length || /[$`]/.test(tokens[p])) return false;
-    if (!programNames(tokens[p]).every((n) => DATA_READER_WORDS.has(n))) return false;
+    if (p >= tokens.length || /[$`]/.test(tokens[p]) || !isBareOrAbsoluteProgram(tokens[p])) return false;
+    const names = programNames(tokens[p]);
+    if (!names.every((n) => DATA_READER_WORDS.has(n))) return false;
+    if (names.includes('git') && !GIT_DATA_SUBCOMMANDS.has(tokens[skipGlobalFlags(tokens, p + 1, '/').index])) return false;
   }
   return true;
 }
@@ -929,12 +945,25 @@ function inPlaceEditTargets(rest, valueFlags, scriptFlags) {
   return programSupplied ? positionals : positionals.slice(1);
 }
 
+// Drops heredoc (`<<EOF`, `<<-EOF`) and here-string (`<<<x`) operator tokens, and the
+// word after a bare `<<`/`<<-`/`<<<`, so they are not read as a write shape's files.
+function dropHeredocOperators(tokens) {
+  const out = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (!tokens[i].startsWith('<<')) { out.push(tokens[i]); continue; }
+    if (/^<<<?-?$/.test(tokens[i])) i += 1;
+  }
+  return out;
+}
+
 function fileWriteTargets(command, cwd) {
   const targets = [];
-  forEachCommandSegment(stripHeredocBodies(command), cwd, (t, effCwd) => {
+  forEachCommandSegment(stripHeredocBodies(command), cwd, (tokens, effCwd) => {
     // Redirection has no command word, so it runs for every segment
     // regardless of t[0] — never gated by the WRITE_SHAPES check below (#3080).
-    for (const file of redirectWriteTargets(t, effCwd)) targets.push({ action: 'write', file });
+    for (const file of redirectWriteTargets(tokens, effCwd)) targets.push({ action: 'write', file });
+    // A heredoc/here-string operator is input, never a file the shape writes.
+    const t = dropHeredocOperators(tokens);
     if (!WRITE_SHAPES.includes(t[0])) return;
     if (t[0] === 'tee') {
       // tee genuinely writes to EVERY non-flag argument, not just the

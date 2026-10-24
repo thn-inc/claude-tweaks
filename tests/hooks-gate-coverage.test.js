@@ -509,51 +509,58 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
 });
 
 // #4149: a body is stripped only when the opener line feeds it to a known data reader
-// (an allowlist), not whenever no shell name shows up (a denylist).
-test('#4149: a body fed to a non-shell executor or a glob-named shell stays visible', () => {
+// (an allowlist), not whenever no shell name shows up (a denylist). Each case is its
+// own test, so one regression going red never hides the others.
+{
   const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
-  for (const cmd of [
-    'make -f - <<EOF\nall:\n\techo x > f.js\nEOF',
-    'at now <<EOF\necho x > f.js\nEOF',
-    '/bin/ba[s]h <<EOF\necho x > f.js\nEOF',
-    'xargs sh -c x <<EOF\necho x > f.js\nEOF',
-  ]) {
-    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), f, JSON.stringify(cmd));
+  const b = [{ action: 'write', file: path.resolve('/r/x', 'f.js') }];
+  const keepCases = [
+    ['a non-shell executor (make -f -)', 'make -f - <<EOF\nall:\n\techo x > f.js\nEOF', f],
+    ['a non-shell executor (at now)', 'at now <<EOF\necho x > f.js\nEOF', f],
+    ['a glob-named shell (/bin/ba[s]h)', '/bin/ba[s]h <<EOF\necho x > f.js\nEOF', f],
+    ['xargs running a shell', 'xargs sh -c x <<EOF\necho x > f.js\nEOF', f],
+    ['a brace group whose consumer is on a later line', '{ cat <<EOF\necho x > f.js\nEOF\n} | sh', f],
+    ['a subshell group whose consumer is on a later line', '(cat <<EOF\necho x > f.js\nEOF\n) | sh', f],
+    ['sudo with an option value (sudo -u bob node)', 'sudo -u bob node x.js <<EOF\necho x > f.js\nEOF', f],
+    ['a program name spelled two ways (ca\\t)', 'ca\\t <<EOF\necho x > f.js\nEOF', f],
+    ['a non-reader segment before a reader (cd x && node)', 'cd x && node y.js <<EOF\necho x > f.js\nEOF', b],
+    ['git bisect run sh (git running a shell)', 'git bisect run sh <<EOF\necho x > f.js\nEOF', f],
+    ['git rebase -x sh (git running a shell)', 'git rebase -x sh HEAD~1 <<EOF\necho x > f.js\nEOF', f],
+    ['a path-qualified relative program (./cat)', './cat <<EOF\necho x > f.js\nEOF', f],
+  ];
+  for (const [label, cmd, expected] of keepCases) {
+    test(`#4149: a body fed to ${label} stays visible`, () => {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
+    });
   }
-});
 
-test('#4149: a group opened on the opener line keeps its body (consumer on a later line)', () => {
-  const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
-  assert.deepStrictEqual(fileWriteTargets('{ cat <<EOF\necho x > f.js\nEOF\n} | sh', '/r'), f);
-  assert.deepStrictEqual(fileWriteTargets('(cat <<EOF\necho x > f.js\nEOF\n) | sh', '/r'), f);
-});
-
-test('#4149: a wrapper is followed to the program it runs, failing closed on an option value', () => {
-  const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
-  assert.deepStrictEqual(fileWriteTargets('sudo node x.js <<EOF\nif (a > 0) b();\nEOF', '/r'), []);
-  assert.deepStrictEqual(fileWriteTargets('env FOO=1 node x.js <<EOF\nif (a > 0) b();\nEOF', '/r'), []);
-  assert.deepStrictEqual(fileWriteTargets('sudo -u bob node x.js <<EOF\necho x > f.js\nEOF', '/r'), f);
-});
-
-test('#4149: a program name the parser can spell two ways counts only when both are readers', () => {
-  // `ca\t` reads as `cat` by one rule and as `t` by the other.
-  assert.deepStrictEqual(fileWriteTargets('ca\\t <<EOF\necho x > f.js\nEOF', '/r'), [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
-});
-
-test('#4149: every command on the opener line must be a reader', () => {
-  assert.deepStrictEqual(fileWriteTargets('cd x && node y.js <<EOF\necho x > f.js\nEOF', '/r'),
-    [{ action: 'write', file: path.resolve('/r/x', 'f.js') }]);
-});
-
-test('#4149: common reader shapes still strip', () => {
-  for (const cmd of [
-    'git commit -F - <<EOF\nfix: a > b\nEOF',
-    'gh pr create --body-file - <<EOF\na > b\nEOF',
-    'python3 - <<EOF\nif a > 0: pass\nEOF',
-    'cat <<EOF\nnothing here\nEOF',
-  ]) {
-    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], JSON.stringify(cmd));
+  const stripCases = [
+    ['sudo node', 'sudo node x.js <<EOF\nif (a > 0) b();\nEOF'],
+    ['env FOO=1 node', 'env FOO=1 node x.js <<EOF\nif (a > 0) b();\nEOF'],
+    ['git commit -F -', 'git commit -F - <<EOF\nfix: a > b\nEOF'],
+    ['git -C x commit -F -', 'git -C x commit -F - <<EOF\nfix: a > b\nEOF'],
+    ['gh pr create --body-file -', 'gh pr create --body-file - <<EOF\na > b\nEOF'],
+    ['python3 -', 'python3 - <<EOF\nif a > 0: pass\nEOF'],
+    ['bare cat', 'cat <<EOF\nnothing here\nEOF'],
+    ['an absolute-path reader (/bin/cat)', '/bin/cat <<EOF\na > b\nEOF'],
+    ['a quoted jq filter with parentheses', 'jq "(.a)" <<EOF\na > b\nEOF'],
+    ['a quoted node -e with parentheses', "node -e '(async()=>{})()' <<EOF\na > b\nEOF"],
+  ];
+  for (const [label, cmd] of stripCases) {
+    test(`#4149: a body fed to ${label} is still stripped`, () => {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), []);
+    });
   }
+}
+
+test('#4149: a shell loop on the opener line keeps its body (deliberate fail-closed tradeoff)', () => {
+  const targets = fileWriteTargets('while read l; do echo "$l"; done <<EOF\na > b\nEOF', '/r');
+  assert.ok(targets.some((t) => t.file === path.resolve('/r', 'b')),
+    'a non-reader segment (`while read l`) keeps the body visible even though this loop only reads it: the fail-closed side of the allowlist');
+});
+
+test('#4149: tee with a heredoc reports only its file, not the heredoc operator', () => {
+  assert.deepStrictEqual(fileWriteTargets('tee out.txt <<EOF\na > b\nEOF', '/r'), [{ action: 'write', file: path.resolve('/r', 'out.txt') }]);
 });
 
 test('#3989: stripHeredocBodies keeps the opener line and its newline, and drops the body and closing delimiter', () => {
