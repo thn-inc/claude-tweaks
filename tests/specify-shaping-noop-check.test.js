@@ -10,8 +10,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { run } = require('../plugin/bin/compose-record');
+const { readText } = require('./helpers/read-skill');
 
-const readFlat = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\s+/g, ' ');
+const readFlat = (rel) => readText(path.join(__dirname, '..', rel)).replace(/\s+/g, ' ');
 const SHAPING = readFlat('plugin/skills/specify/shaping-mode.md');
 const READBACK = readFlat('plugin/skills/specify/shaping-mode-readback.md');
 

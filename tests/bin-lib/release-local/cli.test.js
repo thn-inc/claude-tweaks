@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { run, parseArgs, defaultDeps, writeInsideRoot } = require('../../../plugin/bin/release-local.js');
+const { readText } = require('../../helpers/read-skill');
 
 const mkTmpDir = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 
@@ -12,7 +13,7 @@ const mkTmpDir = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 // reused here so the CLI-level dry-run assertions exercise byte-identical content
 // to a real project's manifest, not a hand-typed minimal string.
 const FIXTURES = path.join(__dirname, 'fixtures');
-const readFixture = (name) => fs.readFileSync(path.join(FIXTURES, name), 'utf8');
+const readFixture = (name) => readText(path.join(FIXTURES, name));
 
 test('writeInsideRoot: refuses a symlinked leaf and a directory whose real location is outside the root; writes a plain file', () => {
   const root = mkTmpDir('release-local-root-');

@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseRoutineTemplate } = require('../plugin/bin/lib/routine-template-parser.js');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 const CRON_RE = /^\S+\s+\S+\s+\S+\s+\S+\s+\S+$/;
@@ -128,14 +129,14 @@ for (const templatePath of findTemplates()) {
 // tests notices when the block loses a part or its version line goes missing —
 // and a kernel missing its branch-sync paragraph reaches every routine at once.
 test('the schema declares an integer kernel_version adjacent to the kernel block', () => {
-  const schema = fs.readFileSync(path.join(SKILLS_DIR, '_shared', 'routine-template-schema.md'), 'utf8');
+  const schema = readText(path.join(SKILLS_DIR, '_shared', 'routine-template-schema.md'));
   const m = schema.match(/^kernel_version: (\d+)$/m);
   assert.ok(m, 'kernel_version literal line missing');
   assert.ok(Number(m[1]) >= 1);
 });
 
 test('the kernel block carries its four parts in order', () => {
-  const schema = fs.readFileSync(path.join(SKILLS_DIR, '_shared', 'routine-template-schema.md'), 'utf8');
+  const schema = readText(path.join(SKILLS_DIR, '_shared', 'routine-template-schema.md'));
   const section = schema.split('## Standard prompt kernel')[1];
   assert.ok(section, 'schema must carry a "## Standard prompt kernel" section');
   const rawBlock = section.split('```')[1];
@@ -168,7 +169,7 @@ test('the kernel block carries its four parts in order', () => {
 // value's argument, nothing else.
 test('code-health/routine-template.yml: parameterless template has no focus field and its kickoff carries no focus= argument (AC4/IL-115 regression pin)', () => {
   const templatePath = path.join(SKILLS_DIR, 'code-health', 'routine-template.yml');
-  const tpl = parseRoutineTemplate(fs.readFileSync(templatePath, 'utf8'));
+  const tpl = parseRoutineTemplate(readText(templatePath));
   assert.equal(
     tpl.focus,
     undefined,
@@ -182,7 +183,7 @@ test('code-health/routine-template.yml: parameterless template has no focus fiel
 });
 
 test('instantiated record schema documents webhook_triggers as an optional field', () => {
-  const schema = fs.readFileSync(path.join(SKILLS_DIR, '_shared', 'routine-template-schema.md'), 'utf8');
+  const schema = readText(path.join(SKILLS_DIR, '_shared', 'routine-template-schema.md'));
   assert.match(schema, /\|\s*`webhook_triggers`\s*\|\s*array of objects\s*\|\s*no\s*\|/);
   assert.match(schema, /webhook_trigger_id/);
   assert.match(schema, /RemoteTrigger.*create_webhook_trigger|create_webhook_trigger.*RemoteTrigger/);

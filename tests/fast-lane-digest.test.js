@@ -6,12 +6,13 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const DIGEST_PATH = path.join(ROOT, 'plugin', 'skills', '_shared', 'fast-lane-digest.md');
 
 function read(relPath) {
-  return fs.readFileSync(path.join(ROOT, relPath), 'utf8');
+  return readText(path.join(ROOT, relPath));
 }
 
 test('fast-lane-digest.md exists', () => {

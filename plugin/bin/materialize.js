@@ -93,7 +93,7 @@ function computeDrift(sha, deps) {
 // Security fix (whole-branch pre-release review, base b9c8bbd86): a
 // `Premise-check:` line is body text — anyone who can create or edit the
 // record's issue can write one, regardless of whether it was actually
-// composed by specShapedBody's premiseCheck param (record.js's own comment
+// composed by specShapedBody's premiseCheck param (record-payload.js's own comment
 // states that as a convention, never an enforced gate). Trust it only when
 // GitHub itself attests the issue author has a real relationship to this
 // repo (author_association, from the REST API — not body content, which is

@@ -14,12 +14,12 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SKILLS = path.join(ROOT, 'plugin', 'skills');
-const read = (...p) => fs.readFileSync(path.join(SKILLS, ...p), 'utf8');
+const read = (...p) => readText(path.join(SKILLS, ...p));
 
 const REVIEW_STEPS = read('review', 'code-mode-steps.md');
 // Empirical Premise-Check Deliverables moved to empirical-premise-check-deliverables.md

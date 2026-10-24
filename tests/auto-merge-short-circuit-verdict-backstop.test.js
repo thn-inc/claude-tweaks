@@ -18,12 +18,13 @@ const { execFileSync } = require('node:child_process');
 const { VERDICT_STEPS, verdictText } = require('../plugin/bin/lib/dispatch/merge-verdict');
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
 const { resolveAll } = require('../plugin/bin/lib/console/resolve');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const collapse = (s) => s.replace(/\s+/g, ' ');
 const SHORT_CIRCUIT_PATH = path.join(ROOT, 'plugin/skills/wrap-up/auto-merge-short-circuit.md');
 const SETTLE_AND_MERGE_PATH = path.join(ROOT, 'plugin/skills/dispatch/settle-and-merge.md');
-const RAW_SHORT_CIRCUIT = fs.readFileSync(SHORT_CIRCUIT_PATH, 'utf8');
+const RAW_SHORT_CIRCUIT = readText(SHORT_CIRCUIT_PATH);
 const FLAT = collapse(RAW_SHORT_CIRCUIT);
 const PLUGIN_DIR = path.join(ROOT, 'plugin').split(path.sep).join('/');
 

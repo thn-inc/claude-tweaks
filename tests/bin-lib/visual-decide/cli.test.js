@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile, execFileSync, spawn } = require('node:child_process');
 const util = require('node:util');
+const { readText } = require('../../helpers/read-skill');
 
 const BIN = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'visual-decide.js');
 const CLI_LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'visual-decide', 'cli.js');
@@ -264,7 +265,7 @@ test('AC8: cli.js and bin entry have zero non-builtin imports', () => {
     BIN,
     path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'visual-decide', 'cli.js'),
   ]) {
-    const src = fs.readFileSync(file, 'utf8');
+    const src = readText(file);
     const requires = [...src.matchAll(/require\(['"]([^'"]+)['"]\)/g)].map((m) => m[1]);
     for (const spec of requires) {
       if (spec.startsWith('.')) continue; // local module references

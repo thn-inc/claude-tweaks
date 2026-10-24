@@ -21,8 +21,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -123,7 +123,7 @@ function formatOffenders(offenders) {
 
 for (const relPath of TARGET_FILES) {
   test(`${relPath}: every table row has an unescaped-pipe cell count matching its header`, () => {
-    const text = fs.readFileSync(path.join(ROOT, relPath), 'utf8');
+    const text = readText(path.join(ROOT, relPath));
     const tables = findTables(text);
     assert.ok(tables.length > 0, `${relPath}: table finder found zero tables — extraction is broken, not the file`);
     const offenders = findOffenders(relPath, text);

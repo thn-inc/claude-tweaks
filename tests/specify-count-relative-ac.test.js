@@ -3,11 +3,10 @@
 // change, never as a file's absolute total (#2709 vs #2706/#2707 in PR #2850).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const TEMPLATE = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin/skills/specify/spec-template.md'), 'utf8');
+const TEMPLATE = readText(path.join(__dirname, '..', 'plugin/skills/specify/spec-template.md'));
 
 function acSection() {
   const start = TEMPLATE.indexOf('## Acceptance Criteria\n');

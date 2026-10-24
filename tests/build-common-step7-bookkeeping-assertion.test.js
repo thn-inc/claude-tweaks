@@ -7,11 +7,11 @@
 // now runs the same backfill unconditionally, before the phase-exit push.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const BUILD_SKILL = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'build', 'SKILL.md'), 'utf8');
+const BUILD_SKILL = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'SKILL.md'));
 
 test('build/SKILL.md: Common Step 7 has a Bookkeeping assertion citing #2311', () => {
   assert.match(BUILD_SKILL, /\*\*Bookkeeping assertion \(`worktree` mode, before the phase-exit push below — #2311\)\.\*\*/);

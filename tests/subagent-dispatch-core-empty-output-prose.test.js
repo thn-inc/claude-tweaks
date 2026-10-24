@@ -9,13 +9,13 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const CORE_MD = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'subagent-dispatch-core.md');
 
 function read() {
-  return fs.readFileSync(CORE_MD, 'utf8');
+  return readText(CORE_MD);
 }
 
 function section(text, start, end) {

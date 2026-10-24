@@ -5,6 +5,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -242,10 +243,7 @@ test('archive-run archives a terminal run with retained staged/ items and no fas
 });
 
 test('cleanup-procedures-execution.md Section B invokes archive-run instead of a hand-run recipe', () => {
-  const text = fs.readFileSync(
-    path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'cleanup-procedures-execution.md'),
-    'utf8',
-  );
+  const text = readText(path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'cleanup-procedures-execution.md'));
   const bStart = text.indexOf('## B.');
   const cStart = text.indexOf('## C.');
   assert.ok(bStart !== -1 && cStart !== -1, 'Section B/C headings must exist');

@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 // #667: no test executes markdown-embedded `node -e` snippets in skills/**/*.md
 // (e.g. `skills/capture/SKILL.md`'s born-ready block) — #647's snippet migration was
@@ -248,7 +249,7 @@ test('every node -e script embedded in a plugin/skills/**/*.md bash fence is syn
   let scriptCount = 0;
   const failures = [];
   for (const file of files) {
-    const markdown = fs.readFileSync(file, 'utf8');
+    const markdown = readText(file);
     const scripts = extractNodeEScripts(markdown);
     scriptCount += scripts.length;
     for (const [index, script] of scripts.entries()) {
@@ -275,7 +276,7 @@ test('no double-quoted node -e body in plugin/skills/**/*.md contains a bare bac
   let bodyCount = 0;
   const failures = [];
   for (const file of files) {
-    const markdown = fs.readFileSync(file, 'utf8');
+    const markdown = readText(file);
     const bodies = extractRawDoubleQuotedNodeEBodies(markdown);
     bodyCount += bodies.length;
     for (const [index, body] of bodies.entries()) {

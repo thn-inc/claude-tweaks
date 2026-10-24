@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/stage-item');
+const { readText } = require('../../helpers/read-skill');
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sicli-'));
@@ -241,7 +242,7 @@ function assertShippedCloseStderrVisible(text) {
 }
 
 test('queue-pull-script.md: the shipped-close- stage-item line does not silence stderr (#3488)', () => {
-  const text = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'), 'utf8');
+  const text = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'));
   assertShippedCloseStderrVisible(text);
 });
 

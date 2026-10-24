@@ -5,12 +5,12 @@
 // a go-red probe against the pre-change text it replaces [IL-105].
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const DIR = path.join(__dirname, '..', 'plugin', 'skills', 'backlog');
-const refineMode = fs.readFileSync(path.join(DIR, 'refine-mode.md'), 'utf8');
-const closing = fs.readFileSync(path.join(DIR, 'refine-closing-summary.md'), 'utf8');
+const refineMode = readText(path.join(DIR, 'refine-mode.md'));
+const closing = readText(path.join(DIR, 'refine-closing-summary.md'));
 
 // Pre-change sentences this record rewrites — used only as go-red probes.
 const PRE_PROJECTION = "projected as: `ready` ↔ `facets.stage === 'ready'`, `auto:build` ↔ `facets.grants.build`, `bot:in-progress` ↔ `facets.bot.inProgress`.";

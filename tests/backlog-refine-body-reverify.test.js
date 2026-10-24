@@ -2,11 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const REFINE_MODE_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'backlog', 'refine-mode.md');
-const refineModeProse = fs.readFileSync(REFINE_MODE_PATH, 'utf8');
+const refineModeProse = readText(REFINE_MODE_PATH);
 
 // #842: the label-only pre-write reverify (#764) left the Related-rows and dependency-repair
 // body-text writes rewriting a record's full body from a Step 1 fetch that could be hours stale
