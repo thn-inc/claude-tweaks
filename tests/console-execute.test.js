@@ -899,6 +899,9 @@ test('AC1.1 AC2.1: loading reconcile/index.js in a fresh process does not load w
   const code = "require(process.argv[1]); console.log(JSON.stringify(Object.keys(require.cache).filter((k) => /[\\\\/]wrap-up[\\\\/]pack\\.js$/.test(k))));";
   const out = execFileSync(process.execPath, ['-e', code, path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js')], { encoding: 'utf8' });
   assert.deepStrictEqual(JSON.parse(out.trim()), []);
+  // Positive control: the same filter does find pack.js once console/resolve.js is loaded, so the empty result above is not a vacuous filter.
+  const control = execFileSync(process.execPath, ['-e', code, path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'console', 'resolve.js')], { encoding: 'utf8' });
+  assert.strictEqual(JSON.parse(control.trim()).length, 1);
 });
 
 test('sdd-ruling leaf: resolve.js re-exports the same objects (#4060)', () => {
