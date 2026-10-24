@@ -28,7 +28,9 @@
 // CT_TEST_SUITE_SLOTS (simultaneous suites, default 1), CT_TEST_CONCURRENCY (files at once,
 // default half the cores, or cores - 1 when CI is set), CT_TEST_SUITE_SLOT_DIR (where the slot
 // locks live, default under the real tmpdir), CT_TEST_SUITE_SLOT_HELD (=1 set for the child so a
-// nested run skips the slot).
+// nested run skips the slot). A `--files-from` subset takes its slot from a separate lane
+// (`<slot dir>/subset`, CT_TEST_SUBSET_SLOTS, default 1): a seconds-long impact subset must not
+// queue behind a sibling's full suite, and two subsets still never run at once (#4024).
 
 const fs = require('fs');
 const os = require('os');
@@ -120,13 +122,23 @@ function resolveConcurrency(env, cpus) {
 
 // How many full suites may run at once across processes (the slot semaphore). Defaults to 1;
 // `CT_TEST_SUITE_SLOTS` overrides with a positive integer. An invalid value falls back to 1 and
-// says so once through `log`, so a typo is visible instead of silently changing the cap.
-function resolveSlots(env, log) {
-  const raw = env.CT_TEST_SUITE_SLOTS;
+// says so once through `log`, so a typo is visible instead of silently changing the cap. `key`
+// names the variable read — `CT_TEST_SUBSET_SLOTS` for the subset lane, same rules.
+function resolveSlots(env, log, key = 'CT_TEST_SUITE_SLOTS') {
+  const raw = env[key];
   if (raw === undefined) return 1;
   if (typeof raw === 'string' && POSITIVE_INT.test(raw)) return Number(raw);
-  log(`run-tests.js: ignoring invalid CT_TEST_SUITE_SLOTS=${JSON.stringify(raw)} (want a positive integer) — using 1 slot.`);
+  log(`run-tests.js: ignoring invalid ${key}=${JSON.stringify(raw)} (want a positive integer) — using 1 slot.`);
   return 1;
+}
+
+// The slot lane a run waits in: a `--files-from` subset (`roots === null`) uses its own
+// `subset/` directory and `CT_TEST_SUBSET_SLOTS`; every other run the full-suite lane.
+// Pure: `baseDir` and `subset` are parameters.
+function slotLane(baseDir, subset) {
+  return subset
+    ? { dir: path.join(baseDir, 'subset'), slotsVar: 'CT_TEST_SUBSET_SLOTS' }
+    : { dir: baseDir, slotsVar: 'CT_TEST_SUITE_SLOTS' };
 }
 
 // Returns the argv (after the node binary) for `node --test`. The explicit file list is the
@@ -292,7 +304,7 @@ function ensureOwnDir(dir) {
 // `isAlive`, `now`, `sleep` and `log` are parameters so tests never touch real processes or time.
 // A lock naming our own `pid` is stale by definition — a prior run that crashed and whose pid the
 // OS then reused for this one — so it is reclaimed rather than waited on forever.
-function acquireSlot({ dir, slots, pid, cwd, isAlive: isPidLive, now, sleep, log, pollMs = 2000, staleUnparseableMs = 600000, staleReclaimMs = 30000 }) {
+function acquireSlot({ dir, slots, pid, cwd, isAlive: isPidLive, now, sleep, log, pollMs = 2000, staleUnparseableMs = 600000, staleReclaimMs = 30000, slotsVar = 'CT_TEST_SUITE_SLOTS' }) {
   const isAlive = (holderPid) => holderPid !== pid && isPidLive(holderPid);
   ensureOwnDir(dir);
   let logged = false;
@@ -316,7 +328,7 @@ function acquireSlot({ dir, slots, pid, cwd, isAlive: isPidLive, now, sleep, log
       // unrelated long-lived process (isAlive cannot tell it from the run that took the slot).
       log(
         `run-tests.js: waiting for a test-suite slot — held by pid ${blocker.pid} (cwd ${blocker.cwd}) ` +
-          `since ${blocker.startedAt}; set CT_TEST_SUITE_SLOTS to raise the limit (lock: ${blocker.lockPath})`,
+          `since ${blocker.startedAt}; set ${slotsVar} to raise the limit (lock: ${blocker.lockPath})`,
       );
     }
     sleep(pollMs);
@@ -368,7 +380,7 @@ function sweepStaleRoots({ dir, isAlive }) {
 
 module.exports = {
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots,
-  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList,
+  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
 };
 
 if (require.main === module) {
@@ -438,9 +450,11 @@ if (require.main === module) {
   // the suite that already holds the slot, and must not wait on it.
   let lockPath = null;
   if (process.env.CT_TEST_SUITE_SLOT_HELD !== '1') {
+    const lane = slotLane(process.env.CT_TEST_SUITE_SLOT_DIR || path.join(os.tmpdir(), 'ct-test-suite-slots'), roots === null);
     lockPath = acquireSlot({
-      dir: process.env.CT_TEST_SUITE_SLOT_DIR || path.join(os.tmpdir(), 'ct-test-suite-slots'),
-      slots: resolveSlots(process.env, console.error),
+      dir: lane.dir,
+      slotsVar: lane.slotsVar,
+      slots: resolveSlots(process.env, console.error, lane.slotsVar),
       pid: process.pid,
       cwd: REPO_ROOT,
       isAlive: isPidAlive,
