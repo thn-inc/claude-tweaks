@@ -446,7 +446,7 @@ function validateManifest(obj) {
           }
         });
       }
-      for (const key of ['installed-probe', 'pinned', 'version-mode', 'contract-paths', 'assertions', 'fixtures']) {
+      for (const key of ['installed-probe', 'pinned', 'version-mode', 'report-upgrades', 'contract-paths', 'assertions', 'fixtures']) {
         if (hasKey(dep, key)) {
           errors.push(`Dependency ${label}: '${key}' is not part of the 'versioning: none' entry class — nothing would ever read it`);
         }
@@ -493,6 +493,13 @@ function validateManifest(obj) {
     // an exact match; see the impeccable-cli entry for why that exists.
     if (hasKey(dep, 'version-mode') && dep['version-mode'] !== 'exact' && dep['version-mode'] !== 'floor') {
       errors.push(`Dependency ${label}: 'version-mode' must be 'exact' or 'floor' (got '${dep['version-mode']}')`);
+    }
+
+    // Optional — defaults to reporting. `false` suppresses the
+    // `upgrade-available` class for a drift-only entry whose assertions carry
+    // the signal; see the claude-code entry for why that exists.
+    if (hasKey(dep, 'report-upgrades') && typeof dep['report-upgrades'] !== 'boolean') {
+      errors.push(`Dependency ${label}: 'report-upgrades' must be true or false (got ${typeof dep['report-upgrades']} ${JSON.stringify(dep['report-upgrades'])} — use an unquoted true or false)`);
     }
 
     if (!isPlainObject(dep.upstream)) {

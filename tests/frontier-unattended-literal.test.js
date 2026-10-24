@@ -14,6 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 function mdFilesUnder(dir) {
   const out = [];
@@ -37,7 +38,7 @@ test('no unguarded "frontier --unattended" literal in skills/ (whitespace-spanni
     const rel = path.relative(path.join(__dirname, '..'), file).split(path.sep).join('/');
     if (ALLOWED.has(rel)) continue;
 
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     const re = /frontier\s+--unattended/gi;
     let m;
     while ((m = re.exec(text)) !== null) {

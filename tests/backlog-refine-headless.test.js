@@ -16,13 +16,14 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SKILL_DIR = path.join(ROOT, 'plugin', 'skills', 'backlog');
 const SHARED_DIR = path.join(ROOT, 'plugin', 'skills', '_shared');
 
 function read(...segments) {
-  return fs.readFileSync(path.join(...segments), 'utf8');
+  return readText(path.join(...segments));
 }
 
 // --- (1) grant-mode.md absent, refine-headless.md present ---

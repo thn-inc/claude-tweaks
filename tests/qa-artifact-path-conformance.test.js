@@ -6,10 +6,10 @@
 // splits reader from writer — the bug this suite exists to make loud.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => readText(path.join(__dirname, '..', rel));
 const PREFIX = '.claude-tweaks/artifacts/screenshots/qa';
 
 test('qa-procedures SCREENSHOTS_BASE carries the artifacts prefix', () => {

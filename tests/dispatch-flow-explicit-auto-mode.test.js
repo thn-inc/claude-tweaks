@@ -10,8 +10,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const TASK_PROMPT = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'task-prompt.md');
 const SKILL = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'SKILL.md');
@@ -19,7 +19,7 @@ const FIRST_HEADING = '## First call — build,test';
 const SECOND_HEADING = '## Second call — review,polish,wrap-up';
 
 function read(file) {
-  return fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  return readText(file);
 }
 
 // The first fenced block in a section — the operative template inlined verbatim into

@@ -9,6 +9,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 
@@ -59,7 +60,7 @@ test('no skill prose invokes a bin via a repo-relative `node plugin/bin/` path (
     // Normalize the one wrap shape that hid the original bug: `node` at end-of-line,
     // `plugin/bin/…` starting the next line (pr-early-run-lifecycle.md's own line wrap).
     const text = joinComposeContextInvocations(
-      fs.readFileSync(file, 'utf8').replace(/node\s*\n\s*plugin\/bin\//g, 'node plugin/bin/'),
+      readText(file).replace(/node\s*\n\s*plugin\/bin\//g, 'node plugin/bin/'),
     );
     const exemptRe = EXEMPT.get(rel);
     for (const line of text.split('\n')) {
@@ -78,7 +79,7 @@ test('no skill prose invokes a bin via a repo-relative `node plugin/bin/` path (
 
 test('the exemption list only exempts lines that still exist (no stale exemptions)', () => {
   for (const [rel, re] of EXEMPT) {
-    const text = fs.readFileSync(path.join(SKILLS, rel), 'utf8');
+    const text = readText(path.join(SKILLS, rel));
     assert.ok(re.test(text), `stale exemption: ${rel} no longer contains ${re}`);
   }
 });

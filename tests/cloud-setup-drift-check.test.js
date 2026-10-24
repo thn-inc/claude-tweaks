@@ -16,6 +16,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const SCRIPT_PATH = path.resolve(__dirname, '..', 'scripts', 'claude-cloud-setup.sh');
 const INSTALLED_JSON = '/tmp/cc-installed.json';
@@ -187,7 +188,7 @@ const SHA_PINNED_CATALOG_ENTRY = {
 let liveSnippet;
 
 test('setup: extract the live VERDICT snippet and confirm it is byte-identical to the template doc', () => {
-  const scriptSource = fs.readFileSync(SCRIPT_PATH, 'utf8');
+  const scriptSource = readText(SCRIPT_PATH);
   liveSnippet = extractVerdictSnippet(scriptSource);
 
   const docPath = path.resolve(
@@ -199,7 +200,7 @@ test('setup: extract the live VERDICT snippet and confirm it is byte-identical t
     'bootstrap',
     'step-14-cloud-routine-parity.md',
   );
-  const docSnippet = extractVerdictSnippet(fs.readFileSync(docPath, 'utf8'));
+  const docSnippet = extractVerdictSnippet(readText(docPath));
   assert.strictEqual(
     liveSnippet,
     docSnippet,
@@ -360,7 +361,7 @@ function runTmpDirBlock(block, sessionId) {
 }
 
 test('session-id guard: CLAUDE_CODE_SESSION_ID unset does not abort under set -u, CC_TMP_DIR stays unscoped', () => {
-  const scriptSource = fs.readFileSync(SCRIPT_PATH, 'utf8');
+  const scriptSource = readText(SCRIPT_PATH);
   const block = extractTmpDirBlock(scriptSource);
   const result = runTmpDirBlock(block, undefined);
   assert.strictEqual(result.status, 0, `expected the guarded block to run clean under set -u (stderr: ${result.stderr})`);
@@ -368,7 +369,7 @@ test('session-id guard: CLAUDE_CODE_SESSION_ID unset does not abort under set -u
 });
 
 test('session-id guard: CLAUDE_CODE_SESSION_ID exported still resolves the ct-session-{id} subdirectory unchanged', () => {
-  const scriptSource = fs.readFileSync(SCRIPT_PATH, 'utf8');
+  const scriptSource = readText(SCRIPT_PATH);
   const block = extractTmpDirBlock(scriptSource);
   const result = runTmpDirBlock(block, 'abc123');
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);

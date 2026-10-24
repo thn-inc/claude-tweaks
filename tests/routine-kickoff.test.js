@@ -6,11 +6,10 @@
 // the kernel migration (#529) wires references in immediately after landing.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const skill = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin', 'skills', 'routine-kickoff', 'SKILL.md'), 'utf8');
+const skill = readText(path.join(__dirname, '..', 'plugin', 'skills', 'routine-kickoff', 'SKILL.md'));
 
 test('names dispatch, tidy, and backlog as manual-execution exclusions, with the principle', () => {
   assert.ok(skill.includes('the target is `dispatch`, `tidy`, or `backlog`'));

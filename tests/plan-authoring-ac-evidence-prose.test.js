@@ -12,13 +12,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const TEXT = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin', 'skills', 'build', 'plan-authoring-checks.md'),
-  'utf8',
-);
+const TEXT = readText(path.join(__dirname, '..', 'plugin', 'skills', 'build', 'plan-authoring-checks.md'));
 
 const LABEL = '**AC-evidence persistence check:**';
 const KEY_PHRASE = "governs whether a check's *code* is committed, not whether its *result* is recorded";

@@ -22,14 +22,14 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { listSkillDirs, mentionsSkill } = require('../plugin/bin/lib/skill-audit/skill-catalog');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SKILLS = listSkillDirs(path.join(ROOT, 'plugin'));
 
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 test('the corpus resolves to every skill directory that has a SKILL.md', () => {
   // A path or glob mistake that silently matched nothing would make every

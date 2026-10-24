@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 const {
   TRUSTED_AUTHOR_ASSOCIATIONS,
@@ -29,8 +30,8 @@ const {
 } = require('../plugin/bin/lib/issues/comment-trust.js');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
-const COMMENTS = fs.readFileSync(path.join(SKILLS, '_shared', 'pr-run-comments.md'), 'utf8');
-const SCAN = fs.readFileSync(path.join(SKILLS, 'tidy', 'scan-procedures.md'), 'utf8');
+const COMMENTS = readText(path.join(SKILLS, '_shared', 'pr-run-comments.md'));
+const SCAN = readText(path.join(SKILLS, 'tidy', 'scan-procedures.md'));
 
 // Frozen pre-change excerpts (the bytes #3358 Task 4 replaced).
 const PRE_CHANGE_FIND_JQ = `  --jq '.comments[] | select(.body | startswith("<!-- run-comment: {kind} -->")) | .id'`;
@@ -165,10 +166,10 @@ test("tidy's tombstone check names each skipped untrusted tombstone", () => {
 // ---- Task 5: demo, parent-gate and grant-maturation readers (#3358) ----
 
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
-const ENTRY_PATHS = fs.readFileSync(path.join(SKILLS, 'demo', 'entry-paths.md'), 'utf8');
-const PARENT_GATE = fs.readFileSync(path.join(SKILLS, 'wrap-up', 'verification-brief-parent-gate.md'), 'utf8');
-const GRANT_GATE = fs.readFileSync(path.join(SKILLS, 'dispatch', 'grant-maturation-gate.md'), 'utf8');
-const SHORT_CIRCUIT = fs.readFileSync(path.join(SKILLS, 'wrap-up', 'auto-merge-short-circuit.md'), 'utf8');
+const ENTRY_PATHS = readText(path.join(SKILLS, 'demo', 'entry-paths.md'));
+const PARENT_GATE = readText(path.join(SKILLS, 'wrap-up', 'verification-brief-parent-gate.md'));
+const GRANT_GATE = readText(path.join(SKILLS, 'dispatch', 'grant-maturation-gate.md'));
+const SHORT_CIRCUIT = readText(path.join(SKILLS, 'wrap-up', 'auto-merge-short-circuit.md'));
 
 // Frozen pre-change passages (the bytes #3358 Task 5 replaced), each carrying its
 // anchor and lacking only the trust citation / skip notice.
@@ -315,13 +316,13 @@ test('the snippet extractor can go red: no node -e body, or two fences, yield nu
 
 // ---- Task 6: needs-decision readers (#3358) ----
 
-const WORK_RECORD = fs.readFileSync(path.join(SKILLS, '_shared', 'work-record.md'), 'utf8');
-const GRANT_LANE = fs.readFileSync(path.join(SKILLS, 'backlog', 'grant-lane-decision.md'), 'utf8');
-const SHAPING_STAMPING = fs.readFileSync(path.join(SKILLS, 'specify', 'shaping-mode-stamping.md'), 'utf8');
-const ATTENTION = fs.readFileSync(path.join(SKILLS, 'backlog', 'attention-mode.md'), 'utf8');
-const REFINE_RECORD = fs.readFileSync(path.join(SKILLS, 'backlog', 'refine-record.md'), 'utf8');
-const STEP_1 = fs.readFileSync(path.join(SKILLS, 'tidy', 'step-1-records.md'), 'utf8');
-const DECISION_MARKERS = fs.readFileSync(path.join(SKILLS, 'tidy', 'decision-markers.md'), 'utf8');
+const WORK_RECORD = readText(path.join(SKILLS, '_shared', 'work-record.md'));
+const GRANT_LANE = readText(path.join(SKILLS, 'backlog', 'grant-lane-decision.md'));
+const SHAPING_STAMPING = readText(path.join(SKILLS, 'specify', 'shaping-mode-stamping.md'));
+const ATTENTION = readText(path.join(SKILLS, 'backlog', 'attention-mode.md'));
+const REFINE_RECORD = readText(path.join(SKILLS, 'backlog', 'refine-record.md'));
+const STEP_1 = readText(path.join(SKILLS, 'tidy', 'step-1-records.md'));
+const DECISION_MARKERS = readText(path.join(SKILLS, 'tidy', 'decision-markers.md'));
 
 // Frozen pre-change passages (the bytes #3358 Task 6 replaced), each carrying its
 // anchor and lacking only the trust wording / filter.
@@ -571,7 +572,7 @@ for (const [name, extract, doc, frozen, window] of PROSE_READERS) {
 
 // ---- Whole-branch review fixes (#3358) ----
 
-const TIDY_SKILL = fs.readFileSync(path.join(SKILLS, 'tidy', 'SKILL.md'), 'utf8');
+const TIDY_SKILL = readText(path.join(SKILLS, 'tidy', 'SKILL.md'));
 
 // Frozen pre-change passages (the bytes the review fixes replaced / followed).
 const PRE_CHANGE_TIDY_GATE_ROW = '- [x] Opened parent gate: "{title}" — parent #{n} carries a brief comment headed `## Verification Brief` (the template\'s own first line) and `demo:pending` in its labels, both re-queried (`gh issue view {n} --json labels,comments`); comment present before label, per the invariant (`github-issues`)';
@@ -646,7 +647,7 @@ test('AC2.1: every jq trust filter in plugin/skills is the generator output', ()
   let selects = 0;
   let notes = 0;
   for (const file of listMarkdown(SKILLS)) {
-    const r = sweepJqTrustCopies(fs.readFileSync(file, 'utf8'), path.relative(SKILLS, file));
+    const r = sweepJqTrustCopies(readText(file), path.relative(SKILLS, file));
     selects += r.selects;
     notes += r.notes;
   }

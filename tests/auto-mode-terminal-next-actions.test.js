@@ -1,12 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const CONTRACT = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'auto-mode-contract.md'),
-  'utf8',
-);
+const CONTRACT = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'auto-mode-contract.md'));
 
 function notSilencedSection() {
   const start = CONTRACT.indexOf('## What `auto` does NOT silence');

@@ -5,16 +5,16 @@
 // free-text summary, while leaving Step 8's fingerprintBasis untouched.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const MD_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'feedback', 'SKILL.md');
-const md = fs.readFileSync(MD_PATH, 'utf8');
+const md = readText(MD_PATH);
 
 // #2697 moved Step 0's batch-loop body (and its cross-reference to Step 4's fingerprint basis)
 // verbatim into bare-invocation.md; SKILL.md keeps only Step 0's trigger paragraph and pointer.
 const BARE_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'feedback', 'bare-invocation.md');
-const bare = fs.readFileSync(BARE_PATH, 'utf8');
+const bare = readText(BARE_PATH);
 
 test('Step 4 derives the --search keywords from the component name only', () => {
   assert.ok(/component[^.\n]*only/i.test(md), 'Step 4 must state the search keywords derive from the component name only');

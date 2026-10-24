@@ -28,7 +28,7 @@ const MISLEADS_LABELS = {
 // verifiedAsOf (#117): the sha the sweep read this repo at, resolved ONCE per
 // run by the caller (bin/docs-health.js, via health-core/read-commit.js) and
 // threaded through here — never resolved inside this function. See
-// specShapedBody's own verifiedAsOf doc in record.js for why.
+// specShapedBody's own verifiedAsOf doc in record-payload.js for why.
 function toIssuePayload(finding, verifiedAsOf) {
   const categoryLabel = CATEGORY_LABELS[finding.category] || finding.category;
   const misleadsLabel = MISLEADS_LABELS[finding.misleads] || finding.misleads;

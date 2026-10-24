@@ -4,8 +4,8 @@
 // real subprocess, a real GitHub release, or a real `git push` (AC5).
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('../helpers/read-skill');
 const {
   run, resolveTagPair, parseReleaseNotesFromLog, applyToReleaseBody, applyToChangelogEntry,
 } = require('../../plugin/bin/lib/release-notes-publish.js');
@@ -157,7 +157,7 @@ test('a gh/git failure is caught and reported as exit 1, never thrown', () => {
 });
 
 test('AC7: the module imports RELEASE_NOTE_FOOTER_RE rather than declaring a second copy of the pattern', () => {
-  const src = fs.readFileSync(path.join(__dirname, '../../plugin/bin/lib/release-notes-publish.js'), 'utf8');
+  const src = readText(path.join(__dirname, '../../plugin/bin/lib/release-notes-publish.js'));
   assert.match(src, /require\(['"]\.\/release-notes['"]\)/);
   assert.match(src, /RELEASE_NOTE_FOOTER_RE/);
   // No second hand-typed Release-Note:-matching regex literal (release-notes.js's
@@ -166,7 +166,7 @@ test('AC7: the module imports RELEASE_NOTE_FOOTER_RE rather than declaring a sec
 });
 
 test('AC8: the module imports and calls renderReleaseNotes rather than reimplementing its filter/map/join logic', () => {
-  const src = fs.readFileSync(path.join(__dirname, '../../plugin/bin/lib/release-notes-publish.js'), 'utf8');
+  const src = readText(path.join(__dirname, '../../plugin/bin/lib/release-notes-publish.js'));
   assert.match(src, /require\(['"]\.\/release-notes['"]\)/);
   assert.match(src, /renderReleaseNotes\(commits\)/);
   // No second flat-list bullet-rendering implementation (release-notes.js's
@@ -179,7 +179,7 @@ test('AC8: the module imports and calls renderReleaseNotes rather than reimpleme
 // tests above fake — so nothing else would notice that a `release` event
 // checks out the tag (detached HEAD) and the real push has no branch.
 test('the workflow step that runs release-notes-publish checks out the default branch, not the detached release tag', () => {
-  const wf = fs.readFileSync(path.join(__dirname, '../../.github/workflows/mirror-marketplace.yml'), 'utf8');
+  const wf = readText(path.join(__dirname, '../../.github/workflows/mirror-marketplace.yml'));
   const runAt = wf.indexOf('node plugin/bin/release-notes-publish.js');
   assert.ok(runAt > 0, 'expected the workflow to run release-notes-publish.js');
   const checkoutAt = wf.lastIndexOf('uses: actions/checkout@', runAt);

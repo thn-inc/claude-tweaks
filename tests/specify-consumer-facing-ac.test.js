@@ -6,11 +6,10 @@
 // `--stamp-status`).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const TEMPLATE = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin/skills/specify/spec-template.md'), 'utf8').replace(/\r\n/g, '\n');
+const TEMPLATE = readText(path.join(__dirname, '..', 'plugin/skills/specify/spec-template.md'));
 
 function acSection() {
   const start = TEMPLATE.indexOf('## Acceptance Criteria\n');

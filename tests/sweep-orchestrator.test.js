@@ -19,6 +19,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { extractArgumentHint, inputSectionBody } = require('../plugin/bin/lib/skill-audit/argument-hint');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SWEEP_DIR = path.join(ROOT, 'plugin', 'skills', 'sweep');
@@ -28,7 +29,7 @@ const BACKLOG_DIR = path.join(ROOT, 'plugin', 'skills', 'backlog');
 const SHARED_DIR = path.join(ROOT, 'plugin', 'skills', '_shared');
 
 function read(...segments) {
-  return fs.readFileSync(path.join(...segments), 'utf8');
+  return readText(path.join(...segments));
 }
 
 // --- (1) sweep/SKILL.md exists; prose contains all three component calls

@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/issues/record.js
+  - plugin/bin/lib/issues/record-payload.js
   - plugin/bin/lib/code-health/issue-payload.js
   - plugin/bin/lib/docs-health/issue-payload.js
   - plugin/bin/lib/harness-health/issue-payload.js

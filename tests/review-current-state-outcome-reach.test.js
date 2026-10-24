@@ -5,11 +5,10 @@
 // read bare `--stamp-status`).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const STEPS = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin/skills/review/code-mode-steps.md'), 'utf8').replace(/\r\n/g, '\n');
+const STEPS = readText(path.join(__dirname, '..', 'plugin/skills/review/code-mode-steps.md'));
 
 function step1() {
   const start = STEPS.indexOf('## Step 1: Spec Compliance Check');

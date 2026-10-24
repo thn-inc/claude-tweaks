@@ -12,12 +12,13 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILL_DIR = path.join(__dirname, '..', 'plugin', 'skills', 'backlog');
 const SHARED_DIR = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
 
 function read(...segments) {
-  return fs.readFileSync(path.join(...segments), 'utf8');
+  return readText(path.join(...segments));
 }
 
 test('attention-mode.md: needs:*/bot:blocked come from the session-scoped snapshot, not a --label fetch', () => {

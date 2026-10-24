@@ -13,15 +13,15 @@
 // read the prose wiring that actually invokes the procedure.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SKILLS = path.join(ROOT, 'plugin', 'skills');
 
-const specifySkill = fs.readFileSync(path.join(SKILLS, 'specify', 'SKILL.md'), 'utf8');
-const brainstormingCeremony = fs.readFileSync(path.join(SKILLS, 'specify', 'brainstorming-ceremony.md'), 'utf8');
-const captureRouting = fs.readFileSync(path.join(SKILLS, 'capture', 'routing.md'), 'utf8');
+const specifySkill = readText(path.join(SKILLS, 'specify', 'SKILL.md'));
+const brainstormingCeremony = readText(path.join(SKILLS, 'specify', 'brainstorming-ceremony.md'));
+const captureRouting = readText(path.join(SKILLS, 'capture', 'routing.md'));
 
 test('specify/SKILL.md case 1 (needs:definition redirect) still cites brainstorming-ceremony.md', () => {
   const case1Line = specifySkill
@@ -60,7 +60,7 @@ test('capture/routing.md wires --route=brainstorm through brainstorming-ceremony
 });
 
 test('policy-schema.md documents capture as a design-ceremony consumer (#2347)', () => {
-  const schema = fs.readFileSync(path.join(SKILLS, '_shared', 'policy-schema.md'), 'utf8');
+  const schema = readText(path.join(SKILLS, '_shared', 'policy-schema.md'));
   const row = schema.split('\n').find((l) => l.includes('| `design-ceremony` |'));
   assert.ok(row, 'design-ceremony row missing from policy-schema.md');
   assert.ok(row.includes('claude-tweaks:capture'), 'design-ceremony row no longer names /claude-tweaks:capture as a consumer');

@@ -4,12 +4,12 @@
 // reflects the actual scoped default behavior (each skill keeps its own).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
+const { readText } = require('./helpers/read-skill');
 
 const MD_PATH = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema.md');
-const md = fs.readFileSync(MD_PATH, 'utf8');
+const md = readText(MD_PATH);
 
 test('auto-mode summary in POLICY_KEYS contains /flow and is <= 140 chars', () => {
   const row = POLICY_KEYS.find((r) => r.key === 'auto-mode');

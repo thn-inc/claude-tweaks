@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { classifyStagedItem, stagingExemption, STAGING_EXEMPTIONS } = require('../../../plugin/bin/lib/console/resolve');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
+const { readText } = require('../../helpers/read-skill');
 
 // Every id a producer hands `stage-item.js` / `writeStagedItem` either maps in
 // the Review Console's SECTION_MAP (classifyStagedItem names a reason other than
@@ -114,10 +115,10 @@ function headOf(p) {
 
 function collectProducers() {
   const producers = [];
-  for (const f of walk(SKILLS_ROOT, '.md')) producers.push(...collectMdProducers(fs.readFileSync(f, 'utf8'), rel(f)));
+  for (const f of walk(SKILLS_ROOT, '.md')) producers.push(...collectMdProducers(readText(f), rel(f)));
   for (const f of walk(BIN_ROOT, '.js')) {
     if (BIN_SKIP(rel(f))) continue;
-    producers.push(...collectBinProducers(fs.readFileSync(f, 'utf8'), rel(f)));
+    producers.push(...collectBinProducers(readText(f), rel(f)));
   }
   checkDynamicIds(producers);
   return producers;
@@ -146,7 +147,7 @@ function collectProseProducers(text, file) {
 
 function collectProseProducersFromSkills() {
   const out = [];
-  for (const f of walk(SKILLS_ROOT, '.md')) out.push(...collectProseProducers(fs.readFileSync(f, 'utf8'), rel(f)));
+  for (const f of walk(SKILLS_ROOT, '.md')) out.push(...collectProseProducers(readText(f), rel(f)));
   return out;
 }
 

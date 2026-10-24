@@ -14,9 +14,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 function read(...parts) {
-  return fs.readFileSync(path.join(__dirname, '..', ...parts), 'utf8').replace(/\r\n/g, '\n');
+  return readText(path.join(__dirname, '..', ...parts));
 }
 
 // The Step 1 body: from its heading up to Step 2's heading.

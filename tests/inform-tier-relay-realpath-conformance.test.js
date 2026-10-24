@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const HOOKS_DOC = path.join(ROOT, 'docs/hooks.md');
@@ -11,11 +11,11 @@ const INCIDENT_LOG = path.join(ROOT, 'docs/incident-log.md');
 // Whitespace-collapsed read, per skill-prose-conformance-tests' control-scan convention --
 // a hard-wrapped literal must not silently defeat these assertions.
 function collapsed(filePath) {
-  return fs.readFileSync(filePath, 'utf8').replace(/\s+/g, ' ');
+  return readText(filePath).replace(/\s+/g, ' ');
 }
 
 test('docs/hooks.md states the inform-tier relay rule once, inside the inform-tier run', () => {
-  const lines = fs.readFileSync(HOOKS_DOC, 'utf8').split('\n');
+  const lines = readText(HOOKS_DOC).split('\n');
   const relayLines = lines.filter((line) => /Every inform-tier line names its relay/.test(line));
   assert.equal(relayLines.length, 1);
   assert.match(relayLines[0], /never run it yourself/);
@@ -24,7 +24,7 @@ test('docs/hooks.md states the inform-tier relay rule once, inside the inform-ti
 });
 
 test('docs/donts.md [IL-150] names fs.realpathSync.native', () => {
-  const lines = fs.readFileSync(DONTS, 'utf8').split('\n');
+  const lines = readText(DONTS).split('\n');
   const il150 = lines.filter((line) => line.includes('realTarget()') && line.includes('[IL-150]'));
   assert.equal(il150.length, 1);
   assert.match(il150[0], /fs\.realpathSync\.native/);
