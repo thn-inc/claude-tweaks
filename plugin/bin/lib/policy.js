@@ -122,6 +122,22 @@ function readGitTimeoutMs(repoRoot) {
   return resolveValue('git-timeout-ms', parsePolicy(repoRoot)['git-timeout-ms']);
 }
 
+// Efficiency budgets (#4029) — the three `{profile}-run-…-ceiling` keys for one
+// ceremony profile, each through resolveValue (absent/blank/non-integer/negative
+// -> the schema default; `0` passes through and means "budget disabled").
+// phase-timing.js --check-budgets is the caller. Only the two profiles the keys
+// exist for are accepted — a typo'd profile throws rather than resolving nothing.
+const EFFICIENCY_PROFILES = ['fast-lane', 'standard'];
+
+function readEfficiencyCeilings(repoRoot, profile) {
+  if (!EFFICIENCY_PROFILES.includes(profile)) {
+    throw new TypeError(`readEfficiencyCeilings: profile must be one of ${EFFICIENCY_PROFILES.join('/')}, got ${JSON.stringify(profile)}`);
+  }
+  const policy = parsePolicy(repoRoot);
+  const read = (measure) => resolveValue(`${profile}-run-${measure}-ceiling`, policy[`${profile}-run-${measure}-ceiling`]);
+  return { roundTrips: read('round-trip'), procedureKb: read('procedure-kb'), verifyMinutes: read('verify-minutes') };
+}
+
 const SERVICE_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
 // `port-services` (#1792): the list-key convention above, plus per-entry
@@ -159,5 +175,5 @@ function resolvePortServices(repoRoot) {
 
 module.exports = {
   isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, resolvePortServices, readGhTimeoutMs,
-  readGitTimeoutMs,
+  readGitTimeoutMs, readEfficiencyCeilings,
 };

@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, readGhTimeoutMs } = require('../plugin/bin/lib/policy');
+const { isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, readGhTimeoutMs, readEfficiencyCeilings } = require('../plugin/bin/lib/policy');
 
 function tmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-'));
@@ -236,4 +236,24 @@ test('readGhTimeoutMs: a non-integer value falls back to the default', () => {
   const repo = tmpRepo();
   writePolicy(repo, 'gh-timeout-ms: soon\n');
   assert.strictEqual(readGhTimeoutMs(repo), 5000);
+});
+
+// readEfficiencyCeilings (#4029) — the six per-ceremony-profile efficiency
+// budgets phase-timing.js --check-budgets compares a run's totals against.
+
+test('#4029: readEfficiencyCeilings resolves defaults, a policy override, and an invalid value back to default', () => {
+  const repo = tmpRepo();
+  writePolicy(repo, 'fast-lane-run-round-trip-ceiling: 5\nstandard-run-verify-minutes-ceiling: abc\n');
+  assert.deepStrictEqual(readEfficiencyCeilings(repo, 'fast-lane'), { roundTrips: 5, procedureKb: 560, verifyMinutes: 21 });
+  assert.deepStrictEqual(readEfficiencyCeilings(repo, 'standard'), { roundTrips: 900, procedureKb: 580, verifyMinutes: 37 });
+  assert.throws(() => readEfficiencyCeilings(repo, 'turbo'), TypeError);
+});
+
+test('#4029: readEfficiencyCeilings: no policy file -> the shipped defaults; 0 passes through as "budget disabled"', () => {
+  assert.deepStrictEqual(readEfficiencyCeilings(tmpRepo(), 'standard'), { roundTrips: 900, procedureKb: 580, verifyMinutes: 37 });
+  const repo = tmpRepo();
+  writePolicy(repo, 'standard-run-procedure-kb-ceiling: 0\nstandard-run-round-trip-ceiling: -3\n');
+  const got = readEfficiencyCeilings(repo, 'standard');
+  assert.strictEqual(got.procedureKb, 0);
+  assert.strictEqual(got.roundTrips, 900, 'a negative value is under min 0 and falls back to the default');
 });

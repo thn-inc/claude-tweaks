@@ -140,8 +140,9 @@ test('POLICY_KEYS entries are unique', () => {
   // 73 -> 74, #3298 (merge-subject scope source): commit-scope — string, no default — the constant Conventional-Commits scope token
   // 74 -> 75, #3298: commit-scope-paths — list, default [] — comma-separated prefix=token pairs resolved against a merge's changed files
   // 75 -> 76, #4041: release-tip-moves — integer, default 2 — caps how far origin/{branch} may move past /release Step 3's reviewed tip before Step 5 holds the release
-  assert.strictEqual(POLICY_KEYS.length, 76);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 76);
+  // 76 -> 82, #4029: the six {fast-lane,standard}-run-{round-trip,procedure-kb,verify-minutes}-ceiling efficiency budgets — integer, min 0 (0 disables), p90-derived defaults
+  assert.strictEqual(POLICY_KEYS.length, 82);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 82);
 });
 
 test('dispatch-batch-size is registered alongside its deprecated alias', () => {
