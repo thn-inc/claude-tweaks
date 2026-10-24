@@ -1,6 +1,0 @@
-# Open Items — Guard against raw markdown reads in tests (#3922)
-
-| # | Phase | Item | Status | Resolution |
-|---|-------|------|--------|------------|
-| 1 | build | A core.autocrlf=true checkout run (base vs branch tip, child git autocrlf=true) still fails 11 tests in tests/bin-lib/staged-patch/stack-check.test.js and cli.test.js (rederive / stacked-check results flip under a CRLF working tree). Not a test-side raw read: the re-derive path in plugin/bin/lib/staged-patch runs git apply/diff against a CRLF temp repo, so this is likely a real Windows behavior of the staged-patch engine. Needs its own record: reproduce on windows-latest, then fix the engine or pin the fixture repo's eol. | deferred | Defer-reason: pre-existing-outside-diff — plugin/bin/lib/staged-patch and its tests are not in this build's diff, and the failure is a production-engine behavior, not the raw-read class #3922 guards. Filed as #3997 |
-| 2 | wrap-up | Reflect Friction lens: 7 wd-guard-refusal (harness-worktree-isolation) denials across this run, all compound-Bash shapes, despite the dispatch prompt already warning against them. | deferred | Staged at staged/reflect-1.md — surfaced at the Wrap-Up Review Console's Skill updates section |
