@@ -679,7 +679,7 @@ test('a complete composition supersedes the single stamp\'s missing reportPath',
   assert.deepEqual(result, { verified: true, reason: null, status });
 });
 
-test('an incomplete composition does not bypass the single-stamp checks', () => {
+test('only a complete composition stands in for the stamp — complete: false with verifiedHead: true is still stamp-absent', () => {
   const status = { present: false, verifiedHead: true, reportPath: null, suiteComposed: { complete: false } };
   const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
     stampStatus: stampStub(status).fn,
