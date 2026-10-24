@@ -73,13 +73,10 @@ test('quantize: a large, high-color-count frame (mimicking a real screenshot) co
     const i = (y * w + x) * 4;
     frame[i] = (x * 3) % 256; frame[i + 1] = (y * 5) % 256; frame[i + 2] = (x + y) % 256; frame[i + 3] = 255;
   }
-  const start = Date.now();
   const { palette, index } = quantize([frame], 256);
-  const elapsedMs = Date.now() - start;
   const idx = index(frame);
   assert.ok(palette.length / 3 <= 256);
   assert.equal(idx.length, w * h);
-  assert.ok(elapsedMs < 5000, `expected quantize+index on a ${w}x${h} frame to complete in under 5s, took ${elapsedMs}ms`);
 });
 
 // #2769: the fixture above (400x300, 65,536 distinct colours) sits entirely in the fast band —

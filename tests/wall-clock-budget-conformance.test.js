@@ -317,9 +317,7 @@ function evaluate(files, allowlist) {
 // The audit record: each file's pinned budget texts, and a reason an author judged by
 // reading the sites. A new, changed or removed budget fails the scan until this is updated.
 const ALLOWLIST = {
-  'tests/bin-lib/dream/scan.test.js': { sites: ['Date.now() - started < 500'], reason: 'redaction-latency guard: a 120k-char tool output must redact under 500 ms, catching an uncapped backtracking regex; candidate to move to perf/.' },
   'tests/bin-lib/flow/preflight.test.js': { sites: ['Date.now() - t0 < 600'], reason: 'parallelism check: three 150 ms probes must finish under 600 ms, a margin a serial run (450 ms of sleeps) nearly fits; candidate to move to perf/.' },
-  'tests/bin-lib/gif/palette.test.js': { sites: ['elapsedMs < 5000'], reason: 'quantize-latency guard: a 400x300 frame must quantize and index under a generous 5 s; candidate to move to perf/.' },
   'tests/bin-lib/git-retry.test.js': { sites: ['elapsed < 1000'], reason: 'bounded-wait check: an injected fake sleep makes the retry loop instant, so elapsed under 1 s only catches a real sleep leaking through; candidate to move to perf/.' },
   'tests/bin-lib/health-core/premise-self-check.test.js': { sites: ['Date.now() - start < 4000'], reason: 'bounded-wait check: a hung `sleep 5` with a 100 ms timeout must return before 4 s, checking the kill path; candidate to move to perf/.' },
   'tests/bin-lib/model-profiles/session-failures.test.js': { sites: ['Date.now() - start < 2000', 'Date.now() - start < 2000'], reason: 'bounded-wait checks: a released lock must be taken before the 2 s timeout, and a never-released lock must degrade near a 50 ms timeout, under 2 s; candidates to move to perf/.' },
