@@ -9,6 +9,7 @@ const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const read = (rel) => readText(path.join(SKILLS, rel));
+const BRIEF = 'wrap-up/verification-brief.md';
 
 function step4(doc) {
   const start = doc.indexOf('## Step 4: Compose and post the brief');
@@ -112,7 +113,7 @@ function assertRouting(s) {
 }
 
 test('AC1.1 AC2.1 AC3.1 AC4.1 AC5.1 AC6.1 AC7.1: Step 4 routes the screenshot commit on the run PR state', () => {
-  assertRouting(step4(read('wrap-up/verification-brief.md')));
+  assertRouting(step4(read(BRIEF)));
 });
 
 test('AC6.1: the wrap-up summary carries an evidence-PR row in Actions Performed', () => {
@@ -124,13 +125,13 @@ test('AC6.1: the wrap-up summary carries an evidence-PR row in Actions Performed
 });
 
 test('AC8.1: removing the evidence-PR route turns the routing assertions red', () => {
-  const s = step4(read('wrap-up/verification-brief.md'));
+  const s = step4(read(BRIEF));
   const gone = bullet(s, GONE);
   assert.throws(() => assertRouting(s.replace(gone, '')));
 });
 
 test('AC8.1: dropping one pinned literal from the evidence-PR bullet turns the routing assertions red', () => {
-  const s = step4(read('wrap-up/verification-brief.md'));
+  const s = step4(read(BRIEF));
   const gone = bullet(s, GONE);
   for (const literal of ['`Refs #{record}`', '`git add docs/demo-evidence/{record}/`', '`discard_changes: true`']) {
     assert.ok(gone.includes(literal), `control premise: bullet carries ${literal}`);
