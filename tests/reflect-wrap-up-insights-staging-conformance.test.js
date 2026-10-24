@@ -119,6 +119,7 @@ const MULTISPEC_TEMPLATE = read('plugin', 'skills', 'flow', 'multispec-console-t
 const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');
 const INSIGHTS_HEAD = `\n#### ${SECTIONS.INSIGHTS} (`;
 const NOT_RUN_HEAD = '\n#### Not run / Failed (';
+const UPSTREAM_THEN_INSIGHTS = `${SECTIONS.UPSTREAM}, ${SECTIONS.INSIGHTS}`;
 
 function assertMultispecHeading(templateText) {
   const idx = templateText.indexOf(INSIGHTS_HEAD);
@@ -132,9 +133,8 @@ function assertMultispecHeading(templateText) {
 }
 
 function assertMultispecOrder(consoleText) {
-  const adjacent = `${SECTIONS.UPSTREAM}, ${SECTIONS.INSIGHTS}`;
-  const count = consoleText.split(adjacent).length - 1;
-  assert.equal(count, 2, `multispec-review-console.md carries "${adjacent}" ${count} times, expected 2 (the step-2 read list and the Canonical render order)`);
+  const count = consoleText.split(UPSTREAM_THEN_INSIGHTS).length - 1;
+  assert.equal(count, 2, `multispec-review-console.md carries "${UPSTREAM_THEN_INSIGHTS}" ${count} times, expected 2 (the step-2 read list and the Canonical render order)`);
 }
 
 function assertMultispecRHandling(consoleText) {
@@ -175,10 +175,9 @@ test('multispec-review-console.md names Reflection insights after Upstream feedb
 });
 
 test('control: dropping Reflection insights from either enumeration fails assertMultispecOrder', () => {
-  const adjacent = `${SECTIONS.UPSTREAM}, ${SECTIONS.INSIGHTS}`;
-  const once = doctor(MULTISPEC_CONSOLE, adjacent, SECTIONS.UPSTREAM);
+  const once = doctor(MULTISPEC_CONSOLE, UPSTREAM_THEN_INSIGHTS, SECTIONS.UPSTREAM);
   assert.throws(() => assertMultispecOrder(once), { message: /carries .* 1 times, expected 2/ });
-  const twice = doctor(once, adjacent, SECTIONS.UPSTREAM);
+  const twice = doctor(once, UPSTREAM_THEN_INSIGHTS, SECTIONS.UPSTREAM);
   assert.throws(() => assertMultispecOrder(twice), { message: /carries .* 0 times, expected 2/ });
 });
 
