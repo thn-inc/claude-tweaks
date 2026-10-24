@@ -39,7 +39,7 @@ files:
 - **URL:** `/claude-tweaks:release`
 - **Action:** Steps 1–4 as before; Step 5 reads the release PR's own checks against the `merge-verification` lever (red or still pending past the bound is `failed`, nothing moves) and then merges release-please's open PR with `gh pr merge --squash` (or, on a `local-merge` repo, runs `bin/release-local.js`); the version Steps 6 and 7 use is the one the engine actually shipped, reconciled once against the console's proposal; Step 6 waits — bounded — for the tag on origin, the GitHub Release and the `release: published` workflow run, and names any miss as a partial state with its recovery command; Step 7 comments `Shipped in v1.3.0` on each shipped record and closes it; Step 8 gives every finding Step 3 staged exactly one disposition before the run closes: filed as a record, digested below the materiality floor, or declined with a reason. The summary's `findings:` line counts them, and then the run directory is closed and archived (#3898).
 - **Should feel:** Slow in the right places — the verify step visibly waits for the hook rather than declaring victory at the merge.
-- **Should understand:** Five outcome words, never folded: `released`, `dry-run`, `HELD` (a Step 4 gate fired before Step 5 — in any mode, not only the train — nothing moved, and `release-held.md` names which gate), `PARTIAL` (the release exists, something after it did not land), `failed` (Step 5 attempted and landed nothing). Under `local-merge` the engine's own exit code is the verdict (`5` means the tag is final and only the hook failed — re-run the hook, never the release; `1` is either nothing written or a named partial state, and its stderr says which). `--as` works under both engines (#2326): under `local-merge` it is passed through as `bin/release-local.js --release-as {version}`, which exits `2` (naming both versions) if the value is not ahead of the derived base.
+- **Should understand:** Five outcome words, never folded: `released`, `dry-run`, `HELD` (a gate stopped the run before the merge — at Step 4, or at one of Step 5's no-merge stops such as `integration branch kept moving` — in any mode, not only the train; nothing moved, and `release-held.md` names which gate), `PARTIAL` (the release exists, something after it did not land), `failed` (Step 5 attempted and landed nothing). Under `local-merge` the engine's own exit code is the verdict (`5` means the tag is final and only the hook failed — re-run the hook, never the release; `1` is either nothing written or a named partial state, and its stderr says which). `--as` works under both engines (#2326): under `local-merge` it is passed through as `bin/release-local.js --release-as {version}`, which exits `2` (naming both versions) if the value is not ahead of the derived base.
 - **Red flags:** `released` printed while the publish workflow is still running or failed; a record closed without the `Shipped in` comment; `--as 7.0.0` accepted without the major-bump gate; a red release PR merged because the review was clean; `Shipped in v1.3.0` written when the engine shipped `v1.4.0`; review findings left in `staged/` of a closed or archived run directory with no disposition line in `decisions.md`; the run directory archived while a filing failed.
 
 ### 4. Unattended — `--train`
@@ -67,6 +67,23 @@ files:
 - **Should understand:** Commits ahead are fine only when they touch nothing outside run directories. The review's test gate runs against the tree it stands in, so that tree must match the range being tagged everywhere that ships.
 - **Red flags:** A release refused over `[reconcile] archive run` commits alone; a checkout behind `origin/main` let through; a stop line advising `git push` for local commits that change shipped files; a review run after a fetch that failed.
 
+### 7. `main` moves while the release is in flight
+- **URL:** `/claude-tweaks:release` (pr-first) on a busy repo where teammates keep merging PRs during Step 3's review or the release PR's check watch
+- **Action:** Step 3's marker line records the tip it reviewed (`at reviewed tip {sha}`). Immediately before `gh pr merge`, Step 5 fetches and compares `origin/main` with that tip:
+  - **Unmoved:** the merge proceeds.
+  - **Only run-dir archive commits arrived:** the reviewed tip advances, and nothing else happens.
+  - **Real commits arrived:** Step 5 asserts the main checkout is on `main` and pulls it to the new tip. It runs a delta review over just the arrived commits, then re-enters the PR-check gate. That re-entry re-gates the bump on the arrived commits as well as the PR title.
+  - **Blocking delta finding:** the release is held, the same `review: blocking` gate as Step 4.
+  - **Bound passed:** once more moves arrive than `release-tip-moves` allows (default 2), the run stops `HELD — integration branch kept moving`. It prints the arrived commits under the HELD line and suggests pausing merges (#4041).
+- **Should feel:** The release never ships a commit nobody reviewed, and a quiet repo never notices the check.
+- **Should understand:** `HELD` here means nothing merged. Re-run once merges pause. A run with `--as` already pushed its `Release-As:` commit, so re-run without a second override.
+- **Red flags:**
+  - A release merged after `main` moved, with no delta-review lines in `decisions.md`.
+  - A delta review or a counted move triggered by archive commits alone.
+  - `pull --rebase` run on a main checkout that is not on `main`.
+  - A `HELD — integration branch kept moving` summary with no commit list under it.
+  - A breaking change that arrived after the console shipping as a minor.
+
 ## Origin
 - Created during build of #2256 (record: The `/claude-tweaks:release` skill)
 - Steps 1-4 built in this session
@@ -75,3 +92,4 @@ files:
 - Step 1 red flags updated for #3040 (the preflight pack's publish-hook probe now reads CRLF workflow files)
 - Steps 2-3 updated and Step 5 added for #3898 (release run-dir lifecycle: Step 0 refuses a prior release's directory, every exit closes out, Step 8 disposes of staged findings and archives the created directory)
 - Step 6 added for #4012 (Step 3's review-tree check accepts run-dir-only commits ahead, stops on a failed fetch, and names counts plus a recovery chosen by the failing clause)
+- Step 7 added for #4041 (Step 5 compares `origin/main` with Step 3's reviewed tip before the merge, delta-reviews arrived commits, and holds past `release-tip-moves`)
