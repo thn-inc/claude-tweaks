@@ -33,6 +33,7 @@ files:
   - A CRLF body saved from the web editor stays CRLF.
   - A body that lost its block entirely gets the block appended rather than overwritten.
   - Only a CLOSED record being reopened is re-rendered in full, because a reopen is a fresh incident.
+  - The same edit also drops any listed path under this checkout's own `.claude-tweaks/pipelines/` that is already gone, and the comment names each dropped path (step 4).
 - **Red flags:** The issue's edit history showing the whole body replaced by the generic "Reconcile has one or more run directories stuck…" text while the record is open. Mixed line endings in a CRLF body.
 
 ### 3. Ad-hoc session dirs stay out of the list — same pass
