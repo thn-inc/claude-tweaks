@@ -33,7 +33,11 @@ function lockInUse(worktree) {
 // `attribution: 'fallback'` lines (another session's hook guessed them into this
 // run). Throws when the log is absent/unreadable — that is unknown evidence, not
 // proof of quiet.
-function ownEventAt(runDir) {
+// With an `ownerSessionId` (anything but undefined), only `session-end` events
+// carrying that exact sessionId count toward lastSessionEndMs — another session
+// resolving this run with non-fallback attribution can append one; lastOwnMs is
+// unchanged.
+function ownEventAt(runDir, ownerSessionId) {
   // Lazy: archive-merged.js is a large module most callers never need.
   const { ownEventRecency } = require('../reconcile/archive-merged');
   const { readable, lastOwnMs } = ownEventRecency(runDir);
@@ -41,6 +45,7 @@ function ownEventAt(runDir) {
   let lastSessionEndMs = null;
   for (const ev of readEventLines(runDir) || []) {
     if (!ev || ev.type !== 'session-end' || ev.attribution === 'fallback') continue;
+    if (ownerSessionId !== undefined && ev.sessionId !== ownerSessionId) continue;
     const t = Date.parse(ev.ts);
     if (Number.isNaN(t)) continue;
     if (lastSessionEndMs === null || t > lastSessionEndMs) lastSessionEndMs = t;

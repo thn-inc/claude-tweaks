@@ -138,6 +138,26 @@ test('ownEventAt: lastSessionEndMs is null when only non-session-end events exis
   assert.deepStrictEqual(DEFAULT_PROBES.ownEventAt(dir), { lastOwnMs: Date.parse(T1), lastSessionEndMs: null });
 });
 
+test('ownEventAt with an owner session id counts only that session\'s session-end events', () => {
+  const dir = runDirWith([
+    JSON.stringify({ type: 'session-end', ts: T1, sessionId: 'A', attribution: 'owner' }),
+    JSON.stringify({ type: 'session-end', ts: T3, sessionId: 'B', attribution: 'owner' }),
+    JSON.stringify({ type: 'session-end', ts: T2, attribution: 'owner' }),
+  ]);
+  assert.deepStrictEqual(DEFAULT_PROBES.ownEventAt(dir, 'A'), { lastOwnMs: Date.parse(T3), lastSessionEndMs: Date.parse(T1) });
+  assert.deepStrictEqual(DEFAULT_PROBES.ownEventAt(dir, 'C'), { lastOwnMs: Date.parse(T3), lastSessionEndMs: null });
+  assert.deepStrictEqual(DEFAULT_PROBES.ownEventAt(dir, null), { lastOwnMs: Date.parse(T3), lastSessionEndMs: null });
+});
+
+test('ownEventAt without an owner session id keeps counting every non-fallback session-end event', () => {
+  const dir = runDirWith([
+    JSON.stringify({ type: 'session-end', ts: T1, sessionId: 'A' }),
+    JSON.stringify({ type: 'session-end', ts: T3, sessionId: 'B' }),
+  ]);
+  assert.deepStrictEqual(DEFAULT_PROBES.ownEventAt(dir), { lastOwnMs: Date.parse(T3), lastSessionEndMs: Date.parse(T3) });
+  assert.deepStrictEqual(DEFAULT_PROBES.ownEventAt(dir, undefined), { lastOwnMs: Date.parse(T3), lastSessionEndMs: Date.parse(T3) });
+});
+
 test('ownEventAt throws when events.jsonl is absent', () => {
   assert.throws(() => DEFAULT_PROBES.ownEventAt(runDirWith(null)));
 });

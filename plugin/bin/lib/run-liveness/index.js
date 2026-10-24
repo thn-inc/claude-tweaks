@@ -61,6 +61,9 @@ function probeOwnerPid(owner, p) {
   if (owner.pidStartedAt === null || owner.pidStartedAt === undefined) {
     return { result: 'negative', detail: 'alive-no-start-time' };
   }
+  // A stored start time that is not the raw `ps` string cannot be compared; it is
+  // unjudgeable, not pid reuse.
+  if (typeof owner.pidStartedAt !== 'string') return { result: 'error', detail: 'invalid-start-time' };
   const started = call(p.pidStartTime, owner.pid);
   if (!started.ok) return { result: 'error', detail: started.message };
   if (started.value === null || started.value === undefined) return { result: 'error', detail: 'start-time-unavailable' };
@@ -112,8 +115,10 @@ function probeCommit(target, p, now) {
   return { result: 'negative', detail: `age:${age}`, absentOrOld: age >= LEGACY_DEAD_MS };
 }
 
-function probeOwnEvents(runDir, p, now) {
-  const r = call(p.ownEventAt, runDir);
+// ownerSessionId scopes the SessionEnd witness to the owner's own session
+// (undefined = no owner block, legacy behavior; null = a block with no session id).
+function probeOwnEvents(runDir, p, now, ownerSessionId) {
+  const r = call(p.ownEventAt, runDir, ownerSessionId);
   if (!r.ok) return { entry: { result: 'error', detail: r.message }, lastSessionEndMs: null };
   const { lastOwnMs, lastSessionEndMs } = r.value || {};
   const bad = (v) => v !== null && v !== undefined && !Number.isFinite(v);
@@ -142,11 +147,18 @@ function gatherEvidence(runDir, { now = Date.now(), probes = {} } = {}) {
 
   const target = worktreeTarget(state, p);
 
-  const pid = probeOwnerPid(owner, p);
-  const heartbeat = probeHeartbeat(owner, now);
+  // An owner block describing another session than the run's current one (an
+  // older build re-stamped sessionId over it, or the block build failed) is not
+  // evidence about the current session's process.
+  const mismatch = owner !== null && typeof state.sessionId === 'string' && state.sessionId !== ''
+    && state.sessionId !== owner.sessionId;
+  const mismatched = { result: 'error', detail: 'owner-session-mismatch' };
+
+  const pid = mismatch ? mismatched : probeOwnerPid(owner, p);
+  const heartbeat = mismatch ? mismatched : probeHeartbeat(owner, now);
   const lock = probeLock(target, p);
   const commit = probeCommit(target, p, now);
-  const events = probeOwnEvents(runDir, p, now);
+  const events = probeOwnEvents(runDir, p, now, owner ? (owner.sessionId ?? null) : undefined);
 
   const results = [pid, heartbeat, lock, commit, events.entry];
   const evidence = PROBE_ORDER.map((probe, i) => ({ probe, result: results[i].result, detail: results[i].detail }));
@@ -181,6 +193,11 @@ function decideVerdict({ evidence, witnesses }) {
 function runLiveness(runDir, opts) {
   try {
     const { now = Date.now(), probes = {} } = isPlainObject(opts) ? opts : {};
+    // Every age comparison goes false on a non-finite clock, which would read a
+    // fresh heartbeat as stale — refuse to judge.
+    if (!Number.isFinite(now)) {
+      return { verdict: 'unknown', evidence: PROBE_ORDER.map((probe) => ({ probe, result: 'error', detail: 'invalid-now' })) };
+    }
     const gathered = gatherEvidence(runDir, { now, probes });
     return { verdict: decideVerdict(gathered), evidence: gathered.evidence };
   } catch (err) {

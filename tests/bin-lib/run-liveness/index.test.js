@@ -408,6 +408,63 @@ test('AC3.1 a re-stamped owner block for the running process reads live through 
   assert.strictEqual(entry(res, 'owner-pid').result, 'positive');
 });
 
+// ---- final review: unjudgeable evidence never reaches dead ----
+test('AC12.2 an owner block from another session than the run-state sessionId is error owner-session-mismatch, verdict unknown', () => {
+  const res = verdictOf(fixture({ state: { sessionId: 'B', owner: owner({ sessionId: 'A' }) } }));
+  assert.deepStrictEqual({ r: entry(res, 'owner-pid').result, d: entry(res, 'owner-pid').detail }, { r: 'error', d: 'owner-session-mismatch' });
+  assert.deepStrictEqual({ r: entry(res, 'heartbeat').result, d: entry(res, 'heartbeat').detail }, { r: 'error', d: 'owner-session-mismatch' });
+  assert.strictEqual(res.verdict, 'unknown');
+});
+
+test('AC12.2 a session mismatch does not mask a positive live probe, and a matching or absent sessionId is judged as before', () => {
+  const live = verdictOf(fixture({ state: { sessionId: 'B', owner: owner({ sessionId: 'A' }) }, probes: { lockInUse: () => true } }));
+  assert.strictEqual(live.verdict, 'live');
+  assert.strictEqual(verdictOf(fixture({ state: { sessionId: 's', owner: owner() } })).verdict, 'dead');
+  assert.strictEqual(verdictOf(fixture({ state: { sessionId: '', owner: owner() } })).verdict, 'dead');
+  assert.strictEqual(verdictOf(fixture({ state: { sessionId: null, owner: owner() } })).verdict, 'dead');
+});
+
+test('AC8.1 a now that is not a finite number is unknown with every probe an invalid-now error', () => {
+  const fx = fixture({ state: { owner: owner() } });
+  for (const now of [NaN, Infinity, '2026-10-24T12:00:00Z', null, {}]) {
+    const res = runLiveness(fx.runDir, { now, probes: fx.probes });
+    assert.strictEqual(res.verdict, 'unknown', String(now));
+    assert.deepStrictEqual(res.evidence.map((e) => e.probe), PROBE_ORDER);
+    for (const e of res.evidence) assert.deepStrictEqual({ r: e.result, d: e.detail }, { r: 'error', d: 'invalid-now' });
+  }
+});
+
+test('AC8.1 a live pid whose stored pidStartedAt is not a string is error invalid-start-time, never pid-reused dead', () => {
+  for (const bad of [12345, {}, true]) {
+    const res = verdictOf(fixture({ state: { owner: owner({ pidStartedAt: bad }) }, probes: { pidAlive: () => true, pidStartTime: () => 'T1' } }));
+    assert.deepStrictEqual({ r: entry(res, 'owner-pid').result, d: entry(res, 'owner-pid').detail }, { r: 'error', d: 'invalid-start-time' }, JSON.stringify(bad));
+    assert.strictEqual(res.verdict, 'unknown');
+  }
+});
+
+test('AC6.1 the owner-events probe is asked for the owner block session id (null when the block has none)', () => {
+  const seen = [];
+  const ownEventAt = (runDir, sid) => { seen.push(sid); return { lastOwnMs: null, lastSessionEndMs: null }; };
+  verdictOf(fixture({ state: { owner: owner({ sessionId: 'A' }) }, probes: { ownEventAt } }));
+  verdictOf(fixture({ state: { owner: owner({ sessionId: undefined }) }, probes: { ownEventAt } }));
+  verdictOf(fixture({ state: {}, probes: { ownEventAt } }));
+  assert.deepStrictEqual(seen, ['A', null, undefined]);
+});
+
+test('AC6.1 a session-end event written by another session is not a death witness for the owner', () => {
+  const { DEFAULT_PROBES } = require('../../../plugin/bin/lib/run-liveness/probes');
+  const mk = (eventSession) => {
+    const fx = fixture({
+      state: { ...interrupted, owner: owner({ sessionId: 'A', pidStartedAt: null, heartbeatAt: new Date(SESSION_END - 5 * MIN).toISOString() }) },
+      probes: { pidAlive: () => true, ownEventAt: DEFAULT_PROBES.ownEventAt },
+    });
+    fs.writeFileSync(path.join(fx.runDir, 'events.jsonl'), JSON.stringify({ type: 'session-end', ts: new Date(SESSION_END).toISOString(), sessionId: eventSession, attribution: 'owner' }) + '\n');
+    return fx;
+  };
+  assert.strictEqual(verdictOf(mk('A')).verdict, 'dead');
+  assert.strictEqual(verdictOf(mk('B')).verdict, 'unknown');
+});
+
 // ---- never throws ----
 test('runLiveness never throws for any second argument', () => {
   const fx = fixture({ state: { owner: owner() } });
