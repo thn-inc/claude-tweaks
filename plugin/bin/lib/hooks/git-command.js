@@ -820,6 +820,10 @@ function scanHeredocs(str) {
       bracketDepth += 1;
       out.push('$[');
       i += 2;
+    } else if (ch === '[' && bracketDepth > 0) {
+      bracketDepth += 1; // an array subscript inside `$[ … ]` nests
+      out.push(ch);
+      i += 1;
     } else if (ch === ']' && bracketDepth > 0) {
       bracketDepth -= 1;
       out.push(ch);

@@ -27,13 +27,13 @@ files:
 - **Action:** Run it.
 - **Should feel:** Consistently refused. The deny reads exactly as it would for a bare `echo x > tracked-file.js`.
 - **Should understand:** Only the body is dropped. Whatever comes after the closing delimiter is scanned as usual, and so is the opener line. The scan also fails closed, keeping the body visible, whenever it cannot prove the body is only data:
-  - the body goes to a shell (`bash <<EOF`, `cat <<EOF | sh`, `sudo -s`, `(bash)`, a glued `sh<<EOF`), or the program word is unresolvable (`$SHELL <<EOF`)
+  - any command on the opener line is not an allowlisted data reader (`bash <<EOF`, `cat <<EOF | sh`, `cd x && node <<EOF`, `make -f - <<EOF`), the line carries a group or process-substitution token (`(bash)`, `>(…)`), or a program word is unresolvable (`$SHELL <<EOF`)
   - the delimiter is unquoted and the body contains `$(` or a backtick
   - the delimiter never closes, or uses `$'…'`/`$"…"` quoting
   - the opener line ends in `|`, `&&`, or `||`
 - **Red flags:**
   - A real top-level or post-delimiter redirect into a repo file that is allowed.
-  - A shell-fed body whose `echo x > f.js` goes unseen.
+  - A body fed to a command that is not a data reader, whose `echo x > f.js` goes unseen.
   - Writing a body to a file and executing it later (`cat > s.sh <<EOF … EOF; bash s.sh`) treated as covered. It is the documented opaque-program gap in `_shared/policy-schema-coverage.md`.
 
 ## Origin

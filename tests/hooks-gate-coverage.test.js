@@ -639,6 +639,14 @@ test('#4149: `<<` inside `$[ … ]` arithmetic is not a heredoc opener, even on 
   assert.deepStrictEqual(fileWriteTargets('cat $[1<<3]\necho x > f.js\n3]', '/r'), [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
 });
 
+test('#4149: an array subscript inside `$[ … ]` nests and does not close the arithmetic early', () => {
+  const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
+  assert.deepStrictEqual(fileWriteTargets('cat $[ a[1]<<3 ]\necho x > f.js\n3', '/r'), f);
+  // Nested `$[ ]` still balances, so the `<<` is arithmetic and the next line runs.
+  assert.deepStrictEqual(fileWriteTargets('cat $[ $[1] <<3 ]\necho x > f.js\n3', '/r'), f);
+  assert.deepStrictEqual(fileWriteTargets('cat $[ $[1<<2] <<3 ]\necho x > f.js\n3', '/r'), f);
+});
+
 test('#4149: only an unquoted `$[` opens arithmetic, and a stray `]` never goes negative', () => {
   // A `$[` inside quotes opens nothing, so the following `<<EOF` is a real opener and its body is data.
   assert.deepStrictEqual(fileWriteTargets("cat '$[' <<EOF\na > b\nEOF", '/r'), []);
