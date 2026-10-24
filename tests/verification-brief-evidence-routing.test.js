@@ -54,14 +54,18 @@ function assertRouting(s) {
   assert.ok(s.includes('Step 4 never commits to or pushes `{integration-branch}`'), 'integration-branch guard');
   assert.match(s, /detached HEAD/);
   assert.ok(s.includes("The run's own branch is the branch checked out in the worktree `run-state.json`'s `worktree` field records"), 'own-branch definition');
-  assert.match(s, /no `worktree` recorded\) the current-branch route is unavailable/);
+  assert.match(s, /Outside it \(back in the main checkout\) the current-branch route is unavailable/);
+  assert.match(s, /With no `worktree`\s+recorded .* the run's own branch is the\s+current branch itself, still under the guard above/s, 'a standalone run keeps the current-branch route');
   assert.ok(s.includes('`git rev-parse --show-toplevel` as its own Bash call and comparing its output with that recorded path'), 'the run-own-branch check names its comparison');
+  assert.match(s, /an exact match after dropping a trailing `\/`; any other output, or an error, counts as outside/);
+  assert.ok(s.includes('`^[A-Za-z0-9._/-]+$`'), 'a branch name with shell metacharacters never reaches a command');
   assert.match(s, /also appends its own "Post-push merge-state check" entry to `decisions\.md`, which is expected/);
   assert.match(s, /regardless of what the read returned/);
 
   const open = bullet(s, OPEN);
   assert.match(open, /push that commit straight away/);
   assert.ok(open.includes('`git push origin {branch}`'));
+  assert.match(open, /If the push fails, compose the brief without embedded screenshots/);
 
   const gone = bullet(s, GONE);
   assert.ok(gone.includes('`_shared/scratch-worktree.md`'));
@@ -86,6 +90,10 @@ function assertRouting(s) {
   assert.ok(gone.includes('`ExitWorktree`'));
   assert.ok(gone.includes('git ls-remote --heads origin demo-evidence/{record}'), 'substitute teardown proof');
   assert.match(gone, /say in it why they are missing/);
+  assert.ok(gone.includes("`git branch --list 'demo-evidence/{record}*'`"), 'local half of the free-name check');
+  assert.match(gone, /when its ancestry check refuses an unpushed commit, leave the worktree/);
+  assert.match(gone, /If the push succeeded but the PR create fails, the commit is on `origin`/);
+  assert.match(gone, /If the ls-remote proof does not return the recorded SHA .* do not discard/);
 
   const none = bullet(s, NONE);
   assert.match(none, /commit and push as for an open PR/);
