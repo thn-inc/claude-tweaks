@@ -1731,8 +1731,10 @@ function classifyRunDir(ctx, now = Date.now()) {
 // unchanged) or a `beginCacheBatch` handle (#1235 — batched across
 // `archiveMerged`'s item loops); see cache.js's own comment on the two
 // shapes.
-function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalateResidue, resolve = resolveResidue, runner } = {}) {
+function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalateResidue, resolve = resolveResidue, runner, dryRun = false } = {}) {
   if (isAdHocIntrinsicSkip(dir, reason)) {
+    // #2724: clearing resolves a real GitHub record, so it sits behind the same dry-run guard as pruneResidueFailures.
+    if (dryRun) return;
     clearResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { resolve, runner, why: ADHOC_EXEMPT_WHY });
     return;
   }
@@ -2218,7 +2220,7 @@ function archiveMerged({
               const guard = byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug);
               if (guard) {
                 skipped.push(skippedEntry(dir, guard));
-                trackStuckSkip(cacheBatch, repoSlug, dir, guard.reason, { runner });
+                trackStuckSkip(cacheBatch, repoSlug, dir, guard.reason, { runner, dryRun });
                 continue;
               }
               finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
@@ -2238,14 +2240,14 @@ function archiveMerged({
             // its own tracked reason too.
             const consoleReason = byNumber.state === 'CLOSED' ? 'console-never-rendered-pr-closed' : 'console-never-rendered-staged-pending';
             skipped.push({ runDir: dir, reason: consoleReason });
-            trackStuckSkip(cacheBatch, repoSlug, dir, consoleReason, { runner });
+            trackStuckSkip(cacheBatch, repoSlug, dir, consoleReason, { runner, dryRun });
             continue;
           }
           if (byNumber.state === 'MERGED') {
             const guard = byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug);
             if (guard) {
               skipped.push(skippedEntry(dir, guard));
-              trackStuckSkip(cacheBatch, repoSlug, dir, guard.reason, { runner });
+              trackStuckSkip(cacheBatch, repoSlug, dir, guard.reason, { runner, dryRun });
               continue;
             }
           }
@@ -2254,14 +2256,14 @@ function archiveMerged({
         }
       }
       skipped.push({ runDir: dir, reason: skipReason });
-      trackStuckSkip(cacheBatch, repoSlug, dir, skipReason, { runner });
+      trackStuckSkip(cacheBatch, repoSlug, dir, skipReason, { runner, dryRun });
       continue;
     }
 
     const runResult = archiveMergedRun({
       root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
       recordCheck: { records, repoSlug },
-      onSkip: (reason) => trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner }),
+      onSkip: (reason) => trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun }),
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
     skipped.push(skippedEntry(dir, runResult));
@@ -2287,8 +2289,8 @@ function archiveMerged({
     const runResult = archiveMergedRun({
       root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
       onSkip: (reason) => {
-        if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner });
-        if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid') trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner });
+        if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun });
+        if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid') trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun });
       },
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }

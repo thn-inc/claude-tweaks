@@ -1961,6 +1961,23 @@ test('#2724 trackStuckSkip: an exempted ad-hoc dir clears its escalated entry an
   assert.deepEqual(listResidueFailures(root), []);
 });
 
+test('#2724 trackStuckSkip: dryRun on an exempted ad-hoc dir neither resolves nor clears its escalated entry', () => {
+  const { root, dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2 });
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck at no-branch' });
+  const escalated = [];
+  const resolved = [];
+  trackStuckSkip(root, 'o/r', dir, 'no-branch', {
+    escalate: (a) => { escalated.push(a); },
+    resolve: (a) => { resolved.push(a); },
+    dryRun: true,
+  });
+  assert.equal(escalated.length, 0);
+  assert.equal(resolved.length, 0);
+  const entries = listResidueFailures(root);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].escalated, true);
+});
+
 test('#2724 trackStuckSkip: an exempted ad-hoc dir with no entry writes nothing and resolves nothing', () => {
   const { root, dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2 });
   const escalated = [];
