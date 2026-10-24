@@ -82,6 +82,19 @@ test('withStatus maps porcelain statuses (#4024)', () => {
   assert.deepStrictEqual(Object.keys(r.statuses).sort(), r.files);
 });
 
+test('withStatus maps unmerged and combined porcelain codes (#4024)', () => {
+  // Selection only tells M (content readers) from A/D (existence probes too), so the pin that matters
+  // is "any code that changes a path's existence is not M"; UU, a path present on both sides, stays M.
+  const statusZ = 'UU uu.js\0AA aa.js\0DU du.js\0UD ud.js\0AU au.js\0UA ua.js\0DD dd.js\0AD ad.js\0MD md.js\0AM am.js\0RM ren.js\0was.js\0C  cp.js\0src.js\0';
+  const r = changedFiles({ base: FULL, execImpl: statusExec('', statusZ), withStatus: true });
+  assert.deepStrictEqual(r.statuses, {
+    'uu.js': 'M', 'aa.js': 'A', 'du.js': 'D', 'ud.js': 'D', 'au.js': 'A', 'ua.js': 'A', 'dd.js': 'D', 'ad.js': 'D', 'md.js': 'D',
+    'am.js': 'A', 'ren.js': 'A', 'was.js': 'D', 'cp.js': 'A',
+  });
+  assert.ok(!('src.js' in r.statuses), "a copy's source is untouched");
+  assert.deepStrictEqual(Object.keys(r.statuses).sort(), r.files);
+});
+
 test('withStatus: an existence change wins over M (#4024)', () => {
   const diffM = changedFiles({ base: FULL, execImpl: statusExec('M\0p.js\0', '?? p.js\0'), withStatus: true });
   assert.deepStrictEqual(diffM.statuses, { 'p.js': 'A' });

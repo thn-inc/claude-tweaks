@@ -288,6 +288,42 @@ test('fetch exits 1 on a downloaded map from a failing suite', () => {
   });
 });
 
+// A gh whose chosen run's download extracts exactly `files` ({name: text}) into --dir.
+function ghDownloading(files) {
+  return (args) => {
+    if (args[1] === 'list') return JSON.stringify([{ databaseId: 6, headSha: SHA_A, event: 'push' }]);
+    const dir = args[args.indexOf('--dir') + 1];
+    for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), text);
+    return '';
+  };
+}
+
+test('fetch exits 1, leaving the cache alone, when the artifact holds no .json file or two', () => {
+  withTempDir((dir) => {
+    const out = path.join(dir, 'map.json');
+    fs.writeFileSync(out, mapText(SHA_C));
+    for (const [files, count] of [[{ 'notes.txt': 'x' }, 0], [{ 'a.json': mapText(SHA_A), 'b.json': mapText(SHA_A) }, 2]]) {
+      const git = fakeGit({ root: dir, ancestors: [SHA_A] });
+      const { deps, errs } = makeDeps({ git, gh: ghDownloading(files), cwd: dir });
+      assert.strictEqual(run({ argv: ['fetch', '--out', out], deps }), 1);
+      assert.match(errs.join('\n'), new RegExp(`holds ${count} \\.json file\\(s\\), want exactly 1`));
+      assert.strictEqual(fs.readFileSync(out, 'utf8'), mapText(SHA_C));
+    }
+  });
+});
+
+test('fetch exits 1, leaving the cache alone, on an artifact that does not parse as a map', () => {
+  withTempDir((dir) => {
+    const out = path.join(dir, 'map.json');
+    fs.writeFileSync(out, mapText(SHA_C));
+    const git = fakeGit({ root: dir, ancestors: [SHA_A] });
+    const { deps, errs } = makeDeps({ git, gh: ghDownloading({ 'claude-tweaks-test-impact.json': '{"commit":' }), cwd: dir });
+    assert.strictEqual(run({ argv: ['fetch', '--out', out], deps }), 1);
+    assert.match(errs.join('\n'), /map is invalid/);
+    assert.strictEqual(fs.readFileSync(out, 'utf8'), mapText(SHA_C));
+  });
+});
+
 test('fetch exits 1 when no successful main map is an ancestor of HEAD', () => {
   withTempDir((dir) => {
     const git = fakeGit({ root: dir, ancestors: [] });
@@ -349,6 +385,7 @@ test('trace under a path with a space: the real CLI maps lib/x.js to the test th
     const out = path.join(tmp, 'map.json');
     const r = spawnSync(process.execPath, [CLI, 'trace', '--allow-dirty', '--out', out], { cwd: root, env, encoding: 'utf8', timeout: 120000 });
     assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+    assert.strictEqual(r.stderr, '', 'a clean trace run says nothing on stderr: no skipped line, no header-less file');
     assert.match(r.stdout, /^trace: 2 test file\(s\), \d+ path\(s\), suite exit 0 → .*map\.json \(\d+ bytes\)$/m);
     const parsed = parseImpactMap(fs.readFileSync(out, 'utf8'));
     assert.ok(parsed.ok, JSON.stringify(parsed));

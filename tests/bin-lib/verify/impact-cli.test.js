@@ -59,7 +59,7 @@ function declOf(impact = {}, overrides = {}) {
 }
 
 // The base commit on `main` carries everything; the work happens on `feature`.
-function impactRepo(decl = declOf()) {
+function impactRepo(decl = declOf(), extraFiles = {}) {
   const repo = tmpDir();
   const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   git('init', '-q');
@@ -73,6 +73,7 @@ function impactRepo(decl = declOf()) {
     'tests/a.test.js': 'a\n',
     'tests/b.test.js': 'b\n',
     '.claude-tweaks/verify-scope.json': JSON.stringify(decl),
+    ...extraFiles,
   };
   for (const [rel, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
@@ -258,6 +259,36 @@ test('{files} path with a space is quoted', async () => {
   const report = JSON.parse(fs.readFileSync(path.join(logDir, 'report.json'), 'utf8'));
   assert.strictEqual(report.scope.impact.selected, 1);
   assert.strictEqual(report.scope.impact.listPath, path.join(logDir, 'impact-files.txt'));
+});
+
+test('an impact.command with quotes of its own cannot take a path that needs quoting: full, files-list-unquotable', async () => {
+  const r = impactRepo(declOf({ command: 'node scripts/subset.js {files} --label "a b"' }));
+  writeMap(r);
+  commitFile(r, 'src/x.js', 'x2\n');
+  const logDir = path.join(tmpDir(), 'dir with space', 'logs');
+  const run = await runCli([...ARGS, '--log-dir', logDir], r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(r.marker(), 'FULL');
+  const imp = JSON.parse(fs.readFileSync(path.join(logDir, 'report.json'), 'utf8')).scope.impact;
+  assert.strictEqual(imp.fallback, 'files-list-unquotable: template-quotes');
+  assert.strictEqual(imp.files, null);
+  assert.strictEqual(fs.existsSync(path.join(logDir, 'impact-files.txt')), false, 'no list is written for a refused hand-over');
+  assert.match(run.stdout, /^Impact: full tests — files-list-unquotable: template-quotes$/m);
+});
+
+test('a selected test path holding a line break cannot be listed: full, files-list-unwritable', { skip: process.platform === 'win32' }, async () => {
+  const odd = 'tests/we\nird.test.js';
+  const r = impactRepo(declOf(), { [odd]: 'odd\n' });
+  fs.writeFileSync(path.join(r.gitDir, DEFAULT_MAP_NAME), mapJson(r.base, {
+    tests: { 'tests/a.test.js': { f: ['src/y.js'] }, [odd]: { f: ['src/x.js'] } },
+  }));
+  commitFile(r, 'src/x.js', 'x2\n');
+  const run = await runCli(ARGS, r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(r.marker(), 'FULL');
+  const imp = r.report().scope.impact;
+  assert.strictEqual(imp.fallback, 'files-list-unwritable: line break in tests/we\\x0aird.test.js');
+  assert.strictEqual(fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'impact-files.txt')), false);
 });
 
 test('a single-string checks.tests needs no --cmd in subset mode, but does on fallback', async () => {

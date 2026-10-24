@@ -21,6 +21,7 @@ No other key is accepted. `impact` cannot be combined with a tool-scoped `checks
 
 - A `"{files}"` wrapper (or `'{files}'` on POSIX) is replaced by that quoting.
 - Anything else left in `command` that could nest with that quoting refuses the substitution. On POSIX that is any other quote, backtick or backslash, or `${files}`. On win32 it is any other quote, or `^`.
+- The list path itself can refuse too, whatever `command` holds: a leading `-` (`leading-dash`) or a control character (`control-character`) on any platform, and on win32 a `"`, `%` or `!`, or a trailing backslash (`cmd-unquotable`). The list lives in the log dir, so a refusal of this kind means changing `--log-dir`.
 - A refusal runs the suite full with `files-list-unquotable: {reason}`.
 
 Keep `command` free of those characters.
