@@ -3466,7 +3466,7 @@ test('--baseline: a SIGINT mid-run removes the scratch worktree and exits 130, l
 });
 
 test('#4177 AC1/AC3: no fixture command uses the POSIX-only single-quoted node -e form — cmd.exe gives \' no meaning', () => {
-  const lines = fs.readFileSync(__filename, 'utf8').split('\n');
+  const lines = readText(__filename).split('\n');
   const offenders = lines.map((l, i) => [i + 1, l]).filter(([, l]) => /node -e \\?'/.test(l)).map(([n]) => n);
   assert.deepStrictEqual(offenders, [], 'build the command with nodeCmd(script, ...args) instead');
 });
