@@ -335,6 +335,83 @@ test('writeRunState merges, stamps updatedAt; readRunState round-trips', () => {
   assert.strictEqual(ctx.readRunState(run).status, 'interrupted');
 });
 
+test('writeRunState with a function patch that returns null writes nothing', () => {
+  const project = tmpProject();
+  const run = mkRun(project, '2026-07-01T090000-spec-fn1');
+  ctx.writeRunState(run, { status: 'active' });
+  const file = path.join(run, 'run-state.json');
+  const before = fs.readFileSync(file);
+  const existing = ctx.readRunState(run);
+  assert.deepStrictEqual(ctx.writeRunState(run, () => null), existing);
+  assert.deepStrictEqual(ctx.writeRunState(run, () => undefined), existing);
+  assert.ok(fs.readFileSync(file).equals(before));
+});
+
+test('writeRunState with a function patch sees the existing state', () => {
+  const project = tmpProject();
+  const run = mkRun(project, '2026-07-01T090000-spec-fn2', { a: 1 });
+  let seen;
+  const next = ctx.writeRunState(run, (existing) => { seen = existing; return { b: 2 }; });
+  assert.deepStrictEqual(seen, { a: 1 });
+  assert.strictEqual(next.a, 1);
+  assert.strictEqual(next.b, 2);
+  assert.ok(next.updatedAt);
+  assert.deepStrictEqual(ctx.readRunState(run), next);
+});
+
+test('writeRunState with a function patch sees {} when no state exists', () => {
+  const project = tmpProject();
+  const run = mkRun(project, '2026-07-01T090000-spec-fn3');
+  let seen;
+  ctx.writeRunState(run, (existing) => { seen = existing; return { b: 2 }; });
+  assert.deepStrictEqual(seen, {});
+});
+
+test('ownerBlock builds the owner block from injected deps', () => {
+  const block = ctx.ownerBlock({
+    sessionId: 's',
+    env: {},
+    now: Date.parse('2026-10-24T06:00:00Z'),
+    deps: {
+      hostname: () => 'h',
+      resolveOwnerPid: () => ({ pid: 9, pidSource: 'env' }),
+      pidStartTime: () => 'Sat Oct 24 08:08:15 2026',
+    },
+  });
+  assert.deepStrictEqual(block, {
+    sessionId: 's', host: 'h', pid: 9, pidSource: 'env',
+    pidStartedAt: 'Sat Oct 24 08:08:15 2026', heartbeatAt: '2026-10-24T06:00:00.000Z',
+  });
+});
+
+test('ownerBlock with an unknown pid has pidStartedAt null and never probes the start time', () => {
+  let probed = false;
+  const block = ctx.ownerBlock({
+    sessionId: 's',
+    env: {},
+    now: Date.parse('2026-10-24T06:00:00Z'),
+    deps: {
+      hostname: () => 'h',
+      resolveOwnerPid: () => ({ pid: null, pidSource: null }),
+      pidStartTime: () => { probed = true; return 'x'; },
+    },
+  });
+  assert.strictEqual(block.pid, null);
+  assert.strictEqual(block.pidStartedAt, null);
+  assert.strictEqual(probed, false);
+});
+
+test('AC2.4: ownerStampPatch never replaces another session\'s owner block', () => {
+  const block = { sessionId: 'b', pid: 1 };
+  const existing = { owner: { sessionId: 'a' } };
+  assert.deepStrictEqual(ctx.ownerStampPatch(existing, 'b', block, { replacesSessionId: false }), {});
+  assert.deepStrictEqual(ctx.ownerStampPatch(existing, 'b', block, { replacesSessionId: true }), { owner: block });
+  assert.deepStrictEqual(ctx.ownerStampPatch(existing, 'a', { sessionId: 'a' }, { replacesSessionId: false }), { owner: { sessionId: 'a' } });
+  assert.deepStrictEqual(ctx.ownerStampPatch(existing, undefined, block, { replacesSessionId: true }), {});
+  assert.deepStrictEqual(ctx.ownerStampPatch(existing, '', block, { replacesSessionId: true }), {});
+  assert.deepStrictEqual(ctx.ownerStampPatch({}, 'b', block, { replacesSessionId: false }), { owner: block });
+});
+
 test('appendEvent writes one JSON line per call, never throws on bad dir', () => {
   const project = tmpProject();
   const run = mkRun(project, '2026-07-01T090000-spec-1');

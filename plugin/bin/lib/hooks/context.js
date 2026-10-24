@@ -1,6 +1,7 @@
 // bin/lib/hooks/context.js
 'use strict';
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const wtDetect = require('./worktree-detect');
 const { writeFileAtomic } = require('../atomic-write');
@@ -9,6 +10,8 @@ const { parseWorktreeList, findWorktreeEntry, isPidAlive } = require('./worktree
 const runDirResolve = require('./run-dir-resolve');
 const { classifyDecisions } = require('../log-decision/claim-log');
 const { canonicalRealpath } = require('../path-guard');
+const processProbe = require('../run-liveness/process-probe');
+const { claudePid } = processProbe;
 
 function readStdin() {
   try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
@@ -733,11 +736,19 @@ function releaseRunStateLock(lockPath) {
 // previously could each read the same pre-write state and one writer's
 // patch would silently overwrite the other's, e.g. resurrecting a worktree
 // assignment a close-run call had just cleared.
-function writeRunState(runDir, patch) {
+//
+// `patchOrFn` is a patch object, or (#3973) a function called INSIDE the lock with
+// the existing state (`{}` when none) so a conditional stamp decides against the
+// state it is about to merge into. A null/undefined return writes nothing, does not
+// bump `updatedAt`, and returns the existing state.
+function writeRunState(runDir, patchOrFn) {
   const lock = acquireRunStateLock(runDir);
   const finalPath = path.join(runDir, 'run-state.json');
   try {
-    const next = { ...(readRunState(runDir) || {}), ...patch, updatedAt: new Date().toISOString() };
+    const existing = readRunState(runDir) || {};
+    const patch = typeof patchOrFn === 'function' ? patchOrFn(existing) : patchOrFn;
+    if (typeof patchOrFn === 'function' && (patch === null || patch === undefined)) return existing;
+    const next = { ...existing, ...patch, updatedAt: new Date().toISOString() };
     // bin/lib/atomic-write.js's writeFileAtomic (#1653): writes a per-process
     // tmp file then fs.renameSync's atomically over the real path, so a
     // reader or a racing unlocked writer can never observe a torn/partial
@@ -778,12 +789,8 @@ function isTrustedOwnedRun(ownedRun) {
 // session id) never re-stamps ownerPid, and its ending is the run's real
 // interruption — suppressing it would regress to a never-flagged run. Probe
 // errors other than "alive" fail open (never nested, never throw from a hook).
-function claudePid(env) {
-  const raw = env && env.CLAUDE_PID;
-  if (typeof raw !== 'string' || !/^[1-9]\d*$/.test(raw)) return null;
-  const pid = Number(raw);
-  return Number.isSafeInteger(pid) ? pid : null;
-}
+// (claudePid itself lives in run-liveness/process-probe.js, imported above, so
+// the run-liveness modules can share it without requiring this file.)
 
 // The run-state patch that stamps this process as the run's owner — empty when
 // the pid is unknown, so a stamp site never writes a garbled `ownerPid`. Shared
@@ -792,6 +799,31 @@ function claudePid(env) {
 function ownerPidPatch(env) {
   const pid = claudePid(env);
   return pid === null ? {} : { ownerPid: pid };
+}
+
+// #3973: the run-state `owner` block — who owns this run and when it last proved it
+// was alive. `pidStartedAt` guards against pid reuse and is null whenever the pid is
+// unknown (the start time is then never probed). Pure but for the injected deps.
+function ownerBlock({ sessionId, env = process.env, now = Date.now(), deps = {} } = {}) {
+  const { pid, pidSource } = (deps.resolveOwnerPid || processProbe.resolveOwnerPid)(env);
+  return {
+    sessionId,
+    host: (deps.hostname || os.hostname)(),
+    pid,
+    pidSource,
+    pidStartedAt: pid === null ? null : (deps.pidStartTime || processProbe.pidStartTime)(pid),
+    heartbeatAt: new Date(now).toISOString(),
+  };
+}
+
+// The run-state patch that stamps `block` as the owner — `{}` when the caller has no
+// session id, or when another session's block is already there and this caller is not
+// the adoption path (`replacesSessionId`), so a stamp never takes over a foreign run.
+function ownerStampPatch(existing, sessionId, block, { replacesSessionId = false } = {}) {
+  if (typeof sessionId !== 'string' || sessionId === '') return {};
+  const current = existing && existing.owner;
+  if (current && current.sessionId !== sessionId && !replacesSessionId) return {};
+  return { owner: block };
 }
 
 function isNestedSession(runState, env, { isAlive = isPidAlive } = {}) {
@@ -945,5 +977,5 @@ module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
-  claudePid, ownerPidPatch, isPidAlive, isNestedSession,
+  claudePid, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch,
 };
