@@ -34,13 +34,18 @@ test('release-tip-moves is an advanced merge-safety integer defaulting to 2', ()
   assert.equal(row.tier, 'advanced');
 });
 
-// The `bash` fence of execute.md that compares origin/{branch} with the reviewed tip, with {branch}
-// resolved to `main` and {reviewed-tip} to the given sha.
-function comparisonFence(executeText, reviewedTip) {
+// The `bash` fence of execute.md containing `needle`, with {branch} resolved to `main` and
+// {reviewed-tip} to the given sha.
+function fenceContaining(executeText, needle, reviewedTip) {
   const fences = [...executeText.matchAll(/```bash\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
-  const fence = fences.find((f) => f.includes('rev-parse origin/{branch})" = "{reviewed-tip}"'));
-  assert.ok(fence, 'extraction pattern is out of sync: no execute.md bash fence contains \'rev-parse origin/{branch})" = "{reviewed-tip}"\'');
+  const fence = fences.find((f) => f.includes(needle));
+  assert.ok(fence, `extraction pattern is out of sync: no execute.md bash fence contains '${needle}'`);
   return fence.split('{branch}').join(BRANCH).split('{reviewed-tip}').join(reviewedTip);
+}
+
+// The fence that compares origin/{branch} with the reviewed tip.
+function comparisonFence(executeText, reviewedTip) {
+  return fenceContaining(executeText, 'rev-parse origin/{branch})" = "{reviewed-tip}"', reviewedTip);
 }
 
 // Runs body against a fresh fixture and always removes it afterwards.
@@ -79,6 +84,19 @@ function pushRunDirUpstream(fx) {
   fx.run(fx.other, ['add', '.claude-tweaks/pipelines']);
   fx.run(fx.other, ['commit', '-q', '-m', '[reconcile] archive run r2']);
   fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
+}
+
+// Runs the comparison fence, after `mutate` doctored it, against an origin that moved once the
+// reviewed tip was read. Returns the run's status and stderr.
+function runAfterMove(prefix, mutate) {
+  let result;
+  withFixture(prefix, (fx) => {
+    const tip = reviewedTipOf(fx);
+    const fence = mutate(comparisonFence(readText(EXECUTE), tip));
+    pushUpstream(fx);
+    result = runComparison(fence, fx);
+  });
+  return result;
 }
 
 test('AC1.1: an unmoved origin/{branch} exits 0', () => {
@@ -133,34 +151,16 @@ test('AC1.2: go-red: dropping the compare clause lets the moved row exit 0', () 
 });
 
 test('AC1.2: go-red: dropping the fetch compares a stale ref, so the moved row exits 0', () => {
-  const stopsOnMove = (mutate) => {
-    let status;
-    withFixture('release-reviewed-tip-nofetch-', (fx) => {
-      const tip = reviewedTipOf(fx);
-      const fence = mutate(comparisonFence(readText(EXECUTE), tip));
-      pushUpstream(fx);
-      status = runComparison(fence, fx).status;
-    });
-    return status;
-  };
+  const statusAfterMove = (mutate) => runAfterMove('release-reviewed-tip-nofetch-', mutate).status;
   const fetchClause = `git -C "$RUN_ROOT" fetch --quiet origin ${BRANCH} \\\n  && `;
   const real = comparisonFence(readText(EXECUTE), 'x');
   assert.ok(real.includes(fetchClause), 'anchor text for the fetch clause not found — proof cannot discriminate');
-  assert.notEqual(stopsOnMove((f) => f), 0, 'the real fence must stop on a move');
-  assert.equal(stopsOnMove((f) => f.replace(fetchClause, '')), 0, 'without the fetch the moved row compares a stale origin/{branch} and passes (exit 0)');
+  assert.notEqual(statusAfterMove((f) => f), 0, 'the real fence must stop on a move');
+  assert.equal(statusAfterMove((f) => f.replace(fetchClause, '')), 0, 'without the fetch the moved row compares a stale origin/{branch} and passes (exit 0)');
 });
 
 test('go-red: without --quiet a move leaves fetch output on stderr, so it would read as a git error', () => {
-  const moveStderr = (mutate) => {
-    let stderr;
-    withFixture('release-reviewed-tip-quiet-', (fx) => {
-      const tip = reviewedTipOf(fx);
-      const fence = mutate(comparisonFence(readText(EXECUTE), tip));
-      pushUpstream(fx);
-      stderr = runComparison(fence, fx).stderr;
-    });
-    return stderr;
-  };
+  const moveStderr = (mutate) => runAfterMove('release-reviewed-tip-quiet-', mutate).stderr;
   const real = comparisonFence(readText(EXECUTE), 'x');
   assert.ok(real.includes(' --quiet'), 'anchor text " --quiet" not found — proof cannot discriminate');
   assert.equal(moveStderr((f) => f), '', 'the real fence keeps a move silent');
@@ -375,12 +375,9 @@ test('placement: the comparison block sits after delta 5 and before Merge', () =
   assert.ok(block < merge, 'the comparison block must come before the Merge paragraph');
 });
 
-// The `bash` fence of execute.md that compares the trees outside run dirs, resolved like comparisonFence.
+// The fence that compares the trees outside run dirs.
 function runDirOnlyFence(executeText, reviewedTip) {
-  const fences = [...executeText.matchAll(/```bash\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
-  const fence = fences.find((f) => f.includes('diff --quiet {reviewed-tip} origin/{branch}'));
-  assert.ok(fence, 'extraction pattern is out of sync: no execute.md bash fence contains \'diff --quiet {reviewed-tip} origin/{branch}\'');
-  return fence.split('{branch}').join(BRANCH).split('{reviewed-tip}').join(reviewedTip);
+  return fenceContaining(executeText, 'diff --quiet {reviewed-tip} origin/{branch}', reviewedTip);
 }
 
 // Status of the run-dir-only check once the upstream moved: 0 means every arrived commit is run-dir-only.
