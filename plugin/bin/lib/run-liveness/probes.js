@@ -13,16 +13,18 @@ const { lastCommitMs } = require('../hooks/resume-freshness');
 const { readEventLines } = require('../hooks/context');
 const { pidStartTime } = require('./process-probe');
 
-// true when a live process holds the worktree lock; false when free, orphaned
-// (lock pid dead) or the worktree has no entry; throws on an unknown lock (no
-// pid in the reason) or when the lock state could not be listed.
+// true when a live process holds the worktree lock; false when free or orphaned
+// (lock pid dead); throws on an unknown lock (no pid in the reason), when the lock
+// state could not be listed, or when the worktree is not among the ones git lists for
+// its main checkout (the caller already established the directory exists, so an
+// unlisted one is a path git did not match, not a worktree known to be unlocked).
 function lockInUse(worktree) {
   const root = mainCheckoutRoot(worktree);
   if (!root) throw new Error(`could not resolve the main checkout of ${worktree}`);
   const { stdout, failure } = runGit(['worktree', 'list', '--porcelain'], root);
   if (failure) throw new Error(`could not list worktrees from ${root}: git ${failure}`);
   const entry = findWorktreeEntry(parseWorktreeList(stdout), safeReal(worktree) || worktree);
-  if (!entry) return false;
+  if (!entry) throw new Error(`${worktree} is not listed by git worktree list in ${root}`);
   const verdict = lockVerdict(entry);
   if (verdict === 'in-use') return true;
   if (verdict === 'free' || verdict === 'orphaned') return false;

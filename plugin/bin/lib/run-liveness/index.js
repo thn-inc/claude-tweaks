@@ -11,9 +11,10 @@
 //
 // Precedence (decideVerdict): any positive among the four live probes -> live;
 // else any error -> unknown; else any death witness -> dead; else unknown.
+const fs = require('fs');
 const path = require('path');
-const ctxLib = require('../hooks/context');
 const { lstatType } = require('../path-guard');
+const { runStartIso } = require('../hooks/run-integrity');
 const { DEFAULT_PROBES } = require('./probes');
 const { LIVE_WINDOW_MS, LEGACY_DEAD_MS } = require('./constants');
 
@@ -21,7 +22,10 @@ const PROBE_ORDER = ['owner-pid', 'heartbeat', 'worktree-lock', 'last-commit', '
 // owner-events is corroboration for the legacy witness, not a liveness probe.
 const LIVE_PROBES = ['owner-pid', 'heartbeat', 'worktree-lock', 'last-commit'];
 
-const RUN_ID_TS_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})(?:-|$)/;
+// process.kill throws on a pid above int32 (ERR_INVALID_ARG_TYPE, not ESRCH), which
+// isPidAlive reads as "gone" — no real pid is that large, so such a value is garbage,
+// not a death witness.
+const MAX_PID = 2 ** 31 - 1;
 
 // Run a probe; tag the outcome so a throw is "could not ask", never "no".
 function call(fn, ...args) {
@@ -35,18 +39,31 @@ function call(fn, ...args) {
 // The run directory's creation time, from its run-id basename prefix
 // (YYYY-MM-DDTHHMMSS, UTC). null when the basename carries none.
 function runIdMs(runDir) {
-  const m = RUN_ID_TS_RE.exec(path.basename(String(runDir)));
-  if (!m) return null;
-  const [y, mo, d, h, mi, s] = m.slice(1).map(Number);
-  const ms = Date.UTC(y, mo - 1, d, h, mi, s);
-  const back = new Date(ms);
-  if (back.getUTCFullYear() !== y || back.getUTCMonth() !== mo - 1 || back.getUTCDate() !== d
-    || back.getUTCHours() !== h || back.getUTCMinutes() !== mi || back.getUTCSeconds() !== s) return null;
-  return ms;
+  const iso = runStartIso(String(runDir));
+  return iso === null ? null : Date.parse(iso);
 }
 
 function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+// The run's run-state.json as { state } — `{}` when the file is absent (a legacy run
+// that never had one) — or { unreadable } when it exists but cannot be read or is not
+// a JSON object: that is a question the module could not ask, never "no owner block".
+function readState(runDir) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { state: {} };
+    return { unreadable: err && err.message ? err.message : String(err) };
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return isPlainObject(parsed) ? { state: parsed } : { unreadable: 'run-state.json is not a JSON object' };
+  } catch (err) {
+    return { unreadable: err && err.message ? err.message : String(err) };
+  }
 }
 
 function probeOwnerPid(owner, p) {
@@ -54,7 +71,7 @@ function probeOwnerPid(owner, p) {
   const host = call(p.hostname);
   if (!host.ok) return { result: 'error', detail: host.message };
   if (owner.host !== host.value) return { result: 'negative', detail: 'other-host' };
-  if (!Number.isInteger(owner.pid) || owner.pid <= 0) return { result: 'negative', detail: 'no-pid' };
+  if (!Number.isInteger(owner.pid) || owner.pid <= 0 || owner.pid > MAX_PID) return { result: 'negative', detail: 'no-pid' };
   const alive = call(p.pidAlive, owner.pid);
   if (!alive.ok) return { result: 'error', detail: alive.message };
   if (!alive.value) return { result: 'negative', detail: 'gone', witness: true };
@@ -138,11 +155,8 @@ function probeOwnEvents(runDir, p, now, ownerSessionId) {
 //      witnesses: ('pid' | 'session-end' | 'legacy')[] }
 function gatherEvidence(runDir, { now = Date.now(), probes = {} } = {}) {
   const p = { pathType: (wt) => lstatType(wt), ...DEFAULT_PROBES, ...probes };
-  let state = {};
-  try {
-    const s = ctxLib.readRunState(runDir);
-    if (isPlainObject(s)) state = s;
-  } catch { /* unreadable run-state reads as legacy */ }
+  const read = readState(runDir);
+  const state = read.state || {};
   const owner = isPlainObject(state.owner) ? state.owner : null;
 
   const target = worktreeTarget(state, p);
@@ -153,11 +167,14 @@ function gatherEvidence(runDir, { now = Date.now(), probes = {} } = {}) {
   const mismatch = owner !== null && typeof state.sessionId === 'string' && state.sessionId !== ''
     && state.sessionId !== owner.sessionId;
   const mismatched = { result: 'error', detail: 'owner-session-mismatch' };
+  // A run-state.json that exists but cannot be read says nothing about the owner,
+  // the worktree or the status — every probe that depends on it could not be asked.
+  const unreadable = { result: 'error', detail: 'unreadable-run-state' };
 
-  const pid = mismatch ? mismatched : probeOwnerPid(owner, p);
-  const heartbeat = mismatch ? mismatched : probeHeartbeat(owner, now);
-  const lock = probeLock(target, p);
-  const commit = probeCommit(target, p, now);
+  const pid = read.unreadable ? unreadable : mismatch ? mismatched : probeOwnerPid(owner, p);
+  const heartbeat = read.unreadable ? unreadable : mismatch ? mismatched : probeHeartbeat(owner, now);
+  const lock = read.unreadable ? unreadable : probeLock(target, p);
+  const commit = read.unreadable ? unreadable : probeCommit(target, p, now);
   const events = probeOwnEvents(runDir, p, now, owner ? (owner.sessionId ?? null) : undefined);
 
   const results = [pid, heartbeat, lock, commit, events.entry];

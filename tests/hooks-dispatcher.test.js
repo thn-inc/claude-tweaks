@@ -584,6 +584,17 @@ test('AC2.4: record-worktree without a session id leaves the owner block unchang
   assert.deepStrictEqual(readRunState(run).owner, first);
 });
 
+test('AC2.4: record-worktree is the adoption path — a different session replaces both sessionId and the owner block, so they always agree', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'first', CLAUDE_PID: String(process.pid) } });
+  assert.strictEqual(readRunState(run).owner.sessionId, 'first');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'second', CLAUDE_PID: String(process.pid) } });
+  const state = readRunState(run);
+  assert.strictEqual(state.sessionId, 'second');
+  assert.strictEqual(state.owner.sessionId, 'second', 'the owner block belongs to the session recorded in sessionId');
+});
+
 test('AC3.1 #3845: hooks.js session-end from a nested claude process (same session id, other CLAUDE_PID) leaves the run active; the owner process stamps it', () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');

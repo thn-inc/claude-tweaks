@@ -412,6 +412,33 @@ test('AC2.4: ownerStampPatch never replaces another session\'s owner block', () 
   assert.deepStrictEqual(ctx.ownerStampPatch({}, 'b', block, { replacesSessionId: false }), { owner: block });
 });
 
+test('patchWithOwnerBlock: no session id returns the bare patch; a session id returns a function that adds the block', () => {
+  const patch = { worktree: '/w', status: 'active' };
+  assert.strictEqual(ctx.patchWithOwnerBlock(patch, undefined), patch);
+  assert.strictEqual(ctx.patchWithOwnerBlock(patch, ''), patch);
+  const fn = ctx.patchWithOwnerBlock(patch, 'b');
+  assert.strictEqual(typeof fn, 'function');
+  const fresh = fn({});
+  assert.strictEqual(fresh.worktree, '/w');
+  assert.strictEqual(fresh.owner.sessionId, 'b');
+  // Another session's block is left alone unless the caller is the adoption path.
+  const foreign = { owner: { sessionId: 'a', pid: 1 } };
+  assert.ok(!('owner' in fn(foreign)), 'a stamp from another session never takes over the block');
+  assert.strictEqual(ctx.patchWithOwnerBlock(patch, 'b', { replacesSessionId: true })(foreign).owner.sessionId, 'b');
+});
+
+test('patchWithOwnerBlock: a failure building the owner block degrades to the bare patch, never costing the stamp', () => {
+  const os = require('os');
+  const real = os.hostname;
+  os.hostname = () => { throw new Error('hostname exploded'); };
+  try {
+    const patch = { worktree: '/w', status: 'active' };
+    assert.strictEqual(ctx.patchWithOwnerBlock(patch, 'b'), patch);
+  } finally {
+    os.hostname = real;
+  }
+});
+
 // #3973: refreshOwnerBlock — heartbeat and re-stamp from the owner's own hooks.
 const RT0 = Date.parse('2026-10-24T06:00:00Z');
 const RT0_ISO = new Date(RT0).toISOString();

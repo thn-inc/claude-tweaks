@@ -239,12 +239,35 @@ test('AC11.1 a run-state with no owner key reads cleanly everywhere and is legac
   assert.strictEqual(entry(res, 'heartbeat').detail, 'no-owner-block');
 });
 
-test('AC11.2 a corrupt run-state.json reads as legacy without throwing', () => {
-  const fx = fixture({ raw: '{ not json' });
-  assert.doesNotThrow(() => checkResumeFreshness(fx.runDir));
+test('AC11.2 an absent run-state.json is a legacy run: no owner block, judged by the legacy route', () => {
+  const fx = fixture({ runId: runIdAt(NOW - 73 * HOUR), probes: { ownEventAt: () => ({ lastOwnMs: NOW - 73 * HOUR, lastSessionEndMs: null }) } });
+  fs.rmSync(path.join(fx.runDir, 'run-state.json'));
   const res = verdictOf(fx);
   assert.strictEqual(entry(res, 'owner-pid').detail, 'no-owner-block');
   assert.strictEqual(entry(res, 'heartbeat').detail, 'no-owner-block');
+  assert.strictEqual(res.verdict, 'dead');
+});
+
+test('AC11.2 a run-state.json that exists but is corrupt reads as unreadable, not legacy: unknown even when the legacy route would say dead', () => {
+  const legacyDead = { ownEventAt: () => ({ lastOwnMs: NOW - 73 * HOUR, lastSessionEndMs: null }) };
+  for (const raw of ['{ not json', '[]', '"s"', 'null']) {
+    const fx = fixture({ raw, runId: runIdAt(NOW - 73 * HOUR), probes: legacyDead });
+    assert.doesNotThrow(() => checkResumeFreshness(fx.runDir));
+    const res = verdictOf(fx);
+    for (const probe of ['owner-pid', 'heartbeat', 'worktree-lock', 'last-commit']) {
+      assert.deepStrictEqual({ r: entry(res, probe).result, d: entry(res, probe).detail }, { r: 'error', d: 'unreadable-run-state' }, `${probe} for ${raw}`);
+    }
+    assert.strictEqual(res.verdict, 'unknown', raw);
+  }
+});
+
+test('AC11.2 a run-state.json that cannot be read at all (a directory in its place) is unreadable too', () => {
+  const fx = fixture({ runId: runIdAt(NOW - 73 * HOUR), probes: { ownEventAt: () => ({ lastOwnMs: NOW - 73 * HOUR, lastSessionEndMs: null }) } });
+  fs.rmSync(path.join(fx.runDir, 'run-state.json'));
+  fs.mkdirSync(path.join(fx.runDir, 'run-state.json'));
+  const res = verdictOf(fx);
+  assert.strictEqual(entry(res, 'owner-pid').detail, 'unreadable-run-state');
+  assert.strictEqual(res.verdict, 'unknown');
 });
 
 // ---- AC12 ----
@@ -391,6 +414,36 @@ test('AC15.2 an owner with a null pid is no-pid and never dead through the PID r
   const res = verdictOf(fixture({ state: { status: 'active', owner: owner({ pid: null, pidSource: null }) } }));
   assert.strictEqual(entry(res, 'owner-pid').detail, 'no-pid');
   assert.strictEqual(res.verdict, 'unknown');
+});
+
+test('AC15.2 a stored pid above int32 is no-pid, not a gone pid: it never reaches dead through the PID row', () => {
+  // process.kill throws on such a pid, which the real isPidAlive reads as false.
+  for (const pid of [2 ** 31, 4294988075, Number.MAX_SAFE_INTEGER]) {
+    const res = verdictOf(fixture({ state: { owner: owner({ pid }) }, probes: { pidAlive: () => false } }));
+    assert.deepStrictEqual({ r: entry(res, 'owner-pid').result, d: entry(res, 'owner-pid').detail }, { r: 'negative', d: 'no-pid' }, String(pid));
+    assert.strictEqual(res.verdict, 'unknown', String(pid));
+  }
+});
+
+test('AC8.1 an unparseable heartbeatAt is a heartbeat error, so a gone pid beside it is unknown, not dead', () => {
+  for (const heartbeatAt of ['not-a-date', '', null, undefined, {}]) {
+    const res = verdictOf(fixture({ state: { owner: owner({ heartbeatAt }) } }));
+    assert.deepStrictEqual({ r: entry(res, 'heartbeat').result, d: entry(res, 'heartbeat').detail }, { r: 'error', d: 'unparseable heartbeatAt' }, String(heartbeatAt));
+    assert.strictEqual(entry(res, 'owner-pid').detail, 'gone');
+    assert.strictEqual(res.verdict, 'unknown', String(heartbeatAt));
+  }
+});
+
+test('AC6.1 the SessionEnd route also judges an owner with a null pid: dead before the session-end, not after', () => {
+  const mk = (heartbeatAt) => verdictOf(fixture({
+    state: { ...interrupted, owner: owner({ pid: null, pidSource: null, pidStartedAt: null, heartbeatAt: new Date(heartbeatAt).toISOString() }) },
+    probes: { ownEventAt: () => ({ lastOwnMs: null, lastSessionEndMs: SESSION_END }) },
+  }));
+  const before = mk(SESSION_END - 5 * MIN);
+  assert.strictEqual(entry(before, 'owner-pid').detail, 'no-pid');
+  assert.strictEqual(before.verdict, 'dead');
+  assert.strictEqual(mk(NOW - 20 * MIN).verdict, 'unknown');
+  assert.strictEqual(mk(NOW - 5 * MIN).verdict, 'live');
 });
 
 // ---- AC3.1 (verdict half) ----

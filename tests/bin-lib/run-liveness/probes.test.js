@@ -111,6 +111,13 @@ test('lockInUse throws when the lock reason carries no pid (unknown)', () => {
   assert.throws(() => DEFAULT_PROBES.lockInUse(wt));
 });
 
+test('lockInUse throws for an existing directory git does not list as a worktree, instead of reading it as free', () => {
+  const { main } = repoWithLinkedWorktree();
+  const sub = path.join(main, 'not-a-worktree');
+  fs.mkdirSync(sub);
+  assert.throws(() => DEFAULT_PROBES.lockInUse(sub), /not listed/);
+});
+
 test('lockInUse throws on a non-repo path', () => {
   assert.throws(() => DEFAULT_PROBES.lockInUse(tmp('ct-probes-norepo-')));
 });
