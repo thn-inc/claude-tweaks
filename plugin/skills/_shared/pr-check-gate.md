@@ -61,18 +61,18 @@ like `read-failed` below.
   forward, push, and re-run the gate.
 - **`inherited-red`** — pass, with a caveat: `TEST_PASSED` is set and carries the caveat; `/review`
   Step 1.5 proceeds. Log one entry:
-  `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --section "{/test|/review}" --step "PR-check gate" --reversibility high --text "PR #{pr} checks red at {headRefOid short}, but every failing check ({names}) is also failing on {baseBranch} at {baseSha short} — inherited, passed with caveat"`.
+  `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --section "{/test|/review}" --step "PR-check gate" --reversibility high --text-file "{text-file}"`, `{text-file}` holding `PR #{pr} checks red at {headRefOid short}, but every failing check ({names}) is also failing on {baseBranch} at {baseSha short} — inherited, passed with caveat` per `_shared/auto-decision-log.md`'s Text from git or a user paragraph (check names and the base branch are forge-supplied).
   The merge gate (`_shared/pr-first-merge.md` Step 2.5) keeps its own read and still sees these
   checks red — this pass never authorizes a merge. This read does not report still-pending checks
   on an `inherited-red` result; the merge gate's own bounded watch settles them.
 - **`pending`** or **`stale`** — pass, with a caveat: `TEST_PASSED` is set and carries the caveat
   naming the pending checks (or the unpushed HEAD), and one entry is logged:
-  `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --section "{/test|/review}" --step "PR-check gate" --reversibility high --text "PR #{pr} checks {state} at {headRefOid short} ({pending names, or 'HEAD not yet pushed'}) — passed with caveat"`.
+  `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --section "{/test|/review}" --step "PR-check gate" --reversibility high --text-file "{text-file}"`, `{text-file}` holding `PR #{pr} checks {state} at {headRefOid short} ({pending names, or 'HEAD not yet pushed'}) — passed with caveat` per `_shared/auto-decision-log.md`'s Text from git or a user paragraph (check names are forge-supplied).
   The merge gate's bounded watch settles them later.
 - **`green`** — pass; nothing to log.
 - **`no-pr`**, **`gh-absent`**, **`no-ci`**, or **`read-failed`** (and exit 2/3) — fail open
   exactly as before this gate existed: the caller's local result stands. Write one `SKIP` entry
   per `_shared/auto-decision-log.md`'s degrade-trace rule:
-  `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "{/test|/review}" --step "PR-check gate" --reversibility n/a --text "condition: pr-checks.js {state}{: reason} → fallback: local verification only"`.
+  `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "{/test|/review}" --step "PR-check gate" --reversibility n/a --text-file "{text-file}"`, `{text-file}` holding `condition: pr-checks.js {state}{: reason} → fallback: local verification only` per `_shared/auto-decision-log.md`'s Text from git or a user paragraph (the reason is tool-supplied).
   `no-pr` is the `local-merge` (and pre-PR) case; `read-failed` is never read as green — it only
   means this gate could not tell, and the merge gate's own read will.
