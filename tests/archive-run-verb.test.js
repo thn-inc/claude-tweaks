@@ -245,7 +245,6 @@ test('#3740 bundle gate: archive-run refuses a terminal bundle run with no conso
   const result = runHook(['archive-run', '--run', runDir], { cwd: root });
   assert.match(result.stdout, /archival refused — console-never-rendered-staged-pending/);
   assert.match(result.stdout, /\(an auto-merge path — the wrap-up short-circuit or the dispatch bundle Auto-merge gate — rendered no console; pending: staged\/reflect-1\.md/);
-  assert.match(result.stdout, /staged\/reflect-1\.md/);
   assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
 });
 
