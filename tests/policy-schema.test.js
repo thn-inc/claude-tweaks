@@ -914,3 +914,13 @@ test('design-critique is registered as an enum off|auto|full defaulting to auto 
   assert.strictEqual(lever.tier, 'advanced');
   assert.ok(!POLICY_KEYS.some((k) => k.key === 'design.critique'), 'the dotted spelling must not be registered — keys are flat kebab-case');
 });
+
+test('#4029 M4: the procedure-kb ceiling summaries say a run may read its procedure KB, not load it', () => {
+  // procedure KB counts the bytes skill-file Reads returned, not what the harness loaded
+  for (const key of ['fast-lane-run-procedure-kb-ceiling', 'standard-run-procedure-kb-ceiling']) {
+    const { summary } = POLICY_KEYS.find((k) => k.key === key);
+    assert.match(summary, / may read before /, key);
+    assert.doesNotMatch(summary, /may load/, key);
+    assert.ok(summary.length <= 140, `${key}: ${summary.length} chars`);
+  }
+});

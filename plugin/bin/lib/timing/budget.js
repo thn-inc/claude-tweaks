@@ -86,7 +86,8 @@ const budgetFingerprint = (profile) => fingerprintFromBasis('efficiencybudget', 
 // -> the staged file text: the header leftover-routing.md's staging step defines
 // (Title / Type / Labels / Defer-reason, a blank line), then the spec-shaped body.
 // The title is stable across runs (profile + metrics); runId appears in the body only.
-function budgetProposal({ runId, profile, checks, totals }) {
+// unattributed: timing.json's `unattributed` bucket, absent without a transcript.
+function budgetProposal({ runId, profile, checks, totals, unattributed }) {
   const over = breached(checks);
   if (over.length === 0) throw new Error('budgetProposal: no breached metric to propose on');
   const top = topTurnClasses(totals && totals.turnClasses);
@@ -97,6 +98,12 @@ function budgetProposal({ runId, profile, checks, totals }) {
       ? `Top turn classes by tool-call count: ${top.join(', ')}.`
       : 'Turn classes: not measured (no transcript data was read for this run).',
   ];
+  const total = totals && totals.toolRoundTrips;
+  const outside = unattributed && unattributed.toolRoundTrips;
+  if (Number.isFinite(total) && total > 0 && Number.isFinite(outside)) {
+    const pct = Math.round((outside * 100) / total);
+    currentState.push(`Unattributed round trips: ${outside} of ${total} (${pct}%) fell outside every phase, so the per-phase breakdown in \`timing.json\` covers the other ${100 - pct}%.`);
+  }
   const deliverables = [
     '- Investigate where the turns went (the run directory\'s `timing.json` carries the per-phase turn-class breakdown) and reduce them.',
     over.map((c) => `- Or raise \`${policyKey(profile, c.metric)}\` in \`.claude-tweaks/policy.yml\` with a rationale for the new value.`).join('\n'),
@@ -199,12 +206,12 @@ function stagingDirOf(runDir) {
 // stage path is already logged, so a re-run overwrites the one staged file
 // without logging it twice. runLabel names the run in the body (the spec dir in
 // a multi-spec run); runId keys the staged id.
-function stageProposal({ runDir, cwd, runId, runLabel = runId, profile, checks, totals }) {
+function stageProposal({ runDir, cwd, runId, runLabel = runId, profile, checks, totals, unattributed }) {
   const target = resolveTarget({ runDir, cwd });
   if (!target.ok) throw new Error(`run directory ${target.reason} — not an anchored run directory under the main checkout ([IL-127])`);
   const stagePath = `staged/efficiency-budget-${runId}.md`;
   writeStagedItem({
-    runDir: target.dir, id: `efficiency-budget-${runId}`, sourcePath: 'proposal.md', content: budgetProposal({ runId: runLabel, profile, checks, totals }),
+    runDir: target.dir, id: `efficiency-budget-${runId}`, sourcePath: 'proposal.md', content: budgetProposal({ runId: runLabel, profile, checks, totals, unattributed }),
   });
   const decisionTarget = resolveDecisionTarget({ runDir, cwd });
   if (!decisionTarget.ok) throw new Error(`staged ${stagePath} but could not log it (decision log ${decisionTarget.reason})`);
@@ -227,8 +234,9 @@ function stageProposal({ runDir, cwd, runId, runLabel = runId, profile, checks, 
   return stagePath;
 }
 
-// { runDir, totals, deps? } -> { budget, line, stderr[] } for timing.json's `budget` key.
-// totals carries toolRoundTrips / procedureBytes only when a transcript was read.
+// { runDir, totals, unattributed?, deps? } -> { budget, line, stderr[] } for timing.json's `budget` key.
+// totals carries toolRoundTrips / procedureBytes only when a transcript was read;
+// unattributed is timing.json's bucket of the same name (the proposal's share line).
 // deps.cwd (default process.cwd()) anchors the staging and decision-log targets;
 // deps.gh (default: real gh) is the open-record lookup's runner.
 // Never throws: a staging failure becomes budget.staged = null + budget.stageError.
@@ -237,7 +245,7 @@ function stageProposal({ runDir, cwd, runId, runLabel = runId, profile, checks, 
 // breach whose staging failed, and unmeasured metrics. No .claude-tweaks
 // ancestor has no decision log to write to: budget.skipped plus stderr only.
 // A breach an open record already tracks sets budget.trackedBy and logs AUTO.
-function checkBudgets({ runDir, totals, deps = {} }) {
+function checkBudgets({ runDir, totals, unattributed, deps = {} }) {
   const cwd = deps.cwd || process.cwd();
   const gh = deps.gh || defaultGh;
   const stderr = [];
@@ -279,7 +287,7 @@ function checkBudgets({ runDir, totals, deps = {} }) {
     } else {
       const rel = (p) => (multi ? `../${p}` : p);
       try {
-        budget.staged = rel(stageProposal({ runDir: stageDir, cwd, runId, runLabel, profile, checks, totals }));
+        budget.staged = rel(stageProposal({ runDir: stageDir, cwd, runId, runLabel, profile, checks, totals, unattributed }));
       } catch (err) {
         budget.stageError = message(err);
         stderr.push(`budget: could not stage the efficiency-budget proposal (${budget.stageError})`);

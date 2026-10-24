@@ -342,6 +342,18 @@ test('#4029: legacy rows without turn fields still join, and a null model keys a
   assert.deepEqual(joined.totals.turnClasses, ZERO_CLASSES);
 });
 
+test('#4029 M6: an unknown turn-class key folds into other, never a new bucket key', () => {
+  const joined = joinTokens(derivePhases({ events: TC_EVENTS }).phases, [
+    usageRow('2026-10-24T10:05:00.000Z', { role: 'user', toolRoundTrip: true, turnClasses: { frobnicate: 2, edit: 1 } }),
+    // an inherited Object.prototype name is not a class either
+    usageRow('2026-10-24T10:06:00.000Z', { role: 'user', toolRoundTrip: true, turnClasses: { toString: 1 } }),
+  ]);
+  for (const b of [joined.totals, joined.phases.find((p) => p.phase === 'build')]) {
+    assert.deepEqual(b.turnClasses, { ...ZERO_CLASSES, edit: 1, other: 3 });
+    assert.deepEqual(Object.keys(b.turnClasses), Object.keys(ZERO_CLASSES));
+  }
+});
+
 test('#4029: verifyMinutes sums every verify durationMs to one decimal, 0 with none', () => {
   const ev = (d) => ({ ts: '2026-10-24T10:20:00.000Z', type: 'verify', durationMs: d });
   assert.equal(derivePhases({ events: [ev(100000), ev(50000)] }).totals.verifyMinutes, 2.5);

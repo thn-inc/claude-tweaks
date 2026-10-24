@@ -48,15 +48,16 @@
 // a `budget.notes` line). A staging failure
 // goes to stderr and `budget.stageError`, and the exit code stays 0. A breach
 // left unstaged and any unmeasured metric each also append a SKIP line to the
-// run's decisions.md (the Degrade-trace rule). Without the flag the output and
-// timing.json are unchanged.
+// run's decisions.md (the Degrade-trace rule). Without the flag the output is
+// unchanged, and timing.json differs only by carrying an existing timing.json's
+// `budget` key forward untouched.
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, TIERS, ROLE_PATTERNS } = require('./lib/timing/derive');
 const { locateTranscripts, readUsage, subagentsDirFor, readDispatches } = require('./lib/timing/transcript');
 const { readManifest } = require('./lib/flow/manifest');
-const { TURN_CLASSES } = require('./lib/timing/turn-class');
+const { TURN_CLASSES, CEREMONY_CLASSES } = require('./lib/timing/turn-class');
 const { checkBudgets } = require('./lib/timing/budget');
 
 const USAGE = 'usage: phase-timing.js --run <dir> [--json] [--markdown] [--transcript <path> ...] [--auto-transcript] [--check-budgets]\n';
@@ -146,11 +147,15 @@ function renderCollapsedSummary(tokens, notes, guard) {
 function renderTurnLines(totals) {
   const k = (n) => (typeof n === 'number' ? `${(n / 1000).toFixed(1)}k` : '—');
   const classes = TURN_CLASSES.map((c) => `${c} ${totals.turnClasses[c]}`).join(' · ');
-  const share = typeof totals.ceremonyShare === 'number' ? `${Math.round(totals.ceremonyShare * 100)}%` : '—';
+  // From the integer counts, not the 3dp ceremonyShare float, which can round twice.
+  const calls = TURN_CLASSES.reduce((sum, c) => sum + totals.turnClasses[c], 0);
+  const ceremony = CEREMONY_CLASSES.reduce((sum, c) => sum + totals.turnClasses[c], 0);
+  const share = calls > 0 ? `${Math.round((ceremony * 100) / calls)}%` : '—';
   const models = Object.entries(totals.modelMix).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([m, n]) => `${m} ×${n}`).join(', ') || '—';
+  const turns = `${totals.context.turns} ${totals.context.turns === 1 ? 'turn' : 'turns'}`;
   return [
     `Turn classes (tool calls): ${classes} — ceremony share ${share}`,
-    `Context per turn: p50 ${k(totals.context.p50)} · p90 ${k(totals.context.p90)} tokens over ${totals.context.turns} turns · models: ${models} · subagents: ${totals.subagents}`,
+    `Context per turn: p50 ${k(totals.context.p50)} · p90 ${k(totals.context.p90)} tokens over ${turns} · models: ${models} · subagents: ${totals.subagents}`,
   ];
 }
 
@@ -351,12 +356,17 @@ async function main(argv) {
   if (o.checkBudgets) {
     const measured = { ...timing.totals };
     if (!tokens || tokens.totals.rows === 0) { delete measured.toolRoundTrips; delete measured.procedureBytes; }
-    const checked = checkBudgets({ runDir, totals: measured });
+    const checked = checkBudgets({ runDir, totals: measured, unattributed: timing.unattributed });
     timing.budget = checked.budget;
     budgetLine = checked.line;
     for (const line of checked.stderr) process.stderr.write(line + '\n');
   }
   const timingPath = path.join(runDir, 'timing.json');
+  // A rewrite without --check-budgets keeps the last budget verdict rather than dropping it.
+  if (!o.checkBudgets) {
+    const previous = readJsonOrNull(timingPath);
+    if (previous && typeof previous === 'object' && Object.hasOwn(previous, 'budget')) timing.budget = previous.budget;
+  }
   fs.writeFileSync(timingPath, JSON.stringify(timing, null, 2) + '\n');
   if (o.markdown) process.stdout.write(renderMarkdown(out, tokens, guard, notes) + renderDispatches(timing.dispatches));
   else if (o.json) process.stdout.write(JSON.stringify(timing, null, 2) + '\n');

@@ -71,8 +71,8 @@ function tokenize(segment) {
   return tokens;
 }
 
-// Drop leading `cd … &&` hops and `VAR=value ` assignments.
-const CD_HOP_RE = /^\s*cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*&&\s*/;
+// Drop leading `cd … &&` / `cd …;` hops and `VAR=value ` assignments.
+const CD_HOP_RE = /^\s*cd\s+(?:"[^"]*"|'[^']*'|[^\s;&]+)\s*(?:&&|;)\s*/;
 const ASSIGN_RE = /^\s*[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+/;
 function stripPrefixes(command) {
   let s = command;

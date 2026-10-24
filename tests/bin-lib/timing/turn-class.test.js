@@ -28,6 +28,8 @@ const ROWS = [
   ['no arguments at all', undefined, 'other'],
   // Bash
   ['cd hop then git -C commit', bash('cd "/r w" && git -C "/r w" commit -m x'), 'bookkeeping'],
+  ['cd hop before ; then git commit', bash('cd /r; git commit -m x'), 'bookkeeping'],
+  ['quoted cd hop before ; then git status', bash('cd "/r w" ; git status'), 'orientation'],
   ['git -C status', bash('git -C /r status'), 'orientation'],
   ['git log', bash('git log --oneline -3'), 'explore'],
   ['env assignment then npm test', bash('FOO=1 npm test > out.txt 2>&1'), 'verify'],

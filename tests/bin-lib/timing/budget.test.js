@@ -98,6 +98,17 @@ test('#4029: readCeremonyProfile reads config.yml and falls back to standard whe
   assert.deepEqual(readCeremonyProfile(dir), { profile: 'standard', source: 'fallback' });
 });
 
+test('#4029 M7: Current State names the unattributed round-trip share, so a reader knows what the per-phase breakdown explains', () => {
+  const checks = evaluateBudgets({ totals: TOTALS, ceilings: CEILINGS });
+  const text = budgetProposal({ runId: 'r', profile: 'fast-lane', checks, totals: TOTALS, unattributed: { toolRoundTrips: 3 } });
+  const current = text.slice(text.indexOf('## Current State'), text.indexOf('## Deliverables'));
+  assert.match(current, /Unattributed round trips: 3 of 10 \(30%\) fell outside every phase, so the per-phase breakdown in `timing\.json` covers the other 70%\./);
+  // no unattributed bucket (no transcript) or no round trips: the line is left out, never a 0% guess
+  assert.doesNotMatch(budgetProposal({ runId: 'r', profile: 'fast-lane', checks, totals: TOTALS }), /Unattributed round trips/);
+  const noRt = evaluateBudgets({ totals: { verifyMinutes: 30 }, ceilings: CEILINGS });
+  assert.doesNotMatch(budgetProposal({ runId: 'r', profile: 'fast-lane', checks: noRt, totals: { verifyMinutes: 30 }, unattributed: { toolRoundTrips: 0 } }), /Unattributed round trips/);
+});
+
 // --- checkBudgets against a tmp checkout --------------------------------------
 // A tmp checkout (.git dir) with a policy.yml and a run dir under .claude-tweaks/pipelines/;
 // deps.cwd = the checkout so the staging and decision-log anchors resolve to it, and deps.gh

@@ -400,7 +400,8 @@ test('#4029 AC1.1: timing.json for the turn-classes fixture carries the class br
   assert.equal(t.totals.verifyMinutes, 2);
   assert.equal(t.totals.procedureBytes, 100);
   const lines = r.stdout.split('\n');
-  assert.ok(lines.includes('Turn classes (tool calls): edit 1 · read 1 · explore 1 · procedure 1 · bookkeeping 1 · orientation 2 · verify 1 · guard-refusal 1 · dispatch 1 · other 1 — ceremony share 46%'), r.stdout);
+  // 5 ceremony calls of 11 is 45.45%: rendered from the counts (M2), not from the 0.455 float (which read 46%)
+  assert.ok(lines.includes('Turn classes (tool calls): edit 1 · read 1 · explore 1 · procedure 1 · bookkeeping 1 · orientation 2 · verify 1 · guard-refusal 1 · dispatch 1 · other 1 — ceremony share 45%'), r.stdout);
   assert.ok(lines.includes('Context per turn: p50 5.0k · p90 9.1k tokens over 10 turns · models: claude-opus-5-5 ×9, claude-sonnet-5 ×1 · subagents: 1'), r.stdout);
 });
 
@@ -422,6 +423,45 @@ test('#4029: a transcript with no tool calls and no assistant turns renders the 
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^Turn classes \(tool calls\): edit 0 · read 0 · explore 0 · procedure 0 · bookkeeping 0 · orientation 0 · verify 0 · guard-refusal 0 · dispatch 0 · other 0 — ceremony share —$/m);
   assert.match(r.stdout, /^Context per turn: p50 — · p90 — tokens over 0 turns · models: — · subagents: 0$/m);
+});
+
+// renderMarkdown with a hand-built single-phase run and a totals bucket, for render-only rows.
+function renderTotals(totals) {
+  const { renderMarkdown } = require(CLI);
+  const phase = { phase: 'build', source: 'event', minutes: 1, ownMinutes: 1, verify: [] };
+  const out = { phases: [phase], totals: { minutes: 1, verifyRuns: 0, verifyModes: [] } };
+  const bucket = { tokens: { input: 0, output: 0 }, procedureBytes: 0, toolRoundTrips: 0 };
+  const tokens = {
+    phases: [{ ...phase, ...bucket }],
+    unattributed: { ...bucket, rows: 0 },
+    totals: { ...bucket, rows: 1, context: { turns: 1, p50: 100, p90: 100 }, modelMix: {}, subagents: 0, ...totals },
+  };
+  return renderMarkdown(out, tokens, { gateDenial: 0, wdAmbiguous: 0, wdDeny: 0 }).split('\n');
+}
+const zeroClasses = () => Object.fromEntries(['edit', 'read', 'explore', 'procedure', 'bookkeeping', 'orientation', 'verify', 'guard-refusal', 'dispatch', 'other'].map((c) => [c, 0]));
+
+test('#4029 M2: the ceremony share renders from the integer class counts, not the 3dp float', () => {
+  // 889 of 2000 is 44.45%; the 3dp float 0.445 would render 45%
+  const lines = renderTotals({ turnClasses: { ...zeroClasses(), procedure: 889, edit: 1111 }, ceremonyShare: 0.445 });
+  assert.ok(lines.some((l) => l.endsWith('— ceremony share 44%')), lines.join('\n'));
+});
+
+test('#4029 M3: one context turn renders "over 1 turn", any other count "turns"', () => {
+  const one = renderTotals({ turnClasses: zeroClasses(), ceremonyShare: null });
+  assert.ok(one.some((l) => l.includes(' tokens over 1 turn · ')), one.join('\n'));
+  const two = renderTotals({ turnClasses: zeroClasses(), ceremonyShare: null, context: { turns: 2, p50: 1, p90: 1 } });
+  assert.ok(two.some((l) => l.includes(' tokens over 2 turns · ')), two.join('\n'));
+});
+
+test('#4029 M1: a rewrite without --check-budgets carries the existing budget verdict forward unchanged', () => {
+  const { root, dir } = budgetTree();
+  assert.equal(runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets']).status, 0);
+  const checked = readTiming(dir).budget;
+  assert.ok(checked && checked.profile === 'fast-lane', JSON.stringify(checked));
+  assert.equal(runIn(root, ['--run', dir, '--transcript', TC_SESSION]).status, 0);
+  assert.deepEqual(readTiming(dir).budget, checked);
+  // and --json shows the carried verdict too
+  assert.deepEqual(JSON.parse(runIn(root, ['--run', dir, '--json']).stdout).budget, checked);
 });
 
 // --check-budgets (#4029): a tmp checkout (.git dir) with a policy.yml and a run dir under
@@ -456,6 +496,8 @@ test('#4029 AC2.1: a budget-breach fixture produces a staged item', () => {
   const text = fs.readFileSync(staged, 'utf8');
   assert.ok(text.startsWith('Title: Efficiency budget: fast-lane runs over the round-trips ceiling\n'), text);
   assert.ok(text.includes(`Run \`${id}\``), 'the run id stays in the body');
+  // M7: phase-timing forwards timing.json's unattributed bucket into the proposal
+  assert.ok(text.includes('Unattributed round trips: 0 of 10 (0%)'), text);
   const decisions = fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8');
   const stagedLine = decisions.split('\n').find((l) => l.startsWith('- STAGED'));
   assert.ok(stagedLine, decisions);
