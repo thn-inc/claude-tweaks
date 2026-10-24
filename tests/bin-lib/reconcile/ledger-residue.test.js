@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
+const { skipUnderRoot } = require('../../helpers/root');
 const {
   LEDGER_RESIDUE_MARKER, QUIET_SKIP_REASONS, residueLedgerPaths, removalBranchName, ledgerFeatureSlug, runDirNamesNumber,
   attributedRunDir, classifyLedgerCandidate, partitionByRemovalPrs, decideLedgerResidue, defaultListRunDirs,
@@ -81,6 +82,7 @@ test('classifyLedgerCandidate: signature, open rows, unrecognized status, run-di
   assert.strictEqual(c(ledgerText(), [], () => 'network-failure'), 'network-failure');
   assert.strictEqual(c(ledgerText(), [], () => [{ number: 5, body: `see ${p}`, labels: [] }]), 'referenced-by-open-record');
   assert.strictEqual(c(ledgerText(), ['2026-10-22T000000-record-9001'], () => { throw new Error('must not load'); }), 'run-live');
+  assert.strictEqual(c(ledgerText(), null, () => { throw new Error('must not load'); }), 'run-dir-scan-failed');
   assert.strictEqual(c(ledgerText({ rows: [] })), null, 'a zero-row ledger has no open row');
   assert.strictEqual(c(ledgerText().replace(/\n/g, '\r\n')), null, 'CRLF blob still carries the signature');
 });
@@ -284,6 +286,21 @@ test('defaultListOpenRecords: work-backend local-files reads specs/ and never ca
   fs.writeFileSync(path.join(root, 'specs', '7-foo.md'), '# Foo\n\nsee x\n');
   assert.deepStrictEqual(defaultListOpenRecords(root, mustNotCall('exec')), [{ number: 7, body: 'see x', labels: [] }]);
 });
+
+test('defaultListOpenRecords: work-backend local-files fails closed (null) when a record file cannot be read',
+  { skip: skipUnderRoot('root ignores mode bits').skip || (process.platform === 'win32' && 'chmod does not deny reads on win32') }, () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-unreadable-'));
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'work-backend: local-files\n');
+    fs.mkdirSync(path.join(root, 'specs'));
+    const file = path.join(root, 'specs', '7-foo.md');
+    fs.writeFileSync(file, '# Foo\n\nsee x\n');
+    fs.chmodSync(file, 0o000);
+    try {
+      assert.strictEqual(defaultListOpenRecords(root, mustNotCall('exec')), null);
+    } finally {
+      fs.chmodSync(file, 0o644); // root-safe
+    }
+  });
 
 test('QUIET_SKIP_REASONS: expected and transient reasons only — open PRs, unresolved ledgers and write failures surface', () => {
   for (const r of ['dry-run', 'run-live', 'not-a-ledger', 'removal-pr-declined', 'gh-absent', 'network-failure', 'ref-check-failed']) {
