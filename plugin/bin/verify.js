@@ -45,7 +45,7 @@ const { selectScope } = require('./lib/verify/scope');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
-const { canonicalRealpath, resolveWithin } = require('./lib/path-guard');
+const { canonicalRealpath, lstatType, resolveWithin } = require('./lib/path-guard');
 
 const KNOWN_SCOPES = new Set(['full', 'scoped', 'none', 'static-only', 'tool-scoped']);
 
@@ -180,7 +180,7 @@ function stampStatus(parsed) {
       scopePath = resolveScopePath(parsed.scope, process.cwd());
     } else {
       const candidate = resolveScopePath(defaultScope, process.cwd());
-      if (fs.existsSync(candidate)) { scopePath = candidate; discovered = true; }
+      if (lstatType(candidate).type !== 'missing') { scopePath = candidate; discovered = true; }
     }
   }
   const scopeRead = scopePath !== null

@@ -6,9 +6,9 @@
 | 2 | build | SDD ruling — AC5.1 fixture runs one unscoped full pass after committing the unparseable declaration, so the bare verdict is shown to come from the single stamp: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
 | 3 | build | SDD ruling — Task 3 may trim redundant words in verification.md's consumer paragraph to fit the suiteComposed mention under the Read rail: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
 | 4 | build | SDD ruling — Task 2's incomplete-composition fixture changed to verifiedHead:true + complete:false so it discriminates the complete===true clause: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
-| 5 | build | verify.js stampStatus — the `!discovered` guard on the scopeRead.missing branch is effectively dead (existsSync already passed); harmless race-safety, unexercised | deferred | — |
+| 5 | build | verify.js stampStatus — the `!discovered` guard on the scopeRead.missing branch is reached only by a dangling-symlink default declaration (lstatType passes it, readDeclaration reads ENOENT); no test exercises that path | deferred | — |
 | 6 | build | AC4.1 asserts the 16-key order + null fields rather than byte-identity against a pre-change capture | deferred | — |
-| 7 | build | fs.existsSync treats a dangling symlink at the default declaration path as absent (silent) — consistent with missing-is-silent | deferred | — |
+| 7 | build | A dangling symlink at the default declaration path reads as absent (silent, via the row-5 guard) rather than as a scopeError — consistent with missing-is-silent; an unreadable leaf now reports (discovery gates on path-guard lstatType since Common Step 5's fix) | deferred | — |
 | 8 | build | Two of Task 2's four new checkFirstCallStamp tests (stamp-absent, report-missing) are regression pins that pass pre-change, not red-first proofs | deferred | — |
 | 9 | build | first-call-artifact-check test title 'does not bypass the single-stamp checks' now mostly exercises the complete===true clause | deferred | — |
 | 10 | build | Prose conformance test checks the Step 1.5 slice as a whole — deleting only one of the two suiteComposed additions (flow vs standalone branch) still passes | deferred | — |
