@@ -805,6 +805,7 @@ for (const [label, cmd] of [
     ['{ cd … && bash <<EOF … }', "{ cd /main && bash <<'EOF'\necho x > f.js\nEOF\n}", [main('write')]],
     ['(cd … && cp a f.js)', '(cd /main && cp a f.js)', [main('copy')]],
     ['( cd … && cp a f.js ) with separate parens', '( cd /main && cp a f.js )', [main('copy')]],
+    ['(FOO=1 cd … && cp a f.js), an assignment-prefixed cd', '(FOO=1 cd /main && cp a f.js)', [main('copy')]],
     ['a nested subshell that closes before the outer write', '(cd /main && (cd /tmp && true) && cp a f.js)', [main('copy')]],
     ['a subshell whose case pattern `)` closes nothing', 'cd /main; (case x in x) cd /tmp;; esac; true); cp a f.js', [main('copy')]],
     ['a subshell whose $( … ) closes nothing', 'cd /main; (x=$(pwd); cd /tmp && true); cp a f.js', [main('copy')]],
