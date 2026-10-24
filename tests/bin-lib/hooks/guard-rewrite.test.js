@@ -218,6 +218,30 @@ test('rules 1 and 2 decline on any arithmetic context', () => {
   assert.strictEqual(rw("P=/x; awk '{print a[1]}' f; echo \"$P/z\"").command, "P=/x; awk '{print a[1]}' f; echo \"/x/z\"", 'a subscript inside single quotes is text');
 });
 
+// Fix wave 4: builtins that assign a parameter NAMED by an operand reassign a
+// variable the text never spells once the name is computed at runtime, so the
+// bare-use check (which needs the name written out) cannot see them.
+const COMPUTED_NAME = 'V=$(echo p | tr a-z A-Z)';
+const NAME_ASSIGNERS = [
+  'zstyle', 'zformat', 'zregexparse', 'getln', 'sysread', 'syswrite', 'sysopen', 'zsystem', 'syserror', 'zstat', 'stat',
+  'zselect', 'zpty', 'zcurses', 'ztie', 'zuntie', 'zgetattr', 'zlistattr', 'pcre_match', 'nameref', 'compadd', 'compset',
+  'compquote', 'comparguments', 'compvalues', 'compdescribe', 'comptags', 'comptry', 'compfiles', 'compgroups', 'compgen',
+];
+test('rules 1 and 2 decline on module builtins that assign a computed name', () => {
+  for (const word of NAME_ASSIGNERS) {
+    assert.strictEqual(rw(`P=/x; ${COMPUTED_NAME}; ${word} "$V"; echo "$P/z"`), null, word);
+  }
+  // The runner words that already decline, now with a computed name.
+  for (const runner of ['print -v "$V" /pv', 'printf -v "$V" %s /pf', 'read -r "$V" < f', 'typeset "$V"=/ty', 'declare "$V"=/de',
+    'export "$V"=/ex', 'readonly "$V"=/ro', 'local "$V"=/lo', 'zparseopts -A "$V" a', 'vared "$V"', 'mapfile -t "$V" < f', 'wait -p "$V"',
+    'strftime -s "$V" %Y 0']) {
+    assert.strictEqual(rw(`P=/x; ${COMPUTED_NAME}; ${runner}; echo "$P/z"`), null, runner);
+  }
+  assert.strictEqual(rw(`node "\${CLAUDE_PLUGIN_ROOT}/bin/x.js"; ${COMPUTED_NAME}; zstyle -s :x y "$V"`), null, 'rule 2 too');
+  // The leading assignment run is not a later command word: `export P=…` still rewrites.
+  assert.deepStrictEqual(rw('export P=/x; node $P/z.js'), { command: 'export P=/x; node /x/z.js', applied: ['inline-literal-assignment'] });
+});
+
 test('the allowlist keeps plain command words rewriting: cd ., ls ., cp a ., find ., git -C ., >.', () => {
   for (const [command, expected] of [
     ['P=/x; cd . && node $P/z.js', 'P=/x; cd . && node /x/z.js'],
@@ -381,14 +405,43 @@ const MUST_DECLINE = [
   { command: 'P=/x; [[ $N -eq 5 ]]; echo $P/z', naive: 'P=/x; [[ $N -eq 5 ]]; echo /x/z', env: { N: 'P=5' } },
   { command: 'P=/x; echo $[$(echo XP=5 | cut -c2-)]; echo $P/z', naive: 'P=/x; echo $[$(echo XP=5 | cut -c2-)]; echo /x/z' },
 ];
+// Fix wave 4: a computed name (never spelled P) handed to a name-assigning
+// builtin. `preamble` stands in for a shell snapshot that already loaded the
+// module; an entry whose module this zsh lacks is skipped, not passed.
+const nameCase = (stmt, extra = {}) => ({
+  command: `P=/x; ${COMPUTED_NAME}; ${stmt}; echo $P/z`, naive: `P=/x; ${COMPUTED_NAME}; ${stmt}; echo /x/z`, ...extra,
+});
+MUST_DECLINE.push(
+  nameCase('zstyle :x y /zs; zstyle -s :x y "$V"', { shells: ['zsh'] }),
+  nameCase('zformat -f "$V" /zf', { shells: ['zsh'] }),
+  nameCase('print -z /gl; getln "$V"', { shells: ['zsh'] }),
+  nameCase('zregexparse "$V" x x', { shells: ['zsh'] }),
+  nameCase('zparseopts -A "$V" a', { shells: ['zsh'] }),
+  nameCase('print -v "$V" /pv', { shells: ['zsh'] }),
+  nameCase('sysread "$V" < setp', { shells: ['zsh'], preamble: 'zmodload zsh/system' }),
+  nameCase('syswrite -c "$V" ab >/dev/null', { shells: ['zsh'], preamble: 'zmodload zsh/system' }),
+  nameCase('syserror -e "$V" 2', { shells: ['zsh'], preamble: 'zmodload zsh/system' }),
+  nameCase('zstat -A "$V" +size setp', { shells: ['zsh'], preamble: 'zmodload zsh/stat' }),
+  nameCase('stat -A "$V" +size setp', { shells: ['zsh'], preamble: 'zmodload zsh/stat' }),
+  nameCase('strftime -s "$V" %Y 0', { shells: ['zsh'], preamble: 'zmodload zsh/datetime' }),
+  nameCase('printf -v "$V" %s /pf'),
+  nameCase('read -r "$V" < setp'),
+  nameCase('declare "$V"=/de'),
+  nameCase('export "$V"=/ex'),
+);
 
-test('must-decline cases: code run from the command text reassigns at runtime, so the naive inline differs under bash and zsh', { skip: process.platform === 'win32' || !SHELLS.includes('bash') }, () => {
-  for (const { command, naive, env = {}, shells = SHELLS } of MUST_DECLINE) {
+test('must-decline cases: code run from the command text reassigns at runtime, so the naive inline differs under bash and zsh', { skip: process.platform === 'win32' || !SHELLS.includes('bash') }, (t) => {
+  for (const { command, naive, env = {}, shells = SHELLS, preamble } of MUST_DECLINE) {
     assert.strictEqual(rw(command), null, command);
     for (const shell of SHELLS.filter((sh) => shells.includes(sh))) {
-      const original = runIn(shell, command, env);
+      if (preamble && runIn(shell, preamble, env).status !== 0) {
+        t.diagnostic(`${shell}: skipped (${preamble} unavailable): ${command}`);
+        continue;
+      }
+      const pre = preamble ? `${preamble}; ` : '';
+      const original = runIn(shell, pre + command, env);
       assert.strictEqual(original.status, 0, `${shell}: ${command}\n${original.stderr}`);
-      assert.notStrictEqual(runIn(shell, naive, env).stdout, original.stdout, `${shell}: the naive inline must differ for ${command}`);
+      assert.notStrictEqual(runIn(shell, pre + naive, env).stdout, original.stdout, `${shell}: the naive inline must differ for ${command}`);
     }
   }
 });

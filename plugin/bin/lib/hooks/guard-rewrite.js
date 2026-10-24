@@ -346,6 +346,19 @@ const RESERVED_WORDS = new Set([
 // in zsh, probed. `exit` evaluates too but ends the shell, so nothing later can
 // read the variable.
 const ARITHMETIC_BUILTINS = new Set(['let', 'shift', 'break', 'continue', 'return']);
+// Module and completion builtins that assign a parameter named by an operand,
+// so a name computed at runtime (`V=$(echo p | tr a-z A-Z); zstyle -s :x y "$V"`)
+// reassigns a variable the text never spells (zshmodules; bash 5.3 compgen -V).
+// zsh/zutil (zstyle, zformat, zregexparse) and core getln reassign under plain
+// `zsh -f`; the others once their module is loaded, which a user's shell
+// snapshot may already have done (probed with zmodload: zsh/system, zsh/stat,
+// zsh/pcre, zsh/zpty). zparseopts, vared, print/printf -v, read, the typeset
+// family, mapfile, wait -p and strftime are in RUNNERS.
+const NAME_ASSIGNING_BUILTINS = new Set([
+  'zstyle', 'zformat', 'zregexparse', 'getln', 'sysread', 'syswrite', 'sysopen', 'zsystem', 'syserror', 'zstat', 'stat',
+  'zselect', 'zpty', 'zcurses', 'ztie', 'zuntie', 'zgetattr', 'zlistattr', 'pcre_match', 'nameref', 'compadd', 'compset',
+  'compquote', 'comparguments', 'compvalues', 'compdescribe', 'comptags', 'comptry', 'compfiles', 'compgroups', 'compgen',
+]);
 // Builtins that run code from the command text, or assign a variable whose name
 // can be computed at runtime (`printf -v "$N"`, `read "$N"`, `wait -p "$N"`), or
 // change how later words parse, in bash or zsh.
@@ -409,6 +422,7 @@ function commandWordsPlain(s, sc, from = 0) {
     if (ASSIGNMENT_PREFIX.test(raw)) return true; // `X=1 cmd`: cmd is next
     if (st.prefix && PREFIX_FLAG.test(raw)) return true; // `env -i cmd`
     if (RESERVED_WORDS.has(raw) || RUNNERS.has(raw) || ARITHMETIC_BUILTINS.has(raw)) return false;
+    if (NAME_ASSIGNING_BUILTINS.has(raw)) return false;
     if (!(PLAIN_COMMAND_WORD.test(raw) || TEST_COMMAND_WORDS.has(raw))) return false;
     if (KEYWORD_PREFIXES.has(raw)) {
       st.prefix = false;
