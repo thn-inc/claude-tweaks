@@ -33,6 +33,7 @@ files:
 - **Action:** Split the test. The functional assertions stay in `tests/`. The timing assertion moves to a new `perf/{topic}.test.js` with a header comment explaining why it lives there.
 - **Should feel:** Like a relocation rather than a rewrite. The perf file keeps the same input and the same bound.
 - **Should understand:** `npm test` never runs `perf/` (`tools/run-tests.js`'s default roots are `tests/` and `tools/upstream-drift/tests/`). `npm run test:perf` runs it, alone and without a competing suite, so its bound can stay tight.
+  - A concurrency bound (the probes must overlap) leaves a deterministic remainder in `tests/`: wrap the slowed call in an in-flight counter (increment, record the max, await, decrement in `finally`) and assert the max. A serial run reads 1. Example: `tests/bin-lib/wrap-up/pack.test.js`'s `gatherPack` test.
 - **Red flags:**
   - Deleting the timing assertion outright when it was the only proof of a linearity or non-blocking property.
   - Loosening the bound to an arbitrary large number and keeping it in `tests/`. That is still a budget, still flagged, and still flaky under enough load.
