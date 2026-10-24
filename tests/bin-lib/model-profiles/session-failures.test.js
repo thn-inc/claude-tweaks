@@ -156,7 +156,7 @@ test('recordFailure acquires the lock before reading and releases it only after 
   cleanup(id);
 });
 
-test('a lock already held by another writer is honored — recordFailure waits for it, never races past it', () => {
+test('a lock released by another writer mid-wait still ends with the model recorded (the wait-vs-timeout bound is perf/session-failures-lock-wait.test.js)', () => {
   // recordFailure's own poll loop blocks this process's main thread
   // synchronously (Atomics.wait), so a same-process setTimeout could never
   // fire while it's running. A real, independent OS process releasing the
