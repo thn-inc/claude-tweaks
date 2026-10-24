@@ -538,6 +538,14 @@ test('#4202 resolve: a CRLF body with a gone path stays CRLF and keeps live path
   assert.equal(seen.commented, '`/x/run-a` no longer exists on disk — resolved by other means, removed from the stuck-paths list (1 path(s) still stuck) (dropped 1 path(s) no longer on disk: `/x/gone-1`).');
 });
 
+test('#4202 escalate: a pathExists that throws keeps the path instead of failing the edit', () => {
+  const pathExists = () => { throw new Error('lstat exploded'); };
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a'])));
+  const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-b', count: 3, runner, pathExists });
+  assert.deepEqual(result, { status: 'appended', number: 2724 });
+  assert.equal(seen.edited, SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/run-b'])));
+});
+
 test('#4202 resolve: an OPEN record whose list an earlier failed resolve already emptied is closed by the retry', () => {
   const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock([])));
   const result = resolveResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', runner });

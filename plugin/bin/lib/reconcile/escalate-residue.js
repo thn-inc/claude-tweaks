@@ -102,9 +102,11 @@ function withStuckPaths(body, paths) {
 }
 
 // #4202: the targetPath always survives (the edit itself decides it); any other listed
-// path is dropped only when pathExists reports it gone. Omitted pathExists drops nothing.
+// path is dropped only when pathExists reports it gone. Omitted pathExists drops nothing,
+// and a predicate that throws keeps the path.
 function convergePaths(existingPaths, targetPath, pathExists) {
-  const keep = (p) => p === targetPath || !pathExists || pathExists(p);
+  const exists = (p) => { try { return pathExists(p); } catch { return true; } };
+  const keep = (p) => p === targetPath || !pathExists || exists(p);
   return { kept: existingPaths.filter(keep), dropped: existingPaths.filter((p) => !keep(p)) };
 }
 
