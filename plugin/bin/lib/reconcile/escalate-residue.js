@@ -70,7 +70,11 @@ function structurallyStuckMarker() {
 // in place (via `gh issue edit --body`) rather than only ever appended to as
 // a comment, so "the body names all N paths" stays literally true for
 // anyone reading the record, not just its comment thread.
-const STUCK_PATHS_RE = /<!-- stuck-paths -->([\s\S]*?)<!-- \/stuck-paths -->/;
+// #2724: the markers are line-anchored — a human-shaped body can name the marker
+// text in prose or an inline-code span, and an unanchored match would swallow it.
+// The closer's `\r` is a lookahead, not part of the match, so a CRLF body's line ending
+// after the block is left untouched.
+const STUCK_PATHS_RE = /^<!-- stuck-paths -->\r?$([\s\S]*?)^<!-- \/stuck-paths -->(?=\r?$)/m;
 
 function parseStuckPaths(body) {
   const m = STUCK_PATHS_RE.exec(body || '');
@@ -81,8 +85,20 @@ function parseStuckPaths(body) {
     .map((mm) => mm[1]);
 }
 
-function renderStuckPathsBlock(paths) {
-  return ['<!-- stuck-paths -->', ...paths.map((p) => `- \`${p}\``), '<!-- /stuck-paths -->'].join('\n');
+function renderStuckPathsBlock(paths, eol = '\n') {
+  return ['<!-- stuck-paths -->', ...paths.map((p) => `- \`${p}\``), '<!-- /stuck-paths -->'].join(eol);
+}
+
+// #2724: replace only the stuck-paths block of an existing body, so text a human
+// shaped around it survives. A function replacer keeps `$&`/`$1` in a path literal.
+// A CRLF body gets a CRLF block, so the edit leaves no mixed line endings.
+// -> a body with no block gets the block appended; an empty body gets the full render.
+function withStuckPaths(body, paths) {
+  const text = body || '';
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  if (STUCK_PATHS_RE.test(text)) return text.replace(STUCK_PATHS_RE, () => renderStuckPathsBlock(paths, eol));
+  if (!text.trim()) return structurallyStuckBody(paths);
+  return `${text.replace(/\s+$/, '')}${eol}${eol}${renderStuckPathsBlock(paths, eol)}${eol}`;
 }
 
 function structurallyStuckBody(paths) {
@@ -282,8 +298,12 @@ function escalateStructurallyStuck({ repo, targetPath, runner = defaultRunner })
         ? `Reconcile is seeing \`${targetPath}\` stuck at structurally-stuck again — reopening rather than filing a duplicate.`
         : `Also stuck: \`${targetPath}\``;
 
+      // #2724: an OPEN record is edited in place (its spec text is live); a CLOSED one
+      // being reopened is a fresh incident, so its spent spec text is replaced by the
+      // full canonical body and its fixed remedy text refreshes.
+      const nextBody = isClosed ? structurallyStuckBody(updatedPaths) : withStuckPaths(hit.body, updatedPaths);
       try {
-        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(updatedPaths)]);
+        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', nextBody]);
         runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body', comment]);
         if (isClosed) {
           runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
@@ -339,9 +359,15 @@ function escalateResidue({
 // ONE of them must never close the record out from under the OTHER,
 // still-genuinely-stuck paths it names. Removes just `targetPath` from the
 // body's stuck-paths list; only closes once the list empties.
+// #2724: optional `why` — a short clause (e.g. "is an ad-hoc session directory …")
+// that replaces the default "no longer exists on disk" reason in the comment this
+// posts, for a caller resolving a path that still exists. Omitted: the comment
+// wording is unchanged.
 // -> { status: 'closed'|'path-removed'|'already-closed'|'not-found', number? } |
 //    { status: 'resolution-failed', reason, number? }
-function resolveStructurallyStuck({ repo, targetPath, runner = defaultRunner }) {
+function resolveStructurallyStuck({
+  repo, targetPath, runner = defaultRunner, why,
+}) {
   const marker = structurallyStuckMarker();
   return findHitForResolve({
     repo,
@@ -353,15 +379,17 @@ function resolveStructurallyStuck({ repo, targetPath, runner = defaultRunner }) 
       if (hit.state === 'CLOSED') return { status: 'already-closed', number: hit.number };
       const remaining = existingPaths.filter((p) => p !== targetPath);
       try {
-        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(remaining)]);
+        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', withStuckPaths(hit.body, remaining)]);
         if (remaining.length === 0) {
           runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
-            `\`${targetPath}\` no longer exists on disk — the last remaining stuck path. Closing.`]);
+            `\`${targetPath}\` ${why || 'no longer exists on disk'} — the last remaining stuck path. Closing.`]);
           runner(['issue', 'close', String(hit.number), '--repo', repo]);
           return { status: 'closed', number: hit.number };
         }
         runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
-          `\`${targetPath}\` no longer exists on disk — resolved by other means, removed from the stuck-paths list `
+          (why
+            ? `\`${targetPath}\` ${why} — removed from the stuck-paths list `
+            : `\`${targetPath}\` no longer exists on disk — resolved by other means, removed from the stuck-paths list `)
           + `(${remaining.length} path(s) still stuck).`]);
         return { status: 'path-removed', number: hit.number };
       } catch (err) {
@@ -371,12 +399,15 @@ function resolveStructurallyStuck({ repo, targetPath, runner = defaultRunner }) 
   });
 }
 
+// #2724: optional `why` is forwarded to resolveStructurallyStuck, where it replaces the
+// default "no longer exists on disk" clause in the structurally-stuck comment; every
+// other reason ignores it and its comment is unchanged.
 // -> { status: 'closed'|'already-closed'|'not-found', number? } |
 //    { status: 'resolution-failed', reason, number? }
 function resolveResidue({
-  repo, reason, targetPath, runner = defaultRunner,
+  repo, reason, targetPath, runner = defaultRunner, why,
 }) {
-  if (reason === 'structurally-stuck') return resolveStructurallyStuck({ repo, targetPath, runner });
+  if (reason === 'structurally-stuck') return resolveStructurallyStuck({ repo, targetPath, runner, why });
   const marker = markerFor(reason, targetPath);
   return findHitForResolve({
     repo,
@@ -397,6 +428,6 @@ function resolveResidue({
 
 module.exports = {
   escalateResidue, resolveResidue, residueFingerprint, residueBody, findResidueDuplicate, defaultRunner, errorText,
-  parseStuckPaths, renderStuckPathsBlock, structurallyStuckBody, structurallyStuckMarker,
+  parseStuckPaths, renderStuckPathsBlock, withStuckPaths, structurallyStuckBody, structurallyStuckMarker,
   capDirtyFiles, DIRTY_FILES_CAP,
 };

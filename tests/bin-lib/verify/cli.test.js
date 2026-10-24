@@ -1720,6 +1720,12 @@ test('AC9.1: review Step 1.5\'s literal stamp-status command reads verifiedHead:
   assert.ok(block, 'a bash block follows the Standalone heading');
   const cmd = block[1];
   assert.strictEqual(cmd, 'node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status');
+  // The /flow pipeline branch runs its read inline, not in a fenced block — pin it to the
+  // same command so a flag added there (a --git-dir, say) cannot silently skip discovery.
+  const flowBranch = steps.split('### Standalone (outside `/claude-tweaks:flow`):')[0];
+  const inline = flowBranch.match(/read of the runner's own artifact \(#1921\) — `([^`]+)`/);
+  assert.ok(inline, 'the /flow branch names its inline stamp-status read');
+  assert.strictEqual(inline[1], cmd, 'the /flow branch runs the same bare stamp-status command');
   const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
   await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
   await runStampSuiteChunk(r, 'other=node -e 0');

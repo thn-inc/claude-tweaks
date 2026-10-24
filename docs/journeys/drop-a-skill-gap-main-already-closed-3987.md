@@ -15,7 +15,7 @@ files:
 
 ### 1. Probe before staging — the reflect pass inside the run
 - **URL:** the `/reflect` pass `/claude-tweaks:wrap-up` runs. Its staged files land under `.claude-tweaks/pipelines/{run-id}/staged/reflect-{n}.md`.
-- **Action:** for a tangential finding that claims a skill or contract file lacks something, resolve `{integration-branch}` per `_shared/integration-branch.md`. Run `git fetch origin {integration-branch}`. Then run `git grep -n -F '{phrase}' origin/{integration-branch} -- {path}` and `git log -S '{phrase}' --oneline origin/{integration-branch} -- {path}`, one command per Bash call.
+- **Action:** for a tangential finding that claims a skill or contract file lacks something, resolve `{integration-branch}` per `_shared/integration-branch.md`. Run `git fetch origin '{integration-branch}'`. Then run `git grep -n -F -e '{phrase}' 'origin/{integration-branch}' -- '{path}'` and `git log -S '{phrase}' --oneline 'origin/{integration-branch}' -- '{path}'`, one command per Bash call. `{phrase}` is single-quoted with each `'` inside it written as `'\''`.
 - **Should feel:** a quick check against the branch the work lands on, not against whatever plugin build this session happens to load. It costs one fetch and two read-only probes.
 - **Should understand:**
   - The session's own view of the skill files can predate main. #3817 was filed at 20:57Z from a run on an installed build that predated #3078, nine hours after #3078's 11:19Z merge had already closed the gap.
@@ -23,6 +23,8 @@ files:
 - **Red flags:**
   - The probe runs against the local checkout or the installed plugin directory instead of `origin/{integration-branch}`.
   - A regex grep on literal skill text, where `-F` is needed. See `prove-an-absence-grep-can-match-3571.md`.
+  - A phrase starting with `-` passed without `-e`, so `git grep` reads it as an option and errors.
+  - Probing after a failed `git fetch`. The stale `origin/{integration-branch}` ref can miss content main already has.
 
 ### 2. Read the outcome — the run's `decisions.md` or the staged record
 - **URL:** `.claude-tweaks/pipelines/{run-id}/decisions.md`, under `/reflect`, and the staged `reflect-{n}.md` body.
@@ -30,10 +32,11 @@ files:
 - **Should feel:** settled. Every absence claim either carries its evidence or has been dropped, with the reason written down.
 - **Should understand:**
   - Content found on the integration branch: the finding is not staged, and one `AUTO … not filed — already on origin/{integration-branch}` line records the probe that matched.
-  - Content absent: the finding is staged, and its Current State quotes the probe command and its empty result.
-  - Probe couldn't run (no `origin`, or the named file is outside this repository): staging proceeds, and the record's Current State says the probe could not run.
+  - Content absent: `git grep` exited 1, or `git log -S` exited 0 with no output. The finding is staged, and its Current State quotes the probe command and its empty result.
+  - Probe couldn't run (no `origin`, the named file is outside this repository, `git fetch` exited non-zero, or `git grep`/`git log` exited other than 0 or 1, such as 128 for a bad ref or pattern): staging proceeds, and the record's Current State says the probe could not run, never that the content is absent.
 - **Red flags:**
   - A staged tangential record whose Current State asserts an absence with no probe cited.
+  - A Current State that reads a failed fetch or a `git grep` exit 128 as "absent", the #4069 shape.
   - A dropped finding with no `decisions.md` line.
 
 ### 3. Approve Queue writes — the Wrap-Up Review Console
@@ -45,5 +48,6 @@ files:
 
 ## Origin
 - Created during the build of #3987, a reflect hindsight finding from #3817. #3817's Deliverable 1 asked to re-add a carve-out that #3078 had deliberately deleted. The reflect pass that filed it ran an installed build older than #3078.
+- Updated during the build of #4069: a failed fetch or a `git grep`/`git log` error exit is now "probe could not run", never "absent", and `{phrase}` passes with `-e` and safe quoting.
 - Pinned by `tests/reflect-integration-branch-probe.test.js`.
 - Related: `drop-a-refuted-code-is-missing-claim-3329.md` (the same ground-truth-before-staging idea, applied to review lens absence claims) and `verify-a-cited-commit-before-filing.md`.

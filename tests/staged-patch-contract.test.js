@@ -13,6 +13,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
 const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
+const { gitEnv } = require('../plugin/bin/lib/staged-patch/stack-check');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const CONTRACT = path.join(SKILLS, '_shared', 'staged-patch.md');
@@ -174,7 +175,7 @@ test('staged-patch.md Staging-time gate cites the pipeline-run-dir.md staged-fil
 // ---- Live discrimination probe: the mechanism the contract's prose relies on ----
 // Spawn env hardened against a global commit.gpgsign=true or template hook affecting the
 // fixture; every spawn (setup and probes) is bounded so a hang fails fast and names itself.
-const FIXTURE_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+const FIXTURE_ENV = gitEnv();
 function gitFixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'staged-patch-probe-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

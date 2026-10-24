@@ -273,6 +273,8 @@ call-site-only, never folded into the classifier itself (folding it in would mis
 `abandoned-interrupted` but fails the gate still falls through to the next-lower-precedence kind,
 matching the pre-consolidation `&&`-chained early-return exactly.
 
+The `structurally-stuck` branch exempts an ad-hoc dir at `no-branch`/`no-worktree`/`no-pr` (`isAdHocIntrinsicSkip`, #2724) — that is an ad-hoc dir's normal state, and `adhoc-superseded` archives it once its linked worktree is no longer registered and `ADHOC_SUPERSEDED_TTL_MS` (30 days) has passed — but only when its recorded worktree is a linked worktree: a dir stamped with the main checkout can never be claimed by `adhoc-superseded`, so it stays tracked and keeps escalating. `trackStuckSkip` clears an exempted dir's cache entry (`clearResidue`) and, if it was already escalated, resolves its path off the consolidated record. Unlike Residue pruning above, an escalated entry is dropped only after that resolve lands (`closed`, `path-removed`, `not-found` or `already-closed`): the dir still exists, so a throw or any other status keeps the entry and the next pass retries. The resolve comment says the path is an ad-hoc session directory rather than "no longer exists on disk" (`resolveResidue`'s optional `why`), and under `reconcile --dry-run` the whole clear is skipped, the same guard `pruneResidueFailures` sits behind.
+
 ## No-run-state.json terminal path and consolidated escalation (#1811)
 
 Two additions beyond the branchless MERGED-by-number probe (already covered by `state.pr.number`
@@ -296,7 +298,10 @@ main loop, landed via #1962/#2226/#2228/#2231):
   path-specific basis, unchanged), so every stuck dir's `trackResidue` call converges on the same
   marker. The record's body carries a `<!-- stuck-paths -->…<!-- /stuck-paths -->` block
   (`parseStuckPaths`/`renderStuckPathsBlock`) edited in place via `gh issue edit --body` on each new
-  path (plus a comment, so both the record body and its thread reflect the addition) — never a
+  path — the edit (`withStuckPaths`) replaces only the line-anchored block (both markers on their own
+  lines, CRLF tolerated), keeps every other byte of the body, and appends the block to a non-empty body
+  that lost it (#2724), except that a CLOSED record being reopened is re-rendered in full
+  (`structurallyStuckBody`: a reopen is a fresh incident, so its fixed remedy text refreshes) — plus a comment, so both the record body and its thread reflect the addition — never a
   second `issue create`. The body's fixed text names every skip reason that feeds the record
   (`no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending` (#3297), #3543's
   `pr-not-found` — a stamped `run-state.json` `pr.number` GitHub's structured GraphQL error confirms

@@ -13,7 +13,7 @@ const { FIXTURE_TIMEOUT_MS } = require('../../helpers/git-fixtures');
 const { checkStack, gitEnv, headerSources, rederive, stagedApplyOrder, stackVerdicts } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 const { readSnapshot } = require('../../../plugin/bin/lib/console/resolve');
 
-const FIXTURE_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+const FIXTURE_ENV = gitEnv();
 const BASE = ['l1', 'l2', 'l3', 'l4', 'anchor', 'a1', 'a2', 'a3'].join('\n') + '\n';
 const PREAMBLE = 'Target: f.txt\nInvariant: x\n\n';
 
@@ -373,6 +373,35 @@ test('#3696: gitEnv keeps NOSYSTEM, drops repo pointers, and never mutates the i
   assert.strictEqual(env.PATH, '/bin');
   for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) assert.ok(!(k in env), k);
   assert.deepStrictEqual(input, { PATH: '/bin', GIT_DIR: '/x/.git', GIT_WORK_TREE: '/x', GIT_INDEX_FILE: '/x/i' });
+});
+
+test('#3997: gitEnv drops GIT_COMMON_DIR and GIT_DIFF_OPTS, which re-point the repo and reshape emitted diffs', () => {
+  const env = gitEnv({ platform: 'linux', devNull: '/dev/null', env: { PATH: '/bin', GIT_COMMON_DIR: '/x/.git', GIT_DIFF_OPTS: '-u0' } });
+  for (const k of ['GIT_COMMON_DIR', 'GIT_DIFF_OPTS']) assert.ok(!(k in env), k);
+  assert.strictEqual(env.PATH, '/bin');
+});
+
+test('#3997: gitEnv drops env-carried config (GIT_CONFIG_PARAMETERS/COUNT/KEY_n/VALUE_n), keeps PATH and author identity, never mutates the input env', () => {
+  const input = {
+    PATH: '/bin',
+    GIT_AUTHOR_NAME: 'Author',
+    GIT_CONFIG_PARAMETERS: "'core.autocrlf'='true'",
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'core.autocrlf',
+    GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_KEY_1: 'diff.noprefix',
+    GIT_CONFIG_VALUE_1: 'true',
+    GIT_CONFIG_KEY_10: 'x',
+    GIT_CONFIG_VALUE_10: 'y',
+    GIT_CONFIG_KEY_X: 'keep',
+  };
+  const before = { ...input };
+  const env = gitEnv({ platform: 'linux', devNull: '/dev/null', env: input });
+  for (const k of ['GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_1', 'GIT_CONFIG_KEY_10', 'GIT_CONFIG_VALUE_10']) assert.ok(!(k in env), k);
+  assert.strictEqual(env.PATH, '/bin');
+  assert.strictEqual(env.GIT_AUTHOR_NAME, 'Author');
+  assert.strictEqual(env.GIT_CONFIG_KEY_X, 'keep');
+  assert.deepStrictEqual(input, before);
 });
 
 // A fixture repo with every `{name: content}` file committed.
