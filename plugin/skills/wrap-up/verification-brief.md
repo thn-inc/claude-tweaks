@@ -304,8 +304,10 @@ resolved above — the live or archive path, never a bare `$PIPELINE_RUN_DIR` th
 archived:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --section "/wrap-up" --status AUTO --step "Verification Brief Step 4" --text "screenshot commit for #{record}: PR state {state} → {current branch | evidence PR #{m} ({url})}" --reversibility high
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --section "/wrap-up" --status AUTO --step "Verification Brief Step 4" --reversibility high --text-file "{text-file}"
 ```
+
+`{text-file}` holds one line, `screenshot commit for #{record}: PR state {state} → {current branch | evidence PR #{m} ({url})}`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — `{url}` comes back from the forge, so it never passes through shell quoting.
 
 On the evidence-PR route, name the evidence PR's URL in the brief (one line under the
 screenshots) and in wrap-up's Actions Performed (`summary-template.md`'s evidence-PR row).
