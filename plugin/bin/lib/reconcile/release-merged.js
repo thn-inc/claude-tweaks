@@ -362,6 +362,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResol
 
   const cache = readCache(root);
   const nextClaimShas = {};
+  const nextClaimBlobs = {};
 
   const wtList = runGit(['worktree', 'list', '--porcelain'], root);
   const worktrees = wtList.failure ? [] : parseWorktreeList(wtList.stdout);
@@ -391,7 +392,17 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResol
       continue; // matches the `if (!isActive) continue;` no-log behavior below
     }
 
-    const claim = readClaim(repoSlug, entry.name, api);
+    // #4032: an ACTIVE claim's content is reused by blob sha (`claimBlobs`,
+    // rewritten each pass to this pass's active claims only). Unlike the
+    // claimShas skip above this never skips the classify/join below — only
+    // the contents read — so a live claim's PR/issue join is still re-run
+    // every pass. A git blob sha names its content, so the reuse is exact; a
+    // stale sha merely makes the conditional tombstone write fail
+    // (`release-write-failed`), never release the wrong claim.
+    const cachedContent = Object.hasOwn(cache.claimBlobs, entry.sha) ? cache.claimBlobs[entry.sha] : undefined;
+    const claim = typeof entry.sha === 'string' && typeof cachedContent === 'string'
+      ? { content: cachedContent, sha: entry.sha, failure: null }
+      : readClaim(repoSlug, entry.name, api);
     if (claim.failure) { skipped.push({ issueNumber, reason: claim.failure }); continue; }
 
     const classified = classifyClaimBlob(claim.content, Date.now());
@@ -411,6 +422,9 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResol
       nextClaimShas[issueNumber] = claim.sha; // terminal — cacheable, see the skip branch above
       continue; // absent/tombstone/unreadable — not worth logging as a skip
     }
+    // Keyed by claim.sha (the blob actually classified), like the terminal
+    // cache-write above — never the listing's entry.sha.
+    if (typeof claim.sha === 'string' && typeof claim.content === 'string') nextClaimBlobs[claim.sha] = claim.content;
 
     let runId = null;
     try { runId = JSON.parse(claim.content).runId || null; } catch { /* falls through to no-run-id below */ }
@@ -583,7 +597,9 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResol
   // for exactly this reason (#820 review). `claimShas: nextClaimShas` stays a
   // full replacement, not a merge — this pass's own listing-driven rebuild is
   // already a complete, self-consistent claimShas set for what it observed.
-  writeCache(root, { ...readCache(root), claimShas: nextClaimShas });
+  // `claimBlobs` (#4032) is replaced the same way, so it stays bounded to
+  // this pass's active claims.
+  writeCache(root, { ...readCache(root), claimShas: nextClaimShas, claimBlobs: nextClaimBlobs });
   return { released, skipped };
 }
 

@@ -197,11 +197,13 @@ test('releaseMerged: caches the blob sha actually classified, not the directory 
   );
 });
 
-// Guards against terminal-only caching silently widening to cover active
-// (live/stale) claims — the invariant this task exists to hold. A live
-// claim's PR/issue join can change pass-to-pass even when its content
-// hasn't, so it must never be cached/skipped, unlike the tombstone above.
-test('releaseMerged: a live claim with an unchanged sha is still re-fetched every pass', async () => {
+// Guards against terminal-only SKIPPING silently widening to cover active
+// (live/stale) claims — the invariant #820 holds. A live claim's PR/issue
+// join can change pass-to-pass even when its content hasn't, so the claim is
+// still classified and re-joined every pass (the issue-state lookup below
+// fires twice). Only its blob READ is reused by sha (#4032, tests further
+// down) — an unchanged git blob sha names unchanged content.
+test('releaseMerged: a live claim with an unchanged sha is still re-evaluated every pass (join re-run, blob read reused)', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-cache-live-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
@@ -213,6 +215,7 @@ test('releaseMerged: a live claim with an unchanged sha is still re-fetched ever
   });
 
   let readCalls = 0;
+  let issueStateCalls = 0;
   const ghApi = (args) => {
     if (args[0].includes('/git/trees/claims-registry')) {
       return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-8.json', sha: 'live-sha' }] }), failure: null, status: null };
@@ -225,17 +228,98 @@ test('releaseMerged: a live claim with an unchanged sha is still re-fetched ever
       // No local run-state.json for 'no-such-run', so the PR join fails
       // closed (no-run-state) and decideRelease falls through to the
       // issue-state lookup — this fake answers it 'OPEN' so the claim
-      // resolves to an ordinary skip ('no-run-state'), never a release,
-      // keeping this test's only assertion on `readCalls`.
+      // resolves to an ordinary skip ('no-run-state'), never a release.
+      issueStateCalls += 1;
       return { stdout: 'OPEN\n', failure: null, status: null };
     }
     throw new Error(`unexpected ${args.join(' ')}`);
   };
 
-  await releaseMerged({ cwd: root, ghApi });
+  const first = await releaseMerged({ cwd: root, ghApi });
   assert.equal(readCalls, 1);
-  await releaseMerged({ cwd: root, ghApi }); // second pass: sha unchanged, but the claim is live — must still re-read
-  assert.equal(readCalls, 2, 'a live claim must never be cached/skipped, even with an unchanged sha');
+  assert.equal(issueStateCalls, 1);
+  const second = await releaseMerged({ cwd: root, ghApi });
+  assert.equal(readCalls, 1, 'an unchanged active blob sha reuses the cached content (#4032)');
+  assert.equal(issueStateCalls, 2, 'a live claim must still be re-joined every pass, even with an unchanged sha');
+  assert.deepEqual(second.skipped, first.skipped);
+  assert.deepEqual(second.released, []);
+});
+
+// #4032 — an active claim's blob content is reused by blob sha. Harness: one
+// live claim (issue 5) whose listing sha the caller controls; counts the
+// `contents/claims/issue-*.json` reads and answers the issue-state lookup OPEN
+// (no run-state for the runId, so the claim resolves to an ordinary skip).
+function claimBlobHarness(prefix) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  const content = JSON.stringify({
+    runId: 'no-such-run', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const state = { listing: [{ name: 'issue-5.json', sha: 's1' }], contentReads: 0 };
+  const ghApi = (args) => {
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: state.listing }), failure: null, status: null };
+    }
+    if (/\/contents\/claims\/issue-\d+\.json/.test(args[0])) {
+      state.contentReads += 1;
+      return { stdout: JSON.stringify({ content, sha: state.listing[0].sha }), failure: null, status: null };
+    }
+    if (args[0].includes('/issues/5')) return { stdout: 'OPEN\n', failure: null, status: null };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  return { root, ghApi, state, content };
+}
+
+test('releaseMerged: an unchanged active claim is not re-read', async () => {
+  const h = claimBlobHarness('ct-release-blobs-same-');
+  const first = await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.equal(h.state.contentReads, 1);
+  assert.deepEqual(first.skipped, [{ issueNumber: 5, runId: 'no-such-run', reason: 'no-run-state' }]);
+  const second = await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.equal(h.state.contentReads, 1, 'second run reuses the cached blob content for sha s1');
+  assert.deepEqual(second.skipped, first.skipped);
+  assert.deepEqual(readCache(h.root).claimBlobs, { s1: h.content });
+});
+
+test('releaseMerged: a changed sha is re-read', async () => {
+  const h = claimBlobHarness('ct-release-blobs-changed-');
+  await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.equal(h.state.contentReads, 1);
+  h.state.listing = [{ name: 'issue-5.json', sha: 's2' }];
+  await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.equal(h.state.contentReads, 2, 'a new listing sha is a cache miss');
+  assert.deepEqual(Object.keys(readCache(h.root).claimBlobs), ['s2'], 'the superseded sha is dropped, the new one cached');
+});
+
+test('releaseMerged: claimBlobs keeps only this pass\'s active shas', async () => {
+  const h = claimBlobHarness('ct-release-blobs-dropped-');
+  await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.deepEqual(Object.keys(readCache(h.root).claimBlobs), ['s1']);
+  h.state.listing = [];
+  await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.deepEqual(readCache(h.root).claimBlobs, {});
+});
+
+test('releaseMerged: a terminal claim is cached by claimShas only, never in claimBlobs', async () => {
+  const h = claimBlobHarness('ct-release-blobs-terminal-');
+  h.state.listing = [{ name: 'issue-5.json', sha: 'tomb' }];
+  const tombApi = (args) => (/\/contents\/claims\/issue-5\.json/.test(args[0])
+    ? { stdout: JSON.stringify({ content: JSON.stringify({ released: true }), sha: 'tomb' }), failure: null, status: null }
+    : h.ghApi(args));
+  await releaseMerged({ cwd: h.root, ghApi: tombApi });
+  const cache = readCache(h.root);
+  assert.deepEqual(cache.claimBlobs, {});
+  assert.equal(cache.claimShas[5], 'tomb');
+});
+
+test('releaseMerged: a non-string cached claimBlobs value is ignored and the claim re-read', async () => {
+  const h = claimBlobHarness('ct-release-blobs-poisoned-');
+  writeCache(h.root, { ...readCache(h.root), claimBlobs: { s1: 42 } });
+  const r = await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.equal(h.state.contentReads, 1);
+  assert.deepEqual(r.skipped, [{ issueNumber: 5, runId: 'no-such-run', reason: 'no-run-state' }]);
+  assert.deepEqual(readCache(h.root).claimBlobs, { s1: h.content });
 });
 
 // Phase 1.5 (#820 review — resolvePrState was left serial in an earlier pass
