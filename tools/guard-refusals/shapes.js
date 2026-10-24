@@ -27,13 +27,27 @@ const CMD = String.raw`(?<![\w./-])`;
 // quotes and comments makes the lines after its own line, up to and including
 // the delimiter line, 'heredoc' data: an apostrophe there is not a quote, and a
 // banned word there is not a command. `<<-` allows leading tabs on the
-// delimiter line; an unterminated body runs to end of text, as in shell.
+// delimiter line. A heredoc whose delimiter line never appears is not one:
+// its "body" is lexed as shell rather than hidden to end of text (shell only
+// warns there). `<<` inside `$((…))` or `((…))` is an arithmetic shift.
 const HEREDOC_OP = /^<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|([A-Za-z_]\w*))/;
+
+// Index just past the `))` closing the arithmetic `((` at `start` (paren
+// depth counted), or the end of text when it never closes.
+function arithmeticEnd(text, start) {
+  let depth = 0;
+  for (let j = start; j < text.length; j++) {
+    if (text[j] === '(') depth++;
+    else if (text[j] === ')' && --depth === 0) return j + 1;
+  }
+  return text.length;
+}
 
 function lexShell(text) {
   const kinds = new Array(text.length);
   let state = 'plain';
   let pending = []; // heredocs opened on the current line: { delim, tabs }
+  let arithEnd = 0; // inside `((…))` until this index
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (c === '\n' && pending.length && (state === 'plain' || state === 'comment')) {
@@ -51,7 +65,10 @@ function lexShell(text) {
       if (c === '\n') { kinds[i] = 'plain'; state = 'plain'; } else kinds[i] = 'comment';
     } else if (c === '\\' && i + 1 < text.length) {
       kinds[i] = 'plain'; kinds[++i] = 'plain';
-    } else if (c === '<' && text[i - 1] !== '<' && text[i + 2] !== '<' && HEREDOC_OP.test(text.slice(i, i + 256))) {
+    } else if (c === '(' && text[i + 1] === '(' && i >= arithEnd) {
+      arithEnd = arithmeticEnd(text, i);
+      kinds[i] = 'plain';
+    } else if (c === '<' && i >= arithEnd && text[i - 1] !== '<' && text[i + 2] !== '<' && HEREDOC_OP.test(text.slice(i, i + 256))) {
       const m = HEREDOC_OP.exec(text.slice(i, i + 256));
       pending.push({ delim: m[2] || m[3] || m[4], tabs: m[1] === '-' });
       // Only the `<<-` operator is consumed here; a quoted delimiter is lexed
@@ -68,19 +85,27 @@ function lexShell(text) {
 }
 
 // Mark each pending heredoc's body lines, from `start`, as 'heredoc' through
-// its delimiter line; returns the index where shell text resumes.
+// its delimiter line; returns the index where shell text resumes. When any
+// pending delimiter line never appears, nothing is marked and shell text
+// resumes at `start`.
 function markHeredocBodies(text, start, pending, kinds) {
+  const spans = [];
   let i = start;
   for (const { delim, tabs } of pending) {
-    while (i < text.length) {
+    let found = false;
+    while (i < text.length && !found) {
       let end = text.indexOf('\n', i);
       if (end === -1) end = text.length;
       const line = text.slice(i, end).replace(/\r$/, '');
-      for (let j = i; j < end; j++) kinds[j] = 'heredoc';
-      if (end < text.length) kinds[end] = 'plain';
+      spans.push([i, end]);
       i = end + 1;
-      if ((tabs ? line.replace(/^\t+/, '') : line) === delim) break;
+      found = (tabs ? line.replace(/^\t+/, '') : line) === delim;
     }
+    if (!found) return start;
+  }
+  for (const [from, end] of spans) {
+    for (let j = from; j < end; j++) kinds[j] = 'heredoc';
+    if (end < text.length) kinds[end] = 'plain';
   }
   return Math.min(i, text.length);
 }

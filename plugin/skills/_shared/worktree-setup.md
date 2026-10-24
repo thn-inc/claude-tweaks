@@ -287,16 +287,16 @@ state does not survive between calls.
 2. Else the upstream of the current branch: `{UPSTREAM}` is what this prints (`origin/feat`).
 
    ```bash
-   git rev-parse --abbrev-ref --symbolic-full-name @{upstream}
+   git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/dev/null
    ```
 
 3. Else the remote default branch: `{UPSTREAM}` is what this prints (`origin/main`).
 
    ```bash
-   git symbolic-ref --quiet --short refs/remotes/origin/HEAD
+   git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null
    ```
 
-None of the three prints a value → there is no fork point to compare against: skip the check
+None of the three prints a value (an error exit with no stdout counts as printing nothing) → there is no fork point to compare against: skip the check
 and say so, never compare against a guessed ref. Otherwise fetch it — `{remote}` and `{branch}`
 are `{UPSTREAM}` split at its first `/`; a failed fetch is not fatal, the count then reads the
 last-fetched ref — and count:

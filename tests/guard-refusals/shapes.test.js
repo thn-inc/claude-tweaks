@@ -190,6 +190,19 @@ test('a <<- heredoc ends at a tab-indented delimiter line, and shell text resume
   assert.deepStrictEqual(detectShapes(`cat <<-EOF\n\techo complete\n\tEOF`), []);
 });
 
+test('an arithmetic shift is not a heredoc operator', () => {
+  assert.deepStrictEqual(detectShapes('X=$(( 1 << n ))\neval "$x"'), ['eval-token']);
+  assert.deepStrictEqual(detectShapes('(( y = 1 << n ))\neval "$x"'), ['eval-token']);
+  // A later line equal to the "delimiter" would otherwise close a fake body
+  // that hides the eval; this case needs the arithmetic rule on its own.
+  assert.deepStrictEqual(detectShapes('X=$(( 1 << n ))\neval "$x"\nn'), ['eval-token']);
+  assert.deepStrictEqual(detectShapes('(( y = 1 << n ))\neval "$x"\nn'), ['eval-token']);
+});
+
+test('a heredoc whose delimiter line never appears is lexed as shell, not a body to end of text', () => {
+  assert.deepStrictEqual(detectShapes('cat <<EOF\necho complete'), ['complete-token']);
+});
+
 test('a heredoc operator inside quotes or a comment opens no body', () => {
   assert.deepStrictEqual(detectShapes(`echo "a <<EOF b"\necho complete`), ['complete-token']);
   assert.deepStrictEqual(detectShapes(`# cat <<EOF\necho complete`), ['complete-token']);

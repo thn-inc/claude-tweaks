@@ -40,7 +40,8 @@ documented in `_shared/pipeline-run-dir.md`'s "Resolving it" section).
 ## Bash snippet (resolution)
 
 ```bash
-RUN_ROOT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only); RUN_ROOT=$(cd "$RUN_ROOT" && pwd -P)
+RUN_ROOT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only) || exit 1  # no root: stop and report, never guess
+RUN_ROOT=$(cd "$RUN_ROOT" && pwd -P)
 RUN_DIR="${PIPELINE_RUN_DIR:-}"
 if [ -n "$RUN_DIR" ]; then
   # Adoption-time anchoring check (step 1): an inherited value must resolve under $RUN_ROOT,

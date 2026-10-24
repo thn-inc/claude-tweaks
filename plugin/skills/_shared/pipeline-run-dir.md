@@ -46,14 +46,15 @@ Run directories live under the **main checkout's** `.claude-tweaks/pipelines/`, 
 linked worktree's. Resolve the root once, before any path is built:
 
 ```bash
-RUN_ROOT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only)
+RUN_ROOT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only) || exit 1
 ```
 
 Resolved from the main checkout, or any subdirectory of it, `$RUN_ROOT` is the repo root's
 realpath. Resolved from inside a linked worktree, it is the main checkout instead: the command
 follows the worktree's `.git` file back to the shared repository
 (`bin/lib/hooks/worktree-detect.js`'s `mainCheckoutRoot`), and exits non-zero rather than guess
-when it cannot. Never compose `git rev-parse --git-common-dir` inline here: the worktree guard
+when it cannot. Then the call stops (`|| exit 1`): report the command's stderr and do not
+continue — an empty `$RUN_ROOT` would build every path from the current directory. Never compose `git rev-parse --git-common-dir` inline here: the worktree guard
 refuses `git` inside `$(...)` (`_shared/scratch-worktree.md` §7). Every path below is built from
 `$RUN_ROOT`, not from the current directory.
 

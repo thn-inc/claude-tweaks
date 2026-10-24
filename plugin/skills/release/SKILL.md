@@ -45,8 +45,10 @@ Under `--train`, read `## --train semantics` first — its two policy levers are
 **Resolve `$RUN_ROOT` first.** Every later command in this skill that names it — `git -C "$RUN_ROOT"`, `--root "$RUN_ROOT"` — re-resolves it with exactly this line, because an `export` does not survive into the next Bash call. This is `_shared/pipeline-run-dir.md`'s Anchoring snippet, verbatim:
 
 ```bash
-RUN_ROOT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only)
+RUN_ROOT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only) || exit 1
 ```
+
+A non-zero exit stops the call: report its stderr and go no further.
 
 Then resolve the run directory per `_shared/run-dir-resolution.md` (steps 1-2: `PIPELINE_RUN_DIR`, then the most-recent matching directory), anchored to that `$RUN_ROOT`. When neither resolves, create the standalone fallback and stamp it — `release` has its own every-mode clause under that file's step 4, the same shape as wrap-up's and not the `auto`-gated allowlist (which is why the snippet below omits `--mode`), and this stamp is the second of the two direct `run-state.json` writes it names:
 
