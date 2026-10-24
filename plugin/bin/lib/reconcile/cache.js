@@ -210,7 +210,9 @@ function recordResidueSuccess(target, reason, targetPath) {
 // #4202: the gone-path predicate handed to escalate/resolve. The consolidated record is shared
 // by every checkout of the repo, so this checkout can only judge paths inside its own run-dir
 // tree (<root>/.claude-tweaks/pipelines); any other listed path counts as present.
-function ownedPathExists(root) {
+// `target` is a plain root string or a cache batch handle.
+function ownedPathExists(target) {
+  const root = isCacheBatch(target) ? target.root : target;
   const pipelinesDir = path.join(root, '.claude-tweaks', 'pipelines');
   return (p) => {
     const rel = path.relative(pipelinesDir, p);
@@ -237,7 +239,7 @@ function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveR
     return { cleared: true, resolved: null };
   }
   let resolved;
-  try { resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why, pathExists: ownedPathExists(isCacheBatch(target) ? target.root : target) }); } catch { return { cleared: false, resolved: null }; }
+  try { resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why, pathExists: ownedPathExists(target) }); } catch { return { cleared: false, resolved: null }; }
   if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) return { cleared: false, resolved };
   recordResidueSuccess(target, reason, targetPath);
   return { cleared: true, resolved };
@@ -262,7 +264,7 @@ function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError,
   try {
     escalate({
       repo: repoSlug, reason, targetPath,
-      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner, pathExists: ownedPathExists(isCacheBatch(target) ? target.root : target),
+      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner, pathExists: ownedPathExists(target),
     });
   } catch { /* best-effort — never let escalation turn a residue-tracking call into a thrown error */ }
 }

@@ -495,9 +495,12 @@ test('#2724 escalate: an OPEN record whose body lost its block gets the block ap
 // #4202: the stuck-paths block converges — a listed path that pathExists reports gone
 // is dropped on the next escalate/resolve edit. Opt-in: omitting pathExists keeps every path.
 
+function existsExcept(...gonePaths) {
+  return (p) => !gonePaths.includes(p);
+}
+
 test('#4202 AC3.1 AC3.2: escalate: an append drops a listed path pathExists reports gone, keeping the text around the block', () => {
-  const gone = new Set(['/x/gone-1']);
-  const pathExists = (p) => !gone.has(p);
+  const pathExists = existsExcept('/x/gone-1');
   const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/gone-1'])));
   const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-b', count: 3, runner, pathExists });
   assert.deepEqual(result, { status: 'appended', number: 2724 });
@@ -506,8 +509,7 @@ test('#4202 AC3.1 AC3.2: escalate: an append drops a listed path pathExists repo
 });
 
 test('#4202 escalate: reopening a CLOSED record drops gone paths from the re-rendered body', () => {
-  const gone = new Set(['/x/gone-1']);
-  const pathExists = (p) => !gone.has(p);
+  const pathExists = existsExcept('/x/gone-1');
   const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/gone-1', '/x/run-a'])), 'CLOSED');
   const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-new', count: 3, runner, pathExists });
   assert.deepEqual(result, { status: 'reopened', number: 2724 });
@@ -515,8 +517,7 @@ test('#4202 escalate: reopening a CLOSED record drops gone paths from the re-ren
 });
 
 test('#4202 AC3.1 AC3.2: resolve: removing a path also drops gone paths and closes when nothing live remains', () => {
-  const gone = new Set(['/x/gone-1', '/x/gone-2']);
-  const pathExists = (p) => !gone.has(p);
+  const pathExists = existsExcept('/x/gone-1', '/x/gone-2');
   const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/gone-1', '/x/gone-2'])));
   const result = resolveResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', runner, pathExists });
   assert.deepEqual(result, { status: 'closed', number: 2724 });
@@ -527,8 +528,7 @@ test('#4202 AC3.1 AC3.2: resolve: removing a path also drops gone paths and clos
 });
 
 test('#4202 resolve: a CRLF body with a gone path stays CRLF and keeps live paths', () => {
-  const gone = new Set(['/x/gone-1']);
-  const pathExists = (p) => !gone.has(p);
+  const pathExists = existsExcept('/x/gone-1');
   const crlf = SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/gone-1', '/x/run-b'])).replace(/\n/g, '\r\n');
   const { runner, seen } = stuckRecordRunner(crlf);
   const result = resolveResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', runner, pathExists });
@@ -537,8 +537,7 @@ test('#4202 resolve: a CRLF body with a gone path stays CRLF and keeps live path
 });
 
 test('#4202 escalate: an already-named path on an OPEN record stays a plain dedup-hit even with gone paths listed', () => {
-  const gone = new Set(['/x/gone-1']);
-  const pathExists = (p) => !gone.has(p);
+  const pathExists = existsExcept('/x/gone-1');
   const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/gone-1'])));
   const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', count: 3, runner, pathExists });
   assert.deepEqual(result, { status: 'dedup-hit', number: 2724 });

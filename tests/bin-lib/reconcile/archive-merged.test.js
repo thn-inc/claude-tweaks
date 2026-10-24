@@ -1817,40 +1817,44 @@ function archivedStuckDirFixture() {
   return { root, dir, live };
 }
 
-test('#4202 AC1.1 AC1.2: trackArchiveResult: archive success resolves an escalated structurally-stuck entry off the consolidated record', () => {
-  const { root, dir, live } = archivedStuckDirFixture();
-  let edited = null;
+function stuckRecordListing(paths) {
+  return JSON.stringify([{ number: 2724, title: 't', body: structurallyStuckBody(paths), createdAt: '2024-01-01T00:00:00Z', state: 'OPEN' }]);
+}
+
+// A gh runner over one open stuck-paths record that captures the edited body and every gh verb.
+function stuckRecordRunner(paths) {
+  const seen = { edited: null, verbs: [] };
   const runner = (argv) => {
-    if (argv[1] === 'list') return JSON.stringify([{ number: 2724, title: 't', body: structurallyStuckBody([dir, live]), createdAt: '2024-01-01T00:00:00Z', state: 'OPEN' }]);
-    if (argv[1] === 'edit') { edited = argv[argv.indexOf('--body') + 1]; return ''; }
+    seen.verbs.push(argv[1]);
+    if (argv[1] === 'list') return stuckRecordListing(paths);
+    if (argv[1] === 'edit') seen.edited = argv[argv.indexOf('--body') + 1];
     return '';
   };
+  return { runner, seen };
+}
+
+test('#4202 AC1.1 AC1.2: trackArchiveResult: archive success resolves an escalated structurally-stuck entry off the consolidated record', () => {
+  const { root, dir, live } = archivedStuckDirFixture();
+  const { runner, seen } = stuckRecordRunner([dir, live]);
   trackArchiveResult(root, 'o/r', dir, { ok: true, movedEntries: [] }, { runner });
-  assert.deepEqual(parseStuckPaths(edited), [live]);
+  assert.deepEqual(parseStuckPaths(seen.edited), [live]);
   assert.deepEqual(listResidueFailures(root), []);
 });
 
 test('#4202 trackArchiveResult: a path from another checkout survives the resolve and keeps the record open', () => {
   const { root, dir } = archivedStuckDirFixture();
   const foreign = '/other-machine/repo/.claude-tweaks/pipelines/2026-01-01T000000-record-9';
-  let edited = null;
-  const verbs = [];
-  const runner = (argv) => {
-    verbs.push(argv[1]);
-    if (argv[1] === 'list') return JSON.stringify([{ number: 2724, title: 't', body: structurallyStuckBody([dir, foreign]), createdAt: '2024-01-01T00:00:00Z', state: 'OPEN' }]);
-    if (argv[1] === 'edit') { edited = argv[argv.indexOf('--body') + 1]; return ''; }
-    return '';
-  };
+  const { runner, seen } = stuckRecordRunner([dir, foreign]);
   trackArchiveResult(root, 'o/r', dir, { ok: true, movedEntries: [] }, { runner });
-  assert.deepEqual(parseStuckPaths(edited), [foreign], 'only this checkout\'s archived dir is resolved; the foreign path stays listed');
-  assert.ok(!verbs.includes('close'), 'the record must stay open while another checkout\'s path is listed');
+  assert.deepEqual(parseStuckPaths(seen.edited), [foreign], 'only this checkout\'s archived dir is resolved; the foreign path stays listed');
+  assert.ok(!seen.verbs.includes('close'), 'the record must stay open while another checkout\'s path is listed');
   assert.deepEqual(listResidueFailures(root), []);
 });
 
 test('#4202 AC2.1: trackArchiveResult: a failed resolve keeps the structurally-stuck entry for the next pass', () => {
   const { root, dir } = archivedStuckDirFixture();
   const runner = (argv) => {
-    if (argv[1] === 'list') return JSON.stringify([{ number: 2724, title: 't', body: structurallyStuckBody([dir]), createdAt: '2024-01-01T00:00:00Z', state: 'OPEN' }]);
+    if (argv[1] === 'list') return stuckRecordListing([dir]);
     throw new Error('gh edit failed');
   };
   trackArchiveResult(root, 'o/r', dir, { ok: true, movedEntries: [] }, { runner });
