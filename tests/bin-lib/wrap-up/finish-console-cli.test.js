@@ -369,6 +369,19 @@ test('finish-console refuses a docs/plans ledger it cannot attribute to this run
   assertNothingWritten(runDir, r, /ledger pre-flight failed: cannot attribute docs\/plans ledgers to this run/);
 });
 
+test('finish-console refuses an unattributable ledger when the run-state worktree is not a git checkout, leaving the ledger byte-identical', (t) => {
+  const runDir = makeRunDir();
+  const wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'finish-console-nongit-')));
+  t.after(() => fs.rmSync(wt, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(wt, 'docs', 'plans'), { recursive: true });
+  const ledger = path.join(wt, 'docs', 'plans', 'a-ledger.md');
+  fs.writeFileSync(ledger, LEDGER_SAMPLE);
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: wt }));
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: PREFLIGHT_PAYLOAD });
+  assertNothingWritten(runDir, r, /ledger pre-flight failed: cannot attribute docs\/plans ledgers to this run/);
+  assert.strictEqual(fs.readFileSync(ledger, 'utf8'), LEDGER_SAMPLE);
+});
+
 test('finish-console refuses a --ledger whose name is not a ledger file before writing any artifact', () => {
   const runDir = makeRunDir();
   fs.writeFileSync(path.join(runDir, 'notes.md'), LEDGER_SAMPLE);

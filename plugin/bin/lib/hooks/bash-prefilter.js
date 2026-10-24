@@ -31,7 +31,7 @@
 // by a raw substring test on `claude-tweaks:` with no JSON parse.
 'use strict';
 const fs = require('fs');
-const { GUARDED_PROGRAM_WORDS, forEachCommandSegment, redirectWriteTargets } = require('./git-command');
+const { GUARDED_PROGRAM_WORDS, forEachCommandSegment, redirectWriteTargets, stripHeredocBodies } = require('./git-command');
 const { REFUSAL_SIGNATURE } = require('./harness-refusal');
 
 // Both word sets come from git-command.js, where the parsers that key on these
@@ -65,9 +65,11 @@ const PARAM_REFERENCE = /\$\{?[A-Za-z_]/;
 // The '.' cwd is a placeholder: it only anchors relative targets, which this
 // boolean never inspects, and the DEVNULL_LIKE/fd-dup/unresolvable exclusions
 // are cwd-independent — so `2>&1` and `> /dev/null` still take the skip path.
+// It scans stripHeredocBodies' output too (#3989), so a `>` inside a heredoc
+// body the parser ignores does not send a call down the full path.
 function hasFileRedirection(command) {
   let found = false;
-  forEachCommandSegment(command, '.', (t) => {
+  forEachCommandSegment(stripHeredocBodies(command), '.', (t) => {
     if (!found && redirectWriteTargets(t, '.').length) found = true;
   });
   return found;

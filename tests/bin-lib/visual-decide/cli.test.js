@@ -44,8 +44,11 @@ test('AC1: start returns detached-running server-info (mode 0600, url has ?key=)
 
     const infoPath = path.join(stateDir, 'server-info');
     assert.equal(fs.existsSync(infoPath), true);
-    const mode = fs.statSync(infoPath).mode & 0o777;
-    assert.equal(mode, 0o600);
+    if (process.platform !== 'win32') {
+      // win32 does not represent POSIX mode bits — Node reports 0o666 whatever mode was requested.
+      const mode = fs.statSync(infoPath).mode & 0o777;
+      assert.equal(mode, 0o600);
+    }
 
     const second = run(['start', '--dir', dir, '--state', stateDir]);
     assert.notEqual(second.code, 0);
