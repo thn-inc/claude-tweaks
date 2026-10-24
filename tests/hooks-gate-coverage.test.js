@@ -557,6 +557,16 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['git commit with a --config-env flag', "git --config-env=core.fsmonitor=V commit -F - <<'EOF'\necho x > f.js\nEOF", f],
     ['git commit after an assignment (GIT_CONFIG_COUNT=1 git commit)', "GIT_CONFIG_COUNT=1 git commit -F - <<'EOF'\necho x > f.js\nEOF", f],
     ['git commit after an assignment behind env (env GIT_CONFIG_COUNT=1 git commit)', "env GIT_CONFIG_COUNT=1 git commit -F - <<'EOF'\necho x > f.js\nEOF", f],
+    // Round 3 (#4149): a reader whose segment carries `$(` or a backtick is no reader. In a pipeline
+    // element the substitution runs with that element's stdin (bash 3.2 and 5 run these bodies); on
+    // the heredoc's own segment it is refused too, failing closed.
+    ['a reader piped on whose quoted argument runs $( ) (| jq "$(bash)")', "cat <<'EOF' | jq \"$(bash)\"\necho x > f.js\nEOF", f],
+    ['a reader piped on whose argument runs $( ) (| jq $(bash))', "cat <<'EOF' | jq $(bash)\necho x > f.js\nEOF", f],
+    ['a reader piped on whose quoted argument runs a backtick (| jq "`bash`")', "cat <<'EOF' | jq \"`bash`\"\necho x > f.js\nEOF", f],
+    ['node piped on with a $( ) argument (| node "$(bash)")', "cat <<'EOF' | node \"$(bash)\"\necho x > f.js\nEOF", f],
+    ['the heredoc reader whose own argument runs $( ) (jq "$(sh)")', "jq \"$(sh)\" <<'EOF'\necho x > f.js\nEOF", f],
+    ['the heredoc reader whose own argument runs $( ) (node "$(bash)")', "node \"$(bash)\" <<'EOF'\necho x > f.js\nEOF", f],
+    ['the heredoc reader whose own argument runs a backtick (cat `sh`)', "cat `sh` <<'EOF'\necho x > f.js\nEOF", f],
   ];
   for (const [label, cmd, expected] of keepCases) {
     test(`#4149: a body fed to ${label} stays visible`, () => {
@@ -935,10 +945,11 @@ for (const [label, cmd] of [
     assert.ok(targets.some((t) => t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
   });
 
-  // The reader check reads a quoted "$( )" and an unquoted ${ } whole, so data bodies still strip.
+  // The reader check reads a quoted "${ }" and an unquoted ${ } whole, so data bodies still strip
+  // (a "$( )" argument makes its command no reader at all, so it cannot pin these seams).
   for (const [label, cmd] of [
-    ['a quoted "$( )" with an & inside (splitOnLoneAmpersand)', "cat <<'EOF' | jq \"$(echo \"a&b\")\"\na > b\nEOF"],
-    ['a quoted "$( )" with a ( inside (removeQuotedSpans)', "cat <<'EOF' | jq \"$(echo \"(a)\")\"\na > b\nEOF"],
+    ['a quoted "${ }" with an & inside (splitOnLoneAmpersand)', "cat <<'EOF' | jq \"${x:-\"a&b\"}\"\na > b\nEOF"],
+    ['a quoted "${ }" with a ( inside (removeQuotedSpans)', "cat <<'EOF' | jq \"${x:-\"(a)\"}\"\na > b\nEOF"],
     ['an unquoted ${ } with an & inside (splitOnLoneAmpersand)', "cat <<'EOF' | jq ${x//&/y}\na > b\nEOF"],
   ]) {
     test(`#4149 nesting: a reader whose argument is ${label} still strips its body`, () => {
@@ -1036,6 +1047,13 @@ for (const opener of ["env -S'bash -s' cat", 'env -S"bash -s" cat', "env -S 'bas
   ]) {
     test(`#4149 routine: \`${opener}\` still strips its body`, () => {
       assert.deepStrictEqual(fileWriteTargets(`${opener}\n${BODY}EOF`, '/r'), expected);
+    });
+  }
+  // The message read from a quoted "$(cat <<'EOF' … EOF)": the inner cat is the reader, and the outer
+  // command, whose segment carries the substitution, receives no heredoc stdin.
+  for (const outer of ['git commit -m', 'git -C /wt/x commit -m', 'gh pr create --title t --body']) {
+    test(`#4149 routine: \`${outer} "$(cat <<'EOF' … EOF)"\` still strips its body`, () => {
+      assert.deepStrictEqual(fileWriteTargets(`${outer} "$(cat <<'EOF'\n${BODY}EOF\n)"`, '/r'), []);
     });
   }
 }

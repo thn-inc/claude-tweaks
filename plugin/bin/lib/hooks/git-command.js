@@ -934,11 +934,14 @@ function isInertNeighbour(tokens, p, seg) {
 // when the command does not configure it (gitIsConfigured; an assignment behind a wrapper
 // counts too, as in `env GIT_CONFIG_COUNT=1 git commit`). The
 // group check reads the segment with its quoted spans removed (tokenize has already
-// dropped the quotes), so a quoted `(.a)` is data, not a group. Fails closed, so the
-// body stays visible to the scan.
+// dropped the quotes), so a quoted `(.a)` is data, not a group. A command whose segment
+// carries `$(` or a backtick anywhere, quoted or not, is neither a reader nor a neighbour:
+// in a pipeline element the substitution runs with that element's stdin (`| jq "$(bash)"`
+// runs the body). Fails closed, so the body stays visible to the scan.
 function lineFeedsOnlyDataReaders(lineText) {
   for (const seg of splitSegments(lineText).flatMap(splitOnLoneAmpersand)) {
     if (seg.trim() === '') continue;
+    if (/\$\(|`/.test(seg)) return false;
     const unquoted = removeQuotedSpans(seg).split(/\s+/);
     if (unquoted.some((t) => /^[({]/.test(t) || t === '}' || /[<>]\(/.test(t))) return false;
     const { tokens } = tokenize(seg.trim());
