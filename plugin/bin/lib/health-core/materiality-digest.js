@@ -51,7 +51,7 @@ function materialityFingerprint({ area, finding, fileRefs } = {}) {
 // filtering is tidy/digest-sweep.md's own concern at sweep time, not this function's.
 // Uses matchAll rather than a manual exec loop — matchAll clones the regex internally per
 // call, so the 'g' flag's lastIndex state is never shared across calls (same convention as
-// issues/record.js's parseIssueNumbers).
+// issues/record-dependencies.js's parseIssueNumbers).
 function parseMaterialityFingerprints(text) {
   const re = new RegExp(`<!-- ${MATERIALITY_MARKER_PREFIX}: (\\S+?) -->`, 'g');
   return [...String(text || '').matchAll(re)].map((m) => m[1]);
