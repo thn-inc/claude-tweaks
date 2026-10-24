@@ -42,8 +42,10 @@
 // it). Round trips and procedure KB need a transcript; without one they read
 // `unmeasured`. A breach stages an `efficiency-budget-{run-id}` proposal for the
 // Review Console's Queue writes section and logs it STAGED; a staging failure
-// goes to stderr and `budget.stageError`, and the exit code stays 0. Without
-// the flag the output and timing.json are unchanged.
+// goes to stderr and `budget.stageError`, and the exit code stays 0. A breach
+// left unstaged and any unmeasured metric each also append a SKIP line to the
+// run's decisions.md (the Degrade-trace rule). Without the flag the output and
+// timing.json are unchanged.
 'use strict';
 const fs = require('fs');
 const path = require('path');

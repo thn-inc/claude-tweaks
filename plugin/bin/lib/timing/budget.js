@@ -4,7 +4,9 @@
 // a breach stages one `efficiency-budget-{run-id}` proposal for the Wrap-Up
 // Review Console's Queue writes section and logs it as a STAGED decision. A
 // breach never blocks or fails a run: every failure here degrades to a report
-// field (`budget.stageError`) plus a stderr line, never a throw to the caller.
+// field (`budget.stageError`) plus a stderr line, never a throw to the caller,
+// and every degrade the run's decision log can carry also lands there as a
+// SKIP line (checkBudgets).
 //
 // Pure pieces (evaluateBudgets, formatBudgetLine, budgetProposal, repoRootOf,
 // readCeremonyProfile) are exported for direct tests; checkBudgets is the one
@@ -121,23 +123,39 @@ function readCeremonyProfile(runDir) {
 
 const message = (err) => (err && err.message ? err.message : String(err));
 
+// Appends one /wrap-up entry to runDir's decisions.md through the same
+// resolve + appendEntry path the STAGED line takes. -> null when it landed, or
+// the reason it did not (an unresolvable log, a failed append).
+function logBudgetEntry({ runDir, cwd, status, step, text, reversibility }) {
+  const target = resolveDecisionTarget({ runDir, cwd });
+  if (!target.ok) return `decision log ${target.reason}`;
+  try {
+    appendEntry({ runDir: path.dirname(target.file), section: '/wrap-up', entry: formatEntry({ status, now: Date.now(), step, text, reversibility }) });
+    return null;
+  } catch (err) {
+    return message(err);
+  }
+}
+
+const metricList = (checks) => checks.map((c) => `${c.metric} ${c.value}/${c.ceiling}`).join(', ');
+
 // Stages the proposal and logs it. Throws on any failure; the caller reports it.
 // -> the run-relative staged path. The decision-log append is skipped when this
 // stage path is already logged, so a re-run overwrites the one staged file
 // without logging it twice.
-function stageProposal({ runDir, runId, profile, checks, totals }) {
-  const target = resolveTarget({ runDir });
+function stageProposal({ runDir, cwd, runId, profile, checks, totals }) {
+  const target = resolveTarget({ runDir, cwd });
   if (!target.ok) throw new Error(`run directory ${target.reason} — not an anchored run directory under the main checkout ([IL-127])`);
   const stagePath = `staged/efficiency-budget-${runId}.md`;
   writeStagedItem({
     runDir: target.dir, id: `efficiency-budget-${runId}`, sourcePath: 'proposal.md', content: budgetProposal({ runId, profile, checks, totals }),
   });
-  const decisionTarget = resolveDecisionTarget({ runDir });
+  const decisionTarget = resolveDecisionTarget({ runDir, cwd });
   if (!decisionTarget.ok) throw new Error(`staged ${stagePath} but could not log it (decision log ${decisionTarget.reason})`);
   let logged = '';
   try { logged = fs.readFileSync(decisionTarget.file, 'utf8'); } catch { /* no decisions.md yet */ }
   if (!logged.includes(`Stage path: ${stagePath}.`)) {
-    const metrics = breached(checks).map((c) => `${c.metric} ${c.value}/${c.ceiling}`).join(', ');
+    const metrics = metricList(breached(checks));
     appendEntry({
       runDir: target.dir,
       section: '/wrap-up',
@@ -153,10 +171,16 @@ function stageProposal({ runDir, runId, profile, checks, totals }) {
   return stagePath;
 }
 
-// { runDir, totals } -> { budget, line, stderr[] } for timing.json's `budget` key.
+// { runDir, totals, deps? } -> { budget, line, stderr[] } for timing.json's `budget` key.
 // totals carries toolRoundTrips / procedureBytes only when a transcript was read.
+// deps.cwd (default process.cwd()) anchors the staging and decision-log targets.
 // Never throws: a staging failure becomes budget.staged = null + budget.stageError.
-function checkBudgets({ runDir, totals }) {
+// Each degrade the decision log can carry is written there as a SKIP line by
+// this function itself (Degrade-trace rule, _shared/auto-decision-log.md): a
+// breach whose staging failed, and unmeasured metrics. No .claude-tweaks
+// ancestor has no decision log to write to: budget.skipped plus stderr only.
+function checkBudgets({ runDir, totals, deps = {} }) {
+  const cwd = deps.cwd || process.cwd();
   const stderr = [];
   const repoRoot = repoRootOf(runDir);
   if (repoRoot === null) {
@@ -167,17 +191,25 @@ function checkBudgets({ runDir, totals }) {
   if (source === 'fallback') stderr.push('budget: ceremony-profile absent from config.yml — checked against standard');
   const checks = evaluateBudgets({ totals, ceilings: readEfficiencyCeilings(repoRoot, profile) });
   const budget = { profile, profileSource: source, checks, staged: null };
-  if (breached(checks).length > 0) {
+  const skip = (text) => {
+    const failed = logBudgetEntry({ runDir, cwd, status: 'SKIP', step: 'efficiency budget (degraded)', text, reversibility: 'n/a' });
+    if (failed) stderr.push(`budget: could not log the degrade trace (${failed})`);
+  };
+  const over = breached(checks);
+  if (over.length > 0) {
     const runId = path.basename(path.resolve(runDir));
     try {
-      budget.staged = stageProposal({ runDir, runId, profile, checks, totals });
+      budget.staged = stageProposal({ runDir, cwd, runId, profile, checks, totals });
     } catch (err) {
       budget.stageError = message(err);
       stderr.push(`budget: could not stage the efficiency-budget proposal (${budget.stageError})`);
       // a throw after the file landed (the log step) leaves the file in place: report its path
       if (lstatType(path.join(runDir, 'staged', `efficiency-budget-${runId}.md`)).type === 'file') budget.staged = `staged/efficiency-budget-${runId}.md`;
+      else skip(`condition: breach of ${metricList(over)} found but staging failed (${budget.stageError}) → fallback: no Review Console item this run; breach recorded in timing.json budget`);
     }
   }
+  const unmeasured = checks.filter((c) => c.status === 'unmeasured');
+  if (unmeasured.length > 0) skip(`condition: ${unmeasured.map((c) => c.metric).join(', ')} unmeasured (no transcript rows) → fallback: only measured metrics checked`);
   return { budget, line: formatBudgetLine(profile, checks), stderr };
 }
 

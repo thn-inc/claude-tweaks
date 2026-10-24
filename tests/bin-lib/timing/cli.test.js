@@ -480,6 +480,8 @@ test('#4029: no transcript leaves round-trip and procedure budgets unmeasured', 
   assert.deepEqual(checks, { 'round-trips': 'unmeasured', 'procedure-kb': 'unmeasured', 'verify-minutes': 'ok' });
   assert.deepEqual(stagedFiles(dir), [], 'nothing breached, nothing staged');
   assert.match(r.stdout, /^Budget \(fast-lane\): round-trips —\/5 unmeasured · procedure-kb —\/\d+ unmeasured · verify-minutes 2\/\d+ ok$/m);
+  // the CLI writes the degrade trace itself (I2)
+  assert.match(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), /^- SKIP \d{2}:\d{2}:\d{2} — efficiency budget \(degraded\): condition: round-trips, procedure-kb unmeasured \(no transcript rows\)/m);
 });
 
 test('#4029: a transcript that cannot be read leaves the transcript-backed budgets unmeasured, not ok', () => {

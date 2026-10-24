@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { evaluateBudgets, formatBudgetLine, budgetProposal, repoRootOf, readCeremonyProfile } = require('../../../plugin/bin/lib/timing/budget');
+const { evaluateBudgets, formatBudgetLine, budgetProposal, repoRootOf, readCeremonyProfile, checkBudgets } = require('../../../plugin/bin/lib/timing/budget');
 
 const CEILINGS = { roundTrips: 5, procedureKb: 560, verifyMinutes: 21 };
 const TOTALS = { toolRoundTrips: 10, procedureBytes: 100, verifyMinutes: 2 };
@@ -93,4 +93,72 @@ test('#4029: readCeremonyProfile reads config.yml and falls back to standard whe
   assert.deepEqual(readCeremonyProfile(dir), { profile: 'standard', source: 'fallback' });
   fs.writeFileSync(path.join(dir, 'config.yml'), 'mode: auto\n');
   assert.deepEqual(readCeremonyProfile(dir), { profile: 'standard', source: 'fallback' });
+});
+
+// --- checkBudgets against a tmp checkout --------------------------------------
+// A tmp checkout (.git dir) with a policy.yml and a run dir under .claude-tweaks/pipelines/;
+// deps.cwd = the checkout so the staging and decision-log anchors resolve to it, and deps.gh
+// is a fake runner (tests never touch real gh).
+function checkout({ policy = 'fast-lane-run-round-trip-ceiling: 5\n' } = {}) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-budget-chk-')));
+  fs.mkdirSync(path.join(root, '.git'));
+  fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), policy);
+  return root;
+}
+function runDirIn(root, id, rel = []) {
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', id, ...rel);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config.yml'), 'ceremony-profile: fast-lane\n');
+  return dir;
+}
+const ghNone = () => '[]';
+const decisionLines = (dir) => (fs.existsSync(path.join(dir, 'decisions.md')) ? fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8').split('\n').filter((l) => l.startsWith('- ')) : []);
+const stagedIn = (dir) => (fs.existsSync(path.join(dir, 'staged')) && fs.statSync(path.join(dir, 'staged')).isDirectory() ? fs.readdirSync(path.join(dir, 'staged')) : []);
+
+test('#4029 I2(a): a breach whose staging fails writes a degraded SKIP line through the decision log', () => {
+  const root = checkout();
+  const dir = runDirIn(root, 'r-stagefail');
+  fs.writeFileSync(path.join(dir, 'staged'), 'a file where the staged/ directory should be');
+  const r = checkBudgets({ runDir: dir, totals: TOTALS, deps: { cwd: root, gh: ghNone } });
+  assert.equal(r.budget.staged, null);
+  assert.ok(r.budget.stageError, 'stageError recorded');
+  assert.ok(r.stderr.some((l) => /could not stage the efficiency-budget proposal/.test(l)), r.stderr.join('\n'));
+  const skip = decisionLines(dir).filter((l) => l.startsWith('- SKIP'));
+  assert.equal(skip.length, 1, decisionLines(dir).join('\n'));
+  assert.match(skip[0], /^- SKIP \d{2}:\d{2}:\d{2} — efficiency budget \(degraded\): condition: breach of round-trips 10\/5 found but staging failed \(.+\) → fallback: no Review Console item this run; breach recorded in timing\.json budget\. Reversibility: n\/a\.$/);
+  assert.match(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), /^## \/wrap-up$/m);
+});
+
+test('#4029 I2: a breach staged but whose STAGED line cannot be written keeps the staged path and reports the error', () => {
+  const root = checkout();
+  const dir = runDirIn(root, 'r-logfail');
+  fs.mkdirSync(path.join(dir, 'decisions.md')); // a directory: the append throws EISDIR
+  const r = checkBudgets({ runDir: dir, totals: TOTALS, deps: { cwd: root, gh: ghNone } });
+  assert.equal(r.budget.staged, 'staged/efficiency-budget-r-logfail.md');
+  assert.ok(fs.existsSync(path.join(dir, 'staged', 'efficiency-budget-r-logfail.md')));
+  assert.match(r.budget.stageError, /EISDIR|illegal operation on a directory/);
+  assert.ok(r.stderr.some((l) => /could not stage the efficiency-budget proposal/.test(l)), r.stderr.join('\n'));
+});
+
+test('#4029 I2(c): unmeasured metrics write one degraded SKIP line naming them; a clean pass writes nothing', () => {
+  const root = checkout();
+  const dir = runDirIn(root, 'r-unmeasured');
+  const r = checkBudgets({ runDir: dir, totals: { verifyMinutes: 2 }, deps: { cwd: root, gh: ghNone } });
+  assert.deepEqual(stagedIn(dir), []);
+  assert.equal(r.budget.staged, null);
+  const lines = decisionLines(dir);
+  assert.equal(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], /^- SKIP \d{2}:\d{2}:\d{2} — efficiency budget \(degraded\): condition: round-trips, procedure-kb unmeasured \(no transcript rows\) → fallback: only measured metrics checked\. Reversibility: n\/a\.$/);
+  const clean = runDirIn(root, 'r-clean');
+  checkBudgets({ runDir: clean, totals: { toolRoundTrips: 1, procedureBytes: 1, verifyMinutes: 1 }, deps: { cwd: root, gh: ghNone } });
+  assert.deepEqual(decisionLines(clean), []);
+});
+
+test('#4029 I2(b): no .claude-tweaks ancestor keeps budget.skipped plus the stderr line and writes no decisions.md', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-budget-noanc-'));
+  const r = checkBudgets({ runDir: dir, totals: TOTALS, deps: { gh: () => { throw new Error('unexpected gh call'); } } });
+  assert.deepEqual(r.budget, { skipped: 'no .claude-tweaks ancestor' });
+  assert.deepEqual(r.stderr, ['budget: skipped — no .claude-tweaks ancestor']);
+  assert.equal(fs.existsSync(path.join(dir, 'decisions.md')), false);
 });
