@@ -14,7 +14,12 @@ const CEREMONY_CLASSES = Object.freeze(['procedure', 'bookkeeping', 'orientation
 
 // The three top refusal texts observed in this machine's transcripts. A plain
 // "Exit code 1" tool error is NOT a refusal and classifies by tool as normal.
-const GUARD_REFUSAL_RE = /This session is isolated in the worktree|PreToolUse:\S+ hook error|Permission to use \S+.*has been denied/;
+// All three lead the result, so classifyToolCall matches only its first
+// REFUSAL_SCAN_CHARS, and the quantifiers are bounded: an is_error tool result
+// is externally sized, and an unbounded `\S+.*` backtracked quadratically on
+// one ([IL-162]).
+const GUARD_REFUSAL_RE = /This session is isolated in the worktree|PreToolUse:\S{1,64} hook error|Permission to use \S{1,64}[^\n]{0,300}has been denied/;
+const REFUSAL_SCAN_CHARS = 2048;
 
 // A Read counts as procedure loading when it targets a skill file — the
 // repo's plugin/skills/** or the installed plugin cache's skills/ (a real
@@ -158,7 +163,7 @@ function classifyBash(command) {
 
 // { name, input, isError, resultText, worktree } -> one of TURN_CLASSES.
 function classifyToolCall({ name, input, isError, resultText, worktree } = {}) {
-  if (isError === true && typeof resultText === 'string' && GUARD_REFUSAL_RE.test(resultText)) return 'guard-refusal';
+  if (isError === true && typeof resultText === 'string' && GUARD_REFUSAL_RE.test(resultText.slice(0, REFUSAL_SCAN_CHARS))) return 'guard-refusal';
   const inp = input && typeof input === 'object' ? input : {};
   switch (name) {
     case 'Edit': case 'Write': case 'MultiEdit': case 'NotebookEdit': return 'edit';
