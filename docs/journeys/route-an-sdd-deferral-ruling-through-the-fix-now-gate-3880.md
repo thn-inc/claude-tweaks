@@ -14,7 +14,7 @@ files:
 **Persona:** The SDD controller running inside `/claude-tweaks:build` decides to defer a finding instead of fixing it. A typical case is "pre-existing, outside the diff, routed to a follow-up record". Later, the maintainer of an `autonomy: unattended` run reads the auto-resolved Review Console and needs to trust that nothing fixable was waved through.
 **Goal:** A deferral that qualifies for an immediate fix is fixed in the build and never reaches the console. A deferral that genuinely can't be fixed now carries exactly one valid `Defer-reason:`. An unattended console never auto-ratifies a deferral without one.
 **Entry point:** The SDD controller is about to write a `Ruling:` line whose decision leaves a finding or a required change unfixed. This can happen at pre-flight, inside a task's fix loop, at the round-5 breaker, or for a residual left after the final fix wave's scoped re-review.
-**Success state:** Either the finding is fixed by a commit in this build, or `staged/sdd-ruling-{N}.md` carries `Defers: yes` plus one valid `Defer-reason:` and resolves `apply` (ratify) at the console. Anything else waits as `pending — sdd-ruling-deferral-no-defer-reason` or `pending — sdd-ruling-unclassified` for a human.
+**Success state:** Either the finding is fixed by a commit in this build, or `staged/sdd-ruling-{N}.md` carries `Defers: yes` plus one valid `Defer-reason:` and resolves `apply` (ratify) at the console. Anything else waits as `pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` for a human.
 
 ## Steps
 
@@ -47,7 +47,7 @@ files:
 - **Action:** Read the ruling row's resolution:
   - `apply` means it ratified: either `Defers: no` with no reason line, or a deferral with exactly one valid reason.
   - `pending — sdd-ruling-deferral-no-defer-reason` means a deferral with a missing, invalid or duplicated reason.
-  - `pending — sdd-ruling-unclassified` means no `Defers:` line, more than one, a value other than yes/no, or an unreadable file. This also covers a ruling staged before #3880.
+  - `pending — sdd-ruling-unclassified` means no `Defers:` line, more than one, or a value other than yes/no. This also covers a ruling staged before #3880. `pending — sdd-ruling-unreadable` means the staged file could not be read at all — no `stagedPath`, a path rejected for leaving the run dir, a missing file, or a failed read (#4049).
 - **Should feel:** Trustworthy. Unattended means nobody clicked, not that nobody checked.
 - **Should understand:**
   - Both trigger points apply the same gate. `bin/lib/console/resolve.js`'s `sddRulingDeferralReason` does it for the live session. On the reconciler side, `console-execute.js` reads each ruling row's `stagedPath` from `console.json` and lists the unsafe ones in `rulingGateGaps`. Those rows and Resolve stay unticked.

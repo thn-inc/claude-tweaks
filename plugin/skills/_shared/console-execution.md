@@ -196,7 +196,7 @@ floor-clearing on this axis); `{ member, reason }` names the first ungranted (or
 unreadable/unresolvable) member and withholds.
 
 **Third narrower exception (#3880):** an `isRulingRow: true` item named in the ready result's
-`rulingGateGaps` (`[{ id, reason }]`, computed in code by `decideConsoleExecute` from each ruling
+`rulingGateGaps` (`[{ id, reason, detail? }]`, computed in code by `decideConsoleExecute` from each ruling
 row's staged file, read via the item's `stagedPath` — `_shared/console-on-pr.md`) is **not**
 floor-clearing: its box and Resolve stay unticked and the console stays pending for a human, the
 same posture as the merge row. It mirrors `console-resolve.js`'s `pending — sdd-ruling-*`
@@ -221,6 +221,7 @@ mergeCheckVerdict: needs-human. Reversibility: n/a (declined to act).` for the f
 auto:merge. Reversibility: n/a (declined to act).` for the second (#1802) — naming the specific
 member `{m}` whose live labels lacked the grant. A withheld ruling row (third exception) logs
 `AUTO {time} — Console execution: withheld ratify of {item} on PR #{n} — {reason}. Reversibility: n/a (declined to act).`
+When the gap carries a `detail` — an `sdd-ruling-unreadable` row, whose staged file could not be read — `{reason}` reads `sdd-ruling-unreadable ({detail})`.
 
 ## Comment-tick trust boundary
 
