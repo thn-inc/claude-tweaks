@@ -158,6 +158,8 @@ test('#3989: hasFileRedirection ignores a heredoc body but sees a redirect after
   assert.strictEqual(hasFileRedirection('node x.js <<EOF\na\nEOF\necho x > f.js'), true);
   // Fix round 1 (#3989): an unterminated body keeps the text from its opener on.
   assert.strictEqual(hasFileRedirection('node x.js <<EOF\nbody\necho x > f.js'), true);
+  // #4149: a non-shell executor reads its body too, so the body stays visible.
+  assert.strictEqual(hasFileRedirection('make -f - <<EOF\nall:\n\techo x > f.js\nEOF'), true);
 });
 
 test('fails open to "run" on anything it cannot read', () => {

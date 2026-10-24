@@ -549,13 +549,13 @@ function matchRedirectOperator(tok) {
   return m ? m[2] : null;
 }
 
-// #3989 heredoc-body stripping (see stripHeredocBodies below). Program words
-// that run their input as shell text:
-const SHELL_INTERPRETER_WORDS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash', 'fish', 'busybox', 'eval', 'source', '.', 'su', 'csh', 'tcsh', 'rbash', 'pwsh', 'powershell']);
-// A versioned shell (`bash5`, `zsh5.9`, `sh4`) runs the same interpreter.
-const VERSIONED_SHELL_RE = /^(ba|z|k|da|mk|a|c|tc|rba)?sh\d[\d.]*$/;
-// Commands that run their own argument as a program: what follows one must resolve.
-const WRAPPER_WORDS = new Set(['sudo', 'doas', 'env', 'exec', 'command', 'nohup', 'time', 'nice', 'xargs']);
+// #3989/#4149 heredoc-body stripping (see stripHeredocBodies below). A body is
+// stripped only when the opener line feeds it to a known data reader: an allowlist,
+// because any program not named here (a shell, `make -f -`, `at`, a glob-named
+// `/bin/ba[s]h`) may run the body as commands, and the set of those cannot be listed.
+const DATA_READER_WORDS = new Set(['cat', 'tee', 'git', 'gh', 'read', 'node', 'python', 'python3', 'jq', 'wc']);
+// Commands that run what follows them: followed to the program they run.
+const READER_WRAPPER_WORDS = new Set(['sudo', 'doas', 'env', 'nice', 'time', 'nohup', 'command', 'exec']);
 
 // The program names one raw token may stand for, lowercased, with quotes and
 // backslashes removed: `bas\h`, `'/bin/bash'`, `C:\bin\sh.exe` each yield a name.
@@ -569,36 +569,29 @@ function programNames(tok) {
   return [bySlash, byBackslash].map((n) => n.replace(/\.exe$/i, '').toLowerCase());
 }
 
-function isShellName(name) {
-  return SHELL_INTERPRETER_WORDS.has(name) || VERSIONED_SHELL_RE.test(name);
-}
-
-// A wrapper runs what follows it: that must resolve, and `sudo` given a shell flag
-// (-s, -i, --shell, --login) is itself a shell.
-function wrapperRunsShell(tokens, k, names) {
-  const rest = tokens.slice(k + 1);
-  if (rest.some((t) => /[$`]/.test(t))) return true;
-  return names.includes('sudo') && rest.some((t) => /^(--shell|--login|-[A-Za-z]*[si][A-Za-z]*)$/.test(t));
-}
-
-// The opener's logical line feeds its body to a shell when a token on it names a
-// shell (a versioned one included), a segment's program word (the first token after
-// NAME=value assignments) is unresolvable ($NAME, $(...), a backtick), or a wrapper
-// (sudo, env, ...) runs an unresolvable word or a shell. Fails closed, so the body
-// stays visible to the scan.
-function bodyRunsAsShell(lineText) {
+// True when every command on the opener's logical line is a known data reader, so
+// the body it receives is data. Per segment: a group or process-substitution token
+// (`(`, `{`, `}`, `>(`, `<(`) fails (its consumer may sit on a later line or inside
+// the substitution); NAME=value assignments and reader wrappers (sudo, env, ...) are
+// skipped together with the flags and assignments that follow a wrapper, so a wrapper
+// option's value (`sudo -u bob`) lands on the program slot and fails; the program word
+// must then resolve ($NAME and backticks do not) and every spelling the parser can read
+// from it must be a reader. Fails closed, so the body stays visible to the scan.
+function lineFeedsOnlyDataReaders(lineText) {
   for (const seg of splitSegments(lineText)) {
+    if (seg.trim() === '') continue;
     const { tokens } = tokenize(seg.trim());
+    if (tokens.some((t) => /^[({]/.test(t) || t === '}' || /[<>]\(/.test(t))) return false;
     let p = 0;
     while (p < tokens.length && SIMPLE_ASSIGNMENT_RE.test(tokens[p])) p += 1;
-    if (p < tokens.length && /[$`]/.test(tokens[p])) return true;
-    for (let k = 0; k < tokens.length; k += 1) {
-      const names = programNames(tokens[k]);
-      if (names.some(isShellName)) return true;
-      if (names.some((n) => WRAPPER_WORDS.has(n)) && wrapperRunsShell(tokens, k, names)) return true;
+    while (p < tokens.length && programNames(tokens[p]).every((n) => READER_WRAPPER_WORDS.has(n))) {
+      p += 1;
+      while (p < tokens.length && (tokens[p].startsWith('-') || SIMPLE_ASSIGNMENT_RE.test(tokens[p]))) p += 1;
     }
+    if (p >= tokens.length || /[$`]/.test(tokens[p])) return false;
+    if (!programNames(tokens[p]).every((n) => DATA_READER_WORDS.has(n))) return false;
   }
-  return false;
+  return true;
 }
 
 // Reads a heredoc operand starting just after `<<`: an optional `-`, blanks, then
@@ -690,8 +683,9 @@ const CONTINUATION_RE = /(?:\|\||&&|\|)\s*(?:#.*)?$/;
 
 // Plans one logical line's heredoc bodies, which start at index `start`:
 //   rest  - a body is unterminated: the text from `start` on is kept as written;
-//   keep  - the bodies stay in the text, because the line runs them as shell, the
-//           line continues, or an unquoted body expands `$(` or a backtick;
+//   keep  - the bodies stay in the text, because the line feeds them to something
+//           other than a known data reader, the line continues, or an unquoted body
+//           expands `$(` or a backtick;
 //   strip - every body is data; `end` is the index after the last one.
 function planHeredocBodies(str, start, pending, lineText) {
   const bodies = [];
@@ -702,9 +696,9 @@ function planHeredocBodies(str, start, pending, lineText) {
     bodies.push({ h, text: body.text });
     p = body.end;
   }
-  const runsAsShell = CONTINUATION_RE.test(lineText) || bodyRunsAsShell(lineText);
+  const keep = CONTINUATION_RE.test(lineText) || !lineFeedsOnlyDataReaders(lineText);
   const expands = bodies.some(({ h, text }) => !h.quoted && /\$\(|`/.test(text));
-  return runsAsShell || expands ? { kind: 'keep' } : { kind: 'strip', end: p };
+  return keep || expands ? { kind: 'keep' } : { kind: 'strip', end: p };
 }
 
 // The single char-level pass behind stripHeredocBodies. Quote, escape, and comment
@@ -787,14 +781,15 @@ function scanHeredocs(str) {
   return out.join('');
 }
 
-// A heredoc body is data for the program it is fed to, not shell text, so a `>`
+// A heredoc body is data for a program that only reads it, not shell text, so a `>`
 // inside it is not a redirection and its newlines are not command boundaries.
 // Returns the command with each body and its closing-delimiter line removed. The
 // opener line keeps its newline, so whatever follows the closing delimiter starts
-// its own segment. Whatever the scan cannot prove is data stays visible (a body
-// fed to a shell, an unquoted body that expands, an unterminated body, a
-// continuation line): see planHeredocBodies. Any internal failure returns the
-// input unchanged (the pre-#3989 scan).
+// its own segment. Only a body fed to a known data reader is stripped; whatever the
+// scan cannot prove is data stays visible (a body fed to any other program, an
+// unquoted body that expands, an unterminated body, a continuation line): see
+// planHeredocBodies. Any internal failure returns the input unchanged (the
+// pre-#3989 scan).
 function stripHeredocBodies(command) {
   if (typeof command !== 'string') return command;
   try {
@@ -814,9 +809,9 @@ function stripHeredocBodies(command) {
 // duplications (`>&2`, `2>&1`) are not file targets either.
 //
 // Heredoc bodies (#3989): fileWriteTargets scans stripHeredocBodies' output, so
-// a `>` inside a body fed to a non-shell program is not a redirection. A body
-// fed to a shell keeps its redirects visible, because that text runs as shell
-// (see stripHeredocBodies for the carve-out).
+// a `>` inside a body fed to a known data reader is not a redirection. A body fed
+// to any other program keeps its redirects visible, because that text may run as
+// shell (see stripHeredocBodies for the allowlist).
 function redirectWriteTargets(t, effCwd) {
   const out = [];
   for (let i = 0; i < t.length; i += 1) {

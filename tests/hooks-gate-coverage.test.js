@@ -508,8 +508,58 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
   assert.deepStrictEqual(fileWriteTargets('echo hi # <<EOF\necho x > f.js', '/r'), expected);
 });
 
+// #4149: a body is stripped only when the opener line feeds it to a known data reader
+// (an allowlist), not whenever no shell name shows up (a denylist).
+test('#4149: a body fed to a non-shell executor or a glob-named shell stays visible', () => {
+  const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
+  for (const cmd of [
+    'make -f - <<EOF\nall:\n\techo x > f.js\nEOF',
+    'at now <<EOF\necho x > f.js\nEOF',
+    '/bin/ba[s]h <<EOF\necho x > f.js\nEOF',
+    'xargs sh -c x <<EOF\necho x > f.js\nEOF',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), f, JSON.stringify(cmd));
+  }
+});
+
+test('#4149: a group opened on the opener line keeps its body (consumer on a later line)', () => {
+  const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
+  assert.deepStrictEqual(fileWriteTargets('{ cat <<EOF\necho x > f.js\nEOF\n} | sh', '/r'), f);
+  assert.deepStrictEqual(fileWriteTargets('(cat <<EOF\necho x > f.js\nEOF\n) | sh', '/r'), f);
+});
+
+test('#4149: a wrapper is followed to the program it runs, failing closed on an option value', () => {
+  const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
+  assert.deepStrictEqual(fileWriteTargets('sudo node x.js <<EOF\nif (a > 0) b();\nEOF', '/r'), []);
+  assert.deepStrictEqual(fileWriteTargets('env FOO=1 node x.js <<EOF\nif (a > 0) b();\nEOF', '/r'), []);
+  assert.deepStrictEqual(fileWriteTargets('sudo -u bob node x.js <<EOF\necho x > f.js\nEOF', '/r'), f);
+});
+
+test('#4149: a program name the parser can spell two ways counts only when both are readers', () => {
+  // `ca\t` reads as `cat` by one rule and as `t` by the other.
+  assert.deepStrictEqual(fileWriteTargets('ca\\t <<EOF\necho x > f.js\nEOF', '/r'), [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
+});
+
+test('#4149: every command on the opener line must be a reader', () => {
+  assert.deepStrictEqual(fileWriteTargets('cd x && node y.js <<EOF\necho x > f.js\nEOF', '/r'),
+    [{ action: 'write', file: path.resolve('/r/x', 'f.js') }]);
+});
+
+test('#4149: common reader shapes still strip', () => {
+  for (const cmd of [
+    'git commit -F - <<EOF\nfix: a > b\nEOF',
+    'gh pr create --body-file - <<EOF\na > b\nEOF',
+    'python3 - <<EOF\nif a > 0: pass\nEOF',
+    'cat <<EOF\nnothing here\nEOF',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], JSON.stringify(cmd));
+  }
+});
+
 test('#3989: stripHeredocBodies keeps the opener line and its newline, and drops the body and closing delimiter', () => {
-  assert.strictEqual(stripHeredocBodies('A <<EOF\nbody\nEOF\nB'), 'A <<EOF\nB');
+  assert.strictEqual(stripHeredocBodies('cat <<EOF\nbody\nEOF\nB'), 'cat <<EOF\nB');
+  // #4149: a program that is not a known data reader keeps its body.
+  assert.strictEqual(stripHeredocBodies('A <<EOF\nbody\nEOF\nB'), 'A <<EOF\nbody\nEOF\nB');
   assert.strictEqual(stripHeredocBodies('cat <<<x'), 'cat <<<x');
 });
 
