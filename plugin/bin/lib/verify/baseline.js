@@ -212,7 +212,9 @@ function multisetMinus(a, b) {
 // #3723: the tests behind an attributable file — report-only, never read by
 // the verdict. Identity is the suite path `testTree` keys by (outermost suite
 // first, names byte-for-byte), never a leaf name — except for a file absent at
-// base, where only the full run's leaf names exist (each a one-element path).
+// base, where only the full run's leaf names exist (each a one-element path;
+// `headTests` is `ownOnly`, so a TAP parent failing only through a child is
+// not counted).
 // `absentAtBase` is the attributed paths found nowhere in the base tree (null
 // when the base run passed and so read no tree). Returns null whenever the
 // per-test identity is unknown: "cannot classify", never a partial answer.
@@ -378,12 +380,14 @@ async function adjudicate({
     const headFileLevel = fileLevelFailures(text, family, at(headDir));
     const headTests = failingTestsByFile(text, family, at(headDir));
     const headLocated = failingTestsByFile(text, family, { ...at(headDir), located: true });
+    const headOwnTests = failingTestsByFile(text, family, { ...at(headDir), ownOnly: true });
     for (const file of files) {
       const subst = substituteFile(template, file, { platform });
       if (!subst.ok) return ineligible(`${c.name} failing file ${describePath(file)} cannot be handed to the shell safely (${subst.reason})`);
       work.push({
         check: c.name, file, command: subst.command,
         headFileLevel: headFileLevel.has(file), headTests: headTests.get(file) || [], headLocated: headLocated.get(file) || [],
+        headOwnTests: headOwnTests.get(file) || [],
       });
     }
   }
@@ -572,7 +576,7 @@ async function adjudicate({
       try {
         const isoText = headRuns[k] ? readLog(headRuns[k].logPath) : null;
         const attributed = attributedTestsOf({
-          atBase: atBase[k], headTests: w.headTests, baseRun: baseRuns[k], ev: baseEv[k], isoText,
+          atBase: atBase[k], headTests: w.headOwnTests, baseRun: baseRuns[k], ev: baseEv[k], isoText,
           isoFamily: isoText === null ? null : accountedFamily(isoText, at(headDir)),
         });
         if (attributed) attributedTests[w.file] = attributed;

@@ -17,9 +17,10 @@
 //
 // Excerpts follow `baselineAdjudicated.attributedTests` (#3723): one per test
 // the adjudication attributed as new, so a file's pre-existing failure is not
-// quoted as the regression. A file with no usable entry (or none of whose
-// attributed tests has a log block) falls back to the block around the first
-// log line naming it, and the issue says so. When base and HEAD fail the same
+// quoted as the regression, at most EXCERPTS_PER_FILE per file (the rest
+// counted). A file with no usable entry, or none of whose attributed tests has
+// a log block, falls back to the block around the first log line naming it,
+// and the issue says which of the two applies. When base and HEAD fail the same
 // number of tests here and none of the attributed ones exists at base, the
 // bullet carries a possible-rename note.
 //
@@ -49,6 +50,7 @@ const LABEL = 'type:bug';
 const BODY_CAP = 60000;
 const TRUNCATION_NOTE = '\n\n…(truncated — see the run\'s verify-report artifact)';
 const EXCERPT_MAX_LINES = 12;
+const EXCERPTS_PER_FILE = 5;
 const FALLBACK_LINES = 200;
 const NOT_RUN = 'baseline adjudication did not run';
 const REQUIRED_FLAGS = ['--report', '--ref', '--sha', '--repo', '--run-url'];
@@ -198,20 +200,24 @@ function excerptFrom(start, lines, tap) {
   return lines.slice(start, end).join('\n');
 }
 
-// Same name rule as plugin/bin/lib/verify/extract.js's TAP_NAME_RE, minus its
-// trimming: byte-for-byte, so a name with edge whitespace still equals the
-// path element the adjudicator recorded. Group 1 is the rest of the line.
+// Same name rules as plugin/bin/lib/verify/extract.js's testTree, whose
+// TAP_POINT_RE / TAP_OPEN_RE produce the path elements the adjudicator
+// records: byte-for-byte, never trimmed. Group 1 is the rest of the line.
 const TAP_NOT_OK_RE = /^\s*not ok\b(?:\s+\d+)?(?:\s+-\s)?(.*)$/;
-const TAP_DIRECTIVE_RE = /\s+#\s*(?:SKIP|TODO)\b/i;
+const TAP_DIRECTIVE_RE = / # (?:SKIP|TODO)\b/i;
 const TAP_SUBTEST_RE = /^\s*# Subtest: ?(.*)$/;
 
 // One excerpt per path in `tests` (suite names outermost first, the test last),
 // in order; null for a path with no block in this source. A `not ok` line is a
 // path's block when its name is the path's last element, its open `# Subtest:`
-// ancestors are the rest of the path (a one-element path matches at any depth),
-// the block (its own line, or a line it owns) names `file`, and no earlier path
-// in `tests` already took it. Each path takes the earliest such block, so a
-// repeated path quotes each occurrence once.
+// ancestors are exactly the rest of the path, the block (its own line, or a
+// line it owns up to its own YAML close) names `file`, and no earlier path in
+// `tests` already took it. A one-element path is a top-level test for a file
+// present at base (the adjudicator records full suite paths there), but only a
+// leaf name for a file absent at base: it takes a top-level block first and
+// falls back to the same name at any depth only when no top-level block is
+// left. Each path takes the earliest such block, so a repeated path quotes
+// each occurrence once.
 function excerptsForTests(file, tests, { lines, normalized, tap }) {
   const needle = slashes(file);
   const ownerAt = ownerAtOf(tap);
@@ -234,8 +240,9 @@ function excerptsForTests(file, tests, { lines, normalized, tap }) {
   const taken = new Set();
   return tests.map((path) => {
     const want = path.slice(0, -1);
-    const hit = candidates.find((c) => !taken.has(c.index) && c.name === path[path.length - 1]
-      && (path.length === 1 || (c.suites.length === want.length && c.suites.every((s, k) => s === want[k]))));
+    const free = candidates.filter((c) => !taken.has(c.index) && c.name === path[path.length - 1]);
+    const hit = free.find((c) => c.suites.length === want.length && c.suites.every((s, k) => s === want[k]))
+      || (path.length === 1 ? free[0] : undefined);
     if (!hit) return null;
     taken.add(hit.index);
     return excerptFrom(hit.index, lines, tap);
@@ -341,14 +348,19 @@ function composeIssue({ report, verdict, sha, base, pr, runUrl, logText }) {
       const found = entry ? entry.tests.map(() => null) : [];
       if (entry) for (const s of sources) excerptsForTests(file, entry.tests, s).forEach((e, k) => { if (found[k] === null) found[k] = e; });
       if (found.some((e) => e !== null)) {
-        const quoted = found.filter((e) => e !== null).map(fence);
+        const all = found.filter((e) => e !== null);
+        const quoted = all.slice(0, EXCERPTS_PER_FILE).map(fence);
+        const more = all.length > EXCERPTS_PER_FILE ? [`_…and ${all.length - EXCERPTS_PER_FILE} more attributed test(s) not quoted._`] : [];
         const missing = entry.tests.filter((_, k) => found[k] === null).map((p) => `- \`${p.join(' > ')}\`: no log block found`);
-        excerpts.push([`#### \`${file}\``, `_Excerpts for the ${entry.tests.length} test(s) the baseline adjudication attributed as new._`, ...quoted, ...missing].join('\n\n'));
+        excerpts.push([`#### \`${file}\``, `_Excerpts for the ${entry.tests.length} test(s) the baseline adjudication attributed as new._`, ...quoted, ...more, ...missing].join('\n\n'));
         continue;
       }
       let excerpt = null;
       for (const s of sources) if (excerpt === null) excerpt = excerptFor(file, s);
-      if (excerpt !== null) excerpts.push(`#### \`${file}\`\n\n_Per-test attribution unavailable — excerpt around the first log line naming this file._\n\n${fence(excerpt)}`);
+      const why = entry
+        ? `No log block found for the ${entry.tests.length} attributed test(s)`
+        : 'Per-test attribution unavailable';
+      if (excerpt !== null) excerpts.push(`#### \`${file}\`\n\n_${why} — excerpt around the first log line naming this file._\n\n${fence(excerpt)}`);
     }
     if (excerpts.length) parts.push(['### Failure excerpts', ...excerpts].join('\n\n'));
   } else {

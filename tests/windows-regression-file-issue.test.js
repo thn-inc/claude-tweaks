@@ -740,6 +740,58 @@ test('#3723: suite path picks the right block when two suites share a leaf name'
   assert.ok(!body.includes('b-detail'));
 });
 
+test('#3723: a one-element path quotes the top-level test, not a same-named nested one', () => {
+  // A real Node TAP log's shape: pre-existing `A > works` nested, the new `works` at top level.
+  const region = ['TAP version 13', '# Subtest: A', '    # Subtest: works', '    not ok 1 - works', '      ---', '      duration_ms: 0.680708',
+    "      type: 'test'", `      location: '/repo/${LEDGER_FILE}:5:23'`, "      failureType: 'testCodeFailure'", "      error: 'nested-preexisting-detail'",
+    "      code: 'ERR_ASSERTION'", '      stack: |-', `        TestContext.<anonymous> (/repo/${LEDGER_FILE}:5:50)`, '      ...', '    1..1',
+    'not ok 1 - A', '  ---', '  duration_ms: 1.173167', "  type: 'suite'", `  location: '/repo/${LEDGER_FILE}:5:1'`, "  failureType: 'subtestsFailed'",
+    "  error: '1 subtest failed'", "  code: 'ERR_TEST_FAILURE'", '  ...', '# Subtest: works', 'not ok 2 - works', '  ---', '  duration_ms: 0.089',
+    "  type: 'test'", `  location: '/repo/${LEDGER_FILE}:6:1'`, "  failureType: 'testCodeFailure'", "  error: 'toplevel-new-detail'",
+    "  code: 'ERR_ASSERTION'", '  stack: |-', `    TestContext.<anonymous> (/repo/${LEDGER_FILE}:6:30)`, '  ...', '1..2', '# tests 2', '# suites 1',
+    '# pass 0', '# fail 2', '# cancelled 0'].join('\n');
+  const body = filedBody(withAttr(ent([['works']], { absentAtBase: [['works']] }), region));
+  assert.ok(body.includes('toplevel-new-detail'));
+  assert.ok(!body.includes('nested-preexisting-detail'));
+});
+
+test('#3723: a one-element path with no top-level block still finds the leaf at depth', () => {
+  const region = ['# Subtest: A', subBlock('works', 'a-detail'), 'not ok 1 - A'].join('\n');
+  const body = filedBody(withAttr(ent([['works']]), region));
+  assert.ok(body.includes('a-detail'));
+});
+
+test('#3723: a same-named test in another file is never quoted for this file', () => {
+  const region = `${winBlock(1, 'new regression', 'tests/other.test.js', 'other-detail')}\n${winBlock(2, 'new regression', LEDGER_FILE, 'new-detail')}`;
+  const body = filedBody(withAttr(ent([['new regression']]), region));
+  assert.ok(body.includes('new-detail'));
+  assert.ok(!body.includes('other-detail'));
+});
+
+test('#3723: a line naming the file after a block\'s YAML close does not make that block the file\'s', () => {
+  const region = [winBlock(1, 'new regression', 'tests/other.test.js', 'other-detail'), `stderr from ${LEDGER_FILE}`].join('\n');
+  const body = filedBody(withAttr(ent([['new regression']]), region));
+  assert.ok(!body.includes('other-detail'));
+  assert.ok(body.includes('No log block found for the 1 attributed test(s)'));
+});
+
+test('#3723: at most five excerpts per file, the rest counted', () => {
+  const names = ['t1', 't2', 't3', 't4', 't5', 't6', 't7'];
+  const region = names.map((n, k) => winBlock(k + 1, n, LEDGER_FILE, `${n}-detail`)).join('\n');
+  const body = filedBody(withAttr(ent(names.map((n) => [n])), region));
+  for (const n of names.slice(0, 5)) assert.ok(body.includes(`${n}-detail`), n);
+  assert.ok(!body.includes('t6-detail'));
+  assert.ok(!body.includes('t7-detail'));
+  assert.ok(body.includes('_…and 2 more attributed test(s) not quoted._'));
+  const five = filedBody(withAttr(ent(names.slice(0, 5).map((n) => [n])), region));
+  assert.ok(!five.includes('more attributed test(s) not quoted'));
+});
+
+test('#3723: no rename note when only some attributed tests are absent at base', () => {
+  const report = withAttr(ent([['new regression'], ['pre-existing failure']], { headFailing: 2, baseFailing: 2, absentAtBase: [['new regression']] }));
+  assert.ok(!filedBody(report).includes('possible rename of an already-failing test'));
+});
+
 test('#3723: no attributedTests entry falls back to the first-match excerpt and says so', () => {
   const body = filedBody({ ...adjudicated(LEDGER_FILE), checks: { tests: { failingRegion: TWO_BLOCKS } } });
   assert.ok(body.includes('old-detail'));
@@ -756,7 +808,8 @@ test('#3723: a repeated path quotes each occurrence\'s own block', () => {
 test('#3723: an attributed test with no block in any source falls back for that file', () => {
   const body = filedBody(withAttr(ent([['missing']])));
   assert.ok(body.includes('old-detail'));
-  assert.match(body, /per-test attribution unavailable/i);
+  assert.ok(body.includes('_No log block found for the 1 attributed test(s) — excerpt around the first log line naming this file._'));
+  assert.doesNotMatch(body, /per-test attribution unavailable/i);
 });
 
 test('#3723: a partly found entry quotes the found test and lists the missing one', () => {

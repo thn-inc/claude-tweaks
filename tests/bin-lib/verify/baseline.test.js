@@ -1218,6 +1218,21 @@ test('#3723: a file absent at base attributes every full-run failure by leaf nam
   assert.deepStrictEqual(r.attributedTests[f], { tests: [['t1'], ['t2']], headFailing: 2, baseFailing: 0, absentAtBase: [['t1'], ['t2']] });
 });
 
+test('#3723: a file absent at base never attributes a TAP suite failing only through its child', async () => {
+  // A real Node TAP log's shape: suite A fails only because `works` does (failureType 'subtestsFailed').
+  const f = 'tests/new.test.js';
+  const tap = ['TAP version 13', '# Subtest: A', '    # Subtest: works', '    not ok 1 - works', '      ---', '      duration_ms: 0.664958',
+    "      type: 'test'", `      location: '/repo/${f}:5:23'`, "      failureType: 'testCodeFailure'", "      error: 'nested-new-detail'",
+    "      code: 'ERR_ASSERTION'", "      name: 'AssertionError'", "      operator: 'fail'", '      stack: |-',
+    `        TestContext.<anonymous> (/repo/${f}:5:50)`, '        Test.runInAsyncScope (node:async_hooks:214:14)', '      ...', '    1..1',
+    'not ok 1 - A', '  ---', '  duration_ms: 1.123333', "  type: 'suite'", `  location: '/repo/${f}:5:1'`, "  failureType: 'subtestsFailed'",
+    "  error: '1 subtest failed'", "  code: 'ERR_TEST_FAILURE'", '  ...', '1..1', '# tests 1', '# suites 1', '# pass 0', '# fail 1',
+    '# cancelled 0', '# skipped 0', '# todo 0', '# duration_ms 50.387292'].join('\n');
+  const r = await adjudicateRaw(tap, { outcomes: {}, existsAtBase: () => false });
+  assert.deepStrictEqual(r.attributable, [f]);
+  assert.deepStrictEqual(r.attributedTests[f], { tests: [['works']], headFailing: 1, baseFailing: 0, absentAtBase: [['works']] });
+});
+
 test('#3723: a file passing at base attributes every isolated failure, existence unknown', async () => {
   const iso = NAMED({ fails: [['a'], ['b']] });
   const r = await adjudicateRaw(iso, {
@@ -1235,10 +1250,10 @@ test('#3723: no entry when per-test identity is unknown', async () => {
     outcomes: { [`baseline:${R}`]: null, [`isolated:${R}`]: 1, [`isolated-retry:${R}`]: 1 },
     logs: { [`isolated:${R}`]: two, [`isolated-retry:${R}`]: two },
   });
-  // (b) a malformed isolated tree (a suite name spanning lines).
+  // (b) a malformed isolated tree (a suite name spanning lines) beside a well-formed base tree.
   const bad = ['▶ multi', 'line', '  ✖ a (1ms)', '✖ multi', 'line (2ms)'];
   const badLog = TREE(bad, [['a', '2:3']]);
-  const b = await isolationCase(badLog, { head: badLog, baseLog: badLog, retryLog: badLog, retryCode: 1 });
+  const b = await isolationCase(badLog, { head: badLog, baseLog: NAMED({ fails: [['x']] }), retryLog: badLog, retryCode: 1 });
   // (c) a base tree with an unclosed suite opener is not well formed.
   const c = await isolationCase(two, { head: two, baseLog: TREE(['▶ S', '  ✖ a (1ms)'], [['a', '2:3']]), retryLog: two, retryCode: 1 });
   // (d) a file absent at base whose full-run name line does not parse.
