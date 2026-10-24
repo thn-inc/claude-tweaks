@@ -20,6 +20,8 @@ const RELEASE_DIR = path.join(ROOT, 'plugin', 'skills', 'release');
 const SKILL = path.join(RELEASE_DIR, 'SKILL.md');
 const EXECUTE = path.join(RELEASE_DIR, 'execute.md');
 const CONSOLE = path.join(RELEASE_DIR, 'console.md');
+const BOOKKEEPING = path.join(RELEASE_DIR, 'bookkeeping.md');
+const POLICY_SCHEMA_DOC = path.join(ROOT, 'plugin', 'skills', '_shared', 'policy-schema.md');
 const BRANCH = 'main';
 
 test('release-tip-moves is an advanced merge-safety integer defaulting to 2', () => {
@@ -188,7 +190,7 @@ const FACTS = [
   ['skill', '{tip-sha} is rev-parse origin/{branch}, read after the check passes',
     /`\{tip-sha\}` is the full 40-hex `git -C "\$RUN_ROOT" rev-parse origin\/\{branch\}`, read right after the check above passes/],
   ['skill', 'Step 8 HELD names `integration branch kept moving`',
-    /`integration branch kept moving`/],
+    /and `integration branch kept moving`, where/],
   ['console', 'console.md names the reviewed-tip comparison among the HELD stops',
     /the reviewed-tip comparison's two stops/],
   ['execute', 'the --as path advances the reviewed tip to the Release-As commit only when its parent is the reviewed tip',
@@ -203,8 +205,8 @@ const FACTS = [
     /a failed fetch[^\n]*`failed`[^\n]*stderr[^\n]*verbatim/],
   ['block', 'an unmoved branch is logged and merges',
     /Step 5: origin\/\{branch\} still at reviewed tip \{short\}; merging\./],
-  ['block', 'the move count is the number of `Step 5: origin/{branch} moved` lines',
-    /the number of `Step 5: origin\/\{branch\} moved` lines/],
+  ['block', 'the move count is the number of lines carrying the delta marker\'s `origin/{branch} moved {reviewed-short} →` form',
+    /the number of lines in the `## \/release` block[^\n]*that carry `origin\/\{branch\} moved \{reviewed-short\} →`/],
   ['block', '`release-tip-moves` is read with resolve-policy.js --values',
     /resolve-policy\.js" --run "\{run-dir\}" --values release-tip-moves/],
   ['block', 'past the bound the run is `HELD`, reason `integration branch kept moving`',
@@ -215,8 +217,10 @@ const FACTS = [
     /git -C "\$RUN_ROOT" log --first-parent --oneline \{step3-tip\}\.\.origin\/\{branch\}/],
   ['block', 'the bound stop suggests holding merges',
     /suggest[^\n]*holding merges/],
-  ['block', 'the delta brings $RUN_ROOT to the tip with pull --rebase',
-    /git -C "\$RUN_ROOT" pull --rebase origin \{branch\}/],
+  ['block', 'the delta brings $RUN_ROOT to the tip with pull --rebase --no-autostash',
+    /git -C "\$RUN_ROOT" pull --rebase --no-autostash origin \{branch\}/],
+  ['block', 'the branch is asserted before the pull: anything but {branch} is `failed` with Step 3\'s wrong-branch stop line, nothing pulled',
+    /First assert the anchor is still on the integration branch: `git -C "\$RUN_ROOT" rev-parse --abbrev-ref HEAD` must equal `\{branch\}`\. Anything else is `failed`[^\n]*Step 3's wrong-branch stop line[^\n]*nothing is pulled/],
   ['block', 'the delta re-runs Step 3\'s review-tree check and a failure is `failed` with Step 3\'s stop lines',
     /re-run SKILL\.md Step 3's review-tree check[^\n]*`failed`[^\n]*Step 3's stop lines/],
   ['block', 'the new tip\'s test gate is the review\'s own Step 1.5',
@@ -233,11 +237,51 @@ const FACTS = [
     /`review: clean` or `review: findings[^\n]*re-enter at the PR-check gate/],
   ['block', 'the remaining window is the merge call itself',
     /the remaining window is the merge call itself/],
+  ['block', 'the bound step ties {bound} to the resolved RELEASE_TIP_MOVES',
+    /`\{bound\}` in this block's log lines is the resolved `RELEASE_TIP_MOVES`/],
+  ['block', 'an unreadable release-tip-moves fails closed as `failed`, reason `release-tip-moves unreadable`',
+    /exits non-zero or prints nothing[^\n]*fail closed[^\n]*`failed`, reason `release-tip-moves unreadable`, nothing merged/],
+  ['block', 'Step 8\'s HELD summary prints the arrived-commit list for the bound stop',
+    /Step 8's HELD summary also prints that `git log` output, the arrived commits, under its gate-and-staged-path line/],
+  ['skill', 'SKILL.md Step 8 prints the arrived-commit list beneath the HELD staged-path line',
+    /For `integration branch kept moving`, the list of arrived commits \(`execute\.md`'s bound step\) prints beneath that line/],
+  ['block', 'every release-held.md the block composes carries the --as warning (the Release-As commit is already on {branch})',
+    /Every `release-held\.md` this block composes carries one more line when `--as` was given: the `Release-As:` commit is already on `\{branch\}`, so re-run without pushing a second override/],
+  ['block', 'a run-dir-only move gets its own step 3a',
+    /\*\*3a\. A run-dir-only move does not count\.\*\*/],
+  ['block', 'the run-dir-only check is a tree diff outside .claude-tweaks/pipelines',
+    /diff --quiet \{reviewed-tip\} origin\/\{branch\} -- ':!\.claude-tweaks\/pipelines'/],
+  ['block', 'a run-dir-only move is not counted, runs no review, advances the reviewed tip and re-compares',
+    /Exit `0` — every arrived commit is run-dir-only: do not count it toward the bound and run no review\. Advance the reviewed tip instead[^\n]*go back to 1 and compare again/],
+  ['block', 'the run-dir-only advance line carries `at reviewed tip {tip-sha}` and is not a counted move line',
+    /by run-dir-only commits \(\{n\} commits, nothing outside \.claude-tweaks\/pipelines\); no review, not counted; at reviewed tip \{tip-sha\}\./],
+  ['block', 'the re-entry derives a bump part from the arrived commits',
+    /On that re-entry, derive the bump part from the arrived commits too/],
+  ['block', 'the arrived commits are read as `git log --format=%B {reviewed-tip}..{tip-sha}`',
+    /git -C "\$RUN_ROOT" log --format=%B \{reviewed-tip\}\.\.\{tip-sha\}/],
+  ['block', 'the arrived part: `!` or a BREAKING CHANGE footer is major, feat minor, anything else patch',
+    /a `!` after a subject's type, or a `BREAKING CHANGE:` footer, is major; `feat` is minor; anything else is patch/],
+  ['block', 'delta 5 re-gates on the higher of the arrived part and the title\'s part',
+    /Delta 5 re-gates on the higher of that part and the title's part/],
+  ['block', 'a major from the arrived commits takes delta 5\'s HELD path with a reason naming the arrived commits',
+    /takes delta 5's `re-rendered to a major after the console` HELD path, with the reason named `re-rendered to a major after the console — from the arrived commits \{shas\}, the release PR title still reads v\{title-version\}`/],
+  ['skill', 'SKILL.md Step 5 summary mentions the reviewed-tip comparison',
+    /it also compares `origin\/\{branch\}` with the tip Step 3 reviewed: a move runs a delta review, and more moves than `release-tip-moves` allows is `HELD`/],
+  ['skill', 'SKILL.md Step 8 says the blocking delta re-fires the existing `review: blocking` gate',
+    /re-fires the existing `review: blocking` gate on the delta range/],
+  ['skill', 'SKILL.md Step 8 `failed` names an unreadable release-tip-moves',
+    /an unreadable `release-tip-moves`/],
+  ['console', 'console.md says the merge never happens (not that Step 5 never runs) under HELD',
+    /The merge never happens and Step 8's summary reads `HELD`\./],
+  ['bookkeeping', 'bookkeeping.md defines the HELD no-Step-6/7 rule over every no-merge stop',
+    /or one of Step 5's stops that merge nothing/],
+  ['schemaDoc', 'the policy-schema.md row states the 0 floor',
+    /Floor `0`: it holds on the first move\./],
 ];
 
 function sources() {
   const execute = readText(EXECUTE);
-  return { skill: readText(SKILL), console: readText(CONSOLE), execute, block: blockOf(execute) };
+  return { skill: readText(SKILL), console: readText(CONSOLE), bookkeeping: readText(BOOKKEEPING), schemaDoc: readText(POLICY_SCHEMA_DOC), execute, block: blockOf(execute) };
 }
 
 function missingFacts(srcs) {
@@ -262,28 +306,24 @@ test('AC2.1/AC3.1: each reviewed-tip prose fact can actually go red on its own (
   }
 });
 
-test('console.md no longer calls the gh-absent stop the only other HELD reason', () => {
-  const text = readText(CONSOLE);
-  assert.ok(!text.includes('the only other `HELD` reason'), 'console.md still says the gh-absent stop is the only other HELD reason');
-  const doctored = text.replace('the reviewed-tip comparison\'s two stops', 'the only other `HELD` reason');
-  assert.notEqual(doctored, text, 'go-red anchor "the reviewed-tip comparison\'s two stops" not found');
-  assert.ok(doctored.includes('the only other `HELD` reason'), 'go-red: the stale phrase must be visible to the assertion');
-});
-
-// Phrases that claimed the gh-absent stop was the only, or the third, non-Step-4 HELD reason. Once delta 5's
-// major re-render and the reviewed-tip stops exist, they are false.
+// Phrases that claimed the gh-absent stop was the only, or the third, non-Step-4 HELD reason, or that HELD
+// is a Step-4-only word. Once delta 5's major re-render and the reviewed-tip stops exist, they are false.
 const STALE_HELD_PHRASES = [
   ['execute', 'the one `HELD` that is not a Step 4 HARD-GATE'],
   ['execute', 'names it as the third reason for the word'],
   ['skill', 'A third reason carries the same word'],
   ['skill', 'A fourth, `integration branch kept moving`'],
+  ['skill', 'beside those two HARD-GATEs'],
+  ['console', 'the only other `HELD` reason'],
+  ['console', 'Step 5 never runs and Step 8\'s summary reads'],
+  ['bookkeeping', 'A HARD-GATE fires at Step 4, before Step 5 ever runs'],
 ];
 
 function staleHeldPhrases(srcs) {
   return STALE_HELD_PHRASES.filter(([source, phrase]) => srcs[source].includes(phrase)).map(([, phrase]) => phrase);
 }
 
-test('no stale ordinal or "the one HELD" claim survives in execute.md or SKILL.md', () => {
+test('no stale ordinal or "the one HELD" claim survives in execute.md, SKILL.md, console.md or bookkeeping.md', () => {
   const srcs = sources();
   assert.deepEqual(staleHeldPhrases(srcs), [], 'a stale HELD-reason phrase is still present');
   for (const [source, phrase] of STALE_HELD_PHRASES) {
@@ -333,6 +373,77 @@ test('placement: the comparison block sits after delta 5 and before Merge', () =
   assert.ok(delta5 !== -1 && block !== -1 && merge !== -1, 'placement anchors missing');
   assert.ok(delta5 < block, 'the comparison block must come after delta 5');
   assert.ok(block < merge, 'the comparison block must come before the Merge paragraph');
+});
+
+// The `bash` fence of execute.md that compares the trees outside run dirs, resolved like comparisonFence.
+function runDirOnlyFence(executeText, reviewedTip) {
+  const fences = [...executeText.matchAll(/```bash\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
+  const fence = fences.find((f) => f.includes('diff --quiet {reviewed-tip} origin/{branch}'));
+  assert.ok(fence, 'extraction pattern is out of sync: no execute.md bash fence contains \'diff --quiet {reviewed-tip} origin/{branch}\'');
+  return fence.split('{branch}').join(BRANCH).split('{reviewed-tip}').join(reviewedTip);
+}
+
+// Status of the run-dir-only check once the upstream moved: 0 means every arrived commit is run-dir-only.
+function runDirOnlyStatus(fx, fence) {
+  fx.run(fx.work, ['fetch', '-q', 'origin', BRANCH]);
+  return runComparison(fence, fx).status;
+}
+
+test('3a: a run-dir-only move exits 0 and a move touching code exits 1', () => {
+  for (const [name, push, expected] of [['run-dir-only', pushRunDirUpstream, 0], ['code', pushUpstream, 1]]) {
+    withFixture('release-reviewed-tip-rundir-', (fx) => {
+      const tip = reviewedTipOf(fx);
+      push(fx);
+      const status = runDirOnlyStatus(fx, runDirOnlyFence(readText(EXECUTE), tip));
+      assert.equal(status, expected, `${name} move: expected exit ${expected}, got ${status}`);
+    });
+  }
+});
+
+test('3a: go-red: without the run-dir pathspec a run-dir-only move reads as a code move', () => {
+  withFixture('release-reviewed-tip-rundir-nopath-', (fx) => {
+    const tip = reviewedTipOf(fx);
+    const fence = runDirOnlyFence(readText(EXECUTE), tip);
+    const pathspec = " -- ':!.claude-tweaks/pipelines'";
+    assert.ok(fence.includes(pathspec), 'anchor text for the pathspec not found — proof cannot discriminate');
+    pushRunDirUpstream(fx);
+    assert.equal(runDirOnlyStatus(fx, fence), 0, 'the real fence must call a run-dir-only move run-dir-only');
+    assert.equal(runDirOnlyStatus(fx, fence.replace(pathspec, '')), 1, 'without the pathspec the same move must exit 1');
+  });
+});
+
+// The log-line templates in the block that carry the literal the bound step says to count, so a log line
+// that drifts into the move count turns this red.
+function countedMoveLines(block) {
+  const literal = block.match(/that carry `(origin\/\{branch\} moved \{reviewed-short\} →)`/);
+  assert.ok(literal, 'extraction pattern is out of sync: the bound step names no counted literal');
+  return block.split('\n').filter((l) => /^(AUTO|STAGED) \{HH:MM:SS\}/.test(l) && l.includes(literal[1]));
+}
+
+test('move count: only the delta marker carries the counted literal', () => {
+  const block = blockOf(readText(EXECUTE));
+  const counted = countedMoveLines(block);
+  assert.equal(counted.length, 1, `exactly one log line may carry the counted literal, found ${counted.length}`);
+  assert.ok(counted[0].includes('delta review starting'), 'the one counted line must be the delta marker');
+  for (const [name, from] of [
+    ['terminal STAGED line', 'origin/{branch} moved past the reviewed tip'],
+    ['run-dir-only advance line', 'origin/{branch} advanced {reviewed-short} →'],
+  ]) {
+    const drifted = block.replace(from, 'origin/{branch} moved {reviewed-short} →');
+    assert.notEqual(drifted, block, `go-red anchor for the ${name} not found`);
+    assert.equal(countedMoveLines(drifted).length, 2, `go-red: a ${name} carrying the literal must be counted`);
+  }
+});
+
+test('placement: 3a sits between the exit classification and the bound; the branch assertion precedes the pull', () => {
+  const block = blockOf(readText(EXECUTE));
+  const at = (s) => {
+    const i = block.indexOf(s);
+    assert.notEqual(i, -1, `placement anchor missing: ${s}`);
+    return i;
+  };
+  assert.ok(at('**3. Classify the exit.**') < at('**3a.') && at('**3a.') < at('**4. The bound.**'), '3a must sit between steps 3 and 4');
+  assert.ok(at('rev-parse --abbrev-ref HEAD` must equal `{branch}`') < at('pull --rebase --no-autostash origin {branch}'), 'the branch assertion must precede the pull');
 });
 
 test('byte guard: release/SKILL.md stays under 49,500 bytes', () => {
