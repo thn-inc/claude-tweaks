@@ -94,10 +94,11 @@ function renderStuckPathsBlock(paths, eol = '\n') {
 // A CRLF body gets a CRLF block, so the edit leaves no mixed line endings.
 // -> a body with no block gets the block appended; an empty body gets the full render.
 function withStuckPaths(body, paths) {
-  const eol = /\r\n/.test(body || '') ? '\r\n' : '\n';
-  if (STUCK_PATHS_RE.test(body || '')) return body.replace(STUCK_PATHS_RE, () => renderStuckPathsBlock(paths, eol));
-  if (!String(body || '').trim()) return structurallyStuckBody(paths);
-  return `${body.replace(/\s+$/, '')}${eol}${eol}${renderStuckPathsBlock(paths, eol)}${eol}`;
+  const text = body || '';
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  if (STUCK_PATHS_RE.test(text)) return text.replace(STUCK_PATHS_RE, () => renderStuckPathsBlock(paths, eol));
+  if (!text.trim()) return structurallyStuckBody(paths);
+  return `${text.replace(/\s+$/, '')}${eol}${eol}${renderStuckPathsBlock(paths, eol)}${eol}`;
 }
 
 function structurallyStuckBody(paths) {
