@@ -221,8 +221,10 @@ function operandText(bare, args, start, end) {
 // call is a literal (`N=5`, `N="a b"`, `N='x'`, a `for N in` list with no `$`
 // or backtick). Live 2026-10-24 (#4028): `L=1; gh … --limit "$L"`, `for n in
 // 4028; do gh issue view "$n" …`, `W="/abs/wt"; git -C "$W" …` and
-// `A=/abs/p.txt; echo digit > "$A"` all ran. A name assigned from `$(…)` or
-// `read`, or never assigned in the call (the environment), is runtime-computed.
+// `A=/abs/p.txt; echo digit > "$A"` all ran. A name assigned from `$(…)`,
+// `read` or a glob loop, or never assigned in the call (the environment), is
+// runtime-computed. Applies only to the gh/git/redirect detectors: node's
+// script operand refuses a literal name too (`Q=/abs/nospace && node $Q/x.js`).
 const LITERAL_VALUE = /^(?:'[^']*'|"[^"$`\\]*"|[^\s;&|()<>$`'"\\]*)(?=[\s;&|)]|$)/;
 const ASSIGN_CONTEXT = /(?:^|[;&|(]|\b(?:then|do|else|export|local|readonly)|[A-Za-z_]\w*=(?:"[^"\n]*"|'[^'\n]*'|\S*))[ \t]*$/;
 function staticNames(text) {
@@ -235,8 +237,11 @@ function staticNames(text) {
     if (kinds[m.index] !== 'plain' || !ASSIGN_CONTEXT.test(lineBefore(m.index))) continue;
     mark(m[1], LITERAL_VALUE.test(text.slice(m.index + m[0].length)));
   }
+  // A loop list with an expansion or a glob char is computed (live 2026-10-25:
+  // `for f in *.json; do gh … "$f"; done` was refused).
   for (const m of bare.matchAll(/(?<![\w-])for[ \t]+([A-Za-z_]\w*)[ \t]+in[ \t]([^;\n]*)/g)) {
-    mark(m[1], !/[$`]/.test(text.slice(m.index, m.index + m[0].length)));
+    const listAt = m.index + m[0].length - m[2].length;
+    mark(m[1], !/[$`*?[]/.test(text.slice(listAt, m.index + m[0].length)));
   }
   for (const m of bare.matchAll(/(?<![\w-])read[ \t]+(?:-\w+[ \t]+)*([A-Za-z_]\w*(?:[ \t]+[A-Za-z_]\w*)*)/g)) {
     for (const name of m[1].split(/[ \t]+/)) mark(name, false);
@@ -249,10 +254,18 @@ function computedRefs(s, known) {
   return [...s.matchAll(/\$\{?([A-Za-z_]\w*)/g)].some((m) => !known.has(m[1]));
 }
 
-function hasVarOperand(text, word) {
+// A `$(…)`, backtick or positional (`$1`, `$@`, `$*`) operand: computed at
+// runtime. Live 2026-10-25: `git -C "$(pwd)" status --short` was refused, while
+// a single `gh issue view "$(echo 4028)" …` call ran, so only git opts in.
+const SUBSTITUTION_OR_POSITIONAL = /\$\(|`|\$\{?[0-9@*]/;
+
+function hasVarOperand(text, word, { substitution = false } = {}) {
   const { bare, args } = views(text);
   const known = staticNames(text);
-  return commandSegments(bare, word).some(([s, e]) => computedRefs(operandText(bare, args, s, e), known));
+  return commandSegments(bare, word).some(([s, e]) => {
+    const operands = operandText(bare, args, s, e);
+    return computedRefs(operands, known) || (substitution && SUBSTITUTION_OR_POSITIONAL.test(operands));
+  });
 }
 
 // More than one command: two non-blank lines, or a ; && || | outside quotes
@@ -363,8 +376,8 @@ const DETECTORS = [
   },
   {
     id: 'git-var-operand',
-    row: "`git -C \"$PWD\" status --short`; `W=\"$(node -e 'console.log(process.cwd())')\"` then `git -C \"$W\" status --short`",
-    test: (t) => hasVarOperand(t, 'git'),
+    row: "`git -C \"$PWD\" status --short`; `W=\"$(node -e 'console.log(process.cwd())')\"` then `git -C \"$W\" status --short`; `git -C \"$(pwd)\" status --short` (2026-10-25)",
+    test: (t) => hasVarOperand(t, 'git', { substitution: true }),
   },
   {
     id: 'node-eval-script-var-with-git',

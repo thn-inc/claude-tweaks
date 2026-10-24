@@ -318,3 +318,25 @@ test('a variable assigned from $(…), read, a loop over $(…), or a later comp
   assert.deepStrictEqual(detectShapes('for n in $(cat /abs/ns); do gh issue view "$n"; done'), ['gh-computed-input']);
   assert.deepStrictEqual(detectShapes('W="$HOME/wt"; git -C "$W" status'), ['git-var-operand']);
 });
+
+// Live 2026-10-25 (#4028 review): `git -C "$(pwd)" status --short` was refused;
+// a single `gh issue view "$(echo 4028)" …` call, and an unquoted `$L` after
+// `L=1`, ran; a glob-loop variable fed to gh was refused ("runs gh with a value
+// computed at runtime (the variable f)").
+test('git-var-operand: a $(…), backtick or positional operand is computed', () => {
+  assert.deepStrictEqual(detectShapes('git -C "$(pwd)" status --short'), ['git-var-operand']);
+  assert.deepStrictEqual(detectShapes('git -C "`pwd`" status --short'), ['git-var-operand']);
+  assert.deepStrictEqual(detectShapes('git -C "$1" status --short'), ['git-var-operand']);
+  assert.deepStrictEqual(detectShapes('git -C "/abs/wt" status --short'), []);
+});
+
+test('a glob-loop variable is computed; a literal-list loop and an unquoted literal name are not', () => {
+  assert.deepStrictEqual(
+    detectShapes('for f in *.json; do gh issue view 4028 --repo thn-inc/claude-tweaks --json number --jq "\\"$f\\""; done'),
+    ['gh-computed-input'],
+  );
+  assert.deepStrictEqual(detectShapes('for f in a?.json; do gh issue view "$f"; done'), ['gh-computed-input']);
+  assert.deepStrictEqual(detectShapes('for n in 4028; do gh issue view "$n" --repo o/r --json number; done'), []);
+  assert.deepStrictEqual(detectShapes('L=1\ngh issue list --repo o/r --limit $L --json number'), []);
+  assert.deepStrictEqual(detectShapes('gh issue view "$(echo 4028)" --repo o/r --json number'), []);
+});
