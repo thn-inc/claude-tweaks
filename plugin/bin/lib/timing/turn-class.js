@@ -78,7 +78,28 @@ function stripPrefixes(command) {
   }
 }
 
-const VERIFY_RE = /^(?:npm\s+(?:run\s+)?test\b|node\s+(?:--\S+\s+)*--test\b|(?:node\s+)?["']?\S*tools\/run-tests\.js|node\s+(?:--\S+\s+)*["']?\S*verify\.js|npx\s+(?:\S+\s+)*--test\b|(?:npx\s+)?(?:tsc|eslint|jest|vitest|pytest)\b)/;
+// Script-path checks run on tokenizer output (quotes already removed), never a
+// `\S*` regex over the raw string — a checkout under "Code Workspaces" puts a
+// space inside the quoted path.
+const VERIFY_SCRIPT_RE = /(^|\/)(verify\.js|tools\/run-tests\.js)$/;
+const VERIFY_TOOLS = new Set(['tsc', 'eslint', 'jest', 'vitest', 'pytest']);
+
+// tokens of one segment -> true when it runs a test/verify tool.
+function isVerifyRun(tokens) {
+  const head = (tokens[0] || '').replace(/^.*\//, '');
+  if (head === 'npm') return tokens[1] === 'run' ? /^test\b/.test(tokens[2] || '') : /^test\b/.test(tokens[1] || '');
+  if (head === 'node') {
+    const rest = tokens.slice(1);
+    const at = rest.findIndex((t) => !t.startsWith('-'));
+    const flags = at === -1 ? rest : rest.slice(0, at); // node's own flags, before the script
+    return flags.includes('--test') || (at !== -1 && VERIFY_SCRIPT_RE.test(rest[at]));
+  }
+  if (head === 'npx') {
+    const tool = tokens.slice(1).find((t) => !t.startsWith('-')) || '';
+    return tokens.slice(1).some((t) => t === '--test') || VERIFY_TOOLS.has(tool);
+  }
+  return VERIFY_TOOLS.has(head) || VERIFY_SCRIPT_RE.test(tokens[0] || '');
+}
 
 const GIT_BOOKKEEPING = new Set(['add', 'commit', 'push', 'pull', 'fetch', 'merge', 'tag', 'rebase', 'cherry-pick', 'reset', 'checkout', 'switch', 'stash']);
 const GIT_ORIENTATION = new Set(['status', 'rev-parse', 'remote', 'config']);
@@ -120,7 +141,7 @@ function classifyBash(command) {
   if (segments.length === 0) return 'other';
   // Verify beats every other class and is looked for in every segment, so
   // `git add . && npm test` is the test run it exists to perform.
-  if (segments.some((s) => VERIFY_RE.test(s))) return 'verify';
+  if (segments.some((s) => isVerifyRun(tokenize(s)))) return 'verify';
   const tokens = tokenize(segments[0]);
   const head = (tokens[0] || '').replace(/^.*\//, '');
   if (head === 'node') {
