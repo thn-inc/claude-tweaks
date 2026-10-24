@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // bin/find-run-comment.js — the worktree-safe PR run-comment Find (#3936).
 //   node bin/find-run-comment.js --comments-file <file> --kind <kind> [--help]
-// Premise, corrected: the Find step's `gh pr view --json comments --jq '...'`
-// pipeline is refused by the worktree guard inside a worktree-isolated session,
-// so the filter moves out of the shell: `gh pr view --json comments` writes a
-// plain file, and this CLI selects the trusted `<!-- run-comment: {kind} -->`
-// comments from it through bin/lib/issues/comment-trust.js, the same rule the
-// jq twin pastes. The contract is _shared/pr-run-comments.md's Find step.
+// Premise, corrected (live probes, #3936): the jq form passes when run alone;
+// the worktree guard refuses it only when it is chained by `;`/`&&` onto an
+// unquoted `$?` (`_shared/scratch-worktree.md` §7), so the Find step's
+// worktree-safe form is a plain fetch-to-file plus this CLI, which survives
+// that habit. The trust rule is bin/lib/issues/comment-trust.js, the same rule
+// the jq twin pastes. The contract is _shared/pr-run-comments.md's Find step.
 // Input: a gh `{comments: [...]}` payload, or a bare REST/MCP comment array.
 // Stdout (exit 0): one line, {kind, id, ids, skipped}. `id` is the first
 // trusted match's id (null when none); `skipped` carries one note per untrusted
