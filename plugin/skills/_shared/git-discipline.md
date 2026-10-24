@@ -159,7 +159,7 @@ the following phases re-verify the merged tree. One plain command per Bash call.
    was stale and there is nothing to push; log one `AUTO` entry (same `--step`, `--text "local merge brought in nothing — the forge's
    conflict state was stale"`) and stop. Otherwise `git -C "{worktree-path}" push origin
    "{branch}"` — the re-push is what lets GitHub run the PR's `pull_request` workflows — and log:
-   `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --section "{/build|/test|/review|/flow|/wrap-up}" --step "Post-push merge-state check" --reversibility high --text "caught PR #{pr}'s branch up with origin/{integration-branch} before the next phase ({before short} → {after short}); re-pushed"`.
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --section "{/build|/test|/review|/flow|/wrap-up}" --step "Post-push merge-state check" --reversibility high --text-file "{text-file}"`, `{text-file}` holding `caught PR #{pr}'s branch up with origin/{integration-branch} before the next phase ({before short} → {after short}); re-pushed` per `_shared/auto-decision-log.md`'s Text from git or a user paragraph (the integration branch name is git-supplied).
 
 `interactive` and `hybrid` never run this merge themselves — they only surface the commands (except
 wrap-up's Leave-open mergeability re-check named above, which runs git's own auto-merge in every mode). A

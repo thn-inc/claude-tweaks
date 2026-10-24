@@ -100,8 +100,10 @@ record's merge to `leave-open`. The refusal line replaces that `needs-human` log
 also write `assess-agent-autonomy verdict needs-human` for a verdict that never ran.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "Auto-merge short-circuit" --reversibility n/a --text "#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}{detail}) — treated as needs-human, Review Console renders normally"
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "Auto-merge short-circuit" --reversibility n/a --text-file "{text-file}"
 ```
+
+`{text-file}` holds one line, `#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}{detail}) — treated as needs-human, Review Console renders normally`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — `{detail}` can carry an error message, so it never passes through shell quoting.
 
 **Both layers pass — acceptance labeling runs first, before the merge.** This branch bypasses
 Phase 4's execution step, which is where acceptance labeling normally happens, so this branch must
