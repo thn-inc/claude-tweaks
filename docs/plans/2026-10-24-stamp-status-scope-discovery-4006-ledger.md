@@ -25,3 +25,4 @@
 | 21 | review | [low, Test] AC5.1's self-cover case asserted only a non-null scopeError | fixed | fb7614a32 — matches the refusal message |
 | 22 | review | [low, Test] prose-conformance go-red controls used bare assert.throws | fixed | 58e3fe4a3 — each control matches its assertion message |
 | 23 | review | [info, Docs] verify.js per-suite record comment named only `--stamp-status --scope` as the composition path | fixed | 22a755926 |
+| 24 | review/hindsight | [skill: plan-authoring-checks] plan-authoring-checks has no check for path-guard-conformance's existsSync/realpathSync token lint — the planned `fs.existsSync` in stampStatus discovery surfaced only at Common Step 5's full suite (one extra full run) | deferred | Staged as staged/reflect-1.md for wrap-up's Skills curation row |
