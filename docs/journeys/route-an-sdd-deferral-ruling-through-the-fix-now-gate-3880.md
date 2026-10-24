@@ -52,7 +52,7 @@ files:
 - **Should understand:**
   - Both trigger points apply the same gate. `bin/lib/console/resolve.js`'s `sddRulingDeferralReason` does it for the live session. On the reconciler side, `console-execute.js` reads each ruling row's `stagedPath` from `console.json` and lists the unsafe ones in `rulingGateGaps`. Those rows and Resolve stay unticked.
   - A pending ruling still blocks nothing else. The rest of the console resolves as usual, and the ruling's `open` ledger row is what the nothing-left-behind gate later drills.
-- **Red flags:** An `apply` on a ruling whose header has `Defers: yes` and no reason. A reconciler pass that ticks a ruling named in `rulingGateGaps`. A `pending` reason other than the two `sdd-ruling-*` words on a ruling row.
+- **Red flags:** An `apply` on a ruling whose header has `Defers: yes` and no reason. A reconciler pass that ticks a ruling named in `rulingGateGaps`. A `pending` reason other than the `sdd-ruling-*` reasons listed above on a ruling row.
 
 ## Origin
 - Created during the build of #3880 (SDD deferral rulings skip the fix-now test and are auto-ratified at unattended), run `2026-10-22T062405-record-3880`.
