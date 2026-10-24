@@ -710,7 +710,10 @@ function decodeHeredocWord(raw) {
 // Scans one heredoc body starting at index p, through the line equal to the
 // delimiter (leading tabs ignored for `<<-`, one trailing `\r` ignored). `text` is
 // the body without that closing line. With no closing line the body runs to end of
-// string and `terminated` is false.
+// string and `terminated` is false. For an unquoted delimiter, bash joins a line that
+// ends in an odd run of backslashes with the next one before comparing, so `E\` +
+// `OF` closes the body; a quoted delimiter takes no continuation. A trailing odd
+// backslash with no next line is left as-is.
 function scanHeredocBody(str, p, h) {
   const bodyStart = p;
   while (p < str.length) {
@@ -718,6 +721,14 @@ function scanHeredocBody(str, p, h) {
     if (end === -1) end = str.length;
     let line = str.slice(p, end);
     if (line.endsWith('\r')) line = line.slice(0, -1);
+    while (!h.quoted && end < str.length && (/\\+$/.exec(line) || [''])[0].length % 2 === 1) {
+      const nextStart = end + 1;
+      end = str.indexOf('\n', nextStart);
+      if (end === -1) end = str.length;
+      let next = str.slice(nextStart, end);
+      if (next.endsWith('\r')) next = next.slice(0, -1);
+      line = line.slice(0, -1) + next;
+    }
     if (h.stripTabs) line = line.replace(/^\t+/, '');
     if (line === h.delim) return { end: Math.min(end + 1, str.length), terminated: true, text: str.slice(bodyStart, p) };
     p = end + 1;

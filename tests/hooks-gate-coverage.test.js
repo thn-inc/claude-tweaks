@@ -603,6 +603,23 @@ test('#4149: tee with a heredoc reports only its file, not the heredoc operator'
   assert.deepStrictEqual(fileWriteTargets('tee out.txt <<EOF\na > b\nEOF', '/r'), [{ action: 'write', file: path.resolve('/r', 'out.txt') }]);
 });
 
+test('#4149: an unquoted heredoc joins a backslash-continued line before matching the delimiter', () => {
+  const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
+  // Bash joins `E\` + `OF` into `EOF`, ends the body there, and runs the next line.
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF\nE\\\nOF\necho x > f.js\nEOF', '/r'), f);
+  // A quoted delimiter takes no continuation: the whole body is data.
+  assert.deepStrictEqual(fileWriteTargets("cat <<'EOF'\nE\\\nOF\necho x > f.js\nEOF", '/r'), []);
+  // `E\\` is a literal backslash (even run), not a continuation.
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF\nE\\\\\nOF\necho x > f.js\nEOF', '/r'), []);
+  // ...so the next line is its own line and may close the body (a join on any backslash would swallow it).
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF\nx\\\\\nEOF\necho x > f.js\nEOF', '/r'), f);
+  // CRLF endings: the `\r` is not part of the backslash run.
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF\r\nE\\\r\nOF\r\necho x > f.js\r\nEOF', '/r'), f);
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF\r\nE\\\\\r\nOF\r\necho x > f.js\r\nEOF', '/r'), []);
+  // `<<-` strips leading tabs from the joined line.
+  assert.deepStrictEqual(fileWriteTargets('cat <<-EOF\n\tE\\\nOF\necho x > f.js\nEOF', '/r'), f);
+});
+
 test('#3989: stripHeredocBodies keeps the opener line and its newline, and drops the body and closing delimiter', () => {
   assert.strictEqual(stripHeredocBodies('cat <<EOF\nbody\nEOF\nB'), 'cat <<EOF\nB');
   // #4149: a program that is not a known data reader keeps its body.
