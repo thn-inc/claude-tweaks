@@ -81,4 +81,5 @@ files:
 - Step 6's reply-comment labelling revised by #3636, run `2026-10-20T135813-record-3636`: a flagged ruling reads `reversed` and counts as cleared, a refused reverse goes in `--reverse-failed`.
 - Step 1 notes the contract-beats-spec exception added by #3557, run `2026-10-20T183400-record-3557`.
 - Step 1 revised by #3510, run `2026-10-20T210418-record-3510`: the carry-forward is one `stage-item.js --ledger` call (stage, fill `Ledger:`, append, log), and its Red flags name what each degraded `SKIP` leaves behind. Verified live: this run carried its own four SDD rulings through the call (`staged/sdd-ruling-1..4.md`, ledger rows #1-#4).
+- The unattended `pending` classes in step 2's Should understand gain `sdd-ruling-unreadable` (#4049, run `2026-10-24T110929-spec-4049`): a ruling row whose staged file cannot be read no longer reads as `sdd-ruling-unclassified`.
 - Related: `docs/journeys/measure-sdd-final-review-value-3386.md` (reads the same rulings as evidence); `docs/journeys/resolve-the-unattended-console-in-one-process-1932.md` (the `consoleAutoResolve` path that ratifies a ruling with zero clicks only when its staged header shows it safe, #3880).
