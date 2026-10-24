@@ -112,7 +112,7 @@ function isVerifyRun(tokens) {
 
 const GIT_BOOKKEEPING = new Set(['add', 'commit', 'push', 'pull', 'fetch', 'merge', 'tag', 'rebase', 'cherry-pick', 'reset', 'checkout', 'switch', 'stash']);
 const GIT_ORIENTATION = new Set(['rev-parse', 'status', 'remote', 'config']);
-const GIT_EXPLORE = new Set(['log', 'show', 'diff', 'grep', 'blame', 'ls-files', 'ls-tree', 'cat-file', 'ls-remote']);
+const GIT_EXPLORE = new Set(['log', 'show', 'diff', 'grep', 'blame', 'ls-files', 'ls-tree', 'cat-file', 'ls-remote']); // git-path-read: not a path list (subcommand names a transcript's commands are classified by)
 const ORIENTATION_HEADS = new Set(['pwd', 'whoami', 'hostname', 'date', 'printenv', 'env', 'which', 'echo']);
 const EXPLORE_HEADS = new Set(['grep', 'rg', 'ugrep', 'find', 'ls', 'cat', 'head', 'tail', 'sed', 'awk', 'wc', 'tree', 'jq', 'stat', 'file', 'diff']);
 
