@@ -196,4 +196,15 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
   };
 }
 
-module.exports = { readDeclaration, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING };
+// #2987: the dirty paths a declared `generated` glob list exempts — every one
+// of them (sorted, deduplicated) when ALL match a glob, else null: any other
+// dirty path still disqualifies. A failed status read (null) or an empty list
+// exempts nothing.
+function generatedExemption(dirtyPaths, generated) {
+  if (!dirtyPaths || dirtyPaths.length === 0) return null;
+  const patterns = generated.map((g) => globToRegExp(g));
+  const allGenerated = dirtyPaths.every((f) => patterns.some((re) => re.test(f)));
+  return allGenerated ? [...new Set(dirtyPaths)].sort() : null;
+}
+
+module.exports = { readDeclaration, generatedExemption, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING };

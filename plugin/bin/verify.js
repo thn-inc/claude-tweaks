@@ -36,13 +36,12 @@ const {
 } = require('./lib/verify/count-stamp');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { composeStamp, writeStamp, readStamp: readVerifyStamp, anchorOf } = require('./lib/verify/stamp');
-const { readDeclaration } = require('./lib/verify/declaration');
+const { readDeclaration, generatedExemption } = require('./lib/verify/declaration');
 const { readSuiteStamps, writeSuiteStamps, composeSuiteCoverage } = require('./lib/verify/suite-stamp');
 const {
   changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
-const { globToRegExp } = require('./lib/issues/blast-radius');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -141,17 +140,6 @@ function scopeSelfPath(resolvedPath, scopeCwd) {
   const rootReal = canonicalRealpath(root);
   if (rootReal === null) return null;
   return path.relative(rootReal, leaf).split(path.sep).join('/') || null;
-}
-
-// #2987: the dirty paths a declared `generated` glob list exempts — every one
-// of them (sorted, deduplicated) when ALL match a glob, else null: any other
-// dirty path still disqualifies. A failed status read (null) or an empty list
-// exempts nothing.
-function generatedExemption(dirtyPaths, generated) {
-  if (!dirtyPaths || dirtyPaths.length === 0) return null;
-  const patterns = generated.map((g) => globToRegExp(g));
-  const allGenerated = dirtyPaths.every((f) => patterns.some((re) => re.test(f)));
-  return allGenerated ? [...new Set(dirtyPaths)].sort() : null;
 }
 
 // --stamp-status (#1921): a read of the runner's own artifact. Status is data,

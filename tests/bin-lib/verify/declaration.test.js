@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
-const { readDeclaration } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'declaration.js'));
+const { readDeclaration, generatedExemption } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'declaration.js'));
 
 function fakeFs(files) {
   return {
@@ -218,4 +218,14 @@ test('a declaration with no checks.tests is valid — bookkeeping-only rules, ze
   assert.match(named.errors.join('\n'), /rules\[0\].*api/);
   const empty = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { tests: '' }, rules: [] }) }));
   assert.strictEqual(empty.ok, false);
+});
+
+test('generatedExemption exempts a dirty set only when every path matches a declared glob', () => {
+  assert.deepStrictEqual(
+    generatedExemption(['next-env.d.ts', 'dist/b.js', 'dist/a.js', 'dist/a.js'], ['next-env.d.ts', 'dist/**']),
+    ['dist/a.js', 'dist/b.js', 'next-env.d.ts'],
+  );
+  assert.strictEqual(generatedExemption(['dist/a.js', 'src/edit.js'], ['dist/**']), null);
+  assert.strictEqual(generatedExemption([], ['dist/**']), null);
+  assert.strictEqual(generatedExemption(null, ['dist/**']), null);
 });
