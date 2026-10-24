@@ -785,6 +785,8 @@ for (const [label, cmd] of [
   ['a multi-line (( whose shift would hide a later quote', '(( x = 1 +\n1 << 2 ))\necho "\n2\n"; cp /etc/hosts /main/f.js'],
   ['a multi-line $(( whose shift would hide a later cd', 'echo $((1 +\n1 << 2))\ncd /main\n2\ncp /etc/hosts f.js'],
   ['a one-line ((…) …) nested subshell before a reader-fed body', "((cd . && true) | cat)\ncat <<'EOF'\ndon't\nEOF\ncp /etc/hosts /main/f.js"],
+  ['a multi-line (( holding single parens', '(( (1) + (2) +\n1 << 2 ))\ncd /main\n2\ncp /etc/hosts f.js'],
+  ['a multi-line $(( holding single parens', 'echo $(( (1) + (2) +\n1 << 2 ))\ncd /main\n2\ncp /etc/hosts f.js'],
 ]) {
   test(`#4149 m2: ${label} reports the write`, () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'copy', file: '/main/f.js' }]);
