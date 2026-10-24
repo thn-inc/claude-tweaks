@@ -288,7 +288,9 @@ main loop, landed via #1962/#2226/#2228/#2231):
   path-specific basis, unchanged), so every stuck dir's `trackResidue` call converges on the same
   marker. The record's body carries a `<!-- stuck-paths -->…<!-- /stuck-paths -->` block
   (`parseStuckPaths`/`renderStuckPathsBlock`) edited in place via `gh issue edit --body` on each new
-  path (plus a comment, so both the record body and its thread reflect the addition) — never a
+  path — the edit (`withStuckPaths`) replaces only the line-anchored block (both markers on their own
+  lines, CRLF tolerated), keeps every other byte of the body, and appends the block to a non-empty body
+  that lost it (#2724) — plus a comment, so both the record body and its thread reflect the addition — never a
   second `issue create`. The body's fixed text names every skip reason that feeds the record
   (`no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending` (#3297), #3543's
   `pr-not-found` — a stamped `run-state.json` `pr.number` GitHub's structured GraphQL error confirms

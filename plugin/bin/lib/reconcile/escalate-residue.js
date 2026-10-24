@@ -70,7 +70,9 @@ function structurallyStuckMarker() {
 // in place (via `gh issue edit --body`) rather than only ever appended to as
 // a comment, so "the body names all N paths" stays literally true for
 // anyone reading the record, not just its comment thread.
-const STUCK_PATHS_RE = /<!-- stuck-paths -->([\s\S]*?)<!-- \/stuck-paths -->/;
+// #2724: the markers are line-anchored — a human-shaped body can name the marker
+// text in prose or an inline-code span, and an unanchored match would swallow it.
+const STUCK_PATHS_RE = /^<!-- stuck-paths -->\r?$([\s\S]*?)^<!-- \/stuck-paths -->\r?$/m;
 
 function parseStuckPaths(body) {
   const m = STUCK_PATHS_RE.exec(body || '');
@@ -83,6 +85,15 @@ function parseStuckPaths(body) {
 
 function renderStuckPathsBlock(paths) {
   return ['<!-- stuck-paths -->', ...paths.map((p) => `- \`${p}\``), '<!-- /stuck-paths -->'].join('\n');
+}
+
+// #2724: replace only the stuck-paths block of an existing body, so text a human
+// shaped around it survives. A function replacer keeps `$&`/`$1` in a path literal.
+// -> a body with no block gets the block appended; an empty body gets the full render.
+function withStuckPaths(body, paths) {
+  if (STUCK_PATHS_RE.test(body || '')) return body.replace(STUCK_PATHS_RE, () => renderStuckPathsBlock(paths));
+  if (!String(body || '').trim()) return structurallyStuckBody(paths);
+  return `${body.replace(/\s+$/, '')}\n\n${renderStuckPathsBlock(paths)}\n`;
 }
 
 function structurallyStuckBody(paths) {
@@ -283,7 +294,7 @@ function escalateStructurallyStuck({ repo, targetPath, runner = defaultRunner })
         : `Also stuck: \`${targetPath}\``;
 
       try {
-        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(updatedPaths)]);
+        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', withStuckPaths(hit.body, updatedPaths)]);
         runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body', comment]);
         if (isClosed) {
           runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
@@ -341,7 +352,9 @@ function escalateResidue({
 // body's stuck-paths list; only closes once the list empties.
 // -> { status: 'closed'|'path-removed'|'already-closed'|'not-found', number? } |
 //    { status: 'resolution-failed', reason, number? }
-function resolveStructurallyStuck({ repo, targetPath, runner = defaultRunner }) {
+function resolveStructurallyStuck({
+  repo, targetPath, runner = defaultRunner, why,
+}) {
   const marker = structurallyStuckMarker();
   return findHitForResolve({
     repo,
@@ -353,15 +366,17 @@ function resolveStructurallyStuck({ repo, targetPath, runner = defaultRunner }) 
       if (hit.state === 'CLOSED') return { status: 'already-closed', number: hit.number };
       const remaining = existingPaths.filter((p) => p !== targetPath);
       try {
-        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', structurallyStuckBody(remaining)]);
+        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', withStuckPaths(hit.body, remaining)]);
         if (remaining.length === 0) {
           runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
-            `\`${targetPath}\` no longer exists on disk — the last remaining stuck path. Closing.`]);
+            `\`${targetPath}\` ${why || 'no longer exists on disk'} — the last remaining stuck path. Closing.`]);
           runner(['issue', 'close', String(hit.number), '--repo', repo]);
           return { status: 'closed', number: hit.number };
         }
         runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body',
-          `\`${targetPath}\` no longer exists on disk — resolved by other means, removed from the stuck-paths list `
+          (why
+            ? `\`${targetPath}\` ${why} — removed from the stuck-paths list `
+            : `\`${targetPath}\` no longer exists on disk — resolved by other means, removed from the stuck-paths list `)
           + `(${remaining.length} path(s) still stuck).`]);
         return { status: 'path-removed', number: hit.number };
       } catch (err) {
@@ -374,9 +389,9 @@ function resolveStructurallyStuck({ repo, targetPath, runner = defaultRunner }) 
 // -> { status: 'closed'|'already-closed'|'not-found', number? } |
 //    { status: 'resolution-failed', reason, number? }
 function resolveResidue({
-  repo, reason, targetPath, runner = defaultRunner,
+  repo, reason, targetPath, runner = defaultRunner, why,
 }) {
-  if (reason === 'structurally-stuck') return resolveStructurallyStuck({ repo, targetPath, runner });
+  if (reason === 'structurally-stuck') return resolveStructurallyStuck({ repo, targetPath, runner, why });
   const marker = markerFor(reason, targetPath);
   return findHitForResolve({
     repo,
@@ -397,6 +412,6 @@ function resolveResidue({
 
 module.exports = {
   escalateResidue, resolveResidue, residueFingerprint, residueBody, findResidueDuplicate, defaultRunner, errorText,
-  parseStuckPaths, renderStuckPathsBlock, structurallyStuckBody, structurallyStuckMarker,
+  parseStuckPaths, renderStuckPathsBlock, withStuckPaths, structurallyStuckBody, structurallyStuckMarker,
   capDirtyFiles, DIRTY_FILES_CAP,
 };
