@@ -207,13 +207,25 @@ function recordResidueSuccess(target, reason, targetPath) {
   if (batch) { target.cache = nextCache; target.dirty = true; } else { writeCache(target, nextCache); }
 }
 
+// #4202: the gone-path predicate handed to escalate/resolve. The consolidated record is shared
+// by every checkout of the repo, so this checkout can only judge paths inside its own run-dir
+// tree (<root>/.claude-tweaks/pipelines); any other listed path counts as present.
+function ownedPathExists(root) {
+  const pipelinesDir = path.join(root, '.claude-tweaks', 'pipelines');
+  return (p) => {
+    const rel = path.relative(pipelinesDir, p);
+    const inside = rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+    return inside ? fs.existsSync(p) : true;
+  };
+}
+
 // #2724: drop a tracked entry for a path that is no longer stuck, and — only
 // when that entry had already been escalated — take the path off the filed
-// GitHub record. Writes nothing when there is no entry. Unlike
-// pruneResidueFailures (whose path is gone, so it can never be retried), this
-// path still exists — an escalated entry is therefore dropped only once the
-// resolution landed (a throw or any other status keeps it, so the next pass
-// calls this again for the same exempt dir).
+// GitHub record. Writes nothing when there is no entry. An escalated entry is
+// dropped only once the resolution landed (a throw or any other status keeps
+// it). #4202: two callers — #2724's ad-hoc exemption (path still exists, so
+// the next pass calls this again) and archive success (path now gone, so the
+// same pass's pruneResidueFailures retries the resolve once).
 const RESIDUE_RESOLVED_STATUSES = new Set(['closed', 'path-removed', 'not-found', 'already-closed']);
 
 function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveResidue, runner, why } = {}) {
@@ -225,7 +237,7 @@ function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveR
     return { cleared: true, resolved: null };
   }
   let resolved;
-  try { resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why, pathExists: fs.existsSync }); } catch { return { cleared: false, resolved: null }; }
+  try { resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why, pathExists: ownedPathExists(isCacheBatch(target) ? target.root : target) }); } catch { return { cleared: false, resolved: null }; }
   if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) return { cleared: false, resolved };
   recordResidueSuccess(target, reason, targetPath);
   return { cleared: true, resolved };
@@ -250,7 +262,7 @@ function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError,
   try {
     escalate({
       repo: repoSlug, reason, targetPath,
-      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner, pathExists: fs.existsSync,
+      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner, pathExists: ownedPathExists(isCacheBatch(target) ? target.root : target),
     });
   } catch { /* best-effort — never let escalation turn a residue-tracking call into a thrown error */ }
 }
@@ -295,7 +307,7 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
     delete failures[key];
     changed = true;
     if (entry && entry.escalated) {
-      try { resolve({ repo: repoSlug, reason, targetPath, runner, pathExists: fs.existsSync }); } catch { /* best-effort */ }
+      try { resolve({ repo: repoSlug, reason, targetPath, runner, pathExists: ownedPathExists(root) }); } catch { /* best-effort */ }
     }
   }
   if (changed) writeCache(root, { ...cache, residueFailures: failures });

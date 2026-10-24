@@ -232,7 +232,9 @@ whose tracked path no longer exists on disk: a path can never fail or succeed th
 must stop counting toward a fresh escalation streak. An entry that was already `escalated` also
 gets its filed backlog record resolved — `escalate-residue.js`'s `resolveResidue` comments ("no
 longer exists on disk — resolved by other means") and closes it, best-effort (a resolution failure
-still drops the cache entry; the record is left for a human to close manually). Escalation itself
+still drops the cache entry; the record is left for a human to close manually). A successful
+archive also resolves an escalated `structurally-stuck` entry, through `clearResidue` (#4202): it
+is kept on a failed resolve, retried once by the same pass's prune, then dropped. Escalation itself
 (`escalateResidue`) now dedups against **closed** records too, not just open ones: a marker match
 that is already closed gets a comment + reopened rather than a duplicate filing — one record per
 path across its whole open/closed/reopened lifetime.
@@ -330,9 +332,12 @@ main loop, landed via #1962/#2226/#2228/#2231):
   this record. `cache.js`'s per-path consecutive-failure counter (`trackResidue`,
   `RESIDUE_ESCALATE_THRESHOLD`) is unchanged and reason-agnostic already; only the filing/resolving
   side consolidates. Resolving one path (`resolveResidue` under `reason: 'structurally-stuck'`)
-  removes just that path from the shared record's body — the record only actually closes once every
-  path it named has resolved, so fixing directory A never silently closes the record while
-  directory B is still genuinely stuck.
+  removes just that path from the shared record's body — the record only actually closes once its
+  stuck-paths list empties, so fixing directory A never silently closes the record while
+  directory B is still genuinely stuck. Escalate and resolve edits also drop listed paths inside
+  this checkout's own `.claude-tweaks/pipelines/` that are gone from disk (#4202) — paths from
+  other checkouts are never judged, since every checkout of a repo appends to the same record —
+  and the record closes when that converged list empties.
 
 ## gh-absent preflight: accepted MCP gap (#2523)
 
