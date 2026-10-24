@@ -318,7 +318,6 @@ function evaluate(files, allowlist) {
 // reading the sites. A new, changed or removed budget fails the scan until this is updated.
 const ALLOWLIST = {
   'tests/bin-lib/flow/preflight.test.js': { sites: ['Date.now() - t0 < 600'], reason: 'parallelism check: three 150 ms probes must finish under 600 ms, a margin a serial run (450 ms of sleeps) nearly fits; candidate to move to perf/.' },
-  'tests/bin-lib/model-profiles/session-failures.test.js': { sites: ['Date.now() - start < 2000', 'Date.now() - start < 2000'], reason: 'bounded-wait checks: a released lock must be taken before the 2 s timeout, and a never-released lock must degrade near a 50 ms timeout, under 2 s; candidates to move to perf/.' },
   'tests/bin-lib/wrap-up/pack.test.js': { sites: ['wall < 600'], reason: 'parallelism check: eight 200 ms probes must finish under 600 ms, where a serial run takes 1.6 s; candidate to move to perf/.' },
   'tests/reconcile.test.js': { sites: ['elapsed < 2500', 'Date.now() - start < 1000'], reason: 'bounded-time checks: a preflight-gated reconcile under 2.5 s and a pre-exhausted budget under 1 s, both doing no real work with generous margins; candidates to move to perf/.' },
 };
