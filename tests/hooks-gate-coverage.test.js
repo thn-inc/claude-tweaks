@@ -567,6 +567,22 @@ for (const [label, cmd] of [
   });
 }
 
+// ANSI-C quoting honours `\'` inside `$'...'`, which the quote scan does not parse: any `$'` on
+// the opener line keeps the body visible (fail closed, like a `$'` delimiter).
+test("#4149: a process substitution after an ANSI-C $'\\'' quote keeps the body visible", () => {
+  const targets = fileWriteTargets("cat <<EOF | tee $'\\'' >(bash) '\n'\necho x > f.js\nEOF", '/r');
+  assert.ok(targets.some((t) => t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
+});
+
+test("#4149: a data-only body on a line with $'...' is deliberately kept visible (fail closed)", () => {
+  const targets = fileWriteTargets("cat $'a' <<EOF\na > b\nEOF", '/r');
+  assert.ok(targets.some((t) => t.file === path.resolve('/r', 'b')), JSON.stringify(targets));
+});
+
+test('#4149: the word after a bare << is the delimiter, not a copy destination', () => {
+  assert.deepStrictEqual(fileWriteTargets('cp a.js /main/f.js << EOF\nx\nEOF', '/r'), [{ action: 'copy', file: '/main/f.js' }]);
+});
+
 test('#4149: a quoted << argument is a file argument, not a heredoc operator', () => {
   const tee = fileWriteTargets("tee '<<' /main/f.js", '/r');
   assert.ok(tee.some((t) => t.action === 'write' && t.file === '/main/f.js'), JSON.stringify(tee));

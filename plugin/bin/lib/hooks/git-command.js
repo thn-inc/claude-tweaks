@@ -623,6 +623,8 @@ function removeQuotedSpans(str) {
 function lineFeedsOnlyDataReaders(lineText) {
   for (const seg of splitSegments(lineText)) {
     if (seg.trim() === '') continue;
+    // ANSI-C quoting (`$'...'`) honours `\'`, which removeQuotedSpans does not parse: fail closed.
+    if (seg.includes("$'")) return false;
     const unquoted = removeQuotedSpans(seg).split(/\s+/);
     if (unquoted.some((t) => /^[({]/.test(t) || t === '}' || /[<>]\(/.test(t))) return false;
     const { tokens } = tokenize(seg.trim());
