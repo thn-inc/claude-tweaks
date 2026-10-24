@@ -46,6 +46,48 @@ test('lastCommitMs throws on a non-repo directory', () => {
   assert.throws(() => lastCommitMs(tmp('ct-probes-norepo-')));
 });
 
+// A damaged repo that HAS commits must read as a probe error, never as a clean
+// "no commits" (fix round 1).
+function branchRefFile(dir) {
+  return path.join(dir, '.git', git(['-C', dir, 'symbolic-ref', 'HEAD']).trim());
+}
+
+test('lastCommitMs throws on a repo with commits and a corrupted branch ref', () => {
+  const dir = emptyRepo();
+  commit(dir);
+  fs.writeFileSync(branchRefFile(dir), 'garbage\n');
+  assert.throws(() => lastCommitMs(dir));
+});
+
+test('lastCommitMs throws on a repo with commits and its loose objects deleted', () => {
+  const dir = emptyRepo();
+  commit(dir);
+  fs.rmSync(path.join(dir, '.git', 'objects'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '.git', 'objects'));
+  assert.throws(() => lastCommitMs(dir));
+});
+
+test('lastCommitMs throws on a repo with commits and a garbage HEAD', () => {
+  const dir = emptyRepo();
+  commit(dir);
+  fs.writeFileSync(path.join(dir, '.git', 'HEAD'), 'garbage\n');
+  assert.throws(() => lastCommitMs(dir));
+});
+
+test('lastCommitMs throws on a repo with commits whose branch ref file was deleted (reflog survives)', () => {
+  const dir = emptyRepo();
+  commit(dir);
+  fs.rmSync(branchRefFile(dir));
+  assert.throws(() => lastCommitMs(dir));
+});
+
+test('lastCommitMs is null on an orphan branch of a repo that has commits elsewhere', () => {
+  const dir = emptyRepo();
+  commit(dir);
+  git(['-C', dir, 'checkout', '-q', '--orphan', 'orph']);
+  assert.strictEqual(lastCommitMs(dir), null);
+});
+
 test('lockInUse is false for an unlocked linked worktree', () => {
   const { wt } = repoWithLinkedWorktree();
   assert.strictEqual(DEFAULT_PROBES.lockInUse(wt), false);
