@@ -111,7 +111,7 @@ test('3713: step3-lens-dispatch.md names the markdown stub and where the diff en
 });
 
 test('3744 AC: review-effort-derivation.md pipes the record labels on stdin and writes no {ctx-dir}/record-{n}.json', () => {
-  assert.ok(!/>\s*"?\{ctx-dir\}\//.test(EFFORT_DERIVATION), 'no > "{ctx-dir}/ redirect may remain');
+  assert.ok(!/>\s*"?(?:\{ctx-dir\}|\$\{?CTX_DIR\}?)\//.test(EFFORT_DERIVATION), 'no redirect into {ctx-dir}/ or $CTX_DIR/ may remain');
   assert.ok(!EFFORT_DERIVATION.includes('record-{n}.json'), 'no record-{n}.json file may be written or read');
   assert.match(
     EFFORT_DERIVATION,
