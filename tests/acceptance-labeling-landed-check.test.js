@@ -24,7 +24,6 @@ const MERGE_PATH = path.join(ROOT, 'plugin', 'skills', '_shared', 'pr-first-merg
 
 const CONTRACT = read('plugin', 'skills', '_shared', 'acceptance-labeling-landed.md');
 const MERGE = read('plugin', 'skills', '_shared', 'pr-first-merge.md');
-// Tasks 3-4 append tests that use these three.
 const PR_SCAN = read('plugin', 'skills', '_shared', 'github-pr-scan.md');
 const CLOSE_OUT = read('plugin', 'skills', 'dispatch', 'close-out.md');
 const TIDY = read('plugin', 'skills', 'tidy', 'actions-github-issues.md');
@@ -120,35 +119,29 @@ function restaters(files) {
   return Object.keys(files).filter((k) => /run-comment: try-it/.test(files[k]) && /demo:pending/.test(files[k]));
 }
 
+const CLAUSE_HOLDERS = {
+  contract: CONTRACT,
+  'pr-first-merge': MERGE,
+  'close-out': CLOSE_OUT,
+  tidy: TIDY,
+  'github-pr-scan': PR_SCAN,
+};
+const RESTATED_CLAUSE = ' `demo:pending` <!-- run-comment: try-it -->';
+
 test('AC6.1: the live-state clause is defined only in the contract', () => {
-  assert.deepStrictEqual(
-    restaters({ contract: CONTRACT, 'pr-first-merge': MERGE, 'close-out': CLOSE_OUT, tidy: TIDY, 'github-pr-scan': PR_SCAN }),
-    ['contract'],
-  );
+  assert.deepStrictEqual(restaters(CLAUSE_HOLDERS), ['contract']);
 });
 
 test('AC6.1: negative control — a caller restating the clause fails the pin', () => {
   assert.throws(() => assert.deepStrictEqual(
-    restaters({
-      contract: CONTRACT,
-      'pr-first-merge': MERGE,
-      'close-out': CLOSE_OUT + ' `demo:pending` <!-- run-comment: try-it -->',
-      tidy: TIDY,
-      'github-pr-scan': PR_SCAN,
-    }),
+    restaters({ ...CLAUSE_HOLDERS, 'close-out': CLOSE_OUT + RESTATED_CLAUSE }),
     ['contract'],
   ), assert.AssertionError);
 });
 
 test('AC6.1: negative control — a third inline copy in github-pr-scan fails the pin', () => {
   assert.throws(() => assert.deepStrictEqual(
-    restaters({
-      contract: CONTRACT,
-      'pr-first-merge': MERGE,
-      'close-out': CLOSE_OUT,
-      tidy: TIDY,
-      'github-pr-scan': PR_SCAN + ' `demo:pending` <!-- run-comment: try-it -->',
-    }),
+    restaters({ ...CLAUSE_HOLDERS, 'github-pr-scan': PR_SCAN + RESTATED_CLAUSE }),
     ['contract'],
   ), assert.AssertionError);
 });

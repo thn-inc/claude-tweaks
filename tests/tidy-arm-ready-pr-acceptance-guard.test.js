@@ -91,16 +91,9 @@ test('AC4.1: Arm ready PR cites the contract and no longer restates the predicat
 });
 
 test('AC4.2 + AC5.2: tidy keeps its deltas', () => {
-  assert.match(arm, /even when (it|the check) resolves `no run dir`/);
+  // The rest of the deltas are pinned by GUARD_PINS, HELD_PINS and the tests below.
   assert.match(arm, /A `landed` outcome continues to Step 3 below\. Otherwise do not run Step 3/);
-  assert.match(arm, /never run labeling from a tidy sweep/);
   assert.match(arm, /not armed — acceptance labeling not landed \(\{reason\}\)/);
-  assert.match(arm, /close-out stops on the same missing run dir/);
-  assert.match(arm, /\/claude-tweaks:demo #\{record\}/);
-  assert.match(arm, /--status SKIP/);
-  assert.match(arm, /Never put an unvalidated marker value/);
-  assert.match(arm, /is held, not armed/);
-  assert.match(arm, /housekeeping-marker flavor .{0,120}skips this check/);
   // AC5.4: a landed PR still reaches Step 3.
   assert.match(arm, /run `_shared\/pr-first-merge\.md`'s Step 3/);
 });
