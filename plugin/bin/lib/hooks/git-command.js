@@ -89,9 +89,14 @@ function stripQuotes(s) {
 // `'$WT/a.js'` and `"$WT/a.js"` are indistinguishable post-tokenize, and the
 // substitution step would wrongly expand the single-quoted (never-expanded)
 // form, fabricating a target real bash would never produce for that command.
+//
+// `leadQuoted[i]` is true when `tokens[i]` BEGINS with a quoted span: a quoted `'<<'`
+// is a literal argument, whereas an unquoted `<<'EOF'` is a heredoc operator with a
+// quoted delimiter (dropHeredocOperators tells them apart by it).
 function tokenize(seg) {
   const out = [];
   const singleQuoted = [];
+  const leadQuoted = [];
   const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
   let m;
   let prevEnd = -1;
@@ -104,10 +109,11 @@ function tokenize(seg) {
     } else {
       out.push(val);
       singleQuoted.push(isSQ);
+      leadQuoted.push(m[3] === undefined);
     }
     prevEnd = re.lastIndex;
   }
-  return { tokens: out, singleQuoted };
+  return { tokens: out, singleQuoted, leadQuoted };
 }
 
 // Global git flags that consume the NEXT token as a value.
@@ -239,7 +245,7 @@ function forEachCommandSegment(command, cwd, handler) {
   let effCwd = cwd || '.'; // string, or null meaning UNKNOWN
   const vars = new Map(); // name -> literal value, same-command only, no chaining
   for (const seg of splitSegments(command)) {
-    const { tokens: rawT, singleQuoted } = tokenize(seg.trim());
+    const { tokens: rawT, singleQuoted, leadQuoted } = tokenize(seg.trim());
     if (!rawT.length) continue;
     if (updateAssignment(vars, rawT)) continue;
     const t = substituteVars(rawT, vars, singleQuoted);
@@ -258,7 +264,7 @@ function forEachCommandSegment(command, cwd, handler) {
       effCwd = resolveCd(effCwd, t[cdLead + 1]);
       continue;
     }
-    handler(t, effCwd);
+    handler(t, effCwd, leadQuoted);
   }
 }
 
@@ -578,6 +584,30 @@ function programNames(tok) {
   return [bySlash, byBackslash].map((n) => n.replace(/\.exe$/i, '').toLowerCase());
 }
 
+// `str` with its quoted spans removed, read the way splitSegments reads quotes: outside
+// quotes and inside double quotes a backslash escapes the next character (an escaped
+// quote opens or closes nothing), and single quotes have no escapes. An escaped pair
+// outside quotes is kept as written. An unterminated span is kept, so text the shell
+// might still run stays visible.
+function removeQuotedSpans(str) {
+  let out = '';
+  let span = '';
+  let quote = null;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (quote === null) {
+      if (ch === '\\' && i + 1 < str.length) { out += ch + str[i + 1]; i += 1; continue; }
+      if (ch === '"' || ch === "'") { quote = ch; span = ch; continue; }
+      out += ch;
+      continue;
+    }
+    span += ch;
+    if (quote === '"' && ch === '\\' && i + 1 < str.length) { span += str[i + 1]; i += 1; continue; }
+    if (ch === quote) { quote = null; span = ''; }
+  }
+  return out + span;
+}
+
 // True when every command on the opener's logical line is a known data reader, so
 // the body it receives is data. Per segment: a group or process-substitution token
 // (`(`, `{`, `}`, `>(`, `<(`) fails (its consumer may sit on a later line or inside
@@ -593,7 +623,7 @@ function programNames(tok) {
 function lineFeedsOnlyDataReaders(lineText) {
   for (const seg of splitSegments(lineText)) {
     if (seg.trim() === '') continue;
-    const unquoted = seg.replace(/"[^"]*"|'[^']*'/g, '').split(/\s+/);
+    const unquoted = removeQuotedSpans(seg).split(/\s+/);
     if (unquoted.some((t) => /^[({]/.test(t) || t === '}' || /[<>]\(/.test(t))) return false;
     const { tokens } = tokenize(seg.trim());
     let p = 0;
@@ -947,10 +977,12 @@ function inPlaceEditTargets(rest, valueFlags, scriptFlags) {
 
 // Drops heredoc (`<<EOF`, `<<-EOF`) and here-string (`<<<x`) operator tokens, and the
 // word after a bare `<<`/`<<-`/`<<<`, so they are not read as a write shape's files.
-function dropHeredocOperators(tokens) {
+// A token that begins with a quoted span (`'<<'`) is a literal argument, not an
+// operator, and stays (`leadQuoted`, from tokenize).
+function dropHeredocOperators(tokens, leadQuoted) {
   const out = [];
   for (let i = 0; i < tokens.length; i += 1) {
-    if (!tokens[i].startsWith('<<')) { out.push(tokens[i]); continue; }
+    if (!tokens[i].startsWith('<<') || (leadQuoted && leadQuoted[i])) { out.push(tokens[i]); continue; }
     if (/^<<<?-?$/.test(tokens[i])) i += 1;
   }
   return out;
@@ -958,12 +990,12 @@ function dropHeredocOperators(tokens) {
 
 function fileWriteTargets(command, cwd) {
   const targets = [];
-  forEachCommandSegment(stripHeredocBodies(command), cwd, (tokens, effCwd) => {
+  forEachCommandSegment(stripHeredocBodies(command), cwd, (tokens, effCwd, leadQuoted) => {
     // Redirection has no command word, so it runs for every segment
     // regardless of t[0] — never gated by the WRITE_SHAPES check below (#3080).
     for (const file of redirectWriteTargets(tokens, effCwd)) targets.push({ action: 'write', file });
     // A heredoc/here-string operator is input, never a file the shape writes.
-    const t = dropHeredocOperators(tokens);
+    const t = dropHeredocOperators(tokens, leadQuoted);
     if (!WRITE_SHAPES.includes(t[0])) return;
     if (t[0] === 'tee') {
       // tee genuinely writes to EVERY non-flag argument, not just the

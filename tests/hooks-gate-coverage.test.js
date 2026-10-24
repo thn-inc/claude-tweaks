@@ -527,6 +527,9 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['git bisect run sh (git running a shell)', 'git bisect run sh <<EOF\necho x > f.js\nEOF', f],
     ['git rebase -x sh (git running a shell)', 'git rebase -x sh HEAD~1 <<EOF\necho x > f.js\nEOF', f],
     ['a path-qualified relative program (./cat)', './cat <<EOF\necho x > f.js\nEOF', f],
+    ['a path-qualified relative wrapper (./sudo node)', './sudo node x.js <<EOF\necho x > f.js\nEOF', f],
+    ['a path-qualified relative wrapper (./env node)', './env node x.js <<EOF\necho x > f.js\nEOF', f],
+    ['a program path with a variable directory (/$D/cat)', '/$D/cat <<EOF\necho x > f.js\nEOF', f],
   ];
   for (const [label, cmd, expected] of keepCases) {
     test(`#4149: a body fed to ${label} stays visible`, () => {
@@ -552,6 +555,27 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     });
   }
 }
+
+// An escaped quote opens no span, so the process substitution after it is still seen as a group.
+for (const [label, cmd] of [
+  ['an escaped single quote', "cat <<EOF | tee \\' >(bash) \\'\necho x > f.js\nEOF"],
+  ['an escaped double quote', 'cat <<EOF | tee \\" >(bash) \\"\necho x > f.js\nEOF'],
+]) {
+  test(`#4149: a process substitution after ${label} keeps the body visible`, () => {
+    const targets = fileWriteTargets(cmd, '/r');
+    assert.ok(targets.some((t) => t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
+  });
+}
+
+test('#4149: a quoted << argument is a file argument, not a heredoc operator', () => {
+  const tee = fileWriteTargets("tee '<<' /main/f.js", '/r');
+  assert.ok(tee.some((t) => t.action === 'write' && t.file === '/main/f.js'), JSON.stringify(tee));
+  assert.deepStrictEqual(fileWriteTargets("cp a.js '<<' /main/f.js", '/r'), [{ action: 'copy', file: '/main/f.js' }]);
+  const dq = fileWriteTargets('tee "<<x" /main/f.js', '/r');
+  assert.ok(dq.some((t) => t.action === 'write' && t.file === '/main/f.js'), JSON.stringify(dq));
+  // An unquoted operator with a quoted delimiter is still a heredoc operator.
+  assert.deepStrictEqual(fileWriteTargets("tee out.txt <<'EOF'\na > b\nEOF", '/r'), [{ action: 'write', file: path.resolve('/r', 'out.txt') }]);
+});
 
 test('#4149: a shell loop on the opener line keeps its body (deliberate fail-closed tradeoff)', () => {
   const targets = fileWriteTargets('while read l; do echo "$l"; done <<EOF\na > b\nEOF', '/r');
