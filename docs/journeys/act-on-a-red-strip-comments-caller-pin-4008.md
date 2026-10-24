@@ -23,7 +23,7 @@ files:
 - **Should feel:** Pinpointed. The message names the exact stems to add or remove, and which of the two lists is stale.
 - **Should understand:**
   - A caller is named by its test-file stem: the basename with `.test.js` dropped, then any trailing `-conformance` dropped (`tests/path-guard-conformance.test.js` → `path-guard`, `tests/bin-lib/console/backfill-cli.test.js` → `backfill-cli`).
-  - The tree side counts any `tests/**` `.js` file whose code (lines not starting with `//` or `*`) has a relative `require(...)` that resolves to `tests/helpers/strip-comments.js`. The helper itself and its own unit suite, `tests/helpers-strip-comments.test.js`, are excluded on purpose.
+  - The tree side counts any `tests/**` `.js` file whose code (lines not starting with `//` or `*`, minus any trailing `// …` comment) has a relative `require(...)` that resolves to `tests/helpers/strip-comments.js`. The helper itself and its own unit suite, `tests/helpers-strip-comments.test.js`, are excluded on purpose.
   - Both lists are checked, and each in both directions, so a fix to one list alone leaves the other test red.
 - **Red flags:**
   - Only one of the two tests is red. The other list was already updated, or was edited differently. Make both lists name the same stems.
