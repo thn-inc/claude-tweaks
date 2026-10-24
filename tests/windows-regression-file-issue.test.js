@@ -759,6 +759,7 @@ test('#3723: a one-element path with no top-level block still finds the leaf at 
   const region = ['# Subtest: A', subBlock('works', 'a-detail'), 'not ok 1 - A'].join('\n');
   const body = filedBody(withAttr(ent([['works']]), region));
   assert.ok(body.includes('a-detail'));
+  assert.ok(body.includes('attributed as new'), 'quoted as the attributed test, not the first-match fallback');
 });
 
 test('#3723: a same-named test in another file is never quoted for this file', () => {
