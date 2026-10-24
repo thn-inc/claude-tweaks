@@ -506,6 +506,8 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
   assert.deepStrictEqual(fileWriteTargets('echo "<<EOF"\necho x > f.js', '/r'), expected);
   assert.deepStrictEqual(fileWriteTargets('echo "<<EOF x"\necho x > f.js', '/r'), expected, 'a complete word inside double quotes is still not an opener');
   assert.deepStrictEqual(fileWriteTargets('echo hi # <<EOF\necho x > f.js', '/r'), expected);
+  // #4149 round 3: with a closing `EOF` line, only the comment rule keeps `echo x > f.js` out of a body.
+  assert.deepStrictEqual(fileWriteTargets('echo hi # <<EOF\necho x > f.js\nEOF', '/r'), expected);
 });
 
 // #4149: a body is stripped only when the opener line feeds it to a known data reader
@@ -887,6 +889,10 @@ for (const [label, cmd] of [
     ['a single-quoted ) inside "$( )"', "cd /main && echo \"$(echo ')\"&\"')\" && cp a f.js", [main('copy')]],
     ['a comment holding a quote inside "$( )"', 'cd /main && echo "$(echo a # say "hi\n)" && cp a f.js', [main('copy')]],
     ['an ANSI-C quote inside "$( )", which falls back to the plain quote end', "cd /main && echo \"$(echo $'a\\'b')\" && cp a f.js", [main('copy')]],
+    ['a quoted ) inside "$( )", in a fresh quoting context', 'cd /main && echo "$(echo ")")" && cp a f.js', [main('copy')]],
+    ['a subshell inside "$( )", whose ) closes only it', 'cd /main && echo "$( (true) ; echo "&" )" && cp a f.js', [main('copy')]],
+    ['a quoted } inside a ${ } default', 'x=; cd /main && echo "${x:-"a}b"}" && cp a f.js', [main('copy')]],
+    ['a $(( )) shift across a line, then a "$( )"', 'cd /main && echo "$((1<<2 +\n3)) $(echo "&")" && cp a f.js', [main('copy')]],
     // One pin per scanner seam.
     ['a ; inside quotes inside "$( )" (segmentSpans)', 'cp "$(echo "a;b" | tr -d ";b")" /main/f.js', [main('copy')]],
     ['a ; inside an unquoted ${ } (segmentSpans)', "x='a;'; cp ${x//;/} /main/f.js", [main('copy')]],
@@ -903,12 +909,13 @@ for (const [label, cmd] of [
     assert.ok(targets.some((t) => t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
   });
 
-  // The reader check reads a quoted "$( )" whole, so data bodies still strip.
+  // The reader check reads a quoted "$( )" and an unquoted ${ } whole, so data bodies still strip.
   for (const [label, cmd] of [
-    ['an & inside it (splitOnLoneAmpersand)', "cat <<'EOF' | jq \"$(echo \"a&b\")\"\na > b\nEOF"],
-    ['a ( inside it (removeQuotedSpans)', "cat <<'EOF' | jq \"$(echo \"(a)\")\"\na > b\nEOF"],
+    ['a quoted "$( )" with an & inside (splitOnLoneAmpersand)', "cat <<'EOF' | jq \"$(echo \"a&b\")\"\na > b\nEOF"],
+    ['a quoted "$( )" with a ( inside (removeQuotedSpans)', "cat <<'EOF' | jq \"$(echo \"(a)\")\"\na > b\nEOF"],
+    ['an unquoted ${ } with an & inside (splitOnLoneAmpersand)', "cat <<'EOF' | jq ${x//&/y}\na > b\nEOF"],
   ]) {
-    test(`#4149 nesting: a reader whose argument is a quoted "$( )" with ${label} still strips its body`, () => {
+    test(`#4149 nesting: a reader whose argument is ${label} still strips its body`, () => {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), []);
     });
   }
