@@ -9,6 +9,7 @@ const { execFileSync } = require('child_process');
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'console-resolve.js');
 const PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..', 'plugin');
 const { run, ghReadGrants, checkPatchStack } = require(CLI);
+const { gitEnv } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', writePolicy = true, runConfig = null, consoleJson = null } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cli-')));
@@ -577,7 +578,7 @@ test('AC3.6: a re-rendered console whose every unresolved item is missing prints
 // #3679: the stacked check (#3290) is wired into resolveAll via checkPatchStack(cwd()). Both
 // patches are real `git diff` captures of f.txt in throwaway fixture repos — never hand-typed hunks.
 const STACK_BASE = ['l1', 'l2', 'l3', 'l4', 'anchor', 'a1', 'a2', 'a3'].join('\n') + '\n';
-const STACK_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+const STACK_ENV = gitEnv();
 
 function captureInsertAboveAnchor(tag) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-capture-'));

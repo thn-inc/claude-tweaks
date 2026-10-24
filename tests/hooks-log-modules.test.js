@@ -402,7 +402,7 @@ test('#1928 AC5: transcript_path alone appends no contract-violation event', () 
 // #2036: SubagentStop's agent_transcript_path identical to the same event's
 // own transcript_path is a known-unreliable attribution (claude-code#27755) —
 // the dispatching session's own async-wait status narration
-// (agent-tool-async-wait-pattern.md: status message, no tool call, while
+// (plugin/skills/_shared/dispatch-waiting.md: status message, no tool call, while
 // awaiting an Agent-tool dispatch's async notification), not a distinct
 // subagent's final reply. AC1: no contract-violation event or systemMessage.
 test('#2036 AC1: agent_transcript_path identical to transcript_path appends no contract-violation event', () => {

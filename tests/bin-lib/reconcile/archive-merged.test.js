@@ -18,7 +18,7 @@ const {
   isClosedSlugStuck, recordNumbersFromSlug, refusal, unclosedRecords, runRecordSet, inFlightRecords,
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
-const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure } = require('../../../plugin/bin/lib/reconcile/cache');
+const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure, cachePath } = require('../../../plugin/bin/lib/reconcile/cache');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
 const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
 const { readText } = require('../../helpers/read-skill');
@@ -1900,6 +1900,115 @@ test('trackStuckSkip: never escalates an ordinary in-flight dir, no matter how m
   }
   assert.equal(calls.length, 0, 'an ordinary mid-flight dir must never be escalated by this path');
   assert.deepEqual(listResidueFailures(root), [], 'a non-stuck dir must not even enter the residue counter');
+});
+
+// --- #2724: a linked-worktree ad-hoc dir is exempt from structurally-stuck at
+// no-branch/no-worktree/no-pr (its normal state), and its escalated entry is cleared ---
+
+// run-state.json is written FIRST, then the dir is backdated — writing a file
+// into the dir moves its mtime and would defeat the TTL.
+function mkAdHocRunDir({ ageMs, worktree, basename = '2026-10-17T081451-adhoc-standalone' } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-adhoc-'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', basename);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({
+    status: 'interrupted',
+    worktree: typeof worktree === 'function' ? worktree(root) : (worktree || path.join(root, '.claude/worktrees/gone')),
+  }));
+  const backdated = new Date(Date.now() - ageMs);
+  fs.utimesSync(dir, backdated, backdated);
+  return { root, dir };
+}
+
+test('#2724 AC1.1 AC1.2: an ad-hoc dir past 7 days at no-branch with an unregistered worktree classifies none', () => {
+  const { dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2 });
+  assert.equal(classifyRunDir({ dir, skipReason: 'no-branch', kinds: ['structurally-stuck'] }).kind, 'none');
+  for (const r of ['no-worktree', 'no-pr']) assert.equal(isStructurallyStuck(dir, r), false);
+});
+
+test('#2724 AC2.1 AC2.2: an ad-hoc dir at a non-intrinsic tracked reason still classifies structurally-stuck', () => {
+  const { dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2 });
+  for (const r of ['merged-partial', 'pr-not-found']) {
+    assert.equal(classifyRunDir({ dir, skipReason: r, kinds: ['structurally-stuck'] }).kind, 'structurally-stuck', r);
+  }
+});
+
+test('#2724 ad-hoc exemption: a dir stamped with the main checkout as its worktree still classifies structurally-stuck', () => {
+  const { dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2, worktree: (root) => root });
+  assert.equal(isStructurallyStuck(dir, 'no-branch'), true);
+});
+
+test('#2724 ad-hoc exemption: a main-checkout stamp reached through a symlinked path still classifies structurally-stuck', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, () => {
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-adhoc-real-'));
+  const alias = `${real}-alias`;
+  fs.symlinkSync(real, alias, 'dir');
+  const dir = path.join(alias, '.claude-tweaks', 'pipelines', '2026-10-17T081451-adhoc-standalone');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'interrupted', worktree: fs.realpathSync(real) }));
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(dir, backdated, backdated);
+  assert.equal(isStructurallyStuck(dir, 'no-branch'), true);
+});
+
+test('#2724 ad-hoc exemption: a linked worktree that still exists on disk is exempt', () => {
+  const { dir } = mkAdHocRunDir({
+    ageMs: STRUCTURALLY_STUCK_TTL_MS * 2,
+    worktree: (root) => { const wt = path.join(root, '.claude', 'worktrees', 'live'); fs.mkdirSync(wt, { recursive: true }); return wt; },
+  });
+  assert.equal(isStructurallyStuck(dir, 'no-branch'), false);
+});
+
+test('#2724 ad-hoc exemption: a non-ad-hoc dir at no-branch still classifies structurally-stuck', () => {
+  const { dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2, basename: '2026-10-17T081451-record-1' });
+  assert.equal(isStructurallyStuck(dir, 'no-branch'), true);
+});
+
+test('#2724 trackStuckSkip: an exempted ad-hoc dir clears its escalated entry and resolves it with the ad-hoc reason text', () => {
+  const { root, dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2 });
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck at no-branch' });
+  assert.equal(listResidueFailures(root)[0].escalated, true);
+  const escalated = [];
+  const resolved = [];
+  trackStuckSkip(root, 'o/r', dir, 'no-branch', {
+    escalate: (a) => { escalated.push(a); },
+    resolve: (a) => { resolved.push(a); return { status: 'path-removed' }; },
+  });
+  assert.equal(escalated.length, 0);
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].reason, 'structurally-stuck');
+  assert.equal(resolved[0].targetPath, dir);
+  assert.match(resolved[0].why, /ad-hoc/);
+  assert.deepEqual(listResidueFailures(root), []);
+});
+
+test('#2724 trackStuckSkip: dryRun on an exempted ad-hoc dir neither resolves nor clears its escalated entry', () => {
+  const { root, dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2 });
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck at no-branch' });
+  const escalated = [];
+  const resolved = [];
+  trackStuckSkip(root, 'o/r', dir, 'no-branch', {
+    escalate: (a) => { escalated.push(a); },
+    resolve: (a) => { resolved.push(a); },
+    dryRun: true,
+  });
+  assert.equal(escalated.length, 0);
+  assert.equal(resolved.length, 0);
+  const entries = listResidueFailures(root);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].escalated, true);
+});
+
+test('#2724 trackStuckSkip: an exempted ad-hoc dir with no entry writes nothing and resolves nothing', () => {
+  const { root, dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2 });
+  const escalated = [];
+  const resolved = [];
+  for (let i = 0; i < 3; i++) {
+    trackStuckSkip(root, 'o/r', dir, 'no-branch', { escalate: (a) => { escalated.push(a); }, resolve: (a) => { resolved.push(a); } });
+  }
+  assert.equal(escalated.length, 0);
+  assert.equal(resolved.length, 0);
+  assert.deepEqual(listResidueFailures(root), []);
+  assert.equal(fs.existsSync(cachePath(root)), false);
 });
 
 // One real archiveMerged() pass, well under the 3-pass escalation threshold

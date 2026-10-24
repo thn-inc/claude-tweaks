@@ -7,7 +7,7 @@ const path = require('path');
 const {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS,
   RESIDUE_ESCALATE_THRESHOLD, recordResidueFailure, recordResidueSuccess, listResidueFailures,
-  trackResidue, pruneResidueFailures,
+  trackResidue, pruneResidueFailures, clearResidue, beginCacheBatch, commitCacheBatch,
 } = require('../../../plugin/bin/lib/reconcile/cache');
 
 function tmpRoot() {
@@ -343,4 +343,76 @@ test('pruneResidueFailures: forwards an injected `runner` into the resolve call'
   pruneResidueFailures(root, 'o/r', { resolve, runner });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].runner, runner);
+});
+
+// --- #2724: clearResidue drops an escalated entry only once its GitHub
+// resolution actually landed, so a failed resolve is retried on the next pass.
+
+function escalatedEntryRoot() {
+  const root = tmpRoot();
+  const p = path.join(root, 'adhoc-dir');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    recordResidueFailure(root, 'structurally-stuck', p, { lastError: 'stuck at no-pr' });
+  }
+  assert.equal(listResidueFailures(root)[0].escalated, true);
+  return { root, p };
+}
+
+test('#2724 clearResidue: an escalated entry whose resolve returns resolution-failed is kept for the next pass', () => {
+  const { root, p } = escalatedEntryRoot();
+  const resolve = () => ({ status: 'resolution-failed', reason: 'boom' });
+  const result = clearResidue(root, 'o/r', 'structurally-stuck', p, { resolve });
+  assert.equal(result.cleared, false);
+  assert.deepEqual(result.resolved, { status: 'resolution-failed', reason: 'boom' });
+  assert.equal(listResidueFailures(root).length, 1);
+});
+
+test('#2724 clearResidue: an escalated entry whose resolve throws is kept', () => {
+  const { root, p } = escalatedEntryRoot();
+  const resolve = () => { throw new Error('gh not found'); };
+  const result = clearResidue(root, 'o/r', 'structurally-stuck', p, { resolve });
+  assert.deepEqual(result, { cleared: false, resolved: null });
+  assert.equal(listResidueFailures(root).length, 1);
+});
+
+for (const status of ['closed', 'path-removed', 'not-found', 'already-closed']) {
+  test(`#2724 clearResidue: an escalated entry is cleared when resolve returns ${status}`, () => {
+    const { root, p } = escalatedEntryRoot();
+    const resolve = () => ({ status });
+    const result = clearResidue(root, 'o/r', 'structurally-stuck', p, { resolve });
+    assert.deepEqual(result, { cleared: true, resolved: { status } });
+    assert.deepEqual(listResidueFailures(root), []);
+  });
+}
+
+test('#2724 clearResidue: an unescalated entry is cleared without calling resolve', () => {
+  const root = tmpRoot();
+  const p = path.join(root, 'adhoc-dir');
+  recordResidueFailure(root, 'structurally-stuck', p, { lastError: 'x' });
+  let called = 0;
+  const result = clearResidue(root, 'o/r', 'structurally-stuck', p, { resolve: () => { called++; return { status: 'closed' }; } });
+  assert.deepEqual(result, { cleared: true, resolved: null });
+  assert.equal(called, 0);
+  assert.deepEqual(listResidueFailures(root), []);
+});
+
+test('#2724 clearResidue: no entry returns cleared:false and writes nothing', () => {
+  const root = tmpRoot();
+  const result = clearResidue(root, 'o/r', 'structurally-stuck', path.join(root, 'nope'), { resolve: () => { throw new Error('must not run'); } });
+  assert.deepEqual(result, { cleared: false, resolved: null });
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', CACHE_FILENAME)), false);
+});
+
+test('#2724 clearResidue: through a cache batch, the entry is dropped on commit only after a successful resolve', () => {
+  const { root, p } = escalatedEntryRoot();
+  const failing = beginCacheBatch(root);
+  clearResidue(failing, 'o/r', 'structurally-stuck', p, { resolve: () => ({ status: 'resolution-failed' }) });
+  commitCacheBatch(failing);
+  assert.equal(listResidueFailures(root).length, 1);
+
+  const succeeding = beginCacheBatch(root);
+  const result = clearResidue(succeeding, 'o/r', 'structurally-stuck', p, { resolve: () => ({ status: 'path-removed' }) });
+  assert.equal(result.cleared, true);
+  commitCacheBatch(succeeding);
+  assert.deepEqual(listResidueFailures(root), []);
 });
