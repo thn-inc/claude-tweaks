@@ -46,8 +46,8 @@ patch is `git apply --check`ed first — stacked on the earlier patches in apply
 no longer applies, never applied blind, per `_shared/staged-patch.md`; an unrecognized staged
 prefix lands in Pending review as `pending — unmapped-prefix`, never auto-approved; an
 `sdd-ruling-*` item whose staged header does not show it safe lands as
-`pending — sdd-ruling-deferral-no-defer-reason` or `pending — sdd-ruling-unclassified` (the
-`sdd-ruling-*` bullet below); a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
+`pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-unclassified`, or
+`pending — sdd-ruling-unreadable` (the `sdd-ruling-*` bullet below); a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
 before any prefix rule runs and resolves to `refused` — those rows are in the CLI's table like
 every other row, and a `refused` item is never applied, at any tier, per `refused-proposals.md`.
 The CLI also computes the merge half with both carve-outs (`merge.resolution` = `merge` |
@@ -102,10 +102,11 @@ procedure — no row is left unrouted:
   deferral (`Defers: yes`, or any `Defer-reason:` header line) with exactly one `Defer-reason:`
   header line whose bare value is in `_shared/deferral-gate.md`'s vocabulary. A deferral without a
   valid reason resolves `pending — sdd-ruling-deferral-no-defer-reason`; a header with no `Defers:`
-  line, more than one, a value other than `yes`/`no`, or an unreadable file resolves
-  `pending — sdd-ruling-unclassified`, since the console cannot tell whether it defers. Neither is
-  ever auto-ratified, and the reconciler's `consoleAutoResolve` path withholds the same rows
-  (`_shared/console-execution.md`).
+  line, more than one, or a value other than `yes`/`no` resolves `pending — sdd-ruling-unclassified`,
+  since the console cannot tell whether it defers; a staged file that cannot be read at all resolves
+  `pending — sdd-ruling-unreadable` (the reconciler's gap names why: `no-staged-path`, `path-rejected`,
+  `not-found`, or `read-failed`). None is ever auto-ratified, and the reconciler's
+  `consoleAutoResolve` path withholds the same rows (`_shared/console-execution.md`).
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
   runs first; on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
   `MEMORY.md` index line).

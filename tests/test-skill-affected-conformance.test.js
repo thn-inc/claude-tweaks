@@ -46,7 +46,8 @@ test('verification.md holds the re-verify scoping table with every site row (#19
   const v = read('plugin/skills/test/verification.md');
   const table = v.slice(v.indexOf('### Re-verify scoping'));
   for (const row of [
-    ['Build Common Step 5', 'always full'],
+    ['Build Common Step 5', '| full (impact-selected via'],
+    ['Build Common Step 5', '(impact-selection.md)'],
     ["auto-inserted `test`", 'scoped against `fullSha`'],
     ['Polish re-verify', 'scoped'],
     ['Review-fix re-verify', 'scoped'],

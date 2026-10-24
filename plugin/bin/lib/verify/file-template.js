@@ -4,7 +4,9 @@
 // shell. A plain path substitutes byte-for-byte; any other path is quoted for
 // the platform's shell or refused with a named reason. The template is never
 // inspected for a plain path, and the value is spliced with split/join so a
-// `$&` in a path is not a replacement pattern.
+// `$&` in a path is not a replacement pattern. The placeholder is `{file}`
+// unless the caller names another `token` (#4024: the impact subset's
+// `{files}` list path); every rule below applies to that token the same way.
 //
 // Why the refusals exist: on win32, cmd.exe expands `%VAR%` even inside double
 // quotes, and `"`/`!` cannot be escaped there, so such a path cannot be quoted
@@ -31,19 +33,19 @@ function describePath(file) {
   return file.replace(CONTROL_CHARS, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
 }
 
-function substituteFile(template, file, { platform = process.platform } = {}) {
+function substituteFile(template, file, { platform = process.platform, token = '{file}' } = {}) {
   if (file.startsWith('-')) return { ok: false, reason: 'leading-dash' };
-  if (PLAIN_PATH.test(file)) return { ok: true, command: template.split('{file}').join(file) };
+  if (PLAIN_PATH.test(file)) return { ok: true, command: template.split(token).join(file) };
   if (CONTROL_CHAR.test(file)) return { ok: false, reason: 'control-character' };
   if (platform === 'win32') {
     if (/["%!]|\\$/.test(file)) return { ok: false, reason: 'cmd-unquotable' };
-    const bare = template.split('"{file}"').join('{file}');
+    const bare = template.split(`"${token}"`).join(token);
     if (/["'^]/.test(bare)) return { ok: false, reason: 'template-quotes' };
-    return { ok: true, command: bare.split('{file}').join(`"${file}"`) };
+    return { ok: true, command: bare.split(token).join(`"${file}"`) };
   }
-  const bare = template.split('"{file}"').join('{file}').split("'{file}'").join('{file}');
-  if (/["'`\\]/.test(bare) || bare.includes('${file}')) return { ok: false, reason: 'template-quotes' };
-  return { ok: true, command: bare.split('{file}').join(`'${file.replace(/'/g, "'\\''")}'`) };
+  const bare = template.split(`"${token}"`).join(token).split(`'${token}'`).join(token);
+  if (/["'`\\]/.test(bare) || bare.includes(`$${token}`)) return { ok: false, reason: 'template-quotes' };
+  return { ok: true, command: bare.split(token).join(`'${file.replace(/'/g, "'\\''")}'`) };
 }
 
 module.exports = { substituteFile, describePath };

@@ -818,11 +818,35 @@ test('build-deviation-unaffected: a non-ruling Pending-review item with no Defer
   assert.strictEqual(item.resolution, 'apply');
 });
 
-test('sddRulingDeferralReason: unreadable text is unclassified, and Defers: matches case-insensitively (#3880)', () => {
+test('AC1.1 AC2.1: SDD_RULING_REASONS gains UNREADABLE; sddRulingDeferralReason(null|undefined) stays unclassified, and Defers: matches case-insensitively (#4049)', () => {
   assert.strictEqual(sddRulingDeferralReason(null), 'sdd-ruling-unclassified');
   assert.strictEqual(sddRulingDeferralReason(undefined), 'sdd-ruling-unclassified');
   assert.strictEqual(sddRulingDeferralReason('Defers: YES\nDefer-reason: blocked-dependency\n\nx'), null);
-  assert.deepStrictEqual(SDD_RULING_REASONS, { NO_DEFER_REASON: 'sdd-ruling-deferral-no-defer-reason', UNCLASSIFIED: 'sdd-ruling-unclassified' });
+  assert.deepStrictEqual(SDD_RULING_REASONS, {
+    NO_DEFER_REASON: 'sdd-ruling-deferral-no-defer-reason',
+    UNCLASSIFIED: 'sdd-ruling-unclassified',
+    UNREADABLE: 'sdd-ruling-unreadable',
+  });
+});
+
+test('AC6.1 AC2.2: an sdd-ruling-*.md whose read throws resolves pending — sdd-ruling-unreadable, even when its content would ratify (#4049)', () => {
+  const runDir = fixture({ staged: { 'sdd-ruling-1.md': RULING('Defers: no\n') }, headers: [7] });
+  const failing = deps({
+    readFile: (p) => {
+      if (path.basename(p) === 'sdd-ruling-1.md') { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }
+      return fs.readFileSync(p, 'utf8');
+    },
+  });
+  const item = resolveAll({ runDir, policy: 'console-auto', deps: failing }).items.find((i) => i.id === 'sdd-ruling-1.md');
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-unreadable');
+});
+
+test('AC6.2: control — a readable ruling with no Defers: line, and an sdd-ruling-* name readSnapshot never reads, both stay unclassified (#4049)', () => {
+  assert.strictEqual(resolveStaged('sdd-ruling-1.md', RULING('')).reason, 'sdd-ruling-unclassified');
+  const item = resolveStaged('sdd-ruling-1.txt', RULING('Defers: no\n'));
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-unclassified');
 });
 
 test('defers-value-other-than-yes-no-is-unclassified: a Defers: value outside yes/no fails closed, reason or not (#3880)', () => {

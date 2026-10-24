@@ -198,15 +198,15 @@ body or no member grants supplied) withholds with `{ member: null, reason: 'gran
 (#4048) — an absent context never reads as `null`.
 
 **Third narrower exception (#3880):** an `isRulingRow: true` item named in the ready result's
-`rulingGateGaps` (`[{ id, reason }]`, computed in code by `decideConsoleExecute` from each ruling
-row's staged file, read via the item's `stagedPath` — `_shared/console-on-pr.md`) is **not**
+`rulingGateGaps` (`[{ id, reason, detail? }]`, computed in code by `decideConsoleExecute` from each
+ruling row's staged file, read via the item's `stagedPath` — `_shared/console-on-pr.md`) is **not**
 floor-clearing: its box and Resolve stay unticked and the console stays pending for a human, the
-same posture as the merge row. It mirrors `console-resolve.js`'s `pending — sdd-ruling-*`
-resolution (`wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet) for the reconciler-side
-trigger point. `rulingGateGaps: []` — every ruling row's header shows it safe — leaves each ruling
-row floor-clearing, unchanged. An absent ruling-text map (no `rulingTexts` in the call's context)
-withholds every ruling row as `sdd-ruling-unclassified` (#4048), the same posture as a row whose
-text is unreadable.
+same posture as the merge row. It mirrors `console-resolve.js`'s `pending — sdd-ruling-*` resolution
+(`wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet) for the reconciler-side trigger
+point. `rulingGateGaps: []` — every ruling row's header shows it safe — leaves each ruling row
+floor-clearing, unchanged. An absent ruling-text map (no `rulingTexts` in the call's context)
+withholds every ruling row as `sdd-ruling-unclassified` (#4048), withheld like any other ruling
+gap; a recorded read error for a row still outranks that and names it `sdd-ruling-unreadable`.
 
 **Auto-resolution performs real comment edits.** It ticks the floor-clearing boxes on the PR
 comment (via `_shared/console-on-pr.md`'s post-or-update procedure) *before* executing — the same
@@ -228,6 +228,7 @@ member `{m}` whose live labels lacked the grant. For a gap whose `member` is nul
 `AUTO {time} — Console execution: withheld branch-finish/merge on PR #{n} — {reason}. Reversibility: n/a (declined to act).`
 A withheld ruling row (third exception) logs
 `AUTO {time} — Console execution: withheld ratify of {item} on PR #{n} — {reason}. Reversibility: n/a (declined to act).`
+When the gap carries a `detail` — an `sdd-ruling-unreadable` row, whose staged file could not be read — `{reason}` reads `sdd-ruling-unreadable ({detail})`.
 
 ## Comment-tick trust boundary
 

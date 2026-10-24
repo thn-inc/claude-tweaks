@@ -10,15 +10,25 @@
     "files": ["tests/bin-lib/log-decision/append.test.js", "tests/bin-lib/verify/cli.test.js", "tests/bin-lib/gif/palette.test.js", "tests/statusline.test.js"],
     "maxRetries": 1
   },
+  "impact": {
+    "suite": "tests",
+    "command": "node tools/run-tests.js --files-from {files}",
+    "tests": ["tests/**/*.test.js", "tools/upstream-drift/tests/**/*.test.js"],
+    "maxAgeCommits": 200,
+    "fetch": "node tools/test-impact.js fetch"
+  },
   "rules": [
-    { "match": "plugin/skills/**", "suites": "*", "static": true },
-    { "match": "plugin/**", "suites": "*", "static": true },
-    { "match": "tests/**", "suites": "*", "static": true },
-    { "match": "tools/**", "suites": "*", "static": true },
+    { "match": "tools/run-tests.js", "suites": "*", "static": true },
+    { "match": "tools/test-impact/**", "suites": "*", "static": true },
+    { "match": "plugin/**", "impact": true, "suites": "*", "static": true },
+    { "match": "tests/**", "impact": true, "suites": "*", "static": true },
+    { "match": "tools/**", "impact": true, "suites": "*", "static": true },
     { "match": "docs/journeys/**", "suites": ["journeys"], "static": false },
     { "match": "docs/plans/*-ledger.md", "suites": [], "static": false },
     { "match": ".claude-tweaks/pipelines/**", "suites": [], "static": false },
     { "match": "docs/superpowers/plans/**", "suites": [], "static": false },
-    { "match": "docs/superpowers/specs/**", "suites": [], "static": false }
+    { "match": "docs/superpowers/specs/**", "suites": [], "static": false },
+    { "match": "docs/**", "impact": true, "suites": "*", "static": true },
+    { "match": "*.md", "impact": true, "suites": "*", "static": true }
   ]
 }

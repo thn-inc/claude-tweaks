@@ -20,6 +20,7 @@
 const { execFileSync } = require('child_process');
 const { preferOriginRef } = require('../blast-radius-cli.js');
 const { anchorOf } = require('./stamp');
+const { parseNameStatusZ, parseStatusPorcelainZ } = require('../git-z');
 
 class ChangedFilesError extends Error {
   constructor(message) { super(message); this.name = 'ChangedFilesError'; }
@@ -91,24 +92,28 @@ function resolveBase({
 // starts with R or C). No quoting is applied to paths in -z mode, unlike the
 // default output which C-quotes non-ASCII bytes. A rename's old path is gone
 // from HEAD exactly like a deletion, so both of its paths are changed; a
-// copy's source is untouched, so only the new path is.
-function parseDiffNameStatusZ(raw) {
-  const tokens = raw.split('\0');
-  const files = [];
-  let i = 0;
-  while (i < tokens.length) {
-    const status = tokens[i];
-    if (status === '') { i += 1; continue; }
+// copy's source is untouched, so only the new path is. The pairs form (#4024)
+// also carries each path's A/M/D status: a rename's old path is D and its new
+// path A, a copy's new path A, and every other non-A/D letter (M, T, U) is M.
+function parseDiffNameStatusPairsZ(raw) {
+  const pairs = [];
+  for (const { status, paths } of parseNameStatusZ(raw)) {
     if (status[0] === 'R' || status[0] === 'C') {
-      if (status[0] === 'R') files.push(tokens[i + 1]);
-      files.push(tokens[i + 2]);
-      i += 3;
+      if (status[0] === 'R') pairs.push([paths[0], 'D']);
+      pairs.push([paths[1], 'A']);
     } else {
-      files.push(tokens[i + 1]);
-      i += 2;
+      pairs.push([paths[0], status[0] === 'A' || status[0] === 'D' ? status[0] : 'M']);
     }
   }
-  return files;
+  return pairs.filter(([p]) => p !== undefined);
+}
+
+// The A/M/D status of a porcelain record's path (#4024): A for `??`, D when XY
+// contains D, A when it contains A, R or C, else M.
+function porcelainStatus(xy) {
+  if (xy === '??') return 'A';
+  if (xy.includes('D')) return 'D';
+  return /[ARC]/.test(xy) ? 'A' : 'M';
 }
 
 // `git status --porcelain -z`: each record is "XY path\0" — the space
@@ -116,32 +121,40 @@ function parseDiffNameStatusZ(raw) {
 // newline/rename-arrow separator is replaced by NUL) — except a rename or
 // copy (R/C anywhere in XY), which is "XY new\0old\0": the NEW path comes
 // first in -z mode, reversed from the "old -> new" order of the default
-// (non-z) porcelain format. As in parseDiffNameStatusZ, a rename's old path
-// is changed too; a copy's is not.
-function parseStatusPorcelainZ(raw) {
-  const tokens = raw.split('\0');
-  const files = [];
-  let i = 0;
-  while (i < tokens.length) {
-    const entry = tokens[i];
-    if (entry === '') { i += 1; continue; }
-    const xy = entry.slice(0, 2);
-    files.push(entry.slice(3));
-    if (xy.includes('R')) files.push(tokens[i + 1]);
-    i += (xy.includes('R') || xy.includes('C')) ? 2 : 1;
+// (non-z) porcelain format. As in parseDiffNameStatusPairsZ, a rename's old path
+// is changed too; a copy's is not. The pairs form (#4024) carries each path's
+// status per porcelainStatus; a rename's old path is D.
+function parseStatusPorcelainPairsZ(raw) {
+  const pairs = [];
+  for (const { xy, path, origPath } of parseStatusPorcelainZ(raw)) {
+    pairs.push([path, porcelainStatus(xy)]);
+    if (xy.includes('R') && origPath !== undefined) pairs.push([origPath, 'D']);
   }
-  return files;
+  return pairs;
 }
 
-function changedFiles({ base, execImpl = execFileSync }) {
-  const set = new Set();
+function statusPorcelainPaths(raw) {
+  return parseStatusPorcelainPairsZ(raw).map(([p]) => p);
+}
+
+// withStatus (#4024): also return `statuses`, one A/M/D per entry of `files`.
+// The committed diff is read first, then the working tree; the first non-M
+// status seen for a path wins (an existence change outranks a content edit),
+// else M. Without the flag the return shape is exactly { base, files }.
+function changedFiles({ base, execImpl = execFileSync, withStatus = false }) {
+  const seen = new Map();
+  const record = ([f, s]) => { if (!seen.has(f) || seen.get(f) === 'M') seen.set(f, s); };
   const diff = git(execImpl, ['diff', '--name-status', '-z', '--end-of-options', `${base}..HEAD`]);
-  for (const f of parseDiffNameStatusZ(diff)) set.add(f);
+  for (const pair of parseDiffNameStatusPairsZ(diff)) record(pair);
   // --untracked-files=all: an untracked directory reports each file inside
   // it individually rather than collapsing to the directory name.
   const status = git(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
-  for (const f of parseStatusPorcelainZ(status)) set.add(f);
-  return { base, files: [...set].sort() };
+  for (const pair of parseStatusPorcelainPairsZ(status)) record(pair);
+  const files = [...seen.keys()].sort();
+  if (!withStatus) return { base, files };
+  // Object.fromEntries defines own properties, so a path named __proto__
+  // cannot reach the prototype setter.
+  return { base, files, statuses: Object.fromEntries(files.map((f) => [f, seen.get(f)])) };
 }
 
 // `git diff --name-only -z`: one NUL-terminated path per record, no status.
@@ -181,7 +194,7 @@ function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileS
   const own = new Set(parseNameOnlyZ(differs));
   const status = tryGit(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
   if (status === null) return null;
-  for (const f of parseStatusPorcelainZ(status)) own.add(f);
+  for (const f of statusPorcelainPaths(status)) own.add(f);
   const mb = tryGit(execImpl, ['merge-base', '--end-of-options', anchor, ref]);
   if (mb === null || mb.trim() === '') return null;
   const ownAsOfAnchor = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', mb.trim(), anchor]);

@@ -182,3 +182,22 @@ what each wrong answer costs.
   commits.** A tip that is an ancestor of `origin/{integration-branch}` but absent from
   `git rev-list --first-parent origin/{integration-branch}` was merged by a merge commit. A fresh
   branch cut at an integration-branch commit sits on the first-parent line and is not merged.
+
+## When the work stays unmerged on purpose: pushed, not landed
+
+Some teardown discards a scratch worktree whose commit is meant to stay unmerged: it lives on its
+own remote branch behind an open PR a human merges later. Every proof in the table above reads
+"not landed" there, and so does `_shared/scratch-worktree.md` §6's ancestry check, which is true,
+so a check built from them never passes. The question is a different one: is the commit preserved
+on `origin`?
+
+- **Prove the exact SHA is on the remote branch.** Record `git rev-parse HEAD` after the commit,
+  push, then run `git ls-remote --heads origin {branch}` and require its SHA to equal the recorded
+  one. A branch that exists, or a push that exited 0, is not the proof.
+- **Every other answer keeps the worktree.** Empty output, a different SHA, or an error leaves the
+  worktree in place and names its path for a human, per the failure discipline above.
+- **Name the substitution at the call site.** §6 says never to override its guard on a non-zero
+  result, so a site that discards on this proof instead states it as the `discard_changes: true`
+  reason and says why §6's check cannot apply.
+- **Instance.** `plugin/skills/wrap-up/verification-brief.md` Step 4's evidence-PR route (#4039),
+  which lands demo screenshots on `demo-evidence/{record}` after the run's own PR merged.

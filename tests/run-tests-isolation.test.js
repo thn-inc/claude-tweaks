@@ -16,7 +16,7 @@ const { spawn, spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const {
   resolveConcurrency, resolveSlots, listTestFiles, buildTestArgs,
-  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots,
+  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
 } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('resolveConcurrency defaults to half the cores, at least 1', () => {
@@ -63,6 +63,19 @@ test('resolveSlots: an invalid value falls back to 1 and logs one line naming CT
   }
 });
 
+test('resolveSlots reads the named variable — CT_TEST_SUBSET_SLOTS for the subset lane', () => {
+  assert.strictEqual(resolveSlots({ CT_TEST_SUBSET_SLOTS: '2', CT_TEST_SUITE_SLOTS: '5' }, () => {}, 'CT_TEST_SUBSET_SLOTS'), 2);
+  assert.strictEqual(resolveSlots({ CT_TEST_SUITE_SLOTS: '5' }, () => {}, 'CT_TEST_SUBSET_SLOTS'), 1);
+  const lines = [];
+  assert.strictEqual(resolveSlots({ CT_TEST_SUBSET_SLOTS: 'x' }, (l) => lines.push(l), 'CT_TEST_SUBSET_SLOTS'), 1);
+  assert.match(lines[0], /CT_TEST_SUBSET_SLOTS/);
+});
+
+test('slotLane puts a --files-from subset in its own subset/ lane and every other run in the base lane', () => {
+  assert.deepStrictEqual(slotLane('/slots', true), { dir: path.join('/slots', 'subset'), slotsVar: 'CT_TEST_SUBSET_SLOTS' });
+  assert.deepStrictEqual(slotLane('/slots', false), { dir: '/slots', slotsVar: 'CT_TEST_SUITE_SLOTS' });
+});
+
 test('listTestFiles accepts an absolute root', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'run-tests-abs-root-'));
   try {
@@ -79,6 +92,40 @@ test('buildTestArgs rejects a non-positive-integer concurrency; a valid one stil
     assert.throws(() => buildTestArgs([], [], { platform: 'linux', nodeMajor: 22, concurrency: bad }), /concurrency/, String(bad));
   }
   assert.throws(() => buildTestArgs([], ['tests'], { platform: 'win32', nodeMajor: 20, concurrency: 4 }), /Node >= 22/);
+});
+
+// #4024: `--files-from <list>` runs an explicit subset (verify.js's impact-selected tests).
+test('readFileList returns the listed entries in order, ignoring blank lines, CRs and repeats', () => {
+  const seen = [];
+  const exists = (p) => { seen.push(p); return true; };
+  assert.deepStrictEqual(
+    readFileList('tests/a.test.js\r\n\n  \ntests/sub/b.test.js\ntests/a.test.js\n', { exists }),
+    ['tests/a.test.js', 'tests/sub/b.test.js'],
+  );
+  assert.deepStrictEqual(seen, ['tests/a.test.js', 'tests/sub/b.test.js']);
+});
+
+test('readFileList refuses an empty list, a missing file and a non-test entry', () => {
+  assert.throws(() => readFileList('\n \n', { exists: () => true }), /no test files/);
+  assert.throws(() => readFileList('tests/gone.test.js\n', { exists: () => false }), /tests\/gone\.test\.js/);
+  assert.throws(() => readFileList('tests/a.test.js\nlib/x.js\n', { exists: () => true }), /lib\/x\.js.*\.test\.js|\.test\.js.*lib\/x\.js/);
+});
+
+test('readFileList refuses an entry that is not a repo-relative path', () => {
+  for (const entry of ['-x.test.js', '../x.test.js', 'tests/../../x.test.js', '/abs/x.test.js', 'C:\\x.test.js', 'tests\\..\\x.test.js']) {
+    assert.throws(() => readFileList(`${entry}\n`, { exists: () => true }), /not a repo-relative path/, entry);
+  }
+});
+
+test('buildTestArgs with null roots (an explicit subset) passes the file list on every platform', () => {
+  assert.deepStrictEqual(
+    buildTestArgs(['tests/a.test.js'], null, { platform: 'win32', nodeMajor: 20, concurrency: 2 }),
+    ['--test', '--test-concurrency=2', 'tests/a.test.js'],
+  );
+  assert.deepStrictEqual(
+    buildTestArgs(['tests/a.test.js'], null, { platform: 'linux', nodeMajor: 22, concurrency: 2 }),
+    ['--test', '--test-concurrency=2', 'tests/a.test.js'],
+  );
 });
 
 // The slot lock and run-root helpers take `isAlive`, `now`, `sleep` and `log` as parameters, so
@@ -446,6 +493,70 @@ test('run-tests.js reclaims a slot held by a dead pid and frees it after the run
     assert.strictEqual(result.status, 0, result.stdout + result.stderr);
     assert.strictEqual(JSON.parse(fs.readFileSync(sb.probeOut, 'utf8')).lockPid, result.pid);
     assert.deepStrictEqual(SLOT_LOCKS(sb.slotDir), []);
+  });
+});
+
+// `--files-from` resolves its entries against the runner's repo root, so this runs a copy of the
+// runner placed at `<tmp root>/tools/run-tests.js` over fixtures copied into `<tmp root>/tests/`,
+// from a subdirectory of that root. The unlisted fixture fails: had it run, the exit would be 1.
+test('run-tests.js --files-from runs exactly the listed files, resolved against the repo root', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const root = path.join(sb.suiteRoot, 'repo root');
+    fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'tests'));
+    fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+    const fixtures = path.join(ROOT, 'tests', 'fixtures', 'run-tests');
+    fs.copyFileSync(path.join(fixtures, 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'one.test.js'));
+    fs.copyFileSync(path.join(fixtures, 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'two.test.js'));
+    fs.copyFileSync(path.join(fixtures, 'fail-probe.fixture.js'), path.join(root, 'tests', 'unlisted.test.js'));
+    const list = path.join(sb.suiteRoot, 'list.txt');
+    fs.writeFileSync(list, 'tests/one.test.js\n\ntests/two.test.js\n');
+    const runner = path.join(root, 'tools', 'run-tests.js');
+    const result = spawnSync(process.execPath, [runner, '--files-from', list], {
+      cwd: path.join(root, 'tests'), env: sb.env, encoding: 'utf8', timeout: 120000,
+    });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /^(?:# |ℹ )tests 2$/m, result.stdout);
+    assert.deepStrictEqual(SLOT_LOCKS(sb.slotDir), []);
+
+    const bad = (text, extra = []) => {
+      fs.writeFileSync(list, text);
+      return spawnSync(process.execPath, [runner, '--files-from', list, ...extra], { cwd: root, env: sb.env, encoding: 'utf8', timeout: 60000 });
+    };
+    for (const [text, extra, re] of [
+      ['\n', [], /no test files/],
+      ['tests/missing.test.js\n', [], /tests\/missing\.test\.js/],
+      ['tests/one.test.js\n', ['tests'], /--files-from/],
+    ]) {
+      const r = bad(text, extra);
+      assert.strictEqual(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stderr, re);
+      assert.doesNotMatch(r.stdout, /tests \d/, 'no test run started');
+    }
+  });
+});
+
+// A live full-suite holder (this process) owns the base lane's only slot: a --files-from subset must
+// run anyway from its own subset/ lane, leave the holder's lock untouched and free its own after.
+// Were it queued in the base lane it would wait until the spawnSync timeout and fail on status null.
+test('a --files-from subset does not wait behind a held full-suite slot', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const root = path.join(sb.suiteRoot, 'repo');
+    fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'tests'));
+    fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+    fs.copyFileSync(path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'one.test.js'));
+    const list = path.join(sb.suiteRoot, 'list.txt');
+    fs.writeFileSync(list, 'tests/one.test.js\n');
+    const lockText = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), cwd: ROOT });
+    fs.writeFileSync(path.join(sb.slotDir, 'slot-0.lock'), lockText);
+    const result = spawnSync(process.execPath, [path.join(root, 'tools', 'run-tests.js'), '--files-from', list], {
+      cwd: root, env: sb.env, encoding: 'utf8', timeout: 30000,
+    });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.doesNotMatch(result.stderr, /waiting for a test-suite slot/);
+    assert.strictEqual(fs.readFileSync(path.join(sb.slotDir, 'slot-0.lock'), 'utf8'), lockText);
+    assert.deepStrictEqual(SLOT_LOCKS(path.join(sb.slotDir, 'subset')), []);
   });
 });
 

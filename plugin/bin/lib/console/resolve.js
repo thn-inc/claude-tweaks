@@ -218,9 +218,13 @@ function parseCategory(text) {
 // never counts. Prose twin: wrap-up/review-console-appendix.md's sdd-ruling-*
 // bullet. Returns null when the item may resolve as today, else the reason it
 // resolves pending under.
+// `UNREADABLE` is decided by the callers that attempted the read (`stagedItems` here,
+// `decideConsoleExecute` in `reconcile/console-execute.js`), never by
+// `sddRulingDeferralReason`, which only ever sees text (#4049).
 const SDD_RULING_REASONS = Object.freeze({
   NO_DEFER_REASON: 'sdd-ruling-deferral-no-defer-reason',
   UNCLASSIFIED: 'sdd-ruling-unclassified',
+  UNREADABLE: 'sdd-ruling-unreadable',
 });
 
 function sddRulingDeferralReason(text) {
@@ -305,15 +309,25 @@ function parseInvariant(patchText) {
   return m ? m[1].trim() : null;
 }
 
+// Only `.patch` / `.md` / shadow-dup entries are read. `readError` is true only when such an attempted
+// read threw (#4049), so a caller can tell an unreadable file from one that was never read at all.
+function readStagedEntry(deps, stagedDir, name) {
+  const file = path.join(stagedDir, name);
+  const entry = { name, path: file, text: null, readError: false };
+  if (!(name.endsWith('.patch') || name.endsWith('.md') || SHADOW_DUP_RE.test(name))) return entry;
+  try {
+    entry.text = deps.readFile(file);
+  } catch {
+    entry.readError = true;
+  }
+  return entry;
+}
+
 // Everything resolveAll reads, read once. No resolution is computed here.
 function readSnapshot({ runDir, deps }) {
   const decisions = readText(deps, path.join(runDir, 'decisions.md')) || '';
   const stagedDir = path.join(runDir, 'staged');
-  const staged = deps.readdir(stagedDir).filter((n) => !n.startsWith('.')).sort().map((name) => ({
-    name,
-    path: path.join(stagedDir, name),
-    text: (name.endsWith('.patch') || name.endsWith('.md') || SHADOW_DUP_RE.test(name)) ? readText(deps, path.join(stagedDir, name)) : null,
-  }));
+  const staged = deps.readdir(stagedDir).filter((n) => !n.startsWith('.')).sort().map((name) => readStagedEntry(deps, stagedDir, name));
   const engineState = readJson(deps, path.join(runDir, 'engine-state.json'));
   const members = readMembers(deps, runDir);
   let grants = null;
@@ -438,7 +452,7 @@ function stagedItems(snapshot) {
     const { section, reason } = classifyStagedItem(s.name, s.text, siblingText);
     if (reason) return { id: s.name, section, resolution: 'pending', reason };
     if (/^sdd-ruling-/.test(s.name)) {
-      const r = sddRulingDeferralReason(s.text);
+      const r = s.readError ? SDD_RULING_REASONS.UNREADABLE : sddRulingDeferralReason(s.text);
       if (r) return { id: s.name, section, resolution: 'pending', reason: r };
     }
     const stance = SECTION_STANCES[section];

@@ -42,9 +42,11 @@ test('producer: the staged header clause says Defers is written on build-deviati
   assert.match(DISPATCH, ws('the one value its line carries, written bare with no backticks'));
 });
 
-test('console prose: the appendix withholds a Defer-reason-bearing Defers: no, a duplicate Defers line, and names the reconciler path', () => {
+test('AC7.1: console prose: the appendix withholds a Defer-reason-bearing Defers: no, a duplicate Defers line, and names the reconciler path', () => {
   assert.match(APPENDIX, ws('`Defers: no` with no `Defer-reason:` header line'));
-  assert.match(APPENDIX, ws('line, more than one, a value other than `yes`/`no`, or an unreadable file resolves'));
+  assert.match(APPENDIX, ws('line, more than one, or a value other than `yes`/`no` resolves'));
+  assert.match(APPENDIX, ws('a staged file that cannot be read at all resolves `pending — sdd-ruling-unreadable`'));
+  assert.doesNotMatch(APPENDIX, /or an unreadable file resolves/);
   assert.match(APPENDIX, ws("the reconciler's `consoleAutoResolve` path withholds the same rows (`_shared/console-execution.md`)"));
 });
 
@@ -64,6 +66,8 @@ test('reconciler prose: console-execution.md states the third exception and cons
   assert.match(EXECUTION, ws('**Third narrower exception (#3880):** an `isRulingRow: true` item named in the ready result\'s `rulingGateGaps`'));
   assert.match(EXECUTION, ws('withheld ratify of {item} on PR #{n} — {reason}. Reversibility: n/a (declined to act).'));
   assert.match(EXECUTION, ws('and a ruling row named in `rulingGateGaps`'));
+  assert.match(EXECUTION, ws('`rulingGateGaps` (`[{ id, reason, detail? }]`'));
+  assert.match(EXECUTION, ws('`{reason}` reads `sdd-ruling-unreadable ({detail})`'));
   assert.match(ON_PR, ws('also carries `"stagedPath"` (#3880)'));
 });
 

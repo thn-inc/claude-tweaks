@@ -9,13 +9,17 @@
 // A relative --scope path resolves against the checkout root (--cwd when
 // given, else this process's own git toplevel), never against process.cwd()
 // alone (#3017) — run this from any subdirectory and --scope still finds
-// the real declaration.
+// the real declaration. A declaration's `impact` block (#4024) narrows one
+// suite to the test files a commit-stamped test-impact map says read a
+// changed path: that suite runs impact.command with {files} naming a list
+// file in the log dir, or its full command whenever the map cannot be
+// trusted — report.json's scope.impact.fallback names why.
 'use strict';
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, execFileSync } = require('child_process');
+const { spawn, spawnSync, execFileSync } = require('child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
 const { runChecks, runOne } = require('./lib/verify/run');
@@ -42,6 +46,8 @@ const {
   changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
+const { gitLocations, loadImpactContext, lazyImpactContext } = require('./lib/verify/impact');
+const { substituteFile, describePath } = require('./lib/verify/file-template');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -95,6 +101,30 @@ function enrich(result) {
     // this on countStampPath before it reaches composeReport).
     ...(result.name === 'tests' && counts === null ? { countsFamily: family } : {}),
   };
+}
+
+// #4024: impact.fetch downloads a ready map (never a trace) — at most once per
+// run, bounded, its output ignored (never piped, so no maxBuffer can kill a
+// verbose fetch); the report keeps its exit code, time, timeout and signal.
+function runImpactFetch(command, cwd) {
+  const startedMs = Date.now();
+  const r = spawnSync(command, { shell: true, cwd, timeout: 120000, stdio: 'ignore', windowsHide: true });
+  return {
+    ran: true,
+    exitCode: typeof r.status === 'number' ? r.status : null,
+    durationMs: Date.now() - startedMs,
+    timedOut: Boolean(r.error && r.error.code === 'ETIMEDOUT'),
+    signal: r.signal || null,
+  };
+}
+
+// #4024: the stdout line under `Scope:` for an impact declaration.
+function impactLine(imp, ctx) {
+  if (imp.files === null) return `Impact: full ${imp.suite} — ${imp.superseded ? 'superseded by a full-suite rule' : imp.fallback}`;
+  if (!ctx.loaded) return `Impact: ${imp.selected} of the ${imp.suite} test file(s) selected — no impact-rule path changed, map not read`;
+  const commit = ctx.mapCommit ? ctx.mapCommit.slice(0, 9) : 'none';
+  const age = Number.isInteger(ctx.distance) ? ctx.distance : '?';
+  return `Impact: ${imp.selected} of ${ctx.headTests.length} test file(s) selected (map ${commit}, ${age} commit(s) old)`;
 }
 
 function statusOf(check) {
@@ -386,6 +416,9 @@ async function main() {
   let decl = null;
   let priorStamp = null;
   let narrowing = null;
+  // #4024: the impact map context and, when a subset runs, its list.
+  let impactCtx = null;
+  let impactSubset = null;
   // #2779: a check's --cmd-env variables, by check name — for the two spawns
   // that are not a parsed --cmd entry itself (tool-scoped's synthesized
   // `tests`, and a flaky retry of a check), so they run in the same
@@ -526,16 +559,50 @@ async function main() {
         }
       }
 
-      files = changedFiles({ base: resolvedBase }).files;
+      // #4024: an impact declaration also needs each changed path's A/M/D status.
+      const changed = changedFiles({ base: resolvedBase, withStatus: Boolean(decl.impact) });
+      files = changed.files;
+      let statuses = changed.statuses || null;
       // #3072: anchored on a full pass and asked about an integration branch the
       // run has since merged — narrow to the branch's own delta. Only when the
       // resolved base IS the usable anchor; with no anchor, resolveBase already
       // returned the merge-base, which excludes merged-in files by construction.
       if (parsed.integrationBranch && anchorSha && resolvedBase === anchorSha) {
         narrowing = mergeNarrowing({ anchor: anchorSha, integrationBranch: parsed.integrationBranch, files });
-        if (narrowing) files = narrowing.files;
+        if (narrowing) {
+          files = narrowing.files;
+          if (statuses) statuses = Object.fromEntries(files.map((f) => [f, statuses[f]]));
+        }
       }
-      sel = selectScope({ decl, files, stamp: anchorSha ? priorStamp : null });
+      // Test-impact selection (#4024): load the map (one impact.fetch when it
+      // has a problem) — lazily, only if selection reads it — select, and for a
+      // non-empty subset run impact.command with {files} = a list file in the
+      // log dir. A list that cannot be handed over re-selects with that reason,
+      // so the suite runs its full command. With no usable stamp anchor, the
+      // --integration-branch merge-base anchors; an explicit --base never does
+      // (it runs full, as before).
+      if (decl.impact) {
+        const where = gitLocations({ cwd: parsed.cwd || process.cwd() });
+        impactCtx = lazyImpactContext(() => (where === null
+          ? { map: null, problem: 'map-unlocatable', headTests: [], mapPath: null, mapCommit: null, distance: null, fetch: null }
+          : loadImpactContext({ decl, ...where, runFetch: (command) => runImpactFetch(command, where.repoRoot) })));
+      }
+      const fallbackBase = !anchorSha && parsed.integrationBranch && !parsed.base ? resolvedBase : null;
+      const select = (impact) => selectScope({ decl, files, stamp: anchorSha ? priorStamp : null, statuses, impact, fallbackBase });
+      sel = select(impactCtx);
+      if (sel.impact && sel.impact.files && sel.impact.files.length) {
+        const listPath = path.resolve(logDir, 'impact-files.txt');
+        const sub = substituteFile(decl.impact.command, listPath, { token: '{files}' });
+        const lineBreak = sel.impact.files.find((f) => /[\r\n]/.test(f));
+        let listProblem = null;
+        if (!sub.ok) listProblem = `files-list-unquotable: ${sub.reason}`;
+        else if (lineBreak !== undefined) listProblem = `files-list-unwritable: line break in ${describePath(lineBreak)}`;
+        if (listProblem) sel = select({ ...impactCtx, problem: listProblem });
+        else impactSubset = { suite: decl.impact.suite, command: sub.command, listPath, files: sel.impact.files };
+      }
+      // In subset mode the impact suite runs impact.command, whatever the
+      // --cmd or declared command for it says (those are its full command).
+      const subsetCommandFor = (name) => (impactSubset && name === impactSubset.suite ? impactSubset.command : null);
       // #3022: a map-form checks.tests (and checks.types/checks.lint, same
       // rule) declares its own per-suite command — a selected name now runs
       // that command unless a --cmd of the same name overrides it (command-
@@ -556,15 +623,19 @@ async function main() {
         if (sel.static) requiredNames.push('types', 'lint');
         if (sel.mode !== 'tool-scoped') requiredNames.push(...(sel.suites === '*' ? decl.suites : sel.suites));
         cmds = requiredNames
-          .filter((n) => haveCmd.has(n) || declaredCommandFor(n) !== null)
+          .filter((n) => haveCmd.has(n) || subsetCommandFor(n) !== null || declaredCommandFor(n) !== null)
           .map((n) => {
-            if (haveCmd.has(n)) return parsed.cmds.find((c) => c.name === n);
+            const subset = subsetCommandFor(n);
+            if (haveCmd.has(n)) {
+              const given = parsed.cmds.find((c) => c.name === n);
+              return subset === null ? given : { ...given, command: subset };
+            }
             // Declared-only (no --cmd): build a fresh entry from the
             // declaration's own command, picking up any --cmd-env bound to
             // this name even though no --cmd named it (#3022 deliverable 3).
             const envEntries = (parsed.cmdEnvs || []).filter((e) => e.name === n);
             const env = envEntries.length ? Object.fromEntries(envEntries.map((e) => [e.key, e.value])) : null;
-            return { name: n, command: declaredCommandFor(n), ...(env ? { env } : {}) };
+            return { name: n, command: subset === null ? declaredCommandFor(n) : subset, ...(env ? { env } : {}) };
           });
         if (sel.mode === 'tool-scoped') {
           const testsEnv = envOf('tests');
@@ -580,7 +651,8 @@ async function main() {
       // come from one source or the other: a declared command (map-form
       // tests, or checks.types/checks.lint) or a --cmd of the same name
       // (minus `tests` under tool-scoped, which is synthesized from
-      // decl.checks.tests rather than either source above).
+      // decl.checks.tests rather than either source above). An impact subset
+      // (#4024) is satisfied by impact.command.
       if (decl && sel.mode !== 'none') {
         const suiteNames = sel.suites === '*' ? decl.suites : sel.suites;
         // Unchanged from before #3022: types/lint are only ever required when
@@ -591,7 +663,7 @@ async function main() {
         let required = [...suiteNames, ...staticNames];
         if (sel.mode === 'tool-scoped') required = required.filter((n) => n !== 'tests');
         const have = new Set(parsed.cmds.map((c) => c.name));
-        const missing = required.filter((n) => !have.has(n) && declaredCommandFor(n) === null);
+        const missing = required.filter((n) => !have.has(n) && subsetCommandFor(n) === null && declaredCommandFor(n) === null);
         if (missing.length) {
           scopeUsageExit(`--scope: mode ${sel.mode} requires --cmd for: ${missing.join(', ')}`);
           return;
@@ -607,6 +679,9 @@ async function main() {
       scopeUsageExit(`--scope: --cmd-env "${unboundCmdEnv.name}" names no check (declared or --cmd: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
       return;
     }
+    // #4024: the subset list, one path per line — written only once no usage
+    // error can still stop the run.
+    if (impactSubset) fs.writeFileSync(impactSubset.listPath, `${impactSubset.files.join('\n')}\n`);
   }
 
   // #2987 + #3757: the stamp's dirty is start OR end, so the generated-path
@@ -895,9 +970,22 @@ async function main() {
     }
   }
 
+  // #4024: present only for an impact declaration — selection plus the map
+  // and list it ran from.
+  // The map fields read the lazily loaded context only when selection loaded it.
+  const mapRead = impactCtx !== null && impactCtx.loaded;
+  const impactReport = sel && sel.impact ? {
+    ...sel.impact,
+    mapPath: mapRead ? impactCtx.mapPath : null,
+    mapCommit: mapRead ? impactCtx.mapCommit : null,
+    mapAgeCommits: mapRead ? impactCtx.distance : null,
+    fetch: mapRead ? impactCtx.fetch : null,
+    listPath: impactSubset ? impactSubset.listPath : null,
+    selectedFiles: impactSubset ? impactSubset.files : null,
+  } : null;
   const report = composeReport({
     checks: results, startedAt, durationMs: Date.now() - startMs, git, testCountRegression,
-    scope: sel ? { mode: sel.mode, suites: scopeSuites, static: sel.static, base: resolvedBase, unmatched: sel.unmatched, changedFiles: files, matched: sel.matched, mergeNarrowing: narrowing ? { ref: narrowing.ref, excluded: narrowing.excluded.length, excludedFiles: narrowing.excluded } : null } : null,
+    scope: sel ? { mode: sel.mode, suites: scopeSuites, static: sel.static, base: resolvedBase, unmatched: sel.unmatched, changedFiles: files, matched: sel.matched, mergeNarrowing: narrowing ? { ref: narrowing.ref, excluded: narrowing.excluded.length, excludedFiles: narrowing.excluded } : null, ...(impactReport ? { impact: impactReport } : {}) } : null,
     flakyEscalation, baselineAdjudicated, preExistingAdjudicated,
   });
   // The exit code and the pass stamp follow the adjudicated verdict; the
@@ -1118,6 +1206,7 @@ async function main() {
     // sel is set — no more "no declaration" branch to render.
     const lead = `Scope: ${sel.mode} — ${sinceClause}`;
     lines.push(`${lead}; suites: ${suiteList}; static: ${sel.static ? 'yes' : 'no'}; unmatched: ${sel.unmatched.length}`);
+    if (sel.impact) lines.push(impactLine(sel.impact, impactCtx));
     if (narrowing) lines.push(`merge-narrowed: ${narrowing.excluded.length} merge-identical path(s) excluded (identical to ${narrowing.ref})`);
     if (sel.mode === 'none') {
       // Nit (re-review): an unchanged-HEAD re-run (M6's own scenario) has

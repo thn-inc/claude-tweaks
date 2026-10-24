@@ -610,7 +610,7 @@ async function detectWithFakePr(dir, pr) {
   try { return await consoleExecuteDetect({ cwd: dir }); } finally { process.env.PATH = originalPath; }
 }
 
-test('consoleExecuteDetect: reads each ruling row\'s staged file and returns rulingGateGaps on the ready entry', { skip: process.platform === 'win32' }, async () => {
+test('AC3.1 AC3.3: consoleExecuteDetect reads each ruling row\'s staged file and returns rulingGateGaps on the ready entry', { skip: process.platform === 'win32' }, async () => {
   const items = [
     { id: 'staged-1', kind: 'staged', summary: 'safe', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
     { id: 'staged-2', kind: 'staged', summary: 'unreasoned', isRulingRow: true, stagedPath: 'staged/sdd-ruling-2.md' },
@@ -628,12 +628,12 @@ test('consoleExecuteDetect: reads each ruling row\'s staged file and returns rul
   assert.strictEqual(result.ready.length, 1, JSON.stringify(result));
   assert.deepStrictEqual(result.ready[0].rulingGateGaps, [
     { id: 'staged-2', reason: 'sdd-ruling-deferral-no-defer-reason' },
-    { id: 'staged-4', reason: 'sdd-ruling-unclassified' },
-    { id: 'staged-5', reason: 'sdd-ruling-unclassified' },
+    { id: 'staged-4', reason: 'sdd-ruling-unreadable', detail: 'not-found' },
+    { id: 'staged-5', reason: 'sdd-ruling-unreadable', detail: 'no-staged-path' },
   ]);
 });
 
-test('consoleExecuteDetect: a stagedPath that escapes the run dir (../, absolute, non-string) is never read -> unclassified gap', { skip: process.platform === 'win32' }, async () => {
+test('AC3.1 AC3.2: consoleExecuteDetect never reads a stagedPath that escapes the run dir (../, absolute, non-string) -> unreadable gap', { skip: process.platform === 'win32' }, async () => {
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-outside-'));
   const absFile = path.join(outside, 'abs.md');
   fs.writeFileSync(absFile, RULING_TEXT_DEFERS_NO);
@@ -647,14 +647,19 @@ test('consoleExecuteDetect: a stagedPath that escapes the run dir (../, absolute
   fs.writeFileSync(path.join(path.dirname(runDir), 'escape.md'), RULING_TEXT_DEFERS_NO);
   const result = await detectWithFakePr(dir, { comments: tickedComment(items.map((i) => i.id)), body: '' });
   assert.strictEqual(result.ready.length, 1, JSON.stringify(result));
-  assert.deepStrictEqual(result.ready[0].rulingGateGaps.map((g) => [g.id, g.reason]), items.map((i) => [i.id, 'sdd-ruling-unclassified']));
+  assert.deepStrictEqual(result.ready[0].rulingGateGaps, [
+    { id: 'staged-1', reason: 'sdd-ruling-unreadable', detail: 'path-rejected' },
+    { id: 'staged-2', reason: 'sdd-ruling-unreadable', detail: 'path-rejected' },
+    { id: 'staged-3', reason: 'sdd-ruling-unreadable', detail: 'path-rejected' },
+    { id: 'staged-4', reason: 'sdd-ruling-unreadable', detail: 'no-staged-path' },
+  ]);
 });
 
-test('readRulingTexts: reads only ruling rows, and a missing, empty, absolute, dot-dot or non-string stagedPath is null (no platform skip -- no fs setup beyond the run dir)', () => {
+test('readRulingTexts: reads only ruling rows, and names why each unreadable stagedPath failed (no platform skip -- no fs setup beyond the run dir)', () => {
   const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-rrt-')));
   fs.mkdirSync(path.join(runDir, 'staged'));
   fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), RULING_TEXT_DEFERS_NO);
-  const texts = readRulingTexts(runDir, [
+  const result = readRulingTexts(runDir, [
     { id: 'ok', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
     { id: 'plain', stagedPath: 'staged/sdd-ruling-1.md' },
     { id: 'none', isRulingRow: true },
@@ -663,11 +668,44 @@ test('readRulingTexts: reads only ruling rows, and a missing, empty, absolute, d
     { id: 'abs', isRulingRow: true, stagedPath: path.join(runDir, 'staged', 'sdd-ruling-1.md') },
     { id: 'num', isRulingRow: true, stagedPath: 7 },
   ]);
-  assert.deepStrictEqual(texts, { ok: RULING_TEXT_DEFERS_NO, none: null, empty: null, dotdot: null, abs: null, num: null });
-  assert.deepStrictEqual(readRulingTexts(runDir, undefined), {});
+  assert.deepStrictEqual(result, {
+    texts: { ok: RULING_TEXT_DEFERS_NO },
+    errors: { none: 'no-staged-path', empty: 'no-staged-path', dotdot: 'path-rejected', abs: 'path-rejected', num: 'no-staged-path' },
+  });
+  assert.deepStrictEqual(readRulingTexts(runDir, undefined), { texts: {}, errors: {} });
 });
 
-test('consoleExecuteDetect: a stagedPath symlink (leaf or directory segment) pointing outside the run dir is never followed -> unclassified gap', { skip: process.platform === 'win32' }, async () => {
+test('AC3.4: readRulingTexts: a run dir that cannot be canonicalized is read-failed for every ruling item with a valid relative stagedPath (injected realpath)', () => {
+  const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-rrt-root-')));
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), RULING_TEXT_DEFERS_NO);
+  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-2.md'), RULING_TEXT_DEFERS_NO);
+  const realpath = () => { throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }); };
+  const result = readRulingTexts(runDir, [
+    { id: 'one', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
+    { id: 'two', isRulingRow: true, stagedPath: 'staged/sdd-ruling-2.md' },
+  ], { realpath });
+  assert.deepStrictEqual(result, { texts: {}, errors: { one: 'read-failed', two: 'read-failed' } });
+});
+
+test('AC3.4: readRulingTexts: a leaf that exists but will not resolve is read-failed, not not-found (injected realpath and lstat)', () => {
+  const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-rrt-leaf-')));
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  const leafPath = path.join(runDir, 'staged', 'sdd-ruling-1.md');
+  fs.writeFileSync(leafPath, RULING_TEXT_DEFERS_NO);
+  const eacces = () => Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+  const realpath = (p) => {
+    if (p === leafPath) throw eacces();
+    return fs.realpathSync.native(p);
+  };
+  const fsImpl = { ...fs, lstatSync: (p, ...rest) => { if (p === leafPath) throw eacces(); return fs.lstatSync(p, ...rest); } };
+  const result = readRulingTexts(runDir, [
+    { id: 'one', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
+  ], { realpath, fsImpl });
+  assert.deepStrictEqual(result, { texts: {}, errors: { one: 'read-failed' } });
+});
+
+test('AC3.2: consoleExecuteDetect never follows a stagedPath symlink (leaf or directory segment) pointing outside the run dir -> unreadable gap', { skip: process.platform === 'win32' }, async () => {
   const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-symout-')));
   fs.writeFileSync(path.join(outside, 'safe.md'), RULING_TEXT_DEFERS_NO);
   const items = [
@@ -682,10 +720,56 @@ test('consoleExecuteDetect: a stagedPath symlink (leaf or directory segment) poi
   const result = await detectWithFakePr(dir, { comments: tickedComment(items.map((i) => i.id)), body: '' });
   assert.strictEqual(result.ready.length, 1, JSON.stringify(result));
   // The two links that leave the run dir are withheld; a link that stays inside it still reads.
-  assert.deepStrictEqual(result.ready[0].rulingGateGaps.map((g) => [g.id, g.reason]), [
-    ['staged-1', 'sdd-ruling-unclassified'],
-    ['staged-2', 'sdd-ruling-unclassified'],
+  assert.deepStrictEqual(result.ready[0].rulingGateGaps, [
+    { id: 'staged-1', reason: 'sdd-ruling-unreadable', detail: 'path-rejected' },
+    { id: 'staged-2', reason: 'sdd-ruling-unreadable', detail: 'path-rejected' },
   ]);
+});
+
+test('AC3.3 AC3.4: a dangling symlink and a dir-symlinked missing file are not-found; a directory at the path is read-failed (#4049)', { skip: process.platform === 'win32' }, async () => {
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-unread-')));
+  const items = [
+    { id: 'staged-1', kind: 'staged', summary: 'dangling', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
+    { id: 'staged-2', kind: 'staged', summary: 'dir link, missing leaf', isRulingRow: true, stagedPath: 'linked/missing.md' },
+    { id: 'staged-3', kind: 'staged', summary: 'directory', isRulingRow: true, stagedPath: 'staged/sdd-ruling-3.md' },
+  ];
+  const { dir, runDir } = makeRulingRepo(items, {});
+  fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
+  fs.symlinkSync(path.join(runDir, 'staged', 'gone.md'), path.join(runDir, 'staged', 'sdd-ruling-1.md'));
+  fs.symlinkSync(outside, path.join(runDir, 'linked'));
+  fs.mkdirSync(path.join(runDir, 'staged', 'sdd-ruling-3.md'));
+  const result = await detectWithFakePr(dir, { comments: tickedComment(items.map((i) => i.id)), body: '' });
+  assert.strictEqual(result.ready.length, 1, JSON.stringify(result));
+  assert.deepStrictEqual(result.ready[0].rulingGateGaps, [
+    { id: 'staged-1', reason: 'sdd-ruling-unreadable', detail: 'not-found' },
+    { id: 'staged-2', reason: 'sdd-ruling-unreadable', detail: 'not-found' },
+    { id: 'staged-3', reason: 'sdd-ruling-unreadable', detail: 'read-failed' },
+  ]);
+});
+
+test('AC4.1 AC5.1: a read error wins over the text; a readable no-Defers ruling stays unclassified with no detail key; every unreadable row is a gap (#4049)', () => {
+  const cj = rulingConsoleJson([
+    { id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'staged-2', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'staged-3', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'constructor', kind: 'staged', summary: 'r', isRulingRow: true },
+  ]);
+  const result = decideConsoleExecute(cj, tickedComment(['staged-1', 'staged-2', 'staged-3', 'constructor']), Date.now(), {
+    rulingTexts: { 'staged-1': RULING_TEXT_DEFERS_NO, 'staged-3': 'Title: r\nKind: sdd-ruling\n\nbody\n', constructor: RULING_TEXT_DEFERS_NO },
+    rulingReadErrors: { 'staged-2': 'read-failed' },
+  });
+  assert.strictEqual(result.action, 'ready');
+  assert.deepStrictEqual(result.rulingGateGaps, [
+    { id: 'staged-2', reason: 'sdd-ruling-unreadable', detail: 'read-failed' },
+    { id: 'staged-3', reason: 'sdd-ruling-unclassified' },
+  ]);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(result.rulingGateGaps[1], 'detail'), false);
+});
+
+test('decideConsoleExecute: ctx.rulingReadErrors without ctx.rulingTexts still names the read cause, outranking the absent-map unclassified (#4049 over #4048)', () => {
+  const cj = rulingConsoleJson([{ id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true }]);
+  const result = decideConsoleExecute(cj, tickedComment(['staged-1']), Date.now(), { rulingReadErrors: { 'staged-1': 'not-found' } });
+  assert.deepStrictEqual(result.rulingGateGaps, [{ id: 'staged-1', reason: 'sdd-ruling-unreadable', detail: 'not-found' }]);
 });
 
 test('consoleExecuteDetect: a console with no ruling row reports rulingGateGaps [] (a non-ruling item\'s stagedPath is not consulted)', { skip: process.platform === 'win32' }, async () => {
