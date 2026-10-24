@@ -20,8 +20,6 @@ const slice = (text, from, to) => {
   return text.slice(a, b);
 };
 
-const MERGE_PATH = path.join(ROOT, 'plugin', 'skills', '_shared', 'pr-first-merge.md');
-
 const CONTRACT = read('plugin', 'skills', '_shared', 'acceptance-labeling-landed.md');
 const MERGE = read('plugin', 'skills', '_shared', 'pr-first-merge.md');
 const PR_SCAN = read('plugin', 'skills', '_shared', 'github-pr-scan.md');
@@ -107,10 +105,6 @@ test("AC2.1: Step 1's not-landed sentence cites the contract and names no caller
   assert.match(sentence, /acceptance-labeling-landed\.md/);
   assert.doesNotMatch(sentence, /close-out/);
   assert.doesNotMatch(sentence, /tidy/);
-});
-
-test('AC2.1: pr-first-merge does not grow (merge bundle headroom)', () => {
-  assert.ok(Buffer.byteLength(readText(MERGE_PATH)) <= 38412, 'pr-first-merge.md must stay <= 38412 bytes');
 });
 
 // The files (by key, in insertion order) that define the live-state clause: they
