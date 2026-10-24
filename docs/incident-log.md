@@ -1938,3 +1938,27 @@ pins the header against both console files, so a reworded header cannot silently
 Cost: a ~7.4h stall (19:58:28Z to 03:22:55Z) on a run the plugin already documented as zero-click,
 plus a misdirected fix, #2734's build, shipped against the wrong cause while the real defect stayed
 open.
+
+## IL-168 — Deterministic release logic written as prose took a fix wave per step and still shipped a counting bug its pins could not see
+
+The #3898/#4012/#4041 batch (2026-10-24, run `2026-10-24T103516-spec-3898-4012-4041`) added three
+pieces of `/claude-tweaks:release` logic, each fully deterministic, as prose in
+`plugin/skills/release/SKILL.md` and `execute.md` for the agent to execute: #3898's Step 0 guard
+`node -e` one-liner and disposition inventory, #4012's Step 3 review-tree classifier, and #4041's
+Step 5 reviewed-tip state machine (read the last `at reviewed tip` line, classify a fetch by exit
+code and stderr, count delta-marker lines below a marker, compare against the
+`release-tip-moves` bound, route a verdict). Prose cannot be unit-tested, so each was pinned by
+regex FACT assertions in a `tests/release-*-conformance.test.js` suite, which check the wording.
+
+Each needed several review fix rounds. #4041's move count was keyed on the current
+`{reviewed-short}`, which no earlier delta line names, so the count stayed at 1 and the bound
+never tripped past the first move. The FACT pin matched the buggy wording exactly; only a review
+lens reading the prose caught it, as a high-severity finding (ledger row 57, staged as
+`spec-4041/staged/review-1.patch`). A stale default on an invalid policy value, a TOCTOU between
+two reads of a moving ref, and a marker recording the tip before its review ran were found the same
+way. All three per-spec hindsight passes named the same root cause independently.
+
+Cost: three fix waves across three specs, one staged high-severity patch, and both files left near
+the Read rail (`execute.md` 50,278 B, `SKILL.md` 49,015 B, against 52,500 B). The remedy deferred
+from this run is one release-state CLI owning all three, printing a JSON verdict, unit-tested per
+cell.

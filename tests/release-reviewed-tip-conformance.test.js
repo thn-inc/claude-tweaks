@@ -210,8 +210,10 @@ const FACTS = [
     /a failed fetch[^\n]*`failed`[^\n]*stderr[^\n]*verbatim/],
   ['block', 'an unmoved branch is logged and merges',
     /Step 5: origin\/\{branch\} still at reviewed tip \{short\}; merging\./],
-  ['block', 'the move count is the number of lines carrying the delta marker\'s `origin/{branch} moved {reviewed-short} →` form',
-    /the number of lines in the `## \/release` block[^\n]*that carry `origin\/\{branch\} moved \{reviewed-short\} →`/],
+  ['block', 'the move count is the number of lines carrying the delta marker\'s `origin/{branch} moved {any-short} →` form, any short sha',
+    /the number of lines in the `## \/release` block[^\n]*that carry `origin\/\{branch\} moved \{any-short\} →`, where `\{any-short\}` is whatever short sha that line names/],
+  ['block', 'the count never keys on the current reviewed tip, which would cap it at one move',
+    /Never match only the current `\{reviewed-short\}`[^\n]*the bound never trips/],
   ['block', '`release-tip-moves` is read in resolve-policy.js\'s JSON form, not --values',
     /resolve-policy\.js" --run "\{run-dir\}" release-tip-moves\n/],
   ['block', '`{bound}` is the entry\'s value and `{source}` its source',
@@ -557,12 +559,28 @@ test('bound read: go-red: the --values form prints the default with exit 0 and n
   assert.ok(!values.stdout.includes('invalid'), 'the --values form drops the invalid flag');
 });
 
-// The log-line templates in the block that carry the literal the bound step says to count, so a log line
-// that drifts into the move count turns this red.
-function countedMoveLines(block) {
-  const literal = block.match(/that carry `(origin\/\{branch\} moved \{reviewed-short\} →)`/);
+// The counted form the bound step names (`origin/{branch} moved {any-short} →`).
+function countedForm(block) {
+  const literal = block.match(/that carry `(origin\/\{branch\} moved \{any-short\} →)`/);
   assert.ok(literal, 'extraction pattern is out of sync: the bound step names no counted literal');
-  return block.split('\n').filter((l) => /^(AUTO|STAGED) \{HH:MM:SS\}/.test(l) && l.includes(literal[1]));
+  return literal[1];
+}
+
+// The counted form as a regex: `{branch}` and the sha placeholder become the given patterns, the rest
+// matches literally.
+function movedFormRe(form, { branch, short }) {
+  return new RegExp(form.split(/(\{[a-z-]+\})/).map((part) => {
+    if (part === '{branch}') return branch;
+    if (/^\{[a-z-]+\}$/.test(part)) return short;
+    return part.replace(/[.*+?^$()|[\]\\{}/]/g, (c) => `\\${c}`);
+  }).join(''));
+}
+
+// The log-line templates in the block that the counted form matches (any placeholder standing in for the
+// sha), so a log line that drifts into the move count turns this red.
+function countedMoveLines(block) {
+  const re = movedFormRe(countedForm(block), { branch: '\\{branch\\}', short: '\\{[a-z-]+\\}' });
+  return block.split('\n').filter((l) => /^(AUTO|STAGED) \{HH:MM:SS\}/.test(l) && re.test(l));
 }
 
 test('move count: only the delta marker carries the counted literal', () => {
@@ -578,6 +596,19 @@ test('move count: only the delta marker carries the counted literal', () => {
     assert.notEqual(drifted, block, `go-red anchor for the ${name} not found`);
     assert.equal(countedMoveLines(drifted).length, 2, `go-red: a ${name} carrying the literal must be counted`);
   }
+});
+
+test('move count: the counted form matches every earlier delta marker, so move 3 reads as move 3', () => {
+  const form = countedForm(blockOf(readText(EXECUTE)));
+  const log = [
+    'AUTO 10:00:00 — Step 5: origin/main moved aaaaaaa → bbbbbbb (2 commits) before the merge — move 1 of 2; delta review starting',
+    'AUTO 10:20:00 — Step 5: origin/main moved bbbbbbb → ccccccc (1 commits) before the merge — move 2 of 2; delta review starting',
+  ];
+  const counted = log.filter((l) => movedFormRe(form, { branch: 'main', short: '[0-9a-f]{7,40}' }).test(l)).length;
+  assert.equal(counted, 2, 'both earlier delta markers count, so the next move is move 3 and exceeds a bound of 2');
+  // Go-red: keying the count on the current reviewed tip (ccccccc after move 2) finds neither marker.
+  const keyedOnCurrent = log.filter((l) => movedFormRe(form, { branch: 'main', short: 'ccccccc' }).test(l)).length;
+  assert.equal(keyedOnCurrent, 0, 'go-red: a count keyed on the current reviewed tip undercounts');
 });
 
 test('placement: 3a sits between the exit classification and the bound; the branch assertion precedes the pull', () => {
