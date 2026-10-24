@@ -4,6 +4,7 @@ files:
   - plugin/skills/tidy/step-6-auto.md
   - plugin/skills/tidy/SKILL.md
   - plugin/skills/_shared/pr-first-merge.md
+  - plugin/skills/_shared/acceptance-labeling-landed.md
   - tests/tidy-arm-ready-pr-acceptance-guard.test.js
 ---
 
