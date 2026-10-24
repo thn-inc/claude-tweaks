@@ -102,8 +102,8 @@ Using the facets already read in Resolve-the-input case 1/5 (`parseRecordFacets`
 present:**
 
 ```bash
-gh issue view {n} --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: ")) | select(.body | contains("**Resolved:**") | not) | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | .id'
-gh issue view {n} --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: ")) | select(.body | contains("**Resolved:**") | not) | select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \(.url) by \(.author.login // "unknown") (\(.authorAssociation // "no association")) — not an owner, member, or collaborator"'
+gh issue view {n} --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: ")) | select(.body | contains("**Resolved:**") | not) | select((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR") | .id'
+gh issue view {n} --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: ")) | select(.body | contains("**Resolved:**") | not) | select(((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR") | not) | "skipped marker comment \(.url // .html_url // .id // "unknown") by \(.author.login // .user.login // "unknown") (\(.authorAssociation // .author_association // "no association")) — not an owner, member, or collaborator"'
 ```
 
 Only a trusted author's comment is a decision comment (`_shared/pr-run-comments.md`'s Trusted authors); print the second command's lines — they name the skipped lookalikes.

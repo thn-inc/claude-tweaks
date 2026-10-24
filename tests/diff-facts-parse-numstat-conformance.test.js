@@ -80,3 +80,44 @@ test('a win32-shaped plugin root splices into the composition with no backslash'
   assert.ok(!cmd.includes('\\'), `spliced command contains a backslash: ${cmd}`);
   assert.ok(cmd.includes("require('D:/a/repo/plugin/bin/lib/git-z.js')"), cmd);
 });
+
+// preSplitFactsMissing(text): the #3829 facts ceremony-derivation.md must state, returning the ones
+// it no longer does. A worktree-isolated session refuses a `$(git ...)` substitution, so the
+// merge-base is its own command and the composition line takes the pasted-in `{merge-base}`.
+const NO_SUBSTITUTION = 'no $(...) substitution on the composition line';
+const PLACEHOLDER = '{merge-base} placeholder on the composition line';
+const OWN_COMMAND = 'git merge-base HEAD origin/main as its own command';
+function preSplitFactsMissing(text) {
+  const lines = text.split('\n');
+  const line = lines.find((l) => l.includes('parseNumstatZ') && l.includes('node -e'));
+  if (!line) return ['composition line (parseNumstatZ and node -e)'];
+  const missing = [];
+  if (line.includes('$(')) missing.push(NO_SUBSTITUTION);
+  if (!line.includes('{merge-base}')) missing.push(PLACEHOLDER);
+  if (!lines.some((l) => l.trim() === 'git merge-base HEAD origin/main')) missing.push(OWN_COMMAND);
+  return missing;
+}
+
+test('#3829: ceremony-derivation.md pre-splits the merge-base out of the composition line', () => {
+  assert.deepStrictEqual(preSplitFactsMissing(CEREMONY), []);
+});
+
+test('#3829 go-red: each pre-split fact fails alone, on a doctored copy of the live text', () => {
+  const doctor = (from, to) => {
+    const doctored = CEREMONY.replace(from, to);
+    assert.notEqual(doctored, CEREMONY, `doctoring matched nothing: ${from}`);
+    return doctored;
+  };
+  assert.deepStrictEqual(
+    preSplitFactsMissing(doctor('{merge-base} | node -e', '{merge-base} "$(echo x)" | node -e')),
+    [NO_SUBSTITUTION],
+  );
+  assert.deepStrictEqual(
+    preSplitFactsMissing(doctor('{merge-base} | node -e', 'abc1234 | node -e')),
+    [PLACEHOLDER],
+  );
+  assert.deepStrictEqual(
+    preSplitFactsMissing(doctor('git merge-base HEAD origin/main\n', 'git merge-base HEAD origin/master\n')),
+    [OWN_COMMAND],
+  );
+});

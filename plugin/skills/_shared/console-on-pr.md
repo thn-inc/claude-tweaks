@@ -38,7 +38,8 @@ gate.
 Every renderable row gets a stable id: `{kind}-{n}` where `{kind}` is one of `staged` (every batch
 section from Auto-applied through Cleanup actions — reusing the console's own global `#` sequence
 as `{n}`), `q` (Queue writes, `{n}` = the `Q#` number), `m` (Memory updates, `{n}` = the `M#`
-number), or `u` (Upstream feedback, `{n}` = the `U#` number). The multi-spec console qualifies
+number), `u` (Upstream feedback, `{n}` = the `U#` number), or `r` (Reflection insights, `{n}` =
+the `R#` number). The multi-spec console qualifies
 every id with its spec slug — `{spec-slug}-{kind}-{n}` — so ids stay unique across every spec's
 rows sharing one comment set. One further id, always present, always last: `resolve`.
 

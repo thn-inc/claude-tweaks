@@ -318,6 +318,19 @@ test('structurallyStuckBody: the reason list names every STRUCTURALLY_STUCK_REAS
   assert.match(body, /For a `merged-partial` directory, the records the run's merged PR was meant to close \(the closing-keyword links on that PR\) are still open: ship them in a later PR, or close\/release them if they were abandoned; the next reconcile then archives the dir and drops it from this record\./);
 });
 
+test('structurallyStuckBody: names both tiebreak reasons and carries their remedy line (#3945)', () => {
+  const body = structurallyStuckBody([]);
+  const listLine = body.split('\n')[0];
+  for (const reason of ['tiebreak-coverage-missing', 'tiebreak-artifact-invalid']) {
+    assert.ok(listLine.includes(`\`${reason}\``), `expected reason list to name \`${reason}\`: ${listLine}`);
+  }
+  assert.ok(body.includes("For a `tiebreak-coverage-missing` or `tiebreak-artifact-invalid` directory, the run's review-findings.json lists a finding with no tiebreak verdict line in decisions.md, or is malformed: re-run the review step's findings writer and tiebreak for that run, or delete review-findings.json if the run predates the tiebreak; the next reconcile then archives the dir and drops it from this record."), body);
+  const lines = body.split('\n');
+  const mergedPartial = lines.findIndex((l) => l.startsWith('For a `merged-partial` directory'));
+  const tiebreak = lines.findIndex((l) => l.startsWith('For a `tiebreak-coverage-missing`'));
+  assert.ok(mergedPartial >= 0 && tiebreak > mergedPartial, 'the tiebreak remedy follows the merged-partial line');
+});
+
 test('escalateResidue: structurally-stuck re-escalating the SAME already-named path is a plain dedup-hit, never appended twice', () => {
   const marker = structurallyStuckMarker();
   const body = structurallyStuckBody(['/x/run-a']);

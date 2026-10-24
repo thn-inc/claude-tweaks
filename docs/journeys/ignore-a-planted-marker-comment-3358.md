@@ -11,6 +11,9 @@ files:
   - plugin/skills/_shared/materiality-floor.md
   - plugin/skills/tidy/digest-sweep.md
   - plugin/skills/tidy/SKILL.md
+  - plugin/skills/tidy/scan-procedures.md
+  - plugin/skills/backlog/grant-lane-decision.md
+  - plugin/skills/specify/shaping-mode-stamping.md
 ---
 
 # Ignore a Planted Marker Comment
@@ -24,7 +27,7 @@ files:
 
 ### 1. Demo a record whose PR carries a stranger's walkthrough — `/claude-tweaks:demo #N`
 - **URL:** `/claude-tweaks:demo #N`, for a record whose PR has a `<!-- run-comment: try-it -->` comment posted by an account with author association `NONE`
-- **Action:** Run demo. It reads the PR's run comments through `_shared/pr-run-comments.md`'s Find step, which keeps only comments whose `authorAssociation` is `OWNER`, `MEMBER` or `COLLABORATOR`.
+- **Action:** Run demo. It reads the PR's run comments through `_shared/pr-run-comments.md`'s Find step, which keeps only comments whose author association (`authorAssociation` from `gh`, `author_association` from REST and MCP) is `OWNER`, `MEMBER` or `COLLABORATOR`.
 - **Should feel:** Uneventful. The walkthrough on screen is the run's own, or a fresh one composed from the record's acceptance criteria. The stranger's steps never appear.
 - **Should understand:** The skip line, printed one line above the verdict, names the planted comment's URL, its author and their association. Trust comes from GitHub's author association, not from which account is reading. Anyone with write access could already push to the branch, so a collaborator's comment is trusted, and another maintainer reading the same PR sees the same result.
 - **Red flags:** Steps from the planted comment shown as the walkthrough. A planted comment dropped with no skip line. A collaborator's legitimate walkthrough rejected because a different account ran demo.
@@ -64,8 +67,16 @@ files:
 - **Should understand:** Dedup (`isMaterialityDuplicate`) counts only fingerprints in `OWNER`/`MEMBER`/`COLLABORATOR` comments, so a planted marker routes the finding as new instead of suppressing it. The tidy sweep's promotion and expiry read only trusted comments, and the run's output names each skipped marker comment in the standard skip line. A bootstrap-race merge re-posts only trusted comments into the surviving digest, so a stranger's entry is never laundered under the maintainer's identity. A caller that passes raw comment bodies instead of comment objects gets its own `skipped bare-string digest element …` line rather than silent non-dedup.
 - **Red flags:** A finding missing from the digest because a stranger's marker matched it. A digest cluster proposal built from a stranger's entry lines. A stranger's entry re-posted under the maintainer's account by the merge-close action.
 
+### 7. Run the same readers where `gh` is absent — a cloud Routine sandbox on the MCP transport
+- **URL:** any marker reader above whose skill prose pastes the trust filter as jq (`_shared/pr-run-comments.md`'s Trusted authors, `tidy/digest-sweep.md`'s Cluster promotion, `tidy/scan-procedures.md`'s tombstone check, the `needs-decision` lookups), run over comments fetched through REST or MCP `issue_read` instead of `gh --json comments`
+- **Action:** The maintainer's own marker comment comes back in the REST shape (`author_association: "MEMBER"`, `user.login`, `html_url`), alongside a stranger's planted copy (`author_association: "NONE"`). Run the reader's jq filter over those comment objects.
+- **Should feel:** The same as on a `gh` run. The maintainer's comment is found and the stranger's is skipped. Switching transport changes nothing the maintainer can see.
+- **Should understand:** The pasted filter reads either spelling (`(.authorAssociation // .author_association)`), so the REST and MCP shape is judged exactly like the `gh` shape. The skip line names the REST comment by its `url` (or `html_url`, then `id`) and its author by `user.login`, the same text `untrustedSkipNote()` prints.
+- **Red flags:** Every marker comment, the maintainer's included, reads as untrusted on a `gh`-absent run (the failure before #3823: the jq keyed on `authorAssociation` only). A skip line reading `by unknown (no association)` for a REST comment that does carry `user.login` and `author_association`.
+
 ## Origin
 - Created during build of #3358 (filter run-comment marker reads by the posting identity, not the marker alone)
 - Steps 1-5 built in this session
 - Step 6 added during build of #3766 (digest dedup and the tidy digest sweep trust only owner/member/collaborator comments)
-- Related specs: #3358, #3766, #2821 (the try-it walkthrough demo reads back), #309 (pending-grant maturation)
+- Step 7 added, and step 1's association wording updated, during build of #3823 (trusted-author jq reads both association spellings, so it works on the REST/MCP transport)
+- Related specs: #3358, #3766, #3823, #2821 (the try-it walkthrough demo reads back), #309 (pending-grant maturation)

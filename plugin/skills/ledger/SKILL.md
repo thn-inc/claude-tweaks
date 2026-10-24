@@ -113,7 +113,7 @@ Only delete when the resolve gate has passed — all items must have terminal st
 
 > **Parallel execution:** Use parallel tool calls aggressively — all `Glob`/`Read` operations across the matched ledger files are independent and should run concurrently.
 
-1. Find the ledgers: when a run dir resolves for this invocation (`$PIPELINE_RUN_DIR`, or the most-recent-matching run), resolve this run's own per `_shared/ledger-format.md`'s resolution rule and list it first, marked as this run's; then list every other ledger file — the probe's `value.unattributedFiles`, or on the rule's fallback the remaining `docs/plans/*-ledger.md` matches — as other runs' ledgers, never as this run's. With no run dir at all, the `docs/plans/*-ledger.md` glob is the complete listing (the rule's no-run-dir fallback).
+1. Find the ledgers: when a run dir resolves for this invocation (`$PIPELINE_RUN_DIR`, or the most-recent-matching run), resolve this run's own per `_shared/ledger-format.md`'s resolution rule and list its `this-run:` ledger(s) first, marked as this run's, then each `other-run:` ledger, marked as another run's — never as this run's; on the rule's reader fallback, list the glob's matches as ledgers this run cannot attribute. With no run dir at all, the `docs/plans/*-ledger.md` glob is the complete listing (the rule's no-run-dir fallback).
 2. For each ledger, show:
    ```
    ## {ledger name}
@@ -130,7 +130,7 @@ Only delete when the resolve gate has passed — all items must have terminal st
 
 ### `/claude-tweaks:ledger resolve`
 
-1. Find the ledger: a `{feature-name}` (`resolve {feature-name}`) is an explicit choice — match it the same way the `{feature-name}` form does above (no match → report `No ledger found for "{feature-name}"` and list the currently active ledgers instead of guessing). Without one, when a run dir resolves for this invocation, the active ledger is this run's per `_shared/ledger-format.md`'s resolution rule — when the rule finds none, report `No ledger found for this run` rather than resolving another run's, and when its probe fails, report the probe error and stop: the gate flips rows, so it never takes the rule's fallback. With no run dir at all, default to the most recent `docs/plans/*-ledger.md` (the rule's no-run-dir fallback).
+1. Find the ledger: a `{feature-name}` (`resolve {feature-name}`) is an explicit choice — match it the same way the `{feature-name}` form does above (no match → report `No ledger found for "{feature-name}"` and list the currently active ledgers instead of guessing). Without one, when a run dir resolves for this invocation, the active ledger is this run's per `_shared/ledger-format.md`'s resolution rule — on `none`, report `No ledger found for this run` rather than resolving another run's; on `ambiguous`, list the `this-run:` ledgers and ask which one; on `unattributable` or no report line, report the verb's output and stop: the gate flips rows, so it never takes the rule's fallback. With no run dir at all, default to the most recent `docs/plans/*-ledger.md` (the rule's no-run-dir fallback).
 2. Run the resolve gate procedure
 3. Present results
 

@@ -47,17 +47,17 @@ Two findings match when **all three** hold:
 
 1. **Exact path match** — `src/auth.ts` matches `src/auth.ts`, not `src/auth/index.ts`.
 2. **Line within ±2, or within ±5 on text agreement** — same finding, slight line-number disagreement is acceptable. Inside ±2 a pair matches unless both texts are known and their substance similarity is below 0.2. A pair 3-5 lines apart (two agents anchoring one finding on different lines of one multi-line statement) matches only when both findings carry text and their substance similarity is at least 0.2, the same threshold that applies inside ±2. A pair with missing text never matches in the wider band.
-3. **Matching severity bucket** — `critical` + `high` collapse to one bucket; `medium` + `low` + `info` collapse to another. Cross-bucket mismatches do not reproduce.
+3. **Matching severity bucket** — `critical` + `high` collapse to one bucket; `medium` + `low` + `info` collapse to another. `findingsMatch` requires the same bucket, but a pair that agrees on location and substance and straddles the boundary still reproduces: `confirmed` at the lower severity, flagged `severityContested` (`reconcileSeverity` in `bin/lib/coordination.js`, #733).
 
 ### Auto-resolution
 
 | Outcome | Status | Destination |
 |---|---|---|
 | Both agents surface a matching finding | `confirmed` | Surface to caller; treat as real |
-| Only one agent surfaces a finding (path/line/severity mismatch) | `unconfirmed` | STAGED to Review Console — never silently dropped |
+| Only one agent surfaces a finding (path/line or substance mismatch) | `unconfirmed` | STAGED to Review Console — never silently dropped |
 | /review only: the unpaired side asserts code is absent and one `grep -n`/`Read` of the live file finds the named construct | refuted | AUTO-logged, not staged — see `review/step3-lens-dispatch.md`'s absence-claim bullet |
 
-No outcome is "ask the user inline." Unconfirmed findings stage; the caller's Review Console handles disposition.
+No outcome is "ask the user inline." Unconfirmed findings stage. On `/review` they first go to its tiebreak (`review/step3-tiebreak.md`); the caller's Review Console handles what is left.
 
 ### Cross-lens corroboration (/review medium tier)
 
@@ -77,10 +77,10 @@ Per `auto-decision-log.md` schema:
 
 ```
 - AUTO {HH:MM:SS} — /review reproduction: confirmed {N} findings, staged {M} unconfirmed. Reversibility: high (commit / stage path).
-- STAGED {HH:MM:SS} — /review reproduction: finding {path}:{line} surfaced by one agent only. Stage path: staged/review-unconfirmed-{n}.patch.
+- STAGED {HH:MM:SS} — /review reproduction: finding {path}:{line} surfaced by one agent only. Stage path: staged/review-unconfirmed-{n}.md.
 ```
 
-`staged/review-unconfirmed-{n}.patch` follows `_shared/staged-patch.md`: `Target:` / `Invariant:` / `Finding:` / `Staged-at:` preamble plus the diff, validated per that file's Staging-time gate — `git apply --check` from the worktree, then its Stacked check (`bin/check-staged-stack.js`) — before the `STAGED` entry above is written — a failing check is handled per that gate and surfaced at staging, and the console re-derives from `Invariant:` when the diff has gone stale.
+`staged/review-unconfirmed-{n}.md` is a finding description (severity, lens, source, where, finding, suggested follow-up), not a patch. The console classifies it as Low-confidence (`bin/lib/console/resolve.js`'s `review-unconfirmed-` row). Such a finding first goes to `/claude-tweaks:review`'s tiebreak (`review/step3-tiebreak.md`).
 
 ### Review Console staging format
 

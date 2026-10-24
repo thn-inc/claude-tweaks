@@ -91,6 +91,16 @@ vocabulary answers "why did fix-now fail for an item this pipeline was already w
 which is not the question a proactive sweep's own fresh finding is answering. A future
 non-gate-routed adopter of this floor uses the same value.
 
+### Tiebreak can't-tell value
+
+A review finding that the independent tiebreak could neither confirm nor refute, at severity `low`
+or `info`, is the resolver's `digest` outcome. `/claude-tweaks:review`'s Step 3.7
+(`review/step3-tiebreak.md`) routes it here with `Defer-reason: tiebreak-cant-tell`. Like
+`direct-filing-sweep`, it is an Entry-format value only. Deliberately **not** in `DEFER_REASONS` — an unverified
+finding never failed fix-now, so no gate reason describes it. Its routing comes from the
+resolver's severity split, not from the three-axis floor above. Dedup and Digest URL and count
+surfacing apply unchanged.
+
 ### Digest URL and count surfacing
 
 Every routing skill's own summary output states the number of findings routed to the digest

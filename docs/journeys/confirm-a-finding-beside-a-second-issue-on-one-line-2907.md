@@ -9,7 +9,7 @@ files:
 **Persona:** a developer who runs `/claude-tweaks:review` (usually inside `/claude-tweaks:flow`) at `medium` effort or above, and reads the review summary to decide what to fix before merge.
 **Goal:** when both agents of a reproduction pair report the same issue at one location, and one agent also reports a different issue there, the shared issue lands `confirmed` no matter which order that agent listed its findings in.
 **Entry point:** `/claude-tweaks:review #{n}` (or the `review` phase of `/claude-tweaks:flow #{n}`) on a diff where one line carries more than one problem.
-**Success state:** the summary's `### Code Review Findings (confirmed)` table lists the shared issue once. Only the second issue, reported by one agent alone, appears in the Review Console's Low-confidence section, with no `nearLocation` pointer.
+**Success state:** the summary's `### Code Review Findings (confirmed)` table lists the shared issue once. Only the second issue, reported by one agent alone, stays `unconfirmed`, with no `nearLocation` pointer. It then goes to Step 3.7's tiebreak (`get-a-verdict-on-every-unverified-review-finding-3947.md`), and reaches the Review Console's Low-confidence section only if the tiebreak cannot settle it.
 
 ## Steps
 

@@ -64,16 +64,16 @@ if [ -n "$SNAPSHOT" ] && node -e "
   const { isFresh } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
   process.exit(isFresh(process.argv[1], Number(process.argv[2])) ? 0 : 1)
 " "$SNAPSHOT" "$TTL"; then
-  cp "$SNAPSHOT" {tmp-records-file}
+  cp "$SNAPSHOT" "{tmp-records-file}"
 else
   LIMIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit)
   export FETCH_LIMIT="$LIMIT"
   FIELDS=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').UNION_FIELDS)")
-  gh issue list --state all --json "$FIELDS" --limit "$LIMIT" > {tmp-records-file}
+  gh issue list --state all --json "$FIELDS" --limit "$LIMIT" > "{tmp-records-file}"
   UNION_LEN=$(node -e "console.log(require('{tmp-records-file}').length)")
   if [ "$UNION_LEN" = "$LIMIT" ]; then
     echo "WARNING: the --state all snapshot hit backlog-fetch-limit ($LIMIT); open records were completed by a second open-only fetch — closed-record coverage is truncated at the $LIMIT newest" >&2
-    gh issue list --state open --json "$FIELDS" --limit "$LIMIT" > {tmp-open-only-file}
+    gh issue list --state open --json "$FIELDS" --limit "$LIMIT" > "{tmp-open-only-file}"
     node -e "
       const { mergeOpenIntoUnion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
       const union = require('{tmp-records-file}');
@@ -81,9 +81,11 @@ else
       require('fs').writeFileSync('{tmp-records-file}', JSON.stringify(mergeOpenIntoUnion(union, open)));
     "
   fi
-  [ -n "$SNAPSHOT" ] && cp {tmp-records-file} "$SNAPSHOT"
+  [ -n "$SNAPSHOT" ] && cp "{tmp-records-file}" "$SNAPSHOT"
 fi
 ```
+
+The fences quote every `{tmp-*}` placeholder themselves — substitute a bare path or a bare `$VAR`, never a pre-quoted value.
 
 This block always fetches `--state all` (the union covers both open and closed consumers) and
 always the full field set — there is no per-consumer `{EXTRA_FIELDS}` list to maintain anymore,
@@ -134,7 +136,7 @@ node -e "
     console.error('WARNING: fetched exactly ' + issues.length + ' open issues (the configured backlog-fetch-limit) — there may be more beyond this cap. Consider raising backlog-fetch-limit in .claude-tweaks/policy.yml, or running /claude-tweaks:tidy to reduce backlog volume.');
   }
   console.log(JSON.stringify(issues.map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))));
-" > {tmp-faceted-file}
+" > "{tmp-faceted-file}"
 ```
 
 Note that `{tmp-records-file}` now holds the **unfiltered** `--state all` snapshot content (open
@@ -163,7 +165,7 @@ since the spread above (`...i`) preserves every original field alongside the der
 node -e "
   const { queryRecords } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
   console.log(JSON.stringify(queryRecords('specs', {})));
-" > {tmp-faceted-file}
+" > "{tmp-faceted-file}"
 ```
 
 Every record returned already carries its parsed `.facets` — no separate parse pass needed.

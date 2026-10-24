@@ -4,6 +4,8 @@ files:
   - plugin/skills/dispatch/task-prompt.md
   - plugin/skills/review/step3-lens-dispatch.md
   - plugin/skills/_shared/subagent-output-contract.md
+  - plugin/skills/review/review-summary-template.md
+  - plugin/skills/review/code-mode-steps.md
 ---
 
 # Keep a Second Reader in a Dispatched Review
@@ -28,13 +30,14 @@ files:
 
 ### 2. Downgrade a lens that cannot be collected
 - **URL:** the same dispatch, when the environment has no `Agent` tool (a cloud routine sandbox) or a lens agent is still silent when the 60-wait bound expires
-- **Action:** the reviewer judges that lens itself, applying the lens's own checklist as an adversarial self-review. It logs the downgrade with the lens and the cause, and gives the lens the partner-died single-read treatment: its findings enter `unconfirmed`. A silent child is now abandoned.
-- **Should feel:** visible and contained. One logged downgrade per affected lens, and the rest of the review carries on.
+- **Action:** the reviewer judges that lens itself, applying the lens's own checklist as an adversarial self-review. It gives the lens the partner-died single-read treatment at whatever effort tier the review runs (`low` through `max`): its findings enter `unconfirmed`, it writes that paragraph's `Reproduction: lens "{lens}" {unavailable | timed out}; single-read coverage` line to `decisions.md`, and the review summary and the PR verdict comment each carry one **Coverage caveat:** line naming every affected lens and its reason. A silent child is now abandoned.
+- **Should feel:** visible and contained. One logged downgrade per affected lens, one caveat line a PR reader sees without opening `decisions.md`, and the rest of the review carries on. A clean review with a caveat still renders the compact PASS form.
 - **Should understand:** an abandoned child no longer counts as outstanding, so the reviewer's final reply still ends with `STATUS: {WORD}`. `INTERIM_STATUS:` is only for a turn that ends while a wait is still in progress. A child result that arrives after its lens was self-judged is ignored and never changes the verdict. An abandoned child cannot be stopped (`TaskStop` refuses a nested child), so it keeps running, and the harness may hold the reviewer's final result until it finishes: the bound caps the wait, not the delivery.
 - **Red flags:**
   - a final reply ending in `INTERIM_STATUS:` after the bound expired, which `/dispatch` reads as BLOCKED;
-  - a self-judged finding promoted to `confirmed` without direct verification;
-  - a missing downgrade line in `decisions.md`.
+  - a self-judged finding promoted to `confirmed` without direct verification or a Step 3.7 tiebreak verdict (`get-a-verdict-on-every-unverified-review-finding-3947.md`);
+  - a missing downgrade line in `decisions.md`;
+  - a downgrade logged in `decisions.md` with no **Coverage caveat:** line in the summary or the PR verdict comment.
 
 ### 3. Answer a late re-wake
 - **URL:** after the second call's final reply, when an abandoned child's notification arrives later
@@ -49,4 +52,5 @@ files:
 ## Origin
 - Created during the build of #3078, which also absorbs #3266. Three earlier builds' premise probes falsified the "foreground nested dispatch" decision. Attempt 4's probe (comment 6286350157, Claude Code 2.1.302) showed that a dispatched subagent's child notification arrives in-turn during a foreground `sleep`. The 20-minute bound comes from the final review's transcript measurement: lens agents had a median of 123 s and a p90 of 260 s, and 26% of sessions had at least one lens agent over 300 s.
 - Updated during the build of #3722: probes across Claude Code 2.1.263–2.1.304 showed re-wake after a dispatched agent's turn ends is mode- and version-dependent, and that a late re-wake answered with only the `STATUS:` line replaced the final report.
+- Updated during the build of #3817: the degrade is named for every effort tier, and its single-read coverage caveat now has a slot in the review summary (compact and full forms) and is copied verbatim into the PR verdict comment.
 - Related journeys: `run-a-review-from-a-worktree-isolated-session-2956.md` (the same dispatched review's file writes), `keep-review-lenses-from-running-suites-3001.md` (the same fan-out's leftover sweep), `clear-the-two-call-gate-for-a-dispatched-group-2775.md` (where the second call's `STATUS:` line is read).

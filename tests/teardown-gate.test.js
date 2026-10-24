@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { findRunByWorktreePath, readRunState } = require('../plugin/bin/lib/hooks/context');
+const { findRunByWorktreePath, findRunsByWorktreePath, classifyOwnership, resolveRun, readRunState } = require('../plugin/bin/lib/hooks/context');
 const { fixtureGit } = require('./helpers/git-fixtures');
 const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { caseInsensitiveFs } = require('./helpers/case-insensitive-fs');
@@ -202,6 +202,71 @@ test('findRunByWorktreePath (#3769): a mis-cased recorded worktree matches the c
   const { root, wt, misCased, fsImpl } = caseFixture3769();
   const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: misCased }));
   assert.strictEqual(findRunByWorktreePath(root, wt, { fsImpl }).runDir, runDir);
+});
+
+// --- #3836: classifyOwnership and findRunsByWorktreePath are case-canonical ---
+// Same fake volume as #3769 above, but a REAL linked worktree: classifyOwnership
+// asks git for the caller's toplevel. `other` exists only in the fake (never on
+// disk), so a 'foreign' verdict proves the injected fs reached the existence probe.
+function caseFixture3836() {
+  const root = fixtureRoot();
+  const wt = addWorktree(root);
+  const other = path.join(path.dirname(wt), 'other-wt');
+  const misCased = path.join(path.dirname(wt), path.basename(wt).toUpperCase());
+  const fsImpl = caseInsensitiveFs({ [root]: 'dir', [wt]: 'dir', [other]: 'dir' });
+  return { root, wt, other, misCased, fsImpl };
+}
+
+test('classifyOwnership (#3836): a same-session binding recorded in a different letter case than the caller\'s worktree classifies as mine', { skip: POSIX_ONLY }, () => {
+  const { wt, misCased, fsImpl } = caseFixture3836();
+  assert.strictEqual(classifyOwnership({ sessionId: 's1', cwd: wt }, { sessionId: 's1', worktree: misCased }, { fsImpl }), 'mine');
+  assert.strictEqual(classifyOwnership({ sessionId: 's1', cwd: wt }, { sessionId: 's1', worktree: wt }, { fsImpl }), 'mine');
+});
+
+test('classifyOwnership (#3836): a binding to a different live worktree is still foreign, resolved through the injected fs', { skip: POSIX_ONLY }, () => {
+  const { wt, other, fsImpl } = caseFixture3836();
+  assert.strictEqual(classifyOwnership({ sessionId: 's1', cwd: wt }, { sessionId: 's1', worktree: other }, { fsImpl }), 'foreign');
+});
+
+test('ExitWorktree(remove) (#3836): a same-session remove whose recorded binding differs only in letter case is denied like the exact-case binding', { skip: POSIX_ONLY }, () => {
+  for (const recorded of ['misCased', 'wt']) {
+    const fixture = caseFixture3836();
+    const { root, wt, fsImpl } = fixture;
+    const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: fixture[recorded], sessionId: 's1' }));
+    const out = preToolUse.run({
+      input: { tool_name: 'ExitWorktree', tool_input: { action: 'remove' }, session_id: 's1' },
+      cwd: wt, runDir: null, runState: null,
+    }, { fsImpl });
+    assert.ok(out.json && out.json.hookSpecificOutput, JSON.stringify(out));
+    assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny', `recorded=${recorded}`);
+    const reason = out.json.hookSpecificOutput.permissionDecisionReason;
+    assert.match(reason, /still assigned to non-terminal pipeline run/);
+    assert.ok(reason.includes(path.basename(runDir)), 'deny reason must name the run dir');
+    assert.ok(!JSON.stringify(out).includes('recorded by a different session'), `recorded=${recorded}`);
+  }
+});
+
+test('findRunsByWorktreePath (#3836): a mis-cased worktree path returns the ad-hoc run dirs the correctly-cased path does', { skip: POSIX_ONLY }, () => {
+  const { root, wt, misCased, fsImpl } = caseFixture3836();
+  const adHoc = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-01T100000-adhoc-standalone');
+  fs.mkdirSync(adHoc, { recursive: true });
+  fs.writeFileSync(path.join(adHoc, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wt }));
+  const exact = findRunsByWorktreePath(root, wt, undefined, { fsImpl }).map((r) => r.runDir);
+  assert.deepStrictEqual(findRunsByWorktreePath(root, misCased, undefined, { fsImpl }).map((r) => r.runDir), exact);
+  assert.strictEqual(exact.length, 1);
+  assert.strictEqual(path.basename(exact[0]), '2026-08-01T100000-adhoc-standalone');
+});
+
+// No case-sensitive-volume skip: the fake volume is injected through opts.fsImpl, so
+// the mis-cased binding resolves through it rather than the real fs, and the test
+// also runs (and discriminates) on Linux CI.
+test('resolveRun strictAttribution (#3836): a run bound to the caller\'s worktree in a different letter case is not dropped as other-worktree-bound', { skip: POSIX_ONLY }, () => {
+  for (const recorded of ['misCased', 'wt']) {
+    const fixture = caseFixture3836();
+    const { root, wt, fsImpl } = fixture;
+    const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: fixture[recorded] }));
+    assert.strictEqual(resolveRun(wt, {}, 's1', { strictAttribution: true, fsImpl }).dir, runDir, `recorded=${recorded}`);
+  }
 });
 
 // --- Task 3: the deny/allow matrix at the dispatcher level ------------------

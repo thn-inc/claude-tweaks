@@ -144,6 +144,14 @@ When mechanizing a prose heuristic into a deterministic check:
    `merge-verdict.js`'s bare-tier pass pattern stay anchored to the bare tier. Both fail safe
    today because their writers still pass bare tiers. When you widen a writer, grep every
    recogniser of its lines and either widen it with the writer or record why it stays narrow.
+   #3870 then widened `merge-verdict.js`'s pass pattern and `claim-log.js`'s `COMPLETE_RE`, and
+   two things went wrong on the way. Widening the pass pattern to a free-text group (`\(.+\)`)
+   let a tail ride behind the note (`... (x). trailing narrative`), reopening the hole its end
+   anchor had closed. Exclude the group's own boundary sequence (`). `) from its content, and
+   pin a tail-after-group copy. Separately, the plan's recogniser inventory cleared `claim-log.js`
+   on `ACTION_RE`'s property (its writer passes a bare tier) while the same file's `COMPLETE_RE`
+   reads lines the model writes with any tier. Whole-branch review caught it. Inventory
+   recognisers per regex, not per file, and name each one's writer.
    A fuzzy text match is the same leak with no anchor at all. `plugin/bin/lib/plan-audit/checks.js`'s
    Check E (#3099) reads an acceptance-criterion clause as `covered` when the plan quotes its text.
    Its first version was a bare substring `includes()`, so the one-word clause "Last." read as
@@ -376,6 +384,22 @@ When mechanizing a prose heuristic into a deterministic check:
     the enumerated list where no stable ending exists: vitest writes its summary to stdout and its
     failure blocks to stderr, so either can end a piped log. The recogniser is a backstop behind
     the list, not a replacement for it.
+20. **An all-of guard passes vacuously on an empty set, and skill prose owes the at-least-one
+    clause as much as code does.** `[].every(p)` is `true`, and an agent told "every record carries
+    the label" reads zero records the same way. tidy's `## Arm ready PR` acceptance-labeling guard
+    (#3877, `plugin/skills/tidy/actions-github-issues.md`) first counted labeling as landed when
+    "every record in the PR's `Fixes` lines carries `demo:pending`": an empty `Fixes` set satisfied
+    it, a failed label or `verify.json` read had no stated outcome, and its log command left
+    `{command}` and the `--run` target undefined. Review caught all of it, and the fix requires at
+    least one record and every read to succeed ("an empty `Fixes` set or a failed read shows
+    nothing"), holds on any failed read with an `unreadable: {…}` reason from a closed `{reason}`
+    set, and defines each placeholder. When writing an all-of guard, in code or in prose, state
+    the empty-set answer and make it the fail-closed one, give each read its could-not-tell arm
+    (item 9), and define every placeholder the reported text interpolates. Then pin each of those
+    edge clauses, not just the rule text, inside the region the suite's strip-the-guard negative
+    control removes, so the control proves each pin can go red: the first version's pins named the
+    rule and none of its edges (`GUARD_PINS` in
+    `tests/tidy-arm-ready-pr-acceptance-guard.test.js`).
 
 ## When to use
 

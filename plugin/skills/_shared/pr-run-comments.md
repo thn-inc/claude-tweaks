@@ -104,9 +104,10 @@ fallback, which a multi-spec run never writes, can be shared.
 A comment is writable by anyone who can comment on the PR or issue, so a marker in its body proves
 nothing about who wrote it. A marker or heading comment counts only when its author association is
 `OWNER`, `MEMBER`, or `COLLABORATOR`. `gh` returns it as `authorAssociation`; the REST and MCP
-transports return it as `author_association`. A missing field is untrusted — a comment with neither field is skipped. An untrusted
-marker comment takes the same path as no such comment — create fresh, fall back, or fail the check —
-never the trusted path.
+transports return it as `author_association`. The filters below read either spelling, so they work
+on either comment shape. A missing field is untrusted — a comment with neither field is skipped.
+An untrusted marker comment takes the same path as no such comment — create fresh, fall back, or
+fail the check — never the trusted path.
 
 There is no viewer lookup. Anyone with write access can already push to the PR branch, so a narrower
 rule adds no protection, while matching the viewer rejects a comment read by a different maintainer or
@@ -118,8 +119,8 @@ Add the select after the marker match, and run the note filter alongside it so e
 named in one line in the reader's output:
 
 ```
-select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
-select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \(.url) by \(.author.login // "unknown") (\(.authorAssociation // "no association")) — not an owner, member, or collaborator"
+select((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR")
+select(((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR") | not) | "skipped marker comment \(.url // .html_url // .id // "unknown") by \(.author.login // .user.login // "unknown") (\(.authorAssociation // .author_association // "no association")) — not an owner, member, or collaborator"
 ```
 
 Code readers use `bin/lib/issues/comment-trust.js`, which builds both filters above.
@@ -141,7 +142,7 @@ plugin's PR-comment surface that edits rather than always-appends.
 
    ```bash
    gh pr view {pr-number} --repo {host}/{owner}/{repo} --json comments \
-     --jq '.comments[] | select(.body | startswith("<!-- run-comment: {kind} -->")) | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | .id'
+     --jq '.comments[] | select(.body | startswith("<!-- run-comment: {kind} -->")) | select((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR") | .id'
    ```
 
    Only a trusted author's comment is found (**Trusted authors** above); an untrusted marker comment
@@ -150,7 +151,7 @@ plugin's PR-comment surface that edits rather than always-appends.
 
    ```bash
    gh pr view {pr-number} --repo {host}/{owner}/{repo} --json comments \
-     --jq '.comments[] | select(.body | startswith("<!-- run-comment: {kind} -->")) | select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \(.url) by \(.author.login // "unknown") (\(.authorAssociation // "no association")) — not an owner, member, or collaborator"'
+     --jq '.comments[] | select(.body | startswith("<!-- run-comment: {kind} -->")) | select(((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR") | not) | "skipped marker comment \(.url // .html_url // .id // "unknown") by \(.author.login // .user.login // "unknown") (\(.authorAssociation // .author_association // "no association")) — not an owner, member, or collaborator"'
    ```
 
    `.id` here is the GraphQL node ID (e.g. `IC_kwDO...`), not a REST numeric ID — `gh pr view

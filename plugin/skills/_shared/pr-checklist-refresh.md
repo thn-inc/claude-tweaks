@@ -57,7 +57,7 @@ phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` fie
   byte-unchanged. Non-empty → write a one-paragraph summary to a session temp file
   (`bin/session-tmp-resolve.js`, e.g. `PR_SUMMARY_REVISION=pr-summary-revision-{run-id}.md`) with
   the Write tool — this run's diff, nothing it does not show, covering every spec in a bundle —
-  and re-run it with `--summary-file {file}`: the row is already checked, so only the
+  and re-run it with `--summary-file "{file}"`: the row is already checked, so only the
   note changes — one `Revised during build: {original claim} → {implemented behavior}` above the
   paragraph. Best-effort: a re-run with `summary.changed` `false` and non-empty `uncovered` logs
   a warning to `decisions.md` naming the `reason`; the row is written — never a phase-exit or
@@ -81,7 +81,7 @@ phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` fie
   phase), touching nothing else. Write the body to a session temp file `{body-file}` (`bin/session-tmp-resolve.js`,
   e.g. `PR_CHECKLIST_BODY=pr-checklist-{run-id}-{n}.md`) with the Write tool, then run `node
   "${CLAUDE_PLUGIN_ROOT}/bin/revise-pr-summary.js" --run-dir "{run-dir}" --body-file
-  {body-file}`; on non-empty `uncovered`, re-run with `--summary-file {file} --out {body-file}`; a
+  "{body-file}"`; on non-empty `uncovered`, re-run with `--summary-file "{file}" --out "{body-file}"`; a
   non-zero exit → warn, write checklist-only. Re-read that file's first line back before the write and
   confirm it still names this run's `{run-id}`; hard-stop on a mismatch rather than push a wrong body.
 

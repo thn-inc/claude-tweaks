@@ -92,7 +92,7 @@ function pluginRoot() {
 
 // #1143: usage strings for every documented `hooks.js` subcommand (the
 // dispatch table's own record-worktree/close-run/teardown-run/archive-run/
-// resolve-run-dir/record-pr/spec-status/manifest-init/check-resume-freshness/check-staged-
+// resolve-run-dir/delete-ledger/resolve-ledger/record-pr/spec-status/manifest-init/check-resume-freshness/check-staged-
 // inventory/check-pass-reentry/check-sibling-sessions/sweep-shadow/adopt-run-dir/reconcile/
 // reconcile-background/reconcile-summary set — see docs/plugin-structure.md's
 // hooks.js line). Doubles as the membership table for the `--help`/`-h` intercept
@@ -112,6 +112,7 @@ const USAGE = {
   'spec-status': 'spec-status --run <parent-dir> --spec <n> --status <pending|running|complete|failed|not-run> --phase <phase>',
   'close-run': 'close-run [--run <dir>]',
   'delete-ledger': 'delete-ledger --run <dir> [--ledger <path>]',
+  'resolve-ledger': 'resolve-ledger --run <dir>',
   'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]',
   'archive-run': 'archive-run [--run <dir>]',
   'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>]',
@@ -128,7 +129,7 @@ const USAGE = {
 const HELP_FLAGS = new Set(['--help', '-h']);
 
 // #1012: declared-flag sets for the flag-strict verbs — the mutating run-state
-// verbs plus the read-only check-pass-reentry (#3553), exactly the keys of the
+// verbs plus the read-only check-pass-reentry (#3553) and resolve-ledger (#3897), exactly the keys of the
 // table below —
 // consulted by the unknown-flag guard below (which supersedes HELP_FLAGS for
 // exactly these verbs: `--help`/`-h` are simply never declared, so they fall
@@ -140,6 +141,7 @@ const HELP_FLAGS = new Set(['--help', '-h']);
 const KNOWN_FLAGS = {
   'close-run': ['--run'],
   'delete-ledger': ['--run', '--ledger'],
+  'resolve-ledger': ['--run'],
   'record-worktree': ['--run', '--dispatch'],
   'record-pr': ['--run'],
   'manifest-init': ['--run', '--specs'],
@@ -703,6 +705,9 @@ async function main(argv) {
       // not clobber a previous stamp.
       const patch = { worktree: path.resolve(worktreeArg), status: 'active' };
       if (process.env.CLAUDE_CODE_SESSION_ID) patch.sessionId = process.env.CLAUDE_CODE_SESSION_ID;
+      // #3845: the owning Claude Code process, so session-end can tell a nested
+      // `claude -p` from the owner. Omitted when absent, like sessionId.
+      Object.assign(patch, ctxLib.ownerPidPatch(process.env));
       if (dispatch) {
         // Permanent for the run's lifetime: only ever written true, never
         // false, so a later plain re-stamp (no --dispatch) cannot clear it.
@@ -1130,6 +1135,32 @@ async function main(argv) {
     }
     return 0;
   }
+  if (cmd === 'resolve-ledger') {
+    // #3897: the read-only twin of delete-ledger — same run-arg resolution,
+    // same refusals, but it only reports (describeRunLedgers) and never
+    // touches a file. _shared/ledger-format.md's resolution rule cites this
+    // verb instead of having a skill list docs/plans itself. stdout is
+    // reserved for the report (its first line is what the rule reads), so the
+    // fallback disclosure and every refusal go to stderr; exit stays 0.
+    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+    const {
+      runDir, invalidRunArg, worktreeLocalFallback, candidates,
+    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+    reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
+    if (invalidRunArg) {
+      process.stderr.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — ledger not resolved\n`);
+    } else if (candidates) {
+      process.stderr.write(`${renderCandidateRefusal('resolve-ledger', candidates)}\nLedger not resolved.\n`);
+    } else if (!runDir) {
+      process.stderr.write('claude-tweaks: no pipeline run dir found — ledger not resolved\n');
+    } else {
+      const { describeRunLedgers, formatLedgerReport } = require('./lib/wrap-up/ledger-write');
+      const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
+      const text = formatLedgerReport(describeRunLedgers({ runDir, worktree }));
+      await new Promise((resolve) => process.stdout.write(text, resolve));
+    }
+    return 0;
+  }
   if (cmd === 'teardown-run') {
     const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
     const { runDir, invalidRunArg, worktreeLocalFallback, candidates } = resolveRunArg(
@@ -1152,6 +1183,7 @@ async function main(argv) {
   if (cmd === 'archive-run') {
     const {
       archiveRunDir, readConsoleState, listSpecDirs, listStagedItems, consoleReplacedByAutoMergeShortCircuit,
+      TIEBREAK_COVERAGE_HINT,
     } = require('./lib/reconcile/archive-merged');
     const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
     const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(
@@ -1202,6 +1234,19 @@ async function main(argv) {
         process.stdout.write(`claude-tweaks: archival refused — console-never-rendered-staged-pending (the auto-merge short-circuit rendered no console; pending: ${pending.join(', ')}) — apply or delete the pending staged/ items (and any spec-*/staged/), or write a resolved console.json, then re-run archive-run\n`);
         return 0;
       }
+    }
+    // #3945: evaluated after the guards above. A findings artifact that is
+    // present but unreadable/malformed is refused under its own reason, before
+    // the per-id coverage gap is looked at.
+    const tiebreakCoverage = require('./lib/tiebreak').checkRunTiebreakCoverage(runDir, listSpecDirs(runDir));
+    const tiebreakHint = `${TIEBREAK_COVERAGE_HINT}, then re-run archive-run`;
+    if (tiebreakCoverage.artifactValid === false) {
+      process.stdout.write(`claude-tweaks: archival refused — tiebreak-artifact-invalid (review-findings.json is present but unreadable or malformed) — ${tiebreakHint}\n`);
+      return 0;
+    }
+    if (tiebreakCoverage.missing.length > 0) {
+      process.stdout.write(`claude-tweaks: archival refused — tiebreak-coverage-missing (${tiebreakCoverage.missing.length} listed finding(s) have no tiebreak verdict line: ${tiebreakCoverage.missing.join(', ')}) — ${tiebreakHint}\n`);
+      return 0;
     }
     const mainRoot = wtDetect.mainCheckoutRoot(process.cwd());
     if (!mainRoot) {
@@ -1513,9 +1558,10 @@ async function main(argv) {
       cwd: process.cwd(),
       mcpReachable: args.includes('--mcp-reachable'),
       checks: checksList.length ? checksList : undefined,
-      // An explicit --checks subset is the caller naming exactly which checks
-      // must run — don't let the SessionStart hot-path time ceiling (#820 D4)
-      // skip them; an unscoped pass keeps the default ceiling (#3026).
+      // An explicit --checks subset is the caller naming which checks must
+      // run (plus any prerequisite reconcile() adds, #3630) — don't let the
+      // SessionStart hot-path time ceiling (#820 D4) skip them; an unscoped
+      // pass keeps the default ceiling (#3026).
       budgetMs: checksList.length ? Infinity : undefined,
       // An explicit subset cannot claim the whole fast pass ran, so it must
       // not stamp the shared freshness key — otherwise the next SessionStart

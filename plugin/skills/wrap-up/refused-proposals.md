@@ -1,9 +1,10 @@
 # Refused Proposals — the hard deferral gate at record creation
 
-Read by `wrap-up/review-console.md` ("On approval" step 7), `flow/multispec-review-console.md`
-(step 2 / Queue writes), and `wrap-up/ledger-narrowing-auto-file.md` — before creating ANY `Q#`
-queue-write proposal. Enforces `_shared/deferral-gate.md`'s hard gate: no record proposal without
-a valid `Defer-reason:`.
+Read by `wrap-up/review-console.md` ("On approval" step 7, and step 10 for a Reflection insights
+Defer/Capture row), `flow/multispec-review-console.md` (step 2 / Queue writes), and
+`wrap-up/ledger-narrowing-auto-file.md` — before creating ANY `Q#` queue-write proposal.
+Enforces `_shared/deferral-gate.md`'s hard gate: no record proposal without a valid
+`Defer-reason:`.
 
 ## The check
 
@@ -15,7 +16,10 @@ reason lives"). Validate the value at runtime against the closed vocabulary:
 node -e "process.exit(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js').DEFER_REASONS.includes(process.argv[1])?0:1)" -- "$VALUE"
 ```
 
-Missing line, or exit 1 → **refuse**: do not create the record.
+A Reflection insights row has no header block of its own: `$VALUE` is the reason its Recommended
+cell names (`Defer — {reason}`, `Capture — {reason}`).
+
+Missing line (or no reason in the cell), or exit 1 → **refuse**: do not create the record.
 
 ## The refused row
 

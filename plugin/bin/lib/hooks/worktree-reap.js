@@ -114,6 +114,22 @@ function parseWorktreeList(porcelain) {
   return out;
 }
 
+// #3695: on win32, `git worktree list --porcelain` prints forward-slash paths (`D:/a/x/feat`) while
+// the run's stamped worktree path is native (`D:\a\x\feat`), so a strict `===` never matched there.
+// Both sides go through pathImpl.resolve, not realpath: the prunable retry runs after a half-removed
+// worktree, which may no longer exist on disk to resolve. Case folds only on win32 (sep `\`), where
+// the filesystem is case-insensitive; posix stays exact. Also serves the cwd lookups in
+// post-tool-use.js and context.js (#3811).
+function findWorktreeEntry(entries, target, pathImpl = path) {
+  if (!target) return null;
+  const key = (p) => {
+    const resolved = pathImpl.resolve(p);
+    return pathImpl.sep === '\\' ? resolved.toLowerCase() : resolved;
+  };
+  const wanted = key(target);
+  return entries.find((entry) => key(entry.path) === wanted) || null;
+}
+
 // signal 0 tests for existence without delivering anything. ESRCH means no
 // such process; EPERM means it exists but belongs to another user, which is
 // still alive. Both directions of pid reuse are safe here: a recycled pid
@@ -403,6 +419,7 @@ function isWorktreeLocked(wtPath, { cwd } = {}) {
 
 module.exports = {
   parseWorktreeList,
+  findWorktreeEntry,
   isPidAlive,
   lockVerdict,
   newestMtimeMs,

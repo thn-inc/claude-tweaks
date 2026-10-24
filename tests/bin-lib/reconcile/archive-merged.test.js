@@ -2851,7 +2851,7 @@ test('AC3.1: archiveMerged: a MERGED PR reached via the by-number fallback with 
 // `issueStates` answers `gh issue view` (installGhWrapper); `claudeMd` writes the
 // main checkout's CLAUDE.md.
 function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specStaged = {}, {
-  origin = false, closes = null, manifestSpecs = null, staleMs = null, issueStates = null, claudeMd = null,
+  origin = false, closes = null, manifestSpecs = null, staleMs = null, issueStates = null, claudeMd = null, findings = null,
 } = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo(branch); // branch ref stays — fallbackBranch recovers it
   if (origin) git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
@@ -2880,6 +2880,8 @@ function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specSta
   if (manifestSpecs) {
     fs.writeFileSync(path.join(runDir, 'manifest.yml'), serializeManifestYaml({ multispec: { parent: 'parent/', specs: manifestSpecs } }));
   }
+  // #3945: an optional review-findings.json body (the tiebreak denominator).
+  if (findings !== null) fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify(findings));
   const pr = {
     number: 3249100, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
     mergeCommit: { oid: featureSha },
@@ -3109,7 +3111,7 @@ test('STRUCTURALLY_STUCK_REASONS includes merged-partial and no-repo-slug but no
 // the PR's closingIssuesReferences name.
 // `issueStates` answers `gh issue view`; `consoleResolved` writes a resolved
 // console.json.
-function fixtureByNumberMergedRecordRun({ runId, closes, issueStates = null, consoleResolved = false }) {
+function fixtureByNumberMergedRecordRun({ runId, closes, issueStates = null, consoleResolved = false, findings = null }) {
   const branch = 'feat-3503-bynumber';
   const { root, featureSha } = mergedFeatureBranchRepo(branch);
   git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
@@ -3123,6 +3125,8 @@ function fixtureByNumberMergedRecordRun({ runId, closes, issueStates = null, con
     pr: { number: 3503001, branch },
   }));
   if (consoleResolved) fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+  // #3945: an optional review-findings.json body (the tiebreak denominator).
+  if (findings !== null) fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify(findings));
   const wrapper = installGhWrapper({
     number: 3503001, state: 'MERGED', mergedAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z',
     mergeCommit: { oid: featureSha }, closingIssuesReferences: closes.map((n) => ref(n)),
@@ -4261,4 +4265,187 @@ test('classifyRunDir: kinds scoping restricts evaluation to exactly the requeste
   assert.equal(classifyRunDir({ dir, kinds: ['orphaned-mint'] }).kind, 'orphaned-mint');
   assert.equal(classifyRunDir({ dir, skipReason: 'no-worktree', kinds: ['structurally-stuck'] }).kind, 'structurally-stuck');
   assert.equal(isStructurallyStuck(dir, 'no-worktree'), true);
+});
+
+// #3945: decideArchiveCore's fifth parameter — the tiebreak coverage refusal.
+// It fires only where the function would otherwise return { action:'archive' },
+// so every earlier guard keeps its word.
+const TIEBREAK_MERGED_PR = { state: 'MERGED', closingIssuesReferences: [ref(5)] };
+const TIEBREAK_HINT = "re-run the review step's findings writer for this run, or delete review-findings.json if the run predates the tiebreak";
+
+test('decideArchiveCore refuses a listed finding with no verdict line (AC8.1)', () => {
+  const coverage = { artifactPresent: true, artifactValid: true, missing: ['spec-a/F-1', 'F-2'] };
+  const expected = { action: 'skip', reason: 'tiebreak-coverage-missing', missing: ['spec-a/F-1', 'F-2'], hint: TIEBREAK_HINT };
+  // Both of today's archive returns: the no-recordCheck one and the all-closed one.
+  assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, undefined, coverage), expected);
+  assert.deepStrictEqual(
+    decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, { records: [5], repoSlug: 'acme/w' }, coverage), expected,
+  );
+});
+
+test('decideArchiveCore refuses an invalid artifact with its own reason (AC8.1)', () => {
+  const coverage = { artifactPresent: true, artifactValid: false, missing: [] };
+  const expected = { action: 'skip', reason: 'tiebreak-artifact-invalid', hint: TIEBREAK_HINT };
+  assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, undefined, coverage), expected);
+  assert.deepStrictEqual(
+    decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, { records: [5], repoSlug: 'acme/w' }, coverage), expected,
+  );
+});
+
+test('decideArchiveCore archives when every listed finding has a line (AC8.1)', () => {
+  const coverage = { artifactPresent: true, artifactValid: true, missing: [] };
+  assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, undefined, coverage), { action: 'archive' });
+  assert.deepStrictEqual(
+    decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, { records: [5], repoSlug: 'acme/w' }, coverage), { action: 'archive' },
+  );
+});
+
+test('decideArchiveCore archives with no artifact exactly as before (AC8.1)', () => {
+  const table = [
+    ['gh-absent', 'resolved', false, undefined],
+    ['network-failure', 'resolved', false, undefined],
+    ['invalid-arguments', 'resolved', false, undefined],
+    ['pr-not-found', 'resolved', false, undefined],
+    [null, 'resolved', false, undefined],
+    [{ state: 'OPEN' }, 'resolved', false, undefined],
+    [{ state: 'CLOSED' }, 'resolved', false, undefined],
+    [TIEBREAK_MERGED_PR, 'unresolved', false, undefined],
+    [TIEBREAK_MERGED_PR, 'none', undefined, undefined],
+    [TIEBREAK_MERGED_PR, 'none', true, undefined],
+    [TIEBREAK_MERGED_PR, 'none', false, undefined],
+    [TIEBREAK_MERGED_PR, 'resolved', false, undefined],
+    [TIEBREAK_MERGED_PR, 'resolved', false, { records: [5], repoSlug: 'acme/w' }],
+    [TIEBREAK_MERGED_PR, 'resolved', false, { records: [5, 6], repoSlug: 'acme/w' }],
+    [TIEBREAK_MERGED_PR, 'resolved', false, { records: [5], repoSlug: null }],
+    [{ state: 'MERGED' }, 'resolved', false, { records: [5], repoSlug: 'acme/w' }],
+  ];
+  const noArtifact = { artifactPresent: false, artifactValid: true, missing: [] };
+  for (const [pr, consoleState, staged, check] of table) {
+    const label = JSON.stringify([pr, consoleState, staged, check]);
+    const before = decideArchiveCore(pr, consoleState, staged, check);
+    assert.deepStrictEqual(decideArchiveCore(pr, consoleState, staged, check, undefined), before, label);
+    assert.deepStrictEqual(decideArchiveCore(pr, consoleState, staged, check, noArtifact), before, label);
+  }
+});
+
+test('decideArchiveCore coverage is evaluated after the #3668/#3370/#3503 guards (AC8.1)', () => {
+  const missing = { artifactPresent: true, artifactValid: true, missing: ['F-1'] };
+  const invalid = { artifactPresent: true, artifactValid: false, missing: [] };
+  for (const coverage of [missing, invalid]) {
+    assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'unresolved', false, undefined, coverage),
+      { action: 'skip', reason: 'console-unresolved' });
+    assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'none', true, undefined, coverage),
+      { action: 'skip', reason: 'console-never-rendered-staged-pending' });
+    assert.deepStrictEqual(decideArchiveCore({ state: 'OPEN' }, 'resolved', false, undefined, coverage),
+      { action: 'skip', reason: 'pr-open' });
+    assert.deepStrictEqual(
+      decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, { records: [5, 6], repoSlug: 'acme/w' }, coverage),
+      { action: 'skip', reason: 'merged-partial', unclosed: [6] });
+    assert.deepStrictEqual(
+      decideArchiveCore({ state: 'MERGED' }, 'resolved', false, { records: [5], repoSlug: 'acme/w' }, coverage),
+      { action: 'skip', reason: 'closing-issues-unknown' });
+    assert.deepStrictEqual(
+      decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, { records: [5], repoSlug: null }, coverage),
+      { action: 'skip', reason: 'no-repo-slug' });
+  }
+});
+
+// #3945 F6: a tiebreak coverage refusal is structurally stuck (it never
+// self-resolves: a human re-runs the findings writer or deletes the artifact),
+// and its `missing` ids and `hint` reach the skipped entry the way #3503's
+// `unclosed` does.
+const TB_FINDINGS = [{ id: 'abc123def456', lens: 'correctness', path: 'src/a.js', line: 3, claim: 'x', reporterSeverity: 'medium', kind: 'unconfirmed' }];
+
+test('STRUCTURALLY_STUCK_REASONS includes tiebreak-coverage-missing and tiebreak-artifact-invalid (#3945)', () => {
+  assert.ok(STRUCTURALLY_STUCK_REASONS.has('tiebreak-coverage-missing'));
+  assert.ok(STRUCTURALLY_STUCK_REASONS.has('tiebreak-artifact-invalid'));
+});
+
+test('branch-joined path: a tiebreak coverage skip carries missing and hint (#3945 F6)', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3945-tb-gap', '2026-10-22T090000-record-3945-tb-gap', [], {}, { findings: TB_FINDINGS },
+  );
+  assert.ok(!result.archived.includes(runDir), `expected ${runDir} NOT archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), true, 'the run dir must stay in place');
+  assert.deepStrictEqual(result.skipped.find((s) => s.runDir === runDir), {
+    runDir, reason: 'tiebreak-coverage-missing', missing: ['abc123def456'], hint: TIEBREAK_HINT,
+  });
+});
+
+test('clean-status sweep: a tiebreak coverage skip carries missing and hint (#3945 F6)', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-22T090000-clean-3945-tb-gap';
+  const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId });
+  fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify(TB_FINDINGS));
+  const wrapper = installGhWrapper([{
+    number: 99, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    mergeCommit: { oid: featureSha },
+  }]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.equal(fs.existsSync(runDir), true, 'the run dir must stay in place');
+  assert.deepStrictEqual(result.skipped.find((s) => s.runDir === runDir), {
+    runDir, reason: 'tiebreak-coverage-missing', missing: ['abc123def456'], hint: TIEBREAK_HINT,
+  });
+});
+
+// #3945 residual b: a closed run skipped for a tiebreak gap never converges on
+// its own, so the clean sweep's onSkip must feed it into the same
+// structurally-stuck escalation the main loop uses — for both tiebreak reasons.
+for (const [reason, findings] of [
+  ['tiebreak-coverage-missing', TB_FINDINGS],
+  ['tiebreak-artifact-invalid', { not: 'an array' }],
+]) {
+  test(`clean-status sweep: a ${reason} skip enters the structurally-stuck residue counter (#3945)`, { skip: PATH_STUB_SKIP }, () => {
+    const runId = `2026-10-22T090000-clean-3945-${reason}`;
+    const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId });
+    fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify(findings));
+    const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+    fs.utimesSync(runDir, backdated, backdated);
+    const wrapper = installGhWrapper([{
+      number: 99, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+      mergeCommit: { oid: featureSha },
+    }]);
+    let result;
+    try {
+      result = archiveMerged({ cwd: root });
+    } finally {
+      wrapper.restore();
+    }
+    const skip = result.skipped.find((s) => s.runDir === runDir);
+    assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+    assert.equal(skip.reason, reason);
+    assert.ok(
+      listResidueFailures(root).some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+      `the clean sweep must start the structurally-stuck residue counter for a ${reason} skip`,
+    );
+  });
+}
+
+test('branch-joined path: an invalid findings artifact skip carries its hint (#3945 F6)', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3945-tb-invalid', '2026-10-22T090000-record-3945-tb-invalid', [], {}, { findings: { not: 'an array' } },
+  );
+  assert.deepStrictEqual(result.skipped.find((s) => s.runDir === runDir), {
+    runDir, reason: 'tiebreak-artifact-invalid', hint: TIEBREAK_HINT,
+  });
+});
+
+// #3945 F7: settleMergedPartial's own coverage branch. The by-number run's PR
+// closes 3503 but not 3504, so decideArchiveCore returns merged-partial and never
+// reaches its coverage check; 3504's issue is CLOSED, so settling empties the
+// unclosed set, and the coverage gap must still refuse rather than archive.
+test('by-number path: a merged-partial settled to archive still refuses a tiebreak coverage gap (#3945 F7)', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-19T090000-record-3503-3504';
+  const { runDir, result } = fixtureByNumberMergedRecordRun({
+    runId, closes: [3503], issueStates: { 3504: 'CLOSED' }, findings: TB_FINDINGS,
+  });
+  assert.ok(!result.archived.includes(runDir), `expected ${runDir} NOT archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), true, 'the run dir must stay in place');
+  assert.deepStrictEqual(result.skipped.find((s) => s.runDir === runDir), {
+    runDir, reason: 'tiebreak-coverage-missing', missing: ['abc123def456'], hint: TIEBREAK_HINT,
+  });
 });

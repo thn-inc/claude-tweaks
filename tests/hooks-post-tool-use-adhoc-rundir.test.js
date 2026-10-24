@@ -67,6 +67,28 @@ test('stamps a lightweight run dir when this session owns none yet', () => {
   assert.strictEqual(fs.realpathSync(state.worktree), wt);
 });
 
+// #3845: the ad-hoc mint stamps the session's process as the run's owner so the
+// nested-session guard in session-end.js covers it; an unknown pid writes nothing.
+test('#3845: the ad-hoc stamp records ownerPid from CLAUDE_PID, and omits it when the pid is unknown', () => {
+  const prior = process.env.CLAUDE_PID;
+  try {
+    process.env.CLAUDE_PID = '4242';
+    const main = gitRepo();
+    const wt = harnessWorktreeOf(main);
+    post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt) }));
+    assert.strictEqual(ctxLib.readRunState(path.join(pipelinesDir(main), adhocDirs(main)[0])).ownerPid, 4242);
+
+    delete process.env.CLAUDE_PID;
+    const main2 = gitRepo();
+    const wt2 = harnessWorktreeOf(main2);
+    post.run(enterWorktreeCtx(wt2, { toolResponse: createdAt(wt2), sessionId: 'sess-adhoc-3845-b' }));
+    assert.ok(!('ownerPid' in ctxLib.readRunState(path.join(pipelinesDir(main2), adhocDirs(main2)[0]))));
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_PID;
+    else process.env.CLAUDE_PID = prior;
+  }
+});
+
 test('does not stamp when ctx.ownedRun.dir already resolves (a formal pipeline already claimed this worktree)', () => {
   const main = gitRepo();
   const wt = harnessWorktreeOf(main);

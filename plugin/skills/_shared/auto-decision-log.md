@@ -153,6 +153,8 @@ The third example is a decision whose outcome was driven by the findings' own se
 | `SKIP` | A documented conditional action (a skill step whose text states a skip/no-op/degrade condition) was skipped or degraded during this run attempt — no staged artifact. Not itself a decision — see the Degrade-trace rule below. | Shown alongside `SCANNED` as an informational trace line (no action to override). |
 | `FAILED` | A batch write attempt errored — the write was neither applied nor refused for a content reason, so nothing landed and nothing is staged. Hand-composed by its two writers (see the `STATUS` row above). | Shown in "Auto-applied" section as an informational failure line (no commit ref, nothing to revert). Decision-bearing for the Empty-console fast path — a log holding one never skips the console — but the remedy is the producing skill's own paste-ready retry, not an Override. |
 
+One `STAGED` exception: `/review`'s reproduction and coordination `STAGED` lines (low-confidence, unconfirmed, contested, debate) need no `staged/` file — the console reads them from `decisions.md` itself (`plugin/bin/lib/console/resolve.js`'s `coordinationItems`); they stay `STAGED`, never `SKIP`.
+
 ## Degrade-trace rule (SKIP)
 
 Applies whenever a documented conditional action is actually skipped or degraded during a run attempt. Two things it is **not**:

@@ -19,6 +19,8 @@ A verb is not shipped until every row lands in the same change.
 | 4 | `tests/hooks-help-guard.test.js` | Add the verb to the `runAccepting` list (any verb that accepts `--run`). |
 | 5 | `docs/hooks.md` | The anchored-`--run` paragraph: bump the spelled-out count ("thirteen subcommands") and insert the verb in the list. If the verb exits 1 on refusal, name it in the exit-code exception sentence beside `close-run` and `resolve-console`. |
 | 6 | `docs/plugin-structure.md`'s `plugin/bin/hooks.js` line | Add the verb to the subcommand list and renumber any ordinal prose that counts the verbs. |
+| 7 | `docs/hooks.md`'s implicit-resolution sentence ("The five mutating run-state verbs … plus `delete-ledger` …") | Only for a verb that resolves an omitted `--run` through `resolveRunArg`'s `unambiguousOnly` path: name it there. The row-5 anchored-`--run` list does not cover this sentence, and a verb can land in one and miss the other (#3897's `resolve-ledger` did). |
+| 8 | The two comment blocks above `USAGE` and `KNOWN_FLAGS` in `plugin/bin/hooks.js` | Add the verb to the `USAGE` comment's subcommand list; for a read-only flag-strict verb, name it in the `KNOWN_FLAGS` comment's description of the table's membership (row 2 already asks for that update). |
 
 Then add a dedicated `tests/hooks-{verb}.test.js` (spawn the CLI, assert stdout, stderr and the exit code separately) and, if a skill calls the verb, a conformance pin on the call text.
 

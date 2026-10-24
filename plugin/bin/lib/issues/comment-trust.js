@@ -17,8 +17,10 @@
 //
 // Skill prose that cannot `require` this module pastes `trustedJqSelect()` /
 // `untrustedJqNote()` verbatim; both are built from the set below so the jq
-// text and the code cannot drift. The contract is `_shared/pr-run-comments.md`'s
-// Trusted authors section.
+// text and the code cannot drift. The pasted filters read either spelling
+// (`authorAssociation` or `author_association`), so a gh-shaped and a
+// REST/MCP-shaped comment are judged alike. The contract is
+// `_shared/pr-run-comments.md`'s Trusted authors section.
 
 // Order is part of the contract — the jq builders below emit it as listed.
 const TRUSTED_AUTHOR_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
@@ -54,10 +56,14 @@ function untrustedSkipNote(comment) {
   return `skipped marker comment ${ref} by ${login} (${association}) — not an owner, member, or collaborator`;
 }
 
-// jq predicate over a `gh --json comments` element, built from the set in its
-// order: `.authorAssociation == "OWNER" or ... or ...`.
+// jq predicate over a `gh --json comments` element or a REST/MCP comment, built
+// from the set in its order: `(.authorAssociation // .author_association) ==
+// "OWNER" or ... or ...`. Both spellings are read; jq's `//` passes `""`
+// through, so a comment carrying an empty camelCase field beside a snake_case
+// one is untrusted in jq but trusted by isTrustedComment — no transport emits
+// both fields, and the divergence fails closed.
 function trustedJqPredicate() {
-  return [...TRUSTED_AUTHOR_ASSOCIATIONS].map((a) => `.authorAssociation == "${a}"`).join(' or ');
+  return [...TRUSTED_AUTHOR_ASSOCIATIONS].map((a) => `(.authorAssociation // .author_association) == "${a}"`).join(' or ');
 }
 
 // jq filter keeping only trusted comments — paste verbatim into a pipeline.
@@ -65,11 +71,12 @@ function trustedJqSelect() {
   return `select(${trustedJqPredicate()})`;
 }
 
-// jq filter emitting the skip note for each untrusted comment (the `gh` shape;
+// jq filter emitting the skip note for each untrusted comment (either shape;
 // a missing association prints as "no association", a deleted author as
-// "unknown"). Same text as untrustedSkipNote's gh-shape output.
+// "unknown"). Same text as untrustedSkipNote's output, including the REST
+// fallbacks (`html_url`, `id`, `user.login`, `author_association`).
 function untrustedJqNote() {
-  return `select((${trustedJqPredicate()}) | not) | "skipped marker comment \\(.url) by \\(.author.login // "unknown") (\\(.authorAssociation // "no association")) — not an owner, member, or collaborator"`;
+  return `select((${trustedJqPredicate()}) | not) | "skipped marker comment \\(.url // .html_url // .id // "unknown") by \\(.author.login // .user.login // "unknown") (\\(.authorAssociation // .author_association // "no association")) — not an owner, member, or collaborator"`;
 }
 
 module.exports = {

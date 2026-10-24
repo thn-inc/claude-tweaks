@@ -57,7 +57,7 @@ playwright-cli -s=walkthrough-{story-id} resize 1280 720
 For each step, run the action exactly as `plugin/agents/qa-agent.md` Section 4 maps it — a `snapshot` to resolve the story's locator to an `eN` ref, then the ref-based `click <eN>` / `fill <eN> "<text>"` / `check <eN>` / `hover <eN>` command (escaping every story-supplied string per that file's escaping rule before interpolation); `assert_visible` re-snapshots and checks tree membership with no action; `navigate` steps use `goto <url>`, never `open` (which is reserved for the session's first navigation in Step 2). Wait `--settle-ms` after the action completes, then screenshot to a session-scoped frame path:
 
 ```bash
-playwright-cli -s=walkthrough-{story-id} screenshot --filename={frame-path}
+playwright-cli -s=walkthrough-{story-id} screenshot --filename="{frame-path}"
 ```
 
 `{frame-path}` is `sessionTmpPath(sessionId, 'walkthrough-{story-id}/{NN}.png')` per `_shared/session-tmp-root.md` (under the OS temp dir, never under `.claude-tweaks/artifacts/`), `{NN}` zero-padded in step order.
@@ -69,7 +69,7 @@ On a locator miss, report the step number and stop — **never loosen a locator 
 Write the story's steps to a JSON file at `{steps-json-path}` first, then:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/walkthrough-encode.js" --frames {frame-dir} --out {gif-path} --delay-ms {delay-ms} --budget-mb {budget-mb} --steps-json {steps-json-path} --captions {name}.md --caption-title "{story description}"
+node "${CLAUDE_PLUGIN_ROOT}/bin/walkthrough-encode.js" --frames "{frame-dir}" --out "{gif-path}" --delay-ms {delay-ms} --budget-mb {budget-mb} --steps-json "{steps-json-path}" --captions {name}.md --caption-title "{story description}"
 ```
 
 Add `--width {width}` when given. Branch on the exit code: `0` → the GIF and caption list are both written; proceed to Step 5. `1` → malformed invocation — relay the message and stop (should not occur; this skill builds the argv itself). `2` → an unreadable, undecodable, or dimension-mismatched frame — relay the message (it names the offending path) and stop; a dimension mismatch means the viewport changed mid-run, which Step 2's explicit `resize` is meant to prevent. `3` → over budget — relay the printed lever list (`fewer steps`, then `lower --width`) and stop; do not retry with a guessed width without the user's input.

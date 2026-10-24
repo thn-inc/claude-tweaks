@@ -620,7 +620,7 @@ if [ -n "$DISPATCH_FIRING_RUN_DIR" ]; then
       console.log(entry.number + '=' + file);
     }
 NODE_EVAL_EOF
-    node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_FIRING_RUN_DIR" --id "shipped-close-$NUM" --file "$FILE" >/dev/null 2>&1 || true
+    node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_FIRING_RUN_DIR" --id "shipped-close-$NUM" --file "$FILE" >/dev/null || true
   done
 fi
 

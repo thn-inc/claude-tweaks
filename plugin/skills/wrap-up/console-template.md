@@ -5,7 +5,7 @@ Referenced by `skills/wrap-up/review-console-interactive.md`'s "Present the cons
 ```markdown
 ### Wrap-Up Review Console
 
-The pipeline auto-resolved {N} decisions and staged {M} items for your review. Every section below — the named batch sections, plus Queue writes, Memory updates, and Upstream feedback — resolves via the same terminal Approve all / Override / Stop choice. Approve all applies each section's own default (batch sections: apply; `Q#`/`M#`: their pre-checked `Apply` default; `U#`: filed when its staged draft carries a `**Causal:** systemic` tag, else its usual unchecked/declined default) with no further prompts, except rows marked drills-individually (listed above the terminal options when present — see `review-console-interactive.md`'s Hard requirements). Override is what still drills `Q#`/`M#`/`U#` individually — one or more chunked `multiSelect` calls, `_shared/batched-item-drill.md` for `Q#`/`M#`, `_shared/upstream-feedback-batch.md` for `U#` (see `review-console-interactive.md`'s Hard requirements for why).
+The pipeline auto-resolved {N} decisions and staged {M} items for your review. Every section below — the named batch sections, plus Queue writes, Memory updates, Upstream feedback, and Reflection insights — resolves via the same terminal Approve all / Override / Stop choice. Approve all applies each section's own default (batch sections: apply; `Q#`/`M#`: their pre-checked `Apply` default; `U#`: filed when its staged draft carries a `**Causal:** systemic` tag, else its usual unchecked/declined default; `R#`: each row's recommended destination, D4/D5 rows informational) with no further prompts, except rows marked drills-individually (listed above the terminal options when present — see `review-console-interactive.md`'s Hard requirements). Override is what still drills `Q#`/`M#`/`U#`/`R#` individually — one or more chunked `multiSelect` calls, `_shared/batched-item-drill.md` for `Q#`/`M#`/`R#`, `_shared/upstream-feedback-batch.md` for `U#` (see `review-console-interactive.md`'s Hard requirements for why).
 
 > **Still pending from earlier** (#2736 — render only when `check-session-residue` reported something; omit entirely otherwise, no row/number of its own, purely informational)
 >
@@ -191,6 +191,18 @@ terminal decision.
 
 > Filing publishes privately-derived content to a public repository. The body shown is already
 > scrubbed; a checked item files it via `/claude-tweaks:feedback --pre-confirmed`.
+
+#### Reflection insights (Approve all applies each row's recommended destination; Override drills each item)
+
+Render this section only when reflect staged `staged/wrap-up-reflect-insights.md` (`reflect/full-mode.md`'s
+`--source wrap-up` branch); omit it entirely otherwise. Its rows are that file's table, renumbered
+`R#`. Approve all applies each row's recommended destination at `review-console.md` step 10; D4
+(Memory) and D5 (Upstream) rows stay informational — they resolve only through their own `M#`/`U#` rows.
+
+| R# | Insight | Causal | Recommended Destination |
+|---|---|---|---|
+| R1 | Retry helper swallowed the last error, hiding the real cause | systemic | Implement now -> Skill: error-handling |
+| R2 | Token refresh and session expiry share no clock source | — | Defer — genuinely-larger |
 
 Below each table, the patch display is tiered by the item's recorded reversibility:
 

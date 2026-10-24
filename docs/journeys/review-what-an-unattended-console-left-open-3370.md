@@ -14,6 +14,7 @@ files:
   - tests/bin-lib/console/residue.test.js
   - tests/bin-lib/console/residue-cli.test.js
   - tests/bin-lib/hooks/session-residue.test.js
+  - tests/bin-lib/console/staged-id-producers.test.js
 ---
 
 # Review What an Unattended Console Left Open
@@ -58,9 +59,9 @@ files:
 - **URL:** `node "{pluginRoot}/bin/stage-item.js" --run "{run-dir}" --id {id} --file {path}`
 - **Action:** **Skill author** stages a proposal under a new name, e.g. `--id review-13-record` with a `.md` file.
 - **Should feel:** The mistake surfaces immediately, on stderr, with the canonical names to choose from. Nobody finds it hours later in a console row.
-- **Should understand:** The warning reads `stage-item.js: warning: --id review-13-record matches no Review Console SECTION_MAP prefix — if a wrap-up Review Console resolves this run, it routes this item to Pending review (unmapped-prefix), never auto-resolved. Nearest canonical prefixes: …`. The file is still written and the exit code is unchanged. A canonical id, or an id made canonical by its extension such as `review-2` with a `.patch` file, prints nothing.
-- **Red flags:** A canonical id printing the warning. The warning changing the exit code. The warning suggesting a prefix that is itself unmapped.
+- **Should understand:** The warning reads `stage-item.js: warning: --id review-13-record matches no Review Console SECTION_MAP prefix — if a wrap-up Review Console resolves this run, it routes this item to Pending review (unmapped-prefix), never auto-resolved. Nearest canonical prefixes: …`. The file is still written and the exit code is unchanged. A canonical id, or an id made canonical by its extension such as `review-2` with a `.patch` file, prints nothing. A producer whose run never reaches wrap-up's console (`release-held`, `dispatch-target-missing-*`, `shipped-close-*`, `dream-proposal-*`) also prints nothing. Its prefix sits on `resolve.js`'s `STAGING_EXEMPTIONS` with the reason written beside it, and an exempt prefix is never also mapped. Some ids are mapped with a reason, such as `upstream-draft-*` (`hand-off-draft`) or `plan-citation-*` (`cited-plan-kept`). These print nothing at staging time, then land in the console as `pending` with that named reason instead of `unmapped-prefix`. `tests/bin-lib/console/staged-id-producers.test.js` fails when any producer in `plugin/skills` or `plugin/bin` stages an id that is neither mapped nor exempt.
+- **Red flags:** A canonical id printing the warning. The warning changing the exit code. The warning suggesting a prefix that is itself unmapped. An exempt id printing the warning, or an exempt prefix that also classifies into a console section.
 
 ## Origin
 
-Built by #3370 (run `2026-10-17T191422-record-3370`). It surfaces the pending and contested items #2821's unattended run left unseen. Updated by #3772: an item whose staged file has since vanished is `missing`, not counted, and named once in the `not counted —` line.
+Built by #3370 (run `2026-10-17T191422-record-3370`). It surfaces the pending and contested items #2821's unattended run left unseen. Updated by #3772: an item whose staged file has since vanished is `missing`, not counted, and named once in the `not counted —` line. Updated by #3488 (run `2026-10-21T235713-record-3488`): every staged-id producer now maps to a console section or is exempt with a stated reason. The step 5 warning therefore fires only where a console would actually park the item.
