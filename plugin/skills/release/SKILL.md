@@ -151,15 +151,28 @@ Log which of the three resolved, and why — the review's scope is never a silen
 
 Invoke `/claude-tweaks:review base:{base}` (Input rule 9 — a whole-branch scope: every first-parent commit from the base to `origin/{integration-branch}`, spanning many already-merged PRs) with `$PIPELINE_RUN_DIR={run-dir}` set, so its findings stage into this run's own `staged/` directory per `_shared/staged-patch.md` and its decisions land in this run's `decisions.md`. Review is a component skill here: it renders no Next Actions of its own.
 
-**Invoke it from `$RUN_ROOT`, standing at the fetched tip.** Assert all three first — `git -C "$RUN_ROOT" fetch origin {branch}`, then `git -C "$RUN_ROOT" rev-parse --abbrev-ref HEAD` equal to `{branch}` and `git -C "$RUN_ROOT" rev-parse HEAD` equal to `origin/{branch}` — and run the review with `$RUN_ROOT` as its working directory. `/claude-tweaks:review`'s own test gate verifies the tree it is standing in (`review/code-mode-steps.md`'s Step 1.5), so a review invoked from a feature-branch worktree would gate the release on a tree the reviewed range does not contain. Anything else stops the run here, before Step 4: nothing has moved, so report `stopped before the console: review tree is not origin/{branch}` and Step 8's summary reads `failed` with that same reason.
+**Invoke it from `$RUN_ROOT`, standing at the fetched tip.** Fetch, then run this check; it exits 0 exactly when the review may run:
+
+```bash
+git -C "$RUN_ROOT" fetch origin {branch}
+[ "$(git -C "$RUN_ROOT" rev-parse --abbrev-ref HEAD)" = "{branch}" ] \
+  && [ "$(git -C "$RUN_ROOT" rev-list --count HEAD..origin/{branch})" = 0 ] \
+  && git -C "$RUN_ROOT" diff --quiet origin/{branch} HEAD -- ':!.claude-tweaks/pipelines'
+```
+
+`/claude-tweaks:review`'s own test gate verifies the tree it is standing in (`review/code-mode-steps.md`'s Step 1.5), so a review invoked from a feature-branch worktree would gate the release on a tree the reviewed range does not contain. Commits ahead are tolerated because reconcile's `[reconcile] archive run …` commits (`plugin/bin/lib/reconcile/archive-merged.js`) stay local and touch only `.claude-tweaks/pipelines/`, which never ships; the comparison is of trees, so a change reverted outside run dirs also passes.
+
+Any non-zero exit stops the run here, before Step 4: nothing has moved. Read the counts with `git -C "$RUN_ROOT" rev-list --left-right --count HEAD...origin/{branch}` (`{ahead}\t{behind}`), then report `stopped before the console: review tree is not origin/{branch} ({ahead} ahead, {behind} behind)` and name the recovery: `git -C "$RUN_ROOT" pull --rebase origin {branch}`, then a bare `git push origin {branch}` from the main checkout. When HEAD is off `{branch}`, the stop line names the current branch (`review tree is on {current}`) instead of counts, and the recovery is `git -C "$RUN_ROOT" switch {branch}`. Step 8's summary reads `failed` with that same reason.
 
 **This review stages; it never commits.** Whatever `review-auto-apply-ceiling` resolves to — Step 0 pins `none` on a created run directory, and an inherited one keeps the parent's value — this review's auto-apply tier is off at every ceiling: every finding is staged for a human, none is applied and committed. The range under review ends at `origin/{branch}`, the exact tip about to be tagged, so an auto-applied fix would ship inside the release it was meant to gate.
 
 **Mark the `## /review` block before invoking.** `log-decision.js` appends each entry at the **end of its section**, so an inherited (or re-adopted) run directory's prior `## /review` lines sit above this run's inside the same block — and a prior run's `critical finding` line would otherwise be read as this run's verdict. Count that block's existing lines first (`0` when the block is absent) and log the count as this step's marker:
 
 ```
-AUTO {HH:MM:SS} — Step 3: whole-branch review starting, base {base}..{branch}; ## /review marker: {k} existing lines. Reversibility: n/a (marker).
+AUTO {HH:MM:SS} — Step 3: whole-branch review starting, base {base}..{branch}; ## /review marker: {k} existing lines; review tree HEAD {head-sha} is origin/{branch} {tip-sha} plus run-dir-only commits. Reversibility: n/a (marker).
 ```
+
+The `review tree HEAD` clause is written only when `rev-parse HEAD` and `origin/{branch}` differ, tracing the review's test-gate evidence to the tagged tip.
 
 When it returns, read **only the lines this run appended after index `{k}`** in `{run-dir}/decisions.md`'s `## /review` block — never the whole block — and classify **against the log lines `/claude-tweaks:review` actually writes**, not against a severity field it does not emit. Its two routing shapes (`review/step3-routing.md`'s routing table) are:
 
