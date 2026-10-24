@@ -160,7 +160,7 @@ test('dispatch item 6 names the backslash-escaped-space shape and agrees with th
   assert.notStrictEqual(end, -1, 'item 7 heading missing after item 6');
   const item6 = TASK_PROMPT.slice(start, end);
   assert.ok(item6.includes('backslash-escaped space'), 'item 6 lost the backslash-escaped-space shape');
-  assert.ok(item6.includes('double-quote'), 'item 6 lost the double-quoted fix');
+  assert.ok(item6.includes('double-quote the whole path instead'), 'item 6 lost the double-quoted fix');
   const row = table().rows.find((r) => splitRow(r)[0].startsWith('Backslash-escaped space'));
   assert.ok(row, 'section 7 lost its Backslash-escaped space row');
   assert.strictEqual(splitRow(row)[2], 'refused', `section 7 verdict drifted from refused: ${row}`);
