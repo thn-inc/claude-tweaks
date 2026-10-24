@@ -5,6 +5,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { execFile, spawn, spawnSync, execFileSync } = require('child_process');
+const { readText } = require('../../helpers/read-skill');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 
@@ -1704,7 +1705,7 @@ test('flaky retry: a fully attributed jest log whose failing file is allowlisted
   // Same wiring as the refusal test above, on a real captured jest log whose
   // only failure is the allowlisted file: the runner now retries it.
   const r = tmpGitRepo();
-  const jest = fs.readFileSync(path.join(__dirname, '..', '..', 'fixtures', 'verify-dialects', 'jest-attributed.txt'), 'utf8');
+  const jest = readText(path.join(__dirname, '..', '..', 'fixtures', 'verify-dialects', 'jest-attributed.txt'));
   fs.writeFileSync(path.join(r.repo, 'fail.js'), `process.stdout.write(${JSON.stringify(jest)} + '\\n'); process.exit(1);\n`);
   fs.writeFileSync(path.join(r.repo, 'retry.js'), "require('fs').writeFileSync('retry.marker', process.argv[2]); process.exit(0);\n");
   const decl = {
@@ -2000,7 +2001,7 @@ test('AC2.1 preExisting: a pytest summary log is never adjudicated through preEx
 });
 
 test('preExisting: a jest log whose only failing file is covered but whose global teardown threw is refused — unattributed-failures: 1 (#3480)', async () => {
-  const log = fs.readFileSync(path.join(__dirname, '..', '..', 'fixtures', 'verify-dialects', 'jest-global-teardown.txt'), 'utf8')
+  const log = readText(path.join(__dirname, '..', '..', 'fixtures', 'verify-dialects', 'jest-global-teardown.txt'))
     .replaceAll('tests/known.test.js', 'tests/known-shallow.test.js');
   await assertPreExistingRefused(log, 'unattributed-failures: 1');
 });

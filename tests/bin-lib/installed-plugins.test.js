@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { selectEntry, readInstalledPlugins, canonicalGitRoot } = require('../../plugin/bin/lib/installed-plugins');
+const { readText } = require('../helpers/read-skill');
 
 // #3541: selectEntry follows Claude Code's first-applicable-in-file-order rule
 // (read from 2.1.302). These tests pin that rule against real temp directories
@@ -180,7 +181,7 @@ test('selectEntry: non-object entries are skipped', () => {
 });
 
 test('AC11.1: the installed-plugins.js header names Claude Code 2.1.302, the first-applicable-in-file-order rule, and the 2026-10-19 probe', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'installed-plugins.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'installed-plugins.js'));
   const header = src.slice(0, src.indexOf('require('));
   assert.ok(header.includes('2.1.302'), 'names Claude Code 2.1.302');
   assert.ok(header.includes('2026-10-19'), 'names the probe date');

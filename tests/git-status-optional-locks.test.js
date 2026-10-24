@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
+const { readText } = require('./helpers/read-skill');
 
 // Every read-only `git status` under plugin/bin/ must pass the top-level
 // `--no-optional-locks` option (before `status`, after any `-C <path>`). A plain
@@ -125,7 +126,7 @@ test('AC1.1/AC1.2/AC2.3: every git status under plugin/bin passes --no-optional-
   let total = 0;
   const offenders = [];
   for (const file of walk(BIN_ROOT)) {
-    const { matched, offenders: bad } = unflaggedStatusCalls(fs.readFileSync(file, 'utf8'));
+    const { matched, offenders: bad } = unflaggedStatusCalls(readText(file));
     total += matched;
     for (const o of bad) {
       offenders.push(`${path.relative(BIN_ROOT, file).replace(/\\/g, '/')}:${o.line} ${o.text}`);

@@ -17,6 +17,7 @@ const { isWorktreeLocked } = require('../plugin/bin/lib/hooks/worktree-reap');
 const { reconcile, PREREQUISITES } = require('../plugin/bin/lib/reconcile');
 const { gitRepo } = require('./helpers/git-fixtures');
 const { skipUnderRoot } = require('./helpers/root');
+const { readText } = require('./helpers/read-skill');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -1177,7 +1178,7 @@ test('reconcile: a policy-configured integration branch never triggers the origi
 });
 
 test('resolveIntegrationBranch stays offline: no fetch, ls-remote, or remote set-head in worktree-reap.js (#3132)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'worktree-reap.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'worktree-reap.js'));
   const start = src.indexOf('function resolveIntegrationBranch(');
   assert.ok(start >= 0, 'resolveIntegrationBranch not found');
   const end = src.indexOf('\n}\n', start);
@@ -1232,7 +1233,7 @@ test('reconcile: reap dispatches strictly after release and archive in source or
   // Pinned structurally, the same way tests/hooks-gate-coverage.test.js
   // pins prose to code — a real ordering regression here has no other test
   // that would catch it without fabricating live PR/claim state.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'));
   const releaseIdx = src.indexOf("checks.includes('release')");
   const archiveIdx = src.indexOf("checks.includes('archive')");
   const reapIdx = src.lastIndexOf("checks.includes('reap')"); // the pr-first dispatch, not the local-merge fallback above it
@@ -1248,7 +1249,7 @@ test('reconcile: ALL_CHECKS includes red-tip immediately after mirror', () => {
 });
 
 test('reconcile: red-tip dispatches immediately after mirror in source order (load-bearing — reads the ref mirror-ff just fetched)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'));
   const mirrorIdx = src.indexOf("checks.includes('mirror')");
   const redTipIdx = src.indexOf("checks.includes('red-tip')");
   const consoleIdx = src.indexOf("checks.includes('console')");
@@ -1335,7 +1336,7 @@ test('expandChecks (#3630): adds mirror ahead of archive/red-tip and widens noth
 // The doc table is a hand-kept restatement of PREREQUISITES that every editor of
 // the table is told to follow, so it is pinned row for row to the exported object.
 test('docs/reconcile-checks.md prerequisite table matches PREREQUISITES row for row (#3630)', () => {
-  const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'reconcile-checks.md'), 'utf8');
+  const doc = readText(path.join(__dirname, '..', 'docs', 'reconcile-checks.md'));
   const rows = doc.split('\n').map((line) => /^\s*\| `([^`]+)` \| `([^`]+)` \| ((?:`[^`]+`(?:, )?)+) \|/.exec(line)).filter(Boolean);
   const fromDoc = {};
   for (const [, check, prerequisite, satisfiedBy] of rows) {
@@ -2059,9 +2060,9 @@ test('AC3.1/AC3.2: hooks.js reconcile: an explicit --checks subset runs unbounde
 });
 
 test('AC4.1: SessionStart and background reconcile call sites pass no budgetMs (default budget)', () => {
-  const sessionStart = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'session-start.js'), 'utf8');
+  const sessionStart = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'session-start.js'));
   assert.equal(sessionStart.includes('budgetMs'), false);
-  const hooksSrc = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js'), 'utf8');
+  const hooksSrc = readText(path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js'));
   assert.equal(hooksSrc.split('budgetMs').length - 1, 1, 'budgetMs occurs once in hooks.js — the reconcile CLI branch');
   const bgLine = hooksSrc.split('\n').find((l) => l.includes('checks: BACKGROUND_CHECKS'));
   assert.ok(bgLine, 'background reconcile call site found');

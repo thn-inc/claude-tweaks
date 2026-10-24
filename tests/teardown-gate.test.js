@@ -11,6 +11,7 @@ const { findRunByWorktreePath, findRunsByWorktreePath, classifyOwnership, resolv
 const { fixtureGit } = require('./helpers/git-fixtures');
 const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { caseInsensitiveFs } = require('./helpers/case-insensitive-fs');
+const { readText } = require('./helpers/read-skill');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -698,7 +699,7 @@ test('garbage: truncated ExitWorktree stdin exits 0 with no stdout noise', () =>
 // Task 5 adds the prose-block pin (policy-schema-coverage.md); this only pins the
 // code-level branch-read, same scope as this file's other Task 3 tests.
 test('GATE_COVERAGE.teardownGitCommands is branch-read by the Bash teardown parser', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'));
   assert.ok(src.includes('GATE_COVERAGE.teardownGitCommands'),
     'pre-tool-use.js must branch on GATE_COVERAGE.teardownGitCommands, not a hardcoded comparison');
 });

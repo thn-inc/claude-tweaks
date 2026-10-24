@@ -7,10 +7,11 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const GATE_FILE = path.join(SKILLS, '_shared', 'pr-first-merge.md');
-const read = (...p) => fs.readFileSync(path.join(SKILLS, ...p), 'utf8');
+const read = (...p) => readText(path.join(SKILLS, ...p));
 
 function walk(dir, acc = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -29,7 +30,7 @@ function* otherSkillFiles() {
 }
 
 test('the gate is stated once — Step 2.5 heading exists exactly once, only in pr-first-merge.md', () => {
-  const gate = fs.readFileSync(GATE_FILE, 'utf8');
+  const gate = readText(GATE_FILE);
   assert.equal((gate.match(/^## Step 2\.5: Merge-verification gate$/gm) || []).length, 1);
   for (const file of otherSkillFiles()) {
     assert.ok(!/^## Step 2\.5: Merge-verification gate$/m.test(fs.readFileSync(file, 'utf8')), `${path.relative(SKILLS, file)} restates the gate heading`);
@@ -61,7 +62,7 @@ test('merge-when-green appears outside the gate only as a lever value (#559 file
 });
 
 test('the gate reads state before any merge attempt and names the red-path pieces', () => {
-  const gate = fs.readFileSync(GATE_FILE, 'utf8');
+  const gate = readText(GATE_FILE);
   const step25 = gate.indexOf('## Step 2.5: Merge-verification gate');
   const step3 = gate.indexOf('## Step 3:');
   assert.ok(step25 !== -1 && step3 !== -1 && step25 < step3, 'Step 2.5 must precede Step 3');
@@ -75,7 +76,7 @@ test('the gate reads state before any merge attempt and names the red-path piece
 });
 
 test('the gate cross-checks head-sha workflow runs before reading green (#3405)', () => {
-  const gate = fs.readFileSync(GATE_FILE, 'utf8');
+  const gate = readText(GATE_FILE);
   const step25 = gate.indexOf('## Step 2.5: Merge-verification gate');
   const step3 = gate.indexOf('## Step 3:');
   const section = gate.slice(step25, step3);

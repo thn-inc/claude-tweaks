@@ -27,11 +27,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const { spawnSync } = require('child_process');
 const path = require('path');
 const { checkVersion } = require('../tools/upstream-drift/checks');
 const { loadManifest } = require('../tools/upstream-drift/manifest');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const FIXTURES = path.join(__dirname, 'fixtures', 'impeccable-cli');
@@ -60,7 +60,7 @@ function detect(fixture) {
 const skip = versionCheck.status === 'absent' ? 'Impeccable CLI not installed' : false;
 
 test('impeccable-cli.md pins the same version the drift manifest does', () => {
-  const doc = fs.readFileSync(CONTRACT_DOC, 'utf8');
+  const doc = readText(CONTRACT_DOC);
   const match = doc.match(/<!--\s*upstream-pin:\s*impeccable-cli@([^\s]+)\s*-->/);
   assert.ok(match, 'impeccable-cli.md must carry an <!-- upstream-pin: impeccable-cli@X.Y.Z --> comment');
   assert.strictEqual(

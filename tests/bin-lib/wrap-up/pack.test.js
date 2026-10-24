@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const { readText } = require('../../helpers/read-skill');
 
 const {
   gatherPack, resolveInputs, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger,
@@ -1284,7 +1285,7 @@ test('the release probe is gone — pre-merge it is a constant and its consumer 
 // merge-size prediction, from the pack or from the CLI.
 test('no merge-size probe anywhere in the pre-merge refresh (#1930 fix round 4, #3310)', () => {
   assert.ok(!PROBE_NAMES.includes('mergeSize'));
-  const refresh = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-checklist-refresh.md'), 'utf8');
+  const refresh = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-checklist-refresh.md'));
   assert.ok(!refresh.includes('pack.mergeSize'), 'the pre-merge step reads no pack-fed merge size');
   assert.doesNotMatch(refresh, /merge-size-probe/, 'the pre-merge step no longer runs the probe CLI');
   const section = refresh.slice(refresh.indexOf('## Pre-merge title/description refresh'), refresh.indexOf('## Merge-time gh-absent degrade'));

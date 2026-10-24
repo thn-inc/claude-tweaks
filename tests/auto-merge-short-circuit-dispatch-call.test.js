@@ -14,11 +14,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const collapse = (s) => s.replace(/\s+/g, ' ');
 const SHORT_CIRCUIT_PATH = path.join(ROOT, 'plugin/skills/wrap-up/auto-merge-short-circuit.md');
-const RAW = fs.readFileSync(SHORT_CIRCUIT_PATH, 'utf8');
+const RAW = readText(SHORT_CIRCUIT_PATH);
 const FLAT = collapse(RAW);
 const PLUGIN_DIR = path.join(ROOT, 'plugin').split(path.sep).join('/');
 
@@ -124,7 +125,7 @@ test('AC4.1: no live dispatch-claim reference survives in plugin/ or docs/skill-
   files.push(path.join(ROOT, 'docs/skill-graph.md'));
   const hits = files.filter((f) => /dispatch-claim/i.test(fs.readFileSync(f, 'utf8')));
   assert.deepStrictEqual(hits.map((f) => path.relative(ROOT, f)), []);
-  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'plugin/skills/flow/SKILL.md'), 'utf8'), /pre-existing gap/);
+  assert.doesNotMatch(readText(path.join(ROOT, 'plugin/skills/flow/SKILL.md')), /pre-existing gap/);
 });
 
 test('the branch snippet, executed verbatim, answers true only for this run\'s own dispatch Task call', (t) => {

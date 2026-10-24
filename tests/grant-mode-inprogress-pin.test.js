@@ -11,14 +11,14 @@
 // silently drifting from `refineWorklist`'s semantics.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const MODULE_REL = 'plugin/bin/lib/backlog-grant-gate/backlog-grant-gate.js';
 const FILTER_EXPR = '.filter((i) => !i.facets.bot.inProgress)';
 
 test('backlog-grant-gate.js still contains the literal not-already-claimed filter expression', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', MODULE_REL), 'utf8');
+  const source = readText(path.join(__dirname, '..', MODULE_REL));
   assert.ok(
     source.includes(FILTER_EXPR),
     `expected the literal filter expression \`${FILTER_EXPR}\` in ${MODULE_REL}`,

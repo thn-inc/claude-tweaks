@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 // Live-corpus scan, deliberately not a frozen fixture (#670-style carve-out, per
 // skill-prose-conformance-tests' Decision Framework): the whole point of this suite is to
@@ -82,7 +83,7 @@ test('no plugin/skills/**/*.md snippet resolves CLAUDE_PLUGIN_ROOT via process.e
   const files = findAllMdFiles(SKILLS_DIR);
   const failures = [];
   for (const file of files) {
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     for (const site of findProcessEnvOccurrences(text)) {
       failures.push(`${path.relative(ROOT, file)}:${site.lineNumber}`);
     }

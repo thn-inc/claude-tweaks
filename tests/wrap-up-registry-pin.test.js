@@ -16,9 +16,10 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { REGISTRY } = require('../plugin/bin/lib/wrap-up/registry');
+const { readText } = require('./helpers/read-skill');
 
 const SKILL_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'SKILL.md');
-const skill = fs.readFileSync(SKILL_PATH, 'utf8');
+const skill = readText(SKILL_PATH);
 
 // Strip markdown inline formatting (backticks, bold) from a table cell so
 // `` `apply-or-stage` `` compares equal to the raw string 'apply-or-stage'.

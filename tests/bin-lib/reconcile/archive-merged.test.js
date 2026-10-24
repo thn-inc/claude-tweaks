@@ -21,6 +21,7 @@ const {
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure } = require('../../../plugin/bin/lib/reconcile/cache');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
 const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
+const { readText } = require('../../helpers/read-skill');
 
 const PATH_STUB_SKIP = process.platform === 'win32' && 'win32: execFileSync("gh") never spawns a #!/bin/sh stub named gh on PATH';
 
@@ -524,10 +525,7 @@ test('refusal: always yields a hint key, defaulting to null, and passes through 
 // fixes (a renamed/removed reason code losing its co-located hint with
 // nothing pinning the two together). Source-scan the file text directly.
 test('archive-merged.js conformance: every ok:false/reason literal goes through refusal()', () => {
-  const src = fs.readFileSync(
-    path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'reconcile', 'archive-merged.js'),
-    'utf8',
-  );
+  const src = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'reconcile', 'archive-merged.js'));
   // The `refusal()` function's own body (`return { ok: false, reason, hint, ...extra };`)
   // is the one sanctioned literal — everything else naming both `ok: false`
   // and a `reason` key must be a `refusal(` call, not a bare object literal.
@@ -1381,7 +1379,7 @@ function detectsTemplate(template) {
   return consoleReplacedByAutoMergeShortCircuit(dir);
 }
 test('consoleReplacedByAutoMergeShortCircuit: detects every log-line template the producer skills write', () => {
-  const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', 'wrap-up', rel), 'utf8');
+  const read = (rel) => readText(path.join(REPO_ROOT, 'plugin', 'skills', 'wrap-up', rel));
   const fast = shortCircuitLogTemplates(read('auto-merge-short-circuit.md'));
   const manifesto = shortCircuitLogTemplates(read('manifesto-authorized-merge.md'));
   assert.strictEqual(fast.length, 2, 'auto-merge-short-circuit.md carries two Fast-lane log templates');

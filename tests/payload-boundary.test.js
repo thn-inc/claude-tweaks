@@ -55,6 +55,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const Module = require('node:module');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const PLUGIN_DIR = path.join(ROOT, 'plugin');
@@ -523,7 +524,7 @@ test('(a) every executable ${CLAUDE_PLUGIN_ROOT}-relative reference in plugin/**
   const failures = [];
   for (const file of files) {
     const isJson = file.endsWith('hooks.json');
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     const relFile = path.relative(ROOT, file);
     for (const ref of scanMarkdownReferences(text, isJson)) {
       if (hasPlaceholderSegment(ref.suffix)) continue;
@@ -541,7 +542,7 @@ test('(b) every require() in plugin/bin/**/*.js resolves inside plugin/ — no d
   const files = findAllJsFiles(path.join(PLUGIN_DIR, 'bin'));
   const failures = [];
   for (const file of files) {
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     const relFile = path.relative(ROOT, file);
     const baseDir = path.dirname(file);
     for (const call of findRequireCalls(text)) {

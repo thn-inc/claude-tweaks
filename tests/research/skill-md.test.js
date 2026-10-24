@@ -2,12 +2,13 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('../helpers/read-skill');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SKILL_PATH = path.join(REPO_ROOT, 'plugin', 'skills', 'research', 'SKILL.md');
 
 function readSkill() {
-  return fs.readFileSync(SKILL_PATH, 'utf8');
+  return readText(SKILL_PATH);
 }
 
 function parseFrontmatter(content) {
@@ -24,13 +25,13 @@ function parseFrontmatter(content) {
 const VERIFY_MODE_PATH = path.join(REPO_ROOT, 'plugin', 'skills', 'research', 'verify-mode.md');
 
 function readVerifyMode() {
-  return fs.readFileSync(VERIFY_MODE_PATH, 'utf8');
+  return readText(VERIFY_MODE_PATH);
 }
 
 const SOURCE_REGISTRY_PATH = path.join(REPO_ROOT, 'plugin', 'skills', 'research', 'source-registry.md');
 
 function readSourceRegistry() {
-  return fs.readFileSync(SOURCE_REGISTRY_PATH, 'utf8');
+  return readText(SOURCE_REGISTRY_PATH);
 }
 
 const REGISTRY_SOURCES = [

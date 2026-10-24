@@ -12,6 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -53,7 +54,7 @@ function findBareRelativeRunArgLiterals(content) {
 test('shipped skill prose never passes a bare-relative .claude-tweaks/pipelines/ literal to --run/--run-dir', () => {
   const files = getAllSkillFiles();
   for (const rel of files) {
-    const content = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const content = readText(path.join(ROOT, rel));
     const hits = findBareRelativeRunArgLiterals(content);
     assert.deepStrictEqual(hits, [], `${rel} carries a bare-relative --run/--run-dir literal: ${JSON.stringify(hits)}`);
   }

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { detectEntrypoints } = require('../../../plugin/bin/lib/code-health/candidates-dead-code');
+const { readText } = require('../../helpers/read-skill');
 
 function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-deadcode-'));
@@ -867,7 +868,7 @@ test('each candidate carries evidence naming its own file and symbol', () => {
 // first so the header's illustrative `require('./a')`-style examples don't
 // count as imports.
 test('cursor-neutrality: the module imports nothing beyond fs/path/./source-scan/./focus-generators/../shared-primitives — never scope.js or next-slice', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'code-health', 'candidates-dead-code.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'code-health', 'candidates-dead-code.js'));
   const codeOnly = src.split('\n').filter((line) => !/^\s*\/\//.test(line)).join('\n');
   const imports = (codeOnly.match(/require\(\s*['"][^'"]+['"]\s*\)/g) || []).sort();
   // './focus-generators' is the shared framework registry this module

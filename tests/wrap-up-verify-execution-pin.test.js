@@ -1,13 +1,13 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const FILE = path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'execution-and-verification.md');
 
 function section() {
-  const content = fs.readFileSync(FILE, 'utf8');
+  const content = readText(FILE);
   const start = content.indexOf('### Verify execution');
   assert.notStrictEqual(start, -1, 'Verify execution section header not found');
   const rest = content.slice(start);

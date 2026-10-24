@@ -8,6 +8,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const CT = path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'console-template.md');
@@ -41,7 +42,7 @@ function assertClaimPinned(liveText, frozenText, pattern, missingMessage) {
 }
 
 test('console-template.md states the reversibility-tiered display rule once, in full', () => {
-  const text = fs.readFileSync(CT, 'utf8');
+  const text = readText(CT);
   assertClaimPinned(text, PRE_CHANGE_CT_LINE, 'tiered by the item\'s recorded reversibility', 'tier rule heading clause missing');
   assertClaimPinned(text, PRE_CHANGE_CT_LINE, 'cat "{absolute stagePath}"', 'paste-ready view command for the high tier missing');
   assertClaimPinned(text, PRE_CHANGE_CT_LINE, 'fail toward showing more', 'fail-open default (unrecorded reversibility renders full) missing');
@@ -55,7 +56,7 @@ test('console-template.md states the reversibility-tiered display rule once, in 
 });
 
 test('multispec-console-template.md cites the canonical rule instead of restating it', () => {
-  const text = fs.readFileSync(MSCT, 'utf8');
+  const text = readText(MSCT);
   assertClaimPinned(text, PRE_CHANGE_MSCT_LINE, 'console-template.md', 'multispec template must cite wrap-up/console-template.md\'s reversibility-tiered rule (missing file reference)');
   assertClaimPinned(text, PRE_CHANGE_MSCT_LINE, 'reversibility-tiered', 'multispec template must cite wrap-up/console-template.md\'s reversibility-tiered rule (missing "reversibility-tiered" token)');
 });
@@ -64,7 +65,7 @@ test('the old unconditional full-patch phrasing is gone from plugin/**/*.md', ()
   const OLD = 'show the full patch / diff for each pending item';
   const offenders = [];
   for (const f of mdFilesUnder(path.join(ROOT, 'plugin'))) {
-    const normalized = fs.readFileSync(f, 'utf8').replace(/\s+/g, ' ');
+    const normalized = readText(f).replace(/\s+/g, ' ');
     if (normalized.includes(OLD)) offenders.push(path.relative(ROOT, f));
   }
   assert.deepStrictEqual(offenders, [], 'unconditional full-patch rule restated in: ' + offenders.join(', '));

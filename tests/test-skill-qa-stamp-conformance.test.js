@@ -5,12 +5,12 @@
 // so a green run proves the pattern can go red [IL-105].
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const SKILL = fs.readFileSync(path.join(ROOT, 'plugin/skills/test/SKILL.md'), 'utf8');
-const REPORTING = fs.readFileSync(path.join(ROOT, 'plugin/skills/test/qa-reporting.md'), 'utf8');
+const SKILL = readText(path.join(ROOT, 'plugin/skills/test/SKILL.md'));
+const REPORTING = readText(path.join(ROOT, 'plugin/skills/test/qa-reporting.md'));
 
 // Pre-change `affected` bullet clause (SKILL.md:121 before #3003).
 const PRE_AFFECTED = "(`{ref}` via `_shared/integration-branch.md`; the stamp's `fullSha` wins whenever it is still an ancestor of HEAD, pipeline or not; `--integration-branch` is the fallback";

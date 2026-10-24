@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
+const { readText } = require('./helpers/read-skill');
 
 // Every child_process call under plugin/bin/ must pass `windowsHide: true`.
 // Node defaults the flag to FALSE, and on Windows a console child of a parent
@@ -171,7 +172,7 @@ test('scanner sees a child_process function reached through a parameter default 
 });
 
 test('report.js carries windowsHide on all three git spawns, and removing any one is caught (#3854)', () => {
-  const raw = fs.readFileSync(path.join(BIN_ROOT, 'lib', 'verify', 'report.js'), 'utf8');
+  const raw = readText(path.join(BIN_ROOT, 'lib', 'verify', 'report.js'));
   const needle = 'windowsHide: true';
   const at = [];
   for (let i = raw.indexOf(needle); i !== -1; i = raw.indexOf(needle, i + 1)) at.push(i);
@@ -185,7 +186,7 @@ test('report.js carries windowsHide on all three git spawns, and removing any on
 test('every child_process call under plugin/bin/ passes windowsHide', () => {
   const offenders = [];
   for (const file of walk(BIN_ROOT)) {
-    for (const call of unhiddenCalls(fs.readFileSync(file, 'utf8'))) {
+    for (const call of unhiddenCalls(readText(file))) {
       offenders.push(`${path.relative(BIN_ROOT, file).replace(/\\/g, '/')}:${call.line}  (${call.args})`);
     }
   }

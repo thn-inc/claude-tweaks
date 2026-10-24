@@ -7,25 +7,16 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 
 const { PER_FILE_CAP_BYTES } = require('../../../plugin/bin/lib/review-context/build');
+const { readText } = require('../../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 
-const EFFORT_DERIVATION = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'review', 'review-effort-derivation.md'),
-  'utf8',
-);
-const LENS_DISPATCH = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'review', 'step3-lens-dispatch.md'),
-  'utf8',
-);
-const DEBATE_AND_REFUTATION = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'review', 'step3-debate-and-refutation.md'),
-  'utf8',
-);
+const EFFORT_DERIVATION = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'review-effort-derivation.md'));
+const LENS_DISPATCH = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-lens-dispatch.md'));
+const DEBATE_AND_REFUTATION = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-debate-and-refutation.md'));
 
 test('review-effort-derivation.md names the JSON shape mint prints by default', () => {
   assert.match(EFFORT_DERIVATION, /\{"dir":\s*"…"\}/);
@@ -51,7 +42,7 @@ test('step3-lens-dispatch.md defines {ctx-dir} before using it as a bare path in
 });
 
 test('AC7.1-AC7.2: step3-lens-dispatch.md and docs/plugin-structure.md both name oversizeSections', () => {
-  const plugStructure = fs.readFileSync(path.join(ROOT, 'docs', 'plugin-structure.md'), 'utf8');
+  const plugStructure = readText(path.join(ROOT, 'docs', 'plugin-structure.md'));
   assert.ok(LENS_DISPATCH.includes('oversizeSections'), 'step3-lens-dispatch.md must name oversizeSections');
   assert.ok(plugStructure.includes('oversizeSections'), 'docs/plugin-structure.md must name oversizeSections');
   assert.match(LENS_DISPATCH, /\{dir, contextPath, bytes, files, emptySections, oversizeSections, baselinePath, listenersPath\}/);

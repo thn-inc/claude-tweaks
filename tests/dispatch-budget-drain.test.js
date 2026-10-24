@@ -1,11 +1,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const root = path.join(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+const read = (p) => readText(path.join(root, p));
 
 test('dispatch argument-hint advertises --budget, not next/--batch-size', () => {
   const hint = read('plugin/skills/dispatch/SKILL.md').split('\n').find((l) => l.startsWith('argument-hint:'));
