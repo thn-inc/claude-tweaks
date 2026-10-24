@@ -13,7 +13,6 @@ const {
 } = require('../../../plugin/bin/lib/reconcile/ledger-residue');
 const { reconcile, ALL_CHECKS } = require('../../../plugin/bin/lib/reconcile');
 const { formatSummary } = require('../../../plugin/bin/lib/reconcile/format-summary');
-const { readText } = require('../../helpers/read-skill');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
