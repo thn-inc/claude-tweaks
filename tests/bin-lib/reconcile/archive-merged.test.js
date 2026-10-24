@@ -1406,6 +1406,9 @@ test('consoleReplacedByAutoMergeShortCircuit: true for the dispatch bundle gate 
   assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), true);
   fs.writeFileSync(path.join(dir, 'decisions.md'), NEEDS_HUMAN);
   assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), false);
+  // Mixed group: member A passes, member B falls back. True by design (fail-safe).
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${GATE}${NEEDS_HUMAN.replace('#3740', '#3741')}`);
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), true);
   fs.writeFileSync(path.join(dir, 'decisions.md'), `${GATE}${TERMINAL}`);
   assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), false);
 });
@@ -1419,8 +1422,8 @@ function dispatchGateTemplates(text) {
 }
 function fillDispatchTemplate(template) {
   return template
-    .replace('{n}', '3740')
-    .replace('{issues}', '3740, 3741')
+    .replaceAll('{n}', '3740')
+    .replaceAll('{issues}', '3740, 3741')
     .replace(/\{[a-z]+\}/g, 'x');
 }
 function detectsDispatchTemplate(template) {

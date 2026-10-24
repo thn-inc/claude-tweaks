@@ -510,8 +510,11 @@ function hasStagedItems(runDir) {
 // merge, and the local-merge group line `Auto-merge: group [{issues}], assess-agent-
 // autonomy verdict auto-merge for every member` written after it. The gate's
 // `verdict needs-human` fall-back line is not a producer: a Review Console renders after
-// it. The gate pattern's trailing `.` (the separator before ` Reversibility:`) keeps the
-// match off that line.
+// it. `verdict auto-merge` never matches `verdict needs-human`; the gate pattern's
+// trailing `.` keeps it off longer tokens such as `auto-merge-pending`. A mixed group
+// (one member `auto-merge`, another `needs-human`) still reads true by design: the
+// fail-safe refuses the archive, and the console that then renders writes the
+// `Review Console: terminal decision` line that turns the signal off.
 function consoleReplacedByAutoMergeShortCircuit(runDir) {
   let raw;
   try { raw = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch (err) { return !(err && err.code === 'ENOENT'); }
