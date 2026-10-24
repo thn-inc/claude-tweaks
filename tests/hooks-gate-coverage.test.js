@@ -903,10 +903,14 @@ for (const [label, cmd] of [
     ['an odd quote inside a top-level backtick, then a newline', 'cd /main && echo `echo "$(`\ncp a f.js', [main('copy')]],
     ['a backtick inside double quotes, then a top-level backtick', 'cd /main && echo "`"`"`"`\ncp a f.js', [main('copy')]],
     ['a top-level backtick, then a backtick inside double quotes', 'cd /main && echo `"`"`"`"\ncp a f.js', [main('copy')]],
-    ['a heredoc opener inside a top-level backtick (scanHeredocs)', 'cd /main && echo `cat <<EOF`\ncp a f.js\nEOF', [main('copy')]],
+    ['a heredoc opener inside a top-level backtick', 'cd /main && echo `cat <<EOF`\ncp a f.js\nEOF', [main('copy')]],
+    ['an odd quote inside a top-level backtick, before a body holding a quote (scanHeredocs)', "cd /main && echo `echo \"x` && cat <<'EOF'\n\"\nEOF\ncp a f.js", [main('copy')]],
     // A pass that nests past the cap is read again flat, as before #4149, from its start.
     ['a nest past the cap holding backticks', `cd /main && echo ${'` "$('.repeat(33)}x${')"`'.repeat(33)} && cp a f.js`, [main('copy')]],
-    ['a nest past the cap behind an unquoted $( and a backtick', `cd /main && echo ${'$($(`"'.repeat(34)}x${'"`))'.repeat(34)} && cp a f.js`, [main('copy')]],
+    ['a nest past the cap whose fallback would restart the nested reading', `cd /main && echo ${'"\'$('.repeat(31)}x${')"'.repeat(31)}; cp a f.js`, [main('copy')]],
+    ['a ${ } nest past the cap (the flat pass takes ${ plainly)', `cd /main && echo ${'"\'${x:-'.repeat(31)}x${'}"'.repeat(31)}; cp a f.js`, [main('copy')]],
+    ['a nest past the cap before a lone & (the flat pass takes a backtick plainly)', `echo ${'"$(;`'.repeat(34)}x${'`)"'.repeat(34)} & cp a /main/f.js`, [main('copy')]],
+    ['a nest past the cap before a lone & (groupEvents re-reads from its starting group state)', `echo ${'$(`"'.repeat(36)}x${'"`)'.repeat(36)} & cp a /main/f.js`, [main('copy')]],
   ]) {
     test(`#4149 nesting: ${label} keeps the earlier cd`, () => {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
@@ -939,6 +943,18 @@ for (const [label, cmd] of [
   ]) {
     test(`#4149 nesting: a reader whose argument is ${label} still strips its body`, () => {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), []);
+    });
+  }
+
+  // The reader check reads a top-level backtick in its own quoting context, so a quote inside it
+  // hides no lone `&` and no process substitution after it (bash 5 runs both bodies).
+  for (const [label, cmd] of [
+    ['a single quote inside a top-level backtick, before a lone & and a shell (splitOnLoneAmpersand)', "cat `'x` & bash <<'EOF'\necho x > f.js\nEOF"],
+    ['an odd quote inside a top-level backtick, before a process substitution (removeQuotedSpans)', "tee `echo \"x` >(bash) \"y\" >/dev/null <<'EOF'\necho x > f.js\nEOF"],
+  ]) {
+    test(`#4149 nesting: ${label} keeps the body visible`, () => {
+      const targets = fileWriteTargets(cmd, '/r');
+      assert.ok(targets.some((t) => t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
     });
   }
 }

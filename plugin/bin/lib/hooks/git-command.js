@@ -57,7 +57,7 @@ function segmentSpansWith(str, spans) {
     if (ch === '`') {
       const r = spans.backtick(str, i + 1);
       if (r.closed) {
-        const inner = segmentSpansWith(str.slice(i + 1, r.end - 1), spans);
+        const inner = segmentSpans(str.slice(i + 1, r.end - 1));
         current += `\`${inner[0].text}`;
         for (let k = 1; k < inner.length; k += 1) {
           cut(i + 1 + inner[k - 1].end);
@@ -110,9 +110,9 @@ function segmentSpansWith(str, spans) {
 // opener and returns { end, closed }: `end` is the index just past the construct (the input's
 // length when it runs off the end) and `closed` says whether its closer was found.
 //
-// Nesting deeper than NEST_LEVEL_CAP stops the scan and marks the result `capped`; a capped result
-// climbs to the top-level span, which then takes the plain reading (the first unescaped `"`) and
-// stays marked `capped`, so the scanner's pass reads on as before #4149 (topLevelSpans). Within one top-level call (level 0), each
+// Nesting deeper than NEST_LEVEL_CAP stops the scan and marks the result `capped`, unclosed; a
+// capped result climbs unchanged to the top-level span, and the scanner whose pass it is reads the
+// whole pass again as before #4149 (scanPass). Within one top-level call (level 0), each
 // result depends only on (kind, start index), so it is memoized for that call: the double-quote
 // fallback below re-reads a deeper chain from a new index, and without the memo those re-reads
 // multiply with depth (unbounded before the cap; under it, bounded but still super-linear), while
@@ -140,8 +140,7 @@ function nestMemoized(kind, str, i, level, scan) {
 // at the first unescaped `"` (the reading before #4149), so a nesting this scan cannot follow
 // never swallows the rest of the command.
 function skipDoubleQuoted(str, i, level = 0) {
-  const r = nestMemoized(0, str, i, level, scanDoubleQuoted);
-  return r.capped && level === 0 ? { ...plainDoubleQuoteEnd(str, i), capped: true } : r;
+  return nestMemoized(0, str, i, level, scanDoubleQuoted);
 }
 
 function scanDoubleQuoted(str, i, level) {
@@ -853,7 +852,7 @@ function removeQuotedSpansWith(str, spans) {
       // A backtick substitution keeps its text, read in its own quoting context (segmentSpans).
       if (ch === '`') {
         const r = spans.backtick(str, i + 1);
-        if (r.closed) { out += `\`${removeQuotedSpansWith(str.slice(i + 1, r.end - 1), spans)}\``; i = r.end - 1; continue; }
+        if (r.closed) { out += `\`${removeQuotedSpans(str.slice(i + 1, r.end - 1))}\``; i = r.end - 1; continue; }
       }
       out += ch;
       continue;
@@ -881,20 +880,10 @@ function splitOnLoneAmpersandWith(seg, spans) {
     if (quote === "'") { if (c === "'") quote = null; continue; }
     if (c === '\\') { i += 1; continue; }
     if (c === "'") { quote = c; continue; }
-    // A backtick substitution is cut at its own lone `&`s, read in its own quoting context (segmentSpans).
+    // A backtick substitution is skipped whole: an `&` or a quote inside it is its own command's.
     if (c === '`') {
       const r = spans.backtick(seg, i + 1);
-      if (r.closed) {
-        let at = i + 1;
-        for (const piece of splitOnLoneAmpersandWith(seg.slice(i + 1, r.end - 1), spans).slice(0, -1)) {
-          at += piece.length;
-          pieces.push(seg.slice(start, at));
-          at += 1;
-          start = at;
-        }
-        i = r.end - 1;
-        continue;
-      }
+      if (r.closed) { i = r.end - 1; continue; }
     }
     // A double-quoted span or an unquoted `${ … }` nests as bash reads it (skipDoubleQuoted).
     const nested = c === '"' ? spans.dq(seg, i + 1) : c === '$' && seg[i + 1] === '{' ? spans.param(seg, i + 2) : null;
@@ -1136,9 +1125,9 @@ function lineLeavesStructureOpen(line) {
     if (c === '\\') { word += c + (line[i + 1] || ''); plain = false; i += 1; continue; }
     if (c === '"') {
       // Nested as bash reads it (skipDoubleQuoted), so a `)` inside a quoted "$( )" closes nothing.
-      // A span left open, or nested past NEST_LEVEL_CAP, leaves the line open (fail closed).
+      // A span left open (a nest past NEST_LEVEL_CAP is one) leaves the line open (fail closed).
       const r = skipDoubleQuoted(line, i + 1);
-      if (!r.closed || r.capped) return true;
+      if (!r.closed) return true;
       word += line.slice(i, r.end);
       plain = false;
       i = r.end - 1;
