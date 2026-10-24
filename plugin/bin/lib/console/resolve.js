@@ -313,8 +313,14 @@ function parseInvariant(patchText) {
 // read threw (#4049), so a caller can tell an unreadable file from one that was never read at all.
 function readStagedEntry(deps, stagedDir, name) {
   const file = path.join(stagedDir, name);
-  if (!(name.endsWith('.patch') || name.endsWith('.md') || SHADOW_DUP_RE.test(name))) return { name, path: file, text: null, readError: false };
-  try { return { name, path: file, text: deps.readFile(file), readError: false }; } catch { return { name, path: file, text: null, readError: true }; }
+  const entry = { name, path: file, text: null, readError: false };
+  if (!(name.endsWith('.patch') || name.endsWith('.md') || SHADOW_DUP_RE.test(name))) return entry;
+  try {
+    entry.text = deps.readFile(file);
+  } catch {
+    entry.readError = true;
+  }
+  return entry;
 }
 
 // Everything resolveAll reads, read once. No resolution is computed here.

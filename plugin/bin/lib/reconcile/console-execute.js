@@ -239,8 +239,7 @@ function readRulingTexts(runDir, items, opts = {}) {
 // -> { text } | { error: 'no-staged-path' | 'path-rejected' | 'not-found' | 'read-failed' }
 function readInsideRunDir(base, rel, opts = {}) {
   if (typeof rel !== 'string' || rel === '') return { error: 'no-staged-path' };
-  if (path.isAbsolute(rel)) return { error: 'path-rejected' };
-  if (rel.split(/[\\/]/).includes('..')) return { error: 'path-rejected' };
+  if (path.isAbsolute(rel) || rel.split(/[\\/]/).includes('..')) return { error: 'path-rejected' };
   const rootReal = canonicalRealpath(base, opts);
   if (rootReal === null) return { error: 'read-failed' };
   const leaf = resolveLeaf(path.resolve(base, rel), opts);
