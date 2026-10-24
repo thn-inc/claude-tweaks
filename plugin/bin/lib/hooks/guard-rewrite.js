@@ -26,9 +26,11 @@
 //     by ruling: that is the injection the guard refuses over).
 // Residual risk the text cannot show: a function or alias from the user's
 // shell snapshot that sets an uppercase variable at runtime (`nvm use`, `conda
-// activate`, a zsh `chpwd` hook) between an assignment and its reference.
-// `source`, `.` and `eval`, which can do the same from the command text itself,
-// make rules 1 and 2 decline.
+// activate`, a zsh `chpwd` hook) between an assignment and its reference: a
+// plain command word can name such a function. Code run from the command text
+// itself (`source`, `.`, `eval`, `trap`, an expansion as the command word) makes
+// rules 1 and 2 decline: every command word must be a plain literal outside the
+// runner set (commandWordsPlain).
 //
 // Anything this module cannot prove declines: a rule that
 // doubts returns nothing, and rewriteForGuard returns null on any throw. It is
@@ -72,6 +74,8 @@ const SQ = 1; // inside '…'
 const DQ = 2; // inside "…"
 const SUB = 3; // unquoted, inside $( … )
 const SKIP = 4; // escaped character or comment text
+const SUB_OPEN = 1;
+const SUB_CLOSE = 2;
 
 const BRACED_REF = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/y;
 const BARE_REF = /\$([A-Za-z_][A-Za-z0-9_]*)/y;
@@ -85,6 +89,8 @@ const CASE_WORD = /(?:^|[\s;&|(])case\s/;
 function scan(s) {
   const n = s.length;
   const kind = new Uint8Array(n);
+  // SUB_OPEN marks the `(` of a $( … ), SUB_CLOSE its closing `)`.
+  const subMark = new Uint8Array(n + 1);
   const refs = [];
   const topQuoted = new Map();
   const flags = { backtick: false, heredoc: false, ansiC: false, complexParam: false, unquotedBrace: false, unquotedTilde: false };
@@ -118,6 +124,7 @@ function scan(s) {
       if (nx === '(') {
         kind[i + 1] = k;
         stack.push({ k: SUB, depth: 1 });
+        subMark[i + 1] |= SUB_OPEN;
         i += 2;
         continue;
       }
@@ -171,13 +178,16 @@ function scan(s) {
     } else if (c === '(' && k === SUB) frame.depth += 1;
     else if (c === ')' && k === SUB) {
       frame.depth -= 1;
-      if (frame.depth === 0) stack.pop();
+      if (frame.depth === 0) {
+        stack.pop();
+        subMark[i] |= SUB_CLOSE;
+      }
     } else if (c === '{' || c === '}') flags.unquotedBrace = true;
     else if (c === '~') flags.unquotedTilde = true;
     else if (c === '<' && s[i + 1] === '<') flags.heredoc = true;
     i += 1;
   }
-  return { kind, refs, topQuoted, flags, balanced: stack.length === 1 };
+  return { kind, subMark, refs, topQuoted, flags, balanced: stack.length === 1 };
 }
 
 // Constructs the walker does not model well enough to rewrite around.
@@ -301,73 +311,119 @@ function leadingAssignments(s) {
   return { list, bodyStart: i };
 }
 
+// Rules 1 and 2 rewrite only when EVERY command-position word of the whole
+// command (top level, subshells, $( … ) alike) is a plain literal outside the
+// runner set: an allowlist, because a denylist of runner spellings kept leaking
+// (`builtin source`, `"$(echo .)" ./f`, `$SRC ./f`, `trap "…" DEBUG`). A command
+// word that is an expansion, quoted, escaped or globbed declines; so does any
+// operator or redirection this walk cannot place with certainty.
+const PLAIN_COMMAND_WORD = /^[A-Za-z0-9_\/][A-Za-z0-9_.\/+-]*$/;
+const TEST_COMMAND_WORDS = new Set(['[', '[[']);
 // Words after which the next word is still in command position.
-const COMMAND_PREFIXES = new Set([
-  '!', '{', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', 'time', 'exec', 'command', 'builtin', 'nohup', 'env', 'noglob', 'nocorrect',
+const COMMAND_PREFIXES = new Set(['then', 'do', 'else', 'elif', 'if', 'while', 'until', 'time', 'nohup', 'env', 'noglob', 'nocorrect']);
+// Builtins that run code from the command text, or assign a variable whose name
+// can be computed at runtime (`printf -v "$N"`, `read "$N"`, `wait -p "$N"`), or
+// change how later words parse, in bash or zsh.
+const RUNNERS = new Set([
+  '.', 'source', 'eval', 'trap', 'builtin', 'command', 'exec', 'enable', 'disable', 'alias', 'unalias', 'functions',
+  'function', 'autoload', 'emulate', 'set', 'setopt', 'unsetopt', 'shopt', 'export', 'declare', 'typeset', 'local',
+  'readonly', 'integer', 'float', 'private', 'read', 'vared', 'printf', 'print', 'let', 'unset', 'getopts', 'zparseopts',
+  'mapfile', 'readarray', 'wait', 'fc', 'r', 'coproc', 'zmodload', 'strftime', 'sched', 'hash', 'bindkey', 'zle',
 ]);
-const SHELL_CODE_RUNNERS = new Set(['source', '.', 'eval']);
-const QUOTE_OR_ESCAPE = /["'\\]/g;
+const SEPARATOR_OPS = new Set([';', '&', '&&', '|', '||', '|&']);
+const REDIRECT_OPS = new Set(['<', '>', '>>', '<>', '>&', '<&', '&>', '&>>']);
+const OP_CHAR = /[;&|<>]/;
 const ASSIGNMENT_PREFIX = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+const PREFIX_FLAG = /^-[A-Za-z0-9-]*$/;
+const FD_NUMBER = /^[0-9]+$/;
 
-// True when `source`, `.` or `eval` runs anywhere in command position (top
-// level, a subshell, a $( … ) substitution, behind a prefix such as `command`
-// or an assignment): the code they run can reassign a variable at runtime, so
-// an assigned literal is no longer what a later reference expands to. `source`
-// and `eval` are also refused as a bare word anywhere (a superset), so only `.`
-// relies on the command-position walk.
-function runsShellCode(s, kind) {
-  let word = '';
-  let cmdPos = true;
-  let inPrefix = false;
-  let redirectTarget = false; // the next word is a redirection's target
-  const endWord = () => {
-    if (!word) return false;
-    const text = word.replace(QUOTE_OR_ESCAPE, '');
-    const raw = word;
-    word = '';
-    if (text === 'source' || text === 'eval') return true;
-    if (redirectTarget) {
-      redirectTarget = false;
-      return false;
+// True when every command-position word from `from` on is allowlisted.
+function commandWordsPlain(s, sc, from = 0) {
+  const { kind, subMark } = sc;
+  const n = s.length;
+  const fresh = () => ({ word: '', cmdPos: true, prefix: false, redirect: false });
+  let st = fresh();
+  const saved = [];
+  const unquoted = (j) => kind[j] === TOP || kind[j] === SUB;
+  // Ends the current word; false when it is a command word off the allowlist.
+  const finish = () => {
+    const raw = st.word;
+    st.word = '';
+    if (!raw) return true;
+    if (st.redirect) {
+      st.redirect = false; // the redirection's target, never a command word
+      return true;
     }
-    if (!cmdPos) return false;
-    if (SHELL_CODE_RUNNERS.has(text)) return true;
-    if (ASSIGNMENT_PREFIX.test(raw) || COMMAND_PREFIXES.has(text) || (inPrefix && text[0] === '-')) {
-      inPrefix = inPrefix || COMMAND_PREFIXES.has(text);
-      return false;
+    if (!st.cmdPos) return true;
+    if (ASSIGNMENT_PREFIX.test(raw)) return true; // `X=1 cmd`: cmd is next
+    if (st.prefix && PREFIX_FLAG.test(raw)) return true; // `env -i cmd`
+    if (!(PLAIN_COMMAND_WORD.test(raw) || TEST_COMMAND_WORDS.has(raw)) || RUNNERS.has(raw)) return false;
+    if (COMMAND_PREFIXES.has(raw)) {
+      st.prefix = true;
+      return true;
     }
-    cmdPos = false;
-    inPrefix = false;
-    return false;
+    st.cmdPos = false;
+    st.prefix = false;
+    return true;
   };
-  for (let i = 0; i < s.length; i += 1) {
-    const k = kind[i];
-    if (k === SUB && (i === 0 || kind[i - 1] !== SUB)) {
-      if (endWord()) return true;
-      cmdPos = true;
-      inPrefix = false;
-    }
+  const commandStart = () => {
+    st.cmdPos = true;
+    st.prefix = false;
+  };
+  let i = from;
+  while (i < n) {
     const c = s[i];
-    if ((k === TOP || k === SUB) && WORD_BREAK.test(c)) {
-      if (c === '<' || c === '>') {
-        // A redirection (`2>f`, `>f`) never takes the command's place: drop an
-        // fd number before it and skip the target word after it.
-        if (/^[0-9]+$/.test(word)) word = '';
-        else if (endWord()) return true;
-        redirectTarget = true;
-        continue;
-      }
-      if (endWord()) return true;
-      if (c !== ' ' && c !== '\t' && !(c === '&' && redirectTarget)) {
-        cmdPos = true;
-        inPrefix = false;
-        redirectTarget = false;
-      }
+    if (subMark[i] & SUB_OPEN) {
+      // A $( … ) inside a redirection target is a target computed at runtime.
+      if (st.redirect) return false;
+      st.word += c; // the enclosing word is now an expansion
+      saved.push(st);
+      st = fresh();
+      i += 1;
       continue;
     }
-    word += c;
+    if (subMark[i] & SUB_CLOSE) {
+      if (!finish() || st.redirect || !saved.length) return false;
+      st = saved.pop();
+      i += 1;
+      continue;
+    }
+    if (unquoted(i) && WORD_BREAK.test(c)) {
+      if (c === ' ' || c === '\t') {
+        if (!finish()) return false;
+        i += 1;
+        continue;
+      }
+      if (c === '\n' || c === '(' || c === ')') {
+        if (!finish() || st.redirect) return false;
+        commandStart();
+        i += 1;
+        continue;
+      }
+      let j = i;
+      while (j < n && OP_CHAR.test(s[j]) && unquoted(j) && !subMark[j]) j += 1;
+      const op = s.slice(i, j);
+      if (REDIRECT_OPS.has(op)) {
+        if (FD_NUMBER.test(st.word)) st.word = '';
+        else if (!finish()) return false;
+        // A missing target, or zsh's `>!` clobber (whose `!` would read as the
+        // target, handing the command position to the real target word). A
+        // process substitution (`>(…)`) declines in the `(` branch above.
+        if (st.redirect || s[j] === '!') return false;
+        st.redirect = true;
+      } else if (SEPARATOR_OPS.has(op)) {
+        if (!finish() || st.redirect) return false;
+        commandStart();
+      } else {
+        return false; // `>|`, `;;`, `;&`, `&|`, …: not placed with certainty
+      }
+      i = j;
+      continue;
+    }
+    st.word += c;
+    i += 1;
   }
-  return endWord();
+  return !saved.length && finish() && !st.redirect;
 }
 
 // Rule 1: inline a literal the command itself assigned at its start.
@@ -377,7 +433,6 @@ function inlineLiteralAssignment(s) {
   if (!list.length) return null;
   const sc = scan(s);
   if (inDoubt(s, sc) || sc.flags.complexParam) return null;
-  if (runsShellCode(s, sc.kind)) return null;
   const values = new Map();
   for (const a of list) {
     if (values.has(a.name)) return null; // reassigned within the leading run
@@ -389,7 +444,10 @@ function inlineLiteralAssignment(s) {
   // Any unsafe reference bails the whole rule, not just its own name.
   const valueOf = (r) => values.get(r.name);
   if (!refsInlineSafely(s, sc, refs, valueOf)) return null;
-  return replaceRefs(s, refs, valueOf);
+  const out = replaceRefs(s, refs, valueOf);
+  // Judged on the rewrite, so an inlined command word (`$P/echo`) counts as the
+  // literal it becomes; the literal leading assignments are skipped.
+  return commandWordsPlain(out, scan(out), bodyStart) ? out : null;
 }
 
 // Rule 2: ${CLAUDE_PLUGIN_ROOT} → the running plugin's own root.
@@ -400,38 +458,32 @@ function pluginRootPlaceholder(s, { pluginRoot }) {
   if (hasBareUse(s, name)) return null; // the command assigns or unsets it itself
   const sc = scan(s);
   if (inDoubt(s, sc) || sc.flags.complexParam) return null;
-  if (runsShellCode(s, sc.kind)) return null;
   const refs = sc.refs.filter((r) => r.name === name);
   if (!refs.length || !refsInlineSafely(s, sc, refs, () => pluginRoot)) return null;
   // Other plugins' prose spells the same placeholder for THEIR root: inline only
   // a reference that continues into a path this plugin actually ships.
   if (!refs.every((r) => shippedUnder(pluginRoot, s, r.end))) return null;
-  return replaceRefs(s, refs, () => pluginRoot);
+  const out = replaceRefs(s, refs, () => pluginRoot);
+  return commandWordsPlain(out, scan(out), leadingAssignments(out).bodyStart) ? out : null;
 }
 
 const ROOT_CONTINUATION = /\/[A-Za-z0-9_.\/@%+,-]+/y;
 const PARENT_SEGMENT = /(?:^|\/)\.\.(?:\/|$)/;
 
-// The continuation must name something specific to this plugin, not a layout
-// every plugin shares (`/.claude-plugin/plugin.json`, `/hooks/hooks.json`,
-// `/skills`, `/bin`): a file under bin/, or a path under one of this plugin's
-// own skill directories. A same-named file in another plugin's bin/ remains a
-// residual collision.
+// The continuation must name a file under this plugin's bin/ that exists: not a
+// layout every plugin shares (`/.claude-plugin/plugin.json`, `/hooks/hooks.json`,
+// `/bin`), and not skills/, where generic directory names collide (another
+// plugin's `${CLAUDE_PLUGIN_ROOT}/skills/review/SKILL.md` would resolve to a
+// claude-tweaks file of the same name). A `.` segment declines (`bin/./x.js`).
+// Residual: a same-named file under another plugin's bin/.
 function shippedUnder(root, s, at) {
   ROOT_CONTINUATION.lastIndex = at;
   const m = ROOT_CONTINUATION.exec(s);
   if (!m || PARENT_SEGMENT.test(m[0])) return false;
   const segments = m[0].split('/').filter(Boolean);
-  const exists = (rel) => lstatType(path.join(root, rel)).type;
-  if (segments[0] === 'bin' && segments.length >= 2) {
-    const t = exists(segments.join('/'));
-    return t === 'file' || t === 'symlink';
-  }
-  if (segments[0] === 'skills' && segments.length >= 3 && exists(`skills/${segments[1]}`) === 'directory') {
-    const t = exists(segments.join('/'));
-    return t === 'file' || t === 'directory' || t === 'symlink';
-  }
-  return false;
+  if (segments[0] !== 'bin' || segments.length < 2 || segments.includes('.')) return false;
+  const { type } = lstatType(path.join(root, ...segments));
+  return type === 'file' || type === 'symlink';
 }
 
 const NODE_EVAL = /node[ \t]+(?:-e|-p|--eval|--print)[ \t]+/g;

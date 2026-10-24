@@ -139,14 +139,61 @@ test('plugin-root-placeholder substitutes the injected root and skips when the c
 
 // Review fix: every plugin ships .claude-plugin/plugin.json, hooks/hooks.json,
 // bin/ and skills/, so existing under this root is not evidence the path is ours.
-test('plugin-root-placeholder inlines only a bin/ file or a path under one of its own skill dirs', () => {
+// Fix wave 2: skills/ is out too, since generic skill names (review, build)
+// collide across plugins; only a file under bin/ is specific enough.
+test('plugin-root-placeholder inlines only a file under its own bin/', () => {
   assert.strictEqual(rw('cat ${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json'), null);
   assert.strictEqual(rw('cat "${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json"'), null);
   assert.strictEqual(rw('ls "${CLAUDE_PLUGIN_ROOT}/bin"'), null, 'the bin directory itself');
   assert.strictEqual(rw('ls "${CLAUDE_PLUGIN_ROOT}/skills"'), null);
-  assert.strictEqual(rw('ls "${CLAUDE_PLUGIN_ROOT}/skills/demo"'), null, 'a skill dir alone names nothing under it');
-  assert.strictEqual(rw('cat "${CLAUDE_PLUGIN_ROOT}/skills/other/SKILL.md"'), null, 'a skill dir this root lacks');
-  assert.deepStrictEqual(rw('cat "${CLAUDE_PLUGIN_ROOT}/skills/demo/SKILL.md"'), { command: `cat "${ROOT}/skills/demo/SKILL.md"`, applied: ['plugin-root-placeholder'] });
+  assert.strictEqual(rw('ls "${CLAUDE_PLUGIN_ROOT}/skills/demo"'), null);
+  assert.strictEqual(rw('cat "${CLAUDE_PLUGIN_ROOT}/skills/demo/SKILL.md"'), null, 'a generic skill name collides across plugins');
+  assert.strictEqual(rw('cat "${CLAUDE_PLUGIN_ROOT}/skills/./demo/SKILL.md"'), null);
+  assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/./x.js"'), null, 'a . segment declines, like skills/./build');
+  assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/./bin/x.js"'), null);
+  assert.deepStrictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js"'), { command: `node "${ROOT}/bin/x.js"`, applied: ['plugin-root-placeholder'] });
+});
+
+// Fix wave 2: rules 1 and 2 rewrite only when every command-position word is a
+// plain literal outside the runner set — an allowlist, since the runner
+// denylist leaked (an expansion as the command word, trap, `>|`, a redirection
+// target computed by $( … )).
+test('inline-literal-assignment declines when a command word is an expansion', () => {
+  assert.strictEqual(rw('P=/x; $(echo .) ./f; echo $P/z'), null);
+  assert.strictEqual(rw('P=/x; "$(echo .)" ./f; echo $P/z'), null);
+  assert.strictEqual(rw('P=/x; $SRC ./f; echo $P/z'), null);
+  assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js"; $SRC ./f'), null, 'rule 2 too');
+});
+
+test('inline-literal-assignment declines on trap and the other runner builtins', () => {
+  assert.strictEqual(rw('P=/x; trap "$(cat setp)" DEBUG; echo $P/z'), null);
+  for (const runner of ['builtin source f', 'command . ./f', 'printf -v "$N" %s /y', 'read -r "$N" < f', 'set -a', 'export "$N=/y"', 'declare -n R="$N"', 'function f { : }']) {
+    // A quoted reference, so the unquoted-brace bail cannot stand in for the runner check.
+    assert.strictEqual(rw(`P=/x; ${runner}; echo "$P/z"`), null, runner);
+  }
+});
+
+test('inline-literal-assignment declines on >| and on a redirection target computed by $( … )', () => {
+  assert.strictEqual(rw('P=/x; >| out . ./f; echo $P/z'), null);
+  assert.strictEqual(rw('P=/x; echo a >| out; echo $P/z'), null, '>| alone is not placed with certainty');
+  assert.strictEqual(rw('P=/x; >"$(echo o)" . ./f; echo $P/z'), null);
+  assert.strictEqual(rw('P=/x; echo a >"$(echo o)"; echo $P/z'), null, 'a computed target alone declines too');
+  assert.strictEqual(rw('P=/x; echo a > >(cat); echo $P/z'), null, 'process substitution after a redirection');
+  assert.strictEqual(rw('P=/x; echo a >(cat); echo $P/z'), null, 'process substitution');
+  assert.strictEqual(rw('P=/x; >! out . ./f; echo $P/z'), null, "zsh's >! clobber would hand `out` the command position");
+});
+
+test('the allowlist keeps plain command words rewriting: cd ., ls ., cp a ., find ., git -C ., >.', () => {
+  for (const [command, expected] of [
+    ['P=/x; cd . && node $P/z.js', 'P=/x; cd . && node /x/z.js'],
+    ['P=/x; ls $P/z .', 'P=/x; ls /x/z .'],
+    ['P=/x; cp a . && node $P/z.js', 'P=/x; cp a . && node /x/z.js'],
+    ['P=/x; find . -name a; node $P/z.js', 'P=/x; find . -name a; node /x/z.js'],
+    ['P=/x; git -C . status; node $P/z.js', 'P=/x; git -C . status; node /x/z.js'],
+    ['P=/x; echo a >. ; node $P/z.js', 'P=/x; echo a >. ; node /x/z.js'],
+    ['P=/x; node $P/z.js 2>&1 | cat', 'P=/x; node /x/z.js 2>&1 | cat'],
+    ['P=/x; X=1 env -i node "$(echo $P)/z.js"', 'P=/x; X=1 env -i node "$(echo /x)/z.js"'],
+  ]) assert.deepStrictEqual(rw(command), { command: expected, applied: ['inline-literal-assignment'] }, command);
 });
 
 test("node-eval-separator inserts -- before \"$A\" and leaves an existing -- alone", () => {
@@ -239,7 +286,7 @@ const POSITIVE = [
   { rule: 'inline-literal-assignment', command: "P=/x; node -e 'console.log(\"$P\")' $P/z.js" },
   { rule: 'inline-literal-assignment', command: 'P=/bin; $P/echo ok' },
   { rule: 'plugin-root-placeholder', command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" a' },
-  { rule: 'plugin-root-placeholder', command: 'node $CLAUDE_PLUGIN_ROOT/bin/x.js "$CLAUDE_PLUGIN_ROOT/skills/demo/SKILL.md"' },
+  { rule: 'plugin-root-placeholder', command: 'node $CLAUDE_PLUGIN_ROOT/bin/x.js "$CLAUDE_PLUGIN_ROOT/bin/x.js"' },
   { rule: 'node-eval-separator', command: `node -e ${EVAL} "$A"` },
   { rule: 'node-eval-separator', command: `node -p ${EVAL} $A x` },
   { rule: 'node-eval-separator', command: `node -e ${EVAL} "$HOME"` },
@@ -278,21 +325,97 @@ test('every positive case is argv-identical under bash and zsh', { skip: process
 // the sourced file or eval'd string reassigns the variable at runtime.
 fs.writeFileSync(path.join(CWD, 'setp'), 'P=/evald\n');
 fs.writeFileSync(path.join(CWD, '.env'), 'export NODE_ENV=production\n');
+fs.writeFileSync(path.join(CWD, 'f'), 'P=/sourced\n');
 const MUST_DECLINE = [
   { command: 'NODE_ENV=development; source .env; echo "$NODE_ENV"', naive: 'NODE_ENV=development; source .env; echo "development"' },
   { command: 'NODE_ENV=development; set -a; . ./.env; set +a; echo "$NODE_ENV"', naive: 'NODE_ENV=development; set -a; . ./.env; set +a; echo "development"' },
   { command: 'P=/x; eval "$(cat setp)"; echo "$P/z"', naive: 'P=/x; eval "$(cat setp)"; echo "/x/z"' },
+  // Fix wave 2: the forms the runner denylist missed.
+  { command: 'P=/x; $(echo .) ./f; echo $P/z', naive: 'P=/x; $(echo .) ./f; echo /x/z' },
+  { command: 'P=/x; "$(echo .)" ./f; echo $P/z', naive: 'P=/x; "$(echo .)" ./f; echo /x/z' },
+  { command: 'P=/x; $SRC ./f; echo $P/z', naive: 'P=/x; $SRC ./f; echo /x/z', env: { SRC: '.' } },
+  { command: 'P=/x; trap "$(cat setp)" DEBUG; echo $P/z', naive: 'P=/x; trap "$(cat setp)" DEBUG; echo /x/z' },
+  { command: 'P=/x; >| out . ./f; echo $P/z', naive: 'P=/x; >| out . ./f; echo /x/z' },
+  { command: 'P=/x; >"$(echo o)" . ./f; echo $P/z', naive: 'P=/x; >"$(echo o)" . ./f; echo /x/z' },
 ];
 
-test('must-decline cases: source, . and eval reassign at runtime, so the naive inline differs under bash and zsh', { skip: process.platform === 'win32' || !SHELLS.includes('bash') }, () => {
-  for (const { command, naive } of MUST_DECLINE) {
+test('must-decline cases: code run from the command text reassigns at runtime, so the naive inline differs under bash and zsh', { skip: process.platform === 'win32' || !SHELLS.includes('bash') }, () => {
+  for (const { command, naive, env = {} } of MUST_DECLINE) {
     assert.strictEqual(rw(command), null, command);
     for (const shell of SHELLS) {
-      const original = runIn(shell, command, {});
+      const original = runIn(shell, command, env);
       assert.strictEqual(original.status, 0, `${shell}: ${command}\n${original.stderr}`);
-      assert.notStrictEqual(runIn(shell, naive, {}).stdout, original.stdout, `${shell}: the naive inline must differ for ${command}`);
+      assert.notStrictEqual(runIn(shell, naive, env).stdout, original.stdout, `${shell}: the naive inline must differ for ${command}`);
     }
   }
+});
+
+// Fix wave 2, property-style: a deterministic PRNG draws short commands from a
+// small grammar mixing safe statements with runners (`.`, source, eval, trap,
+// an expansion as the command word), redirections, the four list operators and
+// subshells. Every command the normalizer rewrites must print the same stdout
+// and stderr, with the same status, under bash and zsh. Only builtins and
+// /bin/echo run, so a few hundred cases stay quick; the runner's timeout is the
+// hang bound (no wall-clock budget in tests/).
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const GRAMMAR = {
+  lead: ['P=/x; ', 'P=/x && ', 'export P=/x\n', 'P=/x; Q=/q; ', 'P="/a b"; '],
+  safe: ['echo $P/z', 'echo "$P/z"', 'echo ${P}/b', '/bin/echo $P/e', 'true', 'false', 'cd . && echo $P/c', 'echo "$Q"', '[ -n "$P" ] && echo $P/t'],
+  risky: [
+    '. ./f', 'source ./f', 'eval "$(cat setp)"', 'trap "$(cat setp)" DEBUG', '$(echo .) ./f', '"$(echo .)" ./f', '$SRC ./f',
+    '>| out . ./f', '>"$(echo o)" . ./f', 'x=1 . ./f', '2>/dev/null . ./f', 'command . ./f', 'builtin source ./f', '( . ./f; echo $P/s )',
+    'echo "$(. ./f; echo $P/i)"', 'set -a', 'read -r P < setp',
+  ],
+  redirect: ['', '', '', ' 2>/dev/null', ' 2>&1', ' >/dev/null'],
+  join: ['; ', ' && ', ' || ', ' | ', '\n'],
+};
+function drawCommand(rand) {
+  const pick = (list) => list[Math.floor(rand() * list.length)];
+  const statement = () => {
+    const body = (rand() < 0.35 ? pick(GRAMMAR.risky) : pick(GRAMMAR.safe)) + pick(GRAMMAR.redirect);
+    return rand() < 0.15 ? `( ${body} )` : body;
+  };
+  let command = pick(GRAMMAR.lead) + statement();
+  const extra = Math.floor(rand() * 3);
+  for (let k = 0; k < extra; k += 1) command += pick(GRAMMAR.join) + statement();
+  return `${command}; echo "$P/end"`;
+}
+
+test('property: every rewrite of a randomly drawn command keeps stdout, stderr and status under bash and zsh', { skip: process.platform === 'win32' || !SHELLS.includes('bash'), timeout: 300000 }, (t) => {
+  const rand = mulberry32(4028);
+  let rewritten = 0;
+  let declined = 0;
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME || os.homedir(), SRC: '.' };
+  for (let n = 0; n < 300; n += 1) {
+    const command = drawCommand(rand);
+    const out = rw(command);
+    if (!out) {
+      declined += 1;
+      continue;
+    }
+    rewritten += 1;
+    for (const shell of SHELLS) {
+      const args = (c) => (shell === 'zsh' ? ['-f', '-c', c] : ['-c', c]);
+      const run = (c) => {
+        const r = spawnSync(shell, args(c), { cwd: CWD, env, encoding: 'utf8', windowsHide: true });
+        return { stdout: r.stdout, stderr: r.stderr, status: r.status };
+      };
+      assert.deepStrictEqual(run(out.command), run(command), `${shell}: ${JSON.stringify(command)}\n→ ${JSON.stringify(out.command)}`);
+    }
+  }
+  t.diagnostic(`rewritten=${rewritten} declined=${declined} shells=${SHELLS.join(',')}`);
+  // Not vacuous: the grammar both rewrites and declines in volume.
+  assert.ok(rewritten >= 50, `only ${rewritten} rewrites`);
+  assert.ok(declined >= 50, `only ${declined} declines`);
 });
 
 // node-eval-separator's one divergence, recorded rather than hidden: node parses a
