@@ -36,7 +36,9 @@
 // point, not a smell to design around, since this module has no other
 // caller today.
 'use strict';
+const { performance } = require('perf_hooks');
 const { defaultRunner } = require('../feedback/file-feedback');
+const { recordSubprocess } = require('./timing');
 
 // Only this exact shape is memoized — every other runner call is a write
 // (or an unrecognized read) and always executes, never skipped.
@@ -101,8 +103,22 @@ function applyWrite(entries, argv, rawOutput) {
 // JSON is handed back verbatim, also uncached, rather than throwing here —
 // the caller's own JSON.parse (inside findResidueDuplicate) is what
 // surfaces that failure.
-function createIssueListCache({ base = defaultRunner } = {}) {
+function createIssueListCache({ base: rawBase = defaultRunner } = {}) {
   const memo = new Map(); // repo -> parsed array of issue entries
+
+  // #4032: every real `gh issue …` round trip is timed as a `gh` spawn (the
+  // default runner's own execFileSync is deliberately left raw — it lives in
+  // feedback/, outside reconcile). A memo hit never reaches here, so it records
+  // nothing. recordSubprocess never throws, so the call's own return/throw is
+  // exactly rawBase's.
+  function base(argv) {
+    const start = performance.now();
+    try {
+      return rawBase(argv);
+    } finally {
+      recordSubprocess('gh', argv, performance.now() - start);
+    }
+  }
 
   function runner(argv) {
     if (isIssueListCall(argv)) {

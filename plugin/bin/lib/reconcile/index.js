@@ -28,9 +28,12 @@ const {
   readCache, writeCache, isFresh, SHARED_HEALTH_TTL_MS,
 } = require('./cache');
 const { formatReconcileSummary, archivedCountFromRunsResult } = require('./residue-summary');
+// summarizeTimings is called through the module object (not destructured) so a
+// test can fault it by property — see the guard in reconcile().
+const timing = require('./timing');
 const {
-  createTimings, phaseOf, withTimings, timePhase, timePhaseSync, summarizeTimings,
-} = require('./timing');
+  createTimings, phaseOf, withTimings, timePhase, timePhaseSync,
+} = timing;
 
 // Execution order (mirror, red-tip, console, release, archive,
 // archive-branches, remote-prune, ledger-residue, reap) is significant — see the ordering
@@ -95,7 +98,13 @@ async function reconcile(opts = {}) {
   const timings = createTimings();
   phaseOf(timings, 'setup');
   const result = await withTimings(timings, () => reconcileInner(opts));
-  result.timings = summarizeTimings(timings);
+  // Measurement is best-effort: a summarizer fault reports no timings rather
+  // than failing a pass whose real work already finished (never-break-a-session).
+  try {
+    result.timings = timing.summarizeTimings(timings);
+  } catch {
+    result.timings = null;
+  }
   return result;
 }
 

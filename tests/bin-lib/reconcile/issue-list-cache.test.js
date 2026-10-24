@@ -185,3 +185,26 @@ test('createIssueListCache: two separate instances never share state (no cross-p
 
   assert.equal(calls.length, 2, 'a fresh instance must never inherit a prior instance\'s memo');
 });
+
+test('createIssueListCache: each real base call is timed as a gh spawn; a memo hit and a throw are not altered (#4032)', () => {
+  const { createTimings, withTimings, summarizeTimings } = require('../../../plugin/bin/lib/reconcile/timing');
+  const base = (argv) => {
+    if (argv[1] === 'close') throw new Error('gh failed');
+    return argv[1] === 'list' ? '[]' : 'https://github.com/o/r/issues/1\n';
+  };
+  const { runner } = createIssueListCache({ base });
+  const list = ['issue', 'list', '--repo', 'o/r', '--state', 'all', '--json', 'x', '--limit', '10000'];
+  const t = createTimings();
+  withTimings(t, () => {
+    runner(list);
+    runner(list); // memo hit — no spawn, nothing recorded
+    runner(['issue', 'create', '--repo', 'o/r', '--title', 't', '--body', 'b']);
+    assert.throws(() => runner(['issue', 'close', '5', '--repo', 'o/r']), /gh failed/);
+  });
+  const { subprocesses } = summarizeTimings(t).phases.setup;
+  assert.equal(subprocesses['gh issue list'].count, 1);
+  assert.equal(subprocesses['gh issue create'].count, 1);
+  assert.equal(subprocesses['gh issue close'].count, 1, 'a failing call is still timed, and still throws');
+  // Outside a timing store the wrapper is inert.
+  assert.equal(createIssueListCache({ base }).runner(list), '[]');
+});

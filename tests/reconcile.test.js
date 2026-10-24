@@ -2543,6 +2543,23 @@ test('AC2.1: reconcile() attaches timings on an early no-remote return', async (
   assert.ok(r.timings.phases.setup, 'the early return still reports its setup phase');
 });
 
+test('reconcile() reports timings: null when the summarizer throws, not a rejected pass (#4032)', async () => {
+  const dir = noRemoteFixture('ct-recon-timings-fault-');
+  const timingMod = require('../plugin/bin/lib/reconcile/timing');
+  const original = timingMod.summarizeTimings;
+  timingMod.summarizeTimings = () => {
+    throw new Error('summarizer fault');
+  };
+  let r;
+  try {
+    r = await reconcile({ cwd: dir, dryRun: true });
+  } finally {
+    timingMod.summarizeTimings = original;
+  }
+  assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }], 'the pass result is intact');
+  assert.equal(r.timings, null);
+});
+
 test('AC2.1: reconcile() times each dispatched check', async () => {
   const { mainDir } = pairedFixture();
   // Same forcing as the D2 shared-fetch test: committed pr-first policy keeps

@@ -11,8 +11,7 @@
 // pass picks up exactly where this one left off.
 'use strict';
 const path = require('path');
-const { execFileSync, execFile } = require('child_process');
-const { promisify } = require('util');
+const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { runGit, repoSlugOf } = require('../hooks/git-exec');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { readRunState } = require('../hooks/context');
@@ -26,8 +25,6 @@ const { readCache, writeCache } = require('./cache');
 const { runWithConcurrency } = require('./gh-pool');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 const { GH_TIMEOUT_MS, runClassified, runClassifiedAsync } = require('../shared-primitives');
-
-const execFileAsync = promisify(execFile);
 
 // Does a MERGED PR actually close issue `issueNumber` in `repoSlug`? Pure.
 // Signals: the PR's `closingIssuesReferences` (matched on number AND
@@ -172,7 +169,7 @@ function buildFailure(e) {
 
 function ghApi(args) {
   return runClassified(
-    () => buildSuccess(execFileSync('gh', ['api', ...args], {
+    () => buildSuccess(execFileSyncTimed('gh', ['api', ...args], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true,
     })),
     buildFailure,
@@ -183,7 +180,7 @@ function ghApi(args) {
 // Raw `gh` runner for the shared write path below (ghApi prepends `api` and
 // swallows failures; writeTombstoneShared composes its own argv and needs the throw).
 function ghRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true });
+  return execFileSyncTimed('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true });
 }
 
 // Both delegate to claim-store.js's one contents-API implementation.
@@ -223,7 +220,7 @@ function readClaim(repoSlug, name, api = ghApi) {
 async function ghApiAsync(args) {
   return runClassifiedAsync(
     async () => {
-      const { stdout } = await execFileAsync('gh', ['api', ...args], { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true });
+      const { stdout } = await execFileAsyncTimed('gh', ['api', ...args], { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true });
       return buildSuccess(stdout);
     },
     buildFailure,

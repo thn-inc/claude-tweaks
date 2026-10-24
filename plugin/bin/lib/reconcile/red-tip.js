@@ -9,7 +9,7 @@
 // error, unparseable response) resolves to null (no finding), matching
 // reconcile's existing degrade posture.
 'use strict';
-const { execFileSync } = require('child_process');
+const { execFileSyncTimed } = require('./timing');
 const { runGit } = require('../hooks/git-exec');
 
 const FETCH_TIMEOUT_MS = 5000;
@@ -87,7 +87,7 @@ function parseCheckRunLines(stdout) {
 function fetchCheckRuns(repoRoot, sha) {
   let stdout;
   try {
-    stdout = execFileSync(
+    stdout = execFileSyncTimed(
       'gh',
       [
         'api', '--paginate',
