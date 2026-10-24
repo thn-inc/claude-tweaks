@@ -4634,6 +4634,28 @@ test('prefetchArchivePrStates: numbers first, branches only for unanswered dirs,
   assert.deepStrictEqual(calls.branches.sort(), ['bb', 'cc', 'dd']);
 });
 
+test('prefetchArchivePrStates: a number with no answer queues no branch (#4032)', async () => {
+  const root = fs.realpathSync(makeRepo());
+  git(root, 'branch', 'ee');
+  const d = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-01T090000-e');
+  fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, 'run-state.json'), JSON.stringify({ status: 'active', pr: { number: 13, branch: 'ee' } }));
+
+  const calls = { numbers: [], branches: [], batch: [] };
+  const prStates = createPrStateResolver({
+    root,
+    deps: {
+      fetchBatch: async (r, keys) => { calls.batch.push(keys); return { byNumber: new Map(), byHead: new Map() }; },
+      byNumberAsync: async (n) => { calls.numbers.push(n); return 'network-failure'; },
+      byBranchAsync: async (b) => { calls.branches.push(b); return null; },
+    },
+  });
+  await prefetchArchivePrStates(root, prStates);
+  assert.deepStrictEqual(calls.numbers, [13], 'phase 2 must not go live again for the failed number');
+  assert.deepStrictEqual(calls.branches, [], 'no answer for the number means no branch lookup');
+  assert.deepStrictEqual(calls.batch, [{ numbers: [13], heads: [] }], 'the branch never reached the batch either');
+});
+
 // The branchless by-number fallback (archiveMerged's own `resolvePrStateByNumber`
 // site, distinct from resolveRunPrState) routes through `prStates` too.
 test('archiveMerged: prStates answers the branchless by-number fallback (#4032)', { skip: PATH_STUB_SKIP }, () => {

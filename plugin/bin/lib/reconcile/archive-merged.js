@@ -1979,9 +1979,11 @@ async function prefetchArchivePrStates(root, prStates, { cache } = {}) {
   for (const { state, branch } of entries) {
     if (!branch) continue;
     const n = numberOf(state);
-    // A memo hit (phase 1 just filled it); only a failed phase-1 lookup, which
-    // is never memoized, goes live again here.
-    if (n && (await prStates.byNumberAsync(n)) !== null) continue;
+    // Peek, never a live call: only a number phase 1 answered `null` falls
+    // through to its branch. A number with no known answer (a phase-1 failure,
+    // never memoized) queues nothing — the loop's resolveRunPrState returns the
+    // failure for it and never queries the branch.
+    if (n && prStates.peekNumber(n) !== null) continue;
     branches.push(branch);
   }
   await prStates.prefetch({ branches });

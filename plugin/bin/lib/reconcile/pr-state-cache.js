@@ -13,16 +13,18 @@
 // never persisted, and failures are not memoized either — a transient failure
 // must not be replayed as an answer. `prefetch` fills the memo through the
 // async twins under a concurrency cap so a sequential caller loop then hits
-// the memo. Entries live in reconcile-cache.json's `prStates` key
-// (cache.js) as `{ v, at }`, keyed `n:{number}` / `b:{branch}`; like the rest
-// of that file this is best-effort — a miss costs one live call, never a
-// wrong answer.
+// the memo — one aliased GraphQL read first (pr-state-batch.js), the per-item
+// twins only for what it left unanswered. Entries live in reconcile-cache.json's
+// `prStates` key (cache.js) as `{ v, at }`, keyed `n:{number}` / `b:{branch}`;
+// like the rest of that file this is best-effort — a miss costs one live call,
+// never a wrong answer.
 'use strict';
 const {
   resolvePrState, resolvePrStateByNumber, resolvePrStateAsync, resolvePrStateByNumberAsync,
 } = require('./pr-state');
 const { readCache, writeCache } = require('./cache');
 const { runWithConcurrency } = require('./gh-pool');
+const { fetchBatch } = require('./pr-state-batch');
 
 const PR_STATE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const NO_PR_TTL_MS = 5 * 60 * 1000;
@@ -52,6 +54,7 @@ function createPrStateResolver({ root, now = Date.now, concurrency = 8, deps = {
     byBranch: (b) => resolvePrState(root, b),
     byNumberAsync: (n) => resolvePrStateByNumberAsync(root, n),
     byBranchAsync: (b) => resolvePrStateAsync(root, b),
+    fetchBatch,
     ...deps,
   };
   const memo = new Map(); // key -> answer, this pass only
@@ -106,21 +109,57 @@ function createPrStateResolver({ root, now = Date.now, concurrency = 8, deps = {
   const byNumberAsync = makeAsync('number', (n) => live.byNumberAsync(n));
   const byBranchAsync = makeAsync('branch', (b) => live.byBranchAsync(b));
 
-  // Resolve every not-yet-known key through the async twins, capped. A failed
-  // item is simply left unknown — a later sync call falls back to a live call.
+  // Peek only: the memo or a still-valid persisted entry, never a live call.
+  // `undefined` = no known answer (a null answer is a real answer).
+  function peekNumber(n) {
+    if (!n) return undefined;
+    const found = lookup('number', keyFor('number', n));
+    return found.hit ? found.value : undefined;
+  }
+
+  // Resolve every not-yet-known key. One batched read (pr-state-batch.js) answers
+  // what it can through the same `learn` path; only the keys it left unanswered
+  // — or all of them, if it threw or returned nothing — go through the async
+  // twins under the concurrency cap. A failed item is simply left unknown: a
+  // later sync call falls back to a live call.
   async function prefetch({ numbers = [], branches = [] } = {}) {
-    const work = [];
+    const pending = [];
     const seen = new Set();
     const add = (kind, id, run) => {
       if (kind === 'branch' && !id) return;
       const key = keyFor(kind, id);
       if (seen.has(key) || lookup(kind, key).hit) return;
       seen.add(key);
-      work.push(() => run(id));
+      pending.push({ kind, id, key, run });
     };
     for (const n of numbers) add('number', n, byNumberAsync);
     for (const b of branches) add('branch', b, byBranchAsync);
-    await runWithConcurrency(work, (job) => job(), concurrency);
+    if (pending.length === 0) return;
+
+    // The batch only takes positive-integer numbers; anything else stays with
+    // the per-item path, which owns the 'invalid-arguments' answer.
+    const batchNumbers = pending.filter((p) => p.kind === 'number' && /^[1-9]\d*$/.test(String(p.id))).map((p) => Number(p.id));
+    const batchHeads = pending.filter((p) => p.kind === 'branch').map((p) => p.id);
+    if (batchNumbers.length > 0 || batchHeads.length > 0) {
+      try {
+        const got = await live.fetchBatch(root, { numbers: batchNumbers, heads: batchHeads });
+        const answeredNumbers = got && got.byNumber instanceof Map ? got.byNumber : new Map();
+        const answeredHeads = got && got.byHead instanceof Map ? got.byHead : new Map();
+        for (const p of pending) {
+          if (p.kind === 'number') {
+            const n = Number(p.id);
+            if (answeredNumbers.has(n)) learn('number', p.key, answeredNumbers.get(n));
+          } else if (answeredHeads.has(p.id)) {
+            learn('branch', p.key, answeredHeads.get(p.id));
+          }
+        }
+      } catch {
+        /* degrade to the per-item twins below */
+      }
+    }
+    // memo.has, not lookup: a failure string `learn` refused is correctly "unanswered".
+    const unanswered = pending.filter((p) => !memo.has(p.key));
+    await runWithConcurrency(unanswered, (p) => p.run(p.id), concurrency);
   }
 
   // Merge newly learned persistable entries into reconcile-cache.json. Re-reads
@@ -144,7 +183,7 @@ function createPrStateResolver({ root, now = Date.now, concurrency = 8, deps = {
     learned.clear();
   }
 
-  return { byNumber, byBranch, byNumberAsync, byBranchAsync, prefetch, persist };
+  return { byNumber, byBranch, byNumberAsync, byBranchAsync, peekNumber, prefetch, persist };
 }
 
 module.exports = { createPrStateResolver, persistableTtl, PR_STATE_RETENTION_MS, NO_PR_TTL_MS };

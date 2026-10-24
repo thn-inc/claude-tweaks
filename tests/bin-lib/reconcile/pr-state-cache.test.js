@@ -291,3 +291,111 @@ test('default deps: an invalid number reaches pr-state.js and returns its failur
   assert.equal(r.byNumber('not-a-number'), 'invalid-arguments');
   assert.equal(r.byNumber(-1), 'invalid-arguments');
 });
+
+// ---- batched prefetch (#4032 Task 4c) ----
+
+test('prefetch: batch answers skip the per-item twins', async () => {
+  const root = tmpRoot();
+  const { deps, calls } = fakeDeps({ byNumberAsync: OPEN(3), byBranchAsync: null });
+  const batchCalls = [];
+  deps.fetchBatch = async (r, keys) => {
+    batchCalls.push({ r, keys });
+    return { byNumber: new Map([[1, MERGED(1)], [2, OPEN(2)]]), byHead: new Map([['b', MERGED(9)]]) };
+  };
+  const res = createPrStateResolver({ root, deps });
+  await res.prefetch({ numbers: [1, 2, 3], branches: ['b', 'c'] });
+  assert.equal(batchCalls.length, 1);
+  assert.equal(batchCalls[0].r, root);
+  assert.deepEqual(batchCalls[0].keys, { numbers: [1, 2, 3], heads: ['b', 'c'] });
+  assert.equal(calls.byNumberAsync, 1, 'only the unanswered number 3 goes per item');
+  assert.equal(calls.byBranchAsync, 1, 'only the unanswered head c goes per item');
+  assert.deepEqual(res.byNumber(1), MERGED(1));
+  assert.deepEqual(res.byNumber(2), OPEN(2));
+  assert.deepEqual(res.byBranch('b'), MERGED(9));
+  assert.deepEqual(res.byNumber(3), OPEN(3));
+  assert.equal(calls.byNumber + calls.byBranch, 0, 'every key is now memoized');
+});
+
+test('prefetch: batch answers persist exactly like per-item answers', async () => {
+  const root = tmpRoot();
+  const { deps } = fakeDeps();
+  deps.fetchBatch = async () => ({
+    byNumber: new Map([[1, MERGED(1)], [2, OPEN(2)]]),
+    byHead: new Map([['merged-b', MERGED(9)], ['none', null], ['open-b', OPEN(4)]]),
+  });
+  const res = createPrStateResolver({ root, deps });
+  await res.prefetch({ numbers: [1, 2], branches: ['merged-b', 'none', 'open-b'] });
+  res.persist();
+  assert.deepEqual(Object.keys(readCache(root).prStates).sort(), ['b:merged-b', 'b:none', 'n:1']);
+});
+
+test('prefetch: a throwing fetchBatch degrades to per-item', async () => {
+  const { deps, calls } = fakeDeps({ byNumberAsync: OPEN(1), byBranchAsync: null });
+  deps.fetchBatch = async () => { throw new Error('batch down'); };
+  const res = createPrStateResolver({ root: tmpRoot(), deps });
+  await res.prefetch({ numbers: [1, 2], branches: ['a'] });
+  assert.equal(calls.byNumberAsync, 2);
+  assert.equal(calls.byBranchAsync, 1);
+});
+
+test('prefetch: an empty or malformed fetchBatch result degrades to per-item', async () => {
+  for (const result of [{ byNumber: new Map(), byHead: new Map() }, undefined, null, {}]) {
+    const { deps, calls } = fakeDeps({ byNumberAsync: OPEN(1), byBranchAsync: null });
+    deps.fetchBatch = async () => result;
+    await createPrStateResolver({ root: tmpRoot(), deps }).prefetch({ numbers: [1], branches: ['a'] });
+    assert.equal(calls.byNumberAsync, 1, JSON.stringify(result));
+    assert.equal(calls.byBranchAsync, 1, JSON.stringify(result));
+  }
+});
+
+test('prefetch: a failure string in a batch answer is never memoized', async () => {
+  const { deps, calls } = fakeDeps({ byNumberAsync: OPEN(1) });
+  deps.fetchBatch = async () => ({ byNumber: new Map([[1, 'network-failure']]), byHead: new Map() });
+  const res = createPrStateResolver({ root: tmpRoot(), deps });
+  await res.prefetch({ numbers: [1] });
+  assert.equal(calls.byNumberAsync, 1, 'the failure string is treated as unanswered');
+});
+
+test('prefetch: known keys are not asked of the batch, and an all-known prefetch makes no batch call', async () => {
+  const root = tmpRoot();
+  writeCache(root, { prStates: { 'n:1': { v: MERGED(1), at: Date.now() } } });
+  const { deps } = fakeDeps({ byNumberAsync: OPEN(2) });
+  const asked = [];
+  deps.fetchBatch = async (r, keys) => { asked.push(keys); return { byNumber: new Map(), byHead: new Map() }; };
+  const res = createPrStateResolver({ root, deps });
+  await res.prefetch({ numbers: [1, 2] });
+  assert.deepEqual(asked, [{ numbers: [2], heads: [] }]);
+  await res.prefetch({ numbers: [1, 2] });
+  assert.equal(asked.length, 1, 'nothing left to ask');
+});
+
+test('prefetch: a non-integer number never reaches the batch and is left to the per-item path', async () => {
+  const { deps, calls } = fakeDeps({ byNumberAsync: 'invalid-arguments' });
+  const asked = [];
+  deps.fetchBatch = async (r, keys) => { asked.push(keys); return { byNumber: new Map(), byHead: new Map() }; };
+  await createPrStateResolver({ root: tmpRoot(), deps }).prefetch({ numbers: ['abc', 5] });
+  assert.deepEqual(asked, [{ numbers: [5], heads: [] }]);
+  assert.equal(calls.byNumberAsync, 2);
+});
+
+test('peekNumber never calls live', () => {
+  const { deps, calls } = fakeDeps({ byNumber: OPEN(5), byNumberAsync: OPEN(5) });
+  const root = tmpRoot();
+  writeCache(root, { prStates: { 'n:9': { v: MERGED(9), at: Date.now() }, 'n:8': { v: MERGED(8), at: Date.now() - RET - 1 } } });
+  const res = createPrStateResolver({ root, deps });
+  assert.equal(res.peekNumber(5), undefined);
+  assert.equal(res.peekNumber(0), undefined);
+  assert.deepEqual(calls, { byNumber: 0, byBranch: 0, byNumberAsync: 0, byBranchAsync: 0 });
+  assert.deepEqual(res.peekNumber(9), MERGED(9), 'a still-valid persisted entry answers');
+  assert.equal(res.peekNumber(8), undefined, 'an expired persisted entry does not');
+  res.byNumber(5);
+  assert.deepEqual(res.peekNumber(5), OPEN(5));
+  assert.equal(calls.byNumber, 1);
+});
+
+test('peekNumber returns a memoized null (a number that names no governing PR)', async () => {
+  const { deps } = fakeDeps({ byNumberAsync: null });
+  const res = createPrStateResolver({ root: tmpRoot(), deps });
+  await res.prefetch({ numbers: [7] });
+  assert.equal(res.peekNumber(7), null);
+});
