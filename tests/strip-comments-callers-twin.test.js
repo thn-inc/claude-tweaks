@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 // The shared comment stripper (tests/helpers/strip-comments.js) is called per file by
 // the source-scan conformance tests. Its header names those callers, and
@@ -14,11 +15,8 @@ const REPO = path.join(__dirname, '..');
 const TESTS_DIR = path.join(REPO, 'tests');
 const HELPER_REL = 'tests/helpers/strip-comments.js';
 const EXCLUDED = new Set([HELPER_REL, 'tests/helpers-strip-comments.test.js']);
-const HELPER_SRC = fs.readFileSync(path.join(REPO, HELPER_REL), 'utf8');
-const SKILL_SRC = fs.readFileSync(
-  path.join(REPO, '.claude', 'skills', 'parse-signal-discipline', 'SKILL.md'),
-  'utf8',
-);
+const HELPER_SRC = readText(path.join(REPO, HELPER_REL));
+const SKILL_SRC = readText(path.join(REPO, '.claude', 'skills', 'parse-signal-discipline', 'SKILL.md'));
 const ANCHOR = 'by test-file stem:';
 const REQUIRE_RE = /\brequire\(\s*(['"])([^'"\n]+)\1\s*\)/g;
 const SCRATCH_CALLER = 'const s = req' + "uire('./helpers/strip-comments');";
@@ -34,7 +32,7 @@ function liveTestFiles() {
       else if (ent.isFile() && ent.name.endsWith('.js')) {
         out.push({
           rel: path.relative(REPO, abs).split(path.sep).join('/'),
-          text: fs.readFileSync(abs, 'utf8'),
+          text: readText(abs),
         });
       }
     }
