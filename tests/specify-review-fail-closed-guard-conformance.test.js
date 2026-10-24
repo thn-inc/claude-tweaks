@@ -35,6 +35,11 @@ function assertRedTeamStep(text) {
   assert.ok(body, `heading not found: ${HEADING}`);
   assert.ok(body.includes('fail closed'), 'section must name a guard whose job is to fail closed');
   assert.ok(body.includes('## Open Questions'), 'section must allow listing a missing class as an Open Question');
+  assert.ok(
+    body.includes('A missing class is a `critical` finding (persona column `Fail-Closed Guard Check`)') &&
+      body.includes('stage-or-ask per write-back step 5'),
+    'section must route a missing class as a critical finding that stages or asks',
+  );
   for (const bullet of CLASS_BULLETS) {
     assert.ok(body.includes(bullet), `section must name the input class ${JSON.stringify(bullet)}`);
   }
@@ -78,6 +83,14 @@ test('AC2.1 go-red: removing any one input-class bullet fails the same assertion
   for (const bullet of CLASS_BULLETS) {
     assert.throws(() => assertRedTeamStep(RED_TEAM.split(bullet).join('- **Removed**')), `removing ${bullet} must fail`);
   }
+});
+
+test('AC1.1 go-red: removing the severity/routing sentence fails the same assertion', () => {
+  const sentence = 'A missing class is a `critical` finding (persona column `Fail-Closed Guard Check`)';
+  assert.ok(RED_TEAM.includes(sentence), 'control premise: the sentence exists to be removed');
+  const body = sliceSection(RED_TEAM, HEADING, '\n## ');
+  assert.throws(() => assertRedTeamStep(RED_TEAM.replace(body, body.replace(sentence, 'A missing class is noted'))));
+  assert.throws(() => assertRedTeamStep(RED_TEAM.replace(body, body.replace('stage-or-ask per write-back step 5', ''))));
 });
 
 test('AC1.1 go-red: removing the lens 3c question fails the same assertion', () => {
