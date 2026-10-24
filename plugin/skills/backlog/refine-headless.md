@@ -131,7 +131,7 @@ node -e "
 ```
 
 `$ST_BACKLOG_GRANT_FRESH_STATE` and `$ST_BACKLOG_GRANT_COMMITLOG` are two more `sessionTmpPath`-resolved
-paths from that same `eval` block, reserved here for bullets 1 and 2 below to write into — named
+paths from that same resolution block, reserved here for bullets 1 and 2 below to write into — named
 now so the Classify snippet's `require()`/`readFileSync()` calls in bullet 3 are real, not
 aspirational.
 

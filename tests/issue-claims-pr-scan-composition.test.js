@@ -55,7 +55,7 @@ test('github-pr-scan.md: ITEM9_BODY_ONLY occurs only inside item 9\'s and item 1
   // below is what proves "inside a fence": any occurrence outside a transport=gh fence would
   // survive into the mcp bundle and fail it.)
   const matchingLines = prScanContent.split('\n').filter((line) => line.includes(ITEM9_BODY_ONLY)).length;
-  assert.equal(matchingLines, 20,'fixture assumption: PR_SCAN_UNARMED matching-line count changed — pick a new item-9/item-11-only string');
+  assert.equal(matchingLines, 20, 'fixture assumption: PR_SCAN_UNARMED matching-line count changed — pick a new item-9/item-11-only string');
   assert.ok(prScanContent.includes(ITEM9_LABEL_PARAGRAPH_END), 'fixture assumption: the discrimination test\'s fence-close anchor is no longer in the file verbatim');
 });
 
