@@ -1533,6 +1533,9 @@ test('a failing chunk with preExisting declared still clears its record, with no
   const failing = await runStampSuiteChunk(r, `unit=node ${JSON.stringify(failScript)}`);
   assert.strictEqual(failing.code, 1, failing.stderr);
   assert.doesNotMatch(failing.stderr, /TypeError/);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.preExistingAdjudicated.fixed, null);
+  assert.strictEqual(report.preExistingAdjudicated.fixedReason, 'scope mode stamp-suite did not run every suite');
   const after = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
   assert.strictEqual(after.verifiedHead, false);
   assert.deepStrictEqual(after.suiteComposed.missing, ['unit']);

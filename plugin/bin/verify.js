@@ -54,6 +54,8 @@ const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = requi
 const { canonicalRealpath, resolveWithin } = require('./lib/path-guard');
 
 const KNOWN_SCOPES = new Set(['full', 'scoped', 'none', 'static-only', 'tool-scoped']);
+// A --stamp-suite chunk runs a caller-chosen subset; kept out of KNOWN_SCOPES so --stamp-status is unchanged.
+const STAMP_SUITE_MODE = 'stamp-suite';
 
 function enrich(result) {
   if (result.skipped) return result;
@@ -851,7 +853,7 @@ async function main() {
       // as a non-full mode (#4040: dereferencing sel.mode there threw before the
       // failing check's per-suite record was cleared).
       const split = newAndFixed({
-        verdict, failingFiles: allFailingFiles, preExisting: decl.preExisting, mode: sel ? sel.mode : 'stamp-suite', allRan: results.every((c) => !c.skipped), listTracked: () => trackedFiles(logCwd),
+        verdict, failingFiles: allFailingFiles, preExisting: decl.preExisting, mode: sel ? sel.mode : STAMP_SUITE_MODE, allRan: results.every((c) => !c.skipped), listTracked: () => trackedFiles(logCwd),
       });
       preExistingAdjudicated = verdict.eligible
         ? { declared: decl.preExisting, matched: verdict.matched, ...split }
