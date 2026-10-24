@@ -207,6 +207,22 @@ function recordResidueSuccess(target, reason, targetPath) {
   if (batch) { target.cache = nextCache; target.dirty = true; } else { writeCache(target, nextCache); }
 }
 
+// #2724: drop a tracked entry for a path that is no longer stuck, and — only
+// when that entry had already been escalated — take the path off the filed
+// GitHub record. Writes nothing when there is no entry. Best-effort, like
+// pruneResidueFailures: a resolution failure still leaves the entry cleared.
+function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveResidue, runner, why } = {}) {
+  const cache = isCacheBatch(target) ? target.cache : readCache(target);
+  const entry = cache.residueFailures[residueKey(reason, targetPath)];
+  if (!entry) return { cleared: false, resolved: null };
+  recordResidueSuccess(target, reason, targetPath);
+  let resolved = null;
+  if (entry.escalated) {
+    try { resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why }); } catch { /* best-effort */ }
+  }
+  return { cleared: true, resolved };
+}
+
 // #1233 — the shared success/fail branch-into-{recordResidueSuccess,
 // recordResidueFailure,escalate} shape that reap-merged.js's
 // trackReapResidue and archive-merged.js's trackArchiveResult each used to
@@ -279,6 +295,6 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
 
 module.exports = {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
-  RESIDUE_ESCALATE_THRESHOLD, residueKey, recordResidueFailure, recordResidueSuccess, listResidueFailures,
+  RESIDUE_ESCALATE_THRESHOLD, residueKey, recordResidueFailure, recordResidueSuccess, clearResidue, listResidueFailures,
   trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 };

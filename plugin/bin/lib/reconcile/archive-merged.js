@@ -20,9 +20,9 @@ const {
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
 const {
-  recordResidueSuccess, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
+  recordResidueSuccess, clearResidue, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 } = require('./cache');
-const { escalateResidue } = require('./escalate-residue');
+const { escalateResidue, resolveResidue } = require('./escalate-residue');
 const { isWorktreeAlwaysOn } = require('../policy');
 const { repoSlugOf, prClosesIssue } = require('./release-merged');
 const { closeRunState } = require('../hooks/close-run-state');
@@ -84,6 +84,20 @@ function isAdHocStandaloneMint(dir) {
   if (!isAdHocRunDir(dir)) return false;
   const state = readRunState(dir);
   return !!(state && typeof state.worktree === 'string' && state.worktree);
+}
+
+// #2724: an ad-hoc dir is a session friction log, "not a pipeline run"
+// (docs/hooks.md), so having no branch, worktree or PR is its normal state —
+// not stuckness — and `adhoc-superseded` archives it once its session ends.
+// That sweep only ever claims a dir whose recorded worktree is a linked
+// worktree, though: a dir stamped with the main checkout can never be
+// superseded, so it stays tracked and keeps escalating.
+const ADHOC_INTRINSIC_STUCK_REASONS = new Set(['no-branch', 'no-worktree', 'no-pr']);
+const ADHOC_EXEMPT_WHY = 'is an ad-hoc session directory: no branch, worktree or PR is its normal state, and the adhoc-superseded sweep archives it once its session has ended';
+
+function isAdHocIntrinsicSkip(dir, reason) {
+  if (!ADHOC_INTRINSIC_STUCK_REASONS.has(reason) || !isAdHocStandaloneMint(dir)) return false;
+  return path.resolve(readRunState(dir).worktree) !== path.resolve(dir, '..', '..', '..');
 }
 
 // #1604: the "swept once genuinely superseded" half of #1117's own design
@@ -1697,7 +1711,8 @@ function classifyRunDir(ctx, now = Date.now()) {
         return { kind: 'none', ttlMs: null, evidence: { skipReason: decision.reason } };
       }
     } else if (kind === 'structurally-stuck') {
-      if (skipReason && STRUCTURALLY_STUCK_REASONS.has(skipReason) && isStaleDir(dir, STRUCTURALLY_STUCK_TTL_MS, now)) {
+      if (skipReason && STRUCTURALLY_STUCK_REASONS.has(skipReason) && !isAdHocIntrinsicSkip(dir, skipReason)
+          && isStaleDir(dir, STRUCTURALLY_STUCK_TTL_MS, now)) {
         return { kind: 'structurally-stuck', ttlMs: STRUCTURALLY_STUCK_TTL_MS, evidence: {} };
       }
     }
@@ -1716,7 +1731,11 @@ function classifyRunDir(ctx, now = Date.now()) {
 // unchanged) or a `beginCacheBatch` handle (#1235 — batched across
 // `archiveMerged`'s item loops); see cache.js's own comment on the two
 // shapes.
-function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalateResidue, runner } = {}) {
+function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalateResidue, resolve = resolveResidue, runner } = {}) {
+  if (isAdHocIntrinsicSkip(dir, reason)) {
+    clearResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { resolve, runner, why: ADHOC_EXEMPT_WHY });
+    return;
+  }
   if (!isStructurallyStuck(dir, reason)) return;
   trackResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { failed: true, lastError: `stuck at ${reason}` }, { escalate, runner });
 }
@@ -2297,7 +2316,7 @@ function archiveMerged({
 module.exports = {
   archiveMerged, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, archiveRunDir, listSpecDirs,
   isStaleDir, classifyRunDir,
-  isOrphanedMint, isAdHocStandaloneMint, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
+  isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
   isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
