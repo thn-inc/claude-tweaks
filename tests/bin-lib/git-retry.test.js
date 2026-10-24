@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { withIndexLockRetry, isIndexLockFailure } = require('../../plugin/bin/lib/git-retry');
+const { readText } = require('../helpers/read-skill');
 
 const LOCK_ERR_MSG = "fatal: Unable to create '/repo/.git/index.lock': File exists.";
 
@@ -84,7 +85,7 @@ test('withIndexLockRetry: a { failure, stderr }-returning runner does not retry 
 test('withIndexLockRetry: the module never references unlinking a lock file', () => {
   const fs = require('fs');
   const path = require('path');
-  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'git-retry.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'git-retry.js'));
   assert.doesNotMatch(src, /\bunlinkSync\(|\bfs\.unlink\(|\bfs\.rm\(/);
 });
 
@@ -133,7 +134,7 @@ test('conformance: every named commit call site routes through withIndexLockRetr
     path.join(root, 'bin', 'release-local.js'),
   ];
   for (const file of sites) {
-    const src = fs.readFileSync(file, 'utf8');
+    const src = readText(file);
     assert.match(src, /withIndexLockRetry/, `${file} must import/use withIndexLockRetry`);
     // Every line that issues a ['commit', ...] git call must not be a bare
     // runGit(...)/deps.git(...) invocation — it must go through the

@@ -14,8 +14,11 @@
 // backlog/trust-signal.md — renamed from refine-mode.md since #647) read only
 // `grants.*`.
 
-// record.js requires only ./facet-shape; this import is one-directional by
-// contract (autonomy -> record, never record -> autonomy) so the two never cycle.
+// record.js's sub-modules require only ./facet-shape, node:path and each other
+// (record-vocabulary.js -> ./facet-shape; record-payload.js -> node:path +
+// ./record-vocabulary; record-fingerprint.js and record-dependencies.js -> nothing),
+// and none requires autonomy; this import is one-directional by contract
+// (autonomy -> record, never record -> autonomy) so the two never cycle.
 const { DEFER_REASONS } = require('./record');
 
 // Ordered least to most permissive. Index comparison is the tier test, so the

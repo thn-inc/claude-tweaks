@@ -2,7 +2,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { listSkillDirs, KNOWN_SKILLS } = require('../plugin/bin/lib/skill-audit/skill-catalog');
 
@@ -12,12 +11,13 @@ const ROOT = path.join(__dirname, '..');
 // #1909: the canonical text now lives in one place — imported, not re-typed —
 // so this file can't drift from the real copy the SessionStart hook injects.
 const { INTERACTION_STYLE_DIRECTIVE: CANONICAL_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
+const { readText } = require('./helpers/read-skill');
 
 function skillNames() {
   return listSkillDirs(path.join(ROOT, 'plugin'));
 }
 
-const read = (name) => fs.readFileSync(path.join(SKILLS_DIR, name, 'SKILL.md'), 'utf8');
+const read = (name) => readText(path.join(SKILLS_DIR, name, 'SKILL.md'));
 
 test('every skill directory with a SKILL.md is discovered', () => {
   // Directory-derived, not a hard-coded literal (was `33` -- see skill-catalog.js's

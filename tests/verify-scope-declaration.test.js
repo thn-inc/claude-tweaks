@@ -14,6 +14,7 @@ const DECL = path.join(REPO_ROOT, '.claude-tweaks', 'verify-scope.json');
 const { readDeclaration } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'verify', 'declaration.js'));
 const { selectScope } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'verify', 'scope.js'));
 const { BOOKKEEPING_RULES } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'init', 'verify-scope-starter.js'));
+const { readText } = require('./helpers/read-skill');
 const STAMP = { sha: 'a'.repeat(40), fullSha: 'a'.repeat(40), scope: 'full' };
 
 test('this repo declares its own verify scope and it passes readDeclaration (#1924 AC5, #3337)', () => {
@@ -71,7 +72,7 @@ test('every rule with suites:[] is one of the bookkeeping-only globs — no sour
 });
 
 test('init/SKILL.md lists Step 6.6 and its sub-file exists (#1924)', () => {
-  const skill = fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', 'init', 'SKILL.md'), 'utf8');
+  const skill = readText(path.join(REPO_ROOT, 'plugin', 'skills', 'init', 'SKILL.md'));
   assert.ok(skill.includes('### Step 6.6: Verify-Scope Starter'));
   assert.ok(skill.includes('bootstrap/step-06-6-verify-scope.md'));
   assert.ok(fs.existsSync(path.join(REPO_ROOT, 'plugin', 'skills', 'init', 'bootstrap', 'step-06-6-verify-scope.md')));

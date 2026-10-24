@@ -5,10 +5,10 @@
 // and pins that decomposition-mode.md no longer carries its own copy of the table.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => readText(path.join(__dirname, '..', rel));
 
 const SHARED = 'plugin/skills/specify/diagram-suggestion.md';
 const DECOMPOSITION = 'plugin/skills/specify/decomposition-mode.md';

@@ -5,3 +5,5 @@
 tools/upstream-drift/fixtures/** -text
 # Byte-exact jest/vitest/pytest captures: a CRLF line never reaches extract.js's non-multiline `$`.
 tests/fixtures/verify-dialects/** -text
+# Captured release-please sections, pinned by the sha256 of their raw bytes (changelog-fixture.test.js).
+tests/bin-lib/release-local/fixtures/release-please-*.md -text

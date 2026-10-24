@@ -214,9 +214,11 @@ it literally into the next call; never carry it in a shell variable across calls
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$RUN_DIR" --status AUTO \
      --section "/wrap-up" --step "Section C (local-merge-auto-finish)" \
-     --text "Merged {feature-branch} into {base-branch} (commit {sha}), pushed. [outcome: merged]" \
+     --text-file "{text-file}" \
      --reversibility high
    ```
+
+   `{text-file}` holds one line, `Merged {feature-branch} into {base-branch} (commit {sha}), pushed. [outcome: merged]`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — the branch names are git-supplied, so they never pass through shell quoting.
 
    Report outcome `merged` to the caller — `cleanup-procedures-execution.md` Section C proceeds to
    its step 4 (worktree removal) exactly as though `finishing-a-development-branch` itself had
@@ -235,7 +237,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$RUN_DIR" "{wor
 
 `record-worktree` restores the worktree assignment and `active` status. It prints `claude-tweaks: worktree recorded for …` when
 it worked; any other line (the run dir may have been archived underneath) is not ignored — carry it
-into the `--text` of the log call below. A park reached from step 2 or step 3 runs no re-stamp:
+into the log call's `{text-file}` below. A park reached from step 2 or step 3 runs no re-stamp:
 `close-run` has not fired, so nothing was closed.
 
 Then log the outcome:
@@ -243,13 +245,11 @@ Then log the outcome:
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$RUN_DIR" --status AUTO \
   --section "/wrap-up" --step "Section C (local-merge-auto-finish)" \
-  --text 'Local merge into {base-branch} failed ({conflict|failed verification}) — reverted, worktree and branch preserved. [outcome: pending-review]' \
+  --text-file "{text-file}" \
   --reversibility high
 ```
 
-The substituted reason can carry a filename or stderr text, so `--text` is single-quoted — never
-double-quoted, where `$(…)`, backticks and `$VAR` would execute — and any `'` in the substituted
-reason is written `'\''`.
+`{text-file}` holds one line, `Local merge into {base-branch} failed ({conflict|failed verification}) — reverted, worktree and branch preserved. [outcome: pending-review]`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — the substituted reason can carry a filename or stderr text, so it never passes through shell quoting.
 
 Report outcome `pending-review` to the caller. The worktree's *files* — the feature branch and its
 commits — are untouched: a human can check out the branch, resolve or investigate, and re-run

@@ -9,12 +9,10 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
-const STEPS_AND_GATES = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'steps-and-gates.md'), 'utf8',
-);
+const STEPS_AND_GATES = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'steps-and-gates.md'));
 
 function caseFiveSection() {
   const start = STEPS_AND_GATES.indexOf('5. **Unset**');

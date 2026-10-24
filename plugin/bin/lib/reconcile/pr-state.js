@@ -395,5 +395,5 @@ function resolvePrStatesBulk(repoRoot, branches, opts = {}) {
 
 module.exports = {
   resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber, resolvePrStateByNumberAsync,
-  FETCH_TIMEOUT_MS, BULK_CHUNK,
+  FETCH_TIMEOUT_MS, BULK_CHUNK, classifyExecError,
 };

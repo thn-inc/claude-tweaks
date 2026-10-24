@@ -12,13 +12,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const TEXT = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin', 'skills', 'build', 'plan-authoring-checks.md'),
-  'utf8',
-);
+const TEXT = readText(path.join(__dirname, '..', 'plugin', 'skills', 'build', 'plan-authoring-checks.md'));
 
 const LABEL = '**AC-evidence persistence check:**';
 const KEY_PHRASE = "governs whether a check's *code* is committed, not whether its *result* is recorded";
@@ -39,11 +36,13 @@ function assertAcEvidenceCheck(text) {
   assert.ok(p.includes('cites that path in the same entry'), 'cites the evidence path in the same entry');
   assert.ok(p.includes('plain Bash redirect'), 'writes the log with a plain Bash redirect');
   assert.ok(p.includes('mkdir -p'), 'creates the evidence directory first');
-  assert.ok(p.includes('single-quoted'), 'passes --text single-quoted');
+  assert.ok(p.includes('`--text-file "{text-file}"`'), 'passes the entry text through --text-file');
   assert.ok(
-    p.includes('contains a single quote closes the quoting, writes `\\\'`, and reopens it'),
-    'covers a command shape that itself contains a single quote',
+    p.includes("`_shared/auto-decision-log.md`'s Text from git or a user paragraph"),
+    'cites the canonical Text-from-git-or-a-user paragraph',
   );
+  assert.ok(!p.includes('single-quoted'), 'carries no single-quote instruction');
+  assert.ok(!p.includes('writes `\\\'`'), 'carries no quote-escape instruction');
   assert.ok(p.includes(KEY_PHRASE), 'separates the check code from its recorded result');
   assert.ok(p.includes('no run directory'), 'names the no-run-directory design-mode fallback');
   assert.ok(p.includes('review/code-mode-steps.md'), 'names the review consumer');
@@ -64,4 +63,10 @@ test('AC1.1 (#3079): negative control — rewording the code-vs-result distincti
   const mutated = TEXT.replace(KEY_PHRASE, "governs both a check's code and its result");
   assert.notStrictEqual(mutated, TEXT, 'control must actually reword the phrase');
   assert.throws(() => assertAcEvidenceCheck(mutated));
+});
+
+test('AC1.1 (#3792): negative control — reverting the entry text to a single-quoted --text fails the pin', () => {
+  const mutated = TEXT.replace('`--text-file "{text-file}"`, `{text-file}` holding', 'a `--text` single-quoted, holding');
+  assert.notStrictEqual(mutated, TEXT, 'control must actually revert the form');
+  assert.throws(() => assertAcEvidenceCheck(mutated), /passes the entry text through --text-file/);
 });

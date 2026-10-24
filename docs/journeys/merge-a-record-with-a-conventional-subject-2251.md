@@ -6,6 +6,8 @@ files:
   - plugin/bin/lib/policy.js
   - plugin/bin/lib/release/subject.js
   - plugin/bin/lib/issues/record.js
+  - plugin/bin/lib/issues/record-vocabulary.js
+  - plugin/bin/lib/issues/record-payload.js
   - plugin/bin/lib/compose-record/compose.js
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/_shared/local-merge-auto-finish.md

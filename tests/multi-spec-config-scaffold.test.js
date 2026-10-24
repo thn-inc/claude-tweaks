@@ -25,10 +25,11 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const MULTI_SPEC = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'flow', 'multi-spec.md'), 'utf8');
-const SCAFFOLD_SUBFILE = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'flow', 'multispec-config-scaffold.md'), 'utf8');
+const MULTI_SPEC = readText(path.join(ROOT, 'plugin', 'skills', 'flow', 'multi-spec.md'));
+const SCAFFOLD_SUBFILE = readText(path.join(ROOT, 'plugin', 'skills', 'flow', 'multispec-config-scaffold.md'));
 const CLI = path.join(ROOT, 'plugin', 'bin', 'resolve-policy.js');
 const FIXTURES = path.join(__dirname, 'fixtures', 'resolve-policy');
 

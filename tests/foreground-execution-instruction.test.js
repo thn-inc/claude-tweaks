@@ -14,8 +14,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const PLUGIN = path.join(__dirname, '..', 'plugin');
 const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
@@ -72,7 +72,7 @@ function templateBlocks(text) {
 }
 
 test('task-prompt.md: both fenced Task-prompt templates carry the foreground-execution instruction', () => {
-  const blocks = templateBlocks(fs.readFileSync(TASK_PROMPT, 'utf8'));
+  const blocks = templateBlocks(readText(TASK_PROMPT));
 
   for (const [index, block] of blocks.entries()) {
     const label = TEMPLATE_LABELS[index];
@@ -83,7 +83,7 @@ test('task-prompt.md: both fenced Task-prompt templates carry the foreground-exe
 });
 
 test('build/dispatch.md: the SDD invocation instruction directs implementer and reviewer dispatches to run in the foreground', () => {
-  const text = fs.readFileSync(BUILD_DISPATCH, 'utf8');
+  const text = readText(BUILD_DISPATCH);
   for (const [pattern, fact] of REQUIRED) {
     assert.match(text, pattern, `build/dispatch.md must instruct SDD's per-task implementer/reviewer dispatches to ${fact} (#1965)`);
   }
@@ -95,7 +95,7 @@ test('build/dispatch.md: the SDD invocation instruction directs implementer and 
 });
 
 test('the foreground-instruction predicate can actually go red (discrimination proof)', () => {
-  const paragraphs = fs.readFileSync(TASK_PROMPT, 'utf8').split(/\r?\n\r?\n/);
+  const paragraphs = readText(TASK_PROMPT).split(/\r?\n\r?\n/);
   const kept = paragraphs.filter((p) => !p.startsWith('Foreground execution (required):'));
   assert.equal(
     paragraphs.length - kept.length,
@@ -164,27 +164,27 @@ const CONTRACT_KEEP_ALIVE = [
 const contractKeepAliveMissing = missingFactsOf(CONTRACT_KEEP_ALIVE);
 
 test('subagent-dispatch-core.md states the nested-dispatch keep-alive rule and its fallback (#3078)', () => {
-  const core = fs.readFileSync(CORE, 'utf8');
+  const core = readText(CORE);
   assert.deepEqual(missingKeepAlive(coreForegroundSection(core)), [], 'Foreground Execution Discipline must state every keep-alive fact (#3078)');
   assert.ok(foldsNoTaskParagraph(core), 'the standalone No-Task paragraph must be folded into the new fallback clause (#3078)');
 });
 
 test('subagent-output-contract.md no longer tells a nested dispatcher to yield across turns (#3078)', () => {
-  const contract = fs.readFileSync(OUTPUT_CONTRACT, 'utf8');
+  const contract = readText(OUTPUT_CONTRACT);
   assert.ok(dropsYieldRule(contract), 'the output contract still instructs nested dispatchers to yield across turns (#3078)');
   assert.deepEqual(contractKeepAliveMissing(contract), [], 'the output contract must state the keep-alive clause and the INTERIM_STATUS marker rule (#3078)');
 });
 
 test('each keep-alive assertion can actually go red on its own (discrimination proof)', () => {
-  assertEachPatternGoesRed(coreForegroundSection(fs.readFileSync(CORE, 'utf8')), KEEP_ALIVE, missingKeepAlive);
+  assertEachPatternGoesRed(coreForegroundSection(readText(CORE)), KEEP_ALIVE, missingKeepAlive);
 });
 
 test('the folded-paragraph and yield-rule assertions can actually go red (discrimination proof)', () => {
-  const core = fs.readFileSync(CORE, 'utf8');
+  const core = readText(CORE);
   const reinsertedHeading = '\n\n**No `Task`/Agent tool available.** Some environments expose no `Task`/Agent dispatch tool at all.\n';
   assert.equal(foldsNoTaskParagraph(core + reinsertedHeading), false, 'the re-inserted No-Task heading must turn the fold assertion red');
 
-  const contract = fs.readFileSync(OUTPUT_CONTRACT, 'utf8');
+  const contract = readText(OUTPUT_CONTRACT);
   const nestedClause = /keeps its turn alive until every child reports \(`_shared\/subagent-dispatch-core\.md`'s Foreground Execution Discipline\)\./;
   assert.match(contract, nestedClause, 'anchor text for the nested-dispatcher clause not found');
   const yieldDoctored = contract.replace(nestedClause, 'must yield control across several of its own turns before its real final reply.');
@@ -192,7 +192,7 @@ test('the folded-paragraph and yield-rule assertions can actually go red (discri
 });
 
 test('each output-contract keep-alive and interim-marker assertion can actually go red on its own (discrimination proof)', () => {
-  assertEachPatternGoesRed(fs.readFileSync(OUTPUT_CONTRACT, 'utf8'), CONTRACT_KEEP_ALIVE, contractKeepAliveMissing);
+  assertEachPatternGoesRed(readText(OUTPUT_CONTRACT), CONTRACT_KEEP_ALIVE, contractKeepAliveMissing);
 });
 
 // #3078: review/step3-lens-dispatch.md's dispatched-reviewer carve-out is deleted, and its
@@ -226,32 +226,32 @@ const hungAgentMissing = missingFactsOf(HUNG_AGENT);
 const LENS_NOTE_SENTENCE = /When the reviewer is itself a dispatched agent,.*?\(findings `unconfirmed`, logged\)\./;
 
 test('step3-lens-dispatch.md has no dispatched-reviewer carve-out (#3078)', () => {
-  const step3 = fs.readFileSync(STEP3, 'utf8');
+  const step3 = readText(STEP3);
   assert.deepEqual(carveOutPhrases(step3), [], 'step3-lens-dispatch.md still carves out a dispatched reviewer from its lens dispatch (#3078)');
 });
 
 test("step3 Foreground note covers the reviewer's own lens dispatches (#3078)", () => {
-  const note = foregroundNote(fs.readFileSync(STEP3, 'utf8'));
+  const note = foregroundNote(readText(STEP3));
   assert.notEqual(note, '', 'the "> **Foreground Execution Discipline:**" note line was not found in step3-lens-dispatch.md');
   assert.deepEqual(lensNoteMissing(note), [], 'the step3 Foreground note must cover the reviewer\'s own lens dispatches (#3078)');
 });
 
 test('step3 hung-single-read paragraph exempts a dispatched reviewer from the nudge (#3078)', () => {
-  assert.deepEqual(hungAgentMissing(fs.readFileSync(STEP3, 'utf8')), [], 'the hung single-read paragraph must route a dispatched reviewer to its keep-alive bound and skip the nudge (#3078)');
+  assert.deepEqual(hungAgentMissing(readText(STEP3)), [], 'the hung single-read paragraph must route a dispatched reviewer to its keep-alive bound and skip the nudge (#3078)');
 });
 
 test('the step3 hung-single-read assertion can actually go red (discrimination proof)', () => {
-  assertEachPatternGoesRed(fs.readFileSync(STEP3, 'utf8'), HUNG_AGENT, hungAgentMissing);
+  assertEachPatternGoesRed(readText(STEP3), HUNG_AGENT, hungAgentMissing);
 });
 
 test('the step3 carve-out predicate can actually go red (discrimination proof)', () => {
-  const step3 = fs.readFileSync(STEP3, 'utf8');
+  const step3 = readText(STEP3);
   const reinserted = step3 + '\n\n' + CARVE_OUT_SENTENCE + '\n';
   assert.notDeepEqual(carveOutPhrases(reinserted), [], 'the re-inserted carve-out sentence must turn the no-carve-out assertion red');
 });
 
 test('the step3 Foreground-note predicate can actually go red (discrimination proof)', () => {
-  const note = foregroundNote(fs.readFileSync(STEP3, 'utf8'));
+  const note = foregroundNote(readText(STEP3));
   assert.match(note, LENS_NOTE_SENTENCE, 'anchor text for the appended lens-dispatch sentence not found in the Foreground note');
   const doctored = note.replace(LENS_NOTE_SENTENCE, '');
   assert.notDeepEqual(lensNoteMissing(doctored), [], 'removing the appended sentence must turn the lens-coverage assertion red');
@@ -307,13 +307,13 @@ const RATIONALE = [
 const rationaleMissing = missingFactsOf(RATIONALE);
 
 test('task-prompt item 7 drops "nothing wakes you" and states what ends a turn (#3078, #3266)', () => {
-  const item7 = item7Block(fs.readFileSync(TASK_PROMPT, 'utf8'));
+  const item7 = item7Block(readText(TASK_PROMPT));
   assert.ok(dropsNothingWakes(item7), 'item 7 still says "nothing wakes you" — the framing #3078 retired (#3266)');
   assert.deepEqual(item7Missing(item7), [], 'item 7 must state every turn-ending and keep-alive fact (#3078, #3266)');
 });
 
 test('neither fenced template keeps the in-turn carve-out (#3078)', () => {
-  const blocks = templateBlocks(fs.readFileSync(TASK_PROMPT, 'utf8'));
+  const blocks = templateBlocks(readText(TASK_PROMPT));
   for (const [index, block] of blocks.entries()) {
     const label = TEMPLATE_LABELS[index];
     assert.ok(dropsInTurnCarveOut(block), `${label} template still carries the in-turn carve-out (#3078)`);
@@ -322,20 +322,20 @@ test('neither fenced template keeps the in-turn carve-out (#3078)', () => {
 });
 
 test("the #2533 rationale cites the core section, not dispatch-waiting.md's resume signal (#3078)", () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   assert.ok(dropsPrimaryResumeSignal(text), 'task-prompt.md still cites dispatch-waiting.md\'s "primary resume signal" (#3078)');
   assert.deepEqual(rationaleMissing(text), [], 'the #2533 rationale must cite subagent-dispatch-core.md\'s Foreground Execution Discipline (#3078)');
 });
 
 test('each task-prompt assertion can actually go red on its own (discrimination proof)', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   assertEachPatternGoesRed(item7Block(text), ITEM7, item7Missing);
   for (const block of templateBlocks(text)) assertEachPatternGoesRed(foregroundParagraph(block), TEMPLATE_KEEP_ALIVE, templateKeepAliveMissing);
   assertEachPatternGoesRed(text, RATIONALE, rationaleMissing);
 });
 
 test('the task-prompt absence predicates can actually go red (discrimination proof)', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   assert.equal(dropsNothingWakes(item7Block(text) + '\n   nothing wakes you automatically.'), false, 'the re-inserted "nothing wakes you" must turn the item-7 assertion red');
 
   const [firstCall] = templateBlocks(text);
@@ -362,12 +362,12 @@ const CONTRACT_ABANDONED = [
 const contractAbandonedMissing = missingFactsOf(CONTRACT_ABANDONED);
 
 test('subagent-output-contract.md says an abandoned child is not outstanding, so INTERIM_STATUS is not its marker (#3078)', () => {
-  const contract = fs.readFileSync(OUTPUT_CONTRACT, 'utf8');
+  const contract = readText(OUTPUT_CONTRACT);
   assert.deepEqual(contractAbandonedMissing(contract), [], 'the output contract must say an abandoned child no longer counts as outstanding (#3078)');
 });
 
 test('each output-contract abandoned-child assertion can actually go red on its own (discrimination proof)', () => {
-  assertEachPatternGoesRed(fs.readFileSync(OUTPUT_CONTRACT, 'utf8'), CONTRACT_ABANDONED, contractAbandonedMissing);
+  assertEachPatternGoesRed(readText(OUTPUT_CONTRACT), CONTRACT_ABANDONED, contractAbandonedMissing);
 });
 
 // The primitive's numbers (sleep interval, call cap, minutes) are restated in four copies; they must
@@ -375,10 +375,10 @@ test('each output-contract abandoned-child assertion can actually go red on its 
 const PRIMITIVE = /`sleep\s+(\d+)`\s+Bash\s+calls,\s+at\s+most\s+(\d+)\s+\((\d+)\s+minutes\)/g;
 const EXPECTED_PRIMITIVE = '20/60/20';
 function primitiveCopies() {
-  const taskPrompt = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const taskPrompt = readText(TASK_PROMPT);
   const [firstCall, secondCall] = templateBlocks(taskPrompt);
   return {
-    'subagent-dispatch-core.md': coreForegroundSection(fs.readFileSync(CORE, 'utf8')),
+    'subagent-dispatch-core.md': coreForegroundSection(readText(CORE)),
     'task-prompt.md item 7': item7Block(taskPrompt),
     'task-prompt.md first-call template': foregroundParagraph(firstCall),
     'task-prompt.md second-call template': foregroundParagraph(secondCall),
@@ -438,19 +438,19 @@ const CORE_ABANDONED = [
 const coreAbandonedMissing = missingFactsOf(CORE_ABANDONED);
 
 test('the core section records that an abandoned nested child cannot be stopped and may delay the final result (#3722)', () => {
-  assert.deepEqual(coreAbandonedMissing(coreForegroundSection(fs.readFileSync(CORE, 'utf8'))), [], 'Foreground Execution Discipline must record the abandoned-child facts (#3722)');
+  assert.deepEqual(coreAbandonedMissing(coreForegroundSection(readText(CORE))), [], 'Foreground Execution Discipline must record the abandoned-child facts (#3722)');
 });
 
 test('each core abandoned-child assertion can actually go red on its own (discrimination proof)', () => {
-  assertEachPatternGoesRed(coreForegroundSection(fs.readFileSync(CORE, 'utf8')), CORE_ABANDONED, coreAbandonedMissing);
+  assertEachPatternGoesRed(coreForegroundSection(readText(CORE)), CORE_ABANDONED, coreAbandonedMissing);
 });
 
 // #3722: interactive 2.1.302 re-wakes a dispatched agent; what holds everywhere is "cannot count on it".
 const UNQUALIFIED = /never\s+(?:be\s+)?(?:re-)?woken|nothing\s+(?:ever\s+)?re-wakes|no\s+notification\s+mechanism|none\s+reaches\s+a\s+dispatched\s+agent/i;
 const claimSites = () => ({
   ...primitiveCopies(),
-  'build/dispatch.md': fs.readFileSync(BUILD_DISPATCH, 'utf8'),
-  'review/step3 Foreground note': foregroundNote(fs.readFileSync(STEP3, 'utf8')),
+  'build/dispatch.md': readText(BUILD_DISPATCH),
+  'review/step3 Foreground note': foregroundNote(readText(STEP3)),
 });
 const unqualifiedClaimSites = (sites) => Object.entries(sites).filter(([, t]) => UNQUALIFIED.test(t)).map(([n]) => n);
 test('no copy states the never-re-woken claim unqualified (#3722)', () => {
@@ -502,8 +502,8 @@ const CORE_MEASURED = [
 ];
 const coreMeasuredMissing = missingFactsOf(CORE_MEASURED);
 test('the core Background work paragraph names the measured re-wake facts (#3722)', () => {
-  assert.deepEqual(coreMeasuredMissing(coreForegroundSection(fs.readFileSync(CORE, 'utf8'))), [], 'Background work must name the measured re-wake facts (#3722)');
+  assert.deepEqual(coreMeasuredMissing(coreForegroundSection(readText(CORE))), [], 'Background work must name the measured re-wake facts (#3722)');
 });
 test('each core measured-fact assertion can actually go red on its own (discrimination proof)', () => {
-  assertEachPatternGoesRed(coreForegroundSection(fs.readFileSync(CORE, 'utf8')), CORE_MEASURED, coreMeasuredMissing);
+  assertEachPatternGoesRed(coreForegroundSection(readText(CORE)), CORE_MEASURED, coreMeasuredMissing);
 });

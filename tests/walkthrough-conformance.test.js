@@ -15,11 +15,11 @@
 // control.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILL_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'walkthrough', 'SKILL.md');
-const skill = fs.readFileSync(SKILL_PATH, 'utf8').replace(/\r\n/g, '\n');
+const skill = readText(SKILL_PATH);
 
 // text, a character index into text -> the single line containing that index (no newlines).
 function lineAt(text, index) {

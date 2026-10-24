@@ -35,7 +35,7 @@ function cells(row) {
   return row.split('|').slice(1, -1).map((c) => c.trim());
 }
 
-const roster = fs.readFileSync(ROSTER, 'utf8');
+const roster = readText(ROSTER);
 const skipTags = rows(section(roster, 'Skips by profile')).map((r) => cells(r)[0].replace(/`/g, ''));
 const neverRows = rows(section(roster, 'Never skipped')).map((r) => cells(r)[0]);
 const mentions = rows(section(roster, 'Mentions that are not skips')).map((r) => {
@@ -60,7 +60,7 @@ test('every skill line pairing fast-lane with skip carries a roster tag or is a 
   for (const file of walk(SKILLS)) {
     if (file === ROSTER) continue;
     const rel = path.relative(SKILLS, file);
-    fs.readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+    readText(file).split('\n').forEach((line, i) => {
       const lower = line.toLowerCase();
       if (!(lower.includes('fast-lane') && lower.includes('skip'))) return;
       const tagged = skipTags.some((t) => line.includes(`roster tag \`${t}\``) || line.includes(`tag \`${t}\``));
@@ -72,15 +72,15 @@ test('every skill line pairing fast-lane with skip carries a roster tag or is a 
 });
 
 test('build/dispatch.md gates the single-task skip on all three conditions and carries the SKIP literal; flow rows carry fast-lane (#1926 AC3, AC4)', () => {
-  const d = fs.readFileSync(path.join(SKILLS, 'build', 'dispatch.md'), 'utf8');
+  const d = readText(path.join(SKILLS, 'build', 'dispatch.md'));
   const sentence = d.split('\n').find((l) => l.includes('Whole-branch review skipped: fast-lane, single-task plan'));
   assert.ok(sentence, 'dispatch.md lacks the SKIP literal');
   assert.ok(sentence.includes('`fast-lane`') && sentence.includes('`tasks` is exactly `1`') && sentence.includes('`batched` is `false`'));
   assert.ok(d.includes('batched plans (`batched: true`, regardless of count) keep the whole-branch review'));
-  const gates = fs.readFileSync(path.join(SKILLS, 'flow', 'steps-and-gates.md'), 'utf8');
+  const gates = readText(path.join(SKILLS, 'flow', 'steps-and-gates.md'));
   const polishRow = gates.split('\n').find((l) => l.startsWith('| `polish` | `/claude-tweaks:design-wrapper polish'));
   assert.ok(polishRow && polishRow.includes('fast-lane'));
-  assert.ok(fs.readFileSync(path.join(SKILLS, 'flow', 'summary-template.md'), 'utf8').includes('Skipped — fast-lane'));
+  assert.ok(readText(path.join(SKILLS, 'flow', 'summary-template.md')).includes('Skipped — fast-lane'));
 });
 
 // #3123: the Batched-plan marker paragraph steers fast-lane transcription plans to one batch.

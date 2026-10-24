@@ -19,6 +19,10 @@
 // to an executing session's own unmechanized, untested prose re-derivation
 // (#1966). `mergeGrantGap` on a `ready` result names the withholding member
 // the same way `mergeCheckVerdict` names a withheld needs-human verdict.
+// #3880: the third, narrowest exception — a ruling row (`isRulingRow: true`)
+// whose staged file does not show it safe to ratify (`console/resolve.js`'s
+// `sddRulingDeferralReason`) is named in `rulingGateGaps` and withheld the
+// same way; `readRulingTexts` reads those staged files for detect.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -30,6 +34,8 @@ const { runWithConcurrency } = require('./gh-pool');
 const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
+const { sddRulingDeferralReason } = require('../console/resolve');
+const { resolveWithin } = require('../path-guard');
 
 const execFileAsync = promisify(execFile);
 
@@ -209,6 +215,35 @@ function resolveVetoWindowHours(runDir, repoRoot) {
   }
 }
 
+// #3880: each `isRulingRow` item's staged file text -> { [itemId]: string|null },
+// read synchronously from `{runDir}/{item.stagedPath}`. null (never a guess) when
+// stagedPath is absent, not a string, absolute, has a `..` segment, resolves
+// (symlinks followed) outside the run dir, or the read fails -- sddRulingDeferralReason reads null
+// as unclassified, so every unreadable ruling row is withheld.
+function readRulingTexts(runDir, items) {
+  const texts = {};
+  const base = path.resolve(runDir);
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item || item.isRulingRow !== true) continue;
+    texts[item.id] = readInsideRunDir(base, item.stagedPath);
+  }
+  return texts;
+}
+
+function readInsideRunDir(base, rel) {
+  if (typeof rel !== 'string' || rel === '' || path.isAbsolute(rel)) return null;
+  if (rel.split(/[\\/]/).includes('..')) return null;
+  // path-guard's resolveWithin follows a leaf symlink and every segment's, so a link planted
+  // inside the run dir that points outside it resolves to null (docs/donts.md, IL-161).
+  const real = resolveWithin(path.resolve(base, rel), base);
+  if (real === null) return null;
+  try {
+    return fs.readFileSync(real, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 // Pure: consoleJson + now -> the pre-fetch skip reason, or null when
 // eligible. Shared by decideConsoleExecute below (the full post-fetch
 // decision) and consoleExecuteDetect's synchronous scan further down — the
@@ -231,9 +266,10 @@ function preFetchSkipReason(consoleJson, now) {
 // merge-grant check below) -> a detection verdict. No I/O, so the
 // race/claim/idempotence logic is unit-testable without gh.
 //   { action: 'ready', prNumber, commentIds, items } | { action: 'skip', reason }
-// ctx: { prBody?, memberGrants?: {[issueNumber]: {labels, pendingSince, skippedUntrusted?}}, vetoWindowHours?, now? }
+// ctx: { prBody?, memberGrants?: {[issueNumber]: {labels, pendingSince, skippedUntrusted?}}, vetoWindowHours?, now?, rulingTexts?: {[itemId]: string|null} }
 // — all optional; omitted entirely (the pre-#1802 call shape) always yields
-// mergeGrantGap: null, unchanged from before.
+// mergeGrantGap: null, unchanged from before. `rulingTexts` (#3880) absent
+// always yields rulingGateGaps: [].
 function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
   const skipReason = preFetchSkipReason(consoleJson, now);
   if (skipReason) return { action: 'skip', reason: skipReason };
@@ -313,12 +349,24 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
     }
   }
 
+  // #3880: the third exception — a ruling row whose staged text does not show it
+  // safe to ratify. Pure: the texts arrive in ctx (consoleExecuteDetect reads them);
+  // a ruling id missing from ctx.rulingTexts reads as unclassified.
+  const rulingGateGaps = [];
+  if (ctx.rulingTexts && typeof ctx.rulingTexts === 'object') {
+    for (const item of items) {
+      if (item.isRulingRow !== true) continue;
+      const reason = sddRulingDeferralReason(ctx.rulingTexts[item.id]);
+      if (reason) rulingGateGaps.push({ id: item.id, reason });
+    }
+  }
+
   return {
-    action: 'ready', prNumber: consoleJson.prNumber, commentIds, items: resolvedItems, mergeCheckVerdict, mergeGrantGap,
+    action: 'ready', prNumber: consoleJson.prNumber, commentIds, items: resolvedItems, mergeCheckVerdict, mergeGrantGap, rulingGateGaps,
   };
 }
 
-// opts: { cwd? } -> { ready: [{ runDir, prNumber, commentIds, items, mergeCheckVerdict, mergeGrantGap }], skipped: [{ runDir, reason }] }
+// opts: { cwd? } -> { ready: [{ runDir, prNumber, commentIds, items, mergeCheckVerdict, mergeGrantGap, rulingGateGaps }], skipped: [{ runDir, reason }] }
 // Runs in two phases (#820, D5): a synchronous scan collecting every run dir
 // that needs a `gh pr view` fetch (fast fs reads + pure pre-checks), then
 // one gh-pool `runWithConcurrency` batch resolving all of those fetches at
@@ -381,10 +429,12 @@ async function consoleExecuteDetect(opts = {}) {
     const ctx = memberGrantsByCandidate.has(i)
       ? { prBody: fetch.body, memberGrants: memberGrantsByCandidate.get(i), vetoWindowHours: resolveVetoWindowHours(c.dir, root), now }
       : {};
+    // #3880: every candidate gets its ruling rows' staged texts (a no-op {} when it has none).
+    ctx.rulingTexts = readRulingTexts(c.dir, c.consoleJson.items);
     const decision = decideConsoleExecute(c.consoleJson, fetch.comments, now, ctx);
     if (decision.action === 'skip') { skipped.push({ runDir: c.dir, reason: decision.reason }); return; }
     ready.push({
-      runDir: c.dir, prNumber: decision.prNumber, commentIds: decision.commentIds, items: decision.items, mergeCheckVerdict: decision.mergeCheckVerdict, mergeGrantGap: decision.mergeGrantGap,
+      runDir: c.dir, prNumber: decision.prNumber, commentIds: decision.commentIds, items: decision.items, mergeCheckVerdict: decision.mergeCheckVerdict, mergeGrantGap: decision.mergeGrantGap, rulingGateGaps: decision.rulingGateGaps,
     });
   });
 
@@ -631,6 +681,7 @@ module.exports = {
   isClaimReclaimable,
   readConsoleJson,
   parseFixesMembers,
+  readRulingTexts,
   fetchIssueGrant,
   resolveConsoleExecution,
   renderExecutedLines,

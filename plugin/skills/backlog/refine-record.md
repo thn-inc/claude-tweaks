@@ -199,8 +199,10 @@ For each resolved row (skip a row the human's answer left untouched):
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO \
      --section "/backlog" --step "refine #{n}" \
-     --text "Backlog refine #{n}: {choice(s)} — {labels/state changed}" --reversibility high
+     --reversibility high --text-file "{text-file}"
    ```
+
+   `{text-file}` holds one line, `Backlog refine #{n}: {choice(s)} — {labels/state changed}`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — an override is the user's free text, so the choices never pass through shell quoting.
 
 ## Anti-Patterns
 

@@ -2,11 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const REFINE_MODE_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'backlog', 'refine-mode.md');
-const refineModeProse = fs.readFileSync(REFINE_MODE_PATH, 'utf8');
+const refineModeProse = readText(REFINE_MODE_PATH);
 
 // #1512 split the closing-summary block (and the log-line templates/close-run call around it)
 // out of refine-mode.md into its own sibling file to keep it lean —
@@ -14,7 +14,7 @@ const refineModeProse = fs.readFileSync(REFINE_MODE_PATH, 'utf8');
 // branch (grant-lane-decision.md). The claims below now live there; refine-mode.md keeps only
 // a citing pointer.
 const CLOSING_SUMMARY_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'backlog', 'refine-closing-summary.md');
-const closingSummaryProse = fs.readFileSync(CLOSING_SUMMARY_PATH, 'utf8');
+const closingSummaryProse = readText(CLOSING_SUMMARY_PATH);
 
 // The pre-change Step 5 text (#741) — no closing-summary block, just the AUTO log-line
 // templates followed directly by the Concurrency section. Used below to prove each

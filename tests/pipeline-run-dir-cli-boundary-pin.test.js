@@ -1,8 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 // #1139: pipeline-run-dir.md's "CLI-argument boundary" paragraph (## Anchoring)
 // makes testable factual claims about six binaries — which of the two rules
@@ -12,7 +12,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const DOC_PATH = path.join(ROOT, 'plugin', 'skills', '_shared', 'pipeline-run-dir.md');
-const DOC = fs.readFileSync(DOC_PATH, 'utf8');
+const DOC = readText(DOC_PATH);
 
 // Anchored on the bullet's own bold lead-in text (structure), not on a
 // sentence elsewhere in the paragraph — the sentence around it is the part

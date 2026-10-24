@@ -5,8 +5,8 @@
 // [unfiled] tag's Collection routing row.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SCAN = path.join(__dirname, '..', 'plugin', 'skills', 'tidy', 'scan-procedures.md');
 const COLLECTION_ROUTING = path.join(__dirname, '..', 'plugin', 'skills', 'tidy', 'collection-routing.md');
@@ -17,7 +17,7 @@ const GRAPH = path.join(__dirname, '..', 'docs', 'skill-graph.md');
 const BACKSTOP_HEADING = '### Backstop: preserved but unfiled upstream feedback drafts';
 
 test('issue-claims-backstops.md carries the unfiled-drafts backstop', () => {
-  const text = fs.readFileSync(BACKSTOPS, 'utf8');
+  const text = readText(BACKSTOPS);
   assert.ok(text.includes(BACKSTOP_HEADING), 'backstop subsection heading missing');
   assert.ok(
     text.includes('find .claude-tweaks/pipelines -path "*/staged/upstream-unfiled-*.md"'),
@@ -42,7 +42,7 @@ test('issue-claims-backstops.md carries the unfiled-drafts backstop', () => {
 });
 
 test('scan-procedures.md routes [unfiled] to Yours, no mutation staged', () => {
-  const routingSection = fs.readFileSync(COLLECTION_ROUTING, 'utf8');
+  const routingSection = readText(COLLECTION_ROUTING);
   assert.ok(
     /\[unfiled\]/.test(routingSection),
     '[unfiled] tag missing from the Collection routing table',
@@ -50,7 +50,7 @@ test('scan-procedures.md routes [unfiled] to Yours, no mutation staged', () => {
 });
 
 test('the backstop cites --pre-confirmed as illegitimate for its own command', () => {
-  const text = fs.readFileSync(BACKSTOPS, 'utf8');
+  const text = readText(BACKSTOPS);
   const section = text.slice(text.indexOf(BACKSTOP_HEADING));
   assert.ok(
     !section.includes('--pre-confirmed'),
@@ -59,7 +59,7 @@ test('the backstop cites --pre-confirmed as illegitimate for its own command', (
 });
 
 test('feedback/SKILL.md Step 1 names a preserved-draft path as a valid gather source', () => {
-  const text = fs.readFileSync(FEEDBACK, 'utf8');
+  const text = readText(FEEDBACK);
   const step1 = text.slice(text.indexOf('### Step 1: Gather'), text.indexOf('### Step 2: Classify the kind'));
   assert.ok(
     step1.includes('preserved') && step1.includes('draft'),
@@ -68,7 +68,7 @@ test('feedback/SKILL.md Step 1 names a preserved-draft path as a valid gather so
 });
 
 test('skill-graph.md documents the tidy -> feedback unfiled-drafts edge', () => {
-  const text = fs.readFileSync(GRAPH, 'utf8');
+  const text = readText(GRAPH);
   const feedbackSection = text.slice(text.indexOf('## feedback'), text.indexOf('## flow'));
   assert.ok(
     /`\/tidy`.*unfiled/s.test(feedbackSection) || feedbackSection.includes('upstream-unfiled'),

@@ -20,6 +20,7 @@ const path = require('path');
 const { GATE_COVERAGE } = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { WRITE_SHAPES, fileWriteTargets, gitTargets } = require('../plugin/bin/lib/hooks/git-command');
 const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
+const { readText } = require('./helpers/read-skill');
 
 const runsFull = (event, command) => shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } });
 function bashGroupOf(group) {
@@ -34,7 +35,7 @@ const TEARDOWN_BEGIN = '<!-- teardown-gate-coverage:begin -->';
 const TEARDOWN_END = '<!-- teardown-gate-coverage:end -->';
 
 function coverageBlock() {
-  const text = fs.readFileSync(SCHEMA, 'utf8');
+  const text = readText(SCHEMA);
   const start = text.indexOf(BEGIN);
   const end = text.indexOf(END);
   assert.ok(start !== -1 && end !== -1 && end > start,
@@ -43,7 +44,7 @@ function coverageBlock() {
 }
 
 function teardownCoverageBlock() {
-  const text = fs.readFileSync(SCHEMA, 'utf8');
+  const text = readText(SCHEMA);
   const start = text.indexOf(TEARDOWN_BEGIN);
   const end = text.indexOf(TEARDOWN_END);
   assert.ok(start !== -1 && end !== -1 && end > start,
@@ -108,7 +109,7 @@ test('every GATE_COVERAGE field is load-bearing, not a parallel hand-kept list',
   // gate, the assertions above keep pinning prose against a dead value — still
   // green, and no longer about the gate's behaviour at all. That is precisely
   // the failure mode [IL-78] describes: a check that would pass on any input.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'));
   // Iterate every GATE_COVERAGE key rather than a hardcoded ['tools',
   // 'gitActions'] list — a field this loop doesn't visit is exactly the
   // "constant nothing reads" gap the loop exists to catch (whole-branch
@@ -122,7 +123,7 @@ test('every GATE_COVERAGE field is load-bearing, not a parallel hand-kept list',
   // bashWriteShapes is implemented in git-command.js, so it is load-bearing
   // there instead: WRITE_SHAPES guards which command words fileWriteTargets
   // will even inspect.
-  const gc = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'git-command.js'), 'utf8');
+  const gc = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'git-command.js'));
   assert.ok(gc.includes('WRITE_SHAPES.includes('),
     'fileWriteTargets must gate on WRITE_SHAPES so an unlisted shape is dead code');
   assert.strictEqual(GATE_COVERAGE.bashWriteShapes, WRITE_SHAPES,
@@ -172,7 +173,7 @@ test('policy-schema-coverage.md\'s teardown coverage block lists exactly the git
 });
 
 test('pre-tool-use.js branches on GATE_COVERAGE.teardownTools, not a duplicated literal', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'));
   assert.ok(src.includes('GATE_COVERAGE.teardownTools'),
     'pre-tool-use.js must branch on GATE_COVERAGE.teardownTools, not a hardcoded comparison');
 });

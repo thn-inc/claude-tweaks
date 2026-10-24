@@ -44,8 +44,10 @@ short-circuit" section. The CLI applies the stances in that section to every sta
 (`bin/lib/console/resolve.js`'s `SECTION_STANCES`, its prefix table `SECTION_MAP`) — a staged
 patch is `git apply --check`ed first — stacked on the earlier patches in apply order, so a re-derived patch is judged at its position — and resolves to `stale — re-derive from Invariant:` when it
 no longer applies, never applied blind, per `_shared/staged-patch.md`; an unrecognized staged
-prefix lands in Pending review as `pending — unmapped-prefix`, never auto-approved; a staged item
-named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
+prefix lands in Pending review as `pending — unmapped-prefix`, never auto-approved; an
+`sdd-ruling-*` item whose staged header does not show it safe lands as
+`pending — sdd-ruling-deferral-no-defer-reason` or `pending — sdd-ruling-unclassified` (the
+`sdd-ruling-*` bullet below); a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
 before any prefix rule runs and resolves to `refused` — those rows are in the CLI's table like
 every other row, and a `refused` item is never applied, at any tier, per `refused-proposals.md`.
 The CLI also computes the merge half with both carve-outs (`merge.resolution` = `merge` |
@@ -94,6 +96,16 @@ procedure — no row is left unrouted:
   per `_shared/staged-patch.md`'s Write-back to the ledger — the same per-item write that
   step already performs for a `.patch`; a `reverse` on any path writes it at step 7, as
   above, never at step 1.
+  Under `console-resolve.js --policy console-auto` (unattended) an `sdd-ruling-*` item resolves
+  `apply` (ratify) only when its staged header shows it is safe (#3880): `Defers: no` with no
+  `Defer-reason:` header line — a settled design decision, resolved exactly as before — or a
+  deferral (`Defers: yes`, or any `Defer-reason:` header line) with exactly one `Defer-reason:`
+  header line whose bare value is in `_shared/deferral-gate.md`'s vocabulary. A deferral without a
+  valid reason resolves `pending — sdd-ruling-deferral-no-defer-reason`; a header with no `Defers:`
+  line, more than one, a value other than `yes`/`no`, or an unreadable file resolves
+  `pending — sdd-ruling-unclassified`, since the console cannot tell whether it defers. Neither is
+  ever auto-ratified, and the reconciler's `consoleAutoResolve` path withholds the same rows
+  (`_shared/console-execution.md`).
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
   runs first; on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
   `MEMORY.md` index line).

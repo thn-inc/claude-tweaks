@@ -6,8 +6,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('../../helpers/read-skill');
 
 const PLUGIN = path.join(__dirname, '..', '..', '..', 'plugin');
 const REPORTING = path.join(PLUGIN, 'skills', 'dispatch', 'reporting.md');
@@ -15,7 +15,7 @@ const SKILL = path.join(PLUGIN, 'skills', 'dispatch', 'SKILL.md');
 const QUEUE_PULL = path.join(PLUGIN, 'skills', 'dispatch', 'queue-pull-script.md');
 
 test('reporting.md names dispatch-fastlane-bundles.json as a read, keyed on set-equality', () => {
-  const text = fs.readFileSync(REPORTING, 'utf8');
+  const text = readText(REPORTING);
   assert.ok(
     text.includes('dispatch-fastlane-bundles.json'),
     'reporting.md must reference dispatch-fastlane-bundles.json',
@@ -27,7 +27,7 @@ test('reporting.md names dispatch-fastlane-bundles.json as a read, keyed on set-
 });
 
 test("SKILL.md Step 4 selection log line carries the fast-lane bundle phrase", () => {
-  const text = fs.readFileSync(SKILL, 'utf8');
+  const text = readText(SKILL);
   assert.ok(
     /minted \{\$GROUP_RUN_DIR\} for group/.test(text),
     'setup: expected the existing Step 4 selection log line to still be present',
@@ -40,7 +40,7 @@ test("SKILL.md Step 4 selection log line carries the fast-lane bundle phrase", (
 
 test('both queue-pull-script.md and reporting.md mention dispatch-fastlane-bundles.json (grep -rln equivalent)', () => {
   for (const file of [QUEUE_PULL, REPORTING]) {
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     assert.ok(
       text.includes('dispatch-fastlane-bundles.json'),
       `${file} must reference dispatch-fastlane-bundles.json`,

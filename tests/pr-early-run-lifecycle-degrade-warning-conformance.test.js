@@ -7,11 +7,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const FILE = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
-const read = () => fs.readFileSync(FILE, 'utf8');
+const read = () => readText(FILE);
 
 function step(text, heading) {
   const start = text.indexOf(heading);

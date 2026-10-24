@@ -12,13 +12,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const TEXT = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin', 'skills', 'review', 'code-mode-steps.md'),
-  'utf8',
-);
+const TEXT = readText(path.join(__dirname, '..', 'plugin', 'skills', 'review', 'code-mode-steps.md'));
 
 const LINE_PREFIX = '2. **Acceptance Criteria**';
 const UNSET_PHRASE = 'When `$PIPELINE_RUN_DIR` is unset (standalone review), this check is unchanged';
@@ -82,8 +79,7 @@ test('AC2.1 (#3079): negative control — rewording the "its evidence/ log is pr
 // the CRITICAL paragraph's closing line), so the anchor is the closing line's own opening
 // words, never the first `verify.js --stamp-status` hit.
 const STAMP_LINE_PREFIX = 'A runner-written pass stamp matching HEAD (`verify.js --stamp-status`) is the raw artifact';
-const TASK_PROMPT_LINES = fs
-  .readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'task-prompt.md'), 'utf8')
+const TASK_PROMPT_LINES = readText(path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'task-prompt.md'))
   .split(/\r?\n/);
 
 function assertAcEvidenceDirectlyAfterStamp(lines) {

@@ -75,12 +75,15 @@ Entry schema names `bin/log-decision.js` as the sole sanctioned writer):
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status STAGED \
   --section "/feedback" --step "upstream-draft Step A" \
-  --text "Unresolved target: {the raw value}. Kept placeholder; no AskUserQuestion in {mode}." \
+  --text-file "{text-file}" \
   --reversibility high
 ```
 
-so the unresolved target surfaces at the Review Console rather than vanishing silently. **Append a
-stage path to `--text` only when `--dry-run` was not also passed** — `... AskUserQuestion in
+`{text-file}` holds one line, `Unresolved target: {the raw value}. Kept placeholder; no
+AskUserQuestion in {mode}.`, written per `_shared/auto-decision-log.md`'s Text from git or a user
+paragraph — the raw value is user-supplied, so it never passes through shell quoting. The entry
+makes the unresolved target surface at the Review Console rather than vanishing silently. **Append a
+stage path to the `{text-file}` line only when `--dry-run` was not also passed** — `... AskUserQuestion in
 {mode}. Stage path: staged/upstream-draft-{N}.md.` — since Step D's `--dry-run` branch never
 persists that file; a logged stage path pointing at a file that will never exist is exactly the
 mismatch the Review Console would flag. Under `--dry-run`, the invocation above (no stage path) is
