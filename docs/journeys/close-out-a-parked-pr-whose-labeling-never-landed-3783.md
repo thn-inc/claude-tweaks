@@ -2,6 +2,7 @@
 files:
   - plugin/skills/dispatch/close-out.md
   - plugin/skills/_shared/pr-first-merge.md
+  - plugin/skills/_shared/acceptance-labeling-landed.md
   - plugin/skills/wrap-up/verification-brief.md
   - plugin/bin/console-residue.js
   - plugin/bin/lib/wrap-up/verify-results.js
