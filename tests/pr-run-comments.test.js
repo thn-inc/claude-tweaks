@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
+const fs = require('fs');
 
 const { readText } = require('./helpers/read-skill');
 // #410: PR as run surface — verdict/brief/failure comments on the PR, the
@@ -345,4 +346,94 @@ test('AC3.1: pr-run-comments.md states the qualified-first brief read with a pla
   assert.match(section, /entry-paths\.md/);
   assert.match(section, /`<!-- run-comment: brief:\{n\} -->`[\s\S]*first[\s\S]*plain `<!-- run-comment: brief -->`/);
   assert.match(section, /sibling[\s\S]*`brief:\{m\}`/);
+});
+
+// #3936: the Find step's worktree-safe form is a plain `gh pr view --json comments > file`, then
+// bin/find-run-comment.js on that file. The two frozen consts are the HEAD text before the change,
+// generated from `git show HEAD:...` (escaped for a template literal); each new test must fail on them.
+const PRE_CHANGE_FIND_STEP = `1. **Find.** Resolve \`{host}\`/\`{owner}\`/\`{repo}\` once (\`gh repo view --json nameWithOwner,url\` —
+   \`{owner}/{repo}\` from \`nameWithOwner\`, \`{host}\` from the returned \`url\`'s authority; a bare
+   \`OWNER/REPO\` handed to \`--repo\` is resolved by \`gh\` against its default host, \`github.com\`,
+   unless the value carries the host as \`HOST/OWNER/REPO\` — so every \`--repo\` below is the
+   host-qualified form), then:
+
+   \`\`\`bash
+   gh pr view {pr-number} --repo {host}/{owner}/{repo} --json comments \\
+     --jq '.comments[] | select(.body | startswith("<!-- run-comment: {kind} -->")) | select((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR") | .id'
+   \`\`\`
+
+   Only a trusted author's comment is found (**Trusted authors** above); an untrusted marker comment
+   reads as not found. Run the skip-notice filter over the same comments and keep its lines in the
+   output:
+
+   \`\`\`bash
+   gh pr view {pr-number} --repo {host}/{owner}/{repo} --json comments \\
+     --jq '.comments[] | select(.body | startswith("<!-- run-comment: {kind} -->")) | select(((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR") | not) | "skipped marker comment \\(.url // .html_url // .id // "unknown") by \\(.author.login // .user.login // "unknown") (\\(.authorAssociation // .author_association // "no association")) — not an owner, member, or collaborator"'
+   \`\`\`
+
+   \`.id\` here is the GraphQL node ID (e.g. \`IC_kwDO...\`), not a REST numeric ID — \`gh pr view
+   --json comments\` exposes only the former. This is exactly why the update step below is a
+   GraphQL mutation rather than a REST PATCH to \`issues/comments/{id}\`, which would need the
+   numeric ID this command doesn't return.
+
+   Zero or one result is the expected case. More than one (a race between two concurrent
+   posts of the same kind) is a hedge, not the normal path — take the **first** and log the
+   anomaly; do not attempt to reconcile or delete the extra here.
+
+`;
+
+const PRE_CHANGE_TOMBSTONE_ROW = `| \`CLOSED\` (unmerged) — check for the tombstone marker: \`gh pr view {pr-number} --json comments --jq '.comments[] \\| select(.body \\| startswith("<!-- run-comment: failure -->")) \\| select((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR")'\` (trusted authors only; name each skipped one per \`_shared/pr-run-comments.md\`'s skip notice) | **Non-empty result → tombstoned.** Keep — same as \`bin/lib/reconcile/reap-merged.js\`'s own \`pr-closed-unmerged\` skip decision. Recommendation: \`Keep (tombstoned — retry via /claude-tweaks:dispatch or /claude-tweaks:flow, PR #{number})\`. **Empty result → abandoned**, not tombstoned — a human closed the draft without the run ever reaching the failure path. Recommendation: \`Keep (abandoned — closed PR #{number} carries no failure marker; manual review before removing worktree)\`. Never auto-remove either case — \`/tidy\` never escalates a "manual review" row to a destructive delete on its own. |`;
+
+const findStep = () => between(COMMENTS, '1. **Find.**', '2. **Found');
+const collapse = (s) => s.replace(/\s+/g, ' ');
+
+test("AC1.1: the Find step's worktree-safe form is a plain fetch plus bin/find-run-comment.js", () => {
+  const find = findStep();
+  assert.ok(
+    find.includes('gh pr view {pr-number} --repo {owner}/{repo} --json comments > /tmp/{kind}-comments-{n}.json'),
+    'the plain fetch line is present',
+  );
+  assert.ok(
+    find.includes('bin/find-run-comment.js" --comments-file /tmp/{kind}-comments-{n}.json --kind {kind}'),
+    'the find-run-comment.js line is present',
+  );
+  const fetchLine = find.split('\n').find((l) => l.includes('> /tmp/{kind}-comments-{n}.json')) ?? '';
+  for (const bad of ['--jq', 'github.com', '$?', ';', '&&']) {
+    assert.ok(!fetchLine.includes(bad), `the fetch line must not contain ${bad}`);
+  }
+  assert.ok(fs.existsSync(path.join(ROOT, 'plugin', 'bin', 'find-run-comment.js')));
+  assert.ok(!PRE_CHANGE_FIND_STEP.includes('> /tmp/{kind}-comments-{n}.json'), 'go-red: the pre-change step has no plain fetch line');
+  assert.ok(!PRE_CHANGE_FIND_STEP.includes('bin/find-run-comment.js" --comments-file'), 'go-red: the pre-change step has no find-run-comment.js line');
+});
+
+test('AC2.1: the worktree-safe form says it applies the same marker and Trusted authors test and relays skipped', () => {
+  const find = collapse(findStep());
+  assert.match(find, /comment-trust\.js/);
+  const sameRule = /applies the same first-line marker `startswith` test and \*\*Trusted authors\*\* rule/;
+  assert.match(find, sameRule);
+  assert.match(find, /`skipped`/);
+  assert.match(find, /exit 1/);
+  assert.match(find, /exit 2/);
+  const pre = collapse(PRE_CHANGE_FIND_STEP);
+  assert.doesNotMatch(pre, /comment-trust\.js/, 'go-red: the pre-change step does not name comment-trust.js');
+  assert.doesNotMatch(pre, sameRule, 'go-red: the pre-change step does not state the same-rule claim');
+  assert.ok(!pre.includes('`skipped`'), 'go-red: the pre-change step does not name the skipped output');
+  assert.doesNotMatch(pre, /exit 1/, 'go-red: the pre-change step names no exit 1');
+  assert.doesNotMatch(pre, /exit 2/, 'go-red: the pre-change step names no exit 2');
+});
+
+test('the Find step forbids chaining an unquoted $? onto the jq shortcut and cites scratch-worktree.md §7', () => {
+  const find = findStep();
+  assert.ok(find.includes('`$?`'), 'the Find step names the unquoted $? chain it forbids');
+  assert.ok(find.includes('_shared/scratch-worktree.md'), 'the Find step cites scratch-worktree.md');
+  assert.ok(!PRE_CHANGE_FIND_STEP.includes('`$?`'), 'go-red: the pre-change step does not name $?');
+  assert.ok(!PRE_CHANGE_FIND_STEP.includes('_shared/scratch-worktree.md'), 'go-red: the pre-change step does not cite scratch-worktree.md');
+});
+
+test("tidy's tombstone row points at the worktree-safe form", () => {
+  const rows = SCAN_PROCEDURES.split('\n').filter((l) => l.includes('run-comment: failure'));
+  assert.strictEqual(rows.length, 1, 'exactly one line carries the run-comment: failure marker');
+  assert.ok(rows[0].includes('find-run-comment.js'), 'the tombstone row names bin/find-run-comment.js');
+  assert.ok(rows[0].includes('--kind failure'), 'the tombstone row passes --kind failure');
+  assert.ok(!PRE_CHANGE_TOMBSTONE_ROW.includes('find-run-comment.js'), 'go-red: the pre-change tombstone row does not name find-run-comment.js');
 });

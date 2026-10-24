@@ -43,10 +43,10 @@ files:
 
 ### 4. Cleanup deletes this run's ledger and nothing else
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$PIPELINE_RUN_DIR"` (`plugin/skills/wrap-up/cleanup-procedures.md` item 2)
-- **Action:** Run the verb after the Phase 3 gate shows zero open items. It reports `deleted ledger {path}` for the owned ledger. If the branch owns none, it reports `no ledger found … — not found`.
-- **Should feel:** Safe to run unattended. In a worktree whose only ledger is inherited, it deletes nothing.
-- **Should understand:** It prints `cannot attribute docs/plans ledgers to {run} (…) — pass --ledger <path> explicitly; ledger not deleted` when ownership can't be computed. An explicit `--ledger` is never ownership-filtered, only confined to the run dir or worktree.
-- **Red flags:** `git status` after cleanup showing a deleted `docs/plans/*-ledger.md` that this branch never added. "not found" on a run whose own ledger is still on disk and was added on this branch.
+- **Action:** Run the verb after the Phase 3 gate shows zero open items. It reports `deleted ledger {path}` for the owned ledger. If the branch owns none and `docs/plans/` holds no ledger at all, it reports `no ledger found for {run} — not found`. If the only ledgers there are inherited, the same line names them: `no ledger found for {run} — only inherited ledgers found: {paths} — not found`.
+- **Should feel:** Safe to run unattended. In a worktree whose only ledger is inherited, it deletes nothing and says which inherited ledgers it left alone.
+- **Should understand:** It prints `cannot attribute docs/plans ledgers to {run} (…) — pass --ledger <path> explicitly; ledger not deleted` when ownership can't be computed (for example, the run-state worktree is not a git checkout). An explicit `--ledger` is never ownership-filtered, only confined to the run dir or worktree, and a missing explicit path keeps the plain not-found line with no inherited list.
+- **Red flags:** `git status` after cleanup showing a deleted `docs/plans/*-ledger.md` that this branch never added. "not found" on a run whose own ledger is still on disk and was added on this branch. An `only inherited ledgers found` list naming a ledger this branch added — that ledger is this run's and should have been deleted.
 
 ### 5. The deletion reaches the PR head before the merge
 - **URL:** `plugin/skills/wrap-up/review-console.md` "On approval" step 13 (`pr-first`); `plugin/skills/wrap-up/cleanup-procedures.md`'s "Item 2 lands before item 4's merge" paragraph
@@ -59,3 +59,4 @@ files:
 - Created during the build of #3566 (`resolveLedgerPath` scoped to branch-owned `docs/plans` ledgers through the ownership helper shared with the wrap-up ledger probe; wrap-up's post-sweep re-count re-runs the probe instead of globbing), run `2026-10-20T001914-record-3566`.
 - Step 5 added by #3595: the `pr-first` merge moved to the Review Console's "On approval" step 13, so the ledger delete is committed and pushed after the console's last ledger writers and before the merge. Run `2026-10-20T124821-spec-3599-3602-3695-3696-3698-3699-3595`.
 - Updated during the build of #3684 (`finish-console` resolves the ledger and flips its rows in a pre-flight before any write, so an `ambiguous` or `unattributable` ledger refuses with nothing written), run `2026-10-20T185239-record-3684`.
+- Step 4 updated during the build of #3686 (`delete-ledger`'s not-found report names inherited-only `docs/plans` ledgers via `describeRunLedgers`; both CLI `unattributable` arms now have direct tests), run `2026-10-24T082713-record-3686`.

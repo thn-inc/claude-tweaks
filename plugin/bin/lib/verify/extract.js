@@ -277,7 +277,11 @@ const TAP_LOCATION_RE = /location:\s*'.*:(\d+:\d+)'/;
 // cancelled is dropped — it did not finish, which proves nothing about
 // whether it fails. A TAP block's diagnostics are its own top-level YAML keys
 // only — an `error:` value can quote a child's timeout (#3153).
-function failingTestsByFile(text, family, { cwd = process.cwd(), located = false, conclusiveOnly = false, exists } = {}) {
+// `ownOnly` (#3723): a TAP block whose own top-level `failureType` key is
+// 'subtestsFailed' is dropped — that parent's failure is inherited from a
+// child, whose own block already carries it. The spec failing section never
+// lists an inherited parent, so spec is unaffected.
+function failingTestsByFile(text, family, { cwd = process.cwd(), located = false, conclusiveOnly = false, ownOnly = false, exists } = {}) {
   const byFile = new Map();
   const add = (rel, name, loc, diagnostics) => {
     if (conclusiveOnly && diagnostics.some((l) => INCONCLUSIVE_RE.test(l))) return;
@@ -299,6 +303,7 @@ function failingTestsByFile(text, family, { cwd = process.cwd(), located = false
     for (const block of tapBlocks(lines)) {
       const [, name, directive] = block.line.replace(/\r$/, '').match(TAP_NAME_RE);
       if (directive) continue;
+      if (ownOnly && block.keys.some((l) => l.replace(/\r$/, '').trim() === "failureType: 'subtestsFailed'")) continue;
       const locLine = block.frames.map((l) => l.match(TAP_LOCATION_RE)).find(Boolean);
       tapBlockFiles(block, cwd, exists).forEach((rel) => add(rel, name, locLine ? locLine[1] : null, block.keys));
     }

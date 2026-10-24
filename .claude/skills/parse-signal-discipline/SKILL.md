@@ -404,6 +404,26 @@ When mechanizing a prose heuristic into a deterministic check:
     rule and none of its edges (`GUARD_PINS` in
     `tests/tidy-arm-ready-pr-acceptance-guard.test.js`).
 
+21. **A shared reader that already folded "could not ask" into its answer shape hands that fold to
+    every wrapper, so a verdict built on tagged probes must distrust the readers under them.**
+    `plugin/bin/lib/run-liveness/` (#3973) tags every probe positive, negative or error so that an
+    unanswered question can only push the verdict toward `unknown`, and the whole-branch review
+    still found three readers beneath it that answered in the wrong shape: `readRunState` returns
+    `null` for an absent file and for a corrupt one alike, so a damaged `run-state.json` read as a
+    legacy run and the legacy route could say `dead`; `isPidAlive` returns `false` for `ESRCH` and
+    also for the `ERR_INVALID_ARG_TYPE` that `process.kill` throws on a pid above int32, so an
+    unprovable pid became the death witness `gone`; and a worktree-lock lookup returned "free"
+    when `git worktree list` had no entry for a directory the caller had already established
+    exists. The SDD reviews had caught four siblings of the same class earlier in that build
+    (`existsSync` reading `EACCES` as absent, a failed `git log` read as no commits, a `NaN` age
+    read as old, a null start-time probe read as pid reuse). Before wrapping a shared reader or
+    liveness primitive in a verdict whose negative branch is destructive, ask of each one whether
+    its falsy answer can also mean "could not ask". Read the file directly where only `ENOENT`
+    means absent (item 11), bound the domain a primitive can answer before treating its `false` as
+    evidence, and throw on a lookup miss the caller's own precondition says cannot happen. Pin
+    each with a fixture the pre-fix code fails (`tests/bin-lib/run-liveness/index.test.js`,
+    `probes.test.js`).
+
 ## When to use
 
 - Writing a new function that parses a plan, a record body, a ledger entry, or any other loose
@@ -416,6 +436,9 @@ When mechanizing a prose heuristic into a deterministic check:
 - Writing a check that reads the filesystem directly (`fs.readdirSync`/`readFileSync`/`existsSync`
   and the like) where catching every error the same way conflates "genuinely absent" (`ENOENT`)
   with "couldn't tell" (`EACCES`, `ENOTDIR`, and other non-ENOENT codes) (fix-shape item 11).
+- Building a verdict (live/dead, present/absent) over several probes or shared readers whose
+  negative branch gates something destructive, where a reader's falsy return may also mean "could
+  not ask" (fix-shape item 21).
 - Adding a validated field to a shared body composer such as `specShapedBody` that another module
   parses back, or that a batch producer fills from LLM output (fix-shape item 18).
 

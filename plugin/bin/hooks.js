@@ -724,7 +724,10 @@ async function main(argv) {
           process.stderr.write('claude-tweaks: record-worktree --dispatch without CLAUDE_CODE_SESSION_ID — dispatchSessionId recorded as null; wrap-up will treat this run as human-run\n');
         }
       }
-      const result = ctxLib.writeRunState(runDir, patch);
+      // #3973: the owner block, only with a session id (record-worktree is the adoption
+      // path, so it replaces another session's block).
+      const result = ctxLib.writeRunState(runDir,
+        ctxLib.patchWithOwnerBlock(patch, process.env.CLAUDE_CODE_SESSION_ID, { replacesSessionId: true }));
       if (result) {
         process.stdout.write(`claude-tweaks: worktree recorded for ${path.basename(runDir)}\n`);
       } else {
@@ -1099,7 +1102,8 @@ async function main(argv) {
     // ownership not computable) it can't disambiguate on its own. The
     // fallback only considers the docs/plans ledger this branch owns
     // (merge-base diff or untracked, #3566) — an inherited one is never
-    // deleted from here.
+    // deleted from here. #3686: the not-found report names those inherited
+    // ledgers (read-only, via describeRunLedgers) so "not found" says why.
     const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
     const {
       runDir, invalidRunArg, rest, worktreeLocalFallback, candidates,
@@ -1113,7 +1117,7 @@ async function main(argv) {
     } else if (!runDir) {
       process.stdout.write('claude-tweaks: no pipeline run dir found — ledger not deleted\n');
     } else {
-      const { resolveLedgerPath } = require('./lib/wrap-up/ledger-write');
+      const { resolveLedgerPath, describeRunLedgers } = require('./lib/wrap-up/ledger-write');
       const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
       const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg || null });
       if (!resolved.ok && resolved.reason === 'ambiguous') {
@@ -1123,7 +1127,15 @@ async function main(argv) {
       } else if (!resolved.ok && resolved.reason === 'unattributable') {
         process.stdout.write(`claude-tweaks: delete-ledger: cannot attribute docs/plans ledgers to ${path.basename(runDir)} (${resolved.detail}) — pass --ledger <path> explicitly; ledger not deleted\n`);
       } else if (!resolved.ok) {
-        process.stdout.write(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)} — not found\n`);
+        // #3686: with no --ledger, an inherited-only docs/plans set is named here.
+        let inherited = '';
+        if (!ledgerArg) {
+          const { report, others } = describeRunLedgers({ runDir, worktree });
+          if (report === 'none' && others.length > 0) {
+            inherited = ` — only inherited ledgers found: ${others.join(', ')}`;
+          }
+        }
+        process.stdout.write(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)}${inherited} — not found\n`);
       } else {
         try {
           fs.unlinkSync(resolved.path);
@@ -1182,7 +1194,7 @@ async function main(argv) {
   }
   if (cmd === 'archive-run') {
     const {
-      archiveRunDir, readConsoleState, listSpecDirs, listStagedItems, consoleReplacedByAutoMergeShortCircuit,
+      archiveRunDir, readConsoleState, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
       TIEBREAK_COVERAGE_HINT,
     } = require('./lib/reconcile/archive-merged');
     const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
@@ -1217,21 +1229,21 @@ async function main(argv) {
     // path. A rendered-but-unanswered console (`unresolved`) always blocks.
     // 'none' is allowed in general — terminal status means close-run ran, i.e.
     // wrap-up's own flow (incl. the empty-console fast path) completed. #3668
-    // narrows that: the auto-merge short-circuit renders no console and no
-    // human ever sees its staged/ items, so a 'none' run whose decisions.md
-    // carries its auto-merge line (fast-lane or manifesto-authorized) is
-    // refused while staged/ holds pending items. Other 'none' runs that keep
-    // staged/ (in-terminal consoles, fleet-approved closes, tidy --approve)
-    // still archive.
+    // narrows that: an auto-merge path renders no console and no human ever
+    // sees its staged/ items, so a 'none' run whose decisions.md carries that
+    // path's auto-merge line (the wrap-up short-circuit's, or the dispatch
+    // bundle Auto-merge gate's, #3740) is refused while staged/ holds pending
+    // items. Other 'none' runs that keep staged/ (in-terminal consoles,
+    // fleet-approved closes, tidy --approve) still archive.
     const consoleState = readConsoleState(runDir);
     if (consoleState === 'unresolved') {
       process.stdout.write('claude-tweaks: archival refused — console-unresolved (console.json rendered but not resolved; answer or resolve the console first)\n');
       return 0;
     }
-    if (consoleState === 'none' && consoleReplacedByAutoMergeShortCircuit(runDir)) {
+    if (consoleState === 'none' && consoleReplacedByAutoMerge(runDir)) {
       const pending = listStagedItems(runDir);
       if (pending.length) {
-        process.stdout.write(`claude-tweaks: archival refused — console-never-rendered-staged-pending (the auto-merge short-circuit rendered no console; pending: ${pending.join(', ')}) — apply or delete the pending staged/ items (and any spec-*/staged/), or write a resolved console.json, then re-run archive-run\n`);
+        process.stdout.write(`claude-tweaks: archival refused — console-never-rendered-staged-pending (an auto-merge path — the wrap-up short-circuit or the dispatch bundle Auto-merge gate — rendered no console; pending: ${pending.join(', ')}) — apply or delete the pending staged/ items (and any spec-*/staged/), or write a resolved console.json, then re-run archive-run\n`);
         return 0;
       }
     }
@@ -1811,6 +1823,11 @@ async function main(argv) {
     try {
       fs.writeSync(2, `attribution: no run dir attributed — no fallback run dir matches ${cwd}; skipped ${ownedRun.dropped.join(', ')}\n`);
     } catch { /* diagnostics never break a session */ }
+  }
+  // #3973: the owner's own events keep the run's owner block fresh. session-start
+  // refreshes it itself, before its reconcile spawn.
+  if (cmd !== 'session-start') {
+    try { ctxLib.refreshOwnerBlock({ input, ownedRun }); } catch { /* never breaks a session */ }
   }
   const out = (await mod.run({ input, runDir, runState, ownedRun, cwd })) || {};
   if (out.json) fs.writeSync(1, JSON.stringify(out.json));

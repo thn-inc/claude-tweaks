@@ -12,7 +12,8 @@ const { withIndexLockRetry } = require('../git-retry');
 const { splitNul } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
-const { isPathContained } = require('../shared-primitives');
+const { isPathContained, escapeRegExp } = require('../shared-primitives');
+const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
   iterRunDirsWithState, writeRunState, readRunState, readEventLines, isAdHocRunDir,
@@ -504,11 +505,28 @@ function hasStagedItems(runDir) {
 // continuation the short-circuit's own log template writes (`, assess-agent-
 // autonomy verdict auto-merge`), and a `Review Console: terminal decision` line
 // turns the signal off: a console was presented and resolved.
-function consoleReplacedByAutoMergeShortCircuit(runDir) {
+// #3740: the dispatch bundle Auto-merge gate (dispatch/settle-and-merge.md) is a third
+// producer of the same console-less merge, with two lines: the per-member verdict
+// `Auto-merge gate: #{n} assess-agent-autonomy verdict auto-merge.` written before the
+// merge, and the local-merge group line `Auto-merge: group [{issues}], assess-agent-
+// autonomy verdict auto-merge for every member` written after it. The gate's
+// `verdict needs-human` fall-back line is not a producer: a Review Console renders after
+// it. `verdict auto-merge` never matches `verdict needs-human`; the gate pattern's
+// trailing `.` keeps it off longer tokens such as `auto-merge-pending`. A mixed group
+// (one member `auto-merge`, another `needs-human`) still reads true by design: the
+// fail-safe refuses the archive, and the console that then renders writes the
+// `Review Console: terminal decision` line that turns the signal off. The gate pattern is
+// built from dispatch/merge-verdict.js's marker, the module that owns that text, so the
+// two cannot drift.
+const BUNDLE_GATE_MARKER_PATTERN = escapeRegExp(verdictMarker(VERDICT_STEPS.gate, 'N')).replace('#N', '#\\d+');
+const BUNDLE_GATE_PASS_RE = new RegExp(`${BUNDLE_GATE_MARKER_PATTERN}\\.`);
+function consoleReplacedByAutoMerge(runDir) {
   let raw;
   try { raw = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch (err) { return !(err && err.code === 'ENOENT'); }
   if (raw.includes('Review Console: terminal decision')) return false;
-  return /(?:Fast-lane|Manifesto-authorized) auto-merge: issue #\d+, assess-agent-autonomy verdict auto-merge/.test(raw);
+  return /(?:Fast-lane|Manifesto-authorized) auto-merge: issue #\d+, assess-agent-autonomy verdict auto-merge/.test(raw)
+    || BUNDLE_GATE_PASS_RE.test(raw)
+    || /Auto-merge: group \[[^\]\n]*\], assess-agent-autonomy verdict auto-merge for every member/.test(raw);
 }
 
 // #1130: gh's MERGED state is a remote fact; the local main checkout may not
@@ -1771,8 +1789,9 @@ function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = esc
 // #3503: this sweep is exempt from the merged-partial record check — wrap-up
 // already closed a `clean` run, so no record is still being built. #3668: this
 // loop tracks only console-never-rendered-staged-pending skips of auto-merge
-// short-circuit runs, plus (#3945) the two tiebreak reasons, which a closed run
-// can never converge on its own (see the clean loop's onSkip). close-run has already run,
+// runs (the short-circuit, or since #3740 the dispatch bundle gate), plus (#3945)
+// the two tiebreak reasons, which a closed run can never converge on its own (see
+// the clean loop's onSkip). close-run has already run,
 // so no later step renders a console or applies those staged items, and
 // archive-run refuses exactly that subset — an untracked skip would freeze the
 // dir silently. Other closed no-console staged-pending runs stay untracked:
@@ -1878,7 +1897,7 @@ function resolveRunPrState(root, state, branch) {
 // differ: the main loop calls `trackStuckSkip` on every `decideArchiveCore`
 // skip (#1613's structurally-stuck visibility); the clean loop passes a hook
 // that tracks only console-never-rendered-staged-pending on auto-merge
-// short-circuit runs (#3668) and the two tiebreak reasons (#3945) — see
+// runs (#3668, #3740) and the two tiebreak reasons (#3945) — see
 // iterCleanRunDirs' comment for why that subset, and why the rest stay untracked.
 function archiveMergedRun({
   root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck,
@@ -2237,7 +2256,7 @@ function archiveMerged({
   // the main loop: decideArchiveCore's merged-PR + resolved-console gate, then
   // the same local-fast-forward check before any move — via the same
   // archiveMergedRun helper. Its onSkip tracks only
-  // console-never-rendered-staged-pending on auto-merge short-circuit runs, and
+  // console-never-rendered-staged-pending on auto-merge runs (#3668, #3740), and
   // the two tiebreak reasons (#3945): archive-run refuses exactly those closed
   // subsets (#3668), so an untracked skip would freeze the dir. Other closed
   // no-console staged-pending runs stay untracked (typically in-terminal
@@ -2249,7 +2268,7 @@ function archiveMerged({
     const runResult = archiveMergedRun({
       root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
       onSkip: (reason) => {
-        if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMergeShortCircuit(dir)) trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner });
+        if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner });
         if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid') trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner });
       },
     });
@@ -2279,12 +2298,12 @@ module.exports = {
   archiveMerged, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, archiveRunDir, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
-  localHasMerge, lastOwnEventMs, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
+  localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
   isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand,
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,
   isClosedSlugStuck, recordNumbersFromSlug, runRecordSet, inFlightRecords,
-  listStagedItems, hasStagedItems, consoleReplacedByAutoMergeShortCircuit,
+  listStagedItems, hasStagedItems, consoleReplacedByAutoMerge,
   refusal, TIEBREAK_COVERAGE_HINT,
 };

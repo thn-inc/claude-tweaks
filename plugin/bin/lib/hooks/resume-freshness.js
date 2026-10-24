@@ -29,10 +29,11 @@
 // interruption stamp... never runs, and run-state.json stays status: active".
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const ctxLib = require('./context');
 const { parseWorktreeList, lockVerdict } = require('./worktree-reap');
 const { mainCheckoutRoot, safeReal } = require('./worktree-detect');
-const { runGit } = require('./git-exec');
+const { runGit, FAILURE } = require('./git-exec');
 
 // "On the order of minutes" (the spec's own phrasing): long enough that a
 // burst of commits from a single working session's normal cadence doesn't
@@ -118,4 +119,44 @@ function checkResumeFreshness(runDir, opts = {}) {
   return { safe: true, verdict: 'stale' };
 }
 
-module.exports = { checkResumeFreshness, RESUME_FRESHNESS_THRESHOLD_MS };
+// Positively identifies an unborn HEAD (a repo or orphan branch with no commit
+// yet), so `git log` failing for any other reason — a damaged repo that HAS
+// commits — is never read as "no commits". All three must hold: HEAD is a
+// symbolic ref; that ref is provably absent (`show-ref --verify` exit 1 — a
+// corrupt ref or a missing object exits 128, a present ref exits 0); and the
+// ref has no reflog (a deleted ref file with history keeps its logs/ entry).
+// Locale-independent: exit codes and files only, no git message matching. Every
+// other outcome, including any probe failing, is "not provably unborn".
+function isUnbornHead(worktree) {
+  const sym = runGit(['symbolic-ref', '-q', 'HEAD'], worktree);
+  if (sym.failure || !sym.stdout) return false;
+  const ref = sym.stdout;
+  const shown = runGit(['show-ref', '--verify', '-q', ref], worktree);
+  if (shown.failure !== FAILURE.GIT_ERROR || shown.exitCode !== 1) return false;
+  const logPath = runGit(['rev-parse', '--git-path', `logs/${ref}`], worktree);
+  if (logPath.failure || !logPath.stdout) return false;
+  try {
+    return fs.statSync(path.resolve(worktree, logPath.stdout)).size === 0;
+  } catch (e) {
+    return !!e && e.code === 'ENOENT';
+  }
+}
+
+// Last-commit time of `worktree` in ms, as a raw probe for the run-liveness
+// verdict module (#3973): null when the repo has no commit yet, THROWS when the
+// answer could not be obtained (not a repo, timeout, unparseable value) so the
+// caller can tell "no evidence" from "could not ask". `checkResumeFreshness`
+// above keeps its own inline read — that function is frozen until #3979.
+function lastCommitMs(worktree) {
+  const { stdout, failure } = runGit(['log', '-1', '--format=%ct'], worktree);
+  if (failure) {
+    if (failure === FAILURE.GIT_ERROR && isUnbornHead(worktree)) return null;
+    throw new Error(`could not read the last commit time of ${worktree}: git ${failure}`);
+  }
+  if (!stdout) return null;
+  const ms = Number(stdout) * 1000;
+  if (!Number.isFinite(ms)) throw new Error(`could not parse the last commit time of ${worktree}: ${stdout}`);
+  return ms;
+}
+
+module.exports = { checkResumeFreshness, lastCommitMs, RESUME_FRESHNESS_THRESHOLD_MS };

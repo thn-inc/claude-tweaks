@@ -19,6 +19,7 @@
 - AUTO 22:51:05 — Approve: Released stale claim on #2987 (run 2026-10-16T222103-record-2987, past 72h TTL); resolved 1 needs-decision: tidy comment(s); needs:decision removed. Reversibility: high.
 - AUTO 22:51:19 — Approve: Released stale claim on #3002 (run 2026-10-16T222103-record-2987, past 72h TTL); resolved 1 needs-decision: tidy comment(s); needs:decision removed. Reversibility: high.
 - AUTO 22:52:15 — Approve: Capture (approved): filed #3905 github-pr-scan item 4 closed/merged premise (by:capture, type:bug, route keep). Step 7.5 verified all 8 approved items live: #3900-#3904 open with 22 #1426 entry lines marked, #3905 open, #2987/#3002 claims tombstoned and needs:decision cleared. Reversibility: high.
+- SKIP 12:10:58 — tidy --approve: re-verified 2026-10-24, all 8 staged items stale — skipped: digest-promotion-1..5 ([hooks]/[docs]/[code-health] staged entries already promoted; [dispatch]/[tidy] now 2 un-promoted, below the 3-entry threshold; 5 new un-promoted [hooks] entries posted 2026-10-24 are a fresh cluster for the next sweep, not this item); tidy-capture-1 already filed as #3905; tidy-claim-releases-1 #2987/#3002 claims already released 2026-10-24 (merged: specs 2987/3002, both issues CLOSED). Approve set empty; nothing applied. Reversibility: n/a.
 ## /specify
 - AUTO 21:57:48 — spec #3702 — Claim: claimed #3702 for bare-drain shaping (attempt 1). Reversibility: high.
 - AUTO 22:01:39 — Release: released claim on #3702 (shaped: #3702); labels removed: bot:in-progress. Reversibility: high.

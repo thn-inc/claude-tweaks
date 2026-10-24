@@ -1,2 +1,0 @@
-## /tidy
-- AUTO 00:00:33 — Step 7: deleted 38 orphaned plans (related records closed, no repo citation; re-verified fresh against origin/main before each delete) and 1 orphaned ledger (docs/plans/2026-10-20-skill-description-trim-audit-ledger.md — no open row, run 2799 archived), one commit each on worktree-tidy-sweep-2026-10-23 (5c364edf3..4a6d5b45b). Reversibility: med. [lever: tidy-aggressiveness=moderate (default)]
