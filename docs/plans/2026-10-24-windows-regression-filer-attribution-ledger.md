@@ -16,3 +16,5 @@
 | 12 | build | SDD ruling — plan Task 3 (full suite) folded into /build Common Step 5, not dispatched: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
 | 13 | build | SDD ruling — filer duplicates the small TAP not-ok name/directive regex locally instead of exporting from extract.js: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
 | 14 | build | SDD ruling — residual final-review Minor (plugin-structure.md lacks ownOnly) routed to /build Common Step 6.5 docs sync, no second fix wave: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
+| 15 | wrap-up | pr — PR #4034 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |
+| 16 | wrap-up | residue sweep suite probe not run (skipped via --no-suite) — the run's suite state is the verification pass stamp, not this probe | observation | — |
