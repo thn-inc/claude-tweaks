@@ -91,7 +91,7 @@ The outcome is **`HELD`**, reason `no gh — merge rendered for a human`. Nothin
 node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "{run-dir}" --id release-held --file {composed .md file}
 ```
 
-Steps 6 and 7 do not run — there is no tag to verify and nothing shipped to book. This is the one `HELD` that is not a Step 4 HARD-GATE; SKILL.md's Step 8 names it as the third reason for the word.
+Steps 6 and 7 do not run — there is no tag to verify and nothing shipped to book. This is one of the Step 5 `HELD` stops that is not a Step 4 HARD-GATE; SKILL.md's Step 8 names them all.
 
 **`--as {version}` — push the override, then wait for the re-render.** release-please derives the PR from the commits it sees, so the override must reach the integration branch and be re-read before the PR is merged. Every git call is anchored to `$RUN_ROOT` — a bare `git commit` from a worktree cwd would put the override on the worktree's branch, where release-please will never see it. Assert three things about the anchor first — on the integration branch, clean, and exactly at the fetched `origin/{branch}` tip:
 

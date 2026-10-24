@@ -270,6 +270,52 @@ test('console.md no longer calls the gh-absent stop the only other HELD reason',
   assert.ok(doctored.includes('the only other `HELD` reason'), 'go-red: the stale phrase must be visible to the assertion');
 });
 
+// Phrases that claimed the gh-absent stop was the only, or the third, non-Step-4 HELD reason. Once delta 5's
+// major re-render and the reviewed-tip stops exist, they are false.
+const STALE_HELD_PHRASES = [
+  ['execute', 'the one `HELD` that is not a Step 4 HARD-GATE'],
+  ['execute', 'names it as the third reason for the word'],
+  ['skill', 'A third reason carries the same word'],
+  ['skill', 'A fourth, `integration branch kept moving`'],
+];
+
+function staleHeldPhrases(srcs) {
+  return STALE_HELD_PHRASES.filter(([source, phrase]) => srcs[source].includes(phrase)).map(([, phrase]) => phrase);
+}
+
+test('no stale ordinal or "the one HELD" claim survives in execute.md or SKILL.md', () => {
+  const srcs = sources();
+  assert.deepEqual(staleHeldPhrases(srcs), [], 'a stale HELD-reason phrase is still present');
+  for (const [source, phrase] of STALE_HELD_PHRASES) {
+    const reintroduced = { ...srcs, [source]: `${srcs[source]}\n${phrase}\n` };
+    assert.deepEqual(staleHeldPhrases(reintroduced), [phrase], `go-red: re-adding "${phrase}" must be caught by the check`);
+  }
+});
+
+// The four Step 5 stops that merge nothing, as Step 8's HELD bullet must name them.
+const STEP5_HELD_REASONS = [
+  ['gh-absent Transport stop', /pr-first with no `gh` on `PATH`/],
+  ['delta 5 major re-render', /delta 5's re-render to a major/],
+  ['blocking delta review', /a `review: blocking` delta review/],
+  ['integration branch kept moving', /`integration branch kept moving`/],
+];
+
+function missingHeldReasons(bullet) {
+  return STEP5_HELD_REASONS.filter(([, pattern]) => !pattern.test(bullet)).map(([reason]) => reason);
+}
+
+test('SKILL.md Step 8 HELD bullet names every Step 5 HELD stop', () => {
+  const m = readText(SKILL).match(/^- \*\*`HELD`\*\*[^\n]*$/m);
+  assert.ok(m, 'extraction pattern is out of sync: no "- **`HELD`**" bullet in SKILL.md');
+  const bullet = m[0];
+  assert.deepEqual(missingHeldReasons(bullet), [], 'the HELD bullet must name all four Step 5 stops');
+  for (const [reason, pattern] of STEP5_HELD_REASONS) {
+    const doctored = bullet.replace(pattern, '');
+    assert.notEqual(doctored, bullet, `anchor text for "${reason}" not found — proof cannot discriminate`);
+    assert.deepEqual(missingHeldReasons(doctored), [reason], `removing only "${reason}" must turn exactly that assertion red`);
+  }
+});
+
 test('the Step 3 marker stays one line and its tip clause matches the sibling pin', () => {
   const lines = readText(SKILL).split('\n').filter((l) => l.includes('whole-branch review starting'));
   assert.equal(lines.length, 1, 'the Step 3 marker must be exactly one line');
