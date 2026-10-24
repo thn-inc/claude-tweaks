@@ -43,7 +43,7 @@ files:
   - The predicate close-out applies is `_shared/acceptance-labeling-landed.md`; step 3 states only what it does on each outcome.
   - **Landed** means an `acceptance-labeling` row of `pass` or `skip` in every file read; `fail`, `unknown`, a missing row or a missing/unreadable file means not landed.
   - **Live check first.** If every `Fixes` record already carries `demo:pending`, or the PR already carries a trusted `brief`/`try-it` run comment, labeling is treated as landed — re-running would duplicate the issue pointer comment.
-  - **A failed read is not landed.** A failed label or comment read (an `unreadable` outcome) or an empty `Fixes` set counts as not landed, so Step 1 runs; an unreadable `verify.json` is not rescued by the live check.
+  - **A failed read is not landed.** A failed label or comment read, or an empty `Fixes` set, never counts as landed on its own: Step 1 runs unless the other live check (a trusted run comment, or `demo:pending` on every `Fixes` record) lands. An unreadable `verify.json` is not rescued by the live check at all.
   - **Otherwise** it runs `_shared/pr-first-merge.md` Step 1 with `PIPELINE_RUN_DIR` (the resolved dir, or each not-landed member's `spec-{N}/`) and `CLOSING_SUB_ISSUES` (the PR's `Fixes` records), before Mark ready and before the confirmation gate.
   - **No run dir** (no valid marker, or neither path exists): the candidate stops with `stopped: acceptance labeling unverifiable — no run dir`.
 - **Red flags:** a merge reaching the confirmation gate with no labeling and a `fail` row; labeling re-run when `demo:pending` is already on every record; a guess at a run dir.

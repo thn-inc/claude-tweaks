@@ -59,9 +59,9 @@ touching shared state runs one member at a time.
    any Step 1 run it leads to, precedes the Mark-ready call below, keeping
    `_shared/pr-first-merge.md`'s own Step 1 → Step 2 order. Apply
    `_shared/acceptance-labeling-landed.md` to this PR (the run-dir resolution, the `verify.json`
-   tier, and the live-state tier all live there; its live tier needs at least one `Fixes` record and
-   never counts an `unreadable` read, so either case now runs Step 1 where this step's old text was
-   silent). Then act on its outcome:
+   tier, and the live-state tier all live there — including that an unreadable read never counts as
+   landed and that the `demo:pending` check needs at least one `Fixes` record, so either one runs
+   Step 1 unless the other live check lands). Then act on its outcome:
    - **`no run dir`**: stop this candidate and report
      `stopped: acceptance labeling unverifiable — no run dir`, without running the live-state tier —
      never guess a run dir.
