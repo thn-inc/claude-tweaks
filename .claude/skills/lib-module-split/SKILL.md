@@ -32,13 +32,15 @@ consumers depend on.
 | The split is about internal cohesion, not a new consumer boundary | Facade |
 | Few call sites, all code, and the point is a new consumer boundary | Migrate |
 
-For #2805 the fan-in was 75 files, 17 of them under `plugin/skills/` as skill-prose requires:
+For #2805 the fan-in was 69 files, 17 of them under `plugin/skills/` as skill-prose requires (run
+against `69bb514df^`; the same command on today's tree counts 75 because new consumers have
+accrued since):
 
 ```
 git grep -lE "issues/record['\"]|issues/record\.js['\"]|require\(['\"]\./record['\"]\)" -- plugin tests | wc -l
 ```
 
-Migrating the 75 call sites is step 2 of expand-contract. What breaks the rule is removing the old
+Migrating the 69 call sites is step 2 of expand-contract. What breaks the rule is removing the old
 path while an installed build, including the prose it executes, still reads it. A facade keeps
 that path alive, so nothing has to be migrated at once. The facade's header comment says new code
 may require a sub-module directly (`plugin/bin/lib/issues/record.js` lines 7-16). A facade does
@@ -106,7 +108,7 @@ const chunks = [];
 for (let i = 0; i < lines.length; i++) {
   if (!DECL.test(lines[i]) || /\brequire\(/.test(lines[i])) continue;
   let j = i;
-  while (!/;\s*$|^[}\])]/.test(lines[j]) || (j === i && /[{([]\s*$/.test(lines[j]))) j++;
+  while (j < lines.length - 1 && (!/;\s*$|^[}\])]/.test(lines[j]) || (j === i && /[{([]\s*$/.test(lines[j])))) j++;
   chunks.push(lines.slice(i, j + 1).join('\n'));
   i = j;
 }
@@ -180,8 +182,10 @@ split so you know the checks bite on your module too.
 
 - Check 2 matches declarations at column 0 that start with `function`, `async function`,
   `const`, `let`, `var`, or `class`, and compares them as text. A module that declares through
-  `module.exports.x = ...` or `exports.x = ...` needs a different matcher. Read the script before
-  trusting a green result on an unusual module.
+  `module.exports.x = ...` or `exports.x = ...` needs a different matcher. A declaration with no
+  terminating `;` is read as running to the next line that ends in `;` or starts with a closing
+  bracket, so it can show up as a false `MISSING`. Read the script before trusting a green result
+  on an unusual module.
 - A "same key" check does not prove the sub-module wiring is right, only that the facade hands
   back the same things. The existing suites still own behavior.
 - Run it against the base of the split commit, not against a base that already contains other
@@ -270,10 +274,11 @@ printed exactly 5 hits, all fixed:
 | `DEP_RE` | `plugin/skills/_shared/observation-plan.md:65` |
 | `DEP_RE` | `plugin/skills/specify/record-creation-linking.md:61` |
 
-At HEAD it still prints one hit, `record-creation-linking.md:61`, and that one is a false
-positive: the line names `record.js` for `parseDependencyAssumptions` (exported, valid) and
-correctly attributes `DEP_RE` to `record-dependencies.js`. Its output is a candidate list to
-read, not a verdict. Apply the import-path vs definition-location test to each line.
+On `main` after the fix it still printed one hit, `record-creation-linking.md:61`, and that one is
+a false positive: the line names `record.js` for `parseDependencyAssumptions` (exported, valid)
+and correctly attributes `DEP_RE` to `record-dependencies.js`. (This skill, its journey, and its
+plan also name `record.js` and `DEP_RE`, so they print as hits too. Ignore them.) Its output is a
+candidate list to read, not a verdict. Apply the import-path vs definition-location test to each line.
 
 ### 3. Skill bullets and doc pointers stating a definition location
 
@@ -291,7 +296,8 @@ On `31cf39c0e^` it surfaced, all fixed:
 - `record.js:4`: "lives here".
 
 It also surfaced the `TYPE_LABELS` lines from the table above. Those are import-path
-references. Leave them.
+references. Leave them. The `| grep -F "record.js"` filter also matches other `*record.js` files
+(`engine-record.js`, `compose-record.js`); those hits are noise.
 
 ### 4. Journey `files:` frontmatter naming the split file
 

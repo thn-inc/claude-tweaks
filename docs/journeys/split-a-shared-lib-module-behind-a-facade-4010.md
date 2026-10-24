@@ -24,7 +24,7 @@ files:
 - **Should understand:**
   - A facade does not forbid migration. It defers migration so consumers can move one at a time.
   - What breaks expand-contract is removing the old path while an installed build still reads it.
-- **Red flags:** Migrating 75 call sites in the same change as the split, including skill-prose require lines the installed build still executes.
+- **Red flags:** Migrating 69 call sites in the same change as the split, including skill-prose require lines the installed build still executes.
 
 ### 2. Prove the move was pure
 - **URL:** the skill's "The pure-move proof" section.
