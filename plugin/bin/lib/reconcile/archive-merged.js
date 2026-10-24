@@ -100,7 +100,13 @@ function isAdHocIntrinsicSkip(dir, reason) {
   if (!ADHOC_INTRINSIC_STUCK_REASONS.has(reason) || !isAdHocRunDir(dir)) return false;
   const state = readRunState(dir); // one read: the file can vanish between two
   if (!(state && typeof state.worktree === 'string' && state.worktree)) return false;
-  return path.resolve(state.worktree) !== path.resolve(dir, '..', '..', '..');
+  // Compare real paths, so a dir reached through a symlink (/var vs /private/var)
+  // never reads a main-checkout stamp as linked. A recorded worktree that no
+  // longer exists cannot be the main checkout, which holds this dir; any other
+  // unprovable path fails closed (not exempt).
+  let mainRoot;
+  try { mainRoot = fs.realpathSync(path.resolve(dir, '..', '..', '..')); } catch { return false; }
+  try { return fs.realpathSync(state.worktree) !== mainRoot; } catch (e) { return !!(e && e.code === 'ENOENT'); }
 }
 
 // #1604: the "swept once genuinely superseded" half of #1117's own design

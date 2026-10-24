@@ -1938,6 +1938,26 @@ test('#2724 ad-hoc exemption: a dir stamped with the main checkout as its worktr
   assert.equal(isStructurallyStuck(dir, 'no-branch'), true);
 });
 
+test('#2724 ad-hoc exemption: a main-checkout stamp reached through a symlinked path still classifies structurally-stuck', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, () => {
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-adhoc-real-'));
+  const alias = `${real}-alias`;
+  fs.symlinkSync(real, alias, 'dir');
+  const dir = path.join(alias, '.claude-tweaks', 'pipelines', '2026-10-17T081451-adhoc-standalone');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'interrupted', worktree: fs.realpathSync(real) }));
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(dir, backdated, backdated);
+  assert.equal(isStructurallyStuck(dir, 'no-branch'), true);
+});
+
+test('#2724 ad-hoc exemption: a linked worktree that still exists on disk is exempt', () => {
+  const { dir } = mkAdHocRunDir({
+    ageMs: STRUCTURALLY_STUCK_TTL_MS * 2,
+    worktree: (root) => { const wt = path.join(root, '.claude', 'worktrees', 'live'); fs.mkdirSync(wt, { recursive: true }); return wt; },
+  });
+  assert.equal(isStructurallyStuck(dir, 'no-branch'), false);
+});
+
 test('#2724 ad-hoc exemption: a non-ad-hoc dir at no-branch still classifies structurally-stuck', () => {
   const { dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2, basename: '2026-10-17T081451-record-1' });
   assert.equal(isStructurallyStuck(dir, 'no-branch'), true);
