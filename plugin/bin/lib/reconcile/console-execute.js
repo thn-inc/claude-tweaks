@@ -34,8 +34,8 @@ const { runWithConcurrency } = require('./gh-pool');
 const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
-const { sddRulingDeferralReason } = require('../console/resolve');
-const { resolveWithin } = require('../path-guard');
+const { sddRulingDeferralReason, SDD_RULING_REASONS } = require('../console/resolve');
+const { canonicalRealpath, resolveLeaf, isAncestorOrSelf } = require('../path-guard');
 
 const execFileAsync = promisify(execFile);
 
@@ -215,32 +215,42 @@ function resolveVetoWindowHours(runDir, repoRoot) {
   }
 }
 
-// #3880: each `isRulingRow` item's staged file text -> { [itemId]: string|null },
-// read synchronously from `{runDir}/{item.stagedPath}`. null (never a guess) when
-// stagedPath is absent, not a string, absolute, has a `..` segment, resolves
-// (symlinks followed) outside the run dir, or the read fails -- sddRulingDeferralReason reads null
-// as unclassified, so every unreadable ruling row is withheld.
+// #3880: each `isRulingRow` item's staged file, read synchronously from
+// `{runDir}/{item.stagedPath}`. Each ruling id lands in exactly one map:
+// `texts` (the file's text) or `errors` (why the read failed). The four causes
+// are no-staged-path, path-rejected, not-found and read-failed; decideConsoleExecute
+// withholds every one as sdd-ruling-unreadable (#4049), so no read failure
+// reaches sddRulingDeferralReason as a silently-unclassified null.
 function readRulingTexts(runDir, items) {
   const texts = {};
+  const errors = {};
   const base = path.resolve(runDir);
   for (const item of Array.isArray(items) ? items : []) {
     if (!item || item.isRulingRow !== true) continue;
-    texts[item.id] = readInsideRunDir(base, item.stagedPath);
+    const read = readInsideRunDir(base, item.stagedPath);
+    if (read.error) errors[item.id] = read.error;
+    else texts[item.id] = read.text;
   }
-  return texts;
+  return { texts, errors };
 }
 
+// -> { text } | { error: 'no-staged-path' | 'path-rejected' | 'not-found' | 'read-failed' }
 function readInsideRunDir(base, rel) {
-  if (typeof rel !== 'string' || rel === '' || path.isAbsolute(rel)) return null;
-  if (rel.split(/[\\/]/).includes('..')) return null;
-  // path-guard's resolveWithin follows a leaf symlink and every segment's, so a link planted
-  // inside the run dir that points outside it resolves to null (docs/donts.md, IL-161).
-  const real = resolveWithin(path.resolve(base, rel), base);
-  if (real === null) return null;
+  if (typeof rel !== 'string' || rel === '') return { error: 'no-staged-path' };
+  if (path.isAbsolute(rel)) return { error: 'path-rejected' };
+  if (rel.split(/[\\/]/).includes('..')) return { error: 'path-rejected' };
+  const rootReal = canonicalRealpath(base);
+  if (rootReal === null) return { error: 'read-failed' };
+  const leaf = resolveLeaf(path.resolve(base, rel));
+  if (leaf.state === 'missing' || leaf.state === 'dangling') return { error: 'not-found' };
+  if (leaf.state !== 'resolved') return { error: 'read-failed' };
+  // IL-161: the leaf's realpath follows a symlink in every segment, so a link planted
+  // inside the run dir that points outside it fails containment (docs/donts.md, IL-161).
+  if (!isAncestorOrSelf(rootReal, leaf.path)) return { error: 'path-rejected' };
   try {
-    return fs.readFileSync(real, 'utf8');
+    return { text: fs.readFileSync(leaf.path, 'utf8') };
   } catch {
-    return null;
+    return { error: 'read-failed' };
   }
 }
 
@@ -266,10 +276,11 @@ function preFetchSkipReason(consoleJson, now) {
 // merge-grant check below) -> a detection verdict. No I/O, so the
 // race/claim/idempotence logic is unit-testable without gh.
 //   { action: 'ready', prNumber, commentIds, items } | { action: 'skip', reason }
-// ctx: { prBody?, memberGrants?: {[issueNumber]: {labels, pendingSince, skippedUntrusted?}}, vetoWindowHours?, now?, rulingTexts?: {[itemId]: string|null} }
+// ctx: { prBody?, memberGrants?: {[issueNumber]: {labels, pendingSince, skippedUntrusted?}}, vetoWindowHours?, now?, rulingTexts?: {[itemId]: string|null}, rulingReadErrors?: {[itemId]: 'no-staged-path'|'path-rejected'|'not-found'|'read-failed'} }
 // — all optional; omitted entirely (the pre-#1802 call shape) always yields
 // mergeGrantGap: null, unchanged from before. `rulingTexts` (#3880) absent
-// always yields rulingGateGaps: [].
+// always yields rulingGateGaps: []. rulingGateGaps elements are { id, reason }
+// or, for an unreadable ruling row (#4049), { id, reason: 'sdd-ruling-unreadable', detail: cause }.
 function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
   const skipReason = preFetchSkipReason(consoleJson, now);
   if (skipReason) return { action: 'skip', reason: skipReason };
@@ -354,8 +365,15 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
   // a ruling id missing from ctx.rulingTexts reads as unclassified.
   const rulingGateGaps = [];
   if (ctx.rulingTexts && typeof ctx.rulingTexts === 'object') {
+    const readErrors = ctx.rulingReadErrors && typeof ctx.rulingReadErrors === 'object' ? ctx.rulingReadErrors : {};
     for (const item of items) {
       if (item.isRulingRow !== true) continue;
+      // #4049: a read that failed names its cause and outranks any text -- the
+      // unreadable row is a gap whether or not a null text also came back.
+      if (Object.prototype.hasOwnProperty.call(readErrors, item.id) && typeof readErrors[item.id] === 'string') {
+        rulingGateGaps.push({ id: item.id, reason: SDD_RULING_REASONS.UNREADABLE, detail: readErrors[item.id] });
+        continue;
+      }
       const reason = sddRulingDeferralReason(ctx.rulingTexts[item.id]);
       if (reason) rulingGateGaps.push({ id: item.id, reason });
     }
@@ -429,8 +447,11 @@ async function consoleExecuteDetect(opts = {}) {
     const ctx = memberGrantsByCandidate.has(i)
       ? { prBody: fetch.body, memberGrants: memberGrantsByCandidate.get(i), vetoWindowHours: resolveVetoWindowHours(c.dir, root), now }
       : {};
-    // #3880: every candidate gets its ruling rows' staged texts (a no-op {} when it has none).
-    ctx.rulingTexts = readRulingTexts(c.dir, c.consoleJson.items);
+    // #3880: every candidate gets its ruling rows' staged texts (a no-op {} when it has none);
+    // #4049: and each unreadable row's cause, so the gap names why the read failed.
+    const { texts, errors } = readRulingTexts(c.dir, c.consoleJson.items);
+    ctx.rulingTexts = texts;
+    ctx.rulingReadErrors = errors;
     const decision = decideConsoleExecute(c.consoleJson, fetch.comments, now, ctx);
     if (decision.action === 'skip') { skipped.push({ runDir: c.dir, reason: decision.reason }); return; }
     ready.push({
