@@ -118,23 +118,23 @@ Expected: all pass. If a schema-coverage pin names a further registration site, 
 
 - [ ] **Step 1: Write the failing tests.**
 
-  **Extract-and-run.** `comparisonFence(executeText)` finds the execute.md `bash` fence containing `rev-parse origin/{branch})" = "{reviewed-tip}"` and resolves `{branch}` to `main` and `{reviewed-tip}` to a sha. Run it with `spawnSync('bash', ['-c', fence], { env: { ...fx.env, RUN_ROOT: fx.work } })` against `originWithTwoClones` fixtures, using a `withFixture` helper like the sibling suite's. The reviewed tip is `git rev-parse origin/main` in `work` after a fetch. Each row is its own test:
+  **Extract-and-run (AC1.1).** `comparisonFence(executeText)` finds the execute.md `bash` fence containing `rev-parse origin/{branch})" = "{reviewed-tip}"` and resolves `{branch}` to `main` and `{reviewed-tip}` to a sha. Run it with `spawnSync('bash', ['-c', fence], { env: { ...fx.env, RUN_ROOT: fx.work } })` against `originWithTwoClones` fixtures, using a `withFixture` helper like the sibling suite's. The reviewed tip is `git rev-parse origin/main` in `work` after a fetch. Each row is its own test:
   - unmoved → status 0;
   - moved (commit and push from `other`) → status non-zero and empty stderr;
   - a run-dir-only commit pushed to origin from `other` → non-zero, because any move counts and only a review can clear it;
   - a failed fetch (`git remote set-url origin {root}/missing.git` in `work`) → non-zero and non-empty stderr.
 
-  **Go-red control.** Drop the `&& [ … ]` clause from the extracted fence. The "moved" row then returns 0. Assert the mutated fence returns 0 and the real one does not.
+  **Go-red control (AC1.2).** Drop the `&& [ … ]` clause from the extracted fence. The "moved" row then returns 0. Assert the mutated fence returns 0 and the real one does not.
 
   **Prose facts.** Use a `FACTS` array of `[label, file, regex]`, each asserting exactly one match, with a discrimination proof: deleting each matched span from its text makes its regex miss. Facts, one regex each:
   - SKILL.md Step 3: the marker carries the unbraced `at reviewed tip {tip-sha};` and still carries `{; review tree HEAD {head-sha} is origin/{branch} {tip-sha} plus run-dir-only commits}`.
   - SKILL.md Step 3: `{tip-sha}` is defined as `rev-parse origin/{branch}` read after the check passes.
-  - execute.md: the comparison reads the last `reviewed tip` line in `{run-dir}/decisions.md`, with the words "never re-derived". This covers AC2.
+  - execute.md: the comparison reads the last `reviewed tip` line in `{run-dir}/decisions.md`, with the words "never re-derived". This covers AC2.1.
   - execute.md: there is no recorded tip → `failed`, reason `no reviewed tip recorded`.
   - execute.md: a failed fetch → `failed`, stderr verbatim.
   - execute.md: the move count is the number of `Step 5: origin/{branch} moved` lines in this run's `decisions.md`.
   - execute.md: `release-tip-moves` is read with `resolve-policy.js … --values release-tip-moves`.
-  - execute.md: past the bound → `HELD`, reason `integration branch kept moving`, `release-held.md` staged via `stage-item.js`, listing the arrived commits with `git -C "$RUN_ROOT" log --first-parent --oneline {step3-tip}..origin/{branch}`, and suggesting holding merges. This covers AC3.
+  - execute.md: past the bound → `HELD`, reason `integration branch kept moving`, `release-held.md` staged via `stage-item.js`, listing the arrived commits with `git -C "$RUN_ROOT" log --first-parent --oneline {step3-tip}..origin/{branch}`, and suggesting holding merges. This covers AC3.1.
   - execute.md: the delta brings `$RUN_ROOT` to the tip with `git -C "$RUN_ROOT" pull --rebase origin {branch}`, then re-runs SKILL.md Step 3's review-tree check. The new tip's test gate is the review's own Step 1.5, run in that tree.
   - execute.md: the delta invokes `/claude-tweaks:review base:{reviewed-tip}` and classifies only the lines after its marker, by Step 3's table.
   - execute.md: a `review: blocking` delta → console.md's `review: blocking` gate (unchanged `--allow-blocking`/`--train` rules) → `HELD`.
@@ -172,4 +172,4 @@ Expected: all pass.
 
 ### Full-suite gate (folded)
 
-AC4's `npm test` is /build Common Step 5's runner, not a task step.
+AC4.1's `npm test` is /build Common Step 5's runner, not a task step.
