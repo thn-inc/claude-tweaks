@@ -132,3 +132,7 @@ one session file, `try-it-{N}.md`: wrap-up writes it and flow's Pipeline Summary
 
 **Extended (#3671):** `skills/_shared/auto-decision-log.md`'s Text from git or a user paragraph
 (the `--text-file` entry text: `decision-text-{run-id}-{step-slug}.md`, a per-purpose suffix).
+
+**Extended (#4065):** `skills/_shared/pr-run-comments.md`'s Post-or-update procedure, which resolves both its
+comments payload (`{kind}-comments-{n}.json`) and its comment body (`{kind}-comment-{n}.md`) in one CLI call
+in step 1.
