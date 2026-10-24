@@ -81,9 +81,15 @@ function isStaleDir(dir, ttlMs, now = Date.now()) {
 // through to the ordinary isOrphanedMint mtime sweep instead, same as any
 // other malformed mint.
 function isAdHocStandaloneMint(dir) {
-  if (!isAdHocRunDir(dir)) return false;
+  return !!readAdHocState(dir);
+}
+
+// The run-state of a genuine ad-hoc mint (the test above), or null — one read,
+// so a caller that needs the state too never re-reads a file that can vanish.
+function readAdHocState(dir) {
+  if (!isAdHocRunDir(dir)) return null;
   const state = readRunState(dir);
-  return !!(state && typeof state.worktree === 'string' && state.worktree);
+  return state && typeof state.worktree === 'string' && state.worktree ? state : null;
 }
 
 // #2724: an ad-hoc dir is a session friction log, "not a pipeline run"
@@ -97,9 +103,9 @@ const ADHOC_INTRINSIC_STUCK_REASONS = new Set(['no-branch', 'no-worktree', 'no-p
 const ADHOC_EXEMPT_WHY = 'is an ad-hoc session directory: no branch, worktree or PR is its normal state, and the adhoc-superseded sweep archives it once its session has ended';
 
 function isAdHocIntrinsicSkip(dir, reason) {
-  if (!ADHOC_INTRINSIC_STUCK_REASONS.has(reason) || !isAdHocRunDir(dir)) return false;
-  const state = readRunState(dir); // one read: the file can vanish between two
-  if (!(state && typeof state.worktree === 'string' && state.worktree)) return false;
+  if (!ADHOC_INTRINSIC_STUCK_REASONS.has(reason)) return false;
+  const state = readAdHocState(dir);
+  if (!state) return false;
   // Compare real paths, so a dir reached through a symlink (/var vs /private/var)
   // never reads a main-checkout stamp as linked. A recorded worktree that no
   // longer exists cannot be the main checkout, which holds this dir; any other
