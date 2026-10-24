@@ -27,9 +27,9 @@ const { listTestFiles } = require('../tools/run-tests');
 // is a budget by this definition and is flagged; pin it. (5) Taint is coarse: an
 // object or array holding a timing taints its name, and a name tainted in one test()
 // of a describe(...) block taints the sibling tests in that block, so a timing-free
-// comparison can be flagged; pin it with a reason. The pinned texts are this scan's
-// floor: a dead or blinded matcher drops sites, and the live-tree test fails on the
-// stale pins.
+// comparison can be flagged; pin it with a reason. The scan's floor is
+// MOVED_TO_PERF: the moved budgets' texts must still match in perf/, so a dead or
+// blinded matcher fails there.
 
 const ROOT = path.join(__dirname, '..');
 const PLUGIN_STRUCTURE = path.join(ROOT, 'docs', 'plugin-structure.md');
@@ -314,10 +314,10 @@ function evaluate(files, allowlist) {
   return offenders;
 }
 
-// The audit record: each file's pinned budget texts, and a reason an author judged by
-// reading the sites. A new, changed or removed budget fails the scan until this is updated.
-const ALLOWLIST = {
-};
+// Empty since #3939 moved every pinned budget to perf/. An entry is for a timing that is
+// inseparable from a functional assertion: `file: { sites: [comparison texts], reason }`,
+// where the reason says why it cannot move. A new, changed or removed pin fails the scan.
+const ALLOWLIST = {};
 
 // Fixtures are single-quoted string arrays, never template literals.
 const DIRECT = [
@@ -498,6 +498,27 @@ test('AC2.1: perf/ budgets are real matches but are never scanned', () => {
   assert.ok(!Object.keys(readTestFiles()).some((rel) => rel.startsWith('perf/')));
   const perf = fs.readFileSync(path.join(ROOT, 'perf', 'closing-keyword-linearity.test.js'), 'utf8');
   assert.ok(findBudgetAssertions(perf).length >= 1);
+});
+
+// Each budget moved out of tests/ by #3939, by its perf/ file and comparison text.
+// With ALLOWLIST empty, these are the scan's floor: a blinded matcher drops them.
+const MOVED_TO_PERF = {
+  'perf/scale-readiness-linearity.test.js': ['elapsed < 1000', 'elapsed < 1000'],
+  'perf/dream-redact-latency.test.js': ['Date.now() - started < 500'],
+  'perf/gif-quantize-latency.test.js': ['elapsedMs < 5000'],
+  'perf/git-retry-bounded-wait.test.js': ['elapsed < 1000'],
+  'perf/premise-self-check-timeout.test.js': ['Date.now() - start < 4000'],
+  'perf/session-failures-lock-wait.test.js': ['Date.now() - start < 2000', 'Date.now() - start < 2000'],
+  'perf/flow-preflight-concurrency.test.js': ['Date.now() - t0 < 600'],
+  'perf/wrap-up-pack-concurrency.test.js': ['wall < 600'],
+  'perf/reconcile-time-bounds.test.js': ['elapsed < 2500', 'Date.now() - start < 1000'],
+};
+
+test('#3939 AC2.1: every budget moved out of tests/ is a real match in its perf/ file', () => {
+  for (const [rel, sites] of Object.entries(MOVED_TO_PERF)) {
+    const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    assert.deepEqual(findBudgetAssertions(src).map((h) => h.text), sites, rel);
+  }
 });
 
 test('docs/plugin-structure.md still states the perf/ rule the failure message cites', () => {
