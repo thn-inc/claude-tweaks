@@ -16,7 +16,8 @@
 'use strict';
 const { execFileAsyncTimed } = require('./timing');
 const { pickGoverningPr } = require('./pr-state');
-const { repoSlugOf } = require('../hooks/git-exec');
+const { runGit } = require('../hooks/git-exec');
+const { parseRepo } = require('../repo-resolve');
 const { runWithConcurrency } = require('./gh-pool');
 
 const BATCH_CHUNK = 50; // aliases per query (numbers + heads) — one rate-limit point
@@ -42,7 +43,7 @@ function buildBatchQuery({ numbers = [], heads = [] } = {}) {
     if (num !== null) fields.push(`n${i}: pullRequest(number:${num}){ ${PR_FIELDS} mergeable mergeStateStatus }`);
   });
   heads.forEach((h, i) => {
-    fields.push(`h${i}: pullRequests(headRefName:${JSON.stringify(String(h))}, first:10, states:[OPEN,CLOSED,MERGED]){ nodes{ ${PR_FIELDS} } pageInfo{ hasNextPage } }`);
+    fields.push(`h${i}: pullRequests(headRefName:${JSON.stringify(String(h))}, first:10, states:[OPEN,CLOSED,MERGED], orderBy:{field:CREATED_AT,direction:DESC}){ nodes{ ${PR_FIELDS} } pageInfo{ hasNextPage } }`);
   });
   return `query($owner:String!,$name:String!){\n  repository(owner:$owner,name:$name){\n    ${fields.join('\n    ')}\n  }\n}`;
 }
@@ -135,12 +136,29 @@ function defaultRunner(root) {
   };
 }
 
+// origin -> { owner, repo } only when it is provably on github.com. `gh api
+// graphql` is sent without --hostname, so it talks to gh's default host; on any
+// other (or unparseable) origin host the batch could answer from a same-named
+// repo elsewhere, which would then be memoized and persisted. Such roots take
+// the per-item path, which follows origin's own host.
+function githubOrigin(root) {
+  try {
+    const remote = runGit(['remote', 'get-url', 'origin'], root);
+    if (remote.failure || !remote.stdout) return null;
+    const parsed = parseRepo(remote.stdout);
+    return parsed && parsed.host.toLowerCase() === 'github.com' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 // -> { byNumber, byHead } over every key the batch could prove. NEVER throws:
 // `gh api graphql` exits 1 when `errors` is present yet still writes the body,
 // so a rejection's `stdout` is parsed like a success (parseBatchResponse
 // discards it when the errors are not the per-alias NOT_FOUND kind); a chunk
 // that cannot be read at all contributes nothing, and its keys fall to the
-// per-item path. No resolvable origin slug -> nothing is spawned.
+// per-item path. An origin that is not on github.com (or cannot be resolved)
+// -> nothing is spawned.
 async function fetchBatch(root, { numbers = [], heads = [] } = {}, { runner } = {}) {
   const byNumber = new Map();
   const byHead = new Map();
@@ -149,14 +167,9 @@ async function fetchBatch(root, { numbers = [], heads = [] } = {}, { runner } = 
     ...heads.map((h) => ({ kind: 'head', value: h })),
   ];
   if (keys.length === 0) return { byNumber, byHead };
-  let slug;
-  try {
-    slug = repoSlugOf(root);
-  } catch {
-    return { byNumber, byHead };
-  }
-  if (!slug) return { byNumber, byHead };
-  const [owner, name] = slug.split('/');
+  const origin = githubOrigin(root);
+  if (!origin) return { byNumber, byHead };
+  const { owner, repo: name } = origin;
   const run = runner || defaultRunner(root);
 
   const chunks = [];
