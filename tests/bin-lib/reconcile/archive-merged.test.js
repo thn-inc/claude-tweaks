@@ -1391,6 +1391,63 @@ test('consoleReplacedByAutoMergeShortCircuit: detects every log-line template th
   assert.strictEqual(detectsTemplate(manifesto[0].replace('verdict auto-merge', 'verdict merge')), false);
 });
 
+// #3740: the dispatch bundle Auto-merge gate (dispatch/settle-and-merge.md) renders no
+// console either, so its per-member verdict line and local-merge group line are producers
+// too. The needs-human fall-back line is not: a Review Console renders after it.
+test('consoleReplacedByAutoMergeShortCircuit: true for the dispatch bundle gate lines, never the needs-human fall-back', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-bundle-'));
+  const GATE = '- AUTO 10:00:00 — Auto-merge gate: #3740 assess-agent-autonomy verdict auto-merge. Reversibility: n/a.\n';
+  const GROUP = '- AUTO 10:10:00 — Auto-merge: group [3740, 3741], assess-agent-autonomy verdict auto-merge for every member (see each member\'s RATIONALE). Merge commit: abc1234. Reversibility: high (git revert). [lever: auto-merge-max-lines=400 (default); auto-merge-max-files=10 (default); merge-sensitive-paths=x (default)]\n';
+  const NEEDS_HUMAN = '- AUTO 10:00:00 — Auto-merge gate: #3740 assess-agent-autonomy verdict needs-human — group falls back to the Review Console. Reversibility: n/a.\n';
+  const TERMINAL = '- AUTO 10:05:00 — Review Console: terminal decision approve-all-merge. Reversibility: n/a.\n';
+  fs.writeFileSync(path.join(dir, 'decisions.md'), GATE);
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), true);
+  fs.writeFileSync(path.join(dir, 'decisions.md'), GROUP);
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), true);
+  fs.writeFileSync(path.join(dir, 'decisions.md'), NEEDS_HUMAN);
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), false);
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${GATE}${TERMINAL}`);
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), false);
+});
+
+// Prose-code twin for the dispatch bundle gate. Extract every `AUTO {time} — Auto-merge…`
+// template from settle-and-merge.md (fenced lines and backticked spans alike), fill the
+// placeholders, and pin the exact count so a new or reworded template fails here.
+function dispatchGateTemplates(text) {
+  return [...text.matchAll(/AUTO \{time\} — (Auto-merge(?: gate)?: [^`\n]*)/g)]
+    .map((m) => m[1].replace(/\s+/g, ' ').trim());
+}
+function fillDispatchTemplate(template) {
+  return template
+    .replace('{n}', '3740')
+    .replace('{issues}', '3740, 3741')
+    .replace(/\{[a-z]+\}/g, 'x');
+}
+function detectsDispatchTemplate(template) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-bundle-twin-'));
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `- AUTO 10:00:00 — ${fillDispatchTemplate(template)}\n`);
+  return consoleReplacedByAutoMergeShortCircuit(dir);
+}
+test('consoleReplacedByAutoMergeShortCircuit: detects every dispatch bundle-gate log template settle-and-merge.md writes', () => {
+  const text = readText(path.join(REPO_ROOT, 'plugin', 'skills', 'dispatch', 'settle-and-merge.md'));
+  const templates = dispatchGateTemplates(text);
+  assert.strictEqual(templates.length, 3, 'settle-and-merge.md carries three Auto-merge log templates');
+  const needsHuman = templates.filter((t) => t.includes('verdict needs-human'));
+  const detected = templates.filter((t) => !t.includes('verdict needs-human'));
+  assert.strictEqual(needsHuman.length, 1, 'exactly one template is the needs-human fall-back');
+  assert.strictEqual(detected.length, 2, 'exactly two templates are producers (gate pass line, group line)');
+  for (const template of detected) {
+    assert.strictEqual(detectsDispatchTemplate(template), true, template);
+  }
+  assert.strictEqual(detectsDispatchTemplate(needsHuman[0]), false, needsHuman[0]);
+  // Go-red control: a producer reword that drops the canonical verdict is not detected.
+  const gate = detected.find((t) => t.startsWith('Auto-merge gate:'));
+  const group = detected.find((t) => t.startsWith('Auto-merge: group'));
+  assert.ok(gate && group, 'both producer templates are present');
+  assert.strictEqual(detectsDispatchTemplate(gate.replace('verdict auto-merge', 'verdict merge')), false);
+  assert.strictEqual(detectsDispatchTemplate(group.replace('verdict auto-merge', 'verdict merge')), false);
+});
+
 // Re-pin the existing exports still resolve after the refactor above touched
 // the same module — a regression here would mean the export list drifted.
 test('archive-merged module still exports its pre-existing surface', () => {

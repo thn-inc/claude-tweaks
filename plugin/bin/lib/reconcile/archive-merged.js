@@ -504,11 +504,21 @@ function hasStagedItems(runDir) {
 // continuation the short-circuit's own log template writes (`, assess-agent-
 // autonomy verdict auto-merge`), and a `Review Console: terminal decision` line
 // turns the signal off: a console was presented and resolved.
+// #3740: the dispatch bundle Auto-merge gate (dispatch/settle-and-merge.md) is a third
+// producer of the same console-less merge, with two lines: the per-member verdict
+// `Auto-merge gate: #{n} assess-agent-autonomy verdict auto-merge.` written before the
+// merge, and the local-merge group line `Auto-merge: group [{issues}], assess-agent-
+// autonomy verdict auto-merge for every member` written after it. The gate's
+// `verdict needs-human` fall-back line is not a producer: a Review Console renders after
+// it. The gate pattern's trailing `.` (the separator before ` Reversibility:`) keeps the
+// match off that line.
 function consoleReplacedByAutoMergeShortCircuit(runDir) {
   let raw;
   try { raw = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch (err) { return !(err && err.code === 'ENOENT'); }
   if (raw.includes('Review Console: terminal decision')) return false;
-  return /(?:Fast-lane|Manifesto-authorized) auto-merge: issue #\d+, assess-agent-autonomy verdict auto-merge/.test(raw);
+  return /(?:Fast-lane|Manifesto-authorized) auto-merge: issue #\d+, assess-agent-autonomy verdict auto-merge/.test(raw)
+    || /Auto-merge gate: #\d+ assess-agent-autonomy verdict auto-merge\./.test(raw)
+    || /Auto-merge: group \[[^\]\n]*\], assess-agent-autonomy verdict auto-merge for every member/.test(raw);
 }
 
 // #1130: gh's MERGED state is a remote fact; the local main checkout may not

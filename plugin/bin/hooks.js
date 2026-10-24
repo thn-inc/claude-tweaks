@@ -1217,12 +1217,12 @@ async function main(argv) {
     // path. A rendered-but-unanswered console (`unresolved`) always blocks.
     // 'none' is allowed in general — terminal status means close-run ran, i.e.
     // wrap-up's own flow (incl. the empty-console fast path) completed. #3668
-    // narrows that: the auto-merge short-circuit renders no console and no
-    // human ever sees its staged/ items, so a 'none' run whose decisions.md
-    // carries its auto-merge line (fast-lane or manifesto-authorized) is
-    // refused while staged/ holds pending items. Other 'none' runs that keep
-    // staged/ (in-terminal consoles, fleet-approved closes, tidy --approve)
-    // still archive.
+    // narrows that: an auto-merge path renders no console and no human ever
+    // sees its staged/ items, so a 'none' run whose decisions.md carries that
+    // path's auto-merge line (the wrap-up short-circuit's, or the dispatch
+    // bundle Auto-merge gate's, #3740) is refused while staged/ holds pending
+    // items. Other 'none' runs that keep staged/ (in-terminal consoles,
+    // fleet-approved closes, tidy --approve) still archive.
     const consoleState = readConsoleState(runDir);
     if (consoleState === 'unresolved') {
       process.stdout.write('claude-tweaks: archival refused — console-unresolved (console.json rendered but not resolved; answer or resolve the console first)\n');
@@ -1231,7 +1231,7 @@ async function main(argv) {
     if (consoleState === 'none' && consoleReplacedByAutoMergeShortCircuit(runDir)) {
       const pending = listStagedItems(runDir);
       if (pending.length) {
-        process.stdout.write(`claude-tweaks: archival refused — console-never-rendered-staged-pending (the auto-merge short-circuit rendered no console; pending: ${pending.join(', ')}) — apply or delete the pending staged/ items (and any spec-*/staged/), or write a resolved console.json, then re-run archive-run\n`);
+        process.stdout.write(`claude-tweaks: archival refused — console-never-rendered-staged-pending (an auto-merge path — the wrap-up short-circuit or the dispatch bundle Auto-merge gate — rendered no console; pending: ${pending.join(', ')}) — apply or delete the pending staged/ items (and any spec-*/staged/), or write a resolved console.json, then re-run archive-run\n`);
         return 0;
       }
     }
