@@ -306,9 +306,11 @@ test('decideConsoleExecute: no isMergeRow item at all -> mergeGrantGap null rega
   assert.strictEqual(result.mergeGrantGap, null);
 });
 
-test('decideConsoleExecute: isMergeRow present but no ctx supplied (legacy call shape) -> mergeGrantGap null, unchanged', () => {
-  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now());
-  assert.strictEqual(result.mergeGrantGap, null);
+test('decideConsoleExecute: isMergeRow present but ctx incomplete (no prBody or no memberGrants) -> grant-context-missing, fails closed', () => {
+  const expected = { member: null, reason: 'grant-context-missing' };
+  assert.deepStrictEqual(decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now()).mergeGrantGap, expected);
+  assert.deepStrictEqual(decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), { prBody: 'Fixes #1' }).mergeGrantGap, expected);
+  assert.deepStrictEqual(decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), { memberGrants: { 1: { labels: ['auto:merge'], pendingSince: null } } }).mergeGrantGap, expected);
 });
 
 test('decideConsoleExecute: a solo record (one Fixes line) carrying auto:merge -> mergeGrantGap null, merge row floor-clearing', () => {
@@ -534,11 +536,18 @@ const RULING_TEXT_DEFERS_NO = 'Title: r\nKind: sdd-ruling\nDefers: no\nStaged-at
 const RULING_TEXT_DEFERS_YES = 'Title: r\nKind: sdd-ruling\nDefers: yes\nStaged-at: abc\n\nbody\n';
 const RULING_TEXT_DEFERS_YES_REASONED = 'Title: r\nKind: sdd-ruling\nDefers: yes\nDefer-reason: genuinely-larger\nStaged-at: abc\n\nbody\n';
 
-test('decideConsoleExecute: no ctx.rulingTexts -> rulingGateGaps [] (legacy call shape unchanged)', () => {
+test('decideConsoleExecute: no ctx.rulingTexts -> every ruling row withheld as sdd-ruling-unclassified, fails closed', () => {
   const cj = rulingConsoleJson([{ id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true }]);
+  const expected = [{ id: 'staged-1', reason: 'sdd-ruling-unclassified' }];
+  assert.deepStrictEqual(decideConsoleExecute(cj, tickedComment(['staged-1']), Date.now()).rulingGateGaps, expected);
+  assert.deepStrictEqual(decideConsoleExecute(cj, tickedComment(['staged-1']), Date.now(), { prBody: 'x' }).rulingGateGaps, expected);
+});
+
+test('decideConsoleExecute: a console with neither ruling nor merge rows needs no ctx -> rulingGateGaps [] and mergeGrantGap null', () => {
+  const cj = rulingConsoleJson([{ id: 'staged-1', kind: 'staged', summary: 'plain' }]);
   const result = decideConsoleExecute(cj, tickedComment(['staged-1']), Date.now());
   assert.deepStrictEqual(result.rulingGateGaps, []);
-  assert.deepStrictEqual(decideConsoleExecute(cj, tickedComment(['staged-1']), Date.now(), { prBody: 'x' }).rulingGateGaps, []);
+  assert.strictEqual(result.mergeGrantGap, null);
 });
 
 test('decideConsoleExecute: a Defers: yes ruling with no Defer-reason is a gap (sdd-ruling-deferral-no-defer-reason)', () => {

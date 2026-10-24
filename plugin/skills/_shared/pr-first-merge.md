@@ -38,8 +38,7 @@ before labeling silently drops acceptance sign-off the same way the pre-#410 fas
 did for a different reason (`wrap-up/review-console.md`'s own "console content is not all of
 Phase 4" note) — this procedure states the ordering explicitly so it is never re-dropped.
 Labeling has not landed when `{run-dir}/verify.json` (each `spec-{N}/` copy, multi-spec) is missing
-or its `acceptance-labeling` row's `result` is anything but `pass`/`skip` — `dispatch/close-out.md`
-step 3 also accepts live labels or brief comments, and tidy's Arm ready PR holds rather than runs this step — whichever caller reached this merge.
+or its `acceptance-labeling` row's `result` is anything but `pass`/`skip` — the full predicate, live-state tier included, is `_shared/acceptance-labeling-landed.md` — whichever caller reached this merge.
 
 ## Step 1.5: Curation-apply completeness guard (#1465)
 

@@ -89,6 +89,36 @@ test('#3845: the ad-hoc stamp records ownerPid from CLAUDE_PID, and omits it whe
   }
 });
 
+test('AC1.1/AC1.2: stampAdHocRunDir writes the owner block', () => {
+  const prior = process.env.CLAUDE_PID;
+  try {
+    process.env.CLAUDE_PID = String(process.pid);
+    const main = gitRepo();
+    const wt = harnessWorktreeOf(main);
+    post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt), sessionId: 'sess-owner-block-a' }));
+    const { owner } = ctxLib.readRunState(path.join(pipelinesDir(main), adhocDirs(main)[0]));
+    assert.strictEqual(owner.sessionId, 'sess-owner-block-a');
+    assert.strictEqual(owner.host, require('os').hostname());
+    assert.strictEqual(owner.pid, process.pid);
+    assert.strictEqual(owner.pidSource, 'env');
+    if (process.platform !== 'win32') assert.strictEqual(typeof owner.pidStartedAt, 'string');
+    assert.ok(!Number.isNaN(Date.parse(owner.heartbeatAt)));
+
+    // A pid that is gone: a short child that has already exited.
+    const dead = cp.spawnSync(process.execPath, ['-e', ''], { windowsHide: true }).pid;
+    process.env.CLAUDE_PID = String(dead);
+    const main2 = gitRepo();
+    const wt2 = harnessWorktreeOf(main2);
+    post.run(enterWorktreeCtx(wt2, { toolResponse: createdAt(wt2), sessionId: 'sess-owner-block-b' }));
+    const deadOwner = ctxLib.readRunState(path.join(pipelinesDir(main2), adhocDirs(main2)[0])).owner;
+    assert.strictEqual(deadOwner.pid, dead);
+    assert.strictEqual(deadOwner.pidStartedAt, null, 'a pid that is gone has no start time');
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_PID;
+    else process.env.CLAUDE_PID = prior;
+  }
+});
+
 test('does not stamp when ctx.ownedRun.dir already resolves (a formal pipeline already claimed this worktree)', () => {
   const main = gitRepo();
   const wt = harnessWorktreeOf(main);

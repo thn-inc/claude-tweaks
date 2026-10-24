@@ -57,26 +57,19 @@ touching shared state runs one member at a time.
    wrong is the forge waiting on required checks/reviews, not a conflict — proceed.
 3. **Convert draft to ready, if needed (AC2).** **Acceptance labeling first** — this check, and
    any Step 1 run it leads to, precedes the Mark-ready call below, keeping
-   `_shared/pr-first-merge.md`'s own Step 1 → Step 2 order:
-   - **Resolve the run dir** from the PR body's `claude-tweaks-run: {run-id}` marker (validated as
-     `flow/claim-targets.md` validates it): `$RUN_ROOT/.claude-tweaks/pipelines/{run-id}/`, else
-     `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/`. When no valid marker resolves, or
-     neither path exists, stop this candidate and report
-     `stopped: acceptance labeling unverifiable — no run dir` — never guess a run dir.
-   - **Read `verify.json`.** A multi-spec PR's marker names the parent run, and `verify` writes only
-     `{parent}/spec-{N}/verify.json`: when the run dir has `spec-*/` subdirectories, read every
-     `spec-*/verify.json`; otherwise read the run dir's own. Labeling has landed only when every
-     file read exists and its `acceptance-labeling` row's `result` is `pass`/`skip`.
-   - **Not landed — check live forge state before re-running.** `wrap-up/verification-brief.md`'s
-     issue pointer comment is a plain post that duplicates on a re-run, so labeling still counts as
-     landed when every record in the PR's `Fixes` lines carries `demo:pending`, or the PR already
-     carries a trusted `<!-- run-comment: brief -->` or `<!-- run-comment: try-it -->` run comment
-     (or its multi-spec `brief:{N}`/`try-it:{N}` form; trusted per `_shared/pr-run-comments.md`'s
-     Trusted authors). Only otherwise run `_shared/pr-first-merge.md` Step 1 before the
-     confirmation gate, with `PIPELINE_RUN_DIR` = the resolved run (or archive) dir and
-     `CLOSING_SUB_ISSUES` = the PR's `Fixes` record numbers — in a multi-spec run, once per
-     not-landed member, with `PIPELINE_RUN_DIR` = its `spec-{N}/` dir and `MULTISPEC_PARENT_DIR` =
-     the parent.
+   `_shared/pr-first-merge.md`'s own Step 1 → Step 2 order. Apply
+   `_shared/acceptance-labeling-landed.md` to this PR (the run-dir resolution, the `verify.json`
+   tier, the live-state tier and the failed-read rule all live there; its failed-read rule and
+   at-least-one-record condition are deliberately stricter than this step's former copy, which was
+   silent on both). Then act on its outcome:
+   - **`no run dir`**: stop this candidate and report
+     `stopped: acceptance labeling unverifiable — no run dir`, without running the live-state tier —
+     never guess a run dir.
+   - **`landed`** (either tier): no Step 1 run.
+   - **Any other outcome**: run `_shared/pr-first-merge.md` Step 1 before the confirmation gate, with
+     `PIPELINE_RUN_DIR` = the resolved run (or archive) dir and `CLOSING_SUB_ISSUES` = the PR's
+     `Fixes` record numbers — in a multi-spec run, once per not-landed member, with
+     `PIPELINE_RUN_DIR` = its `spec-{N}/` dir and `MULTISPEC_PARENT_DIR` = the parent.
 
    Then, when `isDraft`, run `_shared/pr-first-merge.md`'s Step 2 (Mark ready) now, before the
    confirmation gate — the gate's own question states the PR's current state, and "still draft"

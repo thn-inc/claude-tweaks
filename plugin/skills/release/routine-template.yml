@@ -21,7 +21,10 @@ notes: >
   nothing read, nothing merged, nothing tagged, no record touched; the firing reports blocked. A major bump
   (measured on the effective version, --as included) or a `review: blocking` verdict ends the
   firing with `HELD` and a `release-held.md` in the firing's run directory naming the gate;
-  re-run the train once the gate is addressed. A hook that fails after the tag landed is
+  re-run the train once the gate is addressed. Step 5's own no-merge stops end it the same way: a
+  blocking delta review of commits that reached the integration branch after Step 3 reviewed it,
+  and `integration branch kept moving` (more moves than `release-tip-moves` allows), whose recovery
+  is to pause merges to the integration branch or raise `release-tip-moves`, not to re-run at once. A hook that fails after the tag landed is
   `PARTIAL` with the recovery command in the report — the release exists; only the publish
   step needs re-running. A firing with nothing to release is a cheap no-op (`nothing to
   release since v{lastTag}`); a repository that has never tagged a version is held at the

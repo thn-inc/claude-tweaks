@@ -547,6 +547,54 @@ test('#3845: record-worktree without CLAUDE_PID writes no ownerPid', () => {
   assert.ok(!('ownerPid' in readRunState(run)));
 });
 
+// #3973: a pid that is gone — a short child that has already exited.
+function deadPid() {
+  const child = require('child_process').spawnSync(process.execPath, ['-e', ''], { windowsHide: true });
+  return child.pid;
+}
+
+test('AC1.1/AC1.2: record-worktree writes the owner block', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
+  const { owner } = readRunState(run);
+  assert.strictEqual(owner.sessionId, 'owner');
+  assert.strictEqual(owner.host, os.hostname());
+  assert.strictEqual(owner.pid, process.pid);
+  assert.strictEqual(owner.pidSource, 'env');
+  if (process.platform !== 'win32') assert.strictEqual(typeof owner.pidStartedAt, 'string');
+  assert.ok(!Number.isNaN(Date.parse(owner.heartbeatAt)));
+
+  const dead = deadPid();
+  const project2 = tmpProject();
+  const run2 = path.join(project2, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run2, '/tmp/wt-2'], { cwd: project2, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(dead) } });
+  const deadOwner = readRunState(run2).owner;
+  assert.strictEqual(deadOwner.pid, dead);
+  assert.strictEqual(deadOwner.pidStartedAt, null, 'a pid that is gone has no start time');
+});
+
+test('AC2.4: record-worktree without a session id leaves the owner block unchanged', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
+  const first = readRunState(run).owner;
+  assert.ok(first, 'the first stamp wrote an owner block');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: '', CLAUDE_PID: String(process.pid) } });
+  assert.deepStrictEqual(readRunState(run).owner, first);
+});
+
+test('AC2.4: record-worktree is the adoption path — a different session replaces both sessionId and the owner block, so they always agree', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'first', CLAUDE_PID: String(process.pid) } });
+  assert.strictEqual(readRunState(run).owner.sessionId, 'first');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'second', CLAUDE_PID: String(process.pid) } });
+  const state = readRunState(run);
+  assert.strictEqual(state.sessionId, 'second');
+  assert.strictEqual(state.owner.sessionId, 'second', 'the owner block belongs to the session recorded in sessionId');
+});
+
 test('AC3.1 #3845: hooks.js session-end from a nested claude process (same session id, other CLAUDE_PID) leaves the run active; the owner process stamps it', () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
@@ -557,6 +605,20 @@ test('AC3.1 #3845: hooks.js session-end from a nested claude process (same sessi
   assert.strictEqual(readRunState(run).status, 'active', 'a nested process ending must not stamp the parent run');
   runHook(['session-end'], { cwd: project, input, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
   assert.strictEqual(readRunState(run).status, 'interrupted', 'the owner process ending still stamps interrupted');
+});
+
+test('#3973: the dispatcher refreshes the owner block on a non-session-start event (heartbeat through hooks.js)', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  const env = { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) };
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env });
+  const stale = new Date(Date.now() - 10 * 60_000).toISOString();
+  const state = readRunState(run);
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ ...state, owner: { ...state.owner, heartbeatAt: stale } }));
+  runHook(['session-end'], { cwd: project, input: JSON.stringify({ session_id: 'owner', reason: 'other', cwd: project }), env });
+  const owner = readRunState(run).owner;
+  assert.ok(Date.parse(owner.heartbeatAt) > Date.parse(stale) + 9 * 60_000, `heartbeatAt advanced, got ${owner.heartbeatAt}`);
+  assert.strictEqual(owner.pid, process.pid, 'a heartbeat leaves the pid alone');
 });
 
 test('close-run without --run REFUSES to close a run recorded by another (still-active) session, stays silent for the owner (finding regression)', () => {
@@ -1703,9 +1765,14 @@ test('#3225: --dispatch preserves every pre-existing field and writes exactly wh
   assert.strictEqual(disp.dispatched, true);
   assert.strictEqual(plain.dispatchSessionId, undefined, 'a plain record-worktree must not write a dispatchSessionId key');
   assert.strictEqual(disp.dispatchSessionId, 'sess-3225');
-  const strip = (s) => { const { updatedAt, dispatched, dispatchSessionId, ...rest } = s; return rest; };
+  // owner.heartbeatAt is a wall-clock stamp like updatedAt (#3973); every other owner field stays in the comparison.
+  const strip = (s) => {
+    const { updatedAt, dispatched, dispatchSessionId, ...rest } = s;
+    if (rest.owner) rest.owner = { ...rest.owner, heartbeatAt: 'normalized' };
+    return rest;
+  };
   assert.strictEqual(JSON.stringify(strip(disp)), JSON.stringify(strip(plain)),
-    'apart from dispatched/dispatchSessionId/updatedAt, --dispatch must write byte-for-byte what a plain call writes');
+    'apart from dispatched/dispatchSessionId/updatedAt/owner.heartbeatAt, --dispatch must write byte-for-byte what a plain call writes');
   assert.deepStrictEqual(disp.pr, seed.pr);
   assert.strictEqual(disp.claimExempt, true);
   assert.strictEqual(disp.prExempt, false);
