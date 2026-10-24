@@ -75,15 +75,8 @@ test('turn-class: classifyToolCall maps each tool to its class', () => {
   }
 });
 
-test('turn-class [IL-162]: a 200k-char is_error result classifies in under 200 ms, and a leading refusal still matches', () => {
-  // "Permission to use " then one unbroken non-space run: the unbounded \S+.* backtracked
-  // quadratically here (19.9 s at 160k chars) before the 2,048-char slice and bounded quantifiers.
-  const huge = 'Permission to use ' + 'x'.repeat(200000);
-  const t0 = process.hrtime.bigint();
-  const cls = classifyToolCall(bash('grep x', { isError: true, resultText: huge }));
-  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.equal(cls, 'explore');
-  assert.ok(ms < 200, `classified in ${ms.toFixed(1)} ms`);
+test('turn-class [IL-162]: the refusal match reads only the first 2,048 chars, and a leading refusal still matches', () => {
+  // The timing half (200k chars under 200 ms) is perf/turn-class-refusal-latency.test.js.
   // a real refusal leads its result, so a long tail after it changes nothing
   const tail = '\n' + 'y'.repeat(200000);
   assert.equal(classifyToolCall({ name: 'Write', input: {}, isError: true, resultText: 'Permission to use Write has been denied because …' + tail }), 'guard-refusal');
