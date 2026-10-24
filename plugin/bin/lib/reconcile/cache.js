@@ -19,6 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const { escalateResidue, resolveResidue } = require('./escalate-residue');
+const { isAncestorOrSelf, lstatType } = require('../path-guard');
 
 const CACHE_FILENAME = 'reconcile-cache.json';
 const DEFAULT_TTL_MS = 7 * 60 * 1000;
@@ -214,11 +215,9 @@ function recordResidueSuccess(target, reason, targetPath) {
 function ownedPathExists(target) {
   const root = isCacheBatch(target) ? target.root : target;
   const pipelinesDir = path.join(root, '.claude-tweaks', 'pipelines');
-  return (p) => {
-    const rel = path.relative(pipelinesDir, p);
-    const inside = rel && !rel.startsWith('..') && !path.isAbsolute(rel);
-    return inside ? fs.existsSync(p) : true;
-  };
+  // Strictly inside: the parent is the pipelines dir or under it. Only a missing leaf is gone;
+  // an unreadable one stays listed.
+  return (p) => !isAncestorOrSelf(pipelinesDir, path.dirname(p)) || lstatType(p).type !== 'missing';
 }
 
 // #2724: drop a tracked entry for a path that is no longer stuck, and — only
