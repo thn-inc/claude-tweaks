@@ -239,9 +239,10 @@ on it.
 A `verify-run-bookends: degraded —` stderr line (exit 0; the run's `config.yml` carries no valid
 `integration-model` pin) is logged as a `SKIP` decision via
 `log-decision.js --status SKIP --text-file "{text-file}"`, where `{text-file}` holds
-`condition: {stderr line} → fallback: PR-bookend check not run` per
-`_shared/auto-decision-log.md`'s Text from git or a user paragraph (the stderr line interpolates
-the config path), never treated as a failure or a missing bookend.
+`condition: {stderr line} → fallback: PR-bookend check not run` as one line written with the
+Write tool to a session temp file, per the decision log's Text from git or a user rule (the stderr
+line interpolates the config path, so it never goes through shell quoting), never treated as a
+failure or a missing bookend.
 
 OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 
