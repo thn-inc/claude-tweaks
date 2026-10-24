@@ -22,8 +22,10 @@ read exists and its `acceptance-labeling` row's `result` is `pass`/`skip`.
 
 ## Live-state tier
 
-Applies when the verify.json tier shows not landed (a consumer that has no run dir decides whether
-to run it anyway). `wrap-up/verification-brief.md`'s issue pointer comment is a plain post that
+Applies only when the run dir resolved and the verify.json tier read every file successfully but did
+not land — `verify.json missing` or `acceptance-labeling: {result}`. An unreadable `verify.json` is
+not rescued by this tier: its outcome stays `unreadable: verify.json`. Whether a consumer also runs
+the tier on `no run dir` is that consumer's call. `wrap-up/verification-brief.md`'s issue pointer comment is a plain post that
 duplicates on a re-run, so labeling still counts as landed when either holds:
 
 - every record in the PR's `Fixes` lines carries `demo:pending` — at least one record, and every
@@ -34,7 +36,9 @@ duplicates on a re-run, so labeling still counts as landed when either holds:
 
 ## Outcomes
 
-`landed`, or the first not-landed outcome among:
+`landed`, or one not-landed outcome. An `unreadable: …` outcome from any tier takes precedence over
+the others — a read failure is never masked; otherwise the outcome is the run-dir / verify.json
+tier's:
 
 - `no run dir`
 - `verify.json missing`

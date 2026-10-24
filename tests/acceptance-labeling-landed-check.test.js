@@ -65,7 +65,20 @@ test('AC1.2 (live-state tier): the live-state rule lives in the contract', () =>
 });
 
 test('AC1.2 (live-state tier): negative control — the contract before its Live-state tier fails the pins', () => {
-  assert.throws(() => assertLive(slice(CONTRACT, '# Acceptance Labeling', '## Live-state tier')), assert.AssertionError);
+  // Sliced outside the callback so a renamed heading fails here, not inside `throws`.
+  const beforeLive = slice(CONTRACT, '# Acceptance Labeling', '## Live-state tier');
+  assert.ok(beforeLive.length > 0, 'the pre-Live-state slice must be non-empty');
+  assert.throws(() => assertLive(beforeLive), assert.AssertionError);
+});
+
+test('AC1.2 (unreadable verify.json is not rescued): the live-state tier cannot override a read failure', () => {
+  const live = slice(CONTRACT, '## Live-state tier', '## Outcomes');
+  assert.match(live, /An unreadable `verify\.json` is not rescued by this tier/);
+  assert.match(live, /outcome stays `unreadable: verify\.json`/);
+});
+
+test('AC1.2 (outcomes): an unreadable outcome takes precedence over the others', () => {
+  assert.match(CONTRACT, /`unreadable: …` outcome from any tier takes precedence/);
 });
 
 test('AC1.2 (outcomes): the not-landed outcome vocabulary', () => {
