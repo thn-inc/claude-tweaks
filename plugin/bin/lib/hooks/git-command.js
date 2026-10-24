@@ -775,6 +775,7 @@ function scanHeredocs(str) {
   const out = [];
   let quote = null;
   let parenDepth = 0; // unclosed `((` on the current logical line
+  let bracketDepth = 0; // unclosed `$[` on the current logical line
   let pending = []; // heredocs opened on the current logical line, in order
   let lineStart = 0;
   let i = 0;
@@ -813,7 +814,16 @@ function scanHeredocs(str) {
       }
       pending = [];
       parenDepth = 0;
+      bracketDepth = 0;
       lineStart = i;
+    } else if (ch === '$' && str[i + 1] === '[') {
+      bracketDepth += 1;
+      out.push('$[');
+      i += 2;
+    } else if (ch === ']' && bracketDepth > 0) {
+      bracketDepth -= 1;
+      out.push(ch);
+      i += 1;
     } else if (ch === '(' && str[i + 1] === '(') {
       parenDepth += 1;
       out.push('((');
@@ -826,8 +836,8 @@ function scanHeredocs(str) {
       out.push('<<<'); // a here-string is never a heredoc
       i += 3;
     } else if (ch === '<' && str[i + 1] === '<') {
-      // A `<<` inside an open `((...))` is an arithmetic shift, not an opener.
-      const h = parenDepth === 0 ? readHeredocOpener(str, i + 2) : null;
+      // A `<<` inside an open `((...))` or `$[...]` is an arithmetic shift, not an opener.
+      const h = parenDepth === 0 && bracketDepth === 0 ? readHeredocOpener(str, i + 2) : null;
       if (h && h.unprovable) {
         out.push(str.slice(i));
         break;

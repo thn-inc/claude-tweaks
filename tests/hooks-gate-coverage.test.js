@@ -635,6 +635,20 @@ test('#4149: an unterminated heredoc ending in an odd backslash stays visible, w
   assert.deepStrictEqual(fileWriteTargets('cat <<EOF\necho x > f.js\nfoo\\\n', '/r'), f);
 });
 
+test('#4149: `<<` inside `$[ … ]` arithmetic is not a heredoc opener, even on a reader line', () => {
+  assert.deepStrictEqual(fileWriteTargets('cat $[1<<3]\necho x > f.js\n3]', '/r'), [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
+});
+
+test('#4149: only an unquoted `$[` opens arithmetic, and a stray `]` never goes negative', () => {
+  // A `$[` inside quotes opens nothing, so the following `<<EOF` is a real opener and its body is data.
+  assert.deepStrictEqual(fileWriteTargets("cat '$[' <<EOF\na > b\nEOF", '/r'), []);
+  assert.deepStrictEqual(fileWriteTargets('cat "$[" <<EOF\na > b\nEOF', '/r'), []);
+  // A `]` with no open `$[` is ignored: the heredoc after it still opens.
+  assert.deepStrictEqual(fileWriteTargets('cat ] <<EOF\na > b\nEOF', '/r'), []);
+  // The depth resets at each newline, as the `((` depth does.
+  assert.deepStrictEqual(fileWriteTargets('cat $[1\ncat <<EOF\na > b\nEOF', '/r'), []);
+});
+
 test('#3989: stripHeredocBodies keeps the opener line and its newline, and drops the body and closing delimiter', () => {
   assert.strictEqual(stripHeredocBodies('cat <<EOF\nbody\nEOF\nB'), 'cat <<EOF\nB');
   // #4149: a program that is not a known data reader keeps its body.

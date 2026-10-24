@@ -10,7 +10,7 @@ files:
 
 **Persona:** An unattended `/claude-tweaks:dispatch` Routine firing in a fresh cloud sandbox. It works in the main checkout of a `worktree-always` project (there is no linked worktree yet). It runs `queue-pull-script.md`'s documented `node .../bin/node-eval-file.js … <<NODE_EVAL_EOF` snippets verbatim. Nobody is present to retry a refused call by hand.
 **Goal:** Run a skill-prescribed heredoc script whose JavaScript holds a `>`-shaped comparison (`if (openIds.length > 0) …`) without a `worktree-always` denial. Any real shell redirect into a repo file must still be denied.
-**Entry point:** A Bash tool call carrying a `<<WORD` heredoc fed to a non-shell program (`node`, `cat`, `python3`), issued from the main checkout.
+**Entry point:** A Bash tool call carrying a `<<WORD` heredoc fed to an allowlisted data reader (`node`, `cat`, `python3`, …), issued from the main checkout.
 **Success state:** The documented snippet runs on the first try. Its only real write target is outside the repo (a session temp file), and the gate stays silent. Add a top-level `echo x > tracked-file.js` to the same command and the same gate denies it, with the usual remediation.
 
 ## Steps
@@ -19,7 +19,7 @@ files:
 - **URL:** `plugin/skills/dispatch/queue-pull-script.md`'s grouping block, the `node "{plugin-root}/bin/node-eval-file.js" … > "$DISPATCH_GROUPS" <<NODE_EVAL_EOF … NODE_EVAL_EOF` call
 - **Action:** The firing runs the block exactly as written, with its `$DISPATCH_*` paths pointing at session temp files.
 - **Should feel:** Uneventful. The call runs. No `claude-tweaks: this project requires an isolated worktree` denial appears, and nobody has to rewrite `openIds.length > 0` as `openIds.length` to get past the gate.
-- **Should understand:** The gate's redirect scan (`git-command.js`'s `fileWriteTargets`, and `bash-prefilter.js`'s `hasFileRedirection` in front of it) now drops a heredoc body before scanning, via `stripHeredocBodies`. Text that a non-shell program reads on stdin is data, not shell. So a `>` inside it is not a redirect, and its newlines are not command boundaries. The opener line's own redirect (`> "$DISPATCH_GROUPS"`) is still scanned.
+- **Should understand:** The gate's redirect scan (`git-command.js`'s `fileWriteTargets`, and `bash-prefilter.js`'s `hasFileRedirection` in front of it) now drops a heredoc body before scanning, via `stripHeredocBodies`. Text that an allowlisted data reader (`node`, `cat`, `python3`, …) reads on stdin is data, not shell. So a `>` inside it is not a redirect, and its newlines are not command boundaries. The opener line's own redirect (`> "$DISPATCH_GROUPS"`) is still scanned.
 - **Red flags:** A denial naming a target like `0)` or `b)`. That is a fragment of the script's JavaScript, read as a file path. A skill that starts telling agents to avoid `>` in heredoc code.
 
 ### 2. Slip a real write in next to the heredoc — same session
