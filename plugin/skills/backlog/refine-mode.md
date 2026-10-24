@@ -277,7 +277,7 @@ BACKLOG_REFINE_BODY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" -
 if [ -f "$ASSESS_GRANT" ]; then
   # Fresh row already went through Step 3's grant-check, which fetched and cached the
   # body — reuse it instead of a second GitHub API round-trip for the same content.
-  node -e "console.log(require(process.argv[1]).body)" "$ASSESS_GRANT" > "$BACKLOG_REFINE_BODY"
+  node -e "console.log(require(process.argv[1]).body)" -- "$ASSESS_GRANT" > "$BACKLOG_REFINE_BODY"
 else
   # Blocked row skipped grant-check entirely (Step 3), so no cached body exists yet.
   gh issue view "$ISSUE" --json body -q .body > "$BACKLOG_REFINE_BODY"
@@ -294,7 +294,7 @@ Flagged back by /claude-tweaks:backlog refine: body is not spec-shaped — missi
 
 ```bash
 BACKLOG_REFINE_FLAGBACK="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "backlog-refine-flagback-${ISSUE}.md")"
-node -e "console.log(\`Flagged back by /claude-tweaks:backlog refine: body is not spec-shaped — missing/empty: \${process.argv[1]}. Run /claude-tweaks:specify #\${process.argv[2]} to shape it, then re-add 'ready'.\`)" "$MISSING_LIST" "$ISSUE" > "$BACKLOG_REFINE_FLAGBACK"
+node -e "console.log(\`Flagged back by /claude-tweaks:backlog refine: body is not spec-shaped — missing/empty: \${process.argv[1]}. Run /claude-tweaks:specify #\${process.argv[2]} to shape it, then re-add 'ready'.\`)" -- "$MISSING_LIST" "$ISSUE" > "$BACKLOG_REFINE_FLAGBACK"
 ```
 
 Report every downgrade to the user before proceeding — a silent downgrade would look like the grant simply never happened.

@@ -50,7 +50,7 @@ count surfacing" section.
      const args=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));
      const body=specShapedBody(args.compose);
      const p=recordPayload({ ...args.payload, body, deferReason: args.compose.provenance.deferReason });
-     require('fs').writeFileSync(process.argv[2], JSON.stringify(p))" "$WRAP_UP_LEFTOVER_ARGS" "$WRAP_UP_LEFTOVER_PAYLOAD"
+     require('fs').writeFileSync(process.argv[2], JSON.stringify(p))" -- "$WRAP_UP_LEFTOVER_ARGS" "$WRAP_UP_LEFTOVER_PAYLOAD"
    ```
 
    `$WRAP_UP_LEFTOVER_ARGS` carries `{ compose: {header, currentState, deliverables, acceptanceCriteria|openQuestion, releaseNote, filedBy, provenance, keyFiles?, footer}, payload: {title, type, risk?, size?, ready?, parked?} }` — `type`: `task` by default, `bug` for a defect, `feature` for a distinct new capability. The `needs:definition` label is appended at the staging step below (it is a label with no `recordPayload` parameter).

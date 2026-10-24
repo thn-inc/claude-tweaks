@@ -47,7 +47,7 @@ TTL=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapsho
 if [ -n "$SNAPSHOT" ] && node -e "
   const { isFresh } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
   process.exit(isFresh(process.argv[1], Number(process.argv[2])) ? 0 : 1)
-" "$SNAPSHOT" "$TTL"; then
+" -- "$SNAPSHOT" "$TTL"; then
   cp "$SNAPSHOT" "$ST_BACKLOG_ATTENTION_SNAPSHOT_RAW"
 else
   FIELDS=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').UNION_FIELDS)")

@@ -281,7 +281,7 @@ node -e "
     .filter((f) => exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds)
     .filter((f) => parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) === 'due')
     .forEach((f) => console.log(f.path + '\t[parent-gate] ' + f.id + ': ' + f.title + ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ' + f.id));
-" "$RISK_FLOOR"
+" -- "$RISK_FLOOR"
 ```
 
 Each line is `{path}<TAB>{finding}` — the path fills the row's `Path:Line` column (`SKILL.md`'s
@@ -378,7 +378,7 @@ node -e "
       stateReason: r.facets.notPlanned ? 'NOT_PLANNED' : undefined,
     }))
     .forEach((r) => console.log(r.path + '\t[acceptance-gap] ' + r.id + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo ' + r.id));
-" "$RISK_FLOOR" "$SIZE_FLOOR"
+" -- "$RISK_FLOOR" "$SIZE_FLOOR"
 ```
 
 Each line is `{path}<TAB>{finding}`, the same shape Shape 7 emits — the path fills the row's

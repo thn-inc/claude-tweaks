@@ -163,7 +163,7 @@ SUBSNAP=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/rec
 if [ -n "$SUBSNAP" ] && node -e "
   const { isFresh } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
   process.exit(isFresh(process.argv[1], Number(process.argv[2])) ? 0 : 1)
-" "$SUBSNAP" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
+" -- "$SUBSNAP" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
   cp "$SUBSNAP" "{tmp-sub-issues}"
   echo SUBSNAP_FRESH
 else
@@ -281,7 +281,7 @@ GITLOG=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/reco
 if [ -n "$GITLOG" ] && node -e "
   const { isFresh } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
   process.exit(isFresh(process.argv[1], Number(process.argv[2])) ? 0 : 1)
-" "$GITLOG" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
+" -- "$GITLOG" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
   cp "$GITLOG" "{tmp-git-log}"
 else
   git log "{integration-branch}" --format='%H%x1f%B%x1e' > "{tmp-git-log}"

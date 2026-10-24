@@ -13,7 +13,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --all
 Returns the full config JSON — one entry per key: `{value, source, summary, category, tier, type, default}`.
 
 ```bash
-node -e "const {auditPolicy}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/policy-schema.js'); console.log(JSON.stringify(auditPolicy(process.argv[1])))" "$(git rev-parse --show-toplevel)"
+node -e "const {auditPolicy}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/policy-schema.js'); console.log(JSON.stringify(auditPolicy(process.argv[1])))" -- "$(git rev-parse --show-toplevel)"
 ```
 
 Returns `{unrecognizedKeys, invalidValues, migratableKeys, renamedKeys, sourceExcludedKeys}`.

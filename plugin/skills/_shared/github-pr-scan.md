@@ -248,7 +248,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
         if (c.state !== 'live' && c.state !== 'stale') process.exit(0);
         const parsed = JSON.parse(process.argv[2]);
         console.log(JSON.stringify({ number: Number(process.argv[1]), claimedAt: parsed.claimedAt, source: 'claim' }));
-      " "$NUM" "$CONTENT" >> "$PR_SCAN_UNSETTLED_CLAIMS"
+      " -- "$NUM" "$CONTENT" >> "$PR_SCAN_UNSETTLED_CLAIMS"
     done
 
     # 2. bot:in-progress-labelled issues with no matching claim above (a claim/

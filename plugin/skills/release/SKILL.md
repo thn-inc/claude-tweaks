@@ -56,7 +56,7 @@ RUN_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug 
 REFUSED_DIR=
 # A resolved directory that is terminal, or is a prior release run's own, is refused (#3898) — unless it IS the directory
 # PIPELINE_RUN_DIR names: a stale value (missing dir, archived run-id) falls through to step 2 and is checked like any step-2 directory.
-if [ -n "$RUN_DIR" ] && PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" ENV_RUN_DIR="$PIPELINE_RUN_DIR" node -e 'const { NON_TERMINAL } = require(process.env.PLUGIN_ROOT + "/bin/lib/hooks/run-integrity.js"); const real = (d) => { try { return require("fs").realpathSync(d); } catch { return null; } }; const e = real(process.env.ENV_RUN_DIR || ""); if (e !== null && e === real(process.argv[1])) process.exit(1); const r = JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")); const s = r.status; process.exit((typeof s === "string" && !NON_TERMINAL.has(s)) || r.createdBy === "release-standalone" ? 0 : 1)' "$RUN_DIR" 2>/dev/null; then REFUSED_DIR=$RUN_DIR; RUN_DIR=; fi
+if [ -n "$RUN_DIR" ] && PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" ENV_RUN_DIR="$PIPELINE_RUN_DIR" node -e 'const { NON_TERMINAL } = require(process.env.PLUGIN_ROOT + "/bin/lib/hooks/run-integrity.js"); const real = (d) => { try { return require("fs").realpathSync(d); } catch { return null; } }; const e = real(process.env.ENV_RUN_DIR || ""); if (e !== null && e === real(process.argv[1])) process.exit(1); const r = JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")); const s = r.status; process.exit((typeof s === "string" && !NON_TERMINAL.has(s)) || r.createdBy === "release-standalone" ? 0 : 1)' -- "$RUN_DIR" 2>/dev/null; then REFUSED_DIR=$RUN_DIR; RUN_DIR=; fi
 if [ -z "$RUN_DIR" ]; then
   # Steps 1-2 found nothing, or the guard above refused a prior release run's directory (or step 1's
   # adoption-time anchoring check rejected a worktree-trapped PIPELINE_RUN_DIR, [IL-127]) — clear
@@ -65,7 +65,7 @@ if [ -z "$RUN_DIR" ]; then
   printf '{"status":"active","createdBy":"release-standalone"}\n' > "$RUN_DIR/run-state.json"
 fi
 echo "$RUN_DIR"
-[ -z "$REFUSED_DIR" ] || echo "refused: $REFUSED_DIR (status $(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")).status))' "$REFUSED_DIR"))"
+[ -z "$REFUSED_DIR" ] || echo "refused: $REFUSED_DIR (status $(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")).status))' -- "$REFUSED_DIR"))"
 ```
 
 `$RUN_ROOT` is the main checkout, never a worktree cwd — a bare relative path silently shadows the main copy (`[IL-127]`). Later steps use the carried `{run-dir}` path, a fact of this run, and never re-run the fence above: re-running it would now refuse this run's own directory and mint a stray one. The two-line `$RUN_ROOT` snippet keeps its own re-resolve rule.

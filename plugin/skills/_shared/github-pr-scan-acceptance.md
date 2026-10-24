@@ -306,7 +306,7 @@ node -e "
       stateReason: r.stateReason,
     }));
   gaps.forEach(r => console.log('[acceptance-gap] #' + r.number + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo #' + r.number));
-" "$RISK_FLOOR" "$SIZE_FLOOR"
+" -- "$RISK_FLOOR" "$SIZE_FLOOR"
 ```
 
 Note the spread order: derived fields come after the parsed spread, never before (`[IL-01]`). The
@@ -636,7 +636,7 @@ node -e "
     .filter(f => exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds)
     .filter(f => parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) === 'due')
     .forEach(f => console.log('[parent-gate] #' + f.number + ': ' + f.title + ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #' + f.number));
-" "$RISK_FLOOR"
+" -- "$RISK_FLOOR"
 ```
 
 Un-gated parents recommend the `Open parent gate` action (`tidy/SKILL.md`'s Action Vocabulary,

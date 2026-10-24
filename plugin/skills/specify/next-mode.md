@@ -277,7 +277,7 @@ node -e "
   const ranked = candidates.slice().sort((a, b) =>
     bandOf(a) - bandOf(b) || new Date(a.createdAt) - new Date(b.createdAt));
   console.log(JSON.stringify(ranked.length ? ranked[0] : null));
-" "$PRIORITY_FILTER" > "$PICK"
+" -- "$PRIORITY_FILTER" > "$PICK"
 ```
 
 ## Zero eligible or budget exhausted (loop termination + close-out)

@@ -85,7 +85,7 @@ the same module:
 node -e "
   const { confirmFromFile } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/merge-verdict.js');
   for (const [n, v] of Object.entries(confirmFromFile(process.argv[1], process.argv.slice(2)))) console.log(n + '=' + (v.confirmed ? 1 : 0) + ' latest=' + (v.latest || 'none') + (v.error ? ' error=' + v.error : ''));
-" "$PIPELINE_RUN_DIR/decisions.md" {n}
+" -- "$PIPELINE_RUN_DIR/decisions.md" {n}
 ```
 
 `{latest}` is the printed `latest=` value, or `none` when the snippet printed no line for `{n}`;
@@ -189,7 +189,7 @@ call* is one of dispatch's own Task() calls: cwd-pinned to the worktree it inher
 to the main checkout. Ask `bin/lib/dispatch/task-call.js`:
 
 ```bash
-node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/task-call.js').isDispatchTaskCallForRun(process.argv[1], process.env.CLAUDE_CODE_SESSION_ID))" "$PIPELINE_RUN_DIR"
+node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/task-call.js').isDispatchTaskCallForRun(process.argv[1], process.env.CLAUDE_CODE_SESSION_ID))" -- "$PIPELINE_RUN_DIR"
 ```
 
 `true` means a dispatch Task call: `run-state.json` carries `dispatched: true` and its

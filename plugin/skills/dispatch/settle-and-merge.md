@@ -130,7 +130,7 @@ numbered sequence instead of skipped.
      --jq "[.[] | select(.closingIssuesReferences[]?.number == ${ISSUE}) | .number]" > "$DISPATCH_LINKED_PRS" 2>/dev/null \
      || echo '[]' > "$DISPATCH_LINKED_PRS"
    rm -rf "$DISPATCH_PR_COMMENTS_DIR" && mkdir -p "$DISPATCH_PR_COMMENTS_DIR"
-   for PRN in $(node -e "console.log(require(process.argv[1]).join(' '))" "$DISPATCH_LINKED_PRS"); do
+   for PRN in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_LINKED_PRS"); do
      gh api "repos/{owner}/{repo}/issues/${PRN}/comments?per_page=100" > "$DISPATCH_PR_COMMENTS_DIR/${PRN}.json" 2>/dev/null \
        || echo '[]' > "$DISPATCH_PR_COMMENTS_DIR/${PRN}.json"
    done
@@ -148,7 +148,7 @@ numbered sequence instead of skipped.
      const ceiling = Number(process.argv[3] || 3);
      const ceilingHit = attemptNumber >= ceiling; // equivalent to hasHitRetryCeiling if comments included this attempt's own (not-yet-posted) comment
      console.log(JSON.stringify({ attemptNumber, ceilingHit }));
-   " "$DISPATCH_COMMENTS" "$DISPATCH_PR_COMMENTS_DIR" "$DISPATCH_RETRY_CEILING" > "$ATTEMPT_INFO"
+   " -- "$DISPATCH_COMMENTS" "$DISPATCH_PR_COMMENTS_DIR" "$DISPATCH_RETRY_CEILING" > "$ATTEMPT_INFO"
    ```
 
 **MCP path** (`gh` unavailable, same live-as-of-Task-10 status as `dispatch/SKILL.md`'s Step 4): use the confirmed "list issue comments" mapping from `_shared/github-write-transport.md` for the issue's own comments. Linked-PR discovery and per-PR comment fetches have no MCP equivalent (`_shared/github-pr-scan.md`'s Transport note on PR-backed items) — count from the issue's comments alone in that case, and log the degrade to `decisions.md` (a record with genuinely split legacy attempts may undercount until a `gh`-present run re-settles it) rather than silently treating it as a full count. `countFailedAttempts` and the rest of this step's logic consume the same comment-body-string shape regardless of transport or source count.
@@ -170,7 +170,7 @@ numbered sequence instead of skipped.
      const { attemptFailedCommentBody } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/retry.js');
      const { attemptNumber, ceilingHit } = require(process.argv[1]);
      console.log(attemptFailedCommentBody({ attemptNumber, reason: process.argv[2], ceilingHit, classification: process.argv[3] }));
-   " "$ATTEMPT_INFO" "$REASON" "$CLASSIFICATION" > "$ATTEMPT_COMMENT_BODY"
+   " -- "$ATTEMPT_INFO" "$REASON" "$CLASSIFICATION" > "$ATTEMPT_COMMENT_BODY"
    ```
 
    **Post the full comment to the issue, always** (`#1963`) — regardless of `run-state.json`

@@ -67,7 +67,7 @@ NODE_EVAL_EOF
 
 gh issue list --label auto:build --state open --json number,title,body,labels,createdAt,updatedAt,state --limit 500 > "$DISPATCH_QUEUE_RAW"
 alias_mcp_timestamps "$DISPATCH_QUEUE_RAW"
-QUEUE_RAW_COUNT=$(node -e "console.log(require(process.argv[1]).length)" "$DISPATCH_QUEUE_RAW")
+QUEUE_RAW_COUNT=$(node -e "console.log(require(process.argv[1]).length)" -- "$DISPATCH_QUEUE_RAW")
 if [ "$QUEUE_RAW_COUNT" -ge 500 ]; then
   echo "Warning: the auto:build queue pull returned exactly the --limit cap (500) — this repo may have more open auto:build records than fetched. gh issue list returns newest-first, so any records beyond the cap are the OLDEST same-priority ones, exactly what next's own oldest-first tie-break (Step 3) exists to surface first. Consider raising the cap, or filing this as a signal to re-triage the queue down." >&2
 fi
@@ -169,7 +169,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
   require('fs').writeFileSync(process.argv[4], JSON.stringify(unresolved));
 NODE_EVAL_EOF
 : > "$DISPATCH_VERIFIED_OPEN_DEPS"
-for DEP in $(node -e "console.log(require(process.argv[1]).join(' '))" "$DISPATCH_UNRESOLVED_DEPS"); do
+for DEP in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_UNRESOLVED_DEPS"); do
   STATE=$(gh issue view "$DEP" --json state -q .state 2>/dev/null)
   if [ "$STATE" = "OPEN" ]; then echo "$DEP" >> "$DISPATCH_VERIFIED_OPEN_DEPS"; fi
 done
@@ -188,7 +188,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" 
 NODE_EVAL_EOF
 echo '{}' > "$DISPATCH_NATIVE_DEPS"
 if [ "$WORK_LINKS" = "native" ]; then
-  NATIVE_NUMS=$(node -e "console.log(require(process.argv[1]).map((i) => i.number).join(','))" "$DISPATCH_ELIGIBLE")
+  NATIVE_NUMS=$(node -e "console.log(require(process.argv[1]).map((i) => i.number).join(','))" -- "$DISPATCH_ELIGIBLE")
   if [ -n "$NATIVE_NUMS" ]; then
     if node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-blockers.js" "$NATIVE_NUMS" \
       > "$DISPATCH_NATIVE_DEPS_TMP" 2>"$DISPATCH_NATIVE_DEPS_ERR"; then
@@ -476,8 +476,8 @@ for ROW in $(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLU
   for (const m of missing) console.log(Buffer.from(JSON.stringify(m)).toString('base64'));
 NODE_EVAL_EOF
 ); do
-  NUM=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).number)" "$ROW")
-  TPATH=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).path)" "$ROW")
+  NUM=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).number)" -- "$ROW")
+  TPATH=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).path)" -- "$ROW")
   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$DISPATCH_STANDALONE_DIR" --status AUTO \
     --text "dispatch: #${NUM} excluded, named target ${TPATH} absent at ${INTEGRATION_REF}" --reversibility n/a
   TMP_PROPOSAL=$(mktemp)
@@ -530,9 +530,9 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
 NODE_EVAL_EOF
 
 : > "$DISPATCH_SHIPPED_PR_FILES"
-for PR in $(node -e "console.log(require(process.argv[1]).join(' '))" "$DISPATCH_SHIPPED_PROBE_PRS"); do
+for PR in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_SHIPPED_PROBE_PRS"); do
   FILES_JSON=$(gh pr view "$PR" --json files -q '[.files[].path]' 2>/dev/null || echo '[]')
-  node -e "console.log(JSON.stringify({pr: Number(process.argv[1]), files: JSON.parse(process.argv[2])}))" "$PR" "$FILES_JSON" >> "$DISPATCH_SHIPPED_PR_FILES"
+  node -e "console.log(JSON.stringify({pr: Number(process.argv[1]), files: JSON.parse(process.argv[2])}))" -- "$PR" "$FILES_JSON" >> "$DISPATCH_SHIPPED_PR_FILES"
 done
 
 # Second pass: final tier, now with the probed files available for the
@@ -622,7 +622,7 @@ if ! gh issue list --label bot:in-progress --state open --json number,title,body
   echo '[]' > "$DISPATCH_IN_FLIGHT_RAW"
   echo "AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull" >&2
 fi
-IN_FLIGHT_COUNT=$(node -e "console.log(require(process.argv[1]).length)" "$DISPATCH_IN_FLIGHT_RAW")
+IN_FLIGHT_COUNT=$(node -e "console.log(require(process.argv[1]).length)" -- "$DISPATCH_IN_FLIGHT_RAW")
 if [ "$IN_FLIGHT_COUNT" -ge 200 ]; then
   echo "Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch." >&2
 fi
@@ -658,7 +658,7 @@ fi
 # backlog, accepted for the same reason: this is one informational signal
 # among several, not a correctness-critical filter.
 gh pr list --state open --json number,files,closingIssuesReferences --limit 100 > "$DISPATCH_OPEN_PRS" 2>/dev/null || echo '[]' > "$DISPATCH_OPEN_PRS"
-OPEN_PR_COUNT=$(node -e "console.log(require(process.argv[1]).length)" "$DISPATCH_OPEN_PRS")
+OPEN_PR_COUNT=$(node -e "console.log(require(process.argv[1]).length)" -- "$DISPATCH_OPEN_PRS")
 if [ "$OPEN_PR_COUNT" -ge 100 ]; then
   echo "Warning: the open-PR pull for the cross-PR overlap report (#1579) returned exactly the --limit cap (100) — overlap detection may be missing older open PRs. Informational only; never blocks dispatch." >&2
 fi

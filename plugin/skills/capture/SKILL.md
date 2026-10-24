@@ -124,7 +124,7 @@ GITLOG=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/reco
 if [ -n "$GITLOG" ] && node -e "
   const { isFresh } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
   process.exit(isFresh(process.argv[1], Number(process.argv[2])) ? 0 : 1)
-" "$GITLOG" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
+" -- "$GITLOG" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
   cp "$GITLOG" "$CAPTURE_TRUST_COMMIT_LOG"
 else
   git log "{integration-branch}" --format='%H%x1f%B%x1e' > "$CAPTURE_TRUST_COMMIT_LOG"
@@ -189,7 +189,7 @@ toward the grant.
 2. Build the payload and write the body file via `bin/compose-record.js` (#686/#800's CLI precedent — replaces the hand-rolled compose-then-extract `node -e` pair). The temp payload path keys off `$CLAUDE_CODE_SESSION_ID` (the same session identity `_shared/issue-claims.md` stamps on a claim) rather than a fixed name — a concurrent `/capture` invocation against the same checkout gets its own path, never this session's:
 
    ```bash
-   node -e "require('fs').writeFileSync('/tmp/capture-' + (process.env.CLAUDE_CODE_SESSION_ID||'') + '-payload.json', JSON.stringify({title:process.argv[1], body:process.argv[2], type:process.argv[3], origin:'capture'}))" "$TITLE" "$BODY" "$TYPE"
+   node -e "require('fs').writeFileSync('/tmp/capture-' + (process.env.CLAUDE_CODE_SESSION_ID||'') + '-payload.json', JSON.stringify({title:process.argv[1], body:process.argv[2], type:process.argv[3], origin:'capture'}))" -- "$TITLE" "$BODY" "$TYPE"
 
    node "${CLAUDE_PLUGIN_ROOT}/bin/compose-record.js" "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-payload.json" --out "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md"
    ```
@@ -308,7 +308,7 @@ node -e "const fs=require('fs');
     body: process.argv[2],
     facets: { type: process.argv[3], origin: 'capture' }
   });
-  console.log(record.path)" "$TITLE" "$BODY" "$TYPE"
+  console.log(record.path)" -- "$TITLE" "$BODY" "$TYPE"
 ```
 
 Add `needsDefinition: true` to the `facets` object literal above, parallel to `type`/`origin`, when

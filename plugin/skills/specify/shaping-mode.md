@@ -146,7 +146,7 @@ const hit = shapingRefusal(hits, state);
 const result = hit ? { refuse: true, hit, evidence: state[hit.number] } : { refuse: false };
 if (unreadable.length) result.unreadable = unreadable;
 console.log(JSON.stringify(result));
-" "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"
+" -- "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"
 ```
 
 Only a title-similar `ready` candidate scoring at least 2 signals can refuse, so the call reads claims and linked PRs for those
