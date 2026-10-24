@@ -6,6 +6,7 @@
 // One row per migrated site; later migrations append rows to SITES.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
 const path = require('path');
 
 const { readText } = require('./helpers/read-skill');
@@ -89,3 +90,71 @@ for (const site of SITES) {
     assert.throws(() => checkSite(revertSite(read(site.file), site), site), /quoted --text, not --text-file/);
   });
 }
+
+// Repo-wide sweep (AC1): every `plugin/skills/**/*.md` is scanned for a quoted `--text`
+// whose argument interpolates a `{placeholder}` naming git- or user-supplied text.
+const GIT_TEXT = /reason|paths?\b|path|message|branch|names|file|error|detail|raw|stderr|output|note/i;
+
+// On `collapse(text)`: every quoted `--text "…"` / `--text '…'` argument, and inside it every
+// `{name}` (not a shell `${VAR}`) whose name reads as git- or user-supplied text. The two
+// quote forms are separate alternatives so an apostrophe inside a double-quoted argument
+// ("the first call's HEAD") does not end the match early and hide the site.
+function scanQuotedGitText(text) {
+  const hits = [];
+  for (const m of collapse(text).matchAll(/--text (?:"([^"]*)"|'([^']*)')/g)) {
+    const arg = m[1] ?? m[2];
+    for (const p of arg.matchAll(/(?<!\$)\{([^{}]*)\}/g)) {
+      if (GIT_TEXT.test(p[1])) hits.push({ arg, placeholder: p[1] });
+    }
+  }
+  return hits;
+}
+
+// Quoted `--text` calls whose git-text-looking placeholder is NOT git- or user-supplied text.
+// `fragment` is a substring of the offending argument; `why` says what the value really is.
+const ALLOW = [
+  { file: 'plugin/skills/dispatch/two-call-gate.md', fragment: 'no runner pass stamp verifies the first call', why: '`{reason}` is the closed enum from `checkFirstCallStamp` (worktree-unrecorded|stamp-read-failed|stamp-absent|stamp-not-head|report-missing)' },
+  { file: 'plugin/skills/tidy/actions-github-issues.md', fragment: 'acceptance labeling not landed ({reason})', why: '`{reason}` is a closed enum; the paragraph before it forbids logging a non-bare-word `verify.json` string' },
+  { file: 'plugin/skills/build/micro-plan.md', fragment: 'micro-plan composed directly at {plan-path}', why: '`{plan-path}` is an agent-composed `docs/superpowers/plans/...` path, not git or user text' },
+  { file: 'plugin/skills/build/plan-review.md', fragment: 'ceremony-profile=fast-lane (roster tag plan-review)', why: 'the braces enumerate literal skip conditions the agent picks from, not a substituted value' },
+  { file: 'plugin/skills/build/architecture-alignment.md', fragment: 'design mode, no spec | trivial plan | ceremony-profile=fast-lane', why: 'the braces enumerate literal skip conditions the agent picks from (`ceremony-profile` only matches the file pattern by containing "file")' },
+];
+
+function listSkillFiles(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...listSkillFiles(full));
+    else if (entry.name.endsWith('.md')) out.push(full);
+  }
+  return out;
+}
+
+const skillFiles = () => listSkillFiles(path.join(ROOT, 'plugin', 'skills'))
+  .map((abs) => path.relative(ROOT, abs).split(path.sep).join('/'));
+
+const isAllowed = (file, hit) => ALLOW.some((a) => a.file === file && hit.arg.includes(a.fragment));
+
+test('AC1.1: no skill passes git- or user-supplied text in a quoted --text', () => {
+  const hits = [];
+  for (const file of skillFiles()) {
+    for (const hit of scanQuotedGitText(read(file))) {
+      if (!isAllowed(file, hit)) hits.push({ file, ...hit });
+    }
+  }
+  assert.deepStrictEqual(hits, []);
+});
+
+test('AC1.1 go-red: scanQuotedGitText flags a reverted site', () => {
+  assert.strictEqual(scanQuotedGitText('--text "#{N} conflicted at merge-back ({paths}); re-run sequentially."').length, 1);
+  assert.strictEqual(scanQuotedGitText('--text "the first call\'s HEAD ({reason}) → fallback"').length, 1);
+  assert.deepStrictEqual(scanQuotedGitText('--text "dispatch: #${NUM} excluded"'), []);
+  assert.deepStrictEqual(scanQuotedGitText('--text-file "{text-file}"'), []);
+});
+
+test('AC1.1: every ALLOW entry still matches a live hit', () => {
+  for (const a of ALLOW) {
+    const hits = scanQuotedGitText(read(a.file));
+    assert.ok(hits.some((h) => h.arg.includes(a.fragment)), `stale ALLOW entry: ${a.file} / ${a.fragment}`);
+  }
+});
