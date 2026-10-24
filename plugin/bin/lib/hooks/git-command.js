@@ -88,20 +88,51 @@ function segmentSpans(command) {
 // `(`, `)` or newline inside them is structural. Each skipper takes the index just past its
 // opener and returns { end, closed }: `end` is the index just past the construct (the input's
 // length when it runs off the end) and `closed` says whether its closer was found.
+//
+// Nesting deeper than NEST_LEVEL_CAP stops the scan and marks the result `capped`; a capped result
+// climbs to the top-level span, which then takes the plain reading (the first unescaped `"`), so a
+// pathological nest reads exactly as it did before #4149. Within one top-level call (level 0), each
+// result depends only on (kind, start index), so it is memoized for that call: the double-quote
+// fallback below re-reads a deeper chain from a new index, and without the memo those re-reads
+// multiply with depth (unbounded before the cap; under it, bounded but still super-linear), while
+// with it each construct is scanned once.
+const NEST_LEVEL_CAP = 32;
+let nestMemo = null; // the current top-level call's memo
+function nestMemoized(kind, str, i, level, scan) {
+  if (level > NEST_LEVEL_CAP) return { end: str.length, closed: false, capped: true };
+  const top = nestMemo === null;
+  if (top) nestMemo = new Map();
+  try {
+    const key = i * 3 + kind;
+    let r = nestMemo.get(key);
+    if (r === undefined) {
+      r = scan(str, i, level);
+      nestMemo.set(key, r);
+    }
+    return r;
+  } finally {
+    if (top) nestMemo = null;
+  }
+}
 
 // A double-quoted span. When a construct nested in it never closes, the span falls back to ending
 // at the first unescaped `"` (the reading before #4149), so a nesting this scan cannot follow
 // never swallows the rest of the command.
-function skipDoubleQuoted(str, i) {
+function skipDoubleQuoted(str, i, level = 0) {
+  const r = nestMemoized(0, str, i, level, scanDoubleQuoted);
+  return r.capped && level === 0 ? plainDoubleQuoteEnd(str, i) : r;
+}
+
+function scanDoubleQuoted(str, i, level) {
   const start = i;
   while (i < str.length) {
     const c = str[i];
     if (c === '\\') { i += 2; continue; }
     if (c === '"') return { end: i + 1, closed: true };
-    const r = c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2)
-      : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2)
+    const r = c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2, level + 1)
+      : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2, level + 1)
         : c === '`' ? skipBacktick(str, i + 1) : null;
-    if (r && !r.closed) return plainDoubleQuoteEnd(str, start);
+    if (r && !r.closed) return r.capped ? r : plainDoubleQuoteEnd(str, start);
     i = r ? r.end : i + 1;
   }
   return { end: str.length, closed: false };
@@ -121,7 +152,11 @@ function plainDoubleQuoteEnd(str, i) {
 // `<<` outside arithmetic) is skipped raw through its delimiter line, as bash reads it, so an
 // apostrophe or `)` in heredoc prose closes nothing. Known limit: a `case` pattern's `)` closes the
 // substitution early (inside double quotes the span still ends at its own `"`).
-function skipCommandSubstitution(str, i) {
+function skipCommandSubstitution(str, i, level = 0) {
+  return nestMemoized(1, str, i, level, scanCommandSubstitution);
+}
+
+function scanCommandSubstitution(str, i, level) {
   const arith = str[i] === '(';
   let depth = 0;
   let pending = [];
@@ -136,10 +171,10 @@ function skipCommandSubstitution(str, i) {
       wordStart = false;
       continue;
     }
-    const r = c === '"' ? skipDoubleQuoted(str, i + 1)
+    const r = c === '"' ? skipDoubleQuoted(str, i + 1, level + 1)
       : c === '`' ? skipBacktick(str, i + 1)
-        : c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2)
-          : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2) : null;
+        : c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2, level + 1)
+          : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2, level + 1) : null;
     if (r) {
       if (!r.closed) return r;
       i = r.end;
@@ -182,15 +217,19 @@ function skipCommandSubstitution(str, i) {
 
 // A `${ … }` body: double quotes, substitutions, backticks and inner `${` nest; it ends at the first
 // other `}`. Single quotes are taken literally (inside double quotes they quote nothing).
-function skipParamExpansion(str, i) {
+function skipParamExpansion(str, i, level = 0) {
+  return nestMemoized(2, str, i, level, scanParamExpansion);
+}
+
+function scanParamExpansion(str, i, level) {
   while (i < str.length) {
     const c = str[i];
     if (c === '\\') { i += 2; continue; }
     if (c === '}') return { end: i + 1, closed: true };
-    const r = c === '"' ? skipDoubleQuoted(str, i + 1)
+    const r = c === '"' ? skipDoubleQuoted(str, i + 1, level + 1)
       : c === '`' ? skipBacktick(str, i + 1)
-        : c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2)
-          : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2) : null;
+        : c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2, level + 1)
+          : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2, level + 1) : null;
     if (r && !r.closed) return r;
     i = r ? r.end : i + 1;
   }

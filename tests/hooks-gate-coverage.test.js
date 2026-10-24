@@ -903,6 +903,18 @@ for (const [label, cmd] of [
     });
   }
 
+  // The skippers cap nesting depth: uncapped, a nest of unclosed "$( re-reads its chain without end
+  // (the fallback re-descends) and a deep closed nest overflows the stack; a nest past the cap takes
+  // the plain quote reading, so the trailing write still shows.
+  test('#4149 nesting: a nest of unclosed "$( stays bounded', { timeout: 10000 }, () => {
+    const targets = fileWriteTargets(`echo ${'"$('.repeat(40)}\ncp a /main/f.js`, '/r');
+    assert.deepStrictEqual(targets, [main('copy')]);
+  });
+  test('#4149 nesting: a closed nest deeper than the cap takes the plain quote reading', { timeout: 10000 }, () => {
+    const targets = fileWriteTargets(`echo ${'"$('.repeat(5000)}${')"'.repeat(5000)} && cp a /main/f.js`, '/r');
+    assert.deepStrictEqual(targets, [main('copy')]);
+  });
+
   // lineLeavesStructureOpen: a `)` inside a quoted "$( )" closes no subshell, so the later body stays kept.
   test('#4149 nesting: a ) inside a quoted "$( )" leaves the subshell open (lineLeavesStructureOpen)', () => {
     const targets = fileWriteTargets("( echo \"$(echo \")\")\" >/dev/null\ncat <<'EOF'\necho x > f.js\nEOF\n) | bash", '/r');
