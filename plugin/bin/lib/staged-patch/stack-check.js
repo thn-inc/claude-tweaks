@@ -29,6 +29,9 @@ function gitEnv({ platform = process.platform, devNull = os.devNull, env = proce
   delete out.GIT_DIR;
   delete out.GIT_WORK_TREE;
   delete out.GIT_INDEX_FILE;
+  delete out.GIT_COMMON_DIR;
+  // GIT_DIFF_OPTS sets the context length of every diff git emits, including the re-derived patch.
+  delete out.GIT_DIFF_OPTS;
   // Config carried in the environment (`git -c` exports GIT_CONFIG_PARAMETERS; GIT_CONFIG_COUNT and
   // GIT_CONFIG_KEY_n/VALUE_n are git's own form) is not reached by GIT_CONFIG_GLOBAL or NOSYSTEM.
   delete out.GIT_CONFIG_PARAMETERS;

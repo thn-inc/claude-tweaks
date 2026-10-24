@@ -375,6 +375,12 @@ test('#3696: gitEnv keeps NOSYSTEM, drops repo pointers, and never mutates the i
   assert.deepStrictEqual(input, { PATH: '/bin', GIT_DIR: '/x/.git', GIT_WORK_TREE: '/x', GIT_INDEX_FILE: '/x/i' });
 });
 
+test('#3997: gitEnv drops GIT_COMMON_DIR and GIT_DIFF_OPTS, which re-point the repo and reshape emitted diffs', () => {
+  const env = gitEnv({ platform: 'linux', devNull: '/dev/null', env: { PATH: '/bin', GIT_COMMON_DIR: '/x/.git', GIT_DIFF_OPTS: '-u0' } });
+  for (const k of ['GIT_COMMON_DIR', 'GIT_DIFF_OPTS']) assert.ok(!(k in env), k);
+  assert.strictEqual(env.PATH, '/bin');
+});
+
 test('#3997: gitEnv drops env-carried config (GIT_CONFIG_PARAMETERS/COUNT/KEY_n/VALUE_n), keeps PATH and author identity, never mutates the input env', () => {
   const input = {
     PATH: '/bin',
