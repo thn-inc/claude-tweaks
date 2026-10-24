@@ -209,12 +209,19 @@ test('persist keeps other cache keys intact', () => {
 });
 
 test('prefetch resolves concurrently and fills the memo', async () => {
-  const delayed = (value) => () => new Promise((resolve) => setTimeout(() => resolve(value), 20));
+  // Concurrency is proven by the peak number of lookups in flight at once,
+  // not by a wall-clock bound (tests/wall-clock-budget-conformance.test.js).
+  let inFlight = 0;
+  let peak = 0;
+  const delayed = (value) => () => {
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    return new Promise((resolve) => setTimeout(() => { inFlight -= 1; resolve(value); }, 20));
+  };
   const { deps, calls } = fakeDeps({ byNumberAsync: delayed(OPEN(1)) });
   const r = createPrStateResolver({ root: tmpRoot(), concurrency: 8, deps });
-  const t0 = Date.now();
   await r.prefetch({ numbers: [1, 2, 3, 4, 5, 6, 7, 8] });
-  assert.ok(Date.now() - t0 < 120, `prefetch took ${Date.now() - t0}ms`);
+  assert.equal(peak, 8, `expected all 8 lookups in flight at once, peak was ${peak}`);
   assert.equal(calls.byNumberAsync, 8);
   for (let n = 1; n <= 8; n++) r.byNumber(n);
   assert.equal(calls.byNumber, 0);
