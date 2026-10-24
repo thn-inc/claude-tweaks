@@ -50,7 +50,8 @@ function cachePath(root) {
 
 // -> { lastRunAt: number|null, claimShas: {[issueNumber]: string},
 //      residueFailures: {[reason:path]: {count, firstFailedAt, lastError, escalated}},
-//      lastHealthCheckOkAt: number|null, lastOriginHeadRepairFailedAt: number|null }
+//      lastHealthCheckOkAt: number|null, lastOriginHeadRepairFailedAt: number|null,
+//      prStates: {['n:N'|'b:branch']: {v, at}} }  (#4032, pr-state-cache.js owns the shape)
 // Absent file or corrupt JSON both fail closed to empty defaults — a cache
 // is pure optimization; never let a bad read block or skew reconcile().
 // Only the keys parsed below survive a read, and writers persist
@@ -59,7 +60,7 @@ function cachePath(root) {
 function readCache(root) {
   const empty = {
     lastRunAt: null, claimShas: {}, residueFailures: {}, lastHealthCheckOkAt: null,
-    lastOriginHeadRepairFailedAt: null,
+    lastOriginHeadRepairFailedAt: null, prStates: {},
   };
   let raw;
   try {
@@ -75,6 +76,7 @@ function readCache(root) {
       residueFailures: (parsed.residueFailures && typeof parsed.residueFailures === 'object') ? parsed.residueFailures : {},
       lastHealthCheckOkAt: typeof parsed.lastHealthCheckOkAt === 'number' ? parsed.lastHealthCheckOkAt : null,
       lastOriginHeadRepairFailedAt: typeof parsed.lastOriginHeadRepairFailedAt === 'number' ? parsed.lastOriginHeadRepairFailedAt : null,
+      prStates: (parsed.prStates && typeof parsed.prStates === 'object' && !Array.isArray(parsed.prStates)) ? parsed.prStates : {},
     };
   } catch {
     return empty;

@@ -18,7 +18,7 @@ test('readCache: absent file reads as empty defaults, not a throw', () => {
   const root = tmpRoot();
   assert.deepEqual(readCache(root), {
     lastRunAt: null, claimShas: {}, residueFailures: {}, lastHealthCheckOkAt: null,
-    lastOriginHeadRepairFailedAt: null,
+    lastOriginHeadRepairFailedAt: null, prStates: {},
   });
 });
 
@@ -28,7 +28,7 @@ test('readCache: corrupt JSON fails closed to empty defaults, not a throw', () =
   fs.writeFileSync(path.join(root, '.claude-tweaks', CACHE_FILENAME), '{not json');
   assert.deepEqual(readCache(root), {
     lastRunAt: null, claimShas: {}, residueFailures: {}, lastHealthCheckOkAt: null,
-    lastOriginHeadRepairFailedAt: null,
+    lastOriginHeadRepairFailedAt: null, prStates: {},
   });
 });
 
@@ -36,12 +36,20 @@ test('writeCache then readCache round-trips', () => {
   const root = tmpRoot();
   writeCache(root, {
     lastRunAt: 12345, claimShas: { 7: 'abc' }, residueFailures: {}, lastHealthCheckOkAt: 999,
-    lastOriginHeadRepairFailedAt: 4242,
+    lastOriginHeadRepairFailedAt: 4242, prStates: { 'n:1': { v: 'pr-not-found', at: 5 } },
   });
   assert.deepEqual(readCache(root), {
     lastRunAt: 12345, claimShas: { 7: 'abc' }, residueFailures: {}, lastHealthCheckOkAt: 999,
-    lastOriginHeadRepairFailedAt: 4242,
+    lastOriginHeadRepairFailedAt: 4242, prStates: { 'n:1': { v: 'pr-not-found', at: 5 } },
   });
+});
+
+test('readCache: a non-object prStates (array, string) reads as {}', () => {
+  for (const bad of [[1], 'x', 7]) {
+    const root = tmpRoot();
+    writeCache(root, { prStates: bad });
+    assert.deepEqual(readCache(root).prStates, {});
+  }
 });
 
 test('writeCache: a failure (unwritable dir) is swallowed, never throws', () => {
