@@ -6,7 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
-const x = require('./lib/x.js');
+const x = require('./lib/x');
 
 test('module load and file read', () => {
   assert.strictEqual(x.name, 'x');

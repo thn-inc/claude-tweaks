@@ -15,6 +15,14 @@ test('promisified execFile resolves stdout', async () => {
   assert.strictEqual(r.stdout, '1\n');
 });
 
+// The promisified form goes through execFile's promisify.custom, which calls the unwrapped original —
+// these two calls are only visible if the tracer wrapped that custom implementation too.
+test('promisified execFile children and git calls are traced', async () => {
+  const run = util.promisify(execFile);
+  await run(process.execPath, ['bin/child.js', 'docs/promisified.md'], { env: { PATH: process.env.PATH } });
+  await run('git', ['ls-files', 'docs'], { cwd: __dirname });
+});
+
 // Node caches the cwd until the next chdir: a tracer that called process.cwd() between the chdir and
 // the delete would cache it, and the final process.cwd() would then answer instead of throwing.
 test('deleted cwd still throws', { skip: process.platform === 'win32' && 'win32: a process cwd cannot be removed' }, () => {

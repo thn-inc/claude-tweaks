@@ -1,0 +1,27 @@
+// Not a `*.test.js` on purpose: the real suite must never collect this. tests/test-impact-tracer.test.js
+// copies this fixture project into a temp root (renaming `*.fixture.js` to `*.test.js`) and runs
+// `node --test` there under tools/test-impact/tracer.js, then reads back what each test file read (#4024).
+// Every git call here must record something narrower than the root prefix: this file records no `c ''`.
+'use strict';
+const { test } = require('node:test');
+const path = require('path');
+const { execFileSync, execSync } = require('child_process');
+
+const quiet = (cwd) => ({ cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+
+test('git glob and magic pathspecs', () => {
+  execFileSync('git', ['ls-files', '--', '*.md'], quiet(path.join(__dirname, 'docs', 'listed')));
+  execFileSync('git', ['ls-files', '--', ':(glob)docs/*/x.md'], quiet(__dirname));
+});
+
+test('git non-content subcommand with -C', () => {
+  execFileSync('git', ['-C', __dirname, 'rev-parse', '--show-toplevel'], quiet(__dirname));
+});
+
+test('shell string with an env-assignment prefix', () => {
+  execSync('FOO=1 git ls-files', quiet(path.join(__dirname, 'bin')));
+});
+
+test('sh -c script', { skip: process.platform === 'win32' && 'win32: no sh' }, () => {
+  execFileSync('sh', ['-c', 'git ls-files'], quiet(path.join(__dirname, 'lib')));
+});

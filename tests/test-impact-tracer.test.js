@@ -16,7 +16,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const TRACER = path.join(ROOT, 'tools', 'test-impact', 'tracer.js');
 const FIXTURE = path.join(__dirname, 'fixtures', 'test-impact');
-const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js'];
+const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js'];
 
 function copyFixture(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
@@ -138,8 +138,34 @@ test('non-node child records its in-repo path arguments', { skip: process.platfo
 });
 
 test('wrapped execFile keeps promisify.custom', () => {
-  recordsOf('c.test.js');
+  const c = recordsOf('c.test.js');
   assertPassed('promisified execFile resolves stdout');
+  assert.ok(c.has(rec('f', 'docs/promisified.md')), 'a promisified execFile child with an explicit env is traced');
+  assert.ok(c.has(rec('c', 'docs')), 'a promisified git content call records c');
+});
+
+test('a relative require records its resolution candidates as s', () => {
+  const a = recordsOf('a.test.js');
+  for (const p of ['lib/x', 'lib/x.js', 'lib/x.json', 'lib/x/index.js', 'lib/x/package.json']) {
+    assert.ok(a.has(rec('s', p)), `a must record s ${p}`);
+  }
+});
+
+test('git glob and magic pathspecs record their literal directory prefix', () => {
+  const d = recordsOf('d.test.js');
+  assert.ok(d.has(rec('c', 'docs/listed')), "-- '*.md' records the git cwd's prefix");
+  assert.ok(!d.has(rec('f', 'docs/listed/*.md')), 'a glob is not a literal file');
+  assert.ok(d.has(rec('c', 'docs')), "-- ':(glob)docs/*/x.md' records c docs");
+});
+
+test('git option values are not path arguments', () => {
+  assert.ok(!recordsOf('d.test.js').has(rec('c', '')), 'git -C <root> rev-parse records no root prefix');
+});
+
+test('shell env prefixes and sh -c scripts are read as the command they run', () => {
+  const d = recordsOf('d.test.js');
+  assert.ok(d.has(rec('c', 'bin')), 'FOO=1 git ls-files is a git content command');
+  if (process.platform !== 'win32') assert.ok(d.has(rec('c', 'lib')), 'sh -c "git ls-files" is a git content command');
 });
 
 test('absolute path never consults process.cwd', { skip: process.platform === 'win32' && 'win32: a process cwd cannot be removed' }, () => {
