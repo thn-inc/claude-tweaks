@@ -12,11 +12,17 @@
 // to this checkout's plugin/skills. The scan window is [until - since-days, until) over file mtimes.
 //
 // Output (--json prints it; otherwise a short table): { window, files, unreadable, calls, refusals,
-// perPipeline: { runs, attributedRefusals, unattributedRefusals, mean }, byReason, byShape, byFence, top }.
+// perPipeline: { runs, attributedRefusals, unattributedRefusals, mean, median }, byReason, byShape, byFence, top }.
 //   calls       unique Bash + Write tool_use ids; refusals: those whose result carries the isolation refusal
 //   unreadable  files, directories and JSON lines the walk could not read (a store that changes mid-walk)
-//   perPipeline runs is the number of distinct pipeline run ids named by an attributed refusal; mean is
-//               attributedRefusals / runs, so a run with no refusal does not enter it
+//   perPipeline the measure for "guard refusals per pipeline". runs: every pipeline run whose id timestamp
+//               (YYYY-MM-DDTHHMMSS, UTC) lies in the window and that a Bash or Write call in the scanned files
+//               names (or that a refusal was attributed to), whether or not it was refused. attributedRefusals:
+//               refusals attributed to one of those
+//               runs; unattributedRefusals: the rest (no run named, or a run outside the window). mean and
+//               median: attributedRefusals per run over that denominator, so a clean run counts as 0.
+//               A refusal's run is the nearest run id the same file named before the call; a subagent file
+//               that names none inherits its parent session's run (see transcripts.js).
 //   byShape     detector ids (tools/guard-refusals/shapes.js, a command may match several) plus
 //               `unclassified` for a refusal no detector flags
 //   byFence     `file:line` of the skill fence a refusal's command was copied from -> refusals
@@ -82,12 +88,32 @@ function sortedCounts(map) {
   return Object.fromEntries(Object.entries(map).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)));
 }
 
+// The id's own timestamp (`2026-10-24T193452-…`, UTC), in ms; NaN when it has none.
+function runStartMs(id) {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})-/.exec(id);
+  return m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`) : NaN;
+}
+
+function median(sorted) {
+  if (!sorted.length) return 0;
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
 function summarize({ window, scan, index }) {
+  const sinceMs = Date.parse(window.since);
+  const untilMs = Date.parse(window.until);
+  // A run that was refused is a run, even when only an Agent prompt or an inherited parent run names it.
+  const candidates = new Set([...scan.referencedRuns, ...scan.refusals.map((r) => r.runId).filter(Boolean)]);
+  const perRun = Object.fromEntries([...candidates]
+    .filter((id) => runStartMs(id) >= sinceMs && runStartMs(id) < untilMs)
+    .map((id) => [id, 0]));
   const byReason = Object.fromEntries(REASONS.map((r) => [r, 0]));
   const byShape = {};
   const byFence = {};
   const top = {};
-  const runCounts = {};
   let attributed = 0;
   const refusals = scan.refusals.map((r) => {
     const shapes = detectShapes(r.command, { placeholders: false }); // a transcript holds what the guard saw
@@ -95,9 +121,9 @@ function summarize({ window, scan, index }) {
     bump(byReason, r.reason);
     for (const s of shapes.length ? shapes : ['unclassified']) bump(byShape, s);
     for (const f of fences) bump(byFence, f);
-    if (r.runId) {
+    if (r.runId && Object.hasOwn(perRun, r.runId)) {
       attributed++;
-      bump(runCounts, r.runId);
+      perRun[r.runId]++;
     }
     if (!top[r.reason]) top[r.reason] = [];
     if (top[r.reason].length < TOP_PER_REASON) top[r.reason].push(r.command.slice(0, TOP_COMMAND_CHARS));
@@ -106,7 +132,8 @@ function summarize({ window, scan, index }) {
       command: r.command.slice(0, TOP_COMMAND_CHARS), reason: r.reason, runId: r.runId, shapes, fences,
     };
   });
-  const runs = Object.keys(runCounts).length;
+  const counts = Object.values(perRun).sort((a, b) => a - b);
+  const runs = counts.length;
   return {
     window,
     files: scan.files,
@@ -117,7 +144,8 @@ function summarize({ window, scan, index }) {
       runs,
       attributedRefusals: attributed,
       unattributedRefusals: refusals.length - attributed,
-      mean: runs ? Math.round((attributed / runs) * 100) / 100 : 0,
+      mean: runs ? round2(attributed / runs) : 0,
+      median: round2(median(counts)),
     },
     byReason,
     byShape: sortedCounts(byShape),
@@ -130,7 +158,7 @@ function renderTable(out) {
   const lines = [
     `guard refusals ${out.window.since} .. ${out.window.until}`,
     `files ${out.files} (unreadable ${out.unreadable})  calls ${out.calls}  refusals ${out.refusals.length}`,
-    `per pipeline: ${out.perPipeline.attributedRefusals} attributed over ${out.perPipeline.runs} run(s), mean ${out.perPipeline.mean}; ${out.perPipeline.unattributedRefusals} unattributed`,
+    `per pipeline: ${out.perPipeline.attributedRefusals} attributed over ${out.perPipeline.runs} run(s), mean ${out.perPipeline.mean}, median ${out.perPipeline.median}; ${out.perPipeline.unattributedRefusals} unattributed`,
     '',
     'by reason',
     ...Object.entries(out.byReason).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([k, n]) => `  ${String(n).padStart(6)}  ${k}`),
@@ -178,6 +206,12 @@ function run({ argv, deps: given = {} }) {
     }
     if (!isDir) {
       deps.err(`guard-refusals.js: ${flag} ${dir} is not a directory\n${USAGE}`);
+      return 2;
+    }
+    try {
+      deps.fs.readdirSync(dir);
+    } catch (err) {
+      deps.err(`guard-refusals.js: ${flag} ${dir} cannot be read (${err.code || err.message})\n${USAGE}`);
       return 2;
     }
   }
