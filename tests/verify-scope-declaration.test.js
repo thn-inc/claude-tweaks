@@ -1,8 +1,9 @@
 // tests/verify-scope-declaration.test.js — pins this repo's own
 // .claude-tweaks/verify-scope.json (#1924): it parses, no source path maps
 // to [], and the engine classifies the two canonical deltas as the parent
-// design intends (ledger rows → none, skill prose → full). Reads the live
-// file deliberately — the declaration IS the contract.
+// design intends (ledger rows → none, skill prose → impact-selected via the
+// test-impact map, #4024). Reads the live file deliberately — the
+// declaration IS the contract.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -13,6 +14,7 @@ const REPO_ROOT = path.join(__dirname, '..');
 const DECL = path.join(REPO_ROOT, '.claude-tweaks', 'verify-scope.json');
 const { readDeclaration } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'verify', 'declaration.js'));
 const { selectScope } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'verify', 'scope.js'));
+const { encodeImpactMap, parseImpactMap } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 const { BOOKKEEPING_RULES } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'init', 'verify-scope-starter.js'));
 const { readText } = require('./helpers/read-skill');
 const STAMP = { sha: 'a'.repeat(40), fullSha: 'a'.repeat(40), scope: 'full' };
@@ -28,22 +30,57 @@ test('this repo declares its own verify scope and it passes readDeclaration (#19
       assert.deepStrictEqual(rule.suites, ['journeys'], 'docs/journeys/** maps to the journeys suite only');
       continue;
     }
+    if (rule.impact === true) continue;
     assert.ok(rule.suites === '*' || (Array.isArray(rule.suites) && rule.suites.length === 0), `rule ${rule.match} must be "*" or []`);
   }
+  // #4024: the test runner and the map builder change how every test runs or
+  // how the map is built, not what a test reads — every suite; the rest of
+  // plugin/tests/tools goes through the test-impact map.
+  const EVERY_SUITE = ['tools/run-tests.js', 'tools/test-impact/**'];
   for (const rule of r.decl.rules) {
-    if (/^(plugin|tests|tools)\//.test(rule.match)) assert.strictEqual(rule.suites, '*', `${rule.match} must map to every suite`);
+    if (!/^(plugin|tests|tools)\//.test(rule.match)) continue;
+    if (EVERY_SUITE.includes(rule.match)) assert.strictEqual(rule.suites, '*', `${rule.match} must map to every suite`);
+    else assert.strictEqual(rule.impact, true, `${rule.match} must be an impact rule`);
   }
+  const matches = r.decl.rules.map((rule) => rule.match);
+  for (const m of [...EVERY_SUITE, 'plugin/**', 'tests/**', 'tools/**']) assert.ok(matches.includes(m), `missing rule ${m}`);
+  for (const m of EVERY_SUITE) assert.ok(matches.indexOf(m) < matches.indexOf('tools/**'), `${m} must precede tools/** (first match wins)`);
+  assert.ok(!matches.includes('plugin/skills/**'), 'plugin/skills/** is covered by plugin/**');
+  assert.strictEqual(r.decl.impact.suite, 'tests');
+  assert.ok(r.decl.impact.command.includes('--files-from {files}'), r.decl.impact.command);
+  assert.ok(r.decl.impact.fetch.includes('tools/test-impact.js fetch'), r.decl.impact.fetch);
 });
 
-test('a ledger-row delta resolves to none; a skill-prose delta resolves to full (#1924 AC5)', () => {
+test('a ledger-row delta resolves to none; a skill-prose delta is impact-selected, else its suite runs full (#1924 AC5, #4024)', () => {
   const { decl } = readDeclaration(DECL);
-  const sel = (files) => selectScope({ decl, files, stamp: STAMP });
+  const sel = (files, impact = null) => selectScope({ decl, files, stamp: STAMP, impact });
   assert.strictEqual(sel(['docs/plans/2026-09-05-spec-1921-ledger.md']).mode, 'none');
   assert.strictEqual(sel(['.claude-tweaks/pipelines/2026-09-05T193518-x/spec-1/work/1-spec.md']).mode, 'none');
-  assert.strictEqual(sel(['plugin/skills/test/SKILL.md']).mode, 'full');
-  assert.strictEqual(sel(['plugin/bin/verify.js', 'docs/plans/x-ledger.md']).mode, 'full');
   assert.strictEqual(sel(['docs/skill-graph.md']).mode, 'full');
   assert.deepStrictEqual(sel(['docs/skill-graph.md']).unmatched, ['docs/skill-graph.md']);
+
+  // A fixture map: one test reads the skill file, one reads verify.js.
+  const parsed = parseImpactMap(JSON.stringify(encodeImpactMap({
+    commit: 'b'.repeat(40), tracedAt: '2026-10-24T00:00:00Z', exitCode: 0, node: 'v20.0.0',
+    tests: { 'tests/a.test.js': { f: ['plugin/skills/test/SKILL.md'] }, 'tests/b.test.js': { f: ['plugin/bin/verify.js'] } },
+  })));
+  assert.strictEqual(parsed.ok, true);
+  const ctx = { map: parsed.map, problem: null, headTests: ['tests/a.test.js', 'tests/b.test.js'] };
+  const prose = sel(['plugin/skills/test/SKILL.md'], ctx);
+  assert.strictEqual(prose.mode, 'scoped');
+  assert.deepStrictEqual(prose.suites, ['tests']);
+  assert.deepStrictEqual(prose.impact.files, ['tests/a.test.js']);
+  assert.strictEqual(prose.impact.fallback, null);
+  assert.deepStrictEqual(sel(['plugin/bin/verify.js', 'docs/plans/x-ledger.md'], ctx).impact.files, ['tests/b.test.js']);
+
+  // No map context: the impact suite runs its full command and names why.
+  const noMap = sel(['plugin/skills/test/SKILL.md']);
+  assert.strictEqual(noMap.impact.fallback, 'map-missing');
+  assert.strictEqual(noMap.impact.files, null);
+  assert.deepStrictEqual(noMap.suites, ['tests']);
+  // A changed test runner is never impact-selected: every suite runs.
+  assert.strictEqual(sel(['tools/run-tests.js'], ctx).mode, 'full');
+  assert.strictEqual(sel(['tools/test-impact/tracer.js'], ctx).mode, 'full');
 });
 
 test('a journey-only delta runs only the journeys suite; a mixed delta stays full (#3337)', () => {

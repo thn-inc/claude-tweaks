@@ -17,6 +17,7 @@ const CLI = path.join(ROOT, 'tools', 'test-impact.js');
 const { buildMap } = require(path.join(ROOT, 'tools', 'test-impact', 'build-map.js'));
 const { run } = require(CLI);
 const { parseImpactMap, encodeImpactMap } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
+const { readText } = require('./helpers/read-skill');
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -341,4 +342,31 @@ test('trace under a path with a space: the real CLI maps lib/x.js to the test th
     assert.ok(parsed.map.tests['tests/y.test.js'].f.includes('lib/y.js'));
     assert.ok(!parsed.map.tests['tests/y.test.js'].f.includes('lib/x.js'));
   });
+});
+
+// Workflow shape — .github/workflows/test-impact-map.yml builds the map `fetch` downloads (the
+// workflow and artifact names fetch passes to gh are pinned above): main and PR triggers, one run
+// per commit, a clean-tree trace, and an upload that survives a red suite. Read through readText,
+// as tests/windows-regression-file-issue.test.js does, so a CRLF checkout parses like CI's LF one.
+const WORKFLOW_FACTS = {
+  'push to main': /^on:\n {2}push:\n {4}branches: \[main\]\n/m,
+  'workflow_dispatch': /^ {2}workflow_dispatch: \{\}\n/m,
+  'pull_request on the tracer paths': /^ {2}pull_request:\n {4}paths:\n {6}- tools\/test-impact\/\*\*\n/m,
+  'one run per commit': /^concurrency:\n {2}group: test-impact-map-\$\{\{ github\.sha \}\}\n {2}cancel-in-progress: false\n/m,
+  'read-only token': /^permissions:\n {2}contents: read\n/m,
+  'clean-tree trace': /^ {8}run: node tools\/test-impact\.js trace --out "\$RUNNER_TEMP\/test-impact-map\.json"\n/m,
+  'upload even on failure': /^ {8}if: always\(\)\n {8}with:\n {10}name: test-impact-map\n {10}path: \$\{\{ runner\.temp \}\}\/test-impact-map\.json\n/m,
+};
+const missingWorkflowFacts = (text) => Object.keys(WORKFLOW_FACTS).filter((k) => !WORKFLOW_FACTS[k].test(text));
+
+test('the test-impact-map workflow uploads the artifact fetch downloads, traced on a clean tree', () => {
+  const text = readText(path.join(ROOT, '.github', 'workflows', 'test-impact-map.yml'));
+  assert.deepStrictEqual(missingWorkflowFacts(text), []);
+  assert.doesNotMatch(text, /^\s*run:.*--allow-dirty/m, 'CI traces a fresh checkout; --allow-dirty would hide a dirtied tree');
+  // Each fact goes red on its own: strip only its match and the predicate names exactly it.
+  for (const [fact, re] of Object.entries(WORKFLOW_FACTS)) {
+    const doctored = text.replace(re, '');
+    assert.notStrictEqual(doctored, text, fact);
+    assert.deepStrictEqual(missingWorkflowFacts(doctored), [fact]);
+  }
 });

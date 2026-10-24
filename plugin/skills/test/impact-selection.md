@@ -1,0 +1,83 @@
+Test-impact selection — the `impact` block of `.claude-tweaks/verify-scope.json`, the map it reads, and what `verify.js --scope` reports for it (#4024). Read when the declaration declares `impact`, or a report carries `scope.impact`.
+
+# Test-impact selection
+
+A declaration's `impact` block narrows one suite to the test files a test-impact map says read a changed path. The map is built from one traced full-suite run and stamped with the commit it ran at. Whenever the map cannot be trusted, the suite runs its full command and the report names why. Selection fails closed: an unknown never selects fewer tests.
+
+## Declaration
+
+| Field | Meaning |
+|-------|---------|
+| `suite` | The declared suite that impact rules narrow (required). |
+| `command` | That suite's subset command. It must contain `{files}`, which becomes the path of a list file with one repo-relative test path per line (required). |
+| `tests` | Non-empty array of globs naming the suite's test files (required). |
+| `maxAgeCommits` | Positive integer, default 200: the most commits a map may trail HEAD. |
+| `map` | Where the map lives: a repo-relative path with no `..` segment, optionally behind a leading `{git-common-dir}/`. Default: `{git-common-dir}/claude-tweaks-test-impact.json`, which every worktree of the checkout shares. |
+| `fetch` | Optional command that downloads a ready map. It never traces. |
+
+No other key is accepted. `impact` cannot be combined with a tool-scoped `checks.tests` command (`{base}`), since that tool selects its own tests. An impact rule is `{ "match": "<glob>", "impact": true, "static": <bool> }`. It carries no `suites`, because its suite is `impact.suite`, and it needs a valid top-level `impact` block. Rules still match first-wins, so a path that changes how every test runs (the test runner, the map builder) goes in a `"suites": "*"` rule placed above the impact rules.
+
+`{files}` is shell-quoted for the platform. A command holding its own quote, backtick or backslash refuses the substitution whenever the list path needs quoting (a space anywhere in the log dir's path counts), so keep `command` free of those characters.
+
+## The map
+
+The map is JSON: `{version: 1, commit, tracedAt, exitCode, node, paths, tests}`. `paths` is one sorted table of repo-relative POSIX paths. Each `tests` entry lists indexes into that table under up to four kinds:
+
+| Kind | Records |
+|------|---------|
+| `f` | content reads: file reads and opens, copy sources, `stat`/`lstat`, module loads |
+| `s` | existence probes: `exists`, `access`, `realpath`, `readlink`, a `require`'s resolution candidates |
+| `d` | directory listings: `readdir`, `opendir`, the source directory of a copy |
+| `c` | content prefixes: a non-node child's in-repo directory argument, or a content-reading `git` subcommand's cwd or pathspec prefix |
+
+A prefix covers a path when `prefix === ''` (the repo root), `p === prefix`, or `p` starts with `prefix + '/'`.
+
+**Selection.** Each changed path matched by an impact rule is checked against every map test still present at HEAD. A modified path (`M`) selects a test that content-read it (`f`) or holds a covering `c` prefix. An added, deleted or renamed path (`A`/`D`) also selects a test that probed it (`s`) or listed a directory covering it (`d`). A path with no recorded status counts as `A`, the broader match. The selected set is the matched tests, plus changed test files present at HEAD, plus test files at HEAD that the map does not know (untraced tests, which always run).
+
+## When the impact suite runs full
+
+`report.json`'s `scope.impact.fallback` names the reason:
+
+| Fallback | Cause |
+|----------|-------|
+| `map-missing` | No map file at the resolved path. |
+| `map-invalid: {reason}` | Unparseable JSON, a bad shape, the wrong version, a bad commit, or the file is unreadable. |
+| `map-from-failing-suite` | The traced run's `exitCode` was not 0. |
+| `map-not-ancestor` | The map's commit is not an ancestor of HEAD. |
+| `map-stale: {n} commits > {max}` | The map trails HEAD by more than `maxAgeCommits`. An age git cannot count reads as stale. |
+| `untraced-path: {p}` | A changed non-test path that no traced read covers. |
+| `head-tests-unreadable` | git could not list the test files at HEAD. |
+| `map-unlocatable` | git could not name the checkout root or common dir. |
+| `files-list-unquotable: {reason}` | `{files}` could not be substituted safely. |
+| `files-list-unwritable: line break in {path}` | A selected path holds a line break, so the list file cannot carry it. |
+| `no-anchor` | No stamp anchor and no merge-base to diff against. |
+
+When a map problem exists and `fetch` is declared, the runner runs `fetch` once from the checkout root, with a 120 s timeout and its output discarded, and re-reads the map only when it exits 0. A failed fetch leaves the original reason standing.
+
+A non-impact rule, or an unmatched path, that selects the impact suite supersedes the subset, and the suite runs full with `superseded: true`. A delta that touches no impact-rule path gives `files: []`: the impact suite runs nothing. `files: null` always means the suite runs its full command.
+
+## Anchoring
+
+Changed paths are diffed from the stamp's `fullSha`, as every scoped run is. With no usable stamp, an impact declaration anchors on the base the caller named: the merge-base with `--integration-branch`, or the `--base` commit. The first run of a branch is then impact-selected too, instead of full. The resulting stamp is `scoped`, with `fullSha` set to that base. It is never a full pass, but it does verify HEAD (`verifiedHead`).
+
+## Report
+
+`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, superseded, mapPath, mapCommit, mapAgeCommits, fetch, listPath, selectedFiles}`. `fetch` is `{ran, exitCode, durationMs}` when a fetch ran, else `null`. `listPath` and `selectedFiles` are set only when a subset ran. Under `Scope:`, stdout prints one of:
+
+- `Impact: {selected} of {n} test file(s) selected (map {commit9}, {age} commit(s) old)`
+- `Impact: full {suite} — {fallback | superseded by a full-suite rule}`
+
+## Refresh
+
+The map is built outside the runner by a traced full-suite run: a read tracer preloaded into every node process of the suite records each test file's reads. The usual refresh path is a post-merge CI job that uploads the map, with `fetch` downloading the newest one whose commit is an ancestor of HEAD. Verify never traces. CI's full suite stays the merge gate. Impact selection only shortens local verification.
+
+**Known limits — what a map can miss:**
+
+- **Module loads.** CommonJS loads and a relative or absolute `require`'s resolution candidates are traced. ESM `import` loads are seen only through the file-system calls the loader makes.
+- **Non-node children.** Reads by a non-node child process are approximated. Its in-repo path arguments are recorded, and a content-reading `git` subcommand records a content prefix.
+- **Map-to-base drift.** A test that started reading a file after the map's commit is not selected for that file until the map refreshes.
+- **POSIX only.** Tracing runs on POSIX: on win32, `NODE_OPTIONS` quoting drops the tracer path's backslashes.
+
+## Full mode
+
+Build Common Step 5 runs the scoped invocation from `verification.md`'s Re-verify scoping when the declaration declares `impact` (`--run` only when `$PIPELINE_RUN_DIR` is set), so the impact suite runs its selected subset. Standalone `/claude-tweaks:test` passes no `--scope` and is the explicit full mode: every suite runs its full command.
