@@ -6,14 +6,13 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 // CRLF-normalized: a core.autocrlf checkout holds the doc CRLF in the working
 // tree (LF in the blob), and every fence regex below is `\n`-anchored.
-const DOC = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'test', 'verification.md'), 'utf8').replace(/\r\n/g, '\n');
+const DOC = readText(path.join(ROOT, 'plugin', 'skills', 'test', 'verification.md'));
 const { parseArgs, UsageError } = require(
   path.join(ROOT, 'plugin', 'bin', 'lib', 'verify', 'args.js'));
 

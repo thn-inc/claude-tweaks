@@ -2,15 +2,15 @@
 // #3005: QA dispatch resolves absolute origins inside navigate steps, not only story.url.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const QA_PROMPTS = 'plugin/skills/test/qa-prompts.md';
 const BLOCK_START = "**Resolve each story's dispatch URL against `APP_URL`**";
 const BLOCK_END = '**Canonical schema.**';
 
 function read(rel) {
-  return fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\r\n/g, '\n');
+  return readText(path.join(__dirname, '..', rel));
 }
 
 function between(text, startLiteral, endLiteral) {
@@ -109,7 +109,7 @@ const QA_PROMPTS_GO_RED = [
 test('AC3.1: every qa-prompts assertion goes red on its own prose, matched by its own message', () => {
   const live = liveBlock();
   const asserted = [...new Set(QA_PROMPTS_GO_RED.map(([message]) => message))];
-  const source = fs.readFileSync(__filename, 'utf8');
+  const source = readText(__filename);
   const declared = [...source.matchAll(/^\s+assert\.match\(block, .*, '([^']+)'\);$/gm)].map((m) => m[1]);
   assert.deepEqual(asserted.sort(), [...new Set(declared)].sort(), 'the table covers exactly the assertions assertQaPromptsBlock declares');
   for (const [message, mutate] of QA_PROMPTS_GO_RED) {

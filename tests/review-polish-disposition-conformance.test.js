@@ -8,13 +8,13 @@
 // suggestion-driven dispatch of the same finding.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const REVIEW_STEPS_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'review', 'code-mode-steps.md');
 const POLISH_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'modes', 'polish.md');
-const reviewSteps = fs.readFileSync(REVIEW_STEPS_PATH, 'utf8');
-const polish = fs.readFileSync(POLISH_PATH, 'utf8');
+const reviewSteps = readText(REVIEW_STEPS_PATH);
+const polish = readText(POLISH_PATH);
 
 test('Step 6.7 writes dispositionByReview with all five statuses onto the matching cache entry by id', () => {
   assert.ok(reviewSteps.includes('dispositionByReview'), 'code-mode-steps.md must name the dispositionByReview field');
@@ -131,7 +131,7 @@ test('cross-references to the renamed table are updated repo-wide (no stale "thr
   const REVIEW_MODE_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'modes', 'review.md');
   const POLISH_EXEC_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'polish-execution.md');
   for (const p of [REVIEW_STEPS_PATH, POLISH_PATH, REVIEW_MODE_PATH, POLISH_EXEC_PATH]) {
-    const content = fs.readFileSync(p, 'utf8');
+    const content = readText(p);
     assert.ok(!/three-way consumption/i.test(content), `${path.basename(p)} must not cite the retired "three-way consumption" name`);
   }
 });

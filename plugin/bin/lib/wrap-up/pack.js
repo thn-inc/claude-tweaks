@@ -415,11 +415,12 @@ function namesRecordReference(resolution, excludeRecords) {
 // special-cased. A row naming a `staged/…` path or a record reference is
 // exempt: its reason lives in the staged proposal's or filed record's own
 // `Defer-reason:`. A row whose Item starts with the SDD ruling producer's
-// fixed `SDD ruling —` template is exempt too: a ruling states a decision to
-// ratify, not a deferral, and the producer's no-run-dir and degraded
-// stage-item.js paths emit it `open` with no staged path
-// (build/dispatch.md). A Resolution is valid iff it carries exactly one token
-// and its value is in DEFER_REASONS.
+// fixed `SDD ruling —` template is exempt too: a deferral ruling's reason
+// lives in its staged file's `Defer-reason:` header (gated by
+// console/resolve.js's sddRulingDeferralReason), not in the ledger row, and
+// the producer's no-run-dir and degraded stage-item.js paths emit it `open`
+// with no staged path (build/dispatch.md). A Resolution is valid iff it
+// carries exactly one token and its value is in DEFER_REASONS.
 const LEDGER_DEFER_REASON_RE = /Defer-reason:\s*`?([A-Za-z-]+)(?![\w-])`?/g;
 const LEDGER_SDD_RULING_ITEM_RE = /^SDD ruling —/;
 

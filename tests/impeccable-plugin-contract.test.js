@@ -33,6 +33,7 @@ const path = require('node:path');
 const { checkVersion, checkAssertions } = require('../tools/upstream-drift/checks');
 const { loadManifest } = require('../tools/upstream-drift/manifest');
 const engine = require('../plugin/bin/lib/impeccable-engine');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const FIXTURES = path.join(__dirname, 'fixtures', 'impeccable-plugin');
@@ -67,7 +68,7 @@ const versionSkipReason = versionCheck.status === 'ok'
 const PIN_COMMENT_RE = /<!--\s*upstream-pin:\s*impeccable-plugin@(\S+)\s+impeccable-engine@(\S+)\s*-->/;
 
 test('impeccable-plugin.md pins the same plugin AND engine versions the drift manifest does (AC5)', () => {
-  const doc = fs.readFileSync(CONTRACT_DOC, 'utf8');
+  const doc = readText(CONTRACT_DOC);
   const match = doc.match(PIN_COMMENT_RE);
   assert.ok(
     match,
@@ -188,7 +189,7 @@ test('fixture: signals-backend-repo.json still matches validateSignals() shape',
 });
 
 test('fixture: concept-seed.txt still matches validateConceptSeed() shape', () => {
-  const fixtureText = fs.readFileSync(path.join(FIXTURES, 'concept-seed.txt'), 'utf8');
+  const fixtureText = readText(path.join(FIXTURES, 'concept-seed.txt'));
   const out = engine.run('concept-seed', ['--scope', 'surface'], {}, fakeEngineDeps(fixtureText));
   assert.strictEqual(out.ok, true, out.detail || out.reason);
   assert.strictEqual(out.value, fixtureText);
@@ -299,7 +300,7 @@ test('a non-scannable changed file is dropped from scan.targets', () => {
 });
 
 test('the Layer 3 rules replayed above still match frontend-detection.md', () => {
-  const doc = fs.readFileSync(DETECTION_DOC, 'utf8');
+  const doc = readText(DETECTION_DOC);
   const section = (heading) => {
     const start = doc.indexOf(heading);
     assert.notStrictEqual(start, -1, `frontend-detection.md no longer has a "${heading}" section`);

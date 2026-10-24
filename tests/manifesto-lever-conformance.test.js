@@ -21,9 +21,9 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { RUN_PINS } = require('../plugin/bin/lib/set-config/write');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const MANIFESTO_PATH = path.join(REPO_ROOT, 'plugin', 'skills', 'flow', 'manifesto.md');
@@ -121,7 +121,7 @@ const SKIP_KEYS_BY_FILE = new Map([
 ]);
 
 test('manifesto-lever-conformance', async (t) => {
-  const manifestoText = fs.readFileSync(MANIFESTO_PATH, 'utf8');
+  const manifestoText = readText(MANIFESTO_PATH);
   const leverNames = parseLeverNames(manifestoText);
   const configKeys = parseConfigKeys(manifestoText);
 
@@ -165,7 +165,7 @@ test('manifesto-lever-conformance', async (t) => {
   for (const targetFile of TARGET_FILES) {
     const relPath = path.relative(REPO_ROOT, targetFile);
     await t.test(`every lever's config key appears in ${relPath}`, () => {
-      const content = fs.readFileSync(targetFile, 'utf8');
+      const content = readText(targetFile);
       const anchorLines = content.split('\n').filter((line) => line.includes(ANCHOR_TOKEN));
       assert.strictEqual(
         anchorLines.length,

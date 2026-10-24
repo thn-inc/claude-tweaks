@@ -2,8 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('../../helpers/read-skill');
 const {
   NAMESPACE, DEFAULT_BREAKER, readBreakerState, writeBreakerState, readWatched, writeWatched,
   classifyWatchedRecord,
@@ -211,18 +211,18 @@ test('#311 AC4: a human-granted record (never in watched.json) is out of scope f
 
 test('#311 AC7: refine-headless.md never writes tripped:false — the reset write path lives only in refine-mode.md', () => {
   const grantModePath = path.join(__dirname, '../../../plugin/skills/backlog/refine-headless.md');
-  const src = fs.readFileSync(grantModePath, 'utf8');
+  const src = readText(grantModePath);
   assert.ok(!/tripped:\s*false/.test(src), 'refine-headless.md (Step 0.5 + Phase A-C) must never write tripped: false — only refine-mode.md\'s grant sub-stage reset offer may');
 });
 
 test('#311 AC7: refine-mode.md\'s grant sub-stage cites merge-lane-reset.md, the one place that writes tripped:false (the reset path)', () => {
   const refineModePath = path.join(__dirname, '../../../plugin/skills/backlog/refine-mode.md');
-  const refineSrc = fs.readFileSync(refineModePath, 'utf8');
+  const refineSrc = readText(refineModePath);
   assert.match(refineSrc, /merge-lane-reset\.md/, 'refine-mode.md Step 3 must cite merge-lane-reset.md');
   assert.ok(!/tripped:\s*false/.test(refineSrc), 'the reset write itself must live in the cited sub-file, not inline in refine-mode.md');
 
   const resetFilePath = path.join(__dirname, '../../../plugin/skills/backlog/merge-lane-reset.md');
-  const resetSrc = fs.readFileSync(resetFilePath, 'utf8');
+  const resetSrc = readText(resetFilePath);
   const writeMatches = resetSrc.match(/writeBreakerState[^;]*tripped:\s*false/gs) || [];
   assert.equal(writeMatches.length, 1, 'exactly one writeBreakerState(...) call writing tripped: false must exist in merge-lane-reset.md');
 });

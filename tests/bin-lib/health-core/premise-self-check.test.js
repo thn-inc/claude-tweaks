@@ -8,6 +8,7 @@ const {
   premiseReadsUnresolved, defaultRunner, posixShell, PREMISE_SELF_CHECK_TIMEOUT_MS,
 } = require('../../../plugin/bin/lib/health-core/premise-self-check');
 const { buildPremiseCheck } = require('../../../plugin/bin/lib/harness-health/issue-payload');
+const { readText } = require('../../helpers/read-skill');
 
 // Temp dir name deliberately contains a space — the composed command
 // shQuotes the target path, and this proves the quoting survives a real shell.
@@ -41,7 +42,7 @@ test('the runner receives the command, the root as cwd, and the timeout', () => 
 test('materialize.js runs Premise-check commands through this module, not a copy of it', () => {
   // Structural parity: the filing-time self-check reads a command "the way
   // materialize will" only while both use one runner and one timeout.
-  const src = fs.readFileSync(path.join(__dirname, '../../../plugin/bin/materialize.js'), 'utf8');
+  const src = readText(path.join(__dirname, '../../../plugin/bin/materialize.js'));
   assert.match(src, /require\('\.\/lib\/health-core\/premise-self-check'\)/);
   assert.doesNotMatch(src, /PREMISE_CHECK_TIMEOUT_MS\s*=/);
   assert.doesNotMatch(src, /execFileSync\('\/bin\/sh'/);

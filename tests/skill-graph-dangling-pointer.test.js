@@ -28,8 +28,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SKILL_GRAPH_PATH = path.join(ROOT, 'docs/skill-graph.md');
@@ -100,7 +100,7 @@ function formatOffenders(offenders) {
 }
 
 test('docs/skill-graph.md: every "see the `## {section}` section" pointer on a `_shared/*.md` row resolves to a matching row there', () => {
-  const text = fs.readFileSync(SKILL_GRAPH_PATH, 'utf8');
+  const text = readText(SKILL_GRAPH_PATH);
   const sections = parseSkillGraph(text);
   assert.ok(sections.size > 0, 'section parser found zero `## ` sections — extraction is broken, not the file');
   const offenders = findDanglingPointers(sections);

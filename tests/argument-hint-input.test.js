@@ -36,17 +36,17 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { listSkillDirs } = require('../plugin/bin/lib/skill-audit/skill-catalog');
 const { extractArgumentHint, inputSectionBody } = require('../plugin/bin/lib/skill-audit/argument-hint');
 const { splitFrontmatterFence } = require('../plugin/bin/lib/health-core/frontmatter-list');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SKILLS_DIR = path.join(ROOT, 'plugin', 'skills');
 const SKILLS = listSkillDirs(path.join(ROOT, 'plugin'));
 
-const read = (name) => fs.readFileSync(path.join(SKILLS_DIR, name, 'SKILL.md'), 'utf8');
+const read = (name) => readText(path.join(SKILLS_DIR, name, 'SKILL.md'));
 
 const EXEMPT_MARKERS = ['(producer-only)', '(deprecated alias)'];
 
@@ -201,7 +201,7 @@ test('every bracketed leaf in argument-hint appears in ## Input', () => {
 });
 
 test('AC2.1: docs/skill-authoring.md argument-hint bullet names every exemption marker', () => {
-  const doc = fs.readFileSync(path.join(ROOT, 'docs', 'skill-authoring.md'), 'utf8');
+  const doc = readText(path.join(ROOT, 'docs', 'skill-authoring.md'));
   const bullet = doc.split('\n').find((l) => l.startsWith('- **`argument-hint`**'));
   assert.ok(bullet, 'argument-hint bullet not found');
   for (const marker of EXEMPT_MARKERS) {
@@ -336,8 +336,8 @@ test('markedHintFlags reads a marked bullet or row, and only on a whole-token hi
 });
 
 test('#3504 AC3.1/AC3.2: the rule says a marked flag stays out of the hint, nowhere "may be left out"', () => {
-  const doc = fs.readFileSync(path.join(ROOT, 'docs', 'skill-authoring.md'), 'utf8');
-  const check = fs.readFileSync(path.join(SKILLS_DIR, 'build', 'plan-authoring-checks.md'), 'utf8');
+  const doc = readText(path.join(ROOT, 'docs', 'skill-authoring.md'));
+  const check = readText(path.join(SKILLS_DIR, 'build', 'plan-authoring-checks.md'));
   const bullet = doc.split('\n').find((l) => l.startsWith('- **`argument-hint`**'));
   assert.ok(bullet, 'argument-hint bullet not found');
   assert.ok(bullet.includes('stays out of the hint'), 'argument-hint bullet does not say a marked flag stays out of the hint');

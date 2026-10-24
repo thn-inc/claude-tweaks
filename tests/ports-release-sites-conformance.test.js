@@ -5,13 +5,13 @@
 // reverted.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const RELEASE_CMD = 'node "${CLAUDE_PLUGIN_ROOT}/bin/ports.js" release --path';
 
 function read(relPath) {
-  return fs.readFileSync(path.join(__dirname, '..', relPath), 'utf8');
+  return readText(path.join(__dirname, '..', relPath));
 }
 
 test('tidy/scan-procedures.md releases the port lease after the worktree-remove instruction', () => {

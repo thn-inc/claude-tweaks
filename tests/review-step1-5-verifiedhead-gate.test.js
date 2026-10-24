@@ -13,11 +13,11 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const CODE_MODE_STEPS = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'review', 'code-mode-steps.md'), 'utf8');
+const CODE_MODE_STEPS = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'code-mode-steps.md'));
 
 // Hand-built pre-#1923 control (not read from git history): Step 1.5's `/flow` pipeline branch
 // gated on the strict, scope-blind `match` field alone -- no `verifiedHead` field existed yet.

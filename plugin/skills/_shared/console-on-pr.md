@@ -76,7 +76,10 @@ carries its two dispositions in its label, appended after the source reference:
 decline (Legend below). It carries `"isRulingRow": true` on its `console.json` item object (#3636) —
 like `isMergeRow` above, omitted on every other item, never `false` — the flag `resolve-console`
 reads to record an unticked or `--decline`d ruling as `reversed`, not `declined`, and the
-reconciler's detection forwards it to the executing session.
+reconciler's detection forwards it to the executing session. The `isRulingRow: true` item object
+also carries `"stagedPath"` (#3880) — the staged file's path relative to the run directory
+(`staged/sdd-ruling-{N}.md`, or `spec-{N}/staged/sdd-ruling-{N}.md` on a multi-spec console), which
+the reconciler's detection reads to gate the row; omitted on every other item.
 
 ## Legend (verbatim — AC4)
 

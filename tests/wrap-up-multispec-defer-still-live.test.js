@@ -1,7 +1,6 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill.js');
 
@@ -26,7 +25,7 @@ function live() {
 }
 
 function engineSource() {
-  return fs.readFileSync(ENGINE, 'utf8');
+  return readText(ENGINE);
 }
 
 function deferParagraph(text) {
