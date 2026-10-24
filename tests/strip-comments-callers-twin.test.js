@@ -41,6 +41,8 @@ function liveTestFiles() {
   return out;
 }
 
+const LIVE_TEST_FILES = liveTestFiles();
+
 function requireSpecs(text) {
   return [...text.matchAll(REQUIRE_RE)].map((m) => m[2]);
 }
@@ -51,13 +53,14 @@ function resolveSpec(rel, spec) {
   return p;
 }
 
-function treeCallers(files = liveTestFiles()) {
+function treeCallers(files = LIVE_TEST_FILES) {
   const stems = new Map();
   for (const { rel, text } of files) {
     if (EXCLUDED.has(rel)) continue;
     const code = text
       .split('\n')
       .filter((line) => !/^\s*(\/\/|\*)/.test(line))
+      .map((line) => line.replace(/\s\/\/.*$/, ''))
       .join('\n');
     const callsHelper = requireSpecs(code).some(
       (spec) => spec.startsWith('.') && resolveSpec(rel, spec) === HELPER_REL,
@@ -126,7 +129,7 @@ function assertTwin(tree, prose, label) {
 }
 
 test('the tree derivation is non-empty and still excludes the helper suite', () => {
-  const helperSuite = liveTestFiles().find((f) => f.rel === 'tests/helpers-strip-comments.test.js');
+  const helperSuite = LIVE_TEST_FILES.find((f) => f.rel === 'tests/helpers-strip-comments.test.js');
   assert.ok(helperSuite, 'tests/helpers-strip-comments.test.js must exist');
   assert.ok(
     requireSpecs(helperSuite.text).includes('./helpers/strip-comments'),
@@ -150,7 +153,7 @@ test('parse-signal-discipline item 15 lists exactly the tree callers', () => {
 });
 
 test('go-red: a scratch caller missing from both lists fails the twin', () => {
-  const files = [...liveTestFiles(), { rel: 'tests/zz-scratch.test.js', text: SCRATCH_CALLER }];
+  const files = [...LIVE_TEST_FILES, { rel: 'tests/zz-scratch.test.js', text: SCRATCH_CALLER }];
   assert.throws(
     () => assertTwin(treeCallers(files), proseList(headerText(HELPER_SRC), 'helper header'), 'helper header'),
     /zz-scratch/,
@@ -179,8 +182,18 @@ test('go-red: item 15 without its anchor makes the list unparseable', () => {
 test('go-red: a require on a // comment line is not a caller', () => {
   const live = treeCallers();
   const withComment = treeCallers([
-    ...liveTestFiles(),
+    ...LIVE_TEST_FILES,
     { rel: 'tests/zz-comment-only.test.js', text: SCRATCH_COMMENT_ONLY },
   ]);
   assert.deepStrictEqual(withComment, live);
+});
+
+test('go-red: a require after a trailing // or on a * comment line is not a caller', () => {
+  const live = treeCallers();
+  const withComments = treeCallers([
+    ...LIVE_TEST_FILES,
+    { rel: 'tests/zz-trailing-comment.test.js', text: 'const a = 1; ' + SCRATCH_COMMENT_ONLY },
+    { rel: 'tests/zz-star-comment.test.js', text: ' * const s = req' + "uire('./helpers/strip-comments');" },
+  ]);
+  assert.deepStrictEqual(withComments, live);
 });
