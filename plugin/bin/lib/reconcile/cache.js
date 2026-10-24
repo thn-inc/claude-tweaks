@@ -48,6 +48,16 @@ function cachePath(root) {
   return path.join(root, '.claude-tweaks', CACHE_FILENAME);
 }
 
+// Plain object, each value a positive integer; a bad entry is dropped, not fatal.
+function parseResidueIssueIndex(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [key, n] of Object.entries(raw)) {
+    if (Number.isInteger(n) && n > 0) out[key] = n;
+  }
+  return out;
+}
+
 // -> { lastRunAt: number|null, claimShas: {[issueNumber]: string},
 //      residueFailures: {[reason:path]: {count, firstFailedAt, lastError, escalated}},
 //      lastHealthCheckOkAt: number|null, lastOriginHeadRepairFailedAt: number|null,
@@ -59,16 +69,6 @@ function cachePath(root) {
 // Only the keys parsed below survive a read, and writers persist
 // `{ ...readCache(root), … }` — a new cache key must be added here too, or
 // the next unrelated write silently drops it (#3132).
-// Plain object, each value a positive integer; a bad entry is dropped, not fatal.
-function parseResidueIssueIndex(raw) {
-  const out = {};
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
-  for (const [key, n] of Object.entries(raw)) {
-    if (Number.isInteger(n) && n > 0) out[key] = n;
-  }
-  return out;
-}
-
 function readCache(root) {
   const empty = {
     lastRunAt: null, claimShas: {}, residueFailures: {}, lastHealthCheckOkAt: null,

@@ -2766,3 +2766,73 @@ test('reconcile(): a throwing prefetch never breaks the pass (#4032)', async () 
   assert.ok(Array.isArray(r.runs) && Array.isArray(r.worktrees), `archive and reap must still have run, got ${JSON.stringify(r)}`);
   assert.equal(instances[0].calls.persist, 1);
 });
+
+// #4032 — the residue marker index crosses passes through the reconcile cache:
+// index.js loads `residueIssueIndex` into the per-pass issue-list cache and
+// finalize writes the pass's index back. Module-wiring level (archiveMerged is
+// stubbed to issue the lookups), with a fake `gh` as the cache's `base` — no
+// live GitHub.
+test('reconcile(): loads residueIssueIndex into the pass and writes the learned index back (#4032)', async () => {
+  const issueListCache = require('../plugin/bin/lib/reconcile/issue-list-cache');
+  const archiveMergedModule = require('../plugin/bin/lib/reconcile/archive-merged');
+  const reapMergedModule = require('../plugin/bin/lib/reconcile/reap-merged');
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+  const { readCache, writeCache } = require('../plugin/bin/lib/reconcile/cache');
+
+  const seeded = '<!-- fingerprint: reconcile-residue-aaaa1111 -->';
+  const learned = '<!-- fingerprint: reconcile-residue-bbbb2222 -->';
+  const ghCalls = [];
+  const fakeGh = (argv) => {
+    ghCalls.push(argv);
+    if (argv[1] === 'view') {
+      return JSON.stringify({ number: 42, title: 't', body: `x\n${seeded}`, createdAt: '2026-01-01T00:00:00Z', state: 'OPEN' });
+    }
+    if (argv[1] === 'list') {
+      return JSON.stringify([{ number: 9, title: 't', body: `y\n${learned}`, createdAt: '2026-01-01T00:00:00Z', state: 'OPEN' }]);
+    }
+    return '';
+  };
+
+  const originalCreate = issueListCache.createIssueListCache;
+  const originalArchive = archiveMergedModule.archiveMerged;
+  const originalReap = reapMergedModule.reapMerged;
+  const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
+
+  issueListCache.createIssueListCache = (opts) => originalCreate({ ...opts, base: fakeGh });
+  let seededHit;
+  let callsAfterLookup;
+  archiveMergedModule.archiveMerged = (opts) => {
+    seededHit = opts.runner.findIssueByMarker('o/r', seeded);
+    callsAfterLookup = ghCalls.map((c) => c.slice(0, 2).join(' '));
+    opts.runner(['issue', 'list', '--repo', 'o/r', '--state', 'all', '--json', 'number,title,body,createdAt,state', '--limit', '10000']);
+    return { archived: [], skipped: [] };
+  };
+  reapMergedModule.reapMerged = () => ({ reaped: [], skipped: [], portsRelease: [] });
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+
+  try {
+    delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
+    const { reconcile: reconcileFresh } = require('../plugin/bin/lib/reconcile/index');
+    const { mainDir } = pairedFixture();
+    writeCache(mainDir, { ...readCache(mainDir), residueIssueIndex: { [`o/r\n${seeded}`]: 42 } });
+
+    await reconcileFresh({
+      cwd: mainDir, checks: ['archive', 'reap'], resolveIntegrationModel: () => 'pr-first', mcpReachable: true,
+    });
+
+    // (a) the cached entry reached the pass: one view, no list, before the list read.
+    assert.equal(seededHit && seededHit.number, 42, 'the seeded index entry must answer the lookup');
+    assert.deepEqual(callsAfterLookup, ['issue view'], 'the lookup must cost one issue view and no issue list');
+    // (b) the learned index was written back, with the loaded entry preserved.
+    assert.deepEqual(readCache(mainDir).residueIssueIndex, { [`o/r\n${seeded}`]: 42, [`o/r\n${learned}`]: 9 });
+  } finally {
+    issueListCache.createIssueListCache = originalCreate;
+    archiveMergedModule.archiveMerged = originalArchive;
+    reapMergedModule.reapMerged = originalReap;
+    preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
+    delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
+  }
+});
