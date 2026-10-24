@@ -170,6 +170,44 @@ test('changed test files are selected directly', () => {
   assert.deepStrictEqual(deleted, { ok: true, tests: [], matched: [], changedTests: [], untracedTests: [] });
 });
 
+test('a changed test file also selects the other tests that read it', () => {
+  const meta = {
+    'tests/a.test.js': { f: ['src/x.js'] },
+    'tests/meta-read.test.js': { f: ['tests/a.test.js'] },
+    'tests/meta-list.test.js': { d: ['tests'] },
+  };
+  // Modified: the content reader (f) is selected; the listing (d) is not.
+  const modified = select(meta, [{ path: 'tests/a.test.js', status: 'M' }]);
+  assert.deepStrictEqual(modified, {
+    ok: true, tests: ['tests/a.test.js', 'tests/meta-read.test.js'], matched: ['tests/meta-read.test.js'], changedTests: ['tests/a.test.js'], untracedTests: [],
+  });
+  // Added: the listing of tests (d) is selected alongside the new test itself.
+  const head = [...Object.keys(meta), 'tests/new.test.js'];
+  const added = select(meta, [{ path: 'tests/new.test.js', status: 'A' }], head);
+  assert.deepStrictEqual(added, {
+    ok: true, tests: ['tests/meta-list.test.js', 'tests/new.test.js'], matched: ['tests/meta-list.test.js'], changedTests: ['tests/new.test.js'], untracedTests: ['tests/new.test.js'],
+  });
+  // A test that reads itself is a changed test, not its own matched reader.
+  const self = select({ 'tests/s.test.js': { f: ['tests/s.test.js'] } }, [{ path: 'tests/s.test.js', status: 'M' }]);
+  assert.deepStrictEqual(self, { ok: true, tests: ['tests/s.test.js'], matched: [], changedTests: ['tests/s.test.js'], untracedTests: [] });
+});
+
+test('A/D reach an f or s entry on an ancestor directory; M does not; \'\' never counts', () => {
+  const probe = { 'tests/p.test.js': { s: ['plugin/skills/foo'] }, 'tests/st.test.js': { f: ['plugin/skills/foo'] } };
+  for (const status of ['A', 'D']) {
+    const r = select(probe, [{ path: 'plugin/skills/foo/SKILL.md', status }]);
+    assert.deepStrictEqual(r.tests, ['tests/p.test.js', 'tests/st.test.js'], status);
+  }
+  const modified = select(probe, [{ path: 'plugin/skills/foo/SKILL.md', status: 'M' }]);
+  assert.deepStrictEqual(modified, { ok: false, reason: 'untraced-path: plugin/skills/foo/SKILL.md' });
+  // A sibling sharing the name prefix is not beneath the entry.
+  const sibling = select(probe, [{ path: 'plugin/skills/foobar/SKILL.md', status: 'A' }]);
+  assert.deepStrictEqual(sibling, { ok: false, reason: 'untraced-path: plugin/skills/foobar/SKILL.md' });
+  // An exists/stat of the repo root never changes existence.
+  const root = select({ 'tests/r.test.js': { s: [''], f: [''] } }, [{ path: 'README.md', status: 'A' }]);
+  assert.deepStrictEqual(root, { ok: false, reason: 'untraced-path: README.md' });
+});
+
 test('untraced tests at HEAD are selected', () => {
   const r = select(XMAP, [{ path: 'src/x.js', status: 'M' }], ['tests/a.test.js', 'tests/b.test.js', 'tests/new.test.js']);
   assert.deepStrictEqual(r, {

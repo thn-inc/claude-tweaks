@@ -104,11 +104,18 @@ function enrich(result) {
 }
 
 // #4024: impact.fetch downloads a ready map (never a trace) — at most once per
-// run, bounded, its output discarded; the report keeps its exit code and time.
+// run, bounded, its output ignored (never piped, so no maxBuffer can kill a
+// verbose fetch); the report keeps its exit code, time, timeout and signal.
 function runImpactFetch(command, cwd) {
   const startedMs = Date.now();
-  const r = spawnSync(command, { shell: true, cwd, timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  return { ran: true, exitCode: typeof r.status === 'number' ? r.status : null, durationMs: Date.now() - startedMs };
+  const r = spawnSync(command, { shell: true, cwd, timeout: 120000, stdio: 'ignore', windowsHide: true });
+  return {
+    ran: true,
+    exitCode: typeof r.status === 'number' ? r.status : null,
+    durationMs: Date.now() - startedMs,
+    timedOut: Boolean(r.error && r.error.code === 'ETIMEDOUT'),
+    signal: r.signal || null,
+  };
 }
 
 // #4024: the stdout line under `Scope:` for an impact declaration.
@@ -570,14 +577,15 @@ async function main() {
       // has a problem), select, and for a non-empty subset run impact.command
       // with {files} = a list file in the log dir. A list that cannot be handed
       // over re-selects with that reason, so the suite runs its full command.
-      // With no usable stamp anchor, the merge-base the caller named anchors.
+      // With no usable stamp anchor, the --integration-branch merge-base
+      // anchors; an explicit --base never does (it runs full, as before).
       if (decl.impact) {
         const where = gitLocations({ cwd: parsed.cwd || process.cwd() });
         impactCtx = where === null
           ? { map: null, problem: 'map-unlocatable', headTests: [], mapPath: null, mapCommit: null, distance: null, fetch: null }
           : loadImpactContext({ decl, ...where, runFetch: (command) => runImpactFetch(command, where.repoRoot) });
       }
-      const fallbackBase = !anchorSha && (parsed.integrationBranch || parsed.base) ? resolvedBase : null;
+      const fallbackBase = !anchorSha && parsed.integrationBranch && !parsed.base ? resolvedBase : null;
       const select = (impact) => selectScope({
         decl, files, stamp: anchorSha ? priorStamp : null, ...(decl.impact ? { statuses, impact, fallbackBase } : {}),
       });

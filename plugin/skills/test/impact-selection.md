@@ -38,7 +38,7 @@ The map is JSON: `{version: 1, commit, tracedAt, exitCode, node, paths, tests}`.
 
 A prefix covers a path when `prefix === ''` (the repo root), `p === prefix`, or `p` starts with `prefix + '/'`.
 
-**Selection.** Each changed path matched by an impact rule is checked against every map test still present at HEAD. A modified path (`M`) selects a test that content-read it (`f`) or holds a covering `c` prefix. An added, deleted or renamed path (`A`/`D`) also selects a test that probed it (`s`) or listed a directory covering it (`d`). A path with no recorded status counts as `A`, the broader match. The selected set is the matched tests, plus changed test files present at HEAD, plus test files at HEAD that the map does not know (untraced tests, which always run).
+**Selection.** Each changed path matched by an impact rule is checked against every map test still present at HEAD. A modified path (`M`) selects a test that content-read it (`f`) or holds a covering `c` prefix. An added, deleted or renamed path (`A`/`D`) also selects a test that probed it (`s`), listed a directory covering it (`d`), or probed or stat'd an ancestor directory of it (`s`/`f`, never the repo root `''`), since adding a directory's first file or deleting its last changes whether it exists. A path with no recorded status counts as `A`, the broader match. A changed test file also selects the other tests that read it by these rules (a test that reads or lists every test file); it is never `untraced-path`. The selected set is the matched tests, plus changed test files present at HEAD, plus test files at HEAD that the map does not know (untraced tests, which always run).
 
 ## When the impact suite runs full
 
@@ -56,19 +56,19 @@ A prefix covers a path when `prefix === ''` (the repo root), `p === prefix`, or 
 | `map-unlocatable` | git could not name the checkout root or common dir. |
 | `files-list-unquotable: {reason}` | `{files}` could not be substituted safely. |
 | `files-list-unwritable: line break in {path}` | A selected path holds a line break, so the list file cannot carry it. |
-| `no-anchor` | No stamp anchor and no merge-base to diff against. |
+| `no-anchor` | No usable stamp anchor and no `--integration-branch` merge-base to diff against (an explicit `--base` never anchors). |
 
-When a map problem exists and `fetch` is declared, the runner runs `fetch` once from the checkout root, with a 120 s timeout and its output discarded, and re-reads the map only when it exits 0. A failed fetch leaves the original reason standing.
+When a map problem exists and `fetch` is declared, the runner runs `fetch` once from the checkout root, with a 120 s timeout and its output ignored, and re-reads the map only when it exits 0. A failed fetch leaves the original reason standing.
 
 A non-impact rule, or an unmatched path, that selects the impact suite supersedes the subset, and the suite runs full with `superseded: true`. A delta that touches no impact-rule path gives `files: []`: the impact suite runs nothing. `files: null` always means the suite runs its full command.
 
 ## Anchoring
 
-Changed paths are diffed from the stamp's `fullSha`, as every scoped run is. With no usable stamp, an impact declaration anchors on the base the caller named: the merge-base with `--integration-branch`, or the `--base` commit. The first run of a branch is then impact-selected too, instead of full. The resulting stamp is `scoped`, with `fullSha` set to that base. It is never a full pass, but it does verify HEAD (`verifiedHead`).
+Changed paths are diffed from the stamp's `fullSha`, as every scoped run is. With no usable stamp anchor (none yet, or one stranded by a rebase), an impact declaration anchors on the merge-base with `--integration-branch`. An explicit `--base` never anchors it: that run is full, as without `impact`. The first run of a branch is then impact-selected too, instead of full. The resulting stamp is `scoped`, with `fullSha` set to that base. It is never a full pass, but it does verify HEAD (`verifiedHead`).
 
 ## Report
 
-`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, superseded, mapPath, mapCommit, mapAgeCommits, fetch, listPath, selectedFiles}`. `fetch` is `{ran, exitCode, durationMs}` when a fetch ran, else `null`. `listPath` and `selectedFiles` are set only when a subset ran. Under `Scope:`, stdout prints one of:
+`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, superseded, mapPath, mapCommit, mapAgeCommits, fetch, listPath, selectedFiles}`. `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. Under `Scope:`, stdout prints one of:
 
 - `Impact: {selected} of {n} test file(s) selected (map {commit9}, {age} commit(s) old)`
 - `Impact: full {suite} — {fallback | superseded by a full-suite rule}`
@@ -83,6 +83,8 @@ The map is built outside the runner by a traced full-suite run: a read tracer pr
 - **Non-node children.** Reads by a non-node child process are approximated. Its in-repo path arguments are recorded, and a content-reading `git` subcommand records a content prefix.
 - **Map-to-base drift.** A test that started reading a file after the map's commit is not selected for that file until the map refreshes.
 - **POSIX only.** Tracing runs on POSIX: on win32, `NODE_OPTIONS` quoting drops the tracer path's backslashes.
+- **Trace environment.** The map records reads in the environment it was traced in (CI's, for a post-merge job). A test whose reads depend on the local environment (a skip gated on an installed plugin, say) can be under-selected locally.
+- **Tooling not shipped.** The tracer and map builder are the plugin repo's own tooling, not part of the plugin. Another project must produce a map in the format above itself.
 
 ## Full mode
 

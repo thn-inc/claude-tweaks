@@ -214,7 +214,22 @@ test('a failed fetch keeps the original problem and reports the fetch', async ()
   const imp = r.report().scope.impact;
   assert.strictEqual(imp.fallback, 'map-missing');
   assert.strictEqual(imp.fetch.exitCode, 3);
+  assert.strictEqual(imp.fetch.timedOut, false);
+  assert.strictEqual(imp.fetch.signal, null);
   assert.strictEqual(fs.readFileSync(path.join(r.gitDir, 'fetch-count'), 'utf8'), 'x');
+});
+
+test('no stamp and an explicit --base (no --integration-branch) runs full: --base never anchors an impact run', async () => {
+  const r = impactRepo();
+  writeMap(r);
+  commitFile(r, 'src/x.js', 'x2\n');
+  const run = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--base', r.base], r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(r.marker(), 'FULL');
+  const report = r.report();
+  assert.strictEqual(report.scope.mode, 'full');
+  assert.strictEqual(report.scope.impact.fallback, 'no-anchor');
+  assert.strictEqual(report.scope.impact.files, null);
 });
 
 test('a fresh map never fetches', async () => {

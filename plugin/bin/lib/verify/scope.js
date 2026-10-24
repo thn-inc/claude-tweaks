@@ -5,16 +5,17 @@
 // size-ceiling test in an unrelated suite — only declared paths get cheaper).
 // The anchoring invariant lives here: every non-full mode's base is the
 // stamp's fullSha (or, for an impact declaration with no stamp, the caller's
-// CI-verified fallbackBase), never a prior scoped sha, so scoped runs never
-// chain.
+// integration-branch merge-base, fallbackBase), never a prior scoped sha, so
+// scoped runs never chain.
 //
 // Test-impact selection (#4024), gated on decl.impact: a file matched by an
 // impact rule goes to impact.js's selectImpactTests, so impact.suite runs only
 // the test files a traced map says read it. Any reason the map cannot answer
 // (impact.problem, an untraced path) runs that suite full with the reason in
 // `fallback`; a non-impact rule (or an unmatched path) that selects the suite
-// supersedes the subset. Without a stamp, the caller's CI-verified
-// merge-base (`fallbackBase`) anchors an impact declaration.
+// supersedes the subset. Without a stamp, the caller's --integration-branch
+// merge-base (`fallbackBase`) anchors an impact declaration; an explicit
+// --base never does.
 'use strict';
 
 const { globToRegExp } = require('../issues/blast-radius');

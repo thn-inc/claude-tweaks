@@ -94,11 +94,15 @@ function parseImpactMap(text) {
 }
 
 // Status M (content changed) reaches only content readers; A or D (the path
-// appeared or vanished) also reaches existence probes and directory listings.
+// appeared or vanished) also reaches existence probes and directory listings,
+// and an f or s entry on an ancestor directory — adding a directory's first
+// file or deleting its last changes whether it exists, and its stat. The repo
+// root ('') always exists, so an f or s entry of '' is never an ancestor.
 function reads(entry, p, status) {
   if (entry.f.includes(p) || entry.c.some((pre) => under(p, pre))) return true;
   if (status === 'M') return false;
-  return entry.s.includes(p) || entry.d.some((pre) => under(p, pre));
+  const ancestorOrSelf = (e) => e !== '' && under(p, e);
+  return entry.f.some(ancestorOrSelf) || entry.s.some(ancestorOrSelf) || entry.d.some((pre) => under(p, pre));
 }
 
 function selectImpactTests({ map, changed, headTests, isTestFile }) {
@@ -109,12 +113,13 @@ function selectImpactTests({ map, changed, headTests, isTestFile }) {
   const changedTests = new Set();
   const untraced = [];
   for (const { path: p, status } of changed) {
-    if (isTestFile(p)) {
-      if (atHead.has(p)) changedTests.add(p);
-      continue;
-    }
-    const hits = readers.filter((t) => reads(map.tests[t], p, status));
-    if (hits.length === 0) untraced.push(p);
+    // A changed test file runs itself and selects the OTHER tests that read it
+    // (a conformance test reading or listing every test file); with no such
+    // reader it is still traced — never untraced-path.
+    const testFile = isTestFile(p);
+    if (testFile && atHead.has(p)) changedTests.add(p);
+    const hits = readers.filter((t) => !(testFile && t === p) && reads(map.tests[t], p, status));
+    if (hits.length === 0 && !testFile) untraced.push(p);
     for (const t of hits) matched.add(t);
   }
   if (untraced.length) return { ok: false, reason: `untraced-path: ${untraced.sort()[0]}` };
@@ -212,8 +217,8 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl }) {
 
 // The impact context scope.js's selectScope reads, plus what the report shows.
 // A map problem with a declared impact.fetch runs `runFetch(command)` once
-// (→ {ran, exitCode, durationMs}); only a fetch that exits 0 reloads the map,
-// so a failed fetch leaves the original problem standing.
+// (→ {ran, exitCode, durationMs, timedOut, signal}); only a fetch that exits
+// 0 reloads the map, so a failed fetch leaves the original problem standing.
 function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync, fsImpl = fs, runFetch = null }) {
   const mapPath = resolveMapPath({ decl, commonDir, repoRoot });
   let state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl });
