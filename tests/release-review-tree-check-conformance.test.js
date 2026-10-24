@@ -34,6 +34,16 @@ function checkFence(stepThree) {
   return fence.split('{branch}').join(BRANCH);
 }
 
+// Runs body against a fresh fixture and always removes it afterwards.
+function withFixture(prefix, body) {
+  const fx = originWithTwoClones(prefix);
+  try {
+    body(fx);
+  } finally {
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+}
+
 // Exit status of the check run from `work` as $RUN_ROOT.
 function runCheck(fence, fx) {
   const result = spawnSync('bash', ['-c', fence], { env: { ...fx.env, RUN_ROOT: fx.work }, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS });
@@ -82,15 +92,12 @@ const ROWS = [
 for (const [label, arrange, passes] of ROWS) {
   test(label, () => {
     const fence = checkFence(stepThreeOf(readText(SKILL)));
-    const fx = originWithTwoClones('release-review-tree-');
-    try {
+    withFixture('release-review-tree-', (fx) => {
       arrange(fx);
       const status = runCheck(fence, fx);
       if (passes) assert.equal(status, 0, `expected exit 0, got ${status}`);
       else assert.notEqual(status, 0, 'expected a non-zero exit, got 0');
-    } finally {
-      fs.rmSync(fx.root, { recursive: true, force: true });
-    }
+    });
   });
 }
 
@@ -99,14 +106,11 @@ test('AC3.1: go-red: dropping the pathspec exclusion stops the run-dir-only row'
   const exclusion = " -- ':!.claude-tweaks/pipelines'";
   const doctored = fence.replace(exclusion, '');
   assert.notEqual(doctored, fence, `anchor text "${exclusion.trim()}" not found — proof cannot discriminate`);
-  const fx = originWithTwoClones('release-review-tree-nopath-');
-  try {
+  withFixture('release-review-tree-nopath-', (fx) => {
     runDirCommit(fx, 1);
     runDirCommit(fx, 2);
     assert.notEqual(runCheck(doctored, fx), 0, 'without the pathspec exclusion the run-dir-only row must stop (non-zero exit)');
-  } finally {
-    fs.rmSync(fx.root, { recursive: true, force: true });
-  }
+  });
 });
 
 test('AC3.1: go-red: dropping the behind-count clause passes the run-dir-only-behind row', () => {
@@ -115,13 +119,10 @@ test('AC3.1: go-red: dropping the behind-count clause passes the run-dir-only-be
   assert.ok(fence.includes(countClause), 'anchor text for the behind-count clause not found — proof cannot discriminate');
   const doctored = fence.replace(countClause, '');
   assert.notEqual(doctored, fence, 'dropping the behind-count clause must change the fence');
-  const fx = originWithTwoClones('release-review-tree-nocount-');
-  try {
+  withFixture('release-review-tree-nocount-', (fx) => {
     pushRunDirUpstream(fx);
     assert.equal(runCheck(doctored, fx), 0, 'without the behind-count clause the run-dir-only-behind row must pass (exit 0)');
-  } finally {
-    fs.rmSync(fx.root, { recursive: true, force: true });
-  }
+  });
 });
 
 // Each pattern must match exactly once in the Step 3 slice; the fact it names is missing once it is gone.
@@ -136,7 +137,10 @@ const STOP_FACTS = [
   [/git -C "\$RUN_ROOT" diff --name-only origin\/\{branch\} HEAD -- ':!\.claude-tweaks\/pipelines'/, 'the tree-differs case lists the changed files with diff --name-only'],
   [/A failed fetch reports git's stderr verbatim/,'a failed fetch reports git stderr verbatim, not the counts line'],
 ];
-const missingStopFacts = (text) => STOP_FACTS.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
+
+function missingStopFacts(text) {
+  return STOP_FACTS.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
+}
 
 test('AC2.3/AC3.1: stop line names counts and recovery commands', () => {
   const stepThree = stepThreeOf(readText(SKILL));
