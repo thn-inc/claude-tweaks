@@ -1,0 +1,130 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const path = require('node:path');
+
+const { readText } = require('../helpers/read-skill');
+const { DETECTORS, UNDETECTED_ROWS, detectShapes } = require('../../tools/guard-refusals/shapes');
+const { shellFences } = require('../../tools/guard-refusals/fences');
+
+// #4028: tools/guard-refusals/shapes.js holds one static detector per refused
+// row of scratch-worktree.md section 7. Each detector names the row it covers by
+// that row's exact Example cell, so a §7 edit that changes, adds or drops a
+// refused row breaks this suite until the detector list follows it.
+
+const ROOT = path.join(__dirname, '..', '..');
+const DOC = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'scratch-worktree.md'));
+const FIXTURE = readText(path.join(ROOT, 'tests', 'fixtures', 'guard-refusals', 'banned-shapes.md'));
+
+function splitRow(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim());
+}
+
+function section7Rows() {
+  const start = DOC.indexOf('## 7. Shell constraint');
+  assert.notStrictEqual(start, -1, '## 7. Shell constraint heading missing');
+  const lines = DOC.slice(start).split('\n');
+  const head = lines.findIndex((l) => l.trim().startsWith('| Shape'));
+  assert.notStrictEqual(head, -1, 'no table header in section 7');
+  const rows = [];
+  for (let i = head + 2; i < lines.length && lines[i].startsWith('|'); i++) {
+    const cells = splitRow(lines[i]);
+    rows.push({ example: cells[1], verdict: cells[2] });
+  }
+  return rows;
+}
+
+// Each backtick span of an Example cell, with the table's `\|` escape undone,
+// plus all spans joined by newlines (a multi-call shape such as "heredoc then
+// gh --body-file" only shows up across spans).
+function candidates(example) {
+  const spans = [...example.matchAll(/`([^`]+)`/g)].map((m) => m[1].replace(/\\\|/g, '|'));
+  return spans.length > 1 ? [...spans, spans.join('\n')] : spans;
+}
+
+// The refused rows no bound detector flags, and the refused rows bound to
+// nothing and not excused by UNDETECTED_ROWS. Parameterised on the detector list
+// so the go-red control below can run it against a broken copy.
+function unflaggedRows(detectors, undetected) {
+  const out = [];
+  for (const row of section7Rows().filter((r) => r.verdict === 'refused')) {
+    const bound = detectors.filter((d) => d.row === row.example);
+    if (bound.length === 0) {
+      if (!Object.hasOwn(undetected, row.example)) out.push(`unbound: ${row.example}`);
+      continue;
+    }
+    const fired = bound.some((d) => candidates(row.example).some((c) => d.test(c)));
+    if (!fired) out.push(`not flagged by ${bound.map((d) => d.id).join('/')}: ${row.example}`);
+  }
+  return out;
+}
+
+test('section 7 yields the refused and passes rows this suite sweeps', () => {
+  const rows = section7Rows();
+  assert.ok(rows.filter((r) => r.verdict === 'refused').length >= 17, 'refused rows went missing from the parse');
+  assert.ok(rows.filter((r) => r.verdict === 'passes').length >= 18, 'passes rows went missing from the parse');
+  for (const r of rows) assert.ok(candidates(r.example).length > 0, `no backtick span in Example: ${r.example}`);
+});
+
+test('every refused §7 row is flagged by its bound detector or listed in UNDETECTED_ROWS', () => {
+  assert.deepStrictEqual(unflaggedRows(DETECTORS, UNDETECTED_ROWS), []);
+});
+
+test('the bound-row check goes red when one detector stops firing (go-red control)', () => {
+  const victim = DETECTORS.find((d) => d.id === 'sed-var-path');
+  assert.ok(victim, 'sed-var-path detector missing');
+  const broken = DETECTORS.map((d) => (d === victim ? { ...d, test: () => false } : d));
+  assert.deepStrictEqual(unflaggedRows(broken, UNDETECTED_ROWS), [`not flagged by sed-var-path: ${victim.row}`]);
+});
+
+test('no detector fires on any passes-row example', () => {
+  const hits = [];
+  for (const row of section7Rows().filter((r) => r.verdict === 'passes')) {
+    for (const c of candidates(row.example)) {
+      const ids = detectShapes(c, { placeholders: false });
+      if (ids.length) hits.push(`${ids.join(',')} on ${c}`);
+    }
+  }
+  assert.deepStrictEqual(hits, []);
+});
+
+test('every DETECTORS[].row and UNDETECTED_ROWS key still names a live refused row (shrink the list when it goes stale)', () => {
+  const live = new Set(section7Rows().filter((r) => r.verdict === 'refused').map((r) => r.example));
+  const stale = [...DETECTORS.map((d) => d.row), ...Object.keys(UNDETECTED_ROWS)].filter((ex) => !live.has(ex));
+  assert.deepStrictEqual(stale, []);
+});
+
+test('normalizePlaceholders makes a ${CLAUDE_PLUGIN_ROOT} script operand clean and leaves $B flagged', () => {
+  assert.deepStrictEqual(detectShapes('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js"'), []);
+  assert.deepStrictEqual(detectShapes('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"'), []);
+  assert.ok(detectShapes('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js"', { placeholders: false }).includes('node-var-script'));
+  assert.ok(detectShapes('B=$(pwd)\nnode "$B/x.js"').includes('node-var-script'));
+});
+
+test('AC2.1: a fixture holding each banned shape fails the scan', () => {
+  const lines = FIXTURE.split('\n');
+  const fences = shellFences(FIXTURE);
+  const seen = new Set();
+  for (const f of fences) {
+    // The id is the nearest `## ` heading above the fence.
+    let id = null;
+    for (let i = f.line - 2; i >= 0 && id === null; i--) {
+      if (lines[i].startsWith('## ')) id = lines[i].slice(3).trim();
+    }
+    assert.ok(id, `fence at line ${f.line} has no id heading`);
+    assert.deepStrictEqual(detectShapes(f.body), [id], `fence at line ${f.line}`);
+    seen.add(id);
+  }
+  assert.deepStrictEqual([...seen].sort(), [...new Set(DETECTORS.map((d) => d.id))].sort());
+});
+
+test('node-eval-computed-arg: -- separator clears it', () => {
+  assert.deepStrictEqual(detectShapes(`node -e 'x' "$A"`), ['node-eval-computed-arg']);
+  assert.deepStrictEqual(detectShapes(`node -e 'x' -- "$A"`), []);
+});
+
+test('keyword detectors ignore a single-quoted span', () => {
+  assert.deepStrictEqual(detectShapes(`echo 'eval complete'`), []);
+  assert.deepStrictEqual(detectShapes(`echo 'evaluate'`), []);
+  assert.deepStrictEqual(detectShapes('echo evaluate completed'), []);
+});
