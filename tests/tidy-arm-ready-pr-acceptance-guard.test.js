@@ -99,12 +99,12 @@ test('Step 7.5 verification template lists the held outcome', () => {
   assert.match(TIDY_SKILL, /Held \(not armed\): PR #\{n\} — acceptance labeling not landed/);
 });
 
-test("pr-first-merge Step 1 names tidy's Arm ready PR as a caller that holds instead of labeling", () => {
+test("pr-first-merge Step 1's not-landed sentence names no caller", () => {
   const step1 = slice(PR_FIRST_MERGE, '## Step 1:', '## Step 1.5');
-  assert.match(step1, /tidy's Arm ready PR holds rather than runs this step/);
   const sentence = step1.match(/Labeling has not landed when.*?reached this merge\./);
   assert.ok(sentence, 'the Step 1 "Labeling has not landed when … reached this merge." sentence must exist');
-  assert.match(sentence[0], /tidy's Arm ready PR holds rather than runs this step/);
+  assert.doesNotMatch(sentence[0], /tidy|close-out/);
+  assert.match(sentence[0], /acceptance-labeling-landed\.md/);
 });
 
 test('skill-graph records the tidy → dispatch/close-out.md edge', () => {
