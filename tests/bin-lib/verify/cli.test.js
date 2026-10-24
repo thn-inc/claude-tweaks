@@ -1370,6 +1370,264 @@ test('--scope after a history rewrite (no --base) forces mode full and stamps fu
   assert.strictEqual(stamp.fullSha, newHead);
 });
 
+// #2987
+test('a dirty path matching a declared `generated` glob never disqualifies the pass stamp — dirty:false, generatedExempt lists it, verifiedHead:true (#2987 AC1)', async () => {
+  const r = scopedRepo(
+    [{ match: 'src/**', suites: ['unit'], static: true }],
+    { generated: ['dist/**'] },
+  );
+  commitFile(r, 'dist/bundle.js', 'v1');
+  // Simulate a check that regenerates a tracked, declared file in place —
+  // dirty at stamp time, matching the declared glob exactly.
+  fs.writeFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'v2-regenerated');
+  const args = ['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'];
+  const run = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const stamp = stampOf(r.gitDir);
+  assert.strictEqual(stamp.dirty, false, 'the stamp itself reads clean despite the dirty generated path');
+  assert.deepStrictEqual(stamp.generatedExempt, ['dist/bundle.js']);
+  // Bare --stamp-status (no --scope) never re-derives the generated
+  // exemption against the live tree — same posture as before this field
+  // existed, and `effectiveDirty` simply falls back to the raw boolean.
+  const bare = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo })).stdout);
+  assert.strictEqual(bare.dirty, true);
+  assert.strictEqual(bare.match, false, 'bare --stamp-status cannot know dist/** is a declared generated path');
+  // --stamp-status --scope re-derives the SAME exemption against the live
+  // tree, so match/verifiedHead stay true for as long as the only dirty
+  // path is the declared-generated one (#2987's whole point: a build that
+  // regenerates the same file every run must not stay permanently unverified).
+  const status = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(status.dirty, true, 'the LIVE tree is still genuinely dirty — only the stamp is exempted');
+  assert.deepStrictEqual(status.liveGeneratedExempt, ['dist/bundle.js']);
+  assert.strictEqual(status.match, true);
+  assert.strictEqual(status.verifiedHead, true);
+});
+
+// The stamp's dirty gate was never on the WRITE side (it always writes for a
+// passing full run, dirty or not — "dirty never gates the write"); the
+// exemption only changes what the stamp's own `dirty`/`generatedExempt`
+// fields record, which then decides the READ side's match/verifiedHead.
+test('a dirty path NOT matching any declared `generated` glob still disqualifies the stamp exactly as before (#2987 AC2)', async () => {
+  const r = scopedRepo(
+    [{ match: 'src/**', suites: ['unit'], static: true }],
+    { generated: ['dist/**'] },
+  );
+  commitFile(r, 'dist/bundle.js', 'v1');
+  fs.writeFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'v2-regenerated'); // would be exempt alone
+  fs.writeFileSync(path.join(r.repo, 'notes.txt'), 'uncommitted'); // NOT exempt — disqualifies the whole run
+  const args = ['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'];
+  const run = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const stamp = stampOf(r.gitDir);
+  assert.strictEqual(stamp.dirty, true, 'one non-generated dirty path means the stamp stays dirty:true');
+  assert.strictEqual('generatedExempt' in stamp, false);
+  const status = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(status.present, true);
+  assert.strictEqual(status.match, false);
+  assert.strictEqual(status.liveGeneratedExempt, null, 'the live dirty set is not entirely covered by generated globs either');
+});
+
+test('a scope file with no `generated` key behaves exactly as today — any dirty path disqualifies (#2987 AC3)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  fs.writeFileSync(path.join(r.repo, 'notes.txt'), 'uncommitted');
+  const args = ['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'];
+  const run = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const stamp = stampOf(r.gitDir);
+  assert.strictEqual(stamp.dirty, true);
+  assert.strictEqual('generatedExempt' in stamp, false);
+  const status = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(status.match, false);
+});
+
+// #3757's dirty is start OR end: a non-generated path dirty when the run
+// starts still disqualifies, even if a check removes it before the end read.
+test('a non-generated path dirty at the run\'s start disqualifies the exemption even when gone by the end (#2987 + #3757)', async () => {
+  const r = scopedRepo(
+    [{ match: 'src/**', suites: ['unit'], static: true }],
+    { generated: ['dist/**'] },
+  );
+  commitFile(r, 'dist/bundle.js', 'v1');
+  fs.writeFileSync(path.join(r.repo, 'notes.txt'), 'uncommitted'); // NOT generated, dirty at start only
+  const regen = 'other=node -e "require(\'fs\').unlinkSync(\'notes.txt\');require(\'fs\').writeFileSync(\'dist/bundle.js\',\'v2\')"';
+  const args = ['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', regen];
+  const run = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.ok(!fs.existsSync(path.join(r.repo, 'notes.txt')), 'the check really removed the start-dirty file');
+  const stamp = stampOf(r.gitDir);
+  assert.strictEqual(stamp.dirty, true);
+  assert.strictEqual('generatedExempt' in stamp, false);
+});
+
+// #3002: one chunked `--no-stamp --stamp-suite` invocation covering a single --cmd.
+function runStampSuiteChunk(r, cmd) {
+  return runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', cmd], { cwd: r.repo });
+}
+
+test('--stamp-suite composes verifiedHead:true from two chunked, otherwise-partial runs (#3002 AC1)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  // Chunk 1: only the `unit` check, --no-stamp (a partial --cmd set) plus
+  // --stamp-suite — earns `unit` a per-suite record without ever touching
+  // the single full-set stamp.
+  const chunk1 = await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  assert.strictEqual(chunk1.code, 0, chunk1.stderr);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), 'a partial chunk never writes the single full-set stamp');
+  const midway = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(midway.verifiedHead, false, 'only one of two declared suites has a record so far');
+  assert.deepStrictEqual(midway.suiteComposed, { declared: ['unit', 'other'], covered: ['unit'], missing: ['other'], complete: false });
+
+  // Chunk 2: the other declared check, same pattern.
+  const chunk2 = await runStampSuiteChunk(r, 'other=node -e 0');
+  assert.strictEqual(chunk2.code, 0, chunk2.stderr);
+  const after = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(after.verifiedHead, true, 'both declared checks now have a passing record at this clean HEAD (#3002 AC1)');
+  assert.deepStrictEqual(after.suiteComposed, { declared: ['unit', 'other'], covered: ['unit', 'other'], missing: [], complete: true });
+  assert.strictEqual(after.match, false, 'suite-composed verification is never the single full-set match (#3043/#3129\'s own distinction)');
+});
+
+test('--stamp-status --scope reports verifiedHead:false when a declared check has no record yet (#3002 AC2)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  const status = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(status.verifiedHead, false);
+  assert.deepStrictEqual(status.suiteComposed.missing, ['other']);
+});
+
+test('a per-suite record from an earlier sha does not count, even after the missing check later passes (#3002 AC3)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  commitFile(r, 'src/a.js', '1'); // HEAD moves — the `unit` record now names a stale sha
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  const status = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(status.verifiedHead, false);
+  assert.deepStrictEqual(status.suiteComposed.missing, ['unit'], '`unit`\'s record from the OLD sha must not count at the new HEAD');
+});
+
+test('a failing chunk clears that check\'s own per-suite record (#3002 Deliverable 3)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  const complete = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(complete.verifiedHead, true);
+  // Re-run `unit` and have it fail at the SAME HEAD — its own record must be
+  // cleared, not left as a stale pass.
+  const failing = await runStampSuiteChunk(r, 'unit=node -e "process.exit(1)"');
+  assert.notStrictEqual(failing.code, 0);
+  const after = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(after.verifiedHead, false);
+  assert.deepStrictEqual(after.suiteComposed.missing, ['unit']);
+});
+
+test('a plain --no-stamp partial run with no --stamp-suite writes no per-suite records at all (#3002 AC4)', async () => {
+  const r = tmpGitRepo();
+  const run = await runCli(['--no-stamp', '--cmd', 'tests=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-suites.json')));
+});
+
+test('--stamp-status with no --scope never looks at per-suite records (suiteComposed: null)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
+  const status = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo })).stdout);
+  assert.strictEqual(status.suiteComposed, null);
+  assert.strictEqual(status.verifiedHead, false, 'with no --scope, the single-stamp path is all there is, and no full stamp was ever written');
+});
+
+test('a check that regenerates a declared generated file from a clean start still earns a clean stamp — the end-of-run read carries the exemption (#2987)', async () => {
+  const r = scopedRepo(
+    [{ match: 'src/**', suites: ['unit'], static: true }],
+    { generated: ['dist/**'] },
+  );
+  commitFile(r, 'dist/bundle.js', 'v1');
+  const regen = 'other=node -e "require(\'fs\').writeFileSync(\'dist/bundle.js\',\'v2\')"';
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', regen], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.strictEqual(fs.readFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'utf8'), 'v2', 'the check really regenerated the file');
+  const stamp = stampOf(r.gitDir);
+  assert.strictEqual(stamp.dirty, false);
+  assert.deepStrictEqual(stamp.generatedExempt, ['dist/bundle.js']);
+});
+
+test('a --stamp-suite chunk on a tree dirty outside the generated paths writes no record and says why (#3002 AC3)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  fs.writeFileSync(path.join(r.repo, 'notes.txt'), 'uncommitted');
+  const chunk = await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  assert.strictEqual(chunk.code, 0, chunk.stderr);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-suites.json')), 'no per-suite record against a dirty tree');
+  assert.match(chunk.stdout, /CAVEAT: --stamp-suite recorded no per-suite pass this run — the working tree is dirty outside any declared `generated` path/);
+});
+
+test('--stamp-suite chunks compose on a tree whose only dirty paths are declared generated ones (#2987 + #3002)', async () => {
+  const r = scopedRepo(
+    [{ match: 'src/**', suites: ['unit'], static: true }],
+    { generated: ['dist/**'] },
+  );
+  commitFile(r, 'dist/bundle.js', 'v1');
+  fs.writeFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'v2-regenerated');
+  for (const cmd of [`unit=${r.unitCmd}`, 'other=node -e 0']) {
+    const chunk = await runStampSuiteChunk(r, cmd);
+    assert.strictEqual(chunk.code, 0, chunk.stderr);
+    assert.doesNotMatch(chunk.stdout, /CAVEAT: --stamp-suite/);
+  }
+  const status = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(status.suiteComposed.complete, true);
+  assert.strictEqual(status.verifiedHead, true);
+});
+
+test('--stamp-status --scope naming a missing declaration reports scopeError instead of looking like no --scope at all', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const run = await runCli(['--stamp-status', '--scope', '.claude-tweaks/missing.json'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, 'status is data — still exit 0');
+  const status = JSON.parse(run.stdout);
+  assert.match(status.scopeError, /no declaration at .*missing\.json/);
+  assert.strictEqual(status.suiteComposed, null);
+  const ok = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
+  assert.strictEqual(ok.scopeError, null);
+});
+
+test('--stamp-status --scope naming an unparseable declaration reports scopeError', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'broken.json'), '{ not json');
+  const status = JSON.parse((await runCli(['--stamp-status', '--scope', '.claude-tweaks/broken.json'], { cwd: r.repo })).stdout);
+  assert.match(status.scopeError, /could not parse JSON/);
+  assert.strictEqual(status.suiteComposed, null);
+});
+
+test('--stamp-status --scope under a foreign --git-dir reports the ignored --scope in scopeError', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const other = tmpGitRepo();
+  const status = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath, '--git-dir', other.gitDir], { cwd: r.repo })).stdout);
+  assert.match(status.scopeError, /--scope: ignored — --git-dir names another checkout/);
+  assert.strictEqual(status.suiteComposed, null);
+});
+
+test('a --scope declaration at a non-default path whose generated glob covers itself is a usage error (#2987)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const decl = JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8'));
+  commitFile(r, 'ci/scope.json', JSON.stringify({ ...decl, generated: ['ci/**'] }));
+  const run = await runCli(['--scope', 'ci/scope.json', '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`], { cwd: r.repo });
+  assert.strictEqual(run.code, 2, run.stdout);
+  assert.match(run.stderr, /"ci\/\*\*" would also cover ci\/scope\.json itself/);
+});
+
+test('a --stamp-suite chunk whose HEAD moves mid-run writes no record and says why (#3002)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const chunk = await runStampSuiteChunk(r, 'unit=git commit -q --allow-empty -m mid-run && node -e 0');
+  assert.strictEqual(chunk.code, 0, chunk.stderr);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-suites.json')), 'no per-suite record for a moved tree');
+  assert.match(chunk.stdout, /CAVEAT: --stamp-suite recorded no per-suite pass this run — the tree moved during the run/);
+});
+
+test('a --stamp-suite chunk whose record write fails says so instead of passing silently (#3002)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  // A directory where the records file belongs makes the atomic rename fail.
+  fs.mkdirSync(path.join(r.gitDir, 'claude-tweaks-verify-suites.json'));
+  const chunk = await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  assert.strictEqual(chunk.code, 0, chunk.stderr);
+  assert.match(chunk.stdout, /CAVEAT: --stamp-suite recorded no per-suite pass this run — the record write failed: /);
+});
+
 test('--changed-files prints {base, files} = committed-since-anchor ∪ working tree, anchored on the stamp fullSha (#1923 AC2)', async () => {
   const r = tmpGitRepo();
   const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
