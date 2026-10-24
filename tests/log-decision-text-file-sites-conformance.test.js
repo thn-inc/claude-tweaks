@@ -30,6 +30,9 @@ const SITES = [
   { id: 'P2', file: 'plugin/skills/_shared/pr-check-gate.md', content: "PR #{pr} checks {state} at {headRefOid short} ({pending names, or 'HEAD not yet pushed'}) — passed with caveat" },
   { id: 'P3', file: 'plugin/skills/_shared/pr-check-gate.md', content: 'condition: pr-checks.js {state}{: reason} → fallback: local verification only' },
   { id: 'K1', file: 'plugin/skills/_shared/git-discipline.md', content: "caught PR #{pr}'s branch up with origin/{integration-branch} before the next phase ({before short} → {after short}); re-pushed" },
+  { id: 'L1', file: 'plugin/skills/_shared/local-merge-auto-finish.md', content: 'Merged {feature-branch} into {base-branch} (commit {sha}), pushed. [outcome: merged]' },
+  { id: 'L2', file: 'plugin/skills/_shared/local-merge-auto-finish.md', content: 'Local merge into {base-branch} failed ({conflict|failed verification}) — reverted, worktree and branch preserved. [outcome: pending-review]' },
+  { id: 'A1', file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md', content: '#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}{detail}) — treated as needs-human, Review Console renders normally' },
 ];
 
 const collapse = (text) => text.replace(/\s+/g, ' ');
