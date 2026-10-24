@@ -9,7 +9,7 @@ const read = (rel) => readText(path.join(ROOT, rel));
 
 test('flake-handling.md: the runner owns flake retries — the section is "Flake handling" and the agent is no longer told to re-run every failed file first (#1925)', () => {
   const text = read('plugin/skills/test/flake-handling.md');
-  assert.ok(text.includes('# Flake handling (tests check only)'));
+  assert.match(text, /^# Flake handling \(tests check only\)$/m);
   assert.ok(!text.includes('### Flake adjudication'));
   assert.ok(!text.includes('Before reporting a `tests` check failure, re-run each failed file in isolation once'));
   assert.ok(text.includes('CAVEAT: flaky-retried:'));
@@ -22,8 +22,8 @@ test('flake-handling.md: the runner owns flake retries — the section is "Flake
 
 test('flake-handling.md: the isolate-and-rerun-once rule names two paths — named-file isolation and whole-suite re-run — selected by retryDecision.reason (#2026)', () => {
   const text = read('plugin/skills/test/flake-handling.md');
-  assert.ok(text.includes('## Named-file isolation'));
-  assert.ok(text.includes('## Whole-suite re-run'));
+  assert.match(text, /^## Named-file isolation$/m);
+  assert.match(text, /^## Whole-suite re-run$/m);
   assert.ok(text.includes('retryDecision.reason'));
   assert.ok(text.includes("an `unlisted: […]` reason selects **named-file isolation**"));
   assert.ok(text.includes("a `no-parse` reason"));
@@ -50,7 +50,10 @@ test('AC3.1: verification.md keeps only a pointer stub at the moved heading (#40
   const start = v.indexOf('### Flake handling (tests check only)');
   const end = v.indexOf('### Gate behavior');
   assert.ok(start !== -1 && end > start);
-  assert.ok(v.slice(start, end).includes('CAVEAT: flaky-retried:'), 'the stub names the caveat that triggers the load');
+  const stub = v.slice(start, end);
+  assert.ok(stub.includes('CAVEAT: flaky-retried:'), 'the stub names the caveat that triggers the load');
+  assert.ok(stub.includes('CAVEAT: flaky-allowlist:'), 'the stub names the second caveat that triggers the load');
+  assert.ok(stub.includes('When a `tests`-family check fails'), 'the stub names the tests-family failure trigger');
   assert.ok(!v.includes('#### Named-file isolation'));
   assert.ok(!v.includes('#### Whole-suite re-run'));
   assert.ok(!v.includes('One re-run, never more'));
