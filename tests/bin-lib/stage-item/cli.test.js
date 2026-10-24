@@ -184,7 +184,7 @@ test('cli: --help prints usage and exits 0 without touching the filesystem', () 
   assert.match(out.join(''), /usage: stage-item\.js/);
 });
 
-test('cli: --id review-13-record (.md file) warns naming the unmapped prefix and nearest canonical prefixes; exit 0, file still written (#3370)', () => {
+test('AC1.1: cli: --id review-13-record (.md file) warns naming the unmapped prefix and nearest canonical prefixes; exit 0, file still written (#3370)', () => {
   const { main, runDir } = fixture();
   const md = path.join(path.dirname(main), 'proposal.md');
   fs.writeFileSync(md, 'a finding\n');
@@ -210,4 +210,41 @@ test('cli: a canonical id prints nothing to stderr (#3370)', () => {
   const b = fakeDeps(main);
   assert.equal(run(['--run', runDir, '--id', 'review-2', '--file', sourceFile], b.deps), 0);
   assert.equal(b.err.join(''), '');
+});
+
+// #3488: producers whose runs never reach the wrap-up Review Console are exempt from the
+// unmapped-prefix warning; a mapped id (upstream-draft-) classifies cleanly on its own.
+for (const [id, why, titlePrefix] of [
+  ['release-held', 'exempt: release console', 'AC1.1: '],
+  ['dispatch-target-missing-x', 'exempt: dispatch standalone', 'AC1.1: '],
+  ['shipped-close-1', 'exempt: dispatch standalone firing', ''],
+  ['upstream-draft-1', 'mapped, hand-off-draft', ''],
+]) {
+  test(`${titlePrefix}--id ${id} prints no unmapped-prefix warning (${why})`, () => {
+    const { main, runDir } = fixture();
+    const md = path.join(path.dirname(main), 'proposal.md');
+    fs.writeFileSync(md, 'a proposal\n');
+    const { deps, err } = fakeDeps(main);
+    const code = run(['--run', runDir, '--id', id, '--file', md], deps);
+    assert.equal(code, 0);
+    assert.ok(fs.existsSync(path.join(fs.realpathSync(runDir), 'staged', `${id}.md`)));
+    assert.equal(err.join(''), '');
+  });
+}
+
+// #3488: the shipped-close staging call in queue-pull-script.md must not redirect stderr —
+// `2>&1` silencing hid a real staging failure from the firing's log.
+function assertShippedCloseStderrVisible(text) {
+  const line = text.split('\n').find((l) => /--id "shipped-close-/.test(l));
+  assert.ok(line, 'no shipped-close- stage-item line found');
+  assert.doesNotMatch(line, /2>/);
+}
+
+test('queue-pull-script.md: the shipped-close- stage-item line does not silence stderr (#3488)', () => {
+  const text = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'), 'utf8');
+  assertShippedCloseStderrVisible(text);
+});
+
+test('queue-pull-script.md pin control: the original 2>&1 line is rejected (#3488)', () => {
+  assert.throws(() => assertShippedCloseStderrVisible('... --id "shipped-close-$NUM" --file "$FILE" >/dev/null 2>&1 || true'));
 });

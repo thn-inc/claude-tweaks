@@ -73,6 +73,9 @@ test('untrustedJqNote prints the same text as untrustedSkipNote, including a del
     { url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' },
     { url: 'https://x/c2', author: null, authorAssociation: 'NONE' },
     { url: 'https://x/c3', author: { login: 'eve' } },
+    { url: 'https://api/c4', html_url: 'https://x/c4', user: { login: 'eve' }, author_association: 'NONE' },
+    { html_url: 'https://x/c5', user: null, author_association: 'CONTRIBUTOR' },
+    { id: 6, user: { login: 'bot[bot]' } },
   ];
   const r = spawnSync('jq', ['-r', `.comments[] | ${untrustedJqNote()}`], { input: JSON.stringify({ comments }), encoding: 'utf8' });
   assert.strictEqual(r.status, 0, `jq failed: ${r.stderr}`);
@@ -83,10 +86,44 @@ test('untrustedJqNote prints the same text as untrustedSkipNote, including a del
 test('trustedJqSelect/untrustedJqNote are derived from the set', () => {
   assert.strictEqual(
     trustedJqSelect(),
-    'select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")',
+    'select((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR")',
   );
   assert.strictEqual(
     untrustedJqNote(),
-    'select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \\(.url) by \\(.author.login // "unknown") (\\(.authorAssociation // "no association")) — not an owner, member, or collaborator"',
+    'select(((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR") | not) | "skipped marker comment \\(.url // .html_url // .id // "unknown") by \\(.author.login // .user.login // "unknown") (\\(.authorAssociation // .author_association // "no association")) — not an owner, member, or collaborator"',
   );
+});
+
+test('AC1.1: trustedJqSelect keeps a trusted comment on both transports (real jq)', (t) => {
+  const probe = spawnSync('jq', ['--version'], { encoding: 'utf8' });
+  if (probe.error || probe.status !== 0) {
+    t.skip('jq not found in this environment');
+    return;
+  }
+  const comments = [
+    { n: 1, authorAssociation: 'MEMBER' },
+    { n: 2, author_association: 'MEMBER' },
+    { n: 3, author_association: 'OWNER' },
+    { n: 4, author_association: 'COLLABORATOR' },
+    { n: 5, author_association: 'CONTRIBUTOR' },
+    { n: 6, author_association: 'NONE' },
+    { n: 7 },
+    { n: 8, author_association: 'member' },
+    { n: 9, authorAssociation: 'member' },
+    // camelCase wins when both spellings are present.
+    { n: 10, authorAssociation: 'NONE', author_association: 'MEMBER' },
+    // jq's `//` passes "" through, so this is untrusted in jq but trusted by
+    // isTrustedComment — a fail-closed divergence; no transport emits both fields.
+    { n: 11, authorAssociation: '', author_association: 'MEMBER' },
+  ];
+  const r = spawnSync('jq', ['-c', `.comments[] | ${trustedJqSelect()} | .n`], { input: JSON.stringify({ comments }), encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `jq failed: ${r.stderr}`);
+  const kept = r.stdout.split('\n').filter(Boolean);
+  assert.deepStrictEqual(kept, ['1', '2', '3', '4']);
+  for (const c of comments) {
+    if (c.n === 11) continue;
+    assert.strictEqual(kept.includes(String(c.n)), isTrustedComment(c), `jq keep/drop matches isTrustedComment for n:${c.n}`);
+  }
+  assert.strictEqual(isTrustedComment(comments.find((c) => c.n === 11)), true, 'n:11 is trusted by isTrustedComment');
+  assert.ok(!kept.includes('11'), 'n:11 is dropped by jq (fail closed)');
 });

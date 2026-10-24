@@ -7,6 +7,7 @@ const path = require('path');
 const deps = require('../deps');
 const policy = require('../policy');
 const wtDetect = require('./worktree-detect');
+const ctxLib = require('./context');
 const sessionResidue = require('./session-residue');
 const { reconcile } = require('../reconcile');
 const { DEFAULT_TTL_MS } = require('../reconcile/cache');
@@ -64,6 +65,27 @@ function resolveBuildLine(env = process.env) {
   return `claude-tweaks v${version} @ ${pluginRoot}`;
 }
 
+// #3845: `record-worktree` stamps the run's `ownerPid` once, but `claude --resume`
+// brings the same session id back under a NEW process, so the stamped pid goes
+// stale: a recycled pid would read as a live owner and mute the resumed session's
+// real SessionEnd, and a nested `claude -p` of the resumed process would read the
+// dead owner and stamp a live run. A resume is the one SessionStart that is the
+// owning session returning rather than a new session starting, so it re-stamps.
+// Only an already-stamped run is touched (an unstamped run keeps failing open),
+// and only a run this session owns by id — never a `fallback` guess.
+function restampOwnerPidOnResume(ctx) {
+  const input = ctx.input;
+  if (!input || typeof input !== 'object' || input.source !== 'resume') return;
+  const owned = ctx.ownedRun || {};
+  if (!owned.dir || owned.attribution === 'fallback') return;
+  const patch = ctxLib.ownerPidPatch(process.env);
+  if (!('ownerPid' in patch)) return;
+  const state = ctxLib.readRunState(owned.dir);
+  if (!state || typeof state.sessionId !== 'string' || state.sessionId !== input.session_id) return;
+  if (!Number.isInteger(state.ownerPid) || state.ownerPid === patch.ownerPid) return;
+  ctxLib.writeRunState(owned.dir, patch);
+}
+
 async function run(ctx) {
   const parts = [];
   // Per-invocation cache (#381): memoizes `git worktree list --porcelain` and
@@ -98,6 +120,7 @@ async function run(ctx) {
   // (further down) — one place for a future normalization/validation fix to
   // land, instead of two reads that can drift.
   const pluginRootEnv = process.env.CLAUDE_PLUGIN_ROOT;
+  try { restampOwnerPidOnResume(ctx); } catch { /* best-effort */ }
   try { parts.push(...deps.collect()); } catch { /* best-effort */ }
   try {
     const buildLine = resolveBuildLine({ CLAUDE_PLUGIN_ROOT: pluginRootEnv });

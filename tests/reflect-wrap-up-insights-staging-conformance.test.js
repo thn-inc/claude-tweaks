@@ -17,6 +17,8 @@ const read = (...p) => readText(path.join(ROOT, ...p));
 const FULL_MODE = read('plugin', 'skills', 'reflect', 'full-mode.md');
 const CONSOLE = read('plugin', 'skills', 'wrap-up', 'review-console.md');
 const CONSOLE_INTERACTIVE = read('plugin', 'skills', 'wrap-up', 'review-console-interactive.md');
+const CONSOLE_TEMPLATE = read('plugin', 'skills', 'wrap-up', 'console-template.md');
+const { SECTIONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'resolve.js'));
 
 function section(text, heading, nextPrefix) {
   const start = text.indexOf(heading);
@@ -80,6 +82,26 @@ test('review-console.md: the "On approval" numbered procedure stays sequential 1
   const onApproval = section(CONSOLE, '## On approval (option 1)', '\nFor "On override"');
   const numbers = [...onApproval.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
   assert.deepEqual(numbers, Array.from({ length: numbers.length }, (_, i) => i + 1));
+});
+
+test('review-console.md: the Reflection insights step runs refused-proposals.md\'s Defer-reason check before a Defer/Capture record (#3926)', () => {
+  const step = section(CONSOLE, '**Reflection insights (#2547).**', '\n11.');
+  assert.match(step, /"Defer"\/"Capture" runs `refused-proposals\.md`'s check/);
+});
+
+test('console-template.md renders a #### heading for every section console-resolve.js names, Reflection insights after Upstream feedback (#3926)', () => {
+  for (const name of Object.values(SECTIONS)) {
+    assert.ok(CONSOLE_TEMPLATE.includes(`\n#### ${name} (`), `console-template.md has no "#### ${name}" heading`);
+  }
+  assert.ok(
+    CONSOLE_TEMPLATE.indexOf(`\n#### ${SECTIONS.INSIGHTS} (`) > CONSOLE_TEMPLATE.indexOf(`\n#### ${SECTIONS.UPSTREAM} (`),
+    'Reflection insights follows Upstream feedback, the SECTIONS order',
+  );
+});
+
+test('review-console-interactive.md: the Numbering rules give Reflection insights its own R# sequence (#3926)', () => {
+  const rules = section(CONSOLE_INTERACTIVE, '## Numbering rules', '\n## ');
+  assert.match(rules, /\*\*Reflection insights\*\* \(`R1`, `R2`, …/);
 });
 
 test('review-console-interactive.md: the never-satisfies-this-gate rule still names the Reflection Insights batch explicitly', () => {

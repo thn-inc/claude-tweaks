@@ -15,10 +15,22 @@
 //
 // Elsewhere the explicit file list goes to `node --test`; on Windows (Node >= 22) the root globs
 // go instead, because ~780 paths overflow the 32,767-char command line (#3316).
+//
+// Running the suite also bounds its load on the machine (#3969): concurrent suites from sibling
+// worktrees and fixtures leaked into the shared temp dir made the dev machine unusable. Each run
+// takes a cross-process slot, runs `node --test` with a bounded `--test-concurrency` and a private
+// TMPDIR under `<tmpdir>/ct-test-runs/` (removed on exit; roots orphaned by a killed run are swept
+// from that directory on the next one), and forwards SIGINT/SIGTERM/SIGHUP to the child so a
+// signalled runner frees its slot and root promptly instead of after the suite. Env knobs:
+// CT_TEST_SUITE_SLOTS (simultaneous suites, default 1), CT_TEST_CONCURRENCY (files at once,
+// default half the cores, or cores - 1 when CI is set), CT_TEST_SUITE_SLOT_DIR (where the slot
+// locks live, default under the real tmpdir), CT_TEST_SUITE_SLOT_HELD (=1 set for the child so a
+// nested run skips the slot).
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 
 // The repo root every root path is relative to — both the explicit file list and the win32
 // root globs resolve against it (the spawned `node --test` runs with it as cwd), so the two
@@ -58,28 +70,279 @@ function listTestFiles(cwd, roots) {
   const useRoots = roots && roots.length ? roots : DEFAULT_ROOTS;
   const files = [];
   for (const root of useRoots) {
-    collectTestFiles(path.join(base, root), files);
+    collectTestFiles(path.resolve(base, root), files);
   }
   files.sort();
   return files;
 }
 
+// Matches a positive integer with no sign, fraction, or leading zero — the shape both
+// `CT_TEST_CONCURRENCY` and `CT_TEST_SUITE_SLOTS` accept.
+const POSITIVE_INT = /^[1-9]\d*$/;
+
+// How many test files `node --test` runs at once. Half the cores (at least 1) by default so one
+// suite leaves the machine usable for sibling worktrees (#3969), except when `CI` is set (any
+// non-empty value): a CI runner is single-tenant, so halving only slows it and the default is
+// node's own, cores - 1 (at least 1). `CT_TEST_CONCURRENCY` overrides either with a positive
+// integer, and an invalid value is ignored rather than failing the run.
+// Pure: `env` and `cpus` are parameters, never read from `process`/`os`.
+function resolveConcurrency(env, cpus) {
+  const raw = env.CT_TEST_CONCURRENCY;
+  if (typeof raw === 'string' && POSITIVE_INT.test(raw)) return Number(raw);
+  if (typeof env.CI === 'string' && env.CI !== '') return Math.max(1, cpus - 1);
+  return Math.max(1, Math.floor(cpus / 2));
+}
+
+// How many full suites may run at once across processes (the slot semaphore). Defaults to 1;
+// `CT_TEST_SUITE_SLOTS` overrides with a positive integer. An invalid value falls back to 1 and
+// says so once through `log`, so a typo is visible instead of silently changing the cap.
+function resolveSlots(env, log) {
+  const raw = env.CT_TEST_SUITE_SLOTS;
+  if (raw === undefined) return 1;
+  if (typeof raw === 'string' && POSITIVE_INT.test(raw)) return Number(raw);
+  log(`run-tests.js: ignoring invalid CT_TEST_SUITE_SLOTS=${JSON.stringify(raw)} (want a positive integer) — using 1 slot.`);
+  return 1;
+}
+
 // Returns the argv (after the node binary) for `node --test`. The explicit file list is the
 // default — `node --test` glob args don't work on Node 20 (#407). On win32 that list overflows
 // the 32,767-char command line (#3316), so there it passes the root globs, which needs Node >= 22.
-// Pure: `platform` and `nodeMajor` are parameters, never read from `process`.
-function buildTestArgs(files, roots, { platform, nodeMajor }) {
-  if (platform !== 'win32') return ['--test', ...files];
+// `--test-concurrency=<n>` follows `--test` on both branches (#3969); `concurrency` must be a
+// positive integer, checked before the win32/Node<22 error so that error keeps its own message.
+// Pure: `platform`, `nodeMajor` and `concurrency` are parameters, never read from `process`.
+function buildTestArgs(files, roots, { platform, nodeMajor, concurrency }) {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error(`buildTestArgs: concurrency must be a positive integer (got ${String(concurrency)}).`);
+  }
+  const head = ['--test', `--test-concurrency=${concurrency}`];
+  if (platform !== 'win32') return [...head, ...files];
   if (nodeMajor < 22) {
     throw new Error(
       'the Windows command line cannot hold the explicit test-file list, and `node --test` ' +
         `globs need Node >= 22 on Windows (running Node ${nodeMajor}).`,
     );
   }
-  return ['--test', ...roots.map((root) => `${root.split(/[\\/]/).join('/')}/**/*.test.js`)];
+  return [...head, ...roots.map((root) => `${root.split(/[\\/]/).join('/')}/**/*.test.js`)];
 }
 
-module.exports = { listTestFiles, buildTestArgs };
+// Whether `pid` names a live process: signal 0 probes without delivering anything. ESRCH means
+// gone; EPERM means it exists but belongs to someone else, which still counts as alive — a slot
+// holder we cannot signal must not be treated as dead and have its lock stolen. A non-positive or
+// non-integer pid is never a process: `kill(0, 0)` would probe our own process group and report it
+// alive forever.
+function isPidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+// Creates `lockPath` exclusively (`wx`) with the holder's identity. Returns false when another
+// process already owns the file; any other error propagates. The identity is what lets a waiter
+// name the holder and lets a later run tell a dead holder from a live one.
+function createLock(lockPath, pid, cwd, now) {
+  let fd;
+  try {
+    fd = fs.openSync(lockPath, 'wx');
+  } catch (err) {
+    if (err.code === 'EEXIST') return false;
+    throw err;
+  }
+  try {
+    fs.writeSync(fd, JSON.stringify({ pid, startedAt: new Date(now()).toISOString(), cwd }));
+  } catch (err) {
+    // An empty lock left behind would read as a live unknown holder and stall every other run
+    // for `staleUnparseableMs`, so a failed write removes the file before surfacing the error.
+    fs.closeSync(fd);
+    unlinkQuiet(lockPath);
+    throw err;
+  }
+  fs.closeSync(fd);
+  return true;
+}
+
+// Stands in for a holder whose identity is not readable (caught between create and write, or a
+// reclaim in flight).
+const UNKNOWN_HOLDER = Object.freeze({ pid: 'unknown', cwd: 'unknown', startedAt: 'unknown' });
+
+// Classifies an existing lock file: `null` if it vanished, `{ stale: true }` if it is
+// reclaimable (dead holder, or unparseable and older than `staleUnparseableMs`), else the
+// held-by info. A fresh unparseable file is a holder caught between create and write, so it is
+// treated as held with unknown identity rather than reclaimed.
+function readHolder(lockPath, { isAlive, now, staleUnparseableMs }) {
+  let text;
+  let mtimeMs;
+  try {
+    text = fs.readFileSync(lockPath, 'utf8');
+    mtimeMs = fs.statSync(lockPath).mtimeMs;
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+  let held;
+  try {
+    held = JSON.parse(text);
+  } catch (_) {
+    held = null;
+  }
+  if (held && Number.isInteger(held.pid) && held.pid > 0) {
+    return isAlive(held.pid) ? { pid: held.pid, cwd: held.cwd, startedAt: held.startedAt } : { stale: true };
+  }
+  if (now() - mtimeMs > staleUnparseableMs) return { stale: true };
+  return UNKNOWN_HOLDER;
+}
+
+function unlinkQuiet(p) {
+  try {
+    fs.unlinkSync(p);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+}
+
+// Creates the reclaim mutex exclusively; false when it already exists.
+function createMutex(mutex) {
+  try {
+    fs.closeSync(fs.openSync(mutex, 'wx'));
+    return true;
+  } catch (err) {
+    if (err.code === 'EEXIST') return false;
+    throw err;
+  }
+}
+
+// Reclaims a lock its caller judged stale, atomically enough that two reclaimers cannot both end
+// up holding the slot. The race without a mutex: A and B both read the same dead lock; A unlinks it
+// and creates its own; B then unlinks A's live lock and creates its own — both hold the slot. So
+// only the process that creates `slot-<i>.reclaim` (`wx`) may reclaim, and under it the lock is
+// RE-READ and must still be stale before the unlink + create. A mutex older than `staleReclaimMs`
+// was left by a reclaimer that crashed inside its window: it is cleared and taken once. Residual
+// risk: a reclaimer crashing inside the window, or two processes clearing the same old mutex, can
+// at worst let two suites run at once one time — never a deadlock, since the mutex always ages out.
+// Returns true when `lockPath` is now ours; false when someone else holds or is reclaiming it.
+function reclaimSlot(lockPath, { pid, cwd, isAlive, now, staleUnparseableMs, staleReclaimMs }) {
+  const mutex = lockPath.replace(/\.lock$/, '.reclaim');
+  if (!createMutex(mutex)) {
+    let ageMs;
+    try {
+      ageMs = now() - fs.statSync(mutex).mtimeMs;
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+    if (ageMs !== undefined && ageMs <= staleReclaimMs) return false;
+    unlinkQuiet(mutex);
+    if (!createMutex(mutex)) return false;
+  }
+  try {
+    const holder = readHolder(lockPath, { isAlive, now, staleUnparseableMs });
+    if (holder !== null && !holder.stale) return false;
+    if (holder !== null) unlinkQuiet(lockPath);
+    return createLock(lockPath, pid, cwd, now);
+  } finally {
+    unlinkQuiet(mutex);
+  }
+}
+
+// Creates `dir` if needed and refuses it unless it is a real directory owned by this user. The slot
+// and run-root parents sit at fixed names under the tmpdir; where that is a shared, world-writable
+// /tmp (multi-user Linux), another user could pre-create either — a symlink steering the sweep's
+// deletes, or a directory of theirs holding a lock that blocks every run. Throws on a mismatch.
+function ensureOwnDir(dir) {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const st = fs.lstatSync(dir);
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (!st.isDirectory() || (uid !== null && st.uid !== uid)) {
+    throw new Error(`${dir} is not a directory owned by this user — remove it and re-run.`);
+  }
+}
+
+// Takes one of `slots` cross-process suite slots (`slot-<i>.lock` in `dir`) and returns the lock
+// path, polling every `pollMs` until one frees up (#3969). A lock held by a dead pid is reclaimed
+// immediately, so a crashed run never wedges the queue. The wait message is logged once per call.
+// `isAlive`, `now`, `sleep` and `log` are parameters so tests never touch real processes or time.
+// A lock naming our own `pid` is stale by definition — a prior run that crashed and whose pid the
+// OS then reused for this one — so it is reclaimed rather than waited on forever.
+function acquireSlot({ dir, slots, pid, cwd, isAlive: isPidLive, now, sleep, log, pollMs = 2000, staleUnparseableMs = 600000, staleReclaimMs = 30000 }) {
+  const isAlive = (holderPid) => holderPid !== pid && isPidLive(holderPid);
+  ensureOwnDir(dir);
+  let logged = false;
+  for (;;) {
+    let blocker = null;
+    for (let i = 0; i < slots; i++) {
+      const lockPath = path.join(dir, `slot-${i}.lock`);
+      if (createLock(lockPath, pid, cwd, now)) return lockPath;
+      const holder = readHolder(lockPath, { isAlive, now, staleUnparseableMs });
+      if (holder === null || holder.stale) {
+        if (reclaimSlot(lockPath, { pid, cwd, isAlive, now, staleUnparseableMs, staleReclaimMs })) return lockPath;
+        // Someone else is reclaiming this slot or won it: it is held now, so keep scanning.
+        if (!blocker) blocker = { ...UNKNOWN_HOLDER, lockPath };
+        continue;
+      }
+      if (!blocker || blocker.pid === 'unknown') blocker = { ...holder, lockPath };
+    }
+    if (!logged) {
+      logged = true;
+      // The lock path is named so a maintainer can delete a lock whose pid was reused by an
+      // unrelated long-lived process (isAlive cannot tell it from the run that took the slot).
+      log(
+        `run-tests.js: waiting for a test-suite slot — held by pid ${blocker.pid} (cwd ${blocker.cwd}) ` +
+          `since ${blocker.startedAt}; set CT_TEST_SUITE_SLOTS to raise the limit (lock: ${blocker.lockPath})`,
+      );
+    }
+    sleep(pollMs);
+  }
+}
+
+// Frees `lockPath` only if it still names `pid`, so a run that lost its lock to a reclaim never
+// deletes the new owner's. Never throws: this runs on exit paths where a failure must not mask
+// the suite's own exit code.
+function releaseSlot(lockPath, pid) {
+  try {
+    const held = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    if (held && held.pid === pid) fs.unlinkSync(lockPath);
+  } catch (_) {
+    // missing, unparseable or already gone — nothing to release
+  }
+}
+
+// The per-run temp root: a pid-tagged directory under `realTmp` that the suite's children use as
+// their TMPDIR, so one run's leaked temp dirs are removable together and attributable to a pid.
+function createRunRoot(realTmp, pid) {
+  return fs.mkdtempSync(path.join(realTmp, 'ct-testrun-' + pid + '-'));
+}
+
+// Removes `ct-testrun-<pid>-*` roots in `dir` whose pid is no longer alive (a killed run never
+// reached its own cleanup). Returns the removed paths. One unreadable or undeletable entry must
+// not stop the sweep or fail the run, so per-entry errors are swallowed.
+function sweepStaleRoots({ dir, isAlive }) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (_) {
+    return [];
+  }
+  const removed = [];
+  for (const entry of entries) {
+    const match = entry.isDirectory() && /^ct-testrun-(\d+)-/.exec(entry.name);
+    if (!match || isAlive(Number(match[1]))) continue;
+    const full = path.resolve(dir, entry.name);
+    try {
+      fs.rmSync(full, { recursive: true, force: true });
+      removed.push(full);
+    } catch (_) {
+      // leave it for the next sweep
+    }
+  }
+  return removed;
+}
+
+module.exports = {
+  listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots,
+  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots,
+};
 
 if (require.main === module) {
   const argRoots = process.argv.slice(2);
@@ -106,21 +369,89 @@ if (require.main === module) {
     testArgs = buildTestArgs(files, roots, {
       platform: process.platform,
       nodeMajor: Number(process.versions.node.split('.')[0]),
+      concurrency: resolveConcurrency(process.env, os.availableParallelism()),
     });
   } catch (err) {
     console.error(`run-tests.js: ${err.message}`);
     process.exit(1);
   }
 
-  const result = spawnSync(process.execPath, testArgs, {
-    cwd: REPO_ROOT,
-    stdio: 'inherit',
-    env: process.env,
-  });
+  // Run roots live under one dedicated parent, so the startup sweep reads a directory that only
+  // ever holds run roots instead of scanning the whole real tmpdir.
+  const runsDir = path.join(os.tmpdir(), 'ct-test-runs');
+  ensureOwnDir(runsDir);
+  sweepStaleRoots({ dir: runsDir, isAlive: isPidAlive });
 
-  if (result.error) {
-    throw result.error;
+  // A nested run (a test that itself runs this script) inherits CT_TEST_SUITE_SLOT_HELD=1 from
+  // the suite that already holds the slot, and must not wait on it.
+  let lockPath = null;
+  if (process.env.CT_TEST_SUITE_SLOT_HELD !== '1') {
+    lockPath = acquireSlot({
+      dir: process.env.CT_TEST_SUITE_SLOT_DIR || path.join(os.tmpdir(), 'ct-test-suite-slots'),
+      slots: resolveSlots(process.env, console.error),
+      pid: process.pid,
+      cwd: REPO_ROOT,
+      isAlive: isPidAlive,
+      now: Date.now,
+      sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+      log: console.error,
+    });
   }
 
-  process.exit(result.status === null ? 1 : result.status);
+  // From here the slot is held, so a signal must forward to the child and let the cleanup below
+  // run rather than kill the runner with the lock and run root left behind. (While waiting for a
+  // slot nothing is held yet, so the default exit is right.) A signal that lands before the child
+  // exists is applied as soon as it does.
+  let child = null;
+  let forwarded = null;
+  // `node --test` dies on SIGHUP by default, orphaning its workers, but shuts them down on SIGTERM —
+  // so SIGHUP reaches the child as SIGTERM. The runner's own exit code still follows `forwarded`.
+  const childSignal = (sig) => (sig === 'SIGHUP' ? 'SIGTERM' : sig);
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(sig, () => {
+      forwarded = sig;
+      if (child) child.kill(childSignal(sig));
+    });
+  }
+
+  let runRoot = null;
+  const cleanup = () => {
+    if (runRoot) {
+      try {
+        fs.rmSync(runRoot, { recursive: true, force: true });
+      } catch (err) {
+        console.error(`run-tests.js: could not remove ${runRoot}: ${err.message}`);
+      }
+      runRoot = null;
+    }
+    if (lockPath) {
+      releaseSlot(lockPath, process.pid);
+      lockPath = null;
+    }
+  };
+
+  try {
+    runRoot = createRunRoot(runsDir, process.pid);
+    child = spawn(process.execPath, testArgs, {
+      cwd: REPO_ROOT,
+      stdio: 'inherit',
+      env: { ...process.env, TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1' },
+    });
+  } catch (err) {
+    cleanup();
+    throw err;
+  }
+  if (forwarded) child.kill(childSignal(forwarded));
+
+  // A spawn failure emits 'error' (and no 'exit'): clean up, then surface it as an uncaught throw.
+  child.on('error', (err) => {
+    cleanup();
+    throw err;
+  });
+  child.on('exit', (code, signal) => {
+    cleanup();
+    if (forwarded) process.exit(128 + os.constants.signals[forwarded]);
+    if (signal) process.exit(128 + os.constants.signals[signal]);
+    process.exit(code === null ? 1 : code);
+  });
 }

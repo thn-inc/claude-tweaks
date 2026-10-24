@@ -6,14 +6,14 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
 
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
 const { trustedJqSelect, untrustedJqNote } = require('../plugin/bin/lib/issues/comment-trust');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(REPO_ROOT, rel));
 
 const FLOOR = read('plugin/skills/_shared/materiality-floor.md');
 const GATE = read('plugin/skills/_shared/deferral-gate.md');

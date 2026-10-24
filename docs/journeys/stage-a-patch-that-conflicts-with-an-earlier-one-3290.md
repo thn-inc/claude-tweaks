@@ -10,7 +10,7 @@ files:
 
 # Stage a Patch That Conflicts With an Earlier One
 
-**Persona:** The agent running `/claude-tweaks:review` Step 3 routing (or `/test`'s fix staging, `/deepen`'s collapse staging, a reproduction-pair staging) partway through a `/flow` run that has already staged one or more `.patch` proposals. It is about to stage another, its diff anchored on lines an earlier staged patch also touches. A second persona: the maintainer who reads `decisions.md` and opens the Review Console hours later.
+**Persona:** The agent running `/claude-tweaks:review` Step 3 routing (or `/test`'s fix staging or `/deepen`'s collapse staging) partway through a `/flow` run that has already staged one or more `.patch` proposals. It is about to stage another, its diff anchored on lines an earlier staged patch also touches. A second persona: the maintainer who reads `decisions.md` and opens the Review Console hours later.
 **Goal:** Learn at staging time — not at the console — that the new patch will not apply on top of the run's earlier staged patches, and either re-derive it onto them or log both patch names, so the console's fast path still applies every patch it can.
 **Entry point:** A staging site writes `staged/{slug}-{n}.patch`, and its solo `git -C "$WORKTREE" apply --check "$STAGE_PATH"` exits 0.
 **Success state:** Either a `STAGED` line naming the clean patch (unchanged from before), or one naming it with ` Re-derived onto staged/{earlier}.patch.`, or a conflict line naming both `staged/` paths. At the console, every patch that applies at its apply-order position resolves `apply`, including a re-derived one that would fail alone.
@@ -26,10 +26,10 @@ files:
 
 ### 2. Read a conflict naming both patches
 - **URL:** the CLI's exit 1, its stderr line, and its JSON `targetConflict`
-- **Action:** Read `check-staged-stack.js: staged/{patch} does not apply on top of staged/{conflictsWith} in apply order ({error})`. The new patch may be either side: a new `review-10.patch` sorts before an existing `review-2.patch`, so the existing one can be the one that fails.
+- **Action:** Read `check-staged-stack.js: staged/{patch} does not apply on top of staged/{conflictsWith} in apply order ({error})`. The new patch may be either side: a new `review-10.patch` sorts before an existing `review-2.patch`, so the existing one can be the one that fails. When more than one conflict involves `--patch`, the same line carries each one, joined by `; `.
 - **Should feel:** Specific. Two file names and git's own error, not "a patch conflicted".
 - **Should understand:** A patch that does not apply even alone is the solo gate's business (exit 2 here), never reported as a conflict. Exit 4 means the check could not run, never "clean".
-- **Red flags:** A conflict line naming only one patch. Exit 0 when `--patch` was never among the walked names.
+- **Red flags:** A conflict line naming only one patch. A line that drops a second conflict involving `--patch`, or that names a pair which does not involve `--patch` at all. Exit 0 when `--patch` was never among the walked names.
 
 ### 3. Re-derive, re-anchor, or log
 - **URL:** the JSON `rederived` / `rederiveReason` fields, and the run's `decisions.md`
@@ -49,3 +49,4 @@ files:
 - Created during build of #3290 (check same-run staged patches stacked, not only alone, at staging time), run `2026-10-19T205809-record-3290`.
 - Related: `docs/journeys/resolve-the-unattended-console-in-one-process-1932.md` (the unattended console now takes the stacked verdict).
 - Updated during build of #3696 (Windows: the stack check's git calls failed on the `\\.\nul` config path, so every staged patch read as not applicable), run `2026-10-20T124821-spec-3599-3602-3695-3696-3698-3699-3595`.
+- Updated during build of #3679 (harden and cover the stacked check: the exit-1 stderr line names every conflict that involves `--patch`), run `2026-10-21T225455-record-3679`.

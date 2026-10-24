@@ -35,7 +35,7 @@ that needs no resolution, only inclusion:
    `{minted-run-dir}/context/merge.md`, composed by the dispatching session before either call;
    every citation of them in the templates below carries its own fallback to the source file.
 
-6. **Worktree shell constraint** — the Claude Code harness enforces limits on Bash commands in a single call, independent of filesystem effect (see `_shared/scratch-worktree.md` §7 ("Shell constraint") for the full boundary description, if that bundle is absent, read `_shared/scratch-worktree.md` directly). Avoid these shapes: quoted JSON containing `git`; a `for`/`while` loop variable; a glob argument; a `gh api` call inside an `if RAW=$(...)`; `sed -i` on a variable path; `cat "$P/…"` or `sed -n 'a,bp' "$P/…"` where `$P` is a runtime-computed path variable. Use `Write`/`Edit`/`Read` tools instead of equivalent shell commands, separate commands instead of loops or compound constructs, and literal file paths instead of variables. One plain command per Bash call is the general pattern.
+6. **Worktree shell constraint** — the Claude Code harness enforces limits on Bash commands in a single call, independent of filesystem effect (see `_shared/scratch-worktree.md` §7 ("Shell constraint") for the full boundary description, if that bundle is absent, read `_shared/scratch-worktree.md` directly). Avoid these shapes: quoted JSON containing `git`; a `git` call inside a `$(...)` substitution (e.g. `"$(git merge-base HEAD origin/main)"` as another command's argument — run it as its own call and paste the result in); a runtime variable such as `${CLAUDE_PLUGIN_ROOT}` inside the `node -e` script text of a command that also runs `git` (piping `git`/`gh` output into `node -e` passes once the paths are literal); a `for`/`while` loop variable; a glob argument; a `gh api` call inside an `if RAW=$(...)`; `sed -i` on a variable path; `cat "$P/…"` or `sed -n 'a,bp' "$P/…"` where `$P` is a runtime-computed path variable. Use `Write`/`Edit`/`Read` tools instead of equivalent shell commands, separate commands instead of loops or compound constructs, and literal file paths instead of variables. One plain command per Bash call is the general pattern.
 
 7. **Async-wait discipline** — you are a subagent, not a top-level session. Once your turn ends you
    cannot count on being re-woken: a reply that ends without a tool call ends your turn, whatever is
@@ -52,7 +52,9 @@ that needs no resolution, only inclusion:
    (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
    expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
    child is abandoned and no longer counts as outstanding, so your final reply still ends with
-   `STATUS: {WORD}`. Ignore a late result; if a late notification re-wakes you after your final
+   `STATUS: {WORD}`. For a `/claude-tweaks:review` lens unit, log that downgrade as the single-read
+   coverage line, and carry its caveat, from `review/step3-lens-dispatch.md`'s partner-died
+   paragraph. Ignore a late result; if a late notification re-wakes you after your final
    reply, repeat your whole final reply unchanged — the dispatcher keeps only your latest reply, so
    a bare `STATUS:` line would replace the report. A child that reports a failure (a `failed`
    notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not

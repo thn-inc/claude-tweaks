@@ -164,9 +164,7 @@ Context to provide to `/superpowers:writing-plans`:
 - The full design doc content
 - Relevant codebase context (existing files, patterns, schemas)
 
-<IMPORTANT>
-Design mode has no spec with structured acceptance criteria. When providing context to `/superpowers:writing-plans`, extract testable outcomes from the design doc's decisions and recommendations. If the design doc lacks clear success criteria, ask the user to confirm what "done" looks like before proceeding.
-</IMPORTANT>
+Because design mode has no spec with structured acceptance criteria, extract testable outcomes from the design doc's decisions and recommendations when providing context to `/superpowers:writing-plans`. If the design doc lacks clear success criteria, ask the user to confirm what "done" looks like before proceeding.
 
 The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`. Same plan-header artifact rule and plan-authoring check as Spec Step 3 apply (ignore the "For agentic workers" boilerplate).
 

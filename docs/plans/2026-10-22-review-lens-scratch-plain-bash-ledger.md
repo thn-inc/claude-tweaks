@@ -1,0 +1,9 @@
+# Open Items — Tell review lens agents to write scratch probes as one plain Bash call each
+
+| # | Phase | Item | Status | Resolution |
+|---|-------|------|--------|------------|
+| 1 | build | step3-lens-dispatch.md Scratch path sentence mixes "never … nor … and no" after the inserted clause — parses, reads slightly clumsy | observation | Wrap-up correction of the build's `deferred` tag (incomplete deferral, no work to defer): a style preference, not a defect (review CALIBRATION drops style quibbles). The "nor" continuation is the grammatical minimum because #3519 pins the preceding "which the harness Bash guard refuses by shape" fragment verbatim at every site. |
+| 2 | build | new #3876 test pins exact phrases (nor a `;` sequence / no shell variable carried between calls / literal absolute path) — wording-coupled, consistent with neighbouring #3675 tests | observation | Wrap-up correction of the build's `deferred` tag (incomplete deferral, no work to defer): wording-coupling is how this repo pins skill prose (skill-prose-conformance-tests), and the neighbouring #3675 tests do the same. |
+| 3 | review | step3-debate-and-refutation.md refutation and gap-sweep SCRATCH lines still stated the pre-#3876 recipe while step3-lens-dispatch.md gained the no-; / no-carried-variable / literal-path clause (medium, Convention: the four recipe sites are pinned as a set by #3519) | fixed | Same clause added to both SCRATCH lines, commit 4d999344b; pin test sliced once per template, commit 5e3e465d2 |
+| 4 | wrap-up | dispatch-core.md:39 overstates which shapes the guard refuses (scratch-worktree.md §7 lists ; and assign-then-use as passing) (staged/reflect-1.md) | open | — |
+| 5 | wrap-up | pr — PR #3957 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |

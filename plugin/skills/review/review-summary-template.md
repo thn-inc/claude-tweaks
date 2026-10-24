@@ -7,11 +7,12 @@ Present this summary after completing all review steps.
 When **all** of the following hold, render the compact block below instead of the full template — a zero-findings review does not earn ten mostly-empty section headers:
 
 - Verdict is PASS
-- Zero findings in every category (code review, hindsight, visual, design quality, coverage, docs) and zero unresolved QA ledger entries. A non-empty skill load delta (3j) is informational and does not disqualify the compact form.
+- Zero findings in every category (code review, hindsight, visual, design quality, coverage, docs) and zero unresolved QA ledger entries. A non-empty skill load delta (3j) is informational and does not disqualify the compact form. A Coverage caveat (`step3-lens-dispatch.md`'s partner-died single-read degrade) is informational and does not disqualify the compact form either.
 - Zero tradeoffs accepted, zero autonomous actions performed (no fixes, no simplifier changes, no ledger resolutions)
 - No manual steps required
 - No `/build` plan step left not run (the full template's "Not run by /build" section would be omitted)
 - Zero untracked files and zero new listeners reported by the post-fan-out sweep (`step3-lens-dispatch.md`)
+- Step 3.7's tiebreak (`step3-tiebreak.md`) had nothing to judge, or every verdict was `confirmed` or `drop`, and no Tiebreak caveat applies
 
 ```markdown
 ## Review: {spec number or description} — PASS (clean)
@@ -19,6 +20,7 @@ When **all** of the following hold, render the compact block below instead of th
 **Review effort:** {tier} ({derivation source, same format as the full template's Review effort line})
 **Status:** Spec compliance {met | skipped — fast-lane | n/a — no spec} · Tests pass · QA {status} · Findings 0 · Hindsight clean · Simplification none needed · Visual {status, one word} · Design Quality {skipped ({reason}) | 0 findings} · Fan-out leftovers 0
 {only when 3j printed a table:} **Skill load delta:** {N} entry point(s) moved (a grouped `{count} entries:` row counts as {count}) — largest ΔClosure {signed bytes} on {entry, or a grouped row's first name and "+{count−1} more"}
+{only when a lens fell back to single-read coverage — `step3-lens-dispatch.md`'s partner-died paragraph:} **Coverage caveat:** {every affected lens with its reason, e.g. 3b (timed out), 3c (unavailable)} — single-read coverage, findings unconfirmed
 
 ### Key Learnings
 {1-3 insights, or "No key learnings — straightforward review."}
@@ -35,6 +37,7 @@ The compact form never suppresses information, only empty scaffolding: if any se
 ## Review: {spec number or description}
 
 **Review effort:** {tier} (derived from {explicit argument | record labels: risk:{x} × size:{y} | diff heuristic: {reasoning}})
+{only when a lens fell back to single-read coverage — `step3-lens-dispatch.md`'s partner-died paragraph:} **Coverage caveat:** {every affected lens with its reason, e.g. 3b (timed out), 3c (unavailable)} — single-read coverage, findings unconfirmed
 
 ### Spec Compliance (spec-based only)
 | Deliverable | Status |
@@ -82,7 +85,17 @@ Possible QA statuses (the four canonical values from qa-reporting.md's Status de
 | {convention/security/error/perf/arch/test} | {finding} | {low/medium/high} | {fixed/captured/accepted} |
 (or: No findings — code is clean.)
 
-> This table lists `confirmed` findings — findings reproduced by both agents in the per-lens reproduction pair, elevated via the reviewer's own direct-verification override (`step3-lens-dispatch.md`), reported independently by two different lenses at `review-effort: medium` (cross-lens corroboration, `step3-cross-lens-corroboration.md`), or upgraded to `confirmed` after a cross-lens debate round (Step 3.5). At `review-effort: xhigh`, `unconfirmed` findings (single-source, or debate converged negative) also appear here, labeled `(low-confidence)`. At `max`, `contested` findings (debate inconclusive) also appear here too, labeled `(contested — {verdicts})`. Below `xhigh`, `unconfirmed`/`contested` findings are staged to the Wrap-Up Review Console instead — they are not silently dropped either way. Override or apply each in batch from the Console.
+> This table lists `confirmed` findings — findings reproduced by both agents in the per-lens reproduction pair, elevated via the reviewer's own direct-verification override (`step3-lens-dispatch.md`), reported independently by two different lenses at `review-effort: medium` (cross-lens corroboration, `step3-cross-lens-corroboration.md`), upgraded to `confirmed` after a cross-lens debate round (Step 3.5), or confirmed by Step 3.7's tiebreak. At `review-effort: xhigh`, `unconfirmed` findings the tiebreak left can't-tell also appear here, labeled `(low-confidence)`; at `max`, so do can't-tell `contested` findings, labeled `(contested — {verdicts})`. Every `unconfirmed`/`contested` finding goes to Step 3.7 (`step3-tiebreak.md`); its outcomes are in `### Tiebreak` below.
+
+### Tiebreak
+{Include when Step 3.7 (`step3-tiebreak.md`) judged at least one finding. Omit otherwise.}
+
+**Verdicts:** {n} confirmed · {n} dropped · {n} digest · {n} console
+{only when a verdict was read inline — `step3-tiebreak.md`'s Dispatched reviewer section:} **Tiebreak caveat:** {n} verdict(s) read inline by the reviewer, not an independent agent ({reason, e.g. no `Agent` tool, timed out})
+{standalone review only — `step3-tiebreak.md`'s Standalone review section: the verdict lines, then each can't-tell finding of severity medium or higher, with the tiebreak's recommendation:}
+- {path}:{line} — {claim} ({severity}) — Recommendation: {file | drop} — {reason}
+{standalone review only, per finding whose `resolve-tiebreak` exited non-zero:}
+- {path}:{line} — {claim} — no verdict (resolve-tiebreak exited {exit})
 
 ### Fan-out leftovers
 {None | N untracked file(s) left by the review fan-out, reported (not deleted) by the post-fan-out sweep: {paths}; N new local listener(s) since the pre-dispatch snapshot, reported (not killed; ownership unattributed): {command}:{port}, …}

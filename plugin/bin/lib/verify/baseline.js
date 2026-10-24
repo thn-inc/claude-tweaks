@@ -52,6 +52,21 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
         throw err;
       }
     },
+    // `git merge-base`: the full SHA of the best common ancestor of `a` and
+    // `b`, or null on exit 1 (no common ancestor) — the caller fails closed on
+    // null rather than guessing a base. Any other failure throws, like
+    // isAncestor's (the caller's adjudication-error path) (#3810).
+    mergeBase: (a, b) => {
+      try { return git(['merge-base', '--end-of-options', a, b]) || null; } catch (err) {
+        if (err && err.status === 1) return null;
+        throw err;
+      }
+    },
+    // Whether this checkout is a shallow clone — false on any error, since it
+    // only words a refusal that is already fail-closed (#3810).
+    isShallow: () => {
+      try { return git(['rev-parse', '--is-shallow-repository']) === 'true'; } catch { return false; }
+    },
     // Existence-at-base and sameness-at-base for every `files` entry (each a
     // repo-root-relative path) in two spawns total, however many files there
     // are: one `cat-file --batch-check` for the base blob sha (a missing

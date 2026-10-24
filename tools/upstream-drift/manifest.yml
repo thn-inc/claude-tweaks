@@ -376,6 +376,10 @@ dependencies:
   # path.join(file, ".") reads that file, matched as bytes, never decoded.
   # `version-mode: floor`: Claude Code auto-updates near daily, so an exact pin
   # would breach constantly; the assertions, not the version, carry the signal.
+  # `report-upgrades: false`: for the same reason a newer release is not a
+  # finding here — upstream-drift would otherwise keep an `upgrade-available`
+  # issue open almost permanently and dedup reopens it after every lag (#3820).
+  # Drift findings are unaffected.
   # `fixtures: []`: a headless probe that provokes a real refusal costs API
   # tokens and depends on model behavior, while the template literal is
   # deterministic and offline.
@@ -389,6 +393,7 @@ dependencies:
       root: 'readlink -f "$(command -v claude)"'
     pinned: "2.1.302"
     version-mode: floor
+    report-upgrades: false
     upstream:
       repo: "anthropics/claude-code"
       tag-prefix: "v"

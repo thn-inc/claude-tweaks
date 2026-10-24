@@ -380,7 +380,7 @@ Applies to both drivers. The cap governs the stub branch only — a supplied sha
 
 ## Adding an Entry
 
-Both drivers run Backend Selection above; don't overthink — capture the essence.
+Both drivers run Backend Selection above; capture the essence.
 
 When the idea proposes building a new `bin/` CLI, check for a same-named deliverable already
 shipped or already proposed elsewhere before filing — `_shared/issue-claims.md`'s

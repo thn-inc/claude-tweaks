@@ -39,7 +39,7 @@ did for a different reason (`wrap-up/review-console.md`'s own "console content i
 Phase 4" note) — this procedure states the ordering explicitly so it is never re-dropped.
 Labeling has not landed when `{run-dir}/verify.json` (each `spec-{N}/` copy, multi-spec) is missing
 or its `acceptance-labeling` row's `result` is anything but `pass`/`skip` — `dispatch/close-out.md`
-step 3 also accepts live labels or brief comments — whichever caller reached this merge.
+step 3 also accepts live labels or brief comments, and tidy's Arm ready PR holds rather than runs this step — whichever caller reached this merge.
 
 ## Step 1.5: Curation-apply completeness guard (#1465)
 

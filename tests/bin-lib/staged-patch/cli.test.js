@@ -185,13 +185,16 @@ test('--help prints usage and exits 0', (t) => {
   assert.equal(err.join(''), '');
 });
 
-test('a --patch under a worktree-shadow run dir is refused (exit 3), nothing written', (t) => {
-  const fx = fixture(t);
-  stage(fx.staged, 'review-1.patch', captureDiff(t, BASE, insertAboveAnchor('new1')));
-  const shadowPatch = stage(path.join(fx.shadow, 'staged'), 'review-2.patch', captureDiff(t, BASE, insertAboveAnchor('new2')));
-  const { deps } = fakeDeps(fx.main);
-  assert.equal(run(['--worktree', fx.worktree, '--patch', shadowPatch], deps), 3);
-  assert.equal(fs.existsSync(path.join(fx.shadow, 'staged', 'review-1.patch')), false);
+test('AC1.1: a --patch under a worktree-shadow run dir is refused (exit 3) and writes neither JSON nor the rederive file', (t) => {
+  const fx = fixture(t, NINE);
+  const shadowStaged = path.join(fx.shadow, 'staged');
+  stage(shadowStaged, 'review-1.patch', captureDiff(t, NINE, editLine('l2', 'L2')));
+  const shadowPatch = stage(shadowStaged, 'review-2.patch', captureDiff(t, NINE, editLine('l5', 'L5')));
+  const rederived = path.join(fx.shadow, 'rederived.patch');
+  const { deps, out } = fakeDeps(fx.main);
+  assert.equal(run(['--worktree', fx.worktree, '--patch', shadowPatch, '--rederive-out', rederived], deps), 3);
+  assert.equal(out.join(''), '');
+  assert.equal(fs.existsSync(rederived), false);
 });
 
 test('a --patch that does not apply at its position nor alone exits 2', (t) => {
@@ -243,4 +246,98 @@ test('a check that cannot run (git did not complete) maps to exit 4 with the err
   assert.equal(run(['--worktree', fx.worktree, '--patch', r1], deps), 4);
   assert.equal(out.join(''), '');
   assert.match(err.join(''), /did not complete/);
+});
+
+test('AC1.1: the exit-1 stderr line names every conflict that involves --patch', (t) => {
+  const fx = fixture(t);
+  const r1 = stage(fx.staged, 'review-1.patch', captureDiff(t, BASE, insertAboveAnchor('new1')));
+  stage(fx.staged, 'review-2.patch', captureDiff(t, BASE, insertAboveAnchor('new2')));
+  stage(fx.staged, 'review-3.patch', captureDiff(t, BASE, insertAboveAnchor('new3')));
+  const { deps, out, err } = fakeDeps(fx.main);
+  assert.equal(run(['--worktree', fx.worktree, '--patch', r1], deps), 1);
+  // One exact line: the `; ` join and the walk order, built from the JSON's own conflict errors.
+  const [e2, e3] = JSON.parse(out.join('')).conflicts.map((c) => c.error);
+  assert.equal(err.join(''), `check-staged-stack.js: staged/review-2.patch does not apply on top of staged/review-1.patch in apply order (${e2}); staged/review-3.patch does not apply on top of staged/review-1.patch in apply order (${e3})\n`);
+});
+
+test('AC1.1: the exit-1 stderr line is filtered to the conflicts that involve --patch', (t) => {
+  const fx = fixture(t);
+  stage(fx.staged, 'review-1.patch', captureDiff(t, BASE, insertAboveAnchor('new1')));
+  const r2 = stage(fx.staged, 'review-2.patch', captureDiff(t, BASE, insertAboveAnchor('new2')));
+  stage(fx.staged, 'review-3.patch', captureDiff(t, BASE, insertAboveAnchor('new3')));
+  const { deps, err } = fakeDeps(fx.main);
+  assert.equal(run(['--worktree', fx.worktree, '--patch', r2], deps), 1);
+  const stderr = err.join('');
+  assert.match(stderr, /staged\/review-2\.patch does not apply on top of staged\/review-1\.patch/);
+  // review-3 conflicts with review-1 and does not involve review-2.
+  assert.doesNotMatch(stderr, /staged\/review-3\.patch/);
+});
+
+test('AC1.1: rederive refusal lands in rederiveReason and keeps exit 1', (t) => {
+  const fx = fixture(t);
+  stage(fx.staged, 'review-1.patch', captureDiff(t, BASE, insertAboveAnchor('new1')));
+  const r2 = stage(fx.staged, 'review-2.patch', captureDiff(t, BASE, insertAboveAnchor('new2')));
+  const outPath = path.join(fx.main, 'x.patch');
+  const { deps, out } = fakeDeps(fx.main);
+  assert.equal(run(['--worktree', fx.worktree, '--patch', r2, '--rederive-out', outPath], deps), 1);
+  const json = JSON.parse(out.join(''));
+  assert.equal(json.rederived, null);
+  assert.equal(json.rederiveReason, 'conflict in f.txt');
+  assert.equal(fs.existsSync(outPath), false);
+});
+
+test('AC1.1: a rederive that throws lands in rederiveReason as could not run', (t) => {
+  const fx = fixture(t, NINE);
+  stage(fx.staged, 'review-1.patch', captureDiff(t, NINE, editLine('l2', 'L2')));
+  const r2 = stage(fx.staged, 'review-2.patch', captureDiff(t, NINE, editLine('l5', 'L5')));
+  const outPath = path.join(fx.main, 'x.patch');
+  // Real git for every call except merge-file, which reports it never completed.
+  const git = (args, { cwd, binary = false }) => {
+    if (args[0] === 'merge-file') return { status: null, stdout: '', stderr: '' };
+    const r = spawnSync('git', args, { cwd, encoding: binary ? 'buffer' : 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: FIXTURE_ENV });
+    return { status: r.status, stdout: r.stdout || (binary ? Buffer.alloc(0) : ''), stderr: r.stderr ? r.stderr.toString() : '' };
+  };
+  const { deps, out } = fakeDeps(fx.main, { git });
+  assert.equal(run(['--worktree', fx.worktree, '--patch', r2, '--rederive-out', outPath], deps), 1);
+  const json = JSON.parse(out.join(''));
+  assert.equal(json.rederived, null);
+  assert.match(json.rederiveReason, /^could not run: git merge-file .* did not complete/);
+  assert.equal(fs.existsSync(outPath), false);
+});
+
+test('AC1.1: --rederive-out on a non-conflicting --patch writes nothing and reports no reason', (t) => {
+  const fx = fixture(t);
+  stage(fx.staged, 'review-1.patch', captureDiff(t, BASE, editLine('l1', 'l1-edit')));
+  const r2 = stage(fx.staged, 'review-2.patch', captureDiff(t, BASE, editLine('a3', 'a3-edit')));
+  const outPath = path.join(fx.main, 'x.patch');
+  const { deps, out } = fakeDeps(fx.main);
+  assert.equal(run(['--worktree', fx.worktree, '--patch', r2, '--rederive-out', outPath], deps), 0);
+  const json = JSON.parse(out.join(''));
+  assert.equal(json.rederived, null);
+  assert.equal(json.rederiveReason, null);
+  assert.equal(fs.existsSync(outPath), false);
+});
+
+test('AC1.1: when --patch is the earlier side of the conflict no rederive is attempted', (t) => {
+  const fx = fixture(t);
+  const r1 = stage(fx.staged, 'review-1.patch', captureDiff(t, BASE, insertAboveAnchor('new1')));
+  stage(fx.staged, 'review-2.patch', captureDiff(t, BASE, insertAboveAnchor('new2')));
+  const outPath = path.join(fx.main, 'x.patch');
+  const { deps, out } = fakeDeps(fx.main);
+  assert.equal(run(['--worktree', fx.worktree, '--patch', r1, '--rederive-out', outPath], deps), 1);
+  const json = JSON.parse(out.join(''));
+  assert.equal(json.targetConflict.conflictsWith, 'review-1.patch');
+  assert.equal(json.rederived, null);
+  assert.equal(json.rederiveReason, null);
+  assert.equal(fs.existsSync(outPath), false);
+});
+
+test('AC1.1: docs/plugin-structure.md states exit 2 still prints the JSON line and the git 2.32 floor', () => {
+  const doc = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'docs', 'plugin-structure.md'), 'utf8').split('\n');
+  const cli = doc.find((l) => l.includes('node plugin/bin/check-staged-stack.js'));
+  assert.ok(cli, 'plugin-structure.md lists the CLI');
+  assert.match(cli, /exit 2 [^,]*still prints the JSON line/);
+  const lib = doc.find((l) => l.startsWith('plugin/bin/lib/staged-patch/'));
+  assert.ok(lib, 'plugin-structure.md lists the lib dir');
+  assert.ok(lib.includes('git >= 2.32'));
 });

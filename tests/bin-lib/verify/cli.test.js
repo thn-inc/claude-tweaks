@@ -2394,6 +2394,93 @@ test('--baseline: a failing check with no extractable file is not adjudicated an
   assert.match(stdout, /Baseline: not adjudicated — no-parse/);
 });
 
+// #3810: HEAD forks from the base; the integration branch then moves on
+// (fixing env.test.js). --baseline <integ> must adjudicate against the
+// merge-base of HEAD and integ, not against the moved integration tip.
+function forkedBaselineRepo() {
+  const r = baselineRepo();
+  const integ = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  r.git('checkout', '-q', '-b', 'feature');
+  headCommit(r);
+  r.git('checkout', '-q', integ);
+  fs.writeFileSync(path.join(r.repo, 'tests', 'env.test.js'), "require('node:test')('env', () => {});\n");
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'fix env');
+  r.git('checkout', '-q', 'feature');
+  return { ...r, integ };
+}
+
+test('--baseline <branch>: a failure inherited from the merge-base and fixed on the integration tip is baseline, not attributable (#3810 AC1, AC3)', async () => {
+  const r = forkedBaselineRepo();
+  const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', r.integ, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 0, stdout);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.baselineAdjudicated.verdict, 'pass');
+  assert.deepStrictEqual(report.baselineAdjudicated.baselineFailing, ['tests/env.test.js']);
+  assert.deepStrictEqual(report.baselineAdjudicated.attributable, []);
+  assert.strictEqual(report.baselineAdjudicated.base, r.baseSha);
+  assert.strictEqual(report.baselineAdjudicated.baseSha, r.baseSha);
+  assert.strictEqual(report.baselineAdjudicated.baseRef, r.integ);
+  const stamp = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json'), 'utf8'));
+  assert.strictEqual(stamp.baseline.base, r.baseSha);
+  assert.match(stdout, new RegExp(`Baseline: adjudicated against ${r.baseSha.slice(0, 9)} \\(merge-base of HEAD and ${r.integ}\\)`));
+  // The table's Status cell names the ref as passed, not the merge-base sha (the two differ on this fixture).
+  assert.ok(stdout.includes(`pass (baseline-adjudicated vs ${r.integ}: `), stdout);
+});
+
+test('--baseline <branch>: a file passing at the merge-base and failing on the branch stays attributable while the integration tip has moved (#3810 AC2)', async () => {
+  const r = baselineRepo();
+  const integ = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  r.git('checkout', '-q', '-b', 'feature');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => { throw new Error('regressed'); });\n");
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'regress ok');
+  r.git('checkout', '-q', integ);
+  fs.writeFileSync(path.join(r.repo, 'README.md'), 'unrelated\n');
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'integration moves');
+  r.git('checkout', '-q', 'feature');
+  const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', integ, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 1, stdout);
+  assert.match(stdout, /ATTRIBUTABLE: tests\/ok\.test\.js/);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.baselineAdjudicated.base, r.baseSha);
+});
+
+test('--baseline: a ref sharing no merge-base with HEAD is not adjudicated and exits 1, never 2 (#3810)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  const integ = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  r.git('checkout', '-q', '--orphan', 'other');
+  r.git('commit', '-q', '--allow-empty', '-m', 'orphan');
+  r.git('checkout', '-q', integ);
+  const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', 'other', '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 1, stdout);
+  assert.ok(stdout.includes('Baseline: not adjudicated — no merge-base between HEAD and other'), stdout);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.baselineAdjudicated.eligible, false);
+  assert.strictEqual(report.baselineAdjudicated.baseRef, 'other');
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp');
+});
+
+test('--baseline: a shallow clone whose fork point is not fetched names the shallow cause, fails closed with exit 1 (#3810)', async () => {
+  const src = forkedBaselineRepo();
+  const clone = path.join(tmpDir(), 'clone');
+  // file:// is required: a plain local path ignores --depth and clones in full.
+  execFileSync('git', ['clone', '-q', '--depth', '1', '--no-single-branch', `file://${src.repo}`, clone], { stdio: 'ignore' });
+  const cloneGit = (...a) => execFileSync('git', a, { cwd: clone, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  assert.strictEqual(cloneGit('rev-parse', '--is-shallow-repository'), 'true');
+  assert.throws(() => cloneGit('cat-file', '-e', `${src.baseSha}^{commit}`), 'the fork point must be genuinely absent from the clone');
+  const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', `origin/${src.integ}`, '--baseline-cmd', PER_FILE], { cwd: clone, env: nestedRunEnv() });
+  assert.strictEqual(code, 1, stdout);
+  assert.ok(stdout.includes(`Baseline: not adjudicated — no merge-base between HEAD and origin/${src.integ} — shallow clone, fork point not fetched (deepen or unshallow the fetch)`), stdout);
+  const gitDir = path.join(clone, '.git');
+  const report = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.baselineAdjudicated.eligible, false);
+  assert.strictEqual(report.baselineAdjudicated.baseRef, `origin/${src.integ}`);
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp');
+});
+
 test('--baseline: a file failing only in the full run is flaky — exit 0 with a CAVEAT line naming its isolated log (#3043 I3)', async () => {
   const r = baselineRepo();
   // Fails once (the full run consumes the marker), then passes at base and in isolation.

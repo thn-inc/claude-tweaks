@@ -6,8 +6,11 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
-const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes } = require(MOD);
+const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, STAGING_EXEMPTIONS, stagingExemption } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
+const { unresolvedItems } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
+const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
+const { formatEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'append'));
 
 function fixture({
   decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {},
@@ -57,6 +60,7 @@ const EVERY_SECTION = {
   'reflect-1.md': 'reflect',
   'wrap-up-memory-1.md': 'memory',
   'wrap-up-upstream-1.md': 'upstream',
+  'wrap-up-reflect-insights.md': 'insights',
   'mystery-9.md': 'unmapped',
 };
 
@@ -74,6 +78,7 @@ test('classifyStagedItem maps every known prefix to its console section and unkn
     'upstream-unfiled-1.md': 'Queue writes', 'red-team-1.md': 'Queue writes', 'specify-overlap-1.md': 'Queue writes', 'flaky-allowlist-x.md': 'Queue writes',
     'tidy-parked-1.md': 'Queue writes', 'plan-retention-1.md': 'Queue writes', 'feedback-drafts.md': 'Queue writes',
     'wrap-up-memory-1.md': 'Memory updates', 'wrap-up-upstream-1.md': 'Upstream feedback',
+    'wrap-up-reflect-insights.md': 'Reflection insights',
   };
   for (const [name, section] of Object.entries(expect)) {
     assert.strictEqual(classifyStagedItem(name).section, section, name);
@@ -107,11 +112,20 @@ test('resolveAll resolves one item per section per the short-circuit stances and
   assert.strictEqual(by['reflect-1.md'].resolution, 'apply');
   assert.strictEqual(by['wrap-up-memory-1.md'].resolution, 'apply');
   assert.strictEqual(by['wrap-up-upstream-1.md'].resolution, 'filed');
+  assert.strictEqual(by['wrap-up-reflect-insights.md'].resolution, 'approve');
+  assert.strictEqual(by['wrap-up-reflect-insights.md'].reason, SECTION_STANCES['Reflection insights'].reason);
   assert.deepStrictEqual({ resolution: by['mystery-9.md'].resolution, reason: by['mystery-9.md'].reason }, { resolution: 'pending', reason: 'unmapped-prefix' });
   assert.strictEqual(r.sections.cleanup.resolution, 'approve');
   assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
   assert.strictEqual(r.items.length, Object.keys(EVERY_SECTION).length);
   assert.strictEqual(r.ceiling, 'unattended');
+});
+
+test('a run whose only staged file is wrap-up-reflect-insights.md resolves with nothing under Needs a human (#3926 AC2)', () => {
+  const r = resolveAll({ runDir: fixture({ staged: { 'wrap-up-reflect-insights.md': 'table' }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  assert.strictEqual(r.items.length, 1);
+  assert.strictEqual(r.items[0].section, 'Reflection insights');
+  assert.deepStrictEqual(unresolvedItems({ items: r.items }), []);
 });
 
 test('a .shadow-dup file is classified duplicate when byte-identical to its anchor, divergent otherwise, and falls back to shadow-dup-collision with no anchor to compare (#2773)', () => {
@@ -559,6 +573,24 @@ test('AC2.1: a STAGED low-confidence line with no later elevation still produces
   assert.strictEqual(low[0].reason, SECTION_STANCES['Low-confidence findings'].reason);
 });
 
+test('a tiebreak confirmed line supersedes the real-emitter STAGED line (AC2.1, AC9.1, #3945)', () => {
+  const staged = SUPERSEDED.split('\n')[1]; // pr-state.js:158, captured from a real decisions.md
+  const fileLines = Array.from({ length: 200 }, (_, i) => `// line ${i + 1}`);
+  fileLines[157] = '  // the comment sentence is stale';
+  const finding = { lens: '3a', path: 'plugin/bin/lib/reconcile/pr-state.js', line: 158, claim: 'stale comment', reporterSeverity: 'low', kind: 'unconfirmed' };
+  const now = new Date(2026, 9, 22, 23, 50, 0);
+  const verdict = (v) => resolveTiebreak(finding, `Verdict: ${v}\nEvidence: ${finding.path}:158 \`// the comment sentence is stale\`\nSeverity: low\nSTATUS: DONE`, { readFile: () => fileLines.join('\n'), now });
+  const confirmed = verdict('confirmed');
+  // Built through the sanctioned writer's formatter (log-decision.js), not by hand-prepending "- ".
+  const confirmedEntry = formatEntry({ status: confirmed.logStatus, now, step: confirmed.logStep, text: confirmed.logText, reversibility: 'high' });
+  assert.strictEqual(confirmed.outcome, 'confirmed');
+  assert.strictEqual(lowItems(`${staged}\n`).length, 1, 'the STAGED line alone is a Low-confidence item');
+  assert.strictEqual(lowItems(`${staged}\n${confirmedEntry}\n`).length, 0, 'the confirmed line supersedes it');
+  const dropped = verdict('refuted');
+  assert.strictEqual(dropped.outcome, 'drop');
+  assert.strictEqual(lowItems(`${staged}\n- ${dropped.logLine}\n`).length, 1, 'a drop line never supersedes');
+});
+
 test('a same-location AUTO elevation under a different lens does not supersede (#3772)', () => {
   const decisions = [
     '- STAGED 10:00:00 — Single-read: lens "3a" finding src/a.js:4 not directly verified. Staged to Review Console as low-confidence.',
@@ -599,7 +631,7 @@ test('policy other than console-auto throws RangeError (#1932)', () => {
 });
 
 test('SECTION_STANCES names a stance for every section the console renders (#1932)', () => {
-  for (const s of ['Auto-applied', 'Pending review', 'Low-confidence findings', 'Contested findings', 'Skill updates', 'Documentation updates', 'Journey updates', 'Configuration updates', 'Reference repairs', 'Cleanup actions', 'Queue writes', 'Memory updates', 'Upstream feedback', 'Refused — no defer reason']) {
+  for (const s of ['Auto-applied', 'Pending review', 'Low-confidence findings', 'Contested findings', 'Skill updates', 'Documentation updates', 'Journey updates', 'Configuration updates', 'Reference repairs', 'Cleanup actions', 'Queue writes', 'Memory updates', 'Upstream feedback', 'Reflection insights', 'Refused — no defer reason']) {
     assert.ok(SECTION_STANCES[s] && typeof SECTION_STANCES[s].resolution === 'string', s);
   }
 });
@@ -654,6 +686,13 @@ test('AC4.2 (control): removing sdd-ruling-* from the appendix prose alone makes
   assert.throws(() => assertPendingPrefixTwin(pendingMdPrefixesFromCode(), pendingMdPrefixesFromProse(mutated)));
 });
 
+test('the appendix Resolution-to-step mapping routes an approve Reflection insights row to step 10 (#3926)', () => {
+  const approve = /- `approve` — [\s\S]*?(?=\n- `)/.exec(APPENDIX);
+  assert.ok(approve, 'the appendix approve bullet is present');
+  assert.match(approve[0], /Reflection insights/);
+  assert.match(approve[0], /step 10/);
+});
+
 test('every CANONICAL_PREFIXES entry classifies without unmapped-prefix (#3370)', () => {
   assert.ok(CANONICAL_PREFIXES.length > 0);
   for (const p of CANONICAL_PREFIXES) {
@@ -698,4 +737,79 @@ test('nearestCanonicalPrefixes(review-13-record) includes a review-* prefix (#33
 test('nearestCanonicalPrefixes ranks an exact head match first and honors n (#3370)', () => {
   assert.deepStrictEqual(nearestCanonicalPrefixes('review-unconfirmed-9', 1), ['review-unconfirmed-']);
   assert.strictEqual(nearestCanonicalPrefixes('zzz', 5).length, 5);
+});
+
+// #3488: every staged-id producer prefix is either mapped to a console section
+// or exempt (its run never reaches the console), so stage-item.js's
+// unmapped-prefix warning only fires for a genuinely unknown id.
+// AC2.1: one predicate, used by the positive test and by the control.
+function mappedOrExempt(id) {
+  return classifyStagedItem(id + '.md').reason !== 'unmapped-prefix' || stagingExemption(id) !== null;
+}
+const CURRENT_STATE_IDS = ['release-held', 'upstream-draft-1', 'shipped-close-12', 'dispatch-target-missing-12',
+  'review-followup-1', 'build-followup-1', 'docs-1', 'skills-1', 'wrap-up-reflect-insights',
+  'wrap-up-cleanup-ordering', 'reconcile-live-run-archived'];
+
+test('AC2.1: every id named in #3488 Current State classifies mapped or is exempt with a reason', () => {
+  for (const id of CURRENT_STATE_IDS) assert.ok(mappedOrExempt(id), id);
+});
+
+test('AC2.1 (control): an unknown id fails the same predicate', () => {
+  assert.equal(mappedOrExempt('review-13-record'), false);
+});
+
+test('exempt and mapped are disjoint: no exempt id also classifies mapped', () => {
+  for (const id of ['release-held', 'dispatch-target-missing-1', 'shipped-close-1', 'dream-proposal-1']) {
+    assert.ok(stagingExemption(id), id);
+    assert.equal(classifyStagedItem(id + '.md').reason, 'unmapped-prefix', id);
+  }
+});
+
+test('every STAGING_EXEMPTIONS entry carries a non-empty reason', () => {
+  assert.ok(STAGING_EXEMPTIONS.length >= 4);
+  for (const [re, reason] of STAGING_EXEMPTIONS) assert.ok(re instanceof RegExp && typeof reason === 'string' && reason.length > 20);
+});
+
+test('stagingExemption matches with or without the extension and returns null otherwise', () => {
+  assert.equal(stagingExemption('release-held'), stagingExemption('release-held.md'));
+  assert.ok(stagingExemption('release-held.md'));
+  assert.equal(stagingExemption('release-held-extra'), null);
+  assert.equal(stagingExemption('review-13-record'), null);
+});
+
+test('#3488 newly mapped producer prefixes classify to their section and reason', () => {
+  assert.deepStrictEqual(classifyStagedItem('upstream-draft-1.md'), { section: 'Upstream feedback', reason: 'hand-off-draft' });
+  assert.deepStrictEqual(classifyStagedItem('premise-satisfied-7.md'), { section: 'Queue writes', reason: 'premise-satisfied-close-proposal' });
+  assert.deepStrictEqual(classifyStagedItem('sibling-premise-disproof-7.md'), { section: 'Pending review', reason: 'sibling-premise-disproof-note' });
+  // #3926 owns this id: its own Reflection insights section, executed by
+  // review-console.md "On approval" step 10, so no pending reason.
+  assert.deepStrictEqual(classifyStagedItem('wrap-up-reflect-insights.md'), { section: 'Reflection insights' });
+  assert.deepStrictEqual(classifyStagedItem('plan-citation-1.md'), { section: 'Pending review', reason: 'cited-plan-kept' });
+  assert.deepStrictEqual(classifyStagedItem('translation-85.md'), { section: 'Pending review', reason: 'translated-brief' });
+  assert.deepStrictEqual(classifyStagedItem('docs-1.md'), { section: 'Documentation updates' });
+  assert.deepStrictEqual(classifyStagedItem('skills-1.md'), { section: 'Skill updates' });
+  for (const id of ['review-followup-1', 'build-followup-1', 'reconcile-live-run-archived']) {
+    assert.deepStrictEqual(classifyStagedItem(id + '.md'), { section: 'Queue writes' }, id);
+  }
+  assert.deepStrictEqual(
+    classifyStagedItem('wrap-up-cleanup-ordering.md', '**Category:** observation\n'),
+    { section: 'Pending review', reason: 'non-tangential-category:observation' },
+  );
+});
+
+test('#3488: resolveAll never auto-applies a plan-citation or translation proposal — both resolve pending', () => {
+  const runDir = fixture({ staged: { 'plan-citation-1.md': 'cited by x', 'translation-85.md': 'brief' } });
+  const items = resolveAll({ runDir, policy: 'console-auto', deps: deps() }).items;
+  for (const id of ['plan-citation-1.md', 'translation-85.md']) {
+    const item = items.find((i) => i.id === id);
+    assert.ok(item, id);
+    assert.strictEqual(item.resolution, 'pending', id);
+  }
+});
+
+test('#3488: resolveAll never auto-files an upstream-draft hand-off — it resolves pending', () => {
+  const runDir = fixture({ staged: { 'upstream-draft-1.md': 'draft body' } });
+  const item = resolveAll({ runDir, policy: 'console-auto', deps: deps() }).items.find((i) => i.id === 'upstream-draft-1.md');
+  assert.ok(item, 'the draft is an item');
+  assert.strictEqual(item.resolution, 'pending');
 });

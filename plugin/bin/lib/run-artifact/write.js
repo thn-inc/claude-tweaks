@@ -10,14 +10,15 @@
 //
 // ARTIFACT_NAMES is the fail-closed gate. A new run-dir artifact must be added
 // to it explicitly; a name outside the list is refused, so no traversal or
-// sanitizing is needed.
+// sanitizing is needed. Today: sdd-dispatch-sample.txt, sdd-final-review.md,
+// review-findings.json (the review's tiebreak finding list, #3945).
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const { writeFileAtomic } = require('../atomic-write');
 
-const ARTIFACT_NAMES = Object.freeze(['sdd-dispatch-sample.txt', 'sdd-final-review.md']);
+const ARTIFACT_NAMES = Object.freeze(['sdd-dispatch-sample.txt', 'sdd-final-review.md', 'review-findings.json']);
 
 // Exact membership — `name` is used as a bare filename directly under runDir.
 function isArtifactName(name) {

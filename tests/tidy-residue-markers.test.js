@@ -233,8 +233,8 @@ test('approve-mode.md states the walk-back past an empty-staged newest run', () 
 test('tidy/SKILL.md argument-hint carries --approve', () => {
   const src = read('plugin', 'skills', 'tidy', 'SKILL.md');
   assert.ok(
-    src.includes('argument-hint: "[--scope=<name>[,<name>...]] [--dry-run] [--approve [run-dir]] [--source sweep]"'),
-    'tidy/SKILL.md argument-hint must carry --approve [run-dir] and --source sweep',
+    src.includes('argument-hint: "[--scope=<name>[,<name>...]] [--dry-run] [--approve [run-dir]]"'),
+    'tidy/SKILL.md argument-hint must carry --approve [run-dir]',
   );
 });
 

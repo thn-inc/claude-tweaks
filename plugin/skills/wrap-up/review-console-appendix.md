@@ -101,6 +101,7 @@ procedure — no row is left unrouted:
   (Journey updates), step 5 (Configuration updates). A **Reference repairs** row has no numbered
   step of its own — it is applied by Phase 4's execution step, per
   `execution-and-verification.md`'s Reference repairs bullet. Cleanup actions run at step 6.
+  A **Reflection insights** row (`staged/wrap-up-reflect-insights.md`) runs at step 10.
 - `filed` — step 9's `/claude-tweaks:feedback --pre-confirmed` filing (the `U#` divergence stated
   in review-console.md).
 - `stale` — still step 1, but its re-derivation path only: rebuild the diff from the item's

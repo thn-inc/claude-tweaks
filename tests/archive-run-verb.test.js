@@ -254,3 +254,87 @@ test('cleanup-procedures-execution.md Section B invokes archive-run instead of a
   assert.ok(!/\bgit mv\b/.test(sectionB), 'Section B must not hand-run git mv anymore');
   assert.ok(!/\bmv\s+"\$RUN_DIR"/.test(sectionB), 'Section B must not hand-run a raw mv on $RUN_DIR anymore');
 });
+
+// #3945: a run whose review-findings.json lists a finding that has no
+// `tiebreak:{id}` verdict line in decisions.md is refused (its unresolved
+// finding would be archived unseen); a present-but-unparseable artifact is
+// refused under its own reason; full coverage and no artifact archive as before.
+const TB_ID = 'abc123def456';
+
+function writeFindings(dir, body) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'review-findings.json'), typeof body === 'string' ? body : JSON.stringify(body));
+}
+
+const tbFinding = (id) => ({ id, lens: 'correctness', path: 'src/a.js', line: 3, claim: 'x', reporterSeverity: 'medium', kind: 'contested' });
+
+test('AC8.1: archive-run refuses a terminal run whose findings artifact lists an id with no tiebreak verdict line', () => {
+  const { root, runDir } = runDirFixture('clean');
+  writeFindings(runDir, [tbFinding(TB_ID)]);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — tiebreak-coverage-missing \(1 listed finding\(s\) have no tiebreak verdict line: abc123def456\)/);
+  assert.match(result.stdout, /delete review-findings\.json if the run predates the tiebreak/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('AC8.1: archive-run refuses a malformed findings artifact under tiebreak-artifact-invalid', () => {
+  const { root, runDir } = runDirFixture('clean');
+  writeFindings(runDir, '{ not json');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — tiebreak-artifact-invalid \(review-findings\.json is present but unreadable or malformed\)/);
+  assert.doesNotMatch(result.stdout, /tiebreak-coverage-missing/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('AC8.1: archive-run archives a run where every listed finding has a tiebreak verdict line', () => {
+  const { root, runDir, runId } = runDirFixture('clean');
+  writeFindings(runDir, [tbFinding(TB_ID)]);
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), `- AUTO 10:00:00 — Tiebreak tiebreak:${TB_ID}: digested.\n`);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'review-findings.json')));
+});
+
+test('AC8.1: archive-run archives a run with no findings artifact exactly as before', () => {
+  const { root, runDir } = runDirFixture('clean');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /tiebreak/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+});
+
+test('archive-run enforces a findings artifact inside spec-N/ of a multi-spec run, prefixing the id', () => {
+  const { root, runDir } = runDirFixture('clean');
+  writeFindings(path.join(runDir, 'spec-3945'), [tbFinding(TB_ID)]);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /tiebreak-coverage-missing \(1 listed finding\(s\) have no tiebreak verdict line: spec-3945\/abc123def456\)/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('tiebreak refusals are evaluated after the console-unresolved guard', () => {
+  const { root, runDir } = runDirFixture('clean');
+  writeFindings(runDir, [tbFinding(TB_ID)]);
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ commentIds: ['IC_x'], prNumber: 5, items: [], resolved: false }));
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /console-unresolved/);
+  assert.doesNotMatch(result.stdout, /tiebreak-/);
+});
+
+test('the #3668 staged-pending refusal wins over a tiebreak refusal when a run trips both', () => {
+  for (const [body, tiebreakReason] of [[[tbFinding(TB_ID)], 'tiebreak-coverage-missing'], ['{ not json', 'tiebreak-artifact-invalid']]) {
+    const { root, runDir } = runDirFixture('clean');
+    fs.writeFileSync(path.join(runDir, 'decisions.md'), FAST_LANE_FYI);
+    fs.mkdirSync(path.join(runDir, 'staged'));
+    fs.writeFileSync(path.join(runDir, 'staged', 'reflect-1.md'), '# proposal\n');
+    writeFindings(runDir, body);
+    const both = runHook(['archive-run', '--run', runDir], { cwd: root });
+    assert.match(both.stdout, /archival refused — console-never-rendered-staged-pending/, tiebreakReason);
+    assert.doesNotMatch(both.stdout, /tiebreak-/, tiebreakReason);
+    assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+    // The same run trips the tiebreak refusal once the staged item is settled, so the fixture trips both.
+    fs.rmSync(path.join(runDir, 'staged', 'reflect-1.md'));
+    const tiebreakOnly = runHook(['archive-run', '--run', runDir], { cwd: root });
+    assert.match(tiebreakOnly.stdout, new RegExp(`archival refused — ${tiebreakReason} `), tiebreakReason);
+    assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+  }
+});

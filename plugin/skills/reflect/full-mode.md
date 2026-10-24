@@ -321,8 +321,8 @@ already does, but write the composed table — each insight's resolved recommend
 applied — to `{run-dir}/staged/wrap-up-reflect-insights.md` (overwrite if a prior reflect pass in
 this same run already wrote one) instead of asking. Do not apply any "Implement now" insight, do
 not file any Defer/Capture record, and do not record a Don't-capture decline yet — leave every
-non-D4/D5 outcome unapplied. `wrap-up/review-console.md`'s own Pending-review rendering (Hard
-requirement: every file in `staged/` renders) picks up this file, and its own terminal Approve all
+non-D4/D5 outcome unapplied. `wrap-up/review-console.md` (Hard
+requirement: every file in `staged/` renders) picks up this file (`console-resolve.js` classifies it under Reflection insights), and its own terminal Approve all
 / Override decision is what actually applies each row, exactly as the `AskUserQuestion` answer
 would have applied it here. D4 (Memory) and D5 (Upstream) rows are listed in the staged file for
 visibility only — nothing about this branch changes how those two destinations are gated; they

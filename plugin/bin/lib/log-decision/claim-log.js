@@ -56,8 +56,9 @@ function isClaimLogEntry(line) {
 }
 
 // A complete entry: the `Reversibility: <value>.` suffix formatEntry always
-// appends closes the line (a qualifier such as "n/a (informational)" is fine).
-const COMPLETE_RE = /\sReversibility: [^.\s][^.]*\.$/;
+// appends closes the line (a qualifier such as "n/a (informational)" is fine,
+// and a parenthesized note may contain periods, e.g. "n/a (see claim-targets.md)" — #3870).
+const COMPLETE_RE = /\sReversibility: [^.\s][^.]*?(?: \(.+\))?\.$/;
 const BOOKKEEPING_LOCATION_RE = /^Step 2\.8 (?:file-overlap (?:warning|check)|bot:in-progress projection)\b/;
 const BOOKKEEPING_STATUSES = new Set(['AUTO', 'SKIP', 'SCANNED']);
 

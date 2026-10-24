@@ -8,7 +8,7 @@ const { execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'console-resolve.js');
 const PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..', 'plugin');
-const { run, ghReadGrants } = require(CLI);
+const { run, ghReadGrants, checkPatchStack } = require(CLI);
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', writePolicy = true, runConfig = null, consoleJson = null } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cli-')));
@@ -473,4 +473,49 @@ test('AC3.6: a re-rendered console whose every unresolved item is missing prints
   assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
   assert.match(out(), /already records a resolved console/);
   assert.ok(!/Needs a human/.test(out()), out());
+});
+
+// #3679: the stacked check (#3290) is wired into resolveAll via checkPatchStack(cwd()). Both
+// patches are real `git diff` captures of f.txt in throwaway fixture repos — never hand-typed hunks.
+const STACK_BASE = ['l1', 'l2', 'l3', 'l4', 'anchor', 'a1', 'a2', 'a3'].join('\n') + '\n';
+const STACK_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+
+function captureInsertAboveAnchor(tag) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-capture-'));
+  try {
+    const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env: STACK_ENV, stdio: ['ignore', 'pipe', 'ignore'] });
+    git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't');
+    fs.writeFileSync(path.join(dir, 'f.txt'), STACK_BASE);
+    git('add', 'f.txt'); git('commit', '-q', '-m', 'base');
+    fs.writeFileSync(path.join(dir, 'f.txt'), STACK_BASE.replace('anchor\n', `${tag}a\n${tag}b\nanchor\n`));
+    return git('diff');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+test('AC1.1: run() wires the stacked check — a same-anchor pair the per-patch check passes resolves the second to stale (#3290)', async () => {
+  const preamble = 'Target: f.txt\nInvariant: x\nFinding: low x — y\nStaged-at: abc\n\n';
+  const fx = mainCheckoutWithRun({ staged: {
+    'review-1.patch': preamble + captureInsertAboveAnchor('new1'),
+    'review-2.patch': preamble + captureInsertAboveAnchor('new2'),
+  } });
+  fs.writeFileSync(path.join(fx.root, 'f.txt'), STACK_BASE);
+  // Without the wiring, the per-patch fallback (`gitApplyCheck`, answered ok by fakeExec) passes both
+  // patches, so only the stacked check can flag review-2. In the wired run the solo check is never
+  // called (resolve.js:247-249).
+  const { d } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  const resolution = (id) => cj.items.find((i) => i.id === id).resolution;
+  assert.strictEqual(resolution('review-1.patch'), 'apply');
+  assert.strictEqual(resolution('review-2.patch'), 'stale');
+});
+
+test('AC1.1: checkPatchStack fails closed when the walk cannot run', () => {
+  const v = checkPatchStack(path.join(os.tmpdir(), 'no-such-worktree-3679'))(['/x/staged/a.patch', '/x/staged/b.patch']);
+  assert.deepStrictEqual(Object.keys(v), ['a.patch', 'b.patch']);
+  for (const k of Object.keys(v)) {
+    assert.strictEqual(v[k].ok, false);
+    assert.match(v[k].error, /^stacked check could not run: /);
+  }
+  assert.deepStrictEqual(checkPatchStack('anything')([]), {});
 });

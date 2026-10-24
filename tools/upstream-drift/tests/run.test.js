@@ -11,6 +11,8 @@ const {
   pickLatestTag,
   resolveLatest,
   evaluate,
+  isDue,
+  hasUpgrade,
   buildFindings,
   toIssuePayload,
   dedupeFindings,
@@ -285,6 +287,35 @@ test('buildFindings: an upgrade is not reported for an artifact that is not inst
   assert.ok(!findings.some((f) => f.kind === 'upgrade-available'));
 });
 
+test('AC1.1: report-upgrades: false suppresses upgrade-available when installed is behind latest', () => {
+  const ev = greenEvaluation({ latest: '4.0.4', reportUpgrades: false });
+  assert.ok(!buildFindings(ev).some((f) => f.kind === 'upgrade-available'));
+  assert.strictEqual(hasUpgrade(ev), false);
+  assert.strictEqual(isDue(ev), false, 'a version lag alone must not make an opted-out entry due');
+});
+
+test('report-upgrades: false never silences drift', () => {
+  const ev = greenEvaluation({
+    latest: '4.0.4',
+    reportUpgrades: false,
+    assertions: { status: 'drift', results: [{ file: 'f.md', claims: 'c', upstreamPath: 'u', status: 'unmatched', detail: 'd' }] },
+  });
+  assert.ok(buildFindings(ev).some((f) => f.kind === 'assertion-drift'));
+  assert.strictEqual(isDue(ev), true);
+});
+
+test('evaluate: reportUpgrades follows the entry, defaulting to true', () => {
+  const stubs = {
+    checkVersion: () => ({ check: 'version', status: 'ok', installed: ['1.0.0'], pinned: '1.0.0', detail: 'ok' }),
+    checkAssertions: () => ({ check: 'assertions', status: 'ok', results: [] }),
+    replayFixtures: () => ({ check: 'fixtures', status: 'ok', results: [] }),
+    resolveLatest: () => ({ tag: 'v1.0.1', version: '1.0.1' }),
+  };
+  const base = { name: 'p', pinned: '1.0.0', upstream: { repo: 'r', 'tag-prefix': 'v' } };
+  assert.strictEqual(evaluate(base, stubs).reportUpgrades, true);
+  assert.strictEqual(evaluate({ ...base, 'report-upgrades': false }, stubs).reportUpgrades, false);
+});
+
 // ─── AC5: every finding names both versions ──────────────────────────────
 
 test('every finding kind names both versions involved (AC5)', () => {
@@ -530,18 +561,19 @@ test('validate-findings: a malformed entry is dropped, and the valid ones still 
 // ─── the upgrade predicate has exactly one definition ────────────────────
 
 test('hasUpgrade: due, findings, and the due-report all agree on the same predicate', () => {
-  const { hasUpgrade } = require('../run');
   const behind = greenEvaluation({ latest: '4.0.4' });
   const level = greenEvaluation({ latest: '4.0.2' });
   const absent = greenEvaluation({ latest: '4.0.4', resolvedInstalled: null, installed: [] });
+  const optedOut = greenEvaluation({ latest: '4.0.4', reportUpgrades: false });
 
   assert.strictEqual(hasUpgrade(behind), true);
   assert.strictEqual(hasUpgrade(level), false);
   assert.strictEqual(hasUpgrade(absent), false, 'no upgrade path from a missing artifact');
+  assert.strictEqual(hasUpgrade(optedOut), false, 'an entry that opted out of upgrade reporting has no upgrade');
 
   // The agreement itself is the point: a `due` report that disagrees with the
   // findings it precedes is worse than either being wrong alone.
-  for (const ev of [behind, level, absent]) {
+  for (const ev of [behind, level, absent, optedOut]) {
     const hasUpgradeFinding = buildFindings(ev).some((f) => f.kind === 'upgrade-available');
     assert.strictEqual(hasUpgradeFinding, hasUpgrade(ev), 'buildFindings must match hasUpgrade');
   }
@@ -589,6 +621,32 @@ test('buildFindings runs end-to-end against the real manifest with stubbed check
     assert.deepStrictEqual(buildFindings(ev), [], `${dep.name}: an all-green run must file nothing (AC2)`);
     assert.strictEqual(ev.due, false, `${dep.name}: nothing moved, so nothing is due`);
   }
+});
+
+test('AC1.1 + AC2.1: on the real manifest, claude-code reports no upgrade when behind latest; every other version-line entry still does', () => {
+  const { loadManifest } = require('../manifest');
+  const manifest = loadManifest(path.join(__dirname, '..', 'manifest.yml'));
+  const versionLine = manifest.dependencies.filter((d) => !(d.pin && d.pin.versioning === 'none'));
+  let others = 0;
+  for (const dep of versionLine) {
+    const ev = evaluate(dep, {
+      checkVersion: () => ({ check: 'version', status: 'ok', installed: [dep.pinned], pinned: dep.pinned, detail: 'ok' }),
+      checkAssertions: () => ({ check: 'assertions', status: 'ok', results: [] }),
+      replayFixtures: () => ({ check: 'fixtures', status: 'ok', results: [] }),
+      resolveLatest: () => ({ tag: `${dep.upstream['tag-prefix']}999.0.0`, version: '999.0.0' }),
+    });
+    const upgrades = buildFindings(ev).filter((f) => f.kind === 'upgrade-available');
+    if (dep.name === 'claude-code') {
+      assert.strictEqual(upgrades.length, 0, 'claude-code opted out of the upgrade class (AC1.1)');
+      assert.strictEqual(ev.due, false);
+    } else {
+      others++;
+      assert.strictEqual(upgrades.length, 1, `${dep.name} must still report upgrade-available (AC2.1)`);
+      assert.strictEqual(ev.due, true);
+    }
+  }
+  assert.ok(versionLine.some((d) => d.name === 'claude-code'), 'the real manifest must still carry claude-code');
+  assert.ok(others >= 1, 'AC2.1 must check at least one other entry, never pass vacuously');
 });
 
 // ─── content-pinned entries (`versioning: none`) ─────────────────────────

@@ -1,10 +1,10 @@
-template_version: 4
+template_version: 5
 routine_name: backlog-grant-weekdays
 kickoff: backlog refine --source routine
 # Optional: `branch: <name>` pins the assembled kernel's target-branch placeholder.
 # Normally unset here — a branch is project-specific, so /claude-tweaks:routine resolves
 # it at instantiation.
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 allowed_tools: [Bash, Read, Grep, Glob]
 mcp_connections: []
 default_schedule:

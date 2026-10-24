@@ -30,11 +30,20 @@ computation), so there is nothing here to clobber:
    `parseNumstatZ` (`bin/lib/git-z.js`), then pass the parsed `{path, additions, deletions}[]`
    array — never the raw string — to `computeDiffFacts` in `bin/lib/dispatch/ceremony-derive.js` (the same facts
    shape `blast-radius-cli.js`'s `computeBlastRadius` already derives for the merge-check verdict —
-   reuse `classifyDiffFiles`/`blastRadiusSummary`, don't re-derive). The one-line composition
-   (substitute the run's integration branch for `origin/main`); it prints the diff-facts JSON:
+   reuse `classifyDiffFiles`/`blastRadiusSummary`, don't re-derive). Two separate Bash calls, never
+   one (substitute the run's integration branch for `origin/main`) — first print the merge-base:
 
    ```bash
-   git diff --numstat -z "$(git merge-base HEAD origin/main)" | node -e "const { parseNumstatZ } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/git-z.js'); const { computeDiffFacts } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/ceremony-derive.js'); console.log(JSON.stringify(computeDiffFacts(parseNumstatZ(require('fs').readFileSync(0, 'utf8')))))"
+   git merge-base HEAD origin/main
+   ```
+
+   then paste the printed sha in for `{merge-base}` and the literal plugin root (the skill's
+   `Base directory` minus `skills/{name}`) in for `${CLAUDE_PLUGIN_ROOT}`: a worktree-isolated
+   session refuses a `$(git …)` substitution, and a runtime variable inside the `node -e` text of a
+   command that runs `git` (`_shared/scratch-worktree.md` §7). It prints the diff-facts JSON:
+
+   ```bash
+   git diff --numstat -z {merge-base} | node -e "const { parseNumstatZ } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/git-z.js'); const { computeDiffFacts } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/ceremony-derive.js'); console.log(JSON.stringify(computeDiffFacts(parseNumstatZ(require('fs').readFileSync(0, 'utf8')))))"
    ```
 2. When the diff touches zero production/implementation files — any mix of test and/or docs files
    only (`deriveCeremonyProfile`'s `lowSurface` classification; a test file plus a small amount of

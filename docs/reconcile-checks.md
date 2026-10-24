@@ -25,9 +25,27 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   `reconcile-summary` opt-out). Runtime is then
   bounded only by each check's own timeouts, so every scripted `--checks` caller (dispatch's
   drain-termination call, `_shared/pr-first-merge-post-merge.md` Step 4.2) keeps an explicit
-  150000ms+ Bash timeout. A subset that names `archive` should name `mirror` too: without
-  `mirror`'s fetch no `origin/{integration}` refresh runs, and `archive` skips a PR GitHub merged
-  asynchronously as `local-behind-merge`.
+  150000ms+ Bash timeout.
+- **An explicit subset is expanded with its prerequisites (#3630).** For each check that reads
+  state another check produces, `index.js`'s `PREREQUISITES` table names the producing check and
+  the checks that already provide that state. `expandChecks()` adds a missing one before dispatch;
+  `DISPATCH_ORDER` still decides execution order.
+
+  | Check | Prerequisite | Satisfied by | Why |
+  |---|---|---|---|
+  | `archive` | `mirror` | `remote-prune` | `localHasMerge` reads `refs/heads/{integration}`, then `origin/{integration}`, and only the shared fetch refreshes the latter. Without it, a PR GitHub merged asynchronously skips as `local-behind-merge`. |
+  | `red-tip` | `mirror` | `remote-prune` | It reads `origin/{integration}` right after the shared fetch, and otherwise skips as `no-fetch-this-pass`. |
+
+  `release,archive,reap` runs as `mirror,release,archive,reap`; `reap` alone stays `reap`; a
+  subset naming `remote-prune` is not widened, because its `--prune` shared fetch already refreshes
+  `origin/{integration}`; `FAST_CHECKS` and `BACKGROUND_CHECKS` expand to themselves. The added
+  prerequisite runs in the same pass, so under the CLI's `--checks` path it shares the unbounded
+  budget from the bullet above. `archive-branches` has no entry: when `git cherry` cannot prove
+  equivalence it falls back to PR-state squash-merge evidence (#2252), so a stale local ref only
+  delays it and never wrongly skips it. An added prerequisite follows the pass's own gates
+  rather than overriding them: under `--dry-run` it does not fast-forward (`mirror` reports
+  `skipped` / `dry-run` — a `mirror` the caller named behaves the same), and when the gh preflight fails it is dropped along with the check it
+  served, since only a `mirror` the caller named survives the preflight narrowing.
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
   `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `archive`, `archive-branches`, `remote-prune`,
@@ -45,7 +63,8 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `archive-branches.js`'s pattern: pure decision functions, I/O at the edges.
 2. **`bin/lib/reconcile/index.js`** — add the name to `ALL_CHECKS`, insert the dispatch call at
    the correct position in `DISPATCH_ORDER` (see the ordering bullet above), and decide which side
-   of the fast/background split it belongs on.
+   of the fast/background split it belongs on — and, when the check reads state only another check
+   produces, add a `PREREQUISITES` entry for it (see the expansion bullet above).
 3. **`bin/lib/hooks/session-start.js`'s `FAST_CHECKS`** (cheap read/detect) **or
    `bin/hooks.js`'s `BACKGROUND_CHECKS`** (write-only/janitorial) — add the name to whichever list
    matches the decision from step 2. These two lists are asserted to partition `ALL_CHECKS`
@@ -178,6 +197,27 @@ Three skip reasons come out of this check:
 Run-state is never written on any of these skips. The `status: clean` sweep is exempt from this
 check: wrap-up already closed that run.
 
+**A review finding with no tiebreak verdict blocks archival too (#3945).** When the run dir, or
+any of its `spec-*/` subdirs, holds `review-findings.json` (the findings list `/review` Step 3.7
+writes through `review-coordination.js write-findings`), `tiebreak.js`'s `checkRunTiebreakCoverage`
+requires a tiebreak verdict line in that same dir's `decisions.md` for every listed finding id.
+`decideArchiveCore` evaluates it only at the points that would otherwise return `archive`
+(`settleMergedPartial` included), so it runs after every other guard, the record check above
+among them. A run with no artifact archives exactly as before. Two skip reasons come out of it,
+each carrying a recovery `hint`:
+
+- **`tiebreak-artifact-invalid`**: the artifact is present but unreadable or malformed. It is
+  checked before any per-id gap.
+- **`tiebreak-coverage-missing`**: carries `missing`, the uncovered ids, with a spec dir's ids
+  prefixed `spec-N/`.
+
+Both are in `STRUCTURALLY_STUCK_REASONS`, because only a re-run of the findings writer and the
+tiebreak, or deleting a pre-tiebreak artifact, converges them. Unlike the record check, the
+`status: clean` sweep applies this gate as well, and its `onSkip` tracks both reasons, so a closed
+run skipped here escalates through the same structurally-stuck path as the main loop.
+`hooks.js archive-run` refuses on the same two conditions, after its own guards, and
+`review-coordination.js check-coverage` prints the same coverage result without refusing anything.
+
 **Residue pruning.** After every `archive` pass, `cache.js`'s `pruneResidueFailures` drops any
 `residueFailures` entry (reason-agnostic — `move-failed`, `structurally-stuck`, any future reason)
 whose tracked path no longer exists on disk: a path can never fail or succeed there again, so it
@@ -252,8 +292,12 @@ main loop, landed via #1962/#2226/#2228/#2231):
   second `issue create`. The body's fixed text names every skip reason that feeds the record
   (`no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending` (#3297), #3543's
   `pr-not-found` — a stamped `run-state.json` `pr.number` GitHub's structured GraphQL error confirms
-  names no PR, whose remedy is correcting or clearing that stamp), and #3503's `merged-partial` (a run
-  whose merged PR left records unclosed, carried as `unclosed` on the skip). `no-repo-slug` is also in
+  names no PR, whose remedy is correcting or clearing that stamp), #3503's `merged-partial` (a run
+  whose merged PR left records unclosed, carried as `unclosed` on the skip), and #3945's
+  `tiebreak-coverage-missing` and `tiebreak-artifact-invalid` (a run whose `review-findings.json`
+  lists a finding with no tiebreak verdict line in `decisions.md`, or is malformed; the skip carries
+  `missing` ids and a `hint`, which `reconcile/index.js` passes through to `result.runs`, and the body
+  carries their remedy line after the `merged-partial` one). `no-repo-slug` is also in
   `STRUCTURALLY_STUCK_REASONS` but is not listed here: it can never be filed into this record, because
   with no repo slug `findOrCreateIssue` returns `escalation-failed`, so it shows only in the residue
   summary's stuck count. Each path's own reason is its

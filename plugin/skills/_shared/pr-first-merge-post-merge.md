@@ -81,6 +81,17 @@ number — so a run whose worktree is already gone can converge in this same pas
 by design: a run that never rendered a console (the fast-lane auto-merge short-circuit writes no
 `console.json`) archives only when its `staged/` holds nothing pending.)
 
+Resolve where this run lives after the reconcile call. When `$PIPELINE_RUN_DIR` is gone and
+`$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` is present (`{run-id}` =
+`basename($PIPELINE_RUN_DIR)`), reconcile archived this run: every `decisions.md` line this step
+writes after the reconcile call passes that archive path as `--run`
+(`$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/`, `_shared/timing-render.md`'s archive-path
+rule) — never `$PIPELINE_RUN_DIR`. `log-decision.js` exits 3 on the moved path, and a hand append
+would recreate an un-archived run dir holding one `decisions.md`. An archived run is by
+construction not the stuck run (reconcile archives a never-rendered-console run only when its
+`staged/` holds nothing pending), so its own check is clean; the "other run dir(s)" line below
+targets that resolved path.
+
 Decide whether **this run** is that stuck run by checking it directly — never from the reconcile
 summary, which sweeps every run dir in the main checkout and carries counts, not paths. This run
 needs human action when `$PIPELINE_RUN_DIR/console.json` is absent AND `$PIPELINE_RUN_DIR/staged/`
@@ -91,9 +102,10 @@ counts as pending, matching reconcile's fail-closed read. Log, on one line — t
 reconcile call itself returned, since a later pass skips this run the same way:
 `AUTO {time} — pr-first-merge Step 4.2: this run is console-never-rendered-staged-pending — needs human action (pending staged/ items, no rendered console); not left for the next trigger point. Reversibility: n/a.`
 and carry "needs human action" into the closing report. When the summary names the reason but this
-run's own check is clean, the stuck dirs are other runs: log and report "{N} other run dir(s) need
-human action (console-never-rendered-staged-pending)" without attributing it to this run. Either way
-the outcome is reported as `merged`, with a needs-human-action note. Reconcile escalates such a dir
+run's own check is clean, the stuck dirs are other runs: log to the path resolved above (else
+`$PIPELINE_RUN_DIR`) and report "{N} other run dir(s) need human action
+(console-never-rendered-staged-pending)" without attributing it to this run. Either way the outcome
+is reported as `merged`, with a needs-human-action note. Reconcile escalates such a dir
 through the consolidated `structurally-stuck` record only after it sits untouched past the 7-day
 TTL and repeated consecutive stuck passes, whether or not the run is closed: a closed auto-merge
 short-circuit run escalates the same way, via reconcile's clean-status sweep (#3668).

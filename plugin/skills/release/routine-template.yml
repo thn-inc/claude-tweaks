@@ -1,10 +1,10 @@
-template_version: 1
+template_version: 2
 routine_name: release-train-daily
 kickoff: release --train
 # Optional: `branch: <name>` pins the assembled kernel's target-branch placeholder.
 # Normally unset here — a branch is project-specific, so /claude-tweaks:routine resolves
 # it at instantiation.
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 allowed_tools: [Bash, Read, Grep, Glob, Task]
 mcp_connections: []
 default_schedule:

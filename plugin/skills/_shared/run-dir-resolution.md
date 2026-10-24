@@ -53,7 +53,7 @@ if [ -n "$RUN_DIR" ]; then
   esac
 fi
 if [ -z "$RUN_DIR" ]; then
-  RUN_DIR=$(find "$RUN_ROOT/.claude-tweaks/pipelines/" -maxdepth 1 -type d -name "*${SPEC_SLUG}*" 2>/dev/null | grep -E '/[0-9]{4}-[0-9]{2}-[0-9]{2}T[^/]*$' | sort | tail -n 1)  # canonical run-id names only (#2870)
+  RUN_DIR=$(find "$RUN_ROOT/.claude-tweaks/pipelines/" -maxdepth 1 -type d \( -name "*-${SPEC_SLUG}" -o -name "*-${SPEC_SLUG}-*" \) 2>/dev/null | grep -E '/[0-9]{4}-[0-9]{2}-[0-9]{2}T[^/]*$' | sort | tail -n 1)  # canonical run-id names only (#2870); slug as a whole -delimited segment, so spec-378 never matches spec-3784 (#3865)
 fi
 if [ -z "$RUN_DIR" ] && [ "$MODE" = "auto" ] && [ -n "$STANDALONE_SKILL" ]; then
   # Standalone auto fallback — see resolution order step 4 (step 3, the record-mode
