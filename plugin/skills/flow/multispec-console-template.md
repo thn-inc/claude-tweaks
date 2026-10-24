@@ -171,6 +171,17 @@ Render this section only when any spec's Upstream feedback curation row (or the 
 
 Below each row, show the full staged file content for the item so the user can see exactly what would be published. Filing happens after approval by invoking `/claude-tweaks:feedback --pre-confirmed` per checked row. Omit the section entirely when no spec (and no parent-level proposal) staged an upstream proposal.
 
+#### Reflection insights (Approve all applies each row's recommended destination; Override drills each item)
+
+Render this section only when any spec's reflect pass, or the batch-scope reflect pass in the parent run dir (`multispec-batch-curation.md`), staged `staged/wrap-up-reflect-insights.md`. Aggregated across every spec in the run plus the parent's own — `Spec` reads `batch` for a parent-level row — and each file's table rows are renumbered into one `R#` sequence. The Approve-all default and the D4/D5-informational rule are `wrap-up/console-template.md`'s Reflection insights section, per file.
+
+| R# | Spec | Insight | Causal | Recommended Destination |
+|---|---|---|---|---|
+| R1 | batch | Retry helper swallowed the last error, hiding the real cause | systemic | Implement now -> Skill: error-handling |
+| R2 | 159 | Token refresh and session expiry share no clock source | — | Defer — genuinely-larger |
+
+Omit the section entirely when no spec (and no parent-level pass) staged an insights file.
+
 #### Not run / Failed (if any spec didn't complete cleanly)
 
 | Spec | Status | Reason | Worktree |
