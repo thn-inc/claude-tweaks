@@ -242,11 +242,43 @@ fallback applied):
 ## Step 4: Compose and post the brief
 
 **Screenshot commit** (`app-route`/`rendered-page` plans whose Step 2.5 walk completed, with screenshots from Step 3): commit the 1-3 selected
-screenshots to `docs/demo-evidence/{record}/{NN}-{description}.png` on this run's current branch
-— `{record}` is the issue number (`github-issues`) or record id (`local-files`); `{NN}` is a
-zero-padded sequence starting at `01`; `{description}` is a short kebab-case label matching the
-screenshot's content (e.g. `settings-toggle-persisted`). Commit before composing the template
-below — the embed needs the committed SHA.
+screenshots to `docs/demo-evidence/{record}/{NN}-{description}.png` — `{record}` is the issue
+number (`github-issues`) or record id (`local-files`); `{NN}` is a zero-padded sequence starting
+at `01`; `{description}` is a short kebab-case label matching the screenshot's content (e.g.
+`settings-toggle-persisted`). Commit before composing the template below — the embed needs the
+committed SHA. Which branch the commit lands on is decided first.
+
+**Check the branch's PR before committing (`integration-model: pr-first`, #4039).** This run's
+current branch is a safe home for the evidence only while its PR is still open. Acceptance
+labeling can run after that PR merged — a re-run after a `BLOCKED` verify verdict, or a console
+merge that ran before Phase 4 — and a commit on a merged branch never reaches the integration
+branch. Read the branch's governing PR with the existing resolver (`bin/lib/reconcile/pr-state.js`'s
+`resolvePrState`; a merged PR wins when the branch has several). Run `git branch --show-current`
+as its own Bash call first and pass the name in literally — a `git` inside `$(...)` is refused in
+a worktree session (`_shared/scratch-worktree.md` §7):
+
+```bash
+node -e "const s=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/reconcile/pr-state.js').resolvePrState(process.cwd(), process.argv[1]); console.log(typeof s === 'string' ? s : s ? s.state + ' ' + s.number : 'no-pr')" "{branch}"
+```
+
+It prints `OPEN {n}`, `MERGED {n}`, `CLOSED {n}`, `no-pr`, `gh-absent`, or `network-failure`.
+Route on it:
+
+- **Open PR (`OPEN`)** — commit on the current branch (the fence below), then push that commit straight away, as its own Bash call: `git push origin {branch}`. The run's later phase-exit push would carry it, but a re-run after that push has none.
+- **Merged or closed PR (`MERGED`/`CLOSED`)** — never commit to the dead branch. Fetch the integration branch (`_shared/integration-branch.md`), then `git switch -c demo-evidence/{record} origin/{integration-branch}`, commit only `docs/demo-evidence/{record}/` there, and `git push -u origin demo-evidence/{record}` — one Bash call each. When that branch name is already taken locally or on `origin` (an earlier re-run left it), append `-2`, `-3`, … and use the first free name. Open an evidence-only PR against `{integration-branch}` whose body references the record as `Refs #{record}` — never `Fixes`, `Closes`, or `Resolves`: the record's closure belongs to its original PR. The evidence PR is left open for a human to merge and is never auto-merged — no `auto:merge` grant covers it. `{commit-sha}` in the embed below is this evidence commit's SHA, never the dead branch's. Then `git switch -` back, so the rest of wrap-up runs on the branch it expects. If either switch refuses (a local edit conflicts), skip the screenshot commit, compose the brief without embedded screenshots, and say in it why they are missing.
+- **No PR (`no-pr`)** — a degraded run that never opened one: commit and push as for an open PR.
+- **State unreadable (`gh-absent`, `network-failure`)** — the branch cannot be shown to be live, so never commit to it blind: take the merged-or-closed route. With `gh` absent, open the evidence PR through `mcp__github__create_pull_request` (`_shared/github-write-transport.md`'s PR create exception — PR reads have no MCP equivalent there, which is why the read itself degrades).
+
+Log the route when a run directory resolves (`_shared/pipeline-run-dir.md`):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/wrap-up" --status AUTO --step "Verification Brief Step 4" --text "screenshot commit for #{record}: PR state {state} → {current branch | evidence PR #{m} ({url})}" --reversibility high
+```
+
+On the evidence-PR route, name the evidence PR's URL in the brief (one line under the
+screenshots) and in wrap-up's Actions Performed (`summary-template.md`'s evidence-PR row).
+
+**`integration-model: local-merge`** — no PR to read: commit on the current branch as below, with no push and no PR.
 
 ```bash
 git add docs/demo-evidence/{record}/
