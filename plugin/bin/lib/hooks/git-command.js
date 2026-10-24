@@ -23,6 +23,10 @@ function splitSegments(command) {
 // uses it to find the segment that holds a heredoc opener.
 function segmentSpans(command) {
   const str = String(command || '');
+  return scanPass((spans) => segmentSpansWith(str, spans));
+}
+
+function segmentSpansWith(str, spans) {
   const segments = [];
   let current = '';
   const cut = (at) => { segments.push({ text: current, end: at }); current = ''; };
@@ -47,10 +51,27 @@ function segmentSpans(command) {
       current += ch;
       continue;
     }
+    // A backtick substitution's text is its own command, read in its own quoting context (#4149):
+    // its separators still cut, so a command inside it is walked, but a quote inside it opens
+    // nothing past its closing backtick, as bash reads it.
+    if (ch === '`') {
+      const r = spans.backtick(str, i + 1);
+      if (r.closed) {
+        const inner = segmentSpansWith(str.slice(i + 1, r.end - 1), spans);
+        current += `\`${inner[0].text}`;
+        for (let k = 1; k < inner.length; k += 1) {
+          cut(i + 1 + inner[k - 1].end);
+          current = inner[k].text;
+        }
+        current += '`';
+        i = r.end - 1;
+        continue;
+      }
+    }
     // A double-quoted span, or an unquoted `${ … }`, is one piece of a word, with the nesting
     // bash gives it (skipDoubleQuoted): nothing inside it cuts a segment (#4149).
-    const nested = ch === '"' ? skipDoubleQuoted(str, i + 1)
-      : ch === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2) : null;
+    const nested = ch === '"' ? spans.dq(str, i + 1)
+      : ch === '$' && str[i + 1] === '{' ? spans.param(str, i + 2) : null;
     if (nested && (ch === '"' || nested.closed)) {
       current += str.slice(i, nested.end);
       i = nested.end - 1;
@@ -90,8 +111,8 @@ function segmentSpans(command) {
 // length when it runs off the end) and `closed` says whether its closer was found.
 //
 // Nesting deeper than NEST_LEVEL_CAP stops the scan and marks the result `capped`; a capped result
-// climbs to the top-level span, which then takes the plain reading (the first unescaped `"`), so a
-// pathological nest reads exactly as it did before #4149. Within one top-level call (level 0), each
+// climbs to the top-level span, which then takes the plain reading (the first unescaped `"`) and
+// stays marked `capped`, so the scanner's pass reads on as before #4149 (topLevelSpans). Within one top-level call (level 0), each
 // result depends only on (kind, start index), so it is memoized for that call: the double-quote
 // fallback below re-reads a deeper chain from a new index, and without the memo those re-reads
 // multiply with depth (unbounded before the cap; under it, bounded but still super-linear), while
@@ -120,7 +141,7 @@ function nestMemoized(kind, str, i, level, scan) {
 // never swallows the rest of the command.
 function skipDoubleQuoted(str, i, level = 0) {
   const r = nestMemoized(0, str, i, level, scanDoubleQuoted);
-  return r.capped && level === 0 ? plainDoubleQuoteEnd(str, i) : r;
+  return r.capped && level === 0 ? { ...plainDoubleQuoteEnd(str, i), capped: true } : r;
 }
 
 function scanDoubleQuoted(str, i, level) {
@@ -244,6 +265,32 @@ function skipBacktick(str, i) {
     i += 1;
   }
   return { end: str.length, closed: false };
+}
+
+// One scanner pass's reader of top-level spans: a double-quoted span (dq, from just past its `"`),
+// an unquoted `${ … }` (param, from just past `${`) and a backtick substitution (backtick, from
+// just past the backtick). `flat` is the reading before #4149: a plain `"` pairing, with `${` and
+// a backtick taken as plain characters. `capped` records that a span nested past NEST_LEVEL_CAP.
+function topLevelSpans(flat = false) {
+  const open = (str, i) => ({ end: i, closed: false });
+  const reader = {
+    capped: false,
+    dq: (str, i) => (flat ? plainDoubleQuoteEnd(str, i) : watch(skipDoubleQuoted(str, i))),
+    param: (str, i) => (flat ? open(str, i) : watch(skipParamExpansion(str, i))),
+    backtick: (str, i) => (flat ? open(str, i) : skipBacktick(str, i)),
+  };
+  const watch = (r) => { if (r.capped) reader.capped = true; return r; };
+  return reader;
+}
+
+// Runs one scanner pass, `scan(spans)`, and when any span in it nested past NEST_LEVEL_CAP runs the
+// whole pass again in the flat reading, so a pathological nest reads exactly as it did before #4149:
+// a nested reading that falls back to the plain one partway pairs its quotes unlike either reading,
+// which can hide a separator both of them see.
+function scanPass(scan) {
+  const spans = topLevelSpans();
+  const r = scan(spans);
+  return spans.capped ? scan(topLevelSpans(true)) : r;
 }
 
 function stripQuotes(s) {
@@ -784,6 +831,10 @@ function programNames(tok) {
 // outside quotes is kept as written. An unterminated span is kept, so text the shell
 // might still run stays visible.
 function removeQuotedSpans(str) {
+  return scanPass((spans) => removeQuotedSpansWith(str, spans));
+}
+
+function removeQuotedSpansWith(str, spans) {
   let out = '';
   let span = '';
   let quote = null;
@@ -793,12 +844,17 @@ function removeQuotedSpans(str) {
       if (ch === '\\' && i + 1 < str.length) { out += ch + str[i + 1]; i += 1; continue; }
       if (ch === '"') {
         // Nested as bash reads it (skipDoubleQuoted); an unterminated span is kept.
-        const r = skipDoubleQuoted(str, i + 1);
+        const r = spans.dq(str, i + 1);
         if (!r.closed) return out + str.slice(i);
         i = r.end - 1;
         continue;
       }
       if (ch === "'") { quote = ch; span = ch; continue; }
+      // A backtick substitution keeps its text, read in its own quoting context (segmentSpans).
+      if (ch === '`') {
+        const r = spans.backtick(str, i + 1);
+        if (r.closed) { out += `\`${removeQuotedSpansWith(str.slice(i + 1, r.end - 1), spans)}\``; i = r.end - 1; continue; }
+      }
       out += ch;
       continue;
     }
@@ -813,6 +869,10 @@ function removeQuotedSpans(str) {
 // once splitSegments has cut its `|`, so its blank left piece is skipped and the piped-to program
 // is what gets checked.
 function splitOnLoneAmpersand(seg) {
+  return scanPass((spans) => splitOnLoneAmpersandWith(seg, spans));
+}
+
+function splitOnLoneAmpersandWith(seg, spans) {
   const pieces = [];
   let start = 0;
   let quote = null;
@@ -821,8 +881,23 @@ function splitOnLoneAmpersand(seg) {
     if (quote === "'") { if (c === "'") quote = null; continue; }
     if (c === '\\') { i += 1; continue; }
     if (c === "'") { quote = c; continue; }
+    // A backtick substitution is cut at its own lone `&`s, read in its own quoting context (segmentSpans).
+    if (c === '`') {
+      const r = spans.backtick(seg, i + 1);
+      if (r.closed) {
+        let at = i + 1;
+        for (const piece of splitOnLoneAmpersandWith(seg.slice(i + 1, r.end - 1), spans).slice(0, -1)) {
+          at += piece.length;
+          pieces.push(seg.slice(start, at));
+          at += 1;
+          start = at;
+        }
+        i = r.end - 1;
+        continue;
+      }
+    }
     // A double-quoted span or an unquoted `${ … }` nests as bash reads it (skipDoubleQuoted).
-    const nested = c === '"' ? skipDoubleQuoted(seg, i + 1) : c === '$' && seg[i + 1] === '{' ? skipParamExpansion(seg, i + 2) : null;
+    const nested = c === '"' ? spans.dq(seg, i + 1) : c === '$' && seg[i + 1] === '{' ? spans.param(seg, i + 2) : null;
     if (nested && (c === '"' || nested.closed)) { i = nested.end - 1; continue; }
     if (c !== '&' || seg[i + 1] === '&' || seg[i + 1] === '>' || /[&<>|]/.test(seg[i - 1] || '')) continue;
     pieces.push(seg.slice(start, i));
@@ -1061,8 +1136,9 @@ function lineLeavesStructureOpen(line) {
     if (c === '\\') { word += c + (line[i + 1] || ''); plain = false; i += 1; continue; }
     if (c === '"') {
       // Nested as bash reads it (skipDoubleQuoted), so a `)` inside a quoted "$( )" closes nothing.
+      // A span left open, or nested past NEST_LEVEL_CAP, leaves the line open (fail closed).
       const r = skipDoubleQuoted(line, i + 1);
-      if (!r.closed) return true;
+      if (!r.closed || r.capped) return true;
       word += line.slice(i, r.end);
       plain = false;
       i = r.end - 1;
@@ -1148,6 +1224,10 @@ function planHeredocBodies(str, start, pending, lineText, lineOpen) {
 // closing line, so the outer scan resumes after the delimiter with fresh quote state and
 // never plans an opener inside a body; a kept body is returned as its own chunk.
 function scanHeredocs(str) {
+  return scanPass((spans) => scanHeredocsWith(str, spans));
+}
+
+function scanHeredocsWith(str, spans) {
   const out = [];
   let outLen = 0;
   const emit = (s) => { out.push(s); outLen += s.length; };
@@ -1172,7 +1252,13 @@ function scanHeredocs(str) {
       emit(ch + str[i + 1]);
       i += 2;
     } else if (ch === '"') {
-      const end = skipDoubleQuoted(str, i + 1).end;
+      const end = spans.dq(str, i + 1).end;
+      emit(str.slice(i, end));
+      i = end;
+    } else if (ch === '`' && spans.backtick(str, i + 1).closed) {
+      // A backtick substitution is its own command text: a quote or `<<` inside it opens nothing
+      // out here, so a heredoc inside it keeps its body in the outer text, visible.
+      const end = skipBacktick(str, i + 1).end;
       emit(str.slice(i, end));
       i = end;
     } else if (ch === "'") {
@@ -1283,17 +1369,30 @@ const MAX_HEREDOC_NESTING = 8;
 // never saw open, as in `if (…)`): either one closes nothing but cuts the text, so the command
 // after it is a piece of its own and a glued closer (`f.js)`) is not part of a word.
 function groupEvents(seg, g) {
+  // Each change to the group state is journaled as its undo, so a second (flat) pass starts again
+  // from the state this one started from.
+  const undo = [];
+  return scanPass((spans) => {
+    while (undo.length) undo.pop()();
+    return groupEventsWith(seg, g, spans, undo);
+  });
+}
+
+function groupEventsWith(seg, g, spans, undo) {
   const events = [];
   let start = 0;
   let atCmd = true; // the next word is at command position
   const top = () => g.stack[g.stack.length - 1] || g.root;
+  const push = (frame) => { g.stack.push(frame); undo.push(() => g.stack.pop()); };
+  const pop = () => { const frame = g.stack.pop(); undo.push(() => g.stack.push(frame)); };
+  const setCaseDepth = (frame, d) => { const was = frame.caseDepth; frame.caseDepth = d; undo.push(() => { frame.caseDepth = was; }); };
   const cut = (at, ev) => {
     if (at > start) events.push({ text: seg.slice(start, at) });
     if (ev) events.push(ev);
     start = at + 1;
   };
   const nest = (n, cmd) => {
-    for (let k = 0; k < n; k += 1) g.stack.push({ kind: 'p', caseDepth: 0 });
+    for (let k = 0; k < n; k += 1) push({ kind: 'p', caseDepth: 0 });
     atCmd = cmd;
   };
   let i = 0;
@@ -1303,7 +1402,7 @@ function groupEvents(seg, g) {
     if (c === '(') {
       if (atCmd) {
         const frame = { kind: '(', caseDepth: 0 };
-        g.stack.push(frame);
+        push(frame);
         cut(i, { open: frame });
       } else nest(1, false);
       i += 1;
@@ -1311,8 +1410,8 @@ function groupEvents(seg, g) {
     }
     if (c === ')') {
       const t = top();
-      if (t.caseDepth === 0 && t.kind === 'p') { g.stack.pop(); atCmd = false; }
-      else if (t.caseDepth === 0 && t.kind === '(') { g.stack.pop(); cut(i, { close: t }); atCmd = false; }
+      if (t.caseDepth === 0 && t.kind === 'p') { pop(); atCmd = false; }
+      else if (t.caseDepth === 0 && t.kind === '(') { pop(); cut(i, { close: t }); atCmd = false; }
       else { cut(i, null); atCmd = true; }
       i += 1;
       continue;
@@ -1349,7 +1448,7 @@ function groupEvents(seg, g) {
       }
       // A double-quoted span or an unquoted `${ … }` nests as bash reads it (skipDoubleQuoted), so an
       // `&` or `)` inside it is no background and closes no group.
-      const nested = ch === '"' ? skipDoubleQuoted(seg, i + 1) : ch === '$' && seg[i + 1] === '{' ? skipParamExpansion(seg, i + 2) : null;
+      const nested = ch === '"' ? spans.dq(seg, i + 1) : ch === '$' && seg[i + 1] === '{' ? spans.param(seg, i + 2) : null;
       if (nested && (ch === '"' || nested.closed)) {
         i = nested.end;
         plain = false;
@@ -1373,13 +1472,13 @@ function groupEvents(seg, g) {
     const t = top();
     if (w === '{') {
       const frame = { kind: '{', caseDepth: 0 };
-      g.stack.push(frame);
+      push(frame);
       cut(wStart, { open: frame });
       continue; // still at command position
     }
-    if (w === '}' && t.kind === '{') { g.stack.pop(); cut(wStart, { close: t }); atCmd = false; continue; }
-    if (w === 'case') t.caseDepth += 1;
-    else if (w === 'esac') t.caseDepth = Math.max(0, t.caseDepth - 1);
+    if (w === '}' && t.kind === '{') { pop(); cut(wStart, { close: t }); atCmd = false; continue; }
+    if (w === 'case') setCaseDepth(t, t.caseDepth + 1);
+    else if (w === 'esac') setCaseDepth(t, Math.max(0, t.caseDepth - 1));
     atCmd = COMMAND_PREFIX_WORDS.has(w);
   }
   if (seg.length > start) events.push({ text: seg.slice(start) });

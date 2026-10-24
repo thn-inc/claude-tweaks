@@ -897,6 +897,16 @@ for (const [label, cmd] of [
     ['a ; inside quotes inside "$( )" (segmentSpans)', 'cp "$(echo "a;b" | tr -d ";b")" /main/f.js', [main('copy')]],
     ['a ; inside an unquoted ${ } (segmentSpans)', "x='a;'; cp ${x//;/} /main/f.js", [main('copy')]],
     ['an odd quote in a heredoc body inside "$( )", before a later body (scanHeredocs)', "cd /main && echo \"$(cat <<'X'\n5\" x\nX\n)\" && cat <<'EOF'\ndon't\nEOF\ncp a f.js", [main('copy')]],
+    // A top-level backtick substitution is its own command text: a quote inside it opens nothing
+    // past its closing backtick.
+    ['an odd quote inside a top-level backtick', 'cd /main && echo `echo "a&b` && cp a f.js', [main('copy')]],
+    ['an odd quote inside a top-level backtick, then a newline', 'cd /main && echo `echo "$(`\ncp a f.js', [main('copy')]],
+    ['a backtick inside double quotes, then a top-level backtick', 'cd /main && echo "`"`"`"`\ncp a f.js', [main('copy')]],
+    ['a top-level backtick, then a backtick inside double quotes', 'cd /main && echo `"`"`"`"\ncp a f.js', [main('copy')]],
+    ['a heredoc opener inside a top-level backtick (scanHeredocs)', 'cd /main && echo `cat <<EOF`\ncp a f.js\nEOF', [main('copy')]],
+    // A pass that nests past the cap is read again flat, as before #4149, from its start.
+    ['a nest past the cap holding backticks', `cd /main && echo ${'` "$('.repeat(33)}x${')"`'.repeat(33)} && cp a f.js`, [main('copy')]],
+    ['a nest past the cap behind an unquoted $( and a backtick', `cd /main && echo ${'$($(`"'.repeat(34)}x${'"`))'.repeat(34)} && cp a f.js`, [main('copy')]],
   ]) {
     test(`#4149 nesting: ${label} keeps the earlier cd`, () => {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
