@@ -7,7 +7,7 @@ const os = require('node:os');
 const { readText } = require('../../helpers/read-skill');
 
 const {
-  gatherPack, resolveInputs, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger,
+  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
@@ -1542,4 +1542,31 @@ test('pr probe: unparseable pr-checks.js output is ci read-failed (#3469)', asyn
   const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['pr'], deps });
   assert.strictEqual(pack.pr.ok, true);
   assert.strictEqual(pack.pr.value.ci.state, 'read-failed');
+});
+
+test('resolveWorktreeBase returns the merge base against origin/{integration-branch} when one resolves (#3686)', () => {
+  const deps = {
+    resolvePolicy: policyFake(DEFAULT_POLICY),
+    git: (args) => (args[0] === 'merge-base' && args[2] === 'origin/main' ? 'abc123\n' : ''),
+    ghSync: () => { throw new Error('no gh'); },
+  };
+  assert.strictEqual(resolveWorktreeBase('/w/tree', deps), 'abc123');
+});
+
+test('resolveWorktreeBase returns null when git fails (#3686)', () => {
+  const deps = {
+    resolvePolicy: policyFake(DEFAULT_POLICY),
+    git: () => { throw new Error('git failed'); },
+    ghSync: () => { throw new Error('no gh'); },
+  };
+  assert.strictEqual(resolveWorktreeBase('/w/tree', deps), null);
+});
+
+test('resolveWorktreeBase returns null when the policy read throws (#3686)', () => {
+  const deps = {
+    resolvePolicy: () => { throw new Error('policy unreadable'); },
+    git: () => 'abc123\n',
+    ghSync: () => { throw new Error('no gh'); },
+  };
+  assert.strictEqual(resolveWorktreeBase('/w/tree', deps), null);
 });
