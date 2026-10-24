@@ -84,9 +84,9 @@ function stripQuotes(s) {
 // Returns `{ tokens, singleQuoted, doubleQuoted }` — `singleQuoted[i]` is true
 // when any part of `tokens[i]` was assembled from a single-quoted span, and
 // `doubleQuoted[i]` likewise for a double-quoted span (#4015: the redirect scan
-// treats a `>` in either as literal text). Real bash never
-// performs `$`-expansion inside single quotes (unlike double quotes or bare
-// words), so this flag is what lets substituteVars() below refuse to treat a
+// treats a `>` in either as literal text). Real bash never performs
+// `$`-expansion inside single quotes (unlike double quotes or bare words), so
+// this flag is what lets substituteVars() below refuse to treat a
 // single-quoted `'$NAME'` as a variable reference — without it, a token like
 // `'$WT/a.js'` and `"$WT/a.js"` are indistinguishable post-tokenize, and the
 // substitution step would wrongly expand the single-quoted (never-expanded)
@@ -234,14 +234,14 @@ function substituteVars(tokens, vars, singleQuoted) {
 // Shared segment/token walk used by both gitTargets and fileWriteTargets:
 // splits the command into shell segments, tokenizes each, and tracks `cd` to
 // keep the effective cwd in sync. `handler(t, effCwd, quoting)` is invoked for
-// every non-cd, non-empty segment with the cwd value in effect for it (string, or
-// null meaning UNKNOWN); `quoting` is `{ raw, singleQuoted, doubleQuoted }`, the
-// pre-substitution tokens and their per-token quote flags (#4015). Also tracks
-// same-command literal `NAME=value` assignments (see updateAssignment/substituteVars above) and substitutes
-// them into every other segment's tokens before `handler`/the `cd` branch
-// sees them — one shared point so a future fix to either cd-resolution or
-// assignment-substitution can never land in one caller's copy of this
-// preamble and not the other's.
+// every non-cd, non-empty segment with the cwd value in effect for it (string,
+// or null meaning UNKNOWN); `quoting` is `{ raw, singleQuoted, doubleQuoted }`,
+// the pre-substitution tokens and their per-token quote flags (#4015). Also
+// tracks same-command literal `NAME=value` assignments (see
+// updateAssignment/substituteVars above) and substitutes them into every other
+// segment's tokens before `handler`/the `cd` branch sees them — one shared
+// point so a future fix to either cd-resolution or assignment-substitution can
+// never land in one caller's copy of this preamble and not the other's.
 function forEachCommandSegment(command, cwd, handler) {
   let effCwd = cwd || '.'; // string, or null meaning UNKNOWN
   const vars = new Map(); // name -> literal value, same-command only, no chaining
