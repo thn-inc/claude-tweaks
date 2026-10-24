@@ -22,8 +22,10 @@ test('the integration-branch probe paragraph sits once, between the tangential h
   const header = REFLECT.indexOf("Without this header the Console's record-creation step");
   const probe = REFLECT.indexOf(LEAD);
   const number = REFLECT.indexOf('Number `{n}` is a per-run sequence counter');
-  assert.ok(header >= 0 && number > probe, 'the probe paragraph must come before the Number {n} sentence');
+  assert.ok(header >= 0, 'the tangential header paragraph must be present');
+  assert.ok(number >= 0, 'the Number {n} sentence must be present');
   assert.ok(probe > header, 'the probe paragraph must come after the tangential header paragraph');
+  assert.ok(number > probe, 'the Number {n} sentence must come after the probe paragraph');
 });
 
 test('the probe rule names the integration-branch reference, the fetch, the grep and log probes, and the Current State citation', () => {
