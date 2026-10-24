@@ -553,25 +553,53 @@ function matchRedirectOperator(tok) {
 // so a `>` inside it is not a redirection and its newlines are not command
 // boundaries. stripHeredocBodies returns the command with each body and its
 // closing-delimiter line removed. The opener line keeps its newline, so
-// whatever follows the closing delimiter starts its own segment. A body fed to
-// a shell is kept whole, since that text is executed and its redirects are real.
-// Any internal failure returns the input unchanged (the pre-#3989 scan).
-const SHELL_INTERPRETER_WORDS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash', 'fish', 'busybox', 'eval', 'source', '.']);
+// whatever follows the closing delimiter starts its own segment. Whatever the
+// scan cannot prove is data stays visible (a body fed to a shell, an unquoted
+// body that expands, an unterminated body, a continuation line): see
+// planHeredocBodies. Any internal failure returns the input unchanged (the
+// pre-#3989 scan).
+const SHELL_INTERPRETER_WORDS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash', 'fish', 'busybox', 'eval', 'source', '.', 'su', 'csh', 'tcsh', 'rbash', 'pwsh', 'powershell']);
+// A versioned shell (`bash5`, `zsh5.9`, `sh4`) runs the same interpreter.
+const VERSIONED_SHELL_RE = /^(ba|z|k|da|mk|a|c|tc|rba)?sh\d[\d.]*$/;
+// Commands that run their own argument as a program: what follows one must resolve.
+const WRAPPER_WORDS = new Set(['sudo', 'doas', 'env', 'exec', 'command', 'nohup', 'time', 'nice', 'xargs']);
+
+// The program names one raw token may stand for, lowercased, with quotes and
+// backslashes removed: `bas\h`, `'/bin/bash'`, `C:\bin\sh.exe` each yield a name.
+function programNames(tok) {
+  const noQuotes = tok.replace(/["']/g, '');
+  const bySlash = noQuotes.split('/').pop().replace(/\\/g, '');
+  const byBackslash = noQuotes.split(/[\\/]/).pop();
+  return [bySlash, byBackslash].map((n) => n.replace(/\.exe$/i, '').toLowerCase());
+}
+
+function isShellName(name) {
+  return SHELL_INTERPRETER_WORDS.has(name) || VERSIONED_SHELL_RE.test(name);
+}
+
+// A wrapper runs what follows it: that must resolve, and `sudo` given a shell flag
+// (-s, -i, --shell, --login) is itself a shell.
+function wrapperRunsShell(tokens, k, names) {
+  const rest = tokens.slice(k + 1);
+  if (rest.some((t) => /[$`]/.test(t))) return true;
+  return names.includes('sudo') && rest.some((t) => /^(--shell|--login|-[A-Za-z]*[si][A-Za-z]*)$/.test(t));
+}
 
 // The opener's logical line feeds its body to a shell when a token on it names a
-// shell interpreter, or a segment's program word (the first token after NAME=value
-// assignments) is unresolvable ($NAME, $(...), a backtick): that word may be a
-// shell. Fails closed, so the body stays visible to the scan.
+// shell (a versioned one included), a segment's program word (the first token after
+// NAME=value assignments) is unresolvable ($NAME, $(...), a backtick), or a wrapper
+// (sudo, env, ...) runs an unresolvable word or a shell. Fails closed, so the body
+// stays visible to the scan.
 function bodyRunsAsShell(lineText) {
   for (const seg of splitSegments(lineText)) {
     const { tokens } = tokenize(seg.trim());
     let p = 0;
     while (p < tokens.length && SIMPLE_ASSIGNMENT_RE.test(tokens[p])) p += 1;
     if (p < tokens.length && /[$`]/.test(tokens[p])) return true;
-    for (const tok of tokens) {
-      const cut = Math.max(tok.lastIndexOf('/'), tok.lastIndexOf('\\'));
-      const base = (cut >= 0 ? tok.slice(cut + 1) : tok).replace(/["']/g, '').replace(/\.exe$/i, '').toLowerCase();
-      if (SHELL_INTERPRETER_WORDS.has(base)) return true;
+    for (let k = 0; k < tokens.length; k += 1) {
+      const names = programNames(tokens[k]);
+      if (names.some(isShellName)) return true;
+      if (names.some((n) => WRAPPER_WORDS.has(n)) && wrapperRunsShell(tokens, k, names)) return true;
     }
   }
   return false;
@@ -579,8 +607,8 @@ function bodyRunsAsShell(lineText) {
 
 // Reads a heredoc operand starting just after `<<`: an optional `-`, blanks, then
 // the delimiter word. The word ends at unquoted whitespace or a shell metachar.
-// Returns { delim, stripTabs, end }, or null when the operand is empty or its
-// quoting is unterminated (not an opener).
+// Returns { delim, quoted, stripTabs, end }, or null when the operand is empty
+// or its quoting is unterminated (not an opener).
 function readHeredocOpener(str, j) {
   let stripTabs = false;
   if (str[j] === '-') { stripTabs = true; j += 1; }
@@ -597,25 +625,86 @@ function readHeredocOpener(str, j) {
     j += 1;
   }
   if (quote !== null) return null;
-  const delim = str.slice(start, j).replace(/["'\\]/g, '');
-  if (delim === '') return null;
-  return { delim, stripTabs, end: j };
+  const raw = str.slice(start, j);
+  const delim = decodeHeredocWord(raw);
+  if (!delim) return null;
+  return { delim, quoted: /["'\\]/.test(raw), stripTabs, end: j };
 }
 
-// Consumes one heredoc body starting at index p: every line up to and including
-// the one equal to the delimiter (leading tabs ignored for `<<-`, one trailing
-// `\r` ignored). An unterminated body runs to end of string, as bash does.
-function skipHeredocBody(str, p, h) {
+// The delimiter word as bash reads it: quotes removed, single-quoted text literal,
+// a backslash escaping the next character outside single quotes (inside double
+// quotes only before $ ` " \ or a newline). Null when a quote is unterminated.
+function decodeHeredocWord(raw) {
+  let out = '';
+  for (let k = 0; k < raw.length; k += 1) {
+    const c = raw[k];
+    if (c === "'") {
+      const close = raw.indexOf("'", k + 1);
+      if (close === -1) return null;
+      out += raw.slice(k + 1, close);
+      k = close;
+    } else if (c === '"') {
+      let m = k + 1;
+      while (m < raw.length && raw[m] !== '"') {
+        if (raw[m] === '\\' && m + 1 < raw.length && '$`"\\\n'.includes(raw[m + 1])) {
+          out += raw[m + 1];
+          m += 2;
+        } else {
+          out += raw[m];
+          m += 1;
+        }
+      }
+      if (m >= raw.length) return null;
+      k = m;
+    } else if (c === '\\' && k + 1 < raw.length) {
+      out += raw[k + 1];
+      k += 1;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+// Scans one heredoc body starting at index p, through the line equal to the
+// delimiter (leading tabs ignored for `<<-`, one trailing `\r` ignored). `text` is
+// the body without that closing line. With no closing line the body runs to end of
+// string and `terminated` is false.
+function scanHeredocBody(str, p, h) {
+  const bodyStart = p;
   while (p < str.length) {
     let end = str.indexOf('\n', p);
     if (end === -1) end = str.length;
     let line = str.slice(p, end);
     if (line.endsWith('\r')) line = line.slice(0, -1);
     if (h.stripTabs) line = line.replace(/^\t+/, '');
+    if (line === h.delim) return { end: Math.min(end + 1, str.length), terminated: true, text: str.slice(bodyStart, p) };
     p = end + 1;
-    if (line === h.delim) break;
   }
-  return Math.min(p, str.length);
+  return { end: str.length, terminated: false, text: str.slice(bodyStart) };
+}
+
+// A line ending in `|`, `&&` or `||` (optionally followed by a comment) continues
+// onto the next line, so a later command receives its bodies.
+const CONTINUATION_RE = /(?:\|\||&&|\|)\s*(?:#.*)?$/;
+
+// Plans one logical line's heredoc bodies, which start at index `start`:
+//   rest  - a body is unterminated: the text from `start` on is kept as written;
+//   keep  - the bodies stay in the text, because the line runs them as shell, the
+//           line continues, or an unquoted body expands `$(` or a backtick;
+//   strip - every body is data; `end` is the index after the last one.
+function planHeredocBodies(str, start, pending, lineText) {
+  const bodies = [];
+  let p = start;
+  for (const h of pending) {
+    const body = scanHeredocBody(str, p, h);
+    if (!body.terminated) return { kind: 'rest' };
+    bodies.push({ h, text: body.text });
+    p = body.end;
+  }
+  const runsAsShell = CONTINUATION_RE.test(lineText) || bodyRunsAsShell(lineText);
+  const expands = bodies.some(({ h, text }) => !h.quoted && /\$\(|`/.test(text));
+  return runsAsShell || expands ? { kind: 'keep' } : { kind: 'strip', end: p };
 }
 
 // The single char-level pass behind stripHeredocBodies. Quote, escape, and comment
@@ -653,8 +742,13 @@ function scanHeredocs(str) {
     } else if (ch === '\n') {
       i += 1;
       out.push(ch);
-      if (pending.length && !bodyRunsAsShell(str.slice(lineStart, i - 1))) {
-        for (const h of pending) i = skipHeredocBody(str, i, h);
+      if (pending.length) {
+        const plan = planHeredocBodies(str, i, pending, str.slice(lineStart, i - 1));
+        if (plan.kind === 'rest') {
+          out.push(str.slice(i));
+          break;
+        }
+        if (plan.kind === 'strip') i = plan.end;
       }
       pending = [];
       parenDepth = 0;
