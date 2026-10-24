@@ -16,7 +16,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const TRACER = path.join(ROOT, 'tools', 'test-impact', 'tracer.js');
 const FIXTURE = path.join(__dirname, 'fixtures', 'test-impact');
-const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js', 'e.test.js'];
+const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js', 'e.test.js', 'f.test.js'];
 
 function copyFixture(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
@@ -138,6 +138,19 @@ test('non-node child records its in-repo path arguments', { skip: process.platfo
   const b = recordsOf('b.test.js');
   assert.ok(b.has(rec('c', 'docs/listed')), 'a directory argument records c');
   assert.ok(b.has(rec('f', 'docs/ls-target.md')), 'a file argument records f');
+});
+
+test('callback and fs.promises read and readdir are traced like the sync forms', () => {
+  const f = recordsOf('f.test.js');
+  for (const r of [rec('f', 'docs/async-read.md'), rec('d', 'docs/async-list'), rec('f', 'docs/async-promise.md'), rec('d', 'docs/promise-list')]) {
+    assert.ok(f.has(r), `f must record ${r}`);
+  }
+});
+
+test('async spawn and callback exec record their in-repo path arguments', { skip: process.platform === 'win32' && 'win32: no cat' }, () => {
+  const f = recordsOf('f.test.js');
+  assert.ok(f.has(rec('f', 'docs/async-spawn.md')), 'spawn of a non-node child');
+  assert.ok(f.has(rec('f', 'docs/async-exec.md')), 'callback exec of a shell command line');
 });
 
 test('wrapped execFile keeps promisify.custom', () => {
