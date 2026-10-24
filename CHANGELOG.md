@@ -53,6 +53,24 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.153.0](https://github.com/thn-inc/claude-tweaks/compare/v6.152.0...v6.153.0) (2026-10-24)
+
+
+### Features
+
+* Add a run-liveness verdict module and an owner block in… ([#3973](https://github.com/thn-inc/claude-tweaks/issues/3973)) ([673bd63](https://github.com/thn-inc/claude-tweaks/commit/673bd6371834c4081af53e2386b3b33af26bb240))
+* Select local tests by traced file reads instead of… ([#4024](https://github.com/thn-inc/claude-tweaks/issues/4024)) ([3f5124d](https://github.com/thn-inc/claude-tweaks/commit/3f5124d8219b2b793a1170d3dbed3cf10faef422))
+
+
+### Bug Fixes
+
+* archive-run guard does not cover the dispatch bundle… ([#3740](https://github.com/thn-inc/claude-tweaks/issues/3740)) ([18a9fa1](https://github.com/thn-inc/claude-tweaks/commit/18a9fa1c8c1e42272de1c52ea6fcc6e7a1e01941))
+* delete-ledger and finish-console: test the unattributable… ([#3686](https://github.com/thn-inc/claude-tweaks/issues/3686)) ([8d62aea](https://github.com/thn-inc/claude-tweaks/commit/8d62aea9f0cc7eee1a1147961e0a69d6b5788c7f)), closes [#3742](https://github.com/thn-inc/claude-tweaks/issues/3742) [#3776](https://github.com/thn-inc/claude-tweaks/issues/3776)
+* release: a finished release's run dir stays clean and… ([#3898](https://github.com/thn-inc/claude-tweaks/issues/3898)) ([5dfd550](https://github.com/thn-inc/claude-tweaks/commit/5dfd55005a947796e5d6c6095f33ecaf705bd08a)), closes [#4012](https://github.com/thn-inc/claude-tweaks/issues/4012) [#4041](https://github.com/thn-inc/claude-tweaks/issues/4041)
+* verification-brief: under pr-first with the merge left… ([#4039](https://github.com/thn-inc/claude-tweaks/issues/4039)) ([71a3e0d](https://github.com/thn-inc/claude-tweaks/commit/71a3e0d871734f10ffa9e0ff3347ad725c514f24))
+* Windows regression filer quotes a pre-existing failure… ([#3723](https://github.com/thn-inc/claude-tweaks/issues/3723)) ([bf79456](https://github.com/thn-inc/claude-tweaks/commit/bf79456c6a07c3389d656791dc787c39c75898ed))
+* worktree-always PreToolUse hook false-positives on… ([#3989](https://github.com/thn-inc/claude-tweaks/issues/3989)) ([7fc7655](https://github.com/thn-inc/claude-tweaks/commit/7fc7655ff6369facdf321b20bbdcd9ca6513ade0))
+
 ## [6.152.0](https://github.com/thn-inc/claude-tweaks/compare/v6.151.1...v6.152.0) (2026-10-24)
 
 
