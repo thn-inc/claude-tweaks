@@ -1099,7 +1099,6 @@ function groupEvents(seg, g) {
   const events = [];
   let start = 0;
   let atCmd = true; // the next word is at command position
-  let redirTarget = false; // the next word is a redirection's target
   const top = () => g.stack[g.stack.length - 1] || g.root;
   const cut = (at, ev) => {
     if (at > start) events.push({ text: seg.slice(start, at) });
@@ -1142,7 +1141,9 @@ function groupEvents(seg, g) {
         // own list, so it is left alone.
         if (top().kind !== 'p') cut(i, i > 0 ? { bg: true } : null);
         atCmd = true;
-      } else redirTarget = true;
+      }
+      // Any other operator is a redirection. Its target is read as an ordinary word, which ends
+      // command position: bash recognizes no reserved word after a redirection (`> f {` is no group).
       i = j;
       continue;
     }
@@ -1173,7 +1174,6 @@ function groupEvents(seg, g) {
     }
     if (subst) { nest(subst, subst === 1); i += 1 + subst; continue; }
     if (i === wStart) { i += 1; continue; } // a stray separator character: never a word
-    if (redirTarget) { redirTarget = false; continue; }
     if (!plain || !atCmd) { atCmd = false; continue; }
     const t = top();
     if (w === '{') {

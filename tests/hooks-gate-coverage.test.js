@@ -850,6 +850,9 @@ for (const [label, cmd] of [
     ['a write after |&, which pipes on', 'cd /main && echo |& cp a f.js', [main('copy')]],
     ['a write after an & inside $( )', 'cd /main && echo $(true & true) && cp a f.js', [main('copy')]],
     ['a write after an & inside a subshell, from the subshell cwd', 'cd /main && (true & cp a f.js)', [main('copy')]],
+    // A group inside the backgrounded list: the list began before the group, so its cd is undone too.
+    ['a write after a backgrounded list holding a subshell', 'cd /tmp && (true) & cp a f.js', [here('copy')]],
+    ['a write after a backgrounded list holding a brace group', 'cd /tmp && { true; } & cp a f.js', [here('copy')]],
     ['a write after &>', 'cd /main && true &>/dev/null && cp a f.js', [main('copy')]],
     ['a write after >&', 'cd /main && true >&2 && cp a f.js', [main('copy')]],
     ['a write after <&', 'cd /main && true <&0 && cp a f.js', [main('copy')]],
