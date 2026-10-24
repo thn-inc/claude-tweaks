@@ -34,3 +34,4 @@
 | 30 | build | Task 8: {files} doc omits path-side refusals (leading dash, control char, cmd-unquotable) | deferred | Follow-up doc clause. |
 | 31 | build | AC6: median verify minutes per pipeline (timing.json) below 1 across the next 20 runs — a post-merge measurement, not observable in this build | open | |
 | 32 | build | The new test-impact-map workflow has not yet run on a real runner — the PR's pull_request run (tracer paths changed) must be green before merge | open | |
+| 33 | build/ops | CI/CD change: new .github/workflows/test-impact-map.yml (post-merge main map build + artifact upload; PR trigger on tracer paths) — review the workflow diff before merge (reason-not-auto: requires-signoff) | ops | |
