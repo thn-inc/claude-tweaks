@@ -88,7 +88,8 @@ function isAdHocStandaloneMint(dir) {
 
 // #2724: an ad-hoc dir is a session friction log, "not a pipeline run"
 // (docs/hooks.md), so having no branch, worktree or PR is its normal state —
-// not stuckness — and `adhoc-superseded` archives it once its session ends.
+// not stuckness — and `adhoc-superseded` archives it once its linked worktree is
+// no longer registered and ADHOC_SUPERSEDED_TTL_MS has passed.
 // That sweep only ever claims a dir whose recorded worktree is a linked
 // worktree, though: a dir stamped with the main checkout can never be
 // superseded, so it stays tracked and keeps escalating.
@@ -96,8 +97,10 @@ const ADHOC_INTRINSIC_STUCK_REASONS = new Set(['no-branch', 'no-worktree', 'no-p
 const ADHOC_EXEMPT_WHY = 'is an ad-hoc session directory: no branch, worktree or PR is its normal state, and the adhoc-superseded sweep archives it once its session has ended';
 
 function isAdHocIntrinsicSkip(dir, reason) {
-  if (!ADHOC_INTRINSIC_STUCK_REASONS.has(reason) || !isAdHocStandaloneMint(dir)) return false;
-  return path.resolve(readRunState(dir).worktree) !== path.resolve(dir, '..', '..', '..');
+  if (!ADHOC_INTRINSIC_STUCK_REASONS.has(reason) || !isAdHocRunDir(dir)) return false;
+  const state = readRunState(dir); // one read: the file can vanish between two
+  if (!(state && typeof state.worktree === 'string' && state.worktree)) return false;
+  return path.resolve(state.worktree) !== path.resolve(dir, '..', '..', '..');
 }
 
 // #1604: the "swept once genuinely superseded" half of #1117's own design

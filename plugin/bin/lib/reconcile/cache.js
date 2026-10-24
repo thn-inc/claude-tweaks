@@ -209,17 +209,25 @@ function recordResidueSuccess(target, reason, targetPath) {
 
 // #2724: drop a tracked entry for a path that is no longer stuck, and — only
 // when that entry had already been escalated — take the path off the filed
-// GitHub record. Writes nothing when there is no entry. Best-effort, like
-// pruneResidueFailures: a resolution failure still leaves the entry cleared.
+// GitHub record. Writes nothing when there is no entry. Unlike
+// pruneResidueFailures (whose path is gone, so it can never be retried), this
+// path still exists — an escalated entry is therefore dropped only once the
+// resolution landed (a throw or any other status keeps it, so the next pass
+// calls this again for the same exempt dir).
+const RESIDUE_RESOLVED_STATUSES = new Set(['closed', 'path-removed', 'not-found', 'already-closed']);
+
 function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveResidue, runner, why } = {}) {
   const cache = isCacheBatch(target) ? target.cache : readCache(target);
   const entry = cache.residueFailures[residueKey(reason, targetPath)];
   if (!entry) return { cleared: false, resolved: null };
-  recordResidueSuccess(target, reason, targetPath);
-  let resolved = null;
-  if (entry.escalated) {
-    try { resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why }); } catch { /* best-effort */ }
+  if (!entry.escalated) {
+    recordResidueSuccess(target, reason, targetPath);
+    return { cleared: true, resolved: null };
   }
+  let resolved;
+  try { resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why }); } catch { return { cleared: false, resolved: null }; }
+  if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) return { cleared: false, resolved };
+  recordResidueSuccess(target, reason, targetPath);
   return { cleared: true, resolved };
 }
 

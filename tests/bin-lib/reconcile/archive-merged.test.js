@@ -1951,7 +1951,7 @@ test('#2724 trackStuckSkip: an exempted ad-hoc dir clears its escalated entry an
   const resolved = [];
   trackStuckSkip(root, 'o/r', dir, 'no-branch', {
     escalate: (a) => { escalated.push(a); },
-    resolve: (a) => { resolved.push(a); return { status: 'resolved' }; },
+    resolve: (a) => { resolved.push(a); return { status: 'path-removed' }; },
   });
   assert.equal(escalated.length, 0);
   assert.equal(resolved.length, 1);

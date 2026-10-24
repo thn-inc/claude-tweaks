@@ -442,9 +442,15 @@ test('#2724 stuck-paths block: a CRLF body is still found and edited in place', 
   assert.deepEqual(parseStuckPaths(crlf), ['/x/run-a']);
   const { runner, seen } = stuckRecordRunner(crlf);
   escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-b', count: 3, runner });
-  assert.ok(seen.edited.startsWith('Surface: infra\r\n'));
-  assert.ok(seen.edited.endsWith(`- keep me\r\n\r\n${structurallyStuckMarker()}\r\n`));
+  assert.equal(seen.edited, SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/run-b'])).replace(/\n/g, '\r\n'));
   assert.deepEqual(parseStuckPaths(seen.edited), ['/x/run-a', '/x/run-b']);
+});
+
+test('#2724 escalate: reopening a CLOSED record re-renders the full canonical body', () => {
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-old'])), 'CLOSED');
+  const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-new', count: 3, runner });
+  assert.deepEqual(result, { status: 'reopened', number: 2724 });
+  assert.equal(seen.edited, structurallyStuckBody(['/x/run-old', '/x/run-new']));
 });
 
 test('#2724 stuck-paths block: a path containing a dollar sign survives the in-place edit', () => {

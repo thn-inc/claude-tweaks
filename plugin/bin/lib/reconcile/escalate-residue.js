@@ -72,7 +72,9 @@ function structurallyStuckMarker() {
 // anyone reading the record, not just its comment thread.
 // #2724: the markers are line-anchored — a human-shaped body can name the marker
 // text in prose or an inline-code span, and an unanchored match would swallow it.
-const STUCK_PATHS_RE = /^<!-- stuck-paths -->\r?$([\s\S]*?)^<!-- \/stuck-paths -->\r?$/m;
+// The closer's `\r` is a lookahead, not part of the match, so a CRLF body's line ending
+// after the block is left untouched.
+const STUCK_PATHS_RE = /^<!-- stuck-paths -->\r?$([\s\S]*?)^<!-- \/stuck-paths -->(?=\r?$)/m;
 
 function parseStuckPaths(body) {
   const m = STUCK_PATHS_RE.exec(body || '');
@@ -83,17 +85,19 @@ function parseStuckPaths(body) {
     .map((mm) => mm[1]);
 }
 
-function renderStuckPathsBlock(paths) {
-  return ['<!-- stuck-paths -->', ...paths.map((p) => `- \`${p}\``), '<!-- /stuck-paths -->'].join('\n');
+function renderStuckPathsBlock(paths, eol = '\n') {
+  return ['<!-- stuck-paths -->', ...paths.map((p) => `- \`${p}\``), '<!-- /stuck-paths -->'].join(eol);
 }
 
 // #2724: replace only the stuck-paths block of an existing body, so text a human
 // shaped around it survives. A function replacer keeps `$&`/`$1` in a path literal.
+// A CRLF body gets a CRLF block, so the edit leaves no mixed line endings.
 // -> a body with no block gets the block appended; an empty body gets the full render.
 function withStuckPaths(body, paths) {
-  if (STUCK_PATHS_RE.test(body || '')) return body.replace(STUCK_PATHS_RE, () => renderStuckPathsBlock(paths));
+  const eol = /\r\n/.test(body || '') ? '\r\n' : '\n';
+  if (STUCK_PATHS_RE.test(body || '')) return body.replace(STUCK_PATHS_RE, () => renderStuckPathsBlock(paths, eol));
   if (!String(body || '').trim()) return structurallyStuckBody(paths);
-  return `${body.replace(/\s+$/, '')}\n\n${renderStuckPathsBlock(paths)}\n`;
+  return `${body.replace(/\s+$/, '')}${eol}${eol}${renderStuckPathsBlock(paths, eol)}${eol}`;
 }
 
 function structurallyStuckBody(paths) {
@@ -293,8 +297,12 @@ function escalateStructurallyStuck({ repo, targetPath, runner = defaultRunner })
         ? `Reconcile is seeing \`${targetPath}\` stuck at structurally-stuck again — reopening rather than filing a duplicate.`
         : `Also stuck: \`${targetPath}\``;
 
+      // #2724: an OPEN record is edited in place (its spec text is live); a CLOSED one
+      // being reopened is a fresh incident, so its spent spec text is replaced by the
+      // full canonical body and its fixed remedy text refreshes.
+      const nextBody = isClosed ? structurallyStuckBody(updatedPaths) : withStuckPaths(hit.body, updatedPaths);
       try {
-        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', withStuckPaths(hit.body, updatedPaths)]);
+        runner(['issue', 'edit', String(hit.number), '--repo', repo, '--body', nextBody]);
         runner(['issue', 'comment', String(hit.number), '--repo', repo, '--body', comment]);
         if (isClosed) {
           runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
@@ -350,6 +358,10 @@ function escalateResidue({
 // ONE of them must never close the record out from under the OTHER,
 // still-genuinely-stuck paths it names. Removes just `targetPath` from the
 // body's stuck-paths list; only closes once the list empties.
+// #2724: optional `why` — a short clause (e.g. "is an ad-hoc session directory …")
+// that replaces the default "no longer exists on disk" reason in the comment this
+// posts, for a caller resolving a path that still exists. Omitted: the comment
+// wording is unchanged.
 // -> { status: 'closed'|'path-removed'|'already-closed'|'not-found', number? } |
 //    { status: 'resolution-failed', reason, number? }
 function resolveStructurallyStuck({
@@ -386,6 +398,9 @@ function resolveStructurallyStuck({
   });
 }
 
+// #2724: optional `why` is forwarded to resolveStructurallyStuck, where it replaces the
+// default "no longer exists on disk" clause in the structurally-stuck comment; every
+// other reason ignores it and its comment is unchanged.
 // -> { status: 'closed'|'already-closed'|'not-found', number? } |
 //    { status: 'resolution-failed', reason, number? }
 function resolveResidue({
