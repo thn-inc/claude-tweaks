@@ -154,9 +154,9 @@ test('a comment-stripper mis-parse is reported, not passed as a file with no hit
   // so the stripped text leaves an unterminated string and no longer compiles.
   const planted = { rel: 'plugin/bin/lib/planted.js', raw: 'if (b) /"/.test(b); const c = "//"; fs.existsSync(c);' };
   assert.equal(stripperVerdict(planted.raw), 'misparsed');
-  const expected = (err) => err.message.includes(planted.rel) && err.message.includes(STRIPPER_VERDICT_MESSAGES.misparsed);
-  assert.throws(() => scanBinTree(scanHandRolled, [planted]), expected);
-  assert.throws(() => assertNoRelDotDot([planted]), expected);
+  const namesTheMisparse = (err) => err.message.includes(planted.rel) && err.message.includes(STRIPPER_VERDICT_MESSAGES.misparsed);
+  assert.throws(() => scanBinTree(scanHandRolled, [planted]), namesTheMisparse);
+  assert.throws(() => assertNoRelDotDot([planted]), namesTheMisparse);
 });
 
 test('#3892 scanVariableHandRolled flags each variable-mediated binding shape at its startsWith line', () => {
