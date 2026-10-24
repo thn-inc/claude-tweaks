@@ -231,6 +231,66 @@ test('AC2.1: archive-run still archives a terminal fast-lane run with no console
   assert.ok(fs.existsSync(path.join(archiveDir, 'config.yml')));
 });
 
+// #3740: the dispatch bundle Auto-merge gate (dispatch/settle-and-merge.md) is a second
+// auto-merge path that renders no console, so its pending staged/ items get the same guard.
+const BUNDLE_GATE = '- AUTO 10:00:00 — Auto-merge gate: #3740 assess-agent-autonomy verdict auto-merge. Reversibility: n/a.\n'
+  + '- AUTO 10:00:01 — Auto-merge gate: #3741 assess-agent-autonomy verdict auto-merge. Reversibility: n/a.\n';
+const BUNDLE_GROUP = '- AUTO 10:10:00 — Auto-merge: group [3740, 3741], assess-agent-autonomy verdict auto-merge for every member (see each member\'s RATIONALE). Merge commit: abc1234. Reversibility: high (git revert). [lever: auto-merge-max-lines=400 (default); auto-merge-max-files=10 (default); merge-sensitive-paths=x (default)]\n';
+
+test('#3740 bundle gate: archive-run refuses a terminal bundle run with no console.json and a pending staged/ item, naming it', () => {
+  const { root, runDir } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), BUNDLE_GATE);
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'reflect-1.md'), '# proposal\n');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-never-rendered-staged-pending/);
+  assert.match(result.stdout, /\(an auto-merge path — the wrap-up short-circuit or the dispatch bundle Auto-merge gate — rendered no console; pending: staged\/reflect-1\.md/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('#3740 bundle gate: archive-run refuses when the only pending item sits under spec-N/staged/', () => {
+  const { root, runDir } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), BUNDLE_GATE);
+  fs.mkdirSync(path.join(runDir, 'spec-3741', 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'spec-3741', 'staged', 'review-1.patch'), 'x');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-never-rendered-staged-pending/);
+  assert.match(result.stdout, /spec-3741\/staged\/review-1\.patch/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('#3740 bundle gate: archive-run still archives a terminal bundle run with nothing pending', () => {
+  const { root, runDir, runId } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), BUNDLE_GATE);
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', '.DS_Store'), 'x');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  assert.ok(fs.existsSync(path.join(archiveDir, 'config.yml')));
+});
+
+test('#3740 bundle gate: archive-run still archives a terminal bundle run that has no staged/ directory at all', () => {
+  const { root, runDir, runId } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), BUNDLE_GATE);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'config.yml')));
+});
+
+test('#3740 bundle gate: archive-run refuses a local-merge group-line run with a pending staged/ item', () => {
+  const { root, runDir } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), BUNDLE_GROUP);
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'reflect-1.md'), '# proposal\n');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-never-rendered-staged-pending/);
+  assert.match(result.stdout, /staged\/reflect-1\.md/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
 test('archive-run archives a terminal run with retained staged/ items and no fast-lane short-circuit line (#3668 scope)', () => {
   const { root, runDir, runId } = runDirFixture('clean');
   fs.mkdirSync(path.join(runDir, 'staged'));
