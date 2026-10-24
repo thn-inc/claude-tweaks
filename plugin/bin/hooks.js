@@ -1603,10 +1603,12 @@ async function main(argv) {
     if (!checksList.length) {
       // #4032: report the deferral, and hand the deferred checks to the
       // detached background pass (TTL-gated by its own status file) — but only
-      // when this pass converged: a no-repo/no-remote/local-merge/threw result
-      // (a `check: 'all'` skip) already says why nothing ran, and a dry run
-      // must never spawn a mutating child.
-      const converged = !(out.skipped || []).some((s) => s && s.check === 'all');
+      // when this pass converged: a no-repo/no-remote/local-merge/preflight/
+      // threw result already says why nothing ran (reconcile's
+      // NOT_CONVERGED_REASONS), and a dry run must never spawn a mutating
+      // child. A report-only skip (e.g. non-canonical-run-dir) does not count.
+      const { NOT_CONVERGED_REASONS } = require('./lib/reconcile');
+      const converged = !(out.skipped || []).some((s) => s && NOT_CONVERGED_REASONS.has(s.reason));
       let background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
       if (converged) {
         out.skipped = [...(out.skipped || []), { check: CLI_DEFERRED_CHECKS.join(','), reason: 'deferred-to-background' }];

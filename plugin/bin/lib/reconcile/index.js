@@ -45,6 +45,17 @@ const {
 // determine dispatch order.
 const ALL_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'console'];
 
+// `skipped[].reason` values meaning reconcile() returned without running the
+// checks it was asked for (#4032) — the unscoped CLI treats a pass carrying any
+// of them as NOT converged and defers nothing to the background pass. Report-
+// only reasons (`non-canonical-run-dir`, `budget-exceeded`, `fetch-failed`,
+// per-check failures) are deliberately absent: the pass ran. `reconcile-threw`
+// is emitted by hooks.js's catch fallback, not by this module.
+const NOT_CONVERGED_REASONS = new Set([
+  'no-repo', 'no-remote', 'fresh-cache', 'local-merge-model',
+  'preflight-gh-absent', 'preflight-github-unreachable', 'reconcile-threw',
+]);
+
 // Checks that read state another check produces (#3630). A requested check
 // whose `check` is neither requested itself nor covered by a `satisfiedBy`
 // member is expanded with it before dispatch — see expandChecks. Execution
@@ -611,4 +622,4 @@ async function reconcileInner(opts) {
   return result;
 }
 
-module.exports = { reconcile, ALL_CHECKS, PREREQUISITES, expandChecks, formatReconcileSummary };
+module.exports = { reconcile, ALL_CHECKS, NOT_CONVERGED_REASONS, PREREQUISITES, expandChecks, formatReconcileSummary };

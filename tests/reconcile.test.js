@@ -2164,6 +2164,45 @@ test('unscoped CLI never spawns under --dry-run or on a no-remote fixture (#4032
   assert.deepEqual(outputs[0].skipped, [{ check: 'archive-branches,remote-prune,ledger-residue', reason: 'deferred-to-background' }]);
 });
 
+test('unscoped CLI treats a local-merge-model skip as not converged: no deferral entry, skipped untouched (#4032)', async () => {
+  const lmSkip = { check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' };
+  const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], {
+    reconcileResult: () => ({ skipped: [lmSkip] }),
+  });
+  assert.equal(spawnCalls.length, 0);
+  assert.deepEqual(outputs[0].skipped, [lmSkip]);
+  assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: false, reason: 'not-converged' });
+});
+
+test('unscoped CLI treats a gh-preflight skip as not converged (#4032)', async () => {
+  const pfSkip = { check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue', reason: 'preflight-gh-absent' };
+  const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], {
+    reconcileResult: () => ({ skipped: [pfSkip] }),
+  });
+  assert.equal(spawnCalls.length, 0);
+  assert.deepEqual(outputs[0].skipped, [pfSkip]);
+  assert.equal(outputs[0].background.reason, 'not-converged');
+});
+
+test('unscoped CLI still defers and spawns when the pass carries a report-only non-canonical-run-dir skip (#4032)', async () => {
+  const reportOnly = { check: 'all', reason: 'non-canonical-run-dir', names: ['20260911T101010-x'] };
+  const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], {
+    reconcileResult: () => ({ skipped: [reportOnly] }),
+  });
+  assert.equal(spawnCalls.length, 1);
+  assert.deepEqual(outputs[0].skipped, [reportOnly, { check: 'archive-branches,remote-prune,ledger-residue', reason: 'deferred-to-background' }]);
+  assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: true, reason: 'spawned' });
+});
+
+test('NOT_CONVERGED_REASONS names every early-return skip reason reconcile() emits (#4032)', () => {
+  const { NOT_CONVERGED_REASONS } = require('../plugin/bin/lib/reconcile');
+  for (const r of ['no-repo', 'no-remote', 'fresh-cache', 'local-merge-model', 'reconcile-threw']) {
+    assert.ok(NOT_CONVERGED_REASONS.has(r), r);
+  }
+  assert.equal(NOT_CONVERGED_REASONS.has('non-canonical-run-dir'), false);
+  assert.equal(NOT_CONVERGED_REASONS.has('budget-exceeded'), false);
+});
+
 test('unscoped CLI never spawns when reconcile() throws (#4032)', async () => {
   const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], {
     reconcileResult: () => { throw new Error('boom'); },
