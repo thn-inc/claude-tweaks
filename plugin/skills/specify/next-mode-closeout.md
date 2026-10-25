@@ -93,6 +93,7 @@ drained, budget exhausted, and a firing-ending failure
 render the summary above; the nothing-eligible exit still renders nothing:
 
 ```bash
+RUN_DIR_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rundir.txt)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$(cat "$RUN_DIR_FILE")"
 ```
 
