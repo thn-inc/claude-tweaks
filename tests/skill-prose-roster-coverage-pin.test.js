@@ -43,6 +43,10 @@ function missingFacts(rowText) {
   return ROW_FACTS.filter((f) => !rowText.includes(f));
 }
 
+function missingRefFacts(refText) {
+  return REF_FACTS.filter((f) => !refText.includes(f));
+}
+
 function citedPaths(t) {
   return t.match(/tests\/[A-Za-z0-9._/-]+\.test\.js/g) ?? [];
 }
@@ -56,8 +60,7 @@ test('the Decision Framework row names the pattern and cites both roster test pa
 });
 
 test('the Reference section cites both roster test paths (#4185)', () => {
-  const ref = referenceSection(text);
-  assert.deepStrictEqual(REF_FACTS.filter((f) => !ref.includes(f)), []);
+  assert.deepStrictEqual(missingRefFacts(referenceSection(text)), []);
 });
 
 test('every tests/*.test.js path cited in the row and the Reference section exists on disk (#4185)', () => {
@@ -76,6 +79,15 @@ test('go-red: stripping each row fact returns exactly that fact (doctored-text p
     const doctored = row.split(fact).join('removed');
     assert.notStrictEqual(doctored, row, `doctoring found no text for ${fact}`);
     assert.deepStrictEqual(missingFacts(doctored), [fact]);
+  }
+});
+
+test('go-red: stripping each Reference citation returns exactly that citation (doctored-text proof, #4185)', () => {
+  const ref = referenceSection(text);
+  for (const fact of REF_FACTS) {
+    const doctored = ref.split(fact).join('removed');
+    assert.notStrictEqual(doctored, ref, `doctoring found no text for ${fact}`);
+    assert.deepStrictEqual(missingRefFacts(doctored), [fact]);
   }
 });
 
