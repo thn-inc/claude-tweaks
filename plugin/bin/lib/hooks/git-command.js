@@ -470,8 +470,15 @@ function isUnresolvable(raw) {
   );
 }
 
-function isAbsolutePlain(raw) {
-  return !isUnresolvable(raw) && path.isAbsolute(raw);
+function isAbsolutePlain(raw, pathImpl = path) {
+  return !isUnresolvable(raw) && pathImpl.isAbsolute(raw);
+}
+
+// #4281: a drive-relative value (`D:repo`, the value of an unquoted `D:\repo`, or a bare `D:`) names a path
+// relative to that drive's own current directory, which this module never knows. Unresolvable under
+// a win32 pathImpl, where path.win32 would otherwise read it against the walk's cwd.
+function isDriveRelative(raw, pathImpl) {
+  return pathImpl.sep === '\\' && /^[A-Za-z]:(?![\\/])/.test(raw);
 }
 
 // Shared cd-token resolution used by both gitTargets and fileWriteTargets: given
@@ -480,13 +487,13 @@ function isAbsolutePlain(raw) {
 // null when the argument leaves it unprovable). Kept as one function so a
 // future fix to cd-resolution edge cases (a new isUnresolvable pattern,
 // pushd/popd support, etc.) can never land in one caller and not the other.
-function resolveCd(effCwd, raw) {
-  if (isUnresolvable(raw)) return null;
+function resolveCd(effCwd, raw, pathImpl = path) {
+  if (isUnresolvable(raw) || isDriveRelative(raw, pathImpl)) return null;
   if (effCwd === null) {
     // Unknown cwd: only a plain absolute path restores provability.
-    return isAbsolutePlain(raw) ? path.resolve(raw) : null;
+    return isAbsolutePlain(raw, pathImpl) ? pathImpl.resolve(raw) : null;
   }
-  return path.resolve(effCwd, raw);
+  return pathImpl.resolve(effCwd, raw);
 }
 
 // Matches a segment that is exactly one token shaped like a simple literal
@@ -579,12 +586,13 @@ function substituteVars(tokens, vars, singleQuoted, spanKinds) {
 // keep the effective cwd in sync. `handler(t, effCwd, quoting, again)` is
 // invoked for every non-cd, non-empty segment with the cwd value in effect for
 // it (string, or null meaning UNKNOWN); `quoting` is
-// `{ raw, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt }`: the
+// `{ raw, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt, pathImpl }`: the
 // pre-substitution tokens, the words as typed (#4281, see tokenize; powershellOpaqueCommand
 // reads them), their per-token quote flags from tokenize (#4015 reads the first three,
 // #4149's dropRedirections reads `leadQuoted`), their per-character
-// span kinds (#4210, see tokenize), and the nesting state at each token's start
-// (#4210, see advanceNesting). The nesting state carries from piece to piece within
+// span kinds (#4210, see tokenize), the nesting state at each token's start
+// (#4210, see advanceNesting), and the path module every cd and target resolves through
+// (#4281: `opts.pathImpl`, default `path`, so a path.win32 pin runs on any host). The nesting state carries from piece to piece within
 // one chunk, cd and assignment pieces included: a flat (capped) reading can cut at a
 // `|`/`;`/newline inside an inner quote of `"$( … )"`, and the nested context must
 // survive that cut. Also tracks same-command literal
@@ -605,7 +613,7 @@ function forEachCommandSegment(command, cwd, handler, opts) {
 // One segment of forEachShellSegment's walk, already tokenized (`tok`, from tokenize, and
 // `nestAt`, the nesting state at each token's start): updates `vars`, calls `handler` for a
 // non-cd, non-assignment segment, and returns the effective cwd after it.
-function visitSegment(tok, nestAt, effCwd, vars, handler) {
+function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
   const { tokens: rawT, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds } = tok;
   if (!rawT.length) return effCwd;
   if (updateAssignment(vars, rawT, spanKinds[0])) return effCwd;
@@ -622,8 +630,8 @@ function visitSegment(tok, nestAt, effCwd, vars, handler) {
   // spanKinds it is aligned with: bash decides it before any `$` expands (#4281).
   let cdLead = 0;
   while (cdLead < t.length && isAssignmentWord(rawT[cdLead], spanKinds[cdLead])) cdLead += 1;
-  if (t[cdLead] === 'cd') return resolveCd(effCwd, t[cdLead + 1]);
-  handler(t, effCwd, { raw: rawT, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt });
+  if (t[cdLead] === 'cd') return resolveCd(effCwd, t[cdLead + 1], pathImpl);
+  handler(t, effCwd, { raw: rawT, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt, pathImpl });
   return effCwd;
 }
 
@@ -656,7 +664,7 @@ function skipGlobalFlags(t, i, dir, pathImpl = path) {
         // Resolving it would normalize the string and hand the worktree gate
         // a different target than an omitted -C (e.g. `C:\repo` vs `/repo` on
         // Windows) — #3314.
-      } else if (isUnresolvable(raw)) {
+      } else if (isUnresolvable(raw) || isDriveRelative(raw, pathImpl)) {
         unprovable = true;
       } else if (pathImpl.isAbsolute(raw)) {
         dir = pathImpl.resolve(raw);
@@ -700,7 +708,7 @@ function skipGlobalFlags(t, i, dir, pathImpl = path) {
 // re-splits an opaque program string, which is statically unknowable — the
 // same deliberately-uncovered class as `sh -c`/`python -c` (see
 // fileWriteTargets' header) — so it falls through to the not-git default.
-function findGitLead(t, dir) {
+function findGitLead(t, dir, pathImpl = path) {
   let unprovable = false;
   let i = 0;
   while (i < t.length && SIMPLE_ASSIGNMENT_RE.test(t[i])) i += 1;
@@ -720,7 +728,7 @@ function findGitLead(t, dir) {
           : tok.startsWith('-C') && tok.length > 2 ? tok.slice(2)
           : null;
         const raw = attached !== null ? attached : t[i + 1];
-        const resolved = resolveCd(dir, raw);
+        const resolved = resolveCd(dir, raw, pathImpl);
         if (resolved === null) unprovable = true;
         else dir = resolved;
         i += attached !== null ? 1 : 2;
@@ -746,10 +754,10 @@ function findGitLead(t, dir) {
 // callers instead of drifting between two hand-kept copies — the exact gap
 // #1308 closed for teardownTargets, which used to skip this preamble
 // entirely and check a bare `toks[0] !== 'git'` instead.
-function resolveGitCommand(t, effCwd) {
-  const lead = findGitLead(t, effCwd);
+function resolveGitCommand(t, effCwd, pathImpl = path) {
+  const lead = findGitLead(t, effCwd, pathImpl);
   if (lead.index === -1) return null;
-  const { index, dir, unprovable } = skipGlobalFlags(t, lead.index + 1, lead.dir);
+  const { index, dir, unprovable } = skipGlobalFlags(t, lead.index + 1, lead.dir, pathImpl);
   if (lead.unprovable || unprovable || dir === null) return null;
   return { index, dir };
 }
@@ -791,9 +799,9 @@ const PLUMBING_WRITE_SUBCOMMANDS = new Set(['mv', 'rm', 'update-ref', 'apply']);
 function resolvedGitSegments(command, cwd, opts) {
   const segments = [];
   let pieceStart = 0; // where the current piece's first-cwd visit began pushing
-  forEachCommandSegment(command, cwd, (t, effCwd, _quoting, again) => {
+  forEachCommandSegment(command, cwd, (t, effCwd, quoting, again) => {
     if (!again) pieceStart = segments.length;
-    const resolved = resolveGitCommand(t, effCwd);
+    const resolved = resolveGitCommand(t, effCwd, quoting.pathImpl);
     if (!resolved) return;
     // A repeat visit under another cwd (after a brace group) that resolves to the same dir adds nothing.
     if (again && segments.slice(pieceStart).some((s) => s.dir === resolved.dir && s.index === resolved.index)) return;
@@ -889,16 +897,16 @@ function powershellOpaqueCommand(command, cwd) {
 // posture: never fabricate a target from a path this can't prove.
 const DEVNULL_LIKE = new Set(['/dev/null', '/dev/stdout', '/dev/stderr']);
 
-function resolveWriteTarget(effCwd, raw) {
-  if (isUnresolvable(raw)) return null;
+function resolveWriteTarget(effCwd, raw, pathImpl = path) {
+  if (isUnresolvable(raw) || isDriveRelative(raw, pathImpl)) return null;
   // An explicitly-empty token is never a file. It reaches here as BSD sed's
   // separate backup suffix (`sed -i '' ...`); without this it would resolve to
   // effCwd itself and flag the whole directory as a write target.
   if (raw === '') return null;
   if (DEVNULL_LIKE.has(raw)) return null;
-  if (path.isAbsolute(raw)) return path.resolve(raw);
+  if (pathImpl.isAbsolute(raw)) return pathImpl.resolve(raw);
   if (effCwd === null) return null; // cwd UNKNOWN and a relative path — not provable
-  return path.resolve(effCwd, raw);
+  return pathImpl.resolve(effCwd, raw);
 }
 
 // A redirection's RHS that is a file-descriptor duplication (`>&2`, `2>&1`),
@@ -1844,7 +1852,7 @@ function parenMatches(seg) {
 // consumer can drop a target that does not depend on the cwd (`git -C /x`) the second time.
 // The piece is tokenized once; `nest.value` is the chunk's nesting state (advanceNesting,
 // #4210), read at the piece's start and advanced past it once, however many cwds visit it.
-function visitUnderEach(text, cwds, vars, handler, nest) {
+function visitUnderEach(text, cwds, vars, handler, nest, pathImpl) {
   const tok = tokenize(text.trim());
   const nestAt = tok.tokens.map((w, i) => {
     const at = nest.value;
@@ -1853,7 +1861,7 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
   });
   const next = [];
   cwds.forEach((c, k) => {
-    const n = visitSegment(tok, nestAt, c, vars, k === 0 ? handler : (t, effCwd, quoting) => handler(t, effCwd, quoting, true));
+    const n = visitSegment(tok, nestAt, c, vars, k === 0 ? handler : (t, effCwd, quoting) => handler(t, effCwd, quoting, true), pathImpl);
     if (!next.includes(n)) next.push(n);
   });
   return next;
@@ -1890,7 +1898,7 @@ function forEachShellSegment(command, cwd, handler, opts = {}) {
     }
     return collapsed;
   };
-  walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow);
+  walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow, opts.pathImpl || path);
 }
 
 // The union of two cwd lists, collapsed to `overflow()` past CWD_SET_CAP.
@@ -1899,7 +1907,7 @@ function joinCwds(a, b, overflow) {
   return out.length > CWD_SET_CAP ? overflow() : out;
 }
 
-function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
+function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, pathImpl) {
   const { outer, bodies } = plan && depth < MAX_HEREDOC_NESTING ? stripHeredocBodies(text) : { outer: text, bodies: [] };
   const g = { root: { kind: 'root', caseDepth: 0 }, stack: [], nesting: 0 };
   let cur = cwds;
@@ -1925,15 +1933,15 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
   // is dropped, as before the closer cut it (forgetting a name would drop the targets that use it).
   const nest = { value: NOT_NESTED }; // carried across this chunk's pieces in text order (#4210)
   const visitPiece = (ev, pieceCwds, pieceVars) => {
-    if (!ev.tail) return visitUnderEach(ev.text, pieceCwds, pieceVars, handler, nest);
-    const next = visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler, nest);
+    if (!ev.tail) return visitUnderEach(ev.text, pieceCwds, pieceVars, handler, nest, pathImpl);
+    const next = visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler, nest, pathImpl);
     return joinCwds(pieceCwds, next, overflow);
   };
   let b = 0;
   const runBodies = (until, bodyCwds) => {
     for (; b < bodies.length && bodies[b].at < until; b += 1) {
-      walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, true, overflow);
-      if (!bodies[b].shell) walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, false, overflow);
+      walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, true, overflow, pathImpl);
+      if (!bodies[b].shell) walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, false, overflow, pathImpl);
     }
   };
   for (const span of segmentSpans(outer)) {
@@ -2060,7 +2068,7 @@ function redirectWriteTargets(t, effCwd, quoting) {
       rawTarget = t[i];
     }
     if (rawTarget === undefined || isFdDupTarget(rawTarget) || rawTarget.startsWith('(')) continue;
-    const file = resolveWriteTarget(effCwd, rawTarget);
+    const file = resolveWriteTarget(effCwd, rawTarget, quoting && quoting.pathImpl);
     if (file) out.push(file);
   }
   return out;
@@ -2198,6 +2206,7 @@ function dropRedirections(tokens, leadQuoted, spanKinds) {
 function fileWriteTargets(command, cwd, opts) {
   const targets = [];
   forEachShellSegment(command, cwd, (tokens, effCwd, quoting) => {
+    const { pathImpl } = quoting;
     // Redirection has no command word, so it runs for every segment
     // regardless of t[0] — never gated by the WRITE_SHAPES check below (#3080).
     for (const file of redirectWriteTargets(tokens, effCwd, quoting)) targets.push({ action: 'write', file });
@@ -2210,7 +2219,7 @@ function fileWriteTargets(command, cwd, opts) {
       // first — `tee a.txt b.txt` writes both files. .find() silently
       // dropped every destination after the first.
       for (const arg of t.slice(1).filter((a) => !a.startsWith('-'))) {
-        const file = resolveWriteTarget(effCwd, arg);
+        const file = resolveWriteTarget(effCwd, arg, pathImpl);
         if (file) targets.push({ action: 'write', file });
       }
       return;
@@ -2233,10 +2242,10 @@ function fileWriteTargets(command, cwd, opts) {
       }
       const action = t[0] === 'cp' ? 'copy' : 'move';
       if (targetDirRaw !== null) {
-        const file = resolveWriteTarget(effCwd, targetDirRaw);
+        const file = resolveWriteTarget(effCwd, targetDirRaw, pathImpl);
         if (file) targets.push({ action, file });
       } else if (nonFlags.length >= 2) {
-        const file = resolveWriteTarget(effCwd, nonFlags[nonFlags.length - 1]);
+        const file = resolveWriteTarget(effCwd, nonFlags[nonFlags.length - 1], pathImpl);
         if (file) targets.push({ action, file });
       }
       return;
@@ -2252,7 +2261,7 @@ function fileWriteTargets(command, cwd, opts) {
         isSed ? ['-e', '-f', '--expression', '--file'] : ['-e', '-E'],
       );
       for (const arg of raw) {
-        const file = resolveWriteTarget(effCwd, arg);
+        const file = resolveWriteTarget(effCwd, arg, pathImpl);
         if (file) targets.push({ action: 'edit', file });
       }
       return;
@@ -2265,7 +2274,7 @@ function fileWriteTargets(command, cwd, opts) {
       const { positionals, flags } = partitionArgs(rest, INSTALL_VALUE_FLAGS);
       const targetDirRaw = explicitTargetDir(rest);
       if (targetDirRaw !== null) {
-        const file = resolveWriteTarget(effCwd, targetDirRaw);
+        const file = resolveWriteTarget(effCwd, targetDirRaw, pathImpl);
         if (file) targets.push({ action: 'install', file });
         return;
       }
@@ -2278,7 +2287,7 @@ function fileWriteTargets(command, cwd, opts) {
       if (creatingDirs) written = positionals;
       else if (positionals.length >= 2) written = positionals.slice(-1);
       for (const arg of written) {
-        const file = resolveWriteTarget(effCwd, arg);
+        const file = resolveWriteTarget(effCwd, arg, pathImpl);
         if (file) targets.push({ action: 'install', file });
       }
       return;
@@ -2291,15 +2300,15 @@ function fileWriteTargets(command, cwd, opts) {
       const targetDirRaw = explicitTargetDir(rest);
       const { positionals } = partitionArgs(rest, LN_VALUE_FLAGS);
       if (targetDirRaw !== null) {
-        const file = resolveWriteTarget(effCwd, targetDirRaw);
+        const file = resolveWriteTarget(effCwd, targetDirRaw, pathImpl);
         if (file) targets.push({ action: 'link', file });
         return;
       }
       if (positionals.length >= 2) {
-        const file = resolveWriteTarget(effCwd, positionals[positionals.length - 1]);
+        const file = resolveWriteTarget(effCwd, positionals[positionals.length - 1], pathImpl);
         if (file) targets.push({ action: 'link', file });
       } else if (positionals.length === 1) {
-        const file = resolveWriteTarget(effCwd, path.basename(positionals[0]));
+        const file = resolveWriteTarget(effCwd, path.basename(positionals[0]), pathImpl);
         if (file) targets.push({ action: 'link', file });
       }
       return;
@@ -2310,7 +2319,7 @@ function fileWriteTargets(command, cwd, opts) {
       // does not exist, so this writes regardless of `-c`.
       const { positionals } = partitionArgs(t.slice(1), TRUNCATE_VALUE_FLAGS);
       for (const arg of positionals) {
-        const file = resolveWriteTarget(effCwd, arg);
+        const file = resolveWriteTarget(effCwd, arg, pathImpl);
         if (file) targets.push({ action: 'truncate', file });
       }
       return;
@@ -2320,7 +2329,7 @@ function fileWriteTargets(command, cwd, opts) {
       // dd takes keyword arguments, not flags: the destination is `of=`.
       for (const arg of t.slice(1)) {
         if (!arg.startsWith('of=')) continue;
-        const file = resolveWriteTarget(effCwd, arg.slice('of='.length));
+        const file = resolveWriteTarget(effCwd, arg.slice('of='.length), pathImpl);
         if (file) targets.push({ action: 'write', file });
       }
       return;
@@ -2349,12 +2358,12 @@ const MKDIR_VALUE_FLAGS = new Set(['-m', '--mode']);
 function mkdirTargets(command, cwd, opts) {
   const targets = [];
   let pieceStart = 0; // where the current piece's first-cwd visit began pushing
-  forEachCommandSegment(command, cwd, (t, effCwd, _quoting, again) => {
+  forEachCommandSegment(command, cwd, (t, effCwd, quoting, again) => {
     if (!again) pieceStart = targets.length;
     if (t[0] !== 'mkdir') return;
     const { positionals } = partitionArgs(t.slice(1), MKDIR_VALUE_FLAGS);
     for (const arg of positionals) {
-      const file = resolveWriteTarget(effCwd, arg);
+      const file = resolveWriteTarget(effCwd, arg, quoting.pathImpl);
       // A repeat visit under another cwd (after a brace group) adds an absolute path only once.
       if (file && !(again && targets.slice(pieceStart).some((x) => x.file === file))) targets.push({ action: 'mkdir', file });
     }
@@ -2363,7 +2372,7 @@ function mkdirTargets(command, cwd, opts) {
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment,
   // The heredoc reader vocabularies, pinned against policy-schema-coverage.md's prose (#4149).
   DATA_READER_WORDS, READER_WRAPPER_WORDS, GIT_DATA_SUBCOMMANDS, INERT_NEIGHBOUR_WORDS,
 };

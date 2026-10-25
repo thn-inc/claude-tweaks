@@ -790,3 +790,75 @@ test('#4281: a leading-escaped redirect word is a file argument', () => {
   // bash 3.2 and 5: \>x is the word >x, not a redirection.
   assert.deepStrictEqual(fileWriteTargets('cp a \\>x', '/r'), [{ action: 'copy', file: path.resolve('/r', '>x') }]);
 });
+
+// #4281: the Windows shapes, proven on any host through an injected path.win32 (#3314's pattern).
+// bash 3.2 and 5: "D:\repo\a.js", "D:\repo\x", "D:\repo\wt" and "D:\repo" are those exact values;
+// unquoted, D:\repo\a.js and D:\repo are D:repoa.js and D:repo.
+const os = require('node:os');
+const fs = require('node:fs');
+const { after } = require('node:test');
+const realPreToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
+const TEARDOWN_CMD = 'cd "D:\\repo" && git worktree remove wt';
+const QUOTED_NATIVE_PINS = {
+  tee: (mod) => assert.deepStrictEqual(
+    mod.fileWriteTargets('tee "D:\\repo\\a.js"', 'D:\\repo', { pathImpl: path.win32 }).map((t) => t.file),
+    ['D:\\repo\\a.js'],
+  ),
+  mkdir: (mod) => assert.deepStrictEqual(
+    mod.mkdirTargets('mkdir -p "D:\\repo\\x"', 'D:\\repo', { pathImpl: path.win32 }),
+    [{ action: 'mkdir', file: 'D:\\repo\\x' }],
+  ),
+  gitC: (mod) => assert.deepStrictEqual(
+    mod.gitTargets('git -C "D:\\repo\\wt" push', 'D:\\repo', { pathImpl: path.win32 }),
+    [{ action: 'push', dir: 'D:\\repo\\wt' }],
+  ),
+  teardown: (_mod, preToolUse) => assert.deepStrictEqual(
+    preToolUse.teardownTargets({ input: { tool_name: 'Bash', tool_input: { command: TEARDOWN_CMD } }, cwd: 'D:\\x' }, { pathImpl: path.win32 }),
+    [{ path: 'D:\\repo\\wt', source: 'bash' }],
+  ),
+};
+function assertQuotedNativePins(mod, preToolUse, names = Object.keys(QUOTED_NATIVE_PINS)) {
+  for (const name of names) QUOTED_NATIVE_PINS[name](mod, preToolUse);
+}
+const realGitCommand = require('../plugin/bin/lib/hooks/git-command');
+
+test('AC2.1 AC2.2 #4281: a quoted native tee target resolves through path.win32, pinned as an exact string', () => {
+  assertQuotedNativePins(realGitCommand, realPreToolUse, ['tee']);
+});
+
+test('AC2.3 #4281: mkdir, git -C and a cd before worktree remove resolve through path.win32', () => {
+  assertQuotedNativePins(realGitCommand, realPreToolUse, ['mkdir', 'gitC', 'teardown']);
+});
+
+test('AC2.4 #4281: an unquoted native path is no target (bash reads D:repoa.js, a drive-relative path)', () => {
+  assert.deepStrictEqual(fileWriteTargets('tee D:\\repo\\a.js', 'D:\\repo', { pathImpl: path.win32 }), []);
+  assert.deepStrictEqual(gitTargets('cd D:\\repo && git commit -m x', 'D:\\x', { pathImpl: path.win32 }), []);
+  // The -C branch's own drive-relative check: without it, path.win32 reads D:repo as D:\x\repo.
+  assert.deepStrictEqual(gitTargets('git -C D:\\repo commit -m x', 'D:\\x', { pathImpl: path.win32 }), []);
+});
+
+const MUTANT_DIR = path.join(os.tmpdir(), 'ct-4281-mutant-' + process.pid);
+after(() => fs.rmSync(MUTANT_DIR, { recursive: true, force: true }));
+
+test('AC3.1 AC3.2 #4281: go-red — putting the backslash rule back into isUnresolvable fails every quoted AC2 case', () => {
+  const src = fs.readFileSync(require.resolve('../plugin/bin/lib/hooks/git-command'), 'utf8');
+  const anchor = "raw.includes('$') ||";
+  assert.strictEqual(src.split(anchor).length - 1, 1, 'the isUnresolvable anchor matches exactly once');
+  // A function replacement: the anchor's `$'` would be a special pattern in a replacement string.
+  const mutantSrc = src.replace(anchor, () => "raw.includes('\\\\') || " + anchor);
+  fs.mkdirSync(MUTANT_DIR, { recursive: true });
+  const mutantFile = path.join(MUTANT_DIR, 'git-command.js');
+  fs.writeFileSync(mutantFile, mutantSrc); // git-command.js requires only `path`
+  const mutant = require(mutantFile);
+  assert.throws(() => assertQuotedNativePins(mutant, realPreToolUse, ['tee']));
+  assert.throws(() => assertQuotedNativePins(mutant, realPreToolUse, ['mkdir']));
+  assert.throws(() => assertQuotedNativePins(mutant, realPreToolUse, ['gitC']));
+  // Teardown, fallback form: pre-tool-use.js requires a dozen sibling modules, so binding its
+  // teardownTargets to the mutant would mean copying that tree. teardownTargets resolves its dir
+  // through resolveGitCommand, which resolvedGitSegments reports for every git segment (gitTargets
+  // never classifies `worktree remove`, so it would hold no D:\repo dir on either module): the real
+  // module walks into D:\repo, the mutant reads the cd as unprovable and reports no D:\repo dir.
+  const dirs = (mod) => mod.resolvedGitSegments(TEARDOWN_CMD, 'D:\\x', { pathImpl: path.win32 }).map((s) => s.dir);
+  assert.deepStrictEqual(dirs(realGitCommand), ['D:\\repo']);
+  assert.ok(!dirs(mutant).includes('D:\\repo'));
+});
