@@ -53,11 +53,16 @@ test('AC1.1: the refusal line never reads as a needs-human verdict', () => {
 });
 
 test("AC1.1: the documented filed lines match the guard's reader", () => {
-  const templates = [...CONSOLE.matchAll(/'([^']*filed as #\{number\} \(work-fingerprint \{fingerprint\}\))'/g)].map((m) => m[1]);
-  const created = templates.find((t) => !/already/.test(t));
-  const deduped = templates.find((t) => /already filed as/.test(t));
-  assert.ok(created && deduped, 'review-console.md must document both filed-line templates');
-  const lines = [created, deduped].map((t) => '- AUTO 10:00:00 — Queue write: ' + t
+  const commands = [...CONSOLE.matchAll(/node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/log-decision\.js"[^`]*?--text '([^']*filed as #\{number\} \(work-fingerprint \{fingerprint\}\))'[^`]*/g)];
+  const created = commands.find((m) => !/already/.test(m[1]));
+  const deduped = commands.find((m) => /already filed as/.test(m[1]));
+  assert.ok(created && deduped, 'review-console.md must spell out a log-decision command for both filed-line templates');
+  for (const m of [created, deduped]) {
+    for (const flag of ['--run "{item-run-dir}"', '--status AUTO', '--step "Queue write"']) {
+      assert.ok(m[0].includes(flag), `a filed-line command is missing ${flag}: ${m[0]}`);
+    }
+  }
+  const lines = [created[1], deduped[1]].map((t) => '- AUTO 10:00:00 — Queue write: ' + t
     .replace('{item}', 'tiebreak:aaaaaaaaaaaa').replace('{number}', '501').replace('{fingerprint}', 'consolefinding-0123abcd'));
   for (const line of lines) assert.match(line, FILED_LINE_RE);
   assert.strictEqual(filedRecords(lines.join('\n')).get('consolefinding-0123abcd'), 501);
