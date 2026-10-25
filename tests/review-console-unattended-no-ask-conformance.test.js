@@ -91,6 +91,17 @@ test("AC3.1: an unfiled can't-tell filing reads as residue with its --only re-ru
   assert.ok(!filingsReadAsResidue(mutated), 'control: without the filing-pending claim the check goes red');
 });
 
+test("AC3.1 controls: each remaining conjunct, broken alone, turns the filings-as-residue check red", () => {
+  const swap = (from, to) => {
+    const mutated = REVIEW_CONSOLE.split(from).join(to);
+    assert.notStrictEqual(mutated, REVIEW_CONSOLE, `${from} is not in the console prose`);
+    return mutated;
+  };
+  assert.ok(!filingsReadAsResidue(swap(REUSES_ONLY, "--only <items>")), 'the --only re-run');
+  assert.ok(!filingsReadAsResidue(swap(ARCHIVAL, 'archival proceeds')), 'the archival refusal');
+  assert.ok(!filingsReadAsResidue(swap(PENDING, `${PENDING}, ${STALE_CLAIM}`)), 'the retired "not residue" claim');
+});
+
 // AC5's "a record that has since been closed still dedups (state all)" rests on the record list the
 // prose fetches: console-filings.js dedups against whatever --existing holds, closed records included.
 const FETCH_ALL = 'gh issue list --state all --json number,body';

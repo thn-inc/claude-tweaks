@@ -167,6 +167,24 @@ function step7SkipArgv(text, map) {
   return fill(m[1].match(/"[^"]*"|'[^']*'|\S+/g).map((t) => (/^["']/.test(t) ? t.slice(1, -1) : t)), map);
 }
 
+// The two `{why}` strings refused-proposals.md names, read from its prose so rewording them is seen by the AC tests.
+function whyTemplates(text) {
+  const m = text.match(/`\{why\}` is `([^`]+)`\s+or\s+`([^`]+)`/);
+  assert.ok(m, 'refused-proposals.md no longer names the {why} strings as "`{why}` is `…` or `…`"');
+  return { create: m[1], shadowDup: m[2] };
+}
+const WHY_TEMPLATES = whyTemplates(REFUSED);
+const whyOf = (template, code) => {
+  assert.ok(template.includes('{code}'), `${template} carries no {code} placeholder`);
+  return template.replace('{code}', code);
+};
+
+test('the {why} strings the AC tests use are the two the prose names', () => {
+  assert.equal(whyOf(WHY_TEMPLATES.create, '1'), 'record create failed (exit 1)');
+  assert.equal(whyOf(WHY_TEMPLATES.shadowDup, '2'), 'shadow-dup-proposal.js exited 2');
+  assert.throws(() => whyTemplates(doctor(REFUSED, '`{why}` is', '`{why}` becomes')), { message: /no longer names the \{why\} strings/ });
+});
+
 const consoleJson = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8'));
 const cleanup = (t, fx) => t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
 
@@ -175,12 +193,12 @@ test('AC1.1: the documented rewrite, run on a console-auto fixture whose Queue w
   cleanup(t, fx);
   assert.equal(await RESOLVE.run(['--run', fx.runDir, '--policy', 'console-auto'], deps(fx).d), 0);
   assert.equal(consoleJson(fx.runDir).items[0].resolution, 'apply');
-  const argv = rewriteArgv(REFUSED, { '{item-run-dir}': fx.runDir, '{name}': 'leftover-1.md', '{why}': 'record create failed (exit 1)' });
+  const argv = rewriteArgv(REFUSED, { '{item-run-dir}': fx.runDir, '{name}': 'leftover-1.md', '{why}': whyOf(WHY_TEMPLATES.create, '1') });
   const rewrite = deps(fx);
   assert.equal(await RESOLVE.run(argv, rewrite.d), 0, rewrite.err.join(''));
   const item = consoleJson(fx.runDir).items[0];
   assert.equal(item.resolution, 'keep-staged');
-  assert.equal(item.reason, 'record create failed (exit 1)');
+  assert.equal(item.reason, whyOf(WHY_TEMPLATES.create, '1'));
   assert.deepEqual(readRunResidue(fx.runDir).consoles[0].items.map((i) => i.id), ['leftover-1.md']);
 });
 
@@ -196,7 +214,7 @@ test('AC2.1: a shadow-dup compose failure (exit 2 or 3) takes the same path and 
     const skipArgv = step7SkipArgv(REVIEW_CONSOLE, { '{item-run-dir}': fx.runDir, '{code}': code, '{name}': name });
     assert.equal(LOG_DECISION.run(skipArgv, { now: () => Date.parse('2026-10-25T12:00:00Z'), cwd: () => fx.root, mainRoot: fx.root, stdout: () => {}, stderr: (s) => skipErr.push(s) }), 0, skipErr.join(''));
 
-    const why = `shadow-dup-proposal.js exited ${code}`;
+    const why = whyOf(WHY_TEMPLATES.shadowDup, code);
     const rewrite = deps(fx);
     assert.equal(await RESOLVE.run(rewriteArgv(REFUSED, { '{item-run-dir}': fx.runDir, '{name}': name, '{why}': why }), rewrite.d), 0, rewrite.err.join(''));
 

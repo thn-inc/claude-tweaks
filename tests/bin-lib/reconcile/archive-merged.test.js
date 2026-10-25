@@ -3771,6 +3771,30 @@ test('AC4.1: once the filed line is logged the run reads resolved (#4170)', () =
   fs.appendFileSync(path.join(runDir, 'decisions.md'), PLANNED_FILED_LINE);
   assert.strictEqual(readConsoleState(runDir), 'resolved');
 });
+test('filingRerunRemedy names one re-run per unacknowledged console, each with only its unfiled planned filings (#4170)', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-filings-'));
+  const [a, b, c, d] = ['aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc', 'dddddddddddd'].map((h) => `tiebreak:${h}`);
+  const fp = { [a]: 'consolefinding-0123abcd', [b]: 'consolefinding-4567ef01', [c]: 'consolefinding-89abcdef', [d]: 'consolefinding-02468ace' };
+  const item = (id) => ({ id, section: 'Low-confidence findings', resolution: 'filed', reason: 'r' });
+  const filing = (id) => ({ item: id, fingerprint: fp[id], title: 't' });
+  const filedLine = (id, n) => `- AUTO 10:00:00 — Queue write: ${id} filed as #${n} (work-fingerprint ${fp[id]}). Reversibility: n/a.`;
+  const specConsole = (spec, { items, filings, filed = [], acknowledged = false }) => {
+    const dir = path.join(parent, `spec-${spec}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ resolved: true, mode: 'auto-resolve', items, filings, ...(acknowledged ? { residueAcknowledgedAt: '2026-10-25T10:00:00.000Z' } : {}) }));
+    fs.writeFileSync(path.join(dir, 'decisions.md'), `## /wrap-up\n${filed.join('\n')}\n`);
+    return dir;
+  };
+  // spec-1 mixes a filed filing, an unfiled one, and an unrelated keep-staged item the re-run must not name.
+  const one = specConsole(1, { items: [item(a), item(b), { id: 'reflect-1.md', section: 'Pending review', resolution: 'keep-staged', reason: 'r' }], filings: [filing(a), filing(b)], filed: [filedLine(a, 501)] });
+  const two = specConsole(2, { items: [item(c)], filings: [filing(c)] });
+  const three = specConsole(3, { items: [item(d)], filings: [filing(d)], acknowledged: true });
+  const remedy = filingRerunRemedy(parent);
+  assert.ok(remedy.includes(`console-filings.js --run "${one}" --existing <issues.json> --out-dir <dir> --only '${b}'`), remedy);
+  assert.ok(remedy.includes(`console-filings.js --run "${two}" --existing <issues.json> --out-dir <dir> --only '${c}'`), remedy);
+  assert.ok(!remedy.includes(three) && !remedy.includes(d), `an acknowledged console is not named: ${remedy}`);
+  assert.ok(!remedy.includes(a) && !remedy.includes('reflect-1.md'), `a filed filing and a non-filing item are not named: ${remedy}`);
+});
 
 test('decideArchiveCore: invalid-arguments skips with reason invalid-arguments (#3416)', () => {
   assert.deepStrictEqual(decideArchiveCore('invalid-arguments', 'resolved'), { action: 'skip', reason: 'invalid-arguments' });

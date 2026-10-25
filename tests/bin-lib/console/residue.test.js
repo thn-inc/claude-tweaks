@@ -485,3 +485,33 @@ test('the SessionStart banner scan lists a clean run whose console holds a plann
   assert.deepStrictEqual(runs.map((r) => r.dir), [run]);
   assert.ok(runs[0].lines.some((l) => l.includes('tiebreak:aaaaaaaaaaaa — Low-confidence findings: filing-pending')), runs[0].lines.join('\n'));
 });
+
+test('splitMissing never classifies a filing-pending item missing, even with a bare staged-file id (#4170)', () => {
+  // planFilings only emits tiebreak:{id} ids, which carry a ':' and are never checkable; the guard is
+  // pinned here with an id that would otherwise read as a plain staged filename with no file behind it.
+  const items = [{ id: 'wrap-up-docs-9.md', section: 'Queue writes', resolution: FILING_PENDING_RESOLUTION, reason: 'r' }];
+  const { items: kept, missing } = splitMissing(items, tmpRun(), () => false);
+  assert.deepStrictEqual(kept.map((i) => i.id), ['wrap-up-docs-9.md']);
+  assert.deepStrictEqual(missing, []);
+  // Control: the same id as a pending item with no staged file is missing, so the guard is what holds the item.
+  const pending = splitMissing([{ ...items[0], resolution: 'pending' }], tmpRun(), () => false);
+  assert.deepStrictEqual(pending.missing.map((i) => i.id), ['wrap-up-docs-9.md']);
+});
+
+test('a console with one filed and one unfiled planned filing reports only the unfiled one (#4170)', () => {
+  const dir = tmpRun();
+  const filed = { id: 'tiebreak:aaaaaaaaaaaa', section: 'Low-confidence findings', resolution: 'filed', reason: 'r' };
+  const unfiled = { id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'filed', reason: 'r' };
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [filed, unfiled],
+    filings: [
+      { item: filed.id, fingerprint: 'consolefinding-0123abcd', title: 't' },
+      { item: unfiled.id, fingerprint: 'consolefinding-4567ef01', title: 'u' },
+    ],
+  }));
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `## /wrap-up\n${FILED_LINE}\n`);
+  const { consoles } = readRunResidue(dir);
+  assert.deepStrictEqual(consoles.map((c) => c.items.map((i) => [i.id, i.resolution])), [[['tiebreak:bbbbbbbbbbbb', 'filing-pending']]]);
+});

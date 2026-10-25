@@ -700,6 +700,19 @@ test('--set-item whose decisions.md entry cannot be written exits 3 naming the l
   assert.strictEqual(readConsole(fx.runDir).items[0].resolution, 'keep-staged');
 });
 
+const NO_POSIX_PERMISSIONS = (process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0)) && 'needs POSIX directory permissions and a non-root user';
+test('--set-item whose console.json write throws exits 3 naming the file and leaves it untouched (#4170)', { skip: NO_POSIX_PERMISSIONS }, async (t) => {
+  const fx = mainCheckoutWithRun({ consoleJson: `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'leftover-1.md', section: 'Queue writes', resolution: 'apply', reason: 'r' }] })}\n` });
+  const consolePath = path.join(fx.runDir, 'console.json');
+  const before = fs.readFileSync(consolePath, 'utf8');
+  fs.chmodSync(fx.runDir, 0o555);
+  t.after(() => fs.chmodSync(fx.runDir, 0o755));
+  const { d, err } = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_ITEM(fx.runDir), d), 3);
+  assert.match(err(), /^console-resolve\.js: could not write .*console\.json: .+$/m);
+  assert.strictEqual(fs.readFileSync(consolePath, 'utf8'), before);
+});
+
 test('--set-item refusals exit 5 and write nothing (#4170)', async () => {
   const none = mainCheckoutWithRun();
   const a = baseDeps(none, []);
