@@ -523,11 +523,11 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResol
   // prState is already set (object or failure string) are not re-probed.
   const needPrState = candidates.filter((c) => c.joinFailure === null && c.prState === null);
   if (prStateResolver) {
-    try { await prStateResolver.prefetch({ branches: needPrState.map((c) => c.branch) }); } catch { /* warm-up only */ }
+    try { await prStateResolver.prefetch({ branches: needPrState.map((c) => c.branch), freshNull: true }); } catch { /* warm-up only */ }
   }
   const prStates = await runWithConcurrency(
     needPrState,
-    (c) => (prStateResolver ? prStateResolver.byBranchAsync(c.branch) : resolvePrStateAsync(root, c.branch)),
+    (c) => (prStateResolver ? prStateResolver.byBranchAsync(c.branch, { freshNull: true }) : resolvePrStateAsync(root, c.branch)),
   );
   const prStateByIssue = resultsByIssue(needPrState, prStates);
   for (const c of needPrState) c.prState = prStateByIssue.get(c.issueNumber);

@@ -487,6 +487,15 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   | no PR (`null`) | branch | `NO_PR_TTL_MS` (5 min) — a PR can be opened at any time |
   | `OPEN` / `CLOSED` PR, any failure string (`gh-absent`, `network-failure`, `invalid-arguments`) | either | never persisted; failures are not memoized either, so a transient failure is never replayed as an answer |
 
+  `release` alone never consumes a persisted by-branch `null`: it passes `{ freshNull: true }`
+  to `byBranchAsync` and `prefetch`, which re-query such a key live (a PR opened inside the
+  5-minute TTL would otherwise flip a `pr-open` skip into a release); a `null` learned live in the
+  same pass still serves from the memo. `archive` and `reap` keep the persisted answer.
+
+  A persisted `MERGED`-by-branch answer keeps the PR it first saw: if a second PR on the same
+  branch also merges, a fresh call would name the newer one. Every consumer acts the same on
+  either, because all they check is `MERGED`.
+
   Entries past retention or malformed are dropped when the pass persists, which re-reads the file
   first so another writer's keys survive. `peekNumber` answers from the memo or a valid persisted
   entry and never makes a live call.
@@ -528,7 +537,11 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   `preflight-gh-absent`, `preflight-github-unreachable`, `reconcile-threw`); report-only skips such
   as `non-canonical-run-dir` or `budget-exceeded` do not count — nor under `--dry-run`. The
   background pass runs under `BACKGROUND_BUDGET_MS` (`budget.js`, 120 s) because the 18 s hot-path
-  ceiling skipped its last three checks every pass. `/tidy`'s Reconcile-first call names all nine
+  ceiling skipped its last three checks every pass. Without `remote-prune` the inline set is
+  mirror-only-shaped, so the unscoped CLI now takes `mirror`'s single-ref `git fetch origin
+  {integration}` (5 s `FETCH_TIMEOUT_MS`, concurrent with preflight) where it used to run
+  `fetch --prune origin` (10 s); other `refs/remotes/origin/*` refs refresh when the background
+  pass's `--prune` fetch runs. `/tidy`'s Reconcile-first call names all nine
   checks explicitly, because the unscoped call defers three.
 - **Measured (AC1.1, #4032).** `node plugin/bin/hooks.js reconcile --json`, 20 sequential unscoped
   calls against this repo's main checkout (live network, HEAD baf2964, 2026-10-25): wall time min

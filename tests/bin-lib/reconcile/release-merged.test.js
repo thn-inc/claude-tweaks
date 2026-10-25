@@ -1475,16 +1475,20 @@ function prefetchScenario(prefetch) {
     if (args.some((a) => a.includes('/labels/'))) return { stdout: '', failure: null, status: null };
     throw new Error(`unexpected ${args.join(' ')}`);
   };
+  const branchOpts = [];
   const prStates = {
     prefetch,
     byNumberAsync: async (n) => (n === 42 ? closing(42, 11) : null),
-    byBranchAsync: async (b) => (b === 'run-br-branch' ? closing(43, 12) : b === 'run-null-branch' ? closing(44, 13) : null),
+    byBranchAsync: async (b, opts) => {
+      branchOpts.push([b, opts]);
+      return b === 'run-br-branch' ? closing(43, 12) : b === 'run-null-branch' ? closing(44, 13) : null;
+    },
   };
   // Only the tombstone write reaches the real gh; every PR lookup is the resolver's.
   const ghDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-prefetch-gh-'));
   fs.writeFileSync(path.join(ghDir, 'gh'), '#!/bin/sh\ncase "$*" in\n  *"api --method PUT"*) exit 0 ;;\nesac\nexit 1\n');
   fs.chmodSync(path.join(ghDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  return { root, ghApi, prStates, ghDir };
+  return { root, ghApi, prStates, ghDir, branchOpts };
 }
 
 async function runPrefetchScenario(prefetch) {
@@ -1493,7 +1497,7 @@ async function runPrefetchScenario(prefetch) {
   process.env.PATH = `${fx.ghDir}${path.delimiter}${originalPath}`;
   try {
     const result = await releaseMerged({ cwd: fx.root, ghApi: fx.ghApi, prStates: fx.prStates });
-    return { released: result.released, skipped: result.skipped };
+    return { released: result.released, skipped: result.skipped, branchOpts: fx.branchOpts };
   } finally {
     process.env.PATH = originalPath;
   }
@@ -1504,12 +1508,22 @@ test('releaseMerged warms the resolver once per phase', { skip: PATH_STUB_SKIP }
   const warmed = await runPrefetchScenario(async (arg) => { calls.push(arg); });
   assert.deepStrictEqual(calls, [
     { numbers: [42, 77] },
-    { branches: ['run-br-branch', 'run-null-branch'] },
+    { branches: ['run-br-branch', 'run-null-branch'], freshNull: true },
   ], 'by-number candidates first, then only the candidates the by-number loop left for the branch join');
   assert.deepStrictEqual(warmed.released.map((r) => r.issueNumber).sort(), [11, 12, 13]);
 
   const baseline = await runPrefetchScenario(async () => {});
   assert.deepStrictEqual(warmed, baseline, 'prefetch only warms — every decision matches a no-op prefetch');
+});
+
+// #4032: release must not act on a PERSISTED cross-pass "no PR" answer — a PR opened inside
+// its 5-minute TTL would flip the verdict from skip (pr-open) to release.
+test('releaseMerged asks the resolver for fresh by-branch answers (freshNull)', { skip: PATH_STUB_SKIP }, async () => {
+  const r = await runPrefetchScenario(async () => {});
+  assert.deepStrictEqual(r.branchOpts, [
+    ['run-br-branch', { freshNull: true }],
+    ['run-null-branch', { freshNull: true }],
+  ]);
 });
 
 test('a throwing prefetch never changes release\'s verdicts', { skip: PATH_STUB_SKIP }, async () => {

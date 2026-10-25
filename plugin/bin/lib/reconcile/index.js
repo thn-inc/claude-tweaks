@@ -266,9 +266,12 @@ async function reconcileInner(opts) {
   // execFile pattern this reuses (ghHealthCheckAsync, sharedFetchAsync).
   // Computed from `checks` BEFORE the narrowing below, so a request that
   // ever included remote-prune stays on the sequential path even if a
-  // preflight failure later narrows `checks` down to mirror-only —
-  // ALL_CHECKS/mixed and BACKGROUND_CHECKS are explicitly out of scope for
-  // this concurrency and must not gain it incidentally through narrowing.
+  // preflight failure later narrows `checks` down to mirror-only — a
+  // remote-prune request (BACKGROUND_CHECKS, a mixed set) must not gain this
+  // concurrency incidentally through narrowing. The shape holds for
+  // session-start's inline pass AND the unscoped `reconcile` CLI (#4032): its
+  // inline set is mirror without remote-prune, so it takes the single-ref
+  // fetch (5 s) concurrently with preflight, not `fetch --prune origin`.
   const fastChecksShape = checks.includes('mirror') && !checks.includes('remote-prune');
   // #873: session-start.js's inline FAST_CHECKS call and the detached
   // reconcile-background child it spawns moments later (same SessionStart
@@ -347,7 +350,9 @@ async function reconcileInner(opts) {
   // singleton), so nothing here survives across passes or processes.
   // #4032: the persisted marker index lets a residue dedup lookup cost one
   // `gh issue view` instead of the full list; written back in `finalize`.
-  const issueListCache = createIssueListCache({ index: readCache(root).residueIssueIndex });
+  const loadedResidueIndex = readCache(root).residueIssueIndex;
+  const loadedResidueIndexJson = JSON.stringify(loadedResidueIndex || {});
+  const issueListCache = createIssueListCache({ index: loadedResidueIndex });
   // #4032 — one PR-state resolver per pass, shared by release, archive and
   // reap (they ask `gh` about the same PRs). Created here, after the preflight
   // narrowing, and through the module object so a test's
@@ -599,7 +604,11 @@ async function reconcileInner(opts) {
     // write below re-reads a file that already carries them. Best-effort, and
     // dry-run included: it records reads, never repo state.
     try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
-    if (!opts.skipCacheStamp || healthJustSucceeded) {
+    // A scoped (skipCacheStamp) pass that learned marker-index entries still
+    // persists them: like prStates.persist() above, the index records reads
+    // (never freshness), so an explicit --checks pass must not drop them.
+    const residueIndexChanged = JSON.stringify(issueListCache.index) !== loadedResidueIndexJson;
+    if (!opts.skipCacheStamp || healthJustSucceeded || residueIndexChanged) {
       const cache = readCache(root);
       const update = { ...cache };
       if (!opts.skipCacheStamp) update.lastRunAt = Date.now();

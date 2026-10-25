@@ -100,6 +100,63 @@ test('gh-absent and invalid-arguments are not memoized either; pr-not-found is',
   assert.equal(calls.byNumber, 3);
 });
 
+// #4032 F4: a persisted by-branch null is a cross-pass answer; a caller whose verdict flips on a
+// just-opened PR (release) opts out of it per call with { freshNull: true }.
+function persistedNullRoot() {
+  const root = tmpRoot();
+  const A = createPrStateResolver({ root, now: () => 0, deps: fakeDeps({ byBranch: null }).deps });
+  A.byBranch('x');
+  A.persist();
+  return root;
+}
+
+test('a persisted by-branch null is served without freshNull', async () => {
+  const root = persistedNullRoot();
+  const { deps, calls } = fakeDeps({ byBranch: OPEN(5), byBranchAsync: OPEN(5) });
+  const R = createPrStateResolver({ root, now: () => 1000, deps });
+  assert.equal(R.byBranch('x'), null);
+  assert.equal(await R.byBranchAsync('x'), null);
+  assert.equal(calls.byBranch + calls.byBranchAsync, 0);
+});
+
+test('freshNull re-queries a persisted null live once, then serves this pass\'s memo', async () => {
+  const root = persistedNullRoot();
+  const { deps, calls } = fakeDeps({ byBranch: OPEN(5), byBranchAsync: OPEN(5) });
+  const R = createPrStateResolver({ root, now: () => 1000, deps });
+  assert.deepEqual(await R.byBranchAsync('x', { freshNull: true }), OPEN(5));
+  assert.equal(calls.byBranchAsync, 1);
+  // the live answer is now this pass's memo, for either flag and either twin
+  assert.deepEqual(await R.byBranchAsync('x', { freshNull: true }), OPEN(5));
+  assert.deepEqual(R.byBranch('x'), OPEN(5));
+  assert.equal(calls.byBranchAsync + calls.byBranch, 1);
+
+  const S = createPrStateResolver({ root, now: () => 1000, deps: fakeDeps({ byBranch: OPEN(6) }).deps });
+  assert.deepEqual(S.byBranch('x', { freshNull: true }), OPEN(6), 'the sync twin honors the option too');
+});
+
+test('a null learned live in this pass still serves under freshNull', async () => {
+  const root = tmpRoot();
+  const { deps, calls } = fakeDeps({ byBranchAsync: null });
+  const R = createPrStateResolver({ root, now: () => 0, deps });
+  assert.equal(await R.byBranchAsync('y', { freshNull: true }), null);
+  assert.equal(await R.byBranchAsync('y', { freshNull: true }), null);
+  assert.equal(calls.byBranchAsync, 1);
+});
+
+test('prefetch with freshNull treats persisted-null keys as unknown; without it they are skipped', async () => {
+  const root = persistedNullRoot();
+  const plain = fakeDeps({ byBranchAsync: OPEN(5) });
+  await createPrStateResolver({ root, now: () => 1000, deps: plain.deps }).prefetch({ branches: ['x'] });
+  assert.equal(plain.calls.byBranchAsync, 0);
+
+  const fresh = fakeDeps({ byBranchAsync: OPEN(5) });
+  const R = createPrStateResolver({ root, now: () => 1000, deps: fresh.deps });
+  await R.prefetch({ branches: ['x'], freshNull: true });
+  assert.equal(fresh.calls.byBranchAsync, 1, 'the persisted null was queried live');
+  assert.deepEqual(R.byBranch('x', { freshNull: true }), OPEN(5));
+  assert.equal(fresh.calls.byBranch, 0);
+});
+
 test('persist then a new resolver serves MERGED without a live call', () => {
   const root = tmpRoot();
   const a = fakeDeps({ byNumber: MERGED(7), byBranch: MERGED(9) });

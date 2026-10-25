@@ -17,7 +17,10 @@
 // twins only for what it left unanswered. Entries live in reconcile-cache.json's
 // `prStates` key (cache.js) as `{ v, at }`, keyed `n:{number}` / `b:{branch}`;
 // like the rest of that file this is best-effort — a miss costs one live call,
-// never a wrong answer.
+// never a wrong answer. A per-call `{ freshNull: true }` (by-branch calls and
+// `prefetch`) refuses a PERSISTED "no PR" answer from a prior pass and queries
+// live instead — for a caller whose verdict flips on a PR opened inside the
+// null's 5-minute TTL (release); a null learned live in this pass still serves.
 'use strict';
 const {
   resolvePrState, resolvePrStateByNumber, resolvePrStateAsync, resolvePrStateByNumberAsync,
@@ -63,11 +66,12 @@ function createPrStateResolver({ root, now = Date.now, concurrency = 8, deps = {
 
   const keyFor = (kind, id) => (kind === 'number' ? `n:${id}` : `b:${id}`);
 
-  function lookup(kind, key) {
+  function lookup(kind, key, { freshNull = false } = {}) {
     if (memo.has(key)) return { hit: true, value: memo.get(key) };
     if (persisted === null) persisted = readCache(root).prStates || {};
     const entry = persisted[key];
     if (entry && typeof entry === 'object' && typeof entry.at === 'number' && 'v' in entry) {
+      if (freshNull && entry.v === null) return { hit: false };
       // A non-persistable value has TTL 0, so a tampered entry never matches.
       if (now() - entry.at < persistableTtl(kind, entry.v)) return { hit: true, value: entry.v };
     }
@@ -81,10 +85,10 @@ function createPrStateResolver({ root, now = Date.now, concurrency = 8, deps = {
   }
 
   function makeSync(kind, call) {
-    return (id) => {
+    return (id, { freshNull = false } = {}) => {
       if (kind === 'branch' && !id) return call(id); // falsy input -> null, nothing to cache
       const key = keyFor(kind, id);
-      const found = lookup(kind, key);
+      const found = lookup(kind, key, { freshNull });
       if (found.hit) return found.value;
       const value = call(id);
       learn(kind, key, value);
@@ -93,10 +97,10 @@ function createPrStateResolver({ root, now = Date.now, concurrency = 8, deps = {
   }
 
   function makeAsync(kind, call) {
-    return async (id) => {
+    return async (id, { freshNull = false } = {}) => {
       if (kind === 'branch' && !id) return call(id);
       const key = keyFor(kind, id);
-      const found = lookup(kind, key);
+      const found = lookup(kind, key, { freshNull });
       if (found.hit) return found.value;
       const value = await call(id);
       learn(kind, key, value);
@@ -122,13 +126,13 @@ function createPrStateResolver({ root, now = Date.now, concurrency = 8, deps = {
   // — or all of them, if it threw or returned nothing — go through the async
   // twins under the concurrency cap. A failed item is simply left unknown: a
   // later sync call falls back to a live call.
-  async function prefetch({ numbers = [], branches = [] } = {}) {
+  async function prefetch({ numbers = [], branches = [], freshNull = false } = {}) {
     const pending = [];
     const seen = new Set();
     const add = (kind, id, run) => {
       if (kind === 'branch' && !id) return;
       const key = keyFor(kind, id);
-      if (seen.has(key) || lookup(kind, key).hit) return;
+      if (seen.has(key) || lookup(kind, key, { freshNull }).hit) return;
       seen.add(key);
       pending.push({ kind, id, key, run });
     };
@@ -159,7 +163,7 @@ function createPrStateResolver({ root, now = Date.now, concurrency = 8, deps = {
     }
     // memo.has, not lookup: a failure string `learn` refused is correctly "unanswered".
     const unanswered = pending.filter((p) => !memo.has(p.key));
-    await runWithConcurrency(unanswered, (p) => p.run(p.id), concurrency);
+    await runWithConcurrency(unanswered, (p) => p.run(p.id, { freshNull }), concurrency);
   }
 
   // Merge newly learned persistable entries into reconcile-cache.json. Re-reads

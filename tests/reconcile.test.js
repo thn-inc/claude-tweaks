@@ -2174,14 +2174,33 @@ test('unscoped CLI treats a local-merge-model skip as not converged: no deferral
   assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: false, reason: 'not-converged' });
 });
 
-test('unscoped CLI treats a gh-preflight skip as not converged (#4032)', async () => {
-  const pfSkip = { check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue', reason: 'preflight-gh-absent' };
+test('unscoped CLI treats a gh-preflight skip as not converged and keeps the deferred checks accounted for (#4032)', async () => {
+  // What the real reconcile() emits: the inline gh-dependent checks (every inline check but mirror).
+  const pfSkip = { check: INLINE_UNSCOPED_CHECKS.filter((c) => c !== 'mirror').join(','), reason: 'preflight-gh-absent' };
   const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], {
     reconcileResult: () => ({ skipped: [pfSkip] }),
   });
   assert.equal(spawnCalls.length, 0);
-  assert.deepEqual(outputs[0].skipped, [pfSkip]);
+  assert.deepEqual(outputs[0].skipped, [
+    pfSkip,
+    { check: 'archive-branches,remote-prune,ledger-residue', reason: 'preflight-gh-absent' },
+  ]);
   assert.equal(outputs[0].background.reason, 'not-converged');
+});
+
+test('unscoped CLI: a module-load failure still prints the reconcile-threw JSON (#4032)', async () => {
+  const reconcileMod = require('../plugin/bin/lib/reconcile');
+  for (const prop of ['ALL_CHECKS', 'NOT_CONVERGED_REASONS']) {
+    const desc = Object.getOwnPropertyDescriptor(reconcileMod, prop);
+    Object.defineProperty(reconcileMod, prop, { configurable: true, enumerable: true, get() { throw new Error('load failed: ' + prop); } });
+    try {
+      const { outputs } = await runReconcileVerbStubbed([['reconcile', '--json']]);
+      assert.deepEqual(outputs[0].skipped, [{ check: 'all', reason: 'reconcile-threw' }], prop);
+      assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: false, reason: 'not-converged' }, prop);
+    } finally {
+      Object.defineProperty(reconcileMod, prop, desc);
+    }
+  }
 });
 
 test('unscoped CLI still defers and spawns when the pass carries a report-only non-canonical-run-dir skip (#4032)', async () => {
@@ -2879,7 +2898,7 @@ test('reconcile(): a throwing prefetch never breaks the pass (#4032)', async () 
 // finalize writes the pass's index back. Module-wiring level (archiveMerged is
 // stubbed to issue the lookups), with a fake `gh` as the cache's `base` — no
 // live GitHub.
-test('reconcile(): loads residueIssueIndex into the pass and writes the learned index back (#4032)', async () => {
+async function residueIndexPass(extraOpts, seedCache = {}) {
   const issueListCache = require('../plugin/bin/lib/reconcile/issue-list-cache');
   const archiveMergedModule = require('../plugin/bin/lib/reconcile/archive-merged');
   const reapMergedModule = require('../plugin/bin/lib/reconcile/reap-merged');
@@ -2923,17 +2942,12 @@ test('reconcile(): loads residueIssueIndex into the pass and writes the learned 
     delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
     const { reconcile: reconcileFresh } = require('../plugin/bin/lib/reconcile/index');
     const { mainDir } = pairedFixture();
-    writeCache(mainDir, { ...readCache(mainDir), residueIssueIndex: { [`o/r\n${seeded}`]: 42 } });
+    writeCache(mainDir, { ...readCache(mainDir), residueIssueIndex: { [`o/r\n${seeded}`]: 42 }, ...seedCache });
 
     await reconcileFresh({
-      cwd: mainDir, checks: ['archive', 'reap'], resolveIntegrationModel: () => 'pr-first', mcpReachable: true,
+      cwd: mainDir, checks: ['archive', 'reap'], resolveIntegrationModel: () => 'pr-first', mcpReachable: true, ...extraOpts,
     });
-
-    // (a) the cached entry reached the pass: one view, no list, before the list read.
-    assert.equal(seededHit && seededHit.number, 42, 'the seeded index entry must answer the lookup');
-    assert.deepEqual(callsAfterLookup, ['issue view'], 'the lookup must cost one issue view and no issue list');
-    // (b) the learned index was written back, with the loaded entry preserved.
-    assert.deepEqual(readCache(mainDir).residueIssueIndex, { [`o/r\n${seeded}`]: 42, [`o/r\n${learned}`]: 9 });
+    return { seeded, learned, seededHit, callsAfterLookup, cache: readCache(mainDir) };
   } finally {
     issueListCache.createIssueListCache = originalCreate;
     archiveMergedModule.archiveMerged = originalArchive;
@@ -2942,4 +2956,21 @@ test('reconcile(): loads residueIssueIndex into the pass and writes the learned 
     preflight.ghHealthCheckAsync = originalHealthAsync;
     delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
   }
+}
+
+test('reconcile(): loads residueIssueIndex into the pass and writes the learned index back (#4032)', async () => {
+  const { seeded, learned, seededHit, callsAfterLookup, cache } = await residueIndexPass({});
+  // (a) the cached entry reached the pass: one view, no list, before the list read.
+  assert.equal(seededHit && seededHit.number, 42, 'the seeded index entry must answer the lookup');
+  assert.deepEqual(callsAfterLookup, ['issue view'], 'the lookup must cost one issue view and no issue list');
+  // (b) the learned index was written back, with the loaded entry preserved.
+  assert.deepEqual(cache.residueIssueIndex, { [`o/r\n${seeded}`]: 42, [`o/r\n${learned}`]: 9 });
+});
+
+test('reconcile(): a scoped skipCacheStamp pass still persists the index entries it learned, without stamping freshness (#4032)', async () => {
+  // A (future-dated) fresh health stamp keeps healthJustSucceeded false, so the write under test
+  // cannot ride on the health-stamp gate.
+  const { seeded, learned, cache } = await residueIndexPass({ skipCacheStamp: true }, { lastHealthCheckOkAt: Date.now() + 60000 });
+  assert.deepEqual(cache.residueIssueIndex, { [`o/r\n${seeded}`]: 42, [`o/r\n${learned}`]: 9 });
+  assert.ok(!cache.lastRunAt, 'a scoped pass must not stamp the shared freshness key');
 });
