@@ -71,22 +71,40 @@ function alreadyRefused(runDir, name, deps) {
   });
 }
 
+// A staged file's text: { text } | { error } (unreadable).
+function readStagedText(runDir, name, deps) {
+  try {
+    return { text: String(deps.readFile(path.join(runDir, 'staged', name))) };
+  } catch (err) {
+    return { error: `cannot read staged/${name}: ${errorText(err)}` };
+  }
+}
+
 // Every staged/reflect-*.md the applier acts on, sorted: [{ name, text }] — or { name, error } for an
 // unreadable file. Applicable = isApplicableReflect (a Category the console consumer applies).
 function listApplicable({ runDir, deps }) {
-  const dir = path.join(runDir, 'staged');
   const out = [];
-  for (const name of [...deps.readdir(dir)].filter((n) => STAGED_NAME_RE.test(n)).sort()) {
-    let text;
-    try { text = String(deps.readFile(path.join(dir, name))); } catch (err) { out.push({ name, error: `cannot read staged/${name}: ${errorText(err)}` }); continue; }
-    if (isApplicableReflect(name, text)) out.push({ name, text });
+  for (const name of [...deps.readdir(path.join(runDir, 'staged'))].filter((n) => STAGED_NAME_RE.test(n)).sort()) {
+    const read = readStagedText(runDir, name, deps);
+    if (read.error) out.push({ name, error: read.error });
+    else if (isApplicableReflect(name, read.text)) out.push({ name, text: read.text });
   }
   return out;
 }
 
-const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+function shQuote(s) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
 const CLI_PATH = path.resolve(__dirname, '..', '..', 'reflect-apply.js');
-const cliLine = (runDir, tail) => `node ${shQuote(CLI_PATH)} --run ${shQuote(runDir)} ${tail}`;
+
+function cliLine(runDir, tail) {
+  return `node ${shQuote(CLI_PATH)} --run ${shQuote(runDir)} ${tail}`;
+}
+
+function emptyResult() {
+  return { applied: [], session: [], refused: [], pending: [], alreadyApplied: [], failed: [], logFailures: [] };
+}
 
 function logApplied({ runDir, text, reversibility, deps }) {
   deps.appendDecision({ runDir, section: SECTION, entry: formatEntry({ status: 'AUTO', now: deps.now(), step: STEP, text, reversibility }) });
@@ -120,12 +138,14 @@ function declineText({ runDir, item, text, reason, deps }) {
 function declineItem({ runDir, item, reason, deps }) {
   const line = appliedLine(runDir, item, deps);
   if (line) return { alreadyApplied: { item, line } };
-  let text;
-  try { text = String(deps.readFile(path.join(runDir, 'staged', item))); } catch (err) { return { failed: { item, error: `cannot read staged/${item}: ${errorText(err)}` } }; }
-  return declineText({ runDir, item, text, reason, deps });
+  const read = readStagedText(runDir, item, deps);
+  if (read.error) return { failed: { item, error: read.error } };
+  return declineText({ runDir, item, text: read.text, reason, deps });
 }
 
-const normalizeRef = (ref) => `#${String(ref).replace(/^#/, '')}`;
+function normalizeRef(ref) {
+  return `#${String(ref).replace(/^#/, '')}`;
+}
 
 // Logs the AUTO line for a session-performed outcome (the edit made, the record filed through MCP or
 // local files, the digest line posted). { runDir, item, kind: 'edited'|'filed'|'digested', ref? }
@@ -134,9 +154,9 @@ function markApplied({ runDir, item, kind, ref, deps }) {
   if (!APPLIED_KINDS.includes(kind)) return { error: `unknown --applied kind: ${kind} (expected ${APPLIED_KINDS.join('|')})` };
   const line = appliedLine(runDir, item, deps);
   if (line) return { alreadyApplied: { item, line } };
-  let text;
-  try { text = String(deps.readFile(path.join(runDir, 'staged', item))); } catch (err) { return { failed: { item, error: `cannot read staged/${item}: ${errorText(err)}` } }; }
-  const dest = parseReflectDestination(text);
+  const read = readStagedText(runDir, item, deps);
+  if (read.error) return { failed: { item, error: read.error } };
+  const dest = parseReflectDestination(read.text);
   let logText;
   let reversibility;
   let carried = ref;
@@ -190,7 +210,7 @@ function emitProposal(proposal) {
 function applyReflectItems({
   runDir, only, transport = 'gh', outDir, repo, dryRun = false, deps,
 }) {
-  const res = { applied: [], session: [], refused: [], pending: [], alreadyApplied: [], failed: [], logFailures: [] };
+  const res = emptyResult();
   if (dryRun) res.planned = [];
   const wanted = Array.isArray(only) ? new Set(only) : null;
   let workTypes;
@@ -294,5 +314,5 @@ function applyReflectItems({
 }
 
 module.exports = {
-  applyReflectItems, listApplicable, markApplied, declineItem, APPLIED_LINE_RE, APPLIED_KINDS,
+  applyReflectItems, listApplicable, markApplied, declineItem, emptyResult, APPLIED_LINE_RE, APPLIED_KINDS,
 };

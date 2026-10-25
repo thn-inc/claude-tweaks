@@ -63,7 +63,7 @@ const { recordDecline } = require('./lib/declined-learning/store');
 const { readWorkTypes } = require('./lib/work-backend');
 const { defaultRunner } = require('./lib/feedback/file-feedback');
 const {
-  applyReflectItems, listApplicable, markApplied, declineItem, APPLIED_KINDS,
+  applyReflectItems, listApplicable, markApplied, declineItem, emptyResult, APPLIED_KINDS,
 } = require('./lib/console/reflect-apply');
 
 const USAGE = 'usage: reflect-apply.js --run <run-dir> [--only <name,...>] [--transport gh|emit] [--out-dir <dir>] [--repo owner/name] [--dry-run] [--help]\n'
@@ -112,8 +112,6 @@ const realDeps = {
   tmpFile: (name) => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'reflect-apply-')), name),
 };
 
-const emptyResult = () => ({ applied: [], session: [], refused: [], pending: [], alreadyApplied: [], failed: [], logFailures: [] });
-
 function run(argv, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
   const o = parseArgs(argv);
@@ -123,6 +121,7 @@ function run(argv, overrides = {}) {
   if (!o.run) return usageError('--run <run-dir> is required');
 
   const itemMode = o.item !== null || o.decline !== null || o.applied !== null;
+  const transport = o.transport === null ? 'gh' : o.transport;
   let only = null;
   if (itemMode) {
     if (o.item === null) return usageError('--decline and --applied need --item <name>');
@@ -144,7 +143,6 @@ function run(argv, overrides = {}) {
       only = o.only.split(',').map((s) => s.trim()).filter(Boolean);
       if (!only.length) return usageError('--only names no item');
     }
-    const transport = o.transport === null ? 'gh' : o.transport;
     if (transport !== 'gh' && transport !== 'emit') return usageError(`--transport must be gh or emit (got ${transport})`);
     if (transport === 'emit' && o.outDir === null) return usageError('--transport emit needs --out-dir <dir>');
     if (transport === 'gh' && o.outDir !== null) return usageError('--out-dir needs --transport emit');
@@ -185,7 +183,13 @@ function run(argv, overrides = {}) {
     if (r.logFailure) result.logFailures.push(r.logFailure);
   } else {
     result = applyReflectItems({
-      runDir, only, transport: o.transport === null ? 'gh' : o.transport, outDir: o.outDir === null ? undefined : path.resolve(deps.cwd(), o.outDir), repo: o.repo === null ? undefined : o.repo, dryRun: o.dryRun, deps,
+      runDir,
+      only,
+      transport,
+      outDir: o.outDir === null ? undefined : path.resolve(deps.cwd(), o.outDir),
+      repo: o.repo === null ? undefined : o.repo,
+      dryRun: o.dryRun,
+      deps,
     });
   }
   for (const f of result.failed) deps.stderr(`reflect-apply.js: ${f.item}: ${f.error}\n`);
