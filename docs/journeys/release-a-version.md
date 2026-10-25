@@ -51,7 +51,7 @@ files:
 
 ### 5. Release again — a fresh run directory
 - **URL:** `/claude-tweaks:release` a day later, after the previous release finished (or stopped early)
-- **Action:** Step 0 finds the previous release's directory and refuses it. It does this whether that directory is `clean`/`closed` or still `active` from a run that stopped early, because a release's own directory never belongs to a parent pipeline. It mints a fresh standalone directory, logs `Step 0: {dir} is a prior release run's directory (status {status}) — not adopted; minted {new dir}`, and pins its own review ceiling.
+- **Action:** Step 0 finds the previous release's directory and refuses it. It does this whether that directory is `clean`/`closed` or still `active` from a run that stopped early, because a release's own directory never belongs to a parent pipeline. The refusal happens inside `resolve-run-dir`'s step 2, which also refuses a directory whose state file is unreadable. Step 0 then mints a fresh standalone directory and pins its own review ceiling.
 - **Should feel:** Each release is its own run; yesterday's review findings and verdict never leak into today's.
 - **Should understand:** Only a parent pipeline's directory, handed in through `$PIPELINE_RUN_DIR` (for example by `/claude-tweaks:wrap-up`), is ever inherited. An inherited directory is never closed, archived or disposed of by release; its parent owns it.
 - **Red flags:** Today's `## /review` verdict read from yesterday's lines; a standalone run that skipped its ceiling pin or suppressed its Next Actions; a second, stray directory minted mid-run because a later step re-ran the Step 0 fence.
