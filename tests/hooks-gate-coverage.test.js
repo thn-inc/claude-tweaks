@@ -390,6 +390,23 @@ test('#3080: a `>` inside a quoted string is not mistaken for a redirection', ()
   assert.deepStrictEqual(fileWriteTargets('echo "a > b"', '/r'), []);
 });
 
+// #4303: csh-style `>& file` sends stdout and stderr to the file. bash 3.2 and 5 write M/f for
+// `>& M/f`, `>&M/f` and `1>&M/f`; `2>&M/f` is an ambiguous redirect and writes nothing.
+// The fd prefix is read as a number, and only where the operator starts the word: bash 3.2
+// and 5 write M/f for `01>&M/f` and for `"2">&M/f` (a quoted `2` is a word, not an fd), and
+// `0>&M/f` is an ambiguous redirect that writes nothing, like `2>&M/f`. `x>>&M/f` is a syntax
+// error in both, so nothing runs.
+test('#4303: `>&` with a file target resolves the file, as bash writes it', () => {
+  for (const cmd of ['echo x >& /main/f.js', 'echo x >&/main/f.js', 'echo x 1>&/main/f.js', 'cd /main && echo x >& f.js', 'echo x 01>&/main/f.js', 'echo "2">&/main/f.js']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'write', file: MAIN_F }], cmd);
+  }
+});
+test('#4303: `>&` with an fd, `-`, or a non-stdout fd prefix resolves no target', () => {
+  for (const cmd of ['echo x >&2', 'echo x >& 2', 'echo x >&-', 'echo x >&3-', 'echo x 2>&1', 'echo x 2>&/main/f.js', 'echo x 0>&/main/f.js', 'echo x>>&/main/f.js']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+  }
+});
+
 // #4015: bash ends a word at an unquoted `>`, so a redirect glued to a
 // preceding word writes its target just like a spaced one.
 test('AC1.1 AC2.1 #4015: a redirect glued to a preceding unquoted word resolves its target', () => {

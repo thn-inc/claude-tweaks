@@ -859,27 +859,32 @@ function resolveWriteTarget(effCwd, raw) {
   return path.resolve(effCwd, stripped);
 }
 
-// A redirection's RHS that is a file-descriptor duplication (`>&2`, `2>&1`),
-// or an fd close/move (`>&-`, `>&3-`), never a file target — distinct from
-// resolveWriteTarget's unresolvable set because the shape (a bare `&` followed
-// by digits or `-`) is specific to redirection syntax and would otherwise read
-// as a plausible-looking relative path.
-function isFdDupTarget(raw) {
-  return /^&(\d+-?|-)$/.test(raw);
+// The word after a redirection's `&` that duplicates a file descriptor
+// (`>&2`, `2>&1`, `>& 2`) or closes/moves one (`>&-`, `>&3-`), never a file
+// target — distinct from resolveWriteTarget's unresolvable set because the
+// shape (digits or `-`) is specific to redirection syntax and would otherwise
+// read as a plausible-looking relative path. Any other word after `>&` or
+// `1>&` is the csh form's file (redirectWriteTargets).
+function isFdDupTarget(word) {
+  return /^(\d+-?|-)$/.test(word);
 }
 
 // Matches a write-redirection operator at the START of a token, optionally
 // fd-prefixed (`2>`, `1>>`) or in `&>`/`&>>` combined-stream form, capturing
 // whatever follows the operator in the SAME token (a glued target, or '' for
 // a standalone operator whose target is the next token). `<` (input
-// redirection) and `>&N`/`N>&M` (fd duplication, handled by the caller once it
-// has the full candidate target) are not matched as write operators here.
-const REDIRECT_OP_RE = /^\d*(>>|>\||>)(.*)$/;
+// redirection) is not matched. `>&` matches as `>` with a target that starts
+// with `&` (an fd duplication, or the csh form `>& file`), which the caller
+// resolves; `plainFd` is the fd prefix of a plain `>` ('' when unprefixed),
+// and null for `>>`, `>|`, `&>` and `&>>`.
+const REDIRECT_OP_RE = /^(\d*)(>>|>\||>)(.*)$/;
 const AMP_REDIRECT_OP_RE = /^&(>>|>)(.*)$/;
 
 function matchRedirectOperator(tok) {
-  const m = REDIRECT_OP_RE.exec(tok) || AMP_REDIRECT_OP_RE.exec(tok);
-  return m ? m[2] : null;
+  const m = REDIRECT_OP_RE.exec(tok);
+  if (m) return { plainFd: m[2] === '>' ? m[1] : null, target: m[3] };
+  const amp = AMP_REDIRECT_OP_RE.exec(tok);
+  return amp ? { plainFd: null, target: amp[2] } : null;
 }
 
 // #3989/#4149 heredoc-body stripping (see stripHeredocBodies below). A body is
@@ -1988,12 +1993,17 @@ function redirectWriteTargets(t, effCwd, quoting) {
   const kindsOf = quoting && quoting.spanKinds;
   for (let i = compoundBodyEnd(t); i < t.length; i += 1) {
     let rawTarget = null;
-    if (!kindsOf) rawTarget = matchRedirectOperator(t[i]);
-    else {
+    let plainFd = null; // the fd prefix of a plain `>` ('' when unprefixed); null for any other operator
+    if (!kindsOf) {
+      const op = matchRedirectOperator(t[i]);
+      if (op) ({ plainFd, target: rawTarget } = op);
+    } else {
       const raw = quoting.raw[i];
+      const kinds = kindsOf[i];
       const nest = quoting.nestAt ? quoting.nestAt[i] : NOT_NESTED;
-      let opEnd = leadingRedirectOpEnd(raw, kindsOf[i], nest);
-      if (opEnd === null) opEnd = gluedRedirectOpEnd(raw, kindsOf[i], nest);
+      let opEnd = leadingRedirectOpEnd(raw, kinds, nest);
+      const leading = opEnd !== null;
+      if (!leading) opEnd = gluedRedirectOpEnd(raw, kinds, nest);
       if (opEnd !== null) {
         // substituteVars rewrites at most one `$` reference per token, so exactly one
         // side of the operator changed: read the target from whichever side survived.
@@ -2002,6 +2012,12 @@ function redirectWriteTargets(t, effCwd, quoting) {
         if (t[i] === raw) rawTarget = tail;
         else if (t[i].startsWith(head)) rawTarget = t[i].slice(head.length);
         else if (t[i].endsWith(tail)) rawTarget = tail;
+        // A plain `>` is not the second character of `>>` or `&>`. Its fd prefix is the
+        // head's digits when the operator starts the token (`2>`, all bare there); a
+        // glued word before it (`x2>`, `"2">`) is a word, not an fd.
+        const prev = opEnd - 2;
+        const plain = head.endsWith('>') && !(prev >= 0 && kinds[prev] === 'b' && (raw[prev] === '>' || raw[prev] === '&'));
+        if (plain) plainFd = leading ? head.slice(0, -1) : '';
       }
     }
     if (rawTarget === null) continue;
@@ -2009,7 +2025,23 @@ function redirectWriteTargets(t, effCwd, quoting) {
       i += 1; // consume the target token too — never re-scan it as its own operator
       rawTarget = t[i];
     }
-    if (rawTarget === undefined || isFdDupTarget(rawTarget) || rawTarget.startsWith('(')) continue;
+    if (rawTarget === undefined) continue;
+    // #4303: a target that starts with `&` follows `>&`. After a plain `>` with no fd
+    // prefix or the prefix 1, a word that is no fd dup is the csh form `>& file`, which
+    // writes the file (bash 3.2 and 5). A bare `&` takes the next token as that word,
+    // so `>& 2` is still a dup. Any other prefix (`2>&f`, `0>&f`) is an ambiguous
+    // redirect, and any other operator (`>>&f`) a syntax error: neither writes.
+    if (rawTarget.startsWith('&')) {
+      let word = rawTarget.slice(1);
+      if (word === '') {
+        i += 1; // consume the word token too, as above
+        word = t[i];
+      }
+      const stdout = plainFd === '' || Number(plainFd) === 1; // Number(null) is 0: not stdout
+      if (word === undefined || !stdout || isFdDupTarget(word)) continue;
+      rawTarget = word;
+    }
+    if (rawTarget.startsWith('(')) continue;
     const file = resolveWriteTarget(effCwd, rawTarget);
     if (file) out.push(file);
   }

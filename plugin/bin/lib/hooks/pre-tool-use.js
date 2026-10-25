@@ -142,8 +142,10 @@ const GATE_COVERAGE = Object.freeze({
   // fileWriteTargets for every segment, not gated by WRITE_SHAPES) and
   // bash-prefilter.js's hasFileRedirection both recognize these operator
   // spellings (fd-prefixed forms like `2>`/`1>>` are the same operators with
-  // a leading file-descriptor number, not a separate spelling).
-  bashRedirections: Object.freeze(['>', '>>', '>|', '&>', '&>>']),
+  // a leading file-descriptor number, not a separate spelling). `>&` (#4303)
+  // is the csh form `>& file`, which writes the file; `>&2` and `2>&1`, the
+  // same characters with a descriptor after them, write nothing.
+  bashRedirections: Object.freeze(['>', '>>', '>|', '&>', '&>>', '>&']),
   // These have their own prose-binding block — skills/_shared/policy-schema-coverage.md's
   // "Teardown gate coverage" section (tests/hooks-gate-coverage.test.js pins
   // the two) — deliberately separate from the worktree-always block above,
