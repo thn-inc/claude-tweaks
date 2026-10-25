@@ -75,15 +75,14 @@ every path below once, before running anything else, via the CLI wrapper — sev
 that convention's three-file cutoff for preferring it to the inline `node -e` form:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" \
-  PARENT_ISSUES=trust-table-parent-issues.json \
-  SUB_ISSUES=trust-table-sub-issues.json \
-  SUB_ISSUES_BATCH=trust-table-sub-issues-batch.json \
-  GIT_LOG=trust-table-git-log.txt \
-  RECORDS=trust-table-records.json \
-  SUB_ISSUE_NUMBERS=trust-table-sub-issue-numbers.jsonl \
-  SUB_ISSUE_FAILURES=trust-table-sub-issue-failures.txt)"
-echo "$PARENT_ISSUES|$SUB_ISSUES|$SUB_ISSUES_BATCH|$GIT_LOG|$RECORDS|$SUB_ISSUE_NUMBERS|$SUB_ISSUE_FAILURES"
+PARENT_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-parent-issues.json)"
+SUB_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-sub-issues.json)"
+SUB_ISSUES_BATCH="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-sub-issues-batch.json)"
+COMMIT_LOG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-git-log.txt)"
+RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-records.json)"
+SUB_ISSUE_NUMBERS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-sub-issue-numbers.jsonl)"
+SUB_ISSUE_FAILURES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-sub-issue-failures.txt)"
+echo "$PARENT_ISSUES|$SUB_ISSUES|$SUB_ISSUES_BATCH|$COMMIT_LOG|$RECORDS|$SUB_ISSUE_NUMBERS|$SUB_ISSUE_FAILURES"
 ```
 
 Substitute the seven printed absolute paths for `{tmp-parent-issues}`, `{tmp-sub-issues}`,
@@ -164,7 +163,7 @@ SUBSNAP=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/rec
 if [ -n "$SUBSNAP" ] && node -e "
   const { isFresh } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
   process.exit(isFresh(process.argv[1], Number(process.argv[2])) ? 0 : 1)
-" "$SUBSNAP" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
+" -- "$SUBSNAP" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
   cp "$SUBSNAP" "{tmp-sub-issues}"
   echo SUBSNAP_FRESH
 else
@@ -278,15 +277,15 @@ The git-log dump follows the same session-scoped freshness rule as the record sn
 when fresh, else regenerate it:
 
 ```bash
-GITLOG=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').gitLogPath(process.env.CLAUDE_CODE_SESSION_ID) || '')")
-if [ -n "$GITLOG" ] && node -e "
+COMMITLOG=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').gitLogPath(process.env.CLAUDE_CODE_SESSION_ID) || '')")
+if [ -n "$COMMITLOG" ] && node -e "
   const { isFresh } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
   process.exit(isFresh(process.argv[1], Number(process.argv[2])) ? 0 : 1)
-" "$GITLOG" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
-  cp "$GITLOG" "{tmp-git-log}"
+" -- "$COMMITLOG" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)"; then
+  cp "$COMMITLOG" "{tmp-git-log}"
 else
   git log "{integration-branch}" --format='%H%x1f%B%x1e' > "{tmp-git-log}"
-  [ -n "$GITLOG" ] && cp "{tmp-git-log}" "$GITLOG"
+  [ -n "$COMMITLOG" ] && cp "{tmp-git-log}" "$COMMITLOG"
 fi
 ```
 

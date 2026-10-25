@@ -560,6 +560,33 @@ test('a --files-from subset does not wait behind a held full-suite slot', async 
   });
 });
 
+// The subset leaf sits under the fixed-name slot base, so a pre-created base that fails the ownership
+// check must be refused before the leaf is created through it.
+test('a --files-from subset refuses a slot base that is a symlink', {
+  skip: process.platform === 'win32' && 'win32: creating a symlink needs extra privileges',
+}, async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const root = path.join(sb.suiteRoot, 'repo');
+    fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'tests'));
+    fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+    fs.copyFileSync(path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'one.test.js'));
+    const list = path.join(sb.suiteRoot, 'list.txt');
+    fs.writeFileSync(list, 'tests/one.test.js\n');
+    const target = path.join(sb.suiteRoot, 'slot-target');
+    fs.mkdirSync(target);
+    const link = path.join(sb.suiteRoot, 'slot-link');
+    fs.symlinkSync(target, link);
+    const result = spawnSync(process.execPath, [path.join(root, 'tools', 'run-tests.js'), '--files-from', list], {
+      cwd: root, env: { ...sb.env, CT_TEST_SUITE_SLOT_DIR: link }, encoding: 'utf8', timeout: 30000,
+    });
+    assert.notStrictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stderr, /not a directory owned by this user/);
+    assert.doesNotMatch(result.stdout, /tests \d/);
+    assert.strictEqual(fs.existsSync(path.join(target, 'subset')), false);
+  });
+});
+
 // Polls `predicate` until true or `timeoutMs` passes; rejects on timeout so a hang fails the test.
 async function until(predicate, timeoutMs, what) {
   const deadline = Date.now() + timeoutMs;

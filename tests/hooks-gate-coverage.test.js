@@ -367,6 +367,7 @@ test('AC1.1 AC2.1 #4015: a redirect glued to a preceding unquoted word resolves 
     ['echo foo&>x', 'x'], ['echo foo2>x', 'x'], ['echo foo> x', 'x'], ['WT=/w; echo foo>$WT/x', '/w/x'],
     ['(cd sub; ls)>out.txt', 'out.txt'], // a group's redirect runs in the outer cwd, not the inner `cd`'s
     ['[[ a ]] >out', 'out'], ['(( x > y )) >out', 'out'], // a redirect after the comparison's closer still counts
+    ['if (( x > y )) >out', 'out'], ['if (( x>y )); then echo hi > out; fi', 'out'],
   ]) {
     assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
   }
@@ -379,8 +380,165 @@ test('AC1.2 AC2.1 #4015: a `>` that is quoted, escaped, expanded, an fd dup, a s
     '((i>0))', 'if ((n>0)); then echo hi; fi', 'while ((i>0)); do echo x; done',
     'exec 3>&-', 'cmd >&-', 'echo foo>&-',
     '[[ a>b ]]', '[[ a > b ]]', '[[ $x =~ a>b ]]', '(( x>y ))', '(( x > y ))', '(( x>y))',
+    // #4210 review: a control keyword before the compound command does not make its body a redirect
+    'if (( x>y )); then echo hi; fi', 'while (( i>0 )); do echo x; done', 'if [[ a>b ]]; then echo x; fi', 'if ! (( x>y ))',
   ]) {
     assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+// #4210: the word before a glued `>` may hold a quoted span — only the `>`
+// itself has to be bare. A `>` inside any quote, or escaped, stays literal.
+test('AC1.1 #4210: a redirect glued to a word that holds a quoted span resolves its target', () => {
+  for (const [command, file] of [
+    ['echo "hi">x', 'x'], ['printf "%s\\n" "$v">out.txt', 'out.txt'], ['echo foo>"x y"', 'x y'],
+    ["echo 'hi'>>x", 'x'], ['echo "hi">\'x\'', 'x'], ['echo "hi"> x', 'x'], ['WT=/w; echo "hi">$WT/x', '/w/x'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+});
+
+test('AC1.1 #4210: a quoted, escaped, or unterminated `>` beside a bare span resolves no target', () => {
+  for (const command of [
+    'echo "foo>x"', "echo 'foo>x'", 'echo foo">"x', 'node -e "x>y"',
+    'echo "a\\">x"', 'echo "hi"\\>x', 'echo "hi>x', 'echo "hi">x"',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+test('#4210: a mid-word quote merges the way bash does, so `cd foo"bar"` changes into foobar', () => {
+  assert.deepStrictEqual(fileWriteTargets('cd foo"bar"; echo x > a', '/r'), [{ action: 'write', file: path.resolve('/r', 'foobar', 'a') }]);
+});
+
+// #4210: a one-word subshell, command substitution, or process substitution
+// ends at its `)`, so a `>` right after it is a redirect. `((` is arithmetic.
+test('AC2.1 #4210: a redirect after a balanced one-word subshell or substitution resolves its target', () => {
+  for (const [command, file] of [
+    ['(ls)>out', 'out'], ['(ls)>>out', 'out'], ['diff <(a) <(b)>out', 'out'], ['echo $(date)>x', 'x'],
+    ['(ls)2>err', 'err'], ['(ls)2>>err', 'err'], // an fd number after the group: a subshell with a `2>` redirect
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+});
+
+test('AC2.1 #4210: arithmetic and nested groups stay target-free', () => {
+  for (const command of ['((i>0))', '(( x>y ))', '((i>0))>x', '(a(b))>x', '$((1))>x', '"a"(ls)>x']) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+// #4210 F1: a `$(`, `${` or backtick inside double quotes opens a nested context whose
+// own quotes the tokenizer flips, so a `>` there looks bare though bash keeps it quoted.
+test('#4210 F1: a `>` inside a nested "$( … )", "${ … }" or backtick context resolves no target', () => {
+  for (const command of [
+    'echo "$(jq -r ".a>1" f.json)"', 'echo "Count: $(grep -c "foo>" file)"',
+    'echo "$(node -p "process.argv.length>2")"', 'echo "${x:-"a>b"}"', 'echo "$(echo "a>b")"',
+    'echo "$(cmd "x y>z")"', 'echo "$(cmd "x y >z")"', 'echo "`cmd "a>b c"`"',
+    "gh pr create --body \"$(cat <<'EOF'\n- treat \"x>y\" as literal\nEOF\n)\"",
+    'echo "$(echo \\) "x>y")"', 'echo "$(echo \')\' "a>b")"', 'echo "$( { a; } "x>y")"',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+// #4210 F1 residual: splitSegments cuts at a `|`, `;`, `&&` or newline inside an inner
+// quote of "$( … )", so the nesting state must carry across segments, not reset.
+test('#4210 F1: a nested "$( … )" stays nested across a `|`, `;`, `&&` or newline segment break', () => {
+  for (const command of [
+    "git commit -m \"$(cat <<'EOF'\nfix: treat \"a | b>c\" as literal\nEOF\n)\"",
+    "git commit -m \"$(cat <<'EOF'\nfix: treat \"a; b>c\" as literal\nEOF\n)\"",
+    "gh pr create --body \"$(cat <<'EOF'\n- quote \"x\nand y>z\"\nEOF\n)\"",
+    "gh pr create --body \"$(cat <<'EOF'\n- the 12\" screen\n- x>y works\nEOF\n)\"",
+    'echo "$(jq -r ".a | .b > 1" f.json)"', 'echo "$(jq -r ".items | length>0" f.json)"',
+    'echo "$(jq -r ".[] | select(.n > 1) | .name" f.json)"',
+    'msg="$(git log -1 --format="%s | %an>")"', 'echo "$(echo "a;b>c")"', 'echo "$(grep -c "a && b>c" f)"',
+    'echo "${x:-"a | b>c"}"', 'echo "$(awk -F"|" "\\$2>5" f)"',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+test('#4210 F1: a closed "$( … )" or "${ … }" still lets a later redirect resolve', () => {
+  for (const [command, file] of [
+    ['"$(date)">x', 'x'], ['echo "$(date)" foo>x', 'x'], ['echo "${x:-a}">y', 'y'], ['echo "\\$(" foo>x', 'x'],
+    ['echo "$(jq ".a | .b" f)" > out.js', 'out.js'], ['echo "$(a | b)" > out.js', 'out.js'], ['echo "$(a)"; echo y>z', 'z'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+});
+
+// #4210 review: two shapes the nesting walk used to leave nested for the rest of the
+// command, hiding a later genuine redirect that main resolved. A heredoc opened inside
+// "$( … )" is found by stripHeredocBodies, so its body's `'` or backtick is data; a `(`,
+// `)` or `'` inside "${ … }" is literal word text, so only the `}` closes it.
+test('#4210 review: a heredoc body inside "$( … )" does not leave the nesting state open', () => {
+  for (const [command, file] of [
+    ["git commit -m \"$(cat <<'EOF'\nDon't merge yet\nEOF\n)\" && echo x > out.js", 'out.js'],
+    ["git commit -m \"$(cat <<'EOF'\nfix: it's done\nEOF\n)\" && git push && echo ok > status.txt", 'status.txt'],
+    ["git commit -m \"$(cat <<'EOF'\nuse `x` here (and (this\nEOF\n)\" && echo y > o.js", 'o.js'],
+    ["git commit -m \"$(cat <<'EOF'\nDon't\nEOF\n)\" > out.js", 'out.js'],
+    ["gh pr create --body \"$(cat <<'EOF'\n- treat \"x>y\" as literal\nEOF\n)\" && echo a > b.js", 'b.js'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+  assert.deepStrictEqual(fileWriteTargets("git commit -m \"$(cat <<'EOF'\nfoo > bar\nEOF\n)\"", '/r'), []);
+});
+
+test('#4210 review: a literal `(`, `)` or `\'` inside "${ … }" does not leave the nesting state open', () => {
+  for (const [command, file] of [
+    ['echo "${x:-(}" > out.js', 'out.js'], ['echo "${x//(/y}" > out.js', 'out.js'], ['echo "${x:-it\'s}" > out.js', 'out.js'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+  for (const command of ['echo "${x:-a>b}"', 'echo "${x:-"a>b"}"', 'echo "${x:-(}"; echo "${y:-"a>b"}"']) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+// #4210 review: the single-quote guard on `$NAME` substitution reads the `$`'s own span, so a
+// quoted span elsewhere in the token no longer hides a bare reference, and a `$` that sits in
+// single quotes (or is backslash-escaped) is still literal.
+test('#4210 review: a bare $NAME beside a single-quoted span expands; a quoted or escaped one does not', () => {
+  for (const [command, file] of [
+    ["WT=/w; echo 'hi'>$WT/x", '/w/x'], ['WT=/w; echo "hi">$WT/x', '/w/x'], ["WT=/w; echo '$WT'>x", 'x'],
+    ["WT=/w; cd 'a'$WT && echo x > y", 'a/w/y'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+  for (const command of ["WT=/w; echo hi > '$WT/x'", 'WT=/w; echo hi > \\$WT/x']) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+// #4210 F2: an escaped character before the `>` is part of the word, as in bash; an
+// escaped `>` itself stays literal.
+test('#4210 F2: an escaped character before a glued `>` still resolves its target', () => {
+  for (const [command, file] of [
+    ['echo foo\\ bar>out.txt', 'out.txt'], ['cat My\\ File.txt>out.txt', 'out.txt'], ['echo a\\\\>x', 'x'], ['echo \\"hi\\">x', 'x'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+  for (const command of ['echo foo\\>x', 'echo "$(awk "{print \\$1>2}" f)"']) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+// #4210 F3: a token that starts with `>` is a redirect only when the operator itself is
+// bare on the token as typed; a quoted `>` or one a `$VAR` expands to is a word.
+test('#4210 F3: a quoted or expanded leading `>` resolves no target', () => {
+  for (const command of ['echo ">x"', 'echo ">"x', 'gh issue comment 1 --body "> quoted reply"', 'V=">x"; echo $V']) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+test('#4210 F3: a bare leading operator still resolves, with a quoted or $VAR target', () => {
+  for (const [command, file] of [
+    ['echo x > tracked.js', 'tracked.js'], ['echo x >out.js', 'out.js'], ['cmd 2>> err.log', 'err.log'],
+    ['cmd &> f', 'f'], ['cmd >| f', 'f'], ['WT=/w; echo x >$WT/a', '/w/a'], ['echo hi >"x y"', 'x y'],
+    ['echo ">"x>y', 'y'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
   }
 });
 

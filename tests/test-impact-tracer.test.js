@@ -241,3 +241,33 @@ test('unattributed process records nothing', () => {
   assert.strictEqual(result.status, 0, result.stderr);
   assert.deepStrictEqual(fs.readdirSync(dir), []);
 });
+
+// A traced env whose trace writes fail through tests/fixtures/test-impact/fail-trace-append.js, preloaded
+// first (#4158): the read of lib/y.js fails, and with FAIL_TRACE_APPEND=all every .trace and .lost write does.
+function failingTraceEnv(dir) {
+  const env = traceEnv(root, dir);
+  env.CT_TRACE_TEST = 'x.test.js';
+  env.NODE_OPTIONS = `--require "${path.join(root, 'fail-trace-append.js')}" ${env.NODE_OPTIONS}`;
+  return env;
+}
+
+test('a traced process whose trace write fails exits 1 although its own code succeeded, and leaves no loss marker', () => {
+  const dir = path.join(tmp, 'lost-all');
+  fs.mkdirSync(dir);
+  const env = failingTraceEnv(dir);
+  env.FAIL_TRACE_APPEND = 'all';
+  const result = spawnSync(process.execPath, ['-e', "require('fs').readFileSync('lib/x.js')"], { cwd: root, env, encoding: 'utf8' });
+  assert.strictEqual(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stderr, /loss marker could not be written/);
+  assert.deepStrictEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.lost')), []);
+});
+
+test('a read whose trace write fails leaves a .lost marker naming its test, and the process exits 0', () => {
+  const dir = path.join(tmp, 'lost-one');
+  fs.mkdirSync(dir);
+  const result = spawnSync(process.execPath, ['-e', "require('fs').readFileSync('lib/y.js')"], { cwd: root, env: failingTraceEnv(dir), encoding: 'utf8' });
+  assert.strictEqual(result.status, 0, result.stderr);
+  const lost = fs.readdirSync(dir).filter((n) => n.endsWith('.lost'));
+  assert.strictEqual(lost.length, 1);
+  assert.strictEqual(fs.readFileSync(path.join(dir, lost[0]), 'utf8'), '["T","x.test.js"]\n');
+});

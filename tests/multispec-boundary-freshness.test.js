@@ -64,9 +64,14 @@ test('multispec-batch-curation.md derives its batch diff base from git merge-bas
   const scopeLine = text.split('\n').find((l) => l.includes('**Scope**'));
   assert.ok(scopeLine, 'Scope bullet must exist');
   assert.match(scopeLine, /merge-base/, 'Scope bullet must derive from merge-base');
-  const fence = (text.match(/```[\s\S]*?```/g) ?? []).find((f) => f.includes('wrap-up-engine.js'));
+  const fences = text.match(/```[\s\S]*?```/g) ?? [];
+  const fence = fences.find((f) => f.includes('wrap-up-engine.js'));
   assert.ok(fence, 'engine-call fence must exist');
-  assert.match(fence, /--base "\$\(git merge-base /, '--base must come from git merge-base');
+  // #4028: the merge-base runs as its own call (the worktree guard refuses git inside $(...)), and
+  // the engine call takes its printed value as {merge-base}.
+  assert.match(fence, /--base "\{merge-base\}"/, '--base must take the {merge-base} value');
+  assert.ok(fences.some((f) => /^```bash\r?\ngit merge-base --end-of-options HEAD "origin\/\{integration-branch\}"\r?\n```$/.test(f)), 'the merge-base must be its own call');
+  assert.match(text, /`\{merge-base\}` is what this prints:\s*```bash\r?\ngit merge-base /, '--base must come from git merge-base');
   assert.doesNotMatch(text, /yq '\.multispec\.baseSha'/, 'the baseSha yq read must be gone');
 });
 
