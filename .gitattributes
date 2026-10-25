@@ -7,3 +7,5 @@ tools/upstream-drift/fixtures/** -text
 tests/fixtures/verify-dialects/** -text
 # Captured release-please sections, pinned by the sha256 of their raw bytes (changelog-fixture.test.js).
 tests/bin-lib/release-local/fixtures/release-please-*.md -text
+# The traced test-impact fixture asserts a copied file's exact bytes (a.fixture.js's recursive copy, #4134).
+tests/fixtures/test-impact/docs/copied/** -text
