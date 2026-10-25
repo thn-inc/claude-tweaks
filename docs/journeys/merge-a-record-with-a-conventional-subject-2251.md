@@ -56,6 +56,13 @@ files:
 - **Should understand:** The footer's text is the record's own section, verbatim; a `breaking` record with no section is a shaping defect that fails composition (step 1's exit 1), never a merge with an empty footer.
 - **Red flags:** A `breaking`-labelled record whose merge subject has no `!`; a `BREAKING CHANGE:` line that is not the last paragraph of the body.
 
+### 5. A deferred bundle member stays open — `compose-subject.js --keep-open {k}` (pr-first)
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --keep-open {keep-open} --pr {pr-number} --out-dir "{subject-dir}"` (`_shared/pr-first-merge.md` Step 3; `--keep-open` is omitted when the PR body's fixes block has no `Refs` line)
+- **Action:** A pr-first bundle whose PR body defers one record's closure (`Refs #{k} — deferred: {reason}`) passes that record as `--keep-open`. The composer still counts `#{k}` for the subject, the Type aggregation and the release note, but writes `Refs #{k}` for it in the body and `Fixes #{n}` only for the finished records.
+- **Should feel:** The merge message says what the PR body says. Nothing to edit by hand.
+- **Should understand:** The squash message is a closing channel of its own, separate from the PR body's links, so a `Fixes #{k}` there would close the deferred record even with a clean body. A `--keep-open` number that is not in `{issue-list}` exits 1, like the composition errors in step 1. The whole keep-open flow, with the pre-merge unlink and the post-merge reopen, is the `keep-a-deferred-record-open-when-its-bundle-pr-merges-4199.md` journey.
+- **Red flags:** `Fixes #{k}` in the merged commit's body for a record the PR body lists on a `Refs` line.
+
 ## Origin
 - Created during build of #2251 (Merge-time conventional subject and the `breaking` label) — unit 1 of the `/claude-tweaks:release` design (#2250)
 - Steps 1-4 built in this session
@@ -66,3 +73,4 @@ files:
 - Updated during build of #3522 (guard-safe --out-dir merge fences): the composer writes `title.txt`/`body.md`/`message.txt` into `{subject-dir}` and every fence reads them (`-F`, `--body-file`) — no `eval`, no `--shell`
 - Updated during build of #3537 (retire --shell): the composer's eval-able --shell output is gone; JSON and --out-dir are the only output forms, and a plugin/skills/** sweep pins that no fence evals composer output
 - Updated during build of #4014 (compose-subject "Filed by" footer): the release note stops at a record's trailing `_Filed by …_` footer, and a footer-only `## Release Note` section counts as empty at the step 1 gate
+- Updated during build of #4199 (pr-first closing-link guard): step 5, where `--keep-open` writes `Refs #{k}` for a deferred bundle member in the pr-first squash body

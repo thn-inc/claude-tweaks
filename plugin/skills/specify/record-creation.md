@@ -114,7 +114,7 @@ SPECIFY_PARENT_EXISTING=$(node -e "
   const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
   const n = checkFingerprint(map, process.argv[1]);
   console.log(n === null ? '' : n);
-" "${DESIGN_DOC_SLUG}:parent")
+" -- "${DESIGN_DOC_SLUG}:parent")
 ```
 
 `work-backend: github-issues` — the Type expression branch (`_shared/work-record-config.md`, the config-key table's canonical home; read `work-types` once, never re-probe mid-flow):
@@ -143,7 +143,7 @@ else
     const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
     recordFingerprint(map, process.argv[1], Number(process.argv[2]));
     fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
-  " "${DESIGN_DOC_SLUG}:parent" "$PARENT_NUM"
+  " -- "${DESIGN_DOC_SLUG}:parent" "$PARENT_NUM"
 fi
 ```
 
@@ -167,7 +167,7 @@ else
     const slug=deriveSlug(process.argv[1], existingSlugs);
     const body=fs.readFileSync(process.argv[2], 'utf8');
     const record=createRecord(dir, { slug, title: process.argv[1], body, facets: { type: 'feature', isParentIssue: true } });
-    console.log(record.id)" "$PARENT_TITLE" "$SPECIFY_PARENT_BODY")
+    console.log(record.id)" -- "$PARENT_TITLE" "$SPECIFY_PARENT_BODY")
 
   node -e "
     const fs = require('fs');
@@ -175,7 +175,7 @@ else
     const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
     recordFingerprint(map, process.argv[1], Number(process.argv[2]));
     fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
-  " "${DESIGN_DOC_SLUG}:parent" "$PARENT_ID"
+  " -- "${DESIGN_DOC_SLUG}:parent" "$PARENT_ID"
 fi
 ```
 

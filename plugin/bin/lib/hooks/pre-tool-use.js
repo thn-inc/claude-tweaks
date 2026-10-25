@@ -2289,13 +2289,31 @@ function run(ctx, deps = {}) {
       + `If this project requires an isolated worktree, verify manually.`,
     );
   }
-  if (!notes.length) return out;
+  if (!notes.length) return withGuardRewrite(ctx, out);
 
   const json = { ...(out.json || {}) };
   json.systemMessage = json.systemMessage ? [json.systemMessage, ...notes].join(' ') : notes.join(' ');
   // exit stays 0 on every path, deny included — the deny signal is the stdout
   // JSON's permissionDecision, never the exit code (see this file's header).
-  return { ...out, exit: 0, json };
+  return withGuardRewrite(ctx, { ...out, exit: 0, json });
+}
+
+// #4028: an outcome with no hookSpecificOutput (no deny, no other decision)
+// carries the guard normalizer's updatedInput, any systemMessage kept. Never a
+// permissionDecision: the harness guard re-checks the rewritten command, and an
+// `allow` here would skip the permission prompt for it. A full-path Bash call
+// reaches here because bash-prefilter.js's own rewrite runs only on its skip path.
+// Required lazily inside the try: a load-time fault in guard-rewrite.js must
+// cost only the rewrite, never this module's load (every deny gate above).
+function withGuardRewrite(ctx, out) {
+  if (out.json && out.json.hookSpecificOutput) return out;
+  let hookSpecificOutput = null;
+  try {
+    const guardRewrite = require('./guard-rewrite');
+    hookSpecificOutput = guardRewrite.guardRewriteOutput(ctx && ctx.input, guardRewrite.rewriteForGuard);
+  } catch { hookSpecificOutput = null; }
+  if (!hookSpecificOutput) return out;
+  return { ...out, exit: 0, json: { ...(out.json || {}), hookSpecificOutput } };
 }
 
 module.exports = {

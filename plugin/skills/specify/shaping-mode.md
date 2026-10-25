@@ -107,13 +107,14 @@ open linked PR (the same `closedByPullRequestsReferences` connection dispatch's 
 reads — `record.js`'s `buildLinkedPRQuery` / `partitionByOpenLinkedPR`). A score-1 candidate is
 surfaced in the table and the `**Related:**` line only; file and anchor overlap alone never refuse, and `bot:in-progress` is not evidence: it is a projection that outlives the
 build. Build the state and decide in one call. First resolve this run's two session-scoped paths
-(`_shared/session-tmp-root.md` — `eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" NEAR_DUP_HITS=specify-near-dup-hits.json NEAR_DUP_SNAPSHOT=specify-near-dup-snapshot.json)"`
+(`_shared/session-tmp-root.md` — `NEAR_DUP_HITS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json)"` and `NEAR_DUP_SNAPSHOT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-snapshot.json)"`
 prints them) and write the finder's output and the candidates' snapshot entries there as JSON —
 never as inline shell arguments, since a candidate title with an apostrophe breaks the quoting.
 Then run the call below; its first line re-resolves the same two paths:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" NEAR_DUP_HITS=specify-near-dup-hits.json NEAR_DUP_SNAPSHOT=specify-near-dup-snapshot.json)"
+NEAR_DUP_HITS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json)"
+NEAR_DUP_SNAPSHOT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-snapshot.json)"
 node -e "
 const { shapingRefusal, buildShapingState, MIN_REFUSAL_SCORE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
 const { createClaimReader } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
@@ -145,7 +146,7 @@ const hit = shapingRefusal(hits, state);
 const result = hit ? { refuse: true, hit, evidence: state[hit.number] } : { refuse: false };
 if (unreadable.length) result.unreadable = unreadable;
 console.log(JSON.stringify(result));
-" "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"
+" -- "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"
 ```
 
 Only a title-similar `ready` candidate scoring at least 2 signals can refuse, so the call reads claims and linked PRs for those

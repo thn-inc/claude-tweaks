@@ -287,6 +287,21 @@ test('#2686: composeFixesBlock without a deferredClosures argument behaves exact
   );
 });
 
+test('#4199: composeFixesBlock leaves a deferred reason with no closing keyword byte-identical', () => {
+  const reason = 'Refs #2 pending; prefixes #5, resolved-ish, `code` and fixes-ish #6';
+  assert.deepEqual(
+    composeFixesBlock([{ id: 1, status: 'complete' }], new Map([['1', reason]])),
+    [`Refs #1 — deferred: ${reason}`],
+  );
+});
+
+test('#4199: composeFixesBlock neutralizes a closing keyword in a deferred reason', () => {
+  assert.deepEqual(
+    composeFixesBlock([{ id: 2724, status: 'complete' }], new Map([['2724', 'the pass that closes #2724 is pending']])),
+    ['Refs #2724 — deferred: the pass that closes issue #2724 is pending'],
+  );
+});
+
 function seedSpecDecisions(parentDir, specId, lines) {
   const dir = path.join(parentDir, `spec-${specId}`);
   fs.mkdirSync(dir, { recursive: true });

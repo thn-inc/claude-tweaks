@@ -15,7 +15,7 @@ batch-approval mechanism for it to drive.
 newest last) whose `staged/` holds one or more files — a `*-sweep-standalone*` run's staged items
 originate from tidy's own Step 1 component run inside sweep's shared run dir, and are approvable
 the same way as a standalone tidy run's — $RUN_ROOT anchored per `_shared/pipeline-run-dir.md`'s
-Anchoring section (`git rev-parse --git-common-dir`, normalized; never a bare relative path,
+Anchoring section (`hooks.js resolve-run-dir --root-only`; never a bare relative path,
 `[IL-127]`). If the newest matching directory's `staged/` is empty, walk to the next-newest across
 both shapes by the same sort; if none of them have a non-empty `staged/`, report `no staged tidy
 proposals found` and stop — nothing to approve. `backlog/attention-mode.md`'s Tidy row shares this
