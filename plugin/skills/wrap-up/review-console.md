@@ -56,7 +56,7 @@ terminal decision below.
 1. `decisions.md` — auto-decision log
 2. `staged/` directory — patches and proposals awaiting decisions
 3. `config.yml` — the Manifesto answers (for context)
-4. `events.jsonl` — hook-recorded typed events; surface `wd-deny`, `wd-push-mismatch`, `contract-violation`, and `gate-denial` events
+4. `events.jsonl` — hook-recorded typed events; surface `wd-deny`, `wd-push-mismatch`, `contract-violation`, and `gate-denial` events, skipping any `gate-denial` carrying `test: true` — the test suite's own exercise of the hook's deny logic (#1337), never operator friction; the same exclusion `bin/friction-events.js` and `bin/calibration-report.js` apply
 5. **Staged inventory reconciliation** — run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" check-staged-inventory --run "{run-dir}"`. On `MISMATCH`, surface it as a visible warning line (never a silent log entry) — a `STAGED` entry whose named `staged/` file is missing needs manual re-derivation from `decisions.md`'s prose before it can be applied here.
 6. **Session-start residue check** — run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" check-session-residue --run "{run-dir}"`. On pending residue, render a "Still pending from earlier" informational line naming each item and its resolution command, above the console tables (see console-template.md) — informational only, never acted on here. Omit when it reports none.
 
