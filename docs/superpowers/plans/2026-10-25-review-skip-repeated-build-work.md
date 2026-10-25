@@ -135,3 +135,8 @@ git commit -m "Let lens 3i consume build's Step 6.5 per-doc assessment — canon
 | AC1.1 Step 5 states the skip condition and its log line | Task 1 `AC1.1` facts |
 | AC2.1 lens 3i states how it consumes build Step 6.5 | Task 2 `AC2.1` facts |
 | AC3.1 a conformance test pins both conditions | Task 1 and Task 2 `AC3.1 twin` tests |
+
+## As built (Common Step 4.5 alignment)
+
+- **Beneficial — producer side added beyond the record's Key Files.** The record named only the two review files. Its Deliverables require review to read build's logged assessment, and no canonical build line existed, so `build/SKILL.md` Common Step 3 and `build/docs-sync.md` item f. gained the writer lines (Tasks 1-2).
+- **Beneficial — whole-branch review fix wave (d2838d0b1).** Three changes to the plan: the readers diff the working tree plus untracked files, not `{sha}..HEAD`; the Common Step 3 writer is gated on simplify's own `Verification: pass` / `No simplifications needed` outcome and a whole-branch scope, not `STATUS: DONE`; both writers log `SCANNED`, not `AUTO`. The fix wave also added lens 3i's SKIP trace (the Self-adoption obligation), the `→` arrow, the `$PIPELINE_RUN_DIR/decisions.md` anchor, and a skipped-Step-5 variant in `review/review-summary-template.md`.
