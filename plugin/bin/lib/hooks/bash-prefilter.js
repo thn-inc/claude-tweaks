@@ -69,8 +69,9 @@ const PARAM_REFERENCE = /\$\{?[A-Za-z_]/;
 // It walks the same forEachShellSegment as fileWriteTargets (#3989/#4149): the
 // outer text and every kept heredoc body chunk, so a `>` inside a body the parser
 // drops does not send a call down the full path, while one in a kept body does.
-// The glued-word shape (`echo foo>x`, #4015) is reached because the handler's
-// quoting flags are forwarded to redirectWriteTargets.
+// The glued shapes `echo foo>x` (#4015), `echo "hi">x` and `(ls)>out` (#4210) are
+// reached because the handler's `quoting` object, `spanKinds` included, is forwarded
+// to redirectWriteTargets.
 function hasFileRedirection(command) {
   let found = false;
   forEachShellSegment(command, '.', (t, _cwd, quoting) => {

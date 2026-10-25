@@ -16,7 +16,7 @@ All three must hold, checked in this order (cheapest first):
    heading) names **at most one implementation file** — count every listed path except one under
    `tests/`, matching `*.test.*`/`*.spec.*`, or itself a `*.md` path that is not prompt prose (markdown under `skills/`, `agents/`, or `commands/` counts as implementation; the same test/docs
    exclusion `bin/lib/dispatch/ceremony-derive.js`'s `computeDiffFacts` already applies to a diff,
-   read here against the spec's own file list instead of a diff). Zero implementation files still
+   read here against the spec's own file list instead of a diff), or a top-level `docs/plans/*.html` diagram (not nested). Zero implementation files still
    qualifies (a docs-only or test-only record) — the gate is "at most one," not "exactly one."
    An entry whose own description marks it read-only (`read only`, `read-only`, `no change`) is
    not counted either: the build reads it and changes nothing, so it adds no task structure. #3696's

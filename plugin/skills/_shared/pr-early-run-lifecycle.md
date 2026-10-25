@@ -376,6 +376,13 @@ A bundle run's reader is `readDeferredClosures`; a single-record run's is
 different file. A single-record run that never logs this line behaves exactly as before: the one
 `Fixes #{n}` line composed here at Step 3 stays unconditional.
 
+`{reason}` may name the record freely: `composeFixesBlock` rewrites any closing-keyword phrase in it
+("closes #{n}" to "closes issue #{n}"), since GitHub links such a phrase anywhere in the body and
+re-derives every link on each edit (probe PR #4234, #4199; PR #4144 closed #2724 through one in its reason).
+For the same reason the `Fixes` lines composed at run start never need to be withheld up front. The
+pre-merge check in `_shared/pr-checklist-refresh.md` (`bin/closing-links.js`) catches a phrase
+anywhere else in the body.
+
 The body lands at `$PR_EARLY_BODY` — session-scoped (`_shared/session-tmp-root.md`) and keyed
 on this run's own `{run-id}` (the run-dir basename), so a retried run's fresh write can never
 land on a stale file a prior attempt or a sibling session left behind. Before invoking

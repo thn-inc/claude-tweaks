@@ -37,6 +37,8 @@ const DIFFERENTIAL_CORPUS = [
   'echo x > tracked.js',
   // #4015: a redirect glued to a word.
   'echo foo>tracked.js',
+  // #4210: a glued redirect after a quoted span.
+  'echo "hi">tracked.js',
 ];
 const teardown = (command) => teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: CWD });
 const powershell = (command) => (powershellOpaqueCommand(command, CWD) ? [{ action: 'powershell-opaque' }] : []);
@@ -134,13 +136,14 @@ test('post-tool-use skips write shapes it never handled (cp/mkdir/sed)', () => {
 for (const command of [
   'echo x > tracked.js', 'printf y >> tracked.js', 'echo x >out.js', 'cmd &> f', 'cmd &>> f',
   'cmd >| f', 'cmd 2>> err.log', 'echo foo>out.js', 'cat a.txt>b.txt',
+  'echo "hi">out.js', '(ls)>out.js',
 ]) {
   test(`hasFileRedirection detects: ${command}`, () => {
     assert.strictEqual(hasFileRedirection(command), true, command);
   });
 }
 for (const command of ['echo hi', 'cmd 2>&1', 'cmd >&2', 'echo x > /dev/null', 'cmd > /dev/stdout', 'echo "a > b"',
-  'echo "foo>x"', "echo 'foo>x'", '[[ a>b ]]']) {
+  'echo "foo>x"', "echo 'foo>x'", '[[ a>b ]]', 'echo foo">"x', '((i>0))']) {
   test(`hasFileRedirection does not trigger on: ${JSON.stringify(command)}`, () => {
     assert.strictEqual(hasFileRedirection(command), false, command);
   });
@@ -149,6 +152,30 @@ for (const command of ['echo hi', 'cmd 2>&1', 'cmd >&2', 'echo x > /dev/null', '
 test('AC3.1 #4015: the differential corpus lists the glued shape, and it takes the full-handler path', () => {
   assert.ok(DIFFERENTIAL_CORPUS.includes('echo foo>tracked.js'));
   assert.strictEqual(shouldRunFull('pre-tool-use', bash('echo foo>tracked.js')), true);
+});
+
+// #4210 F1/F3: the prefilter shares redirectWriteTargets, so a `>` in a nested
+// "$( … )" context or a quoted leading `>` stays on the skip path, while a closed
+// substitution or an escaped prefix character still reaches the full handler.
+test('#4210 F1 F3: hasFileRedirection skips a nested or quoted leading `>`, and sees a redirect after a closed "$( … )"', () => {
+  for (const command of [
+    'echo "$(jq -r ".a>1" f.json)"', 'echo "$(echo "a>b")"', 'echo "$(cmd "x y>z")"', 'echo "${x:-"a>b"}"',
+    'echo ">x"', 'gh issue comment 1 --body "> quoted reply"', 'V=">x"; echo $V',
+    "git commit -m \"$(cat <<'EOF'\nfix: treat \"a | b>c\" as literal\nEOF\n)\"", 'msg="$(git log -1 --format="%s | %an>")"',
+  ]) {
+    assert.strictEqual(hasFileRedirection(command), false, command);
+  }
+  for (const command of [
+    '"$(date)">out.js', 'echo "$(date)" foo>out.js', 'echo foo\\ bar>out.js',
+    "git commit -m \"$(cat <<'EOF'\nDon't merge yet\nEOF\n)\" && echo x > out.js", 'echo "${x:-(}" > out.js',
+  ]) {
+    assert.strictEqual(hasFileRedirection(command), true, command);
+  }
+});
+
+test('AC3.1 #4210: the differential corpus lists the quoted-word shape, and it takes the full-handler path', () => {
+  assert.ok(DIFFERENTIAL_CORPUS.includes('echo "hi">tracked.js'));
+  assert.strictEqual(shouldRunFull('pre-tool-use', bash('echo "hi">tracked.js')), true);
 });
 
 test('shouldRunFull ORs hasFileRedirection into pre-tool-use only, never post-tool-use', () => {

@@ -167,6 +167,17 @@ above), not necessarily every phase this run actually completed.
    rewrote Fixes block for PR #{number} — {c} complete, {d} deferred, {r} not-run/failed.
    Reversibility: high (gh pr edit).` A single-record run with no deferred-closure entry logs
    nothing here — there was nothing to rewrite.
+
+   **Then check the forge's closing links (#4199).** GitHub links every closing-keyword phrase in the
+   body, not only the `Fixes` lines, and re-derives the links on every edit (probe PR #4234), so a
+   reason or summary reading "closes #{n}" re-links a `Refs` record. Run
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/closing-links.js" --run "{run-dir}" --mode pre-merge`:
+   it reads `closingIssuesReferences`, rewrites every phrase naming a record outside the `Fixes`
+   lines to `closes issue #{n}` (GitHub links no such phrase), writes the body, re-reads, and logs
+   `unlinked #{n}` or `#{n} still linked` to `decisions.md`.
+   A `still-linked` result is left for `pr-first-merge-post-merge.md`'s Step 4.0. Exit 3-5:
+   warn, log one `SKIP` line, and proceed (Step 4.0 is the backstop). `gh-absent`: one `SKIP` line
+   (`_shared/auto-decision-log.md`'s Degrade-trace rule).
 <!-- /when -->
 3. Read the record's current title (`gh issue view {n} --json title -q .title` for the
    lowest-numbered record). If it no longer matches the PR's own title (the record was retitled
