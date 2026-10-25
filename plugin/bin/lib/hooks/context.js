@@ -880,7 +880,8 @@ function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}
     if (!owner || typeof owner !== 'object' || owner.sessionId !== sessionId) return null;
 
     const last = Date.parse(owner.heartbeatAt);
-    const fresh = Number.isFinite(last) && now - last < HEARTBEAT_THROTTLE_MS;
+    const age = now - last;
+    const fresh = Number.isFinite(last) && age >= 0 && age < HEARTBEAT_THROTTLE_MS; // a future-stamped heartbeat (clock skew) is not fresh
     if (fresh && !restampWhileFresh) return null;
 
     const hostname = deps.hostname || os.hostname;

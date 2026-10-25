@@ -501,6 +501,19 @@ test('#4150: restampWhileFresh keeps the in-window re-stamp of a resumed session
   assert.strictEqual(ownerOf(fx).pid, 200);
 });
 
+test('#4150: a heartbeat stamped in the future (clock skew) is not fresh — the default path re-stamps a dead owner', () => {
+  const fx = refreshFixture();
+  assert.strictEqual(refresh(fx, { now: RT0 - 30_000, deps: refreshDeps({ cur: 200, alive: false }) }), 'restamp');
+  assert.strictEqual(ownerOf(fx).pid, 200);
+  assert.strictEqual(ownerOf(fx).heartbeatAt, new Date(RT0 - 30_000).toISOString());
+});
+
+test('#4150: a heartbeat stamped in the future (clock skew) is rewritten by the same owner rather than left stuck', () => {
+  const fx = refreshFixture();
+  assert.strictEqual(refresh(fx, { now: RT0 - 30_000 }), 'heartbeat');
+  assert.strictEqual(ownerOf(fx).heartbeatAt, new Date(RT0 - 30_000).toISOString());
+});
+
 test('AC2.2: an owner event 61 s after the first advances heartbeatAt', () => {
   const fx = refreshFixture();
   assert.strictEqual(refresh(fx, { now: RT0 + 61_000 }), 'heartbeat');
