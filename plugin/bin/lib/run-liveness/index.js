@@ -1,7 +1,8 @@
 'use strict';
 // bin/lib/run-liveness/index.js — a three-valued `live | dead | unknown` verdict
 // for a pipeline run directory (#3973), built from POSITIVE evidence over
-// injectable probes. No caller consumes it yet.
+// injectable probes. One consumer: reconcile/archive-merged.js's `adhoc-session-ended`
+// sweep, through `adHocSessionLiveness` (#4179).
 //
 // Shape: gatherEvidence() asks every probe once and records a tagged entry
 // ({ probe, result: positive | negative | error, detail }) plus the "death

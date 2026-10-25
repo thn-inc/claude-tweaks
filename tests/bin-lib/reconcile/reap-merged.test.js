@@ -16,6 +16,8 @@ const { reconcile } = require('../../../plugin/bin/lib/reconcile');
 const { residueBody } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 const { skipUnderRoot } = require('../../helpers/root');
 
+const PATH_STUB_SKIP = process.platform === 'win32' && 'win32: execFileSync("gh") never spawns a #!/bin/sh stub named gh on PATH';
+
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
@@ -873,7 +875,7 @@ function installFailingGhWithMarker() {
   return { marker, restore: () => { process.env.PATH = originalPath; } };
 }
 
-test('reapMerged: prStates answers replace live lookups (#4032)', () => {
+test('reapMerged: prStates answers replace live lookups (#4032)', { skip: PATH_STUB_SKIP }, () => {
   const control = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 42, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   let controlResult;

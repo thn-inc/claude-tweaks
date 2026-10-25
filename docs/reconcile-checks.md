@@ -278,26 +278,28 @@ effect to its own memoized array directly rather than serving a stale read. Scop
 
 `archiveMerged()`'s main loop no longer carries five independent, interleaved detection
 mechanisms as separate early-return branches. `classifyRunDir(ctx, now)` is the single function
-that owns every mtime-TTL comparison (via `isStaleDir`) and the events-log recency comparison
-(via `ownEventRecency`), returning `{ kind, ttlMs, evidence }` with
-`kind ∈ { 'orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'merged',
-'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
+that owns every mtime-TTL comparison (via `isStaleDir`), the events-log recency comparison
+(via `ownEventRecency`), and the liveness verdict `adhoc-session-ended` consults (through the injectable
+`liveness` argument, default `adHocSessionLiveness`), returning `{ kind, ttlMs, evidence }` with
+`kind ∈ { 'orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended',
+'merged', 'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
 The five pre-consolidation predicates (`isOrphanedMint`, `isAbandonedInterrupted`,
 `isAdHocStandaloneSuperseded`, `decideArchive`, `isStructurallyStuck`) are now thin wrappers that
 call `classifyRunDir` with `ctx.kinds` scoped to their own one kind — this is what keeps a
 standalone call (a unit test constructing a bare fixture dir, or `trackStuckSkip`'s own narrower
 question) answering exactly what it always asked, unaffected by whether the same dir would ALSO
-match some other, higher-precedence kind under the full order. Only `archiveMerged()`'s own main
+match some other, higher-precedence kind under the full order. `adhoc-session-ended` was added
+later (#4179) and has no wrapper predicate. Only `archiveMerged()`'s own main
 loop passes the full, ordered kind set.
 
 The `checkRunIntegrity` shipped-unclosed evidence gate for `abandoned-interrupted` stays
 call-site-only, never folded into the classifier itself (folding it in would misattribute the
-`explicit: true` archival path's justification) — the main loop re-classifies scoped to just
-`adhoc-superseded` when that companion check fails, so a dir that superficially reads
+`explicit: true` archival path's justification) — the main loop re-classifies scoped to
+`adhoc-superseded` and `adhoc-session-ended` when that companion check fails, so a dir that superficially reads
 `abandoned-interrupted` but fails the gate still falls through to the next-lower-precedence kind,
 matching the pre-consolidation `&&`-chained early-return exactly.
 
-The `structurally-stuck` branch exempts an ad-hoc dir at `no-branch`/`no-worktree`/`no-pr` (`isAdHocIntrinsicSkip`, #2724) — that is an ad-hoc dir's normal state, and `adhoc-superseded` archives it once its linked worktree is no longer registered and `ADHOC_SUPERSEDED_TTL_MS` (30 days) has passed — but only when its recorded worktree is a linked worktree: a dir stamped with the main checkout can never be claimed by `adhoc-superseded`, so it stays tracked and keeps escalating. `trackStuckSkip` clears an exempted dir's cache entry (`clearResidue`) and, if it was already escalated, resolves its path off the consolidated record. Unlike Residue pruning above, an escalated entry is dropped only after that resolve lands (`closed`, `path-removed`, `not-found` or `already-closed`): the dir still exists, so a throw or any other status keeps the entry and the next pass retries. The resolve comment says the path is an ad-hoc session directory rather than "no longer exists on disk" (`resolveResidue`'s optional `why`), and under `reconcile --dry-run` the whole clear is skipped, the same guard `pruneResidueFailures` sits behind.
+The `structurally-stuck` branch exempts every genuine ad-hoc dir at `no-branch`/`no-worktree`/`no-pr` (`isAdHocIntrinsicSkip`, #2724, widened by #4179) — that is an ad-hoc dir's normal state. A linked-worktree dir is archived by `adhoc-superseded`, once its worktree is no longer registered and `ADHOC_SUPERSEDED_TTL_MS` (30 days) has passed. A main-checkout dir is archived by `adhoc-session-ended` (never for the caller's own session: a dir whose run-state `sessionId` equals the caller's is skipped, mirroring `abandoned-interrupted`'s `ownLive`), once its session reads `dead` from `adHocSessionLiveness` (`runLiveness` with the worktree probes neutralised, since the main checkout's lock and last commit belong to every session) and `ADHOC_SESSION_ENDED_GRACE_MS` (7 days) has passed by dir mtime. A main-checkout dir whose verdict stays `unknown` is left in place, neither swept nor escalated. `trackStuckSkip` clears an exempted dir's cache entry (`clearResidue`) and, if it was already escalated, resolves its path off the consolidated record. Unlike Residue pruning above, an escalated entry is dropped only after that resolve lands (`closed`, `path-removed`, `not-found` or `already-closed`): the dir still exists, so a throw or any other status keeps the entry and the next pass retries. The resolve comment says the path is an ad-hoc session directory rather than "no longer exists on disk" (`resolveResidue`'s optional `why`), and under `reconcile --dry-run` the whole clear is skipped, the same guard `pruneResidueFailures` sits behind.
 
 ## No-run-state.json terminal path and consolidated escalation (#1811)
 
