@@ -370,27 +370,27 @@ function repoWithLeadingSpacePath() {
   return repo;
 }
 
-test('AC3.1: runGit raw:true keeps a -z path list byte-exact, leading space included', () => {
+test('#3900 AC3.1: runGit raw:true keeps a -z path list byte-exact, leading space included', () => {
   const repo = repoWithLeadingSpacePath();
   const { stdout, failure } = runGit(['ls-files', '-z'], repo, { raw: true });
   assert.strictEqual(failure, null);
   assert.deepStrictEqual(splitNul(stdout), [' lead.txt', 'b.txt']);
 });
 
-test('AC3.1: runGitAsync raw:true keeps a -z path list byte-exact', async () => {
+test('#3900 AC3.1: runGitAsync raw:true keeps a -z path list byte-exact', async () => {
   const repo = repoWithLeadingSpacePath();
   const { stdout, failure } = await runGitAsync(['ls-files', '-z'], repo, { raw: true });
   assert.strictEqual(failure, null);
   assert.deepStrictEqual(splitNul(stdout), [' lead.txt', 'b.txt']);
 });
 
-test('runGit without raw still trims (callers relying on trim keep it)', () => {
+test('#3900 runGit without raw still trims (callers relying on trim keep it)', () => {
   const repo = repoWithLeadingSpacePath();
   assert.ok(!runGit(['ls-files', '-z'], repo).stdout.startsWith(' '), 'default stdout must stay trimmed');
   assert.ok(!runGit(['rev-parse', 'HEAD'], repo).stdout.endsWith('\n'), 'default stdout must stay trimmed');
 });
 
-test('runGit/runGitAsync: only raw === true opts out of trimming (truthy non-true values keep the trim)', async () => {
+test('#3900 runGit/runGitAsync: only raw === true opts out of trimming (truthy non-true values keep the trim)', async () => {
   const repo = repoWithLeadingSpacePath();
   for (const raw of [undefined, false, 0, 1, 'true', null]) {
     assert.ok(!runGit(['ls-files', '-z'], repo, { raw }).stdout.startsWith(' '), `raw=${String(raw)} must trim`);
@@ -398,7 +398,7 @@ test('runGit/runGitAsync: only raw === true opts out of trimming (truthy non-tru
   }
 });
 
-test('runGit raw:true leaves the failure shape unchanged', () => {
+test('#3900 runGit raw:true leaves the failure shape unchanged', () => {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-raw-fail-'));
   const { stdout, failure, stderr, exitCode } = runGit(['ls-files', '-z'], dir, { raw: true });
   assert.strictEqual(stdout, null);

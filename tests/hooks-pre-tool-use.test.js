@@ -1665,7 +1665,7 @@ test('run() merges updatedInput on an allow path and never on a deny', () => {
 // worktree-always gate judges the invoked program, not git-like words inside a
 // quoted prose argument. The control is the discrimination evidence: the same
 // prose plus a genuine chained `git commit` must still deny.
-test('AC2.1: a log-decision call whose quoted --text names git show is not denied', () => {
+test('#3900 AC2.1: a log-decision call whose quoted --text names git show is not denied', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   const cmd = 'node bin/log-decision.js --run x --status AUTO --text "evidence via git show HEAD:foo, then git commit -m x"';
@@ -1673,7 +1673,7 @@ test('AC2.1: a log-decision call whose quoted --text names git show is not denie
   assert.deepStrictEqual(out, {});
 });
 
-test('AC2.1 control: a genuine git commit chained after the same prose is still denied', () => {
+test('#3900 AC2.1 control: a genuine git commit chained after the same prose is still denied', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   const cmd = 'node bin/log-decision.js --run x --text "evidence via git show HEAD:foo"; git commit -m x';

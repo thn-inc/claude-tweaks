@@ -184,25 +184,35 @@ test('git push origin :my-branch (refspec-delete form) from a non-isolated check
   assertAllowed(out);
 });
 
-test('AC1.1: git -C "<repo>" push origin --delete feature-x from a non-isolated checkout is allowed', () => {
+test('#3900 AC1.1: git -C "<repo>" push origin --delete feature-x from a non-isolated checkout is allowed', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   const out = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete feature-x`, repo), runDir: null, runState: null, cwd: repo });
   assertAllowed(out);
 });
 
-test('AC1.1: git -C "<repo>" push origin feature-x (a content push) stays denied', () => {
+test('#3900 AC1.1: git -C "<repo>" push origin feature-x (a content push) stays denied', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   const out = pre.run({ input: bashInput(`git -C "${repo}" push origin feature-x`, repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
-test('AC1.1: git -C "<repo>" push origin --delete a && rm -rf x stays denied, fail-closed', () => {
+test('#3900 AC1.1: git -C "<repo>" push origin --delete a && rm -rf x stays denied, fail-closed', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   const out = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete a && rm -rf x`, repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
+});
+
+test('#3900 AC1.1: the -C target, not the cwd, is the repo — a delete-only push is allowed and a content push denied from an unrelated non-repo cwd', () => {
+  const repo = gitRepoWithCommit();
+  withPolicy(repo, 'worktree-always: true\n');
+  const elsewhere = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-pe-elsewhere-'));
+  const allowed = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
+  assertAllowed(allowed);
+  const denied = pre.run({ input: bashInput(`git -C "${repo}" push origin feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
+  assertDenied(denied);
 });
 
 test('an ordinary content push (git push origin main) stays denied', () => {
