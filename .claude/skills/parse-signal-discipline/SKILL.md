@@ -323,6 +323,20 @@ When mechanizing a prose heuristic into a deterministic check:
     That turned "accurate enough" from a judgment into a count. Pair the comparison with a mutation
     check on every branch the corpus does not reach. A `${}` brace-depth mutant survived both
     every unit test and the whole corpus, so the corpus count says nothing about those branches.
+    A transform that bounds its own work owes a stated answer for the pass that hits the bound.
+    `plugin/bin/lib/hooks/git-command.js`'s heredoc scanner (#4149) caps nesting at
+    `NEST_LEVEL_CAP` and a pass's nested scans at `NEST_STEPS_PER_CHAR` steps per input character
+    plus `NEST_STEPS_FLOOR`, and its two capped outcomes lean opposite ways.
+    `lineLeavesStructureOpen` reads a capped span as a line left open, so every later body stays
+    visible (fail closed). `scanPass` reads a capped pass again whole in the flat, pre-#4149 quote
+    reading and reports no could-not-parse verdict. The #4149 build accepted that divergence from
+    this item as a tradeoff; it is not a shape to copy. The scanner's first capped version fell
+    back to the flat reading partway through a pass, and a reading that switches partway pairs
+    quotes unlike either reading, which can hide a separator both see (`246d40909`). Prefer the fail-closed
+    verdict. Where a capped pass must fall back instead, re-read the whole pass in one reading,
+    state the fallback's direction in the code comment, and pin a nest past the cap with its own
+    case (`tests/hooks-gate-coverage.test.js`'s "a nest past the cap whose fallback would restart
+    the nested reading").
 16. **A precondition probe does not cover the main probe's own failure to run.** Some tools exit
     with one code for both "not found" and "could not run", so item 8's exit-code branch has
     nothing to split on: `git cat-file -e HEAD:<path>` exits 128 for a path missing from HEAD and

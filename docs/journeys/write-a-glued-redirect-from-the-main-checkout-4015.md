@@ -8,7 +8,7 @@ files:
 # Write a Glued Redirect From the Main Checkout
 
 **Persona:** An agent session working in the main checkout of a `worktree-always` project. It writes compact shell (`echo foo>x`, `cat a.txt>b.txt`) with no space before the `>`. Nobody reviews each Bash call.
-**Goal:** Every real redirect into a repo file is denied, however it is spaced. A `>` that bash never treats as a redirect still runs: one in a quoted argument, an escaped `\>`, a `$VAR` expansion, `((i>0))` arithmetic, an fd close `>&-`, or a heredoc body.
+**Goal:** Every real redirect into a repo file is denied, however it is spaced. A `>` that bash never treats as a redirect still runs: one in a quoted argument, an escaped `\>`, a `$VAR` expansion, `((i>0))` arithmetic, an fd close `>&-`, or a heredoc body fed to an allowlisted data reader (`node`, `cat`, …).
 **Entry point:** A Bash tool call from the main checkout. The bash prefilter (`bash-prefilter.js`'s `hasFileRedirection`) runs first, then `git-command.js`'s `fileWriteTargets` in the PreToolUse handler.
 **Success state:** `echo foo>tracked.js` gets the same `claude-tweaks: this project requires an isolated worktree` denial as `echo foo > tracked.js`. The same session's `git commit -m "a>b"`, `node -e "x>y"`, `if ((n>0)); then …; fi`, `[[ a>b ]]` and `exec 3>&-` run without a denial.
 
@@ -27,7 +27,7 @@ files:
 - **URL:** Bash calls such as `git commit -m "a>b"`, `echo 'foo>x'`, `echo foo\>x`, `V="a>b"; echo $V`, `((i>0))`, `exec 3>&-`, `echo foo>/dev/null`, and `node x.js <<EOF … if (a>0) … EOF`
 - **Action:** The session runs each.
 - **Should feel:** Uneventful. None of them is denied, and nobody has to rewrite a commit message or a comparison to get past the gate.
-- **Should understand:** The scan reads a `>` as a redirect only when the word before it holds no quote, backslash, `$`, backtick, or `(`. It decides this on the token as typed, before `$VAR` substitution. In bash, any of those can make the `>` literal, put it in an expansion, or make it arithmetic. A `>` inside a `[[ … ]]` or `(( … ))` body (`[[ a>b ]]`, `(( x>y ))`) is a comparison, so the scan skips to the token after the closer. An fd duplication or close (`>&2`, `>&-`, `>&3-`) and a `/dev/null`-style sink are never file targets. A heredoc body is dropped before the scan (#3989).
+- **Should understand:** The scan reads a `>` as a redirect only when the word before it holds no quote, backslash, `$`, backtick, or `(`. It decides this on the token as typed, before `$VAR` substitution. In bash, any of those can make the `>` literal, put it in an expansion, or make it arithmetic. A `>` inside a `[[ … ]]` or `(( … ))` body (`[[ a>b ]]`, `(( x>y ))`) is a comparison, so the scan skips to the token after the closer. An fd duplication or close (`>&2`, `>&-`, `>&3-`) and a `/dev/null`-style sink are never file targets. A heredoc body fed to an allowlisted data reader is dropped before the scan (#3989, #4149); any other body stays visible and is scanned as its own chunk.
 - **Red flags:**
   - A denial naming a target like `0))`, `y"`, or `&-`: a fragment of a comparison or an fd close read as a path.
   - A quoted commit message containing `>` that is refused.

@@ -9,10 +9,10 @@ files:
 
 # Run a Heredoc Node Script From the Main Checkout
 
-**Persona:** An unattended `/claude-tweaks:dispatch` Routine firing in a fresh cloud sandbox. It works in the main checkout of a `worktree-always` project (there is no linked worktree yet). It runs `queue-pull-script.md`'s documented `node .../bin/node-eval-file.js … <<NODE_EVAL_EOF` snippets verbatim. Nobody is present to retry a refused call by hand.
+**Persona:** An unattended `/claude-tweaks:dispatch` Routine firing in a fresh cloud sandbox. It works in the main checkout of a `worktree-always` project (there is no linked worktree yet). It runs `queue-pull-script.md`'s documented `node .../bin/node-eval-file.js … <<NODE_EVAL_EOF` snippets verbatim. Nobody is present to retry a refused call by hand. In step 3 the same firing has moved into its linked worktree and commits with a heredoc message.
 **Goal:** Run a skill-prescribed heredoc script whose JavaScript holds a `>`-shaped comparison (`if (openIds.length > 0) …`) without a `worktree-always` denial. Any real shell redirect into a repo file must still be denied.
 **Entry point:** A Bash tool call carrying a `<<WORD` heredoc fed to an allowlisted data reader (`node`, `cat`, `python3`, …), issued from the main checkout.
-**Success state:** The documented snippet runs on the first try. Its only real write target is outside the repo (a session temp file), and the gate stays silent. Add a top-level `echo x > tracked-file.js` to the same command and the same gate denies it, with the usual remediation.
+**Success state:** The documented snippet runs on the first try. Its only real write target is outside the repo (a session temp file), and the gate stays silent. Add a top-level `echo x > tracked-file.js` to the same command and the same gate denies it, with the usual remediation. From the linked worktree, a `git commit -F - <<'EOF'` whose message holds `>` or `cd` lands with no denial.
 
 ## Steps
 
