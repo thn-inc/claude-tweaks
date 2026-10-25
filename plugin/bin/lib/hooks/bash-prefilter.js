@@ -115,8 +115,11 @@ function shouldRunFull(event, input) {
   const covered = wordsFor(event);
   if (!covered) return true;
   if (!input || typeof input !== 'object' || input.tool_name !== 'Bash') return true;
-  const command = input.tool_input && input.tool_input.command;
-  if (typeof command !== 'string') return true;
+  const typed = input.tool_input && input.tool_input.command;
+  if (typeof typed !== 'string') return true;
+  // #4281: bash drops a NUL from its input, and so does forEachShellSegment, so `gi<NUL>t commit`
+  // is `git commit` to the parsers; the words are read the same way to stay their superset.
+  const command = typed.replace(/\0/g, '');
   if (ASSIGNMENT.test(command) && PARAM_REFERENCE.test(command)) return true;
   // pre-tool-use only: fileWriteTargets, the sole consumer of redirection
   // targets, never runs in post-tool-use's handler, so checking there would be

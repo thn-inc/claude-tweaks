@@ -357,7 +357,8 @@ function scanPass(scan) {
 // that a word of backslash-newlines alone is dropped, see the end of tokenize): the
 // heredoc-reader checks name programs from it (checkReaderCommand, planHeredocBodies),
 // so `C:\bin\sh` and `bas\h` still read as shells there. A lone backslash at the end of
-// the text matches no escape and stays in the value as a stray `\` (see isUnresolvable).
+// the text matches no escape and stays in the value as a stray `\` of kind `x`, which the
+// walk then settles by path kind or marks unprovable (see settleStrayBackslash).
 //
 // Returns `{ tokens, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds }` — `singleQuoted[i]` is true
 // when any part of `tokens[i]` was assembled from a single-quoted span, and
@@ -435,7 +436,7 @@ function tokenize(seg) {
   // A word made only of backslash-newlines (`cp a \` then `  b` on the next line) is no
   // word in bash, which removes them before splitting; `""` stays, an empty word.
   const keep = out.map((v, i) => v !== '' || singleQuoted[i] || doubleQuoted[i]);
-  const pick = (a) => a.filter((_, i) => keep[i]);
+  const pick = keep.every(Boolean) ? (a) => a : (a) => a.filter((_, i) => keep[i]);
   return { tokens: pick(out), typed: pick(typed), singleQuoted: pick(singleQuoted), doubleQuoted: pick(doubleQuoted), leadQuoted: pick(leadQuoted), spanKinds: pick(spanKinds) };
 }
 
@@ -473,7 +474,8 @@ function isUnresolvable(raw) {
 // drops it and bash 5 keeps it. Under a win32 pathImpl `a` and `a\` name the same path, so the
 // stray `\` is dropped and the word resolves; under POSIX they differ, and so does `D:\` on win32
 // (3.2: `D:`, the drive's cwd; 5: `D:\`, its root). Each of those keeps its length with its final
-// `\` replaced by STRAY, a NUL no bash word can hold, which isUnresolvable rejects. Returns the
+// `\` replaced by STRAY, a NUL no bash word can hold (forEachShellSegment drops every NUL from the
+// command first, as bash drops one from its input), which isUnresolvable rejects. Returns the
 // word values and spanKinds to walk, new arrays only when one changed.
 const STRAY = '\0';
 function settleStrayBackslash(tokens, spanKinds, pathImpl) {
@@ -1911,6 +1913,10 @@ function visitUnderEach(text, cwds, vars, handler, nest, pathImpl) {
 // `opts.overflowCwd` (a path, or a function returning one, called at most once; pre-tool-use passes
 // the main checkout, so a relative target resolves where the worktree gate denies it) together
 // with the walk's own starting cwd (where a worktree-local shadow is denied).
+//
+// #4281: bash drops a NUL it reads from a script or stdin (`echo x > b<NUL>junk` writes `bjunk`, bash
+// 3.2 and 5), so the walk drops every NUL before it reads the command. That also keeps STRAY, a NUL,
+// from ever meeting one typed in the command (settleStrayBackslash).
 const CWD_SET_CAP = 16; // four groups each with a relative cd already make 2^4 cwds
 function forEachShellSegment(command, cwd, handler, opts = {}) {
   const start = cwd || '.';
@@ -1922,7 +1928,7 @@ function forEachShellSegment(command, cwd, handler, opts = {}) {
     }
     return collapsed;
   };
-  walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow, opts.pathImpl || path);
+  walkShellChunk(String(command || '').replace(/\0/g, ''), [start], new Map(), handler, 0, true, overflow, opts.pathImpl || path);
 }
 
 // The union of two cwd lists, collapsed to `overflow()` past CWD_SET_CAP.
@@ -2066,7 +2072,7 @@ function compoundBodyEnd(t, quoting) {
 // (compoundBodyEnd), so the scan starts after its closing word. The walk keeps an
 // arithmetic `((…))` command in one piece (groupEvents), so its `((` reaches here.
 function redirectWriteTargets(t, effCwd, quoting) {
-  const pathImpl = quoting && quoting.pathImpl;
+  const pathImpl = (quoting && quoting.pathImpl) || path;
   return redirectRawTargets(t, quoting).map((raw) => resolveWriteTarget(effCwd, raw, pathImpl)).filter(Boolean);
 }
 

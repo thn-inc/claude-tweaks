@@ -481,3 +481,12 @@ test('#4281: a drive-relative redirect is a hit whatever the placeholder cwd, so
   assert.strictEqual(hasFileRedirection('echo x > a\\', win), true);
   assert.strictEqual(hasFileRedirection('echo x > a\\', { pathImpl: path.posix }), false);
 });
+
+test('#4281: a NUL in the command is dropped, so a parser target behind one takes the full-handler path', () => {
+  // bash 3.2 and 5, fed through stdin: `echo x > b<NUL>junk` writes bjunk, and `gi<NUL>t commit -m x` runs git commit.
+  for (const command of ['echo x > /main/b\0junk', 'gi\0t commit -m x']) {
+    assert.ok(targeted('pre-tool-use', command), JSON.stringify(command));
+    assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), true, JSON.stringify(command));
+  }
+  assert.strictEqual(shouldRunFull('post-tool-use', bash('gi\0t commit -m x')), true);
+});

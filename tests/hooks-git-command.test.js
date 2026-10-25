@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand, skipGlobalFlags, tokenize,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand, skipGlobalFlags, tokenize, redirectWriteTargets,
 } = require('../plugin/bin/lib/hooks/git-command');
 
 test('plain commit resolves to cwd', () => {
@@ -736,9 +736,23 @@ test('#4281: a quoted backslash path is a provable cd target', () => {
 
 test('#4281: a trailing stray backslash stays unresolvable (bash 3.2 drops it, bash 5 keeps it)', () => {
   // bash 3.2: a\ at the end of the command is the value a; bash 5: a\. The versions disagree.
-  assert.deepStrictEqual(gitTargets('git commit -m x; cd /tmp/a\\', '/repo'), [{ action: 'commit', dir: '/repo' }]);
-  assert.deepStrictEqual(gitTargets('cd /tmp/a\\', '/repo'), []);
-  assert.deepStrictEqual(fileWriteTargets('tee /tmp/a\\', '/r'), []);
+  // POSIX paths; under path.win32 a and a\ are one path (the win32 test below).
+  const posix = { pathImpl: path.posix };
+  assert.deepStrictEqual(gitTargets('git commit -m x; cd /tmp/a\\', '/repo', posix), [{ action: 'commit', dir: '/repo' }]);
+  assert.deepStrictEqual(gitTargets('cd /tmp/a\\', '/repo', posix), []);
+  assert.deepStrictEqual(fileWriteTargets('tee /tmp/a\\', '/r', posix), []);
+});
+
+test('#4281: the walk drops a NUL in the command, as bash drops one from its input', () => {
+  // bash 3.2 and 5, fed through stdin: `echo x > b<NUL>junk` writes bjunk, and `git -C sub<NUL> commit -m x`
+  // runs git with `-C sub commit -m x`.
+  const posix = { pathImpl: path.posix };
+  assert.deepStrictEqual(fileWriteTargets('echo x > /main/b\0junk', '/wt', posix), [{ action: 'write', file: '/main/bjunk' }]);
+  assert.deepStrictEqual(gitTargets('git -C /main\0 commit -m x', '/wt', posix), [{ action: 'commit', dir: '/main' }]);
+});
+
+test('#4281: redirectWriteTargets with a null quoting resolves through the default path module', () => {
+  assert.deepStrictEqual(redirectWriteTargets(['echo', 'x', '>', '/main/f'], '/wt', null), [path.resolve('/main/f')]);
 });
 
 test('#4281: an escaped = is a command word, not an assignment', () => {
@@ -879,9 +893,9 @@ test('AC3.1 AC3.2 #4281: go-red — putting the backslash rule back into isUnres
   const mutantFile = path.join(MUTANT_DIR, 'git-command.js');
   fs.writeFileSync(mutantFile, mutantSrc); // git-command.js requires only `path`
   const mutant = require(mutantFile);
-  assert.throws(() => assertQuotedNativePins(mutant, realPreToolUse, ['tee']));
-  assert.throws(() => assertQuotedNativePins(mutant, realPreToolUse, ['mkdir']));
-  assert.throws(() => assertQuotedNativePins(mutant, realPreToolUse, ['gitC']));
+  assert.throws(() => assertQuotedNativePins(mutant, realPreToolUse, ['tee']), { code: 'ERR_ASSERTION' });
+  assert.throws(() => assertQuotedNativePins(mutant, realPreToolUse, ['mkdir']), { code: 'ERR_ASSERTION' });
+  assert.throws(() => assertQuotedNativePins(mutant, realPreToolUse, ['gitC']), { code: 'ERR_ASSERTION' });
   // Teardown, fallback form: pre-tool-use.js requires a dozen sibling modules, so binding its
   // teardownTargets to the mutant would mean copying that tree. teardownTargets resolves its dir
   // through resolveGitCommand, which resolvedGitSegments reports for every git segment (gitTargets
