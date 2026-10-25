@@ -94,6 +94,7 @@ files:
   - The SessionStart banner lists the same runs. A failed PR item has no `cat` line, since its id is a PR row, not a staged file; its detail is in the PR's executed reply and decisions.md.
   - The reconciler's archive sweep skips the same run as `console-residue` and carries a `hint` naming the items.
   - A PR console with only executed and dropped items archives as before.
+  - Since #4170, an unattended console is also refused while a planned can't-tell filing has no logged `filed as #N` or `already filed as #N` line (it reads `filing-pending`), or while a Queue write whose record create failed sits rewritten to `keep-staged` by `console-resolve.js --set-item`. For a pending filing the refusal names the `console-filings.js --only` re-run before the `--ack` command (`recover-a-queue-write-the-unattended-console-could-not-file-4170.md`).
 - **Red flags:**
   - a run with an unreviewed keep-staged item archives
   - a PR console with a filing-failed item archives without a human's `--ack`
@@ -103,6 +104,7 @@ files:
 ## Origin
 - Created during the build of #3949, the third step of the unconfirmed-findings tiebreak project. #3945 built the resolver and the archive coverage check; #3947 built the tiebreak step itself.
 - Updated during the build of #4172: a PR console's `filing-failed`/`reverse-failed` outcome now holds the run out of archival (step 5).
+- Updated during the build of #4170: a planned can't-tell filing with no logged filed line, and a Queue write whose execution failed, now hold an unattended run out of archival too (step 5).
 - Related journeys:
   - `get-a-verdict-on-every-unverified-review-finding-3947.md`: how each finding gets the verdict this console acts on.
   - `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`: the archive refusal for a finding with no verdict line at all.
