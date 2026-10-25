@@ -156,3 +156,61 @@ test('go-red control: review-console.md step 2 without bin/reflect-apply.js fail
   assert.ok(!step2Line(doctored).includes('bin/reflect-apply.js'));
   assert.ok(step2Line(CONSOLE).includes('bin/reflect-apply.js'));
 });
+
+// --- Task 7: the PR-rendered console and the execution step (site 9a and the apply list) -------------
+
+const readAt = (...p) => readText(path.join(ROOT, 'plugin', 'skills', ...p));
+const EXECUTION = readAt('wrap-up', 'execution-and-verification.md');
+const CONSOLE_ON_PR = readAt('_shared', 'console-on-pr.md');
+const CONSOLE_EXECUTION = readAt('_shared', 'console-execution.md');
+
+// execution-and-verification.md's `- **Skill updates**` bullet: one line.
+function skillUpdatesBullet(text) {
+  const start = text.indexOf('- **Skill updates**');
+  assert.notEqual(start, -1, 'missing the "- **Skill updates**" bullet');
+  const end = text.indexOf('\n', start);
+  assert.notEqual(end, -1, 'missing the newline after the Skill updates bullet');
+  return text.slice(start, end);
+}
+
+// A `## ` section of `text`, to the next `## ` heading (both anchors asserted).
+function h2Section(text, heading) {
+  const start = text.indexOf(heading);
+  assert.notEqual(start, -1, `missing "${heading}"`);
+  const end = text.indexOf('\n## ', start + 1);
+  assert.notEqual(end, -1, `missing the heading after "${heading}"`);
+  return text.slice(start, end);
+}
+
+const EXECUTION_FACTS = {
+  'reflect row named': /`staged\/reflect-\{n\}\.md` row/,
+  'applied by step 2 reflect clause': /`review-console\.md` step 2's reflect clause/,
+  'not as a patch': /not as a patch/,
+};
+const ON_PR_FACTS = {
+  'reflect row is a staged row': /reflect Skill-updates row is a `staged` row/,
+  'global sequence': /its `#` from the global sequence/,
+};
+const ROUTING_FACTS = {
+  'unticked reflect row declines': /unticked `staged\/reflect-\{n\}\.md` Skill-updates row declines through/,
+  'reflect-apply decline call': /`bin\/reflect-apply\.js --run \{item-run-dir\} --item '\{name\}' --decline 'declined, no reason given'`/,
+  'decline recorded not only logged': /the decline is recorded, not only logged/,
+};
+
+test('execution-and-verification.md: the Skill updates bullet names staged/reflect- and step 2\'s reflect clause', () => {
+  const bullet = skillUpdatesBullet(EXECUTION);
+  assert.ok(bullet.includes('staged/reflect-'), 'the Skill updates bullet must name staged/reflect-');
+  assertEachFactGoesRed(bullet, EXECUTION_FACTS);
+});
+
+test('console-on-pr.md: the Item ID scheme names a reflect Skill-updates row as a staged row', () => {
+  const section = h2Section(CONSOLE_ON_PR, '## Item ID scheme');
+  assert.ok(/reflect/.test(section), 'the Item ID scheme section must name reflect');
+  assertEachFactGoesRed(section, ON_PR_FACTS);
+});
+
+test('console-execution.md: an unticked reflect row declines through reflect-apply.js --decline', () => {
+  assert.ok(CONSOLE_EXECUTION.includes('reflect-apply.js'), 'console-execution.md must name reflect-apply.js');
+  assert.ok(CONSOLE_EXECUTION.includes('--decline'), 'console-execution.md must name --decline');
+  assertEachFactGoesRed(h2Section(CONSOLE_EXECUTION, '## Execution routing'), ROUTING_FACTS);
+});
