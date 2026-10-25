@@ -341,6 +341,16 @@ test('runGit: opts.env is the spawn environment — a pinned env restores -C rep
   assert.strictEqual(pinned.stdout, fs.realpathSync(path.join(a, '.git')));
 });
 
+test('runGitAsync: opts.env is the spawn environment, same as runGit (#3900)', async () => {
+  const a = gitRepo();
+  const b = gitRepo();
+  const foreign = { ...process.env, GIT_DIR: path.join(b, '.git') };
+  const redirected = await runGitAsync(['rev-parse', '--absolute-git-dir'], a, { env: foreign });
+  assert.strictEqual(redirected.stdout, fs.realpathSync(path.join(b, '.git')), 'opts.env must reach the async child');
+  const pinned = await runGitAsync(['rev-parse', '--absolute-git-dir'], a, { env: repoPinnedEnv(foreign) });
+  assert.strictEqual(pinned.stdout, fs.realpathSync(path.join(a, '.git')));
+});
+
 test('repoPinnedEnv: with no argument it reads process.env, dropping the four vars and keeping the rest (#4178)', () => {
   const keys = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'];
   const prior = Object.fromEntries(keys.map((k) => [k, process.env[k]]));

@@ -179,6 +179,7 @@ async function runGitAsync(args, cwd, opts = {}) {
     async () => {
       const { stdout } = await execFileAsyncTimed('git', ['-C', cwd, ...args], {
         encoding: 'utf8', timeout, windowsHide: true,
+        ...(opts.env ? { env: opts.env } : {}),
       });
       return buildSuccess(stdout, opts.raw === true);
     },
