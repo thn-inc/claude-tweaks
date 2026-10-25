@@ -38,6 +38,10 @@ const PINS = {
     { file: 'sweep/SKILL.md', from: '## Step 4: Close-out', to: '## Next Actions', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/tidy --approve[\s\S]{0,200}archiv/, 'archival stays with tidy --approve']] },
     { file: 'sweep/SKILL.md', from: '## Failure propagation', to: '## Step 4: Close-out', patterns: [[/Step 4's close-out still runs/, 'a failure halt still runs Step 4\'s close-out']] },
   ],
+  specify: [
+    { file: 'specify/next-mode-closeout.md', from: '## Zero eligible or budget exhausted', to: null, patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/nothing eligible this firing[\s\S]{0,400}close-run/, 'the nothing-eligible exit still closes']] },
+    { file: 'specify/next-mode-shape.md', from: '## Failure self-report', to: null, patterns: [[/next-mode-closeout\.md`'s close-out still runs/, 'a firing-ending failure still runs the close-out']] },
+  ],
 };
 
 // --- Slicing and the fact/go-red assertion ----------------------------------------------------------
