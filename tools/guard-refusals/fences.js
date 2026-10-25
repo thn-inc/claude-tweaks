@@ -108,4 +108,4 @@ function walkMarkdown(root, { readdirSync = fs.readdirSync, statSync = fs.statSy
   return out.sort();
 }
 
-module.exports = { SHELL_LANGS, shellFences, malformedFences, walkMarkdown };
+module.exports = { SHELL_LANGS, scanFences, shellFences, malformedFences, walkMarkdown };
