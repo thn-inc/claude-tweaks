@@ -765,6 +765,27 @@ test('#4281: a word of backslash-newlines alone is no word', () => {
   assert.deepStrictEqual(gitTargets('cd \\\n /main && git commit -m x', '/wt'), [{ action: 'commit', dir: path.resolve('/main') }]);
 });
 
+test('#4281: an escaped or quoted [[, (( or keyword is a plain word, so its redirect runs', () => {
+  // bash 3.2 and 5: each line below creates its file (a quoted keyword is no reserved word, and the
+  // redirect runs before "command not found"); a bare `[[ x > f ]]` creates nothing.
+  for (const [cmd, file] of [
+    ['\\[\\[ x > /main/f1 \\]\\]', '/main/f1'],
+    ['\\(\\( 1 > /main/f2 \\)\\)', '/main/f2'],
+    ['\\if [[ x > /main/f4 ]]', '/main/f4'],
+    ['[\\[ x > /main/f5 ]]', '/main/f5'],
+    ['"[[" x > /main/f6 ]]', '/main/f6'],
+  ]) assert.deepStrictEqual(fileWriteTargets(cmd, '/wt'), [{ action: 'write', file: path.resolve(file) }], cmd);
+  assert.deepStrictEqual(fileWriteTargets('[[ x > /main/f3 ]]', '/wt'), []);
+});
+
+test('#4281: an escaped quote in a word is a literal character, never stripped as a delimiter', () => {
+  // bash 3.2 and 5: \'/tmp is the value '/tmp, and A=\"/main sets A to "/main (each a relative path).
+  assert.deepStrictEqual(gitTargets("cd \\'/tmp && git commit -m x", '/main'), [{ action: 'commit', dir: path.resolve('/main', "'/tmp") }]);
+  assert.deepStrictEqual(fileWriteTargets("tee \\'/main/x", '/wt'), [{ action: 'write', file: path.resolve('/wt', "'/main/x") }]);
+  assert.deepStrictEqual(gitTargets("A=\\'/main; cd $A && git commit -m x", '/wt'), [{ action: 'commit', dir: path.resolve('/wt', "'/main") }]);
+  assert.deepStrictEqual(gitTargets('A=\\"/main; cd $A && git commit -m x', '/wt'), []);
+});
+
 test('#4281: a leading-escaped redirect word is a file argument', () => {
   // bash 3.2 and 5: \>x is the word >x, not a redirection.
   assert.deepStrictEqual(fileWriteTargets('cp a \\>x', '/r'), [{ action: 'copy', file: path.resolve('/r', '>x') }]);

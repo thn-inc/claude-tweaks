@@ -341,10 +341,6 @@ function scanPass(scan) {
   return spans.capped ? scan(topLevelSpans(true)) : r;
 }
 
-function stripQuotes(s) {
-  return s.replace(/^['"]|['"]$/g, '');
-}
-
 // Tokenizer that keeps quoted spans (with spaces) as one token. Also merges a
 // quoted span into an immediately-adjacent (no whitespace between) match —
 // matching real shell word-splitting, where `"/tmp/safe/"$SUFFIX` is ONE word
@@ -448,7 +444,7 @@ const VALUE_FLAGS = new Set(['-C', '-c', '--exec-path', '--namespace']);
 // Flags that make the target unprovable from the command text alone.
 const UNPROVABLE_FLAGS = ['--git-dir', '--work-tree'];
 
-// A raw (unquote-stripped) cd/-C argument that is unresolvable to a concrete,
+// A cd/-C argument (its value, from tokenize) that is unresolvable to a concrete,
 // literal path: no argument, "-", starts with "~", contains "$"/backtick,
 // contains a double-quote, or ends in a backslash. The tokenizer above hands over
 // each word's value (#4281), so a backslash inside it is a literal path character
@@ -480,7 +476,7 @@ function isAbsolutePlain(raw) {
 
 // Shared cd-token resolution used by both gitTargets and fileWriteTargets: given
 // the current effective cwd (string, or null meaning UNKNOWN) and a `cd`
-// command's raw (unquote-stripped) argument, returns the new effective cwd (or
+// command's argument (its value, from tokenize), returns the new effective cwd (or
 // null when the argument leaves it unprovable). Kept as one function so a
 // future fix to cd-resolution edge cases (a new isUnresolvable pattern,
 // pushd/popd support, etc.) can never land in one caller and not the other.
@@ -490,7 +486,7 @@ function resolveCd(effCwd, raw) {
     // Unknown cwd: only a plain absolute path restores provability.
     return isAbsolutePlain(raw) ? path.resolve(raw) : null;
   }
-  return path.resolve(effCwd, stripQuotes(raw));
+  return path.resolve(effCwd, raw);
 }
 
 // Matches a segment that is exactly one token shaped like a simple literal
@@ -531,8 +527,7 @@ function isAssignmentWord(tok, kinds) {
 function updateAssignment(vars, t, kinds) {
   if (t.length !== 1 || !isAssignmentWord(t[0], kinds)) return false;
   const m = SIMPLE_ASSIGNMENT_RE.exec(t[0]);
-  const [, name, rawValue] = m;
-  const value = stripQuotes(rawValue);
+  const [, name, value] = m;
   if (isUnresolvable(value)) vars.delete(name);
   else vars.set(name, value);
   return true;
@@ -896,15 +891,14 @@ const DEVNULL_LIKE = new Set(['/dev/null', '/dev/stdout', '/dev/stderr']);
 
 function resolveWriteTarget(effCwd, raw) {
   if (isUnresolvable(raw)) return null;
-  const stripped = stripQuotes(raw);
   // An explicitly-empty token is never a file. It reaches here as BSD sed's
   // separate backup suffix (`sed -i '' ...`); without this it would resolve to
   // effCwd itself and flag the whole directory as a write target.
-  if (stripped === '') return null;
-  if (DEVNULL_LIKE.has(stripped)) return null;
-  if (path.isAbsolute(stripped)) return path.resolve(stripped);
+  if (raw === '') return null;
+  if (DEVNULL_LIKE.has(raw)) return null;
+  if (path.isAbsolute(raw)) return path.resolve(raw);
   if (effCwd === null) return null; // cwd UNKNOWN and a relative path — not provable
-  return path.resolve(effCwd, stripped);
+  return path.resolve(effCwd, raw);
 }
 
 // A redirection's RHS that is a file-descriptor duplication (`>&2`, `2>&1`),
@@ -1991,12 +1985,20 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
 // unterminated body (a glued closer such as `y))`) is skipped whole, which fails
 // open (#4015). A compound command may follow a control keyword on the same
 // segment (`if (( x>y ))`, `while [[ a>b ]]`), so the keywords are skipped first.
+// A keyword or opener counts only as a bare word (#4281): bash reserves no quoted or
+// escaped word, so `\[\[ x > f \]\]`, `"[[" x > f ]]` and `\if [[ x > f ]]` are commands
+// whose redirect runs. Given `quoting`, each word is read pre-substitution with its spanKinds.
 const COMPOUND_LEAD_WORDS = new Set(['if', 'elif', 'while', 'until', 'then', 'do', 'else', '!']);
 
-function compoundBodyEnd(t) {
+function compoundBodyEnd(t, quoting) {
+  const word = (i) => {
+    if (!quoting || !quoting.spanKinds) return t[i];
+    const raw = quoting.raw[i];
+    return raw !== undefined && quoting.spanKinds[i] === 'b'.repeat(raw.length) ? raw : null;
+  };
   let lead = 0;
-  while (lead < t.length && COMPOUND_LEAD_WORDS.has(t[lead])) lead += 1;
-  const closer = t[lead] === '[[' ? ']]' : t[lead] === '((' ? '))' : null;
+  while (lead < t.length && COMPOUND_LEAD_WORDS.has(word(lead))) lead += 1;
+  const closer = word(lead) === '[[' ? ']]' : word(lead) === '((' ? '))' : null;
   if (closer === null) return 0;
   const end = t.indexOf(closer, lead);
   return end === -1 ? t.length : end + 1;
@@ -2034,7 +2036,7 @@ function compoundBodyEnd(t) {
 function redirectWriteTargets(t, effCwd, quoting) {
   const out = [];
   const kindsOf = quoting && quoting.spanKinds;
-  for (let i = compoundBodyEnd(t); i < t.length; i += 1) {
+  for (let i = compoundBodyEnd(t, quoting); i < t.length; i += 1) {
     let rawTarget = null;
     if (!kindsOf) rawTarget = matchRedirectOperator(t[i]);
     else {
@@ -2297,7 +2299,7 @@ function fileWriteTargets(command, cwd, opts) {
         const file = resolveWriteTarget(effCwd, positionals[positionals.length - 1]);
         if (file) targets.push({ action: 'link', file });
       } else if (positionals.length === 1) {
-        const file = resolveWriteTarget(effCwd, path.basename(stripQuotes(positionals[0])));
+        const file = resolveWriteTarget(effCwd, path.basename(positionals[0]));
         if (file) targets.push({ action: 'link', file });
       }
       return;
@@ -2317,9 +2319,8 @@ function fileWriteTargets(command, cwd, opts) {
     if (t[0] === 'dd') {
       // dd takes keyword arguments, not flags: the destination is `of=`.
       for (const arg of t.slice(1)) {
-        const bare = stripQuotes(arg);
-        if (!bare.startsWith('of=')) continue;
-        const file = resolveWriteTarget(effCwd, bare.slice('of='.length));
+        if (!arg.startsWith('of=')) continue;
+        const file = resolveWriteTarget(effCwd, arg.slice('of='.length));
         if (file) targets.push({ action: 'write', file });
       }
       return;
