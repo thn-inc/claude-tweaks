@@ -17,6 +17,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const { GATE_COVERAGE } = require('../plugin/bin/lib/hooks/pre-tool-use');
 const gitCommand = require('../plugin/bin/lib/hooks/git-command');
 const { WRITE_SHAPES, fileWriteTargets, forEachShellSegment, gitTargets, mkdirTargets, stripHeredocBodies } = gitCommand;
@@ -36,6 +37,23 @@ const TEARDOWN_BEGIN = '<!-- teardown-gate-coverage:begin -->';
 const TEARDOWN_END = '<!-- teardown-gate-coverage:end -->';
 // The main-checkout write target the tests below expect, as a native path on win32 too.
 const MAIN_F = path.resolve('/main/f.js');
+
+// #4303: runs one scanner call in a child node killed after 10 s, so a cap that regresses into a
+// loop fails its test instead of hanging the suite (node:test's `timeout` cannot stop a synchronous
+// call). The call's arguments go in as JSON on stdin, never into the script source; stdin, not argv,
+// because a deep-nest command escaped for argv overruns win32's 32767-character command line.
+const GIT_COMMAND = path.resolve(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'git-command.js');
+const BOUNDED_SCRIPT = [
+  "const { mod, fn, command, cwd, opts } = JSON.parse(require('fs').readFileSync(0, 'utf8'));",
+  'process.stdout.write(JSON.stringify(require(mod)[fn](command, cwd, opts)));',
+].join('\n');
+function boundedTargets(fn, command, cwd, opts) {
+  const input = JSON.stringify({ mod: GIT_COMMAND, fn, command, cwd, opts });
+  const r = spawnSync(process.execPath, ['-e', BOUNDED_SCRIPT], { input, timeout: 10000, encoding: 'utf8' });
+  assert.strictEqual(r.signal, null, `${fn} was killed (${r.signal}): a cap no longer bounds it`);
+  assert.strictEqual(r.status, 0, `${fn} exited ${r.status}: ${r.stderr}`);
+  return JSON.parse(r.stdout);
+}
 
 function coverageBlock() {
   const text = readText(SCHEMA);
@@ -988,6 +1006,25 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
   assert.deepStrictEqual(fileWriteTargets('echo hi # <<EOF\necho x > f.js\nEOF', '/r'), expected);
 });
 
+// #4303 (U13): heredoc bodies are planned to MAX_HEREDOC_NESTING (8) levels; deeper, a body is
+// walked whole, so a data body there stays visible (fail closed). One level less still strips.
+// bash 3.2 and 5 write nothing at either depth (the inner cat prints its body), so the past-cap
+// target is a deliberate spurious deny.
+{
+  const nest = (levels, inner) => {
+    let s = inner;
+    for (let k = levels; k >= 1; k -= 1) s = `bash <<'E${k}'\n${s}\nE${k}`;
+    return s;
+  };
+  const dataBody = "cat <<'X'\necho x > /main/f.js\nX";
+  test('#4303: a data body below the heredoc nesting cap is stripped', () => {
+    assert.deepStrictEqual(fileWriteTargets(nest(7, dataBody), '/r'), []);
+  });
+  test('#4303: a data body past the heredoc nesting cap stays visible (deliberate fail-closed tradeoff)', () => {
+    assert.deepStrictEqual(fileWriteTargets(nest(8, dataBody), '/r'), [{ action: 'write', file: MAIN_F }]);
+  });
+}
+
 // #4149: a body is stripped only when the opener line feeds it to a known data reader
 // (an allowlist), not whenever no shell name shows up (a denylist). Each case is its
 // own test, so one regression going red never hides the others.
@@ -1657,8 +1694,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   // The skippers cap nesting depth: uncapped, a nest of unclosed "$( re-reads its chain without end
   // (the fallback re-descends) and a deep closed nest overflows the stack; a nest past the cap takes
   // the plain quote reading, so the trailing write still shows.
-  test('#4149 nesting: a nest of unclosed "$( stays bounded', { timeout: 10000 }, () => {
-    const targets = fileWriteTargets(`echo ${'"$('.repeat(40)}\ncp a /main/f.js`, '/r');
+  test('#4149 nesting: a nest of unclosed "$( stays bounded', () => {
+    const targets = boundedTargets('fileWriteTargets', `echo ${'"$('.repeat(40)}\ncp a /main/f.js`, '/r');
     assert.deepStrictEqual(targets, [main('copy')]);
   });
   // #4149: a cd inside a $( ) holds for the commands after it in the same substitution only.
@@ -1875,8 +1912,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     const targets = fileWriteTargets(`echo ${'"$(<<X\n"'.repeat(7500)} && cp a /main/f.js`, '/r');
     assert.deepStrictEqual(targets, [main('copy')]);
   });
-  test('#4149 nesting: a closed nest deeper than the cap takes the plain quote reading', { timeout: 10000 }, () => {
-    const targets = fileWriteTargets(`echo ${'"$('.repeat(5000)}${')"'.repeat(5000)} && cp a /main/f.js`, '/r');
+  test('#4149 nesting: a closed nest deeper than the cap takes the plain quote reading', () => {
+    const targets = boundedTargets('fileWriteTargets',`echo ${'"$('.repeat(5000)}${')"'.repeat(5000)} && cp a /main/f.js`, '/r');
     assert.deepStrictEqual(targets, [main('copy')]);
   });
 
