@@ -677,7 +677,7 @@ function resolveIntegrationModel(repoRoot, opts = {}) {
 
 // Shared root-resolution + policy.yml/config.yml read + resolvePolicyKeys
 // orchestration for bin/resolve-policy.js's CLI and
-// bin/lib/blast-radius-cli.js's resolveConfig — both independently
+// bin/lib/blast-radius-cli.js's resolveBlastRadiusConfig — both independently
 // reimplemented this exact pathway before #916 (each resolving repo root via
 // `git rev-parse --show-toplevel`, falling back to `process.cwd()` on
 // failure, then reading `.claude-tweaks/policy.yml` and an optional
