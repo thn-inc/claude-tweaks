@@ -348,7 +348,8 @@ function scanPass(scan) {
 // only ever see the quoted portion in isolation, judge it fully resolvable, and
 // silently drop the unresolvable suffix that would otherwise poison the target.
 //
-// #4281: `tokens[i]` is the word's VALUE, what bash passes the program, so a quoted
+// #4281: the Bash tool runs every command through bash, Git Bash on Windows, so these
+// are bash's word rules on every platform. `tokens[i]` is the word's VALUE, what bash passes the program, so a quoted
 // native path (`"D:\a\x"`, `'D:\a\x'`) keeps its backslashes as path characters. A bare
 // `\x` is the character `x`; inside double quotes only `\$`, `` \` ``, `\"` and `\\`
 // escape (the `\` goes), and any other `\` stays as typed (`"a\xb"` is `a\xb`); a
@@ -939,6 +940,8 @@ function powershellOpaqueCommand(command, cwd) {
 // posture: never fabricate a target from a path this can't prove.
 const DEVNULL_LIKE = new Set(['/dev/null', '/dev/stdout', '/dev/stderr']);
 
+// Also called by bash-prefilter.js's hasFileRedirection with a placeholder cwd, so every
+// exclusion here is one the prefilter applies too: narrowing one narrows both.
 function resolveWriteTarget(effCwd, raw, pathImpl = path) {
   if (isUnresolvable(raw) || isUnprovableDriveRelative(raw, effCwd, pathImpl)) return null;
   // An explicitly-empty token is never a file. It reaches here as BSD sed's
