@@ -85,6 +85,8 @@ const FACTS = [
     /Step 5: origin\/\{branch\} still at reviewed tip \{short\}; merging\./],
   ['block', '`{m}`, `{bound}` and `{source}` are the verdict\'s `move`, `bound` and `source`',
     /`\{m\}`, `\{bound\}` and `\{source\}` in this block's log lines are the verdict's `move`, `bound` and `source`/],
+  ['block', '`{reviewed-tip}` is the verdict\'s `reviewedTip` (run-dir-only advances included) and `{reviewed-short}` its short form',
+    /`\{reviewed-tip\}` below is the verdict's `reviewedTip`, which already includes any run-dir-only advance the CLI logged, and `\{reviewed-short\}` is its 7-character short form/],
   ['block', 'the bound stop\'s STAGED line carries the release-tip-moves lever field',
     /move \{m\} exceeds release-tip-moves \{bound\}; release held\. Stage path: staged\/release-held\.md\. Reversibility: high\. \[lever: release-tip-moves=\{bound\} \(\{source\}\)\]/],
   ['block', 'past the bound the run is `HELD`, reason `integration branch kept moving`',
