@@ -476,3 +476,42 @@ test('the #3668 staged-pending refusal wins over a tiebreak refusal when a run t
     assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
   }
 });
+
+// #4171: the auto-merge short-circuit renders no console, so a can't-tell finding the run held and
+// never filed would be archived unseen. archive-run refuses until each has a filed line.
+const CANT_TELL_ID = '0123456789ab';
+const CANT_TELL_VERDICT = `- STAGED 10:00:00 — Tiebreak tiebreak:${CANT_TELL_ID}: lens "3a" finding src/a.js:3 console: verdict:cant-tell. Severity: medium. Recommendation: file.\n`;
+
+function cantTellRun() {
+  const f = runDirFixture('clean');
+  fs.writeFileSync(path.join(f.runDir, 'decisions.md'), FAST_LANE_FYI + CANT_TELL_VERDICT);
+  writeFindings(f.runDir, [{ ...tbFinding(CANT_TELL_ID), lens: '3a', kind: 'unconfirmed' }]);
+  return f;
+}
+
+test('AC1.1: archive-run refuses an auto-merge run with an unfiled can\'t-tell finding', () => {
+  const { root, runDir } = cantTellRun();
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — cant-tell-unfiled \(1 can't-tell finding\(s\) an auto-merge path never filed: tiebreak:0123456789ab\) — file the run's can't-tell findings/);
+  assert.match(result.stdout, /, then re-run archive-run\n$/);
+  assert.equal(result.code, 0);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('archive-run archives the same run once its finding has a filed line', () => {
+  const { root, runDir, runId } = cantTellRun();
+  const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  const [{ fingerprint }] = require('../plugin/bin/lib/console/finding-outcomes').unfiledCantTell({ runDir, deps });
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), `- AUTO 10:01:00 — Queue write: tiebreak:${CANT_TELL_ID} filed as #501 (work-fingerprint ${fingerprint}). Reversibility: n/a.\n`);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'config.yml')));
+});
+
+test('archive-run: a rendered console turns the can\'t-tell guard off', () => {
+  const { root, runDir } = cantTellRun();
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ commentIds: ['IC_x'], prNumber: 5, items: [], resolved: true, executedAt: '2026-08-14T12:00:00Z' }));
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /cant-tell-unfiled/);
+});

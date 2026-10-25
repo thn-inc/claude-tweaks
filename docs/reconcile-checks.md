@@ -240,7 +240,9 @@ failure fails closed. `runTiebreakCoverage` carries the list as `unfiledCantTell
 last, after the artifact checks above: the skip reason is **`cant-tell-unfiled`**, carrying
 `unfiled` and `CANT_TELL_UNFILED_HINT`. It is in `STRUCTURALLY_STUCK_REASONS`, the `status: clean`
 sweep's `onSkip` tracks it, and a rendered console (a `console.json` or a `Review Console:
-terminal decision` line) turns the guard off. Every other run archives exactly as before.
+terminal decision` line) turns the guard off. `hooks.js archive-run` refuses the same condition, inside its
+`console-never-rendered-staged-pending` block and after that refusal. Every other run archives
+exactly as before.
 
 **Console residue (#3949).** `readConsoleState` returns `residue` when a run's console resolved
 (or wrote no top-level `console.json`) but `console/residue.js`'s `readRunResidue` still reports an
