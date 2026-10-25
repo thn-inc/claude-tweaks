@@ -18,6 +18,7 @@ const { buildMap } = require(path.join(ROOT, 'tools', 'test-impact', 'build-map.
 const { run } = require(CLI);
 const { parseImpactMap, encodeImpactMap } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 const { readText } = require('./helpers/read-skill');
+const { requireOption } = require(path.join(ROOT, 'tools', 'test-impact', 'node-options.js'));
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -33,6 +34,11 @@ function withTempDir(fn) {
 }
 
 const traceText = (lines) => lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n') + '\n';
+
+test('#4134 absorbed helper pin: requireOption forward-slashes a win32 path and keeps the quotes for its space', () => {
+  assert.strictEqual(requireOption('D:\\a\\x y\\tracer.js', path.win32), '--require "D:/a/x y/tracer.js"');
+  assert.strictEqual(requireOption('/a/x y/tracer.js', path.posix), '--require "/a/x y/tracer.js"');
+});
 
 // ---- buildMap ----
 
