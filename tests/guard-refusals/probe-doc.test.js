@@ -1,0 +1,68 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert');
+const path = require('node:path');
+const { readText } = require('../helpers/read-skill');
+
+// #4028 AC3: the PreToolUse `updatedInput` vs worktree-isolation-guard probe outcome lives in
+// docs/reference/pretooluse-updatedinput-worktree-guard.md. Every line below is copied from that doc,
+// and each is pinned with a stripped-doc control (the same text with that line removed), so a line the
+// check cannot miss is proven by the check going red without it.
+
+const ROOT = path.join(__dirname, '..', '..');
+const REF_PATH = 'docs/reference/pretooluse-updatedinput-worktree-guard.md';
+const REF = readText(path.join(ROOT, REF_PATH));
+
+const PINNED = [
+  '- **Claude Code version:** 2.1.302',
+  '- **Date measured:** 2026-10-24',
+  '- **Variant 1, control (no hook):** `echo complete PROBE_MARKER` was **refused** by the isolation guard.',
+  '- **Variant 2, rewrite of a refused command:** the hook rewrote `echo complete PROBE_MARKER` to `echo REWRITTEN_BY_HOOK`, and the rewritten command **ran**.',
+  '- **Variant 3, rewrite into a refused command:** the hook rewrote a plain `echo hello …` into `echo complete …`, and the rewritten command was **refused**.',
+  '- **Variant 4, rewrite with no decision:** `updatedInput` was applied with **no** `permissionDecision` field, and the rewrite **ran**.',
+  '- **Ordering:** a PreToolUse `updatedInput` is applied before the isolation guard, and the guard re-checks the rewritten command.',
+  '- **Consequence:** a rewrite can normalize, never bypass. The plugin never emits `permissionDecision: \'allow\'` alongside a rewrite.',
+  '- **Plugin probe (Task 8, 2026-10-24):** with the plugin, `P=/bin; $P/echo ok` and `node -e \'console.log(process.argv[1])\' "$HOME"` both ran, and no hook output carried a `permissionDecision`.',
+  '- **Not measured:** interactive mode, how a prompt in a non-bypass permission mode evaluates the rewritten input, and other Claude Code versions.',
+];
+
+function hasLine(doc, line) {
+  return doc.split(/\r?\n/).includes(line);
+}
+
+test('AC3.1: the probe outcome doc records each variant result, the version and the date', () => {
+  assert.ok(PINNED.length >= 10, 'the pinned set must not shrink silently');
+  for (const line of PINNED) {
+    assert.ok(hasLine(REF, line), `${REF_PATH} lost the pinned line: ${line}`);
+    const stripped = REF.split(/\r?\n/).filter((l) => l !== line).join('\n');
+    assert.ok(!hasLine(stripped, line), `control did not strip: ${line}`);
+    assert.throws(
+      () => assert.ok(hasLine(stripped, line), 'missing'),
+      /missing/,
+      `the stripped-doc control must go red for: ${line}`,
+    );
+  }
+});
+
+test('AC3.1: the doc is found through CRLF line endings too', () => {
+  const crlf = REF.replace(/\n/g, '\r\n');
+  for (const line of PINNED) assert.ok(hasLine(crlf, line), `CRLF doc lost: ${line}`);
+});
+
+test('AC3.1: docs/hooks.md carries the measured ordering and the shipped doc points at the reference', () => {
+  const hooks = readText(path.join(ROOT, 'docs', 'hooks.md'));
+  const scratch = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'scratch-worktree.md'));
+  const skillAuthoring = readText(path.join(ROOT, 'docs', 'skill-authoring.md'));
+  assert.ok(!hooks.includes('nothing here can alter it'), 'docs/hooks.md still carries the pre-probe claim');
+  assert.ok(!skillAuthoring.includes('cannot alter from `plugin/bin/hooks.js` or any hook'),
+    'docs/skill-authoring.md still carries the pre-probe claim');
+  for (const [name, doc] of [['docs/hooks.md', hooks], ['_shared/scratch-worktree.md', scratch], ['docs/skill-authoring.md', skillAuthoring]]) {
+    assert.ok(doc.includes(REF_PATH), `${name} must cite ${REF_PATH}`);
+    // control: the same doc with the citation removed must fail the same check
+    assert.ok(!doc.split(REF_PATH).join('').includes(REF_PATH), `${name} control did not strip the citation`);
+  }
+  for (const id of ['inline-literal-assignment', 'plugin-root-placeholder', 'node-eval-separator', 'quote-escaped-space', 'drop-redundant-cd']) {
+    assert.ok(hooks.includes(id), `docs/hooks.md must name the rule id ${id}`);
+  }
+  assert.ok(hooks.includes('guard-rewrite.js'), 'docs/hooks.md must name guard-rewrite.js');
+});

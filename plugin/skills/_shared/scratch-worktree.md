@@ -279,6 +279,8 @@ Current state, one row per shape, last observed live in a guard-isolated worktre
 | `test a = b` (`[ a = b ]` and `test -f package.json` pass) | `test a = b` | refused | "is too complex to verify that it stays inside the worktree" | Use `[ a = b ]` | 2026-10-20 (#3340); first #3340 |
 | Backslash-escaped space in a path argument (the same path double-quoted passes) | `ls /Users/me/Code\ Workspaces/repo/README.md` | refused | "is too complex to verify that it stays inside the worktree" | Double-quote the path: `ls "/Users/me/Code Workspaces/repo/README.md"` | 2026-10-21 (#3783); first #3712 |
 
+The rows above describe the guard's own behavior. In a linked worktree, a session running this plugin version also has its PreToolUse normalizer (`bin/lib/hooks/guard-rewrite.js`) rewrite five shapes before the guard reads them — a literally assigned name inlined, `${CLAUDE_PLUGIN_ROOT}/bin/…` resolved, `--` inserted before a computed `node -e` argument, a backslash-escaped space double-quoted, a redundant `cd <cwd> &&` dropped — so those shapes can pass there although a row says refused; the measurement and its limits are in `docs/reference/pretooluse-updatedinput-worktree-guard.md`.
+
 **Practical workaround:** default to one plain command per Bash call inside a worktree session. Use `Edit` to append to a file rather than a heredoc append; use the `Write` tool to create a script when multi-step logic is unavoidable, then invoke it with a single plain command. Resolve any value a later call needs explicitly and paste it in literally — it will not survive in a shell variable between calls.
 
 Same shell-hazard family: a bare `=`-led token (e.g. `echo ===`) as a separator also fails under zsh — see `docs/donts.md`.
