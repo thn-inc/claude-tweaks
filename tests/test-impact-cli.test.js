@@ -217,6 +217,38 @@ test('trace refuses the map and exits 1 when a traced process lost a read, namin
   });
 });
 
+test('trace names every test that lost a read, sorted and unique, past an unparseable marker, and writes no map', () => {
+  withTempDir((dir) => {
+    const git = fakeGit({ root: dir });
+    const spawn = (cmd, args, opts) => {
+      const td = opts.env.CT_TRACE_DIR;
+      fs.writeFileSync(path.join(td, '1-1-a.lost'), traceText([['T', 'tests/z.test.js']]));
+      fs.writeFileSync(path.join(td, '2-1-b.lost'), traceText([['T', 'tests/a.test.js']]));
+      fs.writeFileSync(path.join(td, '3-1-c.lost'), '["T"');
+      fs.writeFileSync(path.join(td, '4-1-d.lost'), traceText([['T', 'tests/a.test.js']]));
+      return { status: 0, signal: null };
+    };
+    const out = path.join(dir, 'map.json');
+    const { deps, errs } = makeDeps({ git, spawn, cwd: dir });
+    assert.strictEqual(run({ argv: ['trace', '--out', out], deps }), 1);
+    assert.strictEqual(fs.existsSync(out), false);
+    assert.deepStrictEqual(errs, ['test-impact.js trace: 4 traced process(es) could not record a read (tests: tests/a.test.js, tests/z.test.js) — no map written']);
+  });
+});
+
+test('trace says "tests: unknown" when every lost marker header is unparseable', () => {
+  withTempDir((dir) => {
+    const git = fakeGit({ root: dir });
+    const spawn = (cmd, args, opts) => {
+      fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.lost'), '["T"');
+      return { status: 0, signal: null };
+    };
+    const { deps, errs } = makeDeps({ git, spawn, cwd: dir });
+    assert.strictEqual(run({ argv: ['trace', '--out', path.join(dir, 'map.json')], deps }), 1);
+    assert.deepStrictEqual(errs, ['test-impact.js trace: 1 traced process(es) could not record a read (tests: unknown) — no map written']);
+  });
+});
+
 test('trace and fetch reject unknown arguments with exit 2', () => {
   const { deps } = makeDeps({ git: () => { throw new Error('git must not be called'); }, cwd: os.tmpdir() });
   assert.strictEqual(run({ argv: ['trace', '--bogus'], deps }), 2);

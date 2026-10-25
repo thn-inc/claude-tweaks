@@ -20,8 +20,7 @@
 //
 // Exit codes: 0 map written (or, for fetch, already current); 1 failure (no trace data, a trace run whose
 // tracer lost a read, gh/git failure, an invalid or unusable artifact, no ancestor map) with a message on
-// stderr; 2 malformed
-// invocation or, for trace, a dirty tree.
+// stderr; 2 malformed invocation or, for trace, a dirty tree.
 //
 // Seam: run({ argv, deps }) returns the exit code; deps holds git(args, {cwd}) and gh(args, {cwd})
 // (stdout; throw on failure), spawn(cmd, args, opts) (→ {status, signal, error}), fs, now, env,
@@ -162,7 +161,8 @@ function trace(args, deps) {
 
     const built = buildMap({ traceDir, commit, exitCode, node: process.version, now: deps.now, fsImpl: deps.fs });
     if (built.lost > 0) {
-      deps.err(`test-impact.js trace: ${built.lost} traced process(es) could not record a read (tests: ${built.lostTests.join(', ')}) — no map written`);
+      const named = built.lostTests.length ? built.lostTests.join(', ') : 'unknown';
+      deps.err(`test-impact.js trace: ${built.lost} traced process(es) could not record a read (tests: ${named}) — no map written`);
       return 1;
     }
     const tests = Object.keys(built.map.tests).length;
