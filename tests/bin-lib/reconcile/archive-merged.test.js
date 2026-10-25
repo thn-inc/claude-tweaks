@@ -16,7 +16,7 @@ const {
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin, resolveIdenticalWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, unclosedRecords, runRecordSet, inFlightRecords,
-  listStagedItems, hasStagedItems, consoleReplacedByAutoMerge, consoleResidue, consoleResidueHint,
+  listStagedItems, hasStagedItems, consoleReplacedByAutoMerge, consoleResidue, consoleResidueHint, filingRerunRemedy,
   unfiledCantTellFindings, CANT_TELL_UNFILED_HINT,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { unfiledCantTell } = require('../../../plugin/bin/lib/console/finding-outcomes');
@@ -3737,6 +3737,39 @@ test('consoleResidueHint: names only the unreadable console.json when no item is
   fs.mkdirSync(path.dirname(badPath), { recursive: true });
   fs.writeFileSync(badPath, '{not json');
   assert.strictEqual(consoleResidueHint(runDir), `repair or remove ${badPath}`);
+});
+
+// #4170: a planned can't-tell filing (`console.json#filings`) with no filed line in decisions.md is
+// `filing-pending` residue; the refusal names the `console-filings.js --only` re-run beside the ack.
+const PLANNED_FILED_LINE = '- AUTO 10:00:00 — Queue write: tiebreak:aaaaaaaaaaaa filed as #501 (work-fingerprint consolefinding-0123abcd). Reversibility: n/a.\n';
+function plannedFilingRunDir() {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-filing-'));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:aaaaaaaaaaaa', section: 'Low-confidence findings', resolution: 'filed', reason: 'r' }],
+    filings: [{ item: 'tiebreak:aaaaaaaaaaaa', fingerprint: 'consolefinding-0123abcd', title: 't' }],
+  }));
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '## /wrap-up\n');
+  return runDir;
+}
+test('AC3.1: a console holding a planned filing with no record reads residue and the hint names the console-filings.js --only re-run (#4170)', () => {
+  const runDir = plannedFilingRunDir();
+  assert.strictEqual(readConsoleState(runDir), 'residue');
+  assert.deepStrictEqual(consoleResidue(runDir), { items: 1, unreadable: [], names: ['tiebreak:aaaaaaaaaaaa (filing-pending)'] });
+  assert.ok(consoleResidueHint(runDir).includes(
+    `re-run the planned filing(s): console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --only 'tiebreak:aaaaaaaaaaaa', then file each printed proposal through wrap-up/review-console.md step 7; or review them, then run console-residue.js --ack --run "${runDir}"`,
+  ), consoleResidueHint(runDir));
+});
+test('filingRerunRemedy is empty for a residue console with no planned filing (#4170)', () => {
+  const runDir = prConsoleRunDir([['f1', 'filing-failed']]);
+  assert.strictEqual(filingRerunRemedy(runDir), '');
+  assert.match(consoleResidueHint(runDir), /unresolved: f1 \(filing-failed\) — review them, then run console-residue\.js --ack --run /);
+});
+test('AC4.1: once the filed line is logged the run reads resolved (#4170)', () => {
+  const runDir = plannedFilingRunDir();
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), PLANNED_FILED_LINE);
+  assert.strictEqual(readConsoleState(runDir), 'resolved');
 });
 
 test('decideArchiveCore: invalid-arguments skips with reason invalid-arguments (#3416)', () => {
