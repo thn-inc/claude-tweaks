@@ -132,4 +132,36 @@ test('walker go-red: a nested "Output ONLY" file without the line is found and r
   }
 });
 
+const DOC = readText(path.join(ROOT, 'docs', 'skill-authoring.md'));
+const DOC_FACTS = {
+  heading: '**Return to caller after a bare render.**',
+  line: RETURN_LINE,
+  placement: 'immediately after the render template',
+};
+
+function componentContractRegion(text) {
+  const start = text.indexOf('- **Component-skill contract**');
+  const end = text.indexOf('- **Next Actions placement**');
+  if (start === -1 || end === -1 || end < start) throw new Error('Component-skill contract bullet anchors not found');
+  return text.slice(start, end);
+}
+
+function missingDocFacts(text) {
+  const region = collapse(componentContractRegion(text));
+  return Object.entries(DOC_FACTS).filter(([, needle]) => !region.includes(collapse(needle))).map(([name]) => name);
+}
+
+test('AC2.1: docs/skill-authoring.md Component-skill contract states the return-to-caller convention', () => {
+  assert.deepEqual(missingDocFacts(DOC), []);
+});
+
+test('AC2.1 go-red: stripping any one convention fact reports exactly that fact', () => {
+  const region = componentContractRegion(DOC);
+  for (const [name, needle] of Object.entries(DOC_FACTS)) {
+    const strippedRegion = region.replace(needle, '');
+    assert.notEqual(strippedRegion, region, `${name}: the strip matched nothing`);
+    assert.deepEqual(missingDocFacts(DOC.replace(region, () => strippedRegion)), [name]);
+  }
+});
+
 module.exports = { RETURN_LINE, collapse };
