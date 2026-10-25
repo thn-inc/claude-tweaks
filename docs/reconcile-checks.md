@@ -265,7 +265,7 @@ Every site that skips `console-unresolved` — `decideArchiveCore`, the `status:
 sweep, `hooks.js archive-run` — skips or refuses `console-residue` too, which a human clears with
 `console-residue.js --ack` (an unreadable `console.json` must be repaired or removed instead). The
 skip carries a `hint` naming the open items and any unreadable
-`console.json`, which `reconcile/index.js` passes through to `result.runs` (#4172). It is
+`console.json`, which `reconcile/index.js` passes through to `result.runs` (#4172). Since #4170, when a planned can't-tell filing has no record (`filing-pending`), the hint also names the paste-ready `console-filings.js --only` re-run (`filingRerunRemedy`); the `hooks.js archive-run` refusal prints the same remedy. It is
 deliberately not in `STRUCTURALLY_STUCK_REASONS`: an acknowledgement, not a re-run, converges it.
 
 **Residue pruning.** After every `archive` pass, `cache.js`'s `pruneResidueFailures` drops any
