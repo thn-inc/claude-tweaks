@@ -36,6 +36,7 @@ const SITES = [
   { id: 'L1', file: 'plugin/skills/_shared/local-merge-auto-finish.md', content: 'Merged {feature-branch} into {base-branch} (commit {sha}), pushed. [outcome: merged]' },
   { id: 'L2', file: 'plugin/skills/_shared/local-merge-auto-finish.md', content: 'Local merge into {base-branch} failed ({conflict|failed verification}) — reverted, worktree and branch preserved. [outcome: pending-review]' },
   { id: 'A1', file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md', content: '#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}{detail}) — treated as needs-human, Review Console renders normally' },
+  { id: 'A2', file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md', content: "#{n} has {k} can't-tell finding(s) ({ids}) — {consoleAutoResolve not granted at {ceiling} | filing failed: {reason}}; short-circuit refused, Review Console renders normally" },
   { id: 'F1', file: 'plugin/skills/feedback/upstream-draft.md', content: 'Unresolved target: {the raw value}. Kept placeholder; no AskUserQuestion in {mode}.' },
   { id: 'R1', file: 'plugin/skills/build/plan-review.md', content: 'condition: plan-review record comment failed ({reason}) → fallback: the committed clarification section is the trail' },
   { id: 'R2', file: 'plugin/skills/build/plan-audit.md', content: 'amended plan for {N} unlisted spec path(s) — listed {paths}; waived {paths}' },
