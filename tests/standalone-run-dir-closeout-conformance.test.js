@@ -34,6 +34,10 @@ const P_INHERITED = [/An \*\*(?:inherited|adopted)\*\* directory is never closed
 // { file (relative to plugin/skills), from (heading line prefix), to (next heading prefix, null = EOF), patterns }.
 const PINS = {
   release: { file: 'release/SKILL.md', from: '## Step 8', to: '## Next Actions', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED] },
+  sweep: [
+    { file: 'sweep/SKILL.md', from: '## Step 4: Close-out', to: '## Next Actions', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/tidy --approve[\s\S]{0,200}archiv/, 'archival stays with tidy --approve']] },
+    { file: 'sweep/SKILL.md', from: '## Failure propagation', to: '## Step 4: Close-out', patterns: [[/Step 4's close-out still runs/, 'a failure halt still runs Step 4\'s close-out']] },
+  ],
 };
 
 // --- Slicing and the fact/go-red assertion ----------------------------------------------------------
@@ -95,7 +99,9 @@ function walkMarkdown(dir, rel = '') {
 function allowlistSkills(text) {
   const m = /standalone-auto allowlist \(([^)]*)\)/.exec(text);
   assert.ok(m, 'extraction pattern is out of sync: run-dir-resolution.md has no "standalone-auto allowlist (…)" parenthetical');
-  return [...m[1].matchAll(/`([^`]+)`/g)].map(([, name]) => name.replace(/^\/(?:claude-tweaks:)?/, ''));
+  const names = [...m[1].matchAll(/`([^`]+)`/g)].map(([, name]) => name.replace(/^\/(?:claude-tweaks:)?/, ''));
+  assert.ok(names.length > 0, 'extraction pattern is out of sync: the standalone-auto allowlist parenthetical names no skill — an empty parse must never read as a clean result');
+  return names;
 }
 
 function uncovered(sites, allowlist) {
@@ -123,6 +129,15 @@ test('AC1.1: the mint-site derivation finds the known sentinel sites', () => {
 
 test('AC1.1: every derived mint site and allowlisted skill is an enumerated minter or a recorded exemption', () => {
   assert.deepEqual(uncovered(derivedMintSites(CORPUS), allowlistSkills(ALLOWLIST_TEXT)), []);
+});
+
+test('AC1.1 go-red: an allowlisted name that is not an enumerated minter is reported uncovered', () => {
+  assert.deepEqual(uncovered([], ['fakeskill']), ['fakeskill']);
+  assert.throws(() => assertNoUncovered([], 'standalone-auto allowlist (`/claude-tweaks:fakeskill`)'), /fakeskill/);
+});
+
+test('AC1.1 go-red: an allowlist parenthetical naming no skill is not a clean parse', () => {
+  assert.throws(() => allowlistSkills('standalone-auto allowlist (none)'), /names no skill/);
 });
 
 test('AC1.1: an exempt non-minter has no mint site', () => {
