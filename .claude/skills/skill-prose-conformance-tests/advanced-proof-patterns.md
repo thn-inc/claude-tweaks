@@ -50,6 +50,10 @@ Rows *reworded in place* change no count and need no bump — but they still bel
 
 When a test or a skill procedure must *detect* a document class (a heading, a marker, a body shape), run a corpus scan over the live population before committing to the signal: count exactly which documents each candidate signal matches, and reject any candidate that matches a document it must not. Record #1071's scan of all 234 open records proved the line-anchored `## Leaves` heading matched exactly the four real legacy parents — while the plausible alternatives ("decomposition parent" phrase, "(parent)" title/body match) false-positived on the very bug report describing the defect. The scan result belongs in the record/spec as evidence, so the accepted residual risk is grounded rather than guessed.
 
+## Negative-exclusion tests for a resolver's source-exclusion special case
+
+When a resolver has a deliberate special case that excludes one source from precedence entirely (a config layer that must never win even though it normally would — `merge-authorization`'s exclusion of `.claude-tweaks/policy.yml`, `bin/lib/policy-schema.js`), assert the excluded source is actually ignored, not just what the resolver ultimately returns. `tests/resolve-policy-lib.test.js`'s four `merge-authorization` tests are the instance: unset resolves to default, run-config wins over an unset policy value, a set policy.yml value is discarded (falls to default, not `source: 'policy'`), and run-config still wins even when policy.yml is also set. The third case is the one a same-final-value assertion alone would miss — a resolver that merely deprioritized policy.yml instead of excluding it could pass every other assertion while silently letting policy.yml win whenever run-config is absent.
+
 ## Reference instances
 
 Suites that model the patterns in `SKILL.md`, each annotated with what it shows:

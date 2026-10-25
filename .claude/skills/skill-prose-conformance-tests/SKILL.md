@@ -157,10 +157,6 @@ A named base branch or a suite-owned scratch directory is not a reason to hand-r
 
 Read governed markdown through `tests/helpers/read-skill.js`'s `readText()`, never a private `fs.readFileSync(p, 'utf8')`. It normalizes `\r\n` to `\n`, so an anchor, window, or byte count that spans a line end reads the same on a Windows `core.autocrlf` checkout as on LF (#2763). Route the read through it even when today's anchors are single-line; the next assertion added to the suite may not be. #3060's ordering pin, `tests/build-verify-after-doc-steps.test.js`, shipped the raw read and `/review` flagged it from two lenses (`5495bc798`).
 
-### Negative-exclusion tests for a resolver's source-exclusion special case
-
-When a resolver has a deliberate special case that excludes one source from precedence entirely (a config layer that must never win even though it normally would — `merge-authorization`'s exclusion of `.claude-tweaks/policy.yml`, `bin/lib/policy-schema.js`), assert the excluded source is actually ignored, not just what the resolver ultimately returns. `tests/resolve-policy-lib.test.js`'s four `merge-authorization` tests are the instance: unset resolves to default, run-config wins over an unset policy value, a set policy.yml value is discarded (falls to default, not `source: 'policy'`), and run-config still wins even when policy.yml is also set. The third case is the one a same-final-value assertion alone would miss — a resolver that merely deprioritized policy.yml instead of excluding it could pass every other assertion while silently letting policy.yml win whenever run-config is absent.
-
 ### Doctor by structural boundary, not a magic line-span regex
 
 A discrimination proof that removes an anchor paragraph to prove the sniff can go red needs a
@@ -256,7 +252,7 @@ A varying failure count across runs on byte-identical code tracks machine load f
 
 ## Advanced proof patterns — lazy-loaded
 
-Three specialized procedures — proving a pin's red state with zero tree mutation, bumping the repo-wide Anti-Patterns row-count pin, and choosing a pin/sniff signal empirically from a corpus scan — are lazy-loaded from `advanced-proof-patterns.md` alongside this file. Read it when a go-red proof needs zero-mutation verification, a change adds or removes an Anti-Patterns row, a new detection signal needs corpus validation before it's trusted, or a new pin needs an existing suite to model on (its `## Reference instances` lists them).
+Four specialized procedures — proving a pin's red state with zero tree mutation, bumping the repo-wide Anti-Patterns row-count pin, choosing a pin/sniff signal empirically from a corpus scan, and negative-exclusion tests for a resolver that drops one config source from precedence — are lazy-loaded from `advanced-proof-patterns.md` alongside this file. Read it when a go-red proof needs zero-mutation verification, a change adds or removes an Anti-Patterns row, a new detection signal needs corpus validation before it's trusted, a resolver test must prove an excluded source is actually ignored, or a new pin needs an existing suite to model on (its `## Reference instances` lists them).
 
 ## Reference
 
