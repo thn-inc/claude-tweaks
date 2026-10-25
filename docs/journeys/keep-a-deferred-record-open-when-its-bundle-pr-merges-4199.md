@@ -14,7 +14,7 @@ files:
 **Persona:** Maintainer of a `pr-first` claude-tweaks repo whose multi-record `/claude-tweaks:flow` (or `/claude-tweaks:dispatch`) run defers one record's closure (for example, a deferred reason like "follow-up closes #N later") while the rest of the bundle ships. This is the PR #4144 / #2724 shape.
 **Goal:** The finished records close when the run's PR merges. The deferred record stays open, and `decisions.md` says how that was ensured.
 **Entry point:** The run reaches its pre-merge PR body refresh (`_shared/pr-checklist-refresh.md`), then merges through `_shared/pr-first-merge.md`.
-**Success state:** After the merge, `gh issue view {n}` shows the deferred record OPEN. The run's `decisions.md` has an AUTO entry `unlinked #{n} from PR #{pr} before merge`. If GitHub closed it anyway, there is also an AUTO entry `reopened #{n} after PR #{pr}'s merge closed it`. A clean post-merge pass prints `"action": "nothing-closed"` and logs nothing. The maintainer should feel that deferring a closure inside a bundle is safe.
+**Success state:** After the merge, `gh issue view {n}` shows the deferred record OPEN. The run's `decisions.md` has the refresh's AUTO entry `rewrote Fixes block for PR #{pr} — {c} complete, {d} deferred, …`. A pre-merge check that found no stray link prints `"action": "clean"` and logs nothing; one that had to unlink a surviving link adds an AUTO entry `unlinked #{n} from PR #{pr} before merge`. If GitHub closed it anyway, there is also an AUTO entry `reopened #{n} after PR #{pr}'s merge closed it`. A clean post-merge pass prints `"action": "nothing-closed"` and logs nothing. The maintainer should feel that deferring a closure inside a bundle is safe.
 
 ## Steps
 
@@ -27,7 +27,7 @@ files:
 
 ### 2. The pre-merge closing-link check runs — `node "${CLAUDE_PLUGIN_ROOT}/bin/closing-links.js" --run "{run-dir}" --mode pre-merge`
 - **URL:** —
-- **Action:** The CLI reads the PR's body, `closingIssuesReferences`, and URL. It computes the linked records that the Fixes block does not name, neutralizes their closing phrases elsewhere in the body, writes the body back, re-reads it, and logs one of two outcomes:
+- **Action:** The CLI reads the PR's body, `closingIssuesReferences`, and URL. It computes the linked records that the Fixes block does not name. When there are none (the usual case once step 1 has neutralized the reason), it prints `"action": "clean"` and logs nothing. Otherwise it neutralizes their closing phrases elsewhere in the body, writes the body back, re-reads it, and logs one of two outcomes:
   - `unlinked #{n} from PR #{pr} before merge` (AUTO)
   - `#{n} still linked to PR #{pr} after neutralizing` (SKIP, degraded)
 - **Should feel:** One log line, no prompt.
