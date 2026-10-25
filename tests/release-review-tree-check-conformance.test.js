@@ -29,8 +29,8 @@ function stepThreeOf(text) {
 // The `bash` fence of Step 3 that carries the ahead-count check, with {branch} resolved to `main`.
 function checkFence(stepThree) {
   const fences = [...stepThree.matchAll(/```bash\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
-  const fence = fences.find((f) => f.includes('rev-list --count HEAD..origin/{branch}'));
-  assert.ok(fence, 'extraction pattern is out of sync: no Step 3 bash fence contains "rev-list --count HEAD..origin/{branch}"');
+  const fence = fences.find((f) => f.includes('rev-list --count "HEAD..$TIP"'));
+  assert.ok(fence, 'extraction pattern is out of sync: no Step 3 bash fence contains "rev-list --count \\"HEAD..$TIP\\""');
   return fence.split('{branch}').join(BRANCH);
 }
 
@@ -44,10 +44,28 @@ function withFixture(prefix, body) {
   }
 }
 
+// Result of the check run from `work` as $RUN_ROOT.
+function runCheckResult(fence, fx) {
+  return spawnSync('bash', ['-c', fence], { env: { ...fx.env, RUN_ROOT: fx.work }, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS });
+}
+
 // Exit status of the check run from `work` as $RUN_ROOT.
 function runCheck(fence, fx) {
-  const result = spawnSync('bash', ['-c', fence], { env: { ...fx.env, RUN_ROOT: fx.work }, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS });
-  return result.status;
+  return runCheckResult(fence, fx).status;
+}
+
+// Injects a sibling's push and this checkout's fetch between `$TIP`'s assignment and the final clause
+// (`echo "$TIP"` unless `finalClause` replaces it), so the sibling move lands inside the same bash run.
+function raceFence(fence, fx, finalClause = 'echo "$TIP"') {
+  const anchor = ' \\\n  && echo "$TIP"';
+  assert.ok(fence.includes(anchor), 'anchor text for the final echo not found — race proof cannot inject');
+  const sibling = [
+    `git -C "${fx.other}" add race.txt`,
+    `git -C "${fx.other}" commit -q -m race`,
+    `git -C "${fx.other}" push -q origin ${BRANCH}`,
+    `git -C "$RUN_ROOT" fetch -q origin ${BRANCH}`,
+  ].map((c) => ` \\\n  && ${c}`).join('');
+  return fence.replace(anchor, () => `${sibling} \\\n  && ${finalClause}`);
 }
 
 // A reconcile-shaped commit: one file under .claude-tweaks/pipelines/, committed locally and not pushed.
@@ -101,6 +119,43 @@ for (const [label, arrange, passes] of ROWS) {
   });
 }
 
+test('AC1.1: a passing check prints exactly the origin/{BRANCH} sha it compared against, as its only stdout line', () => {
+  const fence = checkFence(stepThreeOf(readText(SKILL)));
+  withFixture('release-review-tree-tip-', (fx) => {
+    const expected = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    const result = runCheckResult(fence, fx);
+    assert.equal(result.status, 0, `expected exit 0, got ${result.status} (stderr: ${result.stderr})`);
+    assert.equal(result.stdout, `${expected}\n`, 'stdout must be exactly the tip sha, one line');
+  });
+});
+
+test('AC1.2: a sibling move between the tip resolution and the echo leaves the printed tip at the pre-move sha', () => {
+  const fence = checkFence(stepThreeOf(readText(SKILL)));
+  withFixture('release-review-tree-race-', (fx) => {
+    const pre = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    fs.writeFileSync(path.join(fx.other, 'race.txt'), 'race\n');
+    const result = runCheckResult(raceFence(fence, fx), fx);
+    const moved = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    assert.notEqual(moved, pre, 'fixture must have moved origin/main inside the run');
+    assert.equal(result.status, 0, `expected exit 0, got ${result.status} (stderr: ${result.stderr})`);
+    assert.equal(result.stdout.trim(), pre, 'the check must print the sha it resolved before the sibling move');
+  });
+});
+
+test('AC1.2: go-red: re-reading origin/{BRANCH} after the tree check prints the moved sha', () => {
+  const fence = checkFence(stepThreeOf(readText(SKILL)));
+  withFixture('release-review-tree-race-reread-', (fx) => {
+    const pre = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    fs.writeFileSync(path.join(fx.other, 'race.txt'), 'race\n');
+    const doctored = raceFence(fence, fx, `git -C "$RUN_ROOT" rev-parse origin/${BRANCH}`);
+    const result = runCheckResult(doctored, fx);
+    const moved = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    assert.notEqual(moved, pre, 'fixture must have moved origin/main inside the run');
+    assert.equal(result.stdout.trim(), moved, 'go-red: a second rev-parse records the moved sha, not the one the tree check compared');
+    assert.notEqual(result.stdout.trim(), pre);
+  });
+});
+
 test('AC3.1: go-red: dropping the pathspec exclusion stops the run-dir-only row', () => {
   const fence = checkFence(stepThreeOf(readText(SKILL)));
   const exclusion = " -- ':!.claude-tweaks/pipelines'";
@@ -115,7 +170,7 @@ test('AC3.1: go-red: dropping the pathspec exclusion stops the run-dir-only row'
 
 test('AC3.1: go-red: dropping the behind-count clause passes the run-dir-only-behind row', () => {
   const fence = checkFence(stepThreeOf(readText(SKILL)));
-  const countClause = `[ "$(git -C "$RUN_ROOT" rev-list --count HEAD..origin/${BRANCH})" = 0 ] \\\n  && `;
+  const countClause = `[ "$(git -C "$RUN_ROOT" rev-list --count "HEAD..$TIP")" = 0 ] \\\n  && `;
   assert.ok(fence.includes(countClause), 'anchor text for the behind-count clause not found — proof cannot discriminate');
   const doctored = fence.replace(countClause, '');
   assert.notEqual(doctored, fence, 'dropping the behind-count clause must change the fence');

@@ -192,8 +192,8 @@ function blockOf(executeText) {
 const FACTS = [
   ['skill', 'the Step 3 marker carries the unbraced `at reviewed tip {tip-sha};` and keeps the optional review-tree clause',
     /whole-branch review starting, base \{base\}\.\.\{branch\} at reviewed tip \{tip-sha\}; ## \/review marker: \{k\} existing lines\{; review tree HEAD \{head-sha\} is origin\/\{branch\} \{tip-sha\} plus run-dir-only commits\}\. Reversibility: n\/a \(marker\)\./],
-  ['skill', '{tip-sha} is rev-parse origin/{branch}, read after the check passes',
-    /`\{tip-sha\}` is the full 40-hex `git -C "\$RUN_ROOT" rev-parse origin\/\{branch\}`, read right after the check above passes/],
+  ['skill', '{tip-sha} is the sha the check above prints, resolved once before the trees are compared',
+    /`\{tip-sha\}` is the full 40-hex sha that the check above prints: `origin\/\{branch\}` resolved once, before the trees are compared/],
   ['skill', 'Step 8 HELD names `integration branch kept moving`',
     /and `integration branch kept moving`, where/],
   ['console', 'console.md names the reviewed-tip comparison among the HELD stops',
@@ -265,7 +265,9 @@ const FACTS = [
   ['block', 'the delta re-runs Step 3\'s review-tree check and a failure is `failed` under Step 5\'s prefix, without Step 3\'s `switch` recovery',
     /re-run SKILL\.md Step 3's review-tree check; any failure is `failed`, reported with Step 3's stop line and reason under this step's prefix and without its `switch` recovery/],
   ['block', 'a failing `rev-list --count` is `failed`, stderr verbatim, nothing merged',
-    /`\{n\}` is `git -C "\$RUN_ROOT" rev-list --count \{reviewed-tip\}\.\.origin\/\{branch\}`; a non-zero exit from it is `failed`, stderr verbatim, nothing merged/],
+    /`\{n\}` is `git -C "\$RUN_ROOT" rev-list --count \{reviewed-tip\}\.\.\{tip-sha\}`; a non-zero exit from it is `failed`, stderr verbatim, nothing merged/],
+  ['block', 'step 5 reads {tip-sha} as the sha the re-run check printed, never a second rev-parse',
+    /`\{tip-sha\}` is the sha that check printed, never a second `rev-parse` of `origin\/\{branch\}`/],
   ['block', 'the new tip\'s test gate is the review\'s own Step 1.5',
     /the review's own Step 1\.5/],
   ['block', 'the delta marker line',
@@ -430,6 +432,25 @@ test('SKILL.md Step 8 HELD bullet names every Step 5 HELD stop', () => {
     const doctored = bullet.replace(pattern, '');
     assert.notEqual(doctored, bullet, `anchor text for "${reason}" not found — proof cannot discriminate`);
     assert.deepEqual(missingHeldReasons(doctored), [reason], `removing only "${reason}" must turn exactly that assertion red`);
+  }
+});
+
+// Phrases from before Step 3 and execute.md step 5 resolved the tip once: a second `rev-parse` after the check.
+const STALE_TIP_PHRASES = [
+  ['skill', 'rev-parse origin/{branch}`, read right after the check'],
+  ['block', 'Read `{tip-sha}` as Step 3 does, right after the check passes'],
+];
+
+function staleTipPhrases(srcs) {
+  return STALE_TIP_PHRASES.filter(([source, phrase]) => srcs[source].includes(phrase)).map(([, phrase]) => phrase);
+}
+
+test('no second rev-parse of origin/{branch} survives after the Step 3 check', () => {
+  const srcs = sources();
+  assert.deepEqual(staleTipPhrases(srcs), [], 'a second rev-parse of origin/{branch} after the check is still present');
+  for (const [source, phrase] of STALE_TIP_PHRASES) {
+    const reintroduced = { ...srcs, [source]: `${srcs[source]}\n${phrase}\n` };
+    assert.deepEqual(staleTipPhrases(reintroduced), [phrase], `go-red: re-adding "${phrase}" must be caught by the check`);
   }
 });
 
