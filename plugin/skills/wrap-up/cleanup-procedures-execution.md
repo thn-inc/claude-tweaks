@@ -38,7 +38,7 @@ If a pipeline run directory exists for this work — `$RUN_DIR` is the path carr
 
 Do NOT delete the run directory outright — the auto-decision log is project history (for the user's calibration of project policy), not pipeline state.
 
-A run directory always exists from Phase 1 onward, so this section always applies. The one residual exception is a pre-v4.6 pipeline whose run directory was never created — if none resolves, skip this section silently rather than failing the wrap-up.
+A run directory always exists from Phase 1 onward, so this section always applies. The one residual exception is a pre-v4.6 pipeline whose run directory was never created — if none was established, skip this section silently rather than failing the wrap-up.
 
 ---
 

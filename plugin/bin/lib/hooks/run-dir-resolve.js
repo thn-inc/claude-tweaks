@@ -11,8 +11,9 @@
 // splitting run state across two locations ([IL-127]).
 //
 // `run-dir-resolution.md`'s Bash snippet stays as the reference implementation
-// this module mirrors — every call site should cite this command instead of
-// restating that snippet.
+// this module mirrors — except that step 2 here also refuses an unadoptable
+// match (`adoptionRefusal`, #1962/#4151), which the snippet does not. Every
+// call site should cite this command instead of restating that snippet.
 //
 // Deliberately loud where the shared resolution algorithm (as consumed by a
 // skill adopting $PIPELINE_RUN_DIR) is deliberately quiet: that algorithm

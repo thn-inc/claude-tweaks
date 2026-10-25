@@ -246,20 +246,36 @@ test('AC1.1: Step 0 fence run twice without a close: the second run refuses the 
   assertSecondRunRefusesFirst(resolveFence(STEP_ZERO), 'twice-live');
 });
 
-// #4151 AC2.1: the refusal is the resolver's, so Step 0 carries no inline `node -e` adoption probe.
+// #4151 AC2.1: the refusal is the resolver's, so release/SKILL.md carries no inline `node -e` adoption probe.
 function assertNoInlineProbe(text) {
-  assert.doesNotMatch(text, /node -e/, 'Step 0 must not carry an inline node -e adoption probe — the refusal lives in resolve-run-dir step 2 (#4151)');
+  assert.doesNotMatch(text, /node -e/, 'release/SKILL.md must not carry an inline node -e adoption probe — the refusal lives in resolve-run-dir step 2 (#4151)');
 }
 
 // The pre-#4151 guard line, frozen verbatim (SKILL.md line 60 at the parent commit).
 const PRE_CHANGE_GUARD = 'if [ -n "$RUN_DIR" ] && PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" ENV_RUN_DIR="$PIPELINE_RUN_DIR" node -e \'const { NON_TERMINAL } = require(process.env.PLUGIN_ROOT + "/bin/lib/hooks/run-integrity.js"); const real = (d) => { try { return require("fs").realpathSync(d); } catch { return null; } }; const e = real(process.env.ENV_RUN_DIR || ""); if (e !== null && e === real(process.argv[1])) process.exit(1); const r = JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")); const s = r.status; process.exit((typeof s === "string" && !NON_TERMINAL.has(s)) || r.createdBy === "release-standalone" ? 0 : 1)\' -- "$RUN_DIR" 2>/dev/null; then REFUSED_DIR=$RUN_DIR; RUN_DIR=; fi';
 
-test('#4151 AC2.1: Step 0 carries no inline node -e adoption probe', () => {
-  assertNoInlineProbe(STEP_ZERO);
+test('#4151 AC2.1: release/SKILL.md carries no inline node -e adoption probe', () => {
+  assertNoInlineProbe(readText(SKILL));
 });
 
 test('#4151 AC2.1: the no-inline-probe check goes red on the pre-#4151 guard line', () => {
   assert.throws(() => assertNoInlineProbe(PRE_CHANGE_GUARD), /inline node -e adoption probe/);
+});
+
+// Step 2 now refuses a `clean` run's own directory, and wrap-up's close-run marks the run `clean`
+// mid-flight, so wrap-up must carry its Phase-1 run-dir path instead of re-resolving it (#4151).
+const WRAP_UP_CARRIED_PATH = [
+  ['SKILL.md', /never re-runs the resolver/],
+  ['cleanup-procedures-execution.md', /never re-resolved here/],
+  ['standalone-fast-path.md', /never re-resolved/],
+];
+
+test('#4151: wrap-up carries its run-dir path past close-run instead of re-resolving it', () => {
+  for (const [file, pattern] of WRAP_UP_CARRIED_PATH) {
+    const text = readText(path.join(ROOT, 'plugin', 'skills', 'wrap-up', file));
+    assert.match(text, pattern, `wrap-up/${file} must state that the run-dir path is carried, never re-resolved, after close-run (#4151)`);
+    assert.doesNotMatch(text.replace(pattern, ''), pattern, `wrap-up/${file}: the carried-path statement should appear exactly once`);
+  }
 });
 
 // The load-bearing prose facts of the refusal. The patterns match exactly once in Step 0, so
