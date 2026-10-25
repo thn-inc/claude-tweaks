@@ -110,3 +110,84 @@ test('review-console-interactive.md: the never-satisfies-this-gate rule still na
     /not the Reflection Insights batch, not the Skill Updates batch, not any other/,
   );
 });
+
+// --- multi-spec console (#4063): review-console-section-addition site 10 --------------
+// The multi-spec console carries its own Reflection insights heading, both section lists,
+// and R# handling. Each helper is the single assertion its live test and go-red control call.
+
+const MULTISPEC_TEMPLATE = read('plugin', 'skills', 'flow', 'multispec-console-template.md');
+const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');
+const INSIGHTS_HEAD = `\n#### ${SECTIONS.INSIGHTS} (`;
+const NOT_RUN_HEAD = '\n#### Not run / Failed (';
+const UPSTREAM_THEN_INSIGHTS = `${SECTIONS.UPSTREAM}, ${SECTIONS.INSIGHTS}`;
+
+function assertMultispecHeading(templateText) {
+  const idx = templateText.indexOf(INSIGHTS_HEAD);
+  assert.notEqual(idx, -1, `multispec-console-template.md has no "#### ${SECTIONS.INSIGHTS} (" heading`);
+  assert.equal(templateText.indexOf(INSIGHTS_HEAD, idx + 1), -1, `more than one "#### ${SECTIONS.INSIGHTS} (" heading`);
+  const upstream = templateText.indexOf(`\n#### ${SECTIONS.UPSTREAM} (`);
+  const notRun = templateText.indexOf(NOT_RUN_HEAD);
+  assert.ok(upstream !== -1 && notRun !== -1, 'the Upstream feedback or Not run / Failed heading is missing — the order check has no anchors');
+  assert.ok(upstream < idx && idx < notRun, `"#### ${SECTIONS.INSIGHTS} (" is not between ${SECTIONS.UPSTREAM} and Not run / Failed`);
+  assert.match(templateText.slice(idx, notRun), /\| R# \| Spec \|/, 'the multi-spec Reflection insights table has no R#/Spec columns');
+}
+
+function assertMultispecOrder(consoleText) {
+  const count = consoleText.split(UPSTREAM_THEN_INSIGHTS).length - 1;
+  assert.equal(count, 2, `multispec-review-console.md carries "${UPSTREAM_THEN_INSIGHTS}" ${count} times, expected 2 (the step-2 read list and the Canonical render order)`);
+}
+
+function assertMultispecRHandling(consoleText) {
+  const rules = section(consoleText, '## Numbering rules', '\n## ');
+  assert.match(rules, /\*\*Reflection insights\*\* use a separate `R`-prefixed sequence/, 'the multi-spec Numbering rules give Reflection insights no R# sequence');
+  assert.match(consoleText, /^4\.5\. For `R#` reflection insights: .*`wrap-up\/review-console\.md` "On approval" step 10/m, 'multi-spec On approval has no R# step citing review-console.md step 10');
+}
+
+function doctor(text, from, to) {
+  const out = text.replace(from, to);
+  assert.notEqual(out, text, `control did not change the text: ${from}`);
+  return out;
+}
+
+test('multispec-console-template.md renders a #### Reflection insights heading after Upstream feedback, with R# rows (#4063)', () => {
+  assertMultispecHeading(MULTISPEC_TEMPLATE);
+});
+
+test('control: deleting the multi-spec Reflection insights heading fails assertMultispecHeading', () => {
+  const mutated = doctor(MULTISPEC_TEMPLATE, INSIGHTS_HEAD, '\n#### Something else (');
+  assert.throws(() => assertMultispecHeading(mutated), { message: /has no "#### Reflection insights \(" heading/ });
+});
+
+test('control: moving the heading below Not run / Failed fails assertMultispecHeading (order message)', () => {
+  const start = MULTISPEC_TEMPLATE.indexOf(INSIGHTS_HEAD);
+  const notRun = MULTISPEC_TEMPLATE.indexOf(NOT_RUN_HEAD);
+  assert.ok(start !== -1 && notRun !== -1 && start < notRun);
+  const block = MULTISPEC_TEMPLATE.slice(start, notRun);
+  const without = MULTISPEC_TEMPLATE.slice(0, start) + MULTISPEC_TEMPLATE.slice(notRun);
+  const at = without.lastIndexOf('\n```');
+  const permuted = without.slice(0, at) + block + without.slice(at);
+  assert.notEqual(permuted, MULTISPEC_TEMPLATE);
+  assert.throws(() => assertMultispecHeading(permuted), { message: /is not between/ });
+});
+
+test('multispec-review-console.md names Reflection insights after Upstream feedback in both section enumerations (#4063)', () => {
+  assertMultispecOrder(MULTISPEC_CONSOLE);
+});
+
+test('control: dropping Reflection insights from either enumeration fails assertMultispecOrder', () => {
+  const once = doctor(MULTISPEC_CONSOLE, UPSTREAM_THEN_INSIGHTS, SECTIONS.UPSTREAM);
+  assert.throws(() => assertMultispecOrder(once), { message: /carries .* 1 times, expected 2/ });
+  const twice = doctor(once, UPSTREAM_THEN_INSIGHTS, SECTIONS.UPSTREAM);
+  assert.throws(() => assertMultispecOrder(twice), { message: /carries .* 0 times, expected 2/ });
+});
+
+test('multispec-review-console.md gives Reflection insights an R# sequence and an On approval step citing review-console.md step 10 (#4063)', () => {
+  assertMultispecRHandling(MULTISPEC_CONSOLE);
+});
+
+test('control: removing the R# sequence or the On approval step fails assertMultispecRHandling', () => {
+  const noSeq = doctor(MULTISPEC_CONSOLE, '**Reflection insights** use a separate', '**Reflection insights** use the');
+  assert.throws(() => assertMultispecRHandling(noSeq), { message: /no R# sequence/ });
+  const noStep = doctor(MULTISPEC_CONSOLE, '4.5. For `R#` reflection insights:', 'For reflection insights:');
+  assert.throws(() => assertMultispecRHandling(noStep), { message: /no R# step/ });
+});

@@ -13,6 +13,7 @@ const ROOT = path.join(__dirname, '..');
 const DOC = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'scratch-worktree.md'));
 const JOURNEY = readText(path.join(ROOT, 'docs', 'journeys', 'work-around-a-refused-worktree-bash-command-2776.md'));
 const BANNER = readText(path.join(ROOT, 'plugin', 'skills', 'flow', 'multispec-progress-banner.md'));
+const TASK_PROMPT = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'task-prompt.md'));
 
 const HEADER = '| Shape | Example | Verdict | Refusal wording | Workaround | Last verified |';
 
@@ -148,4 +149,19 @@ test('the #3936 row predicate matches nothing in the pre-#3936 table (go-red con
   const rows = PRE_3936_TABLE.split('\n').slice(2);
   assert.strictEqual(rows.length, 2);
   assert.strictEqual(rows.filter(isJqExitRow).length, 0);
+});
+
+// #4022: dispatch task-prompt item 6 lists the Bash shapes the harness refuses;
+// its backslash-escaped-space entry must agree with section 7's refused row.
+test('dispatch item 6 names the backslash-escaped-space shape and agrees with the section 7 row (#4022)', () => {
+  const start = TASK_PROMPT.indexOf('6. **Worktree shell constraint**');
+  assert.notStrictEqual(start, -1, 'item 6 heading missing from task-prompt.md');
+  const end = TASK_PROMPT.indexOf('7. **', start);
+  assert.notStrictEqual(end, -1, 'item 7 heading missing after item 6');
+  const item6 = TASK_PROMPT.slice(start, end);
+  assert.ok(item6.includes('backslash-escaped space'), 'item 6 lost the backslash-escaped-space shape');
+  assert.ok(item6.includes('double-quote the whole path instead'), 'item 6 lost the double-quoted fix');
+  const row = table().rows.find((r) => splitRow(r)[0].startsWith('Backslash-escaped space'));
+  assert.ok(row, 'section 7 lost its Backslash-escaped space row');
+  assert.strictEqual(splitRow(row)[2], 'refused', `section 7 verdict drifted from refused: ${row}`);
 });

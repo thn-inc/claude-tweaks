@@ -6,7 +6,7 @@
 // wait/degrade contract: a lock released by another process must be taken before the 2 s timeout,
 // and a never-released lock must degrade near a short timeout rather than the 2 s default. Lives
 // outside tests/ because a wall-clock assertion flakes under sibling-suite load; the functional half
-// (the model is recorded either way) stays in tests/bin-lib/model-profiles/session-failures.test.js.
+// (no lost update: the holder's write survives) stays in tests/bin-lib/model-profiles/session-failures.test.js.
 'use strict';
 
 const { test } = require('node:test');

@@ -382,28 +382,52 @@ const PRE_CHANGE_FIND_STEP = `1. **Find.** Resolve \`{host}\`/\`{owner}\`/\`{rep
 
 `;
 
+// #4065: the two Find fences as they stood at HEAD, before the session-scoped payload path.
+const PRE_CHANGE_FIND_FENCES = `\`\`\`bash
+gh pr view {pr-number} --repo {owner}/{repo} --json comments > /tmp/{kind}-comments-{n}.json
+\`\`\`
+
+\`\`\`bash
+node "\${CLAUDE_PLUGIN_ROOT}/bin/find-run-comment.js" --comments-file /tmp/{kind}-comments-{n}.json --kind {kind}
+\`\`\`
+`;
+
 const PRE_CHANGE_TOMBSTONE_ROW = `| \`CLOSED\` (unmerged) — check for the tombstone marker: \`gh pr view {pr-number} --json comments --jq '.comments[] \\| select(.body \\| startswith("<!-- run-comment: failure -->")) \\| select((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR")'\` (trusted authors only; name each skipped one per \`_shared/pr-run-comments.md\`'s skip notice) | **Non-empty result → tombstoned.** Keep — same as \`bin/lib/reconcile/reap-merged.js\`'s own \`pr-closed-unmerged\` skip decision. Recommendation: \`Keep (tombstoned — retry via /claude-tweaks:dispatch or /claude-tweaks:flow, PR #{number})\`. **Empty result → abandoned**, not tombstoned — a human closed the draft without the run ever reaching the failure path. Recommendation: \`Keep (abandoned — closed PR #{number} carries no failure marker; manual review before removing worktree)\`. Never auto-remove either case — \`/tidy\` never escalates a "manual review" row to a destructive delete on its own. |`;
 
 const findStep = () => between(COMMENTS, '1. **Find.**', '2. **Found');
 const collapse = (s) => s.replace(/\s+/g, ' ');
 
-test("AC1.1: the Find step's worktree-safe form is a plain fetch plus bin/find-run-comment.js", () => {
+test("AC1.1: the Find step's worktree-safe form is a plain fetch plus bin/find-run-comment.js, session-scoped", () => {
   const find = findStep();
   assert.ok(
-    find.includes('gh pr view {pr-number} --repo {owner}/{repo} --json comments > /tmp/{kind}-comments-{n}.json'),
-    'the plain fetch line is present',
+    find.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" COMMENTS={kind}-comments-{n}.json BODY={kind}-comment-{n}.md'),
+    'the Find step resolves both basenames through bin/session-tmp-resolve.js in one call',
+  );
+  assert.ok(!find.includes('/tmp/'), 'the Find step names no literal /tmp/ path');
+  assert.ok(!COMMENTS.includes('/tmp/{kind}-comment'), 'no fixed /tmp/{kind}-comment name remains in the file (payload or body)');
+  assert.ok(
+    find.includes('gh pr view {pr-number} --repo {owner}/{repo} --json comments > "{comments-path}"'),
+    'the plain fetch line writes to the session-resolved {comments-path}',
   );
   assert.ok(
-    find.includes('bin/find-run-comment.js" --comments-file /tmp/{kind}-comments-{n}.json --kind {kind}'),
-    'the find-run-comment.js line is present',
+    find.includes('bin/find-run-comment.js" --comments-file "{comments-path}" --kind {kind}'),
+    'the find-run-comment.js line reads the session-resolved {comments-path}',
   );
-  const fetchLine = find.split('\n').find((l) => l.includes('> /tmp/{kind}-comments-{n}.json')) ?? '';
+  const fetchLine = find.split('\n').find((l) => l.includes('> "{comments-path}"')) ?? '';
   for (const bad of ['--jq', 'github.com', '$?', ';', '&&']) {
     assert.ok(!fetchLine.includes(bad), `the fetch line must not contain ${bad}`);
   }
+  const resolveAt = find.indexOf('session-tmp-resolve.js');
+  assert.ok(
+    resolveAt >= 0 && resolveAt < find.indexOf('In a worktree-isolated session') && resolveAt < find.indexOf('Outside a worktree-isolated session'),
+    'the resolver call precedes both the worktree-safe route and the jq-shortcut route',
+  );
+  assert.ok(COMMENTS.includes('-F body=@"{body-path}"'), 'the step 2 update writes its body from {body-path}');
+  assert.ok(COMMENTS.includes('--body-file "{body-path}"'), 'the step 3 create writes its body from {body-path}');
   assert.ok(fs.existsSync(path.join(ROOT, 'plugin', 'bin', 'find-run-comment.js')));
-  assert.ok(!PRE_CHANGE_FIND_STEP.includes('> /tmp/{kind}-comments-{n}.json'), 'go-red: the pre-change step has no plain fetch line');
-  assert.ok(!PRE_CHANGE_FIND_STEP.includes('bin/find-run-comment.js" --comments-file'), 'go-red: the pre-change step has no find-run-comment.js line');
+  assert.ok(!PRE_CHANGE_FIND_FENCES.includes('session-tmp-resolve.js'), 'go-red: the pre-change fences do not resolve through session-tmp-resolve.js');
+  assert.ok(!PRE_CHANGE_FIND_FENCES.includes('{comments-path}'), 'go-red: the pre-change fences carry no {comments-path} placeholder');
+  assert.ok(PRE_CHANGE_FIND_FENCES.includes('> /tmp/{kind}-comments-{n}.json'), 'go-red: the frozen pre-change fetch line is the fixed /tmp path');
 });
 
 test('AC2.1: the worktree-safe form says it applies the same marker and Trusted authors test and relays skipped', () => {

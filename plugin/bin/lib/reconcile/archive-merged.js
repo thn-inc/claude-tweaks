@@ -1799,19 +1799,22 @@ function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalat
 // `ls-files-failed`, `readdir-failed`, `tracked-entry`, `close-failed`) are
 // distinct failure classes the issue never named, and folding them into the
 // same counter would blur reasons that need different diagnosis.
-// `escalate` is injectable (defaults to the real `escalateResidue`, which
-// shells to `gh`) so a test can assert escalation actually fired — and how
-// many times — without touching real `gh` or the network.
+// `escalate` and `resolve` are injectable (default to the real
+// `escalateResidue` / `resolveResidue`, which shell to `gh`) so a test can
+// assert escalation and resolution fired — and how many times — without
+// touching real `gh` or the network.
 // `cacheTarget` — plain root string, or a `beginCacheBatch` handle (#1235) —
 // see `trackStuckSkip`'s own comment above.
-function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = escalateResidue, runner } = {}) {
+function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = escalateResidue, resolve = resolveResidue, runner } = {}) {
   if (result.ok) {
     recordResidueSuccess(cacheTarget, 'move-failed', dir);
     // #1613: a dir that just successfully archived can no longer be
     // structurally stuck — clear any prior tracking so a future, unrelated
     // reuse of this path (unlikely — paths are timestamp-uniqued, but cheap
     // to guard) starts a fresh count rather than resuming a stale one.
-    recordResidueSuccess(cacheTarget, 'structurally-stuck', dir);
+    // #4202: an escalated entry resolves off the consolidated record rather
+    // than being silently dropped; a failed resolve keeps it for the next pass.
+    clearResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { resolve, runner });
     return;
   }
   // Archive-specific vocabulary — not part of the shared branching cache.js's
@@ -2351,11 +2354,13 @@ function archiveMerged({
   commitCacheBatch(cacheBatch);
 
   // #1892 Deliverable 3: prune residueFailures entries whose live path no
-  // longer exists — after every archival attempt this pass made, so a path
-  // this very pass just archived is pruned via recordResidueSuccess above,
-  // never re-examined here. A real GitHub write (closing an escalated
-  // record) belongs behind the same dry-run guard every other outward write
-  // in this module already respects.
+  // longer exists — after every archival attempt this pass made. A dir this
+  // pass just archived has its structurally-stuck entry cleared (or kept on a
+  // failed resolve) by trackArchiveResult's clearResidue (#4202); a kept
+  // entry's path is now gone, so the call below retries its resolve in this
+  // same pass and then drops the entry whatever that retry returns. A real
+  // GitHub write (closing an escalated record) belongs behind the same dry-run
+  // guard every other outward write in this module already respects.
   if (!dryRun) pruneResidueFailures(root, repoSlug, { runner });
 
   return { archived, skipped };

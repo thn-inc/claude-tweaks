@@ -232,7 +232,11 @@ whose tracked path no longer exists on disk: a path can never fail or succeed th
 must stop counting toward a fresh escalation streak. An entry that was already `escalated` also
 gets its filed backlog record resolved — `escalate-residue.js`'s `resolveResidue` comments ("no
 longer exists on disk — resolved by other means") and closes it, best-effort (a resolution failure
-still drops the cache entry; the record is left for a human to close manually). Escalation itself
+still drops the cache entry; a per-path record is left for a human to close manually, while a path
+left on the consolidated `structurally-stuck` record comes off at the next escalate or resolve edit
+a pass in this checkout makes — see the consolidated-escalation bullet below). A successful
+archive also resolves an escalated `structurally-stuck` entry, through `clearResidue` (#4202): it
+is kept on a failed resolve, retried once by the same pass's prune, then dropped. Escalation itself
 (`escalateResidue`) now dedups against **closed** records too, not just open ones: a marker match
 that is already closed gets a comment + reopened rather than a duplicate filing — one record per
 path across its whole open/closed/reopened lifetime.
@@ -330,9 +334,14 @@ main loop, landed via #1962/#2226/#2228/#2231):
   this record. `cache.js`'s per-path consecutive-failure counter (`trackResidue`,
   `RESIDUE_ESCALATE_THRESHOLD`) is unchanged and reason-agnostic already; only the filing/resolving
   side consolidates. Resolving one path (`resolveResidue` under `reason: 'structurally-stuck'`)
-  removes just that path from the shared record's body — the record only actually closes once every
-  path it named has resolved, so fixing directory A never silently closes the record while
-  directory B is still genuinely stuck.
+  removes just that path from the shared record's body — the record only actually closes once its
+  stuck-paths list empties, so fixing directory A never silently closes the record while
+  directory B is still genuinely stuck. Escalate and resolve edits also drop listed paths inside
+  this checkout's own `.claude-tweaks/pipelines/` that are gone from disk (#4202) — paths from
+  other checkouts are never judged, since every checkout of a repo appends to the same record —
+  and the record closes when that converged list empties. Only an absolute, normalized listed path
+  is judged; the list is editable issue text. A resolve whose edit emptied the list but whose
+  comment or close failed leaves an open record with nothing listed, and the retry closes it.
 
 ## gh-absent preflight: accepted MCP gap (#2523)
 
@@ -411,12 +420,26 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
   | any row's status is neither `open` nor terminal | `ledger-status-unrecognized` |
   | the `.claude-tweaks/pipelines/` listing failed | `run-dir-scan-failed` |
   | a non-`archive` run directory is attributed to it | `run-live` |
+  | the open-record list could not be read | `record-scan-failed` (or the classified `gh-absent` / `network-failure`) |
+  | an open work record references it | `referenced-by-open-record` (the entry carries `records`) |
 
   Attribution follows tidy, narrowed from tidy's substring match. Every `#{N}` token on the
   ledger's first line is matched as a whole dash-separated token of a run-dir name after its
   leading timestamp, so `#21` never matches `2026-10-21T…`. When the first line has no `#{N}`, the filename's `{feature}` slug
   (`YYYY-MM-DD-{feature}-ledger.md`) is matched as a substring of the name. A kept ledger is
   still reported, so AC1 holds; it waits for a human or `/claude-tweaks:tidy` to resolve it.
+
+  Referencing records follow tidy's referencing-record pass. An open work record keeps the ledger
+  when its `namedTarget` path equals the ledger's path, or its body contains the ledger's filename
+  (which covers the full path) or `{feature}` slug; the kept entry carries the matching record
+  numbers, ascending. The open-record list is read once per pass, and only when a ledger clears
+  every check above, so a pass with no such ledger reads nothing. It comes from
+  `gh issue list --state open`, or from `specs/` under `work-backend: local-files` (closed records
+  excluded). A failed read fails closed: every ledger that reached this check is kept, as
+  `record-scan-failed`, or as the classified `gh-absent` / `network-failure`. One deliberate
+  difference from tidy: tidy deletes the ledger and closes the referencing records in one approved
+  action, while this background check never closes a record. It keeps the ledger and leaves it to
+  `/claude-tweaks:tidy`.
 - **Write posture.** A new ref plus a PR, never a push to the integration branch and never a force
   or lease. The removal commit is built with plumbing (`read-tree` → `update-index --force-remove`
   → `write-tree` → `commit-tree`) on a scratch `GIT_INDEX_FILE`, so the checkout's index, HEAD, and
@@ -453,9 +476,10 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
 - **Surfacing.** `bin/hooks.js`'s `reconcile-background` summary records `ledgerResiduePrOpened`
   (removal PRs opened that pass) and `notableLedgerResidue` (per-path skips, minus
   `ledger-residue.js`'s `QUIET_SKIP_REASONS`: `dry-run`, `run-live`, `not-a-ledger`,
-  `removal-pr-declined`, `gh-absent`, `network-failure`, `ref-check-failed`). The next
-  SessionStart renders both in its prior-pass line. `/claude-tweaks:tidy`'s Step 6 reports them
-  under its Residue-ledger removal PR row.
+  `removal-pr-declined`, `gh-absent`, `network-failure`, `ref-check-failed`).
+  `referenced-by-open-record` and `record-scan-failed` are not quiet, so they surface at
+  SessionStart. The next SessionStart renders both summary fields in its prior-pass line.
+  `/claude-tweaks:tidy`'s Step 6 reports them under its Residue-ledger removal PR row.
 - **Fetch.** Reads the ref the pass's shared fetch refreshed (`skipFetch` when that fetch ran and
   succeeded), else fetches `origin {integration}` itself; a failed fetch skips the whole check as
   `fetch-failed` rather than flagging a ledger a merged removal PR already deleted. Hence its slot:
