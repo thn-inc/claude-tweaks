@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'residue');
-const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines } = require(MOD);
+const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines, consoleResidueItems, filingRerunCommand } = require(MOD);
 
 // The items of the real archived #2821 console.json (#3370): 9 items, four of
 // them unresolved — copied verbatim, including the `skills:undefined` ids.
@@ -398,4 +398,88 @@ test('AC1.1: the SessionStart banner scan lists a clean run whose PR console hol
   const { runs } = require(path.join(MOD, '..', '..', 'hooks', 'session-residue')).scanUnresolvedConsoles(project, { pluginRoot: '/p' });
   assert.deepStrictEqual(runs.map((r) => r.dir), [run]);
   assert.ok(runs[0].lines.some((l) => l.includes('f1 — staged: filing-failed')), runs[0].lines.join('\n'));
+});
+
+// #4170: a planned can't-tell filing (`console.json#filings`) with no `AUTO … filed as #N
+// (work-fingerprint …)` line in decisions.md has no record behind it; it reads as
+// `filing-pending` residue, derived at read time (never stored in console.json).
+function plannedFilingConsole(dir, decisions, items) {
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: items || [{ id: 'tiebreak:aaaaaaaaaaaa', section: 'Low-confidence findings', resolution: 'filed', reason: 'r' }],
+    filings: [{ item: 'tiebreak:aaaaaaaaaaaa', fingerprint: 'consolefinding-0123abcd', title: 't' }],
+  }));
+  if (decisions !== null) fs.writeFileSync(path.join(dir, 'decisions.md'), decisions);
+}
+const FILED_LINE = '- AUTO 10:00:00 — Queue write: tiebreak:aaaaaaaaaaaa filed as #501 (work-fingerprint consolefinding-0123abcd). Reversibility: n/a.';
+
+test('AC3.1: a console whose planned can\'t-tell filing has no filed line reports it filing-pending (#4170)', () => {
+  const dir = tmpRun();
+  plannedFilingConsole(dir, '## /wrap-up\n');
+  const r = readRunResidue(dir);
+  assert.strictEqual(r.consoles.length, 1);
+  assert.deepStrictEqual(r.consoles[0].items.map((i) => [i.id, i.resolution, i.section]), [['tiebreak:aaaaaaaaaaaa', 'filing-pending', 'Low-confidence findings']]);
+  assert.deepStrictEqual(r.consoles[0].missing, []);
+  assert.strictEqual(FILING_PENDING_RESOLUTION, 'filing-pending');
+});
+
+test('AC4.1: a filed or deduplicated planned filing reads resolved (#4170)', () => {
+  for (const line of [FILED_LINE, FILED_LINE.replace('filed as #501', 'already filed as #77')]) {
+    const dir = tmpRun();
+    plannedFilingConsole(dir, `## /wrap-up\n${line}\n`);
+    assert.deepStrictEqual(readRunResidue(dir).consoles, [], line);
+  }
+});
+
+test('a SKIP or STAGED line naming the fingerprint is not filed evidence (#4170)', () => {
+  for (const word of ['SKIP', 'STAGED']) {
+    const dir = tmpRun();
+    plannedFilingConsole(dir, `${FILED_LINE.replace('- AUTO ', `- ${word} `)}\n`);
+    const { consoles } = readRunResidue(dir);
+    assert.deepStrictEqual(consoles.map((c) => c.items.map((i) => i.resolution)), [['filing-pending']], word);
+  }
+});
+
+test('an absent decisions.md fails closed: every planned filing is pending (#4170)', () => {
+  const dir = tmpRun();
+  plannedFilingConsole(dir, null);
+  assert.deepStrictEqual(readRunResidue(dir).consoles.map((c) => c.items.map((i) => i.resolution)), [['filing-pending']]);
+});
+
+test('a planned filing with no matching console item is still listed by its id (#4170)', () => {
+  const dir = tmpRun();
+  plannedFilingConsole(dir, '', []);
+  const [c] = readRunResidue(dir).consoles;
+  assert.deepStrictEqual(c.items.map((i) => ({ id: i.id, resolution: i.resolution })), [{ id: 'tiebreak:aaaaaaaaaaaa', resolution: 'filing-pending' }]);
+});
+
+test('AC3.1: formatResidueLines names the console-filings.js --only re-run for a filing-pending item (#4170)', () => {
+  const dir = tmpRun();
+  plannedFilingConsole(dir, '');
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
+  assert.ok(lines.includes(`    re-run filing: node "/p/bin/console-filings.js" --run "${dir}" --existing <issues.json> --out-dir <dir> --only 'tiebreak:aaaaaaaaaaaa'`), lines.join('\n'));
+  assert.ok(lines.some((l) => l.startsWith('      (<issues.json>: gh issue list --state all --json number,body')), lines.join('\n'));
+});
+
+test('filingRerunCommand escapes a single quote and omits node without a plugin root (#4170)', () => {
+  assert.strictEqual(
+    filingRerunCommand({ consoleDir: '/r', ids: ["a'b", 'c'] }),
+    `console-filings.js --run "/r" --existing <issues.json> --out-dir <dir> --only 'a'\\''b,c'`,
+  );
+});
+
+test('consoleResidueItems on a console with no filings equals unresolvedItems (#4170)', () => {
+  assert.deepStrictEqual(consoleResidueItems(CONSOLE_2821).map((i) => i.id), unresolvedItems(CONSOLE_2821).map((i) => i.id));
+});
+
+test('the SessionStart banner scan lists a clean run whose console holds a planned filing with no record (#4170)', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'console-residue-filing-'));
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-10-25T100000-spec-4170');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'clean' }));
+  plannedFilingConsole(run, '## /wrap-up\n');
+  const { runs } = require(path.join(MOD, '..', '..', 'hooks', 'session-residue')).scanUnresolvedConsoles(project, { pluginRoot: '/p' });
+  assert.deepStrictEqual(runs.map((r) => r.dir), [run]);
+  assert.ok(runs[0].lines.some((l) => l.includes('tiebreak:aaaaaaaaaaaa — Low-confidence findings: filing-pending')), runs[0].lines.join('\n'));
 });

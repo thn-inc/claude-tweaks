@@ -14,20 +14,7 @@
 
 const { findingItems, runIdOf, cell, renderDroppedBlock } = require('./resolve');
 const { planFilings } = require('./finding-filing');
-
-// An AUTO line recording a created or deduped filing. Anchored on `^- AUTO `: the same phrase in a
-// STAGED/SKIP line (or quoted prose) is not evidence a record exists.
-const FILED_LINE_RE = /^- AUTO .*?(?:already )?filed as #(\d+) \(work-fingerprint (consolefinding-[0-9a-f]{8})\)/;
-
-// decisions.md text -> Map<fingerprint, record number>; the first line for a fingerprint wins.
-function filedRecords(decisions) {
-  const out = new Map();
-  for (const line of String(decisions || '').split('\n')) {
-    const m = FILED_LINE_RE.exec(line);
-    if (m && !out.has(m[2])) out.set(m[2], Number(m[1]));
-  }
-  return out;
-}
+const { FILED_LINE_RE, filedRecords } = require('./residue');
 
 // One row per Low-confidence / Contested item, in findingItems' order. A can't-tell item carries a
 // fingerprint (the one planFilings keys its filing on); a legacy row (a staged finding file or a
