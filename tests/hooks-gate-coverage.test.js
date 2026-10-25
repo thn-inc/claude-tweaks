@@ -424,6 +424,59 @@ test('AC2.1 #4210: arithmetic and nested groups stay target-free', () => {
   }
 });
 
+// #4210 F1: a `$(`, `${` or backtick inside double quotes opens a nested context whose
+// own quotes the tokenizer flips, so a `>` there looks bare though bash keeps it quoted.
+test('#4210 F1: a `>` inside a nested "$( … )", "${ … }" or backtick context resolves no target', () => {
+  for (const command of [
+    'echo "$(jq -r ".a>1" f.json)"', 'echo "Count: $(grep -c "foo>" file)"',
+    'echo "$(node -p "process.argv.length>2")"', 'echo "${x:-"a>b"}"', 'echo "$(echo "a>b")"',
+    'echo "$(cmd "x y>z")"', 'echo "$(cmd "x y >z")"', 'echo "`cmd "a>b c"`"',
+    "gh pr create --body \"$(cat <<'EOF'\n- treat \"x>y\" as literal\nEOF\n)\"",
+    'echo "$(echo \\) "x>y")"', 'echo "$(echo \')\' "a>b")"', 'echo "$( { a; } "x>y")"',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+test('#4210 F1: a closed "$( … )" or "${ … }" still lets a later redirect resolve', () => {
+  for (const [command, file] of [
+    ['"$(date)">x', 'x'], ['echo "$(date)" foo>x', 'x'], ['echo "${x:-a}">y', 'y'], ['echo "\\$(" foo>x', 'x'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+});
+
+// #4210 F2: an escaped character before the `>` is part of the word, as in bash; an
+// escaped `>` itself stays literal.
+test('#4210 F2: an escaped character before a glued `>` still resolves its target', () => {
+  for (const [command, file] of [
+    ['echo foo\\ bar>out.txt', 'out.txt'], ['cat My\\ File.txt>out.txt', 'out.txt'], ['echo a\\\\>x', 'x'], ['echo \\"hi\\">x', 'x'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+  for (const command of ['echo foo\\>x', 'echo "$(awk "{print \\$1>2}" f)"']) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+// #4210 F3: a token that starts with `>` is a redirect only when the operator itself is
+// bare on the token as typed; a quoted `>` or one a `$VAR` expands to is a word.
+test('#4210 F3: a quoted or expanded leading `>` resolves no target', () => {
+  for (const command of ['echo ">x"', 'echo ">"x', 'gh issue comment 1 --body "> quoted reply"', 'V=">x"; echo $V']) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+test('#4210 F3: a bare leading operator still resolves, with a quoted or $VAR target', () => {
+  for (const [command, file] of [
+    ['echo x > tracked.js', 'tracked.js'], ['echo x >out.js', 'out.js'], ['cmd 2>> err.log', 'err.log'],
+    ['cmd &> f', 'f'], ['cmd >| f', 'f'], ['WT=/w; echo x >$WT/a', '/w/a'], ['echo hi >"x y"', 'x y'],
+    ['echo ">"x>y', 'y'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+});
+
 // #3989: a heredoc body is data for the reading program, not shell — its `>`
 // is not a redirection. The opener line and whatever follows the closing
 // delimiter still are scanned.

@@ -154,6 +154,21 @@ test('AC3.1 #4015: the differential corpus lists the glued shape, and it takes t
   assert.strictEqual(shouldRunFull('pre-tool-use', bash('echo foo>tracked.js')), true);
 });
 
+// #4210 F1/F3: the prefilter shares redirectWriteTargets, so a `>` in a nested
+// "$( … )" context or a quoted leading `>` stays on the skip path, while a closed
+// substitution or an escaped prefix character still reaches the full handler.
+test('#4210 F1 F3: hasFileRedirection skips a nested or quoted leading `>`, and sees a redirect after a closed "$( … )"', () => {
+  for (const command of [
+    'echo "$(jq -r ".a>1" f.json)"', 'echo "$(echo "a>b")"', 'echo "$(cmd "x y>z")"', 'echo "${x:-"a>b"}"',
+    'echo ">x"', 'gh issue comment 1 --body "> quoted reply"', 'V=">x"; echo $V',
+  ]) {
+    assert.strictEqual(hasFileRedirection(command), false, command);
+  }
+  for (const command of ['"$(date)">out.js', 'echo "$(date)" foo>out.js', 'echo foo\\ bar>out.js']) {
+    assert.strictEqual(hasFileRedirection(command), true, command);
+  }
+});
+
 test('AC3.1 #4210: the differential corpus lists the quoted-word shape, and it takes the full-handler path', () => {
   assert.ok(DIFFERENTIAL_CORPUS.includes('echo "hi">tracked.js'));
   assert.strictEqual(shouldRunFull('pre-tool-use', bash('echo "hi">tracked.js')), true);

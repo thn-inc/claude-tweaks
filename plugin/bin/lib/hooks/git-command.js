@@ -99,7 +99,7 @@ function stripQuotes(s) {
 // delimiters are not part of the token, so they carry no mask character. The
 // per-token flags above say only THAT a span was quoted; the mask says WHERE, which
 // is what lets the glued-redirect scan accept `echo "hi">x` yet refuse `echo "a>b"`.
-// Two alternative changes make the mask truthful: a bare run now stops at a quote
+// Two changes to the token regex make the mask truthful: a bare run now stops at a quote
 // (so `foo"bar"` is a bare span plus a double-quoted span, merged into one token as
 // bash does), and a double-quoted span is backslash-aware (`\"` does not close it,
 // and its value keeps the backslashes as typed).
@@ -144,9 +144,10 @@ const UNPROVABLE_FLAGS = ['--git-dir', '--work-tree'];
 // A raw (unquote-stripped) cd/-C argument that is unresolvable to a concrete,
 // literal path: no argument, "-", starts with "~", contains "$"/backtick, or
 // contains a backslash/double-quote. The last two guard against token-level
-// ambiguity: the regex tokenizer below is not escape-aware, so a value that
-// still carries a backslash or stray quote (from an escaped-quote sequence
-// upstream) cannot be trusted as a literal path — never claim an unprovable
+// ambiguity: the tokenizer above is escape-aware, but it keeps backslashes in
+// the token text as typed, so a value that still carries a backslash or stray
+// quote (from an escaped-quote sequence) cannot be trusted as a literal path —
+// never claim an unprovable
 // target. Also unresolvable: anything else that looks like a FLAG (starts
 // with "-", length > 1) — cd's own flags (-L, -P, -e, -@, --) are not path
 // arguments; without this, `cd -P /other-repo` would resolve "-P" itself as
@@ -186,10 +187,11 @@ function resolveCd(effCwd, raw) {
 
 // Matches a segment that is exactly one token shaped like a simple literal
 // variable assignment: NAME=value / NAME="value" / NAME='value' (bash
-// permits no space around `=`, and this regex requires no space inside the
-// value either — a value containing an unescaped space tokenizes into more
-// than one token, which the length check in updateAssignment below excludes;
-// that's an accepted narrowing, not a bug). No `export`, no arrays:
+// permits no space around `=`). A quoted value may hold a space —
+// `NAME="a b"` is one token and is tracked — but an unquoted, unescaped space
+// (`NAME=a b`) tokenizes into more than one token, which the length check in
+// updateAssignment below excludes; that's an accepted narrowing, not a bug,
+// since bash reads it as an assignment prefix on command `b`. No `export`, no arrays:
 // `export SP=/x` tokenizes to two tokens (`export`, `SP=/x`) and fails the
 // length check before this regex ever runs, so `export` needs no separate
 // rejection.
@@ -588,22 +590,25 @@ const BALANCED_GROUP_RE = /^[$<]?\([^()\\$`<>"']*\)$/;
 // past the glued operator in `raw`, or null when the token holds none.
 //
 // The prefix before the operator is accepted only when every character is quoted
-// (`s`/`d`) or bare and not `$`, backtick or `(` — each of those can put the `>` inside
-// an expansion, and an unquoted `(` inside a bare word is only arithmetic
-// (`((i>0))`, where `>` is a comparison), `$(`, `<(` or extglob syntax. An escaped or
-// stray character in the prefix rejects it; ambiguity resolves to no target. A
-// leading `>` (k === 0) is the start-anchored scan's case, not this one.
+// (`s`/`d`), escaped (`e`: `foo\ bar>x` is the word `foo bar`), or bare and not `$`,
+// backtick or `(` — each of those can put the `>` inside an expansion, and an unquoted
+// `(` inside a bare word is only arithmetic (`((i>0))`, where `>` is a comparison),
+// `$(`, `<(` or extglob syntax. A stray character in the prefix rejects it; ambiguity
+// resolves to no target. A leading `>` (k === 0) is leadingRedirectOpEnd's case.
 //
 // The one exception is a prefix that is exactly one all-bare, un-nested group: it ends
 // at its `)`, so the `>` after it is a redirect (BALANCED_GROUP_RE).
-function gluedRedirectOpEnd(raw, kinds) {
+//
+// `nest` is the nesting state at the token's start (advanceNesting); a `>` reached
+// inside a nested context is quoted in bash, so it yields null.
+function gluedRedirectOpEnd(raw, kinds, nest) {
   let k = 0;
   while (k < raw.length && !(raw[k] === '>' && kinds[k] === 'b')) k += 1;
-  if (k === 0 || k === raw.length) return null;
+  if (k === 0 || k === raw.length || isNested(advanceNesting(nest, raw, kinds, k))) return null;
   let plain = true;
   for (let j = 0; j < k; j += 1) {
     const kind = kinds[j];
-    if (kind === 's' || kind === 'd') continue;
+    if (kind === 's' || kind === 'd' || kind === 'e') continue;
     if (kind === 'b' && !'$`('.includes(raw[j])) continue;
     plain = false;
     break;
@@ -613,6 +618,53 @@ function gluedRedirectOpEnd(raw, kinds) {
   const twoChar = (second === '>' || second === '|') && kinds[k + 1] === 'b';
   return k + (twoChar ? 2 : 1);
 }
+
+// #4210 F3: the start-anchored operator (`>`, `>>`, `>|`, `N>`, `&>`, `&>>`) read on the
+// token as typed. Every operator character, fd digits and `&` included, must be bare: a
+// quoted leading `>` (`echo ">x"`, `--body "> reply"`) is a word, and so is a `>` that a
+// `$VAR` expands to. Returns the index just past the operator, or null.
+function leadingRedirectOpEnd(raw, kinds, nest) {
+  if (isNested(nest)) return null;
+  let k = 0;
+  const amp = raw[0] === '&' && kinds[0] === 'b';
+  if (amp) k = 1;
+  else while (k < raw.length && raw[k] >= '0' && raw[k] <= '9' && kinds[k] === 'b') k += 1;
+  if (raw[k] !== '>' || kinds[k] !== 'b') return null;
+  const second = raw[k + 1];
+  const twoChar = (second === '>' || (second === '|' && !amp)) && kinds[k + 1] === 'b';
+  return k + (twoChar ? 2 : 1);
+}
+
+// #4210 F1: a `$(`, `${` or backtick inside double quotes opens a nested context, and a
+// `"` inside it starts a NEW quote that the tokenizer reads as closing the outer one —
+// so a `>` bash keeps quoted (`echo "$(jq ".a>1" f)"`) gets kind `b`. Only the `d`
+// characters are real shell syntax at that level, so the walk reads only them: `$(`/`${`
+// open, a backtick toggles, and once nested a `(`/`{` opens, a `)`/`}` closes and a `'`
+// starts a span whose parens are literal. A `\` skips the next `d` character.
+// Over-counting only leaves the state nested, which resolves no target.
+function advanceNesting(nest, raw, kinds, end) {
+  let { depth, tick, sq } = nest;
+  for (let j = 0; j < end; j += 1) {
+    if (kinds[j] !== 'd') continue;
+    const c = raw[j];
+    if (sq) { if (c === "'") sq = false; continue; }
+    if (c === '\\') { if (kinds[j + 1] === 'd') j += 1; continue; }
+    if (c === '`') tick = !tick;
+    else if (c === '$' && (raw[j + 1] === '(' || raw[j + 1] === '{') && kinds[j + 1] === 'd') { depth += 1; j += 1; }
+    else if (depth > 0 || tick) {
+      if (c === "'") sq = true;
+      else if (depth > 0 && (c === '(' || c === '{')) depth += 1;
+      else if (depth > 0 && (c === ')' || c === '}')) depth -= 1;
+    }
+  }
+  return { depth, tick, sq };
+}
+
+function isNested(nest) {
+  return nest.depth > 0 || nest.tick || nest.sq;
+}
+
+const NOT_NESTED = Object.freeze({ depth: 0, tick: false, sq: false });
 
 // #3989 heredoc-body stripping (see stripHeredocBodies below). Program words
 // that run their input as shell text:
@@ -895,24 +947,33 @@ function compoundBodyEnd(t) {
 // fed to a shell keeps its redirects visible, because that text runs as shell
 // (see stripHeredocBodies for the carve-out).
 //
-// Glued-word redirects (#4015, #4210): given `quoting` (forEachCommandSegment's third
-// handler argument), a token the start-anchored scan misses (`foo>x`, `"hi">x`) is
-// also tried against gluedRedirectOpEnd. Eligibility is tested on the
-// PRE-substitution token and its per-character span mask, so a quoted, escaped or
-// `$`-expanded `>` never counts; the target is read from the post-substitution
-// token, so `>$WT/x` still resolves. A prefix that is one balanced one-word group
-// (`(ls)>out`, `$(date)>x`, `<(b)>out`) also qualifies; `((i>0))` does not. Without
-// `quoting.spanKinds` the scan is start-anchored only.
+// Span-aware scan (#4015, #4210): given `quoting.spanKinds` (forEachCommandSegment's
+// third handler argument), the operator is found on the PRE-substitution token and its
+// per-character span mask, so a quoted, escaped or `$`-expanded `>` never counts — at
+// the token's start (leadingRedirectOpEnd: `echo ">x"` is a word) or glued to a word
+// (gluedRedirectOpEnd: `foo>x`, `"hi">x`). The target is read from the
+// post-substitution token, so `>$WT/x` still resolves. A prefix that is one balanced
+// one-word group (`(ls)>out`, `$(date)>x`, `<(b)>out`) also qualifies; `((i>0))` does
+// not. The nesting state (advanceNesting) is carried across the segment's tokens, so a
+// `>` inside `"$( … )"` stays quoted even after a token break. Without
+// `quoting.spanKinds` the scan is start-anchored on the substituted token only.
 //
 // A `[[ … ]]` or `(( … ))` segment holds a comparison, not a redirection
 // (compoundBodyEnd), so the scan starts after its closing word.
 function redirectWriteTargets(t, effCwd, quoting) {
   const out = [];
-  for (let i = compoundBodyEnd(t); i < t.length; i += 1) {
-    let rawTarget = matchRedirectOperator(t[i]);
-    if (rawTarget === null && quoting && quoting.spanKinds) {
+  const kindsOf = quoting && quoting.spanKinds;
+  const start = compoundBodyEnd(t);
+  let nest = NOT_NESTED;
+  const advance = (j) => { if (kindsOf && j < t.length) nest = advanceNesting(nest, quoting.raw[j], kindsOf[j], kindsOf[j].length); };
+  for (let j = 0; j < start; j += 1) advance(j);
+  for (let i = start; i < t.length; i += 1) {
+    let rawTarget = null;
+    if (!kindsOf) rawTarget = matchRedirectOperator(t[i]);
+    else {
       const raw = quoting.raw[i];
-      const opEnd = gluedRedirectOpEnd(raw, quoting.spanKinds[i]);
+      let opEnd = leadingRedirectOpEnd(raw, kindsOf[i], nest);
+      if (opEnd === null) opEnd = gluedRedirectOpEnd(raw, kindsOf[i], nest);
       if (opEnd !== null) {
         // substituteVars rewrites at most one `$` reference per token, so exactly one
         // side of the operator changed: read the target from whichever side survived.
@@ -923,9 +984,11 @@ function redirectWriteTargets(t, effCwd, quoting) {
         else if (t[i].endsWith(tail)) rawTarget = tail;
       }
     }
+    advance(i);
     if (rawTarget === null) continue;
     if (rawTarget === '') {
       i += 1; // consume the target token too — never re-scan it as its own operator
+      advance(i);
       rawTarget = t[i];
     }
     if (rawTarget === undefined || isFdDupTarget(rawTarget) || rawTarget.startsWith('(')) continue;
