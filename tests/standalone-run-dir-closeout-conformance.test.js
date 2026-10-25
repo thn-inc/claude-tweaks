@@ -47,6 +47,10 @@ const PINS = {
     { file: 'backlog/refine-closing-summary.md', from: '**Close the run dir.**', to: null, patterns: [P_INHERITED] },
     { file: 'backlog/refine-headless.md', from: '## Step 5: Report', to: '## Cap tracking', patterns: [P_CLOSE] },
   ],
+  dispatch: [
+    { file: 'dispatch/SKILL.md', from: '### Step 1:', to: '### Step 2:', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED] },
+    { file: 'dispatch/SKILL.md', from: '### Step 3:', to: '### Step 4:', patterns: [[/Step 1's close-out still runs/, 'the zero-eligible stop still runs Step 1\'s close-out']] },
+  ],
 };
 
 // --- Slicing and the fact/go-red assertion ----------------------------------------------------------
