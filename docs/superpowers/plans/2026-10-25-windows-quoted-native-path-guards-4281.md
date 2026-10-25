@@ -202,12 +202,12 @@ Claude-Session: https://claude.ai/code/session_01VQ5xwJKNNfTkMXnRsmxndL"
   - `tests/hooks-policy-exemption.test.js`
   - `tests/teardown-gate.test.js`
   - `.claude/skills/windows-checkout-test-parity/SKILL.md`, a new row at the end of its Anti-Patterns table (after :179)
-- Test: `tests/helpers/shell-quote.test.js` (create)
+- Test: `tests/helpers-shell-quote.test.js` (create)
 
 **Interfaces:**
 - Produces: `module.exports = { shellQuote }`. `shellQuote(p: string): string` returns `'` + `p` with every `'` replaced by `'\''` + `'`, a POSIX single-quoted word whose bash value is `p` exactly.
 
-- [ ] **Step 1: Write the failing test** `tests/helpers/shell-quote.test.js`, `#4281: shellQuote yields a word whose bash value is the input`:
+- [ ] **Step 1: Write the failing test** `tests/helpers-shell-quote.test.js`, `#4281: shellQuote yields a word whose bash value is the input`:
   - `shellQuote('D:\\a\\_temp\\x') === "'D:\\a\\_temp\\x'"`.
   - `shellQuote("it's") === "'it'\\''s'"`.
   - Round-trip: for `['D:\\a\\_temp\\x', "it's", '/tmp/a b', 'x$y`z']`, `spawnSync('/bin/bash', ['-c', `printf %s ${shellQuote(v)}`]).stdout.toString() === v`.
@@ -215,7 +215,7 @@ Claude-Session: https://claude.ai/code/session_01VQ5xwJKNNfTkMXnRsmxndL"
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `node --test tests/helpers/shell-quote.test.js`
+Run: `node --test tests/helpers-shell-quote.test.js`
 Expected: FAIL (non-zero exit) with `Cannot find module './shell-quote'`.
 
 - [ ] **Step 3: Implement `shellQuote`**, then route the five files' fixtures through it:
@@ -230,13 +230,13 @@ Expected: FAIL (non-zero exit) with `Cannot find module './shell-quote'`.
 Run: `grep -n 'bashInput(`[^`]*\${' tests/hooks-pre-tool-use.test.js tests/hooks-dispatcher.test.js tests/hooks-pipeline-shadow-guard.test.js tests/hooks-policy-exemption.test.js tests/teardown-gate.test.js | grep -v 'shellQuote('`
 Expected: no output, or only lines whose `${…}` is a non-path value (a message, a sha). List them in the report.
 
-Run: `node --test tests/helpers/shell-quote.test.js tests/hooks-git-command.test.js tests/hooks-bash-prefilter.test.js tests/hooks-pre-tool-use.test.js tests/hooks-dispatcher.test.js tests/hooks-pipeline-shadow-guard.test.js tests/hooks-policy-exemption.test.js tests/teardown-gate.test.js > /private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/c186f969-523f-49e1-b364-8fdcb09e6cd7/scratchpad/4281-t3-green.txt 2>&1; tail -15 /private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/c186f969-523f-49e1-b364-8fdcb09e6cd7/scratchpad/4281-t3-green.txt`
+Run: `node --test tests/helpers-shell-quote.test.js tests/hooks-git-command.test.js tests/hooks-bash-prefilter.test.js tests/hooks-pre-tool-use.test.js tests/hooks-dispatcher.test.js tests/hooks-pipeline-shadow-guard.test.js tests/hooks-policy-exemption.test.js tests/teardown-gate.test.js > /private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/c186f969-523f-49e1-b364-8fdcb09e6cd7/scratchpad/4281-t3-green.txt 2>&1; tail -15 /private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/c186f969-523f-49e1-b364-8fdcb09e6cd7/scratchpad/4281-t3-green.txt`
 Expected: PASS, `# fail 0`. This is AC1.1's suite list plus the helper's test.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/helpers/shell-quote.js tests/helpers/shell-quote.test.js tests/hooks-pre-tool-use.test.js tests/hooks-dispatcher.test.js tests/hooks-pipeline-shadow-guard.test.js tests/hooks-policy-exemption.test.js tests/teardown-gate.test.js .claude/skills/windows-checkout-test-parity/SKILL.md
+git add tests/helpers/shell-quote.js tests/helpers-shell-quote.test.js tests/hooks-pre-tool-use.test.js tests/hooks-dispatcher.test.js tests/hooks-pipeline-shadow-guard.test.js tests/hooks-policy-exemption.test.js tests/teardown-gate.test.js .claude/skills/windows-checkout-test-parity/SKILL.md
 git commit -m "Quote native paths in hook test fixtures through one helper — bash keeps a quoted backslash
 
 Refs #4281
