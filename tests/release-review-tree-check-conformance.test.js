@@ -54,6 +54,11 @@ function runCheck(fence, fx) {
   return runCheckResult(fence, fx).status;
 }
 
+// The sha `work` currently has for origin/{BRANCH}.
+function originSha(fx) {
+  return fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+}
+
 // A sibling's commit outside run dirs, its push, and this checkout's fetch, as bash clauses for the fence.
 function siblingMoveClauses(fx) {
   return [
@@ -137,7 +142,7 @@ for (const [label, arrange, passes] of ROWS) {
 test('AC1.1: a passing check prints exactly the origin/{BRANCH} sha it compared against, as its only stdout line', () => {
   const fence = checkFence(stepThreeOf(readText(SKILL)));
   withFixture('release-review-tree-tip-', (fx) => {
-    const expected = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    const expected = originSha(fx);
     const result = runCheckResult(fence, fx);
     assert.equal(result.status, 0, `expected exit 0, got ${result.status} (stderr: ${result.stderr})`);
     assert.equal(result.stdout, `${expected}\n`, 'stdout must be exactly the tip sha, one line');
@@ -147,10 +152,10 @@ test('AC1.1: a passing check prints exactly the origin/{BRANCH} sha it compared 
 test('AC1.2: a sibling move between the tip resolution and the echo leaves the printed tip at the pre-move sha', () => {
   const fence = checkFence(stepThreeOf(readText(SKILL)));
   withFixture('release-review-tree-race-', (fx) => {
-    const pre = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    const pre = originSha(fx);
     fs.writeFileSync(path.join(fx.other, 'race.txt'), 'race\n');
     const result = runCheckResult(raceFence(fence, fx), fx);
-    const moved = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    const moved = originSha(fx);
     assert.notEqual(moved, pre, 'fixture must have moved origin/main inside the run');
     assert.equal(result.status, 0, `expected exit 0, got ${result.status} (stderr: ${result.stderr})`);
     assert.equal(result.stdout.trim(), pre, 'the check must print the sha it resolved before the sibling move');
@@ -160,11 +165,11 @@ test('AC1.2: a sibling move between the tip resolution and the echo leaves the p
 test('AC1.2: go-red: re-reading origin/{BRANCH} after the tree check prints the moved sha', () => {
   const fence = checkFence(stepThreeOf(readText(SKILL)));
   withFixture('release-review-tree-race-reread-', (fx) => {
-    const pre = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    const pre = originSha(fx);
     fs.writeFileSync(path.join(fx.other, 'race.txt'), 'race\n');
     const doctored = raceFence(fence, fx, `git -C "$RUN_ROOT" rev-parse origin/${BRANCH}`);
     const result = runCheckResult(doctored, fx);
-    const moved = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    const moved = originSha(fx);
     assert.notEqual(moved, pre, 'fixture must have moved origin/main inside the run');
     assert.equal(result.stdout.trim(), moved, 'go-red: a second rev-parse records the moved sha, not the one the tree check compared');
     assert.notEqual(result.stdout.trim(), pre);
@@ -174,10 +179,10 @@ test('AC1.2: go-red: re-reading origin/{BRANCH} after the tree check prints the 
 test('AC1.2: the tree diff compares HEAD against the resolved tip: a sibling move before the diff leaves the check passing', () => {
   const fence = checkFence(stepThreeOf(readText(SKILL)));
   withFixture('release-review-tree-diff-', (fx) => {
-    const pre = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    const pre = originSha(fx);
     fs.writeFileSync(path.join(fx.other, 'race.txt'), 'race\n');
     const result = runCheckResult(moveAfterTipFence(fence, fx), fx);
-    const moved = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    const moved = originSha(fx);
     assert.notEqual(moved, pre, 'fixture must have moved origin/main inside the run');
     assert.equal(result.status, 0, `expected exit 0, got ${result.status} (stderr: ${result.stderr})`);
     assert.equal(result.stdout.trim(), pre, 'the tree diff must compare HEAD against the pre-move tip, which equals HEAD');
