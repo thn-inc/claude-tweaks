@@ -7,6 +7,7 @@
 'use strict';
 
 const { POLICY_KEYS } = require('../policy-schema');
+const { fencedLineRanges } = require('./record-payload');
 
 const REQUIRED_SECTIONS = ['## Current State', '## Deliverables', '## Acceptance Criteria', '## Release Note'];
 // The Design-intent enum, read once from the policy schema (never restated here).
@@ -42,28 +43,16 @@ function stripCodeSpans(text) {
   const lines = text.split('\n');
   const out = [];
   let i = 0;
-  while (i < lines.length) {
-    const fenceMatch = lines[i].match(/^(`{3,}|~{3,})/);
-    if (fenceMatch) {
-      const fenceChar = fenceMatch[1][0];
-      const fenceLen = fenceMatch[1].length;
-      const closeRe = new RegExp(`^${fenceChar}{${fenceLen},}\\s*$`);
-      let j = i + 1;
-      while (j < lines.length && !closeRe.test(lines[j])) j++;
-      // j is the closing fence line, or lines.length when unclosed (runs to
-      // end of text). Either way, everything from the opening fence through
-      // the close (or end) is quoted, not authored — drop it, keeping one
-      // blank line so a section whose only content is a fenced block is
-      // still detected as non-empty by sectionText (which reads the
-      // unstripped body anyway, but this keeps stripCodeSpans' own output
-      // shape sane for any other caller).
-      out.push('');
-      i = j < lines.length ? j + 1 : lines.length;
-      continue;
-    }
-    out.push(lines[i]);
-    i++;
+  for (const [start, end] of fencedLineRanges(lines)) {
+    while (i < start) out.push(lines[i++]);
+    // Everything from the opening fence through the close (or end, when
+    // unclosed) is quoted, not authored — drop it, keeping one blank line so a
+    // section whose only content is a fenced block is still non-empty for any
+    // caller that reads this output.
+    out.push('');
+    i = end + 1;
   }
+  while (i < lines.length) out.push(lines[i++]);
   // Inline code spans: an opening backtick run, non-greedy content, a
   // closing run of the exact same length (the backreference enforces this).
   // #1837 review finding: the unbounded `[\s\S]*?` here has no explicit
@@ -83,15 +72,35 @@ function stripCodeSpans(text) {
   return out.join('\n').replace(/(`+)([\s\S]{0,2000}?)\1/g, '');
 }
 
-// body -> the text of section `## {name}` up to the next `## ` heading (or
-// end of body). null when the heading itself is absent.
+// body -> the text of section `## {name}` up to the next `## ` heading outside a
+// fenced block (or end of body). null when the heading is absent outside fences.
+// Fenced blocks are skipped as quoted content (#4169): a body whose Current State
+// quotes a spec-shaped copy must not have that copy's headings read as its own.
 function sectionText(body, name) {
   const heading = `## ${name}`;
-  const start = body.indexOf(heading);
+  const lines = body.split('\n');
+  const lineStarts = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineStarts.push(offset);
+    offset += line.length + 1;
+  }
+  const fencedSpans = [];
+  for (const [s, e] of fencedLineRanges(lines)) {
+    fencedSpans.push([lineStarts[s], lineStarts[e] + lines[e].length]);
+  }
+  const inFence = (pos) => fencedSpans.some(([from, to]) => pos >= from && pos < to);
+  let start = body.indexOf(heading);
+  while (start !== -1 && inFence(start)) start = body.indexOf(heading, start + 1);
   if (start === -1) return null;
   const afterHeading = start + heading.length;
-  const nextHeadingRel = body.slice(afterHeading).search(/\n## /);
-  const end = nextHeadingRel === -1 ? body.length : afterHeading + nextHeadingRel;
+  let end = body.length;
+  for (let nl = body.indexOf('\n## ', afterHeading); nl !== -1; nl = body.indexOf('\n## ', nl + 1)) {
+    if (!inFence(nl + 1)) {
+      end = nl;
+      break;
+    }
+  }
   return body.slice(afterHeading, end).trim();
 }
 

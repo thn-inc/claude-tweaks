@@ -157,9 +157,11 @@ test('shapeGate: an inline-code marker passes; the same bare marker fails', () =
 });
 
 test('shapeGate: an unclosed fence containing a marker passes (runs to end of authored text)', () => {
+  // The unclosed fence follows the required sections: an unclosed fence hides
+  // every heading after it (#4169), so placing it earlier would hide them too.
   const body = SHAPED_BODY.replace(
-    '- [ ] do a thing',
-    '- [ ] do a thing\n\n```\nunterminated fence with a TODO marker inside',
+    'Fixed the thing.',
+    'Fixed the thing.\n\n```\nunterminated fence with a TODO marker inside',
   );
   assert.deepEqual(shapeGate(body), { ok: true, missing: [] });
 });
@@ -475,4 +477,59 @@ test('normalizeDesignIntent: enum comes from policy-schema (#3018)', () => {
 test('liftMetadata: a CRLF body ends its metadata block at the CRLF blank line (#3018)', () => {
   const body = 'Surface: web\r\n\r\n## Current State\r\nDesign-intent: sparkly\r\nx';
   assert.deepEqual(liftMetadata(body), { surface: 'web' });
+});
+
+// ---- sectionText skips fenced headings (#4169) ----
+const QUOTED_BODY = [
+  '## Current State',
+  'The copy follows.',
+  '',
+  '````',
+  '## Deliverables',
+  '- [ ] quoted deliverable',
+  '```',
+  '## Acceptance Criteria',
+  '```',
+  '1. quoted AC',
+  '## Release Note',
+  'quoted note',
+  '````',
+  '',
+  '## Deliverables',
+  '- [ ] real deliverable',
+  '',
+  '## Open Question',
+  'Is it wanted?',
+  '',
+  '## Release Note',
+  'Real note.',
+].join('\n');
+
+test('AC1.1: sectionText returns null for a heading that exists only inside a fence', () => {
+  assert.equal(sectionText(QUOTED_BODY, 'Acceptance Criteria'), null);
+});
+
+test('AC1.1: sectionText returns the whole Current State, fenced block included', () => {
+  const cs = sectionText(QUOTED_BODY, 'Current State');
+  assert.ok(cs.startsWith('The copy follows.'));
+  assert.ok(cs.endsWith('quoted note\n````'));
+});
+
+test('sectionText: the record\'s own section wins over an earlier fenced quote of the same heading', () => {
+  assert.equal(sectionText(QUOTED_BODY, 'Deliverables'), '- [ ] real deliverable');
+  assert.equal(sectionText(QUOTED_BODY, 'Release Note'), 'Real note.');
+});
+
+test('sectionText: a CRLF fenced quote is skipped too', () => {
+  assert.equal(sectionText(QUOTED_BODY.replace(/\n/g, '\r\n'), 'Acceptance Criteria'), null);
+});
+
+test('shapeGate: a fenced quote of a spec-shaped document does not supply the record\'s missing sections', () => {
+  assert.deepEqual(shapeGate(QUOTED_BODY), { ok: false, missing: ['Acceptance Criteria'] });
+});
+
+test('sectionText: an unclosed fence hides every later heading (CommonMark: it runs to end of text)', () => {
+  const body = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
+  assert.equal(sectionText(body, 'Deliverables'), null);
+  assert.ok(sectionText(body, 'Current State').endsWith('- [ ] d'));
 });
