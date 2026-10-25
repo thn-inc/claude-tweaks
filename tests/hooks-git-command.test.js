@@ -830,11 +830,25 @@ test('AC2.3 #4281: mkdir, git -C and a cd before worktree remove resolve through
   assertQuotedNativePins(realGitCommand, realPreToolUse, ['mkdir', 'gitC', 'teardown']);
 });
 
-test('AC2.4 #4281: an unquoted native path is no target (bash reads D:repoa.js, a drive-relative path)', () => {
-  assert.deepStrictEqual(fileWriteTargets('tee D:\\repo\\a.js', 'D:\\repo', { pathImpl: path.win32 }), []);
-  assert.deepStrictEqual(gitTargets('cd D:\\repo && git commit -m x', 'D:\\x', { pathImpl: path.win32 }), []);
-  // The -C branch's own drive-relative check: without it, path.win32 reads D:repo as D:\x\repo.
-  assert.deepStrictEqual(gitTargets('git -C D:\\repo commit -m x', 'D:\\x', { pathImpl: path.win32 }), []);
+test('AC2.4 #4281: an unquoted native path is never its typed target (bash reads D:repoa.js, a drive-relative path)', () => {
+  // Windows resolves a drive-relative value against the cwd when the cwd is on that drive (letters
+  // compared case-insensitively), so the same-drive value is a provable literal, never D:\repo\a.js.
+  const win = { pathImpl: path.win32 };
+  assert.deepStrictEqual(fileWriteTargets('tee D:\\repo\\a.js', 'D:\\repo', win), [{ action: 'write', file: 'D:\\repo\\repoa.js' }]);
+  assert.deepStrictEqual(fileWriteTargets('tee d:a.js', 'D:\\repo', win), [{ action: 'write', file: 'd:\\repo\\a.js' }]);
+  assert.deepStrictEqual(gitTargets('cd D:\\repo && git commit -m x', 'D:\\x', win), [{ action: 'commit', dir: 'D:\\x\\repo' }]);
+  assert.deepStrictEqual(gitTargets('git -C D:\\repo commit -m x', 'D:\\x', win), [{ action: 'commit', dir: 'D:\\x\\repo' }]);
+  // Against another drive, or a cwd with no drive, that drive's own cwd is unknown: no target.
+  assert.deepStrictEqual(fileWriteTargets('tee D:a.js', 'C:\\x', win), []);
+  assert.deepStrictEqual(fileWriteTargets('tee D:a.js', '/x', win), []);
+  assert.deepStrictEqual(fileWriteTargets('tee D:a.js', 'D:', win), []);
+  assert.deepStrictEqual(gitTargets('cd D:repo && git commit -m x', 'C:\\x', win), []);
+  assert.deepStrictEqual(gitTargets('git -C D:\\repo commit -m x', 'C:\\x', win), []);
+});
+
+test('#4281: a single-positional ln names its link with the injected path module\'s basename', () => {
+  // bash 3.2 and 5: "D:\src\a.js" is the value D:\src\a.js; ln -s creates a.js in the cwd.
+  assert.deepStrictEqual(fileWriteTargets('ln -s "D:\\src\\a.js"', 'D:\\repo', { pathImpl: path.win32 }), [{ action: 'link', file: 'D:\\repo\\a.js' }]);
 });
 
 const MUTANT_DIR = path.join(os.tmpdir(), 'ct-4281-mutant-' + process.pid);

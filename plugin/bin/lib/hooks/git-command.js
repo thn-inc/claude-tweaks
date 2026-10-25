@@ -475,10 +475,13 @@ function isAbsolutePlain(raw, pathImpl = path) {
 }
 
 // #4281: a drive-relative value (`D:repo`, the value of an unquoted `D:\repo`, or a bare `D:`) names a path
-// relative to that drive's own current directory, which this module never knows. Unresolvable under
-// a win32 pathImpl, where path.win32 would otherwise read it against the walk's cwd.
-function isDriveRelative(raw, pathImpl) {
-  return pathImpl.sep === '\\' && /^[A-Za-z]:(?![\\/])/.test(raw);
+// relative to that drive's own current directory. Under a win32 pathImpl, when `base` (the cwd it resolves
+// against) is drive-absolute on the same drive (letters compared case-insensitively), that directory is
+// `base` itself, so the value is a provable literal that pathImpl.resolve(base, raw) places. Against
+// another drive, an unknown (null) base or a base with no drive, the drive's own cwd is unknown: unprovable.
+function isUnprovableDriveRelative(raw, base, pathImpl) {
+  if (pathImpl.sep !== '\\' || !/^[A-Za-z]:(?![\\/])/.test(raw)) return false;
+  return base === null || !/^[A-Za-z]:[\\/]/.test(base) || base[0].toLowerCase() !== raw[0].toLowerCase();
 }
 
 // Shared cd-token resolution used by both gitTargets and fileWriteTargets: given
@@ -488,7 +491,7 @@ function isDriveRelative(raw, pathImpl) {
 // future fix to cd-resolution edge cases (a new isUnresolvable pattern,
 // pushd/popd support, etc.) can never land in one caller and not the other.
 function resolveCd(effCwd, raw, pathImpl = path) {
-  if (isUnresolvable(raw) || isDriveRelative(raw, pathImpl)) return null;
+  if (isUnresolvable(raw) || isUnprovableDriveRelative(raw, effCwd, pathImpl)) return null;
   if (effCwd === null) {
     // Unknown cwd: only a plain absolute path restores provability.
     return isAbsolutePlain(raw, pathImpl) ? pathImpl.resolve(raw) : null;
@@ -664,7 +667,7 @@ function skipGlobalFlags(t, i, dir, pathImpl = path) {
         // Resolving it would normalize the string and hand the worktree gate
         // a different target than an omitted -C (e.g. `C:\repo` vs `/repo` on
         // Windows) — #3314.
-      } else if (isUnresolvable(raw) || isDriveRelative(raw, pathImpl)) {
+      } else if (isUnresolvable(raw) || isUnprovableDriveRelative(raw, dir, pathImpl)) {
         unprovable = true;
       } else if (pathImpl.isAbsolute(raw)) {
         dir = pathImpl.resolve(raw);
@@ -898,7 +901,7 @@ function powershellOpaqueCommand(command, cwd) {
 const DEVNULL_LIKE = new Set(['/dev/null', '/dev/stdout', '/dev/stderr']);
 
 function resolveWriteTarget(effCwd, raw, pathImpl = path) {
-  if (isUnresolvable(raw) || isDriveRelative(raw, pathImpl)) return null;
+  if (isUnresolvable(raw) || isUnprovableDriveRelative(raw, effCwd, pathImpl)) return null;
   // An explicitly-empty token is never a file. It reaches here as BSD sed's
   // separate backup suffix (`sed -i '' ...`); without this it would resolve to
   // effCwd itself and flag the whole directory as a write target.
@@ -2308,7 +2311,7 @@ function fileWriteTargets(command, cwd, opts) {
         const file = resolveWriteTarget(effCwd, positionals[positionals.length - 1], pathImpl);
         if (file) targets.push({ action: 'link', file });
       } else if (positionals.length === 1) {
-        const file = resolveWriteTarget(effCwd, path.basename(positionals[0]), pathImpl);
+        const file = resolveWriteTarget(effCwd, pathImpl.basename(positionals[0]), pathImpl);
         if (file) targets.push({ action: 'link', file });
       }
       return;

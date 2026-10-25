@@ -536,7 +536,7 @@ function teardownTargets(ctx, { pathImpl } = {}) {
     const rest = toks.slice(i + 2).filter((t) => t !== '--force' && t !== '-f' && t !== '--');
     if (rest.length !== 1 || rest[0].startsWith('-')) return; // unconfident -> allow
     // The same resolver as every write target (#4281): an unprovable value ($VAR, ~, a
-    // drive-relative D:wt under win32) is no target, never a literal child of `dir`.
+    // cross-drive D:wt under win32) is no target, never a literal child of `dir`.
     const target = resolveWriteTarget(dir, rest[0], quoting.pathImpl);
     if (target) out.push({ path: target, source: 'bash' });
   }, { ...walkOptions(cwd), pathImpl });
