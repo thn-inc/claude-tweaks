@@ -607,6 +607,35 @@ for (const cmd of ['echo $(( a>1 || b>2 ))', 'x=$(( a>1 | b>2 ))']) {
     assert.deepStrictEqual(gitCommand.splitSegments(cmd), [cmd]);
   });
 }
+// Arithmetic that holds a command substitution runs it, so its separators still cut: bash 3.2 and 5
+// write /main/f.js for each row except the `<(`/`>(` ones (noted on them). The last row resolves /r/f.js,
+// the same as before #4303, though bash writes /main/f.js: the cd inside the substitution is not
+// followed (a pre-existing gap with a record of its own).
+for (const [cmd, file] of [
+  ['echo $(( $(true; cp a /main/f.js) + 1 ))', MAIN_F],
+  ['(( x = $(true; cp a /main/f.js) ))', MAIN_F],
+  ['x=$(( a[$(true; cp a /main/f.js)] ))', MAIN_F],
+  // bash 3.2 writes /main/f.js for a process substitution in a subscript, bash 5 does not; these
+  // pins side with 3.2.
+  ['(( a[<(true; cp a /main/f.js)] ))', MAIN_F],
+  ['echo $(( a[>(true; cp a /main/f.js)] ))', MAIN_F],
+  ['echo $(( $(cd /main; cp a f.js) + 1 ))', path.resolve('/r/f.js')],
+]) {
+  test(`#4303: \`${cmd}\` still reads the write inside the arithmetic's substitution`, () => {
+    assert.ok(fileWriteTargets(cmd, '/r').some((t) => t.file === file), JSON.stringify(fileWriteTargets(cmd, '/r')));
+  });
+}
+// A backtick inside arithmetic is an opener too: bash 3.2 and 5 write /main/f.js. Before #4303 and
+// here alike, the walk resolves a malformed target from it (a write inside a backtick is the same
+// pre-existing gap), so this pins only that the cut keeps a target, and the deny with it.
+test('#4303: arithmetic holding a backtick keeps the target its cut resolved', () => {
+  assert.notDeepStrictEqual(fileWriteTargets('echo $(( `true; cp a /main/f.js` + 1 ))', '/r'), []);
+});
+// A quoted `)` inside `(( ))` closes nothing (parenMatches skips quoted spans): bash 3.2 and 5 report
+// an arithmetic error, then run the cp and write /main/f.js.
+test('#4303: a quoted ) inside (( )) leaves the command after it visible', () => {
+  assert.ok(fileWriteTargets('(( "a)" || 1 )); cp a /main/f.js', '/r').some((t) => t.file === MAIN_F));
+});
 // `$((true); …)` is a `$(` holding a subshell, not arithmetic: bash 3.2 and 5 write M/f.
 test('#4303: a $(( that is a substitution holding a subshell still cuts its commands', () => {
   assert.ok(fileWriteTargets('x=$((true); cd /main; cp a f.js)', '/r').some((t) => t.file === MAIN_F));

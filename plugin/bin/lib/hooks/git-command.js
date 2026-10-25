@@ -34,6 +34,7 @@ function segmentSpansWith(str, spans) {
   let quote = null; // null | "'" (a double-quoted span is consumed whole below)
   let parens = null; // parenMatches from the first `((` or `$((` on, offset by parensFrom
   let parensFrom = 0;
+  let opens = null; // opens[k]: command-substitution openers in str[parensFrom, parensFrom + k)
   for (let i = 0; i < str.length; i++) {
     const ch = str[i];
     if (quote === "'") {
@@ -85,14 +86,26 @@ function segmentSpansWith(str, spans) {
     // closes at a `)` directly followed by `)` (the test groupEvents applies, #4303). It is one piece
     // through that `))`, across lines: a `||`, `&&`, `|` or `;` inside it is an operator of the
     // expression, not a separator. Any other one (`$((true); …)`, `((cd x && ls) | cat)`) holds a
-    // subshell, whose commands are cut as before, and so does a `((` glued to `<` or `>`.
+    // subshell, whose commands are cut as before, and so does a `((` glued to `<` or `>`. Arithmetic
+    // that holds a command-substitution opener (a `$(` that is no `$((`, a backtick, `<(` or `>(`,
+    // quoted or not) is cut as before #4303 too: bash runs that substitution, and the cuts at its
+    // separators are what expose its writes to the walk.
     const lead = ch === '$' && str[i + 1] === '(' && str[i + 2] === '(' ? i + 2
       : ch === '(' && str[i + 1] === '(' && (i === 0 || /[\s;&|(]/.test(str[i - 1])) ? i + 1 : -1;
     if (lead !== -1) {
-      if (parens === null) { parensFrom = i; parens = parenMatches(str.slice(i)); }
+      if (parens === null) {
+        parensFrom = i;
+        parens = parenMatches(str.slice(i));
+        opens = new Uint32Array(str.length - i + 1);
+        for (let k = i; k < str.length; k += 1) {
+          const c = str[k];
+          const opener = c === '`' || (c === '$' && str[k + 1] === '(' && str[k + 2] !== '(') || ((c === '<' || c === '>') && str[k + 1] === '(');
+          opens[k - i + 1] = opens[k - i] + (opener ? 1 : 0);
+        }
+      }
       const inner = parens.get(lead - parensFrom);
-      if (inner !== undefined && str[parensFrom + inner + 1] === ')') {
-        const end = parensFrom + inner + 2;
+      const end = inner === undefined ? -1 : parensFrom + inner + 2;
+      if (end !== -1 && str[end - 1] === ')' && opens[end - parensFrom] === opens[i - parensFrom]) {
         current += str.slice(i, end);
         i = end - 1;
         continue;
