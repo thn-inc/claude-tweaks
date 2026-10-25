@@ -27,6 +27,7 @@ const path = require('path');
 const readline = require('readline');
 const { lstatType, resolveLeaf, canonicalRealpath, isAncestorOrSelf } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
+const { isProcedurePath, classifyToolCall } = require('./turn-class');
 
 const TRANSCRIPT_SLUG_RULE = 'replace every character not in [A-Za-z0-9-] with "-" (observed: "/", " ", and "." all become "-")';
 
@@ -87,17 +88,8 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), configDir =
   return out.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
-// A Read counts as procedure loading when it targets a skill file — the
-// repo's plugin/skills/** or the installed plugin cache's skills/ (a real
-// session reads skills from ~/.claude/plugins/cache/…/skills/, so a
-// repo-only rule would count zero bytes on every real run).
-function isProcedurePath(filePath, worktree) {
-  if (typeof filePath !== 'string' || !filePath) return false;
-  let p = filePath;
-  if (worktree && p.startsWith(worktree)) p = p.slice(worktree.length).replace(/^\/+/, '');
-  if (/(^|\/)(plugin\/)?skills\/.+\.md$/.test(p)) return true;
-  return p.includes('/.claude/plugins/') && p.includes('/skills/') && p.endsWith('.md');
-}
+// isProcedurePath lives in turn-class.js (#4029) and is re-exported below
+// under the same name; turn-class.js must never require this module.
 
 function resultBytes(content) {
   if (typeof content === 'string') return Buffer.byteLength(content, 'utf8');
@@ -126,8 +118,22 @@ function statTranscriptOrThrow(fsImpl, filePath) {
   }
 }
 
+// A tool_result block's content as text: the string itself, or its text parts
+// joined. Feeds classifyToolCall's guard-refusal check (#4029).
+function resultText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) return content.map((b) => (b && typeof b.text === 'string' ? b.text : '')).join('');
+  return '';
+}
+
 // path, { fsImpl?, worktree? } -> Promise<rows>. Streams line by line;
 // malformed lines (bad JSON, no timestamp, no message.role) are skipped.
+// Every row also carries (#4029): turnClasses ({ [class]: count }, sparse — a
+// user row counts its tool_result blocks by class, an assistant row is {}),
+// turnStart (true on the first assistant row of each message.id and on any
+// assistant row without a string id), and contextTokens (inputTokens +
+// cacheRead + cacheCreate on turnStart rows, taken after the stream closes so
+// it reflects the per-id max; 0 elsewhere).
 // Rejects when the file cannot be opened, with the real stat failure's
 // code (ENOENT/EACCES/...; EUNKNOWN if the error carries none), with
 // EISDIR when the path resolves but names a directory, or — if `stat`
@@ -138,6 +144,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
   statTranscriptOrThrow(fsImpl, filePath);
   const rows = [];
   const procedureReads = new Set(); // tool_use ids of Reads on procedure files
+  const toolUses = new Map(); // tool_use id -> { name, input }, to classify the matching tool_result
   // Claude Code writes one JSONL line per content block of an assistant
   // turn under the same message.id — summing every line would inflate tokens
   // ~3x. Main transcripts repeat one cumulative `usage` on each line; subagent
@@ -157,7 +164,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
       const msg = entry && entry.message;
       if (!entry || typeof entry.timestamp !== 'string' || !msg || typeof msg.role !== 'string') return;
       const content = Array.isArray(msg.content) ? msg.content : [];
-      const row = { ts: entry.timestamp, role: msg.role, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, toolRoundTrip: false, procedureBytes: 0, model: null };
+      const row = { ts: entry.timestamp, role: msg.role, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: false, contextTokens: 0 };
       if (msg.role === 'assistant') {
         row.model = typeof msg.model === 'string' ? msg.model : null;
         const u = msg.usage || {};
@@ -166,8 +173,11 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
         row.cacheRead = Number(u.cache_read_input_tokens) || 0;
         row.cacheCreate = Number(u.cache_creation_input_tokens) || 0;
         for (const b of content) {
-          if (b && b.type === 'tool_use' && b.name === 'Read' && b.input && isProcedurePath(b.input.file_path, worktree)) procedureReads.add(b.id);
+          if (!b || b.type !== 'tool_use') continue;
+          if (typeof b.id === 'string') toolUses.set(b.id, { name: b.name, input: b.input });
+          if (b.name === 'Read' && b.input && isProcedurePath(b.input.file_path, worktree)) procedureReads.add(b.id);
         }
+        row.turnStart = true;
         if (typeof msg.id === 'string') {
           const firstRow = firstRowById.get(msg.id);
           if (firstRow) {
@@ -179,6 +189,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
               firstRow[field] = Math.max(firstRow[field], row[field]);
               row[field] = 0;
             }
+            row.turnStart = false;
           } else {
             firstRowById.set(msg.id, row);
           }
@@ -188,12 +199,17 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
           if (!b || b.type !== 'tool_result') continue;
           row.toolRoundTrip = true;
           if (procedureReads.has(b.tool_use_id)) row.procedureBytes += resultBytes(b.content);
+          const call = toolUses.get(b.tool_use_id) || {};
+          const cls = classifyToolCall({ name: call.name, input: call.input, isError: b.is_error === true, resultText: resultText(b.content), worktree });
+          row.turnClasses[cls] = (row.turnClasses[cls] || 0) + 1;
         }
       }
       rows.push(row);
     });
     rl.on('close', resolve);
   });
+  // After the stream closes, so a turn's first row holds the per-id max.
+  for (const r of rows) if (r.turnStart) r.contextTokens = r.inputTokens + r.cacheRead + r.cacheCreate;
   return rows;
 }
 

@@ -19,6 +19,7 @@
 'use strict';
 
 const { PROFILES } = require('../model-profiles/profiles');
+const { TURN_CLASSES, CEREMONY_CLASSES } = require('./turn-class');
 
 const PHASES = ['call-1', 'call-2', 'build', 'plan', 'tasks', 'test', 'review', 'polish', 'wrap-up', 'merge'];
 
@@ -273,6 +274,9 @@ function derivePhases({ events, manifest = null, runState = null, now = new Date
     // exceed endOfRun minus the first event (#1928 fix round 3).
     minutes: unionMinutes(rows.flatMap((r) => r._list || [])),
     verifyRuns: verifies.length,
+    // Summed verify wall-clock (#4029), to one decimal; a verify event with no
+    // numeric durationMs adds nothing.
+    verifyMinutes: Math.round(verifies.reduce((sum, v) => sum + (Number.isFinite(v.durationMs) ? v.durationMs : 0), 0) / 6000) / 10,
     verifyModes: [...new Set(verifies.map((v) => v.mode).filter((m) => typeof m === 'string'))],
   };
   return { phases, totals };
@@ -293,9 +297,12 @@ function joinTokens(phases, usageRows) {
     phase: p.phase, start: ms(p.start), end: ms(p.end), source: p.source,
   }));
   const acc = new Map();
-  const bucket = () => ({ tokens: ZERO_TOKENS(), procedureBytes: 0, toolRoundTrips: 0, rows: 0 });
-  for (const s of spans) acc.set(s.phase, bucket());
-  const unattributed = bucket();
+  // `samples` (one contextTokens per turn start) is internal: finalize()
+  // folds it into `context` and removes it before a bucket leaves joinTokens.
+  const bucket = () => ({
+    tokens: ZERO_TOKENS(), procedureBytes: 0, toolRoundTrips: 0, rows: 0,
+    turnClasses: Object.fromEntries(TURN_CLASSES.map((c) => [c, 0])), modelMix: {}, samples: [],
+  });
   const add = (b, r) => {
     b.tokens.input += Number(r.inputTokens) || 0;
     b.tokens.output += Number(r.outputTokens) || 0;
@@ -304,7 +311,29 @@ function joinTokens(phases, usageRows) {
     b.procedureBytes += Number(r.procedureBytes) || 0;
     if (r.toolRoundTrip) b.toolRoundTrips += 1;
     b.rows += 1;
+    for (const [cls, n] of Object.entries(r.turnClasses || {})) b.turnClasses[Object.hasOwn(b.turnClasses, cls) ? cls : 'other'] += Number(n) || 0;
+    if (r.turnStart) {
+      b.samples.push(Number(r.contextTokens) || 0);
+      const model = typeof r.model === 'string' && r.model ? r.model : 'unknown';
+      b.modelMix[model] = (b.modelMix[model] || 0) + 1;
+    }
   };
+  // Nearest-rank percentile of an ascending array: sorted[ceil(q*n)-1].
+  const percentile = (sorted, q) => (sorted.length ? sorted[Math.ceil(q * sorted.length) - 1] : null);
+  const finalize = (b) => {
+    const sorted = b.samples.slice().sort((x, y) => x - y);
+    const calls = TURN_CLASSES.reduce((sum, c) => sum + b.turnClasses[c], 0);
+    const ceremony = CEREMONY_CLASSES.reduce((sum, c) => sum + b.turnClasses[c], 0);
+    const { samples, ...rest } = b;
+    return {
+      ...rest,
+      context: { turns: sorted.length, p50: percentile(sorted, 0.5), p90: percentile(sorted, 0.9) },
+      subagents: b.turnClasses.dispatch,
+      ceremonyShare: calls ? Math.round((ceremony / calls) * 1000) / 1000 : null,
+    };
+  };
+  for (const s of spans) acc.set(s.phase, bucket());
+  const unattributed = bucket();
   for (const r of rows) {
     const t = ms(r && r.ts);
     if (t === null) continue;
@@ -317,13 +346,13 @@ function joinTokens(phases, usageRows) {
     add(best ? acc.get(best.phase) : unattributed, r);
   }
   const outPhases = phaseList.map((p) => {
-    const b = acc.get(p.phase);
-    return { ...p, tokens: b.tokens, procedureBytes: b.procedureBytes, toolRoundTrips: b.toolRoundTrips };
+    const { rows: _rows, ...b } = finalize(acc.get(p.phase));
+    return { ...p, ...b };
   });
-  const totals = bucket();
-  for (const r of rows) if (ms(r && r.ts) !== null) add(totals, r);
-  delete totals.rows;
-  return { phases: outPhases, unattributed, totals };
+  const totalsAcc = bucket();
+  for (const r of rows) if (ms(r && r.ts) !== null) add(totalsAcc, r);
+  const { rows: _totalRows, ...totals } = finalize(totalsAcc);
+  return { phases: outPhases, unattributed: finalize(unattributed), totals };
 }
 
 const GUARD_TYPES = { 'gate-denial': 'gateDenial', 'wd-ambiguous': 'wdAmbiguous', 'wd-deny': 'wdDeny' };
