@@ -213,6 +213,7 @@ const PRESENT = [
   [/git -C "\$RUN_ROOT" commit-tree \{tip-sha\}\^\{tree\} -p \{tip-sha\} -m /, 'the commit is built with commit-tree on {tip-sha}'],
   [/with `\{tip-sha\}` as its sole parent/, 'the prose states that {tip-sha} is the sole parent'],
   [/`\^\{tree\}` is git's peel syntax, not a placeholder/, 'the prose states that ^{tree} is git\'s peel syntax'],
+  [/is `failed` with nothing pushed: an empty `\{sha\}` would turn the push below into `git push origin :refs\/heads\/\{branch\}`/, 'a commit-tree failure or empty {sha} stops before the push, which would delete the branch'],
   [/git -C "\$RUN_ROOT" push origin \{sha\}:refs\/heads\/\{branch\}/, 'the push sends {sha} to refs/heads/{branch}'],
 ];
 const ABSENT = [

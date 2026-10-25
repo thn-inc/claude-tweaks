@@ -101,7 +101,7 @@ Build the override on `{tip-sha}`, never on `HEAD`: a commit made on `HEAD` woul
 git -C "$RUN_ROOT" commit-tree {tip-sha}^{tree} -p {tip-sha} -m "chore: release {version}" -m "Release-As: {version}"
 ```
 
-It prints the new commit's sha `{sha}` as its only stdout line. Then:
+It prints the new commit's sha `{sha}` as its only stdout line. A non-zero exit, or stdout that is not a single 40-hex sha, is `failed` with nothing pushed: an empty `{sha}` would turn the push below into `git push origin :refs/heads/{branch}`, which deletes the branch on origin. Then:
 
 ```bash
 git -C "$RUN_ROOT" push origin {sha}:refs/heads/{branch}
