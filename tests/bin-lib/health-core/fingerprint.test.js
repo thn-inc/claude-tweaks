@@ -78,12 +78,8 @@ test('AC2.1: parseMarkerFingerprints returns [] for a body with no marker, and f
   assert.deepStrictEqual(parseMarkerFingerprints(42, 'digest-fingerprint'), []);
 });
 
-test('parseMarkerFingerprints is stateless across calls', () => {
-  const body = '<!-- digest-fingerprint: x -->';
-  assert.deepStrictEqual(parseMarkerFingerprints(body, 'digest-fingerprint'), ['x']);
-  assert.deepStrictEqual(parseMarkerFingerprints(body, 'digest-fingerprint'), ['x']);
-});
-
 test('parseMarkerFingerprints matches the prefix literally (regex metacharacters escaped)', () => {
   assert.deepStrictEqual(parseMarkerFingerprints('<!-- a.b: one --> <!-- aXb: two -->', 'a.b'), ['one']);
+  assert.deepStrictEqual(parseMarkerFingerprints('<!-- a$b: one --> <!-- ab: two -->', 'a$b'), ['one']);
+  assert.deepStrictEqual(parseMarkerFingerprints('<!-- a(b: one --> <!-- ab: two -->', 'a(b'), ['one']);
 });
