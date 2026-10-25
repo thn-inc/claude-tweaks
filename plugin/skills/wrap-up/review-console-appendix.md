@@ -58,7 +58,7 @@ The CLI also computes the merge half with both carve-outs (`merge.resolution` = 
 the write the reconciler's archival needs, #1854; `droppedByTiebreak` holds the read-only Dropped
 by tiebreak block's rows, `filings` one `{item, fingerprint, title}` per planned can't-tell
 filing, with no proposal text, #3949). That file may later gain an optional
-`residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); and
+`residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); an item's stored resolution may later be rewritten by `console-resolve.js --set-item` (`refused-proposals.md`'s failed-execution rewrite — `apply` → `keep-staged`, adding `rewrittenFrom`/`rewrittenAt`, and dropping a stale `residueAcknowledgedAt`), and a `filings` entry whose fingerprint has no filed line in that dir's `decisions.md` reads as `filing-pending` residue (#4170); and
 `console-resolve.js --json` on a fresh resolution carries an `unresolved` array (the
 `pending`/`keep-staged` items, `[]` when none); the idempotent re-render of an already-resolved
 console prints the stored table and the `Needs a human` block as text whatever the flags.
