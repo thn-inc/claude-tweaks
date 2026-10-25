@@ -163,11 +163,18 @@ test('bin/lib/session-tmp.js is a pure module (no gh/MCP/network calls)', () => 
 // printf + --body-file pair as it stood at HEAD before #4173 (the go-red half).
 const PRE_CHANGE_PARK_FENCE = String.raw`printf 'Parked by merge-verification (%s): %s on PR #%s. Resume once green.\n' "$VALUE" "$REASON" "$PR" > /tmp/park-comment-{n}.md
 gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file /tmp/park-comment-{n}.md`;
+// The bounded watch's capture line as it stood before #4173.
+const PRE_CHANGE_CHECKS_LINE = String.raw`gh pr checks {pr-number} --repo {owner}/{repo} > /tmp/pr-checks-{n}.txt 2>&1; RC=$?`;
+// One regex per ban, asserted both ways: absent from the live file, present in the frozen pre-change
+// text -- the same pattern object on both sides, so a green live check cannot be a regex that never
+// matched anything.
+const FIXED_PARK_PATH_RE = /\/tmp\/park-comment-/;
+const FIXED_CHECKS_PATH_RE = /\/tmp\/pr-checks-/;
 
 test('#4173: Step 2.5 resolves its checks capture and park-comment body through session-tmp-resolve.js', () => {
   const text = readText(path.join(ROOT, '_shared', 'pr-first-merge.md'));
-  assert.doesNotMatch(text, /\/tmp\/park-comment-/, 'no literal /tmp/park-comment- path remains');
-  assert.doesNotMatch(text, /\/tmp\/pr-checks-/, 'no literal /tmp/pr-checks- path remains');
+  assert.doesNotMatch(text, FIXED_PARK_PATH_RE, 'no literal /tmp/park-comment- path remains');
+  assert.doesNotMatch(text, FIXED_CHECKS_PATH_RE, 'no literal /tmp/pr-checks- path remains');
   const COMBINED_RESOLVE = 'node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PARK_COMMENT=park-comment-{n}.md';
   assert.ok(text.includes(COMBINED_RESOLVE), 'Step 2.5 resolves both scratch paths in one bin/session-tmp-resolve.js call');
   const stateAnchor = text.indexOf('**Read state first');
@@ -179,5 +186,6 @@ test('#4173: Step 2.5 resolves its checks capture and park-comment body through 
   assert.match(text, /printf .* "\$VALUE" "\$REASON" "\$PR" > "\{park-comment-path\}"/, 'the printf redirect writes the resolved {park-comment-path}');
   assert.match(text, /--body-file "\{park-comment-path\}"/, '--body-file reads the resolved {park-comment-path}');
   assert.doesNotMatch(PRE_CHANGE_PARK_FENCE, /session-tmp-resolve\.js/, 'go-red: the pre-change park fence does not resolve through session-tmp-resolve.js');
-  assert.match(PRE_CHANGE_PARK_FENCE, /\/tmp\/park-comment-\{n\}\.md/, 'go-red: the frozen pre-change fence carries the fixed /tmp path');
+  assert.match(PRE_CHANGE_PARK_FENCE, FIXED_PARK_PATH_RE, 'go-red: the park-path ban matches the frozen pre-change fence');
+  assert.match(PRE_CHANGE_CHECKS_LINE, FIXED_CHECKS_PATH_RE, 'go-red: the checks-path ban matches the frozen pre-change watch line');
 });
