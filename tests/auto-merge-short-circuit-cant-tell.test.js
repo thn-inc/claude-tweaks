@@ -88,7 +88,11 @@ test('AC1.1 go-red: the bundle-gate helper throws once the paragraph is removed,
 
 test('AC1.1: the refusal line never reads as a needs-human verdict', () => {
   assert.ok(SHORT_CIRCUIT.includes(REFUSAL), 'refusal template not found verbatim');
-  assert.doesNotMatch(REFUSAL, /needs-human/i);
+  // The skill file's own backticked line, not this test's constant: text appended after the
+  // template (e.g. "— treated as needs-human") would still pass the includes() check above.
+  const line = SHORT_CIRCUIT.match(/holds one line, `(#\{n\} has \{k\} can't-tell finding\(s\)[^`]*)`/);
+  assert.ok(line, "the refusal's {text-file} line not found");
+  assert.doesNotMatch(line[1], /needs-human/i);
 });
 
 test("AC1.1: the documented filed lines match the guard's reader", () => {
@@ -112,7 +116,10 @@ test("AC1.1: the documented filed lines match the guard's reader", () => {
 
 test('AC2.1: both FYI sentences carry the --fyi sections', () => {
   const needle = 'console-filings.js" --run "$PIPELINE_RUN_DIR" --fyi';
-  assert.ok(SHORT_CIRCUIT.split(needle).length - 1 >= 2, 'pr-first and local-merge FYI sentences must both name --fyi');
+  const withSections = `${needle}\` prints — Low-confidence, Contested, Dropped by tiebreak)`;
+  const count = (s) => SHORT_CIRCUIT.split(s).length - 1;
+  assert.ok(count(needle) >= 2, 'pr-first and local-merge FYI sentences must both name --fyi');
+  assert.strictEqual(count(withSections), count(needle), 'every --fyi mention must name the Low-confidence, Contested and Dropped by tiebreak sections');
 });
 
 test("autonomy-ceiling names the short-circuit as a can't-tell filing caller", () => {

@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
+const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -505,7 +506,12 @@ test('archive-run archives the same run once its finding has a filed line', () =
   const { root, runDir, runId } = cantTellRun();
   const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
   const [{ fingerprint }] = require('../plugin/bin/lib/console/finding-outcomes').unfiledCantTell({ runDir, deps });
-  fs.appendFileSync(path.join(runDir, 'decisions.md'), `- AUTO 10:01:00 — Queue write: tiebreak:${CANT_TELL_ID} filed as #501 (work-fingerprint ${fingerprint}). Reversibility: n/a.\n`);
+  // review-console.md's created filed line, built by the real producer (log-decision.js's formatEntry).
+  const filed = formatEntry({
+    status: 'AUTO', now: new Date(2026, 7, 14, 10, 1, 0), step: 'Queue write', reversibility: 'n/a',
+    text: `tiebreak:${CANT_TELL_ID} filed as #501 (work-fingerprint ${fingerprint})`,
+  });
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), `${filed}\n`);
   const result = runHook(['archive-run', '--run', runDir], { cwd: root });
   assert.doesNotMatch(result.stdout, /archival refused/);
   assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
@@ -513,8 +519,21 @@ test('archive-run archives the same run once its finding has a filed line', () =
 });
 
 test('archive-run: a rendered console turns the can\'t-tell guard off', () => {
-  const { root, runDir } = cantTellRun();
+  const { root, runDir, runId } = cantTellRun();
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ commentIds: ['IC_x'], prNumber: 5, items: [], resolved: true, executedAt: '2026-08-14T12:00:00Z' }));
   const result = runHook(['archive-run', '--run', runDir], { cwd: root });
   assert.doesNotMatch(result.stdout, /cant-tell-unfiled/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'config.yml')));
+});
+
+test('archive-run: a Review Console terminal decision line turns the can\'t-tell guard off', () => {
+  const { root, runDir, runId } = cantTellRun();
+  // review-console-interactive.md's terminal-decision log line, built by the real producer.
+  const terminal = formatEntry({ status: 'AUTO', now: new Date(2026, 7, 14, 10, 2, 0), step: 'Review Console', text: 'terminal decision approve-all', reversibility: 'n/a' });
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), `${terminal}\n`);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /cant-tell-unfiled/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'config.yml')));
 });

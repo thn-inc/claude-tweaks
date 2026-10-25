@@ -215,21 +215,22 @@ test('--list with --existing, --out-dir or --only is exit 2', () => {
 test('AC2.1: --fyi prints every can\'t-tell finding and writes nothing (#4171)', () => {
   const f = fixture();
   const { ids } = seed(f, { n: 2 });
-  const writes = [];
-  const { deps, out } = fakeDeps(f.main, { writeFile: (p) => writes.push(p), mkdir: (p) => writes.push(p) });
+  // A write attempt throws out of run(), failing the test, rather than being recorded.
+  const forbid = (p) => { throw new Error(`--fyi must write nothing, tried: ${p}`); };
+  const { deps, out } = fakeDeps(f.main, { writeFile: forbid, mkdir: forbid });
   assert.equal(run(['--run', f.runDir, '--fyi'], deps), 0);
   const text = out.join('');
   for (const id of ids) assert.ok(text.includes(`tiebreak:${id}`), id);
   assert.match(text, /#### Low-confidence findings/);
   assert.ok(text.endsWith('\n'));
-  assert.deepEqual(writes, [], 'nothing is written');
 });
 
 test('--fyi on a run with no findings prints nothing (#4171)', () => {
   const f = fixture();
-  const { deps, out } = fakeDeps(f.main);
+  const { deps, out, err } = fakeDeps(f.main);
   assert.equal(run(['--run', f.runDir, '--fyi'], deps), 0);
   assert.equal(out.join(''), '');
+  assert.equal(err.join(''), '');
 });
 
 test('--fyi with --existing, --out-dir, --only or --list is exit 2 (#4171)', () => {

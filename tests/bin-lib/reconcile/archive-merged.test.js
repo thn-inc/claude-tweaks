@@ -19,6 +19,7 @@ const {
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge, unfiledCantTellFindings, CANT_TELL_UNFILED_HINT,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { unfiledCantTell } = require('../../../plugin/bin/lib/console/finding-outcomes');
+const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure, cachePath, beginCacheBatch, commitCacheBatch } = require('../../../plugin/bin/lib/reconcile/cache');
 const { structurallyStuckBody, parseStuckPaths } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
@@ -4838,6 +4839,11 @@ const AUTO_MERGE_LINE = '- AUTO 09:59:00 — Fast-lane auto-merge: issue #12, as
 const cantTellFinding = { id: '0123456789ab', lens: '3a', path: 'src/a.js', line: 10, claim: 'The guard runs after the read', reporterSeverity: 'medium', kind: 'unconfirmed' };
 const cantTellVerdict = (id) => `- STAGED 10:00:00 — Tiebreak tiebreak:${id}: lens "3a" finding src/a.js:10 console: verdict:cant-tell. Severity: medium. Recommendation: file.`;
 const unfiledDeps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+// review-console.md's created filed line, built by the real producer (log-decision.js's formatEntry).
+const cantTellFiledLine = (fingerprint) => `${formatEntry({
+  status: 'AUTO', now: new Date(2026, 9, 25, 10, 1, 0), step: 'Queue write', reversibility: 'n/a',
+  text: `tiebreak:${cantTellFinding.id} filed as #501 (work-fingerprint ${fingerprint})`,
+})}\n`;
 
 function seedCantTellRun({ autoMerge = true, extraLines = [], consoleJson = null, specDir = null } = {}) {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cant-tell-unfiled-'));
@@ -4866,19 +4872,16 @@ test('AC1.1: unfiledCantTellFindings names an auto-merge run\'s unfiled can\'t-t
   try {
     assert.deepStrictEqual(unfiledCantTellFindings(runDir), [`tiebreak:${cantTellFinding.id}`]);
     const [{ fingerprint }] = unfiledCantTell({ runDir, deps: unfiledDeps });
-    fs.appendFileSync(path.join(runDir, 'decisions.md'),
-      `- AUTO 10:01:00 — Queue write: tiebreak:${cantTellFinding.id} filed as #501 (work-fingerprint ${fingerprint}). Reversibility: n/a.\n`);
+    fs.appendFileSync(path.join(runDir, 'decisions.md'), cantTellFiledLine(fingerprint));
     assert.deepStrictEqual(unfiledCantTellFindings(runDir), []);
   } finally { fs.rmSync(runDir, { recursive: true, force: true }); }
 });
 
 test('a rendered console turns the cant-tell-unfiled guard off (#4171)', () => {
   const resolved = seedCantTellRun({ consoleJson: '{"resolved":true}' });
+  try { assert.deepStrictEqual(unfiledCantTellFindings(resolved), []); } finally { fs.rmSync(resolved, { recursive: true, force: true }); }
   const terminal = seedCantTellRun({ extraLines: ['- AUTO 10:02:00 — Review Console: terminal decision. Reversibility: n/a.'] });
-  try {
-    assert.deepStrictEqual(unfiledCantTellFindings(resolved), []);
-    assert.deepStrictEqual(unfiledCantTellFindings(terminal), []);
-  } finally { for (const d of [resolved, terminal]) fs.rmSync(d, { recursive: true, force: true }); }
+  try { assert.deepStrictEqual(unfiledCantTellFindings(terminal), []); } finally { fs.rmSync(terminal, { recursive: true, force: true }); }
 });
 
 test('a non-auto-merge run is never guarded by cant-tell-unfiled (#4171)', () => {
@@ -4890,6 +4893,17 @@ test('a spec dir\'s unfiled can\'t-tell finding is spec-prefixed (#4171)', () =>
   const runDir = seedCantTellRun({ specDir: 'spec-7' });
   try {
     assert.deepStrictEqual(unfiledCantTellFindings(runDir), [`spec-7/tiebreak:${cantTellFinding.id}`]);
+  } finally { fs.rmSync(runDir, { recursive: true, force: true }); }
+});
+
+test('a spec dir\'s finding clears only on a filed line in that spec dir\'s decisions.md (#4171)', () => {
+  const runDir = seedCantTellRun({ specDir: 'spec-7' });
+  try {
+    const [{ fingerprint }] = unfiledCantTell({ runDir: path.join(runDir, 'spec-7'), deps: unfiledDeps });
+    fs.appendFileSync(path.join(runDir, 'decisions.md'), cantTellFiledLine(fingerprint));
+    assert.deepStrictEqual(unfiledCantTellFindings(runDir), [`spec-7/tiebreak:${cantTellFinding.id}`], 'a top-level filed line does not clear a spec-prefixed item');
+    fs.appendFileSync(path.join(runDir, 'spec-7', 'decisions.md'), cantTellFiledLine(fingerprint));
+    assert.deepStrictEqual(unfiledCantTellFindings(runDir), []);
   } finally { fs.rmSync(runDir, { recursive: true, force: true }); }
 });
 
@@ -4930,8 +4944,7 @@ test('by-number path: archiveMerged skips an unfiled can\'t-tell finding, then a
   });
 
   const [{ fingerprint }] = unfiledCantTell({ runDir, deps: unfiledDeps });
-  fs.appendFileSync(path.join(runDir, 'decisions.md'),
-    `- AUTO 10:01:00 — Queue write: tiebreak:${cantTellFinding.id} filed as #501 (work-fingerprint ${fingerprint}). Reversibility: n/a.\n`);
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), cantTellFiledLine(fingerprint));
   const second = rerun();
   assert.ok(second.archived.includes(runDir), `expected ${runDir} archived once filed, got ${JSON.stringify(second)}`);
   assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
@@ -4946,6 +4959,34 @@ test('branch-joined path: archiveMergedRun skips an unfiled can\'t-tell finding 
   assert.deepStrictEqual(result.skipped.find((s) => s.runDir === runDir), {
     runDir, reason: 'cant-tell-unfiled', unfiled: [`tiebreak:${cantTellFinding.id}`], hint: CANT_TELL_UNFILED_HINT,
   });
+});
+
+// The clean-status sweep's onSkip tracks cant-tell-unfiled, as AC3.1 does for staged-pending (#3668).
+test('the clean-status sweep tracks a cant-tell-unfiled skip toward structurally-stuck escalation (#4171)', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-25T090000-record-4171-clean';
+  const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId, consoleResolved: false });
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), CANT_TELL_DECISIONS);
+  fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify([cantTellFinding]));
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, backdated, backdated);
+
+  const wrapper = installGhWrapper([{
+    number: 99, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', mergeCommit: { oid: featureSha },
+  }]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'cant-tell-unfiled');
+  assert.ok(
+    listResidueFailures(root).some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    'the clean sweep must start the structurally-stuck residue counter for a cant-tell-unfiled skip',
+  );
 });
 
 // #4032: `prStates` (the pass-shared resolver) replaces archiveMerged's live PR

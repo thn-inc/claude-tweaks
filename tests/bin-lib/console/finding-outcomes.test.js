@@ -50,18 +50,30 @@ test('AC1.1: a created or deduped AUTO filed line clears its finding', () => {
 
 test('AC1.1: an in-batch duplicate rides on its twin\'s filed line', () => {
   const twins = [mkFinding('000000000001', 'src/a.js', 10, 'Same claim'), mkFinding('000000000002', 'src/a.js', 40, 'same   claim')];
-  const [only] = unfiledCantTell({ runDir: seed(twins), deps });
-  assert.equal(unfiledCantTell({ runDir: seed(twins), deps }).length, 1, 'one entry per distinct fingerprint');
-  assert.deepEqual(unfiledCantTell({ runDir: seed(twins, [filedLine(twins[0].id, only.fingerprint, 9)]), deps }), []);
+  const runDir = seed(twins);
+  const unfiled = unfiledCantTell({ runDir, deps });
+  assert.equal(unfiled.length, 1, 'one entry per distinct fingerprint');
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), `${filedLine(twins[0].id, unfiled[0].fingerprint, 9)}\n`);
+  assert.deepEqual(unfiledCantTell({ runDir, deps }), []);
+});
+
+test('a filed line carrying another finding\'s fingerprint does not file this one', () => {
+  const fs2 = two();
+  const [, fp1] = unfiledCantTell({ runDir: seed(fs2), deps }).map((u) => u.fingerprint);
+  const runDir = seed(fs2, [filedLine(fs2[0].id, fp1, 501)]);
+  assert.deepEqual(unfiledCantTell({ runDir, deps }).map((u) => u.item), [`tiebreak:${fs2[0].id}`]);
+  assert.deepEqual(cantTellOutcomes({ runDir, deps }).rows.map((r) => r.filedAs), [null, 501]);
 });
 
 test('a filed phrase in a non-AUTO line is not evidence', () => {
   const fs2 = two();
   const [fp0] = unfiledCantTell({ runDir: seed(fs2), deps }).map((u) => u.fingerprint);
-  const skip = filedLine(fs2[0].id, fp0, 501).replace('- AUTO ', '- SKIP ');
-  assert.equal(unfiledCantTell({ runDir: seed(fs2, [skip]), deps }).length, 2);
-  assert.equal(FILED_LINE_RE.test(skip), false);
-  assert.equal(filedRecords(skip).size, 0);
+  for (const status of ['SKIP', 'STAGED']) {
+    const forged = filedLine(fs2[0].id, fp0, 501).replace('- AUTO ', `- ${status} `);
+    assert.equal(unfiledCantTell({ runDir: seed(fs2, [forged]), deps }).length, 2, status);
+    assert.equal(FILED_LINE_RE.test(forged), false, status);
+    assert.equal(filedRecords(forged).size, 0, status);
+  }
 });
 
 test('filedRecords: the first line for a fingerprint wins', () => {
@@ -95,6 +107,12 @@ test('AC2.1: renderFindingFyi names every can\'t-tell finding', () => {
   assert.ok(fyi.includes('| tiebreak:000000000001 | src/a.js:10 | medium | 3a | file | #501 |'));
   assert.ok(fyi.includes('| tiebreak:000000000002 | src/b.js:11 | medium | 3a | file | — |'));
   assert.ok(fyi.includes(`${DROPPED_HEADING}\n\n| Path:Line | Lens | Severity | Evidence |\n|---|---|---|---|\n| src/x.js:3 | 3a | high | src/x.js:3 "q" |`));
+});
+
+test('renderFindingFyi with only a dropped block starts at its heading', () => {
+  const { dropped } = cantTellOutcomes({ runDir: seed([], [droppedLine]), deps });
+  assert.equal(dropped.length, 1);
+  assert.equal(renderFindingFyi({ rows: [], dropped }),`${DROPPED_HEADING}\n\n| Path:Line | Lens | Severity | Evidence |\n|---|---|---|---|\n| src/x.js:3 | 3a | high | src/x.js:3 "q" |`);
 });
 
 test('renderFindingFyi is empty for a run with no findings', () => {
