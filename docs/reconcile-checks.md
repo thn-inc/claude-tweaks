@@ -237,7 +237,7 @@ finding the run held would otherwise be lost at archive. `unfiledCantTellFinding
 `unfiledCantTell`, each finding of the run dir and of every `spec-*/` dir (prefixed `spec-N/`)
 with no `AUTO … filed as #{n} (work-fingerprint {fp})` line in that dir's `decisions.md`. A read
 failure fails closed. `runTiebreakCoverage` carries the list as `unfiledCantTell`, and
-`archiveUnlessTiebreakGap`, the single choke point every archive decision passes, evaluates it
+`archiveUnlessTiebreakGap`, the single choke point every archive decision that carries a run dir passes (`decideArchive`'s thin wrapper holds none, so it never evaluates the guard), evaluates it
 last, after the artifact checks above: the skip reason is **`cant-tell-unfiled`**, carrying
 `unfiled` and `CANT_TELL_UNFILED_HINT`. It is in `STRUCTURALLY_STUCK_REASONS`, the `status: clean`
 sweep's `onSkip` tracks it, and a rendered console (a `console.json` or a `Review Console:
