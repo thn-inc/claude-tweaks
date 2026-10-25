@@ -190,7 +190,9 @@ async function reconcileInner(opts) {
   // offline resolver. Recorded on the result only when attempted, so a
   // checkout with no `origin` keeps today's exact no-remote result.
   if (!integration) {
-    const repair = repairOriginHead(root);
+    // #4180: on a dry run the repair is reported as skipped, never attempted (it writes a git ref
+    // and, on failure, the cache); the pass then falls through to the no-remote skip below.
+    const repair = repairOriginHead(root, { dryRun });
     if (repair) {
       // Re-resolve after EVERY attempt, not only 'repaired' — a concurrent
       // session may have written origin/HEAD while this one's set-head lost

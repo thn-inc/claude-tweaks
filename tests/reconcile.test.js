@@ -3147,3 +3147,43 @@ test('#4180 reconcile: a dry run writes no cache file at all; a real run stamps 
   await run({});
   assert.equal(fs.existsSync(cachePath(root)), true, 'a real run stamps the cache');
 });
+
+// #4180: the #3132 origin/HEAD repair writes a git ref (set-head) and, on failure, the cache, so a
+// dry run reports it as skipped and never attempts it.
+test('#4180 reconcile: a dry run does not repair origin/HEAD, writes no cache, and reports the dry-run skip', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const cacheFile = cachePath(mainCheckoutRoot(mainDir));
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'], dryRun: true });
+
+  assert.deepStrictEqual(r.originHeadRepair, { outcome: 'skipped', reason: 'dry-run' });
+  assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }]);
+  assert.throws(() => git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mainDir), 'a dry run must not write origin/HEAD');
+  assert.equal(fs.existsSync(cacheFile), false, 'a dry run writes no cache file');
+});
+
+test('#4180 reconcile: a dry run over a pre-seeded cache leaves it byte-identical when origin/HEAD is missing', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const root = mainCheckoutRoot(mainDir);
+  recordResidueFailure(root, 'move-failed', path.join(root, 'x'), { lastError: 'e' });
+  const before = fs.readFileSync(cachePath(root));
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'], dryRun: true });
+
+  assert.deepStrictEqual(r.originHeadRepair, { outcome: 'skipped', reason: 'dry-run' });
+  assert.deepEqual(fs.readFileSync(cachePath(root)), before);
+});
+
+test('#4180 repairOriginHead: dryRun never runs set-head or stamps a failure, and a missing origin still reports null', () => {
+  const { repairOriginHead } = require('../plugin/bin/lib/reconcile/origin-head');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-oh-dry-'));
+  const calls = [];
+  const withOrigin = (args) => { calls.push(args.join(' ')); return { stdout: 'https://example.invalid/r.git', failure: null, stderr: null }; };
+  assert.deepStrictEqual(repairOriginHead(root, { runGit: withOrigin, dryRun: true }), { outcome: 'skipped', reason: 'dry-run' });
+  assert.deepStrictEqual(calls, ['remote get-url origin']);
+  assert.equal(fs.existsSync(cachePath(root)), false);
+  const noOrigin = () => ({ stdout: '', failure: 'git-error', stderr: 'fatal: No such remote' });
+  assert.strictEqual(repairOriginHead(root, { runGit: noOrigin, dryRun: true }), null);
+});
