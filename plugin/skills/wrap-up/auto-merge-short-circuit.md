@@ -105,6 +105,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
 
 `{text-file}` holds one line, `#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}{detail}) — treated as needs-human, Review Console renders normally`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — `{detail}` can carry an error message, so it never passes through shell quoting.
 
+**Can't-tell findings — before acceptance labeling (#4171).** This branch renders no console, so nothing else files a can't-tell Low-confidence/Contested finding before the merge closes the record and reconcile archives the run. List them: `node "${CLAUDE_PLUGIN_ROOT}/bin/console-filings.js" --run "$PIPELINE_RUN_DIR" --list` — rows with `cantTell: true`; none means continue below unchanged. Otherwise resolve the ceiling as `review-console.md`'s Auto-resolution short-circuit does and check `bookkeepingPermissions(ceiling).consoleAutoResolve`. Granted: file every can't-tell item now, whatever the tiebreak recommended, through `review-console.md`'s "Can't-tell filings" with `{item-run-dir}` = `$PIPELINE_RUN_DIR` — it logs each created record as `{item} filed as #{number} (work-fingerprint {fingerprint})` and each deduped one as `{item} already filed as #{number} (…)`, the lines `archive-run` and reconcile read (`cant-tell-unfiled`) — then continue below. Not granted, or any non-zero `console-filings.js` exit or failed create: do not merge — log the refusal, then go to "Any layer fails" below; the rendered console carries the rows, and at `unattended` its own Can't-tell filings dedups anything this call already filed.
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "Auto-merge short-circuit" --reversibility n/a --text-file "{text-file}"
+```
+
+`{text-file}` holds one line, `#{n} has {k} can't-tell finding(s) ({ids}) — {consoleAutoResolve not granted at {ceiling} | filing failed: {reason}}; short-circuit refused, Review Console renders normally`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — `{reason}` can carry an error message.
+
 **Both layers pass — acceptance labeling runs first, before the merge.** This branch bypasses
 Phase 4's execution step, which is where acceptance labeling normally happens, so this branch must
 perform it itself. Run `verification-brief.md` now, starting from its **Routing** section, exactly as
@@ -237,7 +245,7 @@ worktree/branch resolution (#299: that resolution anchored against the run dir, 
 a defect that simply cannot recur once there is no checkout resolution step to get wrong; see the
 local-merge branch below for that defect's full account, since local-merge still uses the
 resolution it fixed). Still generate this console's full content (Auto-applied / Skill updates /
-Configuration updates sections, per `review-console-interactive.md`'s "Present the console") and
+Configuration updates sections, per `review-console-interactive.md`'s "Present the console", plus the finding sections `node "${CLAUDE_PLUGIN_ROOT}/bin/console-filings.js" --run "$PIPELINE_RUN_DIR" --fyi` prints — Low-confidence, Contested, Dropped by tiebreak) and
 attach it to a
 `PushNotification` as a non-blocking FYI — nothing this console would have shown is discarded,
 only the wait for a live approval is skipped. Log to `decisions.md`:
@@ -349,7 +357,7 @@ branch would otherwise fast-forward — this is what the `{tag}` tag
 lands on, and the same commit message carries the `Fixes #{issue}` closing
 keyword per "Close-via-merge" in `_shared/issue-claims.md`. Still generate
 this console's full content (Auto-applied / Skill updates / Configuration
-updates sections, per `review-console-interactive.md`'s "Present the console") and attach it to a
+updates sections, per `review-console-interactive.md`'s "Present the console", plus the finding sections `node "${CLAUDE_PLUGIN_ROOT}/bin/console-filings.js" --run "$PIPELINE_RUN_DIR" --fyi` prints — Low-confidence, Contested, Dropped by tiebreak) and attach it to a
 `PushNotification` as a non-blocking FYI. Nothing this console would have
 shown is discarded — only the wait for a live approval is skipped. After a
 successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.1 with `--ref {integration-branch}` (staged file + closing-report line only).

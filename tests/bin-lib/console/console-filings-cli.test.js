@@ -212,6 +212,46 @@ test('--list with --existing, --out-dir or --only is exit 2', () => {
   }
 });
 
+test('AC2.1: --fyi prints every can\'t-tell finding and writes nothing (#4171)', () => {
+  const f = fixture();
+  const { ids } = seed(f, { n: 2 });
+  // A write attempt throws out of run(), failing the test, rather than being recorded.
+  const forbid = (p) => { throw new Error(`--fyi must write nothing, tried: ${p}`); };
+  const { deps, out } = fakeDeps(f.main, { writeFile: forbid, mkdir: forbid });
+  assert.equal(run(['--run', f.runDir, '--fyi'], deps), 0);
+  const text = out.join('');
+  for (const id of ids) assert.ok(text.includes(`tiebreak:${id}`), id);
+  assert.match(text, /#### Low-confidence findings/);
+  assert.ok(text.endsWith('\n'));
+});
+
+test('--fyi on a run with no findings prints nothing (#4171)', () => {
+  const f = fixture();
+  const { deps, out, err } = fakeDeps(f.main);
+  assert.equal(run(['--run', f.runDir, '--fyi'], deps), 0);
+  assert.equal(out.join(''), '');
+  assert.equal(err.join(''), '');
+});
+
+test('--fyi with --existing, --out-dir, --only or --list is exit 2 (#4171)', () => {
+  const f = fixture();
+  seed(f, { n: 1 });
+  noRecords(f);
+  for (const extra of [['--existing', f.existing], ['--out-dir', f.outDir], ['--only', 'x'], ['--list']]) {
+    const { deps } = fakeDeps(f.main);
+    assert.equal(run(['--run', f.runDir, '--fyi', ...extra], deps), 2, extra[0]);
+  }
+});
+
+test('--fyi on a worktree-local or missing run dir is exit 3 (#4171)', () => {
+  const f = fixture();
+  seed(f, { n: 1, dir: f.shadow });
+  const { deps, out } = fakeDeps(f.shadow);
+  assert.equal(run(['--run', f.shadow, '--fyi'], deps), 3);
+  assert.equal(out.join(''), '');
+  assert.equal(run(['--run', path.join(f.main, '.claude-tweaks', 'pipelines', 'absent'), '--fyi'], fakeDeps(f.main).deps), 3);
+});
+
 test('a run with no can\'t-tell items writes nothing and prints empty lists', () => {
   const f = fixture();
   noRecords(f);
@@ -256,7 +296,7 @@ test('--help prints a USAGE that names every flag, exit 0', () => {
   const { deps, out } = fakeDeps(os.tmpdir());
   assert.equal(run(['--help'], deps), 0);
   assert.equal(out.join(''), USAGE);
-  for (const flag of ['--run', '--existing', '--out-dir', '--only', '--list']) assert.ok(USAGE.includes(flag), flag);
+  for (const flag of ['--run', '--existing', '--out-dir', '--only', '--list', '--fyi']) assert.ok(USAGE.includes(flag), flag);
 });
 
 test('exit 3 on a worktree-local run dir, nothing written', () => {

@@ -34,7 +34,7 @@ files:
 - **URL:** the branch openers ("run the Verdict backstop above first") on the `pr-first` branch (before `_shared/pr-first-merge.md`), the `local-merge` branch (before `close-run` and `git merge --no-ff`), and the dispatch-call `local-merge` relay (before `OUTCOME: ready-to-merge`)
 - **Action:** Acceptance labeling and ledger deletion run, then each merging branch re-runs the same check immediately before its own merge call or relay, and merges.
 - **Should feel:** Identical to the fast lane before #2941 — no added prompts, no added waits.
-- **Should understand:** A dispatched singleton under `local-merge` relays `ready-to-merge` to `dispatch/settle-and-merge.md`'s local-merge fallback, which re-runs the same module and accepts the singleton's `Auto-merge short-circuit:` marker.
+- **Should understand:** A dispatched singleton under `local-merge` relays `ready-to-merge` to `dispatch/settle-and-merge.md`'s local-merge fallback, which re-runs the same module and accepts the singleton's `Auto-merge short-circuit:` marker. A confirmed verdict is not the last check before acceptance labeling. Since #4171 the run first lists its can't-tell review findings. At `unattended` it files them and continues. Below `unattended`, or when a filing fails, it logs `#N has {k} can't-tell finding(s) … short-circuit refused, Review Console renders normally` and the PR stays open for the console. That line carries no `needs-human`, so it is not this journey's 3b refusal (`keep-cant-tell-findings-through-a-console-less-auto-merge-4171.md`).
 - **Red flags:** A singleton relayed as `ready-to-merge` that the dispatching session then refuses with `=0` despite a pass line being present — the two paths have drifted on the marker text.
 
 ### 3b. Not confirmed — the run refuses and falls through to the console
@@ -49,3 +49,4 @@ files:
 - Steps 1-3b built in this session
 - Related specs: #2429 (bundle-path backstop this ports), #2853 / PR #2938 (the incident)
 - Updated during build of #3870: Step 2 now covers a noted `Reversibility:` on the pass line, which confirms, and a tail after the note, which is rejected. Both are pinned in `tests/bin-lib/dispatch/merge-verdict.test.js`.
+- Updated during wrap-up of #4171: Step 3a notes the can't-tell findings check that runs after a confirmed verdict, and its own refusal line.

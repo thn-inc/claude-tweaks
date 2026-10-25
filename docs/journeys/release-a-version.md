@@ -10,6 +10,8 @@ files:
   - plugin/bin/lib/release-preflight/pack.js
   - plugin/bin/release-local.js
   - plugin/bin/lib/hooks/run-dir-resolve.js
+  - plugin/bin/release-tip-check.js
+  - plugin/bin/lib/release-tip/check.js
   - plugin/skills/review/SKILL.md
 ---
 
@@ -70,10 +72,10 @@ files:
 
 ### 7. `main` moves while the release is in flight
 - **URL:** `/claude-tweaks:release` (pr-first) on a busy repo where teammates keep merging PRs during Step 3's review or the release PR's check watch
-- **Action:** Step 3's marker line records the tip it reviewed (`at reviewed tip {sha}`). Immediately before `gh pr merge`, Step 5 fetches and compares `origin/main` with that tip:
+- **Action:** Step 3's marker line records the tip it reviewed (`at reviewed tip {sha}`). Immediately before `gh pr merge`, Step 5 runs `bin/release-tip-check.js`. It fetches, compares `origin/main` with that tip, and prints one JSON verdict that the step routes on (#4152):
   - **Unmoved:** the merge proceeds.
   - **Only run-dir archive commits arrived:** the reviewed tip advances, and nothing else happens.
-  - **Real commits arrived:** Step 5 asserts the main checkout is on `main` and pulls it to the new tip, which it takes from the re-run review-tree check's printed sha. It runs a delta review over just the arrived commits, then re-enters the PR-check gate. That re-entry re-gates the bump on the arrived commits as well as the PR title.
+  - **Real commits arrived:** Step 5 asserts the main checkout is on `main` and pulls it to the new tip, which it takes from the re-run review-tree check's printed sha. It runs a delta review over just the arrived commits, then re-enters the PR-check gate. That re-entry re-gates the bump on the arrived commits as well as the PR title: on it the check runs again and reports the arrived commits' bump part. A major among them takes the same major-bump gate as a re-rendered title before anything else is routed. An interactive `Proceed` there continues with the comparison's verdict.
   - **Blocking delta finding:** the release is held, the same `review: blocking` gate as Step 4.
   - **Bound passed:** once more moves arrive than `release-tip-moves` allows (default 2), the run stops `HELD — integration branch kept moving`. It prints the arrived commits under the HELD line and suggests pausing merges (#4041).
 - **Should feel:** The release never ships a commit nobody reviewed, and a quiet repo never notices the check.
@@ -98,3 +100,4 @@ files:
 - Step 3 red flags updated for #4155 (Step 8 disposition treats an unreadable `staged/` or `decisions.md` as a failure that blocks archival, never as an empty inventory)
 - Steps 6-7 updated for #4157 (the review-tree check resolves the tip once, in its own first call, prints it as the recorded reviewed tip, and compares the trees against that pasted sha; Step 5's delta takes the new tip from that same printed sha)
 - Step 5 updated for #4151 (Step 0's refusal moved from an inline `node -e` probe into `resolve-run-dir`'s step 2, which also refuses a directory whose `run-state.json` cannot be read; the `refused: {dir}` line and its log line are gone)
+- Step 7 updated for #4152 (the comparison now runs as the tested CLI `bin/release-tip-check.js`; the arrived-commit major is gated per delta, and an interactive Proceed continues with the verdict)

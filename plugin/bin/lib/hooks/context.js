@@ -1010,7 +1010,7 @@ function resolveDenialRunDir(ctx) {
 // but empty, or readable with every line unparseable) stay distinguishable —
 // callers that need to tell "we don't know" from "we know there's nothing"
 // (run-integrity.js's checkRunIntegrity via scanWrapupEvents below,
-// archive-merged.js's ownEventRecency) rely on that split.
+// run-liveness/probes.js's ownEventRecency) rely on that split.
 function readEventLines(runDir) {
   let raw;
   try { raw = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'); } catch { return null; }

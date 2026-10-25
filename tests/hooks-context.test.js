@@ -648,7 +648,7 @@ test('scanWrapupEvents: malformed JSON lines are skipped, not fatal', () => {
 });
 
 // #1737: readEventLines — the shared raw reader underneath scanWrapupEvents
-// (above) and archive-merged.js's ownEventRecency. `null` (absent/unreadable)
+// (above) and run-liveness/probes.js's ownEventRecency. `null` (absent/unreadable)
 // and `[]` (readable but nothing parseable) must stay distinguishable, since
 // both of those callers rely on telling "we don't know" from "we know it's
 // empty."
