@@ -1543,6 +1543,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     ['echo `true; cd /nope && cd /tmp; cp a f.js; true`', [path.resolve('/tmp/f.js'), here].sort()], // bash: ./f
     ['echo `true; cd /main; cd /tmp & cp a f.js; true`', [MAIN_F]],     // bash: M/f
     ['cd /main && echo `true; true` && cp a f.js', [MAIN_F]],            // bash: M/f
+    // `||` moves the list's current command on, so the command after it fails where it began.
+    // bash 3.2 and 5: V/f, M/f when /var is absent, ./f when /var and /main both are.
+    ['cd /var && true || cd /main && true; cp a f.js', [MAIN_F, path.resolve('/var/f.js'), here].sort()],
   ]) {
     test(`#4303 and-or: \`${cmd}\` resolves where bash writes`, () => {
       assert.deepStrictEqual(files(cmd), expected);
@@ -1571,6 +1574,10 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     ['x=$(true; cd /main; echo $(true; cd /var; echo $(true; cd /tmp)); cp a f.js)', [MAIN_F]], // bash: M/f
     ['echo `true; cd /main; echo $(true; cd /tmp); cp a f.js; true`', [MAIN_F]],               // bash: M/f
     ['echo `true; echo $(true; cd /tmp); cp a f.js; true`', [here]],                           // bash: ./f
+    // The segment's last piece (` > f.js $(true`) begins after the deeper `$( )` closes and ends
+    // inside the next one: its level is where it begins, so the redirect writes from the level
+    // around the first `$( )`.
+    ['x=$(true; cd /main; echo $(true; cd /tmp; true) > f.js $(true; true))', [MAIN_F]],       // bash: M/f
   ]) {
     test(`#4303 and-or: \`${cmd}\` keeps a deeper substitution's cd inside it`, () => {
       assert.deepStrictEqual(files(cmd), expected);

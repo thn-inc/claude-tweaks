@@ -1945,7 +1945,9 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // command after `&&` runs where the one before it succeeded, the command after `||` where it failed
 // (a failed `cd` leaves the cwd where it was), and once the list ends at a `;`, a newline or the
 // end, the walk continues under every cwd the list could have left, so after `cd x && cmd;` a
-// later write resolves under x and under the cwd before the list (failing closed). Each element of
+// later write resolves under x and under the cwd before the list (failing closed). The list's
+// last command branches nothing, so the walk takes it to succeed, as after any `cd x;`: its own
+// failure adds no cwd. Each element of
 // a pipeline runs in a subshell from the cwd the pipeline began at, and its `cd` ends there. A
 // substitution's separators act on the substitution's own list, never the outer one, and a cd
 // inside a substitution nested in another ends at its closer, as the outer walk's does.
