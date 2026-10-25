@@ -62,6 +62,8 @@ test('AC1: risk:low x size:medium labels resolve to low, and a 142-file diff res
   const example = paragraphWith(DERIVATION, '#4028');
   assert.ok(example, 'derivation must carry the #4028 worked example');
   assert.ok(example.includes('label low, diff heuristic high'), 'worked example must record both inputs');
+  assert.ok(example.includes('cross-package interface gives risk proxy `medium`'), 'worked example must name the diff risk proxy');
+  assert.ok(example.includes('10+ files gives size proxy `high`'), 'worked example must name the diff size proxy');
 });
 
 test('the rule is stated and pinned: labels never lower a tier the diff already earns', () => {
