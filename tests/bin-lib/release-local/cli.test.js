@@ -418,3 +418,55 @@ test('#4282 AC3.1 AC3.2: writeInsideRoot refuses a symlinked leaf when O_NOFOLLO
   writeInsideRoot(root, 'plain.json', 'short', noFollow);
   assert.strictEqual(fs.readFileSync(path.join(root, 'plain.json'), 'utf8'), 'short');
 });
+
+test('#4282 AC3: writeInsideRoot\'s post-open identity check refuses a leaf swapped to a symlink between the lstat and the open', () => {
+  const noFollow = { constants: { ...fs.constants, O_NOFOLLOW: undefined } };
+  const setup = () => {
+    const root = mkTmpDir('release-local-root-');
+    const outside = mkTmpDir('release-local-outside-');
+    const victim = path.join(outside, 'victim.json');
+    fs.writeFileSync(victim, 'VICTIM-BYTES');
+    fs.writeFileSync(path.join(root, 'v.json'), '{"version": "1.0.0"}');
+    return { root, victim };
+  };
+  const realOpen = fs.openSync;
+  const realFstat = fs.fstatSync;
+  // One-shot: the first open swaps the leaf it was handed for a symlink to the victim, then opens it.
+  const swapAtOpen = (victim) => {
+    fs.openSync = (leaf, ...rest) => {
+      fs.openSync = realOpen;
+      fs.unlinkSync(leaf);
+      fs.symlinkSync(victim, leaf);
+      return realOpen(leaf, ...rest);
+    };
+  };
+
+  // (a) the leaf is still a symlink when the identity lstat runs
+  const a = setup();
+  try {
+    swapAtOpen(a.victim);
+    assert.throws(() => writeInsideRoot(a.root, 'v.json', 'x', noFollow), /refusing to write v\.json: it is a symlink/);
+  } finally {
+    fs.openSync = realOpen;
+  }
+  assert.strictEqual(fs.readFileSync(a.victim, 'utf8'), 'VICTIM-BYTES');
+
+  // (b) the symlink is swapped back for a fresh regular file before the identity lstat: only dev/ino can tell
+  const b = setup();
+  try {
+    swapAtOpen(b.victim);
+    fs.fstatSync = (fd, ...rest) => {
+      fs.fstatSync = realFstat;
+      const st = realFstat(fd, ...rest);
+      const leaf = path.join(fs.realpathSync(b.root), 'v.json');
+      fs.unlinkSync(leaf);
+      fs.writeFileSync(leaf, 'fresh');
+      return st;
+    };
+    assert.throws(() => writeInsideRoot(b.root, 'v.json', 'x', noFollow), /refusing to write v\.json: it is a symlink/);
+  } finally {
+    fs.openSync = realOpen;
+    fs.fstatSync = realFstat;
+  }
+  assert.strictEqual(fs.readFileSync(b.victim, 'utf8'), 'VICTIM-BYTES');
+});

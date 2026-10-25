@@ -282,9 +282,12 @@ function run(argv, deps) {
 // real path, never the literal one. The parent directory is realpath-resolved
 // and must sit inside the real root. Where the platform defines O_NOFOLLOW, the
 // leaf is opened with it and the kernel refuses a symlinked file. Where it does
-// not (win32), the leaf is lstat'd before the open, and after the open its
-// dev/ino is compared with the lstat's; the file is truncated only once that
-// identity check passes, so a file swapped in during the window is never cut short.
+// not (win32), the leaf is lstat'd before the open (a symlink is refused there),
+// then created with O_EXCL when absent or opened without O_CREAT when present;
+// after the open the fd's dev/ino (bigint, so a 64-bit win32 file ID is not
+// rounded) is compared with a fresh lstat of the leaf, and the file is truncated
+// only once that identity check passes, so a file swapped in during the window
+// is never cut short.
 function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
   const target = path.join(root, p);
   const realRoot = fs.realpathSync(root);
@@ -300,7 +303,7 @@ function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
   }
   const symlinkError = () => new Error(`refusing to write ${p}: it is a symlink`);
   const leaf = path.join(realDir, path.basename(target));
-  const { O_WRONLY, O_CREAT, O_TRUNC, O_NOFOLLOW } = constants;
+  const { O_WRONLY, O_CREAT, O_EXCL, O_TRUNC, O_NOFOLLOW } = constants;
   if (typeof O_NOFOLLOW === 'number') {
     let fd;
     try {
@@ -319,10 +322,19 @@ function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
     if (e.code !== 'ENOENT') throw e;
   }
   if (before && before.isSymbolicLink()) throw symlinkError();
-  const fd = fs.openSync(leaf, O_WRONLY | O_CREAT, 0o644);
+  // A leaf that was absent is created exclusively and one that was present is
+  // opened without O_CREAT, so a leaf that changed since the lstat fails the open
+  // (EEXIST / ENOENT) instead of leaving a freshly created file behind.
+  let fd;
   try {
-    const opened = fs.fstatSync(fd);
-    const after = fs.lstatSync(leaf);
+    fd = fs.openSync(leaf, before ? O_WRONLY : O_WRONLY | O_CREAT | O_EXCL, 0o644);
+  } catch (e) {
+    if (e.code === 'EEXIST' || e.code === 'ENOENT') throw symlinkError();
+    throw e;
+  }
+  try {
+    const opened = fs.fstatSync(fd, { bigint: true });
+    const after = fs.lstatSync(leaf, { bigint: true });
     if (after.isSymbolicLink() || opened.dev !== after.dev || opened.ino !== after.ino) throw symlinkError();
     fs.ftruncateSync(fd, 0);
     fs.writeFileSync(fd, text);
