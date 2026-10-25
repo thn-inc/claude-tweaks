@@ -494,6 +494,9 @@ test('AC1.1: archive-run refuses an auto-merge run with an unfiled can\'t-tell f
   const result = runHook(['archive-run', '--run', runDir], { cwd: root });
   assert.match(result.stdout, /archival refused — cant-tell-unfiled \(1 can't-tell finding\(s\) an auto-merge path never filed: tiebreak:0123456789ab\) — file the run's can't-tell findings/);
   assert.match(result.stdout, /, then re-run archive-run\n$/);
+  // The printed hint is paste-ready: the real run dir, never the `{run-dir}` placeholder.
+  assert.ok(result.stdout.includes(`console-filings.js --run "${runDir}"; a spec-N/-prefixed id is filed and logged with --run "${runDir}/spec-N"`), result.stdout);
+  assert.ok(!result.stdout.includes('{run-dir}'), result.stdout);
   assert.equal(result.code, 0);
   assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
 });

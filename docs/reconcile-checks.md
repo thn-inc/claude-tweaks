@@ -228,8 +228,9 @@ run skipped here escalates through the same structurally-stuck path as the main 
 `hooks.js archive-run` refuses on the same two conditions, after its own guards, and
 `review-coordination.js check-coverage` prints the same coverage result without refusing anything.
 
-**An unfiled can't-tell finding blocks archival of an auto-merge run (#4171).** The auto-merge
-short-circuit renders no Review Console and writes no `console.json`, so a can't-tell tiebreak
+**An unfiled can't-tell finding blocks archival of an auto-merge run (#4171).** An auto-merge
+path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) renders no Review Console
+and writes no `console.json`, so a can't-tell tiebreak
 finding the run held would otherwise be lost at archive. `unfiledCantTellFindings` (in
 `archive-merged.js`) returns `[]` unless `readTopLevelConsoleState` is `none` and
 `consoleReplacedByAutoMerge` is true; otherwise it names, via `console/finding-outcomes.js`'s
@@ -241,8 +242,10 @@ last, after the artifact checks above: the skip reason is **`cant-tell-unfiled`*
 `unfiled` and `CANT_TELL_UNFILED_HINT`. It is in `STRUCTURALLY_STUCK_REASONS`, the `status: clean`
 sweep's `onSkip` tracks it, and a rendered console (a `console.json` or a `Review Console:
 terminal decision` line) turns the guard off. `hooks.js archive-run` refuses the same condition, inside its
-`console-never-rendered-staged-pending` block and after that refusal. Every other run archives
-exactly as before.
+`console-never-rendered-staged-pending` block and after that refusal, printing the hint with the
+real run dir in place of `{run-dir}`. The remedy is to file each finding through
+`wrap-up/review-console.md`'s Can't-tell filings: a `spec-N/`-prefixed id is filed and logged with
+`--run {run-dir}/spec-N` (its own `decisions.md`). Every other run archives exactly as before.
 
 **Console residue (#3949).** `readConsoleState` returns `residue` when a run's console resolved
 (or wrote no top-level `console.json`) but `console/residue.js`'s `readRunResidue` still reports an

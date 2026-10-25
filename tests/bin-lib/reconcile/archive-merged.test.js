@@ -3163,7 +3163,7 @@ test('AC3.1: archiveMerged: a MERGED PR reached via the by-number fallback with 
 // `issueStates` answers `gh issue view` (installGhWrapper); `claudeMd` writes the
 // main checkout's CLAUDE.md.
 function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specStaged = {}, {
-  origin = false, closes = null, manifestSpecs = null, staleMs = null, issueStates = null, claudeMd = null, findings = null,
+  origin = false, closes = null, manifestSpecs = null, staleMs = null, issueStates = null, claudeMd = null, findings = null, decisions = null,
 } = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo(branch); // branch ref stays — fallbackBranch recovers it
   if (origin) git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
@@ -3194,6 +3194,8 @@ function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specSta
   }
   // #3945: an optional review-findings.json body (the tiebreak denominator).
   if (findings !== null) fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify(findings));
+  // #4171: an optional decisions.md body (the auto-merge line and tiebreak verdicts).
+  if (decisions !== null) fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);
   const pr = {
     number: 3249100, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
     mergeCommit: { oid: featureSha },
@@ -3489,7 +3491,7 @@ test('STRUCTURALLY_STUCK_REASONS includes merged-partial and no-repo-slug but no
 // the PR's closingIssuesReferences name.
 // `issueStates` answers `gh issue view`; `consoleResolved` writes a resolved
 // console.json.
-function fixtureByNumberMergedRecordRun({ runId, closes, issueStates = null, consoleResolved = false, findings = null }) {
+function fixtureByNumberMergedRecordRun({ runId, closes, issueStates = null, consoleResolved = false, findings = null, decisions = null }) {
   const branch = 'feat-3503-bynumber';
   const { root, featureSha } = mergedFeatureBranchRepo(branch);
   git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
@@ -3505,15 +3507,18 @@ function fixtureByNumberMergedRecordRun({ runId, closes, issueStates = null, con
   if (consoleResolved) fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
   // #3945: an optional review-findings.json body (the tiebreak denominator).
   if (findings !== null) fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify(findings));
-  const wrapper = installGhWrapper({
+  // #4171: an optional decisions.md body (the auto-merge line and tiebreak verdicts).
+  if (decisions !== null) fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);
+  const pr = {
     number: 3503001, state: 'MERGED', mergedAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z',
     mergeCommit: { oid: featureSha }, closingIssuesReferences: closes.map((n) => ref(n)),
-  }, issueStates);
-  try {
-    return { root, runDir, result: archiveMerged({ cwd: root }) };
-  } finally {
-    wrapper.restore();
-  }
+  };
+  // `rerun` drives a second archiveMerged pass over the same fixture, with the same gh answers.
+  const rerun = () => {
+    const wrapper = installGhWrapper(pr, issueStates);
+    try { return archiveMerged({ cwd: root }); } finally { wrapper.restore(); }
+  };
+  return { root, runDir, result: rerun(), rerun };
 }
 
 // #3503 AC1.1/AC1.2/AC5.1: a multi-spec run (the #3311 incident shape) whose
@@ -4910,6 +4915,37 @@ test('an unreadable decisions.md fails the cant-tell-unfiled guard closed, per d
 
 test('cant-tell-unfiled is structurally stuck (#4171)', () => {
   assert.ok(STRUCTURALLY_STUCK_REASONS.has('cant-tell-unfiled'));
+});
+
+// #4171 end to end: the real archiveMerged sweep over a merged, console-less auto-merge run.
+const CANT_TELL_DECISIONS = `${AUTO_MERGE_LINE}\n${cantTellVerdict(cantTellFinding.id)}\n`;
+
+test('by-number path: archiveMerged skips an unfiled can\'t-tell finding, then archives once it is filed (#4171)', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result, rerun } = fixtureByNumberMergedRecordRun({
+    runId: '2026-10-25T090000-record-4171', closes: [4171], findings: [cantTellFinding], decisions: CANT_TELL_DECISIONS,
+  });
+  assert.ok(!result.archived.includes(runDir), `expected ${runDir} NOT archived, got ${JSON.stringify(result)}`);
+  assert.deepStrictEqual(result.skipped.find((s) => s.runDir === runDir), {
+    runDir, reason: 'cant-tell-unfiled', unfiled: [`tiebreak:${cantTellFinding.id}`], hint: CANT_TELL_UNFILED_HINT,
+  });
+
+  const [{ fingerprint }] = unfiledCantTell({ runDir, deps: unfiledDeps });
+  fs.appendFileSync(path.join(runDir, 'decisions.md'),
+    `- AUTO 10:01:00 — Queue write: tiebreak:${cantTellFinding.id} filed as #501 (work-fingerprint ${fingerprint}). Reversibility: n/a.\n`);
+  const second = rerun();
+  assert.ok(second.archived.includes(runDir), `expected ${runDir} archived once filed, got ${JSON.stringify(second)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+});
+
+test('branch-joined path: archiveMergedRun skips an unfiled can\'t-tell finding with unfiled and hint (#4171)', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-4171-cant-tell', '2026-10-25T090000-record-4171-cant-tell', [], {},
+    { findings: [cantTellFinding], decisions: CANT_TELL_DECISIONS },
+  );
+  assert.equal(fs.existsSync(runDir), true, 'the run dir must stay in place');
+  assert.deepStrictEqual(result.skipped.find((s) => s.runDir === runDir), {
+    runDir, reason: 'cant-tell-unfiled', unfiled: [`tiebreak:${cantTellFinding.id}`], hint: CANT_TELL_UNFILED_HINT,
+  });
 });
 
 // #4032: `prStates` (the pass-shared resolver) replaces archiveMerged's live PR

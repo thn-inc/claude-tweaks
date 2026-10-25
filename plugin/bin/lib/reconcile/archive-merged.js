@@ -378,8 +378,9 @@ function unclosedRecords(prState, records, repoSlug) {
 // #3945: `coverage` (checkRunTiebreakCoverage's `{ artifactPresent,
 // artifactValid, missing }`) is evaluated only at the two points that would
 // otherwise return `{ action: 'archive' }`, so it sits after every guard above.
-// Absent, or `artifactPresent: false`, it is ignored — byte-identical to the
-// 4-arg decision. The skip carries its own recovery `hint`.
+// Absent, it is ignored — byte-identical to the 4-arg decision. `artifactPresent:
+// false` skips only the artifact checks: #4171's `unfiledCantTell` is evaluated
+// regardless of it. Each skip carries its own recovery `hint`.
 function decideArchiveCore(prState, consoleState, hasStagedPending, recordCheck, coverage) {
   if (prState === 'gh-absent') return { action: 'skip', reason: 'gh-absent' };
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
@@ -429,9 +430,10 @@ function decideArchiveCore(prState, consoleState, hasStagedPending, recordCheck,
 // skips carry no hint, and archiveRunDir's refusal() hints are a different path.
 const TIEBREAK_COVERAGE_HINT = "re-run the review step's findings writer for this run, or delete review-findings.json if the run predates the tiebreak";
 
-// #4171: the auto-merge short-circuit renders no console, so a can't-tell finding the run held is
+// #4171: an auto-merge path renders no console, so a can't-tell finding the run held is
 // lost at archive time unless it was filed. `coverage.unfiledCantTell` names the unfiled ones.
-const CANT_TELL_UNFILED_HINT = "file the run's can't-tell findings through wrap-up/review-console.md's Can't-tell filings (console-filings.js --run {run-dir}), logging each as '{item} filed as #{n} (work-fingerprint {fp})', or write a resolved console.json";
+// `{run-dir}` is a placeholder; archive-run substitutes the real run dir before printing.
+const CANT_TELL_UNFILED_HINT = "file the run's can't-tell findings — an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) rendered no console to file them — through wrap-up/review-console.md's Can't-tell filings (console-filings.js --run \"{run-dir}\"; a spec-N/-prefixed id is filed and logged with --run \"{run-dir}/spec-N\", its own decisions.md), logging each as '{item} filed as #{n} (work-fingerprint {fp})', or write a resolved console.json";
 
 // `{ action: 'archive' }` unless the run's findings artifact is present and
 // either unreadable/malformed or lists a finding with no verdict line, or (#4171)

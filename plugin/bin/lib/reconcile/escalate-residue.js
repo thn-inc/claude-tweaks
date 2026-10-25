@@ -126,7 +126,7 @@ function structurallyStuckBody(paths) {
     '',
     "For a `tiebreak-coverage-missing` or `tiebreak-artifact-invalid` directory, the run's review-findings.json lists a finding with no tiebreak verdict line in decisions.md, or is malformed: re-run the review step's findings writer and tiebreak for that run, or delete review-findings.json if the run predates the tiebreak; the next reconcile then archives the dir and drops it from this record.",
     '',
-    "For a `cant-tell-unfiled` directory, the run merged through the auto-merge short-circuit with no Review Console and holds a can't-tell finding no record was filed for: file it through `wrap-up/review-console.md`'s Can't-tell filings step (`console-filings.js --run {run-dir}`), logging `{item} filed as #{n} (work-fingerprint {fp})` for each, or write a resolved `console.json`; the next reconcile then archives the dir and drops it from this record.",
+    "For a `cant-tell-unfiled` directory, the run merged through an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) with no Review Console and holds a can't-tell finding no record was filed for: file it through `wrap-up/review-console.md`'s Can't-tell filings step (`console-filings.js --run {run-dir}`; a `spec-N/`-prefixed id is filed and logged with `--run {run-dir}/spec-N`, its own `decisions.md`), logging `{item} filed as #{n} (work-fingerprint {fp})` for each, or write a resolved `console.json`; the next reconcile then archives the dir and drops it from this record.",
     '',
     "Each directory's exact reason is the `lastError` (`stuck at <reason>`) on its `structurally-stuck` entry under `residueFailures` in the main checkout's `.claude-tweaks/reconcile-cache.json`.",
     '',

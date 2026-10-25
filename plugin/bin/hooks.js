@@ -1273,7 +1273,7 @@ async function main(argv) {
       // #4171: the same auto-merge shape drops a can't-tell finding no run ever filed.
       const unfiled = unfiledCantTellFindings(runDir);
       if (unfiled.length) {
-        process.stdout.write(`claude-tweaks: archival refused — cant-tell-unfiled (${unfiled.length} can't-tell finding(s) an auto-merge path never filed: ${unfiled.join(', ')}) — ${CANT_TELL_UNFILED_HINT}, then re-run archive-run\n`);
+        process.stdout.write(`claude-tweaks: archival refused — cant-tell-unfiled (${unfiled.length} can't-tell finding(s) an auto-merge path never filed: ${unfiled.join(', ')}) — ${CANT_TELL_UNFILED_HINT.replaceAll('{run-dir}', runDir)}, then re-run archive-run\n`);
         return 0;
       }
     }
