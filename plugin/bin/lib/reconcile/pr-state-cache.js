@@ -72,8 +72,11 @@ function createPrStateResolver({ root, now = Date.now, concurrency = 8, deps = {
     const entry = persisted[key];
     if (entry && typeof entry === 'object' && typeof entry.at === 'number' && 'v' in entry) {
       if (freshNull && entry.v === null) return { hit: false };
-      // A non-persistable value has TTL 0, so a tampered entry never matches.
-      if (now() - entry.at < persistableTtl(kind, entry.v)) return { hit: true, value: entry.v };
+      // A non-persistable value has TTL 0, so a tampered entry never matches. A
+      // future `at` (clock stepped back, hand-edited file) has a negative age
+      // that would sit under any TTL forever, so it never matches either.
+      const age = now() - entry.at;
+      if (age >= 0 && age < persistableTtl(kind, entry.v)) return { hit: true, value: entry.v };
     }
     return { hit: false };
   }
@@ -175,7 +178,7 @@ function createPrStateResolver({ root, now = Date.now, concurrency = 8, deps = {
     const prStates = {};
     let changed = learned.size > 0;
     for (const [key, entry] of Object.entries(cache.prStates || {})) {
-      if (entry && typeof entry === 'object' && typeof entry.at === 'number' && t - entry.at <= PR_STATE_RETENTION_MS) {
+      if (entry && typeof entry === 'object' && typeof entry.at === 'number' && entry.at <= t && t - entry.at <= PR_STATE_RETENTION_MS) {
         prStates[key] = entry;
       } else {
         changed = true;

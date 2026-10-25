@@ -220,6 +220,22 @@ test('a null branch answer expires after NO_PR_TTL_MS', () => {
   assert.equal(c.calls.byBranch, 1);
 });
 
+test('a future-dated entry (clock stepped back) is never served and is dropped on persist', () => {
+  const root = tmpRoot();
+  writeCache(root, { prStates: { 'b:x': { v: null, at: 10 * NO_PR_TTL_MS }, 'n:7': { v: MERGED(7), at: 10 * NO_PR_TTL_MS }, 'n:9': { v: MERGED(9), at: 10 * NO_PR_TTL_MS } } });
+  const d = fakeDeps({ byBranch: null, byNumber: MERGED(7) });
+  const r = createPrStateResolver({ root, now: () => 0, deps: d.deps });
+  assert.equal(r.byBranch('x'), null);
+  assert.equal(r.byNumber(7).state, 'MERGED');
+  assert.equal(d.calls.byBranch, 1, 'a future-dated no-PR answer must not outlive its TTL — it is asked live');
+  assert.equal(d.calls.byNumber, 1, 'a future-dated MERGED answer is not served either');
+  r.persist();
+  const states = readCache(root).prStates;
+  assert.equal(states['b:x'].at, 0, 'the live answer replaced the future-dated one');
+  assert.equal(states['n:7'].at, 0);
+  assert.equal('n:9' in states, false, 'a future-dated entry nobody re-asked about is dropped, not kept past retention');
+});
+
 test('entries past retention are dropped on persist', () => {
   const root = tmpRoot();
   writeCache(root, { prStates: { 'n:1': { v: MERGED(1), at: 0 }, 'n:2': { v: MERGED(2), at: RET } } });

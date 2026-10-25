@@ -99,6 +99,20 @@ test('execFileSyncTimed records a failing call and rethrows', () => {
   assert.equal(summarizeTimings(t).phases.x.subprocesses['git definitely-not-a-subcommand'].count, 1);
 });
 
+test('execFileAsyncTimed records its spawn in the active phase, failures included', async () => {
+  const { execFileAsyncTimed } = require('../../../plugin/bin/lib/reconcile/timing');
+  const t = createTimings();
+  await withTimings(t, () => timePhase('y', async () => {
+    const { stdout } = await execFileAsyncTimed('git', ['--version'], { encoding: 'utf8' });
+    assert.match(stdout, /^git version/);
+    await assert.rejects(() => execFileAsyncTimed('git', ['definitely-not-a-subcommand'], {}));
+  }));
+  const { phases } = summarizeTimings(t);
+  assert.equal(phases.y.subprocesses.git.count, 1, '`git --version` has no subcommand, so it buckets as bare `git`');
+  assert.equal(phases.y.subprocesses['git definitely-not-a-subcommand'].count, 1, 'a failing async call is recorded too');
+  assert.equal(phases.y.subprocessCount, 2);
+});
+
 test('commandFamily: git skips --no-optional-locks and other bare global flags before the subcommand', () => {
   assert.equal(commandFamily('git', ['-C', '/x', '--no-optional-locks', 'status', '--porcelain']), 'git status');
   assert.equal(commandFamily('git', ['--no-pager', '-C', '/x', 'log']), 'git log');

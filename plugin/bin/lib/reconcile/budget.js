@@ -12,8 +12,10 @@ const DEFAULT_BUDGET_MS = 18000;
 // archive-branches alone take ~19 s in steady state, leaving remote-prune,
 // ledger-residue and reap skipped as budget-exceeded on every pass (#4032). It
 // stays bounded (never Infinity — #820 D4), just above the ~45 s measured
-// steady state and under background-lock.js's 5-minute STALE_LOCK_MS, so a
-// running pass is never reclaimed as a stale lock.
+// steady state and well under background-lock.js's 5-minute STALE_LOCK_MS. The
+// budget is checked only between checks, so a pass can overrun it by one
+// check's duration; that 2.5x headroom is what keeps a running pass from being
+// reclaimed as a stale lock.
 const BACKGROUND_BUDGET_MS = 120000;
 
 // nowFn is injectable — no Date.now() call baked into exceeded()/remainingMs()

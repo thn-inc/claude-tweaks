@@ -1643,9 +1643,10 @@ async function main(argv) {
       if (!checksList.length) out.background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
     }
     if (jsonOut) {
-      // Unchanged from before #638 — byte-for-byte, so bin/lib/reconcile's
-      // existing JSON consumers (dispatch/tidy reading `console.ready` off
-      // this) don't move.
+      // The full per-item census, not #638's compact summary: no key a JSON
+      // consumer already reads (dispatch/tidy reading `console.ready` off this)
+      // moved. #4032 only ADDED keys — `timings` always, `background` on an
+      // unscoped call.
       process.stdout.write(JSON.stringify(out) + '\n');
     } else {
       // New default (#638): a compact human-readable summary instead of the
@@ -1672,7 +1673,7 @@ async function main(argv) {
     // `skipCacheStamp` below.
     const cwd = process.cwd();
     const root = wtDetect.mainCheckoutRoot(cwd) || cwd;
-    const statusPath = path.join(root, '.claude-tweaks', 'reconcile-background-status.json');
+    const statusPath = path.join(root, '.claude-tweaks', require('./lib/reconcile/background-spawn').STATUS_FILENAME);
     let archivedCount = 0;
     try {
       const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
@@ -1711,6 +1712,7 @@ async function main(argv) {
     const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
     const { isFresh } = require('./lib/reconcile/cache');
     const { BACKGROUND_BUDGET_MS } = require('./lib/reconcile/budget');
+    const { STATUS_FILENAME } = require('./lib/reconcile/background-spawn');
     const { QUIET_SKIP_REASONS } = require('./lib/hooks/worktree-reap');
     const { QUIET_SKIP_REASONS: LEDGER_RESIDUE_QUIET_SKIP_REASONS } = require('./lib/reconcile/ledger-residue');
     const root = mainCheckoutRoot(cwd) || cwd;
@@ -1723,7 +1725,7 @@ async function main(argv) {
     // exactly as unresolvable as before this fix — the other two gates
     // (24h staleness, shipped-unclosed evidence) still govern alone.
     const sessionId = process.env.CLAUDE_TWEAKS_SESSION_ID || undefined;
-    const statusPath = path.join(root, '.claude-tweaks', 'reconcile-background-status.json');
+    const statusPath = path.join(root, '.claude-tweaks', STATUS_FILENAME);
 
     // Freshness is decided from THIS status file's own `completedAt` —
     // deliberately NOT reconcile()'s shared reconcile-cache.json `lastRunAt`
@@ -1792,8 +1794,10 @@ async function main(argv) {
           .map((w) => ({ path: w.path, reason: w.reason })),
         skipped: r.skipped || [],
       };
-    } catch {
-      summary = { failed: true };
+    } catch (e) {
+      // The reason rides in the status file: this process is detached with
+      // stdio ignored, so it is the only trace the next SessionStart can surface.
+      summary = { failed: true, error: String((e && e.message) || e).slice(0, 200) };
     } finally {
       releaseBackgroundLock(lock);
     }

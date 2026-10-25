@@ -104,7 +104,7 @@ function commandFamily(file, args) {
     // value-taking ones (`-C <p>`, `-c <k=v>`, and `--git-dir <p>`-style in
     // their space-separated form) skip their value too; every other leading
     // `-…` token (`--no-optional-locks`, `--no-pager`, `--git-dir=<p>`) is a
-    // bare flag. All current callers put `--no-optional-locks` before the subcommand.
+    // bare flag, whichever callers happen to pass it.
     let i = 0;
     while (i < argv.length) {
       const a = String(argv[i]);

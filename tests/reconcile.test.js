@@ -1248,6 +1248,18 @@ test('reconcile: ALL_CHECKS includes red-tip immediately after mirror', () => {
   assert.strictEqual(ALL_CHECKS[mirrorIdx + 1], 'red-tip', 'red-tip must be the entry immediately after mirror');
 });
 
+// #4032: /tidy's Reconcile-first call names the checks explicitly, because the
+// unscoped CLI defers three of them to the background pass. The list is a
+// hand-copied twin of ALL_CHECKS, so a check added there but not here would
+// silently never converge before /tidy audits.
+test("tidy/scan-procedures.md's explicit reconcile --checks list names exactly ALL_CHECKS (#4032)", () => {
+  const { ALL_CHECKS } = require('../plugin/bin/lib/reconcile');
+  const prose = readText(path.join(__dirname, '..', 'plugin', 'skills', 'tidy', 'scan-procedures.md'));
+  const m = /hooks\.js" reconcile --checks ([a-z,-]+) --json/.exec(prose);
+  assert.ok(m, 'Reconcile-first call with an explicit --checks list found');
+  assert.deepEqual([...m[1].split(',')].sort(), [...ALL_CHECKS].sort());
+});
+
 test('reconcile: red-tip dispatches immediately after mirror in source order (load-bearing — reads the ref mirror-ff just fetched)', () => {
   const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'));
   const mirrorIdx = src.indexOf("checks.includes('mirror')");
@@ -2088,6 +2100,22 @@ test('AC2.1: reconcile(): no opts.budgetMs passes undefined to createBudget, so 
     assert.deepEqual(seen, [undefined]);
     assert.deepEqual(r.skipped, [{ check: 'mirror,red-tip', reason: 'budget-exceeded' }]);
     assert.equal(require('../plugin/bin/lib/reconcile/budget').DEFAULT_BUDGET_MS, 18000);
+  });
+});
+
+test('an over-budget early return still persists the PR answers the pass learned (#4032)', async () => {
+  await withRecordedBudget(async ({ mainDir }) => {
+    const prStateCache = require('../plugin/bin/lib/reconcile/pr-state-cache');
+    const original = prStateCache.createPrStateResolver;
+    let persisted = 0;
+    prStateCache.createPrStateResolver = () => ({ persist: () => { persisted += 1; } });
+    try {
+      const r = await reconcile({ cwd: mainDir, checks: ['mirror', 'red-tip'] });
+      assert.deepEqual(r.skipped, [{ check: 'mirror,red-tip', reason: 'budget-exceeded' }], 'the pass returned early, before finalize');
+      assert.equal(persisted, 1, 'the early return persisted the resolver instead of dropping its answers');
+    } finally {
+      prStateCache.createPrStateResolver = original;
+    }
   });
 });
 

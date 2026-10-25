@@ -136,17 +136,21 @@ function defaultRunner(root) {
   };
 }
 
-// origin -> { owner, repo } only when it is provably on github.com. `gh api
-// graphql` is sent without --hostname, so it talks to gh's default host; on any
-// other (or unparseable) origin host the batch could answer from a same-named
-// repo elsewhere, which would then be memoized and persisted. Such roots take
+// The only host the batch talks to. `gh api graphql` is pinned to it with
+// --hostname, so a GH_HOST (or a different default login) cannot send the query
+// to a same-named repo elsewhere, whose answer would then be memoized and
+// persisted.
+const GITHUB_HOST = 'github.com';
+
+// origin -> { owner, repo } only when it is provably on GITHUB_HOST. On any
+// other (or unparseable) origin host the batch is skipped and such roots take
 // the per-item path, which follows origin's own host.
 function githubOrigin(root) {
   try {
     const remote = runGit(['remote', 'get-url', 'origin'], root);
     if (remote.failure || !remote.stdout) return null;
     const parsed = parseRepo(remote.stdout);
-    return parsed && parsed.host.toLowerCase() === 'github.com' ? parsed : null;
+    return parsed && parsed.host.toLowerCase() === GITHUB_HOST ? parsed : null;
   } catch {
     return null;
   }
@@ -185,7 +189,7 @@ async function fetchBatch(root, { numbers = [], heads = [] } = {}, { runner } = 
     let stdout;
     try {
       // -f, never -F: String! variables must not be type-coerced (#610's shipped bug shape)
-      stdout = await run(['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `query=${buildBatchQuery(chunk)}`]);
+      stdout = await run(['api', 'graphql', '--hostname', GITHUB_HOST, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `query=${buildBatchQuery(chunk)}`]);
     } catch (e) {
       stdout = e && typeof e.stdout === 'string' ? e.stdout : '';
     }

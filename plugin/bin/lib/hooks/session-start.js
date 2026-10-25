@@ -11,6 +11,7 @@ const ctxLib = require('./context');
 const sessionResidue = require('./session-residue');
 const { reconcile } = require('../reconcile');
 const { DEFAULT_TTL_MS } = require('../reconcile/cache');
+const { STATUS_FILENAME } = require('../reconcile/background-spawn');
 const portsEnsure = require('../ports/ensure');
 const { BLOCK_SIZE: PORTS_BLOCK_SIZE } = require('../ports/registry');
 const { INTERACTION_STYLE_DIRECTIVE } = require('./interaction-style');
@@ -305,7 +306,7 @@ async function run(ctx) {
   const bgStatusPath = (() => {
     try {
       const root = wtDetect.mainCheckoutRoot(ctx.cwd);
-      return root ? path.join(root, '.claude-tweaks', 'reconcile-background-status.json') : null;
+      return root ? path.join(root, '.claude-tweaks', STATUS_FILENAME) : null;
     } catch { return null; }
   })();
   function readBgStatus() {
@@ -321,6 +322,10 @@ async function run(ctx) {
       if (status && status.surfaced === false) {
         const s = status.summary || {};
         const lines = [];
+        // A pass that threw (hooks.js `reconcile-background`'s catch) has no counts,
+        // only `failed`; without this line a check that throws every pass would
+        // look like a clean, silent background pass forever.
+        if (s.failed) lines.push(`the pass failed${typeof s.error === 'string' && s.error ? ` (${s.error})` : ''}`);
         if (s.reaped) lines.push(`${s.reaped} finished worktree(s) removed (already merged)`);
         if (s.released) lines.push(`${s.released} issue claim(s) released`);
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);

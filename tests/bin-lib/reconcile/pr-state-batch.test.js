@@ -202,7 +202,7 @@ test('fetchBatch: 120 keys make 3 chunks, pass typed -f variables, and a failed 
   const out = await fetchBatch(SLUG_REPO, { numbers, heads }, { runner });
   assert.equal(calls.length, 3);
   for (const args of calls) {
-    assert.deepEqual(args.slice(0, 2), ['api', 'graphql']);
+    assert.deepEqual(args.slice(0, 4), ['api', 'graphql', '--hostname', 'github.com'], 'pinned to github.com so GH_HOST cannot redirect the query');
     assert.ok(args.includes('owner=thn-inc') && args.includes('name=claude-tweaks'), args.join(' '));
     assert.equal(args.filter((a) => a === '-F').length, 0, 'String! variables travel with -f, never -F');
     const query = args[args.length - 1];

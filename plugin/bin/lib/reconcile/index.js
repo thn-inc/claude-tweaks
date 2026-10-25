@@ -376,6 +376,11 @@ async function reconcileInner(opts) {
     if (!budget.exceeded()) return false;
     const notYetRun = remainingFromHere.filter((c) => checks.includes(c));
     if (notYetRun.length) result.skipped.push({ check: notYetRun.join(','), reason: 'budget-exceeded' });
+    // #4032: an over-budget return skips `finalize`, so persist the terminal PR
+    // answers this pass already paid for here — otherwise a cold pass that hits
+    // the ceiling forgets them and the next pass starts cold and hits it again.
+    // (Only prStates: the freshness stamp and the residue index stay finalize's.)
+    try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
     return true;
   }
 

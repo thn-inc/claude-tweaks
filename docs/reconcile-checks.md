@@ -74,7 +74,12 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `bin/hooks.js`'s `BACKGROUND_CHECKS`** (write-only/janitorial) — add the name to whichever list
    matches the decision from step 2. These two lists are asserted to partition `ALL_CHECKS`
    exactly (`tests/hooks-session-start.test.js`, `tests/bin-lib/hooks/reconcile-background.test.js`)
-   — missing this step fails that assertion, not silently.
+   — missing this step fails that assertion, not silently. A `BACKGROUND_CHECKS` member whose cost
+   would dominate the unscoped CLI's wall time may also join `CLI_DEFERRED_CHECKS` (a subset of
+   `BACKGROUND_CHECKS`, pinned by `tests/bin-lib/hooks/reconcile-background.test.js`); a deferred
+   check is then absent from the unscoped CLI's inline set. `plugin/skills/tidy/scan-procedures.md`'s
+   Reconcile-first call lists every check explicitly for that reason, and
+   `tests/reconcile.test.js` pins that list to `ALL_CHECKS`.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, runs, branches,
    remoteBranches, ledgerResidue, console, skipped, timings }`), substituted only when `reconcile()` itself
@@ -505,8 +510,8 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   `pr-state.js`). The batch is an accelerator, never an authority: a `NOT_FOUND` alias, a truncated
   page, a malformed node or any other error leaves that key out, and the per-item `gh` twins
   resolve it, so they stay the sole owner of `pr-not-found` and every failure string. It runs only
-  when `origin` is provably on `github.com` (the query is sent without `--hostname`); any other
-  host takes the per-item path.
+  when `origin` is provably on `github.com`, and the query is pinned there with `--hostname
+  github.com` so a `GH_HOST` cannot redirect it; any other host takes the per-item path.
 - **Claim blobs are reused by blob sha** (`release-merged.js`, `claimBlobs` key). An active claim's
   contents are cached by git blob sha and rewritten each pass to that pass's active claims, so it
   stays bounded. The reuse skips only the contents read — classification and the PR/issue join
@@ -535,7 +540,9 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   deferred and carries neither. Nothing is spawned when the pass did not converge —
   `NOT_CONVERGED_REASONS` (`no-repo`, `no-remote`, `fresh-cache`, `local-merge-model`,
   `preflight-gh-absent`, `preflight-github-unreachable`, `reconcile-threw`); report-only skips such
-  as `non-canonical-run-dir` or `budget-exceeded` do not count — nor under `--dry-run`. The
+  as `non-canonical-run-dir` or `budget-exceeded` do not count — nor under `--dry-run`, which
+  therefore previews none of the three (`skipped` still names them; `background.reason` reads
+  `dry-run`, saying nothing was handed over; an explicit `--checks … --dry-run` previews them). The
   background pass runs under `BACKGROUND_BUDGET_MS` (`budget.js`, 120 s) because the 18 s hot-path
   ceiling skipped its last three checks every pass. Without `remote-prune` the inline set is
   mirror-only-shaped, so the unscoped CLI now takes `mirror`'s single-ref `git fetch origin
