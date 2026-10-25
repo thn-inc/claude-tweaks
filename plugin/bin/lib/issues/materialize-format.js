@@ -85,10 +85,7 @@ function sectionText(body, name) {
     lineStarts.push(offset);
     offset += line.length + 1;
   }
-  const fencedSpans = [];
-  for (const [s, e] of fencedLineRanges(lines)) {
-    fencedSpans.push([lineStarts[s], lineStarts[e] + lines[e].length]);
-  }
+  const fencedSpans = fencedLineRanges(lines).map(([s, e]) => [lineStarts[s], lineStarts[e] + lines[e].length]);
   const inFence = (pos) => fencedSpans.some(([from, to]) => pos >= from && pos < to);
   let start = body.indexOf(heading);
   while (start !== -1 && inFence(start)) start = body.indexOf(heading, start + 1);
