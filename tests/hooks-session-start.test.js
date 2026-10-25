@@ -671,6 +671,19 @@ test('SessionStart renders a prior background pass\'s reaped/branch/remote-prune
   );
 });
 
+test('SessionStart surfaces a prior background pass that failed, with its reason (#4032)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(), surfaced: false, summary: { failed: true, error: 'gh exploded' },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    out.json.hookSpecificOutput.additionalContext,
+    /background reconcile \(from a prior session\) — the pass failed \(gh exploded\)\./,
+  );
+});
+
 test('SessionStart renders a prior background pass\'s ledger-residue PR count and notable residue (#3812)', async () => {
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });

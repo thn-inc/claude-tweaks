@@ -20,13 +20,10 @@
 // incomplete response by construction).
 'use strict';
 const fs = require('fs');
-const { execFileSync, execFile } = require('child_process');
-const { promisify } = require('util');
+const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { classifyGhApiError } = require('../issues/claim-store');
 const { repoSlugOf } = require('../hooks/git-exec');
 const { runClassified, runClassifiedAsync } = require('../shared-primitives');
-
-const execFileAsync = promisify(execFile);
 
 // Shared with claim-store.js/preflight.js/release-merged.js rather than a
 // fourth/fifth copy of the same ENOENT-vs-everything-else classification
@@ -101,7 +98,7 @@ function resolvePrState(repoRoot, branch, opts) {
   if (!branch) return null;
   return runClassified(
     () => {
-      const stdout = execFileSync(
+      const stdout = execFileSyncTimed(
         'gh',
         ['pr', 'list', '--head', branch, ...PR_LIST_ARGS.slice(2)],
         { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true },
@@ -192,7 +189,7 @@ function confirmPrNotFound(repoRoot, number) {
   const args = prNotFoundProbeArgs(repoRoot, number);
   if (!args) return false;
   const body = runClassified(
-    () => execFileSync('gh', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
+    () => execFileSyncTimed('gh', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
     probeBodyOf,
     { retryOnTimeout: true },
   );
@@ -203,7 +200,7 @@ async function confirmPrNotFoundAsync(repoRoot, number) {
   const args = prNotFoundProbeArgs(repoRoot, number);
   if (!args) return false;
   const body = await runClassifiedAsync(
-    async () => (await execFileAsync('gh', args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true })).stdout,
+    async () => (await execFileAsyncTimed('gh', args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true })).stdout,
     probeBodyOf,
     { retryOnTimeout: true },
   );
@@ -238,7 +235,7 @@ function resolvePrStateByNumber(repoRoot, number) {
   if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
   const result = runClassified(
     () => {
-      const stdout = execFileSync(
+      const stdout = execFileSyncTimed(
         'gh',
         ['pr', 'view', String(number), '--json', PR_VIEW_JSON_FIELDS],
         { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true },
@@ -267,7 +264,7 @@ function resolveIssueStateByNumber(repoRoot, number) {
   if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
   return runClassified(
     () => {
-      const stdout = execFileSync(
+      const stdout = execFileSyncTimed(
         'gh',
         ['issue', 'view', String(number), '--json', 'state'],
         { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true },
@@ -291,7 +288,7 @@ async function resolvePrStateAsync(repoRoot, branch) {
   if (!branch) return null;
   return runClassifiedAsync(
     async () => {
-      const { stdout } = await execFileAsync(
+      const { stdout } = await execFileAsyncTimed(
         'gh',
         ['pr', 'list', '--head', branch, ...PR_LIST_ARGS.slice(2)],
         { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
@@ -314,7 +311,7 @@ async function resolvePrStateByNumberAsync(repoRoot, number) {
   if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
   const result = await runClassifiedAsync(
     async () => {
-      const { stdout } = await execFileAsync(
+      const { stdout } = await execFileAsyncTimed(
         'gh',
         ['pr', 'view', String(number), '--json', PR_VIEW_JSON_FIELDS],
         { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
@@ -341,7 +338,7 @@ function buildBulkQuery(branches) {
 }
 
 function defaultBulkRunner(args, cwd) {
-  return execFileSync('gh', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: BULK_TIMEOUT_MS, windowsHide: true });
+  return execFileSyncTimed('gh', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: BULK_TIMEOUT_MS, windowsHide: true });
 }
 
 // The bulk screen (#1082): every requested branch's governing PR in
@@ -395,5 +392,5 @@ function resolvePrStatesBulk(repoRoot, branches, opts = {}) {
 
 module.exports = {
   resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber, resolvePrStateByNumberAsync,
-  FETCH_TIMEOUT_MS, BULK_CHUNK, classifyExecError,
+  FETCH_TIMEOUT_MS, BULK_CHUNK, classifyExecError, pickGoverningPr,
 };

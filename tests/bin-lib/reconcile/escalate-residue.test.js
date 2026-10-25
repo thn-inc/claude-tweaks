@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  escalateResidue, resolveResidue, residueFingerprint, residueBody, capDirtyFiles,
+  escalateResidue, resolveResidue, residueFingerprint, residueBody, capDirtyFiles, findResidueDuplicate,
   structurallyStuckMarker, structurallyStuckBody, parseStuckPaths, renderStuckPathsBlock, withStuckPaths,
 } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 const { STRUCTURALLY_STUCK_REASONS } = require('../../../plugin/bin/lib/reconcile/archive-merged');
@@ -396,6 +396,42 @@ test('resolveResidue: structurally-stuck closes the record once the last stuck p
   const result = resolveResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-only', runner });
   assert.deepEqual(result, { status: 'closed', number: 204 });
   assert.ok(calls.some((c) => c[1] === 'close'));
+});
+
+// #4032 — the marker index: a runner carrying findIssueByMarker is asked first.
+test('findResidueDuplicate uses the index before listing', () => {
+  const marker = `<!-- fingerprint: ${residueFingerprint('move-failed', '/x/run-1')} -->`;
+  const calls = [];
+  const runner = (args) => { calls.push(args); return '[]'; };
+  runner.findIssueByMarker = (repo, m) => {
+    assert.equal(repo, 'o/r');
+    assert.equal(m, marker);
+    return { number: 3, state: 'OPEN', body: m };
+  };
+  const hit = findResidueDuplicate({ repo: 'o/r', marker, runner });
+  assert.equal(hit.number, 3);
+  assert.equal(calls.length, 0, 'no issue list call when the index answers');
+});
+
+test('findResidueDuplicate: an undefined index answer falls through to the list path', () => {
+  const marker = `<!-- fingerprint: ${residueFingerprint('move-failed', '/x/run-1')} -->`;
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    return JSON.stringify([{ number: 8, state: 'CLOSED', body: marker, createdAt: '2024-01-01T00:00:00Z' }]);
+  };
+  runner.findIssueByMarker = () => undefined;
+  assert.equal(findResidueDuplicate({ repo: 'o/r', marker, runner }).number, 8);
+  assert.equal(calls.length, 1);
+});
+
+test('findResidueDuplicate: plain runner keeps the list path', () => {
+  const marker = '<!-- fingerprint: reconcile-residue-aaaa1111 -->';
+  const calls = [];
+  const runner = (args) => { calls.push(args); return '[]'; };
+  assert.equal(findResidueDuplicate({ repo: 'o/r', marker, runner }), null);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(0, 2), ['issue', 'list']);
 });
 
 // --- #2724: the consolidated record's body is edited in place — only the

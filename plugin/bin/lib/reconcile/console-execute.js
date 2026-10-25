@@ -26,8 +26,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { execFile, execFileSync } = require('child_process');
-const { promisify } = require('util');
+const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { iterRunDirsWithState } = require('../hooks/context');
 const { runWithConcurrency } = require('./gh-pool');
@@ -36,8 +35,6 @@ const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust
 const { resolvePolicyConfig } = require('../policy-schema');
 const { sddRulingDeferralReason, SDD_RULING_REASONS } = require('../console/sdd-ruling');
 const { canonicalRealpath, resolveLeaf, isAncestorOrSelf } = require('../path-guard');
-
-const execFileAsync = promisify(execFile);
 
 const FETCH_TIMEOUT_MS = 5000;
 // _shared/console-execution.md's Pre-execution claim section — a claim older
@@ -144,7 +141,7 @@ function parseItemTicks(body) {
 async function ghJson(repoRoot, args) {
   let stdout;
   try {
-    ({ stdout } = await execFileAsync(
+    ({ stdout } = await execFileAsyncTimed(
       'gh',
       args,
       { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
@@ -211,7 +208,7 @@ async function fetchIssueGrant(repoRoot, issueNumber) {
 // same posture as every other best-effort read in this file.
 function resolveVetoWindowHours(runDir, repoRoot) {
   try {
-    const git = (args) => execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true });
+    const git = (args) => execFileSyncTimed('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true });
     const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
     const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['grant-veto-window-hours'] });
     const entry = result['grant-veto-window-hours'];

@@ -58,7 +58,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSyncTimed } = require('./timing');
 const { DEFAULT_TIMEOUT_MS } = require('../hooks/git-exec');
 const { splitNul } = require('../git-z');
 const sharedPrimitives = require('../shared-primitives');
@@ -213,7 +213,7 @@ function decideLedgerResidue({ paths, removalPrs, refExists, dryRun }) {
 }
 
 function makeDefaultGit(root) {
-  return (args, opts = {}) => execFileSync('git', ['-C', root, ...args], {
+  return (args, opts = {}) => execFileSyncTimed('git', ['-C', root, ...args], {
     encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: DEFAULT_TIMEOUT_MS, windowsHide: true, ...opts,
   });
 }
@@ -234,7 +234,7 @@ function defaultListRunDirs(root) {
 // `specs/` under work-backend: local-files, else `gh issue list --state open`.
 // -> the array, 'gh-absent' / 'network-failure' (github-issues), or null when a
 // local read fails. `exec` is injectable for tests.
-function defaultListOpenRecords(root, exec = execFileSync) {
+function defaultListOpenRecords(root, exec = execFileSyncTimed) {
   if (readWorkBackend(root) === 'local-files') {
     const specsDir = path.join(root, 'specs');
     try {
@@ -270,7 +270,7 @@ function defaultListOpenRecords(root, exec = execFileSync) {
 // is — no recency window. A merged removal PR's branch is deleted after merge,
 // so only a surviving head is found. Any failing call fails the whole list.
 // `exec` is injectable for tests.
-function defaultListRemovalPrs(root, exec = execFileSync) {
+function defaultListRemovalPrs(root, exec = execFileSyncTimed) {
   const opts = { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sharedPrimitives.GH_TIMEOUT_MS, windowsHide: true };
   return sharedPrimitives.runClassified(
     () => {
@@ -297,7 +297,7 @@ function defaultListRemovalPrs(root, exec = execFileSync) {
 
 // -> { number, url }, or 'gh-absent' / 'network-failure'. Never retried: a
 // timed-out create may still have opened the PR. `exec` is injectable for tests.
-function defaultCreatePr({ root, base, head, title, body }, exec = execFileSync) {
+function defaultCreatePr({ root, base, head, title, body }, exec = execFileSyncTimed) {
   try {
     const stdout = exec(
       'gh',

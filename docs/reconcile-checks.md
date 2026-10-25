@@ -18,7 +18,9 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 - **`ALL_CHECKS` is the requested-subset default, not the iteration order.** `index.js`'s own
   `DISPATCH_ORDER` constant is what's actually walked; `ALL_CHECKS` only lists membership.
 - **An explicit `--checks` subset runs without the wall-clock budget (#3026).** `budget.js`'s 18 s
-  ceiling bounds the SessionStart, background, and unscoped passes. The `hooks.js reconcile` CLI
+  ceiling bounds the SessionStart and unscoped passes; the detached `reconcile-background` pass runs under
+  its own `BACKGROUND_BUDGET_MS` (120 s, still bounded and under the 5-minute stale-lock window) because
+  the hot-path ceiling would skip its last three checks every pass (#4032). The `hooks.js reconcile` CLI
   passes `budgetMs: Infinity` into `reconcile()` whenever `--checks` names a subset, so a named
   check such as `reap`, dispatched last, is never skipped as `budget-exceeded`; it also passes
   `skipCacheStamp`, so a subset never marks the SessionStart freshness cache as fresh (the #644
@@ -52,6 +54,9 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   `ledger-residue`, `reap` — write-only/janitorial, run in a detached `reconcile-background` child
   process) must **partition `ALL_CHECKS` exactly** — no overlap, nothing silently dropped. A new
   check has to join one list or the other.
+  The unscoped `hooks.js reconcile` CLI defers three of the six to that same background pass
+  (`CLI_DEFERRED_CHECKS`, #4032 — see the Timing contract below); an explicit `--checks` call is
+  never deferred.
 
 ## Adding a new check
 
@@ -69,10 +74,15 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `bin/hooks.js`'s `BACKGROUND_CHECKS`** (write-only/janitorial) — add the name to whichever list
    matches the decision from step 2. These two lists are asserted to partition `ALL_CHECKS`
    exactly (`tests/hooks-session-start.test.js`, `tests/bin-lib/hooks/reconcile-background.test.js`)
-   — missing this step fails that assertion, not silently.
+   — missing this step fails that assertion, not silently. A `BACKGROUND_CHECKS` member whose cost
+   would dominate the unscoped CLI's wall time may also join `CLI_DEFERRED_CHECKS` (a subset of
+   `BACKGROUND_CHECKS`, pinned by `tests/bin-lib/hooks/reconcile-background.test.js`); a deferred
+   check is then absent from the unscoped CLI's inline set. `plugin/skills/tidy/scan-procedures.md`'s
+   Reconcile-first call lists every check explicitly for that reason, and
+   `tests/reconcile.test.js` pins that list to `ALL_CHECKS`.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, runs, branches,
-   remoteBranches, ledgerResidue, console, skipped }`), substituted only when `reconcile()` itself
+   remoteBranches, ledgerResidue, console, skipped, timings }`), substituted only when `reconcile()` itself
    throws. If the new check populates a new top-level result key, this literal needs that key
    added too — an omission here doesn't throw or fail a lint; it just silently under-reports on the
    one code path (a genuine throw inside `reconcile()`) that almost never runs in normal testing,
@@ -486,6 +496,107 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
   after `remote-prune` (same fetched ref), before `reap` (which stays last).
 - **Side.** `BACKGROUND_CHECKS` — it pushes a ref and opens a PR, so it never runs inline at
   SessionStart.
+
+## Timing contract (#4032)
+
+An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is what brings it under
+10 s, and what lets the next regression be found by reading the JSON instead of guessing.
+
+- **`timings` rides on every `reconcile()` result** — every return path, early ones included — as
+  `{ totalMs, phases: { [phase]: { ms, subprocessMs, subprocessCount, subprocesses: { [family]:
+  { count, ms, maxMs } } } } }` (`timing.js`'s `summarizeTimings`, milliseconds to one decimal), or
+  `null` when the summarizer itself faulted: measurement never changes what a pass does.
+  `hooks.js`'s `reconcile-threw` fallback carries `timings: null` for the same shape reason.
+- **Phase names** are `setup`, `mirror`, `red-tip`, `console`, `release`, `archive`,
+  `archive-branches`, `remote-prune`, `ledger-residue`, `reap` and `finalize`; only phases that ran
+  appear. `setup` is the residual — wall time outside every timed phase — so an early return still
+  reports where its time went. `subprocessMs` can exceed `ms` for a phase that runs subprocesses
+  concurrently (the `gh-pool.js` mappers), so read it as cost, not as a share of the phase.
+- **Every subprocess under `plugin/bin/lib/reconcile/` is timed.** Call `timing.js`'s
+  `execFileSyncTimed` / `execFileAsyncTimed`, or git through `runGit` / `runGitAsync`, which route
+  through them; `subprocess-timing-conformance.test.js` fails on a direct `child_process` call in
+  that directory (exempt: `timing.js` itself and `background-spawn.js`, whose detached child has no
+  duration to attribute). An unmeasured spawn would make the report quietly under-count.
+- **PR-state cache (`pr-state-cache.js`).** `archive`, `reap` and `release` share one per-pass
+  resolver in front of `pr-state.js`: in-pass memo, then a persisted entry still inside its TTL,
+  then a live call. Only terminal answers persist (`persistableTtl`, in `reconcile-cache.json`'s
+  `prStates` key as `{ v, at }`, keyed `n:{number}` / `b:{branch}`); anything else has TTL 0:
+
+  | Answer | By | TTL |
+  |---|---|---|
+  | `MERGED` PR | number or branch | `PR_STATE_RETENTION_MS` (30 days) |
+  | `pr-not-found` | number | `PR_STATE_RETENTION_MS` |
+  | no PR (`null`) | branch | `NO_PR_TTL_MS` (5 min) — a PR can be opened at any time |
+  | `OPEN` / `CLOSED` PR, any failure string (`gh-absent`, `network-failure`, `invalid-arguments`) | either | never persisted; failures are not memoized either, so a transient failure is never replayed as an answer |
+
+  `release` alone never consumes a persisted by-branch `null`: it passes `{ freshNull: true }`
+  to `byBranchAsync` and `prefetch`, which re-query such a key live (a PR opened inside the
+  5-minute TTL would otherwise flip a `pr-open` skip into a release); a `null` learned live in the
+  same pass still serves from the memo. `archive` and `reap` keep the persisted answer.
+
+  A persisted `MERGED`-by-branch answer keeps the PR it first saw: if a second PR on the same
+  branch also merges, a fresh call would name the newer one. Every consumer acts the same on
+  either, because all they check is `MERGED`.
+
+  Entries past retention or malformed are dropped when the pass persists, which re-reads the file
+  first so another writer's keys survive. `peekNumber` answers from the memo or a valid persisted
+  entry and never makes a live call.
+- **`prefetch` warms the memo with one aliased GraphQL read** (`pr-state-batch.js`:
+  `BATCH_CHUNK` = 50 aliases per `gh api graphql` query, chunks run under a small concurrency cap;
+  branch lookups use `orderBy: CREATED_AT DESC` and the same governing-PR tie-break as
+  `pr-state.js`). The batch is an accelerator, never an authority: a `NOT_FOUND` alias, a truncated
+  page, a malformed node or any other error leaves that key out, and the per-item `gh` twins
+  resolve it, so they stay the sole owner of `pr-not-found` and every failure string. It runs only
+  when `origin` is provably on `github.com`, and the query is pinned there with `--hostname
+  github.com` so a `GH_HOST` cannot redirect it; any other host takes the per-item path.
+- **Claim blobs are reused by blob sha** (`release-merged.js`, `claimBlobs` key). An active claim's
+  contents are cached by git blob sha and rewritten each pass to that pass's active claims, so it
+  stays bounded. The reuse skips only the contents read — classification and the PR/issue join
+  re-run every pass — and a stale sha can only make the conditional tombstone write fail
+  (`release-write-failed`), never release the wrong claim. `release` also `prefetch`es its
+  by-number and then its branch-join lookups before the per-item calls.
+- **Residue marker index** (`issue-list-cache.js`, `residueIssueIndex` key,
+  `{ "{repo}\n{marker}": issueNumber }`). The residue-escalation dedup lookup
+  (`escalate-residue.js`'s `findResidueDuplicate`, reached from `archive` and `reap`) becomes one
+  `gh issue view` instead of a full-repo `gh issue list`; it falls back to the list whenever this
+  pass already holds the list, the index has no entry, or the viewed issue no longer carries the
+  marker (that entry is dropped). **Documented divergence:** with duplicates, the indexed issue
+  (canonical at index time) answers even if another process later filed a newer duplicate, where
+  the list path would have picked the newer one.
+- **One run-integrity cache per pass.** `index.js` hands `archive` a single
+  `{ worktreeList, integrationBranch }` cache (the caller's own when it passed one), so the archive
+  loop and every per-dir `checkRunIntegrity` spawn `git worktree list` once between them. `reap`
+  lists afresh itself, since it removes worktrees.
+- **CLI deferral.** The unscoped `hooks.js reconcile` runs `ALL_CHECKS` minus `CLI_DEFERRED_CHECKS`
+  (`archive-branches`, `remote-prune`, `ledger-residue` — `archive-branches`' and `remote-prune`'s
+  per-branch GraphQL lookups measured 14.8 s and 20.4 s, and `remote-prune` needs the all-refs fetch) and hands those to the detached `reconcile-background`
+  pass through `background-spawn.js`'s `spawnBackgroundIfStale`, gated by that pass's own status
+  file, as SessionStart does. The JSON gains `background: { checks, spawned, reason }`
+  (`reason`: `spawned`, `fresh`, `spawn-failed`, `no-root`, `dry-run`, `not-converged`) and a
+  `skipped` entry `deferred-to-background` for the three; an explicit `--checks` call is never
+  deferred and carries neither. Nothing is spawned when the pass did not converge —
+  `NOT_CONVERGED_REASONS` (`no-repo`, `no-remote`, `fresh-cache`, `local-merge-model`,
+  `preflight-gh-absent`, `preflight-github-unreachable`, `reconcile-threw`); report-only skips such
+  as `non-canonical-run-dir` or `budget-exceeded` do not count — nor under `--dry-run`, which
+  therefore previews none of the three (`skipped` still names them; `background.reason` reads
+  `dry-run`, saying nothing was handed over; an explicit `--checks … --dry-run` previews them). The
+  background pass runs under `BACKGROUND_BUDGET_MS` (`budget.js`, 120 s) because the 18 s hot-path
+  ceiling skipped its last three checks every pass. Without `remote-prune` the inline set is
+  mirror-only-shaped, so the unscoped CLI now takes `mirror`'s single-ref `git fetch origin
+  {integration}` (5 s `FETCH_TIMEOUT_MS`, concurrent with preflight) where it used to run
+  `fetch --prune origin` (10 s); other `refs/remotes/origin/*` refs refresh when the background
+  pass's `--prune` fetch runs. `/tidy`'s Reconcile-first call names all nine
+  checks explicitly, because the unscoped call defers three.
+- **Measured (AC1.1, #4032).** `node plugin/bin/hooks.js reconcile --json`, 20 sequential unscoped
+  calls against this repo's main checkout (live network, HEAD baf2964, 2026-10-25): wall time min
+  6786 / p50 7266 / p90 7931 / max 8845 ms, against about 52.5 s before (63 s in the record).
+  Per-phase p50 ms: setup 495.7, mirror 239.8, red-tip 567.8, console 27.9, release 1594.9, archive
+  1737.1, reap 2463.5, finalize 1.2. Wall time exceeded `timings.totalMs` by 58-90 ms on every call
+  (process start-up), so the two clocks agree. The deferred checks do not vanish: one background-shaped pass
+  (`release,archive,archive-branches,remote-prune,ledger-residue,reap`) took about 45 s, which the
+  120 s ceiling lets finish. A live-network wall-time property of this repo's state, so verified by
+  this measurement rather than a committed `npm test` assertion; re-measure after changing any
+  contract above.
 
 ## Referenced by
 

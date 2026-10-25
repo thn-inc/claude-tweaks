@@ -11,8 +11,7 @@
 // pass picks up exactly where this one left off.
 'use strict';
 const path = require('path');
-const { execFileSync, execFile } = require('child_process');
-const { promisify } = require('util');
+const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { runGit, repoSlugOf } = require('../hooks/git-exec');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { readRunState } = require('../hooks/context');
@@ -26,8 +25,6 @@ const { readCache, writeCache } = require('./cache');
 const { runWithConcurrency } = require('./gh-pool');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 const { GH_TIMEOUT_MS, runClassified, runClassifiedAsync } = require('../shared-primitives');
-
-const execFileAsync = promisify(execFile);
 
 // Does a MERGED PR actually close issue `issueNumber` in `repoSlug`? Pure.
 // Signals: the PR's `closingIssuesReferences` (matched on number AND
@@ -172,7 +169,7 @@ function buildFailure(e) {
 
 function ghApi(args) {
   return runClassified(
-    () => buildSuccess(execFileSync('gh', ['api', ...args], {
+    () => buildSuccess(execFileSyncTimed('gh', ['api', ...args], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true,
     })),
     buildFailure,
@@ -183,7 +180,7 @@ function ghApi(args) {
 // Raw `gh` runner for the shared write path below (ghApi prepends `api` and
 // swallows failures; writeTombstoneShared composes its own argv and needs the throw).
 function ghRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true });
+  return execFileSyncTimed('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true });
 }
 
 // Both delegate to claim-store.js's one contents-API implementation.
@@ -223,7 +220,7 @@ function readClaim(repoSlug, name, api = ghApi) {
 async function ghApiAsync(args) {
   return runClassifiedAsync(
     async () => {
-      const { stdout } = await execFileAsync('gh', ['api', ...args], { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true });
+      const { stdout } = await execFileAsyncTimed('gh', ['api', ...args], { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true });
       return buildSuccess(stdout);
     },
     buildFailure,
@@ -341,7 +338,11 @@ function logGrantRemoval(runDir, root, reason) {
 //     conditional-update with its own sha, so there's no benefit to
 //     parallelizing them, and serial writes keep this module's existing
 //     one-write-at-a-time posture.
-async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
+// `prStates` (#4032), when given, is the pass-shared PR-state resolver
+// (pr-state-cache.js) Phase 1.5's two batches ask instead of pr-state.js
+// directly; bound as `prStateResolver` because Phase 1.5 names a local
+// `prStates` (its resolved results).
+async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResolver } = {}) {
   const released = [];
   const skipped = [];
   const root = cwd || process.cwd();
@@ -361,6 +362,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
 
   const cache = readCache(root);
   const nextClaimShas = {};
+  const nextClaimBlobs = {};
 
   const wtList = runGit(['worktree', 'list', '--porcelain'], root);
   const worktrees = wtList.failure ? [] : parseWorktreeList(wtList.stdout);
@@ -390,7 +392,17 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
       continue; // matches the `if (!isActive) continue;` no-log behavior below
     }
 
-    const claim = readClaim(repoSlug, entry.name, api);
+    // #4032: an ACTIVE claim's content is reused by blob sha (`claimBlobs`,
+    // rewritten each pass to this pass's active claims only). Unlike the
+    // claimShas skip above this never skips the classify/join below — only
+    // the contents read — so a live claim's PR/issue join is still re-run
+    // every pass. A git blob sha names its content, so the reuse is exact; a
+    // stale sha merely makes the conditional tombstone write fail
+    // (`release-write-failed`), never release the wrong claim.
+    const cachedContent = Object.hasOwn(cache.claimBlobs, entry.sha) ? cache.claimBlobs[entry.sha] : undefined;
+    const claim = typeof entry.sha === 'string' && typeof cachedContent === 'string'
+      ? { content: cachedContent, sha: entry.sha, failure: null }
+      : readClaim(repoSlug, entry.name, api);
     if (claim.failure) { skipped.push({ issueNumber, reason: claim.failure }); continue; }
 
     const classified = classifyClaimBlob(claim.content, Date.now());
@@ -410,6 +422,9 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
       nextClaimShas[issueNumber] = claim.sha; // terminal — cacheable, see the skip branch above
       continue; // absent/tombstone/unreadable — not worth logging as a skip
     }
+    // Keyed by claim.sha (the blob actually classified), like the terminal
+    // cache-write above — never the listing's entry.sha.
+    if (typeof claim.sha === 'string' && typeof claim.content === 'string') nextClaimBlobs[claim.sha] = claim.content;
 
     let runId = null;
     try { runId = JSON.parse(claim.content).runId || null; } catch { /* falls through to no-run-id below */ }
@@ -474,9 +489,15 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
   // This module has no stuck escalation of its own: the stale stamp surfaces
   // through archive-merged for the same run dir.
   const byNumberCands = candidates.filter((c) => c.prNumber);
+  // The pass resolver batches these lookups into one aliased GraphQL read
+  // (pr-state-cache.js `prefetch`); the per-item calls below then hit its memo.
+  // Warming only — a throw never changes a verdict, the calls below stay as is.
+  if (prStateResolver) {
+    try { await prStateResolver.prefetch({ numbers: byNumberCands.map((c) => c.prNumber) }); } catch { /* warm-up only */ }
+  }
   const prStatesByNumber = await runWithConcurrency(
     byNumberCands,
-    (c) => resolvePrStateByNumberAsync(root, c.prNumber),
+    (c) => (prStateResolver ? prStateResolver.byNumberAsync(c.prNumber) : resolvePrStateByNumberAsync(root, c.prNumber)),
   );
   const prStateByNumberByIssue = resultsByIssue(byNumberCands, prStatesByNumber);
   for (const c of byNumberCands) {
@@ -501,9 +522,12 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
   // not settle: no stamped number, or a by-number null. Candidates whose
   // prState is already set (object or failure string) are not re-probed.
   const needPrState = candidates.filter((c) => c.joinFailure === null && c.prState === null);
+  if (prStateResolver) {
+    try { await prStateResolver.prefetch({ branches: needPrState.map((c) => c.branch), freshNull: true }); } catch { /* warm-up only */ }
+  }
   const prStates = await runWithConcurrency(
     needPrState,
-    (c) => resolvePrStateAsync(root, c.branch),
+    (c) => (prStateResolver ? prStateResolver.byBranchAsync(c.branch, { freshNull: true }) : resolvePrStateAsync(root, c.branch)),
   );
   const prStateByIssue = resultsByIssue(needPrState, prStates);
   for (const c of needPrState) c.prState = prStateByIssue.get(c.issueNumber);
@@ -582,7 +606,9 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
   // for exactly this reason (#820 review). `claimShas: nextClaimShas` stays a
   // full replacement, not a merge — this pass's own listing-driven rebuild is
   // already a complete, self-consistent claimShas set for what it observed.
-  writeCache(root, { ...readCache(root), claimShas: nextClaimShas });
+  // `claimBlobs` (#4032) is replaced the same way, so it stays bounded to
+  // this pass's active claims.
+  writeCache(root, { ...readCache(root), claimShas: nextClaimShas, claimBlobs: nextClaimBlobs });
   return { released, skipped };
 }
 

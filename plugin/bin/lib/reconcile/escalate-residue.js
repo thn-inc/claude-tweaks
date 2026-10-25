@@ -183,7 +183,13 @@ function dirtyFilesBlock(dirtyFiles, targetPath) {
 // GitHub's eventually-consistent Search API, root cause of #1016/#1079/
 // #1089) — `--state all` so a closed duplicate is still found (Deliverable 4:
 // dedup must consider open AND closed records).
+//
+// #4032: a runner that carries `findIssueByMarker` (issue-list-cache.js) is
+// asked first — it answers with one `gh issue view` from a persisted marker
+// index; `undefined` means it cannot, and the list path below runs unchanged.
 function findResidueDuplicate({ repo, marker, runner = defaultRunner }) {
+  const indexed = typeof runner.findIssueByMarker === 'function' ? runner.findIssueByMarker(repo, marker) : undefined;
+  if (indexed !== undefined) return indexed;
   const out = runner(['issue', 'list', '--repo', repo, '--state', 'all', '--json', 'number,title,body,createdAt,state', '--limit', '10000']);
   const issues = JSON.parse(out);
   const result = findByMarker(Array.isArray(issues) ? issues : [], marker);

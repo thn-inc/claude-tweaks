@@ -283,3 +283,74 @@ test('FAST_CHECKS (session-start.js) + BACKGROUND_CHECKS (bin/hooks.js) partitio
     'FAST_CHECKS + BACKGROUND_CHECKS must partition ALL_CHECKS exactly — nothing dropped, nothing duplicated',
   );
 });
+
+// #4032: the unscoped `reconcile` CLI hands CLI_DEFERRED_CHECKS to the
+// background pass. A name there that BACKGROUND_CHECKS lacks would be excluded
+// from the inline set AND never run in the background — dropped entirely.
+test('CLI_DEFERRED_CHECKS (bin/hooks.js) is a non-empty, duplicate-free subset of BACKGROUND_CHECKS', () => {
+  const { CLI_DEFERRED_CHECKS, BACKGROUND_CHECKS } = require('../../../plugin/bin/hooks');
+  assert.ok(Array.isArray(CLI_DEFERRED_CHECKS) && CLI_DEFERRED_CHECKS.length, 'CLI_DEFERRED_CHECKS must be a non-empty array');
+  assert.equal(CLI_DEFERRED_CHECKS.length, new Set(CLI_DEFERRED_CHECKS).size, 'no duplicates');
+  for (const c of CLI_DEFERRED_CHECKS) {
+    assert.ok(BACKGROUND_CHECKS.includes(c), `${c} is deferred to the background pass but BACKGROUND_CHECKS never runs it`);
+  }
+});
+
+// #4032: the background pass runs under its own ceiling — the 18 s hot-path
+// default starved remote-prune/ledger-residue/reap on every pass.
+test('reconcile-background passes the background budget', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-budget-'));
+  git(['init', '-q', '--initial-branch=main'], dir);
+  const { main } = require('../../../plugin/bin/hooks');
+  const reconcileMod = require('../../../plugin/bin/lib/reconcile');
+  const originalReconcile = reconcileMod.reconcile;
+  const originalWrite = process.stdout.write;
+  const originalCwd = process.cwd();
+  const calls = [];
+  reconcileMod.reconcile = async (opts) => { calls.push(opts); return {}; };
+  process.stdout.write = () => true;
+  try {
+    process.chdir(dir);
+    assert.equal(await main(['node', 'hooks.js', 'reconcile-background']), 0);
+  } finally {
+    process.chdir(originalCwd);
+    reconcileMod.reconcile = originalReconcile;
+    process.stdout.write = originalWrite;
+  }
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].budgetMs, require('../../../plugin/bin/lib/reconcile/budget').BACKGROUND_BUDGET_MS);
+});
+
+// #4032: three janitorial checks now converge ONLY here, so a pass that throws
+// must leave its reason in the status file — the detached process has no other
+// channel, and SessionStart surfaces it from there.
+test('reconcile-background: a pass that throws records failed + its message in the status file', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-throws-'));
+  git(['init', '-q', '--initial-branch=main'], dir);
+  const { main } = require('../../../plugin/bin/hooks');
+  const reconcileMod = require('../../../plugin/bin/lib/reconcile');
+  const originalReconcile = reconcileMod.reconcile;
+  const originalWrite = process.stdout.write;
+  const originalCwd = process.cwd();
+  reconcileMod.reconcile = async () => { throw new Error('archive-branches exploded'); };
+  process.stdout.write = () => true;
+  try {
+    process.chdir(dir);
+    assert.equal(await main(['node', 'hooks.js', 'reconcile-background']), 0);
+  } finally {
+    process.chdir(originalCwd);
+    reconcileMod.reconcile = originalReconcile;
+    process.stdout.write = originalWrite;
+  }
+  const status = JSON.parse(fs.readFileSync(path.join(dir, '.claude-tweaks', 'reconcile-background-status.json'), 'utf8'));
+  assert.deepEqual(status.summary, { failed: true, error: 'archive-branches exploded' });
+  assert.equal(status.surfaced, false);
+});
+
+test('background budget stays under the stale-lock window', () => {
+  const { BACKGROUND_BUDGET_MS, DEFAULT_BUDGET_MS } = require('../../../plugin/bin/lib/reconcile/budget');
+  const { STALE_LOCK_MS } = require('../../../plugin/bin/lib/reconcile/background-lock');
+  assert.ok(BACKGROUND_BUDGET_MS < STALE_LOCK_MS, 'a running background pass must never be reclaimed as a stale lock');
+  assert.ok(BACKGROUND_BUDGET_MS > DEFAULT_BUDGET_MS);
+  assert.ok(Number.isFinite(BACKGROUND_BUDGET_MS), 'the background pass stays bounded (#820 D4)');
+});

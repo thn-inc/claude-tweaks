@@ -9,6 +9,7 @@ const {
   decideRelease, releasedEntry, writeTombstone, releaseMerged, shouldSkipClaimRead, prClosesIssue, needsIssueEvidence,
 } = require('../../../plugin/bin/lib/reconcile/release-merged');
 const { readCache, writeCache } = require('../../../plugin/bin/lib/reconcile/cache');
+const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
 const { GRANT_LABELS } = require('../../../plugin/bin/lib/release-claim/release');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../../../plugin/bin/lib/issue-branch-tracking');
 
@@ -196,11 +197,13 @@ test('releaseMerged: caches the blob sha actually classified, not the directory 
   );
 });
 
-// Guards against terminal-only caching silently widening to cover active
-// (live/stale) claims — the invariant this task exists to hold. A live
-// claim's PR/issue join can change pass-to-pass even when its content
-// hasn't, so it must never be cached/skipped, unlike the tombstone above.
-test('releaseMerged: a live claim with an unchanged sha is still re-fetched every pass', async () => {
+// Guards against terminal-only SKIPPING silently widening to cover active
+// (live/stale) claims — the invariant #820 holds. A live claim's PR/issue
+// join can change pass-to-pass even when its content hasn't, so the claim is
+// still classified and re-joined every pass (the issue-state lookup below
+// fires twice). Only its blob READ is reused by sha (#4032, tests further
+// down) — an unchanged git blob sha names unchanged content.
+test('releaseMerged: a live claim with an unchanged sha is still re-evaluated every pass (join re-run, blob read reused)', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-cache-live-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
@@ -212,6 +215,7 @@ test('releaseMerged: a live claim with an unchanged sha is still re-fetched ever
   });
 
   let readCalls = 0;
+  let issueStateCalls = 0;
   const ghApi = (args) => {
     if (args[0].includes('/git/trees/claims-registry')) {
       return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-8.json', sha: 'live-sha' }] }), failure: null, status: null };
@@ -224,17 +228,98 @@ test('releaseMerged: a live claim with an unchanged sha is still re-fetched ever
       // No local run-state.json for 'no-such-run', so the PR join fails
       // closed (no-run-state) and decideRelease falls through to the
       // issue-state lookup — this fake answers it 'OPEN' so the claim
-      // resolves to an ordinary skip ('no-run-state'), never a release,
-      // keeping this test's only assertion on `readCalls`.
+      // resolves to an ordinary skip ('no-run-state'), never a release.
+      issueStateCalls += 1;
       return { stdout: 'OPEN\n', failure: null, status: null };
     }
     throw new Error(`unexpected ${args.join(' ')}`);
   };
 
-  await releaseMerged({ cwd: root, ghApi });
+  const first = await releaseMerged({ cwd: root, ghApi });
   assert.equal(readCalls, 1);
-  await releaseMerged({ cwd: root, ghApi }); // second pass: sha unchanged, but the claim is live — must still re-read
-  assert.equal(readCalls, 2, 'a live claim must never be cached/skipped, even with an unchanged sha');
+  assert.equal(issueStateCalls, 1);
+  const second = await releaseMerged({ cwd: root, ghApi });
+  assert.equal(readCalls, 1, 'an unchanged active blob sha reuses the cached content (#4032)');
+  assert.equal(issueStateCalls, 2, 'a live claim must still be re-joined every pass, even with an unchanged sha');
+  assert.deepEqual(second.skipped, first.skipped);
+  assert.deepEqual(second.released, []);
+});
+
+// #4032 — an active claim's blob content is reused by blob sha. Harness: one
+// live claim (issue 5) whose listing sha the caller controls; counts the
+// `contents/claims/issue-*.json` reads and answers the issue-state lookup OPEN
+// (no run-state for the runId, so the claim resolves to an ordinary skip).
+function claimBlobHarness(prefix) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  const content = JSON.stringify({
+    runId: 'no-such-run', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const state = { listing: [{ name: 'issue-5.json', sha: 's1' }], contentReads: 0 };
+  const ghApi = (args) => {
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: state.listing }), failure: null, status: null };
+    }
+    if (/\/contents\/claims\/issue-\d+\.json/.test(args[0])) {
+      state.contentReads += 1;
+      return { stdout: JSON.stringify({ content, sha: state.listing[0].sha }), failure: null, status: null };
+    }
+    if (args[0].includes('/issues/5')) return { stdout: 'OPEN\n', failure: null, status: null };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  return { root, ghApi, state, content };
+}
+
+test('releaseMerged: an unchanged active claim is not re-read', async () => {
+  const h = claimBlobHarness('ct-release-blobs-same-');
+  const first = await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.equal(h.state.contentReads, 1);
+  assert.deepEqual(first.skipped, [{ issueNumber: 5, runId: 'no-such-run', reason: 'no-run-state' }]);
+  const second = await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.equal(h.state.contentReads, 1, 'second run reuses the cached blob content for sha s1');
+  assert.deepEqual(second.skipped, first.skipped);
+  assert.deepEqual(readCache(h.root).claimBlobs, { s1: h.content });
+});
+
+test('releaseMerged: a changed sha is re-read', async () => {
+  const h = claimBlobHarness('ct-release-blobs-changed-');
+  await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.equal(h.state.contentReads, 1);
+  h.state.listing = [{ name: 'issue-5.json', sha: 's2' }];
+  await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.equal(h.state.contentReads, 2, 'a new listing sha is a cache miss');
+  assert.deepEqual(Object.keys(readCache(h.root).claimBlobs), ['s2'], 'the superseded sha is dropped, the new one cached');
+});
+
+test('releaseMerged: claimBlobs keeps only this pass\'s active shas', async () => {
+  const h = claimBlobHarness('ct-release-blobs-dropped-');
+  await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.deepEqual(Object.keys(readCache(h.root).claimBlobs), ['s1']);
+  h.state.listing = [];
+  await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.deepEqual(readCache(h.root).claimBlobs, {});
+});
+
+test('releaseMerged: a terminal claim is cached by claimShas only, never in claimBlobs', async () => {
+  const h = claimBlobHarness('ct-release-blobs-terminal-');
+  h.state.listing = [{ name: 'issue-5.json', sha: 'tomb' }];
+  const tombApi = (args) => (/\/contents\/claims\/issue-5\.json/.test(args[0])
+    ? { stdout: JSON.stringify({ content: JSON.stringify({ released: true }), sha: 'tomb' }), failure: null, status: null }
+    : h.ghApi(args));
+  await releaseMerged({ cwd: h.root, ghApi: tombApi });
+  const cache = readCache(h.root);
+  assert.deepEqual(cache.claimBlobs, {});
+  assert.equal(cache.claimShas[5], 'tomb');
+});
+
+test('releaseMerged: a non-string cached claimBlobs value is ignored and the claim re-read', async () => {
+  const h = claimBlobHarness('ct-release-blobs-poisoned-');
+  writeCache(h.root, { ...readCache(h.root), claimBlobs: { s1: 42 } });
+  const r = await releaseMerged({ cwd: h.root, ghApi: h.ghApi });
+  assert.equal(h.state.contentReads, 1);
+  assert.deepEqual(r.skipped, [{ issueNumber: 5, runId: 'no-such-run', reason: 'no-run-state' }]);
+  assert.deepEqual(readCache(h.root).claimBlobs, { s1: h.content });
 });
 
 // Phase 1.5 (#820 review — resolvePrState was left serial in an earlier pass
@@ -1261,4 +1346,191 @@ test('AC6.1: a branch-resolved candidate whose stamped pr.number resolves pr-not
   } finally {
     process.env.PATH = originalPath;
   }
+});
+
+// #4032: `prStates` (the pass-shared resolver) replaces Phase 1.5's two pooled
+// batches. One claim whose run-state stamps pr.number 42 (by-number batch) and
+// one with no stamp, joined by branch (branch batch). The control run asks the
+// real (wrapped) gh; the subject run's gh FAILS and drops a marker on every
+// call, so only a resolver-answered lookup can release either claim.
+test('releaseMerged: prStates async answers replace live lookups (#4032)', { skip: PATH_STUB_SKIP }, async () => {
+  const closing = (n, issue) => ({
+    number: n, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    closingIssuesReferences: [{ number: issue, repository: { name: 'w', owner: { login: 'acme' } } }],
+  });
+  const liveContent = JSON.stringify({
+    runId: 'run-x', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const build = () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-prstates-')));
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+    execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+    for (const [run, branch, state] of [['run-num', 'run-num-branch', { pr: { number: 42 } }], ['run-br', 'run-br-branch', {}]]) {
+      const wtPath = path.join(root, '.worktrees', `wt-${run}`);
+      execFileSync('git', ['worktree', 'add', '-q', '-b', branch, wtPath], { cwd: root });
+      const runDir = path.join(root, '.claude-tweaks', 'pipelines', run);
+      fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wtPath, ...state }));
+    }
+    const ghApi = (args) => {
+      if (args[0].includes('/git/trees/claims-registry')) {
+        return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-11.json', sha: 's11' }, { name: 'issue-12.json', sha: 's12' }] }), failure: null, status: null };
+      }
+      const m = /\/contents\/claims\/issue-(\d+)\.json/.exec(args[0]);
+      if (m) {
+        const runId = m[1] === '11' ? 'run-num' : 'run-br';
+        return { stdout: JSON.stringify({ content: liveContent.replace('run-x', runId), sha: `s${m[1]}` }), failure: null, status: null };
+      }
+      if (args.some((a) => a.includes('/labels/'))) return { stdout: '', failure: null, status: null };
+      throw new Error(`unexpected ${args.join(' ')}`);
+    };
+    return { root, ghApi };
+  };
+  const setPath = (dir) => {
+    const original = process.env.PATH;
+    process.env.PATH = `${dir}${path.delimiter}${original}`;
+    return () => { process.env.PATH = original; };
+  };
+  const summarize = (res) => res.released.map((r) => r.issueNumber).sort();
+
+  // Control: no prStates — the wrapped gh answers MERGED-closing for both claims.
+  const control = build();
+  const okDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-okgh-'));
+  fs.writeFileSync(
+    path.join(okDir, 'gh'),
+    '#!/bin/sh\ncase "$*" in\n'
+    + `  *"pr view 42"*) cat <<'EOF'\n${JSON.stringify(closing(42, 11))}\nEOF\n    ;;\n`
+    + `  *"pr list --head run-br-branch"*) cat <<'EOF'\n${JSON.stringify([closing(43, 12)])}\nEOF\n    ;;\n`
+    + '  *"api --method PUT"*) exit 0 ;;\n'
+    + '  *) exit 1 ;;\nesac\n',
+  );
+  fs.chmodSync(path.join(okDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const restoreOk = setPath(okDir);
+  let controlResult;
+  try { controlResult = await releaseMerged({ cwd: control.root, ghApi: control.ghApi }); } finally { restoreOk(); }
+  assert.deepStrictEqual(summarize(controlResult), [11, 12], `control must release both, got ${JSON.stringify(controlResult)}`);
+
+  // Subject: failing gh + a resolver whose async twins answer.
+  const subject = build();
+  const failDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-failgh-'));
+  const marker = path.join(failDir, 'gh-was-called');
+  // The claim write (`api --method PUT`) still succeeds; every other call is a PR lookup.
+  fs.writeFileSync(path.join(failDir, 'gh'), `#!/bin/sh\ncase "$*" in\n  *"api --method PUT"*) exit 0 ;;\nesac\ntouch "${marker}"\nexit 1\n`);
+  fs.chmodSync(path.join(failDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const asked = { numbers: [], branches: [] };
+  const prStates = createPrStateResolver({
+    root: subject.root,
+    deps: {
+      // release now warms the resolver via prefetch; decline the batched read
+      // so the per-item twins below answer and the failing gh is never reached.
+      fetchBatch: async () => null,
+      byNumberAsync: async (n) => { asked.numbers.push(n); return closing(4032042, 11); },
+      byBranchAsync: async (b) => { asked.branches.push(b); return closing(4032043, 12); },
+    },
+  });
+  const restoreFail = setPath(failDir);
+  let subjectResult;
+  try { subjectResult = await releaseMerged({ cwd: subject.root, ghApi: subject.ghApi, prStates }); } finally { restoreFail(); }
+
+  assert.deepStrictEqual(summarize(subjectResult), summarize(controlResult));
+  assert.deepStrictEqual(asked, { numbers: [42], branches: ['run-br-branch'] });
+  assert.equal(fs.existsSync(marker), false, 'a lookup that bypassed prStates would have called the failing gh');
+  const byIssue = Object.fromEntries(subjectResult.released.map((r) => [r.issueNumber, r.prNumber]));
+  assert.deepStrictEqual(byIssue, { 11: 4032042, 12: 4032043 }, 'the resolver\'s sentinel PRs must reach the released entries');
+});
+
+// #4032: releaseMerged warms the pass resolver in one batch per phase. Three
+// live claims: #11 stamps pr.number 42 (answered by number), #13 stamps 77
+// (by-number probe answers null, so the branch join decides), #12 has no stamp
+// (branch join). The branch phase must therefore ask for #13's and #12's
+// branches but not #11's — the by-number loop settles that one first.
+function prefetchScenario(prefetch) {
+  const closing = (n, issue) => ({
+    number: n, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    closingIssuesReferences: [{ number: issue, repository: { name: 'w', owner: { login: 'acme' } } }],
+  });
+  const liveContent = JSON.stringify({
+    runId: 'run-x', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-prefetch-')));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+  const runs = [['run-num', { pr: { number: 42 } }], ['run-br', {}], ['run-null', { pr: { number: 77 } }]];
+  for (const [run, state] of runs) {
+    const wtPath = path.join(root, '.worktrees', `wt-${run}`);
+    execFileSync('git', ['worktree', 'add', '-q', '-b', `${run}-branch`, wtPath], { cwd: root });
+    const runDir = path.join(root, '.claude-tweaks', 'pipelines', run);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wtPath, ...state }));
+  }
+  const runByIssue = { 11: 'run-num', 12: 'run-br', 13: 'run-null' };
+  const ghApi = (args) => {
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [11, 12, 13].map((n) => ({ name: `issue-${n}.json`, sha: `s${n}` })) }), failure: null, status: null };
+    }
+    const m = /\/contents\/claims\/issue-(\d+)\.json/.exec(args[0]);
+    if (m) return { stdout: JSON.stringify({ content: liveContent.replace('run-x', runByIssue[m[1]]), sha: `s${m[1]}` }), failure: null, status: null };
+    if (args.some((a) => a.includes('/labels/'))) return { stdout: '', failure: null, status: null };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  const branchOpts = [];
+  const prStates = {
+    prefetch,
+    byNumberAsync: async (n) => (n === 42 ? closing(42, 11) : null),
+    byBranchAsync: async (b, opts) => {
+      branchOpts.push([b, opts]);
+      return b === 'run-br-branch' ? closing(43, 12) : b === 'run-null-branch' ? closing(44, 13) : null;
+    },
+  };
+  // Only the tombstone write reaches the real gh; every PR lookup is the resolver's.
+  const ghDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-prefetch-gh-'));
+  fs.writeFileSync(path.join(ghDir, 'gh'), '#!/bin/sh\ncase "$*" in\n  *"api --method PUT"*) exit 0 ;;\nesac\nexit 1\n');
+  fs.chmodSync(path.join(ghDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  return { root, ghApi, prStates, ghDir, branchOpts };
+}
+
+async function runPrefetchScenario(prefetch) {
+  const fx = prefetchScenario(prefetch);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${fx.ghDir}${path.delimiter}${originalPath}`;
+  try {
+    const result = await releaseMerged({ cwd: fx.root, ghApi: fx.ghApi, prStates: fx.prStates });
+    return { released: result.released, skipped: result.skipped, branchOpts: fx.branchOpts };
+  } finally {
+    process.env.PATH = originalPath;
+  }
+}
+
+test('releaseMerged warms the resolver once per phase', { skip: PATH_STUB_SKIP }, async () => {
+  const calls = [];
+  const warmed = await runPrefetchScenario(async (arg) => { calls.push(arg); });
+  assert.deepStrictEqual(calls, [
+    { numbers: [42, 77] },
+    { branches: ['run-br-branch', 'run-null-branch'], freshNull: true },
+  ], 'by-number candidates first, then only the candidates the by-number loop left for the branch join');
+  assert.deepStrictEqual(warmed.released.map((r) => r.issueNumber).sort(), [11, 12, 13]);
+
+  const baseline = await runPrefetchScenario(async () => {});
+  assert.deepStrictEqual(warmed, baseline, 'prefetch only warms — every decision matches a no-op prefetch');
+});
+
+// #4032: release must not act on a PERSISTED cross-pass "no PR" answer — a PR opened inside
+// its 5-minute TTL would flip the verdict from skip (pr-open) to release.
+test('releaseMerged asks the resolver for fresh by-branch answers (freshNull)', { skip: PATH_STUB_SKIP }, async () => {
+  const r = await runPrefetchScenario(async () => {});
+  assert.deepStrictEqual(r.branchOpts, [
+    ['run-br-branch', { freshNull: true }],
+    ['run-null-branch', { freshNull: true }],
+  ]);
+});
+
+test('a throwing prefetch never changes release\'s verdicts', { skip: PATH_STUB_SKIP }, async () => {
+  let attempts = 0;
+  const thrown = await runPrefetchScenario(async () => { attempts += 1; throw new Error('batch exploded'); });
+  assert.equal(attempts, 2, 'both phases still attempt the warm-up');
+  const baseline = await runPrefetchScenario(async () => {});
+  assert.deepStrictEqual(thrown, baseline);
+  assert.equal(thrown.released.length, 3);
 });

@@ -27,7 +27,7 @@ const { escalateResidue, resolveResidue } = require('./escalate-residue');
 const { isWorktreeAlwaysOn } = require('../policy');
 const { repoSlugOf, prClosesIssue } = require('./release-merged');
 const { closeRunState } = require('../hooks/close-run-state');
-const { checkRunIntegrity, fallbackBranch } = require('../hooks/run-integrity');
+const { checkRunIntegrity, fallbackBranch, worktreeListStdout } = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
 const { readRunResidue } = require('../console/residue');
@@ -1950,12 +1950,15 @@ function byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug
 // `'invalid-arguments'`, `'pr-not-found'`) is returned as-is, never falling
 // back to the branch: the branch lookup would reintroduce the same
 // misattribution on a transient gh failure.
-function resolveRunPrState(root, state, branch) {
+// #4032: `prStates`, when given, is the pass-shared PR-state resolver
+// (pr-state-cache.js) answering both lookups; absent, the direct pr-state.js
+// calls this function has always made.
+function resolveRunPrState(root, state, branch, prStates) {
   if (state && state.pr && state.pr.number) {
-    const byNumber = resolvePrStateByNumber(root, state.pr.number);
+    const byNumber = prStates ? prStates.byNumber(state.pr.number) : resolvePrStateByNumber(root, state.pr.number);
     if (byNumber !== null) return byNumber;
   }
-  return resolvePrState(root, branch);
+  return prStates ? prStates.byBranch(branch) : resolvePrState(root, branch);
 }
 
 // #1733: the merged-PR archive sequence both the main loop and the
@@ -1970,9 +1973,9 @@ function resolveRunPrState(root, state, branch) {
 // runs (#3668, #3740) and the two tiebreak reasons (#3945) — see
 // iterCleanRunDirs' comment for why that subset, and why the rest stay untracked.
 function archiveMergedRun({
-  root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck,
+  root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck, prStates,
 }) {
-  const prState = resolveRunPrState(root, state, branch);
+  const prState = resolveRunPrState(root, state, branch, prStates);
   const consoleState = readConsoleState(dir);
   // #3249: decideArchiveCore directly, not decideArchive — that thin wrapper
   // routes through classifyRunDir without a `dir`, so the staged-items
@@ -2003,8 +2006,61 @@ function archiveMergedRun({
   return { outcome: 'archived' };
 }
 
+// The parsed `git worktree list --porcelain` for `root`; [] when git cannot
+// answer (archiveMerged and prefetchArchivePrStates both read it once per pass).
+// #4032: `cache` (run-integrity.js's opt-in `{ worktreeList, integrationBranch }`
+// shape, optional) makes that read the same one every per-dir `checkRunIntegrity`
+// shares; absent, it spawns fresh exactly as before.
+function listWorktreesOrEmpty(root, cache) {
+  return parseWorktreeList(worktreeListStdout(root, cache));
+}
+
+// The branch a main-loop run dir is joined to: its stamped worktree's live
+// branch first, then run-integrity.js's `fallbackBranch`. archiveMerged's main
+// loop and prefetchArchivePrStates both derive it here so a prefetch can never
+// warm a different branch than the loop later looks up.
+function runDirBranch(root, dir, state, worktrees) {
+  const stampedWorktree = (state && state.worktree) || null;
+  const wtEntry = stampedWorktree
+    ? worktrees.find((w) => path.resolve(w.path) === path.resolve(stampedWorktree))
+    : null;
+  return (wtEntry && wtEntry.branch) || fallbackBranch(root, dir, state);
+}
+
+// #4032: warm the pass's PR-state resolver for every run dir archiveMerged
+// will probe, concurrently, so the sequential loop below hits the memo. Two
+// phases mirror the loop's own lookup order: stamped `pr.number`s first, then
+// the branch of every dir whose number is absent or came back `null` (the only
+// case resolveRunPrState falls through to the branch lookup). Includes the
+// `status: 'clean'` sweep dirs, whose branch is `fallbackBranch` directly.
+async function prefetchArchivePrStates(root, prStates, { cache } = {}) {
+  const worktrees = listWorktreesOrEmpty(root, cache);
+  const entries = [];
+  for (const { dir, state } of iterRunDirsWithState(root)) {
+    entries.push({ state, branch: runDirBranch(root, dir, state, worktrees) });
+  }
+  for (const { dir, state } of iterCleanRunDirs(root)) {
+    entries.push({ state, branch: fallbackBranch(root, dir, state) });
+  }
+  const numberOf = (state) => (state && state.pr && state.pr.number) || null;
+  const numbers = entries.map((e) => numberOf(e.state)).filter(Boolean);
+  await prStates.prefetch({ numbers });
+  const branches = [];
+  for (const { state, branch } of entries) {
+    if (!branch) continue;
+    const n = numberOf(state);
+    // Peek, never a live call: only a number phase 1 answered `null` falls
+    // through to its branch. A number with no known answer (a phase-1 failure,
+    // never memoized) queues nothing — the loop's resolveRunPrState returns the
+    // failure for it and never queries the branch.
+    if (n && prStates.peekNumber(n) !== null) continue;
+    branches.push(branch);
+  }
+  await prStates.prefetch({ branches });
+}
+
 function archiveMerged({
-  cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration,
+  cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration, prStates, cache,
 } = {}) {
   const archived = [];
   const skipped = [];
@@ -2018,8 +2074,11 @@ function archiveMerged({
   // (pr-first is GitHub-backed by construction).
   const recordCheckApplies = readWorkBackend(root) !== 'local-files';
 
-  const wtList = runGit(['worktree', 'list', '--porcelain'], root);
-  const worktrees = wtList.failure ? [] : parseWorktreeList(wtList.stdout);
+  // #4032: `cache`, when given, is the pass-shared run-integrity cache — the
+  // loop's own list and every per-dir checkRunIntegrity below read it through
+  // one entry. Safe because nothing in this function changes the worktree set
+  // (archiveRunDir moves run dirs only); reap, which does, runs after archive.
+  const worktrees = listWorktreesOrEmpty(root, cache);
 
   // #1235: one read before both loops below, one write after — instead of
   // one read-modify-write per archived/skipped/stuck item. See cache.js's
@@ -2092,7 +2151,7 @@ function archiveMerged({
     // (adhoc-superseded) exactly as the pre-consolidation `&&`-chained
     // early-return did, via one small follow-up classify call scoped to just
     // that remaining kind.
-    if (kind === 'abandoned-interrupted' && checkRunIntegrity(dir).state !== 'shipped-unclosed') {
+    if (kind === 'abandoned-interrupted' && checkRunIntegrity(dir, { cache }).state !== 'shipped-unclosed') {
       kind = classifyRunDir({ dir, state, worktrees, kinds: ['adhoc-superseded'] }).kind;
     }
 
@@ -2217,10 +2276,7 @@ function archiveMerged({
     // branch-joined path below and the by-number fallback.
     const records = recordCheckApplies ? runRecordSet(dir) : null;
     const stampedWorktree = (state && state.worktree) || null;
-    const wtEntry = stampedWorktree
-      ? worktrees.find((w) => path.resolve(w.path) === path.resolve(stampedWorktree))
-      : null;
-    const branch = (wtEntry && wtEntry.branch) || fallbackBranch(root, dir, state);
+    const branch = runDirBranch(root, dir, state, worktrees);
     if (!branch) {
       const reason = stampedWorktree ? 'no-branch' : 'no-worktree';
       // #1962: a run dir whose branch can't be derived at all (fallbackBranch
@@ -2239,7 +2295,7 @@ function archiveMerged({
       // up on its merge commit — mirroring the general merged-PR path below.
       let skipReason = reason;
       if (state && state.pr && state.pr.number) {
-        const byNumber = resolvePrStateByNumber(root, state.pr.number);
+        const byNumber = prStates ? prStates.byNumber(state.pr.number) : resolvePrStateByNumber(root, state.pr.number);
         // #3543: a stamped pr.number GitHub confirms names no PR is a stale
         // stamp, not an absent branch/worktree — report the real cause.
         if (byNumber === 'pr-not-found') skipReason = 'pr-not-found';
@@ -2311,7 +2367,7 @@ function archiveMerged({
 
     const runResult = archiveMergedRun({
       root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
-      recordCheck: { records, repoSlug },
+      recordCheck: { records, repoSlug }, prStates,
       onSkip: (reason) => trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun }),
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
@@ -2336,7 +2392,7 @@ function archiveMerged({
     if (!branch) { skipped.push({ runDir: dir, reason: 'no-branch' }); continue; }
 
     const runResult = archiveMergedRun({
-      root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
+      root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration, prStates,
       onSkip: (reason) => {
         if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun });
         if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid') trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun });
@@ -2367,7 +2423,7 @@ function archiveMerged({
 }
 
 module.exports = {
-  archiveMerged, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, archiveRunDir, listSpecDirs,
+  archiveMerged, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, archiveRunDir, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,

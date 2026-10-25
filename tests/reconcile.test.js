@@ -1250,6 +1250,18 @@ test('reconcile: ALL_CHECKS includes red-tip immediately after mirror', () => {
   assert.strictEqual(ALL_CHECKS[mirrorIdx + 1], 'red-tip', 'red-tip must be the entry immediately after mirror');
 });
 
+// #4032: /tidy's Reconcile-first call names the checks explicitly, because the
+// unscoped CLI defers three of them to the background pass. The list is a
+// hand-copied twin of ALL_CHECKS, so a check added there but not here would
+// silently never converge before /tidy audits.
+test("tidy/scan-procedures.md's explicit reconcile --checks list names exactly ALL_CHECKS (#4032)", () => {
+  const { ALL_CHECKS } = require('../plugin/bin/lib/reconcile');
+  const prose = readText(path.join(__dirname, '..', 'plugin', 'skills', 'tidy', 'scan-procedures.md'));
+  const m = /hooks\.js" reconcile --checks ([a-z,-]+) --json/.exec(prose);
+  assert.ok(m, 'Reconcile-first call with an explicit --checks list found');
+  assert.deepEqual([...m[1].split(',')].sort(), [...ALL_CHECKS].sort());
+});
+
 test('reconcile: red-tip dispatches immediately after mirror in source order (load-bearing — reads the ref mirror-ff just fetched)', () => {
   const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'));
   const mirrorIdx = src.indexOf("checks.includes('mirror')");
@@ -1948,6 +1960,63 @@ test('reconcile(): creates exactly one issue-list cache per pass and passes its 
   }
 });
 
+// #4032 — reconcile() hands archiveMerged one run-integrity cache per pass (the
+// caller's own when it passed one, as session-start does), so the archive loop
+// and its per-dir checkRunIntegrity calls list worktrees once. Same module-wiring
+// level as the issue-list-cache test above; the spawn count itself is proven in
+// archive-merged.test.js. reapMerged must NOT get it: reap removes worktrees.
+test('reconcile(): passes one run-integrity cache per pass to archiveMerged — the caller\'s own when given, never to reapMerged (#4032)', async () => {
+  const archiveMergedModule = require('../plugin/bin/lib/reconcile/archive-merged');
+  const reapMergedModule = require('../plugin/bin/lib/reconcile/reap-merged');
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+
+  const originalArchive = archiveMergedModule.archiveMerged;
+  const originalReap = reapMergedModule.reapMerged;
+  const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
+
+  const archiveCaches = [];
+  let reapOpts;
+  archiveMergedModule.archiveMerged = (opts) => {
+    archiveCaches.push(opts.cache);
+    return { archived: [], skipped: [] };
+  };
+  reapMergedModule.reapMerged = (opts) => {
+    reapOpts = opts;
+    return { reaped: [], skipped: [], portsRelease: [] };
+  };
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+
+  try {
+    delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
+    const { reconcile: reconcileFresh } = require('../plugin/bin/lib/reconcile/index');
+    const { mainDir } = pairedFixture();
+    const run = (extra = {}) => reconcileFresh({
+      cwd: mainDir, checks: ['archive', 'reap'], resolveIntegrationModel: () => 'pr-first', mcpReachable: true, ...extra,
+    });
+
+    await run();
+    await run();
+    const [first, second] = archiveCaches;
+    for (const c of [first, second]) {
+      assert.ok(c && c.worktreeList instanceof Map && c.integrationBranch instanceof Map, 'archiveMerged must receive a run-integrity-shaped cache');
+    }
+    assert.notEqual(first, second, 'each pass gets its own cache — nothing survives across passes');
+
+    const callerCache = { worktreeList: new Map(), integrationBranch: new Map() };
+    await run({ cache: callerCache });
+    assert.equal(archiveCaches[2], callerCache, 'a caller-supplied cache is used, not replaced');
+    assert.ok(!('cache' in reapOpts), 'reapMerged must not share the worktree-list cache');
+  } finally {
+    archiveMergedModule.archiveMerged = originalArchive;
+    reapMergedModule.reapMerged = originalReap;
+    preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
+    delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
+  }
+});
+
 // #820 Task 10's exact regression shape, re-applied to this new mechanism: a
 // `lastRunAt` stamp from an unrelated pass must never be misread as preflight
 // freshness — the two fields are deliberately independent (cache.js's own
@@ -2062,39 +2131,178 @@ test('AC2.1: reconcile(): no opts.budgetMs passes undefined to createBudget, so 
   });
 });
 
-test('AC3.1/AC3.2: hooks.js reconcile: an explicit --checks subset runs unbounded; an unscoped pass keeps the default budget', async () => {
+test('an over-budget early return still persists the PR answers the pass learned (#4032)', async () => {
+  await withRecordedBudget(async ({ mainDir }) => {
+    const prStateCache = require('../plugin/bin/lib/reconcile/pr-state-cache');
+    const original = prStateCache.createPrStateResolver;
+    let persisted = 0;
+    prStateCache.createPrStateResolver = () => ({ persist: () => { persisted += 1; } });
+    try {
+      const r = await reconcile({ cwd: mainDir, checks: ['mirror', 'red-tip'] });
+      assert.deepEqual(r.skipped, [{ check: 'mirror,red-tip', reason: 'budget-exceeded' }], 'the pass returned early, before finalize');
+      assert.equal(persisted, 1, 'the early return persisted the resolver instead of dropping its answers');
+    } finally {
+      prStateCache.createPrStateResolver = original;
+    }
+  });
+});
+
+// Runs hooks.js's `main` in-process with `reconcile` and the background spawn
+// stubbed (no GitHub, no real child), capturing the JSON stdout of each call.
+async function runReconcileVerbStubbed(argvs, { reconcileResult = () => ({ skipped: [] }), spawnResult = { spawned: true, reason: 'spawned' } } = {}) {
   const { main } = require('../plugin/bin/hooks');
   const reconcileMod = require('../plugin/bin/lib/reconcile');
+  const spawnMod = require('../plugin/bin/lib/reconcile/background-spawn');
   const originalReconcile = reconcileMod.reconcile;
+  const originalSpawn = spawnMod.spawnBackgroundIfStale;
   const originalWrite = process.stdout.write;
   const calls = [];
-  reconcileMod.reconcile = async (opts) => { calls.push(opts); return { skipped: [] }; };
-  process.stdout.write = () => true;
+  const spawnCalls = [];
+  const outputs = [];
+  reconcileMod.reconcile = async (opts) => { calls.push(opts); return reconcileResult(calls.length - 1); };
+  spawnMod.spawnBackgroundIfStale = (args) => { spawnCalls.push(args); return spawnResult; };
+  process.stdout.write = (chunk) => { outputs.push(String(chunk)); return true; };
   try {
-    await main(['node', 'hooks.js', 'reconcile', '--checks', 'reap', '--json']);
-    await main(['node', 'hooks.js', 'reconcile', '--json']);
+    for (const argv of argvs) await main(['node', 'hooks.js', ...argv]);
   } finally {
     reconcileMod.reconcile = originalReconcile;
+    spawnMod.spawnBackgroundIfStale = originalSpawn;
     process.stdout.write = originalWrite;
   }
+  return { calls, spawnCalls, outputs: outputs.map((o) => JSON.parse(o)) };
+}
+
+const INLINE_UNSCOPED_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'archive', 'console'];
+const DEFERRED_CHECKS = ['archive-branches', 'remote-prune', 'ledger-residue'];
+
+test('AC3.1/AC3.2: hooks.js reconcile: an explicit --checks subset runs unbounded; an unscoped pass keeps the default budget', async () => {
+  const { calls } = await runReconcileVerbStubbed([
+    ['reconcile', '--checks', 'reap', '--json'],
+    ['reconcile', '--json'],
+  ]);
   assert.equal(calls.length, 2);
   assert.equal(calls[0].budgetMs, Infinity);
   assert.deepEqual(calls[0].checks, ['reap']);
   assert.equal(calls[1].budgetMs, undefined);
-  assert.equal(calls[1].checks, undefined);
+  // The unscoped CLI names its inline set: ALL_CHECKS minus the three checks
+  // deferred to the background pass (#4032).
+  assert.deepEqual(calls[1].checks, INLINE_UNSCOPED_CHECKS);
   // An explicit subset never stamps the shared freshness key; an unscoped pass still does.
   assert.equal(calls[0].skipCacheStamp, true);
   assert.equal(calls[1].skipCacheStamp, undefined);
 });
 
-test('AC4.1: SessionStart and background reconcile call sites pass no budgetMs (default budget)', () => {
+test('unscoped CLI defers three checks and spawns the background pass (#4032)', async () => {
+  const { calls, spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']]);
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(outputs[0].skipped, [{ check: 'archive-branches,remote-prune,ledger-residue', reason: 'deferred-to-background' }]);
+  assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: true, reason: 'spawned' });
+});
+
+test('unscoped CLI reports the helper reason when the background pass is fresh (#4032)', async () => {
+  const { outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], { spawnResult: { spawned: false, reason: 'fresh' } });
+  assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: false, reason: 'fresh' });
+});
+
+test('unscoped CLI never spawns under --dry-run or on a no-remote fixture (#4032)', async () => {
+  const dir = noRemoteFixture('ct-recon-bg-noremote-');
+  const r = runHook(['reconcile', '--dry-run', '--json'], { cwd: dir });
+  assert.strictEqual(r.code, 0);
+  const parsed = JSON.parse(r.stdout);
+  assert.deepStrictEqual(parsed.background, { checks: DEFERRED_CHECKS, spawned: false, reason: 'not-converged' });
+  assert.deepStrictEqual(parsed.skipped, [{ check: 'all', reason: 'no-remote' }]);
+
+  const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--dry-run', '--json']]);
+  assert.equal(spawnCalls.length, 0);
+  assert.equal(outputs[0].background.spawned, false);
+  assert.equal(outputs[0].background.reason, 'dry-run');
+  assert.deepEqual(outputs[0].skipped, [{ check: 'archive-branches,remote-prune,ledger-residue', reason: 'deferred-to-background' }]);
+});
+
+test('unscoped CLI treats a local-merge-model skip as not converged: no deferral entry, skipped untouched (#4032)', async () => {
+  const lmSkip = { check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' };
+  const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], {
+    reconcileResult: () => ({ skipped: [lmSkip] }),
+  });
+  assert.equal(spawnCalls.length, 0);
+  assert.deepEqual(outputs[0].skipped, [lmSkip]);
+  assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: false, reason: 'not-converged' });
+});
+
+test('unscoped CLI treats a gh-preflight skip as not converged and keeps the deferred checks accounted for (#4032)', async () => {
+  // What the real reconcile() emits: the inline gh-dependent checks (every inline check but mirror).
+  const pfSkip = { check: INLINE_UNSCOPED_CHECKS.filter((c) => c !== 'mirror').join(','), reason: 'preflight-gh-absent' };
+  const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], {
+    reconcileResult: () => ({ skipped: [pfSkip] }),
+  });
+  assert.equal(spawnCalls.length, 0);
+  assert.deepEqual(outputs[0].skipped, [
+    pfSkip,
+    { check: 'archive-branches,remote-prune,ledger-residue', reason: 'preflight-gh-absent' },
+  ]);
+  assert.equal(outputs[0].background.reason, 'not-converged');
+});
+
+test('unscoped CLI: a module-load failure still prints the reconcile-threw JSON (#4032)', async () => {
+  const reconcileMod = require('../plugin/bin/lib/reconcile');
+  for (const prop of ['ALL_CHECKS', 'NOT_CONVERGED_REASONS']) {
+    const desc = Object.getOwnPropertyDescriptor(reconcileMod, prop);
+    Object.defineProperty(reconcileMod, prop, { configurable: true, enumerable: true, get() { throw new Error('load failed: ' + prop); } });
+    try {
+      const { outputs } = await runReconcileVerbStubbed([['reconcile', '--json']]);
+      assert.deepEqual(outputs[0].skipped, [{ check: 'all', reason: 'reconcile-threw' }], prop);
+      assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: false, reason: 'not-converged' }, prop);
+    } finally {
+      Object.defineProperty(reconcileMod, prop, desc);
+    }
+  }
+});
+
+test('unscoped CLI still defers and spawns when the pass carries a report-only non-canonical-run-dir skip (#4032)', async () => {
+  const reportOnly = { check: 'all', reason: 'non-canonical-run-dir', names: ['20260911T101010-x'] };
+  const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], {
+    reconcileResult: () => ({ skipped: [reportOnly] }),
+  });
+  assert.equal(spawnCalls.length, 1);
+  assert.deepEqual(outputs[0].skipped, [reportOnly, { check: 'archive-branches,remote-prune,ledger-residue', reason: 'deferred-to-background' }]);
+  assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: true, reason: 'spawned' });
+});
+
+test('NOT_CONVERGED_REASONS names every early-return skip reason reconcile() emits (#4032)', () => {
+  const { NOT_CONVERGED_REASONS } = require('../plugin/bin/lib/reconcile');
+  for (const r of ['no-repo', 'no-remote', 'fresh-cache', 'local-merge-model', 'reconcile-threw']) {
+    assert.ok(NOT_CONVERGED_REASONS.has(r), r);
+  }
+  assert.equal(NOT_CONVERGED_REASONS.has('non-canonical-run-dir'), false);
+  assert.equal(NOT_CONVERGED_REASONS.has('budget-exceeded'), false);
+});
+
+test('unscoped CLI never spawns when reconcile() throws (#4032)', async () => {
+  const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], {
+    reconcileResult: () => { throw new Error('boom'); },
+  });
+  assert.equal(spawnCalls.length, 0);
+  assert.deepEqual(outputs[0].skipped, [{ check: 'all', reason: 'reconcile-threw' }]);
+  assert.equal(outputs[0].timings, null);
+  assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: false, reason: 'not-converged' });
+});
+
+test('explicit --checks output has no background key (#4032)', async () => {
+  const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--checks', 'reap', '--json']]);
+  assert.equal(spawnCalls.length, 0);
+  assert.equal('background' in outputs[0], false);
+  assert.deepEqual(outputs[0].skipped, []);
+});
+
+test('AC4.1: SessionStart passes no budgetMs (default budget); the background pass passes only its own BACKGROUND_BUDGET_MS (#4032)', () => {
   const sessionStart = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'session-start.js'));
   assert.equal(sessionStart.includes('budgetMs'), false);
   const hooksSrc = readText(path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js'));
-  assert.equal(hooksSrc.split('budgetMs').length - 1, 1, 'budgetMs occurs once in hooks.js — the reconcile CLI branch');
+  assert.equal(hooksSrc.split('budgetMs').length - 1, 2, 'budgetMs occurs twice in hooks.js — the reconcile CLI branch and the background call site');
   const bgLine = hooksSrc.split('\n').find((l) => l.includes('checks: BACKGROUND_CHECKS'));
   assert.ok(bgLine, 'background reconcile call site found');
-  assert.equal(bgLine.includes('budgetMs'), false);
+  assert.ok(bgLine.includes('budgetMs: BACKGROUND_BUDGET_MS'), 'the background pass runs under its own ceiling, not the 18 s hot-path default');
 });
 
 // --- shared fetch (#820 D2): mirror and remote-prune merge into one fetch ---
@@ -2558,4 +2766,267 @@ test('AC2: an exhausted budget skips every remaining check as budget-exceeded', 
   }
   // The near-instant bound lives in perf/reconcile-time-bounds.test.js; here, the budget skip it guards.
   assert.deepEqual(r.skipped, [{ check: 'mirror,red-tip,console,release,archive,archive-branches,remote-prune,ledger-residue,reap', reason: 'budget-exceeded' }]);
+});
+
+// --- per-check timings (#4032) ---
+
+test('AC2.1: reconcile() attaches timings on an early no-remote return', async () => {
+  const dir = noRemoteFixture('ct-recon-timings-early-');
+  const r = await reconcile({ cwd: dir, dryRun: true });
+  assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }]);
+  assert.equal(typeof r.timings.totalMs, 'number');
+  assert.ok(r.timings.totalMs >= 0);
+  assert.ok(r.timings.phases.setup, 'the early return still reports its setup phase');
+});
+
+test('reconcile() reports timings: null when the summarizer throws, not a rejected pass (#4032)', async () => {
+  const dir = noRemoteFixture('ct-recon-timings-fault-');
+  const timingMod = require('../plugin/bin/lib/reconcile/timing');
+  const original = timingMod.summarizeTimings;
+  timingMod.summarizeTimings = () => {
+    throw new Error('summarizer fault');
+  };
+  let r;
+  try {
+    r = await reconcile({ cwd: dir, dryRun: true });
+  } finally {
+    timingMod.summarizeTimings = original;
+  }
+  assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }], 'the pass result is intact');
+  assert.equal(r.timings, null);
+});
+
+test('AC2.1: reconcile() times each dispatched check', async () => {
+  const { mainDir } = pairedFixture();
+  // Same forcing as the D2 shared-fetch test: committed pr-first policy keeps
+  // mirror's `git status` clean so it reaches its dispatch.
+  fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
+  git(['add', '.claude-tweaks/policy.yml'], mainDir);
+  git(['commit', '-q', '-m', 'policy'], mainDir);
+
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+  const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+  let r;
+  try {
+    r = await reconcile({ cwd: mainDir, checks: ['mirror'], dryRun: true });
+  } finally {
+    preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
+  }
+  const names = Object.keys(r.timings.phases);
+  for (const want of ['setup', 'mirror', 'finalize']) assert.ok(names.includes(want), `${want} in ${names}`);
+  assert.equal(typeof r.timings.phases.mirror.ms, 'number');
+  assert.ok(
+    Object.values(r.timings.phases).some((p) => Object.keys(p.subprocesses).some((k) => k.startsWith('git '))),
+    JSON.stringify(r.timings),
+  );
+});
+
+test('reconcile verb: the reconcile-threw fallback carries timings: null (#4032)', () => {
+  const src = readText(HOOKS);
+  assert.match(src, /reason: 'reconcile-threw' \}\], timings: null \}/);
+});
+
+// #4032: one PR-state resolver per pass, shared by release, archive and reap,
+// persisted in `finalize`; a prefetch that throws must never break the pass.
+//
+// `full: true` runs a NON-dry-run pass (release is skipped under dryRun) on a
+// fixture where each check reaches the resolver: a live claim for issue 11
+// whose run stamps pr.number 42 (release Phase 1.5 and archive), whose
+// worktree sits in the harness domain on branch `run-num-branch` (reap). A
+// `gh` stub on PATH serves only the claim listing/read; every PR lookup would
+// fail, so the resolver's OPEN-PR deps are the only PR answers, and OPEN means
+// nothing is released, archived or reaped. `events` logs, in order, each
+// DIRECT call a check makes on the resolver (prefetch's internal lookups use
+// the unwrapped closures, so they never appear as byNumberAsync/byBranch) and
+// each prefetch's arguments.
+async function reconcileWithRecordedResolver({ wrap, full = false } = {}) {
+  const { mainDir } = pairedFixture();
+  fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
+  git(['add', '.claude-tweaks/policy.yml'], mainDir);
+  git(['commit', '-q', '-m', 'policy'], mainDir);
+
+  let restorePath = () => {};
+  if (full) {
+    const wtPath = path.join(mainDir, '.claude', 'worktrees', 'wt-run-num');
+    git(['worktree', 'add', '-q', '-b', 'run-num-branch', wtPath], mainDir);
+    const runId = '2026-01-01T000000-run-num'; // archive's run-dir scan only yields timestamped ids
+    const runDir = path.join(mainDir, '.claude-tweaks', 'pipelines', runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wtPath, pr: { number: 42 } }));
+    const claim = JSON.stringify({ runId, sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h' });
+    const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-ghstub-'));
+    fs.writeFileSync(
+      path.join(stubDir, 'gh'),
+      '#!/bin/sh\ncase "$*" in\n'
+      + `  *"git/trees/claims-registry"*) cat <<'EOF'\n${JSON.stringify({ truncated: false, entries: [{ name: 'issue-11.json', sha: 's11' }] })}\nEOF\n    ;;\n`
+      + `  *"contents/claims/issue-11.json"*) cat <<'EOF'\n${JSON.stringify({ content: claim, sha: 's11' })}\nEOF\n    ;;\n`
+      + '  *) exit 1 ;;\nesac\n',
+    );
+    fs.chmodSync(path.join(stubDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${stubDir}${path.delimiter}${originalPath}`;
+    restorePath = () => { process.env.PATH = originalPath; };
+  }
+
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+  const cacheMod = require('../plugin/bin/lib/reconcile/pr-state-cache');
+  const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
+  const originalCreate = cacheMod.createPrStateResolver;
+  const instances = [];
+  const events = [];
+  const open = (n) => ({ number: n || 7, state: 'OPEN', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z', mergeCommit: null });
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+  cacheMod.createPrStateResolver = (opts) => {
+    const deps = full ? {
+      byNumber: (n) => open(n), byNumberAsync: async (n) => open(n), byBranch: () => open(), byBranchAsync: async () => open(),
+    } : undefined;
+    const inst = originalCreate({ ...opts, ...(deps ? { deps } : {}) });
+    const calls = { persist: 0, prefetch: 0 };
+    const persist = inst.persist;
+    const prefetch = inst.prefetch;
+    inst.persist = (...a) => { calls.persist += 1; return persist(...a); };
+    inst.prefetch = (...a) => {
+      calls.prefetch += 1;
+      events.push(['prefetch', a[0]]);
+      return wrap ? wrap(prefetch, ...a) : prefetch(...a);
+    };
+    for (const m of ['byNumber', 'byBranch', 'byNumberAsync', 'byBranchAsync']) {
+      const orig = inst[m];
+      inst[m] = (id) => { events.push([m, id]); return orig(id); };
+    }
+    instances.push({ inst, calls });
+    return inst;
+  };
+  let r;
+  try {
+    r = await reconcile({ cwd: mainDir, checks: ['release', 'archive', 'reap'], dryRun: !full });
+  } finally {
+    preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
+    cacheMod.createPrStateResolver = originalCreate;
+    restorePath();
+  }
+  return { r, instances, events };
+}
+
+test('reconcile(): one resolver per pass is created and persisted once, with archive and reap phases timed (#4032)', async () => {
+  const { r, instances } = await reconcileWithRecordedResolver();
+  assert.equal(instances.length, 1, 'exactly one resolver for the pass');
+  assert.equal(instances[0].calls.persist, 1, 'persisted once, in finalize');
+  assert.ok(r.timings.phases.archive && r.timings.phases.reap && r.timings.phases.finalize);
+});
+
+test('reconcile(): release, archive and reap all use the pass\'s one resolver (#4032)', async () => {
+  const { r, instances, events } = await reconcileWithRecordedResolver({ full: true });
+  assert.equal(instances.length, 1);
+  assert.ok(!r.skipped.some((s) => s.check === 'release'), `release must have run, got ${JSON.stringify(r.skipped)}`);
+  // release runs first: it warms the stamped number in one prefetch (#4032), then its
+  // direct by-number lookup follows. archive's own prefetch comes after both.
+  const releaseCall = events.findIndex(([m, id]) => m === 'byNumberAsync' && id === 42);
+  const isNumberPrefetch = ([m, a]) => m === 'prefetch' && a.numbers && a.numbers.includes(42);
+  const releasePrefetch = events.findIndex(isNumberPrefetch);
+  assert.ok(releasePrefetch !== -1 && releasePrefetch < releaseCall, `release Phase 1.5 must warm the resolver before its lookup, events: ${JSON.stringify(events)}`);
+  assert.ok(releaseCall !== -1 && events.findIndex((e, i) => i > releaseCall && isNumberPrefetch(e)) !== -1, `release Phase 1.5 must call the resolver before archive's prefetch, events: ${JSON.stringify(events)}`);
+  // archive's prefetch warms the stamped number; a branch is only asked of unanswered dirs, so this one is reap's.
+  const prefetched = events.filter(([m]) => m === 'prefetch').map(([, a]) => a);
+  assert.ok(prefetched.some((a) => a.numbers && a.numbers.includes(42)), `archive must prefetch the stamped number, got ${JSON.stringify(prefetched)}`);
+  assert.ok(prefetched.some((a) => a.branches && a.branches.includes('run-num-branch')), `reap must prefetch its worktree branch, got ${JSON.stringify(prefetched)}`);
+  assert.ok(events.some(([m, id]) => m === 'byBranch' && id === 'run-num-branch'), `reapMerged must look the branch up through the resolver, events: ${JSON.stringify(events)}`);
+});
+
+test('reconcile(): a throwing prefetch never breaks the pass (#4032)', async () => {
+  const { r, instances } = await reconcileWithRecordedResolver({ wrap: async () => { throw new Error('prefetch boom'); } });
+  assert.equal(instances.length, 1);
+  assert.ok(Array.isArray(r.runs) && Array.isArray(r.worktrees), `archive and reap must still have run, got ${JSON.stringify(r)}`);
+  assert.equal(instances[0].calls.persist, 1);
+});
+
+// #4032 — the residue marker index crosses passes through the reconcile cache:
+// index.js loads `residueIssueIndex` into the per-pass issue-list cache and
+// finalize writes the pass's index back. Module-wiring level (archiveMerged is
+// stubbed to issue the lookups), with a fake `gh` as the cache's `base` — no
+// live GitHub.
+async function residueIndexPass(extraOpts, seedCache = {}) {
+  const issueListCache = require('../plugin/bin/lib/reconcile/issue-list-cache');
+  const archiveMergedModule = require('../plugin/bin/lib/reconcile/archive-merged');
+  const reapMergedModule = require('../plugin/bin/lib/reconcile/reap-merged');
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+  const { readCache, writeCache } = require('../plugin/bin/lib/reconcile/cache');
+
+  const seeded = '<!-- fingerprint: reconcile-residue-aaaa1111 -->';
+  const learned = '<!-- fingerprint: reconcile-residue-bbbb2222 -->';
+  const ghCalls = [];
+  const fakeGh = (argv) => {
+    ghCalls.push(argv);
+    if (argv[1] === 'view') {
+      return JSON.stringify({ number: 42, title: 't', body: `x\n${seeded}`, createdAt: '2026-01-01T00:00:00Z', state: 'OPEN' });
+    }
+    if (argv[1] === 'list') {
+      return JSON.stringify([{ number: 9, title: 't', body: `y\n${learned}`, createdAt: '2026-01-01T00:00:00Z', state: 'OPEN' }]);
+    }
+    return '';
+  };
+
+  const originalCreate = issueListCache.createIssueListCache;
+  const originalArchive = archiveMergedModule.archiveMerged;
+  const originalReap = reapMergedModule.reapMerged;
+  const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
+
+  issueListCache.createIssueListCache = (opts) => originalCreate({ ...opts, base: fakeGh });
+  let seededHit;
+  let callsAfterLookup;
+  archiveMergedModule.archiveMerged = (opts) => {
+    seededHit = opts.runner.findIssueByMarker('o/r', seeded);
+    callsAfterLookup = ghCalls.map((c) => c.slice(0, 2).join(' '));
+    opts.runner(['issue', 'list', '--repo', 'o/r', '--state', 'all', '--json', 'number,title,body,createdAt,state', '--limit', '10000']);
+    return { archived: [], skipped: [] };
+  };
+  reapMergedModule.reapMerged = () => ({ reaped: [], skipped: [], portsRelease: [] });
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+
+  try {
+    delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
+    const { reconcile: reconcileFresh } = require('../plugin/bin/lib/reconcile/index');
+    const { mainDir } = pairedFixture();
+    writeCache(mainDir, { ...readCache(mainDir), residueIssueIndex: { [`o/r\n${seeded}`]: 42 }, ...seedCache });
+
+    await reconcileFresh({
+      cwd: mainDir, checks: ['archive', 'reap'], resolveIntegrationModel: () => 'pr-first', mcpReachable: true, ...extraOpts,
+    });
+    return { seeded, learned, seededHit, callsAfterLookup, cache: readCache(mainDir) };
+  } finally {
+    issueListCache.createIssueListCache = originalCreate;
+    archiveMergedModule.archiveMerged = originalArchive;
+    reapMergedModule.reapMerged = originalReap;
+    preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
+    delete require.cache[require.resolve('../plugin/bin/lib/reconcile/index')];
+  }
+}
+
+test('reconcile(): loads residueIssueIndex into the pass and writes the learned index back (#4032)', async () => {
+  const { seeded, learned, seededHit, callsAfterLookup, cache } = await residueIndexPass({});
+  // (a) the cached entry reached the pass: one view, no list, before the list read.
+  assert.equal(seededHit && seededHit.number, 42, 'the seeded index entry must answer the lookup');
+  assert.deepEqual(callsAfterLookup, ['issue view'], 'the lookup must cost one issue view and no issue list');
+  // (b) the learned index was written back, with the loaded entry preserved.
+  assert.deepEqual(cache.residueIssueIndex, { [`o/r\n${seeded}`]: 42, [`o/r\n${learned}`]: 9 });
+});
+
+test('reconcile(): a scoped skipCacheStamp pass still persists the index entries it learned, without stamping freshness (#4032)', async () => {
+  // A (future-dated) fresh health stamp keeps healthJustSucceeded false, so the write under test
+  // cannot ride on the health-stamp gate.
+  const { seeded, learned, cache } = await residueIndexPass({ skipCacheStamp: true }, { lastHealthCheckOkAt: Date.now() + 60000 });
+  assert.deepEqual(cache.residueIssueIndex, { [`o/r\n${seeded}`]: 42, [`o/r\n${learned}`]: 9 });
+  assert.ok(!cache.lastRunAt, 'a scoped pass must not stamp the shared freshness key');
 });

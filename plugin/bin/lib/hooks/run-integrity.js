@@ -329,6 +329,9 @@ function checkBranchLanded(runDir, opts = {}) {
 
 module.exports = {
   checkRunIntegrity, checkBranchLanded, repoRootOf, NON_TERMINAL, deriveBranch,
+  // #4032: reconcile's archive loop reads its own top-level list through the
+  // same cache its per-dir checkRunIntegrity calls use, so a pass lists once.
+  worktreeListStdout,
   // #1544: archive-merged.js's clean-status sweep (a run dir close-run
   // already marked terminal, whose archive-run step never followed) needs
   // this same torn-down-worktree branch fallback — checkRunIntegrity itself
