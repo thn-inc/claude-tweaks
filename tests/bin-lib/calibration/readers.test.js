@@ -93,3 +93,15 @@ test('readEventsKinds returns null (never throws) when the path exists but is un
   fs.mkdirSync(dirAsFile);
   assert.strictEqual(readEventsKinds(dirAsFile), null);
 });
+
+test('AC1.1: readEventsKinds drops test:true gate-denial/wd-guard-refusal, keeps the real one (#4186)', () => {
+  const p = tmpFile('events.jsonl');
+  fs.writeFileSync(p, [
+    '{"type":"gate-denial","test":true}',
+    '{"type":"gate-denial"}',
+    '{"type":"gate-denial","test":false}',
+    '{"type":"wd-guard-refusal","test":true}',
+    '{"type":"commit","test":true}',
+  ].join('\n') + '\n');
+  assert.deepStrictEqual(readEventsKinds(p).counts, { 'gate-denial': 2, commit: 1 });
+});
