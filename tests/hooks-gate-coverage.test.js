@@ -1318,7 +1318,9 @@ for (const [label, cmd] of [
 
 // #4149: a `cd` behind `(` or `{` is a `cd`. A subshell's cwd ends at its
 // `)`; a brace group's `cd` may outlive its `}` (unless the group is piped), so after a `}` a
-// relative target resolves under both the inner and the outer cwd.
+// relative target resolves under both the inner and the outer cwd. #4303: a group is one command
+// of the and-or list around it, so `&&` after it runs where it succeeded and `||` where it failed;
+// a piped group runs in a subshell, so the command after the pipeline runs from where it began.
 {
   const main = (action) => ({ action, file: MAIN_F });
   for (const [label, cmd, expected] of [
@@ -1479,17 +1481,95 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   assert.deepStrictEqual(fileWriteTargets('cd /main && x=`true | true & true` && echo x > f.js', '/r'), [{ action: 'write', file: MAIN_F }]);
 });
 
+// #4303: `&&` and `||` make a cd's effect depend on whether it succeeds, and a pipeline element
+// runs in a subshell. Each verdict is bash 3.2 and 5 (M = /main, T = /tmp, start = /r).
+{
+  const here = path.resolve('/r/f.js');
+  const files = (cmd) => fileWriteTargets(cmd, '/r').map((t) => t.file).sort();
+  for (const [cmd, mustHold] of [
+    ['cd /main || cd /tmp; echo x > f.js', [MAIN_F]],              // bash: M/f
+    ['cd /nope && cd /tmp; echo x > f.js', [here]],                 // bash: ./f
+    ['cd /main || cd /tmp && echo x > f.js', [MAIN_F]],             // bash: M/f
+    ['cd /nope && true || echo x > f.js', [here]],                  // bash: ./f
+    ['cd /nope && cd /tmp || echo x > f.js', [here]],               // bash: ./f
+    ['true | cd /main; echo x > f.js', [here]],                     // bash: ./f
+    ['{ cd /main; } | cat; echo x > f.js', [here]],                 // bash: ./f
+  ]) {
+    test(`#4303 and-or: \`${cmd}\` keeps the cwd bash may write from`, () => {
+      for (const f of mustHold) assert.ok(files(cmd).includes(f), JSON.stringify(files(cmd)));
+    });
+  }
+  // bash: ./f
+  test('#4303 and-or: a pipeline element\'s cd never reaches the next list', () => {
+    assert.deepStrictEqual(files('cd /main | true; echo x > f.js'), [here]);
+  });
+  // bash: M/f (and nothing when the cd fails)
+  test('#4303 and-or: the command after cd && runs only where the cd went', () => {
+    assert.deepStrictEqual(files('cd /main && cp a f.js'), [MAIN_F]);
+  });
+  // bash: ./f when the cd fails (and nothing when it succeeds)
+  test('#4303 and-or: the command after cd || runs only where a failed cd left it', () => {
+    assert.deepStrictEqual(files('cd /main || cp a f.js'), [here]);
+  });
+  // bash: M/f
+  test('#4303 and-or: a substitution\'s separators leave the outer list alone', () => {
+    assert.deepStrictEqual(files('cd /main && echo $(true; cd /tmp; true) > f.js'), [MAIN_F]);
+  });
+  // Deliberate fail-closed tradeoff: after the list ends, a failed cd would have left the start
+  // cwd, so a later write resolves under both. bash: M/f, and ./f when the cd fails.
+  test('#4303 and-or: after `cd X && cmd;` a later write resolves under X and the start cwd (deliberate fail-closed tradeoff)', () => {
+    assert.deepStrictEqual(files('cd /main && true; cp a f.js'), [MAIN_F, here].sort());
+  });
+  // bash: git runs in M for both (in T for the first when M is missing).
+  test('#4303 and-or: gitTargets follows the same rules', () => {
+    assert.ok(gitTargets('cd /main || cd /tmp; git commit -m x', '/r').some((t) => t.dir === path.resolve('/main')));
+    assert.deepStrictEqual(gitTargets('cd /main && git commit -m x', '/r').map((t) => t.dir), [path.resolve('/main')]);
+  });
+  // One pin per rule. A pipeline element runs from where the pipeline began; a lone `&` ends the
+  // list, its pipeline and what it was skipping; a group is one command of the list around it, which
+  // may fail where the group left the cwd, and its own list never leaks out. bash 3.2 and 5 write
+  // the file each row names (`./f` is the start cwd, and `when the cd fails` is with /main absent).
+  for (const [cmd, expected] of [
+    ['cd /main | cp a f.js', [here]],                                    // bash: ./f
+    ['cd /main || true & true; cp a f.js', [here]],                      // bash: ./f
+    ['cd /main && true & cd /nope || cp a f.js', [here]],                // bash: ./f
+    ['true | true & cd /main; cp a f.js', [MAIN_F]],                     // bash: M/f
+    ['{ cd /main; false; } || cp a f.js', [MAIN_F, here].sort()],        // bash: M/f, ./f when the cd fails
+    ['( cd /main || true ) && cp a f.js', [here]],                       // bash: ./f
+    ['echo $(true; ( cd /main || true ) && cp a f.js)', [here]],         // bash: ./f
+    ['echo $(true; { cd /main; false; } || cp a f.js)', [MAIN_F, here].sort()], // bash: M/f, ./f when the cd fails
+    // A substitution keeps its own and-or list, and so does a top-level backtick.
+    ['echo $(true; cd /nope && cd /tmp; cp a f.js)', [path.resolve('/tmp/f.js'), here].sort()], // bash: ./f
+    ['echo `true; cd /nope && cd /tmp; cp a f.js; true`', [path.resolve('/tmp/f.js'), here].sort()], // bash: ./f
+    ['echo `true; cd /main; cd /tmp & cp a f.js; true`', [MAIN_F]],     // bash: M/f
+    ['cd /main && echo `true; true` && cp a f.js', [MAIN_F]],            // bash: M/f
+  ]) {
+    test(`#4303 and-or: \`${cmd}\` resolves where bash writes`, () => {
+      assert.deepStrictEqual(files(cmd), expected);
+    });
+  }
+  // A lone `&` inside a substitution backgrounds that substitution's own list only: inside a deeper
+  // `$( )` it never resets an enclosing one's list. bash 3.2 and 5 write M/f.js for each.
+  for (const cmd of ['x=$(true; cd /main && y=$(true & true) && cp a f.js)', 'x=$(true; cd /main && y=`true & true` && cp a f.js)',
+    'cd /main && x=$(true & true) && cp a f.js', 'x=$(true; echo $(true; true); cd /main && y=$(true & true) && cp a f.js)']) {
+    test(`#4303 and-or: \`${cmd}\` keeps the cd past an & in a deeper substitution`, () => {
+      assert.deepStrictEqual(files(cmd), [MAIN_F]);
+    });
+  }
+}
+
 // #4149: inside a double-quoted span, `$( … )`, backticks and `${ … }` nest as in
 // bash, and a quote inside `$(` starts a fresh quoting context; an unquoted `${ … }` nests too. So no
 // `&`, `;`, `(`, `)` or newline inside them is structural, and an earlier `cd` survives. Every case
 // was checked under bash 3.2 and 5 (bash 3.2 cannot parse the odd-quote heredoc one).
 {
   const main = (action) => ({ action, file: MAIN_F });
+  const here = (action) => ({ action, file: path.resolve('/r', 'f.js') });
   const B = "<<'EOF'";
   for (const [label, cmd, expected] of [
     ['an & in a quoted string inside "$( )"', 'cd /main && echo "$(echo "a&b")" && cp a f.js', [main('copy')]],
-    ['... followed by ; cp', 'cd /main && echo "$(echo "a&b")"; cp a f.js', [main('copy')]],
-    ['... followed by a newline and cp', 'cd /main && echo "$(echo "a&b")"\ncp a f.js', [main('copy')]],
+    ['... followed by ; cp', 'cd /main && echo "$(echo "a&b")"; cp a f.js', [main('copy'), here('copy')]], // #4303: bash 3.2 and 5 write ./f.js when the cd fails
+    ['... followed by a newline and cp', 'cd /main && echo "$(echo "a&b")"\ncp a f.js', [main('copy'), here('copy')]], // #4303: bash 3.2 and 5 write ./f.js when the cd fails
     ['... with a redirect after it', 'cd /main && echo "$(echo "a&b")" > f.js', [main('write')]],
     ['an & in a URL inside an assigned "$( )"', 'cd /main && X="$(printf %s "http://h/?a=1&b=2")" && cp a f.js', [main('copy')]],
     ['an & inside "$( )" ahead of a tee file', 'echo hi | tee "$(echo "x&y")" /main/f.js >/dev/null', [main('write')]],
@@ -1513,9 +1593,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // one; the fallback keeps the trailing write visible, failing closed).
     ['a construct read as unclosed, which falls back to the plain quote end', 'echo "${x:-$(echo)" && cp a /main/f.js', [main('copy')]],
     // #4149: a cd inside a backtick or $( ) runs in a subshell; the outer cwd stays.
-    ['a cd inside a top-level backtick', 'cd /main && echo `true; cd /tmp`; cp a f.js', [main('copy')]],
+    ['a cd inside a top-level backtick', 'cd /main && echo `true; cd /tmp`; cp a f.js', [main('copy'), here('copy')]], // #4303: bash 3.2 and 5 write ./f.js when the cd fails
     ['a cd inside an assigned backtick', 'cd /main && x=`true && cd /tmp` && cp a f.js', [main('copy')]],
-    ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); cp a f.js', [main('copy')]],
+    ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); cp a f.js', [main('copy'), here('copy')]], // #4303: bash 3.2 and 5 write ./f.js when the cd fails
     ['a cd after a lone & that follows a $( )', 'echo $(true; true) & cd /main; cp a f.js', [main('copy')]],
     ['a cd after a $( ) in a pass read again flat', `echo $(true) ${'"$('.repeat(40)}x${')"'.repeat(40)}; cd /main; true & cp a f.js`, [main('copy')]],
     ['a quoted ) inside "$( )", in a fresh quoting context', 'cd /main && echo "$(echo ")")" && cp a f.js', [main('copy')]],
@@ -1525,19 +1605,19 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // One pin per scanner seam.
     ['a ; inside quotes inside "$( )" (segmentSpans)', 'cp "$(echo "a;b" | tr -d ";b")" /main/f.js', [main('copy')]],
     ['a ; inside an unquoted ${ } (segmentSpans)', "x='a;'; cp ${x//;/} /main/f.js", [main('copy')]],
-    ['an odd quote in a heredoc body inside "$( )", before a later body (scanHeredocs)', "cd /main && echo \"$(cat <<'X'\n5\" x\nX\n)\" && cat <<'EOF'\ndon't\nEOF\ncp a f.js", [main('copy')]],
+    ['an odd quote in a heredoc body inside "$( )", before a later body (scanHeredocs)', "cd /main && echo \"$(cat <<'X'\n5\" x\nX\n)\" && cat <<'EOF'\ndon't\nEOF\ncp a f.js", [main('copy'), here('copy')]], // #4303: bash 3.2 cannot parse it; bash 5 writes ./f.js when the cd fails
     // A top-level backtick substitution is its own command text: a quote inside it opens nothing
     // past its closing backtick.
     ['an odd quote inside a top-level backtick', 'cd /main && echo `echo "a&b` && cp a f.js', [main('copy')]],
-    ['an odd quote inside a top-level backtick, then a newline', 'cd /main && echo `echo "$(`\ncp a f.js', [main('copy')]],
-    ['a backtick inside double quotes, then a top-level backtick', 'cd /main && echo "`"`"`"`\ncp a f.js', [main('copy')]],
-    ['a top-level backtick, then a backtick inside double quotes', 'cd /main && echo `"`"`"`"\ncp a f.js', [main('copy')]],
-    ['a heredoc opener inside a top-level backtick', 'cd /main && echo `cat <<EOF`\ncp a f.js\nEOF', [main('copy')]],
-    ['an odd quote inside a top-level backtick, before a body holding a quote (scanHeredocs)', "cd /main && echo `echo \"x` && cat <<'EOF'\n\"\nEOF\ncp a f.js", [main('copy')]],
+    ['an odd quote inside a top-level backtick, then a newline', 'cd /main && echo `echo "$(`\ncp a f.js', [main('copy'), here('copy')]], // #4303: bash 3.2 and 5 write ./f.js when the cd fails
+    ['a backtick inside double quotes, then a top-level backtick', 'cd /main && echo "`"`"`"`\ncp a f.js', [main('copy'), here('copy')]], // #4303: bash 3.2 and 5 write ./f.js when the cd fails
+    ['a top-level backtick, then a backtick inside double quotes', 'cd /main && echo `"`"`"`"\ncp a f.js', [main('copy'), here('copy')]], // #4303: bash 3.2 and 5 write ./f.js when the cd fails
+    ['a heredoc opener inside a top-level backtick', 'cd /main && echo `cat <<EOF`\ncp a f.js\nEOF', [main('copy'), here('copy')]], // #4303: bash 3.2 and 5 write ./f.js when the cd fails
+    ['an odd quote inside a top-level backtick, before a body holding a quote (scanHeredocs)', "cd /main && echo `echo \"x` && cat <<'EOF'\n\"\nEOF\ncp a f.js", [main('copy'), here('copy')]], // #4303: bash 3.2 and 5 write ./f.js when the cd fails
     // A pass that nests past the cap is read again flat, as before #4149, from its start.
     ['a nest past the cap holding backticks', `cd /main && echo ${'` "$('.repeat(33)}x${')"`'.repeat(33)} && cp a f.js`, [main('copy')]],
-    ['a nest past the cap whose fallback would restart the nested reading', `cd /main && echo ${'"\'$('.repeat(31)}x${')"'.repeat(31)}; cp a f.js`, [main('copy')]],
-    ['a ${ } nest past the cap (the flat pass takes ${ plainly)', `cd /main && echo ${'"\'${x:-'.repeat(31)}x${'}"'.repeat(31)}; cp a f.js`, [main('copy')]],
+    ['a nest past the cap whose fallback would restart the nested reading', `cd /main && echo ${'"\'$('.repeat(31)}x${')"'.repeat(31)}; cp a f.js`, [main('copy'), here('copy')]], // #4303: bash 3.2 and 5 write ./f.js when the cd fails
+    ['a ${ } nest past the cap (the flat pass takes ${ plainly)', `cd /main && echo ${'"\'${x:-'.repeat(31)}x${'}"'.repeat(31)}; cp a f.js`, [main('copy'), here('copy')]], // #4303: bash 3.2 and 5 write ./f.js when the cd fails
     ['a quoted ${ } nest past the cap before a lone & (the flat pass takes ${ plainly)', `echo ${'\'"${x:-'.repeat(36)}x${'}"'.repeat(36)} & cp a /main/f.js`, [main('copy')]],
     ['a nest past the cap before a lone & (the flat pass takes a backtick plainly)', `echo ${'"$(;`'.repeat(34)}x${'`)"'.repeat(34)} & cp a /main/f.js`, [main('copy')]],
     ['a nest past the cap before a lone & (groupEvents re-reads from its starting group state)', `echo ${'$(`"'.repeat(36)}x${'"`)'.repeat(36)} & cp a /main/f.js`, [main('copy')]],
@@ -1562,7 +1642,6 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   // for the commands after it there, and the substitution's `)` ends its piece: the closer is part
   // of no word, and the rest of the command runs out there. A cd or an assignment inside a
   // substitution ends at the next outer piece. bash 3.2 and 5 write /main/f.js for each.
-  const here = (action) => ({ action, file: path.resolve('/r', 'f.js') });
   for (const [label, cmd, expected] of [
     ['a brace group inside a $( ), after its cd', 'echo $(true; cd /main; { cp a f.js; } )', [main('copy')]],
     ['a brace group inside a <( ), between its cd and the write', 'cat <(true; cd /main; { true; }; cp a f.js ) >/dev/null', [main('copy')]],

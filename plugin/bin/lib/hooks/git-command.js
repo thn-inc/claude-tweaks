@@ -20,7 +20,9 @@ function splitSegments(command) {
 
 // splitSegments' pass, with each segment's `end`: the index in `command` of the
 // separator that ends it (the string's length for the last one). forEachShellSegment
-// uses it to find the segment that holds a heredoc opener.
+// uses it to find the segment that holds a heredoc opener, and reads the separator there.
+// `sub` marks a segment that began inside a top-level backtick span, `endsInSub` one whose
+// separator lies inside one (it separates the backtick's own commands, never the outer list's).
 function segmentSpans(command) {
   const str = String(command || '');
   return scanPass((spans) => segmentSpansWith(str, spans));
@@ -30,7 +32,7 @@ function segmentSpansWith(str, spans) {
   const segments = [];
   let current = '';
   let sub = false; // the segment in progress began inside a top-level backtick span
-  const cut = (at) => { segments.push({ text: current, end: at, sub }); current = ''; sub = false; };
+  const cut = (at, endsInSub = false) => { segments.push({ text: current, end: at, sub, endsInSub }); current = ''; sub = false; };
   let quote = null; // null | "'" (a double-quoted span is consumed whole below)
   let parens = null; // parenMatches from the first `((` or `$((` on, offset by parensFrom
   let parensFrom = 0;
@@ -64,7 +66,7 @@ function segmentSpansWith(str, spans) {
         const inner = segmentSpans(str.slice(i + 1, r.end - 1));
         current += `\`${inner[0].text}`;
         for (let k = 1; k < inner.length; k += 1) {
-          cut(i + 1 + inner[k - 1].end);
+          cut(i + 1 + inner[k - 1].end, true);
           current = inner[k].text;
           sub = true;
         }
@@ -1701,6 +1703,7 @@ const MAX_HEREDOC_NESTING = 8;
 // opens a group and the `)` or `}` that matches it closes it, so a `cd` behind `(`/`{` is read as
 // a `cd` scoped to its group. Returns the segment as { text } pieces and { open } / { close } /
 // { bg } events, in order ({ bg } at a lone `&`, which backgrounds the and-or list before it);
+// each piece, { bg } and group frame carries `nesting`, the substitution depth it begins at;
 // `g.stack` carries the open groups and nesting parens across segments. Any
 // other `(` (`$(`, `$((`, `<(`, an array, a glob) only nests until its `)`. A `)` while a `case` is
 // open in the innermost group is a pattern's, and a `)` that matches nothing (a group this walk
@@ -1733,7 +1736,7 @@ function groupEventsWith(seg, g, spans, undo) {
   const setCaseDepth = (frame, d) => { const was = frame.caseDepth; frame.caseDepth = d; undo.push(() => { frame.caseDepth = was; }); };
   const setBrackets = (frame, d) => { const was = frame.brackets; frame.brackets = d; undo.push(() => { frame.brackets = was; }); };
   const cut = (at, ev) => {
-    if (at > start) events.push({ text: seg.slice(start, at), sub: inSub, tail });
+    if (at > start) events.push({ text: seg.slice(start, at), sub: inSub, tail, nesting: pieceNesting });
     if (ev) events.push(ev);
     start = at + 1;
     inSub = g.nesting > 0;
@@ -1763,7 +1766,7 @@ function groupEventsWith(seg, g, spans, undo) {
         if (inner !== undefined && seg[inner + 1] === ')') { nest(2, false); i += 2; continue; }
       }
       if (atCmd) {
-        const frame = { kind: '(', caseDepth: 0, cmd: true, sub: g.nesting > 0 };
+        const frame = { kind: '(', caseDepth: 0, cmd: true, sub: g.nesting > 0, nesting: g.nesting };
         push(frame);
         cut(i, { open: frame });
       } else nest(1, false, top().cmd);
@@ -1796,7 +1799,7 @@ function groupEventsWith(seg, g, spans, undo) {
         // backgrounds that subshell's own list (`sub`: the walk resets the sub run, never the outer
         // cwd); in a frame that is no command list (`$(( ))`, `$[ ]`, a bare `(` inside one) it is
         // arithmetic, so it is left alone.
-        if (top().cmd) cut(i, i > 0 ? { bg: true, sub: g.nesting > 0 } : null);
+        if (top().cmd) cut(i, i > 0 ? { bg: true, sub: g.nesting > 0, nesting: g.nesting } : null);
         atCmd = true;
       }
       // Any other operator is a redirection. Its target is read as an ordinary word, which ends
@@ -1868,7 +1871,7 @@ function groupEventsWith(seg, g, spans, undo) {
     if (!plain || !atCmd) { atCmd = false; continue; }
     const t = top();
     if (w === '{') {
-      const frame = { kind: '{', caseDepth: 0, cmd: true, sub: g.nesting > 0 };
+      const frame = { kind: '{', caseDepth: 0, cmd: true, sub: g.nesting > 0, nesting: g.nesting };
       push(frame);
       cut(wStart, { open: frame });
       continue; // still at command position
@@ -1878,7 +1881,7 @@ function groupEventsWith(seg, g, spans, undo) {
     else if (w === 'esac') setCaseDepth(t, Math.max(0, t.caseDepth - 1));
     atCmd = COMMAND_PREFIX_WORDS.has(w);
   }
-  if (seg.length > start) events.push({ text: seg.slice(start), sub: inSub, tail });
+  if (seg.length > start) events.push({ text: seg.slice(start), sub: inSub, tail, nesting: pieceNesting });
   return events;
 }
 
@@ -1938,6 +1941,14 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // backgrounds the and-or list before it, which runs in a subshell: the cwd returns to what it was
 // where that list began (after the last `;`, newline, `&` or group opener).
 //
+// Within an and-or list (#4303), whether a `cd` moved the shell decides what runs after it: the
+// command after `&&` runs where the one before it succeeded, the command after `||` where it failed
+// (a failed `cd` leaves the cwd where it was), and once the list ends at a `;`, a newline or the
+// end, the walk continues under every cwd the list could have left, so after `cd x && cmd;` a
+// later write resolves under x and under the cwd before the list (failing closed). Each element of
+// a pipeline runs in a subshell from the cwd the pipeline began at, and its `cd` ends there. A
+// substitution's separators act on the substitution's own list, never the outer one.
+//
 // The walk carries at most CWD_SET_CAP cwds at once. Each brace group's `}` and each tail can add
 // a cwd, and every later piece is visited once per cwd, so a command with many distinct `cd`
 // paths would be quadratic. Past the cap the set collapses, failing closed, to the caller's
@@ -1968,22 +1979,84 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
   const { outer, bodies } = plan && depth < MAX_HEREDOC_NESTING ? stripHeredocBodies(text) : { outer: text, bodies: [] };
   const g = { root: { kind: 'root', caseDepth: 0, cmd: true }, stack: [], nesting: 0 };
   let cur = cwds;
+  // An and-or list's state (#4303), besides the cwds in effect: `listStart`, where the list began
+  // (after the last `;`, newline, `&` or group opener); `spanStart`, where its current command
+  // began (a failed command leaves the cwd there); `skipOk` and `skipFail`, the cwds where the
+  // list may already have succeeded or failed and be skipping commands; `pipeStart`, the cwds a
+  // pipeline in progress began at (each element runs in a subshell from there).
+  const freshList = (at) => ({ listStart: at, spanStart: at, skipOk: [], skipFail: [], pipeStart: null });
+  // Ends the current command of list `L`, in effect at `at`, at the separator `op`, and returns the
+  // cwds the next command runs under. `&&` runs it where the command succeeded and `||` where it
+  // failed; whatever the list skips past carries on to its end. A `;`, a newline or the end joins
+  // every way the list could have gone, except the last command failing: as after any `cd x;`, the
+  // walk takes a command it does not branch on to succeed.
+  const endCommand = (L, at, op) => {
+    if (op === '|') {
+      if (L.pipeStart === null) L.pipeStart = L.spanStart;
+      return L.pipeStart;
+    }
+    if (L.pipeStart !== null) {
+      at = L.pipeStart; // the pipeline ran in subshells: one command, which changed no cwd
+      L.pipeStart = null;
+    }
+    const ok = joinCwds(at, L.skipOk, overflow);
+    const fail = joinCwds(L.spanStart, L.skipFail, overflow);
+    let next;
+    if (op === '&&') {
+      next = ok;
+      L.skipFail = fail;
+      L.skipOk = [];
+    } else if (op === '||') {
+      next = fail;
+      L.skipOk = ok;
+      L.skipFail = [];
+    } else {
+      next = joinCwds(ok, L.skipFail, overflow);
+      L.skipOk = [];
+      L.skipFail = [];
+      L.listStart = next;
+    }
+    L.spanStart = next;
+    return next;
+  };
+  // A lone `&` ran list `L` in the background: the cwd returns to where the list began.
+  const background = (L) => {
+    L.skipOk = [];
+    L.skipFail = [];
+    L.pipeStart = null;
+    L.spanStart = L.listStart;
+    return L.listStart;
+  };
+  // A group's close restores the list it opened in; the group is that list's current command,
+  // which may fail anywhere the group left the cwd.
+  const closeGroup = (frame, at) => {
+    frame.savedList.spanStart = joinCwds(frame.savedList.spanStart, at, overflow);
+    return frame.savedList;
+  };
+  let list = freshList(cwds); // the outer walk's innermost list (a group's own, while one is open)
   // A piece inside a substitution or a backtick span runs in a subshell: it is visited from the
   // cwd and assignments in effect, and what it changes holds only for the pieces after it in the
   // same run of sub pieces, never for the outer walk. A group opened inside the substitution is
   // scoped within that run (its saved cwd is the sub cwd), so its events do not end the run; the
   // next outer piece (the text after the substitution's closer among them) or outer group event does.
-  // The run keeps its own and-or list start, so a lone `&` inside it backgrounds only the run's list.
+  // The run keeps one and-or list per substitution level (`subLists`, keyed by nesting depth, a
+  // top-level backtick span counting as one more level), so a separator or a lone `&` inside a
+  // substitution acts on that substitution's own list only, never an enclosing one's or the outer
+  // walk's. A level's list ends when the walk reaches a piece or event at a shallower level.
   let subCur = null;
   let subVars = null;
-  let subListStart = null;
+  let subLists = null;
   const startSubRun = () => {
     if (subCur !== null) return;
     subCur = cur;
     subVars = new Map(vars);
-    subListStart = cur;
+    subLists = new Map();
   };
-  let listStart = cwds; // the cwds where the current and-or list began
+  const subListAt = (level) => {
+    for (const k of subLists.keys()) if (k > level) subLists.delete(k);
+    if (!subLists.has(level)) subLists.set(level, freshList(subCur));
+    return subLists.get(level);
+  };
   // A tail piece (the rest of a command after a substitution's closer) is visited on its own, so
   // whether a `cd` or an assignment in it runs (`x=$(…) cd /x`) or is an argument (`echo $(…) cd
   // /x`) is unknown: its cwd is added to the ones in effect (failing closed), and what it assigns
@@ -2003,43 +2076,52 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
   };
   for (const span of segmentSpans(outer)) {
     const before = cur;
+    const inBacktick = span.sub ? 1 : 0; // the backtick span's own level, which g.nesting omits
     for (const ev of groupEvents(span.text, g)) {
       if (ev.open ? ev.open.sub || span.sub : ev.close ? ev.close.inSubRun : ev.bg && (ev.sub || span.sub)) {
         startSubRun();
         if (ev.open) {
           ev.open.inSubRun = true;
+          ev.open.level = ev.open.nesting + inBacktick;
           ev.open.saved = subCur;
-          ev.open.savedList = subListStart;
-          subListStart = subCur;
+          ev.open.savedList = subListAt(ev.open.level);
+          subLists.set(ev.open.level, freshList(subCur));
         } else if (ev.close) {
-          const { saved } = ev.close;
+          const { saved, level } = ev.close;
           subCur = ev.close.kind === '(' ? saved : joinCwds(saved, subCur, overflow);
-          subListStart = ev.close.savedList;
-        } else subCur = subListStart;
+          subListAt(level);
+          subLists.set(level, closeGroup(ev.close, subCur));
+        } else subCur = background(subListAt(ev.nesting + inBacktick));
         continue;
       }
       if (ev.open) {
         ev.open.saved = cur;
-        ev.open.savedList = listStart;
-        listStart = cur;
+        ev.open.savedList = list;
+        list = freshList(cur);
       } else if (ev.close) {
         const { saved } = ev.close;
         cur = ev.close.kind === '(' ? saved : joinCwds(saved, cur, overflow);
-        listStart = ev.close.savedList;
-      } else if (ev.bg) cur = listStart;
+        list = closeGroup(ev.close, cur);
+      } else if (ev.bg) cur = background(list);
       else if (ev.sub || span.sub) {
         startSubRun();
+        subListAt(ev.nesting + inBacktick);
         subCur = visitPiece(ev, subCur, subVars);
         continue;
       } else cur = visitPiece(ev, cur, vars);
       subCur = null;
     }
     runBodies(span.end, before);
-    // `&&`, `||` and `|` continue the and-or list; `;`, a newline or the end start a new one.
-    if (outer[span.end] !== '&' && outer[span.end] !== '|') {
-      listStart = cur;
-      if (subCur !== null) subListStart = subCur;
-    }
+    // The separator ends a command of the innermost list open where it stands: a substitution's
+    // (by the nesting there, never by whether the sub run is active: an outer piece before the
+    // separator has ended the run) or the outer walk's.
+    const c = outer[span.end];
+    const op = c === '&' ? '&&' : c === '|' ? (outer[span.end + 1] === '|' ? '||' : '|') : ';';
+    const level = g.nesting + (span.endsInSub ? 1 : 0);
+    if (level > 0) {
+      startSubRun();
+      subCur = endCommand(subListAt(level), subCur, op);
+    } else cur = endCommand(list, cur, op);
   }
   runBodies(Infinity, cur);
 }

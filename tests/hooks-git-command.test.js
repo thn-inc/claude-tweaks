@@ -634,8 +634,10 @@ test('#4149: an absolute -C after a brace group is reported once', () => {
 for (const [label, cmd, expected] of [
   ['a push after an & inside a quoted "$( )" body', "cd /main && gh issue comment 1 --body \"$(cat <<'EOF'\nThe \"Q&A\" page\nEOF\n)\" && git push", [{ action: 'push', dir: path.resolve('/main') }]],
   ['a commit message with an & inside "$( )", then a push', "cd /main && git commit -m \"$(cat <<'EOF'\nUse \"R&D\" term\nEOF\n)\" && git push", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }]],
-  ['a push after a commit body line `1) a`, inside a subshell', "(cd /main && git commit -F - <<'EOF'\n1) a\nEOF\ngit push)", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }]],
-  ['a push after a commit body line `fix: a)`, inside a subshell', "(cd /main && git commit -F - <<'EOF'\nfix: a)\nEOF\ngit push)", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }]],
+  // #4303: the push follows the cd && commit list on a new line, so it runs in /wt too when the cd
+  // fails (bash 3.2 and 5 push from the starting directory then).
+  ['a push after a commit body line `1) a`, inside a subshell', "(cd /main && git commit -F - <<'EOF'\n1) a\nEOF\ngit push)", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }, { action: 'push', dir: '/wt' }]],
+  ['a push after a commit body line `fix: a)`, inside a subshell', "(cd /main && git commit -F - <<'EOF'\nfix: a)\nEOF\ngit push)", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }, { action: 'push', dir: '/wt' }]],
   ['a push inside a kept shell body, walked as its own chunk', "bash <<'EOF'\ncd /main && git push\nEOF", [{ action: 'push', dir: path.resolve('/main') }]],
 ]) {
   test(`#4149: gitTargets reads ${label} as bash runs it`, () => {
@@ -645,15 +647,17 @@ for (const [label, cmd, expected] of [
 
 // #4149: a ${ } honours its quotes (`'}'` closes nothing), `$'…'` inside "$( )" honours
 // `\'`, and a cd inside a backtick or $( ) runs in a subshell, so the push stays at the earlier cd.
-// Checked against bash 3.2 and 5 with a logging git stub.
-for (const [label, cmd] of [
+// Checked against bash 3.2 and 5 with a logging git stub. #4303: a push after `cd … && …;` also
+// runs in /wt when the cd fails (bash 3.2 and 5 push from the starting directory then).
+const pushAtMain = [{ action: 'push', dir: path.resolve('/main') }];
+for (const [label, cmd, expected = pushAtMain] of [
   ['a quoted } inside an unquoted ${ }', "x=; cd /main && echo ${x:-'}'} && git push"],
   ['an ANSI-C \\\' inside a quoted "$( )"', "cd /main && echo \"$(echo $'a\\'b')\" && git push; echo ')\"'"],
-  ['a cd inside a top-level backtick', 'cd /main && echo `true; cd /tmp`; git push'],
-  ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); git push'],
+  ['a cd inside a top-level backtick', 'cd /main && echo `true; cd /tmp`; git push', [...pushAtMain, { action: 'push', dir: '/wt' }]],
+  ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); git push', [...pushAtMain, { action: 'push', dir: '/wt' }]],
 ]) {
   test(`#4149: gitTargets keeps the push after ${label} at the earlier cd`, () => {
-    assert.deepStrictEqual(gitTargets(cmd, '/wt'), [{ action: 'push', dir: path.resolve('/main') }]);
+    assert.deepStrictEqual(gitTargets(cmd, '/wt'), expected);
   });
 }
 
@@ -685,8 +689,10 @@ test('#4149: mkdirTargets reads a mkdir after a & in a subshell inside a $( ) at
   assert.deepStrictEqual(mkdirTargets('cd /main && pid=$( (sleep 0 & echo $!) ) && mkdir d', '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
 });
 
+// #4303: the mkdir follows the cd && cat list on a new line, so it runs in /wt too when the cd fails
+// (bash 3.2 and 5 make ./d then, and /main/d when the cd succeeds).
 test('#4149: mkdirTargets skips a heredoc body when tracking group depth', () => {
-  assert.deepStrictEqual(mkdirTargets("(cd /main && cat <<'EOF'\n1) a\nEOF\nmkdir d)", '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
+  assert.deepStrictEqual(mkdirTargets("(cd /main && cat <<'EOF'\n1) a\nEOF\nmkdir d)", '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }, { action: 'mkdir', file: path.resolve('/wt/d') }]);
 });
 
 test('#4149: mkdirTargets reads a cd behind ( or {', () => {
