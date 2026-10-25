@@ -3433,11 +3433,11 @@ test('--baseline: a stale ct-verify-base-* scratch worktree from an earlier inte
   // verify.js names the path git's porcelain listing prints, which Git for Windows
   // spells with forward slashes — so the expected path comes from that listing.
   const porcelain = r.git('worktree', 'list', '--porcelain');
-  const staleTail = [path.basename(staleParent), 'wt'];
+  const staleSuffix = `/${path.basename(staleParent)}/wt`;
   const listedWt = porcelain.split('\n')
     .filter((line) => line.startsWith('worktree '))
     .map((line) => line.slice('worktree '.length))
-    .find((p) => p.split(/[\\/]/).slice(-2).join('/') === staleTail.join('/'));
+    .find((p) => p.replace(/\\/g, '/').endsWith(staleSuffix));
   assert.ok(listedWt, porcelain);
   const { stderr } = await runCli(['--cmd', 'tests=node -e "process.exit(0)"', '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}'], { cwd: r.repo });
   assert.ok(
