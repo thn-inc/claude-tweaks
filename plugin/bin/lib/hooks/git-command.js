@@ -257,9 +257,13 @@ function substituteVars(tokens, vars, singleQuoted) {
 // splits the command into shell segments, tokenizes each, and tracks `cd` to
 // keep the effective cwd in sync. `handler(t, effCwd, quoting)` is invoked for
 // every non-cd, non-empty segment with the cwd value in effect for it (string,
-// or null meaning UNKNOWN); `quoting` is `{ raw, singleQuoted, doubleQuoted, spanKinds }`,
-// the pre-substitution tokens, their per-token quote flags (#4015) and their
-// per-character span kinds (#4210, see tokenize). Also
+// or null meaning UNKNOWN); `quoting` is `{ raw, singleQuoted, doubleQuoted, spanKinds, nestAt }`,
+// the pre-substitution tokens, their per-token quote flags (#4015), their
+// per-character span kinds (#4210, see tokenize), and the nesting state at each
+// token's start (#4210, see advanceNesting). The nesting state carries across
+// segments, every segment included (cd and assignment ones too): splitSegments cuts
+// at a `|`/`;`/newline inside an inner quote of `"$( … )"`, and the nested context
+// must survive that cut. Also
 // tracks same-command literal `NAME=value` assignments (see
 // updateAssignment/substituteVars above) and substitutes them into every other
 // segment's tokens before `handler`/the `cd` branch sees them — one shared
@@ -268,8 +272,14 @@ function substituteVars(tokens, vars, singleQuoted) {
 function forEachCommandSegment(command, cwd, handler) {
   let effCwd = cwd || '.'; // string, or null meaning UNKNOWN
   const vars = new Map(); // name -> literal value, same-command only, no chaining
+  let nest = NOT_NESTED;
   for (const seg of splitSegments(command)) {
     const { tokens: rawT, singleQuoted, doubleQuoted, spanKinds } = tokenize(seg.trim());
+    const nestAt = rawT.map((tok, i) => {
+      const at = nest;
+      nest = advanceNesting(nest, tok, spanKinds[i], tok.length);
+      return at;
+    });
     if (!rawT.length) continue;
     if (updateAssignment(vars, rawT)) continue;
     const t = substituteVars(rawT, vars, singleQuoted);
@@ -288,7 +298,7 @@ function forEachCommandSegment(command, cwd, handler) {
       effCwd = resolveCd(effCwd, t[cdLead + 1]);
       continue;
     }
-    handler(t, effCwd, { raw: rawT, singleQuoted, doubleQuoted, spanKinds });
+    handler(t, effCwd, { raw: rawT, singleQuoted, doubleQuoted, spanKinds, nestAt });
   }
 }
 
@@ -954,8 +964,9 @@ function compoundBodyEnd(t) {
 // (gluedRedirectOpEnd: `foo>x`, `"hi">x`). The target is read from the
 // post-substitution token, so `>$WT/x` still resolves. A prefix that is one balanced
 // one-word group (`(ls)>out`, `$(date)>x`, `<(b)>out`) also qualifies; `((i>0))` does
-// not. The nesting state (advanceNesting) is carried across the segment's tokens, so a
-// `>` inside `"$( … )"` stays quoted even after a token break. Without
+// not. `quoting.nestAt[i]` is the nesting state (advanceNesting) at token i's start,
+// carried across tokens and segments by forEachCommandSegment, so a `>` inside
+// `"$( … )"` stays quoted even after a token or segment break. Without
 // `quoting.spanKinds` the scan is start-anchored on the substituted token only.
 //
 // A `[[ … ]]` or `(( … ))` segment holds a comparison, not a redirection
@@ -963,15 +974,12 @@ function compoundBodyEnd(t) {
 function redirectWriteTargets(t, effCwd, quoting) {
   const out = [];
   const kindsOf = quoting && quoting.spanKinds;
-  const start = compoundBodyEnd(t);
-  let nest = NOT_NESTED;
-  const advance = (j) => { if (kindsOf && j < t.length) nest = advanceNesting(nest, quoting.raw[j], kindsOf[j], kindsOf[j].length); };
-  for (let j = 0; j < start; j += 1) advance(j);
-  for (let i = start; i < t.length; i += 1) {
+  for (let i = compoundBodyEnd(t); i < t.length; i += 1) {
     let rawTarget = null;
     if (!kindsOf) rawTarget = matchRedirectOperator(t[i]);
     else {
       const raw = quoting.raw[i];
+      const nest = quoting.nestAt ? quoting.nestAt[i] : NOT_NESTED;
       let opEnd = leadingRedirectOpEnd(raw, kindsOf[i], nest);
       if (opEnd === null) opEnd = gluedRedirectOpEnd(raw, kindsOf[i], nest);
       if (opEnd !== null) {
@@ -984,11 +992,9 @@ function redirectWriteTargets(t, effCwd, quoting) {
         else if (t[i].endsWith(tail)) rawTarget = tail;
       }
     }
-    advance(i);
     if (rawTarget === null) continue;
     if (rawTarget === '') {
       i += 1; // consume the target token too — never re-scan it as its own operator
-      advance(i);
       rawTarget = t[i];
     }
     if (rawTarget === undefined || isFdDupTarget(rawTarget) || rawTarget.startsWith('(')) continue;

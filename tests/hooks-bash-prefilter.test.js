@@ -161,6 +161,7 @@ test('#4210 F1 F3: hasFileRedirection skips a nested or quoted leading `>`, and 
   for (const command of [
     'echo "$(jq -r ".a>1" f.json)"', 'echo "$(echo "a>b")"', 'echo "$(cmd "x y>z")"', 'echo "${x:-"a>b"}"',
     'echo ">x"', 'gh issue comment 1 --body "> quoted reply"', 'V=">x"; echo $V',
+    "git commit -m \"$(cat <<'EOF'\nfix: treat \"a | b>c\" as literal\nEOF\n)\"", 'msg="$(git log -1 --format="%s | %an>")"',
   ]) {
     assert.strictEqual(hasFileRedirection(command), false, command);
   }

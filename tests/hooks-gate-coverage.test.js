@@ -438,9 +438,27 @@ test('#4210 F1: a `>` inside a nested "$( … )", "${ … }" or backtick context
   }
 });
 
+// #4210 F1 residual: splitSegments cuts at a `|`, `;`, `&&` or newline inside an inner
+// quote of "$( … )", so the nesting state must carry across segments, not reset.
+test('#4210 F1: a nested "$( … )" stays nested across a `|`, `;`, `&&` or newline segment break', () => {
+  for (const command of [
+    "git commit -m \"$(cat <<'EOF'\nfix: treat \"a | b>c\" as literal\nEOF\n)\"",
+    "git commit -m \"$(cat <<'EOF'\nfix: treat \"a; b>c\" as literal\nEOF\n)\"",
+    "gh pr create --body \"$(cat <<'EOF'\n- quote \"x\nand y>z\"\nEOF\n)\"",
+    "gh pr create --body \"$(cat <<'EOF'\n- the 12\" screen\n- x>y works\nEOF\n)\"",
+    'echo "$(jq -r ".a | .b > 1" f.json)"', 'echo "$(jq -r ".items | length>0" f.json)"',
+    'echo "$(jq -r ".[] | select(.n > 1) | .name" f.json)"',
+    'msg="$(git log -1 --format="%s | %an>")"', 'echo "$(echo "a;b>c")"', 'echo "$(grep -c "a && b>c" f)"',
+    'echo "${x:-"a | b>c"}"', 'echo "$(awk -F"|" "\\$2>5" f)"',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
 test('#4210 F1: a closed "$( … )" or "${ … }" still lets a later redirect resolve', () => {
   for (const [command, file] of [
     ['"$(date)">x', 'x'], ['echo "$(date)" foo>x', 'x'], ['echo "${x:-a}">y', 'y'], ['echo "\\$(" foo>x', 'x'],
+    ['echo "$(jq ".a | .b" f)" > out.js', 'out.js'], ['echo "$(a | b)" > out.js', 'out.js'], ['echo "$(a)"; echo y>z', 'z'],
   ]) {
     assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
   }
