@@ -29,3 +29,4 @@
 | 25 | build | SDD ruling — Final review armed-merge gap: ratify or reverse at the Review Console (staged/sdd-ruling-10.md) | open | — |
 | 26 | build | SDD ruling — final fix wave concern 1: ratify or reverse at the Review Console (staged/sdd-ruling-11.md) | open | — |
 | 27 | build | SDD ruling — final fix wave concern 2: ratify or reverse at the Review Console (staged/sdd-ruling-12.md) | open | — |
+| 28 | build/skill | post-merge-workflow-live-probe extends to forge semantics: a closing-link probe uses a throwaway PR + issue, edits the body and re-reads closingIssuesReferences per variant, then closes the PR, deletes the branch, and closes the issue not-planned | open | — |
