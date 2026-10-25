@@ -72,6 +72,9 @@ function parseArgs(argv) {
 // The read-modify-write runs under console-resolve.js --set-item's lock (#4170), so an ack and a
 // rewrite of the same console.json never interleave and drop one another's field.
 function acknowledge(consolePath, at, { readFile, writeFile }) {
+  // withLock creates a missing lock parent, so a console whose directory moved under a concurrent
+  // archival must be refused before the lock, or the ack would recreate an empty directory.
+  if (!fs.existsSync(path.dirname(consolePath))) return { status: 'failed', message: 'console directory no longer exists' };
   return withLock(path.join(path.dirname(consolePath), CONSOLE_LOCK), () => {
     let parsed;
     try { parsed = JSON.parse(readFile(consolePath)); } catch { return { status: 'unparseable' }; }

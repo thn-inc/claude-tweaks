@@ -690,6 +690,16 @@ test('--set-item on an item already keep-staged says so, logs nothing, exits 0 (
   assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), '');
 });
 
+test('--set-item whose decisions.md entry cannot be written exits 3 naming the landed rewrite (#4170)', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'leftover-1.md', section: 'Queue writes', resolution: 'apply', reason: 'r' }] })}\n` });
+  fs.rmSync(path.join(fx.runDir, 'decisions.md'));
+  fs.mkdirSync(path.join(fx.runDir, 'decisions.md'));
+  const { d, err } = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_ITEM(fx.runDir), d), 3);
+  assert.match(err(), /^console-resolve\.js: leftover-1\.md rewritten apply → keep-staged in .*console\.json, but the decisions\.md entry could not be written \(.+\)$/m);
+  assert.strictEqual(readConsole(fx.runDir).items[0].resolution, 'keep-staged');
+});
+
 test('--set-item refusals exit 5 and write nothing (#4170)', async () => {
   const none = mainCheckoutWithRun();
   const a = baseDeps(none, []);

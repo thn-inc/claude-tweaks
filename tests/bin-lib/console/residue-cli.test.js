@@ -243,6 +243,21 @@ test('--ack exits 3 naming the file when the write throws, and leaves console.js
   assert.strictEqual(fs.readFileSync(f.consolePath, 'utf8'), before);
 });
 
+test('--ack of a console whose directory moved after the scan fails without recreating the directory (#4170)', () => {
+  const f = fixture();
+  const spec2 = path.join(f.runDir, 'spec-2');
+  fs.mkdirSync(path.join(spec2, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(spec2, 'staged', 'wrap-up-docs-2.md'), 'x');
+  fs.writeFileSync(path.join(spec2, 'console.json'), JSON.stringify({ items: [{ id: 'wrap-up-docs-2.md', section: 'Pending review', resolution: 'pending', reason: 'r' }] }));
+  const h = harness(f.main);
+  // The first console's write runs after the scan; archival then moves the second console's directory.
+  h.deps.writeFile = (p, data) => { fs.writeFileSync(p, data); fs.rmSync(spec2, { recursive: true }); };
+  assert.strictEqual(run(['--ack', '--run', f.runDir], h.deps), 3);
+  assert.ok(h.err().includes('console-residue.js: could not write') && h.err().includes('console directory no longer exists'), h.err());
+  assert.ok(!fs.existsSync(spec2), 'acking a vanished console recreated its directory');
+  assert.match(h.out(), /marked 1 console\(s\) reviewed for .*\(1 could not be written\)/);
+});
+
 test('--ack-all keeps going past a failed write, exits 3, and counts the failure', () => {
   const f = fixture();
   const second = path.join(f.archive, '2026-10-15T100000-spec-1');
