@@ -449,6 +449,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `/routine` | `/claude-tweaks:routine create release` instantiates `skills/release/routine-template.yml` (#2258) — the scheduled unattended form of `--train`; the template is a thin wrapper and adds no refusal or gate logic of its own. |
 | `/review` | Step 3 runs `/claude-tweaks:review base:{base}` (the last `v*` tag, or the root commit when none exists) — the whole-branch review before any bump (stance 8, `[IL-97]`); a confirmed critical/high finding marks the run `review: blocking`. Under pr-first, Step 5 runs it again as a delta review, `base:{reviewed-tip}`, when `origin/{branch}` moved past the tip Step 3 reviewed: a blocking delta verdict holds the release, and a move past the `release-tip-moves` bound holds it with no review (#4041). |
 | `bin/release-preflight.js` | Step 1's fact pack (#2255): engine, last tag, unreleased commits, proposed version, release PR, CI on the tip, human-edited release PR, hook presence — read from `{run-dir}/release-preflight.json`. |
+| `bin/release-tip-check.js` | Step 5's reviewed-tip comparison (#4152): one JSON verdict (`merge`/`delta`/`held`/`failed`) `execute.md` routes on. |
 | `bin/release-local.js` | Step 5's local-merge engine (#2254); its exit codes 0/1/3/4/5 are the skill's verdicts. |
 | `_shared/staged-patch.md` | Step 3's review findings stage through it, never a bespoke mechanism. |
 | `_shared/auto-decision-log.md` | Every Step 5–7 action writes one entry under `## /release`. |
