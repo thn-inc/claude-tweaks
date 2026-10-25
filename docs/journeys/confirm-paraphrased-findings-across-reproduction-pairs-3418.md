@@ -9,7 +9,7 @@ files:
 **Persona:** a developer who runs `/claude-tweaks:review`, usually inside `/claude-tweaks:flow`, at `medium` effort or above, and reads the review summary to decide what to fix before merge.
 **Goal:** when both agents of a reproduction pair find the same defect but word it differently, or cite it at nearby lines such as a definition and its use, it lands as one `confirmed` finding. It should not arrive as two `unconfirmed` entries the reviewer has to confirm by reading the source.
 **Entry point:** `/claude-tweaks:review #{n}`, or the `review` phase of `/claude-tweaks:flow #{n}`, on a diff large enough that each lens runs as a reproduction pair.
-**Success state:** the summary's `### Code Review Findings (confirmed)` table lists the defect once. The Review Console's Low-confidence section does not repeat it, and no direct-verification override was needed to confirm it.
+**Success state:** the summary's `### Code Review Findings (confirmed)` table lists the defect once. The Review Console's Low-confidence section does not repeat it, and no Step 3.7 tiebreak was needed to confirm it.
 
 ## Steps
 
@@ -28,7 +28,7 @@ files:
 ### 2. Read the confirmed findings — the review summary
 - **URL:** the review summary's `### Code Review Findings (confirmed)` table, then the Review Console's Low-confidence section
 - **Action:** look for the defect both agents reported, worded in two different ways.
-- **Should feel:** confident. The finding is confirmed because the two agents agreed. Nobody had to spend source reads elevating it through the direct-verification override.
+- **Should feel:** confident. The finding is confirmed because the two agents agreed. Nobody had to spend a tiebreak dispatch elevating it.
 - **Should understand:**
   - Within ±5 lines on the same path, a pair is matched on one named substance threshold (`SUBSTANCE_SIMILARITY_MIN`, 0.2) of token similarity, so paraphrases of one defect pair. Every ±2 pairing is settled before the 3-5 line band, and a pair with no text pairs only within ±2.
   - Two different defects reported at the same location still stay separate: each `unconfirmed` entry carries a `nearLocation` pointer at the other.

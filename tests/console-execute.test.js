@@ -298,6 +298,23 @@ test('decideConsoleExecute: isRulingRow forwarded onto the resolved item when tr
   assert.strictEqual('isRulingRow' in withoutRow.items[0], false);
 });
 
+test('decideConsoleExecute: findingItem forwarded onto the resolved item when a non-empty string, omitted otherwise (#3949)', () => {
+  const withRow = decideConsoleExecute(
+    mergeRowConsoleJson({ items: [{ id: 'staged-1', kind: 'staged', summary: 'finding', findingItem: 'tiebreak:3f2a9c1b7d04' }] }),
+    RESOLVED_COMMENTS,
+    Date.now(),
+  );
+  assert.strictEqual(withRow.items[0].findingItem, 'tiebreak:3f2a9c1b7d04');
+  for (const findingItem of [undefined, '', true]) {
+    const withoutRow = decideConsoleExecute(
+      mergeRowConsoleJson({ items: [{ id: 'staged-1', kind: 'staged', summary: 'x', findingItem }] }),
+      RESOLVED_COMMENTS,
+      Date.now(),
+    );
+    assert.strictEqual('findingItem' in withoutRow.items[0], false, String(findingItem));
+  }
+});
+
 test('decideConsoleExecute: no isMergeRow item at all -> mergeGrantGap null regardless of ctx', () => {
   const consoleJson = { resolved: false, commentIds: ['IC_1'], prNumber: 42, items: [] };
   const result = decideConsoleExecute(consoleJson, RESOLVED_COMMENTS, Date.now(), {
@@ -876,4 +893,20 @@ test('reconcile(): local-merge skips the console check under the same combined s
   const r = await reconcile({ cwd: dir });
   assert.strictEqual(r.console, null);
   assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
+});
+
+test('AC1.1 AC2.1: loading reconcile/index.js in a fresh process does not load wrap-up/pack.js (#4060)', () => {
+  const code = "require(process.argv[1]); console.log(JSON.stringify(Object.keys(require.cache).filter((k) => /[\\\\/]wrap-up[\\\\/]pack\\.js$/.test(k))));";
+  const out = execFileSync(process.execPath, ['-e', code, path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js')], { encoding: 'utf8' });
+  assert.deepStrictEqual(JSON.parse(out.trim()), []);
+  // Positive control: the same filter does find pack.js once console/resolve.js is loaded, so the empty result above is not a vacuous filter.
+  const control = execFileSync(process.execPath, ['-e', code, path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'console', 'resolve.js')], { encoding: 'utf8' });
+  assert.strictEqual(JSON.parse(control.trim()).length, 1);
+});
+
+test('sdd-ruling leaf: resolve.js re-exports the same objects (#4060)', () => {
+  const leaf = require('../plugin/bin/lib/console/sdd-ruling');
+  const resolve = require('../plugin/bin/lib/console/resolve');
+  assert.strictEqual(resolve.SDD_RULING_REASONS, leaf.SDD_RULING_REASONS);
+  assert.strictEqual(resolve.sddRulingDeferralReason, leaf.sddRulingDeferralReason);
 });

@@ -27,7 +27,7 @@ files:
 - **Should feel:** unchanged from before. The earlier passes do the same work, and nothing is settled by the agent that reported it.
 - **Should understand:**
   - A low-tier finding no longer counts as confirmed because the reviewer re-read it.
-  - The Direct-verification override still exists. It writes a verdict line only when it confirms or drops a finding, and anything it can't settle goes on to Step 3.7.
+  - The reviewer no longer settles an `unconfirmed` finding by reading the source itself (a path retired in #3950). Every one goes on to Step 3.7 and gets an independent verdict.
 - **Red flags:**
   - an unconfirmed finding is routed to a fix, or to the console, before Step 3.7 has run
   - one finding ends up with two verdict lines
@@ -53,12 +53,12 @@ files:
 - **Action:** the developer reads the counts for confirmed, dropped, digest and console.
   - Confirmed findings appear in Step 3 Routing at the resolver's severity.
   - Can't-tell findings at `low`/`info` go to the digest with `Defer-reason: tiebreak-cant-tell`.
-  - In a pipeline run, can't-tell findings at `medium` and above stay on the console through their earlier STAGED line.
+  - In a pipeline run, can't-tell findings at `medium` and above appear on the console as their own rows, with the tiebreak's severity and recommendation.
   - Standalone, they are listed in the closing output with the tiebreak's recommendation, and nothing is staged.
 - **Should feel:** short. The console holds only what an independent reader could not settle, not every finding one agent happened to report.
 - **Should understand:**
-  - A `confirmed` verdict replaces the console item when the earlier STAGED line carries `lens "{lens}"` and `{path}:{line}`.
-  - A contested finding's `staged/review-contested-{N}.md` still shows until the console sub-issue lands.
+  - A verdict replaces the console item when the earlier STAGED line carries `lens "{lens}"` and `{path}:{line}`.
+  - A staged review file that line names (`staged/review-contested-{N}.md`, for example) takes the verdict's outcome too, and does not linger on the console.
   - The run cannot archive while a listed finding lacks a verdict line (`clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`).
   - A finding has no verdict when its `resolve-tiebreak` call exits non-zero, or when `log-decision.js` fails twice to write its line. Standalone, it is listed as `no verdict (resolve-tiebreak exited {exit})`. In a pipeline run, the summary names it and the archive gate refuses the run.
 - **Red flags:**
@@ -70,6 +70,7 @@ files:
 - Created during the build of #3947, the second step of the unconfirmed-findings tiebreak project. The first step, #3945, built the resolver, the findings artifact and the archive coverage check.
 - Related journeys:
   - `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`: the archive side.
+  - `settle-every-review-finding-at-the-console-3949.md`: what the Review Console then does with each can't-tell finding.
   - `keep-a-second-reader-in-a-dispatched-review-3078.md`: the dispatched-reviewer nesting this step reuses.
   - `drop-a-refuted-code-is-missing-claim-3329.md`: how a one-agent `unconfirmed` finding arises, and how a refuted absence claim is dropped before it reaches this step.
   - `trust-a-defect-several-review-lenses-flagged-3604.md`: the `medium`-tier pass that confirms some `unconfirmed` findings before this step.

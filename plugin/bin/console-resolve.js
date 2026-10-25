@@ -215,13 +215,16 @@ async function run(argv, deps = {}) {
     ...(deps.resolverDeps || {}),
   };
   const result = resolveAll({ runDir, policy: o.policy, deps: resolverDeps });
-  const { snapshot, table, ...publicResult } = result;
+  // The proposal text stays in-process (result.filings); console.json and --json carry only the summary.
+  const { snapshot, table, filings, ...rest } = result;
+  const filingSummaries = filings.map(({ item, fingerprint, title }) => ({ item, fingerprint, title }));
+  const publicResult = { ...rest, filings: filingSummaries };
   const at = new Date(now()).toISOString();
   if (!o.dryRun) {
     const header = formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text: `Console auto-resolved ${result.items.length} item(s) at unattended (console-resolve.js)`, reversibility: 'per item' });
     // Reversibility uses _shared/auto-decision-log.md's closed vocabulary
     // (high | med | low | n/a) — nothing else is a legal value on a schema line.
-    const nothingToRevert = new Set(['stale', 'keep-staged', 'pending', 'refused']);
+    const nothingToRevert = new Set(['stale', 'keep-staged', 'pending', 'refused', 'dismissed', 'dropped']);
     const reversibilityFor = (resolution) => {
       if (nothingToRevert.has(resolution)) return 'n/a';
       return resolution === 'apply' ? 'med' : 'high';
@@ -235,7 +238,7 @@ async function run(argv, deps = {}) {
       reversibility: reversibilityFor(it.resolution),
     }));
     appendEntry({ runDir, section: '/wrap-up', entry: [header, ...lines].join('\n') });
-    writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge }, null, 2)}\n`);
+    writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge, droppedByTiebreak: result.droppedByTiebreak, filings: filingSummaries }, null, 2)}\n`);
   }
   // #3370: items this console deliberately left pending/keep-staged must survive
   // the run's own final stop. Read-only: nothing here applies or resolves them.

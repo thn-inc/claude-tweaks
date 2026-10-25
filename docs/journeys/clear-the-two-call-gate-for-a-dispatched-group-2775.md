@@ -62,10 +62,10 @@ files:
 
 ### 5. Dispatching session reads the first call's runner stamp before every call-2 dispatch
 - **URL:** `plugin/skills/dispatch/two-call-gate.md` §2 "Stamp read, a note never a gate"; `plugin/skills/dispatch/sequential-execution.md` "Artifact check, first call only"; `plugin/bin/lib/dispatch/first-call-artifact-check.js`'s `checkFirstCallStamp`; the first-call CRITICAL paragraph in `plugin/skills/dispatch/task-prompt.md`
-- **Action:** **First call:** runs its test phase through `/claude-tweaks:test`. The artifact it confirms before reporting is the runner's pass stamp verifying HEAD (`verify.js --stamp-status` → `verifiedHead: true`) plus its `report.json`. A raw `npm test` log no longer counts. If the stamp still does not verify HEAD after one re-run, it reports `STATUS: DONE_WITH_CONCERNS`, naming the stamp state. **Dispatching session:** whenever call 2 is about to be dispatched, on a `{ ok: true }` artifact check or on the step-4 repair branch, it runs `checkFirstCallStamp({ runDir })`. That call runs `verify.js --stamp-status` in the worktree recorded in `run-state.json` and returns `{ verified, reason, status }`.
+- **Action:** **First call:** runs its test phase through `/claude-tweaks:test`. The artifact it confirms before reporting is the runner's pass stamp verifying HEAD (`verify.js --stamp-status` → `verifiedHead: true`) plus its `report.json`, or a complete composed per-suite verdict (#4006). A raw `npm test` log no longer counts. If `--stamp-status` still does not report `verifiedHead: true` after one re-run, it reports `STATUS: DONE_WITH_CONCERNS`, naming the stamp state. **Dispatching session:** whenever call 2 is about to be dispatched, on a `{ ok: true }` artifact check or on the step-4 repair branch, it runs `checkFirstCallStamp({ runDir })`. That call runs `verify.js --stamp-status` in the worktree recorded in `run-state.json` and returns `{ verified, reason, status }`.
 - **Should feel:** Silent when the first call did it right, and a single audit line when it did not. The stamp never costs a good build its second call.
 - **Should understand:**
-  - `verified: true` logs nothing and changes nothing (AC2).
+  - `verified: true` logs nothing and changes nothing (AC2). A complete composed per-suite verdict (`verifiedHead: true` with `suiteComposed.complete: true`, from chunked `--stamp-suite` runs) also reads `verified: true`, with no single stamp or `report.json` behind it (#4006).
   - Any other reason logs one `SKIP … — Artifact check stamp read (degraded): …` decisions line, and call 2 is still dispatched unchanged. The reasons are `stamp-absent`, `stamp-not-head`, `report-missing`, `stamp-read-failed` and `worktree-unrecorded`. Most often the cause is a test phase that bypassed the runner.
   - It is a note rather than a gate. Call 2's review Step 1.5 re-verifies an unstamped HEAD through the runner, so blocking would discard a build that will be checked anyway. Repairing here would only move the suite's cost.
   - The read must run with the recorded worktree as cwd, because the stamp lives under that worktree's git dir and HEAD is read live. Running it from the dispatching session's own checkout would read the wrong tree.
@@ -74,6 +74,7 @@ files:
   - The stamp read skipped on the repair branch.
   - A first call looping on `/claude-tweaks:test` because a dirty tree never verifies, instead of reporting `DONE_WITH_CONCERNS` after one re-run.
   - A first call reporting `build-test-ok` on a raw `npm test` log alone.
+  - A `stamp-absent` note logged for a first call whose chunked suite composed complete at HEAD.
 
 ## Origin
 - Created during #2775's build (multi-spec run 2026-10-16T172750-spec-2775-2733-2677): materialized-header check 5 in the two-call gate, and `claim-targets.js --run` writing the canonical Step 2.8 claim-log line.
@@ -82,4 +83,5 @@ files:
 - Updated during build of #3350: step 3. Check 4 now runs on a run pinned `pr-first`; an unpinned run emits a `degraded —` line that is logged as a `SKIP`.
 - Updated during build of #3577: step 3. Check 6 confirms the canonical Step 2.8 claim line per member from `decisions.md`, so the dispatching session no longer relies on the first call's own `verify-run-bookends.js` self-check.
 - Updated during build of #3661: step 5. The dispatching session reads the first call's `verify.js` pass stamp (`checkFirstCallStamp`) before every call-2 dispatch, as a logged note rather than a gate. The first-call template's artifact is now the runner stamp plus `report.json`, never a raw `npm test` log.
+- Updated during build of #4006: step 5. Bare `verify.js --stamp-status` discovers `.claude-tweaks/verify-scope.json`, and `checkFirstCallStamp` accepts a complete composed per-suite verdict as verified, so a chunked first call no longer logs a degraded stamp note.
 - Related: #2837 (introduced the first-call artifact check), #2861 (claim-log line parser), #2391 (worktree-mirror rung of the record-resolution ladder).

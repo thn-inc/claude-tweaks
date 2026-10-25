@@ -37,6 +37,18 @@ A missing class is a `critical` finding (persona column `Fail-Closed Guard Check
 
 Why: #3877's tidy `## Arm ready PR` guard pinned only that its rule text existed. Review then found an `every` quantifier vacuously true on an empty set and failed reads with no stated outcome, which cost a fix wave and six added pins.
 
+## Implicit-discovery trust check (deterministic, runs before persona dispatch)
+
+Before dispatching the personas below, scan the sub-issue's composed Acceptance Criteria and Deliverables for a tool that discovers or implicitly reads a file at a conventional path, with no caller naming it, when that file's contents decide a verify, skip, or trust verdict. Discovery is a trust decision even when it mirrors an explicit flag: a caller who passes a path chose it, but a discovered file is whatever sits at that path, including a committed symlink. When one fires, the record must state the outcome for each of three cases, or list each missing one as an `## Open Questions` row:
+
+- **Missing file**: say whether absence is silent or reported.
+- **Symlink resolving outside the checkout**: say that it is refused, never read.
+- **Dangling symlink**: say whether it reads as absent or as an error.
+
+A missing case is a `critical` finding (persona column `Implicit-Discovery Trust Check`) and flows through the write-back procedure like a persona finding. Its resolution adds a branch to the discovery's own test list, so it is decision-worthy: stage-or-ask per write-back step 5. With no implicit discovery of a verdict-deciding file, the check is a no-op.
+
+Why: #4006's spec told `verify.js --stamp-status` to use a discovered `.claude-tweaks/verify-scope.json` "exactly as an explicit `--scope` would", so a committed symlink to an out-of-tree file could widen `generated` under a verified verdict. The path-guard detection above did not fire, because the AC prescribed no containment test, and only review lens 3b caught it.
+
 ## Parallel dispatch
 
 **Persona selection by tier** (`ceremony:*` label, stamped on the sub-issue in Step 3 — rationale

@@ -115,7 +115,7 @@ const USAGE = {
   'resolve-ledger': 'resolve-ledger --run <dir>',
   'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]',
   'archive-run': 'archive-run [--run <dir>]',
-  'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>]',
+  'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>] [--filing-failed <id,id,...>]',
   'check-resume-freshness': 'check-resume-freshness [--run <dir>]',
   'check-staged-inventory': 'check-staged-inventory [--run <dir>]',
   'check-session-residue': 'check-session-residue [--run <dir>]',
@@ -154,14 +154,14 @@ const KNOWN_FLAGS = {
   // it from `KNOWN_FLAGS` and `USAGE` here. Until then a session can still hold pre-(1) prose in context
   // while the running build's hooks.js is newer, and the unknown-flag guard would refuse that call.
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
-  'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed'],
+  'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed', '--filing-failed'],
   'check-pass-reentry': ['--run', '--online'],
 };
 
 // Declared flags that consume the following token as a value — the
 // unknown-flag scan below must skip that token rather than risk misreading
 // it as a flag itself (an argument value could itself start with "--").
-const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--ledger']);
+const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger']);
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
 // null when every `--*` token is declared (or there are none). Scans the
@@ -1194,7 +1194,7 @@ async function main(argv) {
   }
   if (cmd === 'archive-run') {
     const {
-      archiveRunDir, readConsoleState, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
+      archiveRunDir, readConsoleState, consoleResidue, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
       TIEBREAK_COVERAGE_HINT,
     } = require('./lib/reconcile/archive-merged');
     const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
@@ -1238,6 +1238,23 @@ async function main(argv) {
     const consoleState = readConsoleState(runDir);
     if (consoleState === 'unresolved') {
       process.stdout.write('claude-tweaks: archival refused — console-unresolved (console.json rendered but not resolved; answer or resolve the console first)\n');
+      return 0;
+    }
+    // #3949: a resolved console can still hold an item no human has reviewed.
+    if (consoleState === 'residue') {
+      // --ack skips an unparseable console, so an unreadable one's remedy is repairing the file.
+      const { items, unreadable } = consoleResidue(runDir);
+      const what = [];
+      const remedies = [];
+      if (items > 0) {
+        what.push(`${items} unresolved item(s) no human has reviewed`);
+        remedies.push(`review them, then run console-residue.js --ack --run "${runDir}"`);
+      }
+      if (unreadable.length > 0) {
+        what.push(`${unreadable.length} console.json file(s) could not be read`);
+        remedies.push(`repair or remove ${unreadable.join(', ')}, then re-run archive-run`);
+      }
+      process.stdout.write(`claude-tweaks: archival refused — console-residue (${what.join(' and ')}; ${remedies.join('; ')})\n`);
       return 0;
     }
     if (consoleState === 'none' && consoleReplacedByAutoMerge(runDir)) {
@@ -1337,6 +1354,7 @@ async function main(argv) {
     const approve = splitIds(flagVal(argv.slice(3), '--approve'));
     const decline = splitIds(flagVal(argv.slice(3), '--decline'));
     const reverseFailed = splitIds(flagVal(argv.slice(3), '--reverse-failed'));
+    const filingFailed = splitIds(flagVal(argv.slice(3), '--filing-failed'));
 
     const mainRoot = wtDetect.mainCheckoutRoot(process.cwd()) || process.cwd();
     const execFileAsync = promisify(execFile);
@@ -1352,7 +1370,9 @@ async function main(argv) {
       },
     };
     const { resolveConsoleExecution, renderExecutedLines } = require('./lib/reconcile/console-execute');
-    const result = await resolveConsoleExecution(runDir, { approve, decline, reverseFailed }, deps);
+    const result = await resolveConsoleExecution(runDir, {
+      approve, decline, reverseFailed, filingFailed,
+    }, deps);
     if (result.status === 'executed') {
       process.stdout.write(renderExecutedLines(result, path.basename(runDir)));
       return 0;
@@ -1367,6 +1387,10 @@ async function main(argv) {
     }
     if (result.reason === 'not-ruling-items') {
       process.stdout.write(`claude-tweaks: --reverse-failed id(s) ${result.ids.join(', ')} are not sdd-ruling items (no isRulingRow flag), console not resolved\n`);
+      return 1;
+    }
+    if (result.reason === 'not-finding-items') {
+      process.stdout.write(`claude-tweaks: --filing-failed id(s) ${result.ids.join(', ')} are not finding rows (no findingItem), console not resolved\n`);
       return 1;
     }
     process.stdout.write(`claude-tweaks: console resolution failed for ${path.basename(runDir)} — ${result.reason}${result.error ? `: ${result.error}` : ''}\n`);

@@ -8,7 +8,8 @@
 // staged/<id>.json alongside it — echoes the written path(s) to stdout, one
 // per line); 2 on a malformed invocation (missing/unsafe args, unreadable
 // --file/--json, --json content that isn't a JSON array, a rejected --ledger,
-// or --allocate with an --id that isn't a "{kind}-{n}" shape); 3 when the run dir is missing or
+// --allocate with an --id that isn't a "{kind}-{n}" shape, or an --id that is
+// unmapped — see #3946 below); 3 when the run dir is missing or
 // not anchored under the main checkout (a worktree-local shadow —
 // _shared/pipeline-run-dir.md's Anchoring section, [IL-127]), or a staged
 // file is unwritable. The printed path is the run dir's realpath, which can
@@ -32,11 +33,14 @@
 // stdout line is still the written path), but should not assume the id it
 // passed is the id that landed. See bin/lib/stage-item/write.js's
 // writeStagedItem for the full contract.
-// #3370: when the id that landed matches no Review Console SECTION_MAP prefix
-// (console/resolve.js), a warning naming the nearest canonical prefixes goes to
-// stderr after the write. It never changes the exit code; a canonical id prints
-// nothing, and neither does an exempt one (#3488: resolve.js's STAGING_EXEMPTIONS —
-// producers whose runs never reach that console).
+// #3946 (was a #3370 warning): an --id that matches no Review Console SECTION_MAP
+// prefix (console/resolve.js) and no STAGING_EXEMPTIONS entry (#3488: producers
+// whose runs never reach that console) is refused — exit 2, stderr
+// `stage-item.js: refused (unmapped-prefix): …` naming the nearest canonical
+// prefixes — before anything is read, staged, appended to a ledger or logged.
+// The check classifies the id plus the --file extension, never the file's content,
+// and runs after every usage check, so it covers the plain and --ledger paths alike.
+// A mapped or exempt id prints nothing.
 // The staged/ half of #637 ("no CLI writes decisions.md or staged/ items");
 // bin/log-decision.js is the decisions.md half, shipped under #686.
 // `--ledger <path>` (#3510) turns one call into the whole carry-forward: read the
@@ -114,14 +118,16 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
 };
 
-// #3370: warn (never fail) when the id that landed matches no SECTION_MAP
-// prefix — a wrap-up Review Console resolving this run would park it in
-// Pending review. Not every staging producer's run reaches that console.
-function warnUnmappedPrefix(landedId, sourceFile, deps) {
-  if (stagingExemption(landedId + path.extname(sourceFile)) !== null) return;
-  if (classifyStagedItem(landedId + path.extname(sourceFile)).reason === 'unmapped-prefix') {
-    deps.stderr(`stage-item.js: warning: --id ${landedId} matches no Review Console SECTION_MAP prefix — if a wrap-up Review Console resolves this run, it routes this item to Pending review (unmapped-prefix), never auto-resolved. Nearest canonical prefixes: ${nearestCanonicalPrefixes(landedId).join(', ')}\n`);
-  }
+// #3946: an id that matches neither a SECTION_MAP row nor a STAGING_EXEMPTIONS
+// entry would reach no final Review Console outcome (it parks in Pending
+// review, never auto-resolved), so it is refused before anything is read,
+// staged, appended or logged. Classified by id and extension alone — no file
+// content. Returns the stderr message, or null when mapped or exempt.
+function unmappedPrefixRefusal(id, sourceFile) {
+  const name = id + path.extname(sourceFile);
+  if (stagingExemption(name) !== null) return null;
+  if (classifyStagedItem(name).reason !== 'unmapped-prefix') return null;
+  return `stage-item.js: refused (unmapped-prefix): --id ${id} matches no Review Console SECTION_MAP prefix and no STAGING_EXEMPTIONS entry — nothing written. Nearest canonical prefixes: ${nearestCanonicalPrefixes(id).join(', ')}\n`;
 }
 
 // #3510: the --ledger branch of run(), entered once the run dir has resolved.
@@ -158,7 +164,6 @@ function runLedger(o, { id, content, target }, deps) {
     deps.stdout(`stage-item.js: --id ${result.requestedId} already exists in staged/ — wrote ${result.id} instead\n`);
   }
   deps.stdout(`stage-item.js: appended ledger row #${result.number} to ${o.ledger}\n`);
-  warnUnmappedPrefix(result.id, o.file, deps);
   return 0;
 }
 
@@ -186,6 +191,9 @@ function run(argv, deps = realDeps) {
     const stray = [['--item', o.item], ['--label', o.label], ['--phase', o.phase], ['--section', o.section]].find(([, v]) => v !== undefined);
     if (stray) return usageError(`${stray[0]} requires --ledger`);
   }
+
+  const refusal = unmappedPrefixRefusal(id, o.file);
+  if (refusal) { deps.stderr(refusal); return 2; }
 
   let content;
   try { content = deps.readFile(o.file); } catch (err) {
@@ -247,8 +255,6 @@ function run(argv, deps = realDeps) {
     }
     deps.stdout(sidecar.file + '\n');
   }
-
-  warnUnmappedPrefix(result.id, o.file, deps);
 
   return 0;
 }
