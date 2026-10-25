@@ -403,8 +403,10 @@ test('integration-branch policy selects the branch; --branch overrides it', () =
   assert.strictEqual(run(['--dry-run'], c.deps), 1);
 });
 
+// The win32 shape: a platform whose fs.constants has no O_NOFOLLOW.
+const noFollow = { constants: { ...fs.constants, O_NOFOLLOW: undefined } };
+
 test('#4282 AC3.1 AC3.2: writeInsideRoot refuses a symlinked leaf when O_NOFOLLOW is absent, and still writes a plain file', () => {
-  const noFollow = { constants: { ...fs.constants, O_NOFOLLOW: undefined } };
   const root = mkTmpDir('release-local-root-');
   const outside = mkTmpDir('release-local-outside-');
   fs.writeFileSync(path.join(outside, 'victim.json'), '{"version": "1.2.0"}');
@@ -420,7 +422,6 @@ test('#4282 AC3.1 AC3.2: writeInsideRoot refuses a symlinked leaf when O_NOFOLLO
 });
 
 test('#4282 AC3: writeInsideRoot\'s post-open identity check refuses a leaf swapped to a symlink between the lstat and the open', () => {
-  const noFollow = { constants: { ...fs.constants, O_NOFOLLOW: undefined } };
   const setup = () => {
     const root = mkTmpDir('release-local-root-');
     const outside = mkTmpDir('release-local-outside-');
@@ -472,7 +473,6 @@ test('#4282 AC3: writeInsideRoot\'s post-open identity check refuses a leaf swap
 });
 
 test('#4282: writeInsideRoot refuses a leaf that appears between the lstat and the open', () => {
-  const noFollow = { constants: { ...fs.constants, O_NOFOLLOW: undefined } };
   const root = mkTmpDir('release-local-root-');
   const realOpen = fs.openSync;
   // One-shot: a concurrent writer creates the leaf just before the O_EXCL open runs.

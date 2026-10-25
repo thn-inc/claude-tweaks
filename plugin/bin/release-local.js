@@ -282,13 +282,11 @@ function run(argv, deps) {
 // real path, never the literal one. The parent directory is realpath-resolved
 // and must sit inside the real root. Where the platform defines O_NOFOLLOW, the
 // leaf is opened with it and the kernel refuses a symlinked file. Where it does
-// not (win32), the leaf is lstat'd before the open (a symlink is refused there),
-// then created with O_EXCL when absent or opened without O_CREAT when present
-// (a leaf that changed before the open is refused as "changed between the check
-// and the open", not as a symlink); after the open the fd's dev/ino (bigint, so
-// a 64-bit win32 file ID is not rounded) is compared with a fresh lstat of the
-// leaf, and the file is truncated only once that identity check passes, so a
-// file swapped in during the window is never cut short.
+// not (win32), the leaf is lstat'd before the open and refused if it is a
+// symlink; after the open the fd's dev/ino (bigint, so a 64-bit win32 file ID is
+// not rounded) is compared with a fresh lstat of the leaf, and the file is
+// truncated only once that identity check passes, so a file swapped in during
+// the window is never cut short.
 function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
   const target = path.join(root, p);
   const realRoot = fs.realpathSync(root);
