@@ -1843,8 +1843,8 @@ async function runReconcileBackground(argv) {
 async function main(argv) {
   const cmd = argv[2];
   const verb = verbFor(cmd);
-  // #1143: dumb, verb-agnostic --help/-h intercept — ahead of every branch
-  // below, before any lib call or resolveRunArg scan. Every subcommand here
+  // #1143: dumb, verb-agnostic --help/-h intercept — ahead of dispatch,
+  // before any lib call or resolveRunArg scan. Every subcommand here
   // (other than record-worktree, hardened separately by #1124) previously
   // fell through to its normal dispatch on a stray --help, and several of
   // those paths implicitly guess a target run dir (resolveRunDir's "newest
@@ -1893,12 +1893,12 @@ async function main(argv) {
     }
     const known = [...Object.keys(USAGE), ...EVENTS];
     if (!cmd) {
-      process.stderr.write(`claude-tweaks: no hooks.js subcommand given — known subcommands: ${known.join(', ')}\n`);
+      process.stderr.write('claude-tweaks: no hooks.js subcommand given\n');
       process.stderr.write(usageText());
       return 1;
     }
     const suggestion = closestVerb(cmd, known);
-    const hint = suggestion ? ` — did you mean '${suggestion}'?` : ` — known subcommands: ${known.join(', ')}`;
+    const hint = suggestion ? ` — did you mean '${suggestion}'?` : '';
     process.stderr.write(`claude-tweaks: unrecognized hooks.js subcommand '${cmd}'${hint}\n`);
     process.stderr.write(usageText());
     return 1;
