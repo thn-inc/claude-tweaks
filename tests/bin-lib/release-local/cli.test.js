@@ -402,3 +402,19 @@ test('integration-branch policy selects the branch; --branch overrides it', () =
   const c = makeDeps({ branch: 'develop' });
   assert.strictEqual(run(['--dry-run'], c.deps), 1);
 });
+
+test('#4282 AC3.1 AC3.2: writeInsideRoot refuses a symlinked leaf when O_NOFOLLOW is absent, and still writes a plain file', () => {
+  const noFollow = { constants: { ...fs.constants, O_NOFOLLOW: undefined } };
+  const root = mkTmpDir('release-local-root-');
+  const outside = mkTmpDir('release-local-outside-');
+  fs.writeFileSync(path.join(outside, 'victim.json'), '{"version": "1.2.0"}');
+  fs.symlinkSync(path.join(outside, 'victim.json'), path.join(root, 'linked.json'));
+  assert.throws(() => writeInsideRoot(root, 'linked.json', 'x', noFollow), /refusing to write linked\.json: it is a symlink/);
+  assert.strictEqual(fs.readFileSync(path.join(outside, 'victim.json'), 'utf8'), '{"version": "1.2.0"}');
+  fs.symlinkSync(path.join(outside, 'not-yet.json'), path.join(root, 'dangling.json'));
+  assert.throws(() => writeInsideRoot(root, 'dangling.json', 'x', noFollow), /refusing to write dangling\.json: it is a symlink/);
+  assert.ok(!fs.existsSync(path.join(outside, 'not-yet.json')));
+  writeInsideRoot(root, 'plain.json', '{"version": "1.3.0"}', noFollow);
+  writeInsideRoot(root, 'plain.json', 'short', noFollow);
+  assert.strictEqual(fs.readFileSync(path.join(root, 'plain.json'), 'utf8'), 'short');
+});

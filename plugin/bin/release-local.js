@@ -280,9 +280,12 @@ function run(argv, deps) {
 // (release-please-config.json's extra-files, the stack manifest names), so a
 // planted symlink is an ordinary PR away — the IL-150 class: decide on the
 // real path, never the literal one. The parent directory is realpath-resolved
-// and must sit inside the real root; the leaf is opened with O_NOFOLLOW so a
-// symlinked file is refused at the kernel (no lstat-then-write window).
-function writeInsideRoot(root, p, text) {
+// and must sit inside the real root. Where the platform defines O_NOFOLLOW, the
+// leaf is opened with it and the kernel refuses a symlinked file. Where it does
+// not (win32), the leaf is lstat'd before the open, and after the open its
+// dev/ino is compared with the lstat's; the file is truncated only once that
+// identity check passes, so a file swapped in during the window is never cut short.
+function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
   const target = path.join(root, p);
   const realRoot = fs.realpathSync(root);
   let realDir;
@@ -295,15 +298,37 @@ function writeInsideRoot(root, p, text) {
   if (!isPathContained(realDir, realRoot, { orEqual: true })) {
     throw new Error(`refusing to write ${p}: its real location ${realDir} is outside the repo root`);
   }
-  const { O_WRONLY, O_CREAT, O_TRUNC, O_NOFOLLOW } = fs.constants;
-  let fd;
-  try {
-    fd = fs.openSync(path.join(realDir, path.basename(target)), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0o644);
-  } catch (e) {
-    if (e.code === 'ELOOP' || e.code === 'EMLINK') throw new Error(`refusing to write ${p}: it is a symlink`);
-    throw e;
+  const symlinkError = () => new Error(`refusing to write ${p}: it is a symlink`);
+  const leaf = path.join(realDir, path.basename(target));
+  const { O_WRONLY, O_CREAT, O_TRUNC, O_NOFOLLOW } = constants;
+  if (typeof O_NOFOLLOW === 'number') {
+    let fd;
+    try {
+      fd = fs.openSync(leaf, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0o644);
+    } catch (e) {
+      if (e.code === 'ELOOP' || e.code === 'EMLINK') throw symlinkError();
+      throw e;
+    }
+    try { fs.writeFileSync(fd, text); } finally { fs.closeSync(fd); }
+    return;
   }
-  try { fs.writeFileSync(fd, text); } finally { fs.closeSync(fd); }
+  let before = null;
+  try {
+    before = fs.lstatSync(leaf);
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e;
+  }
+  if (before && before.isSymbolicLink()) throw symlinkError();
+  const fd = fs.openSync(leaf, O_WRONLY | O_CREAT, 0o644);
+  try {
+    const opened = fs.fstatSync(fd);
+    const after = fs.lstatSync(leaf);
+    if (after.isSymbolicLink() || opened.dev !== after.dev || opened.ino !== after.ino) throw symlinkError();
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, text);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function defaultDeps(root) {
