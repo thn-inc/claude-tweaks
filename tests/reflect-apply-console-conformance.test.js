@@ -11,6 +11,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const { readText } = require('./helpers/read-skill');
@@ -213,4 +214,78 @@ test('console-execution.md: an unticked reflect row declines through reflect-app
   assert.ok(CONSOLE_EXECUTION.includes('reflect-apply.js'), 'console-execution.md must name reflect-apply.js');
   assert.ok(CONSOLE_EXECUTION.includes('--decline'), 'console-execution.md must name --decline');
   assertEachFactGoesRed(h2Section(CONSOLE_EXECUTION, '## Execution routing'), ROUTING_FACTS);
+});
+
+// --- Task 8: the multi-spec console (site 10) --------------------------------------------------------
+
+const MULTI_CONSOLE_PATH = path.join(ROOT, 'plugin', 'skills', 'flow', 'multispec-review-console.md');
+const MULTI_CONSOLE = readAt('flow', 'multispec-review-console.md');
+const MULTI_TEMPLATE = readAt('flow', 'multispec-console-template.md');
+const MULTI_CONSOLE_RAIL = 52500;
+
+// The list line that starts with `prefix` (e.g. "2. For each `spec-{N}/`"), within the section that
+// starts at `head` — one line, both anchors asserted.
+function listLineIn(text, head, prefix) {
+  const h = text.indexOf(head);
+  assert.notEqual(h, -1, `missing "${head}"`);
+  const start = text.indexOf(`\n${prefix}`, h);
+  assert.notEqual(start, -1, `missing the line starting "${prefix}" under "${head}"`);
+  const end = text.indexOf('\n', start + 1);
+  assert.notEqual(end, -1, `missing the newline after the "${prefix}" line`);
+  return text.slice(start + 1, end);
+}
+
+// multispec-console-template.md's `#### Skill updates` section, to the next `#### ` heading.
+function multiSkillUpdatesSection(text) {
+  const start = text.indexOf('#### Skill updates');
+  assert.notEqual(start, -1, 'missing "#### Skill updates"');
+  const end = text.indexOf('\n#### ', start + 1);
+  assert.notEqual(end, -1, 'missing the heading after "#### Skill updates"');
+  return text.slice(start, end);
+}
+
+const MULTI_READ_FACTS = {
+  'Skill updates read, reflect rows named': /Skill updates \(each spec's `staged\/reflect-\{n\}\.md` observation\/convention rows\)/,
+};
+const MULTI_APPROVAL_FACTS = {
+  'reflect row per step 2 clause': /each spec's `staged\/reflect-\{n\}\.md` row per `wrap-up\/review-console\.md` step 2's reflect clause/,
+  'item-run-dir is the spec dir': /`\{item-run-dir\}` its `spec-\{N\}` dir/,
+};
+const MULTI_OVERRIDE_FACTS = {
+  'reflect skip declines per clause': /a reflect row's `skip \{#\}` declines per that clause/,
+};
+const MULTI_TEMPLATE_FACTS = {
+  'reflect rows named': /`staged\/reflect-\{n\}\.md`/,
+  'after the engine output': /after the engine output/,
+  'contributing spec in Spec column': /contributing spec in the Spec column/,
+  'same rule as the single-spec template': /same rule as `wrap-up\/console-template\.md`/,
+};
+
+test('multispec-review-console.md: step 2 reads each spec\'s staged/reflect- rows', () => {
+  const line = listLineIn(MULTI_CONSOLE, '## When to run the consolidated console', '2. For each `spec-{N}/`');
+  assert.ok(line.includes('staged/reflect-'), 'step 2 must name staged/reflect-');
+  assertEachFactGoesRed(line, MULTI_READ_FACTS);
+});
+
+test('multispec-review-console.md: On approval step 5 applies reflect rows per review-console.md step 2\'s clause', () => {
+  const line = listLineIn(MULTI_CONSOLE, '## On approval (option 1)', '5. ');
+  assert.ok(line.includes('review-console.md` step 2'), 'step 5 must cite review-console.md step 2');
+  assert.ok(line.includes('reflect'), 'step 5 must name reflect');
+  assertEachFactGoesRed(line, MULTI_APPROVAL_FACTS);
+});
+
+test('multispec-review-console.md: On override step 2 declines a reflect row\'s skip per the same clause', () => {
+  const line = listLineIn(MULTI_CONSOLE, '## On override (option 2)', '2. ');
+  assertEachFactGoesRed(line, MULTI_OVERRIDE_FACTS);
+});
+
+test('multispec-console-template.md: the Skill updates section renders the staged/reflect- rows', () => {
+  const section = multiSkillUpdatesSection(MULTI_TEMPLATE);
+  assert.ok(section.includes('staged/reflect-'), 'the Skill updates section must name staged/reflect-');
+  assertEachFactGoesRed(section, MULTI_TEMPLATE_FACTS);
+});
+
+test(`multispec-review-console.md stays under its ${MULTI_CONSOLE_RAIL} B size rail`, () => {
+  const size = fs.statSync(MULTI_CONSOLE_PATH).size;
+  assert.ok(size < MULTI_CONSOLE_RAIL, `multispec-review-console.md is ${size} B, rail ${MULTI_CONSOLE_RAIL} B`);
 });
