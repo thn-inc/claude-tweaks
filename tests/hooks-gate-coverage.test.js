@@ -464,6 +464,34 @@ test('#4210 F1: a closed "$( … )" or "${ … }" still lets a later redirect re
   }
 });
 
+// #4210 review: two shapes the nesting walk used to leave nested for the rest of the
+// command, hiding a later genuine redirect that main resolved. A heredoc opened inside
+// "$( … )" is found by stripHeredocBodies, so its body's `'` or backtick is data; a `(`,
+// `)` or `'` inside "${ … }" is literal word text, so only the `}` closes it.
+test('#4210 review: a heredoc body inside "$( … )" does not leave the nesting state open', () => {
+  for (const [command, file] of [
+    ["git commit -m \"$(cat <<'EOF'\nDon't merge yet\nEOF\n)\" && echo x > out.js", 'out.js'],
+    ["git commit -m \"$(cat <<'EOF'\nfix: it's done\nEOF\n)\" && git push && echo ok > status.txt", 'status.txt'],
+    ["git commit -m \"$(cat <<'EOF'\nuse `x` here (and (this\nEOF\n)\" && echo y > o.js", 'o.js'],
+    ["git commit -m \"$(cat <<'EOF'\nDon't\nEOF\n)\" > out.js", 'out.js'],
+    ["gh pr create --body \"$(cat <<'EOF'\n- treat \"x>y\" as literal\nEOF\n)\" && echo a > b.js", 'b.js'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+  assert.deepStrictEqual(fileWriteTargets("git commit -m \"$(cat <<'EOF'\nfoo > bar\nEOF\n)\"", '/r'), []);
+});
+
+test('#4210 review: a literal `(`, `)` or `\'` inside "${ … }" does not leave the nesting state open', () => {
+  for (const [command, file] of [
+    ['echo "${x:-(}" > out.js', 'out.js'], ['echo "${x//(/y}" > out.js', 'out.js'], ['echo "${x:-it\'s}" > out.js', 'out.js'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+  for (const command of ['echo "${x:-a>b}"', 'echo "${x:-"a>b"}"', 'echo "${x:-(}"; echo "${y:-"a>b"}"']) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
 // #4210 F2: an escaped character before the `>` is part of the word, as in bash; an
 // escaped `>` itself stays literal.
 test('#4210 F2: an escaped character before a glued `>` still resolves its target', () => {

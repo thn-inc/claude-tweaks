@@ -651,30 +651,37 @@ function leadingRedirectOpEnd(raw, kinds, nest) {
 // characters are real shell syntax at that level, so the walk reads only them: `$(`/`${`
 // open, a backtick toggles, and once nested a `(`/`{` opens, a `)`/`}` closes and a `'`
 // starts a span whose parens are literal. A `\` skips the next `d` character.
+// `stack` holds one character per open level: `c` for `$(` or `(`, `g` for a bare `{`,
+// `p` for `${`. Inside a `${ … }` the `(`, `)`, `{` and `'` are literal word text
+// (`"${x:-(}"`, `"${x:-it's}"`), so only a `}` closes it.
 // Over-counting only leaves the state nested, which resolves no target.
 function advanceNesting(nest, raw, kinds, end) {
-  let { depth, tick, sq } = nest;
+  let { stack, tick, sq } = nest;
   for (let j = 0; j < end; j += 1) {
     if (kinds[j] !== 'd') continue;
     const c = raw[j];
     if (sq) { if (c === "'") sq = false; continue; }
     if (c === '\\') { if (kinds[j + 1] === 'd') j += 1; continue; }
     if (c === '`') tick = !tick;
-    else if (c === '$' && (raw[j + 1] === '(' || raw[j + 1] === '{') && kinds[j + 1] === 'd') { depth += 1; j += 1; }
-    else if (depth > 0 || tick) {
-      if (c === "'") sq = true;
-      else if (depth > 0 && (c === '(' || c === '{')) depth += 1;
-      else if (depth > 0 && (c === ')' || c === '}')) depth -= 1;
+    else if (c === '$' && (raw[j + 1] === '(' || raw[j + 1] === '{') && kinds[j + 1] === 'd') {
+      stack += raw[j + 1] === '(' ? 'c' : 'p';
+      j += 1;
+    } else if (stack !== '' || tick) {
+      const inParam = stack.endsWith('p');
+      if (inParam) { if (c === '}') stack = stack.slice(0, -1); }
+      else if (c === "'") sq = true;
+      else if (stack !== '' && (c === '(' || c === '{')) stack += c === '(' ? 'c' : 'g';
+      else if (stack !== '' && (c === ')' || c === '}')) stack = stack.slice(0, -1);
     }
   }
-  return { depth, tick, sq };
+  return { stack, tick, sq };
 }
 
 function isNested(nest) {
-  return nest.depth > 0 || nest.tick || nest.sq;
+  return nest.stack !== '' || nest.tick || nest.sq;
 }
 
-const NOT_NESTED = Object.freeze({ depth: 0, tick: false, sq: false });
+const NOT_NESTED = Object.freeze({ stack: '', tick: false, sq: false });
 
 // #3989 heredoc-body stripping (see stripHeredocBodies below). Program words
 // that run their input as shell text:
@@ -840,6 +847,7 @@ function planHeredocBodies(str, start, pending, lineText) {
 function scanHeredocs(str) {
   const out = [];
   let quote = null;
+  const subs = []; // paren depth of each open `"$( … )"` substitution (#4210)
   let parenDepth = 0; // unclosed `((` on the current logical line
   let pending = []; // heredocs opened on the current logical line, in order
   let lineStart = 0;
@@ -852,6 +860,15 @@ function scanHeredocs(str) {
       i += 1;
     } else if (ch === '\\' && i + 1 < str.length) {
       out.push(ch, str[i + 1]);
+      i += 2;
+    } else if (quote === '"' && ch === '$' && str[i + 1] === '(' && str[i + 2] !== '(') {
+      // #4210: `"$( … )"` is a command-substitution context whose text is shell again, so
+      // a heredoc opened inside it (`"$(cat <<'EOF' … EOF\n)"`, the commit-message idiom)
+      // is found, and its body no longer reads as quotes. `subs` holds one paren depth per
+      // open substitution; the `)` that closes the last one returns to the double quote.
+      out.push('$(');
+      subs.push(1);
+      quote = null;
       i += 2;
     } else if (quote === '"') {
       out.push(ch);
@@ -888,6 +905,14 @@ function scanHeredocs(str) {
       parenDepth -= 1;
       out.push('))');
       i += 2;
+    } else if (subs.length > 0 && (ch === '(' || ch === ')')) {
+      subs[subs.length - 1] += ch === '(' ? 1 : -1;
+      if (subs[subs.length - 1] === 0) {
+        subs.pop();
+        quote = '"';
+      }
+      out.push(ch);
+      i += 1;
     } else if (ch === '<' && str[i + 1] === '<' && str[i + 2] === '<') {
       out.push('<<<'); // a here-string is never a heredoc
       i += 3;

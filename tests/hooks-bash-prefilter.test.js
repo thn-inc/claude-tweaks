@@ -165,7 +165,10 @@ test('#4210 F1 F3: hasFileRedirection skips a nested or quoted leading `>`, and 
   ]) {
     assert.strictEqual(hasFileRedirection(command), false, command);
   }
-  for (const command of ['"$(date)">out.js', 'echo "$(date)" foo>out.js', 'echo foo\\ bar>out.js']) {
+  for (const command of [
+    '"$(date)">out.js', 'echo "$(date)" foo>out.js', 'echo foo\\ bar>out.js',
+    "git commit -m \"$(cat <<'EOF'\nDon't merge yet\nEOF\n)\" && echo x > out.js", 'echo "${x:-(}" > out.js',
+  ]) {
     assert.strictEqual(hasFileRedirection(command), true, command);
   }
 });
