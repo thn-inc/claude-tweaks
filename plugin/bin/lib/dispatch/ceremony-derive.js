@@ -17,12 +17,14 @@
 // (`build/micro-plan.md`, `wrap-up/ceremony-derivation.md`) still reads them through this module.
 const { classifyDiffFiles, blastRadiusSummary, isPromptProsePath, PROMPT_PROSE_DIRS } = require('../issues/blast-radius');
 
-// Docs-only surface: markdown that is not prompt prose. Deliberately broader
-// than `docs/**` alone — a materialized `work/{n}-spec.md` file (itself
-// markdown) is exactly the kind of accompanying file the #1545 evidence diff
-// carried alongside its one test file, and both must count as low-surface.
+// Docs-only surface: markdown that is not prompt prose, plus the
+// `/claude-tweaks:visualize` diagrams at `docs/plans/*.html` (top level only).
+// Deliberately broader than `docs/**` alone — a materialized `work/{n}-spec.md`
+// file (itself markdown) is exactly the kind of accompanying file the #1545
+// evidence diff carried alongside its one test file, and both must count as
+// low-surface.
 function isDocsPath(path) {
-  return /\.md$/i.test(path) && !isPromptProsePath(path);
+  return (/\.md$/i.test(path) && !isPromptProsePath(path)) || /^docs\/plans\/[^/]+\.html$/i.test(path);
 }
 
 // files: [{path, additions, deletions}] (git-z.js's parseNumstatZ

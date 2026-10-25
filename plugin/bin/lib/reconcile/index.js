@@ -25,7 +25,7 @@ const { sharedFetch, sharedFetchAsync } = require('./shared-fetch');
 const { repairOriginHead } = require('./origin-head');
 const { createIssueListCache } = require('./issue-list-cache');
 const {
-  readCache, writeCache, isFresh, SHARED_HEALTH_TTL_MS,
+  readCache, writeCache, isFresh, SHARED_HEALTH_TTL_MS, listResidueFailures,
 } = require('./cache');
 const { formatReconcileSummary, archivedCountFromRunsResult } = require('./residue-summary');
 // summarizeTimings is called through the module object (not destructured) so a
@@ -92,7 +92,12 @@ function expandChecks(checks) {
 }
 
 // opts: { dryRun?: boolean, checks?: string[], cwd?: string, sessionId?: string, budgetMs?: number }
-// -> { mirror, redTip, worktrees, claims, runs, branches, remoteBranches, ledgerResidue, console, skipped, timings }
+// -> { mirror, redTip, worktrees, claims, runs, branches, remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }
+// A dry run writes neither the cache nor GitHub (#4180): `residuePlan` lists what the residue
+// tracking would have done (an array on a dry run when archive ran, null otherwise), and
+// `residueErrors` lists the escalate/resolve failures recorded on tracked entries plus this
+// pass's prune failures; it rides on EVERY return path that resolved a repo root (an early or
+// over-budget return included), and stays null only when there is no repo.
 // `sessionId`, when the caller has one, threads through to archiveMerged's
 // own `isAbandonedInterrupted` ownership check (archive-merged.js) — omitted
 // (undefined), archiveMerged falls back to its own
@@ -108,7 +113,10 @@ async function reconcile(opts = {}) {
   // timings edit at each return, so a new early return cannot forget it.
   const timings = createTimings();
   phaseOf(timings, 'setup');
-  const result = await withTimings(timings, () => reconcileInner(opts));
+  // #4180: what reconcileInner learns that the wrapper needs after ANY return — the resolved root
+  // and the archive check's prune failures (whose entries are already gone from the cache).
+  const state = { root: null, archiveResidueErrors: null };
+  const result = await withTimings(timings, () => reconcileInner(opts, state));
   // Measurement is best-effort: a summarizer fault reports no timings rather
   // than failing a pass whose real work already finished (never-break-a-session).
   try {
@@ -116,15 +124,29 @@ async function reconcile(opts = {}) {
   } catch {
     result.timings = null;
   }
+  // #4180: every swallowed escalate/resolve failure in one list — the reasons recorded on tracked
+  // entries (`lastResidueError`), then this pass's prune failures. Set here, not in finalize, so a
+  // pass that returned early (over-budget after archive, the background pass) still reports them.
+  // Best-effort like timings: a fault leaves null; no root (no-repo) leaves it null too.
+  try {
+    if (state.root) {
+      result.residueErrors = listResidueFailures(state.root)
+        .filter((e) => e.lastResidueError)
+        .map((e) => ({ reason: e.reason, path: e.path, op: e.lastResidueError.op, error: e.lastResidueError.reason, at: e.lastResidueError.at }))
+        .concat((state.archiveResidueErrors || []).map((e) => ({ reason: e.reason, path: e.path, op: e.op, error: e.error, at: null })));
+    }
+  } catch {
+    result.residueErrors = null;
+  }
   return result;
 }
 
-async function reconcileInner(opts) {
+async function reconcileInner(opts, state) {
   const dryRun = !!opts.dryRun;
   const requestedChecks = Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS;
   let checks = expandChecks(requestedChecks);
   const cwd = opts.cwd || process.cwd();
-  const result = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, skipped: [] };
+  const result = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, skipped: [] };
 
   // Declined-learning store prune (#1399) — local, gitignored bookkeeping unrelated to git/
   // GitHub reachability, so it runs unconditionally on every reconcile pass regardless of
@@ -132,10 +154,13 @@ async function reconcileInner(opts) {
   // path is process.cwd()-relative (no root param on this module today, matching every existing
   // caller: /feedback and /reflect never pass one either), so this deliberately does not thread
   // `root` through. Best-effort: a prune failure never blocks the rest of the pass.
-  try {
-    require('../declined-learning/store').pruneDeclines();
-  } catch {
-    /* best-effort — never break reconcile over declined-learning maintenance */
+  // #4180: skipped on a dry run — the prune rewrites the store file (and takes its lock directory).
+  if (!dryRun) {
+    try {
+      require('../declined-learning/store').pruneDeclines();
+    } catch {
+      /* best-effort — never break reconcile over declined-learning maintenance */
+    }
   }
 
   const root = mainCheckoutRoot(cwd);
@@ -143,6 +168,7 @@ async function reconcileInner(opts) {
     result.skipped.push({ check: 'all', reason: 'no-repo' });
     return result;
   }
+  state.root = root;
 
   // #848: a non-canonical (dash-less) run-dir name is invisible to
   // iterRunDirsWithState's RUN_ID_RE filter, so every check below silently
@@ -186,7 +212,9 @@ async function reconcileInner(opts) {
   // offline resolver. Recorded on the result only when attempted, so a
   // checkout with no `origin` keeps today's exact no-remote result.
   if (!integration) {
-    const repair = repairOriginHead(root);
+    // #4180: on a dry run the repair is reported as skipped, never attempted (it writes a git ref
+    // and, on failure, the cache); the pass then falls through to the no-remote skip below.
+    const repair = repairOriginHead(root, { dryRun });
     if (repair) {
       // Re-resolve after EVERY attempt, not only 'repaired' — a concurrent
       // session may have written origin/HEAD while this one's set-head lost
@@ -380,7 +408,10 @@ async function reconcileInner(opts) {
     // answers this pass already paid for here — otherwise a cold pass that hits
     // the ceiling forgets them and the next pass starts cold and hits it again.
     // (Only prStates: the freshness stamp and the residue index stay finalize's.)
-    try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
+    // #4180: a dry run writes nothing, so it forgets the answers as finalize does.
+    if (!dryRun) {
+      try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
+    }
     return true;
   }
 
@@ -503,6 +534,8 @@ async function reconcileInner(opts) {
         ...(s.missing !== undefined ? { missing: s.missing } : {}),
         ...(s.hint !== undefined ? { hint: s.hint } : {}),
       })));
+    result.residuePlan = r.residuePlan === undefined ? null : r.residuePlan;
+    state.archiveResidueErrors = Array.isArray(r.residueErrors) ? r.residueErrors : [];
   }
 
   // Same live-ref dependency as release/archive: derives branch state from
@@ -605,21 +638,26 @@ async function reconcileInner(opts) {
   // #4032: the end-of-pass cache write and the residue summary below form the
   // `finalize` timing phase.
   timePhaseSync('finalize', () => {
-    // #4032: persist the pass's terminal PR-state answers first, so the cache
-    // write below re-reads a file that already carries them. Best-effort, and
-    // dry-run included: it records reads, never repo state.
-    try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
-    // A scoped (skipCacheStamp) pass that learned marker-index entries still
-    // persists them: like prStates.persist() above, the index records reads
-    // (never freshness), so an explicit --checks pass must not drop them.
-    const residueIndexChanged = JSON.stringify(issueListCache.index) !== loadedResidueIndexJson;
-    if (!opts.skipCacheStamp || healthJustSucceeded || residueIndexChanged) {
-      const cache = readCache(root);
-      const update = { ...cache };
-      if (!opts.skipCacheStamp) update.lastRunAt = Date.now();
-      if (healthJustSucceeded) update.lastHealthCheckOkAt = now;
-      update.residueIssueIndex = issueListCache.index;
-      writeCache(root, update);
+    // #4180: a dry run writes nothing — neither the cache nor GitHub — so both cache writes below
+    // are skipped for it. Both only record reads (PR answers, the marker index) or freshness, and a
+    // dry run that wrote them would leave the next real pass looking fresher than it is; what it
+    // would have done reaches the caller as `residuePlan` instead.
+    if (!dryRun) {
+      // #4032: persist the pass's terminal PR-state answers first, so the cache
+      // write below re-reads a file that already carries them. Best-effort.
+      try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
+      // A scoped (skipCacheStamp) pass that learned marker-index entries still
+      // persists them: like prStates.persist() above, the index records reads
+      // (never freshness), so an explicit --checks pass must not drop them.
+      const residueIndexChanged = JSON.stringify(issueListCache.index) !== loadedResidueIndexJson;
+      if (!opts.skipCacheStamp || healthJustSucceeded || residueIndexChanged) {
+        const cache = readCache(root);
+        const update = { ...cache };
+        if (!opts.skipCacheStamp) update.lastRunAt = Date.now();
+        if (healthJustSucceeded) update.lastHealthCheckOkAt = now;
+        update.residueIssueIndex = issueListCache.index;
+        writeCache(root, update);
+      }
     }
 
     // #644 Deliverable 3 — the one-line residue summary /claude-tweaks:flow's

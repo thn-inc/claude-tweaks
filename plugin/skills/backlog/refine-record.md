@@ -159,11 +159,18 @@ For each resolved row (skip a row the human's answer left untouched):
    numeric id this call doesn't return. Update the body in place via the same GraphQL mutation
    `_shared/pr-run-comments.md`'s Post-or-update procedure Step 2 already uses for PR comments —
    an issue comment and a PR comment are the same `IssueComment` object on the wire, so the
-   mutation is identical:
+   mutation is identical. The worktree guard refuses it inline (`_shared/scratch-worktree.md` §7),
+   so pass it by file: this prints a session-scoped path (`_shared/session-tmp-root.md`) —
 
    ```bash
-   gh api graphql -f query='mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}' \
-     -f id="{comment-id}" -F body=@{session-scoped resolved-body file}
+   node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value update-issue-comment.graphql
+   ```
+
+   — write `mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}`
+   there with the `Write` tool, and pass that path as `{query-file}`:
+
+   ```bash
+   gh api graphql -F query=@"{query-file}" -f id="{comment-id}" -F body=@{session-scoped resolved-body file}
    ```
 
 2. **Label/state writes**, per the row's choice:

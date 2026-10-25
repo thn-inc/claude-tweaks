@@ -11,9 +11,9 @@ const { classifyMirror } = require('../plugin/bin/lib/reconcile/classify');
 const { mirrorFastForward } = require('../plugin/bin/lib/reconcile/mirror-ff');
 const { decideReap } = require('../plugin/bin/lib/reconcile/reap-merged');
 const { decideRelease } = require('../plugin/bin/lib/reconcile/release-merged');
-const { decideArchive, readConsoleState, localHasMerge } = require('../plugin/bin/lib/reconcile/archive-merged');
+const { decideArchive, readConsoleState, localHasMerge, STRUCTURALLY_STUCK_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
 const { formatSummary } = require('../plugin/bin/lib/reconcile/format-summary');
-const { recordResidueFailure, listResidueFailures } = require('../plugin/bin/lib/reconcile/cache');
+const { recordResidueFailure, recordResidueError, listResidueFailures, RESIDUE_ESCALATE_THRESHOLD, cachePath } = require('../plugin/bin/lib/reconcile/cache');
 const { structurallyStuckBody } = require('../plugin/bin/lib/reconcile/escalate-residue');
 const { isWorktreeLocked } = require('../plugin/bin/lib/hooks/worktree-reap');
 const { reconcile, PREREQUISITES } = require('../plugin/bin/lib/reconcile');
@@ -1680,6 +1680,19 @@ test('formatSummary: no origin/HEAD repair attempted renders no origin/HEAD line
   assert.ok(!formatSummary(result).includes('origin/HEAD'), formatSummary(result));
 });
 
+test('formatSummary: a dry-run residue plan renders one line, counting would-resolve with would-clear and omitting zero parts (#4180)', () => {
+  const base = {
+    mirror: null, redTip: null, worktrees: null, claims: null, runs: null,
+    branches: null, remoteBranches: null, console: null, skipped: null,
+  };
+  const entry = (action) => ({ action, reason: 'structurally-stuck', path: `/x/${action}` });
+  const plan = [entry('would-escalate'), entry('would-track'), entry('would-track'), entry('would-clear'), entry('would-resolve')];
+  assert.equal(formatSummary({ ...base, residuePlan: plan }), 'residue (dry run): would escalate 1, would track 2, would clear 2');
+  assert.equal(formatSummary({ ...base, residuePlan: [entry('would-track')] }), 'residue (dry run): would track 1');
+  assert.equal(formatSummary({ ...base, residuePlan: [] }), 'reconcile: nothing to do');
+  assert.equal(formatSummary({ ...base, residuePlan: null }), 'reconcile: nothing to do');
+});
+
 test('reconcile verb: compact default separates branch entries from archive-branches.js\'s interleaved tag-aging entries in result.branches (#638)', () => {
   // archive-branches.js pushes both kind:'branch' and kind:'tag' entries into
   // the same result.branches array — a tag's own 'aged-out' action must not
@@ -2918,9 +2931,18 @@ async function reconcileWithRecordedResolver({ wrap, full = false } = {}) {
 }
 
 test('reconcile(): one resolver per pass is created and persisted once, with archive and reap phases timed (#4032)', async () => {
-  const { r, instances } = await reconcileWithRecordedResolver();
+  const { r, instances } = await reconcileWithRecordedResolver({ full: true });
   assert.equal(instances.length, 1, 'exactly one resolver for the pass');
   assert.equal(instances[0].calls.persist, 1, 'persisted once, in finalize');
+  assert.ok(r.timings.phases.archive && r.timings.phases.reap && r.timings.phases.finalize);
+});
+
+// #4180: a dry run writes nothing, so the pass's PR answers are not persisted either (this pass
+// used to persist them under "dry-run included: it records reads"; that wrote the cache).
+test('reconcile(): a dry run still creates one resolver per pass but never persists it (#4180)', async () => {
+  const { r, instances } = await reconcileWithRecordedResolver();
+  assert.equal(instances.length, 1, 'exactly one resolver for the pass');
+  assert.equal(instances[0].calls.persist, 0, 'a dry run persists nothing');
   assert.ok(r.timings.phases.archive && r.timings.phases.reap && r.timings.phases.finalize);
 });
 
@@ -2943,7 +2965,7 @@ test('reconcile(): release, archive and reap all use the pass\'s one resolver (#
 });
 
 test('reconcile(): a throwing prefetch never breaks the pass (#4032)', async () => {
-  const { r, instances } = await reconcileWithRecordedResolver({ wrap: async () => { throw new Error('prefetch boom'); } });
+  const { r, instances } = await reconcileWithRecordedResolver({ wrap: async () => { throw new Error('prefetch boom'); }, full: true });
   assert.equal(instances.length, 1);
   assert.ok(Array.isArray(r.runs) && Array.isArray(r.worktrees), `archive and reap must still have run, got ${JSON.stringify(r)}`);
   assert.equal(instances[0].calls.persist, 1);
@@ -3029,4 +3051,194 @@ test('reconcile(): a scoped skipCacheStamp pass still persists the index entries
   const { seeded, learned, cache } = await residueIndexPass({ skipCacheStamp: true }, { lastHealthCheckOkAt: Date.now() + 60000 });
   assert.deepEqual(cache.residueIssueIndex, { [`o/r\n${seeded}`]: 42, [`o/r\n${learned}`]: 9 });
   assert.ok(!cache.lastRunAt, 'a scoped pass must not stamp the shared freshness key');
+});
+
+// #4180: a local git fixture shaped like the #3503 archive test, with a PATH `gh` shim that logs
+// every invocation's argv and exits 1, and the gh preflight stubbed healthy (the shim would fail
+// the real one). `checks: ['archive']` expands with mirror, so the fast shape calls the async
+// preflight; both are patched. `run(opts)` returns reconcile()'s result with the env restored.
+function dryRunFixture() {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-4180-')));
+  git(['init', '-q', '--initial-branch=main'], root);
+  git(['config', 'user.email', 'test@example.com'], root);
+  git(['config', 'user.name', 'Test'], root);
+  fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
+  git(['add', 'a.txt'], root);
+  git(['commit', '-q', '-m', 'seed'], root);
+  git(['remote', 'add', 'origin', 'git@github.com:acme/w.git'], root);
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-4180-gh-'));
+  const ghLog = path.join(wrapperDir, 'gh-calls.log');
+  fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\necho "$@" >> '${ghLog}'\nexit 1\n`, { mode: 0o755 });
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+  async function run(opts) {
+    const original = {
+      health: preflight.ghHealthCheck, healthAsync: preflight.ghHealthCheckAsync, path: process.env.PATH, ssh: process.env.GIT_SSH_COMMAND,
+    };
+    preflight.ghHealthCheck = () => ({ ok: true });
+    preflight.ghHealthCheckAsync = async () => ({ ok: true });
+    process.env.PATH = `${wrapperDir}${path.delimiter}${original.path}`;
+    // mirror's shared fetch targets a real-looking SSH origin; `false` makes it fail fast.
+    process.env.GIT_SSH_COMMAND = 'false';
+    try {
+      return await reconcile({ cwd: root, checks: ['archive'], resolveIntegrationModel: () => 'pr-first', ...opts });
+    } finally {
+      preflight.ghHealthCheck = original.health;
+      preflight.ghHealthCheckAsync = original.healthAsync;
+      process.env.PATH = original.path;
+      if (original.ssh === undefined) delete process.env.GIT_SSH_COMMAND;
+      else process.env.GIT_SSH_COMMAND = original.ssh;
+    }
+  }
+  return { root, run, ghCalls: () => (fs.existsSync(ghLog) ? fs.readFileSync(ghLog, 'utf8') : '') };
+}
+
+test('#4180 AC1.1: reconcile --dry-run over a past-threshold stuck run dir makes zero gh calls and leaves reconcile-cache.json byte-identical', async () => {
+  const { root, run, ghCalls } = dryRunFixture();
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-4180');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: path.join(root, '.claude', 'worktrees', 'gone'),
+  }));
+  const old = new Date(Date.now() - 2 * STRUCTURALLY_STUCK_TTL_MS);
+  fs.utimesSync(runDir, old, old); // the DIR's mtime, set after its files are written
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) {
+    recordResidueFailure(root, 'structurally-stuck', runDir, { lastError: 'stuck at no-worktree' });
+  }
+  const before = fs.readFileSync(cachePath(root));
+  const r = await run({ dryRun: true });
+  assert.ok(
+    (r.runs || []).some((x) => x.runDir === runDir && x.action === 'skipped' && ['no-worktree', 'no-branch', 'no-pr'].includes(x.reason)),
+    `the fixture dir must skip for a structurally-stuck reason, got ${JSON.stringify(r.runs)}`,
+  );
+  assert.equal(ghCalls(), '', 'a dry run makes no gh call');
+  assert.deepEqual(fs.readFileSync(cachePath(root)), before, 'a dry run leaves the cache byte-identical');
+  assert.deepEqual(r.residuePlan, [{ action: 'would-escalate', reason: 'structurally-stuck', path: runDir, count: RESIDUE_ESCALATE_THRESHOLD }]);
+});
+
+test('#4180 AC2.1: a recorded resolve failure appears in reconcile JSON residueErrors', async () => {
+  const { root, run } = dryRunFixture();
+  const p = path.join(root, 'a.txt'); // an existing path: the prune leaves the entry alone
+  recordResidueFailure(root, 'structurally-stuck', p, { lastError: 'stuck at no-pr', threshold: 1 });
+  recordResidueError(root, 'structurally-stuck', p, { op: 'resolve', error: 'HTTP 502' });
+  const r = await run({});
+  assert.deepEqual(r.residueErrors.map(({ at, ...e }) => e), [{ reason: 'structurally-stuck', path: p, op: 'resolve', error: 'HTTP 502' }]);
+  assert.equal(typeof r.residueErrors[0].at, 'number');
+  assert.match(r.residueSummary, /1 residue error\(s\) \(last: resolve — HTTP 502\)/);
+  assert.equal(r.residuePlan, null);
+});
+
+test('#4180 reconcile: a dry run with nothing stuck reports residuePlan [] and a real run reports null', async () => {
+  const { run } = dryRunFixture();
+  const dry = await run({ dryRun: true });
+  assert.deepEqual(dry.residuePlan, []);
+  assert.deepEqual(dry.residueErrors, []);
+  const real = await run({});
+  assert.equal(real.residuePlan, null);
+  assert.deepEqual(real.residueErrors, []);
+});
+
+test('#4180 reconcile: a dry run writes no cache file at all; a real run stamps it', async () => {
+  const { root, run } = dryRunFixture();
+  await run({ dryRun: true });
+  assert.equal(fs.existsSync(cachePath(root)), false, 'a dry run writes no cache file');
+  await run({});
+  assert.equal(fs.existsSync(cachePath(root)), true, 'a real run stamps the cache');
+});
+
+// #4180: the #3132 origin/HEAD repair writes a git ref (set-head) and, on failure, the cache, so a
+// dry run reports it as skipped and never attempts it.
+test('#4180 reconcile: a dry run does not repair origin/HEAD, writes no cache, and reports the dry-run skip', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const cacheFile = cachePath(mainCheckoutRoot(mainDir));
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'], dryRun: true });
+
+  assert.deepStrictEqual(r.originHeadRepair, { outcome: 'skipped', reason: 'dry-run' });
+  assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }]);
+  assert.throws(() => git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mainDir), 'a dry run must not write origin/HEAD');
+  assert.equal(fs.existsSync(cacheFile), false, 'a dry run writes no cache file');
+});
+
+test('#4180 reconcile: a dry run over a pre-seeded cache leaves it byte-identical when origin/HEAD is missing', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const root = mainCheckoutRoot(mainDir);
+  recordResidueFailure(root, 'move-failed', path.join(root, 'x'), { lastError: 'e' });
+  const before = fs.readFileSync(cachePath(root));
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'], dryRun: true });
+
+  assert.deepStrictEqual(r.originHeadRepair, { outcome: 'skipped', reason: 'dry-run' });
+  assert.deepEqual(fs.readFileSync(cachePath(root)), before);
+});
+
+test('#4180 repairOriginHead: dryRun never runs set-head or stamps a failure, and a missing origin still reports null', () => {
+  const { repairOriginHead } = require('../plugin/bin/lib/reconcile/origin-head');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-oh-dry-'));
+  const calls = [];
+  const withOrigin = (args) => { calls.push(args.join(' ')); return { stdout: 'https://example.invalid/r.git', failure: null, stderr: null }; };
+  assert.deepStrictEqual(repairOriginHead(root, { runGit: withOrigin, dryRun: true }), { outcome: 'skipped', reason: 'dry-run' });
+  assert.deepStrictEqual(calls, ['remote get-url origin']);
+  assert.equal(fs.existsSync(cachePath(root)), false);
+  const noOrigin = () => ({ stdout: '', failure: 'git-error', stderr: 'fatal: No such remote' });
+  assert.strictEqual(repairOriginHead(root, { runGit: noOrigin, dryRun: true }), null);
+});
+
+// #4180: `residueErrors` is computed on every return path with a root, not only finalize. A budget
+// that trips once the archive check's prune has dropped the gone path's entry returns before
+// finalize; the prune failure (its entry is gone, so only this pass's memory holds it) must still
+// reach the result, with `at: null`.
+test('#4180 reconcile: an over-budget return after archive still reports a prune resolve failure in residueErrors', async () => {
+  const { root, run } = dryRunFixture();
+  const gone = path.join(root, '.claude-tweaks', 'pipelines', 'gone-4180');
+  recordResidueFailure(root, 'move-failed', gone, { lastError: 'EBUSY', threshold: 1 }); // escalated, path absent
+  const budgetMod = require('../plugin/bin/lib/reconcile/budget');
+  const originalBudget = budgetMod.createBudget;
+  budgetMod.createBudget = () => ({
+    exceeded: () => !listResidueFailures(root).some((e) => e.path === gone),
+    remainingMs: () => 0,
+  });
+  let r;
+  try {
+    r = await run({});
+  } finally {
+    budgetMod.createBudget = originalBudget;
+  }
+  assert.equal(listResidueFailures(root).some((e) => e.path === gone), false, 'the prune dropped the entry');
+  assert.equal(r.residueSummary, undefined, 'the pass returned before finalize');
+  assert.equal(r.residueErrors.length, 1);
+  assert.deepEqual(
+    { reason: r.residueErrors[0].reason, path: r.residueErrors[0].path, op: r.residueErrors[0].op, at: r.residueErrors[0].at },
+    { reason: 'move-failed', path: gone, op: 'resolve', at: null },
+  );
+  assert.equal(typeof r.residueErrors[0].error, 'string');
+});
+
+test('#4180 reconcile: residueErrors is null when there is no repo', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-4180-norepo-'));
+  const r = await reconcile({ cwd: dir, checks: ['mirror'] });
+  assert.deepEqual(r.skipped, [{ check: 'all', reason: 'no-repo' }]);
+  assert.equal(r.residueErrors, null);
+});
+
+// #4180: the declined-learning prune rewrites its store (and takes a lock directory), so a dry
+// run skips it; a real pass still runs it exactly once.
+test('#4180 reconcile: a dry run skips the declined-learning prune; a real run still runs it', async () => {
+  const { run } = dryRunFixture();
+  const store = require('../plugin/bin/lib/declined-learning/store');
+  const original = store.pruneDeclines;
+  let calls = 0;
+  store.pruneDeclines = () => { calls += 1; return 0; };
+  try {
+    await run({ dryRun: true });
+    assert.equal(calls, 0, 'a dry run must not prune the declined-learning store');
+    await run({});
+    assert.equal(calls, 1, 'a real pass prunes once');
+  } finally {
+    store.pruneDeclines = original;
+  }
 });

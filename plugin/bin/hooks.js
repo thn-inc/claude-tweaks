@@ -31,7 +31,15 @@ if (require.main === module) {
   try {
     EARLY = require('./lib/hooks/bash-prefilter').earlyGate(process.argv[2]);
   } catch { EARLY = null; }
-  if (EARLY && EARLY.skip) process.exit(0);
+  if (EARLY && EARLY.skip) {
+    // #4028: a skip may carry the guard normalizer's updatedInput. writeSync is
+    // synchronous, so the exit below cannot truncate it; a failed write is
+    // swallowed, leaving the plain silent skip.
+    if (EARLY.json) {
+      try { require('fs').writeSync(1, JSON.stringify(EARLY.json)); } catch { /* never breaks a session */ }
+    }
+    process.exit(0);
+  }
 }
 const fs = require('fs');
 const path = require('path');
@@ -1668,7 +1676,7 @@ async function runReconcile(argv) {
       out.background = background;
     }
   } catch {
-    out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
+    out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
     if (!checksList.length) out.background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
   }
   if (jsonOut) {
@@ -1746,6 +1754,7 @@ async function runReconcileBackground(argv) {
   const { STATUS_FILENAME } = require('./lib/reconcile/background-spawn');
   const { QUIET_SKIP_REASONS } = require('./lib/hooks/worktree-reap');
   const { QUIET_SKIP_REASONS: LEDGER_RESIDUE_QUIET_SKIP_REASONS } = require('./lib/reconcile/ledger-residue');
+  const { latestResidueError } = require('./lib/reconcile/residue-summary');
   const root = mainCheckoutRoot(cwd) || cwd;
   // #1687: session-start.js's spawn site now threads the spawning session's
   // id into this dedicated env var (never `CLAUDE_CODE_SESSION_ID` — see
@@ -1823,6 +1832,11 @@ async function runReconcileBackground(argv) {
       notableWorktrees: (r.worktrees || [])
         .filter((w) => w.action === 'skipped' && !QUIET_SKIP_REASONS.has(w.reason))
         .map((w) => ({ path: w.path, reason: w.reason })),
+      // Swallowed escalate/resolve failures this pass saw (#4180): a count plus the latest one — the
+      // prune half exists only in this pass's in-memory result, so this file is its one durable trace.
+      // Prune failures carry `at: null` (this pass), so they rank newest.
+      residueErrors: (r.residueErrors || []).length,
+      lastResidueError: latestResidueError(r.residueErrors),
       skipped: r.skipped || [],
     };
   } catch (e) {

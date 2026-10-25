@@ -80,6 +80,20 @@ test('buildMap counts a well-formed JSON line that is not a [kind, path] record 
   });
 });
 
+test('buildMap counts a .lost marker and names its test, and still counts one whose header does not parse', () => {
+  withTempDir((dir) => {
+    fs.writeFileSync(path.join(dir, '1-1-a.trace'), traceText([['T', 'tests/a.test.js'], ['f', 'lib/x.js']]));
+    fs.writeFileSync(path.join(dir, '1-1-a.lost'), traceText([['T', 'tests/a.test.js']]));
+    const first = buildMap({ traceDir: dir, commit: SHA_A, exitCode: 0, node: 'v22.0.0', now: () => 0 });
+    assert.strictEqual(first.lost, 1);
+    assert.deepStrictEqual(first.lostTests, ['tests/a.test.js']);
+    fs.writeFileSync(path.join(dir, '2-1-b.lost'), '["T"');
+    const second = buildMap({ traceDir: dir, commit: SHA_A, exitCode: 0, node: 'v22.0.0', now: () => 0 });
+    assert.strictEqual(second.lost, 2);
+    assert.deepStrictEqual(second.lostTests, ['tests/a.test.js']);
+  });
+});
+
 // ---- fakes ----
 
 // A fake git answering the calls the CLI makes from `root`; `ancestors` are the shas that are
@@ -183,6 +197,55 @@ test('trace exits 1 when the run left no parseable trace file', () => {
     assert.strictEqual(run({ argv: ['trace', '--out', out], deps }), 1);
     assert.match(errs.join('\n'), /no parseable trace/);
     assert.strictEqual(fs.existsSync(out), false);
+  });
+});
+
+test('trace refuses the map and exits 1 when a traced process lost a read, naming its test', () => {
+  withTempDir((dir) => {
+    const git = fakeGit({ root: dir });
+    const spawn = (cmd, args, opts) => {
+      fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.trace'), traceText([['T', 'tests/a.test.js'], ['f', 'lib/x.js']]));
+      fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.lost'), traceText([['T', 'tests/a.test.js']]));
+      return { status: 0, signal: null };
+    };
+    const out = path.join(dir, 'map.json');
+    const { deps, out: lines, errs } = makeDeps({ git, spawn, cwd: dir });
+    assert.strictEqual(run({ argv: ['trace', '--out', out], deps }), 1);
+    assert.strictEqual(fs.existsSync(out), false);
+    assert.deepStrictEqual(errs, ['test-impact.js trace: 1 traced process(es) could not record a read (tests: tests/a.test.js) — no map written']);
+    assert.deepStrictEqual(lines, []);
+  });
+});
+
+test('trace names every test that lost a read, sorted and unique, past an unparseable marker, and writes no map', () => {
+  withTempDir((dir) => {
+    const git = fakeGit({ root: dir });
+    const spawn = (cmd, args, opts) => {
+      const td = opts.env.CT_TRACE_DIR;
+      fs.writeFileSync(path.join(td, '1-1-a.lost'), traceText([['T', 'tests/z.test.js']]));
+      fs.writeFileSync(path.join(td, '2-1-b.lost'), traceText([['T', 'tests/a.test.js']]));
+      fs.writeFileSync(path.join(td, '3-1-c.lost'), '["T"');
+      fs.writeFileSync(path.join(td, '4-1-d.lost'), traceText([['T', 'tests/a.test.js']]));
+      return { status: 0, signal: null };
+    };
+    const out = path.join(dir, 'map.json');
+    const { deps, errs } = makeDeps({ git, spawn, cwd: dir });
+    assert.strictEqual(run({ argv: ['trace', '--out', out], deps }), 1);
+    assert.strictEqual(fs.existsSync(out), false);
+    assert.deepStrictEqual(errs, ['test-impact.js trace: 4 traced process(es) could not record a read (tests: tests/a.test.js, tests/z.test.js) — no map written']);
+  });
+});
+
+test('trace says "tests: unknown" when every lost marker header is unparseable', () => {
+  withTempDir((dir) => {
+    const git = fakeGit({ root: dir });
+    const spawn = (cmd, args, opts) => {
+      fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.lost'), '["T"');
+      return { status: 0, signal: null };
+    };
+    const { deps, errs } = makeDeps({ git, spawn, cwd: dir });
+    assert.strictEqual(run({ argv: ['trace', '--out', path.join(dir, 'map.json')], deps }), 1);
+    assert.deepStrictEqual(errs, ['test-impact.js trace: 1 traced process(es) could not record a read (tests: unknown) — no map written']);
   });
 });
 
@@ -346,44 +409,50 @@ test('fetch exits 1 when gh fails', () => {
 
 // ---- end to end ----
 
+// The space-path fixture root under `tmp`: tools/run-tests.js and the tracer, lib/x.js and lib/y.js, and two
+// tests (x loads lib/x.js, y reads lib/y.js), committed to a git repo. Returns the root, the env its runs take
+// and HEAD.
+function traceFixture(tmp) {
+  const root = path.join(tmp, 'fixture root');
+  for (const dir of ['tests', 'lib', path.join('tools', 'test-impact')]) fs.mkdirSync(path.join(root, dir), { recursive: true });
+  for (const dir of ['slots', 'tmp']) fs.mkdirSync(path.join(tmp, dir));
+  fs.copyFileSync(path.join(ROOT, 'tools', 'run-tests.js'), path.join(root, 'tools', 'run-tests.js'));
+  fs.copyFileSync(path.join(ROOT, 'tools', 'test-impact', 'tracer.js'), path.join(root, 'tools', 'test-impact', 'tracer.js'));
+  const fixture = path.join(ROOT, 'tests', 'fixtures', 'test-impact');
+  for (const f of ['x.js', 'y.js']) fs.copyFileSync(path.join(fixture, 'lib', f), path.join(root, 'lib', f));
+  fs.writeFileSync(path.join(root, 'tests', 'x.test.js'),
+    "'use strict';\nconst { test } = require('node:test');\ntest('loads x', () => { require('../lib/x'); });\n");
+  fs.writeFileSync(path.join(root, 'tests', 'y.test.js'),
+    "'use strict';\nconst { test } = require('node:test');\nconst fs = require('fs');\n" +
+    "test('reads y', () => { fs.readFileSync('lib/y.js', 'utf8'); });\n");
+
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('CT_TRACE_') || /^GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR)$/.test(key)) delete env[key];
+  }
+  delete env.NODE_TEST_CONTEXT;
+  delete env.NODE_OPTIONS;
+  delete env.CT_TEST_SUITE_SLOT_HELD;
+  Object.assign(env, {
+    CT_TEST_SUITE_SLOT_DIR: path.join(tmp, 'slots'), TMPDIR: path.join(tmp, 'tmp'), TMP: path.join(tmp, 'tmp'), TEMP: path.join(tmp, 'tmp'),
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com',
+  });
+  const git = (args) => {
+    const r = spawnSync('git', args, { cwd: root, env, encoding: 'utf8' });
+    assert.strictEqual(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  git(['init', '-q']);
+  git(['add', '.']);
+  git(['commit', '-q', '-m', 'fixture']);
+  return { root, env, head: git(['rev-parse', 'HEAD']) };
+}
+
 // Tracing is POSIX-only (plugin/skills/test/impact-selection.md, Known limits): on win32 the quoted
 // NODE_OPTIONS `--require` path loses its backslashes, so the traced children never load the tracer.
 test('trace under a path with a space: the real CLI maps lib/x.js to the test that loads it', { skip: process.platform === 'win32' && 'tracing is POSIX-only' }, () => {
   withTempDir((tmp) => {
-    const root = path.join(tmp, 'fixture root');
-    for (const dir of ['tests', 'lib', path.join('tools', 'test-impact')]) fs.mkdirSync(path.join(root, dir), { recursive: true });
-    for (const dir of ['slots', 'tmp']) fs.mkdirSync(path.join(tmp, dir));
-    fs.copyFileSync(path.join(ROOT, 'tools', 'run-tests.js'), path.join(root, 'tools', 'run-tests.js'));
-    fs.copyFileSync(path.join(ROOT, 'tools', 'test-impact', 'tracer.js'), path.join(root, 'tools', 'test-impact', 'tracer.js'));
-    const fixture = path.join(ROOT, 'tests', 'fixtures', 'test-impact');
-    for (const f of ['x.js', 'y.js']) fs.copyFileSync(path.join(fixture, 'lib', f), path.join(root, 'lib', f));
-    fs.writeFileSync(path.join(root, 'tests', 'x.test.js'),
-      "'use strict';\nconst { test } = require('node:test');\ntest('loads x', () => { require('../lib/x'); });\n");
-    fs.writeFileSync(path.join(root, 'tests', 'y.test.js'),
-      "'use strict';\nconst { test } = require('node:test');\nconst fs = require('fs');\n" +
-      "test('reads y', () => { fs.readFileSync('lib/y.js', 'utf8'); });\n");
-
-    const env = { ...process.env };
-    for (const key of Object.keys(env)) {
-      if (key.startsWith('CT_TRACE_') || /^GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR)$/.test(key)) delete env[key];
-    }
-    delete env.NODE_TEST_CONTEXT;
-    delete env.NODE_OPTIONS;
-    delete env.CT_TEST_SUITE_SLOT_HELD;
-    Object.assign(env, {
-      CT_TEST_SUITE_SLOT_DIR: path.join(tmp, 'slots'), TMPDIR: path.join(tmp, 'tmp'), TMP: path.join(tmp, 'tmp'), TEMP: path.join(tmp, 'tmp'),
-      GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com',
-    });
-    const git = (args) => {
-      const r = spawnSync('git', args, { cwd: root, env, encoding: 'utf8' });
-      assert.strictEqual(r.status, 0, r.stderr);
-      return r.stdout.trim();
-    };
-    git(['init', '-q']);
-    git(['add', '.']);
-    git(['commit', '-q', '-m', 'fixture']);
-    const head = git(['rev-parse', 'HEAD']);
-
+    const { root, env, head } = traceFixture(tmp);
     const out = path.join(tmp, 'map.json');
     const r = spawnSync(process.execPath, [CLI, 'trace', '--allow-dirty', '--out', out], { cwd: root, env, encoding: 'utf8', timeout: 120000 });
     assert.strictEqual(r.status, 0, r.stdout + r.stderr);
@@ -396,6 +465,22 @@ test('trace under a path with a space: the real CLI maps lib/x.js to the test th
     assert.ok(parsed.map.tests['tests/x.test.js'].f.includes('lib/x.js'), JSON.stringify(parsed.map.tests['tests/x.test.js']));
     assert.ok(parsed.map.tests['tests/y.test.js'].f.includes('lib/y.js'));
     assert.ok(!parsed.map.tests['tests/y.test.js'].f.includes('lib/x.js'));
+  });
+});
+
+// A preload (tests/fixtures/test-impact/fail-trace-append.js) loaded before the tracer makes the trace write of
+// the read of lib/y.js fail, so the real CLI must refuse the map rather than record an under-recorded one (#4158).
+test('a trace whose write fails exits 1, writes no map and names the test that lost a read', { skip: process.platform === 'win32' && 'tracing is POSIX-only' }, () => {
+  withTempDir((tmp) => {
+    const { root, env } = traceFixture(tmp);
+    const out = path.join(tmp, 'map.json');
+    const fail = path.join(ROOT, 'tests', 'fixtures', 'test-impact', 'fail-trace-append.js');
+    const r = spawnSync(process.execPath, [CLI, 'trace', '--allow-dirty', '--out', out], {
+      cwd: root, env: { ...env, NODE_OPTIONS: `--require "${fail}"` }, encoding: 'utf8', timeout: 120000,
+    });
+    assert.strictEqual(r.status, 1, r.stdout + r.stderr);
+    assert.strictEqual(fs.existsSync(out), false, 'no map is written');
+    assert.match(r.stderr, /could not record a read \(tests: tests\/y\.test\.js\) — no map written/);
   });
 });
 

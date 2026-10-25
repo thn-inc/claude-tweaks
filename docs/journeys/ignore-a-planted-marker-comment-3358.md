@@ -9,6 +9,7 @@ files:
   - plugin/bin/lib/issues/grant-maturation.js
   - plugin/skills/_shared/work-record.md
   - plugin/bin/lib/health-core/materiality-digest.js
+  - plugin/bin/lib/health-core/fingerprint.js
   - plugin/skills/_shared/materiality-floor.md
   - plugin/skills/tidy/digest-sweep.md
   - plugin/skills/tidy/SKILL.md
@@ -88,4 +89,5 @@ files:
 - Step 6 added during build of #3766 (digest dedup and the tidy digest sweep trust only owner/member/collaborator comments)
 - Step 7 added, and step 1's association wording updated, during build of #3823 (trusted-author jq reads both association spellings, so it works on the REST/MCP transport)
 - Step 8 added during build of #3936 (the Find step's worktree-safe form, `bin/find-run-comment.js`, applies the same trust rule to a fetched comments file)
+- `files:` updated during build of #4182 (step 6's materiality-fingerprint marker parsing moved to `health-core/fingerprint.js`'s shared `parseMarkerFingerprints`; no step behavior changed)
 - Related specs: #3358, #3766, #3823, #2821 (the try-it walkthrough demo reads back), #309 (pending-grant maturation)
