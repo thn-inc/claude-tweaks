@@ -59,7 +59,15 @@ function formatReconcileSummary(root, { archivedCount = 0, mirror = null } = {},
   const stuckPart = oldest === null
     ? `${stuck.length} stuck`
     : `${stuck.length} stuck (oldest ${humanAge(now - oldest)})`;
-  return `reconcile: ${archivedCount} archived, ${stuckPart}, mirror ff ${mirrorFfPart(mirror)}`;
+  // #4180: a failed escalate/resolve rides on its entry (`lastResidueError`, cache.js) — name the
+  // count and the latest one here so a swallowed failure is visible at the closing report. With none
+  // tracked the line is unchanged.
+  const errored = stuck.filter((e) => e.lastResidueError);
+  const latest = errored.reduce((best, e) => (best === null || e.lastResidueError.at > best.lastResidueError.at ? e : best), null);
+  const errorPart = latest === null
+    ? ''
+    : `, ${errored.length} escalation error(s) (last: ${latest.lastResidueError.op} — ${latest.lastResidueError.reason})`;
+  return `reconcile: ${archivedCount} archived, ${stuckPart}, mirror ff ${mirrorFfPart(mirror)}${errorPart}`;
 }
 
 module.exports = { formatReconcileSummary, archivedCountFromRunsResult, humanAge, mirrorFfPart };

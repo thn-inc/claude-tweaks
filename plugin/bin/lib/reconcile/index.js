@@ -25,7 +25,7 @@ const { sharedFetch, sharedFetchAsync } = require('./shared-fetch');
 const { repairOriginHead } = require('./origin-head');
 const { createIssueListCache } = require('./issue-list-cache');
 const {
-  readCache, writeCache, isFresh, SHARED_HEALTH_TTL_MS,
+  readCache, writeCache, isFresh, SHARED_HEALTH_TTL_MS, listResidueFailures,
 } = require('./cache');
 const { formatReconcileSummary, archivedCountFromRunsResult } = require('./residue-summary');
 // summarizeTimings is called through the module object (not destructured) so a
@@ -92,7 +92,11 @@ function expandChecks(checks) {
 }
 
 // opts: { dryRun?: boolean, checks?: string[], cwd?: string, sessionId?: string, budgetMs?: number }
-// -> { mirror, redTip, worktrees, claims, runs, branches, remoteBranches, ledgerResidue, console, skipped, timings }
+// -> { mirror, redTip, worktrees, claims, runs, branches, remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }
+// A dry run writes neither the cache nor GitHub (#4180): `residuePlan` lists what the residue
+// tracking would have done (an array on a dry run when archive ran, null otherwise), and
+// `residueErrors` lists the escalate/resolve failures recorded on tracked entries plus this
+// pass's prune failures (null until a pass reaches its finalize phase).
 // `sessionId`, when the caller has one, threads through to archiveMerged's
 // own `isAbandonedInterrupted` ownership check (archive-merged.js) — omitted
 // (undefined), archiveMerged falls back to its own
@@ -124,7 +128,7 @@ async function reconcileInner(opts) {
   const requestedChecks = Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS;
   let checks = expandChecks(requestedChecks);
   const cwd = opts.cwd || process.cwd();
-  const result = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, skipped: [] };
+  const result = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, skipped: [] };
 
   // Declined-learning store prune (#1399) — local, gitignored bookkeeping unrelated to git/
   // GitHub reachability, so it runs unconditionally on every reconcile pass regardless of
@@ -380,7 +384,10 @@ async function reconcileInner(opts) {
     // answers this pass already paid for here — otherwise a cold pass that hits
     // the ceiling forgets them and the next pass starts cold and hits it again.
     // (Only prStates: the freshness stamp and the residue index stay finalize's.)
-    try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
+    // #4180: a dry run writes nothing, so it forgets the answers as finalize does.
+    if (!dryRun) {
+      try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
+    }
     return true;
   }
 
@@ -485,6 +492,9 @@ async function reconcileInner(opts) {
     }
   }
 
+  // The archive check's prune failures (#4180), kept for finalize's `residueErrors`; stays null
+  // when archive did not run, so that report appends nothing.
+  let archiveResidueErrors = null;
   if (overBudget(DISPATCH_ORDER.slice(4))) return result;
   if (checks.includes('archive')) {
     const r = await timePhase('archive', async () => {
@@ -503,6 +513,8 @@ async function reconcileInner(opts) {
         ...(s.missing !== undefined ? { missing: s.missing } : {}),
         ...(s.hint !== undefined ? { hint: s.hint } : {}),
       })));
+    result.residuePlan = r.residuePlan === undefined ? null : r.residuePlan;
+    archiveResidueErrors = Array.isArray(r.residueErrors) ? r.residueErrors : [];
   }
 
   // Same live-ref dependency as release/archive: derives branch state from
@@ -605,22 +617,34 @@ async function reconcileInner(opts) {
   // #4032: the end-of-pass cache write and the residue summary below form the
   // `finalize` timing phase.
   timePhaseSync('finalize', () => {
-    // #4032: persist the pass's terminal PR-state answers first, so the cache
-    // write below re-reads a file that already carries them. Best-effort, and
-    // dry-run included: it records reads, never repo state.
-    try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
-    // A scoped (skipCacheStamp) pass that learned marker-index entries still
-    // persists them: like prStates.persist() above, the index records reads
-    // (never freshness), so an explicit --checks pass must not drop them.
-    const residueIndexChanged = JSON.stringify(issueListCache.index) !== loadedResidueIndexJson;
-    if (!opts.skipCacheStamp || healthJustSucceeded || residueIndexChanged) {
-      const cache = readCache(root);
-      const update = { ...cache };
-      if (!opts.skipCacheStamp) update.lastRunAt = Date.now();
-      if (healthJustSucceeded) update.lastHealthCheckOkAt = now;
-      update.residueIssueIndex = issueListCache.index;
-      writeCache(root, update);
+    // #4180: a dry run writes nothing — neither the cache nor GitHub — so both cache writes below
+    // are skipped for it. Both only record reads (PR answers, the marker index) or freshness, and a
+    // dry run that wrote them would leave the next real pass looking fresher than it is; what it
+    // would have done reaches the caller as `residuePlan` instead.
+    if (!dryRun) {
+      // #4032: persist the pass's terminal PR-state answers first, so the cache
+      // write below re-reads a file that already carries them. Best-effort.
+      try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
+      // A scoped (skipCacheStamp) pass that learned marker-index entries still
+      // persists them: like prStates.persist() above, the index records reads
+      // (never freshness), so an explicit --checks pass must not drop them.
+      const residueIndexChanged = JSON.stringify(issueListCache.index) !== loadedResidueIndexJson;
+      if (!opts.skipCacheStamp || healthJustSucceeded || residueIndexChanged) {
+        const cache = readCache(root);
+        const update = { ...cache };
+        if (!opts.skipCacheStamp) update.lastRunAt = Date.now();
+        if (healthJustSucceeded) update.lastHealthCheckOkAt = now;
+        update.residueIssueIndex = issueListCache.index;
+        writeCache(root, update);
+      }
     }
+
+    // #4180: every swallowed escalate/resolve failure in one list — the reasons recorded on tracked
+    // entries (`lastResidueError`), then this pass's prune failures, whose entries are already gone.
+    result.residueErrors = listResidueFailures(root)
+      .filter((e) => e.lastResidueError)
+      .map((e) => ({ reason: e.reason, path: e.path, op: e.lastResidueError.op, error: e.lastResidueError.reason, at: e.lastResidueError.at }))
+      .concat((archiveResidueErrors || []).map((e) => ({ reason: e.reason, path: e.path, op: e.op, error: e.error, at: null })));
 
     // #644 Deliverable 3 — the one-line residue summary /claude-tweaks:flow's
     // closing report renders, attached to the same JSON this function already
