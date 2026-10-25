@@ -184,6 +184,9 @@ abandoned ad-hoc dir (its recorded worktree no longer resolves in `git worktree 
 swept separately once `ADHOC_SUPERSEDED_TTL_MS` (30 days) has elapsed since it was last touched
 (`isAdHocStandaloneSuperseded`, #1604) — a still-live one (worktree still registered) is never
 swept by this path, no matter its age, preserving this section's own invariant.**
+A dir stamped with the main checkout never reaches that path (the main checkout is always
+registered); `adhoc-session-ended` sweeps it instead, once its session reads `dead` and the dir has
+sat untouched for 7 days (#4179). A wrap-up later than either window reads no friction from it.
 
 **This block is the single machine-checked statement of the vocabulary above** (`tests/reflect-friction-lens-vocab.test.js` pins it against the real `appendEvent(...)` call sites in `bin/lib/hooks/*.js` — a drift here is a test failure, not a silent doc rot, per `#452`'s post-mortem):
 

@@ -273,20 +273,43 @@ call site on a tracked feature branch compare against the wrong ref and warn abo
 that isn't there.
 <!-- integration-branch-ranks: excludes=5 -->
 
+Resolve `{UPSTREAM}`, the ref to compare against, with the plain calls below, each its own Bash
+call (the worktree guard refuses `git` inside `$(...)`, `_shared/scratch-worktree.md` §7), and
+stop at the first that prints a value. A value is pasted literally into every later call — shell
+state does not survive between calls.
+
+1. The pinned integration branch: when this prints `{name}`, `{UPSTREAM}` is `origin/{name}`.
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch
+   ```
+
+2. Else the upstream of the current branch: `{UPSTREAM}` is what this prints (`origin/feat`).
+
+   ```bash
+   git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/dev/null
+   ```
+
+3. Else the remote default branch: `{UPSTREAM}` is what this prints (`origin/main`).
+
+   ```bash
+   git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null
+   ```
+
+None of the three prints a value (an error exit with no stdout counts as printing nothing) → there is no fork point to compare against: skip the check
+and say so, never compare against a guessed ref. Otherwise fetch it — `{remote}` and `{branch}`
+are `{UPSTREAM}` split at its first `/`; a failed fetch is not fatal, the count then reads the
+last-fetched ref — and count:
+
 ```bash
-# Integration branch when the project pins one, else the upstream of the current
-# branch, else the remote default branch (origin/HEAD). Assigned and used in the
-# same call — a fresh shell per Bash invocation means a value resolved elsewhere
-# would arrive empty here, and an empty UPSTREAM silently skips the check.
-INTEGRATION_BRANCH=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch)
-UPSTREAM="${INTEGRATION_BRANCH:+origin/$INTEGRATION_BRANCH}"
-[ -n "$UPSTREAM" ] || UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/dev/null) \
-  || UPSTREAM="origin/$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')"
-git fetch "${UPSTREAM%%/*}" "${UPSTREAM#*/}" 2>/dev/null
-ahead=$(git rev-list --count "HEAD..$UPSTREAM" 2>/dev/null)
+git fetch {remote} {branch}
 ```
 
-If `ahead > 0`, surface the divergence (`git log --oneline HEAD..$UPSTREAM | head -5`) and call
+```bash
+git rev-list --count HEAD..{UPSTREAM}
+```
+
+The printed count is `ahead`. If `ahead > 0`, surface the divergence (`git log --oneline HEAD..{UPSTREAM} | head -5`) and call
 `AskUserQuestion`:
 - `question`: `"{UPSTREAM} is {N} commits ahead — how do you want to proceed?"`, `header`:
   `"Divergence"`, `multiSelect`: `false`

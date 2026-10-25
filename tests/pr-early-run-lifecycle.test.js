@@ -230,7 +230,8 @@ test('#3319: steps-and-gates.md phase-exit paragraph routes a non-frontend polis
 });
 
 test('bin/hooks.js record-pr verb writes run-state.json.pr through writeRunState, mirroring record-worktree', () => {
-  assert.match(HOOKS_JS, /if \(cmd === 'record-pr'\)/);
+  assert.match(HOOKS_JS, /'record-pr': \{[^}\n]*\brun: runRecordPr\b/);
+  assert.match(HOOKS_JS, /^async function runRecordPr\(argv\) \{/m);
   // Anchored on the property this test is named for — run-state reaches disk
   // only through the sanctioned `writeRunState` writer (CLAUDE.md's
   // write-ownership rule), and the field it writes is `pr` — rather than on the

@@ -56,7 +56,7 @@ Build the payload once, from either transport, the same way:
 node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   console.log(JSON.stringify(c.claimPayload({issueNumber:Number(process.argv[1]),
   runId:process.argv[2],sessionId:process.env.CLAUDE_CODE_SESSION_ID||'',
-  host:require('os').hostname(),now:Date.now()})))" "$ISSUE" "$RUN_ID" > /tmp/claim-payload-${ISSUE}.json
+  host:require('os').hostname(),now:Date.now()})))" -- "$ISSUE" "$RUN_ID" > /tmp/claim-payload-${ISSUE}.json
 ```
 
 - **Bootstrap the branch** (once per run, before the first claim/release write). Branch creation
@@ -318,7 +318,7 @@ affects claim state. Generate bodies with the module — never hand-write marker
 node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   console.log(c.claimPayload({issueNumber:Number(process.argv[1]),
   runId:process.argv[2],sessionId:process.env.CLAUDE_CODE_SESSION_ID||'',
-  host:require('os').hostname(),now:Date.now()}).commentBody)" "$ISSUE" "$RUN_ID" > /tmp/claim-${ISSUE}.md
+  host:require('os').hostname(),now:Date.now()}).commentBody)" -- "$ISSUE" "$RUN_ID" > /tmp/claim-${ISSUE}.md
 ```
 
 <!-- when: transport=gh -->

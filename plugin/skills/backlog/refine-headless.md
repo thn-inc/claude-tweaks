@@ -121,27 +121,17 @@ not a replacement for, `trust.js`'s per-class revocation (#268) — a class can 
 while this breaker is tripped, and vice versa.
 
 ```bash
-eval "$(node -e "
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  const os = require('os'); const path = require('path');
-  const files = {
-    ST_BACKLOG_GRANT_WATCHED: 'backlog-grant-watched.json',
-    ST_BACKLOG_GRANT_FRESH_STATE: 'backlog-grant-fresh-state.json',
-    ST_BACKLOG_GRANT_GITLOG: 'backlog-grant-gitlog.txt',
-  };
-  for (const [varName, filename] of Object.entries(files)) {
-    const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-    console.log(varName + '=' + JSON.stringify(p));
-  }
-")"
+ST_BACKLOG_GRANT_WATCHED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-grant-watched.json)"
+ST_BACKLOG_GRANT_FRESH_STATE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-grant-fresh-state.json)"
+ST_BACKLOG_GRANT_COMMITLOG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-grant-gitlog.txt)"
 node -e "
   const { readWatched } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/merge-lane-breaker.js');
   console.log(JSON.stringify(readWatched(process.cwd())));
 " > "$ST_BACKLOG_GRANT_WATCHED"
 ```
 
-`$ST_BACKLOG_GRANT_FRESH_STATE` and `$ST_BACKLOG_GRANT_GITLOG` are two more `sessionTmpPath`-resolved
-paths from that same `eval` block, reserved here for bullets 1 and 2 below to write into — named
+`$ST_BACKLOG_GRANT_FRESH_STATE` and `$ST_BACKLOG_GRANT_COMMITLOG` are two more `sessionTmpPath`-resolved
+paths from that same resolution block, reserved here for bullets 1 and 2 below to write into — named
 now so the Classify snippet's `require()`/`readFileSync()` calls in bullet 3 are real, not
 aspirational.
 
@@ -157,7 +147,7 @@ An empty `{}` means nothing to sweep — skip straight to Step 1. Otherwise, for
    the resolved `trust-revert-window-days` policy value (`resolve-policy.js --values
    trust-revert-window-days`, same resolver pattern Step 0 already uses elsewhere in this posture):
    ```bash
-   git log "{integration-branch}" --format='%H%x1f%B%x1e' > "$ST_BACKLOG_GRANT_GITLOG"
+   git log "{integration-branch}" --format='%H%x1f%B%x1e' > "$ST_BACKLOG_GRANT_COMMITLOG"
    WINDOW_DAYS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values trust-revert-window-days)
    ```
    This fetch is independent of `bin/backlog-grant-gate.js`'s own internal git-log fetch below
@@ -190,7 +180,7 @@ An empty `{}` means nothing to sweep — skip straight to Step 1. Otherwise, for
        closedAt: fresh.closedAt,
        labels: fresh.labels.map((l) => (typeof l === 'string' ? l : l.name)),
      };
-     const gitLog = parseGitLog(fs.readFileSync('$ST_BACKLOG_GRANT_GITLOG', 'utf8'));
+     const gitLog = parseGitLog(fs.readFileSync('$ST_BACKLOG_GRANT_COMMITLOG', 'utf8'));
      const result = classifyWatchedRecord(entry, gitLog, Date.now(), $WINDOW_DAYS);
      console.log(JSON.stringify(result));
    "
@@ -239,20 +229,10 @@ skill's directory for the fetch/compute split that reproduces this CLI's outcome
 plus its already-exported pure functions, with no new module.
 
 ```bash
-eval "$(node -e "
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  const os = require('os'); const path = require('path');
-  const files = {
-    ST_BACKLOG_GRANT_OUTLOOK: 'backlog-grant-outlook.json',
-    ST_BACKLOG_GRANT_CANDIDATES: 'backlog-grant-candidates.json',
-    ST_BACKLOG_GRANT_TRUST_ROWS: 'backlog-grant-trust-rows.json',
-    ST_BACKLOG_GRANT_PHASE_A: 'backlog-grant-phase-a.json',
-  };
-  for (const [varName, filename] of Object.entries(files)) {
-    const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-    console.log(varName + '=' + JSON.stringify(p));
-  }
-")"
+ST_BACKLOG_GRANT_OUTLOOK="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-grant-outlook.json)"
+ST_BACKLOG_GRANT_CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-grant-candidates.json)"
+ST_BACKLOG_GRANT_TRUST_ROWS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-grant-trust-rows.json)"
+ST_BACKLOG_GRANT_PHASE_A="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-grant-phase-a.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/backlog-grant-gate.js" > "$ST_BACKLOG_GRANT_OUTLOOK"
 SHORTCUT=$(node -e "
   const fs = require('fs');

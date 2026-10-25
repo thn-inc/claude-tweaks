@@ -19,7 +19,7 @@ files:
 ## Steps
 
 ### 1. Gather the facts — `bin/activity-gather.js`
-- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/activity-gather.js" --period 7d --out "$ACTIVITY_FACTS"` (paths resolved by `bin/session-tmp-resolve.js`; `--repo owner/name[,...]` and `--actor login` when given)
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/activity-gather.js" --period 7d --out "$ACTIVITY_FACTS"` (the three paths come from one `ACTIVITY_FACTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value activity-facts.json)"` line each, likewise `ACTIVITY_NARRATIVES` and `ACTIVITY_REPORT`, in place of the `eval "$(…)"` form the worktree guard refuses; `--repo owner/name[,...]` and `--actor login` when given)
 - **Action:** The skill runs the gather CLI, the only place `gh` is called. The CLI resolves the actor via `gh api user`, the repo from `origin` via `bin/lib/repo-resolve.js`, canonicalizes every slug via `gh repo view --json nameWithOwner` (a renamed or transferred repo would otherwise search under its stale name and return nothing), then runs six queries per repo — each independently fail-safe — and writes `facts.json` with `schemaVersion: 1`.
 - **Should feel:** Mechanical and complete — a partial gather still exits 0 and names the failed query in `failures[]` rather than aborting; a redirect is a one-line stderr note, not a surprise empty report.
 - **Should understand:** Exit 1 is a malformed invocation (an unrecognized period form, a host-qualified `--repo`, a mis-shaped `--actor`), exit 2 is `gh` absent or unauthenticated or an unresolvable repository, exit 3 means every query failed; each stops the skill with the CLI's own message. A `truncated[]` entry means a query hit its `--limit` row cap and the period holds more than the count shows.
@@ -49,4 +49,5 @@ files:
 ## Origin
 - Created during build of #2757 (`/claude-tweaks:activity` — period-scoped "what shipped" report with citation-validated rendering)
 - Steps 1-4 built in this session
+- Updated during build of #4028: step 1's path resolution moved from one `eval "$(…session-tmp-resolve.js VAR=file …)"` line to one `--value` line per variable, because a worktree-isolated session's guard refuses `eval` (`_shared/scratch-worktree.md` §7).
 - Related specs: none — standalone utility skill; `/claude-tweaks:help` lists it, `/claude-tweaks:feedback`'s session judge remains the owner of harness-performance reporting

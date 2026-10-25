@@ -33,7 +33,7 @@ INSTALLED_VERSION=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/.claude-
 node -e "
   const { compareVersions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/changelog.js');
   console.log(compareVersions(process.argv[1], process.argv[2]));
-" "$MARKER_VERSION" "$INSTALLED_VERSION"
+" -- "$MARKER_VERSION" "$INSTALLED_VERSION"
 ```
 
 Prints `-1` (marker older than installed), `0` (match), or `1` (marker newer — shouldn't happen
@@ -60,7 +60,7 @@ node -e "
   const { extractChangelogRange } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/changelog.js');
   const changelog = fs.readFileSync(path, 'utf8');
   console.log(JSON.stringify(extractChangelogRange(changelog, process.argv[1], process.argv[2])));
-" "$MARKER_VERSION" "$INSTALLED_VERSION"
+" -- "$MARKER_VERSION" "$INSTALLED_VERSION"
 ```
 
 An empty array means either no entries in range or (the common installed-build case) no
