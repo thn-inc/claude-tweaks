@@ -20,10 +20,10 @@ files:
 - **Should feel:** The same one command and one line as before, plus one field. Nothing to opt into, and no flag to remember.
 - **Should understand:**
   - `bytes` is bounded per file (the 64 KB cap) and for the whole bundle (a 256 KB total budget, #4220). Under the budget, a huge rewrite of an existing hand-written file still inlines its whole hunk, because that hunk is what is being reviewed. Over it, the largest remaining hunks and sections are stubbed first until the bundle fits. A readable markdown file's section is never inlined, whatever its size (#3713); its modified hunk stays whole in the diff unless the budget takes it.
-  - `bytes` can stay above 256 KB only when the diff headers and one-line stubs alone exceed it — a branch touching well over a thousand files.
+  - `bytes` can stay above 256 KB only when the diff headers and one-line stubs alone exceed it — about 600 bytes per changed file, so a branch touching more than roughly 450 files.
   - `--files-from` is still the escape hatch for scoping the bundle down.
 - **Red flags:**
-  - A `bytes` over 262144 on a diff of a few hundred files or fewer.
+  - A `bytes` over 262144 on a diff of fewer than 300 files.
   - A JSON line with no `oversizeSections` key (an installed CLI older than this change).
 
 ### 2. Hand the bundle path to every lens agent
