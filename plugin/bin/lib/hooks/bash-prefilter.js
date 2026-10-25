@@ -67,10 +67,11 @@ function anchorFor(raw) {
 
 // #3080: bare shell redirection (`>`, `>>`, ...) has no command word for
 // commandWords() to key on, so it needs its own check. It reuses the parser's
-// own redirectWriteTargets (git-command.js is already loaded) rather than a
-// second scanner, so the prefilter matches exactly what the parser resolves.
-// It must stay a superset of what fileWriteTargets can report under ANY real cwd.
-// The '.' cwd is a placeholder: it only anchors relative targets, which this
+// own scan (git-command.js is already loaded) rather than a second scanner:
+// redirectRawTargets finds each segment's redirect values, and resolveWriteTarget
+// applies the parser's exclusions to each one. It must stay a superset of what
+// fileWriteTargets can report under ANY real cwd, so it never resolves against a
+// real one: the '.' cwd is a placeholder that only anchors relative targets, which this
 // boolean never inspects, and the DEVNULL_LIKE/fd-dup/unresolvable exclusions
 // are cwd-independent — so `2>&1` and `> /dev/null` still take the skip path.
 // The one cwd-dependent rule is the win32 drive-relative one (#4281): `D:x`
@@ -83,7 +84,7 @@ function anchorFor(raw) {
 // drops does not send a call down the full path, while one in a kept body does.
 // The glued shapes `echo foo>x` (#4015), `echo "hi">x` and `(ls)>out` (#4210) are
 // reached because the handler's `quoting` object, `spanKinds` included, is forwarded
-// to redirectWriteTargets.
+// to redirectRawTargets.
 function hasFileRedirection(command, { pathImpl = path } = {}) {
   let found = false;
   forEachShellSegment(command, '.', (t, _cwd, quoting) => {
