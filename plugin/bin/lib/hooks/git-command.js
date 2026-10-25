@@ -352,7 +352,18 @@ function stripQuotes(s) {
 // only ever see the quoted portion in isolation, judge it fully resolvable, and
 // silently drop the unresolvable suffix that would otherwise poison the target.
 //
-// Returns `{ tokens, singleQuoted, doubleQuoted, leadQuoted, spanKinds }` — `singleQuoted[i]` is true
+// #4281: `tokens[i]` is the word's VALUE, what bash passes the program, so a quoted
+// native path (`"D:\a\x"`, `'D:\a\x'`) keeps its backslashes as path characters. A bare
+// `\x` is the character `x`; inside double quotes only `\$`, `` \` ``, `\"` and `\\`
+// escape (the `\` goes), and any other `\` stays as typed (`"a\xb"` is `a\xb`); a
+// backslash-newline, bare or double-quoted, is removed. `typed[i]` is the same word as
+// typed, quote delimiters dropped and backslashes kept (the token before #4281, except
+// that a word of backslash-newlines alone is dropped, see the end of tokenize): the
+// heredoc-reader checks name programs from it (checkReaderCommand, planHeredocBodies),
+// so `C:\bin\sh` and `bas\h` still read as shells there. A lone backslash at the end of
+// the text matches no escape and stays in the value as a stray `\` (see isUnresolvable).
+//
+// Returns `{ tokens, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds }` — `singleQuoted[i]` is true
 // when any part of `tokens[i]` was assembled from a single-quoted span, and
 // `doubleQuoted[i]` likewise for a double-quoted span (#4015: the redirect scan
 // treats a `>` in either as literal text). Real bash never performs
@@ -368,42 +379,56 @@ function stripQuotes(s) {
 // quoted delimiter (dropRedirections tells them apart by it).
 //
 // `spanKinds[i]` (#4210) is a string exactly as long as `tokens[i]`, one character
-// per character of the token: `b` bare, `e` backslash-escaped (the `\` and the
-// character it escapes, in a bare span), `s` single-quoted, `d` double-quoted, `x`
-// stray (an unterminated quote character or a lone trailing backslash). Quote
-// delimiters are not part of the token, so they carry no mask character. The
+// per character of the value: `b` bare, `e` backslash-escaped (the one character an
+// escape leaves, bare or double-quoted; #4281), `s` single-quoted, `d` double-quoted
+// (an unescaping `\` inside double quotes included), `x` stray (an unterminated quote
+// character or a lone trailing backslash). Quote delimiters and removed backslashes
+// are not part of the value, so they carry no mask character. The
 // per-token flags above say only THAT a span was quoted; the mask says WHERE, which
 // is what lets the glued-redirect scan accept `echo "hi">x` yet refuse `echo "a>b"`.
 // Two changes to the token regex make the mask truthful: a bare run now stops at a quote
 // (so `foo"bar"` is a bare span plus a double-quoted span, merged into one token as
-// bash does), and a double-quoted span is backslash-aware (`\"` does not close it,
-// and its value keeps the backslashes as typed).
+// bash does), and a double-quoted span is backslash-aware (`\"` does not close it).
 function tokenize(seg) {
   const out = [];
   const singleQuoted = [];
   const doubleQuoted = [];
   const leadQuoted = [];
   const spanKinds = [];
+  const typed = [];
   const re = /"((?:[^"\\]|\\[\s\S])*)"|'([^']*)'|((?:\\[\s\S]|[^\s"'\\])+)|(\S)/g;
   let m;
   let prevEnd = -1;
   while ((m = re.exec(seg)) !== null) {
-    const val = m[1] ?? m[2] ?? m[3] ?? m[4];
+    const text = m[1] ?? m[2] ?? m[3] ?? m[4];
     const isSQ = m[2] !== undefined;
     const isDQ = m[1] !== undefined;
     const isBare = m[3] !== undefined;
+    let val = text;
     let kinds;
-    if (isDQ) kinds = 'd'.repeat(val.length);
-    else if (isSQ) kinds = 's'.repeat(val.length);
-    else if (isBare) kinds = val.replace(/\\[\s\S]|[\s\S]/g, (u) => (u.length === 2 ? 'ee' : 'b'));
-    else kinds = 'x';
+    if (isSQ) kinds = 's'.repeat(text.length);
+    else if (!isDQ && !isBare) kinds = 'x';
+    else {
+      val = '';
+      kinds = '';
+      for (let j = 0; j < text.length; j += 1) {
+        const c = text[j];
+        const next = text[j + 1];
+        if (c === '\\' && next === '\n') { j += 1; continue; }
+        if (c === '\\' && (isBare || '$`"\\'.includes(next))) { val += next; kinds += 'e'; j += 1; continue; }
+        val += c;
+        kinds += isDQ ? 'd' : 'b';
+      }
+    }
     if (out.length && m.index === prevEnd) {
       out[out.length - 1] += val;
+      typed[typed.length - 1] += text;
       spanKinds[spanKinds.length - 1] += kinds;
       if (isSQ) singleQuoted[singleQuoted.length - 1] = true;
       if (isDQ) doubleQuoted[doubleQuoted.length - 1] = true;
     } else {
       out.push(val);
+      typed.push(text);
       spanKinds.push(kinds);
       singleQuoted.push(isSQ);
       doubleQuoted.push(isDQ);
@@ -411,7 +436,11 @@ function tokenize(seg) {
     }
     prevEnd = re.lastIndex;
   }
-  return { tokens: out, singleQuoted, doubleQuoted, leadQuoted, spanKinds };
+  // A word made only of backslash-newlines (`cp a \` then `  b` on the next line) is no
+  // word in bash, which removes them before splitting; `""` stays, an empty word.
+  const keep = out.map((v, i) => v !== '' || singleQuoted[i] || doubleQuoted[i]);
+  const pick = (a) => a.filter((_, i) => keep[i]);
+  return { tokens: pick(out), typed: pick(typed), singleQuoted: pick(singleQuoted), doubleQuoted: pick(doubleQuoted), leadQuoted: pick(leadQuoted), spanKinds: pick(spanKinds) };
 }
 
 // Global git flags that consume the NEXT token as a value.
@@ -420,12 +449,14 @@ const VALUE_FLAGS = new Set(['-C', '-c', '--exec-path', '--namespace']);
 const UNPROVABLE_FLAGS = ['--git-dir', '--work-tree'];
 
 // A raw (unquote-stripped) cd/-C argument that is unresolvable to a concrete,
-// literal path: no argument, "-", starts with "~", contains "$"/backtick, or
-// contains a backslash/double-quote. The last two guard against token-level
-// ambiguity: the tokenizer above is escape-aware, but it keeps backslashes in
-// the token text as typed, so a value that still carries a backslash or stray
-// quote (from an escaped-quote sequence) cannot be trusted as a literal path —
-// never claim an unprovable target. Also unresolvable: anything else that looks
+// literal path: no argument, "-", starts with "~", contains "$"/backtick,
+// contains a double-quote, or ends in a backslash. The tokenizer above hands over
+// each word's value (#4281), so a backslash inside it is a literal path character
+// (`"D:\a\x"` names `D:\a\x`), but a double-quote still marks an escaped-quote
+// sequence this module does not trust as a literal path. A value that ENDS in `\`
+// is the stray-backslash case, a `\` with nothing left to escape (`cd /x\` at the
+// end of the command): bash 3.2 drops it and bash 5 keeps it, so its value is
+// unprovable — never claim an unprovable target. Also unresolvable: anything else that looks
 // like a FLAG (starts with "-", length > 1) — cd's own flags (-L, -P, -e, -@,
 // --) are not path arguments; without this, `cd -P /other-repo` would resolve
 // "-P" itself as a literal (almost certainly nonexistent) child directory of
@@ -438,7 +469,7 @@ function isUnresolvable(raw) {
     raw.startsWith('~') ||
     raw.includes('$') ||
     raw.includes('`') ||
-    raw.includes('\\') ||
+    raw.endsWith('\\') ||
     raw.includes('"')
   );
 }
@@ -474,6 +505,15 @@ function resolveCd(effCwd, raw) {
 // rejection.
 const SIMPLE_ASSIGNMENT_RE = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 
+// #4281: a word is an assignment only when its name and its `=` are bare. The value is
+// read after quote removal, so `A\=x` and `"A"=x` both read `A=x`, yet bash runs each as
+// the command `A=x` (exit 127) and assigns nothing. `kinds` is the word's spanKinds.
+function isAssignmentWord(tok, kinds) {
+  if (!SIMPLE_ASSIGNMENT_RE.test(tok)) return false;
+  const eq = tok.indexOf('=');
+  return kinds.slice(0, eq + 1) === 'b'.repeat(eq + 1);
+}
+
 // Classifies raw (pre-substitution) token array `t` as a simple same-command
 // assignment and updates `vars` in place; returns whether it was one (the
 // caller `continue`s past handler/cd on true, the same way an existing `cd`
@@ -487,10 +527,10 @@ const SIMPLE_ASSIGNMENT_RE = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 // keeps a chained reference (`B=$A/y`) from ever resolving through a second
 // hop: `$A/y`'s raw value still contains `$`, so isUnresolvable rejects it
 // here, before substitution would otherwise have had a chance to touch it.
-function updateAssignment(vars, t) {
-  if (t.length !== 1) return false;
+// `kinds` is the token's spanKinds (isAssignmentWord).
+function updateAssignment(vars, t, kinds) {
+  if (t.length !== 1 || !isAssignmentWord(t[0], kinds)) return false;
   const m = SIMPLE_ASSIGNMENT_RE.exec(t[0]);
-  if (!m) return false;
   const [, name, rawValue] = m;
   const value = stripQuotes(rawValue);
   if (isUnresolvable(value)) vars.delete(name);
@@ -544,9 +584,10 @@ function substituteVars(tokens, vars, singleQuoted, spanKinds) {
 // keep the effective cwd in sync. `handler(t, effCwd, quoting, again)` is
 // invoked for every non-cd, non-empty segment with the cwd value in effect for
 // it (string, or null meaning UNKNOWN); `quoting` is
-// `{ raw, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt }`: the
-// pre-substitution tokens, their per-token quote flags from tokenize (#4015 reads
-// the first three, #4149's dropRedirections reads `leadQuoted`), their per-character
+// `{ raw, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt }`: the
+// pre-substitution tokens, the words as typed (#4281, see tokenize; powershellOpaqueCommand
+// reads them), their per-token quote flags from tokenize (#4015 reads the first three,
+// #4149's dropRedirections reads `leadQuoted`), their per-character
 // span kinds (#4210, see tokenize), and the nesting state at each token's start
 // (#4210, see advanceNesting). The nesting state carries from piece to piece within
 // one chunk, cd and assignment pieces included: a flat (capped) reading can cut at a
@@ -570,9 +611,9 @@ function forEachCommandSegment(command, cwd, handler, opts) {
 // `nestAt`, the nesting state at each token's start): updates `vars`, calls `handler` for a
 // non-cd, non-assignment segment, and returns the effective cwd after it.
 function visitSegment(tok, nestAt, effCwd, vars, handler) {
-  const { tokens: rawT, singleQuoted, doubleQuoted, leadQuoted, spanKinds } = tok;
+  const { tokens: rawT, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds } = tok;
   if (!rawT.length) return effCwd;
-  if (updateAssignment(vars, rawT)) return effCwd;
+  if (updateAssignment(vars, rawT, spanKinds[0])) return effCwd;
   const t = substituteVars(rawT, vars, singleQuoted, spanKinds);
   // `FOO=1 cd /path` really does change the shell's cwd — a preceding
   // assignment on a regular (non-special) builtin like `cd` is scoped only
@@ -582,11 +623,12 @@ function visitSegment(tok, nestAt, effCwd, vars, handler) {
   // is the opposite case and deliberately NOT normalized here: `env` execs
   // an external `cd` binary that does not exist on a normal system, so it
   // errors and never changes cwd — normalizing it would fabricate a target
-  // for a shape that has no real effect.
+  // for a shape that has no real effect. An assignment is read from the raw word, whose
+  // spanKinds it is aligned with: bash decides it before any `$` expands (#4281).
   let cdLead = 0;
-  while (cdLead < t.length && SIMPLE_ASSIGNMENT_RE.test(t[cdLead])) cdLead += 1;
+  while (cdLead < t.length && isAssignmentWord(rawT[cdLead], spanKinds[cdLead])) cdLead += 1;
   if (t[cdLead] === 'cd') return resolveCd(effCwd, t[cdLead + 1]);
-  handler(t, effCwd, { raw: rawT, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt });
+  handler(t, effCwd, { raw: rawT, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt });
   return effCwd;
 }
 
@@ -802,17 +844,23 @@ function gitTargets(command, cwd, opts) {
 // module already accepts in exchange for never fabricating a false deny.
 const POWERSHELL_LEADS = new Set(['powershell', 'pwsh']);
 const POWERSHELL_OPAQUE_FLAGS = new Set(['-command', '-encodedcommand']);
+// The lead is matched on the word's value and on the word as typed (#4281), so an
+// unquoted `C:\Windows\System32\powershell.exe`, whose value has lost its backslashes,
+// still reads as powershell: the deny keeps erring toward the shape.
+function isPowershellLead(word) {
+  const lead = word.toLowerCase().replace(/\.exe$/, '');
+  const cut = Math.max(lead.lastIndexOf('/'), lead.lastIndexOf('\\'));
+  return POWERSHELL_LEADS.has(cut >= 0 ? lead.slice(cut + 1) : lead);
+}
+
 function powershellOpaqueCommand(command, cwd) {
   let found = false;
-  forEachCommandSegment(command, cwd, (t) => {
+  forEachCommandSegment(command, cwd, (t, _effCwd, quoting) => {
     if (found || !t.length) return;
     let i = 0;
     while (i < t.length && SIMPLE_ASSIGNMENT_RE.test(t[i])) i += 1;
     if (i >= t.length) return;
-    const lead = t[i].toLowerCase().replace(/\.exe$/, '');
-    const cut = Math.max(lead.lastIndexOf('/'), lead.lastIndexOf('\\'));
-    const base = cut >= 0 ? lead.slice(cut + 1) : lead;
-    if (!POWERSHELL_LEADS.has(base)) return;
+    if (!isPowershellLead(t[i]) && !isPowershellLead(quoting.typed[i])) return;
     for (let j = i + 1; j < t.length; j++) {
       if (POWERSHELL_OPAQUE_FLAGS.has(t[j].toLowerCase())) { found = true; return; }
     }
@@ -1180,7 +1228,7 @@ function lineFeedsOnlyDataReaders(lineText) {
 function checkReaderCommand(seg) {
   const unquoted = removeQuotedSpans(seg).split(/\s+/);
   if (unquoted.some((t) => /^[({]/.test(t) || t === '}' || /[<>]\(/.test(t))) return false;
-  const { tokens } = tokenize(seg.trim());
+  const { typed: tokens } = tokenize(seg.trim());
   let p = 0;
   while (p < tokens.length && SIMPLE_ASSIGNMENT_RE.test(tokens[p])) p += 1;
   if (isInertNeighbour(tokens, p)) return true;
@@ -1441,7 +1489,7 @@ function planHeredocBodies(str, start, pending, lineText, lineOpen) {
   const keep = lineOpen || CONTINUATION_RE.test(lineText) || !lineFeedsOnlyDataReaders(lineText);
   const expands = bodies.some(({ h, text }) => !h.quoted && /\$\(|`/.test(text));
   if (keep || expands) {
-    const shell = tokenize(lineText).tokens.some((tok) => programNames(tok).some((n) => KNOWN_SHELL_WORDS.has(n)));
+    const shell = tokenize(lineText).typed.some((tok) => programNames(tok).some((n) => KNOWN_SHELL_WORDS.has(n)));
     return { kind: 'keep', end: p, bodies: bodies.map(({ h, text }) => ({ at: h.at, text, shell })) };
   }
   return { kind: 'strip', end: p };
@@ -2127,12 +2175,13 @@ const REDIRECTION_TOKEN_RE = /^(?:\d+|&)?(?:>>|>\||>&|<>|<&|>|<)(?![<(])/;
 // stands alone (`<< EOF`, `> /dev/null`), so none is read as a write shape's files; the
 // redirection's own target is reported by redirectWriteTargets. A token that begins with a
 // quoted span (`'<<'`, `'>f'`) is a literal argument, not an operator, and stays
-// (`leadQuoted`, from tokenize).
-function dropRedirections(tokens, leadQuoted) {
+// (`leadQuoted`, from tokenize). So does one that begins with an escaped character
+// (`\>x` is the word `>x`, #4281: its first spanKinds character is `e`).
+function dropRedirections(tokens, leadQuoted, spanKinds) {
   const out = [];
   for (let i = 0; i < tokens.length; i += 1) {
     const tok = tokens[i];
-    if (leadQuoted && leadQuoted[i]) { out.push(tok); continue; }
+    if ((leadQuoted && leadQuoted[i]) || (spanKinds && spanKinds[i][0] === 'e')) { out.push(tok); continue; }
     if (tok.startsWith('<<')) {
       if (/^<<<?-?$/.test(tok)) i += 1;
       continue;
@@ -2152,7 +2201,7 @@ function fileWriteTargets(command, cwd, opts) {
     for (const file of redirectWriteTargets(tokens, effCwd, quoting)) targets.push({ action: 'write', file });
     // A heredoc/here-string operator is input and a redirection is reported above, so
     // neither is a file the shape writes.
-    const t = dropRedirections(tokens, quoting.leadQuoted);
+    const t = dropRedirections(tokens, quoting.leadQuoted, quoting.spanKinds);
     if (!WRITE_SHAPES.includes(t[0])) return;
     if (t[0] === 'tee') {
       // tee genuinely writes to EVERY non-flag argument, not just the

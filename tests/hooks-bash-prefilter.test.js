@@ -39,6 +39,8 @@ const DIFFERENTIAL_CORPUS = [
   'echo foo>tracked.js',
   // #4210: a glued redirect after a quoted span.
   'echo "hi">tracked.js',
+  // #4281: a bare redirect to a quoted native path.
+  'echo x > "D:\\r\\tracked.js"',
 ];
 const teardown = (command) => teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: CWD });
 const powershell = (command) => (powershellOpaqueCommand(command, CWD) ? [{ action: 'powershell-opaque' }] : []);

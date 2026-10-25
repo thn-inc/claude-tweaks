@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand, skipGlobalFlags,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand, skipGlobalFlags, tokenize,
 } = require('../plugin/bin/lib/hooks/git-command');
 
 test('plain commit resolves to cwd', () => {
@@ -693,4 +693,79 @@ test('#4149: mkdirTargets reads a cd behind ( or {', () => {
   assert.deepStrictEqual(mkdirTargets('(cd /main && mkdir d)', '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
   assert.deepStrictEqual(mkdirTargets('(cd /main && true); mkdir d', '/wt'), [{ action: 'mkdir', file: path.resolve('/wt/d') }]);
   assert.deepStrictEqual(mkdirTargets('{ cd /main; }; mkdir /x', '/wt'), [{ action: 'mkdir', file: path.resolve('/x') }]);
+});
+
+// #4281: each word's value as bash passes it to the program. The cases below, as tokenize sees them.
+const VALUE_CASES = [
+  // bash 3.2 and 5: "D:\a\_temp\x" and 'D:\a\_temp\x' are both the value D:\a\_temp\x.
+  ['tee "D:\\a\\_temp\\x"', ['tee', 'D:\\a\\_temp\\x']],
+  ["tee 'D:\\a\\_temp\\x'", ['tee', 'D:\\a\\_temp\\x']],
+  // bash 3.2 and 5: an unquoted D:\a\_temp\x is the value D:a_tempx.
+  ['tee D:\\a\\_temp\\x', ['tee', 'D:a_tempx']],
+  // bash 3.2 and 5: "a\$b" "a\`b" "a\"b" "a\\b" "a\xb" are a$b, a`b, a"b, a\b, a\xb.
+  ['p "a\\$b" "a\\`b" "a\\"b" "a\\\\b" "a\\xb"', ['p', 'a$b', 'a`b', 'a"b', 'a\\b', 'a\\xb']],
+  // bash 3.2 and 5: an unquoted a\ b is the one word a b.
+  ['p a\\ b', ['p', 'a b']],
+  // bash 3.2 and 5: a backslash-newline, bare or inside "…", is removed: ab.
+  ['p a\\\nb', ['p', 'ab']],
+  ['p "a\\\nb"', ['p', 'ab']],
+];
+
+test('#4281: tokenize returns each word\'s bash value', () => {
+  for (const [seg, expected] of VALUE_CASES) assert.deepStrictEqual(tokenize(seg).tokens, expected, seg);
+});
+
+test('#4281: spanKinds stays aligned with the value, and an escaped character is kind e', () => {
+  for (const [seg] of VALUE_CASES) {
+    const { tokens, spanKinds } = tokenize(seg);
+    tokens.forEach((tok, i) => assert.strictEqual(spanKinds[i].length, tok.length, `${seg} word ${i}`));
+  }
+  // bash 3.2 and 5: "a\$b" is a$b, its $ literal; an unquoted a\ b is a b, its space literal.
+  assert.strictEqual(tokenize('p "a\\$b"').spanKinds[1], 'ded');
+  assert.strictEqual(tokenize('p a\\ b').spanKinds[1], 'beb');
+});
+
+test('#4281: typed keeps the word as typed', () => {
+  assert.strictEqual(tokenize('tee D:\\a\\x').typed[1], 'D:\\a\\x');
+});
+
+test('#4281: a quoted backslash path is a provable cd target', () => {
+  // bash 3.2 and 5: '/tmp/a\b' is the value /tmp/a\b, a literal path.
+  assert.deepStrictEqual(gitTargets("cd '/tmp/a\\b' && git commit -m x", '/repo'), [{ action: 'commit', dir: path.resolve('/tmp/a\\b') }]);
+});
+
+test('#4281: a trailing stray backslash stays unresolvable (bash 3.2 drops it, bash 5 keeps it)', () => {
+  // bash 3.2: a\ at the end of the command is the value a; bash 5: a\. The versions disagree.
+  assert.deepStrictEqual(gitTargets('git commit -m x; cd /tmp/a\\', '/repo'), [{ action: 'commit', dir: '/repo' }]);
+  assert.deepStrictEqual(gitTargets('cd /tmp/a\\', '/repo'), []);
+  assert.deepStrictEqual(fileWriteTargets('tee /tmp/a\\', '/r'), []);
+});
+
+test('#4281: an escaped = is a command word, not an assignment', () => {
+  // bash 3.2 and 5: A\=/evil runs the command A=/evil (exit 127), so A stays unset.
+  assert.deepStrictEqual(gitTargets('A\\=/evil; cd $A && git commit -m x', '/repo'), []);
+});
+
+test('#4281: a quoted assignment name is a command word, not an assignment', () => {
+  // bash 3.2 and 5: "A"=/evil runs the command A=/evil (exit 127), so A stays unset.
+  assert.deepStrictEqual(gitTargets('"A"=/evil; cd $A && git commit -m x', '/repo'), []);
+});
+
+test('#4281: an assignment is read from the word before expansion', () => {
+  // bash 3.2 and 5: after `N=A` or `X=1`, `$N=/x cd /tmp` and `A$X=v cd /tmp` run the commands
+  // A=/x and A1=v (not found), so the cd never runs; `A=$X cd /tmp` is an assignment and does cd.
+  assert.deepStrictEqual(gitTargets('N=A; $N=/x cd /main; git commit -m x', '/wt'), [{ action: 'commit', dir: '/wt' }]);
+  assert.deepStrictEqual(gitTargets('X=1; A$X=v cd /main; git commit -m x', '/wt'), [{ action: 'commit', dir: '/wt' }]);
+  assert.deepStrictEqual(gitTargets('A=$X cd /main; git commit -m x', '/wt'), [{ action: 'commit', dir: path.resolve('/main') }]);
+});
+
+test('#4281: a word of backslash-newlines alone is no word', () => {
+  // bash 3.2 and 5: `a \` + newline + ` "" b` passes a, the empty word, b; `cd \` + newline + ` /tmp` changes to /tmp.
+  assert.deepStrictEqual(tokenize('p a \\\n "" b').tokens, ['p', 'a', '', 'b']);
+  assert.deepStrictEqual(gitTargets('cd \\\n /main && git commit -m x', '/wt'), [{ action: 'commit', dir: path.resolve('/main') }]);
+});
+
+test('#4281: a leading-escaped redirect word is a file argument', () => {
+  // bash 3.2 and 5: \>x is the word >x, not a redirection.
+  assert.deepStrictEqual(fileWriteTargets('cp a \\>x', '/r'), [{ action: 'copy', file: path.resolve('/r', '>x') }]);
 });
