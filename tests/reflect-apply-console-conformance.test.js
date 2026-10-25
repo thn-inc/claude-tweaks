@@ -73,6 +73,7 @@ const STEP2_FACTS = {
   'digest then applied digested': /`digest` — append its `line`[^;]*`_shared\/materiality-floor\.md`[^;]*then `--item '\{name\}' --applied digested --ref/,
   'failed logs one SKIP': /A `failed` entry logs one Degrade-trace `SKIP`/,
   'Override skip declines': /Override's `skip \{#\}` on such a row runs `--item '\{name\}' --decline '/,
+  'Override declines run before the --only apply': /, and runs before the apply; under Override the apply always carries `--only`, never a plain batch run\./,
 };
 const APPROVE_FACTS = {
   'reflect row runs at step 2 clause': /`staged\/reflect-\{n\}\.md` runs at step 2's reflect clause \(`bin\/reflect-apply\.js`\)/,
@@ -193,9 +194,11 @@ const ON_PR_FACTS = {
   'global sequence': /its `#` from the global sequence/,
 };
 const ROUTING_FACTS = {
-  'unticked reflect row declines': /unticked `staged\/reflect-\{n\}\.md` Skill-updates row declines through/,
-  'reflect-apply decline call': /`bin\/reflect-apply\.js --run \{item-run-dir\} --item '\{name\}' --decline 'declined, no reason given'`/,
+  'unticked reflect row declines first': /unticked `staged\/reflect-\{n\}\.md` Skill-updates row declines first, through/,
+  'reflect-apply decline call': /`bin\/reflect-apply\.js --run \{item-run-dir\} --item '\{name\}' --decline 'declined at Review Console, no reason given'`/,
   'decline recorded not only logged': /the decline is recorded, not only logged/,
+  'ticked rows apply via step 2 with --only': /the ticked ones then apply through "On approval" step 2's reflect clause with `--only '\{name\},…'` naming exactly the ticked rows/,
+  'never a plain run': /never a plain run, which would apply the unticked ones too/,
 };
 
 test('execution-and-verification.md: the Skill updates bullet names staged/reflect- and step 2\'s reflect clause', () => {
@@ -213,7 +216,11 @@ test('console-on-pr.md: the Item ID scheme names a reflect Skill-updates row as 
 test('console-execution.md: an unticked reflect row declines through reflect-apply.js --decline', () => {
   assert.ok(CONSOLE_EXECUTION.includes('reflect-apply.js'), 'console-execution.md must name reflect-apply.js');
   assert.ok(CONSOLE_EXECUTION.includes('--decline'), 'console-execution.md must name --decline');
-  assertEachFactGoesRed(h2Section(CONSOLE_EXECUTION, '## Execution routing'), ROUTING_FACTS);
+  const routing = h2Section(CONSOLE_EXECUTION, '## Execution routing');
+  assertEachFactGoesRed(routing, ROUTING_FACTS);
+  // The order is the contract: the decline lands before the ticked rows' apply, which never runs plain.
+  assert.ok(routing.includes('--only'), 'the reflect clause must name --only');
+  assert.ok(routing.indexOf('--decline') < routing.indexOf('--only \'{name},…\''), 'the decline must be ordered before the --only apply');
 });
 
 // --- Task 8: the multi-spec console (site 10) --------------------------------------------------------
@@ -268,7 +275,7 @@ test('multispec-review-console.md: step 2 reads each spec\'s staged/reflect- row
 });
 
 test('multispec-review-console.md: On approval step 5 applies reflect rows per review-console.md step 2\'s clause', () => {
-  const line = listLineIn(MULTI_CONSOLE, '## On approval (option 1)', '5. ');
+  const line = listLineIn(MULTI_CONSOLE, '## On approval (option 1)', '5. Apply skill updates and create new skills');
   assert.ok(line.includes('review-console.md` step 2'), 'step 5 must cite review-console.md step 2');
   assert.ok(line.includes('reflect'), 'step 5 must name reflect');
   assertEachFactGoesRed(line, MULTI_APPROVAL_FACTS);
