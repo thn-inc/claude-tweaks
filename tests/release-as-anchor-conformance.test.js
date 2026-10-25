@@ -21,7 +21,17 @@ const BRANCH = 'main';
 const VERSION = '9.9.9';
 
 // The {branch} and {version} placeholders resolved, as the live fences run them.
-const resolveNames = (fence) => fence.split('{branch}').join(BRANCH).split('{version}').join(VERSION);
+function resolveNames(fence) {
+  return fence.split('{branch}').join(BRANCH).split('{version}').join(VERSION);
+}
+
+// The first bash fence in `text` containing `needle`, placeholders resolved; `where` names the region in the failure message.
+function bashFenceContaining(text, needle, where) {
+  const fences = [...text.matchAll(/```bash\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
+  const fence = fences.find((f) => f.includes(needle));
+  assert.ok(fence, `extraction pattern is out of sync: no ${where} bash fence contains "${needle}"`);
+  return resolveNames(fence);
+}
 
 // Step 3's review-tree check, extracted as release-review-tree-check-conformance.test.js does.
 function stepThreeOf(text) {
@@ -32,19 +42,12 @@ function stepThreeOf(text) {
   return text.slice(start, next);
 }
 
-function stepThreeFence(stepThree, needle) {
-  const fences = [...stepThree.matchAll(/```bash\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
-  const fence = fences.find((f) => f.includes(needle));
-  assert.ok(fence, `extraction pattern is out of sync: no Step 3 bash fence contains "${needle}"`);
-  return resolveNames(fence);
-}
-
 // The check's two calls: the tip fence prints {tip-sha}; the tree check takes it as a placeholder.
 function liveCheck() {
   const stepThree = stepThreeOf(readText(SKILL));
   return {
-    tip: stepThreeFence(stepThree, 'rev-parse --verify origin/{branch}'),
-    check: stepThreeFence(stepThree, 'rev-list --count HEAD..{tip-sha}'),
+    tip: bashFenceContaining(stepThree, 'rev-parse --verify origin/{branch}', 'Step 3'),
+    check: bashFenceContaining(stepThree, 'rev-list --count HEAD..{tip-sha}', 'Step 3'),
   };
 }
 
@@ -57,20 +60,13 @@ function overrideBlockOf(text) {
   return text.slice(start, next);
 }
 
-function overrideFence(block, needle) {
-  const fences = [...block.matchAll(/```bash\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
-  const fence = fences.find((f) => f.includes(needle));
-  assert.ok(fence, `extraction pattern is out of sync: no --as bash fence contains "${needle}"`);
-  return resolveNames(fence);
-}
-
 // The commit-tree fence ({tip-sha} left as a placeholder) and the push fence ({sha} left as a placeholder).
 function liveOverride() {
   const block = overrideBlockOf(readText(EXECUTE));
   return {
     block,
-    commitTree: overrideFence(block, 'git -C "$RUN_ROOT" commit-tree'),
-    push: overrideFence(block, '{sha}:refs/heads/'),
+    commitTree: bashFenceContaining(block, 'git -C "$RUN_ROOT" commit-tree', '--as'),
+    push: bashFenceContaining(block, '{sha}:refs/heads/', '--as'),
   };
 }
 
