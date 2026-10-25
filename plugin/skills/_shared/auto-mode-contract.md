@@ -131,6 +131,10 @@ When any floor fails, the skill MUST stage the decision (log it, don't act) and 
 
 The hook surface (`bin/hooks.js`, see CLAUDE.md Conventions → Hooks) mechanizes these tiers for working-directory discipline and run continuity — block/warn/inform/log map 1:1 to the reversibility floors defined here.
 
+### Tiebreak-refuted drop (one-decision amendment)
+
+Dropping a finding counts as Confidence `high` and is exempt from the findings severity ceiling at every severity, in every mode (`auto`, `confirm`, `hybrid`, `interactive`), only when `plugin/bin/lib/tiebreak.js`'s `resolveTiebreak` returned outcome `drop` — a refutation whose evidence was verified against the file; the agent's claim alone never qualifies, and a refutation the resolver turned into can't-tell is not exempt and is never dropped. This does not loosen the ceiling for applying fixes, and does not cover dropping a can't-tell item. Low and medium drops stay auditable through their `AUTO … dropped` lines in `decisions.md`; high and critical ones also render in the Review Console's read-only "Dropped by tiebreak" block.
+
 ### Always-reversible (auto-OK)
 
 - File edits in worktree (`git revert`)

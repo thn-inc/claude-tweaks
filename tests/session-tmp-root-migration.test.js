@@ -64,6 +64,7 @@ const MIGRATED_FILES = [
   'wrap-up/leftover-routing.md',
   'wrap-up/unblocked-records.md',
   'wrap-up/verification-brief-parent-gate.md',
+  '_shared/pr-run-comments.md', // #4065: Find payload + comment body
 ];
 
 // Matches a literal, unscoped /tmp/{prefix}-*.{ext} path -- the shape this

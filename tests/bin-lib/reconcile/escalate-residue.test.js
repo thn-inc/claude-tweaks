@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   escalateResidue, resolveResidue, residueFingerprint, residueBody, capDirtyFiles, findResidueDuplicate,
-  structurallyStuckMarker, structurallyStuckBody, parseStuckPaths,
+  structurallyStuckMarker, structurallyStuckBody, parseStuckPaths, renderStuckPathsBlock, withStuckPaths,
 } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 const { STRUCTURALLY_STUCK_REASONS } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 
@@ -432,4 +432,169 @@ test('findResidueDuplicate: plain runner keeps the list path', () => {
   assert.equal(findResidueDuplicate({ repo: 'o/r', marker, runner }), null);
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].slice(0, 2), ['issue', 'list']);
+});
+
+// --- #2724: the consolidated record's body is edited in place — only the
+// line-anchored stuck-paths block is replaced, never the whole body.
+
+const SHAPED = (block) => `Surface: infra\n\n## Current State\n\nThe record names \`<!-- stuck-paths -->\` in prose.\n- \`/x/decoy\`\n\n${block}\n\n## Gotchas\n\n- keep me\n\n${structurallyStuckMarker()}\n`;
+
+// One hit carrying `body`; returns the runner plus the recorded `--body` of
+// the `issue edit` and `issue comment` calls.
+function stuckRecordRunner(body, state = 'OPEN') {
+  const seen = { calls: [], edited: null, commented: null };
+  const runner = (args) => {
+    seen.calls.push(args);
+    if (args[0] === 'issue' && args[1] === 'list') {
+      return JSON.stringify([{ number: 2724, title: 't', body, createdAt: '2024-01-01T00:00:00Z', state }]);
+    }
+    if (args[0] === 'issue' && args[1] === 'edit') seen.edited = args[args.indexOf('--body') + 1];
+    if (args[0] === 'issue' && args[1] === 'comment') seen.commented = args[args.indexOf('--body') + 1];
+    return '';
+  };
+  return { runner, seen };
+}
+
+test('#2724 AC3.1 AC3.2: escalate appends into the block and keeps the text around it byte-for-byte', () => {
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a'])));
+  const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-b', count: 3, runner });
+  assert.deepEqual(result, { status: 'appended', number: 2724 });
+  assert.equal(seen.edited, SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/run-b'])));
+});
+
+test('#2724 AC3.1 AC3.2: resolve removes its path from the block and keeps the text around it byte-for-byte', () => {
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/run-b'])));
+  const result = resolveResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', runner });
+  assert.deepEqual(result, { status: 'path-removed', number: 2724 });
+  assert.equal(seen.edited, SHAPED(renderStuckPathsBlock(['/x/run-b'])));
+});
+
+test('#2724 AC3.3: parseStuckPaths ignores a marker named in prose above the block', () => {
+  assert.deepEqual(parseStuckPaths(SHAPED(renderStuckPathsBlock(['/x/run-a']))), ['/x/run-a']);
+});
+
+test('#2724 stuck-paths block: a CRLF body is still found and edited in place', () => {
+  const crlf = SHAPED(renderStuckPathsBlock(['/x/run-a'])).replace(/\n/g, '\r\n');
+  assert.deepEqual(parseStuckPaths(crlf), ['/x/run-a']);
+  const { runner, seen } = stuckRecordRunner(crlf);
+  escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-b', count: 3, runner });
+  assert.equal(seen.edited, SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/run-b'])).replace(/\n/g, '\r\n'));
+  assert.deepEqual(parseStuckPaths(seen.edited), ['/x/run-a', '/x/run-b']);
+});
+
+test('#2724 escalate: reopening a CLOSED record re-renders the full canonical body', () => {
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-old'])), 'CLOSED');
+  const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-new', count: 3, runner });
+  assert.deepEqual(result, { status: 'reopened', number: 2724 });
+  assert.equal(seen.edited, structurallyStuckBody(['/x/run-old', '/x/run-new']));
+});
+
+test('#2724 stuck-paths block: a path containing a dollar sign survives the in-place edit', () => {
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a'])));
+  escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-$&-b', count: 3, runner });
+  assert.deepEqual(parseStuckPaths(seen.edited), ['/x/run-a', '/x/run-$&-b']);
+});
+
+test('#2724 withStuckPaths: a non-empty body with no block gets the block appended, an empty body gets the full render', () => {
+  assert.equal(withStuckPaths('Human text.\n', ['/x/a']), `Human text.\n\n${renderStuckPathsBlock(['/x/a'])}\n`);
+  assert.equal(withStuckPaths('', ['/x/a']), structurallyStuckBody(['/x/a']));
+});
+
+test('#2724 resolveResidue: structurally-stuck with a why text uses it in place of the on-disk wording', () => {
+  const { runner, seen } = stuckRecordRunner(structurallyStuckBody(['/x/run-a', '/x/run-b']));
+  const result = resolveResidue({
+    repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', runner, why: 'is exempt here',
+  });
+  assert.deepEqual(result, { status: 'path-removed', number: 2724 });
+  assert.equal(seen.commented, '`/x/run-a` is exempt here — removed from the stuck-paths list (1 path(s) still stuck).');
+});
+
+test('#2724 resolveResidue: a why text on the last remaining path closes the record with that wording', () => {
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a'])));
+  const result = resolveResidue({
+    repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', runner, why: 'is exempt here',
+  });
+  assert.deepEqual(result, { status: 'closed', number: 2724 });
+  assert.equal(seen.edited, SHAPED(renderStuckPathsBlock([])));
+  assert.equal(seen.commented, '`/x/run-a` is exempt here — the last remaining stuck path. Closing.');
+  assert.ok(seen.calls.some((c) => c[0] === 'issue' && c[1] === 'close'));
+});
+
+test('#2724 escalate: an OPEN record whose body lost its block gets the block appended, keeping the shaped text', () => {
+  const shaped = `## Current State\n\nShaped by a human.\n\n${structurallyStuckMarker()}\n`;
+  const { runner, seen } = stuckRecordRunner(shaped);
+  const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', count: 3, runner });
+  assert.deepEqual(result, { status: 'appended', number: 2724 });
+  assert.equal(seen.edited, `${shaped.trimEnd()}\n\n${renderStuckPathsBlock(['/x/run-a'])}\n`);
+});
+
+// #4202: the stuck-paths block converges — a listed path that pathExists reports gone
+// is dropped on the next escalate/resolve edit. Opt-in: omitting pathExists keeps every path.
+
+function existsExcept(...gonePaths) {
+  return (p) => !gonePaths.includes(p);
+}
+
+test('#4202 AC3.1 AC3.2: escalate: an append drops a listed path pathExists reports gone, keeping the text around the block', () => {
+  const pathExists = existsExcept('/x/gone-1');
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/gone-1'])));
+  const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-b', count: 3, runner, pathExists });
+  assert.deepEqual(result, { status: 'appended', number: 2724 });
+  assert.equal(seen.edited, SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/run-b'])));
+  assert.match(seen.commented, /gone-1/);
+});
+
+test('#4202 escalate: reopening a CLOSED record drops gone paths from the re-rendered body', () => {
+  const pathExists = existsExcept('/x/gone-1');
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/gone-1', '/x/run-a'])), 'CLOSED');
+  const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-new', count: 3, runner, pathExists });
+  assert.deepEqual(result, { status: 'reopened', number: 2724 });
+  assert.equal(seen.edited, structurallyStuckBody(['/x/run-a', '/x/run-new']));
+  assert.equal(seen.commented, 'Reconcile is seeing `/x/run-new` stuck at structurally-stuck again — reopening rather than filing a duplicate (dropped 1 path(s) no longer on disk: `/x/gone-1`).');
+});
+
+test('#4202 AC3.1 AC3.2: resolve: removing a path also drops gone paths and closes when nothing live remains', () => {
+  const pathExists = existsExcept('/x/gone-1', '/x/gone-2');
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/gone-1', '/x/gone-2'])));
+  const result = resolveResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', runner, pathExists });
+  assert.deepEqual(result, { status: 'closed', number: 2724 });
+  assert.equal(seen.edited, SHAPED(renderStuckPathsBlock([])));
+  assert.ok(seen.calls.some((c) => c[0] === 'issue' && c[1] === 'close'));
+  assert.match(seen.commented, /gone-1/);
+  assert.match(seen.commented, /gone-2/);
+});
+
+test('#4202 resolve: a CRLF body with a gone path stays CRLF and keeps live paths', () => {
+  const pathExists = existsExcept('/x/gone-1');
+  const crlf = SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/gone-1', '/x/run-b'])).replace(/\n/g, '\r\n');
+  const { runner, seen } = stuckRecordRunner(crlf);
+  const result = resolveResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', runner, pathExists });
+  assert.deepEqual(result, { status: 'path-removed', number: 2724 });
+  assert.equal(seen.edited, SHAPED(renderStuckPathsBlock(['/x/run-b'])).replace(/\n/g, '\r\n'));
+  assert.equal(seen.commented, '`/x/run-a` no longer exists on disk — resolved by other means, removed from the stuck-paths list (1 path(s) still stuck) (dropped 1 path(s) no longer on disk: `/x/gone-1`).');
+});
+
+test('#4202 escalate: a pathExists that throws keeps the path instead of failing the edit', () => {
+  const pathExists = () => { throw new Error('lstat exploded'); };
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a'])));
+  const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-b', count: 3, runner, pathExists });
+  assert.deepEqual(result, { status: 'appended', number: 2724 });
+  assert.equal(seen.edited, SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/run-b'])));
+});
+
+test('#4202 resolve: an OPEN record whose list an earlier failed resolve already emptied is closed by the retry', () => {
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock([])));
+  const result = resolveResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', runner });
+  assert.deepEqual(result, { status: 'closed', number: 2724 });
+  assert.equal(seen.edited, null);
+  assert.equal(seen.commented, 'The stuck-paths list is empty. Closing.');
+  assert.ok(seen.calls.some((c) => c[0] === 'issue' && c[1] === 'close'));
+});
+
+test('#4202 escalate: an already-named path on an OPEN record stays a plain dedup-hit even with gone paths listed', () => {
+  const pathExists = existsExcept('/x/gone-1');
+  const { runner, seen } = stuckRecordRunner(SHAPED(renderStuckPathsBlock(['/x/run-a', '/x/gone-1'])));
+  const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', count: 3, runner, pathExists });
+  assert.deepEqual(result, { status: 'dedup-hit', number: 2724 });
+  assert.equal(seen.edited, null);
 });

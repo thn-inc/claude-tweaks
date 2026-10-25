@@ -61,6 +61,19 @@ once the record exists; when the record is refused or not created, log that caus
 (`REFUSED` when `wrap-up/refused-proposals.md` refuses it, else `SKIP` — `FAILED` is reserved for
 its two refine writers) — never `declined`, and never `reversed` without a record number.
 
+**Except a finding row** (`findingItem` on its item — a can't-tell Low-confidence/Contested row,
+`_shared/console-on-pr.md`'s Row shape, #3949): ticked, it files through `wrap-up/review-console.md`
+step 7's can't-tell clause, `--only` naming the ticked rows' `findingItem` ids and `{item-run-dir}`
+the run dir whose findings hold them (on a multi-spec console, the `spec-{N}` dir its spec slug
+names); unticked at Resolve time, or named in `resolve-console --decline`, it is **dropped** —
+nothing filed, logged as Override's `drop {#}` is (`wrap-up/review-console-interactive.md`), and
+`resolve-console` records it `dropped`, which counts as cleared. Its tick is read from whichever
+console comment carries its row (an overflow comment included); a row no comment carries is
+recorded `declined`, not cleared — a drop needs the untick. A ticked row whose filing failed
+(a non-zero `console-filings.js` exit, or a failed create) goes in `resolve-console --filing-failed`:
+its reply reads `filing failed — see decisions.md`, Resolve stays unticked, and it is carried as
+step 7 carries a failed filing — never recorded `executed`.
+
 **Staged-file drift check, before executing any item that reads one:** verify the item's staged
 file (`staged/...`) still exists, and re-hash its current content against `console.json`'s recorded
 `stagedHash` for that item. Missing → unexecutable, report it as such (not an error — the file may
@@ -78,7 +91,8 @@ when it happens anyway, surface it rather than executing: there is nowhere to ap
 
 **Reply comment first, then the resolved marker edit** on the console comment itself — never the
 reverse. Post one reply comment (`<!-- console-item: executed -->`) summarizing per-item outcomes
-(executed / declined / reversed / reverse-failed / unexecutable / unexecutable-stale), then edit the
+(executed / declined / reversed / reverse-failed / unexecutable / unexecutable-stale), plus
+dropped / filing-failed for a finding row, then edit the
 console comment's first line to add `<!-- claude-tweaks-console-resolved -->`, then write
 `console.json.executedAt` and `console.json.resolved` (`true` only when every item cleared) together,
 in one write. The comment
@@ -109,7 +123,7 @@ just posted to the PR. Two surfaces, one answer: whichever resolves first wins.
 
 - **Chat answers first:** execute directly via this file's Execution routing above, then perform
   the same Write order (reply comment, resolved marker, `console.json.executedAt`/`resolved`) —
-  `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-console --run {run-dir} --approve {ids} --decline {ids} [--reverse-failed {ids}]`
+  `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-console --run {run-dir} --approve {ids} --decline {ids} [--reverse-failed {ids}] [--filing-failed {ids}]`
   is the concrete mechanism: it performs the three coupled writes in the documented order (reusing
   `console-execute.js`'s own read/parse/decide helpers rather than re-deriving console state), so a
   later reconciler pass detects the resolved marker and no-ops rather than re-asking.
@@ -166,6 +180,10 @@ later — it exists solely to close the specific correctness gap #1294 found; do
 into a broader test or pre-implement #347's predicate here (Related, not merged scope, same as
 `_shared/console-on-pr.md`'s own note on #347).
 
+**A finding row is floor-clearing and is ticked whatever its pre-tick** (#3949): at `unattended`
+every can't-tell item files, its recommendation notwithstanding (`_shared/autonomy-ceiling.md`'s
+`consoleAutoResolve` row), so this wiring never drops one — it files it per Execution routing above.
+
 **Second narrower exception (#1802):** the same `isMergeRow: true` item is also **not**
 floor-clearing when a live re-fetch shows any group member currently lacking both `auto:merge`
 and a matured `auto:merge-pending` — unlike `mergeCheckVerdict` above, this fact needs no
@@ -198,15 +216,15 @@ body or no member grants supplied) withholds with `{ member: null, reason: 'gran
 (#4048) — an absent context never reads as `null`.
 
 **Third narrower exception (#3880):** an `isRulingRow: true` item named in the ready result's
-`rulingGateGaps` (`[{ id, reason }]`, computed in code by `decideConsoleExecute` from each ruling
-row's staged file, read via the item's `stagedPath` — `_shared/console-on-pr.md`) is **not**
+`rulingGateGaps` (`[{ id, reason, detail? }]`, computed in code by `decideConsoleExecute` from each
+ruling row's staged file, read via the item's `stagedPath` — `_shared/console-on-pr.md`) is **not**
 floor-clearing: its box and Resolve stay unticked and the console stays pending for a human, the
-same posture as the merge row. It mirrors `console-resolve.js`'s `pending — sdd-ruling-*`
-resolution (`wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet) for the reconciler-side
-trigger point. `rulingGateGaps: []` — every ruling row's header shows it safe — leaves each ruling
-row floor-clearing, unchanged. An absent ruling-text map (no `rulingTexts` in the call's context)
-withholds every ruling row as `sdd-ruling-unclassified` (#4048), the same posture as a row whose
-text is unreadable.
+same posture as the merge row. It mirrors `console-resolve.js`'s `pending — sdd-ruling-*` resolution
+(`wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet) for the reconciler-side trigger
+point. `rulingGateGaps: []` — every ruling row's header shows it safe — leaves each ruling row
+floor-clearing, unchanged. An absent ruling-text map (no `rulingTexts` in the call's context)
+withholds every ruling row as `sdd-ruling-unclassified` (#4048), withheld like any other ruling
+gap; a recorded read error for a row still outranks that and names it `sdd-ruling-unreadable`.
 
 **Auto-resolution performs real comment edits.** It ticks the floor-clearing boxes on the PR
 comment (via `_shared/console-on-pr.md`'s post-or-update procedure) *before* executing — the same
@@ -228,6 +246,7 @@ member `{m}` whose live labels lacked the grant. For a gap whose `member` is nul
 `AUTO {time} — Console execution: withheld branch-finish/merge on PR #{n} — {reason}. Reversibility: n/a (declined to act).`
 A withheld ruling row (third exception) logs
 `AUTO {time} — Console execution: withheld ratify of {item} on PR #{n} — {reason}. Reversibility: n/a (declined to act).`
+When the gap carries a `detail` — an `sdd-ruling-unreadable` row, whose staged file could not be read — `{reason}` reads `sdd-ruling-unreadable ({detail})`.
 
 ## Comment-tick trust boundary
 

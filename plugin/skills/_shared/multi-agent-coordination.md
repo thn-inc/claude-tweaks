@@ -77,8 +77,10 @@ Per `auto-decision-log.md` schema:
 
 ```
 - AUTO {HH:MM:SS} — /review reproduction: confirmed {N} findings, staged {M} unconfirmed. Reversibility: high (commit / stage path).
-- STAGED {HH:MM:SS} — /review reproduction: finding {path}:{line} surfaced by one agent only. Stage path: staged/review-unconfirmed-{n}.md.
+- STAGED {HH:MM:SS} — /review reproduction: lens "{lens}" finding {path}:{line} surfaced by one agent only. Stage path: staged/review-unconfirmed-{n}.md.
 ```
+
+`lens "{lens}"` with `{path}:{line}` is the finding key a later tiebreak verdict supersedes the line and its staged file by (`review/step3-tiebreak.md`).
 
 `staged/review-unconfirmed-{n}.md` is a finding description (severity, lens, source, where, finding, suggested follow-up), not a patch. The console classifies it as Low-confidence (`bin/lib/console/resolve.js`'s `review-unconfirmed-` row). Such a finding first goes to `/claude-tweaks:review`'s tiebreak (`review/step3-tiebreak.md`).
 
@@ -148,8 +150,10 @@ from the general singleton-only rule; see `_shared/subagent-output-contract.md`.
 ```
 - AUTO {HH:MM:SS} — /review debate: {path}:{line} confirmed (both agreed). Reversibility: high.
 - AUTO {HH:MM:SS} — /review debate: {path}:{line} unconfirmed (both disagreed). Reversibility: high.
-- STAGED {HH:MM:SS} — /review debate: {path}:{line} contested (mixed verdicts). Stage path: staged/review-debate-{n}.md.
+- STAGED {HH:MM:SS} — /review debate: lens "{lens}" {path}:{line} contested (mixed verdicts). Stage path: staged/review-debate-{n}.md.
 ```
+
+`{lens}` is the first position's lens — the key the tiebreak verdict carries for a contested finding.
 
 ### Review Console staging format
 

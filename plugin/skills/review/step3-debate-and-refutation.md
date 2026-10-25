@@ -43,7 +43,7 @@ After per-lens reproduction completes, scan for contradictions across lenses bef
    ```
    - Both `agree` → finding upgraded to `confirmed`. Write `AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged positive after 1 round. Reversibility: high.`
    - Both `disagree` → finding downgraded to `unconfirmed`, for Step 3.7 (`step3-tiebreak.md`). Write `STAGED {HH:MM:SS} — Debate: lens "{lensA}" finding {path}:{line} — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.`
-   - Mixed / partial → finding becomes `contested`. Write `STAGED {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} inconclusive ({verdicts}). Both verdicts staged. Reversibility: high.` Stage the side-by-side verdicts to `staged/review-contested-{N}.md`.
+   - Mixed / partial → finding becomes `contested`. Write `STAGED {HH:MM:SS} — Debate: lens "{lensA}" cross-lens disagreement on {path}:{line} inconclusive ({verdicts}). Both verdicts staged. Stage path: staged/review-contested-{N}.md. Reversibility: high.` Stage the side-by-side verdicts to that file. `{lensA}` is Finding A's lens, and Finding A is the contested entry's first position — the lens Step 3.7's verdict carries (`step3-tiebreak.md`'s Findings artifact), so the verdict supersedes this line and its file.
 
 5. **Skip debate** when no overlap is detected, or when only one lens covered a region. Avoid running debate on every `Path:Line` where any two lenses touched — that explodes the token budget for no value.
 
@@ -90,7 +90,7 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 >    Recommendation: file | drop — {one-line reason}
 >
 >    confirmed means the finding still stands after your attempt to break it; refuted means you broke it; cant-tell means you could not decide.
->    Evidence is required for confirmed and refuted: cite the finding's own path and a line within 5 of {line} in the current file, and quote the whole cited source line verbatim — a token or fragment of the line is not a quote. cant-tell needs no Evidence line.
+>    Evidence is required for confirmed and refuted: cite {path} exactly as given (the full repo-relative path, never a bare filename or another file) and a line within 5 of {line} in the current file, and quote the whole cited source line verbatim — a token or fragment of the line is not a quote. cant-tell needs no Evidence line.
 >    Recommendation file means the finding is worth a fix or a work record; drop means it is not worth acting on.
 >    Produce your response first; the last non-empty line of your reply must then read exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled `STATUS: {WORD}`.
 >

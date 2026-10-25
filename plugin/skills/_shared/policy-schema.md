@@ -73,6 +73,7 @@ Every `POLICY_KEYS` row carries three human-facing fields alongside its shape: `
 | Code-health focus verticals | `health-sweeps` |
 | Auto-mode levers | `pipeline-behavior` |
 | Model profiles | `models` |
+| Efficiency budgets | `housekeeping` |
 | Additional levers | `housekeeping` |
 
 ## Key naming
@@ -209,6 +210,19 @@ Registered by #219; the resolver that actually reads these five is `bin/lib/mode
 | `model-ceiling` |
 | `model-profiles` |
 | `research-mode` |
+
+## Efficiency budgets
+
+Registered by #4029; read by `readEfficiencyCeilings` in `bin/lib/policy.js` for `bin/phase-timing.js --check-budgets`. `0` disables a budget. Full table and the defaults' derivation: `policy-schema-efficiency-budgets.md`.
+
+| Key |
+|---|
+| `fast-lane-run-round-trip-ceiling` |
+| `fast-lane-run-procedure-kb-ceiling` |
+| `fast-lane-run-verify-minutes-ceiling` |
+| `standard-run-round-trip-ceiling` |
+| `standard-run-procedure-kb-ceiling` |
+| `standard-run-verify-minutes-ceiling` |
 
 ## Additional levers
 

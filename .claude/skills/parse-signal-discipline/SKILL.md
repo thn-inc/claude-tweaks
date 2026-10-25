@@ -200,6 +200,15 @@ When mechanizing a prose heuristic into a deterministic check:
    review round each: its probe first read `$DISPATCH_EXCLUSIONS` from an earlier call
    (`aab721418` made it resolve the session-tmp path itself), and then it had no branch for a
    failed probe (`39129d212` added one that reports "exclusion reason unknown").
+   `plugin/skills/reflect/SKILL.md`'s integration-branch probe (#3987) slipped on the same split
+   a third way (#4069, PR #4160). Its could-not-run list named only a missing `origin` and a file
+   outside the repository, so a failed `git fetch` left a stale `origin/{integration-branch}` that
+   the next `git grep` or `git log -S` read as "absent", and a `git grep` exit 128 was never split
+   from exit 1. A refresh step whose failure leaves old data is a could-not-run for every probe
+   after it. Name each tool's own no-match signal as well: `git grep` exits 1, but `git log -S`
+   exits 0 with no output, so an exit-code branch alone cannot call that one.
+   `tests/reflect-integration-branch-probe.test.js` pins the clause, and removing either the fetch
+   clause or the `-e` form turns it red.
 10. **A helper's can't-tell answer is safe only for the caller it was written for.** A new caller
    that reads the same answer in the opposite direction has to guard the input itself.
    `plugin/bin/lib/issues/claims.js`'s `isStale` answers `false` whenever it cannot tell. An
@@ -287,9 +296,12 @@ When mechanizing a prose heuristic into a deterministic check:
 15. **A transform in front of a scanner owes its own could-not-parse verdict.** A scan over
     transformed text reads whatever the transform wrongly removed as "nothing here", so a
     transform that mis-parses produces a clean scan. `tests/helpers/strip-comments.js`'s
-    `stripComments` blanks comments to spaces before the windows-hide, git-status, path-guard,
-    path-containment, porcelain-cwd-compare, staged-id producer, exit-code and wall-clock-budget
-    conformance scans count tokens. It models regex literals (#3585); its residual
+    `stripComments` blanks comments to spaces before its callers' scans count tokens. Its
+    callers, by test-file stem: `backfill-cli`, `exit-code`, `git-status-optional-locks`,
+    `hooks-harness-refusal`, `path-containment`, `path-guard`, `porcelain-cwd-compare`,
+    `raw-markdown-read`, `staged-id-producers`, `wall-clock-budget` and `windows-hide-spawn`.
+    `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
+    tree. It models regex literals (#3585); its residual
     ambiguity is a regex right after `)` or `}`, which it reads as division. In
     `if (b) /"/.test(b); const c = "//"; fs.existsSync(c);` the quote inside the regex pairs with a
     later string, the `//` after it opens a line comment, and the guarded call counted as zero.
@@ -403,7 +415,6 @@ When mechanizing a prose heuristic into a deterministic check:
     control removes, so the control proves each pin can go red: the first version's pins named the
     rule and none of its edges (`GUARD_PINS` in
     `tests/tidy-arm-ready-pr-acceptance-guard.test.js`).
-
 21. **A shared reader that already folded "could not ask" into its answer shape hands that fold to
     every wrapper, so a verdict built on tagged probes must distrust the readers under them.**
     `plugin/bin/lib/run-liveness/` (#3973) tags every probe positive, negative or error so that an
@@ -423,7 +434,6 @@ When mechanizing a prose heuristic into a deterministic check:
     evidence, and throw on a lookup miss the caller's own precondition says cannot happen. Pin
     each with a fixture the pre-fix code fails (`tests/bin-lib/run-liveness/index.test.js`,
     `probes.test.js`).
-
 22. **A check that reads its input from an optional context argument owes a fail-closed answer
     when the row it gates is present and the context is not.** A pure decision function that
     takes `ctx = {}` and wraps a check in `if (ctx.x present)` reads "the caller passed nothing" as
@@ -442,6 +452,22 @@ When mechanizing a prose heuristic into a deterministic check:
     compatibility, and pin a partial context (one of two required keys) with its own assertion
     (`tests/console-execute.test.js`). When you find one guard of this shape, read every sibling
     guard in the same function, because a new guard is usually copied from the one beside it.
+23. **Failing closed does not excuse folding "could not read" into "read, but unclassifiable".
+    The reason a withheld item carries is what the human acts on.**
+    `plugin/bin/lib/reconcile/console-execute.js`'s `readInsideRunDir` (#3880) returned one `null`
+    for a missing `stagedPath`, a rejected path, a missing file and a failed read, and
+    `plugin/bin/lib/console/resolve.js`'s `readSnapshot` did the same through `readText`. Both fed
+    that `null` to `sddRulingDeferralReason`, which maps it to `sdd-ruling-unclassified`, the reason
+    for a header with no valid `Defers:` line. Every row was still withheld, so nothing unsafe
+    shipped, but a reviewer told to fix the header could be facing a missing file or a planted
+    symlink escaping the run dir. A review's can't-tell finding became #4049, which added
+    `sdd-ruling-unreadable`. `readInsideRunDir` now returns `{ text } | { error }` with one of four
+    causes, `readRulingTexts` puts each id in exactly one of `texts` or `errors`, and `readSnapshot`
+    sets `readError` only on an attempted read that threw. Each caller checks the error before it
+    calls the classifier, which still sees text only (`sddRulingDeferralReason(null)` still returns
+    `sdd-ruling-unclassified`). Decide a read failure in the caller that attempted the read, never
+    inside the pure classifier, let a recorded read error outrank any text for the same id, and pin
+    each cause on each path with its own assertion.
 
 ## When to use
 

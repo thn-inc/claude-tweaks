@@ -46,16 +46,18 @@ patch is `git apply --check`ed first — stacked on the earlier patches in apply
 no longer applies, never applied blind, per `_shared/staged-patch.md`; an unrecognized staged
 prefix lands in Pending review as `pending — unmapped-prefix`, never auto-approved; an
 `sdd-ruling-*` item whose staged header does not show it safe lands as
-`pending — sdd-ruling-deferral-no-defer-reason` or `pending — sdd-ruling-unclassified` (the
-`sdd-ruling-*` bullet below); a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
+`pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-unclassified`, or
+`pending — sdd-ruling-unreadable` (the `sdd-ruling-*` bullet below); a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
 before any prefix rule runs and resolves to `refused` — those rows are in the CLI's table like
 every other row, and a `refused` item is never applied, at any tier, per `refused-proposals.md`.
 The CLI also computes the merge half with both carve-outs (`merge.resolution` = `merge` |
 `leave-open`, with the reason — it **never** runs the merge itself), appends one decisions block
 (`AUTO {time} — Review Console: Console auto-resolved {n} item(s) at unattended
 (console-resolve.js). Reversibility: per item.` plus one line per item), and writes
-`{run-dir}/console.json` (`{resolved: true, mode: 'auto-resolve', at, ceiling, items, merge}` —
-the write the reconciler's archival needs, #1854). That file may later gain an optional
+`{run-dir}/console.json` (`{resolved: true, mode: 'auto-resolve', at, ceiling, items, merge, droppedByTiebreak, filings}` —
+the write the reconciler's archival needs, #1854; `droppedByTiebreak` holds the read-only Dropped
+by tiebreak block's rows, `filings` one `{item, fingerprint, title}` per planned can't-tell
+filing, with no proposal text, #3949). That file may later gain an optional
 `residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); and
 `console-resolve.js --json` on a fresh resolution carries an `unresolved` array (the
 `pending`/`keep-staged` items, `[]` when none); the idempotent re-render of an already-resolved
@@ -102,23 +104,33 @@ procedure — no row is left unrouted:
   deferral (`Defers: yes`, or any `Defer-reason:` header line) with exactly one `Defer-reason:`
   header line whose bare value is in `_shared/deferral-gate.md`'s vocabulary. A deferral without a
   valid reason resolves `pending — sdd-ruling-deferral-no-defer-reason`; a header with no `Defers:`
-  line, more than one, a value other than `yes`/`no`, or an unreadable file resolves
-  `pending — sdd-ruling-unclassified`, since the console cannot tell whether it defers. Neither is
-  ever auto-ratified, and the reconciler's `consoleAutoResolve` path withholds the same rows
-  (`_shared/console-execution.md`).
+  line, more than one, or a value other than `yes`/`no` resolves `pending — sdd-ruling-unclassified`,
+  since the console cannot tell whether it defers; a staged file that cannot be read at all resolves
+  `pending — sdd-ruling-unreadable` (the reconciler's gap names why: `no-staged-path`, `path-rejected`,
+  `not-found`, or `read-failed`). None is ever auto-ratified, and the reconciler's
+  `consoleAutoResolve` path withholds the same rows (`_shared/console-execution.md`).
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
-  runs first; on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
+  runs first (a `.shadow-dup` copy is composed by `shadow-dup-proposal.js` before that, as that step states); on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
   `MEMORY.md` index line).
 - `approve` — the curation steps: step 2 (Skill updates), step 3 (Documentation updates), step 4
   (Journey updates), step 5 (Configuration updates). A **Reference repairs** row has no numbered
   step of its own — it is applied by Phase 4's execution step, per
   `execution-and-verification.md`'s Reference repairs bullet. Cleanup actions run at step 6.
   A **Reflection insights** row (`staged/wrap-up-reflect-insights.md`) runs at step 10.
-- `filed` — step 9's `/claude-tweaks:feedback --pre-confirmed` filing (the `U#` divergence stated
-  in review-console.md).
+- `filed` — on a `U#` item, step 9's `/claude-tweaks:feedback --pre-confirmed` filing (the `U#`
+  divergence stated in review-console.md); on a Low-confidence or Contested item, step 7, its
+  proposal composed by `console-filings.js` (review-console.md's "Can't-tell filings").
+- `dropped` — execute **nothing**. A tiebreak refuted the finding, or a human chose Approve all on
+  its `drop` recommendation (`console-template.md`); its staged file stays in `staged/`, and the
+  row is a final outcome, not residue.
 - `stale` — still step 1, but its re-derivation path only: rebuild the diff from the item's
   `Target:`/`Invariant:` preamble. Never `git apply` a diff the CLI already reported as failing
   `--check`, and never drop it silently.
+- `dismissed` — execute **nothing**. A **Dismissed duplicates** row is a `.shadow-dup` copy
+  byte-identical to its anchor (`shadow-dup-duplicate`): the anchor is its own item, routed on
+  its own, and the copy stays in `staged/` like every other staged file. A Low-confidence or
+  Contested staged file a later tiebreak verdict superseded — confirmed (the finding went through
+  Step 3 Routing) or digested (the materiality digest holds it) — also resolves `dismissed`.
 - `keep-staged`, `pending`, and `refused` — execute **nothing**. They stay in `staged/`, are named
   in the closing pointer, and are never applied; `refused` rows have no default at any tier
   (`refused-proposals.md`).

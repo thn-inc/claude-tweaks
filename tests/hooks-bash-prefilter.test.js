@@ -35,6 +35,8 @@ const DIFFERENTIAL_CORPUS = [
   // #3080: bare redirection has no command word — hasFileRedirection, not the
   // word scan, is what reaches it; see shouldRunFull's pre-tool-use-only OR.
   'echo x > tracked.js',
+  // #4015: a redirect glued to a word.
+  'echo foo>tracked.js',
 ];
 const teardown = (command) => teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: CWD });
 const powershell = (command) => (powershellOpaqueCommand(command, CWD) ? [{ action: 'powershell-opaque' }] : []);
@@ -131,17 +133,23 @@ test('post-tool-use skips write shapes it never handled (cp/mkdir/sed)', () => {
 // to stay cheap.
 for (const command of [
   'echo x > tracked.js', 'printf y >> tracked.js', 'echo x >out.js', 'cmd &> f', 'cmd &>> f',
-  'cmd >| f', 'cmd 2>> err.log',
+  'cmd >| f', 'cmd 2>> err.log', 'echo foo>out.js', 'cat a.txt>b.txt',
 ]) {
   test(`hasFileRedirection detects: ${command}`, () => {
     assert.strictEqual(hasFileRedirection(command), true, command);
   });
 }
-for (const command of ['echo hi', 'cmd 2>&1', 'cmd >&2', 'echo x > /dev/null', 'cmd > /dev/stdout', 'echo "a > b"']) {
+for (const command of ['echo hi', 'cmd 2>&1', 'cmd >&2', 'echo x > /dev/null', 'cmd > /dev/stdout', 'echo "a > b"',
+  'echo "foo>x"', "echo 'foo>x'", '[[ a>b ]]']) {
   test(`hasFileRedirection does not trigger on: ${JSON.stringify(command)}`, () => {
     assert.strictEqual(hasFileRedirection(command), false, command);
   });
 }
+
+test('AC3.1 #4015: the differential corpus lists the glued shape, and it takes the full-handler path', () => {
+  assert.ok(DIFFERENTIAL_CORPUS.includes('echo foo>tracked.js'));
+  assert.strictEqual(shouldRunFull('pre-tool-use', bash('echo foo>tracked.js')), true);
+});
 
 test('shouldRunFull ORs hasFileRedirection into pre-tool-use only, never post-tool-use', () => {
   assert.strictEqual(shouldRunFull('pre-tool-use', bash('echo x > f.js')), true);

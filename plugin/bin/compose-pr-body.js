@@ -29,7 +29,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { o.help = true; continue; }
-    if (!(a in FLAGS)) return { error: `unknown argument: ${a}` };
+    if (!Object.hasOwn(FLAGS, a)) return { error: `unknown argument: ${a}` };
     const v = argv[i + 1];
     if (v === undefined || v.startsWith('--')) return { error: `${a} needs a value` };
     o[FLAGS[a]] = v;

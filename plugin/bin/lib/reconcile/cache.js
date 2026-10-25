@@ -19,6 +19,8 @@
 const fs = require('fs');
 const path = require('path');
 const { escalateResidue, resolveResidue } = require('./escalate-residue');
+const { lstatType } = require('../path-guard');
+const { isPathContained } = require('../shared-primitives');
 
 const CACHE_FILENAME = 'reconcile-cache.json';
 const DEFAULT_TTL_MS = 7 * 60 * 1000;
@@ -223,6 +225,46 @@ function recordResidueSuccess(target, reason, targetPath) {
   if (batch) { target.cache = nextCache; target.dirty = true; } else { writeCache(target, nextCache); }
 }
 
+// #4202: the gone-path predicate handed to escalate/resolve. The consolidated record is shared
+// by every checkout of the repo, so this checkout can only judge paths inside its own run-dir
+// tree (<root>/.claude-tweaks/pipelines); any other listed path counts as present.
+// `target` is a plain root string or a cache batch handle.
+function ownedPathExists(target) {
+  const root = isCacheBatch(target) ? target.root : target;
+  const pipelinesDir = path.join(root, '.claude-tweaks', 'pipelines');
+  // Listed paths come from an editable issue body, so only an absolute, already-normalized path
+  // strictly inside the pipelines dir is judged. Only a missing leaf is gone; an unreadable one
+  // stays listed.
+  return (p) => {
+    const judged = path.isAbsolute(p) && path.normalize(p) === p && isPathContained(p, pipelinesDir);
+    return !judged || lstatType(p).type !== 'missing';
+  };
+}
+
+// #2724: drop a tracked entry for a path that is no longer stuck, and — only
+// when that entry had already been escalated — take the path off the filed
+// GitHub record. Writes nothing when there is no entry. An escalated entry is
+// dropped only once the resolution landed (a throw or any other status keeps
+// it). #4202: two callers — #2724's ad-hoc exemption (path still exists, so
+// the next pass calls this again) and archive success (path now gone, so the
+// same pass's pruneResidueFailures retries the resolve once).
+const RESIDUE_RESOLVED_STATUSES = new Set(['closed', 'path-removed', 'not-found', 'already-closed']);
+
+function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveResidue, runner, why } = {}) {
+  const cache = isCacheBatch(target) ? target.cache : readCache(target);
+  const entry = cache.residueFailures[residueKey(reason, targetPath)];
+  if (!entry) return { cleared: false, resolved: null };
+  if (!entry.escalated) {
+    recordResidueSuccess(target, reason, targetPath);
+    return { cleared: true, resolved: null };
+  }
+  let resolved;
+  try { resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why, pathExists: ownedPathExists(target) }); } catch { return { cleared: false, resolved: null }; }
+  if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) return { cleared: false, resolved };
+  recordResidueSuccess(target, reason, targetPath);
+  return { cleared: true, resolved };
+}
+
 // #1233 — the shared success/fail branch-into-{recordResidueSuccess,
 // recordResidueFailure,escalate} shape that reap-merged.js's
 // trackReapResidue and archive-merged.js's trackArchiveResult each used to
@@ -242,7 +284,7 @@ function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError,
   try {
     escalate({
       repo: repoSlug, reason, targetPath,
-      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner,
+      count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner, pathExists: ownedPathExists(target),
     });
   } catch { /* best-effort — never let escalation turn a residue-tracking call into a thrown error */ }
 }
@@ -287,7 +329,7 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
     delete failures[key];
     changed = true;
     if (entry && entry.escalated) {
-      try { resolve({ repo: repoSlug, reason, targetPath, runner }); } catch { /* best-effort */ }
+      try { resolve({ repo: repoSlug, reason, targetPath, runner, pathExists: ownedPathExists(root) }); } catch { /* best-effort */ }
     }
   }
   if (changed) writeCache(root, { ...cache, residueFailures: failures });
@@ -295,6 +337,6 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
 
 module.exports = {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
-  RESIDUE_ESCALATE_THRESHOLD, residueKey, recordResidueFailure, recordResidueSuccess, listResidueFailures,
+  RESIDUE_ESCALATE_THRESHOLD, residueKey, recordResidueFailure, recordResidueSuccess, clearResidue, listResidueFailures,
   trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 };

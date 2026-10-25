@@ -35,7 +35,7 @@ that needs no resolution, only inclusion:
    `{minted-run-dir}/context/merge.md`, composed by the dispatching session before either call;
    every citation of them in the templates below carries its own fallback to the source file.
 
-6. **Worktree shell constraint** — the Claude Code harness enforces limits on Bash commands in a single call, independent of filesystem effect (see `_shared/scratch-worktree.md` §7 ("Shell constraint") for the full boundary description, if that bundle is absent, read `_shared/scratch-worktree.md` directly). Avoid these shapes: quoted JSON containing `git`; a `git` call inside a `$(...)` substitution (e.g. `"$(git merge-base HEAD origin/main)"` as another command's argument — run it as its own call and paste the result in); a runtime variable such as `${CLAUDE_PLUGIN_ROOT}` inside the `node -e` script text of a command that also runs `git` (piping `git`/`gh` output into `node -e` passes once the paths are literal); a `for`/`while` loop variable; a glob argument; a `gh api` call inside an `if RAW=$(...)`; `sed -i` on a variable path; `cat "$P/…"` or `sed -n 'a,bp' "$P/…"` where `$P` is a runtime-computed path variable. Use `Write`/`Edit`/`Read` tools instead of equivalent shell commands, separate commands instead of loops or compound constructs, and literal file paths instead of variables. One plain command per Bash call is the general pattern.
+6. **Worktree shell constraint** — the Claude Code harness enforces limits on Bash commands in a single call, independent of filesystem effect (see `_shared/scratch-worktree.md` §7 ("Shell constraint") for the full boundary description, if that bundle is absent, read `_shared/scratch-worktree.md` directly). Avoid these shapes: quoted JSON containing `git`; a `git` call inside a `$(...)` substitution (e.g. `"$(git merge-base HEAD origin/main)"` as another command's argument — run it as its own call and paste the result in); a runtime variable such as `${CLAUDE_PLUGIN_ROOT}` inside the `node -e` script text of a command that also runs `git` (piping `git`/`gh` output into `node -e` passes once the paths are literal); a `for`/`while` loop variable; a glob argument; a `gh api` call inside an `if RAW=$(...)`; `sed -i` on a variable path; `cat "$P/…"` or `sed -n 'a,bp' "$P/…"` where `$P` is a runtime-computed path variable; a path spelled with a backslash-escaped space (e.g. `Code\ Workspaces` — double-quote the whole path instead, `"/Users/…/Code Workspaces/…"`; §7's row). Use `Write`/`Edit`/`Read` tools instead of equivalent shell commands, separate commands instead of loops or compound constructs, and literal file paths instead of variables. One plain command per Bash call is the general pattern.
 
 7. **Async-wait discipline** — you are a subagent, not a top-level session. Once your turn ends you
    cannot count on being re-woken: a reply that ends without a tool call ends your turn, whatever is
@@ -219,14 +219,17 @@ CRITICAL: before reporting `DONE`/`build-test-ok`, confirm your own claim agains
 you just produced -- this call is the producer, not a second call distrusting someone else's
 prior claim, so there is no earlier report to check here, only your own freshly written result.
 The actual artifact is the runner-written pass stamp verifying HEAD (`verify.js --stamp-status`
-reports `verifiedHead: true`) and its `report.json`, which exist only when the test phase runs
-through `/claude-tweaks:test`. A raw `npm test` log is not that artifact: it leaves no stamp, and
-the second call then re-runs the full suite (#3661). Never report a result from narrative or
-memory of an earlier pass in this same call -- if the stamp is absent or does not verify HEAD,
-re-run the test phase through `/claude-tweaks:test` once before reporting. If the stamp still does
-not verify HEAD (a dirty tree never verifies), report `STATUS: DONE_WITH_CONCERNS` (the OUTCOME is
-unchanged by this alone), naming the stamp state -- the gate notes it, and the second call's
-review re-verifies through the runner.
+reports `verifiedHead: true`) and its `report.json` -- or a complete composed verdict
+(`suiteComposed.complete: true`), whose per-suite records carry their own report paths and are
+the same artifact. Both exist only when the test phase runs through `/claude-tweaks:test`. A raw
+`npm test` log is not that artifact: it leaves no stamp, and the second call then re-runs the
+full suite (#3661). Never report a result from narrative or memory of an earlier pass in this same
+call -- if `--stamp-status` does not report `verifiedHead: true` (no stamp, no complete
+composition, or neither verifies HEAD), re-run the test phase through `/claude-tweaks:test` once
+before reporting. If the artifact still does not verify HEAD (a tree dirty outside the declared
+`generated` paths never does), report `STATUS: DONE_WITH_CONCERNS` (the OUTCOME is unchanged by
+this alone), naming the stamp state -- the gate notes it, and the second call's review
+re-verifies through the runner.
 
 Bookends (every transport, #2912): before reporting `DONE`/`build-test-ok`, also run
 `node "{plugin-root}/bin/verify-run-bookends.js" --run "{minted-run-dir}" --targets {comma-joined issue numbers}`.

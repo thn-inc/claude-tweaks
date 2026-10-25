@@ -53,6 +53,72 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.154.0](https://github.com/thn-inc/claude-tweaks/compare/v6.153.0...v6.154.0) (2026-10-25)
+
+
+### Features
+
+* give every Review Console item a final outcome and backfill the console backlog ([#3992](https://github.com/thn-inc/claude-tweaks/issues/3992)) ([6510874](https://github.com/thn-inc/claude-tweaks/commit/6510874174729159ee6f724f746a5c5dd208843a)), closes [#3816](https://github.com/thn-inc/claude-tweaks/issues/3816) [#3946](https://github.com/thn-inc/claude-tweaks/issues/3946) [#3949](https://github.com/thn-inc/claude-tweaks/issues/3949) [#3950](https://github.com/thn-inc/claude-tweaks/issues/3950)
+
+
+### Bug Fixes
+
+* compose-pr-body.js: parseArgs accepts inherited object… ([#4021](https://github.com/thn-inc/claude-tweaks/issues/4021)) ([8c725c7](https://github.com/thn-inc/claude-tweaks/commit/8c725c7b56f18fa5f5a1025d415e8a3ae11f126b))
+* compose-subject renders the record's "Filed by" footer as… ([#4014](https://github.com/thn-inc/claude-tweaks/issues/4014)) ([9908c65](https://github.com/thn-inc/claude-tweaks/commit/9908c65a477f539f289092d7bf802efcf1c70746))
+* reconcile: archiving an escalated stuck dir drops its… ([#4202](https://github.com/thn-inc/claude-tweaks/issues/4202)) ([04078e6](https://github.com/thn-inc/claude-tweaks/commit/04078e6240839551d0459bbdd32bff6e5a1f68ac))
+* reflect's integration-branch probe reads a failed fetch… ([#4069](https://github.com/thn-inc/claude-tweaks/issues/4069)) ([bddfa50](https://github.com/thn-inc/claude-tweaks/commit/bddfa50bbacec82a8887edb0684b6a5095c13b74))
+* staged-patch gitEnv leaks env-injected git config… ([#3997](https://github.com/thn-inc/claude-tweaks/issues/3997)) ([d36f5f6](https://github.com/thn-inc/claude-tweaks/commit/d36f5f6a54367f74e589527555a81ab403ba3058))
+* Windows regression: 1 test file(s) newly failing after… ([#4177](https://github.com/thn-inc/claude-tweaks/issues/4177)) ([42aacbb](https://github.com/thn-inc/claude-tweaks/commit/42aacbbbd5a6c76731d011189fc0d31b1677d9ed))
+* worktree-always redirect scan misses a redirect glued to… ([#4015](https://github.com/thn-inc/claude-tweaks/issues/4015)) ([5d66bf3](https://github.com/thn-inc/claude-tweaks/commit/5d66bf378f00ed495a4b18013350d53be8f0b3bb))
+
+### Highlights
+* Maintainer-facing: timing budgets run on a schedule again, and the session-failures lock wait is covered by the regular suite.
+* The worktree-always gate now sees a redirect glued to a word (`echo foo>x`), which it previously let through.
+* Maintainer-only: a project skill for splitting a shared lib module without leaving stale location claims behind.
+* Each run reports where its turns went, and the Review Console flags runs that blow their efficiency budget.
+* No user-visible change.
+* Reconcile's consolidated stuck-runs record now closes by itself once every listed run directory has been archived.
+* No user-visible change: fixed the Windows-only failures in the verification runner's own tests, so post-merge Windows checks report real regressions again.
+* Merge commits composed from agent-filed records no longer include the record's "Filed by" footer.
+* No user-visible change.
+* No user-visible change.
+* No user-visible change.
+* The reflect skill no longer files a duplicate record when it could not reach the integration branch to check.
+* SessionStart reconcile no longer loads the wrap-up pack module it does not use.
+
+## [6.153.0](https://github.com/thn-inc/claude-tweaks/compare/v6.152.0...v6.153.0) (2026-10-24)
+
+
+### Features
+
+* Add a run-liveness verdict module and an owner block in… ([#3973](https://github.com/thn-inc/claude-tweaks/issues/3973)) ([673bd63](https://github.com/thn-inc/claude-tweaks/commit/673bd6371834c4081af53e2386b3b33af26bb240))
+* Select local tests by traced file reads instead of… ([#4024](https://github.com/thn-inc/claude-tweaks/issues/4024)) ([3f5124d](https://github.com/thn-inc/claude-tweaks/commit/3f5124d8219b2b793a1170d3dbed3cf10faef422))
+
+
+### Bug Fixes
+
+* archive-run guard does not cover the dispatch bundle… ([#3740](https://github.com/thn-inc/claude-tweaks/issues/3740)) ([18a9fa1](https://github.com/thn-inc/claude-tweaks/commit/18a9fa1c8c1e42272de1c52ea6fcc6e7a1e01941))
+* delete-ledger and finish-console: test the unattributable… ([#3686](https://github.com/thn-inc/claude-tweaks/issues/3686)) ([8d62aea](https://github.com/thn-inc/claude-tweaks/commit/8d62aea9f0cc7eee1a1147961e0a69d6b5788c7f)), closes [#3742](https://github.com/thn-inc/claude-tweaks/issues/3742) [#3776](https://github.com/thn-inc/claude-tweaks/issues/3776)
+* release: a finished release's run dir stays clean and… ([#3898](https://github.com/thn-inc/claude-tweaks/issues/3898)) ([5dfd550](https://github.com/thn-inc/claude-tweaks/commit/5dfd55005a947796e5d6c6095f33ecaf705bd08a)), closes [#4012](https://github.com/thn-inc/claude-tweaks/issues/4012) [#4041](https://github.com/thn-inc/claude-tweaks/issues/4041)
+* verification-brief: under pr-first with the merge left… ([#4039](https://github.com/thn-inc/claude-tweaks/issues/4039)) ([71a3e0d](https://github.com/thn-inc/claude-tweaks/commit/71a3e0d871734f10ffa9e0ff3347ad725c514f24))
+* Windows regression filer quotes a pre-existing failure… ([#3723](https://github.com/thn-inc/claude-tweaks/issues/3723)) ([bf79456](https://github.com/thn-inc/claude-tweaks/commit/bf79456c6a07c3389d656791dc787c39c75898ed))
+* worktree-always PreToolUse hook false-positives on… ([#3989](https://github.com/thn-inc/claude-tweaks/issues/3989)) ([7fc7655](https://github.com/thn-inc/claude-tweaks/commit/7fc7655ff6369facdf321b20bbdcd9ca6513ade0))
+
+### Highlights
+* Show why an SDD ruling row was held when its staged file could not be read: the Review Console now names it `sdd-ruling-unreadable` (no path, rejected path, missing file, or failed read) instead of folding it into `sdd-ruling-unclassified`.
+* Fix demo evidence screenshots getting stranded on an already-merged branch when wrap-up's
+* Builds run only the tests a change can affect, so most verify steps take seconds instead of about eight minutes; CI still runs the full suite before merge.
+* No user-visible change — the unattended Review Console's withhold checks now fail closed if their inputs are ever missing.
+* Keep `/tidy` and `/dispatch close-out` agreeing on when a PR's acceptance labeling has landed: one shared definition instead of two hand-kept copies.
+* Release runs no longer leave their run directory behind for the next release to reuse, and every staged review finding is filed or declined before the run closes.
+* Cleaning up a finished bundle run no longer hides staged proposals nobody approved when the run never showed its review console.
+* Added a per-run liveness record so claude-tweaks can tell a running session's run from an abandoned one, with no change to how runs behave yet.
+* Windows regression issues now quote the tests that newly fail and flag likely renames of tests that were already failing.
+* No user-visible change.
+* Internal hardening: the `worktree-always` write gate no longer mistakes a numeric comparison (`x.length > 0`) inside a heredoc-embedded script for a real shell redirect.
+* No user-visible change.
+* `delete-ledger` now says when a worktree holds only inherited ledgers, instead of reporting a bare "not found".
+
 ## [6.152.0](https://github.com/thn-inc/claude-tweaks/compare/v6.151.1...v6.152.0) (2026-10-24)
 
 

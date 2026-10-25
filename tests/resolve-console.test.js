@@ -9,7 +9,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { resolveConsoleExecution, REVERSE_FAILED_NOTE } = require('../plugin/bin/lib/reconcile/console-execute');
+const {
+  resolveConsoleExecution, REVERSE_FAILED_NOTE, DROPPED_NOTE, FILING_FAILED_NOTE,
+} = require('../plugin/bin/lib/reconcile/console-execute');
 
 function makeRunDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-'));
@@ -155,7 +157,7 @@ const RULING_ITEMS = [
   { id: 'r1', kind: 'staged', summary: 'SDD ruling', isRulingRow: true },
 ];
 
-async function runRuling(items, { approve, decline, reverseFailed }) {
+async function runRuling(items, { approve, decline, reverseFailed, filingFailed }) {
   const dir = makeRunDir();
   writeConsoleJson(dir, { items });
   const ghCalls = [];
@@ -165,7 +167,7 @@ async function runRuling(items, { approve, decline, reverseFailed }) {
     gh: fakeGh(ghCalls, { prViewBody: primaryCommentBody(items.map((i) => i.id)) }),
     writeFile: (p, content) => writeCalls.push({ path: p, content }),
   };
-  const result = await resolveConsoleExecution(dir, { approve, decline, reverseFailed }, deps);
+  const result = await resolveConsoleExecution(dir, { approve, decline, reverseFailed, filingFailed }, deps);
   const markerBody = ghCalls.find((a) => a[0] === 'api').find((a) => a.startsWith('body='));
   const replyCall = ghCalls.find((a) => a[0] === 'pr' && a[1] === 'comment');
   const replyBody = replyCall[replyCall.indexOf('--body') + 1];
@@ -268,6 +270,87 @@ test('an id in reverseFailed that matches no console row is rejected as unknown-
   });
   assert.equal(result.reason, 'unknown-item-ids');
   assert.deepEqual(result.ids, ['nope']);
+  assert.equal(writeCalls.length, 0);
+});
+
+// #3949 — a finding row (`findingItem`: a can't-tell Low-confidence/Contested item) is
+// tick = file, untick = drop: an unticked or declined one is dropped (a decided outcome, cleared);
+// one whose filing failed is named in filingFailed and is not cleared.
+const FINDING_ITEMS = [
+  { id: '1', kind: 'batch', summary: 'fix A' },
+  { id: 'f1', kind: 'staged', summary: 'can\'t-tell finding', findingItem: 'tiebreak:3f2a9c1b7d04' },
+];
+
+test('a finding row unticked and in neither list reads dropped and clears Resolve', async () => {
+  const { result, markerBody, replyBody, written } = await runRuling(FINDING_ITEMS, { approve: ['1'], decline: [] });
+  const f1 = result.outcomes.find((o) => o.id === 'f1');
+  assert.equal(f1.outcome, 'dropped');
+  assert.equal(f1.note, 'dropped — nothing filed');
+  assert.equal(result.resolved, true);
+  assert.match(markerBody, /<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[x\]/i);
+  assert.ok(replyBody.includes(`\`f1\`: ${DROPPED_NOTE}`));
+  assert.ok(!replyBody.includes('no reason given'));
+  assert.equal(written.resolved, true);
+});
+
+test('a finding row named in --decline reads dropped; approved it reads executed', async () => {
+  assert.equal((await runRuling(FINDING_ITEMS, { approve: ['1', 'f1'], decline: ['f1'] })).result.outcomes.find((o) => o.id === 'f1').outcome, 'dropped');
+  assert.equal((await runRuling(FINDING_ITEMS, { approve: ['1', 'f1'], decline: [] })).result.outcomes.find((o) => o.id === 'f1').outcome, 'executed');
+});
+
+test('a finding row named in filingFailed reads filing-failed, uncleared, Resolve unticked', async () => {
+  const { result, markerBody, replyBody, written } = await runRuling(FINDING_ITEMS, { approve: ['1', 'f1'], decline: [], filingFailed: ['f1'] });
+  const f1 = result.outcomes.find((o) => o.id === 'f1');
+  assert.equal(f1.outcome, 'filing-failed');
+  assert.equal(f1.note, 'filing failed — see decisions.md');
+  assert.equal(result.resolved, false);
+  assert.doesNotMatch(markerBody, /<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[x\]/i);
+  assert.ok(replyBody.includes(`\`f1\`: ${FILING_FAILED_NOTE}`));
+  assert.equal(written.resolved, false);
+});
+
+// #3949 review: a long console splits into overflow comments, each carrying its own rows' ticks.
+async function runOverflow(overflowBody) {
+  const dir = makeRunDir();
+  writeConsoleJson(dir, { commentIds: ['IC_primary', 'IC_overflow1'], items: [FINDING_ITEMS[0], { ...FINDING_ITEMS[1], commentId: 'IC_overflow1' }] });
+  const ghCalls = [];
+  const writeCalls = [];
+  const extraComments = overflowBody === null ? [] : [{ id: 'IC_overflow1', body: overflowBody }];
+  const result = await resolveConsoleExecution(dir, { approve: ['1'], decline: [] }, {
+    now: () => Date.now(),
+    gh: fakeGh(ghCalls, { prViewBody: primaryCommentBody(['1']), extraComments }),
+    writeFile: (p, c) => writeCalls.push({ p, c }),
+  });
+  return { result, written: writeCalls.length ? JSON.parse(writeCalls[0].c) : null };
+}
+
+test('a finding row ticked in an overflow comment reads executed, not dropped', async () => {
+  const { result } = await runOverflow('<!-- console-item: f1 -->\n- [x] item f1');
+  assert.equal(result.outcomes.find((o) => o.id === 'f1').outcome, 'executed');
+  assert.equal(result.resolved, true);
+});
+
+test('a finding row whose tick no comment carries reads declined and leaves Resolve unticked', async () => {
+  const { result, written } = await runOverflow(null);
+  assert.equal(result.outcomes.find((o) => o.id === 'f1').outcome, 'declined');
+  assert.equal(result.resolved, false);
+  assert.equal(written.resolved, false);
+});
+
+test('an id without findingItem in filingFailed is rejected as not-finding-items before any write', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir, { items: FINDING_ITEMS });
+  const ghCalls = [];
+  const writeCalls = [];
+  const result = await resolveConsoleExecution(dir, { approve: [], decline: [], filingFailed: ['1', 'f1'] }, {
+    now: () => Date.now(),
+    gh: fakeGh(ghCalls, { prViewBody: primaryCommentBody(['1', 'f1']) }),
+    writeFile: (p, c) => writeCalls.push({ p, c }),
+  });
+  assert.equal(result.status, 'error');
+  assert.equal(result.reason, 'not-finding-items');
+  assert.deepEqual(result.ids, ['1']);
+  assert.ok(ghCalls.every((a) => !(a[0] === 'pr' && a[1] === 'comment') && a[0] !== 'api'));
   assert.equal(writeCalls.length, 0);
 });
 

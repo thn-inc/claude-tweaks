@@ -49,7 +49,7 @@ const CONTESTED_LOG_LINE =
 const PROMOTE_CLAUSE = 'Emit each `corroborated` entry as `confirmed`';
 const INPUT_STEP = '1. **Collect the input.**';
 const VACUITY_SCOPE = 'however it became `unconfirmed`';
-const OVERRIDES_FIRST = 'Direct-verification overrides run before the pass';
+const VACUITY_BULLET_CITE = '"Lens 3f vacuity findings need execution evidence" bullet';
 
 function assertPromotes(file) {
   assert.match(file, /corroborate-cross-lens/);
@@ -70,8 +70,8 @@ function assertInputScope(file) {
   assert.match(step, /vacuity/);
   assert.match(step, /excluded/);
   assert.ok(step.includes(VACUITY_SCOPE), 'vacuity exclusion is not scoped to every route into unconfirmed');
-  assert.ok(step.includes('Direct-verification override'), 'vacuity exclusion does not cite the override paragraph');
-  assert.ok(step.includes(OVERRIDES_FIRST), 'input step does not order overrides before the pass');
+  assert.ok(step.includes(VACUITY_BULLET_CITE), 'vacuity exclusion does not cite the lens 3f vacuity bullet');
+  assert.doesNotMatch(step, /direct[- ]verification/i, 'input step still names the retired Direct-verification override');
 }
 
 function assertKeepsStaged(file, dispatch) {
@@ -157,7 +157,7 @@ test('AC1.1 go-red: dropping the contested log line fails the same assertions', 
   assert.throws(() => assertPromotes(mutated));
 });
 
-test('every lens 3f vacuity finding is excluded from the input; overrides run before the pass', () => {
+test('every lens 3f vacuity finding is excluded from the input, citing the vacuity bullet', () => {
   assertInputScope(read('review', 'step3-cross-lens-corroboration.md'));
 });
 
@@ -168,11 +168,14 @@ test('go-red: narrowing the vacuity exclusion fails the same assertions', () => 
   assert.throws(() => assertInputScope(mutated));
 });
 
-test('go-red: dropping the overrides-before-the-pass clause fails the same assertions', () => {
+test('go-red: re-citing the retired override paragraph, or dropping the vacuity-bullet citation, fails the same assertions', () => {
   const file = read('review', 'step3-cross-lens-corroboration.md');
-  const mutated = file.replace(OVERRIDES_FIRST, 'Overrides may run');
-  assert.notEqual(mutated, file, 'mutation did not change the text');
-  assert.throws(() => assertInputScope(mutated));
+  const reintroduced = file.replace(VACUITY_BULLET_CITE, 'that same Direct-verification override paragraph');
+  assert.notEqual(reintroduced, file, 'mutation did not change the text');
+  assert.throws(() => assertInputScope(reintroduced));
+  const uncited = file.replace(VACUITY_BULLET_CITE, 'the lens dispatch file');
+  assert.notEqual(uncited, file, 'mutation did not change the text');
+  assert.throws(() => assertInputScope(uncited));
 });
 
 test('#3698 AC1.1: on a CRLF checkout both go-red mutations still change the text', (t) => {

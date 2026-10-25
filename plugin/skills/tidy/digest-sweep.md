@@ -63,7 +63,8 @@ repeated firings of one recurring finding.
 When **3 or more** un-promoted entry lines share the same `{area}`, propose one spec-shaped issue
 absorbing them — each entry becomes one Deliverables bullet, the cluster's shared `{area}` becomes
 the proposal's title subject. Present the proposal per this project's standard staged-item flow
-(`{run-dir}/staged/digest-promotion-{n}.md`) — the `Propose digest cluster` action, Stage at every
+(`{run-dir}/staged/digest-promotion-{n}.md`, staged through `step-6-auto.md`'s `stage-item.js` call with
+`--id "digest-promotion-{n}"`) — the `Propose digest cluster` action, Stage at every
 tier (`step-6-auto.md`).
 
 On approval: file the proposed record, then append `→ {id}` to each promoted entry **line** in the
