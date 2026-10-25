@@ -562,4 +562,7 @@ test('#4282 AC2.1 AC2.2: segmentsOf splits a relative path on both separators, u
   assert.deepEqual(rb.segmentsOf('.github/workflows/release-please.yml', path.posix), ['.github', 'workflows']);
   assert.deepEqual(rb.segmentsOf('./.github//workflows/x.yml', path.posix), ['.github', 'workflows']);
   assert.deepEqual(rb.segmentsOf('release-please-config.json', path.win32), []);
+  // '\' is a filename character on posix, a separator only under win32 semantics
+  assert.deepEqual(rb.segmentsOf('a\\b/x.yml', path.posix), ['a\\b']);
+  assert.deepEqual(rb.segmentsOf('a\\b\\x.yml', path.win32), ['a', 'b']);
 });

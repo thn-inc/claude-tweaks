@@ -470,3 +470,21 @@ test('#4282 AC3: writeInsideRoot\'s post-open identity check refuses a leaf swap
   }
   assert.strictEqual(fs.readFileSync(b.victim, 'utf8'), 'VICTIM-BYTES');
 });
+
+test('#4282: writeInsideRoot refuses a leaf that appears between the lstat and the open', () => {
+  const noFollow = { constants: { ...fs.constants, O_NOFOLLOW: undefined } };
+  const root = mkTmpDir('release-local-root-');
+  const realOpen = fs.openSync;
+  // One-shot: a concurrent writer creates the leaf just before the O_EXCL open runs.
+  fs.openSync = (leaf, ...rest) => {
+    fs.openSync = realOpen;
+    fs.writeFileSync(leaf, 'OTHER');
+    return realOpen(leaf, ...rest);
+  };
+  try {
+    assert.throws(() => writeInsideRoot(root, 'new.json', 'x', noFollow), /refusing to write new\.json: it changed between the check and the open/);
+  } finally {
+    fs.openSync = realOpen;
+  }
+  assert.strictEqual(fs.readFileSync(path.join(root, 'new.json'), 'utf8'), 'OTHER');
+});

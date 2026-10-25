@@ -283,11 +283,12 @@ function run(argv, deps) {
 // and must sit inside the real root. Where the platform defines O_NOFOLLOW, the
 // leaf is opened with it and the kernel refuses a symlinked file. Where it does
 // not (win32), the leaf is lstat'd before the open (a symlink is refused there),
-// then created with O_EXCL when absent or opened without O_CREAT when present;
-// after the open the fd's dev/ino (bigint, so a 64-bit win32 file ID is not
-// rounded) is compared with a fresh lstat of the leaf, and the file is truncated
-// only once that identity check passes, so a file swapped in during the window
-// is never cut short.
+// then created with O_EXCL when absent or opened without O_CREAT when present
+// (a leaf that changed before the open is refused as "changed between the check
+// and the open", not as a symlink); after the open the fd's dev/ino (bigint, so
+// a 64-bit win32 file ID is not rounded) is compared with a fresh lstat of the
+// leaf, and the file is truncated only once that identity check passes, so a
+// file swapped in during the window is never cut short.
 function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
   const target = path.join(root, p);
   const realRoot = fs.realpathSync(root);
@@ -324,12 +325,15 @@ function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
   if (before && before.isSymbolicLink()) throw symlinkError();
   // A leaf that was absent is created exclusively and one that was present is
   // opened without O_CREAT, so a leaf that changed since the lstat fails the open
-  // (EEXIST / ENOENT) instead of leaving a freshly created file behind.
+  // (EEXIST / ENOENT) instead of leaving a freshly created file behind. That
+  // change may be a symlink swap or a concurrent writer, so it gets its own
+  // message; ELOOP / EMLINK are a symlink, as in the O_NOFOLLOW branch.
   let fd;
   try {
     fd = fs.openSync(leaf, before ? O_WRONLY : O_WRONLY | O_CREAT | O_EXCL, 0o644);
   } catch (e) {
-    if (e.code === 'EEXIST' || e.code === 'ENOENT') throw symlinkError();
+    if (e.code === 'ELOOP' || e.code === 'EMLINK') throw symlinkError();
+    if (e.code === 'EEXIST' || e.code === 'ENOENT') throw new Error(`refusing to write ${p}: it changed between the check and the open`);
     throw e;
   }
   try {

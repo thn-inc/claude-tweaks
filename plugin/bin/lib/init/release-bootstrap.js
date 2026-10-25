@@ -446,10 +446,13 @@ function writeBootstrapFiles(root, toWrite, { dryRun = false } = {}) {
   return { written };
 }
 
-// Directory segments of a relative write target, leaf excluded. Splits on both
-// separators: on win32 a '/'-separated rel is one segment under path.sep alone.
+// Directory segments of a relative write target, leaf excluded. Under win32
+// semantics both separators split (a '/'-separated rel is one segment under
+// path.sep alone); elsewhere only '/' does, since '\' is a legal filename
+// character on posix and a directory named `a\b` is one segment there.
 function segmentsOf(rel, pathImpl = path) {
-  return pathImpl.dirname(rel).split(/[\\/]/).filter((s) => s !== '' && s !== '.');
+  const sep = pathImpl.sep === '\\' ? /[\\/]/ : '/';
+  return pathImpl.dirname(rel).split(sep).filter((s) => s !== '' && s !== '.');
 }
 
 // Refuses to write through a symlink anywhere between root and the target:
