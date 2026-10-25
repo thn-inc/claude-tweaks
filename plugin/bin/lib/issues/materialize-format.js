@@ -68,7 +68,7 @@ function stripCodeSpans(text) {
   // and removes the open-ended shape as a defensive measure. A span whose
   // content exceeds the cap degrades to being left as literal text instead
   // of stripped — the same safe direction stripCodeSpans already takes for
-  // an unclosed fence (line 42-43 above) — never to a longer scan.
+  // an unclosed fence (fencedLineRanges, record-payload.js) — never to a longer scan.
   return out.join('\n').replace(/(`+)([\s\S]{0,2000}?)\1/g, '');
 }
 

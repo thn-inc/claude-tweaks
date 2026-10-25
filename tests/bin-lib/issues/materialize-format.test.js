@@ -521,7 +521,11 @@ test('sectionText: the record\'s own section wins over an earlier fenced quote o
 });
 
 test('sectionText: a CRLF fenced quote is skipped too', () => {
-  assert.equal(sectionText(QUOTED_BODY.replace(/\n/g, '\r\n'), 'Acceptance Criteria'), null);
+  const crlf = QUOTED_BODY.replace(/\n/g, '\r\n');
+  assert.equal(sectionText(crlf, 'Acceptance Criteria'), null);
+  // The record's own sections must still be found — a CRLF bug that made every fence run to end of text would hide them.
+  assert.equal(sectionText(crlf, 'Deliverables'), '- [ ] real deliverable');
+  assert.equal(sectionText(crlf, 'Release Note'), 'Real note.');
 });
 
 test('shapeGate: a fenced quote of a spec-shaped document does not supply the record\'s missing sections', () => {
