@@ -120,28 +120,17 @@ numbered sequence instead of skipped.
    Resolve this run's session-scoped temp paths first (`_shared/session-tmp-root.md`) — these carry the existing `${ISSUE}` suffix, since two different records settling concurrently (a dispatch loop over a bundle group's members) still need per-record disjoint files even within one session, exactly as `_shared/session-tmp-root.md`'s "Record-suffixed callers keep both suffixes" section states:
 
    ```bash
-   eval "$(node -e "
-     const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-     const os = require('os'); const path = require('path');
-     const issue = process.argv[1];
-     const files = {
-       DISPATCH_COMMENTS: 'dispatch-comments-' + issue + '.json',
-       DISPATCH_LINKED_PRS: 'dispatch-linked-prs-' + issue + '.json',
-       DISPATCH_PR_COMMENTS_DIR: 'dispatch-pr-comments-' + issue,
-       ATTEMPT_INFO: 'attempt-info-' + issue + '.json',
-     };
-     for (const [varName, filename] of Object.entries(files)) {
-       const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-       console.log(varName + '=' + JSON.stringify(p));
-     }
-   " "$ISSUE")"
+   DISPATCH_COMMENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "dispatch-comments-${ISSUE}.json")"
+   DISPATCH_LINKED_PRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "dispatch-linked-prs-${ISSUE}.json")"
+   DISPATCH_PR_COMMENTS_DIR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "dispatch-pr-comments-${ISSUE}")"
+   ATTEMPT_INFO="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "attempt-info-${ISSUE}.json")"
    DISPATCH_RETRY_CEILING=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-retry-ceiling)
    gh api "repos/{owner}/{repo}/issues/${ISSUE}/comments?per_page=100" > "$DISPATCH_COMMENTS"
    gh pr list --repo {owner}/{repo} --state all --json number,closingIssuesReferences --limit 200 \
      --jq "[.[] | select(.closingIssuesReferences[]?.number == ${ISSUE}) | .number]" > "$DISPATCH_LINKED_PRS" 2>/dev/null \
      || echo '[]' > "$DISPATCH_LINKED_PRS"
    rm -rf "$DISPATCH_PR_COMMENTS_DIR" && mkdir -p "$DISPATCH_PR_COMMENTS_DIR"
-   for PRN in $(node -e "console.log(require(process.argv[1]).join(' '))" "$DISPATCH_LINKED_PRS"); do
+   for PRN in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_LINKED_PRS"); do
      gh api "repos/{owner}/{repo}/issues/${PRN}/comments?per_page=100" > "$DISPATCH_PR_COMMENTS_DIR/${PRN}.json" 2>/dev/null \
        || echo '[]' > "$DISPATCH_PR_COMMENTS_DIR/${PRN}.json"
    done
@@ -159,7 +148,7 @@ numbered sequence instead of skipped.
      const ceiling = Number(process.argv[3] || 3);
      const ceilingHit = attemptNumber >= ceiling; // equivalent to hasHitRetryCeiling if comments included this attempt's own (not-yet-posted) comment
      console.log(JSON.stringify({ attemptNumber, ceilingHit }));
-   " "$DISPATCH_COMMENTS" "$DISPATCH_PR_COMMENTS_DIR" "$DISPATCH_RETRY_CEILING" > "$ATTEMPT_INFO"
+   " -- "$DISPATCH_COMMENTS" "$DISPATCH_PR_COMMENTS_DIR" "$DISPATCH_RETRY_CEILING" > "$ATTEMPT_INFO"
    ```
 
 **MCP path** (`gh` unavailable, same live-as-of-Task-10 status as `dispatch/SKILL.md`'s Step 4): use the confirmed "list issue comments" mapping from `_shared/github-write-transport.md` for the issue's own comments. Linked-PR discovery and per-PR comment fetches have no MCP equivalent (`_shared/github-pr-scan.md`'s Transport note on PR-backed items) — count from the issue's comments alone in that case, and log the degrade to `decisions.md` (a record with genuinely split legacy attempts may undercount until a `gh`-present run re-settles it) rather than silently treating it as a full count. `countFailedAttempts` and the rest of this step's logic consume the same comment-body-string shape regardless of transport or source count.
@@ -175,24 +164,13 @@ numbered sequence instead of skipped.
    # this marker back from the record's comments as known-bad evidence for the record's class
    # (see its "Operational outcome evidence" section and _shared/autonomy-ceiling.md's
    # Revocation section for the full semantics).
-   eval "$(node -e "
-     const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-     const os = require('os'); const path = require('path');
-     const issue = process.argv[1];
-     const files = {
-       ATTEMPT_INFO: 'attempt-info-' + issue + '.json',
-       ATTEMPT_COMMENT_BODY: 'attempt-comment-body-' + issue + '.md',
-     };
-     for (const [varName, filename] of Object.entries(files)) {
-       const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-       console.log(varName + '=' + JSON.stringify(p));
-     }
-   " "$ISSUE")"
+   ATTEMPT_INFO="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "attempt-info-${ISSUE}.json")"
+   ATTEMPT_COMMENT_BODY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "attempt-comment-body-${ISSUE}.md")"
    node -e "
      const { attemptFailedCommentBody } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/retry.js');
      const { attemptNumber, ceilingHit } = require(process.argv[1]);
      console.log(attemptFailedCommentBody({ attemptNumber, reason: process.argv[2], ceilingHit, classification: process.argv[3] }));
-   " "$ATTEMPT_INFO" "$REASON" "$CLASSIFICATION" > "$ATTEMPT_COMMENT_BODY"
+   " -- "$ATTEMPT_INFO" "$REASON" "$CLASSIFICATION" > "$ATTEMPT_COMMENT_BODY"
    ```
 
    **Post the full comment to the issue, always** (`#1963`) — regardless of `run-state.json`
@@ -215,16 +193,7 @@ numbered sequence instead of skipped.
    them down.
 
    ```bash
-   eval "$(node -e "
-     const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-     const os = require('os'); const path = require('path');
-     const issue = process.argv[1];
-     const files = { FAILURE_POINTER: 'failure-pointer-' + issue + '.md' };
-     for (const [varName, filename] of Object.entries(files)) {
-       const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-       console.log(varName + '=' + JSON.stringify(p));
-     }
-   " "$ISSUE")"
+   FAILURE_POINTER="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "failure-pointer-${ISSUE}.md")"
    printf '<!-- run-comment: failure -->\n\nAttempt failed — see the full comment on #%s.\n' "$ISSUE" > "$FAILURE_POINTER"
    # find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=failure
    gh pr close {pr-number} --repo {owner}/{repo}
@@ -387,9 +356,8 @@ The two commands resolve `{integration-branch}`: the resolver's output when non-
 **Pre-merge checks — from the main checkout, nothing mutated.** `{integration-branch}` and `{branch}` are the values just read:
 
 ```bash
-CURRENT=$(git branch --show-current)
-if [ "$CURRENT" != "{integration-branch}" ]; then
-  echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+if ! git branch --show-current | grep -qxF '{integration-branch}'; then
+  echo "Main checkout is not on '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
   exit 1
 fi
 node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --tag auto-merge --range {integration-branch}...{branch} --out-dir "{subject-dir}" || exit 1
@@ -409,9 +377,8 @@ That only satisfies E1. Under `worktree-always: true` the run-independent `check
 **Merge — from the main checkout.** The guard repeats as the race backstop (a concurrent session may have switched the checkout since):
 
 ```bash
-CURRENT=$(git branch --show-current)
-if [ "$CURRENT" != "{integration-branch}" ]; then
-  echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+if ! git branch --show-current | grep -qxF '{integration-branch}'; then
+  echo "Main checkout is not on '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
   exit 1
 fi
 git merge --no-ff {branch} -F "{subject-dir}/message.txt"

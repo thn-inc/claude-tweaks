@@ -237,7 +237,8 @@ function reapMerged({
       // live session's own worktree gets 'in-use' on every ~7-minute
       // background pass for the length of the session, which would flood
       // its events.jsonl with nothing new to say each time.
-      if (!QUIET_SKIP_REASONS.has(decision.reason)) {
+      // #4180: not on a dry run — the append writes a run's events.jsonl.
+      if (!dryRun && !QUIET_SKIP_REASONS.has(decision.reason)) {
         logReapEvent(resolveOwningRunDir(root, real), 'worktree-reap-skipped', { reason: decision.reason, prNumber: prState && prState.number });
       }
       continue;

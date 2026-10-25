@@ -9,6 +9,7 @@
 'use strict';
 
 const { escapeRegExp } = require('../shared-primitives');
+const { neutralizeClosingPhrases } = require('./closing-links');
 
 // The five canonical phase rows every PR-early body starts with, unchecked
 // and in this order — never narrowed to a run's step list (#2877): a skipped
@@ -181,9 +182,12 @@ const PREMISE_REVERSED_RE = new RegExp(
 
 // A `; ` inside a claim is rewritten to `, ` so no written entry contains the
 // note's entry separator: otherwise an existing `X; Y → Z` entry would make a
-// distinct new `Y → Z` read as already noted and drop it.
+// distinct new `Y → Z` read as already noted and drop it. A closing-keyword
+// phrase is neutralized (#4199): the note lands in the PR body, where GitHub
+// would link "closes #N" from a reversal's own wording and close #N at merge.
+// The coverage check compares these same neutralized forms.
 function formatReversal({ original, replacement }) {
-  const clean = (s) => String(s).replace(/; /g, ', ');
+  const clean = (s) => neutralizeClosingPhrases(String(s).replace(/; /g, ', ')).text;
   return `${clean(original)} → ${clean(replacement)}`;
 }
 
@@ -252,7 +256,7 @@ function reviseSpecSummary({ body, reversals, summary }) {
   const isNoted = (w) => trimmedNote !== null && `; ${entryList}; `.includes(`; ${w}; `);
   const uncovered = wanted.filter((w) => !isNoted(w));
   if (uncovered.length === 0) return { body: text, changed: false, uncovered: [], reason: 'already-noted' };
-  const paragraph = String(summary || '').trim();
+  const paragraph = neutralizeClosingPhrases(String(summary || '').trim()).text;
   if (!paragraph) return { body: text, changed: false, uncovered, reason: 'summary-required' };
   if (/\n\s*\n/.test(paragraph) || /^#{1,6}\s/m.test(paragraph)) {
     return { body: text, changed: false, uncovered, reason: 'summary-not-one-paragraph' };

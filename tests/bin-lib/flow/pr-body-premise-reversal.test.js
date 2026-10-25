@@ -8,6 +8,7 @@ const {
   composePrEarlyBody, parsePremiseReversals, formatReversal, reviseSpecSummary,
   PREMISE_REVERSED_MARKER, REVISION_PREFIX,
 } = require('../../../plugin/bin/lib/flow/pr-body');
+const { findClosingRefs } = require('../../../plugin/bin/lib/flow/closing-links');
 
 // The exact line bin/log-decision.js writes for this marker.
 const line = (text, step = 'Spec Step 3') => `- AUTO 09:35:19 — ${step}: ${text} Reversibility: high.`;
@@ -162,4 +163,17 @@ test('a summary containing a heading line is refused as summary-not-one-paragrap
   assert.equal(r.changed, false);
   assert.equal(r.reason, 'summary-not-one-paragraph');
   assert.deepEqual(r.uncovered, ['A → B']);
+});
+
+test('closing-keyword phrases in a reversal or the summary never reach the PR body, and coverage stays idempotent (#4199)', () => {
+  const rev = [{ original: "the Refs line whose reason says 'closes #4233' links it", replacement: 'PR #4144 closed #2724 from prose' }];
+  const first = reviseSpecSummary({ body: body(), reversals: rev, summary: 'Resolves #2724 by neutralizing.' });
+  assert.equal(first.changed, true);
+  assert.deepEqual(findClosingRefs(first.body).map((r) => r.number), [3050], 'only the Fixes line links');
+  assert.match(first.body, /'closes issue #4233'/);
+  assert.match(first.body, /closed issue #2724/);
+  assert.match(first.body, /Resolves issue #2724 by neutralizing\./);
+  const second = reviseSpecSummary({ body: first.body, reversals: rev, summary: 'Different paragraph.' });
+  assert.equal(second.reason, 'already-noted');
+  assert.equal(second.body, first.body);
 });

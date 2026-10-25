@@ -115,7 +115,7 @@ test('AC3.1: go-red: dropping the pathspec exclusion stops the run-dir-only row'
 
 test('AC3.1: go-red: dropping the behind-count clause passes the run-dir-only-behind row', () => {
   const fence = checkFence(stepThreeOf(readText(SKILL)));
-  const countClause = `[ "$(git -C "$RUN_ROOT" rev-list --count HEAD..origin/${BRANCH})" = 0 ] \\\n  && `;
+  const countClause = `git -C "$RUN_ROOT" rev-list --count HEAD..origin/${BRANCH} | grep -qx 0 \\\n  && `;
   assert.ok(fence.includes(countClause), 'anchor text for the behind-count clause not found — proof cannot discriminate');
   const doctored = fence.replace(countClause, '');
   assert.notEqual(doctored, fence, 'dropping the behind-count clause must change the fence');

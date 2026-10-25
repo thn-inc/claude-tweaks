@@ -50,6 +50,21 @@ Rows *reworded in place* change no count and need no bump — but they still bel
 
 When a test or a skill procedure must *detect* a document class (a heading, a marker, a body shape), run a corpus scan over the live population before committing to the signal: count exactly which documents each candidate signal matches, and reject any candidate that matches a document it must not. Record #1071's scan of all 234 open records proved the line-anchored `## Leaves` heading matched exactly the four real legacy parents — while the plausible alternatives ("decomposition parent" phrase, "(parent)" title/body match) false-positived on the very bug report describing the defect. The scan result belongs in the record/spec as evidence, so the accepted residual risk is grounded rather than guessed.
 
+## Two-class allowlists: exempt and ratchet
+
+A corpus sweep that lands while known offenders remain (the convention is new, and migrating every site is a record of its own) carries two kinds of carve-out that rot differently. `tests/skill-fence-guard-shapes.test.js` (#4028) is the instance:
+
+- **`exempt`** is permanent: the site is not an instance of the hazard (a block the user runs by hand, a generated script the Bash tool never runs, prose naming a retired form as retired). Every entry carries a `reason`; `badEntries()` fails one without it.
+- **`ratchet`** is migration debt. Every entry cites one module-level `FOLLOW_UP` constant (`'#4217'`) through the `ratchet()` builder, never its own copy of the record number, and `badEntries()` fails an entry whose follow-up differs. Ratchet entries are allowed only under the detectors the change itself added (`NEW_SHAPE_IDS`, plus a named `RATCHET_ORIGINAL_EXCEPTIONS` list), so debt can never quietly re-admit a shape the convention already banned.
+- **Key each entry by file, detector and a content anchor** (a distinctive substring of the offending fence), never a line number, and require exactly one match. Zero matches fails with "remove this entry" (the site was migrated, so the list only shrinks); two or more fails as an ambiguous anchor, never a free pass for the second offender. `applyAllowlist()` reports both as `stale`, and the live test asserts every entry covered one hit.
+- **Name the unit's blind spot.** An entry covers one hit, and a hit is one fence × one detector (`detectShapes` returns each id once per fence), so a second offense of the same shape inside an already-allowlisted fence is invisible. State that in the test's header comment, or narrow the unit.
+
+Prove each class rule with go-red inputs to `badEntries()` (a ratchet under an original detector, one with its own follow-up text, an exempt without a reason), and the matcher with a synthetic stale, a new and an ambiguous case. `tests/log-decision-text-file-sites-conformance.test.js` (below) is a one-class sibling keyed on a finer unit.
+
+## Negative-exclusion tests for a resolver's source-exclusion special case
+
+When a resolver has a deliberate special case that excludes one source from precedence entirely (a config layer that must never win even though it normally would — `merge-authorization`'s exclusion of `.claude-tweaks/policy.yml`, `bin/lib/policy-schema.js`), assert the excluded source is actually ignored, not just what the resolver ultimately returns. `tests/resolve-policy-lib.test.js`'s four `merge-authorization` tests are the instance: unset resolves to default, run-config wins over an unset policy value, a set policy.yml value is discarded (falls to default, not `source: 'policy'`), and run-config still wins even when policy.yml is also set. The third case is the one a same-final-value assertion alone would miss — a resolver that merely deprioritized policy.yml instead of excluding it could pass every other assertion while silently letting policy.yml win whenever run-config is absent.
+
 ## Reference instances
 
 Suites that model the patterns in `SKILL.md`, each annotated with what it shows:

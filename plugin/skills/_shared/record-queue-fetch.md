@@ -63,7 +63,7 @@ SNAPSHOT=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/re
 if [ -n "$SNAPSHOT" ] && node -e "
   const { isFresh } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
   process.exit(isFresh(process.argv[1], Number(process.argv[2])) ? 0 : 1)
-" "$SNAPSHOT" "$TTL"; then
+" -- "$SNAPSHOT" "$TTL"; then
   cp "$SNAPSHOT" "{tmp-records-file}"
 else
   LIMIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit)
