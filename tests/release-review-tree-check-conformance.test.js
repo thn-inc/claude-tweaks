@@ -54,18 +54,33 @@ function runCheck(fence, fx) {
   return runCheckResult(fence, fx).status;
 }
 
-// Injects a sibling's push and this checkout's fetch between `$TIP`'s assignment and the final clause
-// (`echo "$TIP"` unless `finalClause` replaces it), so the sibling move lands inside the same bash run.
-function raceFence(fence, fx, finalClause = 'echo "$TIP"') {
-  const anchor = ' \\\n  && echo "$TIP"';
-  assert.ok(fence.includes(anchor), 'anchor text for the final echo not found — race proof cannot inject');
-  const sibling = [
+// A sibling's commit outside run dirs, its push, and this checkout's fetch, as bash clauses for the fence.
+function siblingMoveClauses(fx) {
+  return [
     `git -C "${fx.other}" add race.txt`,
     `git -C "${fx.other}" commit -q -m race`,
     `git -C "${fx.other}" push -q origin ${BRANCH}`,
     `git -C "$RUN_ROOT" fetch -q origin ${BRANCH}`,
   ].map((c) => ` \\\n  && ${c}`).join('');
-  return fence.replace(anchor, () => `${sibling} \\\n  && ${finalClause}`);
+}
+
+// Injects the sibling move between `$TIP`'s assignment and the final clause (`echo "$TIP"` unless
+// `finalClause` replaces it), so the sibling move lands inside the same bash run.
+function raceFence(fence, fx, finalClause = 'echo "$TIP"') {
+  const anchor = ' \\\n  && echo "$TIP"';
+  assert.ok(fence.includes(anchor), 'anchor text for the final echo not found — race proof cannot inject');
+  return fence.replace(anchor, () => `${siblingMoveClauses(fx)} \\\n  && ${finalClause}`);
+}
+
+// Injects the sibling move right after `$TIP` is resolved, so it lands before the tree comparisons. With
+// `diffRef`, the tree diff's `"$TIP"` is replaced by that ref (go-red).
+function moveAfterTipFence(fence, fx, diffRef) {
+  const tipClause = `TIP=$(git -C "$RUN_ROOT" rev-parse --verify origin/${BRANCH})`;
+  const diffClause = 'git -C "$RUN_ROOT" diff --quiet "$TIP" HEAD';
+  assert.ok(fence.includes(tipClause), 'anchor text for the TIP assignment not found — proof cannot discriminate');
+  assert.ok(fence.includes(diffClause), 'anchor text for the tree diff not found — proof cannot discriminate');
+  const injected = fence.replace(tipClause, () => `${tipClause}${siblingMoveClauses(fx)}`);
+  return diffRef === undefined ? injected : injected.replace(diffClause, () => `git -C "$RUN_ROOT" diff --quiet ${diffRef} HEAD`);
 }
 
 // A reconcile-shaped commit: one file under .claude-tweaks/pipelines/, committed locally and not pushed.
@@ -153,6 +168,30 @@ test('AC1.2: go-red: re-reading origin/{BRANCH} after the tree check prints the 
     assert.notEqual(moved, pre, 'fixture must have moved origin/main inside the run');
     assert.equal(result.stdout.trim(), moved, 'go-red: a second rev-parse records the moved sha, not the one the tree check compared');
     assert.notEqual(result.stdout.trim(), pre);
+  });
+});
+
+test('AC1.2: the tree diff compares HEAD against the resolved tip: a sibling move before the diff leaves the check passing', () => {
+  const fence = checkFence(stepThreeOf(readText(SKILL)));
+  withFixture('release-review-tree-diff-', (fx) => {
+    const pre = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    fs.writeFileSync(path.join(fx.other, 'race.txt'), 'race\n');
+    const result = runCheckResult(moveAfterTipFence(fence, fx), fx);
+    const moved = fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim();
+    assert.notEqual(moved, pre, 'fixture must have moved origin/main inside the run');
+    assert.equal(result.status, 0, `expected exit 0, got ${result.status} (stderr: ${result.stderr})`);
+    assert.equal(result.stdout.trim(), pre, 'the tree diff must compare HEAD against the pre-move tip, which equals HEAD');
+  });
+});
+
+test('AC1.2: go-red: diffing origin/{BRANCH} instead of the resolved tip fails the same move', () => {
+  const fence = checkFence(stepThreeOf(readText(SKILL)));
+  withFixture('release-review-tree-diff-go-red-', (fx) => {
+    fs.writeFileSync(path.join(fx.other, 'race.txt'), 'race\n');
+    const doctored = moveAfterTipFence(fence, fx, `origin/${BRANCH}`);
+    assert.ok(doctored.includes(`diff --quiet origin/${BRANCH} HEAD`), 'go-red anchor for the doctored tree diff not found');
+    const status = runCheck(doctored, fx);
+    assert.notEqual(status, 0, 'go-red: a tree diff against the moved origin/{branch} must stop the check (non-zero exit)');
   });
 });
 
