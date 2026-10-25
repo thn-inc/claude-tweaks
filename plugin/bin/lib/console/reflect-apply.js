@@ -41,8 +41,9 @@ const SECTION = '/wrap-up';
 const STEP = 'Reflect apply';
 const STAGED_NAME_RE = /^reflect-.*\.md$/;
 const APPLIED_KINDS = ['edited', 'filed', 'digested'];
-// Labels the console's filing never writes: the grant and claim namespaces are a human's call.
-const STRIPPED_LABEL_RE = /^(auto|bot):/i;
+// Labels the console's filing never writes: the grant and claim namespaces are a human's call, and the
+// record's `Type:` line is the one authority for its `type:*` label.
+const STRIPPED_LABEL_RE = /^(auto|bot|type):/i;
 
 function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 

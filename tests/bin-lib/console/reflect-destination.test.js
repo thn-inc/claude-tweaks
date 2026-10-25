@@ -53,7 +53,8 @@ test('edit: a valid target parses', () => {
 });
 
 test('edit: an unsafe or out-of-scope target is invalid edit-target', () => {
-  for (const target of ['../CLAUDE.md', '/abs/skills/a.md', 'C:/skills/a.md', 'skills\\a.md', 'plugin/skills/a.js', 'docs/a.md']) {
+  for (const target of ['../CLAUDE.md', '/abs/skills/a.md', 'C:/skills/a.md', 'skills\\a.md', 'plugin/skills/a.js', 'docs/a.md',
+    '.git/skills/a.md', 'node_modules/x/skills/a.md', './CLAUDE.md', 'plugin//skills/a.md', 'plugin/./skills/a.md']) {
     assert.deepStrictEqual(
       parseReflectDestination(file({ destination: `edit ${target}` })),
       { kind: 'invalid', why: 'edit-target' },

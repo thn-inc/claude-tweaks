@@ -256,6 +256,23 @@ test('emit transport writes "Labels: none" when every label is stripped', () => 
   assert.match(fs.readFileSync(path.join(f.outDir, 'reflect-apply-reflect-1.md'), 'utf8'), /^Labels: none$/m);
 });
 
+test('a Labels: type:* label is dropped — the Type: line is the one type label, on the gh transport', () => {
+  const f = fixture({ 'reflect-1.md': RECORD.replace('Labels: risk:low, auto:build', 'Labels: type:bug, risk:low') });
+  const { deps, calls } = fakeDeps(f);
+  assert.equal(run(['--run', f.runDir], deps), 0);
+  const labels = calls.gh[0].filter((_, i, a) => a[i - 1] === '--label');
+  assert.deepEqual(labels, ['risk:low', 'type:task']);
+});
+
+test('a Labels: type:* label is dropped — the Type: line is the one type, on the emit transport', () => {
+  const f = fixture({ 'reflect-1.md': RECORD.replace('Labels: risk:low, auto:build', 'Labels: Type:bug, risk:low') });
+  const { deps } = fakeDeps(f);
+  assert.equal(run(['--run', f.runDir, '--transport', 'emit', '--out-dir', f.outDir], deps), 0);
+  const text = fs.readFileSync(path.join(f.outDir, 'reflect-apply-reflect-1.md'), 'utf8');
+  assert.match(text, /^Type: task\nLabels: risk:low\n/m);
+  assert.ok(!/type:bug/i.test(text), text);
+});
+
 test('a record with an invalid Defer-reason is refused, logged once, never filed', () => {
   const f = fixture({ 'reflect-4.md': BAD_DEFER });
   const first = fakeDeps(f);

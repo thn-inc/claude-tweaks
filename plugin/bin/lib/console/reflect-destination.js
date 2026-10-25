@@ -47,7 +47,8 @@ function isApplicableReflect(name, text) {
 function validEditTarget(target) {
   if (target.startsWith('/') || /^[A-Za-z]:/.test(target) || target.includes('\\')) return false;
   const segments = target.split('/');
-  if (segments.includes('..') || !target.endsWith('.md')) return false;
+  if (segments.some((s) => s === '' || s === '.' || s === '..' || s === '.git' || s === 'node_modules')) return false;
+  if (!target.endsWith('.md')) return false;
   return segments[segments.length - 1] === 'CLAUDE.md' || segments.includes('skills') || segments.includes('rules');
 }
 

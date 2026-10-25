@@ -72,6 +72,9 @@ const STEP2_FACTS = {
   'record then applied filed': /`record` — file the emitted proposal[^;]*then `--item '\{name\}' --applied filed --ref \{n\}`/,
   'digest then applied digested': /`digest` — append its `line`[^;]*`_shared\/materiality-floor\.md`[^;]*then `--item '\{name\}' --applied digested --ref/,
   'failed logs one SKIP': /A `failed` entry logs one Degrade-trace `SKIP`/,
+  'failed is not residue': /; `console\.json` already records the row `approve`, so it is not residue and nothing else surfaces it:/,
+  'failed carries a needs-human line': /carry a needs-human-action line naming `\{item-run-dir\}`, the failed items, and the paste-ready re-run `node /,
+  'failed line rides the Needs a human block': /wherever the CLI's `Needs a human` block is carried — the `PushNotification` and the run's final human-facing stop\./,
   'Override skip declines': /Override's `skip \{#\}` on such a row runs `--item '\{name\}' --decline '/,
   'Override declines run before the --only apply': /, and runs before the apply; under Override the apply always carries `--only`, never a plain batch run\./,
 };
@@ -82,6 +85,7 @@ const APPROVE_FACTS = {
 const TEMPLATE_FACTS = {
   'reflect rows named': /`staged\/reflect-\{n\}\.md`/,
   'not engine findings': /not an engine finding/,
+  'target is the edit path or the staged file': /Target is the `edit` path for an edit destination, else the staged file/,
   'four-column table': /`\| # \| Target \| Change \| Disposition \|`/,
   'disposition cell': /`staged \(staged\/reflect-\{n\}\.md\)`/,
 };
@@ -119,6 +123,14 @@ test('review-console.md step 2 carries bin/reflect-apply.js, --applied and --dec
 
 test('review-console.md step 2: every fact of the reflect clause is stated, and each can go red', () => {
   assertEachFactGoesRed(step2Line(CONSOLE), STEP2_FACTS);
+});
+
+// The re-run is the one command a human can paste, so its exact shape is pinned apart from the fact list
+// (its `reflect-apply.js --run` and `--only` bytes overlap two facts, which would break their go-red controls).
+const FAILED_RERUN = 'the paste-ready re-run `node "${CLAUDE_PLUGIN_ROOT}/bin/reflect-apply.js" --run "{item-run-dir}" --only \'{name},…\'`';
+test('review-console.md step 2: a failed reflect apply carries the paste-ready --only re-run, and the pin goes red without it', () => {
+  assert.ok(step2Line(CONSOLE).includes(FAILED_RERUN), 'step 2 must carry the paste-ready re-run');
+  assert.ok(!step2Line(CONSOLE.split(FAILED_RERUN).join('')).includes(FAILED_RERUN));
 });
 
 test('review-console.md: the "On approval" steps are not renumbered (7, 10, 12, 13 are cited by number)', () => {
@@ -199,6 +211,7 @@ const ROUTING_FACTS = {
   'decline recorded not only logged': /the decline is recorded, not only logged/,
   'ticked rows apply via step 2 with --only': /the ticked ones then apply through "On approval" step 2's reflect clause with `--only '\{name\},…'` naming exactly the ticked rows/,
   'never a plain run': /never a plain run, which would apply the unticked ones too/,
+  'skipped when no reflect row is ticked': /and skipped when no reflect row is ticked \(`--only` naming no item exits 2\)\./,
 };
 
 test('execution-and-verification.md: the Skill updates bullet names staged/reflect- and step 2\'s reflect clause', () => {

@@ -320,7 +320,7 @@ test('an invalid reflect destination stays pending with a named reason (#4168)',
 });
 
 test('characterization (#4168): every non-tangential Category outside reflect observation/convention keeps its #2473 Pending review reroute', () => {
-  // Pinned before the observation/convention reroute lands: these must stay exactly as they are.
+  // Outside reflect observation/convention, #2473's non-tangential reroute holds: these stay exactly as they are.
   assert.deepStrictEqual(classifyStagedItem('reflect-1.md', '**Category:** other\n'), { section: 'Pending review', reason: 'non-tangential-category:other' });
   assert.deepStrictEqual(classifyStagedItem('reflect-1.md', '**Category:** Design-Drift\n'), { section: 'Pending review', reason: 'non-tangential-category:Design-Drift' });
   assert.deepStrictEqual(classifyStagedItem('leftover-1.md', '**Category:** observation\n'), { section: 'Pending review', reason: 'non-tangential-category:observation' });
