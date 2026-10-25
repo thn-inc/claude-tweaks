@@ -21,7 +21,7 @@ files:
 - **Action:** the deny path writes a `gate-denial` event carrying `test: true` into whichever run dir the hook resolved. Real operator denials are written by the same code without the tag.
 - **Should feel:** invisible. The maintainer does nothing extra, and the suite's assertions that the event is written still pass.
 - **Should understand:** the tag is the only thing that distinguishes a test denial from a real one. Readers drop tagged events at read time and never at the write site, so the tests that assert the event exists still see it.
-- **Red flags:** a test denial written with no `test` field. No reader can exclude it, and it shows up as friction (see the run ledger's real-input probe note for #4186: archived denials naming tmp/scratchpad paths carry no tag).
+- **Red flags:** a test denial written with no `test` field. No reader can exclude it, and it shows up as friction. A denial that names a tmp/scratchpad path is not evidence of this on its own: the #4186 wrap-up found 238 such archived denials, and the sampled ones were real operator-session denials on a session scratchpad, not test-suite hook runs.
 
 ### 2. Read the run's events at the Review Console: wrap-up
 - **URL:** `/claude-tweaks:wrap-up` → `plugin/skills/wrap-up/review-console.md` → Read inputs item 4 (`events.jsonl`)
