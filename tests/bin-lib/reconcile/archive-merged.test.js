@@ -4888,6 +4888,26 @@ test('a spec dir\'s unfiled can\'t-tell finding is spec-prefixed (#4171)', () =>
   } finally { fs.rmSync(runDir, { recursive: true, force: true }); }
 });
 
+test('an unreadable decisions.md fails the cant-tell-unfiled guard closed, per dir (#4171)', () => {
+  const top = seedCantTellRun();
+  const spec = seedCantTellRun({ specDir: 'spec-7' });
+  try {
+    // decisions.md as a directory: readFileSync throws EISDIR, not ENOENT.
+    fs.rmSync(path.join(top, 'decisions.md'));
+    fs.mkdirSync(path.join(top, 'decisions.md'));
+    // The top-level file reads as "auto-merge" only when unreadable too (fail closed), so the guard is reached.
+    const topResult = unfiledCantTellFindings(top);
+    assert.equal(topResult.length, 1);
+    assert.match(topResult[0], /^\(unreadable: decisions\.md: .*EISDIR/);
+
+    fs.rmSync(path.join(spec, 'spec-7', 'decisions.md'));
+    fs.mkdirSync(path.join(spec, 'spec-7', 'decisions.md'));
+    const specResult = unfiledCantTellFindings(spec);
+    assert.equal(specResult.length, 1);
+    assert.match(specResult[0], /^\(unreadable: spec-7\/decisions\.md: .*EISDIR/);
+  } finally { for (const d of [top, spec]) fs.rmSync(d, { recursive: true, force: true }); }
+});
+
 test('cant-tell-unfiled is structurally stuck (#4171)', () => {
   assert.ok(STRUCTURALLY_STUCK_REASONS.has('cant-tell-unfiled'));
 });

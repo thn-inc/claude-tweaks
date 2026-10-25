@@ -459,11 +459,19 @@ function unfiledCantTellFindings(runDir) {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
   };
+  // console/resolve.js swallows a read failure into an empty decisions.md, which would read as "no
+  // findings" — so probe decisions.md here: any non-ENOENT read error is unreadable (fails closed).
+  const unfiledIn = (dir, prefix) => {
+    try { fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'); } catch (err) {
+      if (!(err && err.code === 'ENOENT')) return [`(unreadable: ${prefix}decisions.md: ${err && err.message})`];
+    }
+    return unfiledCantTell({ runDir: dir, deps }).map((u) => `${prefix}${u.item}`);
+  };
   try {
-    const own = unfiledCantTell({ runDir, deps }).map((u) => u.item);
-    const specs = listSpecDirs(runDir).sort().flatMap((name) => (
-      unfiledCantTell({ runDir: path.join(runDir, name), deps }).map((u) => `${name}/${u.item}`)));
-    return [...own, ...specs];
+    return [
+      ...unfiledIn(runDir, ''),
+      ...listSpecDirs(runDir).sort().flatMap((name) => unfiledIn(path.join(runDir, name), `${name}/`)),
+    ];
   } catch (err) {
     return [`(unreadable: ${err && err.message})`];
   }
