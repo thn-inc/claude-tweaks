@@ -2,15 +2,15 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const {
   findClosingRefs, neutralizeClosingPhrases, parseFixesSpan, prRepoFromUrl, sameRepoNumbers,
 } = require('../../../plugin/bin/lib/flow/closing-links');
 
 const REPO = { owner: 'thn-inc', repo: 'claude-tweaks' };
-const fixture = fs.readFileSync(
-  path.join(__dirname, '..', '..', 'fixtures', 'closing-links', 'pr-4144-body.md'), 'utf8',
+const fixture = readText(
+  path.join(__dirname, '..', '..', 'fixtures', 'closing-links', 'pr-4144-body.md'),
 );
 
 test('findClosingRefs matches every probed form', () => {
