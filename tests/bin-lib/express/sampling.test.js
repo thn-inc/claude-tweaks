@@ -29,6 +29,7 @@ test('expressMarker renders the line EXPRESS_MARKER_RE matches; isExpressPr read
   assert.strictEqual(isExpressPr(`Body.\n${expressMarker('r1')}`), true);
   assert.strictEqual(isExpressPr('Body without marker'), false);
   assert.strictEqual(isExpressPr(`see claude-tweaks-express: r1 inline`), false);
+  assert.strictEqual(isExpressPr('see claude-tweaks-express: r1'), false);
   assert.strictEqual(isExpressPr(undefined), false);
 });
 
@@ -69,6 +70,22 @@ test('non-express PRs interleaved among the ten do not consume ordinals', () => 
   assert.strictEqual(merges.length, 12);
   const out = selectReviewSamples(merges, 5);
   assert.deepStrictEqual(out.map((s) => [s.number, s.ordinal]), [[105, 5], [110, 10]]);
+});
+
+test('an express merge with an unparseable mergedAt consumes no ordinal (fail closed)', () => {
+  const garbage = { number: 150, mergedAt: 'garbage', body: expressMarker('bad') };
+  const baseline = selectReviewSamples(expressMerges(), 5);
+  // Placed mid-list so a non-transitive comparator would actually reorder around it.
+  const withGarbage = expressMerges();
+  withGarbage.splice(5, 0, garbage);
+  assert.deepStrictEqual(selectReviewSamples(withGarbage, 5), baseline);
+  assert.deepStrictEqual(selectReviewSamples(withGarbage.slice().reverse(), 5), baseline);
+  assert.deepStrictEqual(selectReviewSamples(shuffled(expressMerges()).concat(garbage), 1).map((s) => s.number),
+    expressMerges().map((m) => m.number));
+  const missing = { number: 151, body: expressMarker('none') };
+  assert.deepStrictEqual(selectReviewSamples([missing].concat(expressMerges()), 5), baseline);
+  assert.deepStrictEqual(selectReviewSamples([missing, garbage].concat(expressMerges()), 1).map((s) => s.number),
+    expressMerges().map((m) => m.number));
 });
 
 test('every of 0, -1, NaN samples nothing (fail closed)', () => {

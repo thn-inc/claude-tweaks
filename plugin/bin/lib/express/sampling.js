@@ -24,10 +24,11 @@ function isExpressPr(body) {
 // merges: [{ number, mergedAt, body }] in any order. Ordinals are 1-based over
 // express merges only, ascending by mergedAt then PR number, so the result is
 // independent of fetch order and non-express PRs never consume an ordinal.
+// An unparseable mergedAt fails closed: the entry consumes no ordinal and is
+// never sampled (keeping it would make the comparator non-transitive).
 function selectReviewSamples(merges, every) {
   const express = (Array.isArray(merges) ? merges : [])
-    .filter((m) => m && isExpressPr(m.body))
-    .slice()
+    .filter((m) => m && isExpressPr(m.body) && Number.isFinite(Date.parse(m.mergedAt)))
     .sort((a, b) => (Date.parse(a.mergedAt) - Date.parse(b.mergedAt)) || (a.number - b.number));
 
   const samples = [];
