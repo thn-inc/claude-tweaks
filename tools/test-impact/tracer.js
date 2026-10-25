@@ -12,9 +12,10 @@
 // Output: each attributed process appends JSON lines to `{CT_TRACE_DIR}/{pid}-{ms}-{rand}.trace` —
 // `["T", test]` first, then `[kind, relPath]` once per unique pair, written immediately with the
 // unpatched appendFileSync. JSON, not tab-separated, because fixture paths hold tabs and newlines.
-// Kinds: f content read (read/open/copy source/stat/lstat/module load/cp of a file), s existence probe
-// (exists/access/realpath/readlink, and every resolution candidate of a relative or absolute require),
-// d directory listing (readdir/opendir), c content prefix (a cp of a directory, a non-node child's in-repo
+// Kinds: f content read (read/open/copy source/stat/lstat/module load/cp of a file, and a package.json a
+// require reads for main or exports), s existence probe (exists/access/realpath/readlink, and every
+// candidate a require probes — relative, absolute, node_modules, require.resolve paths), d directory
+// listing (readdir/opendir), c content prefix (a cp of a directory, a non-node child's in-repo
 // directory argument, or a content-reading git subcommand — its cwd, or a pathspec's literal prefix). Paths
 // under `.git/` and outside the root are dropped; `''` is the root itself.
 // A trace write that fails (EMFILE, ENOSPC) marks the process lost: `{pid}-{ms}-{rand}.lost` beside the trace
@@ -60,6 +61,7 @@ function install() {
   // Unpatched originals the tracer itself uses.
   const appendFileSync = fs.appendFileSync;
   const statSync = fs.statSync;
+  const readFileSync = fs.readFileSync;
   const realpathNative = fs.realpathSync.native;
 
   const stripSep = (p) => (p.length > 1 && (p.endsWith('/') || p.endsWith(path.sep)) ? p.slice(0, -1) : p);
@@ -277,25 +279,125 @@ function install() {
   }
 
   // The CJS resolver probes candidates through internal bindings, so an added `index.js` (or a `foo.js`
-  // beside `foo/`) can change what a relative or absolute `require` resolves to without touching any
-  // recorded read: each such request records `s` for its whole candidate set. Bare specifiers record nothing.
-  const RESOLVE_EXTS = ['.js', '.json', '.cjs', '.node'];
+  // beside `foo/`, or a node_modules package) can change what a `require` resolves to without touching any
+  // recorded read. resolutionCandidates lists, in Node's probe order, every path Module._resolveFilename /
+  // _findPath / tryPackage / resolveExports would consult for a request — absolute paths, out-of-root ones
+  // included (relOf filters at emit): `s` for an existence probe, `f` for a package.json whose content
+  // (main, exports) is read, and `cover: true` on the `s` of a package directory resolved through `exports`
+  // (its whole subtree holds the result). Null for a builtin or a non-string request; throws when Node's own
+  // lookup helpers are unavailable (the hook's guard then fails closed).
+  const EXPORTS_PATTERN = /^((?:@[^/\\%]+\/)?[^./\\%][^/\\%]*)(\/.*)?$/;
+  const TRAILING_DOT = /[\\/]$|(?:^|[\\/])\.\.?$/;
+  const isFile = (p) => {
+    try {
+      const st = statSync(p, { throwIfNoEntry: false });
+      return Boolean(st) && st.isFile();
+    } catch (_) {
+      return false;
+    }
+  };
+  // The package.json at `p`, parsed (unpatched read), or null when absent or unparseable.
+  const readPackageJson = (p) => {
+    try {
+      return JSON.parse(readFileSync(p, 'utf8'));
+    } catch (_) {
+      return null;
+    }
+  };
+  function resolutionCandidates(request, parent, options) {
+    if (typeof request !== 'string') return null;
+    if (typeof Module.isBuiltin === 'function' ? Module.isBuiltin(request) : request.startsWith('node:') || Module.builtinModules.includes(request)) return null;
+    if (typeof Module._resolveLookupPaths !== 'function' || typeof Module._nodeModulePaths !== 'function') {
+      throw new Error('Module lookup helpers unavailable');
+    }
+    const exts = Object.keys(Module._extensions);
+    const absoluteRequest = path.isAbsolute(request);
+
+    // Lookup dirs: Node's own derivation (a null entry = an absolute request, whose base is itself).
+    let dirs;
+    if (absoluteRequest) dirs = [null];
+    else if (options && typeof options === 'object' && Array.isArray(options.paths)) {
+      if (request.startsWith('./') || request.startsWith('../') || (process.platform === 'win32' && (request.startsWith('.\\') || request.startsWith('..\\')))) {
+        dirs = options.paths.map((p) => toAbs(p));
+      } else {
+        dirs = [];
+        for (const p of options.paths) {
+          const abs = toAbs(p);
+          if (!abs) continue;
+          for (const d of Module._resolveLookupPaths(request, { paths: Module._nodeModulePaths(abs) }) || []) {
+            if (!dirs.includes(d)) dirs.push(d);
+          }
+        }
+      }
+    } else dirs = Module._resolveLookupPaths(request, parent) || [];
+
+    const list = [];
+    const listed = new Set();
+    const add = (kind, abs, cover) => {
+      const key = `${kind}\0${abs}`;
+      if (listed.has(key)) return;
+      listed.add(key);
+      list.push(cover ? { kind, abs, cover: true } : { kind, abs });
+    };
+    const addExts = (b) => {
+      for (const ext of exts) add('s', b + ext);
+    };
+    const addWithExts = (b) => {
+      add('s', b);
+      addExts(b);
+    };
+    const trailingSlash = TRAILING_DOT.test(request);
+
+    for (const dir of dirs) {
+      let base;
+      if (dir === null) base = toAbs(request);
+      else {
+        const dirAbs = toAbs(dir);
+        if (!dirAbs) continue;
+        // resolveExports: a bare `name` / `@scope/name` (+ subpath) whose package.json declares `exports`.
+        const m = EXPORTS_PATTERN.exec(request);
+        if (m) {
+          const pkgDir = path.join(dirAbs, m[1]);
+          const pkgJson = path.join(pkgDir, 'package.json');
+          if (isFile(pkgJson)) {
+            add('f', pkgJson);
+            const pkg = readPackageJson(pkgJson);
+            if (pkg && pkg.exports != null) {
+              add('s', pkgDir, true);
+              continue;
+            }
+          }
+        }
+        base = toAbs(request, dirAbs);
+      }
+      if (!base) continue;
+      // _findPath: the path itself, then each extension (not for a request ending in `/`, `.` or `..`).
+      if (!trailingSlash) addWithExts(base);
+      // tryPackage: the directory's package.json `main`, then its index.
+      const baseJson = path.join(base, 'package.json');
+      let main;
+      if (isFile(baseJson)) {
+        add('f', baseJson);
+        const pkg = readPackageJson(baseJson);
+        if (pkg && typeof pkg.main === 'string' && pkg.main) main = pkg.main;
+      } else add('s', baseJson);
+      if (main !== undefined) {
+        const m = path.resolve(base, main);
+        addWithExts(m);
+        addExts(path.join(m, 'index'));
+      }
+      addExts(path.join(base, 'index'));
+    }
+    return list;
+  }
+
+  // Every candidate is emitted before the original runs (the hook's `before` style), in-root ones only.
   patch(Module, '_resolveFilename', (args) => {
-    const request = args[0];
-    if (typeof request !== 'string') return;
-    let base;
-    if (path.isAbsolute(request)) base = toAbs(request);
-    else if (/^\.\.?(\/|\\|$)/.test(request)) {
-      const parent = args[1];
-      if (!parent || typeof parent.filename !== 'string' || !path.isAbsolute(parent.filename)) return;
-      base = toAbs(request, path.dirname(parent.filename));
-    } else return;
-    if (!base) return;
-    const candidates = [base, path.join(base, 'package.json')];
-    for (const ext of RESOLVE_EXTS) candidates.push(base + ext, path.join(base, `index${ext}`));
+    const candidates = resolutionCandidates(args[0], args[1], args[3]);
+    if (candidates === null) return;
     for (const c of candidates) {
-      const r = relOf(c);
-      if (r !== null) emit('s', r);
+      const r = relOf(c.abs);
+      if (r !== null) emit(c.kind, r);
     }
   });
 
