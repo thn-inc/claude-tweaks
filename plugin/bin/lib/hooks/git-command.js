@@ -567,25 +567,38 @@ function forEachCommandSegment(command, cwd, handler, opts) {
 }
 
 // The index just past the assignment word that starts at token `i` of `rawT`, or `i` itself when
-// `rawT[i]` is not an assignment (#4303). Bash reads `x=$(cd /tmp)` as one word, but tokenize splits
-// it at the spaces inside the substitution, so the word runs on through later tokens until every
-// bare `(` it opened (a `$(` or `$((` included) has its `)` and every bare backtick its partner,
-// counted on the `b` characters of `spanKinds` (a quoted or escaped paren is text). A paren inside a
-// backtick span belongs to the inner command, so it is not counted. A word that never closes is no
-// assignment: bash cannot parse it and runs nothing.
+// `rawT[i]` is not an assignment (#4303). Bash reads `x=$(cd /tmp)`, `x=${a:-b c}` and `x=$[1 + 2]`
+// as one word each, but tokenize splits them at the spaces inside, so the word runs on through
+// later tokens until every level it opened is closed, read on the `b` characters of `spanKinds`
+// (a quoted or escaped character is text). `stack` holds one character per open level: `c` for a
+// `(` (a `$(` or `$((` included), `p` for `${`, `a` for `$[` or a `[` inside one. Inside `${ … }` a
+// `(`, `)`, `{`, `[` or `]` is word text and only a `}` closes it (as advanceNesting reads a `p`
+// frame); a `$(`, `${`, `$[` or backtick still nests there. A backtick span belongs to the inner
+// command, so nothing inside it is counted. A word that never closes is no assignment: bash
+// cannot parse it and runs nothing.
+const WORD_OPENERS = { '(': 'c', '{': 'p', '[': 'a' };
 function assignmentWordEnd(rawT, spanKinds, i) {
   if (i >= rawT.length || !SIMPLE_ASSIGNMENT_RE.test(rawT[i])) return i;
-  let depth = 0;
+  let stack = '';
   let inTick = false;
   for (let j = i; j < rawT.length; j += 1) {
     const w = rawT[j];
+    const kinds = spanKinds[j];
     for (let k = 0; k < w.length; k += 1) {
-      if (spanKinds[j][k] !== 'b') continue;
-      if (w[k] === '`') inTick = !inTick;
-      else if (!inTick && w[k] === '(') depth += 1;
-      else if (!inTick && w[k] === ')') depth -= 1;
+      if (kinds[k] !== 'b') continue;
+      const c = w[k];
+      const top = stack[stack.length - 1];
+      if (c === '`') inTick = !inTick;
+      else if (inTick) continue;
+      else if (c === '$' && WORD_OPENERS[w[k + 1]] && kinds[k + 1] === 'b') {
+        stack += WORD_OPENERS[w[k + 1]];
+        k += 1;
+      } else if (top === 'p') { if (c === '}') stack = stack.slice(0, -1); }
+      else if (c === '(') stack += 'c';
+      else if (c === '[' && top === 'a') stack += 'a';
+      else if (c === ')' || (c === ']' && top === 'a')) stack = stack.slice(0, -1);
     }
-    if (depth <= 0 && !inTick) return j + 1;
+    if (stack === '' && !inTick) return j + 1;
   }
   return i;
 }

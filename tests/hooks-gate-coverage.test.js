@@ -1277,6 +1277,33 @@ test('#4303: the assignment word ends at its closing backtick or paren', () => {
 test('#4303: an expanded `$V=1` is no assignment, so the cd after it changes nothing', () => {
   assert.deepStrictEqual(fileWriteTargets('V=x; $V=1 cd /main; cp a f.js', '/r'), [{ action: 'copy', file: path.resolve('/r/f.js') }]);
 });
+// #4303: a `${ … }` or `$[ … ]` with a space is one word to bash too. Inside `${ … }` a `(`, `)` or
+// `{` is word text and the first bare `}` closes it; `$[ … ]` closes at its own `]`, past any
+// `[ … ]` or `$( … )` inside; a quoted `{` after `$` opens nothing, and a `]` closes no `$(`.
+// bash 3.2 and 5 write M/f.js for each, except `$(echo ${a:-) c})`: bash 3.2 cannot parse it,
+// bash 5 writes M/f.js, and the pin sides with bash 5.
+for (const cmd of ['x=${a:-b c} cd /main; echo x > f.js', 'x=${a:+b c} cd /main; echo x > f.js', 'x=${a:-(} cd /main; echo x > f.js',
+  'x=$[1 + 2] cd /main; echo x > f.js', 'x=${a:-$(echo b c)} cd /main; echo x > f.js', 'x=${a:-) b} cd /main; echo x > f.js',
+  'x=${a:-\\} b} cd /main; echo x > f.js', 'x=$(echo ${a:-) c}) cd /main; echo x > f.js',
+  'a=(1 2); x=$[a[1] + 2] cd /main; echo x > f.js', 'x=$[ $(echo 1) + 2 ] cd /main; echo x > f.js',
+  'x=$"{" cd /main; echo x > f.js', 'x=$(echo ] b) cd /main; echo x > f.js',
+  'x=${a:-${b:-c d} e} cd /main; echo x > f.js', 'x=${a:-$[1 + 2] b} cd /main; echo x > f.js']) {
+  test(`#4303: \`${cmd}\` changes into the cd after the assignment`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'write', file: MAIN_F }]);
+  });
+}
+// #4303: the first bare `}` closes `${ … }`, so in `${a:-{b c} d}` the `d}` is the command and the
+// `cd` its argument (bash 3.2 and 5: "d}: command not found", and write f.js).
+test('#4303: `${ … }` in an assignment word closes at its first bare `}`', () => {
+  assert.deepStrictEqual(fileWriteTargets('x=${a:-{b c} d} cd /main; echo x > f.js', '/r'), [{ action: 'write', file: path.resolve('/r/f.js') }]);
+});
+// #4303: bash 3.2 and 5 refuse to parse these ("unexpected EOF") and write nothing; the scanner
+// keeps the trailing write as a deliberate fail-closed tradeoff.
+test('#4303: an assignment whose `${` or `$[` never closes is no cd lead (deliberate fail-closed tradeoff)', () => {
+  for (const cmd of ['x=${a:-b c cd /main; echo x > /r2/f.js', 'x=$[1 + 2 cd /main; echo x > /r2/f.js']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r2/f.js')], cmd);
+  }
+});
 
 // #4149: the write walk cuts at an unquoted lone `&`, so the command after it is
 // read as a command; the backgrounded and-or list runs in a subshell, so its `cd` does not move the
