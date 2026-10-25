@@ -29,14 +29,14 @@ SCANNED {HH:MM:SS} — Step 8 disposition: no staged review findings. Reversibil
 
 ### Review staging roster
 
-`Route` is one value from the closed set `confirmed`, `unconfirmed`, `contested`, `proposal`, `note`, `not staged by review`. The Routing table keys on that value, never on a prefix.
+`Route` is one value from the closed set `confirmed`, `unconfirmed`, `contested`, `proposal`, `note`, `not staged by review`. The Routing table keys on that value, never on a prefix. `review-{n}` means `review-` followed by a number, so a `review-foo.md` matches no row.
 
 | Prefix | Example | Staged by | Counted as | Route |
 |---|---|---|---|---|
 | `review-{n}` | `staged/review-{n}.{md,patch}` | `review/step3-routing.md` (Step 3; a critical lands here too, because the KEPT-PROMPT row stages a patch as well as surfacing it inline) | one confirmed finding per file, its severity read from the file's `Finding: {severity} {category} — …` line | `confirmed` |
 | `review-unconfirmed-` | `staged/review-unconfirmed-{n}.md` | `_shared/multi-agent-coordination.md` (Step 3 tiebreak) | one finding per entry line | `unconfirmed` |
 | `review-contested-` | `staged/review-contested-{n}.md` | `review/step3-debate-and-refutation.md` (Step 3) | one finding per file, both verdicts side by side | `contested` |
-| `review-debate-` | `staged/review-debate-{n}.md` | `_shared/multi-agent-coordination.md` (Step 3) | same | `contested` |
+| `review-debate-` | `staged/review-debate-{n}.md` | `_shared/multi-agent-coordination.md` (Step 3) | one finding per file, both verdicts side by side | `contested` |
 | `reflect-` | `staged/reflect-{n}.md` | `reflect/SKILL.md` (Step 4's hindsight pass) | one finding per file | `proposal` |
 | `simplify-` | `staged/simplify-{n}.md` | `simplify/SKILL.md` (Step 5) | one finding per file | `proposal` |
 | `deepen-` | `staged/deepen-{n}.md`, `staged/deepen-collapse-{n}.patch` | `deepen/SKILL.md` (any deepen candidate list) | one finding per file | `proposal` |
@@ -54,9 +54,9 @@ The Recommended column is what the batch table below pre-fills for each row.
 | Finding | Recommended disposition |
 |---|---|
 | A `confirmed` file, any severity | Defer per `review/step3-routing.md`'s Defer bullet: compose the body with `specShapedBody`, file it with `recordPayload`, born-ready. Apply that bullet's materiality-floor test (`_shared/materiality-floor.md`) first: a finding that fails the floor is `Digest — below floor`, appended only once the row is approved, after the dedup check. Use `Defer-reason: pre-existing-outside-diff` — a release reviews already-merged history and has no diff of its own — and `provenance.origin: /claude-tweaks:release v{version} release-gate review (run {run-id})`. |
-| An `unconfirmed` file at critical/high | The same Defer |
+| An `unconfirmed` entry at critical/high | The same Defer |
 | A `contested` file at critical/high in either verdict | The same Defer, both verdicts quoted in the body |
-| An `unconfirmed` file at medium/low/info | `declined (unconfirmed: one reproduction agent of the pair)` |
+| An `unconfirmed` entry at medium/low/info | `declined (unconfirmed: one reproduction agent of the pair)` |
 | A `contested` file, otherwise | `declined (contested: {verdicts})` |
 | A `decisions.md`-only `STAGED` line at critical/high | The same Defer |
 | A `decisions.md`-only `STAGED` line, otherwise | `declined (unconfirmed: {the line's own reason, e.g. not reproduced})` |

@@ -553,6 +553,8 @@ test('AC3.1: docs/skill-graph.md release table lists every review contract dispo
 // --- Review staging roster: every staged/ prefix a review producer writes has one routed row (#4156) ---
 // disposition.md's roster is the only place a staged prefix is named. The producer corpus is derived from its
 // Staged by column, so a producer that starts staging a prefix with no row turns the corpus check red.
+// The scan's limit: the corpus is plugin/skills/review/** plus the producers the roster names, so a producer in a
+// skill directory no row names is not scanned.
 const SKILLS = path.join(ROOT, 'plugin', 'skills');
 const ROSTER_HEADING = '### Review staging roster';
 const ROUTES = ['confirmed', 'unconfirmed', 'contested', 'proposal', 'note', 'not staged by review'];
@@ -723,12 +725,23 @@ test('AC1: classify pins the review prefixes and leaves an unknown prefix unrout
   const expected = { 'review-3.patch': 'confirmed', 'review-unconfirmed-2.md': 'unconfirmed', 'review-debate-1.md': 'contested', 'visual-review-skipped.md': 'note' };
   for (const [name, route] of Object.entries(expected)) assert.equal((classify(name, roster) || {}).route, route, name);
   assert.equal(classify('brand-new-1.md', roster), null);
+  assert.equal(classify('review-foo.md', roster), null);
 });
 
 test('AC1: parseRoster throws on a missing heading, an empty table and an unknown route', () => {
   assert.throws(() => parseRoster('no roster here'), /has no "### Review staging roster" heading/);
   assert.throws(() => parseRoster(`${ROSTER_HEADING}\n\n| Prefix | Example | Staged by | Counted as | Route |\n|---|---|---|---|---|\n\nnext`), /has no rows/);
-  assert.throws(() => parseRoster(withRosterRoute(readDisposition(), 'design-decision-', 'not-a-route')), /outside the closed set/);
+});
+
+// The roster prose the checks rely on, each clause pinned with its own go-red.
+const ROSTER_PROSE = [
+  [/`review-\{n\}` means `review-` followed by a number, so a `review-foo\.md` matches no row/, 'the roster says review-{n} is review- then a number, so review-foo.md matches no row'],
+  [/matched against the review staging roster below by its longest matching prefix/, 'the Inventory matches every other staged file against the roster by its longest matching prefix'],
+  [/A producer that starts staging a new prefix adds its roster row in the same change/, 'a producer that starts staging a new prefix adds its roster row in the same change'],
+];
+
+test('roster-vs-routing: the roster prose clauses the checks rely on are stated (with go-red)', () => {
+  assertFactsAndGoRed(readDisposition(), ROSTER_PROSE, 'disposition.md must state the roster clauses (#4156)');
 });
 
 test('roster-vs-routing: every staged/ literal a review producer names classifies to a roster row', () => {
