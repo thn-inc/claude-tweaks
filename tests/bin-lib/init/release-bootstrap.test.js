@@ -554,3 +554,12 @@ test('bootstrapRelease: no override, auto-detected simple with a found manifest 
   assert.equal(r.version, '6.121.0');
   assert.deepEqual(JSON.parse(read(root, '.release-please-manifest.json')), { '.': '6.121.0' });
 });
+
+test('#4282 AC2.1 AC2.2: segmentsOf splits a relative path on both separators, under path.win32 too', () => {
+  for (const rel of ['.github/workflows/release-please.yml', '.github\\workflows\\release-please.yml']) {
+    assert.deepEqual(rb.segmentsOf(rel, path.win32), ['.github', 'workflows'], rel);
+  }
+  assert.deepEqual(rb.segmentsOf('.github/workflows/release-please.yml', path.posix), ['.github', 'workflows']);
+  assert.deepEqual(rb.segmentsOf('./.github//workflows/x.yml', path.posix), ['.github', 'workflows']);
+  assert.deepEqual(rb.segmentsOf('release-please-config.json', path.win32), []);
+});

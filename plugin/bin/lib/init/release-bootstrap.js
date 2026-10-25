@@ -446,6 +446,12 @@ function writeBootstrapFiles(root, toWrite, { dryRun = false } = {}) {
   return { written };
 }
 
+// Directory segments of a relative write target, leaf excluded. Splits on both
+// separators: on win32 a '/'-separated rel is one segment under path.sep alone.
+function segmentsOf(rel, pathImpl = path) {
+  return pathImpl.dirname(rel).split(/[\\/]/).filter((s) => s !== '' && s !== '.');
+}
+
 // Refuses to write through a symlink anywhere between root and the target:
 // any existing path segment between root and the file's own directory that
 // is itself a symlink, or the target file path itself being a symlink. The
@@ -454,8 +460,7 @@ function writeBootstrapFiles(root, toWrite, { dryRun = false } = {}) {
 // write is still closed because mkdirSync/writeFileSync never themselves
 // follow a symlink into existence.
 function assertSafeWriteTarget(root, rel) {
-  const dirRel = path.dirname(rel);
-  const segments = dirRel === '.' ? [] : dirRel.split(path.sep);
+  const segments = segmentsOf(rel);
   let cur = root;
   for (const seg of segments) {
     cur = path.join(cur, seg);
@@ -473,5 +478,5 @@ module.exports = {
   RELEASE_STACK_TABLE, RELEASE_TYPE_VALUES, CONFLICT_MARKERS, CONFIG_FILE, MANIFEST_FILE, WORKFLOW_FILE,
   isBootstrapShaped, detectReleaseProcess, resolveReleaseType, readStackManifestVersion, seedManifestVersion,
   isValidBranchName, renderWorkflowYaml, renderConfig, renderManifest, renderPolicyRows,
-  defaultListTags, bootstrapRelease, writeBootstrapFiles,
+  defaultListTags, bootstrapRelease, writeBootstrapFiles, segmentsOf,
 };
