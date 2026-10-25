@@ -14,6 +14,7 @@ const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
 const { canonicalRealpath, resolveLeaf } = require('../path-guard');
+const { runLiveness } = require('../run-liveness');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
@@ -96,27 +97,53 @@ function readAdHocState(dir) {
 
 // #2724: an ad-hoc dir is a session friction log, "not a pipeline run"
 // (docs/hooks.md), so having no branch, worktree or PR is its normal state —
-// not stuckness — and `adhoc-superseded` archives it once its linked worktree is
-// no longer registered and ADHOC_SUPERSEDED_TTL_MS has passed.
-// That sweep only ever claims a dir whose recorded worktree is a linked
-// worktree, though: a dir stamped with the main checkout can never be
-// superseded, so it stays tracked and keeps escalating.
+// not stuckness. Every genuine ad-hoc dir has a sweep that archives it once its
+// session has ended: `adhoc-superseded` for a dir whose recorded worktree is a
+// linked worktree (no longer registered, ADHOC_SUPERSEDED_TTL_MS passed), and
+// `adhoc-session-ended` (#4179) for a dir stamped with the main checkout (dead
+// session, ADHOC_SESSION_ENDED_GRACE_MS passed). So structurally-stuck
+// escalation, which would only nag about a dir those sweeps already own, exempts
+// all of them.
 const ADHOC_INTRINSIC_STUCK_REASONS = new Set(['no-branch', 'no-worktree', 'no-pr']);
-const ADHOC_EXEMPT_WHY = 'is an ad-hoc session directory: no branch, worktree or PR is its normal state, and the adhoc-superseded sweep archives it once its session has ended';
+const ADHOC_EXEMPT_WHY = 'is an ad-hoc session directory: no branch, worktree or PR is its normal state, and reconcile archives it once its session has ended (adhoc-superseded for a linked worktree, adhoc-session-ended for the main checkout)';
 
 function isAdHocIntrinsicSkip(dir, reason) {
-  if (!ADHOC_INTRINSIC_STUCK_REASONS.has(reason)) return false;
+  return ADHOC_INTRINSIC_STUCK_REASONS.has(reason) && !!readAdHocState(dir);
+}
+
+// #4179: the sweep `adhoc-superseded` cannot make. A dir stamped with the main
+// checkout is never superseded — the main checkout is always a registered
+// worktree — so it needs a different end-of-session signal: the session's own
+// liveness. ADHOC_SESSION_ENDED_GRACE_MS is the quiet period a dead-reading
+// session must also have been untouched for before its dir is archived, a wide
+// margin for wrap-up's reflect pass (or a human) to consume the friction record
+// first — 7 days, the same window structurally-stuck gives a stuck dir.
+const ADHOC_SESSION_ENDED_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+
+// True only for a genuine ad-hoc dir whose recorded worktree provably resolves
+// to the main checkout that holds it. Compares real paths, so a dir reached
+// through a symlink (/var vs /private/var) never reads a main-checkout stamp as
+// linked; any unprovable path — missing, unresolvable — is false, so an
+// unprovable dir is never swept on liveness evidence.
+function isMainCheckoutAdHoc(dir) {
   const state = readAdHocState(dir);
   if (!state) return false;
-  // Compare real paths, so a dir reached through a symlink (/var vs /private/var)
-  // never reads a main-checkout stamp as linked. A recorded worktree that no
-  // longer exists cannot be the main checkout, which holds this dir; any other
-  // unprovable path fails closed (not exempt).
   const mainRoot = canonicalRealpath(path.resolve(dir, '..', '..', '..'));
   if (!mainRoot) return false;
   const leaf = resolveLeaf(state.worktree);
-  if (leaf.state === 'resolved') return leaf.path !== mainRoot;
-  return leaf.state === 'missing';
+  return leaf.state === 'resolved' && leaf.path === mainRoot;
+}
+
+// runLiveness with its worktree-path probe forced to 'missing'. For a
+// main-checkout ad-hoc dir the worktree-lock and last-commit evidence belong to
+// the checkout every session shares, not to this session: the main checkout is
+// always locked-in-use and its newest commit is routinely seconds old, so as-is
+// the verdict reads `unknown` for every real main-checkout dir and never
+// `dead`. With the path probe out of the picture, the remaining per-session
+// evidence (its own events log, session markers) decides, and a legacy dir
+// silent past the dead threshold reads `dead`.
+function adHocSessionLiveness(dir) {
+  return runLiveness(dir, { probes: { pathType: () => ({ type: 'missing' }) } }).verdict;
 }
 
 // #1604: the "swept once genuinely superseded" half of #1117's own design
@@ -134,7 +161,7 @@ function isAdHocIntrinsicSkip(dir, reason) {
 const ADHOC_SUPERSEDED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 // #1732: thin wrapper — see isOrphanedMint's comment on the `kinds` scoping
-// pattern every one of these five wrappers now shares.
+// pattern every one of these wrappers shares.
 function isAdHocStandaloneSuperseded(dir, state, worktrees, now = Date.now()) {
   return classifyRunDir({ dir, state, worktrees, kinds: ['adhoc-superseded'] }, now).kind === 'adhoc-superseded';
 }
@@ -942,7 +969,7 @@ function archivedPendingTrackedMoveCommand(dir) {
 // case this predicate exists for is a run dir with config.yml but NO
 // run-state.json at all (materialize.md's own worktree-first commit never
 // landed, or the process died before record-worktree stamped anything):
-// every other lifecycle path in this file (the classifier's five kinds, the
+// every other lifecycle path in this file (the classifier's kinds, the
 // branch/by-number probes below) needs SOME evidence out of run-state.json
 // or a live worktree to resolve a branch/PR — this shape has neither, so it
 // escalates at `structurally-stuck` forever without ever resolving (see this
@@ -1680,8 +1707,8 @@ function isStructurallyStuck(dir, reason, now = Date.now()) {
 // isAbandonedInterrupted, isAdHocStandaloneSuperseded, decideArchive's
 // merged-PR path, isStructurallyStuck) into one first-match list, evaluated
 // in the exact precedence order the pre-consolidation main loop checked them
-// in: orphaned-mint -> abandoned-interrupted -> adhoc-superseded -> merged ->
-// structurally-stuck -> none.
+// in: orphaned-mint -> abandoned-interrupted -> adhoc-superseded ->
+// adhoc-session-ended -> merged -> structurally-stuck -> none.
 //
 // `ctx.kinds` scopes evaluation to a subset (in the order given) — every
 // wrapper predicate above passes its own single kind, so a standalone call
@@ -1690,11 +1717,15 @@ function isStructurallyStuck(dir, reason, now = Date.now()) {
 // same dir would ALSO match some OTHER kind earlier in the full precedence
 // list. Only archiveMerged's own main loop passes the full, ordered kind set
 // (the module default below) to get precedence-respecting classification
-// across all five at once.
+// across every kind at once.
 //
 // I/O-free apart from the one mtime stat (via isStaleDir) and the one
 // events.jsonl read (via ownEventRecency) that the mtime-based kinds and
-// abandoned-interrupted's recency check respectively need — every other
+// abandoned-interrupted's recency check respectively need — and the
+// `adhoc-session-ended` kind's own I/O: it reads run-state.json (the ad-hoc
+// stamp, and the own-session guard when `state` is not passed), does a
+// realpath, and calls the injectable `liveness` function (which spawns `ps`
+// and reads events), evaluated LAST after every cheap gate. Every other
 // input (state, worktrees, sessionId, prState, consoleState, skipReason) is
 // pre-computed by the caller, per this file's own Gotchas: the merged-PR
 // path's prState/consoleState inputs, and — deliberately excluded from this
@@ -1704,13 +1735,13 @@ function isStructurallyStuck(dir, reason, now = Date.now()) {
 // folded into a kind this function alone decided.
 //
 // -> { kind: 'orphaned-mint'|'abandoned-interrupted'|'adhoc-superseded'|
-//            'merged'|'structurally-stuck'|'none',
+//            'adhoc-session-ended'|'merged'|'structurally-stuck'|'none',
 //      ttlMs: number|null, evidence: object }
-const CLASSIFY_ORDER = ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'merged', 'structurally-stuck'];
+const CLASSIFY_ORDER = ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended', 'merged', 'structurally-stuck'];
 
 function classifyRunDir(ctx, now = Date.now()) {
   const {
-    dir, state, worktrees, sessionId, prState, consoleState, skipReason, kinds,
+    dir, state, worktrees, sessionId, prState, consoleState, skipReason, kinds, liveness = adHocSessionLiveness,
   } = ctx;
   const order = kinds || CLASSIFY_ORDER;
 
@@ -1740,6 +1771,26 @@ function classifyRunDir(ctx, now = Date.now()) {
         const stillLive = (worktrees || []).some((w) => path.resolve(w.path) === path.resolve(state.worktree));
         if (!stillLive && isStaleDir(dir, ADHOC_SUPERSEDED_TTL_MS, now)) {
           return { kind: 'adhoc-superseded', ttlMs: ADHOC_SUPERSEDED_TTL_MS, evidence: {} };
+        }
+      }
+    } else if (kind === 'adhoc-session-ended') {
+      // Cheap, I/O-light gates first; liveness spawns processes, so it runs
+      // last. Only an exact 'dead' counts — 'live', 'unknown' and a throwing
+      // liveness function all leave the dir alone. The caller's own session is
+      // never swept (mirrors abandoned-interrupted's `ownLive`): it is live by
+      // definition, whatever the liveness probe reads.
+      const ownState = state || (sessionId && dir ? readRunState(dir) : null);
+      const ownerId = ownState && typeof ownState.sessionId === 'string' ? ownState.sessionId : '';
+      const ownSession = !!sessionId && ownerId === sessionId;
+      if (!ownSession && dir && isMainCheckoutAdHoc(dir) && isStaleDir(dir, ADHOC_SESSION_ENDED_GRACE_MS, now)) {
+        let verdict;
+        try {
+          verdict = liveness(dir);
+        } catch {
+          verdict = 'unknown';
+        }
+        if (verdict === 'dead') {
+          return { kind: 'adhoc-session-ended', ttlMs: ADHOC_SESSION_ENDED_GRACE_MS, evidence: { verdict: 'dead' } };
         }
       }
     } else if (kind === 'merged') {
@@ -2067,7 +2118,7 @@ async function prefetchArchivePrStates(root, prStates, { cache } = {}) {
 }
 
 function archiveMerged({
-  cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration, prStates, cache,
+  cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration, prStates, cache, liveness,
 } = {}) {
   const archived = [];
   const skipped = [];
@@ -2147,15 +2198,17 @@ function archiveMerged({
     // iterRunDirsWithState already excludes status: 'clean' — every dir
     // reached here is genuinely non-terminal.
     //
-    // #1732: one classification call covering the three TTL-based lifecycle
-    // kinds this loop used to check as separate, interleaved early-return
-    // branches (orphaned-mint, abandoned-interrupted, adhoc-superseded), then
+    // #1732: one classification call covering the four TTL-based lifecycle
+    // kinds (orphaned-mint, abandoned-interrupted, adhoc-superseded, and —
+    // #4179 — adhoc-session-ended; the first three this loop used to check as
+    // separate, interleaved early-return branches), then
     // one dispatch per kind below — a per-kind action table, not a
     // detector-specific chain. Precedence is classifyRunDir's own
     // first-match order, unchanged from what this loop checked before
     // consolidation.
     const classification = classifyRunDir({
-      dir, state, worktrees, sessionId, kinds: ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded'],
+      dir, state, worktrees, sessionId, liveness,
+      kinds: ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended'],
     });
     let { kind } = classification;
     // #1673/#1732: the `checkRunIntegrity` shipped-unclosed evidence gate is
@@ -2165,9 +2218,9 @@ function archiveMerged({
     // that kind — it falls through to the next-lower-precedence kind
     // (adhoc-superseded) exactly as the pre-consolidation `&&`-chained
     // early-return did, via one small follow-up classify call scoped to just
-    // that remaining kind.
+    // the two remaining kinds (adhoc-superseded, adhoc-session-ended).
     if (kind === 'abandoned-interrupted' && checkRunIntegrity(dir, { cache }).state !== 'shipped-unclosed') {
-      kind = classifyRunDir({ dir, state, worktrees, kinds: ['adhoc-superseded'] }).kind;
+      kind = classifyRunDir({ dir, state, worktrees, sessionId, liveness, kinds: ['adhoc-superseded', 'adhoc-session-ended'] }).kind;
     }
 
     if (kind === 'orphaned-mint') {
@@ -2260,7 +2313,14 @@ function archiveMerged({
     // sweep a still-live ad-hoc session) is unchanged: classifyRunDir never
     // returns 'adhoc-superseded' while the worktree still resolves, regardless
     // of age.
-    if (kind === 'adhoc-superseded') {
+    //
+    // #4179: 'adhoc-session-ended' is the same archive for the one shape
+    // adhoc-superseded can never claim — a dir stamped with the main checkout,
+    // which is always a registered worktree. Its end-of-session evidence is the
+    // session's liveness verdict rather than a worktree's absence, but the dir
+    // is the same real dev session with the same possible tracked work/ subtree,
+    // so it shares archiveRunDir and the #593 tracked-entry guard below.
+    if (kind === 'adhoc-superseded' || kind === 'adhoc-session-ended') {
       // archiveRunDir, not archiveOrphanedMint: an ad-hoc-standalone dir is a
       // real dev session that can have materialized a spec (a git-tracked work/
       // subtree) before being abandoned. archiveOrphanedMint is a bare
@@ -2443,7 +2503,7 @@ module.exports = {
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
-  isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
+  isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, adHocSessionLiveness,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand,
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,
