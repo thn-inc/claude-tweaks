@@ -42,6 +42,11 @@ const PINS = {
     { file: 'specify/next-mode-closeout.md', from: '## Zero eligible or budget exhausted', to: null, patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/nothing eligible this firing[\s\S]{0,400}close-run/, 'the nothing-eligible exit still closes']] },
     { file: 'specify/next-mode-shape.md', from: '## Failure self-report', to: null, patterns: [[/next-mode-closeout\.md`'s close-out still runs/, 'a firing-ending failure still runs the close-out']] },
   ],
+  backlog: [
+    { file: 'backlog/SKILL.md', from: '## Component-Skill Contract', to: '## Anti-Patterns', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/--reset-breaker[\s\S]{0,300}overview[\s\S]{0,300}attention|overview[\s\S]{0,300}attention[\s\S]{0,300}--reset-breaker/, 'the statement covers every mode that resolves its own directory']] },
+    { file: 'backlog/refine-closing-summary.md', from: '**Close the run dir.**', to: null, patterns: [P_INHERITED] },
+    { file: 'backlog/refine-headless.md', from: '## Step 5: Report', to: '## Cap tracking', patterns: [P_CLOSE] },
+  ],
 };
 
 // --- Slicing and the fact/go-red assertion ----------------------------------------------------------
