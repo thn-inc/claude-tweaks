@@ -823,6 +823,26 @@ test('#4281: an escaped character anywhere in a redirect operator makes the word
   ]) assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected, cmd);
 });
 
+test('#4281: a cd line\'s redirect writes in the cwd before the cd, and the cd still moves the later segments', () => {
+  // bash 3.2 and 5 write f1 in the starting cwd for `\cd sub > f1`, `c\d sub > f1` and `cd sub > f1`
+  // (bash applies the redirect before the builtin runs), and sub/f2 for `cd sub && echo x > f2`.
+  // `cd sub > f1; echo y > f2`, `A=1 cd sub > f1; echo y > f2` and `cd > f1 sub; echo y > f2` each
+  // write f1 and sub/f2: the redirect is no argument of cd.
+  const at = (f) => ({ action: 'write', file: path.resolve('/r', f) });
+  for (const cmd of ['\\cd sub > f1', 'c\\d sub > f1', 'cd sub > f1']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [at('f1')], cmd);
+  }
+  assert.deepStrictEqual(fileWriteTargets('cd sub && echo x > f2', '/r'), [at('sub/f2')]);
+  for (const cmd of ['cd sub > f1; echo y > f2', 'A=1 cd sub > f1; echo y > f2', 'cd > f1 sub; echo y > f2']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [at('f1'), at('sub/f2')], cmd);
+  }
+  // A cd segment reaches every walk consumer now, and none of them reads it as its own shape.
+  assert.deepStrictEqual(gitTargets('cd sub > f1 && git commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/r/sub') }]);
+  assert.deepStrictEqual(gitTargets('cd git > f1', '/r'), []);
+  assert.deepStrictEqual(mkdirTargets('cd mkdir > f1', '/r'), []);
+  assert.strictEqual(powershellOpaqueCommand('cd pwsh -Command > f1', '/r'), false);
+});
+
 // #4281: the Windows shapes, proven on any host through an injected path.win32 (#3314's pattern).
 // bash 3.2 and 5: "D:\repo\a.js", "D:\repo\x", "D:\repo\wt" and "D:\repo" are those exact values;
 // unquoted, D:\repo\a.js and D:\repo are D:repoa.js and D:repo.

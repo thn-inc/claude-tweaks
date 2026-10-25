@@ -41,6 +41,8 @@ const DIFFERENTIAL_CORPUS = [
   'echo "hi">tracked.js',
   // #4281: a bare redirect to a quoted native path.
   'echo x > "D:\\r\\tracked.js"',
+  // #4281: a redirect on a cd line.
+  '\\cd sub > tracked.js', 'cd sub > tracked.js',
 ];
 const teardown = (command) => teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: CWD });
 const powershell = (command) => (powershellOpaqueCommand(command, CWD) ? [{ action: 'powershell-opaque' }] : []);
@@ -489,4 +491,11 @@ test('#4281: a NUL in the command is dropped, so a parser target behind one take
     assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), true, JSON.stringify(command));
   }
   assert.strictEqual(shouldRunFull('post-tool-use', bash('gi\0t commit -m x')), true);
+});
+
+test('#4281: a redirect on a cd line takes the full-handler path', () => {
+  // bash 3.2 and 5: `\cd sub > f1` and `cd sub > f1` write f1 in the starting cwd.
+  for (const command of ['\\cd sub > f1', 'cd sub > f1']) {
+    assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), true, command);
+  }
 });

@@ -609,8 +609,10 @@ function substituteVars(tokens, vars, singleQuoted, spanKinds) {
 // bash-prefilter.js's hasFileRedirection call directly. The walk
 // splits the command into shell segments, tokenizes each, and tracks `cd` to
 // keep the effective cwd in sync. `handler(t, effCwd, quoting, again)` is
-// invoked for every non-cd, non-empty segment with the cwd value in effect for
-// it (string, or null meaning UNKNOWN); `quoting` is
+// invoked for every non-empty segment that is not a bare assignment with the cwd value in
+// effect for it (string, or null meaning UNKNOWN). A `cd` segment is visited too, under the
+// cwd before the cd (#4281: its redirections run there); no consumer reads `cd` as its own
+// lead word, so it yields only redirect targets. `quoting` is
 // `{ raw, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt, pathImpl }`: the
 // pre-substitution tokens, the words as typed (#4281, see tokenize; powershellOpaqueCommand
 // reads them), their per-token quote flags from tokenize (#4015 reads the first three,
@@ -637,7 +639,7 @@ function forEachCommandSegment(command, cwd, handler, opts) {
 
 // One segment of forEachShellSegment's walk, already tokenized (`tok`, from tokenize, and
 // `nestAt`, the nesting state at each token's start): updates `vars`, calls `handler` for a
-// non-cd, non-assignment segment, and returns the effective cwd after it.
+// non-assignment segment (a cd one included), and returns the effective cwd after it.
 function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
   const { typed, singleQuoted, doubleQuoted, leadQuoted } = tok;
   const { tokens: rawT, spanKinds } = settleStrayBackslash(tok.tokens, tok.spanKinds, pathImpl);
@@ -656,8 +658,12 @@ function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
   // spanKinds it is aligned with: bash decides it before any `$` expands (#4281).
   let cdLead = 0;
   while (cdLead < t.length && isAssignmentWord(rawT[cdLead], spanKinds[cdLead])) cdLead += 1;
-  if (t[cdLead] === 'cd') return resolveCd(effCwd, t[cdLead + 1], pathImpl);
-  handler(t, effCwd, { raw: rawT, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt, pathImpl });
+  const quoting = { raw: rawT, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt, pathImpl };
+  // #4281: bash applies a cd line's redirections before the builtin runs, so `cd sub > f1`
+  // writes f1 in the cwd before the cd: the handler sees the cd segment under that cwd. Its
+  // redirect words are no argument of cd (`cd > f1 sub` changes to sub).
+  handler(t, effCwd, quoting);
+  if (t[cdLead] === 'cd') return resolveCd(effCwd, dropRedirections(t, quoting)[cdLead + 1], pathImpl);
   return effCwd;
 }
 
