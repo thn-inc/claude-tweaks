@@ -38,6 +38,7 @@ A size comparison whose operand the scanner cannot resolve (an UPPER_CASE consta
 |---|---|
 | Can the scanner resolve the operand to a number? | Large literal or laundered literal: violation. Rail name: clean. Unresolvable named constant: `unclassified`. |
 | Is the number about the guarded artifact? | Yes: delete it, or move it into the single source. No: allowlist the file with its reason. |
+| Does a limit about something else trip only rule (a), by its `*BUDGET*`/`*CEILING*` name? | Rename it rather than allowlist the file, since an entry would exempt the whole file from rule (b) too. `plugin/bin/lib/review-context/build.js`'s bundle limit ships as `TOTAL_CAP_BYTES`, the `_CAP_` spelling of its `PER_FILE_CAP_BYTES` (#4220). |
 | Is the miss a cheap single-line shape (a tainted `.length`, a lowercase literal variable, a bare `size` variable)? | Fix the scanner in the same change, with a go-red self-test of the exact shape, as #3311 did for all three. |
 | Does catching the miss need a parser (multi-line comparisons, helper-returned taint, destructuring)? | Record it as a known limit. Do not grow the regex into a parser. |
 
