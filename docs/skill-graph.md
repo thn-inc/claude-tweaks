@@ -461,8 +461,12 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `review/step3-lens-dispatch.md` | Step 8's disposition (`release/disposition.md`) inventories its `not reproduced` `STAGED` lines in `decisions.md` as findings with no `staged/` file. |
 | `review/step3-tiebreak.md` | Step 8's disposition inventories the `console`-outcome line a tiebreak leaves standing in `decisions.md`, and a failed tiebreak's line. |
 | `review/step3-debate-and-refutation.md` | Step 8's disposition inventories `staged/review-contested-{n}.md` and `staged/review-debate-{n}.md` — both verdicts side by side — and routes each. |
-| `review/code-mode-steps.md` | Step 8's disposition inventories the `staged/reflect-*` and `staged/simplify-*` files its Steps 4-5 produce. |
+| `review/code-mode-steps.md` | Step 8's disposition inventories the `reflect-` and `simplify-` files its Steps 4-5 produce, routed by the review staging roster in `release/disposition.md`'s Inventory. |
 | `_shared/multi-agent-coordination.md` | Step 8's disposition inventories each entry of `staged/review-unconfirmed-{n}.md` as a finding the tiebreak left unconfirmed. |
+| `design-wrapper/modes/review.md` | Step 8's disposition inventories its `staged/design-decision-*.md` files (Step 6.5) as proposals, routed through the review staging roster. |
+| `visual-review/SKILL.md` | Step 8's disposition reads its `staged/visual-review-*.md` skip notes as `note` roster rows, kept out of the findings. |
+| `test/fix-mode.md` | Step 8's disposition inventories its `staged/test-fix-{n}.patch` files (Step 1.5's test gate) as proposals. |
+| `test/flake-handling.md` | Step 8's disposition inventories its `staged/flaky-allowlist-{slug}.md` files (Step 1.5's test gate) as proposals. |
 | `_shared/materiality-floor.md` | Step 8's disposition routes a below-floor finding to the digest container instead of an ordinary record, and surfaces the digest comment URL and count in its own output. |
 | `bin/hooks.js archive-run` | Step 8 archives the run directory it created once disposition reported `0 failed`; Step 0 refuses a step-2 directory that is terminal or carries a prior release run's `createdBy: "release-standalone"` stamp, whatever its status, so a later release never adopts a finished or stopped-early one (#3898). |
 
