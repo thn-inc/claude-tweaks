@@ -12,3 +12,5 @@
 | 8 | build | Journey 2724 line 45 'keeps escalating too' lost its referent | fixed | ab3f1794a — now 'still escalates' |
 | 9 | build | Journey 2724 success-state line and red flag narrowed to 'linked worktree' | fixed | ab3f1794a — narrowing dropped |
 | 10 | build | docs/reconcile-checks.md:280/:287 uneven mid-paragraph wraps | accepted | Cosmetic, below the materiality floor (whole-branch review triage) |
+| 11 | wrap-up | pr — PR #4256 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | |
+| 12 | wrap-up | suite — residue probe skipped via --no-suite; suite state taken from the verify stamp (full scope, e1e287e0f, 16886 tests, 0 failed) | observation | |
