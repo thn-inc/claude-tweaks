@@ -650,3 +650,15 @@ test('#4180 recordResidueError: through a cache batch, lands on commit', () => {
   commitCacheBatch(batch);
   assert.deepEqual(listResidueFailures(root)[0].lastResidueError, { op: 'resolve', reason: 'nope', at: 5 });
 });
+
+test('#4180 recordResidueFailure carries lastResidueError forward on the next failing pass', () => {
+  const root = almostEscalatedRoot();
+  trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'EBUSY' }, { escalate: () => ({ status: 'escalation-failed', reason: 'rate limited' }) });
+  const before = listResidueFailures(root)[0].lastResidueError;
+  assert.equal(before.op, 'escalate');
+  const streak = recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY again' });
+  assert.equal(streak.shouldEscalate, false);
+  const [e] = listResidueFailures(root);
+  assert.equal(e.count, RESIDUE_ESCALATE_THRESHOLD + 1);
+  assert.deepEqual(e.lastResidueError, before);
+});

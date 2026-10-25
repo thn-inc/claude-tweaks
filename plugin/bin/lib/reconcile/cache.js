@@ -205,6 +205,9 @@ function recordResidueFailure(target, reason, targetPath, {
     lastError: lastError || (existing && existing.lastError) || null,
     dirtyFiles,
     escalated: alreadyEscalated || shouldEscalate,
+    // #4180: carried forward unchanged — escalation is one-shot, so a failed escalate's reason
+    // must survive later failing passes. Dropped only with the entry itself.
+    ...(existing && existing.lastResidueError ? { lastResidueError: existing.lastResidueError } : {}),
   };
   const nextCache = { ...cache, residueFailures: failures };
   if (batch) { target.cache = nextCache; target.dirty = true; } else { writeCache(target, nextCache); }
@@ -244,9 +247,10 @@ function ownedPathExists(target) {
 
 // #4180: the one channel for a swallowed escalate/resolve failure — the reason sits on the
 // still-tracked entry (`lastResidueError`) so the caller can surface it instead of the next pass
-// retrying in silence. A no-op when there is no entry (nothing to attach to); the entry's own
-// next recordResidueFailure/recordResidueSuccess rebuilds or drops it, so a stale error never
-// outlives the streak it described. Batch-aware like its siblings.
+// retrying in silence. A no-op when there is no entry (nothing to attach to). recordResidueFailure
+// carries the field forward unchanged (escalation is one-shot, so the reason must survive later
+// failing passes); it is dropped only when the entry itself is dropped (recordResidueSuccess /
+// prune), so it never outlives the streak. Batch-aware like its siblings.
 function recordResidueError(target, reason, targetPath, { op, error, now = Date.now() } = {}) {
   const batch = isCacheBatch(target);
   const cache = batch ? target.cache : readCache(target);
