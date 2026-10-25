@@ -7,7 +7,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { runGit } = require('../hooks/git-exec');
+const { runGit: runGitInherited, repoPinnedEnv } = require('../hooks/git-exec');
 const { withIndexLockRetry } = require('../git-retry');
 const { splitNul } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
@@ -31,6 +31,12 @@ const { checkRunIntegrity, fallbackBranch, worktreeListStdout } = require('../ho
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
 const { readRunResidue } = require('../console/residue');
+
+// #4178: every call here addresses `root` via `-C`; an inherited GIT_DIR /
+// GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR would silently override that
+// and commit to whatever repo it names (e.g. a linked worktree's branch). Pin
+// the spawn env so `-C <root>` stays in charge.
+const runGit = (args, cwd, opts = {}) => runGitInherited(args, cwd, { ...opts, env: repoPinnedEnv() });
 
 // Orphan case introduced by the dispatch/flow run-identity unification:
 // dispatch mints an empty, anchored run directory (mkdir only, no
