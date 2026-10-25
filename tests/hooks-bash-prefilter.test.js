@@ -501,8 +501,12 @@ test('#4281: a backslash-newline inside a program word is joined, so the word re
   // bash 3.2 and 5 join a backslash-newline: `t\`+newline+`ee f1` and `"t\`+newline+`ee" f1` write f1, and
   // `g\`+newline+`it --version` runs git. After an escaped backslash the newline separates:
   // `echo a\\`+newline+`tee f1` writes f1 too, and `x\\`+newline+`G=gi; ${G}t --version` runs git, an
-  // assignment only the unjoined reading sees.
-  for (const command of ['g\\\nit commit -m x', 't\\\nee f1', '"g\\\nit" commit -m x', 'echo a\\\\\ntee f1', 'x\\\\\nG=gi; ${G}t push']) {
+  // assignment only the unjoined reading sees. bash 3.2 and 5 also run `git push` for
+  // `echo a\\`+newline+`G=gi; $\`+newline+`{G}t push`, `echo a\\`+newline+`X=it; g$\`+newline+`X push` and
+  // `echo a\\`+newline+`G\`+newline+`=gi; ${G}t push`: only a backslash-newline after an even run of
+  // backslashes is joined.
+  for (const command of ['g\\\nit commit -m x', 't\\\nee f1', '"g\\\nit" commit -m x', 'echo a\\\\\ntee f1', 'x\\\\\nG=gi; ${G}t push',
+    'echo a\\\\\nG=gi; $\\\n{G}t push', 'echo a\\\\\nX=it; g$\\\nX push', 'echo a\\\\\nG\\\n=gi; ${G}t push']) {
     assert.ok(targeted('pre-tool-use', command), JSON.stringify(command));
     assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), true, JSON.stringify(command));
   }

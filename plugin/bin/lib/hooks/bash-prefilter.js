@@ -126,11 +126,15 @@ function shouldRunFull(event, input) {
   // is `git commit` to the parsers; the words are read the same way to stay their superset.
   const command = typed.replace(/\0/g, '');
   // #4281: bash joins a backslash-newline, and so do the parsers, so `g\`+newline+`it commit` is `git
-  // commit`. The word checks read the command with every one removed as well as without: removing
-  // one bash keeps (inside single quotes, after an escaped `\`) only adds words. hasFileRedirection
-  // walks the parser itself, which joins them as bash does.
-  const readings = command.includes('\\\n') ? [command, command.replace(/\\\n/g, '')] : [command];
-  if (readings.some((c) => ASSIGNMENT.test(c) && PARAM_REFERENCE.test(c))) return true;
+  // commit`. The checks read the command both as typed and joined. The joined reading drops a
+  // backslash-newline only where the backslash is unescaped (an odd run of them), as bash does, so
+  // `a\\`+newline+`G=gi` still separates; joining one bash keeps inside single quotes only adds words.
+  // An assignment and a reference may each show in only one reading, so either reading counts for
+  // each. hasFileRedirection walks the parser itself, which joins them as bash does.
+  const readings = command.includes('\\\n')
+    ? [command, command.replace(/(\\+)\n/g, (run, slashes) => (slashes.length % 2 ? slashes.slice(0, -1) : run))]
+    : [command];
+  if (readings.some((c) => ASSIGNMENT.test(c)) && readings.some((c) => PARAM_REFERENCE.test(c))) return true;
   // pre-tool-use only: fileWriteTargets, the sole consumer of redirection
   // targets, never runs in post-tool-use's handler, so checking there would be
   // pure cost.
