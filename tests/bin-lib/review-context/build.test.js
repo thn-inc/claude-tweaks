@@ -11,7 +11,7 @@ const {
   realLsof,
   MAX_BUFFER,
   PER_FILE_CAP_BYTES,
-  TOTAL_BUDGET_BYTES,
+  TOTAL_CAP_BYTES,
   isAlwaysStub,
   isMarkdown,
   elideDiff,
@@ -761,7 +761,7 @@ test('4220: a budget-stubbed section whose chunk was also elided points at the g
 
 test('4220: under the default budget the same diff is untouched', () => {
   const { result, bundle } = buildFrom(makeBudgetRepo());
-  assert.ok(result.bytes < TOTAL_BUDGET_BYTES);
+  assert.ok(result.bytes < TOTAL_CAP_BYTES);
   assert.deepStrictEqual(result.oversizeSections, []);
   assert.strictEqual(sectionOf(bundle, 'a.txt'), budgetLines('a.txt', 8, 'new'));
 });

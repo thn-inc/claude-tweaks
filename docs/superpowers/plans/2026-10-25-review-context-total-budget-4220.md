@@ -17,7 +17,7 @@ Every code and prose block below was run in a scratch mirror before this plan wa
 - Test: `tests/bin-lib/review-context/build.test.js`
 - Test: `tests/bin-lib/review-context/prose.test.js`
 
-- [ ] **Step 1: Failing test** — in `tests/bin-lib/review-context/build.test.js`, add `TOTAL_BUDGET_BYTES,` to the destructured `require('../../../plugin/bin/lib/review-context/build')` list, directly after `PER_FILE_CAP_BYTES,`. Then insert this block immediately before the line `test('CLI: malformed invocations exit 2 with usage', () => {` (covers AC1.1, and AC2.1 — Step 3 disables the budget branch to prove the test goes red):
+- [ ] **Step 1: Failing test** — in `tests/bin-lib/review-context/build.test.js`, add `TOTAL_CAP_BYTES,` to the destructured `require('../../../plugin/bin/lib/review-context/build')` list, directly after `PER_FILE_CAP_BYTES,`. Then insert this block immediately before the line `test('CLI: malformed invocations exit 2 with usage', () => {` (covers AC1.1, and AC2.1 — Step 3 disables the budget branch to prove the test goes red):
 
 ````js
 // --- Total bundle budget (#4220) -------------------------------------------------------
@@ -78,21 +78,21 @@ test('4220: a budget-stubbed section whose chunk was also elided points at the g
 
 test('4220: under the default budget the same diff is untouched', () => {
   const { result, bundle } = buildFrom(makeBudgetRepo());
-  assert.ok(result.bytes < TOTAL_BUDGET_BYTES);
+  assert.ok(result.bytes < TOTAL_CAP_BYTES);
   assert.deepStrictEqual(result.oversizeSections, []);
   assert.strictEqual(sectionOf(bundle, 'a.txt'), budgetLines('a.txt', 8, 'new'));
 });
 
 ````
 
-  In `tests/bin-lib/review-context/prose.test.js`, change the require line to `const { PER_FILE_CAP_BYTES, TOTAL_BUDGET_BYTES } = require('../../../plugin/bin/lib/review-context/build');` and append at the end of the file:
+  In `tests/bin-lib/review-context/prose.test.js`, change the require line to `const { PER_FILE_CAP_BYTES, TOTAL_CAP_BYTES } = require('../../../plugin/bin/lib/review-context/build');` and append at the end of the file:
 
 ````js
 
 test('4220: step3-lens-dispatch.md names the total budget in KB and the per-path git diff read', () => {
   assert.ok(
-    LENS_DISPATCH.includes(`${TOTAL_BUDGET_BYTES / 1024} KB total budget`),
-    `step3-lens-dispatch.md must name the budget as ${TOTAL_BUDGET_BYTES / 1024} KB`,
+    LENS_DISPATCH.includes(`${TOTAL_CAP_BYTES / 1024} KB total budget`),
+    `step3-lens-dispatch.md must name the budget as ${TOTAL_CAP_BYTES / 1024} KB`,
   );
   assert.ok(
     LENS_DISPATCH.includes("read that change with `git diff {base}...{branch} -- '{path}'`, one path per call"),
@@ -176,7 +176,7 @@ const PER_FILE_CAP_BYTES = 64 * 1024;
 // section, not the bundle, and #4028's 129-file review still came to 3 MB, more than any lens
 // agent can read. Over it, buildContext replaces the largest remaining diff chunks and inlined
 // sections, largest first, with the same marker line and one-line stub until the bundle fits.
-const TOTAL_BUDGET_BYTES = 256 * 1024;
+const TOTAL_CAP_BYTES = 256 * 1024;
 
 // Generated files whose content is never worth inlining, matched on basename.
 const ALWAYS_STUB_BASENAMES = new Set([
@@ -306,7 +306,7 @@ function buildContext({
   branch,
   dir,
   filesFrom,
-  budgetBytes = TOTAL_BUDGET_BYTES,
+  budgetBytes = TOTAL_CAP_BYTES,
   git = realGit,
   readFile = fs.readFileSync,
   writeFile = fs.writeFileSync,
@@ -466,7 +466,7 @@ function buildContext({
   };
 }
 
-module.exports = { resolveDir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, TOTAL_BUDGET_BYTES, isAlwaysStub, isMarkdown, elideDiff };
+module.exports = { resolveDir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, TOTAL_CAP_BYTES, isAlwaysStub, isMarkdown, elideDiff };
 ````
 
   In `plugin/skills/review/step3-lens-dispatch.md`, in the paragraph that starts `> A section can legitimately come out empty`, replace `Any other modified file's hunks stay whole, an over-cap modified file included;` with `Any other modified file's hunks stay whole, an over-cap modified file included, unless the total budget in the next note needs them;`. Then, directly after that paragraph (before the `>` line that precedes `> **Pre-dispatch listing (scratch-sweep baseline).**`), insert these two lines:
@@ -476,7 +476,7 @@ module.exports = { resolveDir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_
 > **Over-budget bundle (#4220).** The whole bundle is held to a 256 KB total budget: when the diff and sections together exceed it, the CLI replaces the largest remaining hunks and inlined sections, largest first, with the same marker line and a one-line stub until the bundle fits, and names each in `oversizeSections` — so on a long branch any file's hunk, a modified file's included, can come back as a marker line. Tell each dispatched agent explicitly: for each path in its scope whose hunk the bundle shows as a marker line, read that change with `git diff {base}...{branch} -- '{path}'`, one path per call — never the whole branch diff in one read. This rule goes in the dispatch prompt alongside the scope, outside the byte-identical Calibration/Output-template block below.
 ````
 
-  In `docs/plugin-structure.md`, in the `plugin/bin/lib/review-context/` row, replace ``pre-dispatch-listeners.txt` baselines, #3302). Consumed by`` with ``pre-dispatch-listeners.txt` baselines, #3302; over the 256 KB total budget, `TOTAL_BUDGET_BYTES`, the largest remaining hunks and sections are stubbed first until the bundle fits, #4220). Consumed by``.
+  In `docs/plugin-structure.md`, in the `plugin/bin/lib/review-context/` row, replace ``pre-dispatch-listeners.txt` baselines, #3302). Consumed by`` with ``pre-dispatch-listeners.txt` baselines, #3302; over the 256 KB total budget, `TOTAL_CAP_BYTES`, the largest remaining hunks and sections are stubbed first until the bundle fits, #4220). Consumed by``.
 
 - [ ] **Step 3: Run** `node --test tests/bin-lib/review-context/build.test.js tests/bin-lib/review-context/prose.test.js tests/bin-lib/review-context/exit-code.test.js` — PASS. Then prove the AC1.1 test discriminates (AC2.1): change `if (total > budgetBytes) {` to `if (false && total > budgetBytes) {` in `build.js`, re-run `node --test --test-name-pattern=4220 tests/bin-lib/review-context/build.test.js` and confirm `4220 AC1.1` FAILS, then restore the line and re-run to green. Never commit the disabled line.
 
@@ -487,5 +487,5 @@ module.exports = { resolveDir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_
 ## Self-review
 
 - **Spec coverage:** Deliverable 1 (budget, largest first, `oversizeSections` names every stubbed path) — Step 2 `build.js`; Deliverable 2 (lens agents' per-path `git diff` read) — Step 2 `step3-lens-dispatch.md` note, pinned by the prose test; Deliverable 3 (fixture whose files sum above the budget) — Step 1. AC1.1 — `4220 AC1.1` test; AC2.1 — Step 3's go-red revert.
-- **Return shape:** unchanged — the printed JSON keys are the same eight; only `TOTAL_BUDGET_BYTES` is a new export. No test asserts the module's export list.
+- **Return shape:** unchanged — the printed JSON keys are the same eight; only `TOTAL_CAP_BYTES` is a new export. No test asserts the module's export list.
 - **Placeholders:** none.

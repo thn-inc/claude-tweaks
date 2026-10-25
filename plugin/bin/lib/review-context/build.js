@@ -70,7 +70,9 @@ const PER_FILE_CAP_BYTES = 64 * 1024;
 // section, not the bundle, and #4028's 129-file review still came to 3 MB, more than any lens
 // agent can read. Over it, buildContext replaces the largest remaining diff chunks and inlined
 // sections, largest first, with the same marker line and one-line stub until the bundle fits.
-const TOTAL_BUDGET_BYTES = 256 * 1024;
+// Named `_CAP_` like PER_FILE_CAP_BYTES: tests/skill-size-single-source.test.js reads any
+// `*BUDGET*_BYTES` constant as a skill-size number.
+const TOTAL_CAP_BYTES = 256 * 1024;
 
 // Generated files whose content is never worth inlining, matched on basename.
 const ALWAYS_STUB_BASENAMES = new Set([
@@ -200,7 +202,7 @@ function buildContext({
   branch,
   dir,
   filesFrom,
-  budgetBytes = TOTAL_BUDGET_BYTES,
+  budgetBytes = TOTAL_CAP_BYTES,
   git = realGit,
   readFile = fs.readFileSync,
   writeFile = fs.writeFileSync,
@@ -360,4 +362,4 @@ function buildContext({
   };
 }
 
-module.exports = { resolveDir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, TOTAL_BUDGET_BYTES, isAlwaysStub, isMarkdown, elideDiff };
+module.exports = { resolveDir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, TOTAL_CAP_BYTES, isAlwaysStub, isMarkdown, elideDiff };
