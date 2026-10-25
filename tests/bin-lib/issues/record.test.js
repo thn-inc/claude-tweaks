@@ -608,6 +608,7 @@ test('buildLinkedPRQuery also requests the cross-reference timeline, same-repo P
   assert.match(q, /timelineItems\(itemTypes:\[CROSS_REFERENCED_EVENT\], last:20\)/);
   assert.match(q, /\.\.\. on CrossReferencedEvent \{ source \{ \.\.\. on PullRequest/);
   assert.match(q, /merged mergedAt repository \{ nameWithOwner \}/);
+  assert.match(q, /\.\.\. on PullRequest \{ number title state createdAt merged mergedAt/);
 });
 
 test('buildLinkedPRQuery returns null for an empty array', () => {

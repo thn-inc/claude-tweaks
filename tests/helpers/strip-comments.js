@@ -2,8 +2,8 @@
 const vm = require('node:vm');
 // Shared literal-aware comment stripper for the source-scan conformance tests
 // (#3536, #3585). The tests that call it per file, by test-file stem: `backfill-cli`,
-// `exit-code`, `git-status-optional-locks`, `hooks-harness-refusal`, `path-containment`,
-// `path-guard`, `porcelain-cwd-compare`, `raw-markdown-read`, `staged-id-producers`,
+// `exit-code`, `git-status-optional-locks`, `hooks-harness-refusal`, `owner-pid-probe`,
+// `path-containment`, `path-guard`, `porcelain-cwd-compare`, `raw-markdown-read`, `staged-id-producers`,
 // `subprocess-timing`, `wall-clock-budget` and `windows-hide-spawn`. tests/strip-comments-callers-twin.test.js
 // pins this list to the tree. `raw-markdown-read` and `wall-clock-budget` (#3491) also
 // call it in `literals: 'blank'` mode. Comments are blanked, never deleted:

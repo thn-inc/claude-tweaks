@@ -2,7 +2,7 @@
 
 **Goal:** `plugin/skills/stories/refine.md` step 5a opens `<story.url>` raw; give it the same `resolved_url` rewrite `plugin/skills/test/qa-prompts.md` uses, citing it rather than restating it.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-25T080733-record-4184/work/4184-spec.md` (materialized from GitHub issue #4184)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-25T080733-record-4184/work/4184-spec.md` (materialized from GitHub issue #4184)
 
 ---
 
