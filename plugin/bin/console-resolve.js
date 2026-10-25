@@ -168,8 +168,9 @@ function setItem(o, runDir, { stdout, stderr, now }) {
   }
   if (r.status === 'refused') { stderr(`console-resolve.js: ${r.why} — nothing written\n`); return 5; }
   if (r.status === 'unchanged') { stdout(`console-resolve.js: ${o.setItem} already ${o.resolution} — nothing rewritten\n`); return 0; }
+  const text = `Console item ${o.setItem} (${r.item.section}): rewritten ${r.from} → ${o.resolution} after execution — ${o.reason}`;
   try {
-    appendEntry({ runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text: `Console item ${o.setItem} (${r.item.section}): rewritten ${r.from} → ${o.resolution} after execution — ${o.reason}`, reversibility: 'n/a' }) });
+    appendEntry({ runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text, reversibility: 'n/a' }) });
   } catch (err) {
     stderr(`console-resolve.js: ${o.setItem} rewritten ${r.from} → ${o.resolution} in ${consolePath}, but the decisions.md entry could not be written (${err && err.message ? err.message : err})\n`);
     return 3;
