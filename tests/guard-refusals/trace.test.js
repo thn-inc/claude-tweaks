@@ -89,6 +89,17 @@ test('classifyReason reads each stored refusal verbatim: session, This agent, Ru
   assert.equal(classifyReason(refusal('runs a string through eval, which can\'t be verified to stay inside the worktree', AGENT_FRAME)), 'runs-eval');
 });
 
+// The cut at "Refusing to run": the real session frame with only its tail worktree path changed to one
+// holding reason wording. Read whole, "run them from /Users/me/runs bash/wt." would match bash-construct,
+// which REASON_TABLE tests before too-complex.
+test('classifyReason ignores reason wording in the frame tail after "Refusing to run"', () => {
+  const tail = /run them from [^\n]*\.$/;
+  assert.match(SESSION_FRAME, tail, 'the stored session frame lost its "run them from <WT>." tail');
+  const doctored = SESSION_FRAME.replace(tail, 'run them from /Users/me/runs bash/wt.');
+  assert.notEqual(doctored, SESSION_FRAME);
+  assert.equal(classifyReason(asScanned(doctored)), 'too-complex');
+});
+
 test('classifyReason reads a bare clause, and the empty string as other', () => {
   assert.equal(classifyReason('this command is too complex to verify that it stays inside the worktree'), 'too-complex');
   assert.equal(classifyReason(''), 'other');

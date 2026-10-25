@@ -353,6 +353,14 @@ test('a path-prefixed command word is still the command (absolute and relative n
   assert.deepStrictEqual(detectShapes(`/usr/bin/sed -n '1,2p' "$P/README.md"`), ['sed-var-path']);
   // A longer name ending in the word is not the word.
   assert.deepStrictEqual(detectShapes('/abs/bin/node-eval-file.js "$X"'), []);
+  // Env assignments before a prefixed command word keep it in command position.
+  assert.deepStrictEqual(detectShapes('FOO=1 /usr/local/bin/node "$X/y.js"'), ['node-var-script']);
+});
+
+test('a path ending in a command word is not that command outside command position', () => {
+  assert.deepStrictEqual(detectShapes('cat dir/node "$X/y"'), []);
+  assert.deepStrictEqual(detectShapes(`ls /opt/bin/sed "$P/README.md"`), []);
+  assert.deepStrictEqual(detectShapes('echo a && cat ./bin/node "$X/y"'), []);
 });
 
 // An ANSI-C `$'…'` span closes at its last apostrophe: `\'` inside it is
@@ -378,6 +386,10 @@ test('node-var-script: a quoted reference to a literally assigned name is not fl
   assert.deepStrictEqual(detectShapes('export P=/abs && node "$P/x.js"'), []);
   assert.deepStrictEqual(detectShapes('P=/abs; node "${P}/x.js"'), []);
   assert.deepStrictEqual(detectShapes('Q=/abs/nospace && node $Q/hello.js'), ['node-var-script']);
+  // Order does not matter (live 2026-10-25, #4028 re-review): `node "$P/ct-probe-4028-nonexistent.js";
+  // P=/tmp` ran, with P empty at the reference; the same call with no assignment was refused.
+  assert.deepStrictEqual(detectShapes('node "$P/x.js"; P=/lit'), []);
+  assert.deepStrictEqual(detectShapes('node "$P/x.js"'), ['node-var-script']);
 });
 
 test('sed-var-path: a quoted reference to a literally assigned name is not flagged; an unquoted one is', () => {

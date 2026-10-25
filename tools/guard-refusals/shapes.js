@@ -12,11 +12,15 @@
 
 // A runtime variable reference: $NAME or ${NAME (not $?, $1, $$).
 const VAR = String.raw`\$\{?[A-Za-z_]`;
-// A command word boundary: the word is not part of a flag or longer name, and
-// may carry an absolute or relative path prefix (`/usr/local/bin/node`,
-// `./bin/node`), which runs the same program.
-const PATH_PREFIX = String.raw`(?:[\w.~-]*\/)*`;
-const CMD = String.raw`(?<![\w./-])${PATH_PREFIX}`;
+// A command word boundary: the word is not part of a path, flag or longer name;
+// or, in command position only, the word carries an absolute or relative path
+// prefix (`/usr/local/bin/node`, `./bin/node`), which runs the same program.
+// Command position: text or line start, or after ; & | ( ! (so &&, ||, $( too)
+// or a then/do/else/if/while/until keyword, then optional blanks and NAME=value
+// env assignments. An argument such as `cat dir/node "$X/y"` is not a command.
+const PATH_PREFIX = String.raw`(?:[\w.~-]*\/)+`;
+const CMD_POSITION = String.raw`(?<=(?:^|[\n;&|(!]|\b(?:then|do|else|if|while|until)\s)[ \t]*(?:[A-Za-z_]\w*=[^\s;&|()<>]*[ \t]+)*)`;
+const CMD = String.raw`(?:(?<![\w./-])|${CMD_POSITION}${PATH_PREFIX})`;
 
 // One left-to-right shell-lexing pass: the state of each char of `text`, one of
 // 'plain', 'delim' (a quote char that opens or closes a span), 'single',
@@ -187,8 +191,8 @@ function wholeWord(word) {
 const GH_JQ_PIPE = new RegExp(`${CMD}gh\\s[^\\n]*--jq[\\s=]+(?:'[^']*\\|[^']*'|"[^"]*\\|[^"]*")`);
 const GH_REPO_URL = new RegExp(`${CMD}gh\\s[^\\n]*--repo[\\s=]+["']?(?:https?://)?github\\.com/`);
 const GH_CHAINED_STATUS = new RegExp(`${CMD}gh\\s[^\\n]*?(?:;|&&)[^\\n]*\\$\\?`);
-const GIT_COMMAND = new RegExp(String.raw`(?:^|[\s;&|(])${PATH_PREFIX}git\s+[a-z]`, 'm');
-const GIT_IN_SUBSTITUTION = new RegExp(String.raw`\$\(\s*${PATH_PREFIX}git\s`);
+const GIT_COMMAND = new RegExp(String.raw`(?:(?:^|[\s;&|(])|${CMD_POSITION}${PATH_PREFIX})git\s+[a-z]`, 'm');
+const GIT_IN_SUBSTITUTION = new RegExp(String.raw`\$\(\s*(?:${PATH_PREFIX})?git\s`);
 const NODE_EVAL_SCRIPT_VAR = new RegExp(`${CMD}node\\s+(?:-e|-p|--eval|--print)\\s+"[^"]*${VAR}`);
 // `>file`, `>>file`, and bash's `&>file` / `&>>file` (stdout and stderr).
 const STDOUT_FILE_REDIRECT = /(?:&|(?<![<>&\d]))>>?(?!&)\s*\S/;
@@ -205,7 +209,7 @@ function views(text) {
 // at command position (line start, after ; & | ( !, or after a then/do/else/
 // if/while/until keyword) in `bare`, through the next ; & | ) or line end.
 function commandSegments(bare, word) {
-  const re = new RegExp(`(?:^|[;&|(!]|\\b(?:then|do|else|if|while|until)\\s)[ \\t]*${PATH_PREFIX}${word}(?=[ \\t]|$)`, 'gm');
+  const re = new RegExp(`(?:^|[;&|(!]|\\b(?:then|do|else|if|while|until)\\s)[ \\t]*(?:${PATH_PREFIX})?${word}(?=[ \\t]|$)`, 'gm');
   const out = [];
   for (const m of bare.matchAll(re)) {
     const start = m.index + m[0].length - word.length;
@@ -234,7 +238,13 @@ function operandText(bare, args, start, end) {
 // 4028; do gh issue view "$n" …`, `W="/abs/wt"; git -C "$W" …` and
 // `A=/abs/p.txt; echo digit > "$A"` all ran. A name assigned from `$(…)`,
 // `read` or a glob loop, or never assigned in the call (the environment), is
-// runtime-computed. The gh/git/redirect detectors apply it to every
+// runtime-computed. Order does not matter, by measurement: live 2026-10-25
+// (#4028 re-review), `node "$P/ct-probe-4028-nonexistent.js"; P=/tmp` ran (it
+// hit MODULE_NOT_FOUND for `/ct-probe-4028-nonexistent.js`, so P was empty at
+// the reference) while the same call with no assignment was refused ("runs node
+// with a value computed at runtime (the variable P) …"); the guard resolves a
+// literally assigned name wherever the assignment sits, so do not make this
+// order-sensitive. The gh/git/redirect detectors apply it to every
 // reference; the older sed/node/github-url detectors only to a double-quoted
 // one (literalizeQuotedStatic), since node's script operand refuses an
 // unquoted literal name (`Q=/abs/nospace && node $Q/x.js`).
