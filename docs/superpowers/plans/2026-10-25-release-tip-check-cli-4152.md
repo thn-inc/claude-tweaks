@@ -1,5 +1,7 @@
 # Release reviewed-tip check CLI (#4152) Implementation Plan
 
+> **Superseded in one place (`e836498f8`, the final whole-branch review).** The CLI does not return `held` for an arrived-commit major. It reports `arrived` (the last delta verdict line's `base..tip`) beside every verdict, and `execute.md` takes delta 5's major gate before routing the verdict, so an interactive `Proceed` continues with the same verdict. Where Task 3, Task 5 and the Task 6 prose below say the CLI holds with `re-rendered to a major after the console`, read this note instead; the spec's Build notes record the ruling.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace `/claude-tweaks:release` Step 5's prose reviewed-tip state machine (`plugin/skills/release/execute.md`, "Reviewed-tip comparison" steps 1–4, 3a and step 7's arrived-commit bump derivation) with one unit-tested CLI, `plugin/bin/release-tip-check.js`, that prints one JSON verdict the step routes on.
