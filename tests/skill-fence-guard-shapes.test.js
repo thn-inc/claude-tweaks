@@ -9,9 +9,10 @@
 // is a parameter, so the go-red controls below run the same walk, extraction
 // and match over a temp tree. Four regions are scanned:
 //   1. shell-labelled fences (bash/sh/shell/zsh/console), every detector;
-//   2. unlabelled fences whose first non-blank line starts with a command word,
-//      every detector (shellFences skips unlabelled fences by design, so this
-//      pass makes that blind spot visible);
+//   2. every unlabelled fence, every detector except complete-token (a prose
+//      "complete" in a prompt template or report skeleton is not a command).
+//      shellFences skips unlabelled fences by design; a first-line command-word
+//      filter missed fences that open with a `#` comment or a `recover:` label;
 //   3. unterminated fences (malformed-fence), which would otherwise swallow or
 //      drop the text after them;
 //   4. inline code spans over fence-stripped text, for the retired
@@ -23,8 +24,9 @@
 //   - exempt: permanent, with a reason.
 //   - ratchet: temporary, deferred to a follow-up record (R1, Defer-reason
 //     genuinely-larger). Allowed only under the four detectors added by Task 6b,
-//     plus dispatch/queue-pull-script.md's fence, which needs a bin/ CLI
-//     extraction. A ratchet entry under any other original detector fails.
+//     plus dispatch/queue-pull-script.md's git-in-substitution hit, which needs
+//     a bin/ CLI extraction. A ratchet entry under any other original detector
+//     fails.
 // Every entry must match exactly one live offender: an entry whose site no
 // longer offends fails with "remove this entry", so the list only shrinks.
 
@@ -40,16 +42,18 @@ const { detectShapes } = require('../tools/guard-refusals/shapes');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 
-// Task 9 replaces this with the real follow-up issue number; every ratchet
+// The follow-up record that migrates the ratchet sites (R1); every ratchet
 // entry reads it from here.
-const FOLLOW_UP = 'see the AC1.1/R1 follow-up record (filed by Task 9)';
+const FOLLOW_UP = '#4217';
 
 // The four detectors Task 6b added (two of them widened renames). Ratchet
-// entries are allowed under these only.
+// entries are allowed under these only, plus the one original-detector
+// exception below.
 const NEW_SHAPE_IDS = new Set(['gh-computed-input', 'git-text-redirect-var', 'git-var-operand', 'node-git-text']);
-const RATCHET_ANY_DETECTOR_FILES = new Set(['dispatch/queue-pull-script.md']);
+const RATCHET_ORIGINAL_EXCEPTIONS = [{ file: 'dispatch/queue-pull-script.md', detector: 'git-in-substitution' }];
 
-const SHELL_LOOKING = /^(?:git|gh|node|cd|npm|cat|echo|ls|mkdir|rm|cp|mv|bash|sh)(?=\s|$)/;
+// Detectors not run over unlabelled fences: they fire on prose.
+const PROSE_DETECTORS = new Set(['complete-token']);
 const INLINE_EVAL_SUBST = /(?<![\w./-])eval\s+"?\$\(/;
 
 const ratchet = (file, detector, anchor) => ({ kind: 'ratchet', file, detector, anchor, followUp: FOLLOW_UP });
@@ -76,6 +80,15 @@ const ALLOWLIST = [
     anchor: 'eval "$(…)"',
     reason: 'section 7 row naming the form its passing row replaces, not an instruction to run it',
   },
+  {
+    kind: 'exempt',
+    file: 'help/policy.md',
+    detector: 'git-in-substitution',
+    anchor: 'printf \'%s\\n\' "{key}: {value}" >> "$(git rev-parse --show-toplevel)/.claude-tweaks/policy.yml"',
+    reason: 'a paste-ready block THE USER runs by hand outside the session on a pre-6.86.0 build; the prose states the agent never executes it, so no Claude Bash call carries it',
+  },
+  ratchet('journeys/SKILL.md', 'git-var-operand', 'git -C "$WORKTREE" add docs/journeys/{journey-name}.md'),
+  ratchet('release/execute.md', 'git-var-operand', 'recover: git -C "$RUN_ROOT" pull --rebase origin {branch} && git -C "$RUN_ROOT" push origin {branch}'),
   ratchet('_shared/github-pr-scan-acceptance.md', 'gh-computed-input', 'GAP_NUMS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-acceptanc'),
   ratchet('_shared/github-pr-scan-acceptance.md', 'gh-computed-input', 'SUB_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-sub-iss'),
   ratchet('_shared/github-pr-scan.md', 'gh-computed-input', ': > "$PR_SCAN_UNARMED_LINKS"'),
@@ -160,11 +173,10 @@ function stripFences(text) {
 }
 
 // Every hit under `root`: { file, line, id, text }, file relative to root.
-// fences counts the shell-labelled fences scanned; unlabelledShell counts the
-// unlabelled fences that look like shell and were scanned too.
+// fences counts the shell-labelled fences scanned; unlabelled counts the
+// unlabelled fences, all of which are scanned too.
 function scanRoot(root) {
   let fences = 0;
-  let unlabelledShell = 0;
   let unlabelled = 0;
   const hits = [];
   for (const abs of walkMarkdown(root)) {
@@ -177,11 +189,10 @@ function scanRoot(root) {
     for (const f of scanFences(text)) {
       if (f.lang !== '') continue;
       unlabelled++;
-      const first = (f.body.find((l) => l.trim()) || '').trim();
-      if (!SHELL_LOOKING.test(first)) continue;
-      unlabelledShell++;
       const body = f.body.join('\n');
-      for (const id of detectShapes(body)) hits.push({ file, line: f.line, id, text: body });
+      for (const id of detectShapes(body)) {
+        if (!PROSE_DETECTORS.has(id)) hits.push({ file, line: f.line, id, text: body });
+      }
     }
     for (const line of malformedFences(text)) hits.push({ file, line, id: 'malformed-fence', text: '' });
     stripFences(text).forEach((l, i) => {
@@ -190,7 +201,7 @@ function scanRoot(root) {
       }
     });
   }
-  return { fences, unlabelled, unlabelledShell, hits, offenders: hits.map((h) => `${h.file}:${h.line} ${h.id}`) };
+  return { fences, unlabelled, hits, offenders: hits.map((h) => `${h.file}:${h.line} ${h.id}`) };
 }
 
 // Subtract the allowlist. offenders: hits no entry covers. stale: entries that
@@ -216,7 +227,8 @@ function badEntries(allowlist) {
       if (!e.reason) out.push(`${key}: exempt entry without a reason`);
     } else if (e.kind === 'ratchet') {
       if (e.followUp !== FOLLOW_UP) out.push(`${key}: ratchet entry must cite FOLLOW_UP`);
-      if (!NEW_SHAPE_IDS.has(e.detector) && !RATCHET_ANY_DETECTOR_FILES.has(e.file)) out.push(`${key}: ratchet entry under an original detector`);
+      const excepted = RATCHET_ORIGINAL_EXCEPTIONS.some((x) => x.file === e.file && x.detector === e.detector);
+      if (!NEW_SHAPE_IDS.has(e.detector) && !excepted) out.push(`${key}: ratchet entry under an original detector`);
     } else out.push(`${key}: unknown kind ${e.kind}`);
     if (!e.anchor) out.push(`${key}: no content anchor`);
   }
@@ -256,22 +268,36 @@ test('AC2.2: no shell fence under plugin/skills carries a known-refused shape', 
   assert.ok(covered > 0 && covered === ALLOWLIST.length, `allowlist matched ${covered} of ${ALLOWLIST.length} entries`);
 });
 
-test('allowlist classes: exempt entries carry a reason, ratchet entries cite the follow-up and sit only under the Task 6b detectors or queue-pull-script', () => {
+test('allowlist classes: exempt entries carry a reason, ratchet entries cite the follow-up and sit only under the Task 6b detectors or queue-pull-script\'s git-in-substitution', () => {
+  assert.match(FOLLOW_UP, /^#\d+$/, 'FOLLOW_UP must name the follow-up record by number');
   assert.deepEqual(badEntries(ALLOWLIST), []);
   // Go-red: a ratchet entry under an original detector, and one with its own follow-up text.
   assert.deepEqual(badEntries([ratchet('backlog/x.md', 'eval-token', 'a')]), ['backlog/x.md eval-token: ratchet entry under an original detector']);
+  // queue-pull-script's exception covers git-in-substitution only, not every original detector.
+  assert.deepEqual(badEntries([ratchet('dispatch/queue-pull-script.md', 'git-in-substitution', 'a')]), []);
+  assert.deepEqual(badEntries([ratchet('dispatch/queue-pull-script.md', 'eval-token', 'a')]), ['dispatch/queue-pull-script.md eval-token: ratchet entry under an original detector']);
   assert.deepEqual(badEntries([{ ...ratchet('backlog/x.md', 'git-var-operand', 'a'), followUp: 'later' }]), ['backlog/x.md git-var-operand: ratchet entry must cite FOLLOW_UP']);
   assert.deepEqual(badEntries([{ kind: 'exempt', file: 'x.md', detector: 'eval-token', anchor: 'a' }]), ['x.md eval-token: exempt entry without a reason']);
 });
 
-test('the scan sees a planted offender in a nested, blockquoted, CRLF fence (walker + extractor + matcher)', () => {
+test('the scan sees a planted offender in a nested, blockquoted, CRLF fence and an indented list-nested one (walker + extractor + matcher)', () => {
   const planted = ['# Nested', '', 'Prose.', '', ...PRE_CHANGE_EVAL_FENCE.split('\n').map((l) => `> ${l}`), ''].join('\n').replace(/\n/g, '\r\n');
+  const listed = ['# Steps', '', '1. Check the tree:', '', '   ```bash', '   git -C "$W" status --short', '   ```', ''].join('\n');
   const result = withTree({
     'clean.md': ['```bash', 'git status --short', '```', ''].join('\n'),
     'a/b/nested.md': planted,
+    'a/list.md': listed,
   }, scanRoot);
-  assert.equal(result.fences, 2);
-  assert.deepEqual(result.offenders, ['a/b/nested.md:5 eval-token']);
+  assert.equal(result.fences, 3);
+  assert.deepEqual(result.offenders, ['a/b/nested.md:5 eval-token', 'a/list.md:5 git-var-operand']);
+});
+
+test('scanFences reads raw CRLF text directly, without readText normalizing it first', () => {
+  const crlf = ['# Nested', '', ...PRE_CHANGE_EVAL_FENCE.split('\n').map((l) => `> ${l}`), ''].join('\r\n');
+  assert.ok(crlf.includes('\r\n'));
+  assert.deepEqual(scanFences(crlf).map((f) => ({ line: f.line, lang: f.lang, closed: f.closed, body: f.body })), [
+    { line: 3, lang: 'bash', closed: true, body: [PRE_CHANGE_EVAL_FENCE.split('\n')[1]] },
+  ]);
 });
 
 test('an unterminated fence is an offender, never passed silently', () => {
@@ -279,21 +305,28 @@ test('an unterminated fence is an offender, never passed silently', () => {
   assert.deepEqual(result.offenders, ['x.md:2 malformed-fence']);
 });
 
-test('an unlabelled fence that starts with a command word is scanned; one that starts with prose is not', () => {
-  const body = 'git tag v1 $(git log -1 --format=%H)';
+test('every unlabelled fence is scanned, whatever its first line; complete-token is not run over them', () => {
   const result = withTree({
-    'x.md': ['```', body, '```', '', '```', `Example: ${body}`, '```', ''].join('\n'),
+    'x.md': [
+      '```', 'git tag v1 $(git log -1 --format=%H)', '```', '', //                 1: command word first
+      '```', '# Preferred when $W is set:', 'git -C "$W" add f.md', '```', '', //  5: comment first
+      '```', 'recover: git -C "$R" pull origin main && git -C "$R" push origin main', '```', '', // 10: label first
+      '```', 'Task scope: report DONE when complete', '```', '', //                14: prose "complete"
+    ].join('\n'),
   }, scanRoot);
-  assert.equal(result.unlabelled, 2);
-  assert.equal(result.unlabelledShell, 1);
-  assert.deepEqual(result.offenders, ['x.md:1 git-in-substitution', 'x.md:1 git-var-operand']);
+  assert.equal(result.unlabelled, 4);
+  assert.deepEqual(result.offenders, [
+    'x.md:1 git-in-substitution', 'x.md:1 git-var-operand',
+    'x.md:5 git-var-operand',
+    'x.md:10 git-var-operand',
+  ]);
 });
 
-test('live unlabelled fences: the shell-looking ones are counted and scanned', (t) => {
+test('live unlabelled fences are counted and scanned', (t) => {
   const scan = live();
   assert.ok(scan.unlabelled > 0, 'no unlabelled fences found: the extractor regressed');
-  assert.ok(scan.unlabelledShell > 0, 'no shell-looking unlabelled fence found: the command-word filter regressed');
-  t.diagnostic(`unlabelled fences: ${scan.unlabelled}; shell-looking: ${scan.unlabelledShell}`);
+  const hits = scan.hits.filter((h) => scanFences(readText(path.join(SKILLS, h.file))).some((f) => f.lang === '' && f.line === h.line));
+  t.diagnostic(`unlabelled fences: ${scan.unlabelled}; detector hits among them: ${hits.length}`);
 });
 
 test('an inline code span carrying eval "$( is an offender', () => {
