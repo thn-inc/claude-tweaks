@@ -4,7 +4,7 @@
 
 **Goal:** A pr-first merge never closes a record the run deliberately left open (a deferred or not-run `Refs #N` record, or any stray issue a closing-keyword phrase names), and `decisions.md` records whether the link was removed before the merge or the record was reopened after it.
 
-**Architecture:** One pure module (`plugin/bin/lib/flow/closing-links.js`) finds and neutralizes GitHub closing-keyword phrases and reads the PR body's fixes span. One CLI (`plugin/bin/closing-links.js`) on `bin/pr-checklist.js`'s exit vocabulary runs it against the live PR in two modes. `pre-merge` reads `closingIssuesReferences`, wraps every unwanted keyword phrase in a code span, writes the body, re-reads, and logs `unlinked` or `still linked`. `post-merge` reopens any keep-open record the merge closed and logs `reopened`. `composeFixesBlock` neutralizes keyword phrases in the reasons it writes, and three `_shared` files wire the CLI in.
+**Architecture:** One pure module (`plugin/bin/lib/flow/closing-links.js`) finds and neutralizes GitHub closing-keyword phrases and reads the PR body's fixes span. One CLI (`plugin/bin/closing-links.js`) on `bin/pr-checklist.js`'s exit vocabulary runs it against the live PR in two modes. `pre-merge` reads `closingIssuesReferences`, rewrites every unwanted keyword phrase to `{keyword} issue {ref}` (which GitHub never links), writes the body, re-reads, and logs `unlinked` or `still linked`. `post-merge` reopens any keep-open record the merge closed and logs `reopened`. `composeFixesBlock` neutralizes keyword phrases in the reasons it writes, and three `_shared` files wire the CLI in.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, `gh` CLI through an injected `deps.gh(args, input)` runner.
 
@@ -23,8 +23,11 @@ The record assumes GitHub keeps the closing link it made when the PR was opened 
 | `This change resolves thn-inc/claude-tweaks#4233 in a later pass.` | `[4233]` |
 | `Fixed: https://github.com/thn-inc/claude-tweaks/issues/4233` | `[4233]` |
 | plain-Refs body, `Fixes #4233` only in a branch commit's message | `[]` |
+| `…the reconcile pass that closes (#4233) is pending…` | `[4233]` |
+| `…the reconcile pass that closes issue #4233 is pending…` | `[]` |
+| `resolves issue thn-inc/claude-tweaks#4233` + `Fixed: issue https://…/issues/4233` + `Fixes: issue #4233` | `[]` |
 
-GitHub re-derives the link from the current body on every edit. PR #4144 closed #2724 because its body said "closes #2724" twice: in the Spec summary ("…the reconcile pass that closes #2724 still need the main checkout…") and inside the deferred reason itself ("Refs #2724 — deferred: Part B close/archive and the reconcile pass that closes #2724 via resolveResidue…"). Deliverable 2's Refs-at-open alternative is therefore unnecessary. Deliverable 1's check is the fix, and wrapping a phrase in a code span is the unlink mechanism.
+GitHub re-derives the link from the current body on every edit. PR #4144 closed #2724 because its body said "closes #2724" twice: in the Spec summary ("…the reconcile pass that closes #2724 still need the main checkout…") and inside the deferred reason itself ("Refs #2724 — deferred: Part B close/archive and the reconcile pass that closes #2724 via resolveResidue…"). Deliverable 2's Refs-at-open alternative is therefore unnecessary. Deliverable 1's check is the fix. The unlink mechanism is inserting `issue ` between the keyword and the reference (rows 8-10). Wrapping the phrase in a code span (row 4) also unlinks it, but it was dropped during Task 1. A stray backtick elsewhere in the block can re-pair with the wrapper, and modelling that correctly needs a CommonMark block parser, which three review rounds kept finding gaps in.
 
 Merging into the published integration branch closes issues through two channels. One is `closingIssuesReferences`, from the PR body. The other is the squash commit's own message, which `compose-subject.js` writes with one `Fixes #n` per number it is given. The pre-merge check covers the first channel. The post-merge reopen covers both.
 
@@ -32,8 +35,8 @@ Merging into the published integration branch closes issues through two channels
 
 - Closing keywords are `CLOSING_KEYWORD_ALTERNATION` from `plugin/bin/lib/issue-branch-tracking.js` (`(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)`). Import it; never retype the set.
 - Keyword grammar: word boundary before the keyword, case-insensitive, optional `:`, then `[ \t]+` (never `\s+`, so `Fixes\n#5` does not match), then one reference: `#N`, `owner/repo#N`, or `http(s)://host/owner/repo/issues/N`.
-- A phrase inside an inline code span or a fenced code block is not a link. GitHub ignores it (probe row 4), so the matcher skips it, which also makes neutralization idempotent.
-- Neutralize = wrap the matched phrase, from keyword through reference, in single backticks. Every other byte of the body stays identical (CRLF included).
+- No markdown masking (SDD ruling, Task 1 redesign). The matcher reports every keyword phrase, including one inside code. That is a superset of what GitHub links, which is the safe direction.
+- Neutralize = insert the literal word `issue ` between the keyword's colon or whitespace and the reference, so `closes #2724` becomes `closes issue #2724`, `Fixes: #5` becomes `Fixes: issue #5`, and `Fixed: https://…/issues/N` becomes `Fixed: issue https://…/issues/N`. GitHub links none of these (probe rows 8-10). The matcher never matches the result, so neutralization is idempotent by construction. Every other byte of the body stays identical (CRLF included).
 - Every real `execFileSync` call passes `windowsHide: true` and `timeout: GH_TIMEOUT_MS` (import from `plugin/bin/lib/shared-primitives.js`) in the call's own options literal (`tests/windows-hide-spawn-conformance.test.js`). The `gh` dep forwards `input` with `stdio: ['pipe','pipe','pipe']`, as `bin/pr-checklist.js` does.
 - `require.main === module` sets `process.exitCode`, never `process.exit` (`tests/bin-lib/exit-code-conformance.test.js`).
 - Exit vocabulary copies `bin/pr-checklist.js`: 0 done or status-as-data, 2 malformed invocation, 3 run dir missing or not anchored under the main checkout (`lib/log-decision/append.js`'s `resolveTarget`), 4 run-marker mismatch (pre-merge only, nothing written), 5 a required `gh` read or the body edit failed.
@@ -61,8 +64,8 @@ Merging into the published integration branch closes issues through two channels
 
 **Interfaces:**
 - Produces (exact exports of `plugin/bin/lib/flow/closing-links.js`):
-  - `findClosingRefs(text: string, { owner?: string, repo?: string } = {}) -> Array<{ number: number, start: number, end: number, phrase: string }>`: every closing-keyword phrase outside code, in document order. `start`/`end` are string offsets of the phrase (keyword through reference). With `owner`/`repo` given, `owner/repo#N` and URL forms count only when owner and repo match case-insensitively. A bare `#N` always counts. With neither given, every form counts.
-  - `neutralizeClosingPhrases(text: string, { targets = null, owner, repo } = {}) -> { text: string, neutralized: Array<{ number: number, phrase: string }> }`: wraps each `findClosingRefs` phrase whose `number` is in `targets` (or every phrase when `targets` is `null`) in backticks.
+  - `findClosingRefs(text: string, { owner?: string, repo?: string } = {}) -> Array<{ number: number, start: number, end: number, phrase: string }>`: every closing-keyword phrase in document order, including any inside code (no masking, per the Task 1 redesign ruling). `start`/`end` are string offsets of the phrase (keyword through reference). With `owner`/`repo` given, `owner/repo#N` and URL forms count only when owner and repo match case-insensitively. A bare `#N` always counts. With neither given, every form counts.
+  - `neutralizeClosingPhrases(text: string, { targets = null, owner, repo } = {}) -> { text: string, neutralized: Array<{ number: number, phrase: string }> }`: inserts `issue ` before the reference of each `findClosingRefs` phrase whose `number` is in `targets` (or of every phrase when `targets` is `null`).
   - `parseFixesSpan(body: string) -> { found: boolean, fixes: number[], refs: number[] }`: reads the lines between the first marker pair that has both ends, `[claude-tweaks-fixes-start]`/`[claude-tweaks-fixes-end]` or `<!-- fixes-start -->`/`<!-- fixes-end -->`. Lines matching `^Fixes #(\d+)\s*$` go to `fixes`, lines matching `^Refs #(\d+)\b` go to `refs` (trim `\r` first). With no pair, the result is `{found:false, fixes:[], refs:[]}`.
   - `prRepoFromUrl(url: string) -> { host: string, owner: string, repo: string } | null`, parsed from `https://{host}/{owner}/{repo}/pull/{n}`.
   - `sameRepoNumbers(refs: Array<{number, repository?: {name, owner?: {login}}}>, { owner, repo }) -> number[]`: the numbers of the `closingIssuesReferences` entries whose repository matches case-insensitively (an entry with no repository counts as not matching), ascending, deduplicated.
@@ -87,7 +90,7 @@ Merging into the published integration branch closes issues through two channels
 
 - [ ] **Step 3: Run to verify they fail.** Run: `node --test tests/bin-lib/flow/closing-links.test.js tests/bin-lib/flow/manifest.test.js`. Expected: FAIL, with `Cannot find module '../../../plugin/bin/lib/flow/closing-links'` (or the repo's equivalent relative path) and the new manifest case failing on the unwrapped phrase.
 
-- [ ] **Step 4: Implement.** Build one regex from `CLOSING_KEYWORD_ALTERNATION` (flags `gi`; iterate with `matchAll`, never `.test()` on a shared global instance). Compute masked ranges before matching. Fenced blocks are lines whose trimmed start is ```` ``` ```` or `~~~`, toggling. Inline code spans are a backtick run closed by the next run of equal length on the same line. A match whose `start` falls inside a masked range is dropped. Apply replacements right-to-left so earlier offsets stay valid. The module header comment states what each export is for, cites the probe table in this plan by PR number (#4234), and states that the module does no I/O.
+- [ ] **Step 4: Implement.** Build one regex from `CLOSING_KEYWORD_ALTERNATION` (flags `gi`; iterate with `matchAll`, never `.test()` on a shared global instance). No masking: insert `issue ` at each targeted phrase's reference offset (Task 1 redesign ruling). Apply replacements right-to-left so earlier offsets stay valid. The module header comment states what each export is for, cites the probe table in this plan by PR number (#4234), and states that the module does no I/O.
 
 - [ ] **Step 5: Run to verify they pass.** Run: `node --test tests/bin-lib/flow/closing-links.test.js tests/bin-lib/flow/manifest.test.js tests/deferred-closure-fixes-2686.test.js tests/bundle-fixes-reconciliation-2015.test.js`. Expected: all pass (the last two are existing `composeFixesBlock` consumers and their reasons carry no keyword).
 
@@ -183,8 +186,8 @@ Text to add (exact):
    body, not only the `Fixes` lines, and re-derives the links on every edit (probe PR #4234), so a
    reason or summary reading "closes #{n}" re-links a `Refs` record. Run `node
    "${CLAUDE_PLUGIN_ROOT}/bin/closing-links.js" --run "{run-dir}" --mode pre-merge`: it reads
-   `closingIssuesReferences`, wraps every phrase naming a record outside the `Fixes` lines in a code
-   span, writes the body, re-reads, and logs `unlinked #{n}` or `#{n} still linked` to `decisions.md`.
+   `closingIssuesReferences`, rewrites every phrase naming a record outside the `Fixes` lines to
+   `closes issue #{n}` (GitHub links no such phrase), writes the body, re-reads, and logs `unlinked #{n}` or `#{n} still linked` to `decisions.md`.
    A `still-linked` result is left for `pr-first-merge-post-merge.md`'s Step 4.0. Exit 4 or 5:
    warn and proceed (Step 4.0 is the backstop). `gh-absent`: one `SKIP` line, per "Merge-time
    gh-absent degrade" below.
@@ -213,9 +216,9 @@ then continue to Step 4.1.
 `pr-early-run-lifecycle.md`, after "…stays unconditional.":
 
 ```markdown
-`{reason}` may name the record freely: `composeFixesBlock` wraps any closing-keyword phrase in it
-("closes #{n}") in a code span, since GitHub links such a phrase anywhere in the body and re-derives
-every link on each edit (probe PR #4234, #4199; PR #4144 closed #2724 through one in its reason).
+`{reason}` may name the record freely: `composeFixesBlock` rewrites any closing-keyword phrase in it
+("closes #{n}" to "closes issue #{n}"), since GitHub links such a phrase anywhere in the body and
+re-derives every link on each edit (probe PR #4234, #4199; PR #4144 closed #2724 through one in its reason).
 For the same reason the `Fixes` lines composed at run start never need to be withheld up front. The
 pre-merge check in `_shared/pr-checklist-refresh.md` (`bin/closing-links.js`) catches a phrase
 anywhere else in the body.
@@ -224,7 +227,7 @@ anywhere else in the body.
 - [ ] **Step 1: Write the failing test** `tests/closing-links-prose-conformance.test.js` (read live skill prose, per the repo's prose-test convention). Factor one `assertWiring(text, file)` function per file and call it from both the positive test and a go-red control that runs it on the text with the added block removed and expects a throw:
   - `AC2.1 pre-merge refresh runs closing-links after the Fixes rewrite`: in `pr-checklist-refresh.md`, the index of `bin/closing-links.js" --run "{run-dir}" --mode pre-merge` is greater than the index of `rewrote Fixes block for PR #` and less than the index of `3. Read the record's current title`, and the match lies inside the `<!-- when: integration-model=pr-first -->` fence.
   - `AC2.1 post-merge Step 4.0 runs before release-status and reconcile`: in `pr-first-merge-post-merge.md`, `### Step 4.0` and `--mode post-merge` both appear before `### Step 4.1`.
-  - `deferred-closure section states the keyword neutralization`: `pr-early-run-lifecycle.md` contains `composeFixesBlock` wraps any closing-keyword phrase and `probe PR #4234`.
+  - `deferred-closure section states the keyword neutralization`: `pr-early-run-lifecycle.md` contains `composeFixesBlock` rewrites any closing-keyword phrase and `probe PR #4234`.
   - `go-red controls`: each `assertWiring` throws on its file's text with the added block sliced out.
 
 - [ ] **Step 2: Run to verify it fails.** Run: `node --test tests/closing-links-prose-conformance.test.js`. Expected: FAIL on the missing `closing-links.js` literal in all three files.
