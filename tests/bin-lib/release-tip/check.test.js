@@ -1,0 +1,316 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const {
+  checkReviewedTip, MAX_ADVANCES, REVIEWED_TIP_RE, movedLineRe,
+} = require('../../../plugin/bin/lib/release-tip/check.js');
+const { originWithTwoClones } = require('../../helpers/git-fixtures.js');
+
+const BRANCH = 'main';
+const VERDICT_KEYS = [
+  'verdict', 'reason', 'detail', 'branch', 'reviewedTip', 'step3Tip', 'tipSha', 'commits',
+  'move', 'bound', 'source', 'advanced', 'arrived', 'arrivedLog',
+].sort();
+
+const runner = (cwd, env) => (args) => spawnSync('git', args, { cwd, env, encoding: 'utf8', windowsHide: true });
+
+const step3Line = (tip) => `- AUTO 10:00:00 — Step 3: whole-branch review starting, base v1.0.0..main at reviewed tip ${tip}; ## /review marker: 0 existing lines. Reversibility: n/a (marker).`;
+const deltaMarker = (n, of) => `- AUTO 10:10:00 — Step 5: origin/main moved aaaaaaa → bbbbbbb (1 commits) before the merge — move ${n} of ${of}; delta review starting, base ${'c'.repeat(40)}..main; ## /review marker: 3 existing lines. Reversibility: n/a (marker). [lever: release-tip-moves=${of} (default)]`;
+const deltaVerdict = (tip) => `- AUTO 10:20:00 — Step 5: delta review base ${'c'.repeat(40)}..main: review: clean. Findings staged at none; at reviewed tip ${tip}. Reversibility: n/a (gate evaluation).`;
+const decisions = (lines) => ['# Decisions', '', '## /release', ...lines, ''].join('\n');
+
+const boundOf = (value, source = 'default', extra = {}) => ({
+  status: 0, stdout: JSON.stringify({ 'release-tip-moves': { value, source, ...extra } }), stderr: '',
+});
+
+function withFixture(fn) {
+  const fx = originWithTwoClones('release-tip-check-');
+  try {
+    return fn(fx);
+  } finally {
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+}
+
+const originTip = (fx) => runner(fx.work, fx.env)(['rev-parse', `origin/${BRANCH}`]).stdout.trim();
+
+function commitMsg(fx, cwd, name, msg) {
+  fs.writeFileSync(path.join(cwd, name), msg);
+  fx.run(cwd, ['add', name]);
+  fx.run(cwd, ['commit', '-q', '-m', msg]);
+}
+
+function pushUpstream(fx) {
+  fx.commit(fx.other, 'upstream.txt');
+  fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
+}
+
+function pushRunDirUpstream(fx) {
+  const dir = path.join(fx.other, '.claude-tweaks', 'pipelines', 'archive', 'r2');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'y.md'), 'upstream archive\n');
+  fx.run(fx.other, ['add', '.claude-tweaks/pipelines']);
+  fx.run(fx.other, ['commit', '-q', '-m', '[reconcile] archive run r2']);
+  fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
+}
+
+function check(fx, { decisionsText, bound = boundOf(2), asGiven = false, git } = {}) {
+  const logged = [];
+  const v = checkReviewedTip(
+    { decisionsText, branch: BRANCH, asGiven, preMajor: false },
+    { git: git || runner(fx.work, fx.env), resolveBound: () => bound, appendLog: (t) => logged.push(t) },
+  );
+  assert.deepStrictEqual(Object.keys(v).sort(), VERDICT_KEYS, 'a verdict always carries every key');
+  return { v, logged };
+}
+
+test('MAX_ADVANCES is 20', () => {
+  assert.strictEqual(MAX_ADVANCES, 20);
+});
+
+test('unmoved origin → merge', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    const { v, logged } = check(fx, { decisionsText: decisions([step3Line(tip)]) });
+    assert.strictEqual(v.verdict, 'merge');
+    assert.strictEqual(v.tipSha, v.reviewedTip);
+    assert.strictEqual(v.tipSha, tip);
+    assert.strictEqual(v.step3Tip, tip);
+    assert.deepStrictEqual(v.advanced, []);
+    assert.strictEqual(v.arrived, null);
+    assert.strictEqual(logged.length, 0);
+  });
+});
+
+test('code move within the bound → delta, move 1 of 2', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    pushUpstream(fx);
+    const { v } = check(fx, { decisionsText: decisions([step3Line(tip)]) });
+    const newTip = originTip(fx);
+    assert.strictEqual(v.verdict, 'delta');
+    assert.strictEqual(v.move, 1);
+    assert.strictEqual(v.bound, 2);
+    assert.strictEqual(v.source, 'default');
+    assert.strictEqual(v.commits, 1);
+    assert.notStrictEqual(newTip, tip);
+    assert.strictEqual(v.tipSha, newTip);
+    assert.strictEqual(v.reviewedTip, tip);
+  });
+});
+
+test('run-dir-only move advances, logs, and re-compares to merge', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    pushRunDirUpstream(fx);
+    const { v, logged } = check(fx, { decisionsText: decisions([step3Line(tip)]) });
+    const newTip = originTip(fx);
+    assert.strictEqual(v.verdict, 'merge');
+    assert.strictEqual(v.advanced.length, 1);
+    assert.deepStrictEqual(v.advanced[0], { from: tip, to: newTip, commits: 1 });
+    assert.strictEqual(v.reviewedTip, newTip);
+    assert.strictEqual(v.tipSha, newTip);
+    assert.strictEqual(logged.length, 1);
+    const m = REVIEWED_TIP_RE.exec(logged[0]);
+    assert.ok(m, `the advance line must record a reviewed tip: ${logged[0]}`);
+    assert.strictEqual(m[1], newTip);
+    assert.ok(!movedLineRe(BRANCH).test(logged[0]), 'an advance is never a counted move');
+  });
+});
+
+test('run-dir-only then code move → delta from the advanced tip', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    pushRunDirUpstream(fx);
+    const inner = runner(fx.work, fx.env);
+    let pushed = false;
+    // A sibling's code commit lands after the run-dir-only advance was taken.
+    const git = (args) => {
+      const r = inner(args);
+      if (args[0] === 'diff' && r.status === 0 && !pushed) {
+        pushed = true;
+        pushUpstream(fx);
+      }
+      return r;
+    };
+    const { v, logged } = check(fx, { decisionsText: decisions([step3Line(tip)]), git });
+    assert.ok(pushed, 'fixture must have taken the run-dir-only advance');
+    assert.strictEqual(v.verdict, 'delta');
+    assert.strictEqual(v.advanced.length, 1);
+    assert.strictEqual(logged.length, 1);
+    const advancedTip = v.advanced[0].to;
+    assert.strictEqual(v.reviewedTip, advancedTip);
+    assert.strictEqual(v.tipSha, originTip(fx));
+    assert.strictEqual(v.commits, 1, 'the delta is counted from the advanced tip');
+    assert.strictEqual(v.move, 1);
+  });
+});
+
+test('bound exceeded → held, integration branch kept moving', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    pushUpstream(fx);
+    const { v } = check(fx, { decisionsText: decisions([step3Line(tip), deltaMarker(1, 2), deltaMarker(2, 2)]) });
+    assert.strictEqual(v.verdict, 'held');
+    assert.strictEqual(v.reason, 'integration branch kept moving');
+    assert.strictEqual(v.move, 3);
+    assert.strictEqual(v.bound, 2);
+    assert.match(v.arrivedLog, /upstream\.txt/);
+  });
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    pushUpstream(fx);
+    const { v } = check(fx, { decisionsText: decisions([step3Line(tip)]), bound: boundOf(0, 'policy') });
+    assert.strictEqual(v.verdict, 'held', 'bound 0 holds on the first move');
+    assert.strictEqual(v.move, 1);
+    assert.strictEqual(v.bound, 0);
+    assert.strictEqual(v.source, 'policy');
+  });
+});
+
+test('bound equal to move is not exceeded', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    pushUpstream(fx);
+    const { v } = check(fx, { decisionsText: decisions([step3Line(tip)]), bound: boundOf(1) });
+    assert.strictEqual(v.verdict, 'delta');
+    assert.strictEqual(v.move, 1);
+    assert.strictEqual(v.bound, 1);
+  });
+});
+
+test('unreadable lever → failed', () => {
+  const cases = [
+    ['non-zero exit', { status: 1, stdout: '', stderr: 'boom' }],
+    ['not JSON', { status: 0, stdout: 'nope', stderr: '' }],
+    ['invalid: true', boundOf(2, 'policy', { invalid: true })],
+    ['negative', boundOf(-1)],
+    ['fractional', boundOf(1.5)],
+  ];
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    pushUpstream(fx);
+    for (const [name, bound] of cases) {
+      const { v } = check(fx, { decisionsText: decisions([step3Line(tip)]), bound });
+      assert.strictEqual(v.verdict, 'failed', name);
+      assert.strictEqual(v.reason, 'release-tip-moves unreadable', name);
+      assert.strictEqual(v.bound, null, name);
+    }
+  });
+});
+
+test('no reviewed tip → failed, and no git call runs', () => {
+  const git = () => { throw new Error('git must not run'); };
+  const texts = [
+    decisions(['- AUTO 09:00:00 — Step 1: preflight read. Reversibility: n/a.']),
+    decisions([deltaVerdict('d'.repeat(40))]), // a tip, but no Step 3 marker
+    '# Decisions\n',
+  ];
+  for (const decisionsText of texts) {
+    const { v } = check(null, { decisionsText, git });
+    assert.strictEqual(v.verdict, 'failed');
+    assert.strictEqual(v.reason, 'no reviewed tip recorded');
+  }
+});
+
+test('fetch failure → failed with stderr', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    fx.run(fx.work, ['remote', 'set-url', 'origin', path.join(fx.root, 'missing.git')]);
+    const { v } = check(fx, { decisionsText: decisions([step3Line(tip)]) });
+    assert.strictEqual(v.verdict, 'failed');
+    assert.strictEqual(v.reason, 'fetch failed');
+    assert.ok(typeof v.detail === 'string' && v.detail.trim() !== '', 'git stderr must be carried verbatim');
+  });
+});
+
+// Step 3 reviewed `base`; a delta then reviewed a commit `other` pushed with
+// `msg`, which `work` has fetched.
+function arrivedAfterDelta(fx, msg) {
+  const base = originTip(fx);
+  commitMsg(fx, fx.other, 'arrived.txt', msg);
+  fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
+  fx.run(fx.work, ['fetch', '-q', 'origin']);
+  const arrivedTip = originTip(fx);
+  assert.notStrictEqual(arrivedTip, base);
+  return {
+    base, arrivedTip,
+    decisionsText: decisions([step3Line(base), deltaMarker(1, 2), deltaVerdict(arrivedTip)]),
+  };
+}
+
+test('arrived major after a delta → held', () => {
+  withFixture((fx) => {
+    const { base, arrivedTip, decisionsText } = arrivedAfterDelta(fx, 'feat!: y');
+    const { v } = check(fx, { decisionsText });
+    assert.strictEqual(v.verdict, 'held');
+    assert.strictEqual(v.reason, 're-rendered to a major after the console');
+    assert.strictEqual(v.arrived.part, 'major');
+    assert.strictEqual(v.arrived.base, base);
+    assert.strictEqual(v.arrived.tip, arrivedTip);
+    assert.strictEqual(v.step3Tip, base);
+    assert.strictEqual(v.reviewedTip, arrivedTip);
+  });
+});
+
+test('asGiven exempts the arrived major', () => {
+  withFixture((fx) => {
+    const { decisionsText } = arrivedAfterDelta(fx, 'feat!: y');
+    const { v } = check(fx, { decisionsText, asGiven: true });
+    assert.strictEqual(v.verdict, 'merge');
+    assert.strictEqual(v.arrived, null);
+  });
+});
+
+test('chore-only arrived range is none and does not hold', () => {
+  withFixture((fx) => {
+    const { decisionsText } = arrivedAfterDelta(fx, 'chore: x');
+    const { v } = check(fx, { decisionsText });
+    assert.strictEqual(v.verdict, 'merge');
+    assert.strictEqual(v.arrived.part, 'none');
+  });
+});
+
+test('an unresolvable Step 3 tip → failed, git error with stderr', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    const { v } = check(fx, { decisionsText: decisions([step3Line('e'.repeat(40)), deltaVerdict(tip)]) });
+    assert.strictEqual(v.verdict, 'failed');
+    assert.strictEqual(v.reason, 'git error');
+    assert.ok(typeof v.detail === 'string' && v.detail.trim() !== '');
+  });
+});
+
+test('a log write that throws → failed, log write failed', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    pushRunDirUpstream(fx);
+    const v = checkReviewedTip(
+      { decisionsText: decisions([step3Line(tip)]), branch: BRANCH, asGiven: false, preMajor: false },
+      { git: runner(fx.work, fx.env), resolveBound: () => boundOf(2), appendLog: () => { throw new Error('disk full'); } },
+    );
+    assert.strictEqual(v.verdict, 'failed');
+    assert.strictEqual(v.reason, 'log write failed');
+    assert.match(v.detail, /disk full/);
+  });
+});
+
+test('non-converging advances → failed', () => {
+  const ok = (stdout) => ({ status: 0, stdout, stderr: '' });
+  let n = 0;
+  const git = (args) => {
+    if (args[0] === 'fetch') return ok('');
+    if (args[0] === 'rev-parse') { n += 1; return ok(`${n.toString(16).padStart(40, '0')}\n`); }
+    if (args[0] === 'diff') return ok('');
+    if (args[0] === 'rev-list') return ok('1\n');
+    throw new Error(`unexpected git ${args.join(' ')}`);
+  };
+  const { v, logged } = check(null, { decisionsText: decisions([step3Line('a'.repeat(40))]), git });
+  assert.strictEqual(v.verdict, 'failed');
+  assert.strictEqual(v.reason, 'run-dir-only advances did not converge');
+  assert.strictEqual(logged.length, MAX_ADVANCES);
+  assert.strictEqual(v.advanced.length, MAX_ADVANCES);
+});
