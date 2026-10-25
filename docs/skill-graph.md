@@ -524,7 +524,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 |---|---|
 | every routine kernel | Invoked by the kernel's closing line (`Then: /claude-tweaks:routine-kickoff {kickoff}`) assembled from `skills/_shared/routine-template-schema.md`'s Standard prompt kernel — the only intended caller; the kernel's frozen-catalog fallback (an unknown-/unrecognized-skill error from the Skill tool, after self-heal) also reads this SKILL.md directly as raw prose |
 | each routine-backed skill | Step 4 composes `/claude-tweaks:{first-token}` from the kickoff args and invokes it via the Skill tool; the manual-execution fallback (raw-prose read path) excludes `dispatch`/`tidy` (work-claiming/deleting skills) and any future skill that claims work or writes beyond report-only surfaces |
-| `bin/hooks.js reconcile` | Step 3 runs reconcile best-effort before the target invocation — full convergence under `pr-first`, worktree reap only under `local-merge` |
+| `bin/hooks.js reconcile` | Step 3 runs reconcile best-effort before the target invocation — under `pr-first` the inline checks plus a detached background pass for the three deferred ones (#4032), worktree reap only under `local-merge` |
 
 ## simplify
 
