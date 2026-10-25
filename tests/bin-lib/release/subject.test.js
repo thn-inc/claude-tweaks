@@ -21,6 +21,13 @@ test('body: summary, optional tag paragraph, then one Fixes line per record', ()
   assert.equal(noSummary.body, 'Release-Note: Tidied.\n\nFixes #1');
 });
 
+test('keepOpen (#4199): a kept-open number writes Refs, and must be one of fixes', () => {
+  const { body } = composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: 'Added X.', fixes: [42, 43], keepOpen: [43] });
+  assert.equal(body, 'Release-Note: Added X.\n\nFixes #42\nRefs #43');
+  assert.throws(() => composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: 'Added X.', fixes: [42], keepOpen: [43] }),
+    (err) => err instanceof ComposeSubjectError && /keepOpen entries must also be in fixes/.test(err.message));
+});
+
 test('breaking: ! suffix on the prefix and a trailing BREAKING CHANGE footer', () => {
   const out = composeSubject({ type: 'feature', title: 'Drop legacy flag', number: 5, breaking: true, summary: 'Removes it.', migrationNote: 'Pass --new instead of --legacy.', releaseNote: 'Removed legacy flag support.' });
   assert.equal(out.title, 'feat!: Drop legacy flag (#5)');

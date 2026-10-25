@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ `node:test`, `tests/helpers/strip-comments.js` (`stripComments`, `stripperVerdict`, `STRIPPER_VERDICT_MESSAGES`), `tests/helpers/read-skill.js` (`readText`).
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-23T222244-record-3922/work/3922-spec.md`
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-23T222244-record-3922/work/3922-spec.md`
 
 ## Global Constraints
 

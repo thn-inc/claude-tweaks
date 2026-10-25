@@ -38,7 +38,7 @@ produce.
 **Priority/Related fetch (both drivers).** Fetch and facet-parse the full open-issue queue per `_shared/record-queue-fetch.md` (`{tmp-records-file}` = `session-scoped backlog-refine-open.json`, `{tmp-faceted-file}` = `session-scoped backlog-refine-faceted.json`) — reading through the session-scoped record snapshot, whose union field set always carries `body` (no `{EXTRA_FIELDS}` request needed) for this pass's synthesis. Under `work-backend: github-issues`, also fold in `unsynced: true` local fallback records the same way the retired `/claude-tweaks:review-backlog` skill's old Step 1 did:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_REFINE_UNSYNCED=backlog-refine-unsynced.json)"
+ST_BACKLOG_REFINE_UNSYNCED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-unsynced.json)"
 node -e "
   const { queryRecords } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
   const records = queryRecords('specs', { unsynced: true });
@@ -49,7 +49,10 @@ node -e "
 For each unsynced record, attach a `createdAt` from its own last-commit date (the local driver carries no timestamp facet — same approach `/claude-tweaks:tidy`'s Step 1 staleness clock already uses) via `backlog.js`'s shared `deriveCreatedAtFromGit` helper (the same staleness-clock approach `_shared/record-queue-fetch.md` documents for the `local-files` driver):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_REFINE_UNSYNCED=backlog-refine-unsynced.json ST_BACKLOG_REFINE_UNSYNCED_DATED=backlog-refine-unsynced-dated.json ST_BACKLOG_REFINE_FACETED=backlog-refine-faceted.json ST_BACKLOG_REFINE_FACETED_MERGED=backlog-refine-faceted-merged.json)"
+ST_BACKLOG_REFINE_UNSYNCED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-unsynced.json)"
+ST_BACKLOG_REFINE_UNSYNCED_DATED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-unsynced-dated.json)"
+ST_BACKLOG_REFINE_FACETED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-faceted.json)"
+ST_BACKLOG_REFINE_FACETED_MERGED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-faceted-merged.json)"
 node -e "
   const { deriveCreatedAtFromGit } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/backlog.js');
   const records = require('$ST_BACKLOG_REFINE_UNSYNCED');
@@ -69,7 +72,8 @@ The merge writes to a **distinct** path and `mv`s it over the original — `>` t
 **Grant fetch (`work-backend: github-issues` only, skipped per Preflight under `local-files`).** Fetch per the same shared fragment, this time server-side filtered:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_REFINE_READY=backlog-refine-ready.json ST_BACKLOG_REFINE_READY_FACETED=backlog-refine-ready-faceted.json)"
+ST_BACKLOG_REFINE_READY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-ready.json)"
+ST_BACKLOG_REFINE_READY_FACETED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-ready-faceted.json)"
 LIMIT="${BACKLOG_FETCH_LIMIT:-1000}"
 export FETCH_LIMIT="$LIMIT"
 gh issue list --label ready --state open --json number,title,labels,updatedAt --limit "$LIMIT" > "$ST_BACKLOG_REFINE_READY"
@@ -91,7 +95,9 @@ node -e "
 Immediately after, compute the whole refine worklist in one pass — this is what Step 2 and Step 3 below both read, in place of their own inline split/slice scripts:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_REFINE_FACETED=backlog-refine-faceted.json ST_BACKLOG_REFINE_READY_FACETED=backlog-refine-ready-faceted.json ST_BACKLOG_REFINE_WORKLIST=backlog-refine-worklist.json)"
+ST_BACKLOG_REFINE_FACETED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-faceted.json)"
+ST_BACKLOG_REFINE_READY_FACETED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-ready-faceted.json)"
+ST_BACKLOG_REFINE_WORKLIST="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-worklist.json)"
 node -e "
   const { refineWorklist } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/backlog.js');
   const fs = require('fs');
@@ -266,11 +272,12 @@ already fetched and cached the body at this run's session-scoped `assess-grant-{
 `_shared/session-tmp-root.md`; reuse it instead of a second API round-trip).
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" "ASSESS_GRANT=assess-grant-${ISSUE}.json" "BACKLOG_REFINE_BODY=backlog-refine-body-${ISSUE}.md")"
+ASSESS_GRANT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "assess-grant-${ISSUE}.json")"
+BACKLOG_REFINE_BODY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "backlog-refine-body-${ISSUE}.md")"
 if [ -f "$ASSESS_GRANT" ]; then
   # Fresh row already went through Step 3's grant-check, which fetched and cached the
   # body — reuse it instead of a second GitHub API round-trip for the same content.
-  node -e "console.log(require(process.argv[1]).body)" "$ASSESS_GRANT" > "$BACKLOG_REFINE_BODY"
+  node -e "console.log(require(process.argv[1]).body)" -- "$ASSESS_GRANT" > "$BACKLOG_REFINE_BODY"
 else
   # Blocked row skipped grant-check entirely (Step 3), so no cached body exists yet.
   gh issue view "$ISSUE" --json body -q .body > "$BACKLOG_REFINE_BODY"
@@ -286,8 +293,8 @@ Flagged back by /claude-tweaks:backlog refine: body is not spec-shaped — missi
 ```
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" "BACKLOG_REFINE_FLAGBACK=backlog-refine-flagback-${ISSUE}.md")"
-node -e "console.log(\`Flagged back by /claude-tweaks:backlog refine: body is not spec-shaped — missing/empty: \${process.argv[1]}. Run /claude-tweaks:specify #\${process.argv[2]} to shape it, then re-add 'ready'.\`)" "$MISSING_LIST" "$ISSUE" > "$BACKLOG_REFINE_FLAGBACK"
+BACKLOG_REFINE_FLAGBACK="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "backlog-refine-flagback-${ISSUE}.md")"
+node -e "console.log(\`Flagged back by /claude-tweaks:backlog refine: body is not spec-shaped — missing/empty: \${process.argv[1]}. Run /claude-tweaks:specify #\${process.argv[2]} to shape it, then re-add 'ready'.\`)" -- "$MISSING_LIST" "$ISSUE" > "$BACKLOG_REFINE_FLAGBACK"
 ```
 
 Report every downgrade to the user before proceeding — a silent downgrade would look like the grant simply never happened.
@@ -418,7 +425,7 @@ Stripping `bot:blocked` in the same edit as the grant matters: without it, the r
 **Flag-back rows:** For every row flagged back — Step 3.5's auto-downgrade, a row missing risk/size accepted as recommended, Step 3's missing-verdict outcome (`grant-check` rendered no `RECOMMEND_BUILD`/`RECOMMEND_MERGE` line at all), or a human override in Step 4 — remove `ready` and post a comment. Step 3.5's downgrade always uses its exact wording above; every other flag-back uses a shorter comment: `Flagged back by /claude-tweaks:backlog refine: {reason}. Re-add 'ready' once addressed.`, where `{reason}` is `needs scoring` for the recommended case, `no verdict rendered` for Step 3's missing-verdict outcome, or the human's own free-text reason for an explicit override.
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" "BACKLOG_REFINE_FLAGBACK=backlog-refine-flagback-${ISSUE}.md")"
+BACKLOG_REFINE_FLAGBACK="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "backlog-refine-flagback-${ISSUE}.md")"
 gh issue edit "$ISSUE" --remove-label ready
 gh issue comment "$ISSUE" --body-file "$BACKLOG_REFINE_FLAGBACK"
 ```

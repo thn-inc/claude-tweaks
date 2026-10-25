@@ -126,7 +126,7 @@ gh api "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues" --jq '.[].number'
 # work-links: body-text — parse the parent's own task list. Resolve this run's
 # session-scoped temp path first (_shared/session-tmp-root.md, cited throughout
 # this file rather than restated).
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" WRAPUP_PARENT_BODY=wrapup-parent-body.md)"
+WRAPUP_PARENT_BODY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrapup-parent-body.md)"
 gh issue view $PARENT_NUM --json body -q .body > "$WRAPUP_PARENT_BODY"
 node -e "
   const { parseSubIssues } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
@@ -349,7 +349,7 @@ Otherwise write the rendered template composed above (**Compose the parent brief
 session-scoped `parent-verification-brief.md` (`_shared/session-tmp-root.md`), then:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PARENT_VERIFICATION_BRIEF=parent-verification-brief.md)"
+PARENT_VERIFICATION_BRIEF="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value parent-verification-brief.md)"
 gh issue comment $PARENT_NUM --body-file "$PARENT_VERIFICATION_BRIEF"
 gh issue edit $PARENT_NUM --add-label demo:pending
 ```

@@ -146,7 +146,7 @@ test('next-mode-shape.md describes the same refusal condition (#3141)', () => {
 function refusalFenceBody(text = SHAPING_MODE) {
   const lf = text.replace(/\r\n/g, '\n');
   const open = 'node -e "\n';
-  const close = '" "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n';
+  const close = '" -- "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n';
   const start = lf.indexOf(open);
   const end = lf.indexOf(close, start);
   assert.ok(start !== -1 && end !== -1, 'refusal fence anchors must exist');

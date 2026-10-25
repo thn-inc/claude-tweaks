@@ -500,6 +500,18 @@ test('IMPORTANT 4: Bash `cd <dir> && git worktree remove <relative-path>` is den
     'the cd-relative target must resolve to the assigned worktree and be denied');
 });
 
+// #4149: an & inside a quoted "$( )" body is no background, so the earlier `cd` still anchors
+// the relative teardown target; and a heredoc body line like `1) a` closes no outer `(`.
+for (const [label, command] of [
+  ['an & inside a quoted "$( )" body', "cd /main && gh pr create --body \"$(cat <<'EOF'\nUse \"R&D\" term\nEOF\n)\" && git worktree remove .claude/worktrees/x"],
+  ['a heredoc body line `1) a` inside a subshell', "(cd /main && git commit -F - <<'EOF'\n1) a\nEOF\ngit worktree remove .claude/worktrees/x)"],
+]) {
+  test(`#4149: teardownTargets resolves the target under the earlier cd after ${label}`, () => {
+    const targets = preToolUse.teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: '/wt' });
+    assert.deepStrictEqual(targets, [{ path: path.resolve('/main/.claude/worktrees/x'), source: 'bash' }]);
+  });
+}
+
 // AC4: fail-open cases.
 test('AC4: an unresolvable teardown target (no positional path) is allowed', () => {
   const root = fixtureRoot();

@@ -262,6 +262,23 @@ test('reconcile-background summary: ledger-residue PRs opened and notable per-pa
   assert.deepEqual(empty.notableLedgerResidue, []);
 });
 
+test('reconcile-background summary: carries the residue error count and the latest error (#4180)', async () => {
+  const summary = await backgroundSummaryFor({
+    residueErrors: [
+      { reason: 'move-failed', path: '/x/a', op: 'escalate', error: 'HTTP 502', at: 100 },
+      { reason: 'move-failed', path: '/x/gone', op: 'resolve', error: 'gh down', at: null },
+    ],
+  });
+  assert.equal(summary.residueErrors, 2);
+  assert.deepEqual(summary.lastResidueError, { op: 'resolve', error: 'gh down' });
+  const none = await backgroundSummaryFor({ residueErrors: [] });
+  assert.equal(none.residueErrors, 0);
+  assert.equal(none.lastResidueError, null);
+  const absent = await backgroundSummaryFor({});
+  assert.equal(absent.residueErrors, 0);
+  assert.equal(absent.lastResidueError, null);
+});
+
 // Task 10 review Important #3: pin the FAST_CHECKS/BACKGROUND_CHECKS
 // partition invariant — a future check added to reconcile/index.js's
 // ALL_CHECKS that isn't also added to exactly one of these two lists must

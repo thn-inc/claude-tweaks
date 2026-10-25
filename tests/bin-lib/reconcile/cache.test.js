@@ -7,7 +7,7 @@ const path = require('path');
 const {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS,
   RESIDUE_ESCALATE_THRESHOLD, recordResidueFailure, recordResidueSuccess, listResidueFailures,
-  trackResidue, pruneResidueFailures, clearResidue, beginCacheBatch, commitCacheBatch,
+  trackResidue, pruneResidueFailures, clearResidue, beginCacheBatch, commitCacheBatch, recordResidueError, planClear,
 } = require('../../../plugin/bin/lib/reconcile/cache');
 
 function tmpRoot() {
@@ -494,4 +494,274 @@ test('#2724 clearResidue: through a cache batch, the entry is dropped on commit 
   assert.equal(result.cleared, true);
   commitCacheBatch(succeeding);
   assert.deepEqual(listResidueFailures(root), []);
+});
+
+// #4180: one recorded reason for a swallowed escalate/resolve failure.
+
+function escalatedStuckRoot() {
+  const root = tmpRoot();
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'structurally-stuck', '/x/p', { lastError: 'stuck at no-branch' });
+  return root;
+}
+
+test('#4180 AC2.1 clearResidue: a resolution-failed resolve leaves its reason on the kept entry', () => {
+  const root = escalatedStuckRoot();
+  const r = clearResidue(root, 'o/r', 'structurally-stuck', '/x/p', { resolve: () => ({ status: 'resolution-failed', reason: 'HTTP 502' }) });
+  assert.deepEqual(r, { cleared: false, resolved: { status: 'resolution-failed', reason: 'HTTP 502' } });
+  const [e] = listResidueFailures(root);
+  assert.equal(e.lastResidueError.op, 'resolve');
+  assert.equal(e.lastResidueError.reason, 'HTTP 502');
+  assert.equal(typeof e.lastResidueError.at, 'number');
+});
+
+test('#4180 clearResidue: an unexpected status without a reason records `status <status>`', () => {
+  const root = escalatedStuckRoot();
+  clearResidue(root, 'o/r', 'structurally-stuck', '/x/p', { resolve: () => ({ status: 'weird' }) });
+  assert.equal(listResidueFailures(root)[0].lastResidueError.reason, 'status weird');
+});
+
+test('#4180 clearResidue: a falsy result records `no result`', () => {
+  const root = escalatedStuckRoot();
+  const r = clearResidue(root, 'o/r', 'structurally-stuck', '/x/p', { resolve: () => null });
+  assert.deepEqual(r, { cleared: false, resolved: null });
+  assert.equal(listResidueFailures(root)[0].lastResidueError.reason, 'no result');
+});
+
+test('#4180 clearResidue: a resolve that throws records the thrown message', () => {
+  const root = escalatedStuckRoot();
+  const r = clearResidue(root, 'o/r', 'structurally-stuck', '/x/p', { resolve: () => { throw new Error('gh: not found'); } });
+  assert.deepEqual(r, { cleared: false, resolved: null });
+  const [e] = listResidueFailures(root);
+  assert.equal(e.lastResidueError.op, 'resolve');
+  assert.equal(e.lastResidueError.reason, 'gh: not found');
+  assert.equal(typeof e.lastResidueError.at, 'number');
+});
+
+test('#4180 clearResidue: a resolved status records no error', () => {
+  const root = escalatedStuckRoot();
+  clearResidue(root, 'o/r', 'structurally-stuck', '/x/p', { resolve: () => ({ status: 'closed' }) });
+  assert.deepEqual(listResidueFailures(root), []);
+});
+
+function almostEscalatedRoot() {
+  const root = tmpRoot();
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  return root;
+}
+
+test('#4180 trackResidue: an escalation-failed escalate records op escalate and its reason; escalated stays true', () => {
+  const root = almostEscalatedRoot();
+  trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'EBUSY' }, { escalate: () => ({ status: 'escalation-failed', reason: 'rate limited' }) });
+  const [e] = listResidueFailures(root);
+  assert.equal(e.escalated, true);
+  assert.equal(e.lastResidueError.op, 'escalate');
+  assert.equal(e.lastResidueError.reason, 'rate limited');
+  assert.equal(typeof e.lastResidueError.at, 'number');
+});
+
+test('#4180 trackResidue: an escalate that throws records the thrown message', () => {
+  const root = almostEscalatedRoot();
+  assert.doesNotThrow(() => trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'EBUSY' }, { escalate: () => { throw new Error('boom'); } }));
+  const [e] = listResidueFailures(root);
+  assert.equal(e.escalated, true);
+  assert.equal(e.lastResidueError.op, 'escalate');
+  assert.equal(e.lastResidueError.reason, 'boom');
+});
+
+test('#4180 trackResidue: a successful escalate records no error', () => {
+  const root = almostEscalatedRoot();
+  trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'EBUSY' }, { escalate: () => ({ status: 'filed', number: 9 }) });
+  const [e] = listResidueFailures(root);
+  assert.equal(e.escalated, true);
+  assert.equal('lastResidueError' in e, false);
+});
+
+test('#4180 trackResidue: an escalate failure recorded through a cache batch lands on commit', () => {
+  const root = almostEscalatedRoot();
+  const batch = beginCacheBatch(root);
+  trackResidue(batch, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'EBUSY' }, { escalate: () => ({ status: 'escalation-failed', reason: 'rate limited' }) });
+  assert.equal('lastResidueError' in listResidueFailures(root)[0], false);
+  commitCacheBatch(batch);
+  assert.equal(listResidueFailures(root)[0].lastResidueError.reason, 'rate limited');
+});
+
+test('#4180 a later success drops the entry and its lastResidueError together', () => {
+  const root = escalatedStuckRoot();
+  clearResidue(root, 'o/r', 'structurally-stuck', '/x/p', { resolve: () => ({ status: 'resolution-failed', reason: 'HTTP 502' }) });
+  assert.equal(listResidueFailures(root)[0].lastResidueError.reason, 'HTTP 502');
+  clearResidue(root, 'o/r', 'structurally-stuck', '/x/p', { resolve: () => ({ status: 'closed' }) });
+  assert.deepEqual(listResidueFailures(root), []);
+});
+
+test('#4180 pruneResidueFailures: returns resolve failures for gone escalated paths and still drops the entries', () => {
+  const root = tmpRoot();
+  const gonePath = path.join(root, 'gone');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'move-failed', gonePath, { lastError: 'EBUSY' });
+  const out = pruneResidueFailures(root, 'o/r', { resolve: () => ({ status: 'resolution-failed', reason: 'HTTP 500' }) });
+  assert.deepEqual(out, { failures: [{ reason: 'move-failed', path: gonePath, op: 'resolve', error: 'HTTP 500' }] });
+  assert.deepEqual(listResidueFailures(root), []);
+});
+
+test('#4180 pruneResidueFailures: a throwing resolve is a failure with the thrown message; a resolved or unescalated gone path is not', () => {
+  const root = tmpRoot();
+  const thrown = path.join(root, 'gone-throw');
+  const closed = path.join(root, 'gone-closed');
+  const unescalated = path.join(root, 'gone-unescalated');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    recordResidueFailure(root, 'move-failed', thrown, { lastError: 'x' });
+    recordResidueFailure(root, 'move-failed', closed, { lastError: 'x' });
+  }
+  recordResidueFailure(root, 'move-failed', unescalated, { lastError: 'x' });
+  const out = pruneResidueFailures(root, 'o/r', {
+    resolve: ({ targetPath }) => {
+      if (targetPath === thrown) throw new Error('gh: down');
+      return { status: 'closed' };
+    },
+  });
+  assert.deepEqual(out, { failures: [{ reason: 'move-failed', path: thrown, op: 'resolve', error: 'gh: down' }] });
+  assert.deepEqual(listResidueFailures(root), []);
+});
+
+test('#4180 pruneResidueFailures: nothing to prune returns an empty failures list', () => {
+  const root = tmpRoot();
+  assert.deepEqual(pruneResidueFailures(root, 'o/r', { resolve: () => { throw new Error('must not run'); } }), { failures: [] });
+});
+
+test('#4180 recordResidueError: a no-op when the entry does not exist', () => {
+  const root = tmpRoot();
+  recordResidueError(root, 'move-failed', '/x/none', { op: 'resolve', error: 'x' });
+  assert.deepEqual(listResidueFailures(root), []);
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', CACHE_FILENAME)), false);
+});
+
+test('#4180 recordResidueError: sets lastResidueError on an existing entry', () => {
+  const root = tmpRoot();
+  recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  recordResidueError(root, 'move-failed', '/x/m', { op: 'escalate', error: 'nope', now: 1234 });
+  assert.deepEqual(listResidueFailures(root)[0].lastResidueError, { op: 'escalate', reason: 'nope', at: 1234 });
+});
+
+test('#4180 recordResidueError: a multi-line gh failure is stored as one line capped at 200 characters', () => {
+  const root = tmpRoot();
+  recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  recordResidueError(root, 'move-failed', '/x/m', { op: 'escalate', error: `Command failed: gh issue create\n${'HTTP 502\n'.repeat(100)}` });
+  const stored = listResidueFailures(root)[0].lastResidueError.reason;
+  assert.equal(stored.length, 200);
+  assert.ok(!/\s{2}|\n/.test(stored));
+  assert.ok(stored.startsWith('Command failed: gh issue create HTTP 502'));
+});
+
+test('#4180 pruneResidueFailures: a long multi-line resolve failure is returned as one capped line', () => {
+  const root = tmpRoot();
+  const gonePath = path.join(root, 'gone');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'move-failed', gonePath, { lastError: 'EBUSY' });
+  const out = pruneResidueFailures(root, 'o/r', { resolve: () => ({ status: 'resolution-failed', reason: `a\n${'b'.repeat(500)}` }) });
+  assert.equal(out.failures[0].error.length, 200);
+  assert.ok(!out.failures[0].error.includes('\n'));
+});
+
+test('#4180 recordResidueError: through a cache batch, lands on commit', () => {
+  const root = tmpRoot();
+  const batch = beginCacheBatch(root);
+  recordResidueFailure(batch, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  recordResidueError(batch, 'move-failed', '/x/m', { op: 'resolve', error: 'nope', now: 5 });
+  assert.deepEqual(listResidueFailures(root), []);
+  commitCacheBatch(batch);
+  assert.deepEqual(listResidueFailures(root)[0].lastResidueError, { op: 'resolve', reason: 'nope', at: 5 });
+});
+
+test('#4180 recordResidueFailure carries lastResidueError forward on the next failing pass', () => {
+  const root = almostEscalatedRoot();
+  trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'EBUSY' }, { escalate: () => ({ status: 'escalation-failed', reason: 'rate limited' }) });
+  const before = listResidueFailures(root)[0].lastResidueError;
+  assert.equal(before.op, 'escalate');
+  const streak = recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY again' });
+  assert.equal(streak.shouldEscalate, false);
+  const [e] = listResidueFailures(root);
+  assert.equal(e.count, RESIDUE_ESCALATE_THRESHOLD + 1);
+  assert.deepEqual(e.lastResidueError, before);
+});
+
+const cacheBytes = (root) => fs.readFileSync(path.join(root, '.claude-tweaks', CACHE_FILENAME));
+
+test('#4180 dry-run trackResidue: past threshold plans would-escalate, calls no escalate, writes nothing', () => {
+  const root = almostEscalatedRoot();
+  const before = cacheBytes(root);
+  let calls = 0;
+  const plan = trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'e' }, { escalate: () => { calls++; }, dryRun: true });
+  assert.deepEqual(plan, { action: 'would-escalate', reason: 'move-failed', path: '/x/m', count: RESIDUE_ESCALATE_THRESHOLD });
+  assert.equal(calls, 0);
+  assert.deepEqual(cacheBytes(root), before);
+});
+
+test('#4180 dry-run trackResidue: below threshold plans would-track; success with an entry plans would-clear; success without plans none', () => {
+  const root = tmpRoot();
+  const noEscalate = () => { throw new Error('must not escalate'); };
+  assert.deepEqual(
+    trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'e' }, { escalate: noEscalate, dryRun: true }),
+    { action: 'would-track', reason: 'move-failed', path: '/x/m', count: 1 },
+  );
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', CACHE_FILENAME)), false);
+  assert.deepEqual(
+    trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: false }, { dryRun: true }),
+    { action: 'none', reason: 'move-failed', path: '/x/m' },
+  );
+  recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  const before = cacheBytes(root);
+  assert.deepEqual(
+    trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: false }, { dryRun: true }),
+    { action: 'would-clear', reason: 'move-failed', path: '/x/m' },
+  );
+  assert.deepEqual(cacheBytes(root), before);
+});
+
+test('#4180 dry-run trackResidue: an already-escalated entry past threshold plans would-track, not a second escalation', () => {
+  const root = tmpRoot();
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  const plan = trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true }, { dryRun: true });
+  assert.deepEqual(plan, { action: 'would-track', reason: 'move-failed', path: '/x/m', count: RESIDUE_ESCALATE_THRESHOLD + 1 });
+});
+
+test('#4180 dry-run trackResidue reads an existing batch entry', () => {
+  const root = tmpRoot();
+  const batch = beginCacheBatch(root);
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) recordResidueFailure(batch, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  const cacheBefore = batch.cache;
+  const plan = trackResidue(batch, 'o/r', 'move-failed', '/x/m', { failed: true }, { escalate: () => { throw new Error('must not escalate'); }, dryRun: true });
+  assert.equal(plan.action, 'would-escalate');
+  assert.equal(plan.count, RESIDUE_ESCALATE_THRESHOLD);
+  assert.equal(batch.cache, cacheBefore);
+  assert.equal(batch.cache.residueFailures['move-failed:/x/m'].count, RESIDUE_ESCALATE_THRESHOLD - 1);
+});
+
+test('#4180 dry-run trackResidue: a batch that was never dirtied stays clean', () => {
+  const root = tmpRoot();
+  const batch = beginCacheBatch(root);
+  trackResidue(batch, 'o/r', 'move-failed', '/x/m', { failed: true }, { dryRun: true });
+  assert.equal(batch.dirty, false);
+});
+
+test('#4180 commitCacheBatch: dryRun never writes a dirty batch', () => {
+  const root = tmpRoot();
+  const batch = beginCacheBatch(root);
+  recordResidueFailure(batch, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  assert.equal(batch.dirty, true);
+  commitCacheBatch(batch, { dryRun: true });
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', CACHE_FILENAME)), false);
+  commitCacheBatch(batch);
+  assert.equal(listResidueFailures(root).length, 1);
+});
+
+test('#4180 planClear: escalated entry plans would-resolve, unescalated would-clear, absent none; reads only', () => {
+  const root = tmpRoot();
+  assert.deepEqual(planClear(root, 'move-failed', '/x/m'), { action: 'none', reason: 'move-failed', path: '/x/m' });
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', CACHE_FILENAME)), false);
+  recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  assert.deepEqual(planClear(root, 'move-failed', '/x/m'), { action: 'would-clear', reason: 'move-failed', path: '/x/m' });
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  const before = cacheBytes(root);
+  assert.deepEqual(planClear(root, 'move-failed', '/x/m'), { action: 'would-resolve', reason: 'move-failed', path: '/x/m' });
+  assert.deepEqual(cacheBytes(root), before);
+  const batch = beginCacheBatch(root);
+  assert.equal(planClear(batch, 'move-failed', '/x/m').action, 'would-resolve');
 });
