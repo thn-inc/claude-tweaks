@@ -14,9 +14,9 @@ const { resolveIntegrationBranch, bareIntegrationName, reapWorktrees: legacyReap
 const { resolveIntegrationModel } = require('../policy-schema');
 const { mirrorFastForward } = require('./mirror-ff');
 const { redTipCheck } = require('./red-tip');
-const { reapMerged } = require('./reap-merged');
+const { reapMerged, prefetchReapPrStates } = require('./reap-merged');
 const { releaseMerged } = require('./release-merged');
-const { archiveMerged } = require('./archive-merged');
+const { archiveMerged, prefetchArchivePrStates } = require('./archive-merged');
 const { archiveBranches } = require('./archive-branches');
 const { pruneRemote } = require('./prune-remote');
 const { ledgerResidue } = require('./ledger-residue');
@@ -28,6 +28,12 @@ const {
   readCache, writeCache, isFresh, SHARED_HEALTH_TTL_MS,
 } = require('./cache');
 const { formatReconcileSummary, archivedCountFromRunsResult } = require('./residue-summary');
+// summarizeTimings is called through the module object (not destructured) so a
+// test can fault it by property — see the guard in reconcile().
+const timing = require('./timing');
+const {
+  createTimings, phaseOf, withTimings, timePhase, timePhaseSync,
+} = timing;
 
 // Execution order (mirror, red-tip, console, release, archive,
 // archive-branches, remote-prune, ledger-residue, reap) is significant — see the ordering
@@ -38,6 +44,17 @@ const { formatReconcileSummary, archivedCountFromRunsResult } = require('./resid
 // array is the requested-subset default only; it is never iterated to
 // determine dispatch order.
 const ALL_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'console'];
+
+// `skipped[].reason` values meaning reconcile() returned without running the
+// checks it was asked for (#4032) — the unscoped CLI treats a pass carrying any
+// of them as NOT converged and defers nothing to the background pass. Report-
+// only reasons (`non-canonical-run-dir`, `budget-exceeded`, `fetch-failed`,
+// per-check failures) are deliberately absent: the pass ran. `reconcile-threw`
+// is emitted by hooks.js's catch fallback, not by this module.
+const NOT_CONVERGED_REASONS = new Set([
+  'no-repo', 'no-remote', 'fresh-cache', 'local-merge-model',
+  'preflight-gh-absent', 'preflight-github-unreachable', 'reconcile-threw',
+]);
 
 // Checks that read state another check produces (#3630). A requested check
 // whose `check` is neither requested itself nor covered by a `satisfiedBy`
@@ -75,7 +92,7 @@ function expandChecks(checks) {
 }
 
 // opts: { dryRun?: boolean, checks?: string[], cwd?: string, sessionId?: string, budgetMs?: number }
-// -> { mirror, redTip, worktrees, claims, runs, branches, remoteBranches, ledgerResidue, console, skipped }
+// -> { mirror, redTip, worktrees, claims, runs, branches, remoteBranches, ledgerResidue, console, skipped, timings }
 // `sessionId`, when the caller has one, threads through to archiveMerged's
 // own `isAbandonedInterrupted` ownership check (archive-merged.js) — omitted
 // (undefined), archiveMerged falls back to its own
@@ -86,6 +103,23 @@ function expandChecks(checks) {
 // per-check rather than attempting an MCP fallback (see
 // `_shared/integration-model.md`).
 async function reconcile(opts = {}) {
+  // #4032: per-phase timings ride on the result of EVERY return path (the many
+  // early `return result;`s below included) — a wrapper around the body, not a
+  // timings edit at each return, so a new early return cannot forget it.
+  const timings = createTimings();
+  phaseOf(timings, 'setup');
+  const result = await withTimings(timings, () => reconcileInner(opts));
+  // Measurement is best-effort: a summarizer fault reports no timings rather
+  // than failing a pass whose real work already finished (never-break-a-session).
+  try {
+    result.timings = timing.summarizeTimings(timings);
+  } catch {
+    result.timings = null;
+  }
+  return result;
+}
+
+async function reconcileInner(opts) {
   const dryRun = !!opts.dryRun;
   const requestedChecks = Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS;
   let checks = expandChecks(requestedChecks);
@@ -192,7 +226,7 @@ async function reconcile(opts = {}) {
     // under this model), release, and archive have no local-merge
     // equivalent and stay skipped.
     if (checks.includes('reap')) {
-      const legacy = legacyReapWorktrees({ cwd: root, integration, dryRun, now: opts.now });
+      const legacy = timePhaseSync('reap', () => legacyReapWorktrees({ cwd: root, integration, dryRun, now: opts.now }));
       result.worktrees = legacy.reaped.map((p) => ({ path: p, action: 'reaped' }))
         .concat(legacy.skipped.map((s) => ({ path: s.path, action: 'skipped', reason: s.reason })));
       // MAX_EXAMINED_PER_RUN candidates the legacy reaper never got to this
@@ -232,9 +266,12 @@ async function reconcile(opts = {}) {
   // execFile pattern this reuses (ghHealthCheckAsync, sharedFetchAsync).
   // Computed from `checks` BEFORE the narrowing below, so a request that
   // ever included remote-prune stays on the sequential path even if a
-  // preflight failure later narrows `checks` down to mirror-only —
-  // ALL_CHECKS/mixed and BACKGROUND_CHECKS are explicitly out of scope for
-  // this concurrency and must not gain it incidentally through narrowing.
+  // preflight failure later narrows `checks` down to mirror-only — a
+  // remote-prune request (BACKGROUND_CHECKS, a mixed set) must not gain this
+  // concurrency incidentally through narrowing. The shape holds for
+  // session-start's inline pass AND the unscoped `reconcile` CLI (#4032): its
+  // inline set is mirror without remote-prune, so it takes the single-ref
+  // fetch (5 s) concurrently with preflight, not `fetch --prune origin`.
   const fastChecksShape = checks.includes('mirror') && !checks.includes('remote-prune');
   // #873: session-start.js's inline FAST_CHECKS call and the detached
   // reconcile-background child it spawns moments later (same SessionStart
@@ -311,12 +348,39 @@ async function reconcile(opts = {}) {
   // reused across every stuck dir/path archive+reap escalate or resolve in
   // THIS pass — created fresh every reconcile() call (never a module-level
   // singleton), so nothing here survives across passes or processes.
-  const issueListCache = createIssueListCache();
+  // #4032: the persisted marker index lets a residue dedup lookup cost one
+  // `gh issue view` instead of the full list; written back in `finalize`.
+  const loadedResidueIndex = readCache(root).residueIssueIndex;
+  const loadedResidueIndexJson = JSON.stringify(loadedResidueIndex || {});
+  const issueListCache = createIssueListCache({ index: loadedResidueIndex });
+  // #4032 — one PR-state resolver per pass, shared by release, archive and
+  // reap (they ask `gh` about the same PRs). Created here, after the preflight
+  // narrowing, and through the module object so a test's
+  // `require('./pr-state-cache').createPrStateResolver = fn` monkeypatch
+  // reaches this call site. Never a module-level singleton: its in-pass memo
+  // must not outlive the pass; only terminal answers persist, in `finalize`.
+  const prStates = require('./pr-state-cache').createPrStateResolver({ root });
+  // A prefetch only warms the memo: a throw here must never break the pass,
+  // the sequential lookups that follow simply fall back to live calls.
+  const warm = async (prefetch) => { try { await prefetch(root, prStates); } catch { /* best-effort */ } };
+  // #4032 — one run-integrity cache per pass (run-integrity.js's opt-in
+  // `{ worktreeList, integrationBranch }` shape; the caller's own when it passed
+  // one, as session-start does), so archive's loop and every per-dir
+  // checkRunIntegrity under it spawn `git worktree list` once between them.
+  // Filled lazily, at archive's first read — after mirror/fetch have run — and
+  // handed to archive only: `reap` removes worktrees and lists afresh itself,
+  // and nothing before it in the dispatch order changes the worktree set.
+  const runIntegrityCache = opts.cache || { worktreeList: new Map(), integrationBranch: new Map() };
   const DISPATCH_ORDER = ['mirror', 'red-tip', 'console', 'release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
   function overBudget(remainingFromHere) {
     if (!budget.exceeded()) return false;
     const notYetRun = remainingFromHere.filter((c) => checks.includes(c));
     if (notYetRun.length) result.skipped.push({ check: notYetRun.join(','), reason: 'budget-exceeded' });
+    // #4032: an over-budget return skips `finalize`, so persist the terminal PR
+    // answers this pass already paid for here — otherwise a cold pass that hits
+    // the ceiling forgets them and the next pass starts cold and hits it again.
+    // (Only prStates: the freshness stamp and the residue index stay finalize's.)
+    try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
     return true;
   }
 
@@ -360,7 +424,7 @@ async function reconcile(opts = {}) {
     result.skipped.push({ check: 'red-tip', reason: 'no-fetch-this-pass' });
   }
   if (checks.includes('mirror') && sharedFetchOk) {
-    result.mirror = mirrorFastForward(root, integration, { skipFetch: true, dryRun });
+    result.mirror = timePhaseSync('mirror', () => mirrorFastForward(root, integration, { skipFetch: true, dryRun }));
   }
 
   // Detection only — never mutates repo/run state. Reads origin/{integration}
@@ -376,9 +440,9 @@ async function reconcile(opts = {}) {
   // refreshed the ref red-tip reads.
   if (overBudget(DISPATCH_ORDER.slice(1))) return result;
   if (checks.includes('red-tip') && sharedFetchOk && fetchRan) {
-    result.redTip = redTipCheck(root, integration, {
+    result.redTip = timePhaseSync('red-tip', () => redTipCheck(root, integration, {
       onSkip: (reason) => result.skipped.push({ check: 'red-tip', reason }),
-    });
+    }));
   }
 
   // Detection only — never mutates repo/run state, so its position relative
@@ -387,7 +451,7 @@ async function reconcile(opts = {}) {
   // worktree-list join nor merged-PR evidence, unlike the three that follow.
   if (overBudget(DISPATCH_ORDER.slice(2))) return result;
   if (checks.includes('console')) {
-    result.console = await consoleExecuteDetect({ cwd: root });
+    result.console = await timePhase('console', () => consoleExecuteDetect({ cwd: root }));
   }
 
   // Ordering is load-bearing, not incidental: release, archive, and
@@ -411,7 +475,7 @@ async function reconcile(opts = {}) {
     if (dryRun) {
       result.skipped.push({ check: 'release', reason: 'dry-run-not-supported' });
     } else {
-      const r = await releaseMerged({ cwd: root });
+      const r = await timePhase('release', () => releaseMerged({ cwd: root, prStates }));
       if (r.failure) {
         result.skipped.push({ check: 'release', reason: r.failure });
       } else {
@@ -423,8 +487,12 @@ async function reconcile(opts = {}) {
 
   if (overBudget(DISPATCH_ORDER.slice(4))) return result;
   if (checks.includes('archive')) {
-    const r = archiveMerged({
-      cwd: root, dryRun, sessionId: opts.sessionId, runner: issueListCache.runner, integration,
+    const r = await timePhase('archive', async () => {
+      await warm((r, states) => prefetchArchivePrStates(r, states, { cache: runIntegrityCache }));
+      return archiveMerged({
+        cwd: root, dryRun, sessionId: opts.sessionId, runner: issueListCache.runner, integration, prStates,
+        cache: runIntegrityCache,
+      });
     });
     result.runs = r.archived.map((d) => ({ runDir: d, action: 'archived' }))
       .concat(r.skipped.map((s) => ({
@@ -442,7 +510,7 @@ async function reconcile(opts = {}) {
   // branch attachments), before reap (which stays last — see above).
   if (overBudget(DISPATCH_ORDER.slice(5))) return result;
   if (checks.includes('archive-branches')) {
-    const r = archiveBranches({ cwd: root, integration, dryRun });
+    const r = timePhaseSync('archive-branches', () => archiveBranches({ cwd: root, integration, dryRun }));
     if (r.failure) {
       result.skipped.push({ check: 'archive-branches', reason: r.failure });
     } else {
@@ -456,7 +524,7 @@ async function reconcile(opts = {}) {
   // removed, so this too runs before reap (which stays last — see above).
   if (overBudget(DISPATCH_ORDER.slice(6))) return result;
   if (checks.includes('remote-prune') && sharedFetchOk) {
-    const r = pruneRemote({ cwd: root, integration, dryRun, skipFetch: true });
+    const r = timePhaseSync('remote-prune', () => pruneRemote({ cwd: root, integration, dryRun, skipFetch: true }));
     if (r.failure) {
       result.skipped.push({ check: 'remote-prune', reason: r.failure });
     } else {
@@ -471,7 +539,7 @@ async function reconcile(opts = {}) {
   // not run or failed, `skipFetch` is false and the check fetches for itself.
   if (overBudget(DISPATCH_ORDER.slice(7))) return result;
   if (checks.includes('ledger-residue')) {
-    const r = ledgerResidue({ cwd: root, integration, dryRun, skipFetch: fetchRan && sharedFetchOk });
+    const r = timePhaseSync('ledger-residue', () => ledgerResidue({ cwd: root, integration, dryRun, skipFetch: fetchRan && sharedFetchOk }));
     if (r.failure) {
       result.skipped.push({ check: 'ledger-residue', reason: r.failure });
     } else {
@@ -493,7 +561,10 @@ async function reconcile(opts = {}) {
     // was always the main checkout, never inside any worktree), even though
     // reap-merged.test.js's isolated calls (which pass a worktree path
     // directly) still exercised and passed.
-    const r = reapMerged({ cwd, dryRun, runner: issueListCache.runner });
+    const r = await timePhase('reap', async () => {
+      await warm(prefetchReapPrStates);
+      return reapMerged({ cwd, dryRun, runner: issueListCache.runner, prStates });
+    });
     if (r.failure) {
       result.skipped.push({ check: 'reap', reason: r.failure });
     } else {
@@ -531,25 +602,38 @@ async function reconcile(opts = {}) {
   // mirror-only skipCacheStamp caller still benefits a sibling process —
   // though in practice that caller's checks are mirror-only, so
   // `healthJustSucceeded` is always false for it anyway.
-  if (!opts.skipCacheStamp || healthJustSucceeded) {
-    const cache = readCache(root);
-    const update = { ...cache };
-    if (!opts.skipCacheStamp) update.lastRunAt = Date.now();
-    if (healthJustSucceeded) update.lastHealthCheckOkAt = now;
-    writeCache(root, update);
-  }
+  // #4032: the end-of-pass cache write and the residue summary below form the
+  // `finalize` timing phase.
+  timePhaseSync('finalize', () => {
+    // #4032: persist the pass's terminal PR-state answers first, so the cache
+    // write below re-reads a file that already carries them. Best-effort, and
+    // dry-run included: it records reads, never repo state.
+    try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
+    // A scoped (skipCacheStamp) pass that learned marker-index entries still
+    // persists them: like prStates.persist() above, the index records reads
+    // (never freshness), so an explicit --checks pass must not drop them.
+    const residueIndexChanged = JSON.stringify(issueListCache.index) !== loadedResidueIndexJson;
+    if (!opts.skipCacheStamp || healthJustSucceeded || residueIndexChanged) {
+      const cache = readCache(root);
+      const update = { ...cache };
+      if (!opts.skipCacheStamp) update.lastRunAt = Date.now();
+      if (healthJustSucceeded) update.lastHealthCheckOkAt = now;
+      update.residueIssueIndex = issueListCache.index;
+      writeCache(root, update);
+    }
 
-  // #644 Deliverable 3 — the one-line residue summary /claude-tweaks:flow's
-  // closing report renders, attached to the same JSON this function already
-  // returns (never a second data source): archived count from this pass's
-  // own `runs`, stuck count/age from the residue cache `archive`/`reap`
-  // (Deliverable 2) just finished updating, mirror ff outcome from this
-  // pass's own `mirror` when `mirror` was among the requested checks.
-  result.residueSummary = formatReconcileSummary(root, {
-    archivedCount: archivedCountFromRunsResult(result),
-    mirror: result.mirror,
+    // #644 Deliverable 3 — the one-line residue summary /claude-tweaks:flow's
+    // closing report renders, attached to the same JSON this function already
+    // returns (never a second data source): archived count from this pass's
+    // own `runs`, stuck count/age from the residue cache `archive`/`reap`
+    // (Deliverable 2) just finished updating, mirror ff outcome from this
+    // pass's own `mirror` when `mirror` was among the requested checks.
+    result.residueSummary = formatReconcileSummary(root, {
+      archivedCount: archivedCountFromRunsResult(result),
+      mirror: result.mirror,
+    });
   });
   return result;
 }
 
-module.exports = { reconcile, ALL_CHECKS, PREREQUISITES, expandChecks, formatReconcileSummary };
+module.exports = { reconcile, ALL_CHECKS, NOT_CONVERGED_REASONS, PREREQUISITES, expandChecks, formatReconcileSummary };

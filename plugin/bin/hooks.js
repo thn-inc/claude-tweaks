@@ -59,6 +59,13 @@ const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', '
 // not the other.
 const BACKGROUND_CHECKS = ['release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
 
+// The janitorial checks an UNSCOPED `reconcile` CLI call hands to the detached
+// background pass instead of running inline (#4032) — the three whose cost
+// (an all-refs fetch, per-branch PR lookups, residue-ledger scans) dominated
+// the CLI's wall time. A subset of BACKGROUND_CHECKS; an explicit `--checks`
+// call is never deferred.
+const CLI_DEFERRED_CHECKS = ['archive-branches', 'remote-prune', 'ledger-residue'];
+
 // String-literal per-event requires — not a computed `require('./lib/hooks/' +
 // event)` — so every `bin/lib/hooks/*.js` module resolves statically inside
 // `plugin/` (payload-boundary test #419, assertion (b): a dynamic require() is
@@ -115,7 +122,7 @@ const USAGE = {
   'resolve-ledger': 'resolve-ledger --run <dir>',
   'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]',
   'archive-run': 'archive-run [--run <dir>]',
-  'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>]',
+  'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>] [--filing-failed <id,id,...>]',
   'check-resume-freshness': 'check-resume-freshness [--run <dir>]',
   'check-staged-inventory': 'check-staged-inventory [--run <dir>]',
   'check-session-residue': 'check-session-residue [--run <dir>]',
@@ -154,14 +161,14 @@ const KNOWN_FLAGS = {
   // it from `KNOWN_FLAGS` and `USAGE` here. Until then a session can still hold pre-(1) prose in context
   // while the running build's hooks.js is newer, and the unknown-flag guard would refuse that call.
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
-  'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed'],
+  'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed', '--filing-failed'],
   'check-pass-reentry': ['--run', '--online'],
 };
 
 // Declared flags that consume the following token as a value — the
 // unknown-flag scan below must skip that token rather than risk misreading
 // it as a flag itself (an argument value could itself start with "--").
-const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--ledger']);
+const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger']);
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
 // null when every `--*` token is declared (or there are none). Scans the
@@ -1194,7 +1201,7 @@ async function main(argv) {
   }
   if (cmd === 'archive-run') {
     const {
-      archiveRunDir, readConsoleState, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
+      archiveRunDir, readConsoleState, consoleResidue, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
       TIEBREAK_COVERAGE_HINT,
     } = require('./lib/reconcile/archive-merged');
     const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
@@ -1238,6 +1245,23 @@ async function main(argv) {
     const consoleState = readConsoleState(runDir);
     if (consoleState === 'unresolved') {
       process.stdout.write('claude-tweaks: archival refused — console-unresolved (console.json rendered but not resolved; answer or resolve the console first)\n');
+      return 0;
+    }
+    // #3949: a resolved console can still hold an item no human has reviewed.
+    if (consoleState === 'residue') {
+      // --ack skips an unparseable console, so an unreadable one's remedy is repairing the file.
+      const { items, unreadable } = consoleResidue(runDir);
+      const what = [];
+      const remedies = [];
+      if (items > 0) {
+        what.push(`${items} unresolved item(s) no human has reviewed`);
+        remedies.push(`review them, then run console-residue.js --ack --run "${runDir}"`);
+      }
+      if (unreadable.length > 0) {
+        what.push(`${unreadable.length} console.json file(s) could not be read`);
+        remedies.push(`repair or remove ${unreadable.join(', ')}, then re-run archive-run`);
+      }
+      process.stdout.write(`claude-tweaks: archival refused — console-residue (${what.join(' and ')}; ${remedies.join('; ')})\n`);
       return 0;
     }
     if (consoleState === 'none' && consoleReplacedByAutoMerge(runDir)) {
@@ -1337,6 +1361,7 @@ async function main(argv) {
     const approve = splitIds(flagVal(argv.slice(3), '--approve'));
     const decline = splitIds(flagVal(argv.slice(3), '--decline'));
     const reverseFailed = splitIds(flagVal(argv.slice(3), '--reverse-failed'));
+    const filingFailed = splitIds(flagVal(argv.slice(3), '--filing-failed'));
 
     const mainRoot = wtDetect.mainCheckoutRoot(process.cwd()) || process.cwd();
     const execFileAsync = promisify(execFile);
@@ -1352,7 +1377,9 @@ async function main(argv) {
       },
     };
     const { resolveConsoleExecution, renderExecutedLines } = require('./lib/reconcile/console-execute');
-    const result = await resolveConsoleExecution(runDir, { approve, decline, reverseFailed }, deps);
+    const result = await resolveConsoleExecution(runDir, {
+      approve, decline, reverseFailed, filingFailed,
+    }, deps);
     if (result.status === 'executed') {
       process.stdout.write(renderExecutedLines(result, path.basename(runDir)));
       return 0;
@@ -1367,6 +1394,10 @@ async function main(argv) {
     }
     if (result.reason === 'not-ruling-items') {
       process.stdout.write(`claude-tweaks: --reverse-failed id(s) ${result.ids.join(', ')} are not sdd-ruling items (no isRulingRow flag), console not resolved\n`);
+      return 1;
+    }
+    if (result.reason === 'not-finding-items') {
+      process.stdout.write(`claude-tweaks: --filing-failed id(s) ${result.ids.join(', ')} are not finding rows (no findingItem), console not resolved\n`);
       return 1;
     }
     process.stdout.write(`claude-tweaks: console resolution failed for ${path.basename(runDir)} — ${result.reason}${result.error ? `: ${result.error}` : ''}\n`);
@@ -1569,6 +1600,11 @@ async function main(argv) {
       dryRun: args.includes('--dry-run'),
       cwd: process.cwd(),
       mcpReachable: args.includes('--mcp-reachable'),
+      // Unscoped: run everything except the janitorial checks deferred to the
+      // background pass (#4032); FAST_CHECKS stays inside the inline set, so the
+      // freshness stamp below is still truthful.
+      // Filled inside the try below for the unscoped call, so a module-load
+      // failure still reaches the reconcile-threw fallback (#4032).
       checks: checksList.length ? checksList : undefined,
       // An explicit --checks subset is the caller naming which checks must
       // run (plus any prerequisite reconcile() adds, #3630) — don't let the
@@ -1583,15 +1619,58 @@ async function main(argv) {
     };
     const jsonOut = args.includes('--json');
     let out;
+    // Everything that can throw on the way to the JSON — the module load, the
+    // unscoped inline-set derivation, reconcile() itself and the deferral
+    // post-processing — sits in this one try, so dispatch's parser always gets a
+    // JSON document (the reconcile-threw fallback) rather than a bare stack.
     try {
-      out = await require('./lib/reconcile').reconcile(opts);
+      const reconcileLib = require('./lib/reconcile');
+      if (!checksList.length) {
+        opts.checks = reconcileLib.ALL_CHECKS.filter((c) => !CLI_DEFERRED_CHECKS.includes(c));
+      }
+      out = await reconcileLib.reconcile(opts);
+      if (!checksList.length) {
+        // #4032: report the deferral, and hand the deferred checks to the
+        // detached background pass (TTL-gated by its own status file) — but only
+        // when this pass converged: a no-repo/no-remote/local-merge/preflight/
+        // threw result already says why nothing ran (reconcile's
+        // NOT_CONVERGED_REASONS), and a dry run must never spawn a mutating
+        // child. A report-only skip (e.g. non-canonical-run-dir) does not count.
+        const { NOT_CONVERGED_REASONS } = reconcileLib;
+        const skippedIn = out.skipped || [];
+        const converged = !skippedIn.some((s) => s && NOT_CONVERGED_REASONS.has(s.reason));
+        let background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
+        if (converged) {
+          out.skipped = [...skippedIn, { check: CLI_DEFERRED_CHECKS.join(','), reason: 'deferred-to-background' }];
+          background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'dry-run' };
+          if (!opts.dryRun) {
+            const cwd = process.cwd();
+            const r = require('./lib/reconcile/background-spawn').spawnBackgroundIfStale({
+              root: wtDetect.mainCheckoutRoot(cwd),
+              cwd,
+              sessionId: process.env.CLAUDE_CODE_SESSION_ID || undefined,
+            });
+            background = { checks: CLI_DEFERRED_CHECKS, spawned: r.spawned, reason: r.reason };
+          }
+        } else {
+          // A gh-preflight failure skipped the inline gh-dependent checks; the
+          // three deferred ones never got the chance to run either, so keep
+          // them accounted for in `skipped` under the same reason, as before
+          // the deferral. Every other not-converged reason already says "all".
+          const pf = skippedIn.find((s) => s && typeof s.reason === 'string' && s.reason.startsWith('preflight-'));
+          if (pf) out.skipped = [...skippedIn, { check: CLI_DEFERRED_CHECKS.join(','), reason: pf.reason }];
+        }
+        out.background = background;
+      }
     } catch {
-      out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }] };
+      out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
+      if (!checksList.length) out.background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
     }
     if (jsonOut) {
-      // Unchanged from before #638 — byte-for-byte, so bin/lib/reconcile's
-      // existing JSON consumers (dispatch/tidy reading `console.ready` off
-      // this) don't move.
+      // The full per-item census, not #638's compact summary: no key a JSON
+      // consumer already reads (dispatch/tidy reading `console.ready` off this)
+      // moved. #4032 only ADDED keys — `timings` always, `background` on an
+      // unscoped call.
       process.stdout.write(JSON.stringify(out) + '\n');
     } else {
       // New default (#638): a compact human-readable summary instead of the
@@ -1618,7 +1697,7 @@ async function main(argv) {
     // `skipCacheStamp` below.
     const cwd = process.cwd();
     const root = wtDetect.mainCheckoutRoot(cwd) || cwd;
-    const statusPath = path.join(root, '.claude-tweaks', 'reconcile-background-status.json');
+    const statusPath = path.join(root, '.claude-tweaks', require('./lib/reconcile/background-spawn').STATUS_FILENAME);
     let archivedCount = 0;
     try {
       const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
@@ -1656,6 +1735,8 @@ async function main(argv) {
     const { reconcile } = require('./lib/reconcile');
     const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
     const { isFresh } = require('./lib/reconcile/cache');
+    const { BACKGROUND_BUDGET_MS } = require('./lib/reconcile/budget');
+    const { STATUS_FILENAME } = require('./lib/reconcile/background-spawn');
     const { QUIET_SKIP_REASONS } = require('./lib/hooks/worktree-reap');
     const { QUIET_SKIP_REASONS: LEDGER_RESIDUE_QUIET_SKIP_REASONS } = require('./lib/reconcile/ledger-residue');
     const root = mainCheckoutRoot(cwd) || cwd;
@@ -1668,7 +1749,7 @@ async function main(argv) {
     // exactly as unresolvable as before this fix — the other two gates
     // (24h staleness, shipped-unclosed evidence) still govern alone.
     const sessionId = process.env.CLAUDE_TWEAKS_SESSION_ID || undefined;
-    const statusPath = path.join(root, '.claude-tweaks', 'reconcile-background-status.json');
+    const statusPath = path.join(root, '.claude-tweaks', STATUS_FILENAME);
 
     // Freshness is decided from THIS status file's own `completedAt` —
     // deliberately NOT reconcile()'s shared reconcile-cache.json `lastRunAt`
@@ -1713,7 +1794,7 @@ async function main(argv) {
 
     let summary = {};
     try {
-      const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId });
+      const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
       summary = {
         released: (r.claims || []).filter((c) => c.action === 'released').length,
         archived: (r.runs || []).filter((x) => x.action === 'archived').length,
@@ -1737,8 +1818,10 @@ async function main(argv) {
           .map((w) => ({ path: w.path, reason: w.reason })),
         skipped: r.skipped || [],
       };
-    } catch {
-      summary = { failed: true };
+    } catch (e) {
+      // The reason rides in the status file: this process is detached with
+      // stdio ignored, so it is the only trace the next SessionStart can surface.
+      summary = { failed: true, error: String((e && e.message) || e).slice(0, 200) };
     } finally {
       releaseBackgroundLock(lock);
     }
@@ -1841,4 +1924,4 @@ if (require.main === module) {
 // USAGE exported so tests/hooks-help-guard.test.js's table-driven suite
 // iterates the SAME verb list this dispatcher's --help/-h guard checks
 // membership against, rather than a second, driftable copy of it.
-module.exports = { main, BACKGROUND_CHECKS, USAGE };
+module.exports = { main, BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, USAGE };

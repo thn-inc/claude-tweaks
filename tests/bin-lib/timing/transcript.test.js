@@ -174,7 +174,7 @@ test('#1929 AC2: readUsage streams rows, sums procedure bytes for skills Reads o
   assert.equal(rows.reduce((s, r) => s + r.procedureBytes, 0), 18);
   const assistants = rows.filter((r) => r.role === 'assistant');
   assert.deepEqual(assistants.map((r) => r.toolRoundTrip), [false, false, false, false, false]);
-  assert.deepEqual(assistants[0], { ts: '2026-09-05T13:50:00.000Z', role: 'assistant', inputTokens: 10, outputTokens: 20, cacheRead: 300, cacheCreate: 40, toolRoundTrip: false, procedureBytes: 0, model: null });
+  assert.deepEqual(assistants[0], { ts: '2026-09-05T13:50:00.000Z', role: 'assistant', inputTokens: 10, outputTokens: 20, cacheRead: 300, cacheCreate: 40, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: true, contextTokens: 350 });
   assert.equal(assistants[3].inputTokens, 100);
   assert.equal(users[0].inputTokens, 0);
   // #1929 whole-branch review fix 1: a duplicate message.id (same turn,
@@ -185,6 +185,69 @@ test('#1929 AC2: readUsage streams rows, sums procedure bytes for skills Reads o
   assert.equal(rows[rows.length - 1].outputTokens, 0);
   assert.equal(assistants.reduce((s, r) => s + r.inputTokens, 0), 116);
   assert.equal(assistants.reduce((s, r) => s + r.outputTokens, 0), 228);
+});
+
+const TURN_CLASSES_FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'turn-classes', 'session.jsonl');
+
+test('#4029 AC1.1: readUsage tags each tool_result with its turn class and marks turn starts', async () => {
+  const rows = await readUsage(TURN_CLASSES_FIX, { worktree: '/repo' });
+  const summed = {};
+  for (const r of rows) for (const [c, n] of Object.entries(r.turnClasses)) summed[c] = (summed[c] || 0) + n;
+  assert.deepEqual(summed, { edit: 1, read: 1, explore: 1, procedure: 1, bookkeeping: 1, orientation: 2, verify: 1, 'guard-refusal': 1, dispatch: 1, other: 1 });
+  const starts = rows.filter((r) => r.turnStart);
+  assert.equal(starts.length, 10);
+  assert.ok(starts.every((r) => r.role === 'assistant'));
+  assert.deepEqual(starts.map((r) => r.contextTokens), [1010, 2020, 3030, 4040, 5050, 6060, 7070, 8080, 9090, 10100]);
+  // every non-start row carries the fields too: false / 0 (the duplicate m1 line and all user rows)
+  for (const r of rows.filter((x) => !x.turnStart)) assert.equal(r.contextTokens, 0);
+  assert.ok(rows.every((r) => typeof r.turnStart === 'boolean' && typeof r.contextTokens === 'number' && r.turnClasses && typeof r.turnClasses === 'object'));
+  assert.deepEqual(rows.filter((r) => r.role === 'assistant').map((r) => r.turnClasses).filter((c) => Object.keys(c).length), []);
+  // the m2 user row batches two orientation results; the m5 refusal is decided by its result text, not the tool
+  const users = rows.filter((r) => r.role === 'user');
+  assert.deepEqual(users[1].turnClasses, { orientation: 2 });
+  assert.deepEqual(users[4].turnClasses, { 'guard-refusal': 1 });
+  assert.equal(rows.reduce((s, r) => s + r.procedureBytes, 0), 100);
+});
+
+test('#4029: an orphan tool_result counts as other', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-orphan-')), 's.jsonl');
+  fs.writeFileSync(f, JSON.stringify({ type: 'user', timestamp: '2026-10-24T10:00:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'never-seen', content: 'x' }] } }) + '\n');
+  const rows = await readUsage(f);
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0].turnClasses, { other: 1 });
+  assert.equal(rows[0].turnStart, false);
+  assert.equal(rows[0].contextTokens, 0);
+});
+
+test('#4029: contextTokens is the per-id max sum (streaming snapshot then final), on the first row only; id-less assistant rows each start a turn', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ctx-'));
+  const f = path.join(dir, 's.jsonl');
+  const noId = JSON.stringify({ type: 'assistant', timestamp: '2026-10-24T10:02:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'x' }], usage: { input_tokens: 3, output_tokens: 1, cache_read_input_tokens: 4, cache_creation_input_tokens: 5 } } });
+  fs.writeFileSync(f, [
+    snapLine('2026-10-24T10:00:00.000Z', 'mx', null, [1, 8, 100, 5], 'thinking'),
+    snapLine('2026-10-24T10:00:09.000Z', 'mx', 'tool_use', [7, 407, 100, 5], 'tool_use'),
+    noId,
+    noId,
+  ].join('\n') + '\n');
+  const rows = await readUsage(f);
+  assert.deepEqual(rows.map((r) => r.turnStart), [true, false, true, true]);
+  assert.deepEqual(rows.map((r) => r.contextTokens), [112, 0, 12, 12]);
+});
+
+test('#4029: tool_result text parts are joined for the guard-refusal check, and a plain error stays a tool-classed call', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-guard-')), 's.jsonl');
+  const use = (id, command) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-24T10:00:00.000Z', message: { id: `m-${id}`, role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }], usage: {} } });
+  const res = (id, content, isError) => JSON.stringify({ type: 'user', timestamp: '2026-10-24T10:00:05.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError }] } });
+  fs.writeFileSync(f, [
+    use('a', 'git -C /repo commit -m x'),
+    res('a', [{ type: 'text', text: 'This session is isolated' }, { type: 'text', text: ' in the worktree /repo' }], true),
+    use('b', 'git -C /repo commit -m x'),
+    res('b', 'Exit code 1', true),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f);
+  const users = rows.filter((r) => r.role === 'user');
+  assert.deepEqual(users[0].turnClasses, { 'guard-refusal': 1 });
+  assert.deepEqual(users[1].turnClasses, { bookkeeping: 1 });
 });
 
 test('#1929: readUsage on a missing file rejects with a code the CLI can name', async () => {

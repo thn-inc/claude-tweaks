@@ -352,10 +352,12 @@ function stripQuotes(s) {
 // only ever see the quoted portion in isolation, judge it fully resolvable, and
 // silently drop the unresolvable suffix that would otherwise poison the target.
 //
-// Returns `{ tokens, singleQuoted }` — `singleQuoted[i]` is true when any part
-// of `tokens[i]` was assembled from a single-quoted span. Real bash never
-// performs `$`-expansion inside single quotes (unlike double quotes or bare
-// words), so this flag is what lets substituteVars() below refuse to treat a
+// Returns `{ tokens, singleQuoted, doubleQuoted, leadQuoted }` — `singleQuoted[i]` is true
+// when any part of `tokens[i]` was assembled from a single-quoted span, and
+// `doubleQuoted[i]` likewise for a double-quoted span (#4015: the redirect scan
+// treats a `>` in either as literal text). Real bash never performs
+// `$`-expansion inside single quotes (unlike double quotes or bare words), so
+// this flag is what lets substituteVars() below refuse to treat a
 // single-quoted `'$NAME'` as a variable reference — without it, a token like
 // `'$WT/a.js'` and `"$WT/a.js"` are indistinguishable post-tokenize, and the
 // substitution step would wrongly expand the single-quoted (never-expanded)
@@ -367,6 +369,7 @@ function stripQuotes(s) {
 function tokenize(seg) {
   const out = [];
   const singleQuoted = [];
+  const doubleQuoted = [];
   const leadQuoted = [];
   const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
   let m;
@@ -374,17 +377,20 @@ function tokenize(seg) {
   while ((m = re.exec(seg)) !== null) {
     const val = m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3];
     const isSQ = m[2] !== undefined;
+    const isDQ = m[1] !== undefined;
     if (out.length && m.index === prevEnd) {
       out[out.length - 1] += val;
       if (isSQ) singleQuoted[singleQuoted.length - 1] = true;
+      if (isDQ) doubleQuoted[doubleQuoted.length - 1] = true;
     } else {
       out.push(val);
       singleQuoted.push(isSQ);
+      doubleQuoted.push(isDQ);
       leadQuoted.push(m[3] === undefined);
     }
     prevEnd = re.lastIndex;
   }
-  return { tokens: out, singleQuoted, leadQuoted };
+  return { tokens: out, singleQuoted, doubleQuoted, leadQuoted };
 }
 
 // Global git flags that consume the NEXT token as a value.
@@ -504,12 +510,15 @@ function substituteVars(tokens, vars, singleQuoted) {
 
 // Shared segment/token walk used by both gitTargets and fileWriteTargets:
 // splits the command into shell segments, tokenizes each, and tracks `cd` to
-// keep the effective cwd in sync. `handler(t, effCwd)` is invoked for every
-// non-cd, non-empty segment with the cwd value in effect for it (string, or
-// null meaning UNKNOWN). Also tracks same-command literal `NAME=value`
-// assignments (see updateAssignment/substituteVars above) and substitutes
-// them into every other segment's tokens before `handler`/the `cd` branch
-// sees them — one shared point so a future fix to either cd-resolution or
+// keep the effective cwd in sync. `handler(t, effCwd, quoting, again)` is
+// invoked for every non-cd, non-empty segment with the cwd value in effect for
+// it (string, or null meaning UNKNOWN); `quoting` is
+// `{ raw, singleQuoted, doubleQuoted, leadQuoted }`, the pre-substitution tokens
+// and their per-token quote flags from tokenize (#4015 reads the first three,
+// #4149's dropRedirections reads `leadQuoted`). Also tracks same-command literal
+// `NAME=value` assignments (see updateAssignment/substituteVars above) and
+// substitutes them into every other segment's tokens before `handler`/the `cd`
+// branch sees them — one shared point so a future fix to either cd-resolution or
 // assignment-substitution can never land in one caller's copy of this
 // preamble and not the other's.
 //
@@ -524,7 +533,7 @@ function forEachCommandSegment(command, cwd, handler, opts) {
 // One segment of forEachShellSegment's walk: updates `vars`, calls `handler`
 // for a non-cd, non-assignment segment, and returns the effective cwd after it.
 function visitSegment(seg, effCwd, vars, handler) {
-  const { tokens: rawT, singleQuoted, leadQuoted } = tokenize(seg.trim());
+  const { tokens: rawT, singleQuoted, doubleQuoted, leadQuoted } = tokenize(seg.trim());
   if (!rawT.length) return effCwd;
   if (updateAssignment(vars, rawT)) return effCwd;
   const t = substituteVars(rawT, vars, singleQuoted);
@@ -540,7 +549,7 @@ function visitSegment(seg, effCwd, vars, handler) {
   let cdLead = 0;
   while (cdLead < t.length && SIMPLE_ASSIGNMENT_RE.test(t[cdLead])) cdLead += 1;
   if (t[cdLead] === 'cd') return resolveCd(effCwd, t[cdLead + 1]);
-  handler(t, effCwd, leadQuoted);
+  handler(t, effCwd, { raw: rawT, singleQuoted, doubleQuoted, leadQuoted });
   return effCwd;
 }
 
@@ -708,7 +717,7 @@ const PLUMBING_WRITE_SUBCOMMANDS = new Set(['mv', 'rm', 'update-ref', 'apply']);
 function resolvedGitSegments(command, cwd, opts) {
   const segments = [];
   let pieceStart = 0; // where the current piece's first-cwd visit began pushing
-  forEachCommandSegment(command, cwd, (t, effCwd, _leadQuoted, again) => {
+  forEachCommandSegment(command, cwd, (t, effCwd, _quoting, again) => {
     if (!again) pieceStart = segments.length;
     const resolved = resolveGitCommand(t, effCwd);
     if (!resolved) return;
@@ -814,11 +823,12 @@ function resolveWriteTarget(effCwd, raw) {
 }
 
 // A redirection's RHS that is a file-descriptor duplication (`>&2`, `2>&1`),
-// never a file target — distinct from resolveWriteTarget's unresolvable set
-// because the shape (a bare `&` followed by digits) is specific to redirection
-// syntax and would otherwise read as a plausible-looking relative path.
+// or an fd close/move (`>&-`, `>&3-`), never a file target — distinct from
+// resolveWriteTarget's unresolvable set because the shape (a bare `&` followed
+// by digits or `-`) is specific to redirection syntax and would otherwise read
+// as a plausible-looking relative path.
 function isFdDupTarget(raw) {
-  return /^&\d+$/.test(raw);
+  return /^&(\d+-?|-)$/.test(raw);
 }
 
 // Matches a write-redirection operator at the START of a token, optionally
@@ -829,6 +839,15 @@ function isFdDupTarget(raw) {
 // has the full candidate target) are not matched as write operators here.
 const REDIRECT_OP_RE = /^\d*(>>|>\||>)(.*)$/;
 const AMP_REDIRECT_OP_RE = /^&(>>|>)(.*)$/;
+
+// #4015: bash ends a word at an unquoted `>`, so `echo foo>x` redirects exactly
+// like `echo foo > x`. The prefix excludes quotes, backslash, `$` and backtick
+// because each can make the `>` literal or put it inside an expansion, and `(`
+// because an unquoted `(` inside a bare word is only arithmetic (`((i>0))`, where
+// `>` is a comparison), `$(`, `<(` or extglob syntax; ambiguity resolves to no
+// target. Used only on a token the start-anchored scan above did not match, and
+// only when the caller's quoting flags say the token was bare.
+const GLUED_REDIRECT_RE = /^[^"'\\$`>(]+(>>|>\||>)(.*)$/;
 
 function matchRedirectOperator(tok) {
   const m = REDIRECT_OP_RE.exec(tok) || AMP_REDIRECT_OP_RE.exec(tok);
@@ -1493,11 +1512,20 @@ function groupEventsWith(seg, g, spans, undo) {
     for (let k = 0; k < n; k += 1) push({ kind: 'p', caseDepth: 0, arith: n === 2 });
     atCmd = cmd;
   };
+  let parens = null; // parenMatches(seg), computed at the first `((` at command position
   let i = 0;
   while (i < seg.length) {
     const c = seg[i];
     if (c === ' ' || c === '\t' || c === '\r' || c === '\n') { i += 1; continue; }
     if (c === '(') {
+      // An arithmetic `(( … ))` command nests like `$(( … ))`, so it stays one piece and the
+      // redirect scan reads its body as a comparison (compoundBodyEnd, #4015), not as a group's
+      // commands. Any other `((` is two subshells (`((cd x && ls) | cat)`).
+      if (atCmd && seg[i + 1] === '(') {
+        if (parens === null) parens = parenMatches(seg);
+        const inner = parens.get(i + 1);
+        if (inner !== undefined && seg[inner + 1] === ')') { nest(2, false); i += 2; continue; }
+      }
       if (atCmd) {
         const frame = { kind: '(', caseDepth: 0, sub: g.nesting > 0 };
         push(frame);
@@ -1591,13 +1619,35 @@ function groupEventsWith(seg, g, spans, undo) {
   return events;
 }
 
+// For one segment, the index of the `)` that matches each `(` (absent when it never closes), in one
+// linear pass. groupEvents reads a `((` at command position as bash does: arithmetic when the paren
+// after its first `(` closes at a `)` directly followed by another `)`. Bash reads that matched pair
+// with quotes, so a `)` in a quoted span or a backtick substitution closes nothing here either.
+function parenMatches(seg) {
+  const match = new Map();
+  const stack = [];
+  for (let i = 0; i < seg.length; i += 1) {
+    const c = seg[i];
+    if (c === '\\') { i += 1; continue; }
+    if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1;
+      while (j < seg.length && seg[j] !== c) j += c !== "'" && seg[j] === '\\' ? 2 : 1;
+      i = j;
+      continue;
+    }
+    if (c === '(') stack.push(i);
+    else if (c === ')' && stack.length) match.set(stack.pop(), i);
+  }
+  return match;
+}
+
 // visitSegment for each cwd the walk may be in (a list, as after a brace group), deduplicated.
 // `handler` gets a fourth argument, true on every visit of the piece after the first, so a
 // consumer can drop a target that does not depend on the cwd (`git -C /x`) the second time.
 function visitUnderEach(text, cwds, vars, handler) {
   const next = [];
   cwds.forEach((c, k) => {
-    const n = visitSegment(text, c, vars, k === 0 ? handler : (t, effCwd, lq) => handler(t, effCwd, lq, true));
+    const n = visitSegment(text, c, vars, k === 0 ? handler : (t, effCwd, quoting) => handler(t, effCwd, quoting, true));
     if (!next.includes(n)) next.push(n);
   });
   return next;
@@ -1722,6 +1772,18 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
   runBodies(Infinity, cur);
 }
 
+// Where a `[[ … ]]` or `(( … ))` segment's body ends: the `>` inside one is a
+// comparison (`[[ a>b ]]`, `(( x>y ))`), never a redirection, so the redirect scan
+// starts at the token after the closing word. 0 for any other segment; an
+// unterminated body (a glued closer such as `y))`) is skipped whole, which fails
+// open (#4015).
+function compoundBodyEnd(t) {
+  const closer = t[0] === '[[' ? ']]' : t[0] === '((' ? '))' : null;
+  if (closer === null) return 0;
+  const end = t.indexOf(closer);
+  return end === -1 ? t.length : end + 1;
+}
+
 // Redirection-target scan (#3080): unlike fileWriteTargets' other shapes, a
 // redirection carries no command word — `echo`, `printf`, `cat`, or nothing
 // at all can precede it — so this runs over the WHOLE token list regardless
@@ -1735,10 +1797,26 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
 // inside a body fed to a known data reader is not a redirection. A body fed to any
 // other program is scanned as its own chunk, because that text may run as shell
 // (see lineFeedsOnlyDataReaders for the allowlist).
-function redirectWriteTargets(t, effCwd) {
+//
+// Glued-word redirects (#4015): given `quoting` (the walk handler's third
+// argument), a token the start-anchored scan misses (`foo>x`) is also
+// tried against GLUED_REDIRECT_RE. Eligibility is tested on the PRE-substitution
+// token and the unquoted flags, so a quoted or `$`-expanded `>` never counts;
+// the target is read from the post-substitution token, so `>$WT/x` still
+// resolves. Without `quoting` the scan is start-anchored only.
+//
+// A `[[ … ]]` or `(( … ))` segment holds a comparison, not a redirection
+// (compoundBodyEnd), so the scan starts after its closing word. The walk keeps an
+// arithmetic `((…))` command in one piece (groupEvents), so its `((` reaches here.
+function redirectWriteTargets(t, effCwd, quoting) {
   const out = [];
-  for (let i = 0; i < t.length; i += 1) {
+  for (let i = compoundBodyEnd(t); i < t.length; i += 1) {
     let rawTarget = matchRedirectOperator(t[i]);
+    if (rawTarget === null && quoting && !quoting.singleQuoted[i] && !quoting.doubleQuoted[i]
+      && GLUED_REDIRECT_RE.test(quoting.raw[i])) {
+      const glued = GLUED_REDIRECT_RE.exec(t[i]);
+      if (glued) rawTarget = glued[2];
+    }
     if (rawTarget === null) continue;
     if (rawTarget === '') {
       i += 1; // consume the target token too — never re-scan it as its own operator
@@ -1881,13 +1959,13 @@ function dropRedirections(tokens, leadQuoted) {
 
 function fileWriteTargets(command, cwd, opts) {
   const targets = [];
-  forEachShellSegment(command, cwd, (tokens, effCwd, leadQuoted) => {
+  forEachShellSegment(command, cwd, (tokens, effCwd, quoting) => {
     // Redirection has no command word, so it runs for every segment
     // regardless of t[0] — never gated by the WRITE_SHAPES check below (#3080).
-    for (const file of redirectWriteTargets(tokens, effCwd)) targets.push({ action: 'write', file });
+    for (const file of redirectWriteTargets(tokens, effCwd, quoting)) targets.push({ action: 'write', file });
     // A heredoc/here-string operator is input and a redirection is reported above, so
     // neither is a file the shape writes.
-    const t = dropRedirections(tokens, leadQuoted);
+    const t = dropRedirections(tokens, quoting.leadQuoted);
     if (!WRITE_SHAPES.includes(t[0])) return;
     if (t[0] === 'tee') {
       // tee genuinely writes to EVERY non-flag argument, not just the
@@ -2034,7 +2112,7 @@ const MKDIR_VALUE_FLAGS = new Set(['-m', '--mode']);
 function mkdirTargets(command, cwd, opts) {
   const targets = [];
   let pieceStart = 0; // where the current piece's first-cwd visit began pushing
-  forEachCommandSegment(command, cwd, (t, effCwd, _leadQuoted, again) => {
+  forEachCommandSegment(command, cwd, (t, effCwd, _quoting, again) => {
     if (!again) pieceStart = targets.length;
     if (t[0] !== 'mkdir') return;
     const { positionals } = partitionArgs(t.slice(1), MKDIR_VALUE_FLAGS);

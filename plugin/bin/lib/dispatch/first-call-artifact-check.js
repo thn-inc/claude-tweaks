@@ -287,7 +287,9 @@ function defaultReportExists(p) {
 // worktree's HEAD, with its `report.json` still on disk. Reads `run-state.json`'s `worktree`
 // (written by `hooks.js record-worktree`), then `verify.js --stamp-status` there. First match
 // wins, in the order listed: no recorded worktree -> worktree-unrecorded (no stamp read);
-// a throwing or non-object stamp read -> stamp-read-failed; `present !== true` -> stamp-absent;
+// a throwing or non-object stamp read -> stamp-read-failed; a complete composed per-suite
+// verdict (`verifiedHead` and `suiteComposed.complete`, #4006) verifies with no single stamp or
+// `reportPath` needed; `present !== true` -> stamp-absent;
 // `verifiedHead !== true` -> stamp-not-head; a `reportPath` that is not a string or does not
 // exist -> report-missing. `status` is the parsed stamp-status object whenever one was read.
 //
@@ -321,6 +323,9 @@ function checkFirstCallStamp({ runDir }, deps = {}) {
     return { verified: false, reason: 'stamp-read-failed', status: null };
   }
 
+  if (status.verifiedHead === true && status.suiteComposed && status.suiteComposed.complete === true) {
+    return { verified: true, reason: null, status };
+  }
   if (status.present !== true) return { verified: false, reason: 'stamp-absent', status };
   if (status.verifiedHead !== true) return { verified: false, reason: 'stamp-not-head', status };
   if (typeof status.reportPath !== 'string' || !exists(status.reportPath)) {

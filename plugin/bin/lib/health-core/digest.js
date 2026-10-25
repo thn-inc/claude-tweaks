@@ -1,4 +1,5 @@
 'use strict';
+const { parseMarkerFingerprints } = require('./fingerprint');
 
 // Drain-rate cap + digest mode (#235). When an origin's open-singleton
 // finding count is at or above the `health-open-cap` policy value, a
@@ -67,12 +68,7 @@ function findOpenDigestIssue(rawIssues, digestLabel) {
 //   <!-- digest-fingerprint: <fp> -->
 // Extracts every embedded fingerprint from a body string.
 function parseDigestFingerprints(body) {
-  const re = new RegExp(`<!-- ${DIGEST_MARKER_PREFIX}: (\\S+?) -->`, 'g');
-  const out = [];
-  let m;
-  // eslint-disable-next-line no-cond-assign
-  while ((m = re.exec(String(body || '')))) out.push(m[1]);
-  return out;
+  return parseMarkerFingerprints(body, DIGEST_MARKER_PREFIX);
 }
 
 // Expands a digest issue's embedded fingerprints into the same

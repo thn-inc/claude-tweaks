@@ -159,6 +159,40 @@ test('both review-console.md and multispec-review-console.md cite the shared int
   assert.match(mcSection, /_shared\/integration-model\.md/);
 });
 
+// #3949: a can't-tell finding row on the PR console is tick = file, untick = drop. The flag name
+// and the two outcome notes are console-execute.js's own, so the prose and the code cannot drift.
+const flat = (s) => s.replace(/\s+/g, ' ');
+const CONSOLE_EXECUTION = flat(read('plugin', 'skills', '_shared', 'console-execution.md'));
+const { decideConsoleExecute, FILING_FAILED_NOTE } = require('../plugin/bin/lib/reconcile/console-execute');
+
+test('#3949: console-on-pr.md renders a finding row from --list with its label, pre-tick and findingItem flag', () => {
+  const onPr = flat(CONSOLE_ON_PR);
+  assert.ok(onPr.includes('`console-filings.js --run "{item-run-dir}" --list`'));
+  assert.ok(onPr.includes('`— tick = file · untick = drop`'));
+  assert.ok(onPr.includes('renders **pre-ticked** when the entry\'s `resolution` (its Approve-all default) is `filed` and unticked when it is `dropped`'));
+  assert.ok(onPr.includes('carries `"findingItem": "{id}"`'));
+  assert.ok(onPr.includes('**Exception — a finding row** (`tick = file · untick = drop`)'));
+  const resolved = decideConsoleExecute({ commentIds: ['IC_1'], prNumber: 1, items: [{ id: 'staged-1', kind: 'staged', findingItem: 'tiebreak:3f2a9c1b7d04' }] },
+    [{ id: 'IC_1', body: '<!-- console-item: resolve -->\n- [x] Resolve' }], Date.now());
+  assert.strictEqual(resolved.items[0].findingItem, 'tiebreak:3f2a9c1b7d04', 'the flag the prose names is the one detection forwards');
+});
+
+test('#3949: the Post-or-update steps and the Legend name the pre-ticked finding-row exception', () => {
+  const onPr = flat(CONSOLE_ON_PR);
+  assert.ok(onPr.includes('all rows unticked — except a finding row whose default is `filed`, which renders pre-ticked per "A Low-confidence or Contested row" above'));
+  assert.ok(onPr.includes('a `filed`-default finding row arrives pre-ticked'));
+  assert.ok(onPr.includes('A finding row may arrive pre-ticked (its default is to file) — untick it to drop it.'));
+});
+
+test('#3949: console-execution.md routes a ticked finding row to step 7 and a failed filing to --filing-failed', () => {
+  assert.ok(CONSOLE_EXECUTION.includes('**Except a finding row** (`findingItem` on its item'));
+  assert.ok(CONSOLE_EXECUTION.includes('it files through `wrap-up/review-console.md` step 7\'s can\'t-tell clause'));
+  assert.ok(CONSOLE_EXECUTION.includes('it is **dropped** — nothing filed'));
+  assert.ok(CONSOLE_EXECUTION.includes(`goes in \`resolve-console --filing-failed\`: its reply reads \`${FILING_FAILED_NOTE}\``));
+  assert.ok(CONSOLE_EXECUTION.includes('[--filing-failed {ids}]'));
+  assert.ok(CONSOLE_EXECUTION.includes('**A finding row is floor-clearing and is ticked whatever its pre-tick**'));
+});
+
 // Per-file 40 KB pins on review-console.md and multispec-review-console.md
 // retired by #1997 — the per-file tier was a warning from #1990 until #3311
 // deleted the ceiling model entirely, and these files have no compose call

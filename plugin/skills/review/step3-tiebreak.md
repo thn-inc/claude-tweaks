@@ -54,7 +54,7 @@ Severity: critical | high | medium | low | info
 Recommendation: file | drop — {one-line reason}
 
 You are the independent tiebreak judge for this one finding. Re-read the live file at Location and decide from the code itself whether the finding holds; you were deliberately given no account of how it was reported.
-Evidence is required for confirmed and refuted: cite the finding's own path and a line within 5 of Location, and quote the whole cited source line verbatim — a token or fragment of the line is not a quote. cant-tell needs no Evidence line.
+Evidence is required for confirmed and refuted: cite the Location path exactly as given (the full repo-relative path, never a bare filename or another file) and a line within 5 of Location, and quote the whole cited source line verbatim — a token or fragment of the line is not a quote. cant-tell needs no Evidence line.
 Recommendation file means the finding is worth a fix or a work record; drop means it is not worth acting on.
 A vacuity claim — that a test cannot fail, or that its cases are vacuous — cannot be confirmed by reading code: never reply confirmed for one.
 Produce your response first; the last non-empty line of your reply must then read exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled `STATUS: {WORD}`.
@@ -90,11 +90,11 @@ For each entry, once its agent has returned:
    - `confirmed`: the finding enters Step 3 Routing at the returned `severity`, as an input `step3-routing.md`'s routing table lists.
    - `drop`: logged only.
    - `digest` (a pipeline run only; `## Standalone review` covers the no-run-dir case): one materiality-digest entry with `Defer-reason: tiebreak-cant-tell` and area `review`, written through the digest path `step3-routing.md`'s Defer bullet uses, including that bullet's interactive batch-table approval (`_shared/materiality-floor.md`'s Entry format, Dedup, and Digest URL and count surfacing sections). The count goes in `review-summary-template.md`'s `### Tiebreak` section.
-   - `console` (a pipeline run only; `## Standalone review` covers the no-run-dir case): the finding surfaces at the Review Console through its earlier STAGED line until the console sub-issue lands — the logged line, which carries the `Recommendation:`, holds no keyword the console matches.
+   - `console` (a pipeline run only; `## Standalone review` covers the no-run-dir case): the finding surfaces at the Review Console as a Low-confidence or Contested row carrying the logged line's `Severity:` and `Recommendation:` — `console/resolve.js` reads the verdict line itself (`wrap-up/console-template.md`'s Low-confidence findings section).
 
-The earlier STAGED line for the finding is not rewritten. A `confirmed` verdict supersedes it through `console/resolve.js`'s `#3772` matcher only when that line carries `lens "{lens}"` and `{path}:{line}` (the gap sweep's does, under lens `gap-sweep`). A contested finding's `staged/review-contested-{N}.md` is never superseded, so it still shows at the console after a `confirmed` verdict until the console sub-issue lands. Under the other outcomes the earlier line stays at the console too.
+The earlier STAGED line for the finding is not rewritten. Every verdict line supersedes it through `console/resolve.js`'s `#3772` matcher only when that line carries `lens "{lens}"` and `{path}:{line}` (the gap sweep's does, under lens `gap-sweep`) and the verdict is logged after it. A staged `review-unconfirmed-*`, `review-contested-*` or `review-debate-*` file that line names is superseded with it, taking the verdict's final outcome (`wrap-up/review-console-appendix.md`'s Resolution-to-step mapping). A STAGED line no verdict settles stays at the console, `keep-staged`.
 
-Any reviewer-read verdict — a Direct-verification override, or an inline fallback below — goes through the same resolver, with ` Mode: inline.` appended to the content of `T` (never to a shell argument) before step 3 logs it. An override's can't-tell outcome is not logged: that finding enters this step like any other (`step3-lens-dispatch.md`'s Direct-verification override paragraph).
+An inline fallback verdict (`## Dispatched reviewer`) goes through the same resolver, with ` Mode: inline.` appended to the content of `T` (never to a shell argument) before step 3 logs it.
 
 ## Standalone review
 

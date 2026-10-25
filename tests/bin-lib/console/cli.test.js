@@ -9,6 +9,7 @@ const { execFileSync } = require('child_process');
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'console-resolve.js');
 const PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..', 'plugin');
 const { run, ghReadGrants, checkPatchStack } = require(CLI);
+const { gitEnv } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', writePolicy = true, runConfig = null, consoleJson = null } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cli-')));
@@ -71,6 +72,78 @@ test('unattended: exit 0, one decisions block of items+1 lines, console.json res
   // item that is backed by a staged/ file.
   for (const line of block.slice(1)) assert.match(line, /Reversibility: (high|med|low|n\/a)\.$/, line);
   assert.ok(block.some((l) => /Console item reflect-1\.md \(Queue writes\): apply — .*\(staged\/reflect-1\.md\)\. Reversibility: med\.$/.test(l)), block.join('\n'));
+});
+
+test('a dismissed shadow-dup duplicate logs reversibility n/a (#3946)', async () => {
+  const fx = mainCheckoutWithRun({ staged: { 'wrap-up-memory-1.md': 'same', 'wrap-up-memory-1.md.shadow-dup': 'same' } });
+  const { d } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  const decisions = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.match(decisions, /Console item wrap-up-memory-1\.md\.shadow-dup \(Dismissed duplicates\): dismissed — shadow-dup-duplicate .*Reversibility: n\/a\.$/m);
+});
+
+// A refuted-drop verdict line built through the real resolver and the sanctioned formatter, never typed by hand.
+function drop(over, severity) {
+  const { resolveTiebreak } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'tiebreak'));
+  const { formatEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
+  const tbNow = new Date(2026, 9, 24, 10, 0, 0);
+  const file = Array.from({ length: 300 }, () => 'quote text here').join('\n');
+  const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim', reporterSeverity: severity, kind: 'unconfirmed', ...over };
+  const r = resolveTiebreak(finding, `Verdict: refuted\nEvidence: ${finding.path}:${finding.line} \`quote text here\`\nSeverity: ${severity}\nSTATUS: DONE`, { readFile: () => file, now: tbNow });
+  return { r, entry: formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' }) };
+}
+
+test('console.json records droppedByTiebreak and a re-render shows the block (#3949 AC4)', async () => {
+  const high = drop({}, 'high');
+  const low = drop({ path: 'src/b.js', claim: 'other' }, 'low');
+  const fx = mainCheckoutWithRun({ staged: THREE, decisions: `${high.entry}\n${low.entry}\n` });
+  const first = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], first.d), 0);
+  const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  assert.deepStrictEqual(cj.droppedByTiebreak, [{ id: high.r.id, lens: '3a', path: 'src/a.js', line: 9, severity: 'high', evidence: 'src/a.js:9 "quote text here"' }]);
+  assert.match(first.out(), /#### Dropped by tiebreak \(read-only — no decision\)/);
+  assert.match(first.out(), /\| src\/a\.js:9 \| 3a \| high \| src\/a\.js:9 "quote text here" \|/);
+  assert.ok(!first.out().includes('src/b.js'), 'a low drop never reaches the console');
+  const second = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], second.d), 0);
+  assert.match(second.out(), /already records a resolved console/);
+  assert.match(second.out(), /#### Dropped by tiebreak \(read-only — no decision\)[\s\S]*\| src\/a\.js:9 \| 3a \| high \|/);
+  const none = mainCheckoutWithRun({ staged: THREE });
+  assert.strictEqual(await run(['--run', none.runDir, '--policy', 'console-auto'], baseDeps(none, []).d), 0);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(none.runDir, 'console.json'), 'utf8')).droppedByTiebreak, [], 'always written');
+});
+
+test('a dropped item logs reversibility n/a (#3949)', async () => {
+  const v = drop({ reporterSeverity: 'low' }, 'low');
+  const staged = '- STAGED 09:59:00 — Debate: lens "3a" cross-lens disagreement on src/a.js:9 inconclusive (positions differ). Both verdicts staged. Stage path: staged/review-contested-1.md. Reversibility: high.';
+  const fx = mainCheckoutWithRun({ decisions: `${staged}\n${v.entry}\n`, staged: { 'review-contested-1.md': 'x' } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], baseDeps(fx, []).d), 0);
+  const decisions = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.match(decisions, /Console item review-contested-1\.md \(Contested findings\): dropped — refuted by tiebreak \(staged\/review-contested-1\.md\)\. Reversibility: n\/a\.$/m);
+});
+
+test('console.json and --json carry filings as {item, fingerprint, title} with no proposal text (#3949 AC5)', async () => {
+  const { resolveTiebreak } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'tiebreak'));
+  const { formatEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
+  const tbNow = new Date(2026, 9, 24, 10, 0, 0);
+  const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
+  const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
+  const json = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto', '--json'], json.d), 0);
+  const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  assert.strictEqual(cj.filings.length, 1);
+  assert.deepStrictEqual(Object.keys(cj.filings[0]).sort(), ['fingerprint', 'item', 'title']);
+  assert.strictEqual(cj.filings[0].item, `tiebreak:${r.id}`);
+  assert.match(cj.filings[0].fingerprint, /^consolefinding-[0-9a-f]{8}$/);
+  assert.deepStrictEqual(JSON.parse(json.out()).filings, cj.filings, '--json prints the same');
+  assert.ok(!json.out().includes('work-fingerprint'), 'no proposal text in --json');
+  assert.ok(!JSON.stringify(cj).includes('work-fingerprint'), 'no proposal text in console.json');
+  assert.deepStrictEqual(cj.items.map((i) => i.resolution), ['filed']);
+  const none = mainCheckoutWithRun({ staged: THREE });
+  assert.strictEqual(await run(['--run', none.runDir, '--policy', 'console-auto'], baseDeps(none, []).d), 0);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(none.runDir, 'console.json'), 'utf8')).filings, [], 'always written');
 });
 
 // grant-veto-window-hours only reaches evaluateMaturation if the CLI resolves
@@ -252,6 +325,33 @@ test('trusted: exit 4 and nothing written (#1932 AC5)', async () => {
   assert.match(err(), /consoleAutoResolve/);
   assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), before);
   assert.ok(!fs.existsSync(path.join(fx.runDir, 'console.json')));
+});
+
+// #3949 AC6: below `unattended` with no human, the resolver files nothing, drops
+// nothing, and leaves every item unresolved — no console.json, so the archive
+// guard (readConsoleState 'none' with staged items) refuses with
+// console-never-rendered-staged-pending, a structurally-stuck reason reconcile
+// escalates to a human (escalate-residue.js).
+test('AC6: console-resolve.js below unattended exits 4, writes no console.json, and archival refuses', async () => {
+  const { readConsoleState, decideArchiveCore, STRUCTURALLY_STUCK_REASONS } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'reconcile', 'archive-merged.js'));
+  for (const autonomy of ['supervised', 'trusted']) {
+    const fx = mainCheckoutWithRun({ autonomy, staged: NEEDS });
+    const calls = [];
+    const { d, err } = baseDeps(fx, calls);
+    assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 4, autonomy);
+    assert.match(err(), /consoleAutoResolve/);
+    assert.ok(!fs.existsSync(path.join(fx.runDir, 'console.json')), autonomy);
+    assert.ok(!calls.some((c) => c[0] === 'gh'), 'no gh call');
+    for (const [n, b] of Object.entries(NEEDS)) {
+      assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'staged', n), 'utf8'), b, `${autonomy}: ${n} untouched`);
+    }
+    const consoleState = readConsoleState(fx.runDir);
+    assert.strictEqual(consoleState, 'none', autonomy);
+    const hasStagedPending = fs.readdirSync(path.join(fx.runDir, 'staged')).some((n) => !n.startsWith('.'));
+    const decision = decideArchiveCore({ state: 'MERGED' }, consoleState, hasStagedPending);
+    assert.deepStrictEqual(decision, { action: 'skip', reason: 'console-never-rendered-staged-pending' }, `${autonomy}: a merged run still refuses archival`);
+    assert.ok(STRUCTURALLY_STUCK_REASONS.has(decision.reason), 'the refusal escalates to a human');
+  }
 });
 
 test('--dry-run at unattended prints the table and writes nothing (#1932 AC5)', async () => {
@@ -478,7 +578,7 @@ test('AC3.6: a re-rendered console whose every unresolved item is missing prints
 // #3679: the stacked check (#3290) is wired into resolveAll via checkPatchStack(cwd()). Both
 // patches are real `git diff` captures of f.txt in throwaway fixture repos — never hand-typed hunks.
 const STACK_BASE = ['l1', 'l2', 'l3', 'l4', 'anchor', 'a1', 'a2', 'a3'].join('\n') + '\n';
-const STACK_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+const STACK_ENV = gitEnv();
 
 function captureInsertAboveAnchor(tag) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-capture-'));

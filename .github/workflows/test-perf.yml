@@ -1,0 +1,48 @@
+# Scheduled perf/ budget run (#4067).
+#
+# perf/ holds the wall-clock timing budgets, which npm test and every PR gate
+# exclude: a timing assertion flakes under load, and a flaky gate trains
+# readers to dismiss real failures. This job runs `npm run test:perf` on an
+# idle runner, once a day and on demand, so the budgets are still exercised
+# without ever gating or flaking a PR. A pull_request or push trigger is
+# deliberately absent. A failing budget makes the scheduled run red in the
+# Actions tab, and GitHub's failed-scheduled-workflow notification reports it.
+name: test-perf
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: test-perf-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # reconcile-time-bounds.test.js commits fixtures; CI runners have no git identity.
+      GIT_AUTHOR_NAME: ci
+      GIT_AUTHOR_EMAIL: ci@invalid.example
+      GIT_COMMITTER_NAME: ci
+      GIT_COMMITTER_EMAIL: ci@invalid.example
+      # reconcile()'s GitHub-health preflight (plugin/bin/lib/reconcile/preflight.js,
+      # #820) shells to `gh api rate_limit` before any dispatch that doesn't stub
+      # it — an unauthenticated `gh` reads as "GitHub unreachable" and skips the
+      # whole pass, which is exactly what happened here without a token.
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history, as in test.yml, for suites that read git history.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # No install step: the plugin ships zero npm deps, and node --test is built in.
+      - run: npm run test:perf

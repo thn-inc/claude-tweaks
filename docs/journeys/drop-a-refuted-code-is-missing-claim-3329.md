@@ -34,7 +34,7 @@ files:
   - Found → the claim is refuted, logged `AUTO … Not staged.`, and dropped.
   - Not found, or an ambiguous hit → it stays `unconfirmed`, is staged as before, and goes on to Step 3.7's tiebreak.
   - At `medium`, the check runs before the cross-lens corroboration pass, so a refuted claim is never cross-lens input.
-  - The check only refutes. Raising a finding to `confirmed` takes the Direct-verification override or a `confirmed` Step 3.7 tiebreak verdict (`get-a-verdict-on-every-unverified-review-finding-3947.md`).
+  - The check only refutes. Raising a finding to `confirmed` takes a `confirmed` Step 3.7 tiebreak verdict (`get-a-verdict-on-every-unverified-review-finding-3947.md`).
 - **Red flags:**
   - A real defect ("`foo()` is missing parameter `timeout`") is logged as refuted because `timeout` appears in some other function.
   - The check reads the plan, spec or review bundle instead of the live file.

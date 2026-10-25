@@ -190,6 +190,23 @@ test('AC2.1 the dispatch template assertions can go red', () => {
   assertEachPatternGoesRed(fencedTemplate(sectionOf(tiebreakText(), 'Dispatch')), DISPATCH_TEMPLATE, dispatchTemplateMissing);
 });
 
+// Minor 11 (#3950, ruling R18 moved into the template): a bare filename or another file in Evidence fails
+// the resolver's path check and files a refuted finding, so the judge cites the Location path as given.
+const EVIDENCE_PATH = [
+  [/cite the Location path exactly as given \(the full repo-relative path, never a bare filename or another file\)/, 'the Evidence instruction cites the Location path exactly as given'],
+];
+const evidencePathMissing = missingFactsOf(EVIDENCE_PATH);
+
+test("minor 11: the tiebreak template tells the judge to cite the Location path exactly as given", () => {
+  const template = fencedTemplate(sectionOf(tiebreakText(), 'Dispatch'));
+  assert.deepEqual(evidencePathMissing(template), []);
+  assert.doesNotMatch(template, /the finding's own path/, 'the retired wording is gone');
+});
+
+test('minor 11 the evidence-path assertion can go red', () => {
+  assertEachPatternGoesRed(fencedTemplate(sectionOf(tiebreakText(), 'Dispatch')), EVIDENCE_PATH, evidencePathMissing);
+});
+
 const hasFrontier = (text) => /Frontier/.test(text);
 
 test('AC2.2 no Frontier in the tiebreak fan-out', () => {
@@ -443,7 +460,7 @@ test('code-mode-steps wiring assertions can go red', () => {
   assert.ok(wiringProblems(routingFirst).includes('the Step 3.7 heading comes after Step 3 Routing'));
 });
 
-// --- step3-lens-dispatch.md: low tier and the Direct-verification override route through the tiebreak ---
+// --- step3-lens-dispatch.md: the low tier routes through the tiebreak; the Direct-verification override is retired ---
 
 const STEP3 = path.join(SKILLS, 'review', 'step3-lens-dispatch.md');
 
@@ -476,30 +493,42 @@ test('AC4.1 the low-tier assertions can go red', () => {
   assert.deepEqual(lowTierLeftovers(`${paragraph} confirmed via direct verification`), ['the old direct-verification confirmation log line']);
 });
 
-// AC4.2: the override stays documented and emits a resolver verdict line.
-const OVERRIDE_REQUIRED = [
-  [/resolve-tiebreak/, 'the override resolves through resolve-tiebreak'],
-  [/Mode: inline\./, 'the override marks its verdict Mode: inline.'],
-  [/step3-tiebreak\.md/, 'the override cites the tiebreak step'],
-];
-const OVERRIDE_FORBIDDEN = [[/the resolution path that actually confirms/, 'the resolution-path-that-actually-confirms sentence']];
-const overrideMissing = missingFactsOf(OVERRIDE_REQUIRED);
-const overrideLeftovers = leftoverFactsOf(OVERRIDE_FORBIDDEN);
+// AC8.1 (#3950): the reviewer's own Direct-verification override is retired. Every unconfirmed finding
+// reaches Step 3.7's tiebreak, so the paragraph (and its ` Mode: inline.` verdict path) is gone.
+const DIRECT_VERIFICATION = /direct[- ]verification/i;
+const RETIRED_REPLACEMENT = "recoverable only through Step 3.7's tiebreak";
 
-test('AC4.2 the override stays documented and emits a resolver verdict line', () => {
-  const paragraph = overrideParagraph(readText(STEP3));
-  assert.notEqual(paragraph, '', 'the Direct-verification override paragraph was not found');
-  assert.deepEqual(overrideMissing(paragraph), [], 'the override must route through the resolver');
-  assert.deepEqual(overrideLeftovers(paragraph), [], 'the override must not claim to be the resolution path that confirms');
+// The one predicate both the positive test and its go-red proof call: the retirement facts the text breaks.
+function retirementProblems(text) {
+  const problems = [];
+  if (DIRECT_VERIFICATION.test(text)) problems.push('step3-lens-dispatch.md must not mention direct verification');
+  if (overrideParagraph(text) !== '') problems.push('the override paragraph must be gone');
+  if (/the override below/.test(text)) problems.push('no pointer to the retired override remains');
+  if (!text.includes(RETIRED_REPLACEMENT)) problems.push('the anchor note must name the tiebreak as the way back');
+  if (!text.includes('Reading source alone never lifts this downgrade: the only way back')) problems.push('the lens 3f downgrade rule survives the override');
+  return problems;
+}
+
+test("AC8.1: the Direct-verification override is retired", () => {
+  assert.deepEqual(retirementProblems(readText(STEP3)), []);
 });
 
-test('AC4.2 the override assertions can go red', () => {
-  const paragraph = overrideParagraph(readText(STEP3));
-  assertEachPatternGoesRed(paragraph, OVERRIDE_REQUIRED, overrideMissing);
-  assert.deepEqual(overrideLeftovers(`${paragraph} expect it to be the resolution path that actually confirms a real finding`), ['the resolution-path-that-actually-confirms sentence']);
+test('AC8.1 the retirement assertions can go red', () => {
+  const text = readText(STEP3);
+  assert.deepEqual(retirementProblems(`${text}\n> **Direct-verification override.** planted`), ['step3-lens-dispatch.md must not mention direct verification', 'the override paragraph must be gone']);
+  assert.deepEqual(retirementProblems(`${text}\nsee the override below`), ['no pointer to the retired override remains']);
+  assert.deepEqual(retirementProblems(text.replace(RETIRED_REPLACEMENT, 'recoverable only through the override')), ['the anchor note must name the tiebreak as the way back']);
+  assert.deepEqual(retirementProblems(text.replace('Reading source alone never lifts this downgrade: the only way back', 'Reading source lifts it')), ['the lens 3f downgrade rule survives the override']);
 });
 
-// pointer: the file names the tiebreak step at least twice (low tier + override).
+// AC8.2: the file stays under the rail (52,500 bytes, budgets.js's RAIL_BYTES — the single source) after the paragraph is removed.
+test('AC8.2: step3-lens-dispatch.md stays under the rail', () => {
+  const bytes = Buffer.byteLength(readText(STEP3));
+  assert.ok(underRail(bytes), `step3-lens-dispatch.md is ${bytes} bytes, expected < ${RAIL_BYTES}`);
+  assert.ok(!underRail(Buffer.byteLength('x'.repeat(RAIL_BYTES))), 'a file exactly at the rail must turn the check red');
+});
+
+// pointer: the file names the tiebreak step at least twice (low tier + the recoverable-through note).
 const countOf = (text, needle) => text.split(needle).length - 1;
 
 test('pointer: step3-lens-dispatch.md names step3-tiebreak.md at least twice', () => {
@@ -748,6 +777,21 @@ test('the review-wide bypass scan can go red', () => {
   }
 });
 
+// AC8.1 (#3950): no file of the review skill names the retired Direct-verification override.
+const retiredOverrideMentions = (files, readFile) => files.filter((name) => DIRECT_VERIFICATION.test(readFile(name)));
+
+test('AC8.1: no review file names the retired Direct-verification override', () => {
+  assert.deepEqual(retiredOverrideMentions(reviewFiles(), readReviewFile), []);
+  const routing = routingText();
+  assert.doesNotMatch(noReproBullet(routing), /Mode: inline|resolve-tiebreak/, 'the no-reproduction bullet no longer resolves through an override');
+  assert.match(readReviewFile('step3-tiebreak.md'), /An inline fallback verdict \(`## Dispatched reviewer`\) goes through the same resolver, with ` Mode: inline\.` appended to the content of `T`/);
+});
+
+test('AC8.1 the review-wide retirement scan can go red', () => {
+  assert.deepEqual(retiredOverrideMentions(['planted.md'], () => 'the Direct-verification override'), ['planted.md']);
+  assert.deepEqual(retiredOverrideMentions(['planted.md'], () => 'elevated via direct verification'), ['planted.md']);
+});
+
 const ROUTING_INPUTS = [[/tiebreak-confirmed findings \(`step3-tiebreak\.md`\)/, 'the Inputs list takes tiebreak-confirmed findings']];
 const routingInputsMissing = missingFactsOf(ROUTING_INPUTS);
 
@@ -763,8 +807,7 @@ test('AC6.1 the Inputs assertion can go red', () => {
 const routingTexts = () => ({ routing: routingText() });
 
 const SOURCE_BULLETS = [
-  [({ routing }) => noReproBullet(routing), /resolve-tiebreak/, 'the Direct-verification override resolves through resolve-tiebreak'],
-  [({ routing }) => noReproBullet(routing), /Mode: inline\./, 'the override marks its verdict Mode: inline.'],
+  [({ routing }) => noReproBullet(routing), /A lens 3f vacuity finding from either source is re-confirmed only by the reviewing agent's own executed run, never by source reading\./, 'the no-reproduction bullet states the lens 3f executed-run rule on its own'],
   [({ routing }) => lowTierBullet(routing), /goes to the tiebreak \(`step3-tiebreak\.md`\)/, 'the low-tier bullet hands findings to the tiebreak'],
   [({ routing }) => refutationBullet(routing), /Step 3\.7/, 'the refutation bullet hands the downgraded finding to Step 3.7'],
   [({ routing }) => refutationBullet(routing), /can't-tell/, "the refutation bullet names the can't-tell downgrade"],
@@ -781,9 +824,22 @@ test('AC6.1 the source-bullet assertions can go red', () => {
   assertEachSectionFactGoesRed(routingTexts(), SOURCE_BULLETS, sourceBulletsMissing);
 });
 
+// Minor 13: what the lens 3f rule was once an exception to is gone, so the bullet never calls it one.
+const orphanedException = (bullet) => /\bthe exception\b/.test(bullet);
+
+test('minor 13: the no-reproduction bullet states the lens 3f rule with no orphaned "the exception"', () => {
+  assert.equal(orphanedException(noReproBullet(routingText())), false);
+});
+
+test('minor 13 the orphaned-exception assertion can go red', () => {
+  const bullet = noReproBullet(routingText());
+  assert.equal(orphanedException(bullet.replace('is re-confirmed only by', 'is the exception: re-confirmed only by')), true);
+});
+
 const SURFACING = [
   [({ routing }) => surfacingParagraph(routing), /Step 3\.7's `confirmed` outcome \(`step3-tiebreak\.md`\)/, "unconfirmed/contested findings reach the table only through Step 3.7's confirmed outcome"],
-  [({ routing }) => surfacingParagraph(routing), /`console` outcome reaches the Wrap-Up Review Console through the finding's earlier STAGED line/, "a tiebreak console outcome reaches the Review Console through the earlier STAGED line"],
+  // #3949 retired "through the finding's earlier STAGED line": the verdict supersedes that line.
+  [({ routing }) => surfacingParagraph(routing), /`console` outcome reaches the Wrap-Up Review Console as its own row, per `step3-tiebreak\.md`'s `console` bullet/, "a tiebreak console outcome reaches the Review Console as its own row, citing step3-tiebreak.md"],
   [({ routing }) => xhighParagraph(routing), /can't-tell/, "the xhigh paragraph names the tiebreak's can't-tell outcomes"],
   [({ routing }) => xhighParagraph(routing), /surfacing inline doesn't remove the staging/, 'the xhigh paragraph keeps the staging wording'],
   [({ routing }) => maxParagraph(routing), /on top of the .{0,40}rows `xhigh` already added/, 'the max paragraph still stacks on the xhigh rows'],
@@ -967,7 +1023,6 @@ const liveTexts = () => ({
 const tiebreakSection = (heading) => (texts) => sectionOf(texts.tiebreak, heading);
 const tiebreakTemplate = (texts) => fencedTemplate(sectionOf(texts.tiebreak, 'Dispatch'));
 const hungParagraph = (texts) => lineStartingWith(texts.step3, '**Hung or non-responsive single-read agent.**');
-const overrideOf = (texts) => overrideParagraph(texts.step3);
 const refutationTemplateOf = (texts) => refutationStep4(texts.debate);
 const compactForm = (texts) => between(texts.template, '## Compact form — clean PASS', '```markdown');
 const templateTiebreakSection = (texts) => sliceSection(texts.template.slice(texts.template.indexOf('## Full template')), '\n### Tiebreak\n', '\n### ');
@@ -978,19 +1033,18 @@ const FIX_WAVE = [
   [tiebreakSection('Resolve and act'), /On a lens 3f vacuity finding, write a `confirmed` reply to `R` with its `Verdict: confirmed` line replaced by `Verdict: cant-tell`/, "F1 a confirmed reply on a vacuity finding is rewritten as a can't-tell reply"],
   [tiebreakSection('Resolve and act'), /a vacuity claim needs an executed run \(`step3-lens-dispatch\.md`'s lens 3f vacuity bullet\)/, "F1 the cause cites step3-lens-dispatch.md's vacuity rule"],
   [tiebreakSection('Resolve and act'), /a `refuted` reply resolves as written/, 'F1 a refuted reply on a vacuity finding resolves normally'],
-  // F3: the override logs only confirmed/drop; can't-tell is left to Step 3.7.
-  [overrideOf, /On `confirmed`, log the resolver's line: the finding is confirmed\./, 'F3 an override confirmed logs the resolver line'],
-  [overrideOf, /On `drop`, log it: the finding is dropped\./, 'F3 an override drop logs the resolver line'],
-  [overrideOf, /On `digest`\/`console` \(can't-tell\), log nothing: the finding stays `unconfirmed` and Step 3\.7 judges it/, "F3 an override can't-tell logs nothing and leaves the finding to Step 3.7"],
-  [tiebreakSection('Resolve and act'), /An override's can't-tell outcome is not logged/, "F3 step3-tiebreak.md agrees the override's can't-tell is not logged"],
+  // F3 (#3950): the reviewer-read override is retired; only an inline fallback verdict is reviewer-read, and it carries Mode: inline.
+  [tiebreakSection('Resolve and act'), /An inline fallback verdict \(`## Dispatched reviewer`\) goes through the same resolver, with ` Mode: inline\.` appended to the content of `T`/, 'F3 only an inline fallback verdict is reviewer-read and carries Mode: inline.'],
   // F4: the post-fan-out sweep re-runs after the tiebreak's last wave.
   [tiebreakSection('Dispatch'), /After the last wave, re-run `step3-lens-dispatch\.md`'s Post-fan-out untracked-file sweep against the same pre-dispatch listing/, 'F4 the sweep re-runs after the last wave against the same listing'],
   [tiebreakSection('Dispatch'), /report-only, as there/, 'F4 the re-run sweep is report-only'],
   [tiebreakSection('Dispatch'), /Skip it when this step dispatched no agent/, 'F4 the re-run is skipped when nothing was dispatched'],
   // F5: what #3772 supersedes, and how a console outcome surfaces.
   [tiebreakSection('Resolve and act'), /supersedes it through `console\/resolve\.js`'s `#3772` matcher only when that line carries `lens "\{lens\}"` and `\{path\}:\{line\}`/, 'F5a the supersession claim names the lens + path:line key'],
-  [tiebreakSection('Resolve and act'), /`staged\/review-contested-\{N\}\.md` is never superseded/, 'F5a the contested-file gap is stated'],
-  [tiebreakSection('Resolve and act'), /- `console`[^\n]*surfaces at the Review Console through its earlier STAGED line/, 'F5b a console outcome surfaces through the earlier STAGED line'],
+  // #3949 retired the contested-file gap and the surfaces-through-the-STAGED-line wording: verdicts now
+  // supersede the line and its linked staged file, and a console verdict is its own row.
+  [tiebreakSection('Resolve and act'), /A staged `review-unconfirmed-\*`, `review-contested-\*` or `review-debate-\*` file that line names is superseded with it/, 'F5a a linked staged file is superseded with its line'],
+  [tiebreakSection('Resolve and act'), /- `console`[^\n]*surfaces at the Review Console as a Low-confidence or Contested row carrying the logged line's `Severity:` and `Recommendation:`/, 'F5b a console outcome surfaces as a row carrying severity and recommendation'],
   // F6: the refutation template carries only the allowlist.
   [refutationTemplateOf, /Diff scope: /, 'F6 the refutation template input carries the diff scope'],
   // F7: step3-tiebreak.md points at the template's Tiebreak section; the template has the slots.
@@ -1057,15 +1111,15 @@ test('F1 the vacuity-rewrite assertion can go red', () => {
 });
 
 const FIX_WAVE_FORBIDDEN = [
-  [overrideOf, /can still be elevated to `confirmed`/, 'F3 the override no longer frames itself as elevation'],
-  [hungParagraph, /Direct-verification override for that lens|resolved via reviewing agent's own Direct-verification override/, 'F12 the hung-agent fallback no longer settles through the override'],
+  [tiebreakSection('Resolve and act'), /Any reviewer-read verdict|An override's can't-tell outcome/, 'F3 step3-tiebreak.md no longer routes a reviewer-read override through the resolver'],
+  [hungParagraph, /Direct-verification override for that lens|resolved via reviewing agent's own Direct-verification override|never the override below/, 'F12 the hung-agent fallback no longer settles through the override'],
   [refutationTemplateOf, /Cached evidence:/, 'F6 no Cached evidence line in the refutation template'],
   [refutationTemplateOf, /Category: \{category\}/, 'F6 no Category line in the refutation template'],
   [refutationTemplateOf, /cached evidence/i, "F6 no mention of the reporter's cached evidence"],
 ];
 const fixWaveLeftovers = (texts) => FIX_WAVE_FORBIDDEN.filter(([pick, pattern]) => pattern.test(pick(texts))).map(([, , fact]) => fact);
 
-test('the override elevation, hung-agent override and cached-evidence wording is gone', () => {
+test('the reviewer-read override, hung-agent override and cached-evidence wording is gone', () => {
   const texts = liveTexts();
   for (const [pick, , fact] of FIX_WAVE_FORBIDDEN) assert.notEqual(pick(texts), '', `region not found for "${fact}"`);
   assert.deepEqual(fixWaveLeftovers(texts), []);
@@ -1073,7 +1127,7 @@ test('the override elevation, hung-agent override and cached-evidence wording is
 
 test('the retired-wording assertions can go red', () => {
   const plants = [
-    'An `unconfirmed` finding can still be elevated to `confirmed` here.',
+    "An override's can't-tell outcome is not logged.",
     "resolved via reviewing agent's own Direct-verification override",
     'Cached evidence: {evidence text}',
     'Severity: {severity}  Category: {category}',

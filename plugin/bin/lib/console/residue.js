@@ -66,6 +66,8 @@ function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultR
       if (!(err && err.code === 'ENOENT')) unreadable.push(p);
       continue;
     }
+    // Valid JSON that is not an object (`null`, a number) is a malformed console, not "no residue".
+    if (!parsed || typeof parsed !== 'object') { unreadable.push(p); continue; }
     const { items, missing } = splitMissing(unresolvedItems(parsed), path.dirname(p), exists);
     const acknowledged = typeof parsed.residueAcknowledgedAt === 'string';
     if (items.length === 0) {

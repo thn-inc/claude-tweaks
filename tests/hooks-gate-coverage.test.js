@@ -359,6 +359,46 @@ test('#3080: a `>` inside a quoted string is not mistaken for a redirection', ()
   assert.deepStrictEqual(fileWriteTargets('echo "a > b"', '/r'), []);
 });
 
+// #4015: bash ends a word at an unquoted `>`, so a redirect glued to a
+// preceding word writes its target just like a spaced one.
+test('AC1.1 AC2.1 #4015: a redirect glued to a preceding unquoted word resolves its target', () => {
+  for (const [command, file] of [
+    ['echo foo>x', 'x'], ['cat a.txt>b.txt', 'b.txt'], ['echo foo>>x', 'x'], ['echo foo>|x', 'x'],
+    ['echo foo&>x', 'x'], ['echo foo2>x', 'x'], ['echo foo> x', 'x'], ['WT=/w; echo foo>$WT/x', '/w/x'],
+    ['(cd sub; ls)>out.txt', 'out.txt'], // a group's redirect runs in the outer cwd, not the inner `cd`'s
+    ['[[ a ]] >out', 'out'], ['(( x > y )) >out', 'out'], // a redirect after the comparison's closer still counts
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+});
+
+test('AC1.2 AC2.1 #4015: a `>` that is quoted, escaped, expanded, an fd dup, a sink, in a heredoc body, or in a [[ ]] / (( )) comparison resolves no target', () => {
+  for (const command of [
+    'echo "foo>x"', "echo 'foo>x'", 'echo foo\\>x', 'echo foo">"x', 'node -e "x>y"', 'git commit -m "a>b"',
+    'V="a>b"; echo $V', 'echo foo>&2', 'echo foo>/dev/null', 'node x.js <<EOF\nif (a>0) b();\nEOF',
+    '((i>0))', 'if ((n>0)); then echo hi; fi', 'while ((i>0)); do echo x; done',
+    'exec 3>&-', 'cmd >&-', 'echo foo>&-',
+    '[[ a>b ]]', '[[ a > b ]]', '[[ $x =~ a>b ]]', '(( x>y ))', '(( x > y ))', '(( x>y))',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+// #4149 with #4015: the glued shape is read through the shell walk, so it resolves inside a kept
+// heredoc body chunk, after a lone `&`, and inside a `( )` group against that group's `cd`; and an
+// arithmetic `((…))` stays one piece (no `>` in it is a target) while a `((` that bash reads as two
+// subshells keeps its `cd` scope.
+test('#4149: a glued redirect resolves through kept heredoc bodies, lone `&` cuts, groups and arithmetic `((…))`', () => {
+  const at = (...files) => files.map((f) => ({ action: 'write', file: path.resolve(f) }));
+  assert.deepStrictEqual(fileWriteTargets("bash <<'EOF'\ncd /m;echo x>f\nEOF", '/r'), at('/m/f'));
+  assert.deepStrictEqual(fileWriteTargets('cd /m; true & echo x>f', '/r'), at('/m/f'));
+  assert.deepStrictEqual(fileWriteTargets('cd /m & echo x>f', '/r'), at('/r/f'));
+  assert.deepStrictEqual(fileWriteTargets('(cd /m; echo x>f)>out', '/r'), at('/m/f', '/r/out'));
+  assert.deepStrictEqual(fileWriteTargets('((cd /m && echo hi>f) | cat)', '/r'), at('/m/f'));
+  assert.deepStrictEqual(fileWriteTargets('cd /m; if ((2>1)); then echo x>f; fi', '/r'), at('/m/f'));
+  assert.deepStrictEqual(fileWriteTargets('((1>0)) && echo hi>/m/f', '/r'), at('/m/f'));
+});
+
 // #3989: a heredoc body is data for the reading program, not shell — its `>`
 // is not a redirection. The opener line and whatever follows the closing
 // delimiter still are scanned.

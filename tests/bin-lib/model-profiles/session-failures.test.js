@@ -156,30 +156,43 @@ test('recordFailure acquires the lock before reading and releases it only after 
   cleanup(id);
 });
 
-test('a lock released by another writer mid-wait still ends with the model recorded (the wait-vs-timeout bound is perf/session-failures-lock-wait.test.js)', () => {
+test('a lock held by another writer is waited for, so its write is not lost (the wait-vs-timeout bound is perf/session-failures-lock-wait.test.js)', () => {
   // recordFailure's own poll loop blocks this process's main thread
   // synchronously (Atomics.wait), so a same-process setTimeout could never
   // fire while it's running. A real, independent OS process releasing the
   // lock genuinely runs concurrently with that blocked thread, which a
   // same-process timer cannot.
+  //
+  // The holder reads the (empty) failure set when it takes the lock, then
+  // writes its own result and releases. A recordFailure that gives up on
+  // EEXIST without waiting reads before that write and then clobbers it, so
+  // the holder's model is lost. Waiting for the release keeps both models.
   const { spawn } = require('node:child_process');
   const id = `sf-test-lock-contend-${process.pid}`;
   cleanup(id);
-  const lockDir = `${failurePath(id)}.lock`;
+  const p = failurePath(id);
+  const lockDir = `${p}.lock`;
   fs.mkdirSync(lockDir); // simulate a concurrent recordFailure already holding the lock
   const releaser = spawn(
     process.execPath,
-    ['-e', `setTimeout(() => { try { require('fs').rmdirSync(${JSON.stringify(lockDir)}); } catch {} }, 30)`],
+    ['-e', `setTimeout(() => { const fs = require('fs'); fs.writeFileSync(${JSON.stringify(p)}, JSON.stringify(['fable'])); try { fs.rmdirSync(${JSON.stringify(lockDir)}); } catch {} }, 30)`],
     { stdio: 'ignore' },
   );
   releaser.on('error', () => {}); // best-effort helper — a spawn failure just makes this test time out, not crash
   try {
-    recordFailure(id, 'opus', { lockTimeoutMs: 2000, lockPollMs: 5 });
+    // A long timeout: a slow-to-start helper under load must not turn this
+    // into a timeout-degrade. The lock is always released eventually, so the
+    // bound costs nothing when the wait is correct.
+    recordFailure(id, 'opus', { lockTimeoutMs: 30000, lockPollMs: 5 });
+    assert.deepStrictEqual(
+      readFailedModels(id),
+      new Set(['fable', 'opus']),
+      'a no-wait lock reads before the holder writes and loses one model; waiting must keep both',
+    );
   } finally {
     releaser.kill();
+    cleanup(id);
   }
-  assert.deepStrictEqual(readFailedModels(id), new Set(['opus']));
-  cleanup(id);
 });
 
 test('recordFailure degrades to unlocked (never throws, still records the model) when the lock cannot be acquired', () => {

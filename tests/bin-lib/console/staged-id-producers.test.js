@@ -11,16 +11,12 @@ const { readText } = require('../../helpers/read-skill');
 // the Review Console's SECTION_MAP (classifyStagedItem names a reason other than
 // `unmapped-prefix`) or sits on its documented staging exemption list. A producer
 // that does neither lands in Pending review as `unmapped-prefix`, which
-// stage-item.js warns about (#3488). The scan reads the producers from the
+// stage-item.js refuses (#3488, #3946). The scan reads the producers from the
 // skills' command lines and the bin modules' in-process calls, so a new producer
 // with an unmapped prefix fails here instead of at a Review Console.
 const REPO = path.join(__dirname, '..', '..', '..');
 const SKILLS_ROOT = path.join(REPO, 'plugin', 'skills');
 const BIN_ROOT = path.join(REPO, 'plugin', 'bin');
-
-// Ids built entirely at run time (an empty static head) name the prefix their
-// call site documents; a dynamic call site missing from this map fails the scan.
-const DYNAMIC_ID_PREFIXES = { 'plugin/skills/tidy/step-6-auto.md': 'tidy-' };
 
 // `<kind>-<n>` in this file is a usage synopsis, not a producer.
 const SYNOPSIS_FILES = new Set(['plugin/skills/_shared/auto-decision-log.md']);
@@ -45,14 +41,18 @@ function staticHead(id) {
   return id.split(/[{$<]/)[0];
 }
 
-// -> [{ file, id }] for every same-line `stage-item.js ... --id <token>` (quoted or bare,
-// `--id x` or `--id=x`) in one skill file's text.
+// -> [{ file, id }] for every `--id <token>` (quoted or bare, `--id x` or `--id=x`) in a
+// paragraph of one skill file's text that mentions `stage-item.js`. A paragraph is a
+// blank-line-separated block, with `\`+newline continuations joined first, so an id on a
+// later line of the paragraph (or a wrapped command line) is still a producer; a paragraph
+// that never names stage-item.js (`winget install --id …`) is not scanned.
 function collectMdProducers(text, file) {
   if (SYNOPSIS_FILES.has(file)) return [];
   const out = [];
-  const re = /stage-item\.js\b[^\n]*?--id[= ]\s*(?:"([^"\n]*)"|'([^'\n]*)'|([^\s"'`]+))/g;
-  for (const line of text.split('\n')) {
-    for (const m of line.matchAll(re)) {
+  const re = /--id(?![\w-])[= ]\s*(?:"([^"\n]*)"|'([^'\n]*)'|([^\s"'`]+))/g;
+  for (const para of text.replace(/\\\r?\n/g, ' ').split(/\r?\n[ \t]*\r?\n/)) {
+    if (!/stage-item\.js\b/.test(para)) continue;
+    for (const m of para.matchAll(re)) {
       const id = m[1] ?? m[2] ?? m[3];
       // `<kind>-<n>` placeholders in usage text carry no static head and are not call sites.
       if (/^<[^>]*>/.test(id)) continue;
@@ -91,26 +91,18 @@ function collectBinProducers(raw, file) {
   return out;
 }
 
-// Throws naming the file when a fully dynamic id has no documented prefix, or when one file
-// carries a second dynamic call site (DYNAMIC_ID_PREFIXES is keyed by file, so a second site
-// would silently inherit the first one's prefix).
+// Throws naming the file for any id with an empty static head: a producer's literal head is
+// what the console maps, so a fully dynamic id is fixed at the producer, never exempted here.
 function checkDynamicIds(producers) {
-  const seen = new Set();
   for (const p of producers) {
     if (p.id === null) continue;
     if (staticHead(p.id) !== '') continue;
-    if (!(p.file in DYNAMIC_ID_PREFIXES)) {
-      throw new Error(`${p.file}: --id ${JSON.stringify(p.id)} is fully dynamic — add its documented prefix to DYNAMIC_ID_PREFIXES`);
-    }
-    if (seen.has(p.file)) {
-      throw new Error(`${p.file}: a second fully dynamic id call site — DYNAMIC_ID_PREFIXES is keyed by file, so key it per site before adding another`);
-    }
-    seen.add(p.file);
+    throw new Error(`${p.file}: --id ${JSON.stringify(p.id)} is fully dynamic — give the producer a literal head (fix it at the producer, never exempt it)`);
   }
 }
 
 function headOf(p) {
-  return staticHead(p.id) || DYNAMIC_ID_PREFIXES[p.file];
+  return staticHead(p.id);
 }
 
 function collectProducers() {
@@ -161,7 +153,7 @@ function isMapped(probe) {
 }
 
 // A mapped id that is also exempt would hide a real mapping behind an exemption (and
-// stage-item.js would skip a warning the console never needed to skip). `exemptionOf` is
+// stage-item.js would skip a refusal the console never needed to skip). `exemptionOf` is
 // injectable so the go-red control can pass a stub that exempts everything.
 function assertExemptionsDisjointFromMapped(producers, exemptionOf = stagingExemption) {
   for (const p of producers) {
@@ -199,10 +191,10 @@ test("Deliverable 4: every staging producer's id is mapped or exempt", () => {
 
 test('the scan finds the known producers (matcher floor)', () => {
   const producers = collectProducers();
-  assert.ok(producers.length >= 14, `found only ${producers.length} producers`);
+  assert.ok(producers.length >= 19, `found only ${producers.length} producers`);
   const heads = new Set(producers.map(headOf));
   for (const h of ['release-held', 'dispatch-target-missing-', 'shipped-close-', 'upstream-draft-',
-    'premise-satisfied-', 'dream-proposal-', 'flaky-allowlist-']) {
+    'premise-satisfied-', 'dream-proposal-', 'flaky-allowlist-', 'tidy-release-note-', 'digest-promotion-']) {
     // dream-scan.js passes the literal 'dream-proposal-1', so match by prefix.
     assert.ok([...heads].some((x) => x.startsWith(h)), `producer head ${h} not found — the matcher lost a call shape`);
   }
@@ -229,18 +221,25 @@ test('matcher controls: --id= form, bare tokens, bin object-literal span, placeh
   assert.equal(collectBinProducers("const s = '/*'; // ok\nwriteStagedItem({ id: 'z-1' });", 'b.js')[0].id, 'z-1');
 });
 
-test('control: a new fully dynamic --id call site outside DYNAMIC_ID_PREFIXES fails the dynamic-id check', () => {
-  const fixture = 'node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "{run-dir}" --id "{x}" --file "{p}"';
-  assert.throws(() => checkDynamicIds(collectMdProducers(fixture, 'plugin/skills/new/step.md')),
-    /plugin\/skills\/new\/step\.md/);
-  assert.doesNotThrow(() => checkDynamicIds(collectMdProducers(fixture, 'plugin/skills/tidy/step-6-auto.md')));
+test('AC2.1: a producer whose --id sits on a later line of the stage-item.js paragraph is collected', () => {
+  assert.deepEqual(
+    collectMdProducers('Stage one item with `stage-item.js` (see X),\n`--id tidy-release-note-{id}`. The .md holds it.', 'a.md'),
+    [{ file: 'a.md', id: 'tidy-release-note-{id}' }]);
+  assert.deepEqual(collectMdProducers('winget install --id GitHub.cli', 'b.md'), []);
 });
 
-test('control: a second fully dynamic call site in a DYNAMIC_ID_PREFIXES file fails the dynamic-id check', () => {
+test('AC2.1 go-red: a deliberately unmapped fixture producer, read through the matcher, fails the disposition check', () => {
+  assert.throws(() => assertProducerDisposition(collectMdProducers(
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run r --id "zz-unmapped-{n}" --file f', 'plugin/skills/new/step.md')),
+  /plugin\/skills\/new\/step\.md.*zz-unmapped-/);
+});
+
+test('control: any fully dynamic --id fails the dynamic-id check, in every file', () => {
   const fixture = 'node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "{run-dir}" --id "{x}" --file "{p}"';
-  const file = 'plugin/skills/tidy/step-6-auto.md';
-  assert.throws(() => checkDynamicIds([...collectMdProducers(fixture, file), ...collectMdProducers(fixture, file)]),
-    /second fully dynamic/);
+  for (const file of ['plugin/skills/new/step.md', 'plugin/skills/tidy/step-6-auto.md']) {
+    assert.throws(() => checkDynamicIds(collectMdProducers(fixture, file)), /fully dynamic/);
+    assert.throws(() => checkDynamicIds(collectMdProducers(fixture, file)), new RegExp(file.replace(/[/.]/g, '\\$&')));
+  }
 });
 
 test('prose-named staged files: every static head is mapped or exempt', () => {

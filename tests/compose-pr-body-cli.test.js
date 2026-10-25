@@ -67,6 +67,14 @@ test('an unknown flag or a flag with no value is malformed — exit 2', () => {
   assert.equal(run(['--run-id'], fakeDeps()), 2);
 });
 
+test('a bare inherited Object.prototype key is an unknown argument — exit 2', () => {
+  for (const token of ['constructor', 'toString']) {
+    const deps = fakeDeps();
+    assert.equal(run([token, 'x'], deps), 2, token);
+    assert.match(deps.calls.stderr.join(''), new RegExp(`unknown argument: ${token}`));
+  }
+});
+
 test('a real subprocess run writes a non-empty body starting with the run marker, and shell-hostile summary text arrives verbatim', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-pr-body-'));
   try {

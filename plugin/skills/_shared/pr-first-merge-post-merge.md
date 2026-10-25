@@ -67,10 +67,11 @@ was observed taking ~2 minutes, at or past that default, twice tripping it in on
 firing and once stranding a firing whose one-shot turn ended waiting on the backgrounded call).
 
 `--checks mirror,release,archive` scopes the sweep to exactly what this step needs — the full
-`ALL_CHECKS` default also runs `red-tip`/`reap`/`archive-branches`/`remote-prune`/
-`ledger-residue`/`console`, none of which this step's own next paragraph describes needing, and
-`remote-prune`'s inclusion is what forces the full `--prune all-refs` fetch (`shared-fetch.js`)
-instead of the single-ref fetch a `mirror`-only request uses. Fast-forwards the mirror (the local integration branch — "mirror" and
+unscoped default also runs `red-tip`/`reap`/`console` inline (and hands `archive-branches`/
+`remote-prune`/`ledger-residue` to the background pass), none of which this step's own next
+paragraph describes needing, and `remote-prune`'s inclusion is what forces the full
+`--prune all-refs` fetch (`shared-fetch.js`) instead of the single-ref fetch a `mirror`-only
+request uses. Fast-forwards the mirror (the local integration branch — "mirror" and
 "local main" name the same object; this file uses "mirror" throughout since that is
 `bin/lib/reconcile`'s own term), releases the claim, and archives the run dir. This is convergent
 cleanup, not owed — a failure

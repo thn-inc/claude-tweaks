@@ -11,6 +11,7 @@ const ctxLib = require('./context');
 const sessionResidue = require('./session-residue');
 const { reconcile } = require('../reconcile');
 const { DEFAULT_TTL_MS } = require('../reconcile/cache');
+const { STATUS_FILENAME } = require('../reconcile/background-spawn');
 const portsEnsure = require('../ports/ensure');
 const { BLOCK_SIZE: PORTS_BLOCK_SIZE } = require('../ports/registry');
 const { INTERACTION_STYLE_DIRECTIVE } = require('./interaction-style');
@@ -305,7 +306,7 @@ async function run(ctx) {
   const bgStatusPath = (() => {
     try {
       const root = wtDetect.mainCheckoutRoot(ctx.cwd);
-      return root ? path.join(root, '.claude-tweaks', 'reconcile-background-status.json') : null;
+      return root ? path.join(root, '.claude-tweaks', STATUS_FILENAME) : null;
     } catch { return null; }
   })();
   function readBgStatus() {
@@ -321,6 +322,10 @@ async function run(ctx) {
       if (status && status.surfaced === false) {
         const s = status.summary || {};
         const lines = [];
+        // A pass that threw (hooks.js `reconcile-background`'s catch) has no counts,
+        // only `failed`; without this line a check that throws every pass would
+        // look like a clean, silent background pass forever.
+        if (s.failed) lines.push(`the pass failed${typeof s.error === 'string' && s.error ? ` (${s.error})` : ''}`);
         if (s.reaped) lines.push(`${s.reaped} finished worktree(s) removed (already merged)`);
         if (s.released) lines.push(`${s.released} issue claim(s) released`);
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);
@@ -354,69 +359,17 @@ async function run(ctx) {
   } catch { /* best-effort */ }
   try {
     if (bgStatusPath) {
-      // Re-read rather than reuse the surfacing block's copy: the two blocks
-      // are deliberately independent (see the comment above them), so this
-      // gate must not depend on that block having reached its own read.
-      const status = readBgStatus();
-
-      // Spawn the detached background pass — TTL-gated by THIS status
-      // file's own `completedAt`, deliberately never reconcile()'s shared
-      // reconcile-cache.json `lastRunAt` stamp: that stamp fires on ANY
-      // fully-completed pr-first pass, including the FAST_CHECKS call just
-      // above in this same function, which would make this gate see a
-      // false "fresh" from a pass that never ran the background checks at
-      // all and never spawn (#820 Task 10 fix-up, caught by task review).
-      // `detached: true` + `stdio: 'ignore'` + `child.unref()` together let
-      // this process exit without waiting on the child, and without the
-      // child dying alongside it.
-      const { isFresh } = require('../reconcile/cache');
-      const fresh = isFresh(
-        { lastRunAt: status && typeof status.completedAt === 'number' ? status.completedAt : null },
-        Date.now(),
-      );
-      if (!fresh) {
-        try {
-          const { spawn } = require('child_process');
-          // #1687: thread this session's id into the detached child's
-          // environment so `bin/hooks.js`'s `reconcile-background` subcommand
-          // can pass it to `reconcile({ ..., sessionId })`, which is what
-          // makes archive-merged.js's `isAbandonedInterrupted` ownership gate
-          // actually engage on this path — before this fix the child had no
-          // session id at all, reachable via neither an argv nor an env value,
-          // so the gate was permanently inert here (the path that runs the
-          // 'archive' check in production). A dedicated `CLAUDE_TWEAKS_`-
-          // prefixed var, not `CLAUDE_CODE_SESSION_ID`: the child inherits
-          // this process's env either way, and if that harness-set var were
-          // reliably present here this record wouldn't exist (see this file's
-          // header comment and #1687's own body). Only set when a real
-          // session id is known — an absent key means "unresolvable", matching
-          // reconcile-background's read-side fallback (`|| undefined`).
-          const spawnEnv = sessionId ? { ...process.env, CLAUDE_TWEAKS_SESSION_ID: sessionId } : process.env;
-          const child = spawn(
-            process.execPath,
-            [path.join(__dirname, '..', '..', 'hooks.js'), 'reconcile-background'],
-            // `windowsHide: true` is load-bearing alongside `detached: true`:
-            // detaching is what leaves the child with no inheritable console,
-            // and without the flag Windows gives it a VISIBLE one — as it
-            // then does for every git process this background pass spawns
-            // beneath it. See tests/hooks-git-exec.test.js for the funnel.
-            { cwd: ctx.cwd, detached: true, stdio: 'ignore', windowsHide: true, env: spawnEnv },
-          );
-          // spawn() returns an EventEmitter, and an ASYNCHRONOUS spawn
-          // failure (EAGAIN under fork pressure — routine in a repo running
-          // many concurrent agent sessions) emits 'error' after this
-          // synchronous block has already returned. With no listener Node
-          // promotes that to an uncaught exception, which neither the
-          // surrounding try/catch (already exited) nor bin/hooks.js's
-          // top-level promise `.catch()` can absorb — it would take down the
-          // whole SessionStart hook process, breaking the never-break-a-
-          // session invariant. A no-op listener degrades it to exactly what
-          // a synchronous spawn failure already does here: this session's
-          // background pass simply didn't fire, and the next one retries.
-          child.on('error', () => { /* see above — silent degrade, never a throw */ });
-          child.unref();
-        } catch { /* best-effort — a failed spawn just means this session's background pass didn't fire; the next one tries again */ }
-      }
+      // Spawn the detached background pass — the TTL gate (this status file's
+      // own `completedAt`, never reconcile-cache.json's shared `lastRunAt`
+      // stamp, #820 Task 10 fix-up), the `CLAUDE_TWEAKS_SESSION_ID` env
+      // threading (#1687) and the detached/windowsHide/'error'-listener spawn
+      // hardening all live in the shared helper, which the unscoped
+      // `hooks.js reconcile` CLI also calls (#4032). It never throws.
+      require('../reconcile/background-spawn').spawnBackgroundIfStale({
+        root: path.dirname(path.dirname(bgStatusPath)), // bgStatusPath = {root}/.claude-tweaks/<status file>
+        cwd: ctx.cwd,
+        sessionId,
+      });
     }
   } catch { /* best-effort */ }
   try {

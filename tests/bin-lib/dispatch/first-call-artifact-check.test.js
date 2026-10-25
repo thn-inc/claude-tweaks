@@ -640,3 +640,80 @@ test('the default stampStatus spawns verify.js with the recorded worktree as cwd
   assert.equal(result.status.head, head);
   assert.notEqual(git(['rev-parse', 'HEAD'], process.cwd()), head, 'control: the test process cwd is a different repo');
 });
+
+// ---- #4006: a complete composed per-suite verdict stands in for the single stamp ----
+
+test('AC8.1: a complete composed verdict with no single stamp verifies HEAD', () => {
+  const status = { present: false, verifiedHead: true, reportPath: null, suiteComposed: { complete: true } };
+  const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
+    stampStatus: stampStub(status).fn,
+    exists: () => false,
+  });
+  assert.deepEqual(result, { verified: true, reason: null, status });
+});
+
+test('AC8.1: no stamp and no composition is still stamp-absent', () => {
+  const status = { present: false, verifiedHead: false, reportPath: null, suiteComposed: null };
+  const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
+    stampStatus: stampStub(status).fn,
+    exists: () => true,
+  });
+  assert.deepEqual(result, { verified: false, reason: 'stamp-absent', status });
+});
+
+test('AC8.1: a single stamp whose reportPath is gone is still report-missing', () => {
+  const status = { present: true, verifiedHead: true, reportPath: '/r.json', suiteComposed: null };
+  const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
+    stampStatus: stampStub(status).fn,
+    exists: () => false,
+  });
+  assert.deepEqual(result, { verified: false, reason: 'report-missing', status });
+});
+
+test('a complete composition supersedes the single stamp\'s missing reportPath', () => {
+  const status = { present: true, verifiedHead: true, reportPath: '/missing.json', suiteComposed: { complete: true } };
+  const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
+    stampStatus: stampStub(status).fn,
+    exists: () => false,
+  });
+  assert.deepEqual(result, { verified: true, reason: null, status });
+});
+
+// Unstubbed: real `--stamp-suite` chunks in a real declaration repo, read back through the default
+// verify.js spawn — the only test where the guard sees the field names verify.js actually prints.
+test('a complete composition from real --stamp-suite chunks verifies through the default verify.js spawn', () => {
+  const VERIFY = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stamp-composed-')));
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true }).trim();
+  git('init', '-q');
+  git('config', 'user.email', 'first-call-test@example.invalid');
+  git('config', 'user.name', 'first-call test');
+  const decl = { checks: { tests: { unit: 'node -e 0', other: 'node -e 0' } }, rules: [{ match: 'src/**', suites: ['unit'], static: true }] };
+  fs.mkdirSync(path.join(repo, '.claude-tweaks'));
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  git('add', '.claude-tweaks/verify-scope.json');
+  git('commit', '-q', '-m', 'declare verify scope');
+  const branch = git('symbolic-ref', '--short', 'HEAD');
+  const chunk = (cmd) => execFileSync(process.execPath, [VERIFY, '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch,
+    '--no-stamp', '--stamp-suite', '--cmd', cmd], { cwd: repo, encoding: 'utf8', windowsHide: true });
+  const runDir = stampRun({ worktree: repo });
+
+  chunk('unit=node -e 0');
+  const partial = checkFirstCallStamp({ runDir });
+  assert.equal(partial.reason, 'stamp-absent', 'one of two declared suites recorded is not a complete composition');
+
+  chunk('other=node -e 0');
+  const result = checkFirstCallStamp({ runDir });
+  assert.equal(result.status.present, false, 'control: no single pass stamp exists, so only the composition can verify');
+  assert.equal(result.status.suiteComposed.complete, true);
+  assert.deepEqual({ verified: result.verified, reason: result.reason }, { verified: true, reason: null });
+});
+
+test('only a complete composition stands in for the stamp — complete: false with verifiedHead: true is still stamp-absent', () => {
+  const status = { present: false, verifiedHead: true, reportPath: null, suiteComposed: { complete: false } };
+  const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
+    stampStatus: stampStub(status).fn,
+    exists: () => true,
+  });
+  assert.deepEqual(result, { verified: false, reason: 'stamp-absent', status });
+});

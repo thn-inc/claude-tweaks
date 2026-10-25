@@ -130,6 +130,6 @@ node --test --test-reporter=tap tests/bin-lib/verify/extract.test.js   # capture
 
 - Code: `plugin/bin/lib/verify/extract.js` (`testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount`, `countUnmatchedFailures`, `fileLevelFailures`, `unattributedFailureCount`, `tapBlockCount`, `tapLines`), `tools/windows-regression/file-issue.js` (`excerptFor`, `excerptsForTests`, `ownerAt`), `plugin/bin/lib/verify/baseline.js` (`adjudicate`, `accountedFamily`, `RUNNER_ERROR_RE`, `normalizeLog`), `plugin/bin/lib/verify/flaky.js` (`planRetry`)
 - Tests: `tests/bin-lib/verify/extract.test.js`, `tests/bin-lib/verify/baseline.test.js`, `tests/bin-lib/verify/cli.test.js`, `tests/bin-lib/verify/flaky.test.js`
-- Contract: `plugin/skills/test/verification.md`'s Baseline adjudication and Flake handling
+- Contract: `plugin/skills/test/verification.md`'s Baseline adjudication; `plugin/skills/test/flake-handling.md`
 - Related skills: `parse-signal-discipline` (couldn't parse versus doesn't apply; reconciling a list against an independent count), `windows-checkout-test-parity` (the Windows failure baseline this adjudicator exists for)
 - Origin: #3043; the flaky-retry consumer: #3066; the `preExisting` consumer: #3481; the shared `tapLines` classifier and the Windows filer's reuse of it: #3404

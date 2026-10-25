@@ -6,11 +6,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  reapMerged, isOwnCwd, decideReap, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, gitCommittedToRemoval,
+  reapMerged, prefetchReapPrStates, isOwnCwd, decideReap, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, gitCommittedToRemoval,
 } = require('../../../plugin/bin/lib/reconcile/reap-merged');
 const { writeRunState } = require('../../../plugin/bin/lib/hooks/context');
 const { listResidueFailures, RESIDUE_ESCALATE_THRESHOLD } = require('../../../plugin/bin/lib/reconcile/cache');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
+const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
 const { reconcile } = require('../../../plugin/bin/lib/reconcile');
 const { residueBody } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 const { skipUnderRoot } = require('../../helpers/root');
@@ -840,4 +841,60 @@ test('#2566: the fallback is never attempted on a non-win32 platform — no beha
   assert.equal(result.skipped[0].reason, 'removal-failed');
   assert.equal(fsRmSyncCalled, false, 'fsRmSync must never be invoked off win32');
   assert.equal(fs.existsSync(wtPath), true, 'the worktree must still exist — no behavior change on this platform');
+});
+
+// #4032: `prStates` (the pass-shared resolver) replaces reapMerged's live
+// lookups. The discriminator: a `gh` on PATH that FAILS and drops a marker on
+// every call (a bypassing lookup would skip the worktree on network-failure and
+// leave the marker), while the resolver's deps answer a MERGED PR whose number
+// only they could produce — it lands in the worktree-reaped event.
+function installFailingGhWithMarker() {
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-failgh-'));
+  const marker = path.join(wrapperDir, 'gh-was-called');
+  fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ntouch "${marker}"\nexit 1\n`);
+  fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  return { marker, restore: () => { process.env.PATH = originalPath; } };
+}
+
+test('reapMerged: prStates answers replace live lookups (#4032)', () => {
+  const control = buildReapableFixture();
+  const wrapper = installGhWrapper([{ number: 42, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
+  let controlResult;
+  try { controlResult = reapMerged({ cwd: control.root }); } finally { wrapper.restore(); }
+  assert.deepStrictEqual(controlResult.reaped, [control.wtPath], `control must reap, got ${JSON.stringify(controlResult)}`);
+
+  const subject = buildReapableFixture();
+  const failing = installFailingGhWithMarker();
+  const asked = [];
+  let subjectResult;
+  try {
+    const prStates = createPrStateResolver({
+      root: subject.root,
+      deps: {
+        byBranch: (b) => {
+          asked.push(b);
+          return { number: 4032777, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' };
+        },
+      },
+    });
+    subjectResult = reapMerged({ cwd: subject.root, prStates });
+  } finally { failing.restore(); }
+
+  const norm = (res, root) => JSON.parse(JSON.stringify(res).split(root).join('<root>'));
+  assert.deepStrictEqual(norm(subjectResult, subject.root), norm(controlResult, control.root));
+  assert.deepStrictEqual(asked, ['worktree-issue-1']);
+  assert.equal(fs.existsSync(failing.marker), false, 'a lookup that bypassed prStates would have called the failing gh');
+  const events = fs.readFileSync(path.join(subject.runDir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.equal(events.find((e) => e.type === 'worktree-reaped').prNumber, 4032777, 'the resolver\'s sentinel PR must reach the reap trail');
+});
+
+test('prefetchReapPrStates: warms the harness-domain worktree branches only (#4032)', async () => {
+  const { root } = buildReapableFixture();
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'outside-domain', path.join(root, 'elsewhere')], { cwd: root });
+  const asked = [];
+  const prStates = createPrStateResolver({ root, deps: { byBranchAsync: async (b) => { asked.push(b); return null; } } });
+  await prefetchReapPrStates(root, prStates);
+  assert.deepStrictEqual(asked, ['worktree-issue-1']);
 });
