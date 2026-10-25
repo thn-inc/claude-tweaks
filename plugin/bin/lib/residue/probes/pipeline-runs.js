@@ -58,6 +58,16 @@ function findLockedWorktree(worktreePath, scope) {
   return scope.worktrees.find((wt) => wt && wt.locked && safeReal(wt.path) === real) || null;
 }
 
+// True when `{dir}/staged/` exists and holds at least one entry; an absent
+// or unreadable staged/ reads as empty.
+function hasStagedEntries(dir) {
+  try {
+    return fs.readdirSync(path.join(dir, 'staged')).length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function probePipelineRuns({ cwd, runId, worktreeRoot, scope } = {}) {
   const start = cwd || process.cwd();
   const root = mainCheckoutRoot(start) || start;
@@ -90,6 +100,15 @@ function probePipelineRuns({ cwd, runId, worktreeRoot, scope } = {}) {
       continue; // no readable run-state.json — nothing to classify as closed
     }
     if (!state || state.status !== 'clean') continue;
+    // #4138: a clean tidy/sweep standalone run dir that still holds staged
+    // items is still approvable — `/claude-tweaks:tidy --approve` finds it by
+    // name glob under pipelines/ (never archive/) and archives it itself, and
+    // tidy's 30-day Archival compaction is the backstop for one never
+    // approved. Auto-archiving it here would hide its staged items from that
+    // lookup. Same predicate as session-residue.js's
+    // collectApprovableStandalone; a dream-standalone dir is deliberately not
+    // exempt (its proposals are reviewed by hand, and archive/ keeps them).
+    if (/-(tidy|sweep)-standalone/.test(entry.name) && hasStagedEntries(dir)) continue;
     // #1328: a status: clean finding is only safe to auto-archive when its
     // recorded worktree isn't still locked by a live sibling session —
     // blindly archiving out from under one corrupts that session's state.
