@@ -340,3 +340,57 @@ test('a glob-loop variable is computed; a literal-list loop and an unquoted lite
   assert.deepStrictEqual(detectShapes('L=1\ngh issue list --repo o/r --limit $L --json number'), []);
   assert.deepStrictEqual(detectShapes('gh issue view "$(echo 4028)" --repo o/r --json number'), []);
 });
+
+// #4028 final review: a command word with an absolute or relative path prefix
+// runs the same program, so the detectors keyed on it still fire.
+test('a path-prefixed command word is still the command (absolute and relative node, git, gh, sed)', () => {
+  assert.deepStrictEqual(detectShapes('/usr/local/bin/node "$X/y.js"'), ['node-var-script']);
+  assert.deepStrictEqual(detectShapes('./bin/node "$X/y.js"'), ['node-var-script']);
+  assert.deepStrictEqual(detectShapes(`/usr/local/bin/node -e 'x' "$A"`), ['node-eval-computed-arg']);
+  assert.deepStrictEqual(detectShapes('/usr/bin/git -C "$W" status --short'), ['git-var-operand']);
+  assert.deepStrictEqual(detectShapes('echo "$(/usr/bin/git rev-parse HEAD)"'), ['git-in-substitution']);
+  assert.deepStrictEqual(detectShapes('X=$(pwd)\n/opt/homebrew/bin/gh issue view "$X"'), ['gh-computed-input']);
+  assert.deepStrictEqual(detectShapes(`/usr/bin/sed -n '1,2p' "$P/README.md"`), ['sed-var-path']);
+  // A longer name ending in the word is not the word.
+  assert.deepStrictEqual(detectShapes('/abs/bin/node-eval-file.js "$X"'), []);
+});
+
+// An ANSI-C `$'…'` span closes at its last apostrophe: `\'` inside it is
+// escaped. Unmodelled, the escaped apostrophe closed the span early and the
+// real closing one opened a quote that hid every later command.
+test('an ANSI-C $\'…\' span with an escaped apostrophe does not hide a later eval', () => {
+  assert.deepStrictEqual(detectShapes(`echo $'it\\'s' && eval "$x"`), ['eval-token']);
+  assert.deepStrictEqual(detectShapes(`echo $'a\\\\' && eval "$x"`), ['eval-token']);
+});
+
+test('an ANSI-C $\'…\' span is literal text, like a single-quoted one', () => {
+  assert.deepStrictEqual(detectShapes(`echo $'don\\'t eval'`), []);
+  // Inside "…" a $' is not ANSI-C quoting.
+  assert.deepStrictEqual(detectShapes(`echo "it$'s" && eval "$x"`), ['eval-token']);
+});
+
+// Live 2026-10-24/25 (#4028): `P="/abs path"` then `node "$P/x.js"`, and
+// `export P=/abs && node "$P/x.js"`, ran; `Q=/abs/nospace && node $Q/hello.js`
+// (unquoted) was refused. The older detectors exempt a double-quoted reference
+// to a literally assigned name, never an unquoted one.
+test('node-var-script: a quoted reference to a literally assigned name is not flagged; an unquoted one is', () => {
+  assert.deepStrictEqual(detectShapes('P="/abs path"\nnode "$P/x.js"'), []);
+  assert.deepStrictEqual(detectShapes('export P=/abs && node "$P/x.js"'), []);
+  assert.deepStrictEqual(detectShapes('P=/abs; node "${P}/x.js"'), []);
+  assert.deepStrictEqual(detectShapes('Q=/abs/nospace && node $Q/hello.js'), ['node-var-script']);
+});
+
+test('sed-var-path: a quoted reference to a literally assigned name is not flagged; an unquoted one is', () => {
+  assert.deepStrictEqual(detectShapes(`P=/abs/dir; sed -n '1,2p' "$P/README.md"`), []);
+  assert.deepStrictEqual(detectShapes(`P=/abs/dir; sed -n '1,2p' $P/README.md`), ['sed-var-path']);
+});
+
+test('node-eval-computed-arg: a quoted reference to a literally assigned name is not flagged; an unquoted one is', () => {
+  assert.deepStrictEqual(detectShapes(`A=/abs/a.txt; node -e 'x' "$A"`), []);
+  assert.deepStrictEqual(detectShapes(`A=/abs/a.txt; node -e 'x' $A`), ['node-eval-computed-arg']);
+});
+
+test('github-url-with-var: a quoted reference to a literally assigned name is not flagged; an unquoted one is', () => {
+  assert.deepStrictEqual(detectShapes('U=https://github.com/o/r; echo "$U"'), []);
+  assert.deepStrictEqual(detectShapes('U=https://github.com/o/r; echo $U'), ['github-url-with-var']);
+});

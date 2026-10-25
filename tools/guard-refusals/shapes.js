@@ -12,8 +12,11 @@
 
 // A runtime variable reference: $NAME or ${NAME (not $?, $1, $$).
 const VAR = String.raw`\$\{?[A-Za-z_]`;
-// A command word boundary: the word is not part of a path, flag or longer name.
-const CMD = String.raw`(?<![\w./-])`;
+// A command word boundary: the word is not part of a flag or longer name, and
+// may carry an absolute or relative path prefix (`/usr/local/bin/node`,
+// `./bin/node`), which runs the same program.
+const PATH_PREFIX = String.raw`(?:[\w.~-]*\/)*`;
+const CMD = String.raw`(?<![\w./-])${PATH_PREFIX}`;
 
 // One left-to-right shell-lexing pass: the state of each char of `text`, one of
 // 'plain', 'delim' (a quote char that opens or closes a span), 'single',
@@ -30,6 +33,9 @@ const CMD = String.raw`(?<![\w./-])`;
 // delimiter line. A heredoc whose delimiter line never appears is not one:
 // its "body" is lexed as shell rather than hidden to end of text (shell only
 // warns there). `<<` inside `$((…))` or `((…))` is an arithmetic shift.
+// An ANSI-C `$'…'` outside quotes is a single-quote span in which a backslash
+// escapes the next char (`$'it\'s'` closes at its last apostrophe); its `$` is
+// a 'delim' like the quote. Inside "…" a `$'` is literal text.
 const HEREDOC_OP = /^<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|([A-Za-z_]\w*))/;
 
 // Index just past the `))` closing the arithmetic `((` at `start` (paren
@@ -59,6 +65,8 @@ function lexShell(text) {
     }
     if (state === 'single') {
       if (c === "'") { kinds[i] = 'delim'; state = 'plain'; } else kinds[i] = 'single';
+    } else if (state === 'ansi') {
+      if (c === '\\' && i + 1 < text.length) { kinds[i] = 'single'; kinds[++i] = 'single'; } else if (c === "'") { kinds[i] = 'delim'; state = 'plain'; } else kinds[i] = 'single';
     } else if (state === 'double') {
       if (c === '\\' && i + 1 < text.length) { kinds[i] = 'double'; kinds[++i] = 'double'; } else if (c === '"') { kinds[i] = 'delim'; state = 'plain'; } else kinds[i] = 'double';
     } else if (state === 'comment') {
@@ -75,6 +83,8 @@ function lexShell(text) {
       // as an ordinary quote span on the operator line.
       kinds[i] = 'plain'; kinds[++i] = 'plain';
       if (m[1] === '-') kinds[++i] = 'plain';
+    } else if (c === '$' && text[i + 1] === "'") {
+      kinds[i] = 'delim'; kinds[++i] = 'delim'; state = 'ansi';
     } else if (c === "'" || c === '"') {
       kinds[i] = 'delim'; state = c === "'" ? 'single' : 'double';
     } else if (c === '#' && (i === 0 || /[\s;&|()<>]/.test(text[i - 1]))) {
@@ -177,7 +187,8 @@ function wholeWord(word) {
 const GH_JQ_PIPE = new RegExp(`${CMD}gh\\s[^\\n]*--jq[\\s=]+(?:'[^']*\\|[^']*'|"[^"]*\\|[^"]*")`);
 const GH_REPO_URL = new RegExp(`${CMD}gh\\s[^\\n]*--repo[\\s=]+["']?(?:https?://)?github\\.com/`);
 const GH_CHAINED_STATUS = new RegExp(`${CMD}gh\\s[^\\n]*?(?:;|&&)[^\\n]*\\$\\?`);
-const GIT_COMMAND = /(?:^|[\s;&|(])git\s+[a-z]/m;
+const GIT_COMMAND = new RegExp(String.raw`(?:^|[\s;&|(])${PATH_PREFIX}git\s+[a-z]`, 'm');
+const GIT_IN_SUBSTITUTION = new RegExp(String.raw`\$\(\s*${PATH_PREFIX}git\s`);
 const NODE_EVAL_SCRIPT_VAR = new RegExp(`${CMD}node\\s+(?:-e|-p|--eval|--print)\\s+"[^"]*${VAR}`);
 // `>file`, `>>file`, and bash's `&>file` / `&>>file` (stdout and stderr).
 const STDOUT_FILE_REDIRECT = /(?:&|(?<![<>&\d]))>>?(?!&)\s*\S/;
@@ -194,7 +205,7 @@ function views(text) {
 // at command position (line start, after ; & | ( !, or after a then/do/else/
 // if/while/until keyword) in `bare`, through the next ; & | ) or line end.
 function commandSegments(bare, word) {
-  const re = new RegExp(`(?:^|[;&|(!]|\\b(?:then|do|else|if|while|until)\\s)[ \\t]*${word}(?=[ \\t]|$)`, 'gm');
+  const re = new RegExp(`(?:^|[;&|(!]|\\b(?:then|do|else|if|while|until)\\s)[ \\t]*${PATH_PREFIX}${word}(?=[ \\t]|$)`, 'gm');
   const out = [];
   for (const m of bare.matchAll(re)) {
     const start = m.index + m[0].length - word.length;
@@ -223,8 +234,10 @@ function operandText(bare, args, start, end) {
 // 4028; do gh issue view "$n" …`, `W="/abs/wt"; git -C "$W" …` and
 // `A=/abs/p.txt; echo digit > "$A"` all ran. A name assigned from `$(…)`,
 // `read` or a glob loop, or never assigned in the call (the environment), is
-// runtime-computed. Applies only to the gh/git/redirect detectors: node's
-// script operand refuses a literal name too (`Q=/abs/nospace && node $Q/x.js`).
+// runtime-computed. The gh/git/redirect detectors apply it to every
+// reference; the older sed/node/github-url detectors only to a double-quoted
+// one (literalizeQuotedStatic), since node's script operand refuses an
+// unquoted literal name (`Q=/abs/nospace && node $Q/x.js`).
 const LITERAL_VALUE = /^(?:'[^']*'|"[^"$`\\]*"|[^\s;&|()<>$`'"\\]*)(?=[\s;&|)]|$)/;
 const ASSIGN_CONTEXT = /(?:^|[;&|(]|\b(?:then|do|else|export|local|readonly)|[A-Za-z_]\w*=(?:"[^"\n]*"|'[^'\n]*'|\S*))[ \t]*$/;
 function staticNames(text) {
@@ -247,6 +260,24 @@ function staticNames(text) {
     for (const name of m[1].split(/[ \t]+/)) mark(name, false);
   }
   return new Set([...literal].filter(([, ok]) => ok).map(([name]) => name));
+}
+
+// `text` with the `$` of every double-quoted reference to a staticNames name
+// (`"$P/x.js"`, `"${P}"`) turned into `_`, same length, for the older
+// detectors that key on a bare `$`. Live 2026-10-24/25 (#4028): `P="/abs
+// path"` then `node "$P/x.js"`, and `export P=/abs && node "$P/x.js"`, ran;
+// the UNQUOTED `Q=/abs/nospace && node $Q/hello.js` was refused, so an
+// unquoted reference keeps its `$`.
+function literalizeQuotedStatic(text) {
+  const known = staticNames(text);
+  if (known.size === 0) return text;
+  const kinds = lexShell(text);
+  const out = text.split('');
+  for (const m of text.matchAll(/\$(\{)?([A-Za-z_]\w*)/g)) {
+    const closed = !m[1] || text[m.index + m[0].length] === '}';
+    if (kinds[m.index] === 'double' && closed && known.has(m[2])) out[m.index] = '_';
+  }
+  return out.join('');
 }
 
 // Whether `s` references a runtime-computed variable: a name not in `known`.
@@ -357,7 +388,7 @@ const DETECTORS = [
     row: '`echo "https://github.com/o/r/pull/1" --run "$RUN_DIR"`',
     // A github.com inside a comment, a single-quoted span or a heredoc body,
     // beside a runtime variable, ran in a live probe (2026-10-24, #4028).
-    test: (t) => { const s = stripSingle(t); return /github\.com/.test(s) && new RegExp(VAR).test(s); },
+    test: (t) => { const s = stripSingle(literalizeQuotedStatic(t)); return /github\.com/.test(s) && new RegExp(VAR).test(s); },
   },
   {
     id: 'gh-jq-pipe-chained',
@@ -372,7 +403,7 @@ const DETECTORS = [
   {
     id: 'git-in-substitution',
     row: '`echo "$(git rev-parse --short HEAD)"`',
-    test: (t) => /\$\(\s*git\s/.test(t),
+    test: (t) => GIT_IN_SUBSTITUTION.test(t),
   },
   {
     id: 'git-var-operand',
@@ -392,17 +423,17 @@ const DETECTORS = [
   {
     id: 'sed-var-path',
     row: "`sed -i '' 's/a/b/' \"$B\"`; `sed -n '1,2p' \"$P/README.md\"`",
-    test: (t) => new RegExp(`${CMD}sed\\s[^;&|\\n]*\\s"?${VAR}`).test(stripSingle(t)),
+    test: (t) => new RegExp(`${CMD}sed\\s[^;&|\\n]*\\s"?${VAR}`).test(stripSingle(literalizeQuotedStatic(t))),
   },
   {
     id: 'node-var-script',
     row: '`node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status`; `node "$HOME/x.js"`',
-    test: (t) => new RegExp(`${CMD}node\\s+"?\\$[{(A-Za-z_]`).test(t),
+    test: (t) => new RegExp(`${CMD}node\\s+"?\\$[{(A-Za-z_]`).test(literalizeQuotedStatic(t)),
   },
   {
     id: 'node-eval-computed-arg',
     row: "`node -e '<s>' \"$HOME\"`; `A=\"$(node /lit/x.js …)\"` then `node -e '<s>' \"$A\"`",
-    test: (t) => new RegExp(`${CMD}node\\s+(?:-e|-p|--eval|--print)\\s+(?:'[^']*'|"(?:[^"\\\\]|\\\\.)*")\\s+"?\\$`).test(t),
+    test: (t) => new RegExp(`${CMD}node\\s+(?:-e|-p|--eval|--print)\\s+(?:'[^']*'|"(?:[^"\\\\]|\\\\.)*")\\s+"?\\$`).test(literalizeQuotedStatic(t)),
   },
   {
     id: 'graphql-multivar-mutation',

@@ -28,7 +28,8 @@
 //   byFence     `file:line` of the skill fence a refusal's command was copied from -> refusals
 //   top         up to 20 sample commands per reason, cut to 300 chars
 //
-// Exit codes: 0 success; 2 malformed invocation or a missing --projects-dir / --skills-root.
+// Exit codes: 0 success; 2 malformed invocation, a missing --projects-dir / --skills-root, or a
+// --projects-dir / --skills-root that exists but cannot be read.
 //
 // Seam: run({ argv, deps }) returns the exit code; deps holds fs, env, now, homedir, log and err.
 

@@ -65,9 +65,13 @@ const MIN_COMMAND_LINE = 20;
 const ROOT_FENCE = /\$\{CLAUDE_PLUGIN_ROOT\}|\$CLAUDE_PLUGIN_ROOT(?!\w)/g;
 const PLACEHOLDER = /\{[A-Za-z][\w.-]*(?:\|[\w.-]+)*\}/g;
 const VAR_TOKEN = /"?\$(?:\{[A-Za-z_][^}]*\}|[A-Za-z_]\w*)"?/g;
-// An absolute path ending in the plugin root, spaces allowed when the path sits inside quotes.
-const ROOT_QUOTED = /(?<=["'])\/[^"'\n]*?(?:\/claude-tweaks\/\d+\.\d+\.\d+|\/plugin)\//g;
-const ROOT_BARE = /(?<![\w./-])\/[^\s"'`]*?(?:\/claude-tweaks\/\d+\.\d+\.\d+|\/plugin)\//g;
+// An absolute path ending in a real plugin root, spaces allowed when the path sits inside quotes: an
+// installed `…/claude-tweaks/<semver>/` cache root, or a checkout's own `…/plugin/` root, known by a
+// `bin/` or `skills/` segment directly after it. Any other `/plugin/` segment is left alone, so an
+// unrelated path cannot tie two fences.
+const PLUGIN_ROOT_END = String.raw`(?:\/claude-tweaks\/\d+\.\d+\.\d+\/|\/plugin\/(?=(?:bin|skills)\/))`;
+const ROOT_QUOTED = new RegExp(String.raw`(?<=["'])\/[^"'\n]*?${PLUGIN_ROOT_END}`, 'g');
+const ROOT_BARE = new RegExp(String.raw`(?<![\w./-])\/[^\s"'\`]*?${PLUGIN_ROOT_END}`, 'g');
 
 function collapse(line) {
   return line.replace(/\s+/g, ' ').trim();
