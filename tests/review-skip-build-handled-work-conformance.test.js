@@ -13,6 +13,8 @@ const { run } = require('../plugin/bin/log-decision');
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const build = readText(path.join(SKILLS, 'build', 'SKILL.md'));
 const steps = readText(path.join(SKILLS, 'review', 'code-mode-steps.md'));
+const docsSync = readText(path.join(SKILLS, 'build', 'docs-sync.md'));
+const docsLensText = readText(path.join(SKILLS, 'review', 'step3-doc-freshness-lens.md'));
 
 // Both anchors must resolve; the end anchor is searched after the start so a
 // repeated end string elsewhere in the file cannot pull the slice wider.
@@ -29,6 +31,9 @@ const review5 = between(steps, '## Step 5: Simplify Changed Code', '## Step 6: V
 
 const REGIONS = { build3, review5 };
 
+const docsLens = between(docsLensText, '1. Read `docs/REGISTRY.md`', '#### 3i-diagram');
+const DOCS_REGIONS = { sync: docsSync, lens: docsLens };
+
 const FACTS = {
   build3: [
     { name: 'AC1.1 writer', re: /--section "\/build" --status AUTO --step "Common Step 3" --text "simplify: scope simplified at \{sha\}"/ },
@@ -43,6 +48,20 @@ const FACTS = {
     { name: 'AC1.1 no fix since', re: /no build fix and no review fix has touched an in-scope source file since/ },
     { name: 'AC1.1 skip log', re: /--section "\/review" --status SKIP --step "Step 5 simplify \(skipped\)"/ },
     { name: 'AC1.1 fallback', re: /runs this step as below/ },
+  ],
+};
+
+const DOCS_FACTS = {
+  sync: [
+    { name: 'AC2.1 writer', re: /--section "\/build" --status AUTO --step "Common Step 6\.5" --text "docs sync: \{doc\} assessed at \{sha\}, no stale text"/ },
+    { name: 'AC2.1 one line per doc', re: /log one line per such doc/ },
+  ],
+  lens: [
+    { name: 'AC2.1 selector', re: /`Common Step 6\.5: docs sync: \{doc\} assessed at \{sha\}, no stale text`/ },
+    { name: 'AC2.1 ancestry', re: /`git merge-base --is-ancestor \{sha\} HEAD` exits 0/ },
+    { name: 'AC2.1 auto-detect diff', re: /lists no file matching this entry's Auto-detect patterns/ },
+    { name: 'AC2.1 no finding', re: /emit no finding for it/ },
+    { name: 'AC2.1 renumbered flag step', re: /5\. Flag the remaining unupdated docs as informational findings:/ },
   ],
 };
 
@@ -152,4 +171,49 @@ test('AC3.1 twin go-red: rewording the writer text or the reader selector breaks
   const rewordedReader = review5.replace('scope simplified', 'scope cleaned');
   assert.notEqual(rewordedReader, review5, 'selector reword applied');
   assert.equal(selectSha(decisions, rewordedReader, DOC), null, 'reworded selector no longer matches the writer');
+});
+
+test('AC2.1: every docs-pair fact matches exactly once in its region', () => {
+  for (const [regionName, facts] of Object.entries(DOCS_FACTS)) {
+    const region = DOCS_REGIONS[regionName];
+    assert.deepStrictEqual(missing(region, facts), [], `${regionName}: missing facts`);
+    for (const { name, re } of facts) {
+      assert.strictEqual(countMatches(region, re), 1, `${name}: expected exactly one match`);
+    }
+  }
+});
+
+test('AC2.1 go-red: stripping each docs-pair fact reports exactly that fact', () => {
+  for (const [regionName, facts] of Object.entries(DOCS_FACTS)) {
+    const original = DOCS_REGIONS[regionName];
+    for (const { name, re } of facts) {
+      const mutated = original.replace(re, '');
+      assert.notEqual(mutated, original, `${name}: regex did not match its region`);
+      assert.deepStrictEqual(missing(mutated, facts), [name], name);
+    }
+  }
+});
+
+const DOC_PLUGIN = 'docs/plugin-structure.md';
+const DOC_HOOKS = 'docs/hooks.md';
+
+test("AC3.1 twin: lens 3i's selector reads the sha build Step 6.5's command writes for that doc", () => {
+  const decisions = producerLine(docsSync, SHA, DOC_PLUGIN);
+  assert.equal(selectSha(decisions, docsLens, DOC_PLUGIN), SHA);
+
+  const otherDoc = producerLine(docsSync, SHA, DOC_HOOKS);
+  assert.equal(selectSha(otherDoc, docsLens, DOC_PLUGIN), null);
+});
+
+test('AC3.1 twin go-red: rewording the no-stale-text phrase in either region breaks the match', () => {
+  const decisions = producerLine(docsSync, SHA, DOC_PLUGIN);
+  assert.equal(selectSha(decisions, docsLens, DOC_PLUGIN), SHA, 'baseline matches');
+
+  const rewordedWriter = docsSync.replace('no stale text', 'nothing stale');
+  assert.notEqual(rewordedWriter, docsSync, 'writer reword applied');
+  assert.equal(selectSha(producerLine(rewordedWriter, SHA, DOC_PLUGIN), docsLens, DOC_PLUGIN), null, 'reworded writer no longer matches the selector');
+
+  const rewordedReader = docsLens.replace('no stale text', 'nothing stale');
+  assert.notEqual(rewordedReader, docsLens, 'reader reword applied');
+  assert.equal(selectSha(decisions, rewordedReader, DOC_PLUGIN), null, 'reworded selector no longer matches the writer');
 });

@@ -8,7 +8,8 @@ and is gated separately.
 1. Read `docs/REGISTRY.md`
 2. Match changed files against Auto-detect patterns
 3. For each matched registry entry, check if the doc was updated in this work's commits (look for doc update commits in `git log`)
-4. Flag unupdated docs as informational findings:
+4. **Skip a doc `/build` already checked (#4137).** When `$PIPELINE_RUN_DIR` is set and its `decisions.md` carries, under `## /build`, a line with `Common Step 6.5: docs sync: {doc} assessed at {sha}, no stale text` for this entry's doc, `git merge-base --is-ancestor {sha} HEAD` exits 0, and `git diff --name-only {sha} HEAD` lists no file matching this entry's Auto-detect patterns, emit no finding for it — build read it against the same source. A doc whose matched sources changed since that `{sha}` is still flagged.
+5. Flag the remaining unupdated docs as informational findings:
 
    ```
    | {N} | Doc `{file}` covers changed areas (`{pattern}`) but wasn't updated | Low | Docs | {file} | Review in wrap-up |
