@@ -4,7 +4,9 @@
 // anywhere in a PR body ("closes #N" inside a deferred reason included) and
 // re-derives those links on every edit, so PR #4144 closed #2724 it had logged
 // as deferred. The pure matcher/neutralizer is lib/flow/closing-links.js; the
-// calling procedure is skills/_shared/pr-first-merge.md.
+// callers are skills/_shared/pr-checklist-refresh.md (pre-merge) and
+// pr-first-merge-post-merge.md Step 4.0 (post-merge), and pr-first-merge.md
+// Step 3 passes the pre-merge `keepOpen` on to compose-subject.js --keep-open.
 //
 //   node bin/closing-links.js --run <run-dir> --mode <pre-merge|post-merge>
 //     [--settle-ms <n>] [--help]

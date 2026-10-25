@@ -534,6 +534,34 @@ test('post-merge leaves a record closed before the merge alone', () => {
   assert.equal(h.log(runDir), '');
 });
 
+test('post-merge reopens a record closed in the same second as mergedAt (>= boundary)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: MERGED_AT }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'reopened');
+  assert.deepEqual(j.reopened, [2724]);
+  assert.equal(h.reopens().length, 1);
+});
+
+test('post-merge never reopens a record whose closedAt is null or unparseable', () => {
+  for (const closedAt of [null, 'not-a-date']) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, {
+      prReads: [mergedView(body(), [2724, 3997])],
+      issues: { 2724: [{ state: 'CLOSED', closedAt }] },
+    });
+    assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+    const j = h.json();
+    assert.equal(j.action, 'nothing-closed', String(closedAt));
+    assert.deepEqual(j.closedBefore, [2724], String(closedAt));
+    assert.equal(h.reopens().length, 0, String(closedAt));
+  }
+});
+
 test('post-merge reopens a single-record deferral closed by the merge-commit keyword', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const single = body({ summary: 'No phrase.', span: ['Refs #10 — deferred: x'] });

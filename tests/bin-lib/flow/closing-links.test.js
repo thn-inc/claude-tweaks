@@ -171,3 +171,17 @@ test('prRepoFromUrl', () => {
     { host: 'github.com', owner: 'thn-inc', repo: 'claude-tweaks' });
   assert.equal(prRepoFromUrl('not a url'), null);
 });
+
+// The reader (parseFixesSpan) and the writer (pr-body.js composeFixesSpan) each hold the span
+// markers as literals; a rename on one side alone would turn the guard into a silent
+// no-fixes-span. Round-trip the real writer's output through the reader.
+test('parseFixesSpan reads what composeFixesSpan writes', () => {
+  const { composeFixesSpan } = require('../../../plugin/bin/lib/flow/pr-body');
+  const { composeFixesBlock } = require('../../../plugin/bin/lib/flow/manifest');
+  const lines = composeFixesBlock(
+    [{ id: 3997, status: 'complete' }, { id: 2724, status: 'complete' }, { id: 5, status: 'failed', phase: 'build' }],
+    new Map([['2724', 'the pass that closes #2724 is pending']]),
+  );
+  const parsed = parseFixesSpan(`intro\n\n${composeFixesSpan(lines)}\n\ntail`);
+  assert.deepEqual(parsed, { found: true, fixes: [3997], refs: [2724, 5] });
+});
