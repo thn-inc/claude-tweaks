@@ -41,7 +41,7 @@ files:
 - **URL:** `docs/hooks.md`'s "Bash prefilter (#3074)" bullet, the #4281 parenthetical
 - **Action:** Read it before relying on the gate for an unusual path shape.
 - **Should feel:** Clear about where the line is. The one deliberate fail-open is named, with its reason.
-- **Should understand:** A drive-relative path on a drive other than the session cwd's (`D:repo` from `C:\…`) gets no target, so the guard fails open rather than invent one. The prefilter still anchors such a redirect at its own drive root, so it never skips a call the parsers could judge. Other shapes still give no target, as they did before this change: a literal `$`, backtick or `"` inside a quoted value, an escaped trailing space at the end of a command piece, and `cp a 2\>x`. They are tracked as one follow-up, not supported bypasses.
+- **Should understand:** A drive-relative path on a drive other than the session cwd's (`D:repo` from `C:\…`) gets no target, so the guard fails open rather than invent one. The prefilter still anchors such a redirect at its own drive root, so it never skips a call the parsers could judge. Other shapes still give no target, as they did before this change: a literal `$`, backtick or `"` inside a quoted value, and, on POSIX, an escaped trailing space at the end of a command piece (`echo x > a\ ; ls`). They are tracked as one follow-up, not supported bypasses. Under `path.win32` that trailing-space shape now names the path without its space, which errs toward a deny. An escaped redirect operator is no redirect: `cp a 2\>x` copies to the file `2>x`, and the guard reports that file.
 - **Red flags:** A skill or procedure that tells agents to write `D:repo`-style paths, or any of the shapes above, because the gate misses them.
 
 ## Origin
