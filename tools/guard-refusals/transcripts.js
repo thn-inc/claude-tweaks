@@ -142,7 +142,7 @@ function scanStore({ projectsDir, match = null, since, until, fs: fsImpl = fs })
   const sinceMs = toMs(since);
   const untilMs = toMs(until);
   let unreadable = 0;
-  const bump = () => { unreadable++; };
+  const countUnreadable = () => { unreadable++; };
 
   const files = [];
   for (const slug of fsImpl.readdirSync(projectsDir).sort()) { // root errors throw
@@ -152,16 +152,16 @@ function scanStore({ projectsDir, match = null, since, until, fs: fsImpl = fs })
     try {
       isDir = fsImpl.statSync(slugDir).isDirectory();
     } catch (_) {
-      bump();
+      countUnreadable();
       continue;
     }
     if (!isDir) continue;
-    for (const p of listCandidates(fsImpl, slugDir, bump)) {
+    for (const p of listCandidates(fsImpl, slugDir, countUnreadable)) {
       let mtime;
       try {
         mtime = fsImpl.statSync(p).mtimeMs;
       } catch (_) {
-        bump();
+        countUnreadable();
         continue;
       }
       if (mtime >= sinceMs && mtime < untilMs) files.push(p);
@@ -190,7 +190,7 @@ function scanStore({ projectsDir, match = null, since, until, fs: fsImpl = fs })
         try {
           entry = JSON.parse(line);
         } catch (_) {
-          unreadable++;
+          countUnreadable();
           return;
         }
         const content = entry && entry.message && entry.message.content;
@@ -229,7 +229,7 @@ function scanStore({ projectsDir, match = null, since, until, fs: fsImpl = fs })
         }
       });
     } catch (_) {
-      unreadable++;
+      countUnreadable();
     }
   }
 

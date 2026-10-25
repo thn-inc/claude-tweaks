@@ -251,13 +251,13 @@ function refsInlineSafely(s, sc, refs, valueOf) {
   return true;
 }
 
-// `refs` in source order; `valueOf(ref)` is the literal each one becomes.
-function replaceRefs(s, refs, valueOf) {
+// `spans` ({ start, end }) in source order; `valueOf(span)` is the text each one becomes.
+function replaceSpans(s, spans, valueOf) {
   let out = '';
   let last = 0;
-  for (const ref of refs) {
-    out += s.slice(last, ref.start) + valueOf(ref);
-    last = ref.end;
+  for (const span of spans) {
+    out += s.slice(last, span.start) + valueOf(span);
+    last = span.end;
   }
   return out + s.slice(last);
 }
@@ -300,7 +300,7 @@ function leadingAssignments(s) {
     ASSIGNMENT.lastIndex = i;
     const m = ASSIGNMENT.exec(s);
     if (!m) break;
-    const value = m[2] !== undefined ? m[2] : m[3];
+    const value = m[2] ?? m[3];
     if (!LITERAL_VALUE.test(value)) break;
     SEPARATOR.lastIndex = i + m[0].length;
     const sep = SEPARATOR.exec(s);
@@ -515,7 +515,7 @@ function inlineLiteralAssignment(s) {
   // Any unsafe reference bails the whole rule, not just its own name.
   const valueOf = (r) => values.get(r.name);
   if (!refsInlineSafely(s, sc, refs, valueOf)) return null;
-  const out = replaceRefs(s, refs, valueOf);
+  const out = replaceSpans(s, refs, valueOf);
   // Judged on the rewrite, so an inlined command word (`$P/echo`) counts as the
   // literal it becomes; the literal leading assignments are skipped.
   return inlineContextSafe(out, bodyStart) ? out : null;
@@ -534,7 +534,7 @@ function pluginRootPlaceholder(s, { pluginRoot }) {
   // Other plugins' prose spells the same placeholder for THEIR root: inline only
   // a reference that continues into a path this plugin actually ships.
   if (!refs.every((r) => shippedUnder(pluginRoot, s, r.end))) return null;
-  const out = replaceRefs(s, refs, () => pluginRoot);
+  const out = replaceSpans(s, refs, () => pluginRoot);
   return inlineContextSafe(out, leadingAssignments(out).bodyStart) ? out : null;
 }
 
@@ -624,23 +624,17 @@ function quoteEscapedSpace(s) {
   let m;
   while ((m = ESCAPED_WORD.exec(s)) !== null) {
     const word = m[0];
-    const st = m.index;
-    const en = st + word.length;
-    if (!word.includes('\\ ') || sc.kind[st] !== TOP) continue;
-    if (!atWordStart(s, sc.kind, st) || (en < s.length && !WORD_BREAK.test(s[en]))) continue;
+    const start = m.index;
+    const end = start + word.length;
+    if (!word.includes('\\ ') || sc.kind[start] !== TOP) continue;
+    if (!atWordStart(s, sc.kind, start) || (end < s.length && !WORD_BREAK.test(s[end]))) continue;
     // Tilde expansion (leading, or after `=`/`:`), zsh's leading =cmd, and an
     // assignment word all stop meaning the same thing once quoted.
     if (word[0] === '~' || word[0] === '=' || ASSIGNMENT_WORD.test(word) || /[=:]~/.test(word)) continue;
-    edits.push({ st, en, text: `"${word.replace(/\\ /g, ' ')}"` });
+    edits.push({ start, end, text: `"${word.replace(/\\ /g, ' ')}"` });
   }
   if (!edits.length) return null;
-  let out = '';
-  let last = 0;
-  for (const e of edits) {
-    out += s.slice(last, e.st) + e.text;
-    last = e.en;
-  }
-  return out + s.slice(last);
+  return replaceSpans(s, edits, (edit) => edit.text);
 }
 
 const LEADING_CD = /^[ \t]*cd[ \t]+(?:'([^']*)'|"([^"$`\\]*)"|([A-Za-z0-9_.\/:@%+,=-]+))[ \t]*&&[ \t\n]*/;
@@ -657,7 +651,7 @@ function trimSlashes(p) {
 function dropRedundantCd(s, { cwd }) {
   const m = LEADING_CD.exec(s);
   if (!m) return null;
-  const target = m[1] !== undefined ? m[1] : (m[2] !== undefined ? m[2] : m[3]);
+  const target = m[1] ?? m[2] ?? m[3];
   const rest = s.slice(m[0].length);
   // `cd X && # note` is a syntax error; `# note` alone is not.
   if (!/\S/.test(rest) || rest[0] === '#' || OLDPWD_USE.test(rest)) return null;

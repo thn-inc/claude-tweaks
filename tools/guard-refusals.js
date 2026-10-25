@@ -202,9 +202,7 @@ function run({ argv, deps: given = {} }) {
     let isDir = false;
     try {
       isDir = deps.fs.statSync(dir).isDirectory();
-    } catch (_) {
-      isDir = false;
-    }
+    } catch (_) { /* a missing or unstat-able path is reported as not a directory below */ }
     if (!isDir) {
       deps.err(`guard-refusals.js: ${flag} ${dir} is not a directory\n${USAGE}`);
       return 2;

@@ -22,6 +22,19 @@ const PATH_PREFIX = String.raw`(?:[\w.~-]*\/)+`;
 const CMD_POSITION = String.raw`(?<=(?:^|[\n;&|(!]|\b(?:then|do|else|if|while|until)\s)[ \t]*(?:[A-Za-z_]\w*=[^\s;&|()<>]*[ \t]+)*)`;
 const CMD = String.raw`(?:(?<![\w./-])|${CMD_POSITION}${PATH_PREFIX})`;
 
+const HEREDOC_OP = /^<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|([A-Za-z_]\w*))/;
+
+// Index just past the `))` closing the arithmetic `((` at `start` (paren
+// depth counted), or the end of text when it never closes.
+function arithmeticEnd(text, start) {
+  let depth = 0;
+  for (let j = start; j < text.length; j++) {
+    if (text[j] === '(') depth++;
+    else if (text[j] === ')' && --depth === 0) return j + 1;
+  }
+  return text.length;
+}
+
 // One left-to-right shell-lexing pass: the state of each char of `text`, one of
 // 'plain', 'delim' (a quote char that opens or closes a span), 'single',
 // 'double' or 'comment'. Pairing quotes with a regex instead lets an apostrophe
@@ -40,19 +53,6 @@ const CMD = String.raw`(?:(?<![\w./-])|${CMD_POSITION}${PATH_PREFIX})`;
 // An ANSI-C `$'…'` outside quotes is a single-quote span in which a backslash
 // escapes the next char (`$'it\'s'` closes at its last apostrophe); its `$` is
 // a 'delim' like the quote. Inside "…" a `$'` is literal text.
-const HEREDOC_OP = /^<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|([A-Za-z_]\w*))/;
-
-// Index just past the `))` closing the arithmetic `((` at `start` (paren
-// depth counted), or the end of text when it never closes.
-function arithmeticEnd(text, start) {
-  let depth = 0;
-  for (let j = start; j < text.length; j++) {
-    if (text[j] === '(') depth++;
-    else if (text[j] === ')' && --depth === 0) return j + 1;
-  }
-  return text.length;
-}
-
 function lexShell(text) {
   const kinds = new Array(text.length);
   let state = 'plain';
