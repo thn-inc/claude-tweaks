@@ -6,8 +6,9 @@
 // `AUTO` decisions.md line naming the finding's `work-fingerprint`: `wrap-up/review-console.md`'s
 // Can't-tell filings commands, invoked from the console itself and also from
 // `wrap-up/auto-merge-short-circuit.md`'s Can't-tell findings step and the dispatch bundle
-// Auto-merge gate (`dispatch/settle-and-merge.md`). Consumers: `console-filings.js --fyi` (the FYI table) and the archive
-// guard in `reconcile/archive-merged.js` (refuses to archive a run with an unfiled finding).
+// Auto-merge gate (`dispatch/settle-and-merge.md`). Consumers: `console-filings.js --fyi` (the FYI
+// table) and the archive guard in `reconcile/archive-merged.js` (refuses to archive a run with an
+// unfiled finding).
 // Read-only over the run dir; never calls `gh` — evidence is the run's own decisions.md.
 'use strict';
 
@@ -39,9 +40,8 @@ function cantTellOutcomes({ runDir, deps }) {
     const fingerprint = item.tiebreak
       ? planFilings({ items: [{ ...item, resolution: 'filed' }], findings, runId })[0].fingerprint
       : null;
-    return {
-      id: item.id, section: item.section, tiebreak: item.tiebreak || null, fingerprint, filedAs: fingerprint ? (filed.get(fingerprint) ?? null) : null,
-    };
+    const filedAs = fingerprint ? (filed.get(fingerprint) ?? null) : null;
+    return { id: item.id, section: item.section, tiebreak: item.tiebreak || null, fingerprint, filedAs };
   });
   return { rows, dropped };
 }
@@ -58,7 +58,9 @@ function unfiledCantTell({ runDir, deps }) {
   return out;
 }
 
-const orDash = (v) => (v === null || v === undefined || v === '' ? '—' : v);
+function orDash(value) {
+  return value === null || value === undefined || value === '' ? '—' : value;
+}
 
 function renderSection(section, rows) {
   const lines = [`#### ${section}`, '', '| Item | Path:Line | Severity | Lens | Recommendation | Filed as |', '|---|---|---|---|---|---|'];
