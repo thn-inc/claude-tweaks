@@ -12,3 +12,5 @@
 | 8 | build | SDD ruling — fix final-review Important 1 in code (residue probe skips clean tidy/sweep standalone dirs with non-empty staged/; dream excluded): ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | |
 | 9 | build | SDD ruling — leave deferred minors 2 (capitalised An) and 3 (dispatch-parked inherited dir) per final-review triage: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | |
 | 10 | build | SDD ruling — file the wrap-up Stop-and-re-engage resume-gap follow-up via /claude-tweaks:capture from the controller, not the fix wave: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | |
+| 11 | wrap-up | pr — PR #4302 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | |
+| 12 | wrap-up | residue suite probe not run — skipped via --no-suite; suite state taken from the runner stamp (full pass at 009459c37, 17589/17591) | observation | |
