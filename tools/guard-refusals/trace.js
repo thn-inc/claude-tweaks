@@ -108,12 +108,12 @@ function compileFenceLine(normalized) {
 
 // skillsRoot → { fences: [{ id, lines: number }], byKey: Map<key, Array<{ fence, line, regex }>> }.
 // A fence id is `<path relative to skillsRoot>:<line of its opening fence>`.
-function buildFenceIndex(skillsRoot, { fsImpl = fs } = {}) {
+function buildFenceIndex(skillsRoot) {
   const fences = [];
   const byKey = new Map();
   for (const file of walkMarkdown(skillsRoot)) {
     const rel = path.relative(path.resolve(skillsRoot), file).split(path.sep).join('/');
-    const text = fsImpl.readFileSync(file, 'utf8');
+    const text = fs.readFileSync(file, 'utf8');
     for (const f of shellFences(text)) {
       const entry = { id: `${rel}:${f.line}`, lines: 0 };
       fences.push(entry);
@@ -160,4 +160,4 @@ function traceFence(command, index) {
   return ids.sort();
 }
 
-module.exports = { REASONS, classifyReason, buildFenceIndex, traceFence, normalizeCommandLine, normalizeFenceLine };
+module.exports = { REASONS, classifyReason, buildFenceIndex, traceFence, normalizeCommandLine };
