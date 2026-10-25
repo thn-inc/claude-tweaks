@@ -211,7 +211,8 @@ DEADLINE=$(( $(date +%s) + 900 ))
 while :; do
   gh pr checks {pr-number} --repo {owner}/{repo} > /tmp/pr-checks-{n}.txt 2>&1; RC=$?
   case "$RC" in
-    0) PENDING_RUNS=$(gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status --jq '[.[] | select(.status != "completed")] | length') || { RC=2; break; }
+    0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status > /tmp/pr-runs-{n}.json || { RC=2; break; }
+       PENDING_RUNS=$(node -e "console.log(require(process.argv[1]).filter((r) => r.status !== 'completed').length)" -- /tmp/pr-runs-{n}.json) || { RC=2; break; }
        [ "${PENDING_RUNS:-x}" = 0 ] && break                 # all green — no head run still in progress
        [ "$(date +%s)" -ge "$DEADLINE" ] && RC=124 && break  # rollup green, a head run still pending at the bound
        sleep 30 ;;
@@ -222,6 +223,9 @@ while :; do
   esac
 done
 ```
+
+The head runs are counted from the saved file, never through a `gh … --jq` program: the worktree
+guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` §7).
 
 - `RC=0` → **green** — every reported check passed **and** every head run completed (the `0)` branch
   breaks only at zero pending head runs). Re-read state (`gh pr view … --json state,mergeStateStatus,headRefOid`)

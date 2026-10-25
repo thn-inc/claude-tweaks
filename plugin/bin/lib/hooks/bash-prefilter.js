@@ -25,7 +25,8 @@
 // push`) is not reached, and the handler cannot resolve it either.
 //
 // Dependency-light by contract: fs, git-command.js (which requires only path)
-// and harness-refusal.js (which requires nothing). Adding a heavier require here
+// and harness-refusal.js (which requires nothing), plus guard-rewrite.js (path
+// and ../path-guard), loaded only on a pre-tool-use skip. Adding a heavier require here
 // moves cost onto EVERY Bash call. The same holds for user-prompt-submit: it fires
 // on every human prompt and Claude Code waits for it, so it is governed here too,
 // by a raw substring test on `claude-tweaks:` with no JSON parse.
@@ -128,8 +129,10 @@ function failureCarriesRefusal(raw, input) {
 
 // Reads stdin once — the caller must hand `raw` on to the full handler, since
 // stdin cannot be read a second time. Returns null (and reads nothing) for
-// every event this filter does not govern.
-function earlyGate(event, readRaw = () => fs.readFileSync(0, 'utf8')) {
+// every event this filter does not govern. A pre-tool-use skip may also carry
+// `json` (the guard normalizer's updatedInput), which bin/hooks.js prints.
+// `deps.rewriteForGuard` is a test seam.
+function earlyGate(event, readRaw = () => fs.readFileSync(0, 'utf8'), deps = {}) {
   const isFailure = event === 'post-tool-use-failure';
   const isPrompt = event === 'user-prompt-submit';
   if (!wordsFor(event) && !isFailure && !isPrompt) return null;
@@ -149,7 +152,16 @@ function earlyGate(event, readRaw = () => fs.readFileSync(0, 'utf8')) {
   // stdin is already drained, so `raw` must survive even if the decision throws.
   let skip = false;
   try { skip = !shouldRunFull(event, input); } catch { skip = false; }
-  return { raw, skip };
+  if (!skip || event !== 'pre-tool-use') return { raw, skip };
+  // #4028: a skipped Bash call still gets the guard normalizer — its shapes
+  // (`node -e '…' "$A"`, `ls /a\ b`, `cd <cwd> && …`) rarely carry a covered word.
+  // A throw, or a require failure, leaves the plain skip.
+  let hookSpecificOutput = null;
+  try {
+    const guardRewrite = require('./guard-rewrite');
+    hookSpecificOutput = guardRewrite.guardRewriteOutput(input, deps.rewriteForGuard || guardRewrite.rewriteForGuard);
+  } catch { hookSpecificOutput = null; }
+  return hookSpecificOutput ? { raw, skip, json: { hookSpecificOutput } } : { raw, skip };
 }
 
 module.exports = { PRE_TOOL_USE_WORDS, POST_TOOL_USE_WORDS, commandWords, shouldRunFull, earlyGate, hasFileRedirection };

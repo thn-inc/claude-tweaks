@@ -450,7 +450,10 @@ if (require.main === module) {
   // the suite that already holds the slot, and must not wait on it.
   let lockPath = null;
   if (process.env.CT_TEST_SUITE_SLOT_HELD !== '1') {
-    const lane = slotLane(process.env.CT_TEST_SUITE_SLOT_DIR || path.join(os.tmpdir(), 'ct-test-suite-slots'), roots === null);
+    // The subset leaf sits under the fixed-name slot base, so the base is ownership-checked too.
+    const slotBase = process.env.CT_TEST_SUITE_SLOT_DIR || path.join(os.tmpdir(), 'ct-test-suite-slots');
+    ensureOwnDir(slotBase);
+    const lane = slotLane(slotBase, roots === null);
     lockPath = acquireSlot({
       dir: lane.dir,
       slotsVar: lane.slotsVar,

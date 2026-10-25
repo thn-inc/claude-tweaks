@@ -361,3 +361,59 @@ test('e2e: a plain `git stash` from a linked worktree now reaches checkGitStashW
   const { stdout } = spawnHook('pre-tool-use', { ...bash('git stash'), cwd: wt }, { cwd: wt });
   assert.match(stdout, /git stash is repository-wide/);
 });
+
+// ── #4028: the guard normalizer on the skip path ─────────────────────────────
+// A skip-path Bash call whose shape the harness worktree guard over-refuses gets
+// a semantics-preserving rewrite as `updatedInput`, and never a
+// permissionDecision, since the guard must re-check the rewritten command.
+test('earlyGate returns json with updatedInput for a rewritable skip-path Bash call and no json otherwise', () => {
+  const wt = linkedWorktreeOf(gitRepo());
+  const tool_input = { command: `node -e '1' "$HOME"`, description: 'probe' };
+  const raw = JSON.stringify({ tool_name: 'Bash', tool_input, cwd: wt });
+  assert.deepStrictEqual(earlyGate('pre-tool-use', () => raw), {
+    raw, skip: true,
+    json: { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { command: `node -e '1' -- "$HOME"`, description: 'probe' } } },
+  });
+  const plain = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: wt });
+  assert.deepStrictEqual(earlyGate('pre-tool-use', () => plain), { raw: plain, skip: true }, 'nothing to rewrite');
+  const outside = JSON.stringify({ tool_name: 'Bash', tool_input, cwd: SANDBOX });
+  assert.deepStrictEqual(earlyGate('pre-tool-use', () => outside), { raw: outside, skip: true }, 'not a linked worktree');
+  const noCwd = JSON.stringify({ tool_name: 'Bash', tool_input });
+  assert.deepStrictEqual(earlyGate('pre-tool-use', () => noCwd), { raw: noCwd, skip: true }, 'no cwd in the payload');
+  assert.deepStrictEqual(earlyGate('post-tool-use', () => raw), { raw, skip: true }, 'post-tool-use never rewrites');
+  const full = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git status; node -e '1' "$HOME"` }, cwd: wt });
+  assert.deepStrictEqual(earlyGate('pre-tool-use', () => full), { raw: full, skip: false }, 'the full handler owns a non-skip call');
+});
+
+test('earlyGate keeps skip true and returns no json when rewriteForGuard throws', () => {
+  const raw = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `node -e '1' "$HOME"` }, cwd: SANDBOX });
+  const boom = () => { throw new Error('boom'); };
+  assert.deepStrictEqual(earlyGate('pre-tool-use', () => raw, { rewriteForGuard: boom }), { raw, skip: true });
+  // The seam is the one earlyGate really calls.
+  const stub = earlyGate('pre-tool-use', () => raw, { rewriteForGuard: () => ({ command: 'X', applied: ['t'] }) });
+  assert.strictEqual(stub.json.hookSpecificOutput.updatedInput.command, 'X');
+});
+
+test('e2e #4028: a rewritable skip-path call prints updatedInput and still never loads the heavy modules', () => {
+  const wt = linkedWorktreeOf(gitRepo());
+  const { stdout, loaded } = spawnHook('pre-tool-use', { ...bash(`node -e '1' "$HOME"`), cwd: wt }, { cwd: wt });
+  assert.deepStrictEqual(JSON.parse(stdout), { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { command: `node -e '1' -- "$HOME"` } } });
+  assert.ok(!loadedModule(loaded, 'lib/hooks/context.js'), 'context.js loaded on the skip path');
+  assert.ok(!loadedModule(loaded, 'lib/hooks/pre-tool-use.js'), 'pre-tool-use.js loaded on the skip path');
+});
+
+// Review Focus 5: a throw inside the normalizer, in the real process, on both the
+// fast path and the full handler, still exits 0 with no stdout.
+test('e2e #4028: a throwing normalizer exits 0 with no stdout on the skip path and the full path', () => {
+  const thrower = path.join(SANDBOX, 'throw-rewrite.js');
+  const target = path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'guard-rewrite.js');
+  fs.writeFileSync(thrower, `require(${JSON.stringify(target)}).rewriteForGuard = () => { throw new Error('boom'); };\n`);
+  const wt = linkedWorktreeOf(gitRepo());
+  for (const command of [`node -e '1' "$HOME"`, 'P=/x/y; node $P/z.js']) {
+    const stdout = execFileSync('node', ['--require', thrower, HOOKS, 'pre-tool-use'], {
+      input: JSON.stringify({ ...bash(command), cwd: wt }), cwd: wt, encoding: 'utf8',
+      env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
+    });
+    assert.strictEqual(stdout, '', command);
+  }
+});

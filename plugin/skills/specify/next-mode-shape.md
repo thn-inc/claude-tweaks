@@ -287,7 +287,7 @@ firing's session-scoped run-directory file first, the same file `## Claim`
 above resolved it from:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RUN_DIR_FILE=specify-next-rundir.txt)"
+RUN_DIR_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rundir.txt)"
 RUN_DIR=$(cat "$RUN_DIR_FILE")
 # Success path:
 node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" {n} --run "$RUN_DIR" \

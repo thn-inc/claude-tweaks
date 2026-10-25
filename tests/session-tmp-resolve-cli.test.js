@@ -1,8 +1,10 @@
 // tests/session-tmp-resolve-cli.test.js — spawn tests for
-// bin/session-tmp-resolve.js, the byte-cheap eval-ready CLI wrapper over
+// bin/session-tmp-resolve.js, the byte-cheap CLI wrapper over
 // lib/session-tmp.js#sessionTmpPath (#266's follow-up to shrink the
 // per-fence inline `node -e` preamble that pushed backlog/overview-mode.md
-// over the then-40 KB skill-file ceiling).
+// over the then-40 KB skill-file ceiling). Two forms: `VAR=filename ...`
+// (VAR="path" lines) and `--value filename` (the bare path — the eval-free
+// per-variable form, since the worktree guard refuses `eval`, #4028).
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -89,6 +91,54 @@ test('exits non-zero with no arguments', () => {
 test('exits non-zero on a malformed argument (no "=")', () => {
   const { status } = run(['not-a-valid-arg']);
   assert.notEqual(status, 0);
+});
+
+test('--value prints only the path', () => {
+  const { stdout, status } = run(['--value', 'a.json'], { CLAUDE_CODE_SESSION_ID: 'sess-val' });
+  assert.equal(status, 0);
+  assert.equal(stdout, `${printed(path.join(os.tmpdir(), 'ct-session-sess-val', 'a.json'))}\n`);
+});
+
+test('--value without a session id falls back to the OS tmpdir', () => {
+  const { stdout, status } = run(['--value', 'a.json'], { CLAUDE_CODE_SESSION_ID: '' });
+  assert.equal(status, 0);
+  assert.equal(stdout, `${printed(path.join(os.tmpdir(), 'a.json'))}\n`);
+});
+
+test('--value with no operand exits 1 with a usage line', () => {
+  const { stdout, stderr, status } = run(['--value']);
+  assert.equal(status, 1);
+  assert.equal(stdout, '');
+  assert.match(stderr, /Usage: session-tmp-resolve\.js/);
+});
+
+test('--value combined with VAR=file exits 1', () => {
+  for (const args of [['--value', 'a.json', 'B=b.md'], ['B=b.md', '--value', 'a.json'], ['--value', 'A=a.json']]) {
+    const { stdout, status } = run(args, { CLAUDE_CODE_SESSION_ID: 'sess-mix' });
+    assert.equal(status, 1, `args ${JSON.stringify(args)} must exit 1`);
+    assert.equal(stdout, '');
+  }
+});
+
+test('--value path is usable via command substitution with no eval (the guard-accepted multi-path form)', { skip: process.platform === 'win32' }, () => {
+  const script = `A="$(node "${CLI}" --value a.json)"\nB="$(node "${CLI}" --value b.md)"\necho "$A"\necho "$B"`;
+  const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { ...process.env, CLAUDE_CODE_SESSION_ID: 'sess-subst' } });
+  assert.equal(result.status, 0);
+  assert.deepEqual(result.stdout.trim().split('\n'), [
+    path.join(os.tmpdir(), 'ct-session-sess-subst', 'a.json'),
+    path.join(os.tmpdir(), 'ct-session-sess-subst', 'b.md'),
+  ]);
+});
+
+test('VAR=filename: a filename containing "=" keeps everything after the first "="', () => {
+  const { stdout, status } = run(['X=a=b.json'], { CLAUDE_CODE_SESSION_ID: 'sess-eq' });
+  assert.equal(status, 0);
+  assert.equal(stdout.trim(), `X=${JSON.stringify(printed(path.join(os.tmpdir(), 'ct-session-sess-eq', 'a=b.json')))}`);
+});
+
+test('VAR=filename: a leading "=" (empty variable name) exits non-zero', () => {
+  const { status } = run(['=a.json']);
+  assert.equal(status, 1);
 });
 
 test('the resolved value is safe to eval directly in bash', () => {

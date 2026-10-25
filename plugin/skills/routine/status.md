@@ -75,7 +75,7 @@ In `--all` mode, use `record.filename` in place of `{PREFIXED_NAME}` (never deri
 
 ```bash
 node -e "const {kernelFreshness}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/routine-template-parser.js');
-  console.log(kernelFreshness(process.argv[1], process.argv[2]))" "$RECORDED" "$CURRENT"
+  console.log(kernelFreshness(process.argv[1], process.argv[2]))" -- "$RECORDED" "$CURRENT"
 ```
 
 When it prints `kernel-stale`, report **kernel stale (recorded `kernel_version` N < current M — run `/claude-tweaks:routine update <skill>`)** distinctly from template-field drift; a record with no `kernel_version` reports kernel-stale (the helper already treats a missing value this way). Kernel-staleness renders within the **Drifted** verdict's Detail column — never a sixth verdict (the five-verdict set is closed; `skills/init/update-mode.md` enumerates it).

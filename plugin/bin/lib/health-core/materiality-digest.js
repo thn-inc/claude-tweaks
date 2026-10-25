@@ -14,7 +14,7 @@
 // only OWNER/MEMBER/COLLABORATOR comments (issues/comment-trust.js) can suppress a finding.
 'use strict';
 
-const { fingerprintFromBasis, normalizeText } = require('./fingerprint');
+const { fingerprintFromBasis, normalizeText, parseMarkerFingerprints } = require('./fingerprint');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 
 const MATERIALITY_MARKER_PREFIX = 'materiality-fingerprint';
@@ -49,12 +49,8 @@ function materialityFingerprint({ area, finding, fileRefs } = {}) {
 // expired (a trailing `→ {id}`/`→ expired` marker sits on the same line, after this one) —
 // dedup must still recognize a still-active entry as already-present; promoted/expired
 // filtering is tidy/digest-sweep.md's own concern at sweep time, not this function's.
-// Uses matchAll rather than a manual exec loop — matchAll clones the regex internally per
-// call, so the 'g' flag's lastIndex state is never shared across calls (same convention as
-// issues/record-dependencies.js's parseIssueNumbers).
 function parseMaterialityFingerprints(text) {
-  const re = new RegExp(`<!-- ${MATERIALITY_MARKER_PREFIX}: (\\S+?) -->`, 'g');
-  return [...String(text || '').matchAll(re)].map((m) => m[1]);
+  return parseMarkerFingerprints(text, MATERIALITY_MARKER_PREFIX);
 }
 
 // entry: { area, finding, fileRefs, deferReason, provenance }. Composes one Entry-format line

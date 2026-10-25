@@ -57,7 +57,7 @@ This is a sequencing requirement, not a formality. `ISSUES_FILE` is the only inp
 `$FOCUS` and `$ROOT` are passed as `process.argv` arguments after `--`, never spliced into the JS source itself — a `--root` value containing a single quote (a realistic path like `O'Brien's-repo`) would otherwise break out of a string literal. Resolve this run's session-scoped destination first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" CODE_HEALTH_FOCUS_SCAN=code-health-focus-scan.json)"
+CODE_HEALTH_FOCUS_SCAN="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value code-health-focus-scan.json)"
 node -e "
 const { FOCUS_GENERATORS } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/code-health/focus-generators.js');
 const focus = process.argv[1];
@@ -104,7 +104,7 @@ Both counts are reported the same way on a **non-empty** firing too — they are
 Stamp the freshness marker first, exactly as SKILL.md Step 3 does for the generalist path — Step 7.5 is unmodified under focus mode and reads this marker, and a missing marker makes its `find -newer` check silently pass every finding. Resolve the session-scoped marker path the same way (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" CODE_HEALTH_READ_MARKER=code-health-read-marker)"
+CODE_HEALTH_READ_MARKER="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value code-health-read-marker)"
 touch "$CODE_HEALTH_READ_MARKER"
 ```
 
