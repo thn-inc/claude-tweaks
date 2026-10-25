@@ -53,7 +53,7 @@ const PINS = {
   ],
   init: { file: 'init/SKILL.md', from: '## Phase 9: Present Summary and Confirm', to: '## Important Notes', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/Stop here/, 'the Scope Gate stop is named']] },
   'harness-health': { file: 'harness-health/dream-pass.md', from: '## Running it', to: '## Reviewing proposals', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED] },
-  'wrap-up': { file: 'wrap-up/SKILL.md', from: '### Establish the run directory (unconditional)', to: '### Diff-derived ceremony default', patterns: [P_STATEMENT, P_CLOSE, [/Stop and re-engage/, 'the resumable halt is the one exception'], [/`BLOCKED`/, 'a BLOCKED verdict still closes a created directory']] },
+  'wrap-up': { file: 'wrap-up/SKILL.md', from: '### Establish the run directory (unconditional)', to: '### Diff-derived ceremony default', patterns: [P_STATEMENT, P_CLOSE, [/Stop and re-engage/, 'the resumable halt stays open'], [/A `--dry-run` run skips execution entirely/, 'a --dry-run run, which skips item 8, closes a created directory itself'], [/a verify exit 3 too, since Execute approved actions runs item 8 before its Verify execution/, 'a verify exit 3 still reaches item 8']] },
   tidy: { file: 'tidy/SKILL.md', from: '## Step 7.5: Verify Execution', to: '## Routine Configuration', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/--approve[\s\S]{0,300}archiv/, 'archival stays with --approve']] },
 };
 
