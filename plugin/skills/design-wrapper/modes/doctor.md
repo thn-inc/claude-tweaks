@@ -145,3 +145,5 @@ Upstream's display order is `route`, `mention`, `auto`. That is a reading order 
 `counts` is a convenience tally by severity; `findings` remains the authority. `platform` is the wrapper's standard top-level Layer 0 field (see `../SKILL.md`'s Output contract), not something this mode computes — the engine's `doctor` verb reports its own `platform` too, and the two agree because both read the same `PRODUCT.md`.
 
 **This mode modifies no file, in any project, under any condition.** It is read-only with respect to both source code and Impeccable's own artifacts.
+
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.

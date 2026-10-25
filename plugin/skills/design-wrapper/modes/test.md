@@ -75,3 +75,5 @@ Or on skip:
 ```
 
 Both shapes additionally carry the wrapper's standard top-level `platform` / `surface_track` fields — see `../SKILL.md`'s Output contract. They are not restated here.
+
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.

@@ -306,3 +306,5 @@ A layout `ok` exists only on a pick, so `visual_reference` always carries the wi
 - Plus the standard availability/kill-switch skips defined in `../SKILL.md` (`design integration disabled`, etc.) — this mode does not redefine those, it dispatches into them exactly as every other mode does.
 
 Both shapes carry the wrapper's standard top-level `platform` and `surface_track` fields — see `../SKILL.md`'s Output contract. This mode adds no field beyond what's shown above.
+
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.
