@@ -85,7 +85,6 @@ The map is built outside the runner by a traced full-suite run: a read tracer pr
 - **Module loads.** CommonJS loads and a relative or absolute `require`'s resolution candidates are traced. ESM `import` loads are seen only through the file-system calls the loader makes.
 - **Non-node children.** Reads by a non-node child process are approximated. Its in-repo path arguments are recorded, and a content-reading `git` subcommand records a content prefix.
 - **Map-to-base drift.** A test that started reading a file after the map's commit is not selected for that file until the map refreshes.
-- **POSIX only.** Tracing runs on POSIX: on win32, `NODE_OPTIONS` quoting drops the tracer path's backslashes.
 - **Trace environment.** The map records reads in the environment it was traced in (CI's, for a post-merge job). A test whose reads depend on the local environment (a skip gated on an installed plugin, say) can be under-selected locally.
 - **Tooling not shipped.** The tracer and map builder are the plugin repo's own tooling, not part of the plugin. Another project must produce a map in the format above itself.
 
