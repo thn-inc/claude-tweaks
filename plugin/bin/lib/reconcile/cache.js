@@ -18,7 +18,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { escalateResidue, resolveResidue } = require('./escalate-residue');
+const { escalateResidue, resolveResidue, errorText } = require('./escalate-residue');
 const { lstatType } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
 
@@ -61,7 +61,8 @@ function parseResidueIssueIndex(raw) {
 }
 
 // -> { lastRunAt: number|null, claimShas: {[issueNumber]: string},
-//      residueFailures: {[reason:path]: {count, firstFailedAt, lastError, escalated}},
+//      residueFailures: {[reason:path]: {count, firstFailedAt, lastError, escalated,
+//        lastResidueError?: {op: 'escalate'|'resolve', reason, at}}},  (#4180, set by recordResidueError)
 //      lastHealthCheckOkAt: number|null, lastOriginHeadRepairFailedAt: number|null,
 //      prStates: {['n:N'|'b:branch']: {v, at}},  (#4032, pr-state-cache.js owns the shape)
 //      claimBlobs: {[blobSha]: content},  (#4032, release-merged.js: active claims' content by blob sha)
@@ -241,6 +242,28 @@ function ownedPathExists(target) {
   };
 }
 
+// #4180: the one channel for a swallowed escalate/resolve failure — the reason sits on the
+// still-tracked entry (`lastResidueError`) so the caller can surface it instead of the next pass
+// retrying in silence. A no-op when there is no entry (nothing to attach to); the entry's own
+// next recordResidueFailure/recordResidueSuccess rebuilds or drops it, so a stale error never
+// outlives the streak it described. Batch-aware like its siblings.
+function recordResidueError(target, reason, targetPath, { op, error, now = Date.now() } = {}) {
+  const batch = isCacheBatch(target);
+  const cache = batch ? target.cache : readCache(target);
+  const key = residueKey(reason, targetPath);
+  const existing = cache.residueFailures[key];
+  if (!existing) return;
+  const failures = { ...cache.residueFailures, [key]: { ...existing, lastResidueError: { op, reason: error, at: now } } };
+  const nextCache = { ...cache, residueFailures: failures };
+  if (batch) { target.cache = nextCache; target.dirty = true; } else { writeCache(target, nextCache); }
+}
+
+// Why a resolve result is not a landed resolution: its own reason, else the unexpected status.
+function unresolvedReason(resolved) {
+  if (!resolved) return 'no result';
+  return resolved.reason || `status ${resolved.status}`;
+}
+
 // #2724: drop a tracked entry for a path that is no longer stuck, and — only
 // when that entry had already been escalated — take the path off the filed
 // GitHub record. Writes nothing when there is no entry. An escalated entry is
@@ -259,8 +282,16 @@ function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveR
     return { cleared: true, resolved: null };
   }
   let resolved;
-  try { resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why, pathExists: ownedPathExists(target) }); } catch { return { cleared: false, resolved: null }; }
-  if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) return { cleared: false, resolved };
+  try {
+    resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why, pathExists: ownedPathExists(target) });
+  } catch (err) {
+    recordResidueError(target, reason, targetPath, { op: 'resolve', error: errorText(err) });
+    return { cleared: false, resolved: null };
+  }
+  if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) {
+    recordResidueError(target, reason, targetPath, { op: 'resolve', error: unresolvedReason(resolved) });
+    return { cleared: false, resolved };
+  }
   recordResidueSuccess(target, reason, targetPath);
   return { cleared: true, resolved };
 }
@@ -282,11 +313,17 @@ function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError,
   const streak = recordResidueFailure(target, reason, targetPath, { lastError, dirtyFiles });
   if (!streak.shouldEscalate) return;
   try {
-    escalate({
+    const result = escalate({
       repo: repoSlug, reason, targetPath,
       count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner, pathExists: ownedPathExists(target),
     });
-  } catch { /* best-effort — never let escalation turn a residue-tracking call into a thrown error */ }
+    if (result && result.status === 'escalation-failed') {
+      recordResidueError(target, reason, targetPath, { op: 'escalate', error: result.reason || 'status escalation-failed' });
+    }
+  } catch (err) {
+    // best-effort — never let escalation turn a residue-tracking call into a thrown error
+    recordResidueError(target, reason, targetPath, { op: 'escalate', error: errorText(err) });
+  }
 }
 
 // Snapshot for reporting (e.g. the #644 flow closing-report line): every
@@ -316,11 +353,13 @@ function listResidueFailures(root) {
 // a resolution failure (gh absent, network) still drops the cache entry —
 // the path itself is gone either way — leaving the filed issue open for a
 // human to close manually later, same posture as escalateResidue's own
-// never-breaks-a-session contract.
+// never-breaks-a-session contract. #4180: the entry is gone, so a failed resolve cannot ride on
+// it — the failures come back as `{ failures: [{ reason, path, op: 'resolve', error }] }` instead.
 function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner } = {}) {
   const cache = readCache(root);
   const failures = { ...cache.residueFailures };
   let changed = false;
+  const resolveFailures = [];
   for (const [key, entry] of Object.entries(cache.residueFailures)) {
     const sep = key.indexOf(':');
     const reason = sep === -1 ? key : key.slice(0, sep);
@@ -329,14 +368,20 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
     delete failures[key];
     changed = true;
     if (entry && entry.escalated) {
-      try { resolve({ repo: repoSlug, reason, targetPath, runner, pathExists: ownedPathExists(root) }); } catch { /* best-effort */ }
+      let error = null;
+      try {
+        const resolved = resolve({ repo: repoSlug, reason, targetPath, runner, pathExists: ownedPathExists(root) });
+        if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) error = unresolvedReason(resolved);
+      } catch (err) { error = errorText(err); }
+      if (error !== null) resolveFailures.push({ reason, path: targetPath, op: 'resolve', error });
     }
   }
   if (changed) writeCache(root, { ...cache, residueFailures: failures });
+  return { failures: resolveFailures };
 }
 
 module.exports = {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
   RESIDUE_ESCALATE_THRESHOLD, residueKey, recordResidueFailure, recordResidueSuccess, clearResidue, listResidueFailures,
-  trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
+  recordResidueError, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 };
