@@ -97,27 +97,18 @@ function readAdHocState(dir) {
 
 // #2724: an ad-hoc dir is a session friction log, "not a pipeline run"
 // (docs/hooks.md), so having no branch, worktree or PR is its normal state —
-// not stuckness — and `adhoc-superseded` archives it once its linked worktree is
-// no longer registered and ADHOC_SUPERSEDED_TTL_MS has passed.
-// That sweep only ever claims a dir whose recorded worktree is a linked
-// worktree, though: a dir stamped with the main checkout can never be
-// superseded, so it stays tracked and keeps escalating.
+// not stuckness. Every genuine ad-hoc dir has a sweep that archives it once its
+// session has ended: `adhoc-superseded` for a dir whose recorded worktree is a
+// linked worktree (no longer registered, ADHOC_SUPERSEDED_TTL_MS passed), and
+// `adhoc-session-ended` (#4179) for a dir stamped with the main checkout (dead
+// session, ADHOC_SESSION_ENDED_GRACE_MS passed). So structurally-stuck
+// escalation, which would only nag about a dir those sweeps already own, exempts
+// all of them.
 const ADHOC_INTRINSIC_STUCK_REASONS = new Set(['no-branch', 'no-worktree', 'no-pr']);
-const ADHOC_EXEMPT_WHY = 'is an ad-hoc session directory: no branch, worktree or PR is its normal state, and the adhoc-superseded sweep archives it once its session has ended';
+const ADHOC_EXEMPT_WHY = 'is an ad-hoc session directory: no branch, worktree or PR is its normal state, and reconcile archives it once its session has ended (adhoc-superseded for a linked worktree, adhoc-session-ended for the main checkout)';
 
 function isAdHocIntrinsicSkip(dir, reason) {
-  if (!ADHOC_INTRINSIC_STUCK_REASONS.has(reason)) return false;
-  const state = readAdHocState(dir);
-  if (!state) return false;
-  // Compare real paths, so a dir reached through a symlink (/var vs /private/var)
-  // never reads a main-checkout stamp as linked. A recorded worktree that no
-  // longer exists cannot be the main checkout, which holds this dir; any other
-  // unprovable path fails closed (not exempt).
-  const mainRoot = canonicalRealpath(path.resolve(dir, '..', '..', '..'));
-  if (!mainRoot) return false;
-  const leaf = resolveLeaf(state.worktree);
-  if (leaf.state === 'resolved') return leaf.path !== mainRoot;
-  return leaf.state === 'missing';
+  return ADHOC_INTRINSIC_STUCK_REASONS.has(reason) && !!readAdHocState(dir);
 }
 
 // #4179: the sweep `adhoc-superseded` cannot make. A dir stamped with the main
@@ -130,9 +121,9 @@ function isAdHocIntrinsicSkip(dir, reason) {
 const ADHOC_SESSION_ENDED_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
 // True only for a genuine ad-hoc dir whose recorded worktree provably resolves
-// to the main checkout that holds it. Same real-path comparison as
-// isAdHocIntrinsicSkip (a symlinked /var vs /private/var never reads as
-// linked); any unprovable path — missing, unresolvable — is false, so an
+// to the main checkout that holds it. Compares real paths, so a dir reached
+// through a symlink (/var vs /private/var) never reads a main-checkout stamp as
+// linked; any unprovable path — missing, unresolvable — is false, so an
 // unprovable dir is never swept on liveness evidence.
 function isMainCheckoutAdHoc(dir) {
   const state = readAdHocState(dir);

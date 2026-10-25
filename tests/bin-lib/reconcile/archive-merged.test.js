@@ -2014,12 +2014,12 @@ test('#2724 AC2.1 AC2.2: an ad-hoc dir at a non-intrinsic tracked reason still c
   }
 });
 
-test('#2724 ad-hoc exemption: a dir stamped with the main checkout as its worktree still classifies structurally-stuck', () => {
+test('AC3.1 #4179: a dir stamped with the main checkout as its worktree no longer classifies structurally-stuck', () => {
   const { dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2, worktree: (root) => root });
-  assert.equal(isStructurallyStuck(dir, 'no-branch'), true);
+  for (const r of ['no-branch', 'no-worktree', 'no-pr']) assert.equal(isStructurallyStuck(dir, r), false, r);
 });
 
-test('#2724 ad-hoc exemption: a main-checkout stamp reached through a symlinked path still classifies structurally-stuck', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, () => {
+test('AC3.1 #4179: a main-checkout stamp reached through a symlinked path no longer classifies structurally-stuck', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, () => {
   const real = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-adhoc-real-'));
   const alias = `${real}-alias`;
   fs.symlinkSync(real, alias, 'dir');
@@ -2028,7 +2028,7 @@ test('#2724 ad-hoc exemption: a main-checkout stamp reached through a symlinked 
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'interrupted', worktree: fs.realpathSync(real) }));
   const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
   fs.utimesSync(dir, backdated, backdated);
-  assert.equal(isStructurallyStuck(dir, 'no-branch'), true);
+  assert.equal(isStructurallyStuck(dir, 'no-branch'), false);
 });
 
 test('#2724 ad-hoc exemption: a linked worktree that still exists on disk is exempt', () => {
@@ -2093,6 +2093,22 @@ test('#2724 trackStuckSkip: an exempted ad-hoc dir with no entry writes nothing 
 });
 
 // --- #4179: a main-checkout ad-hoc dir is swept by session liveness, not by worktree registration ---
+
+test('AC3.2 #4179: an escalated main-checkout ad-hoc entry is resolved off the record with the ad-hoc reason text', () => {
+  const { root, dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2, worktree: (r) => r });
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck at no-pr' });
+  const escalated = [];
+  const resolved = [];
+  trackStuckSkip(root, 'o/r', dir, 'no-pr', {
+    escalate: (a) => { escalated.push(a); },
+    resolve: (a) => { resolved.push(a); return { status: 'path-removed' }; },
+  });
+  assert.equal(escalated.length, 0);
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].targetPath, dir);
+  assert.match(resolved[0].why, /adhoc-session-ended for the main checkout/);
+  assert.deepEqual(listResidueFailures(root), []);
+});
 
 test('AC1.1 #4179: a main-checkout ad-hoc dir past the grace period with a dead session classifies adhoc-session-ended', () => {
   const { dir } = mkAdHocRunDir({ ageMs: ADHOC_SESSION_ENDED_GRACE_MS * 2, worktree: (root) => root });
