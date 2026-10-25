@@ -423,5 +423,5 @@ const realDeps = {
 };
 
 module.exports = {
-  run, realDeps, USAGE, ESCALATION_REASONS, escalationText, hasEscalation, defaultResolvePolicy, parseArgs,
+  run, realDeps, USAGE, ESCALATION_REASONS, escalationText, hasEscalation, defaultResolvePolicy, parseArgs, sensitivePathsOf,
 };

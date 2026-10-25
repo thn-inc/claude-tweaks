@@ -112,7 +112,7 @@ CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_
   const autoBuild = require(process.argv[1]);
   const depFreshness = require(process.argv[2]);
   const current = buildFreshnessSignal([...autoBuild, ...depFreshness]);
-  if (!cacheUsable(persisted, current)) { console.log('0'); process.exit(0); }
+  if (!cacheUsable(persisted, current, require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().grouping)) { console.log('0'); process.exit(0); }
   fs.writeFileSync(process.argv[3], JSON.stringify(persisted.groups));
   // persisted.excluded is the disk cache's own (unchanged) blocked-only
   // shape ({number, blockedBy}[]) -- convert to this run's unified
@@ -224,7 +224,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPAT
   // bundleCap (default 3), always well under the size guard's own default of
   // 10, so ordering here never interacts with that gate.
   const bundleCap = parseInt(process.argv[6], 10);
-  const { groups, bundles } = buildDispatchGroups(finalEligible, { bundleCap });
+  const { groups, bundles } = buildDispatchGroups(finalEligible, { bundleCap, keepSingleton: require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().keepSingleton });
   console.log(JSON.stringify(groups));
   fs.writeFileSync(process.argv[7], JSON.stringify(bundles));
   const excludedBody = require(process.argv[3]);
@@ -290,7 +290,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
   const blob = composeOrderBlob({
     computedAt: new Date().toISOString(),
     runId: process.env.PIPELINE_RUN_DIR ? path.basename(process.env.PIPELINE_RUN_DIR) : null,
-    freshnessSignal, groups, excluded, bundles,
+    freshnessSignal, groups, excluded, bundles, grouping: require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().grouping,
   });
   const result = writeOrder(root, blob);
   if (!result.ok) console.error('Queue-order cache write-back failed (non-blocking): ' + result.error);
