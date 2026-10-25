@@ -11,6 +11,7 @@ const {
   realLsof,
   MAX_BUFFER,
   PER_FILE_CAP_BYTES,
+  TOTAL_BUDGET_BYTES,
   isAlwaysStub,
   isMarkdown,
   elideDiff,
@@ -701,6 +702,69 @@ test('added over-cap markdown: diff chunk elided, stub gives the git diff pointe
   assert.ok(section.startsWith(`[section omitted: big.md is ${PER_FILE_CAP_BYTES + 1} bytes of markdown, not inlined; its diff was elided too`), section);
   assert.strictEqual(lineCount(section), 1);
   assert.deepStrictEqual(result.oversizeSections, ['big.md']);
+});
+
+// --- Total bundle budget (#4220) -------------------------------------------------------
+
+// Four modified files of 8, 6, 4 and 1 KB with every line changed, so each diff chunk is about
+// twice its file and diff plus sections come to roughly 57 KB.
+const BUDGET_FILE_KB = { 'a.txt': 8, 'b.txt': 6, 'c.txt': 4, 'd.txt': 1 };
+
+function budgetLines(name, kb, word) {
+  let text = '';
+  for (let i = 0; Buffer.byteLength(text) < kb * 1024; i++) text += `${name} ${word} line ${i}\n`;
+  return text;
+}
+
+function makeBudgetRepo() {
+  const repo = initRepo('review-ctx-budget-');
+  for (const [name, kb] of Object.entries(BUDGET_FILE_KB)) fs.writeFileSync(path.join(repo, name), budgetLines(name, kb, 'old'));
+  startFeatureBranch(repo);
+  for (const [name, kb] of Object.entries(BUDGET_FILE_KB)) fs.writeFileSync(path.join(repo, name), budgetLines(name, kb, 'new'));
+  commitAll(repo, 'rewrite every line');
+  return repo;
+}
+
+// Every path the bundle shows as a budget-stubbed section or an elided diff chunk.
+function stubbedPaths(bundle) {
+  const paths = new Set();
+  for (const m of bundle.matchAll(/^\[section omitted: (.+?) is \d+ bytes, stubbed to fit the \d+-byte bundle budget;/gm)) paths.add(m[1]);
+  for (const m of bundle.matchAll(/^\[\d+ bytes of diff elided for (.+?) — see oversizeSections\]$/gm)) paths.add(m[1]);
+  return [...paths];
+}
+
+test('4220 AC1.1: a diff whose files sum above the budget yields bytes at or under it, every stubbed path listed', () => {
+  const budgetBytes = 16 * 1024;
+  const { result, bundle } = buildFrom(makeBudgetRepo(), { budgetBytes });
+  assert.strictEqual(result.bytes, Buffer.byteLength(bundle), 'printed bytes is the bundle written');
+  assert.ok(result.bytes <= budgetBytes, `bundle ${result.bytes} B over the ${budgetBytes} B budget`);
+  const stubbed = stubbedPaths(bundle);
+  assert.ok(stubbed.length > 0, 'the fixture must actually exceed the budget');
+  for (const p of stubbed) assert.ok(result.oversizeSections.includes(p), `${p} stubbed but not in oversizeSections`);
+  assert.deepStrictEqual([...result.oversizeSections].sort(), [...stubbed].sort());
+});
+
+test('4220: the largest pieces are stubbed first — the smallest file stays inline with its hunk whole', () => {
+  const { result, bundle, diffPart } = buildFrom(makeBudgetRepo(), { budgetBytes: 16 * 1024 });
+  assert.match(diffPart, /^\[\d+ bytes of diff elided for a\.txt — see oversizeSections\]$/m, 'the largest chunk goes first');
+  assert.strictEqual(sectionOf(bundle, 'd.txt'), budgetLines('d.txt', 1, 'new'));
+  assert.match(diffPart, /^\+d\.txt new line 0$/m);
+  assert.ok(!result.oversizeSections.includes('d.txt'));
+});
+
+test('4220: a budget-stubbed section whose chunk was also elided points at the git diff command', () => {
+  const { bundle } = buildFrom(makeBudgetRepo(), { budgetBytes: 16 * 1024 });
+  const section = sectionOf(bundle, 'a.txt');
+  assert.match(section, /^\[section omitted: a\.txt is \d+ bytes, stubbed to fit the 16384-byte bundle budget; its diff was elided too/);
+  assert.ok(section.includes("`git diff main...feature -- 'a.txt'`"), section);
+  assert.strictEqual(lineCount(section), 1);
+});
+
+test('4220: under the default budget the same diff is untouched', () => {
+  const { result, bundle } = buildFrom(makeBudgetRepo());
+  assert.ok(result.bytes < TOTAL_BUDGET_BYTES);
+  assert.deepStrictEqual(result.oversizeSections, []);
+  assert.strictEqual(sectionOf(bundle, 'a.txt'), budgetLines('a.txt', 8, 'new'));
 });
 
 test('CLI: malformed invocations exit 2 with usage', () => {
