@@ -557,16 +557,15 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['git commit with a --config-env flag', "git --config-env=core.fsmonitor=V commit -F - <<'EOF'\necho x > f.js\nEOF", f],
     ['git commit after an assignment (GIT_CONFIG_COUNT=1 git commit)', "GIT_CONFIG_COUNT=1 git commit -F - <<'EOF'\necho x > f.js\nEOF", f],
     ['git commit after an assignment behind env (env GIT_CONFIG_COUNT=1 git commit)', "env GIT_CONFIG_COUNT=1 git commit -F - <<'EOF'\necho x > f.js\nEOF", f],
-    // Round 3 (#4149): a reader whose segment carries `$(` or a backtick is no reader. In a pipeline
-    // element the substitution runs with that element's stdin (bash 3.2 and 5 run these bodies); on
-    // the heredoc's own segment it is refused too, failing closed.
+    // Round 3 (#4149): a reader that a pipe feeds is no reader when it carries `$(` or a backtick:
+    // the substitution runs with that element's stdin (bash 3.2 and 5 run these bodies). Round 4: the
+    // heredoc's own command is refused too when a pipe feeds it, since its substitution reads the pipe.
     ['a reader piped on whose quoted argument runs $( ) (| jq "$(bash)")', "cat <<'EOF' | jq \"$(bash)\"\necho x > f.js\nEOF", f],
     ['a reader piped on whose argument runs $( ) (| jq $(bash))', "cat <<'EOF' | jq $(bash)\necho x > f.js\nEOF", f],
     ['a reader piped on whose quoted argument runs a backtick (| jq "`bash`")', "cat <<'EOF' | jq \"`bash`\"\necho x > f.js\nEOF", f],
     ['node piped on with a $( ) argument (| node "$(bash)")', "cat <<'EOF' | node \"$(bash)\"\necho x > f.js\nEOF", f],
-    ['the heredoc reader whose own argument runs $( ) (jq "$(sh)")', "jq \"$(sh)\" <<'EOF'\necho x > f.js\nEOF", f],
-    ['the heredoc reader whose own argument runs $( ) (node "$(bash)")', "node \"$(bash)\" <<'EOF'\necho x > f.js\nEOF", f],
-    ['the heredoc reader whose own argument runs a backtick (cat `sh`)', "cat `sh` <<'EOF'\necho x > f.js\nEOF", f],
+    ['a reader piped on with a $( ) inside a ${ } default (| jq "${x:-$(bash)}")', "cat <<'EOF' | jq \"${x:-$(bash)}\"\necho x > f.js\nEOF", f],
+    ['a piped-to reader with its own heredoc whose argument runs $( ) (| jq "$(sh)" <<B)', "cat <<'EOF' | jq \"$(sh)\" <<'B'\necho x > f.js\nEOF\nb\nB", f],
   ];
   for (const [label, cmd, expected] of keepCases) {
     test(`#4149: a body fed to ${label} stays visible`, () => {
@@ -898,7 +897,20 @@ for (const [label, cmd] of [
     ['a quoted ${ } default holding an & inside double quotes', 'x=; cd /main && echo "${x:-"a&b"}" && cp a f.js', [main('copy')]],
     ['a single-quoted ) inside "$( )"', "cd /main && echo \"$(echo ')\"&\"')\" && cp a f.js", [main('copy')]],
     ['a comment holding a quote inside "$( )"', 'cd /main && echo "$(echo a # say "hi\n)" && cp a f.js', [main('copy')]],
-    ['an ANSI-C quote inside "$( )", which falls back to the plain quote end', "cd /main && echo \"$(echo $'a\\'b')\" && cp a f.js", [main('copy')]],
+    ['an ANSI-C quote inside "$( )"', "cd /main && echo \"$(echo $'a\\'b')\" && cp a f.js", [main('copy')]],
+    // Round 4: `$'…'` inside "$( )" honours its `\'`, so a later `)"` closes nothing early.
+    ['an ANSI-C \\\' inside "$( )", with a quoted )" later', "echo \"$(echo $'a\\'b')\" && cp a /main/f.js; echo ')\"'", [main('copy')]],
+    // Round 4: a ${ } honours its single quotes when it finds its closing brace.
+    ['a quoted } inside an unquoted ${ }', "x=; echo ${x:-'}'} && cp a /main/f.js", [main('copy')]],
+    ['a double quote inside single quotes inside a quoted ${ }', "x=; cd /main && echo \"${x:-'\"'}\" && cp a f.js", [main('copy')]],
+    ['an ANSI-C \\\' inside an unquoted ${ }', "x=; echo ${x:-$'a\\'b'} && cp a /main/f.js", [main('copy')]],
+    // A construct this scan reads as unclosed falls back to the plain quote end (bash rejects this
+    // one; the fallback keeps the trailing write visible, failing closed).
+    ['a construct read as unclosed, which falls back to the plain quote end', 'echo "${x:-$(echo)" && cp a /main/f.js', [main('copy')]],
+    // Round 4: a cd inside a backtick or $( ) runs in a subshell; the outer cwd stays.
+    ['a cd inside a top-level backtick', 'cd /main && echo `true; cd /tmp`; cp a f.js', [main('copy')]],
+    ['a cd inside an assigned backtick', 'cd /main && x=`true && cd /tmp` && cp a f.js', [main('copy')]],
+    ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); cp a f.js', [main('copy')]],
     ['a quoted ) inside "$( )", in a fresh quoting context', 'cd /main && echo "$(echo ")")" && cp a f.js', [main('copy')]],
     ['a subshell inside "$( )", whose ) closes only it', 'cd /main && echo "$( (true) ; echo "&" )" && cp a f.js', [main('copy')]],
     ['a quoted } inside a ${ } default', 'x=; cd /main && echo "${x:-"a}b"}" && cp a f.js', [main('copy')]],
@@ -934,6 +946,16 @@ for (const [label, cmd] of [
     const targets = fileWriteTargets(`echo ${'"$('.repeat(40)}\ncp a /main/f.js`, '/r');
     assert.deepStrictEqual(targets, [main('copy')]);
   });
+  // Round 4: a pass's nested scans share a step budget, so a shape whose "$( runs off the end from
+  // every top-level span (each falls back to the plain quote end and the next one rescans the same
+  // text) stays linear. Unbudgeted, 60 KB of `"$( #"` took about 1.6 s; budgeted, about 10 ms.
+  test('#4149 nesting: a "$( that runs off the end from every span stays linear', () => {
+    const t = process.hrtime.bigint();
+    const targets = fileWriteTargets(`echo ${'"$( #"'.repeat(10000)} && cp a /main/f.js`, '/r');
+    const ms = Number(process.hrtime.bigint() - t) / 1e6;
+    assert.deepStrictEqual(targets, [main('copy')]);
+    assert.ok(ms < 750, `took ${ms.toFixed(0)} ms`);
+  });
   test('#4149 nesting: a closed nest deeper than the cap takes the plain quote reading', { timeout: 10000 }, () => {
     const targets = fileWriteTargets(`echo ${'"$('.repeat(5000)}${')"'.repeat(5000)} && cp a /main/f.js`, '/r');
     assert.deepStrictEqual(targets, [main('copy')]);
@@ -962,6 +984,9 @@ for (const [label, cmd] of [
   for (const [label, cmd] of [
     ['a single quote inside a top-level backtick, before a lone & and a shell (splitOnLoneAmpersand)', "cat `'x` & bash <<'EOF'\necho x > f.js\nEOF"],
     ['an odd quote inside a top-level backtick, before a process substitution (removeQuotedSpans)', "tee `echo \"x` >(bash) \"y\" >/dev/null <<'EOF'\necho x > f.js\nEOF"],
+    // Round 4: the same seams read a single-quoted span whole, so a `"` inside one opens nothing.
+    ['a double quote inside single quotes, before a lone & and a shell (splitOnLoneAmpersand)', "jq '\"' & bash <<'EOF'\necho x > f.js\nEOF"],
+    ['a double quote inside single quotes, around a process substitution (removeQuotedSpans)', "tee '\"' >(bash) '\"' >/dev/null <<'EOF'\necho x > f.js\nEOF"],
   ]) {
     test(`#4149 nesting: ${label} keeps the body visible`, () => {
       const targets = fileWriteTargets(cmd, '/r');
@@ -1044,6 +1069,16 @@ for (const opener of ["env -S'bash -s' cat", 'env -S"bash -s" cat', "env -S 'bas
     ["mkdir -p d && cat > d/f <<'EOF'", own('d/f')],
     ["git add -A && git commit -F - <<'EOF'", []],
     ["git -C x add f && git -C x commit -F - <<'EOF'", []],
+    // Round 4 (#4149): a substitution on the heredoc's own command reads the shell's stdin (bash
+    // expands the words before it attaches the heredoc), so it refuses nothing; `$((` is arithmetic.
+    ["gh pr create --title \"$(git log -1 --format=%s)\" --body-file - <<'EOF'", []],
+    ["gh pr create --title \"`date`\" --body-file - <<'EOF'", []],
+    ["git -C \"$(git rev-parse --show-toplevel)\" commit -F - <<'EOF'", []],
+    ["jq '.a | \"$(x)\"' <<'EOF'", []],
+    ["jq \"$(sh)\" <<'EOF'", []],
+    ["node \"$(bash)\" <<'EOF'", []],
+    ["cat `sh` <<'EOF'", []],
+    ["cat <<'EOF' | jq \"$((1))\"", []],
   ]) {
     test(`#4149 routine: \`${opener}\` still strips its body`, () => {
       assert.deepStrictEqual(fileWriteTargets(`${opener}\n${BODY}EOF`, '/r'), expected);

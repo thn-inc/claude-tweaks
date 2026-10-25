@@ -29,7 +29,8 @@ function segmentSpans(command) {
 function segmentSpansWith(str, spans) {
   const segments = [];
   let current = '';
-  const cut = (at) => { segments.push({ text: current, end: at }); current = ''; };
+  let sub = false; // the segment in progress began inside a top-level backtick span
+  const cut = (at) => { segments.push({ text: current, end: at, sub }); current = ''; sub = false; };
   let quote = null; // null | "'" (a double-quoted span is consumed whole below)
   for (let i = 0; i < str.length; i++) {
     const ch = str[i];
@@ -62,6 +63,7 @@ function segmentSpansWith(str, spans) {
         for (let k = 1; k < inner.length; k += 1) {
           cut(i + 1 + inner[k - 1].end);
           current = inner[k].text;
+          sub = true;
         }
         current += '`';
         i = r.end - 1;
@@ -110,20 +112,33 @@ function segmentSpansWith(str, spans) {
 // opener and returns { end, closed }: `end` is the index just past the construct (the input's
 // length when it runs off the end) and `closed` says whether its closer was found.
 //
-// Nesting deeper than NEST_LEVEL_CAP stops the scan and marks the result `capped`, unclosed; a
-// capped result climbs unchanged to the top-level span, and the scanner whose pass it is reads the
-// whole pass again as before #4149 (scanPass). Within one top-level call (level 0), each
-// result depends only on (kind, start index), so it is memoized for that call: the double-quote
-// fallback below re-reads a deeper chain from a new index, and without the memo those re-reads
-// multiply with depth (unbounded before the cap; under it, bounded but still super-linear), while
-// with it each construct is scanned once.
+// Two bounds keep a pass linear. Nesting deeper than NEST_LEVEL_CAP, or a pass's nested scans
+// taking more than NEST_STEPS_PER_CHAR steps per input character (plus NEST_STEPS_FLOOR), stops
+// the scan and marks the result `capped`, unclosed. A capped result climbs unchanged to the
+// top-level span; from there the pass's reader nests nothing more, and the scanner reads the whole
+// pass again as before #4149 (scanPass). The step budget is what bounds a shape whose nested
+// construct runs off the end from every top-level span: each span falls back to the plain quote end
+// and the next one rescans the same text. Within one top-level call (level 0), each result depends
+// only on (kind, start index), so it is memoized for that call: the double-quote fallback re-reads
+// a deeper chain from a new index, which the memo scans once.
 const NEST_LEVEL_CAP = 32;
+const NEST_STEPS_PER_CHAR = 8;
+const NEST_STEPS_FLOOR = 4096;
 let nestMemo = null; // the current top-level call's memo
+let nestBudget = null; // { left }: the steps the pass (or lone top-level call) in progress may still take
+const cappedEnd = (str) => ({ end: str.length, closed: false, capped: true });
+// Charges `n` steps to the budget in force; true once it is spent. Outside a nested scan (a
+// top-level reader's own backtick or flat quote scan) nothing is charged.
+const overBudget = (n) => nestBudget !== null && (nestBudget.left -= n) < 0;
+
 function nestMemoized(kind, str, i, level, scan) {
-  if (level > NEST_LEVEL_CAP) return { end: str.length, closed: false, capped: true };
+  if (level > NEST_LEVEL_CAP) return cappedEnd(str);
   const top = nestMemo === null;
+  const ownBudget = top && nestBudget === null;
   if (top) nestMemo = new Map();
+  if (ownBudget) nestBudget = { left: NEST_STEPS_PER_CHAR * (str.length - i) + NEST_STEPS_FLOOR };
   try {
+    if (nestBudget.left < 0) return cappedEnd(str);
     const key = i * 3 + kind;
     let r = nestMemo.get(key);
     if (r === undefined) {
@@ -133,6 +148,7 @@ function nestMemoized(kind, str, i, level, scan) {
     return r;
   } finally {
     if (top) nestMemo = null;
+    if (ownBudget) nestBudget = null;
   }
 }
 
@@ -146,6 +162,7 @@ function skipDoubleQuoted(str, i, level = 0) {
 function scanDoubleQuoted(str, i, level) {
   const start = i;
   while (i < str.length) {
+    if (overBudget(1)) return cappedEnd(str);
     const c = str[i];
     if (c === '\\') { i += 2; continue; }
     if (c === '"') return { end: i + 1, closed: true };
@@ -160,6 +177,7 @@ function scanDoubleQuoted(str, i, level) {
 
 function plainDoubleQuoteEnd(str, i) {
   while (i < str.length) {
+    if (overBudget(1)) return cappedEnd(str);
     if (str[i] === '\\') { i += 2; continue; }
     if (str[i] === '"') return { end: i + 1, closed: true };
     i += 1;
@@ -167,11 +185,28 @@ function plainDoubleQuoteEnd(str, i) {
   return { end: str.length, closed: false };
 }
 
-// A `$( … )` (or `$(( … ))`) body, read as its own command text: quotes, nested substitutions and
-// parens nest, a word-initial `#` comments to the end of the line, and a heredoc's body (opened by
-// `<<` outside arithmetic) is skipped raw through its delimiter line, as bash reads it, so an
-// apostrophe or `)` in heredoc prose closes nothing. Known limit: a `case` pattern's `)` closes the
-// substitution early (inside double quotes the span still ends at its own `"`).
+// A single-quoted span from just past its opening quote: plain (`'…'`, no escapes) or ANSI-C
+// (`$'…'`, where a backslash escapes the next character, so `\'` closes nothing).
+function skipSingleQuoted(str, i, ansi) {
+  const from = i;
+  if (!ansi) {
+    const close = str.indexOf("'", i);
+    if (overBudget((close === -1 ? str.length : close) - from)) return cappedEnd(str);
+    return close === -1 ? { end: str.length, closed: false } : { end: close + 1, closed: true };
+  }
+  while (i < str.length) {
+    if (str[i] === '\\') { i += 2; continue; }
+    if (str[i] === "'") return overBudget(i - from) ? cappedEnd(str) : { end: i + 1, closed: true };
+    i += 1;
+  }
+  return overBudget(str.length - from) ? cappedEnd(str) : { end: str.length, closed: false };
+}
+
+// A `$( … )` (or `$(( … ))`) body, read as its own command text: quotes (`'…'`, `$'…'`, `"…"`),
+// nested substitutions and parens nest, a word-initial `#` comments to the end of the line, and a
+// heredoc's body (opened by `<<` outside arithmetic) is skipped raw through its delimiter line, as
+// bash reads it, so an apostrophe or `)` in heredoc prose closes nothing. Known limit: a `case`
+// pattern's `)` closes the substitution early (inside double quotes the span still ends at its own `"`).
 function skipCommandSubstitution(str, i, level = 0) {
   return nestMemoized(1, str, i, level, scanCommandSubstitution);
 }
@@ -182,19 +217,15 @@ function scanCommandSubstitution(str, i, level) {
   let pending = [];
   let wordStart = true;
   while (i < str.length) {
+    if (overBudget(1)) return cappedEnd(str);
     const c = str[i];
     if (c === '\\') { i += 2; wordStart = false; continue; }
-    if (c === "'") {
-      const close = str.indexOf("'", i + 1);
-      if (close === -1) return { end: str.length, closed: false };
-      i = close + 1;
-      wordStart = false;
-      continue;
-    }
-    const r = c === '"' ? skipDoubleQuoted(str, i + 1, level + 1)
-      : c === '`' ? skipBacktick(str, i + 1)
-        : c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2, level + 1)
-          : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2, level + 1) : null;
+    const r = c === "'" ? skipSingleQuoted(str, i + 1, false)
+      : c === '$' && str[i + 1] === "'" ? skipSingleQuoted(str, i + 2, true)
+        : c === '"' ? skipDoubleQuoted(str, i + 1, level + 1)
+          : c === '`' ? skipBacktick(str, i + 1)
+            : c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2, level + 1)
+              : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2, level + 1) : null;
     if (r) {
       if (!r.closed) return r;
       i = r.end;
@@ -202,7 +233,10 @@ function scanCommandSubstitution(str, i, level) {
       continue;
     }
     if (c === '#' && wordStart && !arith) {
-      while (i < str.length && str[i] !== '\n') i += 1;
+      const nl = str.indexOf('\n', i);
+      const to = nl === -1 ? str.length : nl;
+      if (overBudget(to - i)) return cappedEnd(str);
+      i = to;
       continue;
     }
     if (c === '<' && str[i + 1] === '<' && !arith) {
@@ -217,6 +251,7 @@ function scanCommandSubstitution(str, i, level) {
       i += 1;
       for (const h of pending) {
         const body = scanHeredocBody(str, i, h);
+        if (overBudget((body.terminated ? body.end : str.length) - i)) return cappedEnd(str);
         if (!body.terminated) return { end: str.length, closed: false };
         i = body.end;
       }
@@ -235,21 +270,25 @@ function scanCommandSubstitution(str, i, level) {
   return { end: str.length, closed: false };
 }
 
-// A `${ … }` body: double quotes, substitutions, backticks and inner `${` nest; it ends at the first
-// other `}`. Single quotes are taken literally (inside double quotes they quote nothing).
+// A `${ … }` body: quotes (`'…'`, `$'…'`, `"…"`), substitutions, backticks and inner `${` nest; it
+// ends at the first other `}`. Bash matches single quotes here when it looks for the closing brace,
+// inside double quotes as well, so `${x:-'}'}` and `"${x:-'}'}"` both close at their last `}`.
 function skipParamExpansion(str, i, level = 0) {
   return nestMemoized(2, str, i, level, scanParamExpansion);
 }
 
 function scanParamExpansion(str, i, level) {
   while (i < str.length) {
+    if (overBudget(1)) return cappedEnd(str);
     const c = str[i];
     if (c === '\\') { i += 2; continue; }
     if (c === '}') return { end: i + 1, closed: true };
-    const r = c === '"' ? skipDoubleQuoted(str, i + 1, level + 1)
-      : c === '`' ? skipBacktick(str, i + 1)
-        : c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2, level + 1)
-          : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2, level + 1) : null;
+    const r = c === "'" ? skipSingleQuoted(str, i + 1, false)
+      : c === '$' && str[i + 1] === "'" ? skipSingleQuoted(str, i + 2, true)
+        : c === '"' ? skipDoubleQuoted(str, i + 1, level + 1)
+          : c === '`' ? skipBacktick(str, i + 1)
+            : c === '$' && str[i + 1] === '(' ? skipCommandSubstitution(str, i + 2, level + 1)
+              : c === '$' && str[i + 1] === '{' ? skipParamExpansion(str, i + 2, level + 1) : null;
     if (r && !r.closed) return r;
     i = r ? r.end : i + 1;
   }
@@ -258,34 +297,46 @@ function scanParamExpansion(str, i, level) {
 
 // A backtick substitution: it ends at the next unescaped backtick.
 function skipBacktick(str, i) {
+  const from = i;
   while (i < str.length) {
     if (str[i] === '\\') { i += 2; continue; }
-    if (str[i] === '`') return { end: i + 1, closed: true };
+    if (str[i] === '`') return overBudget(i - from) ? cappedEnd(str) : { end: i + 1, closed: true };
     i += 1;
   }
-  return { end: str.length, closed: false };
+  return overBudget(str.length - from) ? cappedEnd(str) : { end: str.length, closed: false };
 }
 
 // One scanner pass's reader of top-level spans: a double-quoted span (dq, from just past its `"`),
 // an unquoted `${ … }` (param, from just past `${`) and a backtick substitution (backtick, from
 // just past the backtick). `flat` is the reading before #4149: a plain `"` pairing, with `${` and
-// a backtick taken as plain characters. `capped` records that a span nested past NEST_LEVEL_CAP.
+// a backtick taken as plain characters. The pass's nested scans share one step budget, sized by
+// the first string the reader is handed (a pass reads one string). `capped` records that a span
+// nested past NEST_LEVEL_CAP or spent the budget; from then on the reader reads flat, so a capped
+// pass costs no more nested work before scanPass reads it again.
 function topLevelSpans(flat = false) {
   const open = (str, i) => ({ end: i, closed: false });
-  const reader = {
-    capped: false,
-    dq: (str, i) => (flat ? plainDoubleQuoteEnd(str, i) : watch(skipDoubleQuoted(str, i))),
-    param: (str, i) => (flat ? open(str, i) : watch(skipParamExpansion(str, i))),
-    backtick: (str, i) => (flat ? open(str, i) : skipBacktick(str, i)),
+  let budget = null;
+  const reader = { capped: false };
+  const nested = (str, i, skip) => {
+    if (budget === null) budget = { left: NEST_STEPS_PER_CHAR * str.length + NEST_STEPS_FLOOR };
+    const outer = nestBudget;
+    nestBudget = budget;
+    let r;
+    try { r = skip(str, i); } finally { nestBudget = outer; }
+    if (r.capped) reader.capped = true;
+    return r;
   };
-  const watch = (r) => { if (r.capped) reader.capped = true; return r; };
+  const isFlat = () => flat || reader.capped;
+  reader.dq = (str, i) => (isFlat() ? plainDoubleQuoteEnd(str, i) : nested(str, i, skipDoubleQuoted));
+  reader.param = (str, i) => (isFlat() ? open(str, i) : nested(str, i, skipParamExpansion));
+  reader.backtick = (str, i) => (isFlat() ? open(str, i) : skipBacktick(str, i));
   return reader;
 }
 
-// Runs one scanner pass, `scan(spans)`, and when any span in it nested past NEST_LEVEL_CAP runs the
-// whole pass again in the flat reading, so a pathological nest reads exactly as it did before #4149:
-// a nested reading that falls back to the plain one partway pairs its quotes unlike either reading,
-// which can hide a separator both of them see.
+// Runs one scanner pass, `scan(spans)`, and when any span in it was capped runs the whole pass again
+// in the flat reading, so a pathological nest reads exactly as it did before #4149: a nested
+// reading that falls back to the plain one partway pairs its quotes unlike either reading, which
+// can hide a separator both of them see.
 function scanPass(scan) {
   const spans = topLevelSpans();
   const r = scan(spans);
@@ -934,37 +985,55 @@ function isInertNeighbour(tokens, p, seg) {
 // when the command does not configure it (gitIsConfigured; an assignment behind a wrapper
 // counts too, as in `env GIT_CONFIG_COUNT=1 git commit`). The
 // group check reads the segment with its quoted spans removed (tokenize has already
-// dropped the quotes), so a quoted `(.a)` is data, not a group. A command whose segment
-// carries `$(` or a backtick anywhere, quoted or not, is neither a reader nor a neighbour:
-// in a pipeline element the substitution runs with that element's stdin (`| jq "$(bash)"`
-// runs the body). Fails closed, so the body stays visible to the scan.
+// dropped the quotes), so a quoted `(.a)` is data, not a group. A command that carries a
+// command substitution (`$(` but not the arithmetic `$((`, or a backtick) anywhere, quoted or
+// not, is neither a reader nor a neighbour, unless it is the heredoc's own command (it holds an
+// unquoted `<<`) and no pipe feeds it: bash expands the words before it attaches the heredoc, so
+// the own command's substitution reads the shell's stdin, while in a piped-to element it reads
+// the pipe (`| jq "$(bash)"` runs the body, and so does `cat <<'A' | jq "$(sh)" <<'B'`). Fails
+// closed, so the body stays visible to the scan.
+const COMMAND_SUBSTITUTION_RE = /\$\((?!\()|`/;
+const OWN_HEREDOC_OPENER_RE = /(^|[^<])<<(?!<)/;
 function lineFeedsOnlyDataReaders(lineText) {
-  for (const seg of splitSegments(lineText).flatMap(splitOnLoneAmpersand)) {
-    if (seg.trim() === '') continue;
-    if (/\$\(|`/.test(seg)) return false;
-    const unquoted = removeQuotedSpans(seg).split(/\s+/);
-    if (unquoted.some((t) => /^[({]/.test(t) || t === '}' || /[<>]\(/.test(t))) return false;
-    const { tokens } = tokenize(seg.trim());
-    let p = 0;
-    while (p < tokens.length && SIMPLE_ASSIGNMENT_RE.test(tokens[p])) p += 1;
-    if (isInertNeighbour(tokens, p, seg)) continue;
-    let assigned = p > 0;
-    while (p < tokens.length && isBareOrAbsoluteProgram(tokens[p]) && programNames(tokens[p]).every((n) => READER_WRAPPER_WORDS.has(n))) {
-      const isEnv = programNames(tokens[p]).includes('env');
+  const lineSpans = segmentSpans(lineText);
+  for (let s = 0; s < lineSpans.length; s += 1) {
+    const sep = s === 0 ? '' : lineText.slice(lineSpans[s - 1].end, lineSpans[s - 1].end + 2);
+    let fed = sep[0] === '|' && sep !== '||'; // a `|` or `|&` pipes into the next command
+    for (const seg of splitOnLoneAmpersand(lineSpans[s].text)) {
+      if (seg.trim() === '') continue; // the blank piece before a `|&`'s `&`
+      const pipedInto = fed;
+      fed = false;
+      if (COMMAND_SUBSTITUTION_RE.test(seg) && (pipedInto || !OWN_HEREDOC_OPENER_RE.test(removeQuotedSpans(seg)))) return false;
+      if (!checkReaderCommand(seg)) return false;
+    }
+  }
+  return true;
+}
+
+// One command of lineFeedsOnlyDataReaders: true when it is an inert neighbour or a data reader.
+function checkReaderCommand(seg) {
+  const unquoted = removeQuotedSpans(seg).split(/\s+/);
+  if (unquoted.some((t) => /^[({]/.test(t) || t === '}' || /[<>]\(/.test(t))) return false;
+  const { tokens } = tokenize(seg.trim());
+  let p = 0;
+  while (p < tokens.length && SIMPLE_ASSIGNMENT_RE.test(tokens[p])) p += 1;
+  if (isInertNeighbour(tokens, p, seg)) return true;
+  let assigned = p > 0;
+  while (p < tokens.length && isBareOrAbsoluteProgram(tokens[p]) && programNames(tokens[p]).every((n) => READER_WRAPPER_WORDS.has(n))) {
+    const isEnv = programNames(tokens[p]).includes('env');
+    p += 1;
+    while (p < tokens.length && (tokens[p].startsWith('-') || SIMPLE_ASSIGNMENT_RE.test(tokens[p]))) {
+      if (isEnv && ENV_PROGRAM_FLAG_RE.test(tokens[p])) return false;
+      if (SIMPLE_ASSIGNMENT_RE.test(tokens[p])) assigned = true;
       p += 1;
-      while (p < tokens.length && (tokens[p].startsWith('-') || SIMPLE_ASSIGNMENT_RE.test(tokens[p]))) {
-        if (isEnv && ENV_PROGRAM_FLAG_RE.test(tokens[p])) return false;
-        if (SIMPLE_ASSIGNMENT_RE.test(tokens[p])) assigned = true;
-        p += 1;
-      }
     }
-    if (p >= tokens.length || /[$`]/.test(tokens[p]) || !isBareOrAbsoluteProgram(tokens[p])) return false;
-    const names = programNames(tokens[p]);
-    if (!names.every((n) => DATA_READER_WORDS.has(n))) return false;
-    if (names.includes('git')) {
-      const sub = skipGlobalFlags(tokens, p + 1, '/').index;
-      if (gitIsConfigured(tokens, p, sub, assigned) || !GIT_DATA_SUBCOMMANDS.has(tokens[sub])) return false;
-    }
+  }
+  if (p >= tokens.length || /[$`]/.test(tokens[p]) || !isBareOrAbsoluteProgram(tokens[p])) return false;
+  const names = programNames(tokens[p]);
+  if (!names.every((n) => DATA_READER_WORDS.has(n))) return false;
+  if (names.includes('git')) {
+    const sub = skipGlobalFlags(tokens, p + 1, '/').index;
+    if (gitIsConfigured(tokens, p, sub, assigned) || !GIT_DATA_SUBCOMMANDS.has(tokens[sub])) return false;
   }
   return true;
 }
@@ -1106,6 +1175,7 @@ function lineLeavesStructureOpen(line) {
   let closerPos = true; // ...directly after `;`, `;;` or `&`, where a closer may stand
   let word = '';
   let plain = true; // the word has no quoted, escaped or expanded part
+  const spans = topLevelSpans();
   const endWord = () => {
     if (word === '') return;
     const w = word;
@@ -1128,9 +1198,10 @@ function lineLeavesStructureOpen(line) {
     if (c === '\\') { word += c + (line[i + 1] || ''); plain = false; i += 1; continue; }
     if (c === '"') {
       // Nested as bash reads it (skipDoubleQuoted), so a `)` inside a quoted "$( )" closes nothing.
-      // A span left open (a nest past NEST_LEVEL_CAP is one) leaves the line open (fail closed).
-      const r = skipDoubleQuoted(line, i + 1);
-      if (!r.closed) return true;
+      // A span left open, or a capped one (topLevelSpans: the line's spans share one step budget),
+      // leaves the line open (fail closed).
+      const r = spans.dq(line, i + 1);
+      if (!r.closed || spans.capped) return true;
       word += line.slice(i, r.end);
       plain = false;
       i = r.end - 1;
@@ -1375,13 +1446,18 @@ function groupEventsWith(seg, g, spans, undo) {
   let start = 0;
   let atCmd = true; // the next word is at command position
   const top = () => g.stack[g.stack.length - 1] || g.root;
-  const push = (frame) => { g.stack.push(frame); undo.push(() => g.stack.pop()); };
-  const pop = () => { const frame = g.stack.pop(); undo.push(() => g.stack.push(frame)); };
+  const count = (frame, d) => { if (frame.kind === 'p') g.nesting += d; };
+  const push = (frame) => { g.stack.push(frame); count(frame, 1); undo.push(() => { count(g.stack.pop(), -1); }); };
+  const pop = () => { const frame = g.stack.pop(); count(frame, -1); undo.push(() => { g.stack.push(frame); count(frame, 1); }); };
+  // Whether the current piece began inside a nesting frame (`$(`, `<(`, ...): its commands run in a
+  // subshell, so their `cd` and assignments never reach the outer walk.
+  let inSub = g.nesting > 0;
   const setCaseDepth = (frame, d) => { const was = frame.caseDepth; frame.caseDepth = d; undo.push(() => { frame.caseDepth = was; }); };
   const cut = (at, ev) => {
-    if (at > start) events.push({ text: seg.slice(start, at) });
+    if (at > start) events.push({ text: seg.slice(start, at), sub: inSub });
     if (ev) events.push(ev);
     start = at + 1;
+    inSub = g.nesting > 0;
   };
   const nest = (n, cmd) => {
     for (let k = 0; k < n; k += 1) push({ kind: 'p', caseDepth: 0 });
@@ -1473,7 +1549,7 @@ function groupEventsWith(seg, g, spans, undo) {
     else if (w === 'esac') setCaseDepth(t, Math.max(0, t.caseDepth - 1));
     atCmd = COMMAND_PREFIX_WORDS.has(w);
   }
-  if (seg.length > start) events.push({ text: seg.slice(start) });
+  if (seg.length > start) events.push({ text: seg.slice(start), sub: inSub });
   return events;
 }
 
@@ -1508,8 +1584,13 @@ function forEachShellSegment(command, cwd, handler) {
 
 function walkShellChunk(text, cwds, vars, handler, depth, plan) {
   const { outer, bodies } = plan && depth < MAX_HEREDOC_NESTING ? stripHeredocBodies(text) : { outer: text, bodies: [] };
-  const g = { root: { kind: 'root', caseDepth: 0 }, stack: [] };
+  const g = { root: { kind: 'root', caseDepth: 0 }, stack: [], nesting: 0 };
   let cur = cwds;
+  // A piece inside a substitution or a backtick span runs in a subshell: it is visited from the
+  // cwd and assignments in effect, and what it changes holds only for the pieces after it in the
+  // same run of sub pieces, never for the outer walk.
+  let subCur = null;
+  let subVars = null;
   let listStart = cwds; // the cwds where the current and-or list began
   let b = 0;
   const runBodies = (until, bodyCwds) => {
@@ -1530,7 +1611,12 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan) {
         cur = ev.close.kind === '(' ? saved : [...saved, ...cur.filter((c) => !saved.includes(c))];
         listStart = ev.close.savedList;
       } else if (ev.bg) cur = listStart;
-      else cur = visitUnderEach(ev.text, cur, vars, handler);
+      else if (ev.sub || span.sub) {
+        if (subCur === null) { subCur = cur; subVars = new Map(vars); }
+        subCur = visitUnderEach(ev.text, subCur, subVars, handler);
+        continue;
+      } else cur = visitUnderEach(ev.text, cur, vars, handler);
+      subCur = null;
     }
     runBodies(span.end, before);
     // `&&`, `||` and `|` continue the and-or list; `;`, a newline or the end start a new one.

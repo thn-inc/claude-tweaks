@@ -643,6 +643,20 @@ for (const [label, cmd, expected] of [
   });
 }
 
+// #4149 round 4: a ${ } honours its quotes (`'}'` closes nothing), `$'…'` inside "$( )" honours
+// `\'`, and a cd inside a backtick or $( ) runs in a subshell, so the push stays at the earlier cd.
+// Checked against bash 3.2 and 5 with a logging git stub.
+for (const [label, cmd] of [
+  ['a quoted } inside an unquoted ${ }', "x=; cd /main && echo ${x:-'}'} && git push"],
+  ['an ANSI-C \\\' inside a quoted "$( )"', "cd /main && echo \"$(echo $'a\\'b')\" && git push; echo ')\"'"],
+  ['a cd inside a top-level backtick', 'cd /main && echo `true; cd /tmp`; git push'],
+  ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); git push'],
+]) {
+  test(`#4149 round 4: gitTargets keeps the push after ${label} at the earlier cd`, () => {
+    assert.deepStrictEqual(gitTargets(cmd, '/wt'), [{ action: 'push', dir: path.resolve('/main') }]);
+  });
+}
+
 test('#4149 round 3: mkdirTargets skips a heredoc body when tracking group depth', () => {
   assert.deepStrictEqual(mkdirTargets("(cd /main && cat <<'EOF'\n1) a\nEOF\nmkdir d)", '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
 });
