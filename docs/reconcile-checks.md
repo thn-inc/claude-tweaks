@@ -53,7 +53,11 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   run's `worktree-reap-skipped` event append; what residue tracking would have done comes back as
   `residuePlan`. The shared `git fetch` still runs and still refreshes remote-tracking refs (and prunes
   them under an explicit `--checks remote-prune`) — a preview over stale refs would be inaccurate, so
-  this is the one write a dry run keeps. A new check's dry-run branch must write nothing else.
+  this is the one write a dry run keeps. A new check's dry-run branch must write nothing else. Reads
+  stay live: the `gh` preflight probe and the PR-state lookups still run, since a preview that did not
+  consult GitHub would report nothing true — so "writes nothing" means no writes, never "makes zero `gh`
+  calls" (#4180's AC1 states the zero-call bar over a fixture where the preflight is stubbed and only
+  the archive check runs).
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
   `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `archive`, `archive-branches`, `remote-prune`,
