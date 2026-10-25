@@ -245,6 +245,40 @@ test('archive-run names both remedies when residue items and an unreadable conso
   assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
 });
 
+// #4172: a PR console's failed item (filing-failed / reverse-failed) is residue
+// with no staged file behind it — the refusal names the item, and --ack clears it.
+function prConsole(runDir, outcomes, extra = {}) {
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    prNumber: 42, commentIds: ['IC_1'], executedAt: '2026-10-25T10:00:00.000Z', resolved: false,
+    items: outcomes.map(([id, outcome]) => ({ id, kind: 'staged', summary: id, outcome })), ...extra,
+  }));
+}
+
+test('AC1.1: archive-run refuses an executed PR console holding a filing-failed item, naming it', () => {
+  const { root, runDir } = runDirFixture('clean');
+  prConsole(runDir, [['1', 'executed'], ['f1', 'filing-failed']]);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\) no human has reviewed; review them, then run console-residue\.js --ack --run .*\) — unresolved: f1 \(filing-failed\)\n$/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('AC1.1: console-residue.js --ack clears a filing-failed PR console and archive-run then archives', () => {
+  const { root, runDir } = runDirFixture('clean');
+  prConsole(runDir, [['f1', 'filing-failed']]);
+  execFileSync('node', [path.join(__dirname, '..', 'plugin', 'bin', 'console-residue.js'), '--ack', '--run', runDir], { cwd: root, encoding: 'utf8' });
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+});
+
+test('AC2.1: archive-run archives an executed PR console with only executed/dropped items', () => {
+  const { root, runDir } = runDirFixture('clean');
+  prConsole(runDir, [['1', 'executed'], ['d1', 'dropped']]);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+});
+
 // #1130 AC2: the two-call dispatch handoff shape, walked end-to-end on ONE
 // run dir — call 1 (build,test) parks the run with a rendered-but-unanswered
 // PR console; between calls the run is closed terminal (close-run) but its

@@ -26,8 +26,8 @@ files:
 - **URL:** the printed JSON's `lowSurface` field
 - **Action:** Hand the facts to ceremony-derivation.md step 2. When `lowSurface` is `true` (zero implementation files, in any mix of test and docs files), narrow `ceremony-profile` to `fast-lane` via `set-config.js`. When it is `false`, leave the `standard` default in place.
 - **Should feel:** Mechanical. The verdict is in the JSON and nothing has to be re-derived.
-- **Should understand:** Only committed work counts. An uncommitted edit in the working tree is not in `mergeBase..HEAD`, and a run with no committed work has `fileCount: 0`, which is never `lowSurface`. That keeps the failure direction safe: it stays on `standard`. Prompt prose under `skills/`, `agents/` or `commands/` counts as implementation, not docs.
-- **Red flags:** `lowSurface: true` on a branch whose commits touch a `plugin/bin/` or `plugin/skills/` file.
+- **Should understand:** Only committed work counts. An uncommitted edit in the working tree is not in `mergeBase..HEAD`, and a run with no committed work has `fileCount: 0`, which is never `lowSurface`. That keeps the failure direction safe: it stays on `standard`. Prompt prose under `skills/`, `agents/` or `commands/` counts as implementation, not docs. A top-level `docs/plans/*.html` diagram (the `/claude-tweaks:visualize` output path) counts as docs (#4187), so a docs-only record that ships one still derives `fast-lane`. Any other `.html`, including one nested under `docs/plans/`, is not docs.
+- **Red flags:** `lowSurface: true` on a branch whose commits touch a `plugin/bin/` or `plugin/skills/` file. `lowSurface: false` on a diff of only `docs/**/*.md` plus one `docs/plans/{slug}.html` diagram.
 
 ### 3. Watch a failure fail loud
 - **URL:** `node "<plugin-root>/bin/diff-facts.js" --integration-branch no-such-branch` (or `--integration-branch` with no value)
@@ -40,3 +40,4 @@ files:
 - Created during build of #3955 (wrap-up ceremony diff facts in one process — replaced ceremony-derivation.md step 1's pre-split `git merge-base` + `git diff --numstat -z | node -e` composition, which #3829 had split into two calls with paste-in literals, with `plugin/bin/diff-facts.js`)
 - Steps 1-3 built in this session
 - Related specs: #3829 (the pre-split this replaces), #1545 (the diff-derived ceremony default), #888 (`blast-radius.js`, whose gather this shares)
+- Updated during build of #4187: step 2 now covers `docs/plans/*.html` diagrams counting as docs in `isDocsPath`

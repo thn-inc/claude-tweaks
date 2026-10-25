@@ -143,7 +143,7 @@ test('the section maps the pool to list_issues and the claim read to issue-claim
 });
 
 test('queue-pull-script.md declares DISPATCH_IN_FLIGHT_CLAIMS and points MCP-transport firings at mcp-transport.md', () => {
-  assert.ok(QUEUE_PULL.includes("DISPATCH_IN_FLIGHT_CLAIMS: 'dispatch-in-flight-claims.json'"));
+  assert.ok(QUEUE_PULL.includes('DISPATCH_IN_FLIGHT_CLAIMS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-in-flight-claims.json)"'));
   const anchor = '# #3278: neighbour-in-flight pass.';
   const at = QUEUE_PULL.indexOf(anchor);
   assert.notStrictEqual(at, -1);

@@ -35,14 +35,15 @@ applied and appear directly in the authorization gate's worklist, skipping matur
 Before filing this firing's own new findings, drain the durable retry queue from prior firings' filing failures and check for regressed reopens (see `_shared/health-state.md`) — both mechanics below follow the canonical shape in `_shared/health-filing-mechanics.md` (`{BINARY}` = `harness-health.js`, `{PREFIX}` = `harness-health`); check that file when either changes to keep this skill's copy in sync with its three siblings. Each drained retry payload is also subject to the same cap check above before its `gh issue create` attempt. Resolve this run's session-scoped temp path first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" HARNESS_HEALTH_RETRY_PAYLOADS=harness-health-retry-payloads.json)"
+HARNESS_HEALTH_RETRY_PAYLOADS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-retry-payloads.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health.js" retry-queue drain --root . > "$HARNESS_HEALTH_RETRY_PAYLOADS"
 ```
 
 For each payload in `$HARNESS_HEALTH_RETRY_PAYLOADS`, attempt `gh issue create` exactly as below. Track every attempt's outcome (retry-queue payloads AND any brand-new payload from this step's own filing loop that fails) as `[{ fingerprint, payload, ok: true }]` or `[{ fingerprint, payload, ok: false, error: "<gh's error output>" }]`, write to this run's session-scoped `harness-health-retry-results.json`, then re-resolve both session-scoped paths this fence needs (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit the prior fence's shell variable):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" HARNESS_HEALTH_RETRY_RESULTS=harness-health-retry-results.json HARNESS_HEALTH_ESCALATED=harness-health-escalated.json)"
+HARNESS_HEALTH_RETRY_RESULTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-retry-results.json)"
+HARNESS_HEALTH_ESCALATED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-escalated.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health.js" retry-queue update "$HARNESS_HEALTH_RETRY_RESULTS" --root . > "$HARNESS_HEALTH_ESCALATED"
 ```
 

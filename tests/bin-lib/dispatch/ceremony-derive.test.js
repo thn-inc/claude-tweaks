@@ -138,6 +138,29 @@ test('AC2.1: a docs/**/*.md-only diff still derives fast-lane', () => {
   assert.equal(deriveCeremonyProfile(files, 'standard'), 'fast-lane');
 });
 
+test('AC2.2: a docs/plans/*.html diagram counts as docs, so it still derives fast-lane', () => {
+  const files = [
+    { path: 'docs/plugin-structure.md', additions: 5, deletions: 0 },
+    { path: 'docs/reference/x.md', additions: 3, deletions: 0 },
+    { path: 'docs/plans/x.html', additions: 40, deletions: 0 },
+  ];
+  const facts = computeDiffFacts(files);
+  assert.equal(facts.lowSurface, true);
+  assert.equal(facts.docsOnly, true);
+  assert.equal(facts.implFiles, 0);
+  assert.equal(deriveCeremonyProfile(files, 'standard'), 'fast-lane');
+});
+
+test('isDocsPath: top-level docs/plans/*.html (any extension case) is docs; other .html stays implementation', () => {
+  for (const p of ['docs/plans/x.html', 'docs/plans/2026-10-25-spec-1-flow.HTML']) {
+    assert.equal(isDocsPath(p), true, p);
+  }
+  for (const p of ['index.html', 'docs/x.html', 'docs/diagrams/x.html', 'docs/plans/sub/x.html',
+    'plugin/skills/visualize/template.html', 'src/docs/plans/x.html']) {
+    assert.equal(isDocsPath(p), false, p);
+  }
+});
+
 test('isPromptProsePath: markdown under skills/, agents/, commands/ at any prefix is prompt prose', () => {
   for (const p of ['plugin/skills/test/qa-prompts.md', 'plugin/skills/_shared/work-record.md', 'plugin/agents/qa-agent.md',
     '.claude/skills/upstream-drift/SKILL.md', 'skills/foo/SKILL.md', '.claude/commands/ship.md', 'plugin/skills/foo/SKILL.MD']) {

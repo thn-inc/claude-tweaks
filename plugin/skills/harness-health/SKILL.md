@@ -62,7 +62,7 @@ FINDINGS_FILE=$(node -e "
   const targetId = process.argv[1];
   const name = targetId ? 'harness-health-findings-' + targetId + '.json' : 'harness-health-findings.json';
   console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, name) || require('path').join(require('os').tmpdir(), name))
-" "$TARGET_ID")
+" -- "$TARGET_ID")
 ```
 
 Run this once per target (`$TARGET_ID` set to that target's `.id`) for a multi-target run, and once with `$TARGET_ID` unset for a single-target run (no `--budget`, or `--budget 1`) — the resolved `$FINDINGS_FILE` is `harness-health-findings.json` in that case. The gap-scan-only path (below) resolves its own `harness-health-findings-gapscan.json` the same way, substituting that literal name for `targetId ? ... : ...` above.
@@ -92,7 +92,7 @@ This parses every `route(s) to \`/X\`, never \`/Y\`` clause out of CLAUDE.md (`b
 **AGENTS.md shadow check (#2798, same shape as the Policy schema check above — separate, runs every firing).** By default Claude Code reads `AGENTS.md` only when no `CLAUDE.md` exists in the working directory or above it (https://code.claude.com/docs/en/memory), so a project root carrying both files has `CLAUDE.md` winning silently — `AGENTS.md` could be stale, or intentionally maintained for a different tool, either way with no signal to the maintainer about which one actually governs the session. Call:
 
 ```bash
-node -e "const fs=require('fs'),p=require('path'),r=process.argv[1];const real=(f)=>{try{return fs.realpathSync(p.join(r,f))}catch{return null}};const c=real('CLAUDE.md'),a=real('AGENTS.md');let imp=false;try{imp=/^\s*@AGENTS\.md\b/m.test(fs.readFileSync(c,'utf8'))}catch{}console.log(JSON.stringify({claudeMd:!!c,agentsMd:!!a,sameFile:!!c&&c===a,claudeImportsAgents:imp}))" "${ROOT:-$PWD}"
+node -e "const fs=require('fs'),p=require('path'),r=process.argv[1];const real=(f)=>{try{return fs.realpathSync(p.join(r,f))}catch{return null}};const c=real('CLAUDE.md'),a=real('AGENTS.md');let imp=false;try{imp=/^\s*@AGENTS\.md\b/m.test(fs.readFileSync(c,'utf8'))}catch{}console.log(JSON.stringify({claudeMd:!!c,agentsMd:!!a,sameFile:!!c&&c===a,claudeImportsAgents:imp}))" -- "${ROOT:-$PWD}"
 ```
 
 This is a deterministic presence check, not the judged dimension analysis — if `claudeMd` and `agentsMd` aren't both `true`, or `sameFile` or `claudeImportsAgents` is `true` (a symlink, or a `CLAUDE.md` that pulls `AGENTS.md` in with an `@AGENTS.md` line, both mean `AGENTS.md` is read), do nothing further for this check this firing (a project with only `CLAUDE.md`, the common case, triggers no finding). Otherwise, file one work-record issue (origin `by:harness-health`, `risk:low` + `size:low` — a detection finding, not a code fix) titled `"Both CLAUDE.md and AGENTS.md present — AGENTS.md is not loaded by default"`, body stating the actual precedence plainly (by default Claude Code reads `CLAUDE.md` when present and skips `AGENTS.md`; the Project instructions setting `claude-md-and-agents-md`, or an `@AGENTS.md` import in `CLAUDE.md`, loads both — https://code.claude.com/docs/en/memory) and pointing at both files, with a tone that's informational, not an error — intentionally maintaining both for some other tool's benefit, with `CLAUDE.md` correctly taking precedence, is not itself a problem; this check surfaces the *ambiguity risk* only. Skip filing when any `by:harness-health` issue, open or closed, already carries this exact title (reuse Step 5's `--state all` fetch when reached this firing; the same standalone `gh issue list --state all` fetch otherwise): the condition is constant, so a closed issue records the maintainer's "keep both" decision rather than inviting a refile every firing. Skip filing entirely under `--dry-run`, printing what would be filed instead.
@@ -163,7 +163,8 @@ Apply `_shared/harness-health-analysis.md`'s new-skill gap detection over commit
 Resolve this run's session-scoped temp paths first, per `_shared/session-tmp-root.md` (cited throughout this file rather than restated):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" HARNESS_HEALTH_ISSUES_RAW=harness-health-issues-raw.json HARNESS_HEALTH_ISSUES=harness-health-issues.json)"
+HARNESS_HEALTH_ISSUES_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-issues-raw.json)"
+HARNESS_HEALTH_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-issues.json)"
 gh issue list --label by:harness-health --state all --json number,title,state,labels,body --limit 500 > "$HARNESS_HEALTH_ISSUES_RAW"
 ```
 
@@ -180,7 +181,8 @@ A matched issue carrying the `wontfix` label is a standing suppression decision:
 Resolve this run's session-scoped payloads path first (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit an earlier fence's shell variables) — `$FINDINGS_FILE` itself is assumed still set from Step 3's resolution, the same assumption this command already makes for `$TARGET_ID`/`$TARGET_KIND`/`$GAP_SCAN_RAN`/`$MIN_CONFIDENCE`/`$DRY_RUN`:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" HARNESS_HEALTH_PAYLOADS=harness-health-payloads.json HARNESS_HEALTH_FINDINGS=harness-health-findings.json)"
+HARNESS_HEALTH_PAYLOADS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-payloads.json)"
+HARNESS_HEALTH_FINDINGS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-findings.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/harness-health.js" validate-findings "${FINDINGS_FILE:-$HARNESS_HEALTH_FINDINGS}" \
   --root "${ROOT:-$PWD}" \
   ${ISSUES_FILE:+--issues "$ISSUES_FILE"} \

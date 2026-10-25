@@ -59,7 +59,25 @@ function formatReconcileSummary(root, { archivedCount = 0, mirror = null } = {},
   const stuckPart = oldest === null
     ? `${stuck.length} stuck`
     : `${stuck.length} stuck (oldest ${humanAge(now - oldest)})`;
-  return `reconcile: ${archivedCount} archived, ${stuckPart}, mirror ff ${mirrorFfPart(mirror)}`;
+  // #4180: a failed escalate/resolve rides on its entry (`lastResidueError`, cache.js) — name the
+  // count and the latest one here so a swallowed failure is visible at the closing report. With none
+  // tracked the line is unchanged.
+  const errored = stuck.filter((e) => e.lastResidueError);
+  const latest = errored.reduce((best, e) => (best === null || e.lastResidueError.at > best.lastResidueError.at ? e : best), null);
+  const errorPart = latest === null
+    ? ''
+    : `, ${errored.length} residue error(s) (last: ${latest.lastResidueError.op} — ${latest.lastResidueError.reason})`;
+  return `reconcile: ${archivedCount} archived, ${stuckPart}, mirror ff ${mirrorFfPart(mirror)}${errorPart}`;
 }
 
-module.exports = { formatReconcileSummary, archivedCountFromRunsResult, humanAge, mirrorFfPart };
+// reconcile()'s `residueErrors` list -> its newest entry as `{ op, error }`, or null when empty. A prune
+// failure (`at: null`) belongs to the pass that just ran, so it outranks every recorded `at`. Feeds
+// the `reconcile-background` status summary (#4180).
+function latestResidueError(errors) {
+  if (!Array.isArray(errors) || !errors.length) return null;
+  const rank = (e) => (typeof e.at === 'number' ? e.at : Infinity);
+  const latest = errors.reduce((best, e) => (rank(e) >= rank(best) ? e : best));
+  return { op: latest.op, error: latest.error };
+}
+
+module.exports = { formatReconcileSummary, latestResidueError, archivedCountFromRunsResult, humanAge, mirrorFfPart };

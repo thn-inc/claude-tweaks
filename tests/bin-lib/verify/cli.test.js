@@ -3430,9 +3430,18 @@ test('--baseline: a stale ct-verify-base-* scratch worktree from an earlier inte
   const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
   const staleWt = path.join(staleParent, 'wt');
   r.git('worktree', 'add', '--detach', staleWt, 'HEAD');
+  // verify.js names the path git's porcelain listing prints, which Git for Windows
+  // spells with forward slashes — so the expected path comes from that listing.
+  const porcelain = r.git('worktree', 'list', '--porcelain');
+  const staleSuffix = `/${path.basename(staleParent)}/wt`;
+  const listedWt = porcelain.split('\n')
+    .filter((line) => line.startsWith('worktree '))
+    .map((line) => line.slice('worktree '.length))
+    .find((p) => p.replace(/\\/g, '/').endsWith(staleSuffix));
+  assert.ok(listedWt, porcelain);
   const { stderr } = await runCli(['--cmd', 'tests=node -e "process.exit(0)"', '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}'], { cwd: r.repo });
   assert.ok(
-    stderr.includes(`verify.js: a stale baseline scratch worktree is registered at ${staleWt} from an earlier interrupted run — remove it manually: git worktree remove --force ${staleWt}`),
+    stderr.includes(`verify.js: a stale baseline scratch worktree is registered at ${listedWt} from an earlier interrupted run — remove it manually: git worktree remove --force ${listedWt}`),
     stderr,
   );
   assert.ok(fs.existsSync(staleWt), 'never swept automatically — a sibling session\'s own live scratch would look identical');

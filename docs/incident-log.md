@@ -1961,4 +1961,5 @@ way. All three per-spec hindsight passes named the same root cause independently
 Cost: three fix waves across three specs, one staged high-severity patch, and both files left near
 the Read rail (`execute.md` 50,278 B, `SKILL.md` 49,015 B, against 52,500 B). The remedy deferred
 from this run is one release-state CLI owning all three, printing a JSON verdict, unit-tested per
-cell.
+cell. The Step 5 reviewed-tip state machine is now `plugin/bin/release-tip-check.js` (#4152); the
+Step 0 guard and the Step 3 classifier remain prose.
