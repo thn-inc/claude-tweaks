@@ -247,7 +247,7 @@ The simplify skill handles scope resolution, running the code-simplifier subagen
 
 If the simplifier makes changes, commit them separately.
 
-**Log the simplified tree (`$PIPELINE_RUN_DIR` set).** Once `/claude-tweaks:simplify` returns `STATUS: DONE` (its changes committed, or none made), write `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/build" --status AUTO --step "Common Step 3" --text "simplify: scope simplified at {sha}" --reversibility n/a`, `{sha}` being `git rev-parse HEAD` after that commit. `/review` Step 5 reads this line to skip re-simplifying an unchanged tree (`review/code-mode-steps.md`); any other outcome writes no line.
+**Log the simplified tree (`$PIPELINE_RUN_DIR` set).** When `/claude-tweaks:simplify` reports `Verification: pass` (its changes committed) or `No simplifications needed`, and the scope it was passed is the branch's whole own-work diff from the integration base, write `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/build" --status SCANNED --step "Common Step 3" --text "simplify: scope simplified at {sha}" --reversibility n/a`, `{sha}` being `git rev-parse HEAD` after that commit. `/review` Step 5 reads this line to skip re-simplifying an unchanged tree (`review/code-mode-steps.md`); a BLOCKED or STAGED Step 3 writes no line, nor does any other outcome.
 
 **If the `/claude-tweaks:simplify` dispatch itself fails transiently** (not a simplification finding — the dispatch call erroring out), see `failure-recovery.md`'s **Anything else** row: verify actual state (`git diff`, `git log`) before redoing, then retry rather than improvising.
 

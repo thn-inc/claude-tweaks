@@ -36,31 +36,36 @@ const DOCS_REGIONS = { sync: docsSync, lens: docsLens };
 
 const FACTS = {
   build3: [
-    { name: 'AC1.1 writer', re: /--section "\/build" --status AUTO --step "Common Step 3" --text "simplify: scope simplified at \{sha\}"/ },
-    { name: 'AC1.1 writer gate', re: /`STATUS: DONE`/ },
+    { name: 'AC1.1 writer', re: /--section "\/build" --status SCANNED --step "Common Step 3" --text "simplify: scope simplified at \{sha\}"/ },
+    { name: 'AC1.1 writer gate', re: /reports `Verification: pass` \(its changes committed\) or `No simplifications needed`/ },
+    { name: 'AC1.1 writer scope', re: /scope it was passed is the branch's whole own-work diff from the integration base/ },
+    { name: 'AC1.1 writer no line', re: /a BLOCKED or STAGED Step 3 writes no line/ },
     { name: 'AC1.1 reader pointer', re: /`\/review` Step 5 reads this line/ },
   ],
   review5: [
     { name: 'AC1.1 selector', re: /`Common Step 3: simplify: scope simplified at \{sha\}`/ },
-    { name: 'AC1.1 last line', re: /read the last line under `decisions\.md`'s `## \/build` heading/ },
+    { name: 'AC1.1 last line', re: /read the last line under `\$PIPELINE_RUN_DIR\/decisions\.md`'s `## \/build` heading/ },
     { name: 'AC1.1 ancestry', re: /`git merge-base --is-ancestor \{sha\} HEAD` exits 0/ },
-    { name: 'AC1.1 diff', re: /`git diff --name-only \{sha\} HEAD`/ },
+    { name: 'AC1.1 diff', re: /`git diff --name-only \{sha\}` \(the working tree, so uncommitted fixes count\) or `git ls-files --others --exclude-standard` lists/ },
     { name: 'AC1.1 no fix since', re: /no build fix and no review fix has touched an in-scope source file since/ },
     { name: 'AC1.1 skip log', re: /--section "\/review" --status SKIP --step "Step 5 simplify \(skipped\)"/ },
+    { name: 'AC1.1 skip arrow', re: /\{sha\}, no in-scope source file changed since → fallback: \/claude-tweaks:simplify not re-run"/ },
     { name: 'AC1.1 fallback', re: /runs this step as below/ },
   ],
 };
 
 const DOCS_FACTS = {
   sync: [
-    { name: 'AC2.1 writer', re: /--section "\/build" --status AUTO --step "Common Step 6\.5" --text "docs sync: \{doc\} assessed at \{sha\}, no stale text"/ },
+    { name: 'AC2.1 writer', re: /--section "\/build" --status SCANNED --step "Common Step 6\.5" --text "docs sync: \{doc\} assessed at \{sha\}, no stale text"/ },
     { name: 'AC2.1 one line per doc', re: /log one line per such doc/ },
   ],
   lens: [
     { name: 'AC2.1 selector', re: /`Common Step 6\.5: docs sync: \{doc\} assessed at \{sha\}, no stale text`/ },
     { name: 'AC2.1 ancestry', re: /`git merge-base --is-ancestor \{sha\} HEAD` exits 0/ },
-    { name: 'AC2.1 auto-detect diff', re: /lists no file matching this entry's Auto-detect patterns/ },
+    { name: 'AC2.1 auto-detect diff', re: /neither `git diff --name-only \{sha\}` \(the working tree\) nor `git ls-files --others --exclude-standard` lists a file matching this entry's Auto-detect patterns/ },
     { name: 'AC2.1 no finding', re: /emit no finding for it/ },
+    { name: 'AC2.1 skip trace', re: /--section "\/review" --status SKIP --step "Lens 3i doc freshness \(skipped\)" --text "condition: build Common Step 6\.5 assessed \{docs and shas\} with no stale text, matched sources unchanged since → fallback: no 3i finding for them" --reversibility n\/a/ },
+    { name: 'AC2.1 skip trace once', re: /one line per review, listing the dropped docs/ },
     { name: 'AC2.1 renumbered flag step', re: /5\. Flag the remaining unupdated docs as informational findings:/ },
   ],
 };
@@ -82,6 +87,7 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // fixture laid out like tests/bin-lib/log-decision/cli.test.js's fixture()/deps(). Returns
 // the decisions.md text run() wrote.
 function producerLine(regionText, sha, doc) {
+  const status = regionText.match(/--status ([A-Z-]+)/)[1];
   const section = regionText.match(/--section "([^"]+)"/)[1];
   const step = regionText.match(/--step "([^"]+)"/)[1];
   const text = regionText.match(/--text "([^"]+)"/)[1].replaceAll('{sha}', sha).replaceAll('{doc}', doc);
@@ -92,7 +98,7 @@ function producerLine(regionText, sha, doc) {
     fs.mkdirSync(runDir, { recursive: true });
     fs.mkdirSync(path.join(main, '.git'), { recursive: true });
     const code = run(
-      ['--run', runDir, '--section', section, '--status', 'AUTO', '--step', step, '--text', text, '--reversibility', 'n/a'],
+      ['--run', runDir, '--section', section, '--status', status, '--step', step, '--text', text, '--reversibility', 'n/a'],
       { now: () => NOW, cwd: () => main, mainRoot: main, stdout: () => {}, stderr: () => {} },
     );
     assert.equal(code, 0, 'log-decision run() exits 0');
@@ -152,6 +158,7 @@ const SECOND_SHA = 'ffffffffffffffffffffffffffffffffffffffff';
 
 test("AC3.1 twin: review Step 5's selector reads the sha build Common Step 3's command writes", () => {
   const decisions = producerLine(build3, SHA, DOC);
+  assert.match(decisions, /^- SCANNED /m, 'the writer logs a scan outcome, not an auto-applied change');
   assert.equal(selectSha(decisions, review5, DOC), SHA);
 
   const movedUnderReview = decisions.replace('## /build', '## /review');
@@ -194,11 +201,27 @@ test('AC2.1 go-red: stripping each docs-pair fact reports exactly that fact', ()
   }
 });
 
+const summaryTemplate = readText(path.join(SKILLS, 'review', 'review-summary-template.md'));
+const SUMMARY_FACTS = [
+  { name: 'compact form', re: /Simplification \{none needed \| skipped — \/build simplified at \{sha\}\}/ },
+  { name: 'section variants', re: /\{summary of simplifier changes, "No simplifications needed", or "skipped — \/build simplified at \{sha\}"\}/ },
+];
+
+test('AC1.1: the review summary template offers the skipped-Step-5 wording in both forms', () => {
+  assert.deepStrictEqual(missing(summaryTemplate, SUMMARY_FACTS), []);
+  for (const { name, re } of SUMMARY_FACTS) {
+    assert.strictEqual(countMatches(summaryTemplate, re), 1, `${name}: expected exactly one match`);
+    const mutated = summaryTemplate.replace(re, '');
+    assert.deepStrictEqual(missing(mutated, SUMMARY_FACTS), [name], `go-red: ${name}`);
+  }
+});
+
 const DOC_PLUGIN = 'docs/plugin-structure.md';
 const DOC_HOOKS = 'docs/hooks.md';
 
 test("AC3.1 twin: lens 3i's selector reads the sha build Step 6.5's command writes for that doc", () => {
   const decisions = producerLine(docsSync, SHA, DOC_PLUGIN);
+  assert.match(decisions, /^- SCANNED /m, 'the writer logs a scan outcome, not an auto-applied change');
   assert.equal(selectSha(decisions, docsLens, DOC_PLUGIN), SHA);
 
   const otherDoc = producerLine(docsSync, SHA, DOC_HOOKS);

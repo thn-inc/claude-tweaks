@@ -18,7 +18,7 @@ When **all** of the following hold, render the compact block below instead of th
 ## Review: {spec number or description} — PASS (clean)
 
 **Review effort:** {tier} ({derivation source, same format as the full template's Review effort line})
-**Status:** Spec compliance {met | skipped — fast-lane | n/a — no spec} · Tests pass · QA {status} · Findings 0 · Hindsight clean · Simplification none needed · Visual {status, one word} · Design Quality {skipped ({reason}) | 0 findings} · Fan-out leftovers 0
+**Status:** Spec compliance {met | skipped — fast-lane | n/a — no spec} · Tests pass · QA {status} · Findings 0 · Hindsight clean · Simplification {none needed | skipped — /build simplified at {sha}} · Visual {status, one word} · Design Quality {skipped ({reason}) | 0 findings} · Fan-out leftovers 0
 {only when 3j printed a table:} **Skill load delta:** {N} entry point(s) moved (a grouped `{count} entries:` row counts as {count}) — largest ΔClosure {signed bytes} on {entry, or a grouped row's first name and "+{count−1} more"}
 {only when a lens fell back to single-read coverage — `step3-lens-dispatch.md`'s partner-died paragraph:} **Coverage caveat:** {every affected lens with its reason, e.g. 3b (timed out), 3c (unavailable)} — single-read coverage, findings unconfirmed
 
@@ -179,7 +179,7 @@ These challenge the project's DESIGN.md, not the diff — the wrapper never edit
 > Findings are advisory — they inform the verdict but were not auto-applied. To action them inline, route through Step 3 Routing's resolution flow with category `App Store Readiness`. Each row is a static-text signal for Apple App Store review risk, not a verified rejection — confirm against the actual code path before treating a finding as settled (`criteria-app-store-readiness.md`'s "What NOT to flag").
 
 ### Code Simplification
-- {summary of simplifier changes, or "No simplifications needed"}
+- {summary of simplifier changes, "No simplifications needed", or "skipped — /build simplified at {sha}"}
 
 ### Skill Load Delta
 {3j's output, verbatim — one outcome line or the table (`step3-skill-load-delta.md`)}
