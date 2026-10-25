@@ -77,6 +77,19 @@ test('a throwing resolvePolicy behaves as disabled with exactly one stderr line'
   assert.ok(sink.lines[0].endsWith('\n') && sink.lines[0].indexOf('\n') === sink.lines[0].length - 1);
 });
 
+test('a throwing eligibility check keeps the record bundleable, with exactly one stderr line', () => {
+  const { resolvePolicy } = policy({ 'express-lane': true, 'integration-model': 'pr-first', 'merge-sensitive-paths': [] });
+  const sink = stderrSink();
+  const p = expressQueuePolicy({ resolvePolicy, stderr: sink.stderr });
+  const malformed = { number: 7, body: BODY, get labels() { throw new Error('labels unreadable'); } };
+  assert.equal(p.keepSingleton(malformed), false);
+  assert.equal(sink.lines.length, 1);
+  assert.match(sink.lines[0], /#7/);
+  assert.match(sink.lines[0], /labels unreadable/);
+  assert.ok(sink.lines[0].endsWith('\n') && sink.lines[0].indexOf('\n') === sink.lines[0].length - 1);
+  assert.equal(p.keepSingleton(ELIGIBLE), true);
+});
+
 test('queue-pull-script.md passes expressQueuePolicy() into the cache check, the write-back and the grouping pass', () => {
   const script = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'));
   const call = '/bin/lib/express/queue.js\').expressQueuePolicy()';

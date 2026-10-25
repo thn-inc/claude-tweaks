@@ -14,7 +14,8 @@ const DISABLED = Object.freeze({ enabled: false, grouping: groupingMode(false), 
 // deps: { resolvePolicy?, stderr? } -> { enabled, grouping, keepSingleton }.
 // Resolves the three policy keys once. No run dir exists at queue-pull time,
 // so the resolution is project policy only. A failed resolution behaves as
-// disabled (fail toward bundling, the pre-#4025 behavior) with one stderr line.
+// disabled (fail toward bundling, the pre-#4025 behavior) with one stderr line;
+// so does a throwing eligibility check, for that one record.
 function expressQueuePolicy(deps = {}) {
   const resolvePolicy = deps.resolvePolicy || defaultResolvePolicy;
   const stderr = deps.stderr || ((s) => process.stderr.write(s));
@@ -30,7 +31,14 @@ function expressQueuePolicy(deps = {}) {
   return {
     enabled: true,
     grouping: groupingMode(true),
-    keepSingleton: (issue) => evaluateRecordEligibility(issue, opts).eligible,
+    keepSingleton: (issue) => {
+      try {
+        return evaluateRecordEligibility(issue, opts).eligible;
+      } catch (err) {
+        stderr(`express-lane: eligibility check failed for #${issue && issue.number}, fast-lane bundling unchanged for it: ${String(err && err.message).replace(/\s+/g, ' ')}\n`);
+        return false;
+      }
+    },
   };
 }
 
