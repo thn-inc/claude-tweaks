@@ -246,11 +246,17 @@ toward the grant.
 
       Non-zero → **stop** and surface gh's stderr; nothing was filed. Exit `0` → the record exists; take its number `N` from the printed URL, then set its type in (c).
 
-   c. Set the native type on `N`. Resolve the slug first (`gh api graphql`'s `-f`/`-F` never expands `{owner}/{repo}` — `.claude/skills/gh-api-module-pattern`'s own guidance), then the issue's node id, then the type's id — three plain calls:
+   c. Set the native type on `N`. Resolve the slug first (`gh api graphql`'s `-f`/`-F` never expands `{owner}/{repo}` — `.claude/skills/gh-api-module-pattern`'s own guidance), then the issue's node id, then the type's id — three plain calls, one per fence:
 
       ```bash
       gh repo view --json owner,name -q '.owner.login + " " + .name'
+      ```
+
+      ```bash
       gh issue view N --json id -q .id
+      ```
+
+      ```bash
       gh api graphql -f query='query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){issueTypes(first:50){nodes{id name}}}}' -f owner=OWNER -f repo=REPO -q ".data.repository.issueTypes.nodes[] | select(.name | ascii_downcase == \"$TYPE\") | .id"
       ```
 

@@ -12,7 +12,7 @@ Every record body opens with a short metadata block — plain body-metadata line
 
 `Ui-stack:` names the UI component library / styling approach a frontend build should use — e.g. `shadcn/ui + Tailwind`, or an explicit `none — no preference, defer to reference codebase` when the record's author genuinely has no opinion. `/claude-tweaks:specify`'s Step 2.5c2 (`design-pre-steps.md`, immediately after the Design-intent question) writes it, following the same auto-mode/`ui-stack` policy-key precedence Step 2.5c already uses for `Design-intent:`. Omitted for backend/infra/terminal records — the same frontend-only gate that already governs `Design-intent:`.
 
-```markdown
+````markdown
 Surface: {web | mobile | desktop | backend | infra | terminal}
 Design-intent: {one or more of bold | quiet | minimal | delightful | onboarding, comma-separated — or none alone}
 Ui-stack: {free-form component-library/styling-approach string (e.g. "shadcn/ui + Tailwind"), or an explicit no-preference answer — omitted for backend/infra/terminal, same as Design-intent:}
@@ -153,7 +153,7 @@ Examples that **do belong here**:
 - "Get security review signoff on the new third-party data flow (reason-not-auto: requires-signoff)"
 
 {If none: delete this section.}
-```
+````
 
 ## No Placeholders
 
