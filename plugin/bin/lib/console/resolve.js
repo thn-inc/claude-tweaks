@@ -692,7 +692,7 @@ function findingItems({ runDir, deps }) {
   const snapshot = { ...readRunFiles({ runDir, deps }), patchChecks: {} };
   const stagedIds = new Set(snapshot.staged.map((s) => s.name));
   const items = [...stagedItems(snapshot), ...coordinationItems(snapshot, stagedIds)].filter((i) => FINDING_SECTIONS.includes(i.section));
-  return { items, findings: snapshot.findings };
+  return { items, findings: snapshot.findings, decisions: snapshot.decisions, dropped: droppedByTiebreak(snapshot.decisions) };
 }
 
 // Every cell is escaped, ids included: a staged filename is producer-supplied
@@ -711,15 +711,20 @@ function droppedByTiebreak(decisions) {
     .map((t) => ({ id: t.id, lens: t.lens, path: t.path, line: t.line, severity: t.severity, evidence: t.evidence }));
 }
 
+// The read-only "Dropped by tiebreak" block as lines, led by a blank line; [] when nothing dropped.
+function renderDroppedBlock(dropped) {
+  if (!dropped.length) return [];
+  const lines = ['', '#### Dropped by tiebreak (read-only — no decision)', '', '| Path:Line | Lens | Severity | Evidence |', '|---|---|---|---|'];
+  dropped.forEach((d) => lines.push(`| ${cell(`${d.path}:${d.line}`)} | ${cell(d.lens)} | ${cell(d.severity)} | ${cell(d.evidence ?? '—')} |`));
+  return lines;
+}
+
 function renderRows({ items, cleanup, merge, intro, dropped = [] }) {
   const lines = ['### Wrap-Up Review Console (auto-resolved at unattended)', '', intro, '', '| # | Section | Item | Resolution | Reason |', '|---|---|---|---|---|'];
   items.forEach((it, i) => lines.push(`| ${i + 1} | ${cell(it.section)} | ${cell(it.id)} | AUTO-RESOLVED: ${cell(it.resolution)} | ${cell(it.reason)} |`));
   lines.push(`| ${items.length + 1} | Cleanup actions | cleanup-procedures.md items | AUTO-RESOLVED: ${cell(cleanup.resolution)} | ${cell(cleanup.reason)} |`);
   lines.push('', `Merge: **${merge.resolution}** — ${merge.reason}`);
-  if (dropped.length) {
-    lines.push('', '#### Dropped by tiebreak (read-only — no decision)', '', '| Path:Line | Lens | Severity | Evidence |', '|---|---|---|---|');
-    dropped.forEach((d) => lines.push(`| ${cell(`${d.path}:${d.line}`)} | ${cell(d.lens)} | ${cell(d.severity)} | ${cell(d.evidence ?? '—')} |`));
-  }
+  lines.push(...renderDroppedBlock(dropped));
   return lines.join('\n');
 }
 
@@ -777,4 +782,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, runIdOf, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
