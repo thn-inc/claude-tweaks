@@ -1248,6 +1248,36 @@ for (const [label, cmd] of [
   });
 }
 
+// #4303: an assignment word holding a `$( … )` or backtick with spaces is one word to bash, so
+// the `cd` after it changes the shell's cwd. bash 3.2 and 5 write M/f for each.
+for (const cmd of ['x=$(cd /tmp) cd /main; echo hi | tee f.js', 'x=`cd /tmp` cd /main; cp a f.js', 'x=$(cd /tmp)y cd /main; cp a f.js',
+  'a=1 x=$(echo a b) cd /main; cp a f.js']) {
+  test(`#4303: \`${cmd}\` changes into the cd after the assignment`, () => {
+    assert.ok(fileWriteTargets(cmd, '/r').some((t) => t.file === MAIN_F), JSON.stringify(fileWriteTargets(cmd, '/r')));
+  });
+}
+// bash 3.2 and 5 refuse to parse this ("unexpected EOF") and write nothing; the scanner keeps
+// the trailing write as a deliberate fail-closed tradeoff (this pin passes today and must stay).
+test('#4303: an assignment whose substitution never closes is no cd lead (deliberate fail-closed tradeoff)', () => {
+  assert.deepStrictEqual(fileWriteTargets('x=$(cd /tmp cd /main; cp a /r2/f.js', '/r').map((t) => t.file), [path.resolve('/r2/f.js')]);
+});
+// #4303: a quoted or escaped paren, or one inside a backtick span, is not the word's own, so the
+// word ends at its closing paren or backtick (bash 3.2 and 5 write M/f.js); and it ends there, so a
+// `cd` that is an argument, or glued onto the word, changes nothing (bash 3.2 and 5 write f.js).
+test('#4303: the assignment word ends at its closing backtick or paren', () => {
+  for (const cmd of ['x=`echo (` cd /main; cp a f.js', 'x=$(echo "(") cd /main; cp a f.js', 'x=$(echo \\() cd /main; cp a f.js']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'copy', file: MAIN_F }], cmd);
+  }
+  for (const cmd of ['x=$(echo a b) echo cd /main; cp a f.js', 'x=$(echo a b)cd /main; cp a f.js']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'copy', file: path.resolve('/r/f.js') }], cmd);
+  }
+});
+// #4303: the assignment word is read before substitution, so `$V=1` is a command name and the
+// `cd` after it an argument (bash 3.2 and 5: "x=1: command not found", and write f.js).
+test('#4303: an expanded `$V=1` is no assignment, so the cd after it changes nothing', () => {
+  assert.deepStrictEqual(fileWriteTargets('V=x; $V=1 cd /main; cp a f.js', '/r'), [{ action: 'copy', file: path.resolve('/r/f.js') }]);
+});
+
 // #4149: the write walk cuts at an unquoted lone `&`, so the command after it is
 // read as a command; the backgrounded and-or list runs in a subshell, so its `cd` does not move the
 // cwd for what follows. `&&`, `&>`, `>&`, `<&`, `|&` and an `&` inside `$( )` are not cuts.

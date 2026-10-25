@@ -566,6 +566,30 @@ function forEachCommandSegment(command, cwd, handler, opts) {
   forEachShellSegment(command, cwd, handler, opts);
 }
 
+// The index just past the assignment word that starts at token `i` of `rawT`, or `i` itself when
+// `rawT[i]` is not an assignment (#4303). Bash reads `x=$(cd /tmp)` as one word, but tokenize splits
+// it at the spaces inside the substitution, so the word runs on through later tokens until every
+// bare `(` it opened (a `$(` or `$((` included) has its `)` and every bare backtick its partner,
+// counted on the `b` characters of `spanKinds` (a quoted or escaped paren is text). A paren inside a
+// backtick span belongs to the inner command, so it is not counted. A word that never closes is no
+// assignment: bash cannot parse it and runs nothing.
+function assignmentWordEnd(rawT, spanKinds, i) {
+  if (i >= rawT.length || !SIMPLE_ASSIGNMENT_RE.test(rawT[i])) return i;
+  let depth = 0;
+  let inTick = false;
+  for (let j = i; j < rawT.length; j += 1) {
+    const w = rawT[j];
+    for (let k = 0; k < w.length; k += 1) {
+      if (spanKinds[j][k] !== 'b') continue;
+      if (w[k] === '`') inTick = !inTick;
+      else if (!inTick && w[k] === '(') depth += 1;
+      else if (!inTick && w[k] === ')') depth -= 1;
+    }
+    if (depth <= 0 && !inTick) return j + 1;
+  }
+  return i;
+}
+
 // One segment of forEachShellSegment's walk, already tokenized (`tok`, from tokenize, and
 // `nestAt`, the nesting state at each token's start): updates `vars`, calls `handler` for a
 // non-cd, non-assignment segment, and returns the effective cwd after it.
@@ -584,7 +608,8 @@ function visitSegment(tok, nestAt, effCwd, vars, handler) {
   // errors and never changes cwd — normalizing it would fabricate a target
   // for a shape that has no real effect.
   let cdLead = 0;
-  while (cdLead < t.length && SIMPLE_ASSIGNMENT_RE.test(t[cdLead])) cdLead += 1;
+  let next;
+  while ((next = assignmentWordEnd(rawT, spanKinds, cdLead)) > cdLead) cdLead = next;
   if (t[cdLead] === 'cd') return resolveCd(effCwd, t[cdLead + 1]);
   handler(t, effCwd, { raw: rawT, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt });
   return effCwd;
