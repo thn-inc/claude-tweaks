@@ -58,21 +58,21 @@ files:
 
 ### 6. Release from a main checkout reconcile has touched
 - **URL:** `/claude-tweaks:release` while local `main` carries unpushed `[reconcile] archive run …` commits from earlier pipeline archival
-- **Action:** Step 3 fetches and runs its review-tree check. The checkout is on `main`, 0 commits behind `origin/main`, and its tree differs only under `.claude-tweaks/pipelines/`, so the whole-branch review runs. Because `HEAD` and `origin/main` differ, the marker line records both shas. A checkout that fails the check stops before the console with a line starting `stopped before the console: review tree is not origin/main`, and one recovery chosen by what failed:
+- **Action:** Step 3 fetches and runs its review-tree check. The checkout is on `main`, 0 commits behind `origin/main`, and its tree differs only under `.claude-tweaks/pipelines/`, so the whole-branch review runs. The check resolves `origin/main` once, compares `HEAD` against that sha, and prints it; the marker's reviewed tip is the printed sha, never a second read (#4157). Because `HEAD` and that tip differ, the marker line records both shas. A checkout that fails the check stops before the console with a line starting `stopped before the console: review tree is not origin/main`, and one recovery chosen by what failed:
   - Behind: the line names the ahead/behind counts, and the recovery is `git -C "$RUN_ROOT" pull --rebase origin main`, then a bare `git push origin main` only once nothing outside run dirs is still ahead.
   - Wrong branch: the line names the current branch, and the recovery is `git -C "$RUN_ROOT" switch main`.
   - Changes outside run dirs: the line lists the files that differ and points to a PR, with no push command.
   - A failed fetch, or another git error: git's own stderr in place of that line (#4012).
 - **Should feel:** Archive bookkeeping never blocks a release; a real divergence stops it with the one command that fixes it.
 - **Should understand:** Commits ahead are fine only when they touch nothing outside run directories. The review's test gate runs against the tree it stands in, so that tree must match the range being tagged everywhere that ships.
-- **Red flags:** A release refused over `[reconcile] archive run` commits alone; a checkout behind `origin/main` let through; a stop line advising `git push` for local commits that change shipped files; a review run after a fetch that failed.
+- **Red flags:** A release refused over `[reconcile] archive run` commits alone; a checkout behind `origin/main` let through; a stop line advising `git push` for local commits that change shipped files; a review run after a fetch that failed; a marker whose reviewed tip differs from the sha the check compared against (a sibling fetch landed between them).
 
 ### 7. `main` moves while the release is in flight
 - **URL:** `/claude-tweaks:release` (pr-first) on a busy repo where teammates keep merging PRs during Step 3's review or the release PR's check watch
 - **Action:** Step 3's marker line records the tip it reviewed (`at reviewed tip {sha}`). Immediately before `gh pr merge`, Step 5 fetches and compares `origin/main` with that tip:
   - **Unmoved:** the merge proceeds.
   - **Only run-dir archive commits arrived:** the reviewed tip advances, and nothing else happens.
-  - **Real commits arrived:** Step 5 asserts the main checkout is on `main` and pulls it to the new tip. It runs a delta review over just the arrived commits, then re-enters the PR-check gate. That re-entry re-gates the bump on the arrived commits as well as the PR title.
+  - **Real commits arrived:** Step 5 asserts the main checkout is on `main` and pulls it to the new tip, which it takes from the re-run review-tree check's printed sha. It runs a delta review over just the arrived commits, then re-enters the PR-check gate. That re-entry re-gates the bump on the arrived commits as well as the PR title.
   - **Blocking delta finding:** the release is held, the same `review: blocking` gate as Step 4.
   - **Bound passed:** once more moves arrive than `release-tip-moves` allows (default 2), the run stops `HELD — integration branch kept moving`. It prints the arrived commits under the HELD line and suggests pausing merges (#4041).
 - **Should feel:** The release never ships a commit nobody reviewed, and a quiet repo never notices the check.
@@ -93,3 +93,4 @@ files:
 - Steps 2-3 updated and Step 5 added for #3898 (release run-dir lifecycle: Step 0 refuses a prior release's directory, every exit closes out, Step 8 disposes of staged findings and archives the created directory)
 - Step 6 added for #4012 (Step 3's review-tree check accepts run-dir-only commits ahead, stops on a failed fetch, and names counts plus a recovery chosen by the failing clause)
 - Step 7 added for #4041 (Step 5 compares `origin/main` with Step 3's reviewed tip before the merge, delta-reviews arrived commits, and holds past `release-tip-moves`)
+- Steps 6-7 updated for #4157 (the review-tree check resolves the tip once before the tree comparison and prints it as the recorded reviewed tip; Step 5's delta takes the new tip from that same printed sha)
