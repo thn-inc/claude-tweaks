@@ -6,11 +6,8 @@
 // (`D:\a\_temp\x` reaches the guard as `D:a_tempx`, a drive-relative path no
 // real session sends), so a fixture that interpolates a temp path unquoted
 // fails on win32 only. A POSIX single-quoted word keeps every character
-// literal; an embedded `'` closes the quote, adds an escaped `\'`, and reopens
-// it. Unlike a double-quoted fixture, this also survives a `$`, backtick or
-// `"` in the path.
-function shellQuote(p) {
-  return `'${p.replace(/'/g, "'\\''")}'`;
-}
+// literal, a `$`, backtick or `"` in the path included. The quoting itself is
+// compose-subject.js's shellQuote, re-exported so there is one copy.
+const { shellQuote } = require('../../plugin/bin/lib/compose-subject');
 
 module.exports = { shellQuote };
