@@ -53,6 +53,29 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.154.1](https://github.com/thn-inc/claude-tweaks/compare/v6.154.0...v6.154.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* ceremony-derive isDocsPath: treat docs/plans/*.html… ([#4187](https://github.com/thn-inc/claude-tweaks/issues/4187)) ([8099b55](https://github.com/thn-inc/claude-tweaks/commit/8099b55fd9ea8ff36e50da769879496fa371fc4b))
+* Explicit-list dispatch drops the first-named record when… ([#4219](https://github.com/thn-inc/claude-tweaks/issues/4219)) ([cd9ad93](https://github.com/thn-inc/claude-tweaks/commit/cd9ad9353184869604ba3c70aafca6b653a56929))
+* pr-first: rewriting Fixes #N to Refs #N before merge does… ([#4199](https://github.com/thn-inc/claude-tweaks/issues/4199)) ([71d8059](https://github.com/thn-inc/claude-tweaks/commit/71d8059a59f68d7d87f470e658ed86fd49de8e5a))
+* reconcile: background archive-run commit lands on a… ([#4178](https://github.com/thn-inc/claude-tweaks/issues/4178)) ([8e864ba](https://github.com/thn-inc/claude-tweaks/commit/8e864ba5f201aaa6a5f0c8b56ffd809f6efa004b))
+* reconcile: make --dry-run write nothing, and record why… ([#4180](https://github.com/thn-inc/claude-tweaks/issues/4180)) ([ff0fc67](https://github.com/thn-inc/claude-tweaks/commit/ff0fc67ab73cc75878ec88df0074bb0464c1c06d))
+* reconcile: sweep main-checkout ad-hoc session dirs by… ([#4179](https://github.com/thn-inc/claude-tweaks/issues/4179)) ([272aa63](https://github.com/thn-inc/claude-tweaks/commit/272aa63aa935a8a3213bfafeddee5ef2e51b32ce))
+* release disposition has no route for design-decision-*… ([#4156](https://github.com/thn-inc/claude-tweaks/issues/4156)) ([b89606b](https://github.com/thn-inc/claude-tweaks/commit/b89606b40d47c93040c69e33ea75302312adb9b7))
+* release disposition reads an unreadable staged/ as empty… ([#4155](https://github.com/thn-inc/claude-tweaks/issues/4155)) ([2b0af99](https://github.com/thn-inc/claude-tweaks/commit/2b0af99850c4f5c252b18a7f676da78733d3f8e5))
+* research source-registry: split the `; echo exit=$?`… ([#4190](https://github.com/thn-inc/claude-tweaks/issues/4190)) ([5871d69](https://github.com/thn-inc/claude-tweaks/commit/5871d691bb6dd6a1ae363d1e3a1a7c4e1953264d))
+* Resolve a redirect glued to a word that holds a quoted… ([#4210](https://github.com/thn-inc/claude-tweaks/issues/4210)) ([b4a2f59](https://github.com/thn-inc/claude-tweaks/commit/b4a2f59db6e620215a354cf8f9cdf5b678eb2fd5))
+* run-tests --files-from subset lane skips the ownership… ([#4159](https://github.com/thn-inc/claude-tweaks/issues/4159)) ([420e142](https://github.com/thn-inc/claude-tweaks/commit/420e1427ac46dfd4fd11c47cf9695ded5e510692))
+* stories/refine.md 5a: resolve story URL against the run… ([#4184](https://github.com/thn-inc/claude-tweaks/issues/4184)) ([9938abd](https://github.com/thn-inc/claude-tweaks/commit/9938abda5c4be4000e91b22821f6d1b945b47ec9))
+* test-impact tracer drops a read whose trace write fails… ([#4158](https://github.com/thn-inc/claude-tweaks/issues/4158)) ([4535906](https://github.com/thn-inc/claude-tweaks/commit/4535906dfd01298ff60cf892bd9d6383accb1e28))
+* Windows regression: 1 test file(s) newly failing after… ([#4296](https://github.com/thn-inc/claude-tweaks/issues/4296)) ([ebf7148](https://github.com/thn-inc/claude-tweaks/commit/ebf7148263bfb33dd656366219836f55f67170ab))
+* Windows regression: 2 test file(s) newly failing after… ([#4228](https://github.com/thn-inc/claude-tweaks/issues/4228)) ([ea9bd53](https://github.com/thn-inc/claude-tweaks/commit/ea9bd53dc9055780ba3824dabfb37e3c3fb68a58))
+* Windows: [#3064](https://github.com/thn-inc/claude-tweaks/issues/3064) stale-worktree test expects a native path… ([#4222](https://github.com/thn-inc/claude-tweaks/issues/4222)) ([cd9f6b8](https://github.com/thn-inc/claude-tweaks/commit/cd9f6b87815d059d37c10b23970a2bfc020eb454))
+* worktree-always write gate misses writes inside heredocs… ([#4149](https://github.com/thn-inc/claude-tweaks/issues/4149)) ([2a21fbe](https://github.com/thn-inc/claude-tweaks/commit/2a21fbee9d45aae8b4f8c9356cd0ab27f50934bd))
+
 ## [6.154.0](https://github.com/thn-inc/claude-tweaks/compare/v6.153.0...v6.154.0) (2026-10-25)
 
 
