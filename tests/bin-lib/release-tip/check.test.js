@@ -298,6 +298,40 @@ test('a log write that throws → failed, log write failed', () => {
   });
 });
 
+// A stub origin that moved once, from REVIEWED to MOVED: `diffStatus` picks
+// run-dir-only (0) or code (1), and `fail` names the one git command that
+// exits 128 with STUB_STDERR.
+const REVIEWED = 'a'.repeat(40);
+const MOVED = 'b'.repeat(40);
+const STUB_STDERR = 'fatal: stub failure 4152\n';
+function stubGit({ diffStatus, fail }) {
+  return (args) => {
+    if (args[0] === fail) return { status: 128, stdout: '', stderr: STUB_STDERR };
+    if (args[0] === 'fetch') return { status: 0, stdout: '', stderr: '' };
+    if (args[0] === 'rev-parse') return { status: 0, stdout: `${MOVED}\n`, stderr: '' };
+    if (args[0] === 'diff') return { status: diffStatus, stdout: '', stderr: '' };
+    if (args[0] === 'rev-list') return { status: 0, stdout: '1\n', stderr: '' };
+    if (args[0] === 'log') return { status: 0, stdout: 'bbbbbbb upstream.txt\n', stderr: '' };
+    throw new Error(`unexpected git ${args.join(' ')}`);
+  };
+}
+
+for (const [name, stub, bound] of [
+  ['rev-parse of origin/<branch> fails', { diffStatus: 1, fail: 'rev-parse' }, boundOf(2)],
+  ['diff --quiet exits neither 0 nor 1', { diffStatus: 128, fail: 'diff' }, boundOf(2)],
+  ['rev-list --count fails on a run-dir-only advance', { diffStatus: 0, fail: 'rev-list' }, boundOf(2)],
+  ['rev-list --count fails on a delta', { diffStatus: 1, fail: 'rev-list' }, boundOf(2)],
+  ['git log --first-parent fails on a held move', { diffStatus: 1, fail: 'log' }, boundOf(0)],
+]) {
+  test(`${name} → failed, git error, stderr verbatim`, () => {
+    const { v, logged } = check(null, { decisionsText: decisions([step3Line(REVIEWED)]), git: stubGit(stub), bound });
+    assert.strictEqual(v.verdict, 'failed');
+    assert.strictEqual(v.reason, 'git error');
+    assert.strictEqual(v.detail, STUB_STDERR);
+    assert.strictEqual(logged.length, 0, 'nothing is logged on a failed git call');
+  });
+}
+
 test('non-converging advances → failed', () => {
   const ok = (stdout) => ({ status: 0, stdout, stderr: '' });
   let n = 0;
