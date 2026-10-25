@@ -1780,8 +1780,8 @@ function classifyRunDir(ctx, now = Date.now()) {
       // never swept (mirrors abandoned-interrupted's `ownLive`): it is live by
       // definition, whatever the liveness probe reads.
       const ownState = state || (sessionId && dir ? readRunState(dir) : null);
-      const ownerId = ownState && typeof ownState.sessionId === 'string' && ownState.sessionId ? ownState.sessionId : null;
-      const ownSession = !!(ownerId && sessionId && ownerId === sessionId);
+      const ownerId = ownState && typeof ownState.sessionId === 'string' ? ownState.sessionId : '';
+      const ownSession = !!sessionId && ownerId === sessionId;
       if (!ownSession && dir && isMainCheckoutAdHoc(dir) && isStaleDir(dir, ADHOC_SESSION_ENDED_GRACE_MS, now)) {
         let verdict;
         try {
