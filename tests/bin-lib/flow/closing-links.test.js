@@ -37,7 +37,7 @@ test('findClosingRefs ignores non-links', () => {
 });
 
 test('word boundary', () => {
-  for (const text of ['prefixes #5', 'suffixed #5', 'unresolved #5']) {
+  for (const text of ['prefixes #5', 'suffixed #5', 'unresolved #5', 'Fixes-ish #5']) {
     assert.deepEqual(findClosingRefs(text, REPO), [], text);
   }
 });
@@ -54,7 +54,12 @@ test('neutralize the real #4144 body', () => {
   assert.equal(result.neutralized.length, 2);
   assert.deepEqual(result.neutralized.map((n) => n.phrase), ['closes #2724', 'closes #2724']);
   assert.deepEqual(findClosingRefs(result.text, REPO).map((r) => r.number), [3997]);
-  assert.equal(result.text, fixture.split('closes #2724').join('`closes #2724`'));
+  assert.deepEqual(result.stillLive, []);
+  // The Spec-summary paragraph already holds single backticks, so its wrapper is
+  // a double-backtick run; the fixes-span line has none, so it gets a single.
+  const parts = fixture.split('closes #2724');
+  assert.equal(parts.length, 3);
+  assert.equal(result.text, parts[0] + '``closes #2724``' + parts[1] + '`closes #2724`' + parts[2]);
 });
 
 test('neutralize leaves expected Fixes lines untouched', () => {
@@ -112,4 +117,104 @@ test('prRepoFromUrl', () => {
   assert.deepEqual(prRepoFromUrl('https://github.com/thn-inc/claude-tweaks/pull/4144'),
     { host: 'github.com', owner: 'thn-inc', repo: 'claude-tweaks' });
   assert.equal(prRepoFromUrl('not a url'), null);
+});
+
+// --- Fix round 1: paragraph-scoped code spans, CommonMark fences, minors ---
+
+function assertNeutralized(text, number) {
+  const result = neutralizeClosingPhrases(text, { targets: [number] });
+  assert.deepEqual(findClosingRefs(result.text).filter((r) => r.number === number), [], result.text);
+  assert.deepEqual(result.stillLive, [], result.text);
+  assert.deepEqual(neutralizeClosingPhrases(result.text, { targets: [number] }).neutralized, [], 'idempotent');
+  return result;
+}
+
+test('stray backtick before the phrase: wrapper must not pair with it', () => {
+  const text = 'it is `x closes #5';
+  assert.equal(findClosingRefs(text).length, 1);
+  const result = assertNeutralized(text, 5);
+  assert.equal(result.text, 'it is `x ``closes #5``');
+});
+
+test('stray backtick on an earlier line of the paragraph', () => {
+  const text = 'a `b\nRefs #1 closes #5';
+  assert.deepEqual(findClosingRefs(text).map((r) => r.number), [5]);
+  const result = assertNeutralized(text, 5);
+  assert.equal(result.text, 'a `b\nRefs #1 ``closes #5``');
+});
+
+test('a code span pairs across lines within one paragraph', () => {
+  assert.deepEqual(findClosingRefs('see `a\ncloses #5` end'), []);
+  assert.deepEqual(findClosingRefs('see `a\n\ncloses #5` end').map((r) => r.number), [5]);
+});
+
+test('wrapper length skips every run length present in the paragraph', () => {
+  const result = assertNeutralized('`a` ``b`` x`y closes #5', 5);
+  assert.equal(result.text, '`a` ``b`` x`y ```closes #5```');
+});
+
+test('a backtick adjacent to the phrase does not merge into the wrapper', () => {
+  assertNeutralized('x`closes #5', 5);
+  assertNeutralized('`a`closes #5`', 5);
+});
+
+test('stillLive is empty after a successful wrap and ignores non-targets', () => {
+  assert.deepEqual(neutralizeClosingPhrases('closes #5', { targets: [5] }).stillLive, []);
+  assert.deepEqual(neutralizeClosingPhrases('closes #5 closes #6', { targets: [5] }).stillLive, []);
+});
+
+test('an inline triple-backtick span is not a fence', () => {
+  assert.deepEqual(findClosingRefs('```a``` ok\ncloses #5').map((r) => r.number), [5]);
+  assert.deepEqual(findClosingRefs('x ```closes #5``` y'), []);
+});
+
+test('a 4-space-indented fence marker is not a fence', () => {
+  assert.deepEqual(findClosingRefs('    ```\ncloses #5').map((r) => r.number), [5]);
+  assert.deepEqual(findClosingRefs('   ```\ncloses #5\n   ```'), []);
+});
+
+test('a tilde fence masks, and a tilde line does not close a backtick fence', () => {
+  assert.deepEqual(findClosingRefs('~~~\ncloses #5\n~~~\ncloses #6').map((r) => r.number), [6]);
+  assert.deepEqual(findClosingRefs('```\ncloses #5\n~~~\ncloses #6\n```\ncloses #7').map((r) => r.number), [7]);
+});
+
+test('a shorter closer does not close a fence; a longer one does', () => {
+  assert.deepEqual(findClosingRefs('````\ncloses #5\n```\ncloses #6\n````\ncloses #7').map((r) => r.number), [7]);
+  assert.deepEqual(findClosingRefs('```\ncloses #5\n`````\ncloses #6').map((r) => r.number), [6]);
+});
+
+test('a closer with trailing text does not close the fence', () => {
+  assert.deepEqual(findClosingRefs('```\ncloses #5\n``` x\ncloses #6\n```\ncloses #7').map((r) => r.number), [7]);
+});
+
+test('an unclosed fence masks to the end of the text', () => {
+  assert.deepEqual(findClosingRefs('```\ncloses #5\ncloses #6'), []);
+});
+
+test('a tilde fence info string may contain a backtick', () => {
+  assert.deepEqual(findClosingRefs('~~~ a`b\ncloses #5\n~~~'), []);
+});
+
+test('CRLF fences mask the same as LF', () => {
+  assert.deepEqual(findClosingRefs('```\r\ncloses #5\r\n```\r\ncloses #6\r\n').map((r) => r.number), [6]);
+});
+
+test('no match when a word character follows the number', () => {
+  assert.deepEqual(findClosingRefs('closes #5abc'), []);
+  assert.deepEqual(findClosingRefs('closes #55x'), []);
+  assert.equal(findClosingRefs('closes #5.').length, 1);
+  assert.equal(findClosingRefs('closes #5, and more').length, 1);
+});
+
+test('Fixes-ish is not a keyword phrase', () => {
+  assert.deepEqual(findClosingRefs('Fixes-ish #5'), []);
+});
+
+test('sameRepoNumbers skips entries without a positive integer number', () => {
+  const repository = { name: 'claude-tweaks', owner: { login: 'thn-inc' } };
+  const refs = [
+    { number: 0, repository }, { number: -3, repository }, { number: 1.5, repository },
+    { number: '12', repository }, { repository }, { number: 8, repository },
+  ];
+  assert.deepEqual(sameRepoNumbers(refs, REPO), [8]);
 });
