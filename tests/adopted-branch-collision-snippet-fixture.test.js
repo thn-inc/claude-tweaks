@@ -22,7 +22,9 @@ const ROOT = path.join(__dirname, '..');
 const CHECK = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'adopted-branch-collision-check.md'));
 const PLUGIN_ROOT = path.join(ROOT, 'plugin').split(path.sep).join('/');
 
-const START_ANCHOR = '```bash\nnode "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$(git branch --show-current)"';
+// #4028: {branch} and {repo} are plain-call results the agent pastes in (the worktree guard refuses
+// git inside $(...)), so the test substitutes them the same way before it runs the fence.
+const START_ANCHOR = '```bash\nnode "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "{branch}" "{repo}" "{records}"';
 
 function extractSnippet() {
   const start = CHECK.indexOf(START_ANCHOR);
@@ -33,8 +35,19 @@ function extractSnippet() {
   return CHECK.slice(bodyStart, end);
 }
 
+// Pastes the plain-call values in. `repo` defaults to '' — what the fixture's `gh repo view`
+// (no GitHub remote) yields, the fail-open path that skips the PR lookup.
+function fill(snippet, { branch, repo = '' }) {
+  for (const placeholder of ['"{branch}"', '"{repo}"']) {
+    assert.strictEqual(snippet.split(placeholder).length - 1, 1, `the snippet must carry ${placeholder} exactly once`);
+  }
+  return snippet.replace('"{branch}"', JSON.stringify(branch)).replace('"{repo}"', JSON.stringify(repo));
+}
+
+const currentBranch = (r) => r.run(r.work, ['branch', '--show-current']).trim();
+
 function runSnippet(r) {
-  const stdout = execFileSync('bash', ['-c', extractSnippet()], {
+  const stdout = execFileSync('bash', ['-c', fill(extractSnippet(), { branch: currentBranch(r) })], {
     cwd: r.work,
     timeout: 60000,
     encoding: 'utf8',
@@ -96,7 +109,7 @@ test('the snippet prints the unknown-relation card for unreachable with remoteSh
   t.after(() => fs.rmSync(r.root, { recursive: true, force: true }));
   r.run(r.work, ['checkout', '-q', '-b', 'worktree-record-2']);
   const run = (result) => {
-    const stdout = execFileSync('bash', ['-c', extractSnippet()], {
+    const stdout = execFileSync('bash', ['-c', fill(extractSnippet(), { branch: currentBranch(r) })], {
       cwd: r.work, timeout: 60000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...r.env, CLAUDE_PLUGIN_ROOT: stubPluginRoot(t, result) },
     });
@@ -141,8 +154,6 @@ test('AC1.1: the snippet adopts this record\'s own prior attempt instead of card
   };
   const snippet = extractSnippet();
   assert.strictEqual(snippet.split('"{records}"').length - 1, 1, 'the snippet must carry the "{records}" placeholder exactly once');
-  const repoArg = '"$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)"';
-  assert.ok(snippet.includes(repoArg), 'repo argument expression not found -- the test substitution is out of sync with the live file');
   const run = (script) => {
     const stdout = execFileSync('bash', ['-c', script], {
       cwd: r.work, timeout: 60000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
@@ -150,7 +161,7 @@ test('AC1.1: the snippet adopts this record\'s own prior attempt instead of card
     });
     return JSON.parse(stdout.trim());
   };
-  const withRecords = (records) => snippet.replace(repoArg, '"o/r"').replace('"{records}"', `"${records}"`);
+  const withRecords = (records) => fill(snippet, { branch, repo: 'o/r' }).replace('"{records}"', `"${records}"`);
 
   const own = run(withRecords('1'));
   assert.strictEqual(own.state, 'prior-attempt');
@@ -164,7 +175,7 @@ test('AC1.1: the snippet adopts this record\'s own prior attempt instead of card
   const bundle = run(withRecords('7,1'));
   assert.strictEqual(bundle.state, 'prior-attempt', 'a bundle run matches any of its records');
 
-  const verbatim = run(snippet);
+  const verbatim = run(fill(snippet, { branch }));
   assert.strictEqual(verbatim.state, 'foreign', 'the unsubstituted placeholder matches no record');
   assert.match(verbatim.card, /worktree-record-1/);
 });

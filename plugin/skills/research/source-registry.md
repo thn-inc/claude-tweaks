@@ -30,11 +30,26 @@ renders them identically.
 ### Bounded execution (`runtime`)
 
 Reuse the technique `skills/docs-health/judge-procedure.md` already established for executing
-command blocks — do not invent a second one:
+command blocks — do not invent a second one. It is three plain Bash calls, never one `;`-chained
+compound: a worktree-isolated session refuses some chained shapes outright
+(`_shared/scratch-worktree.md` §7), and `cmd` is whatever the claim names, so its shape is not
+known in advance:
 
 ```bash
-cmd > /tmp/rv-$$.out 2>&1; echo "exit=$?"
+mktemp
 ```
+
+```bash
+cmd > "{tmp-rv-out}" 2>&1
+```
+
+```bash
+tail -20 "{tmp-rv-out}"
+```
+
+`{tmp-rv-out}` is the literal path `mktemp` printed, pasted into both later calls — not `$$`,
+which names a different file in each fresh shell. The Bash tool reports the command's own
+non-zero exit as `Exit code {n}` on the second call; no such line means it exited 0.
 
 Inspect the exit status plus `tail -20` of the temp file. The check is whether the command behaves
 as claimed, not what it prints; an unbounded capture of something like `npm test` runs to hundreds

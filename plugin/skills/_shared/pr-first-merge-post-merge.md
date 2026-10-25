@@ -10,6 +10,25 @@ parked/red/conflict/permission branch in Step 3 never reaches here at all).
 
 ## Step 4: Post-merge reconcile
 
+### Step 4.0: Reopen what the merge closed by mistake (#4199)
+
+Before Step 4.1, while `$PIPELINE_RUN_DIR` still exists (Step 4.2's reconcile may archive it):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/closing-links.js" --run "$PIPELINE_RUN_DIR" --mode post-merge
+```
+
+It reopens every record the PR's fixes block names on a `Refs` line, and every stray linked
+record, that the merge closed after `mergedAt`. That covers a closing link that survived the
+pre-merge check, and a squash message composed without `--keep-open` (Step 3). It polls a
+will-close record up to 15 s, since GitHub closes it about 2 s after the merge, and logs `reopened
+#{n}` per record to `decisions.md`. Whatever the `action`, report each `failed[]` record (reopen it
+by hand) and each `pendingClose[]` record (the merge may still close it — re-run the step once,
+then reopen it by hand if it closed) in the closing summary, never as anything but `merged`. Exit
+3-5 or `gh-absent`: one `SKIP` line (`bin/log-decision.js --status SKIP`, Reversibility n/a), then continue to Step 4.1. An `armed` outcome never reaches
+this step, and the reconciler does not run the CLI; with `--keep-open` on the composer, only a
+Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
+
 ### Step 4.1: Which release carried this? (before reconcile)
 
 A merge can land minutes before a sibling session's version bump and be swept into it with no

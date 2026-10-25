@@ -48,6 +48,16 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   rather than overriding them: under `--dry-run` it does not fast-forward (`mirror` reports
   `skipped` / `dry-run` — a `mirror` the caller named behaves the same), and when the gh preflight fails it is dropped along with the check it
   served, since only a `mirror` the caller named survives the preflight narrowing.
+- **`--dry-run` writes nothing, with one deliberate exception (#4180).** A dry run skips the end-of-pass
+  cache writes, every GitHub write, the declined-learning store prune, the `origin/HEAD` repair, and a
+  run's `worktree-reap-skipped` event append; what residue tracking would have done comes back as
+  `residuePlan`. The shared `git fetch` still runs and still refreshes remote-tracking refs (and prunes
+  them under an explicit `--checks remote-prune`) — a preview over stale refs would be inaccurate, so
+  this is the one write a dry run keeps. A new check's dry-run branch must write nothing else. Reads
+  stay live: the `gh` preflight probe and the PR-state lookups still run, since a preview that did not
+  consult GitHub would report nothing true — so "writes nothing" means no writes, never "makes zero `gh`
+  calls" (#4180's AC1 states the zero-call bar over a fixture where the preflight is stubbed and only
+  the archive check runs).
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
   `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `archive`, `archive-branches`, `remote-prune`,
@@ -82,7 +92,7 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `tests/reconcile.test.js` pins that list to `ALL_CHECKS`.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, runs, branches,
-   remoteBranches, ledgerResidue, console, skipped, timings }`), substituted only when `reconcile()` itself
+   remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }`), substituted only when `reconcile()` itself
    throws. If the new check populates a new top-level result key, this literal needs that key
    added too — an omission here doesn't throw or fail a lint; it just silently under-reports on the
    one code path (a genuine throw inside `reconcile()`) that almost never runs in normal testing,
@@ -268,26 +278,28 @@ effect to its own memoized array directly rather than serving a stale read. Scop
 
 `archiveMerged()`'s main loop no longer carries five independent, interleaved detection
 mechanisms as separate early-return branches. `classifyRunDir(ctx, now)` is the single function
-that owns every mtime-TTL comparison (via `isStaleDir`) and the events-log recency comparison
-(via `ownEventRecency`), returning `{ kind, ttlMs, evidence }` with
-`kind ∈ { 'orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'merged',
-'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
+that owns every mtime-TTL comparison (via `isStaleDir`), the events-log recency comparison
+(via `ownEventRecency`), and the liveness verdict `adhoc-session-ended` consults (through the injectable
+`liveness` argument, default `adHocSessionLiveness`), returning `{ kind, ttlMs, evidence }` with
+`kind ∈ { 'orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended',
+'merged', 'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
 The five pre-consolidation predicates (`isOrphanedMint`, `isAbandonedInterrupted`,
 `isAdHocStandaloneSuperseded`, `decideArchive`, `isStructurallyStuck`) are now thin wrappers that
 call `classifyRunDir` with `ctx.kinds` scoped to their own one kind — this is what keeps a
 standalone call (a unit test constructing a bare fixture dir, or `trackStuckSkip`'s own narrower
 question) answering exactly what it always asked, unaffected by whether the same dir would ALSO
-match some other, higher-precedence kind under the full order. Only `archiveMerged()`'s own main
+match some other, higher-precedence kind under the full order. `adhoc-session-ended` was added
+later (#4179) and has no wrapper predicate. Only `archiveMerged()`'s own main
 loop passes the full, ordered kind set.
 
 The `checkRunIntegrity` shipped-unclosed evidence gate for `abandoned-interrupted` stays
 call-site-only, never folded into the classifier itself (folding it in would misattribute the
-`explicit: true` archival path's justification) — the main loop re-classifies scoped to just
-`adhoc-superseded` when that companion check fails, so a dir that superficially reads
+`explicit: true` archival path's justification) — the main loop re-classifies scoped to
+`adhoc-superseded` and `adhoc-session-ended` when that companion check fails, so a dir that superficially reads
 `abandoned-interrupted` but fails the gate still falls through to the next-lower-precedence kind,
 matching the pre-consolidation `&&`-chained early-return exactly.
 
-The `structurally-stuck` branch exempts an ad-hoc dir at `no-branch`/`no-worktree`/`no-pr` (`isAdHocIntrinsicSkip`, #2724) — that is an ad-hoc dir's normal state, and `adhoc-superseded` archives it once its linked worktree is no longer registered and `ADHOC_SUPERSEDED_TTL_MS` (30 days) has passed — but only when its recorded worktree is a linked worktree: a dir stamped with the main checkout can never be claimed by `adhoc-superseded`, so it stays tracked and keeps escalating. `trackStuckSkip` clears an exempted dir's cache entry (`clearResidue`) and, if it was already escalated, resolves its path off the consolidated record. Unlike Residue pruning above, an escalated entry is dropped only after that resolve lands (`closed`, `path-removed`, `not-found` or `already-closed`): the dir still exists, so a throw or any other status keeps the entry and the next pass retries. The resolve comment says the path is an ad-hoc session directory rather than "no longer exists on disk" (`resolveResidue`'s optional `why`), and under `reconcile --dry-run` the whole clear is skipped, the same guard `pruneResidueFailures` sits behind.
+The `structurally-stuck` branch exempts every genuine ad-hoc dir at `no-branch`/`no-worktree`/`no-pr` (`isAdHocIntrinsicSkip`, #2724, widened by #4179) — that is an ad-hoc dir's normal state. A linked-worktree dir is archived by `adhoc-superseded`, once its worktree is no longer registered and `ADHOC_SUPERSEDED_TTL_MS` (30 days) has passed. A main-checkout dir is archived by `adhoc-session-ended` (never for the caller's own session: a dir whose run-state `sessionId` equals the caller's is skipped, mirroring `abandoned-interrupted`'s `ownLive`), once its session reads `dead` from `adHocSessionLiveness` (`runLiveness` with the worktree probes neutralised, since the main checkout's lock and last commit belong to every session) and `ADHOC_SESSION_ENDED_GRACE_MS` (7 days) has passed by dir mtime. A main-checkout dir whose verdict stays `unknown` is left in place, neither swept nor escalated. `trackStuckSkip` clears an exempted dir's cache entry (`clearResidue`) and, if it was already escalated, resolves its path off the consolidated record. Unlike Residue pruning above, an escalated entry is dropped only after that resolve lands (`closed`, `path-removed`, `not-found` or `already-closed`): the dir still exists, so a throw or any other status keeps the entry and the next pass retries. The resolve comment says the path is an ad-hoc session directory rather than "no longer exists on disk" (`resolveResidue`'s optional `why`), and under `reconcile --dry-run` the whole clear is skipped, the same guard `pruneResidueFailures` sits behind.
 
 ## No-run-state.json terminal path and consolidated escalation (#1811)
 
@@ -397,8 +409,9 @@ would retry on every pass (SessionStart's inline pass AND its detached backgroun
 no-remote path returns before reconcile ever stamps `lastRunAt`, so `skipIfFresh` never short-
 circuits it. The outcome is recorded on the result as `originHeadRepair` —
 `{outcome: 'repaired', branch}`, `{outcome: 'failed', reason}`, or `{outcome: 'skipped',
-reason: 'recent-failure'}` (any of the three degrades to the `no-remote` skip when re-resolving
-still finds nothing, never throws), or `{outcome: 'unresolved'}` when a 'repaired' attempt's
+reason: 'recent-failure' | 'dry-run'}` (`dry-run`: under `--dry-run` neither `set-head` nor the
+failure stamp is attempted, #4180; any of the three degrades to the `no-remote` skip when
+re-resolving still finds nothing, never throws), or `{outcome: 'unresolved'}` when a 'repaired' attempt's
 re-resolve still came up empty — and the key is absent when no repair was attempted (no `origin`
 remote, or the branch already resolved). A failed or skipped outcome also carries `branch` when
 the re-resolve it triggers finds one anyway (the concurrent-winner case). The repair lives in

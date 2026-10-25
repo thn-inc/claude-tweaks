@@ -88,7 +88,8 @@ Before fingerprinting and dedup, re-examine every finding in `$JH_F_LIGHT` and (
 **Step 4 — GATHER OPEN ISSUES for dedup.** Resolve this run's session-scoped temp paths first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" JH_ISSUES_RAW=jh-issues-raw.json JH_ISSUES=jh-issues.json)"
+JH_ISSUES_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value jh-issues-raw.json)"
+JH_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value jh-issues.json)"
 gh issue list --label by:journey-health --state all --json number,state,labels,body --limit 500 > "$JH_ISSUES_RAW"
 ```
 
@@ -107,7 +108,8 @@ Findings from Steps 2-3 (light tier) and Step 3.5 (deep tier) use different `--t
 Always run the light-tier call, even when its findings file is `[]`. Resolve this run's session-scoped paths first (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit an earlier fence's shell variables):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" JH_F_LIGHT=jh-findings-light.json JH_P_LIGHT=jh-payloads-light.json)"
+JH_F_LIGHT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value jh-findings-light.json)"
+JH_P_LIGHT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value jh-payloads-light.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/journey-health.js" validate-findings "$JH_F_LIGHT" \
   --root "${ROOT:-$PWD}" --tier light \
   --run-id "${RUN_ID}" \
@@ -122,7 +124,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/journey-health.js" validate-findings "$JH_F_LIGH
 Run the deep-tier call whenever this run's session-scoped `jh-findings-deep.json` exists (i.e., whenever Step 3.5 reached the **Otherwise:** block, even if the file is `[]`) — this is required for `recordAudit` to fire and the deep cursor to advance on every path through that block (QA-evidence-satisfied, QA-evidence-regression, or live-verification). Re-resolve this fence's session-scoped paths too:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" JH_F_DEEP=jh-findings-deep.json JH_P_DEEP=jh-payloads-deep.json)"
+JH_F_DEEP="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value jh-findings-deep.json)"
+JH_P_DEEP="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value jh-payloads-deep.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/journey-health.js" validate-findings "$JH_F_DEEP" \
   --root "${ROOT:-$PWD}" --tier deep \
   --run-id "${RUN_ID}" \
@@ -154,14 +157,15 @@ Size is always `size:medium` — a journey-health finding carries no scope/size 
 Before filing this firing's own new findings, drain the durable retry queue from prior firings' filing failures and check for regressed reopens (see `_shared/health-state.md`) — both mechanics below follow the canonical shape in `_shared/health-filing-mechanics.md` (`{BINARY}` = `journey-health.js`, `{PREFIX}` = `journey-health`); check that file when either changes to keep this skill's copy in sync with its three siblings. Each drained retry payload is also subject to the same cap check above before its `gh issue create` attempt. Resolve this run's session-scoped temp path first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" JH_RETRY_PAYLOADS=jh-retry-payloads.json)"
+JH_RETRY_PAYLOADS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value jh-retry-payloads.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/journey-health.js" retry-queue drain --root "${ROOT:-$PWD}" > "$JH_RETRY_PAYLOADS"
 ```
 
 For each payload in `$JH_RETRY_PAYLOADS`, attempt `gh issue create` exactly as below. Track every attempt's outcome (retry-queue payloads AND any brand-new payload from this step's own filing loop that fails) as `[{ fingerprint, payload, ok: true }]` or `[{ fingerprint, payload, ok: false, error: "<gh's error output>" }]`, write to this run's session-scoped `jh-retry-results.json`, then re-resolve both session-scoped paths this fence needs (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit the prior fence's shell variable):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" JH_RETRY_RESULTS=jh-retry-results.json JH_ESCALATED=jh-escalated.json)"
+JH_RETRY_RESULTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value jh-retry-results.json)"
+JH_ESCALATED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value jh-escalated.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/journey-health.js" retry-queue update "$JH_RETRY_RESULTS" --root "${ROOT:-$PWD}" > "$JH_ESCALATED"
 ```
 

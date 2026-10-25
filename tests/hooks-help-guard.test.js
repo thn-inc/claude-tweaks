@@ -14,13 +14,12 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
-const { USAGE } = require('../plugin/bin/hooks.js');
-const { readText } = require('./helpers/read-skill');
+const { USAGE, VERBS } = require('../plugin/bin/hooks.js');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -30,14 +29,10 @@ const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-help-sandbox-'));
 
 function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) {
-  try {
-    const stdout = execFileSync('node', [HOOKS, ...args], {
-      input, cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...env },
-    });
-    return { code: 0, stdout };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '' };
-  }
+  const r = spawnSync('node', [HOOKS, ...args], {
+    input, cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...env },
+  });
+  return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
 
 // A real, initialized run dir under a real git checkout — every --run-
@@ -53,10 +48,10 @@ function projectWithRun() {
   return { dir, run };
 }
 
-const VERBS = Object.keys(USAGE);
+const VERB_NAMES = Object.keys(USAGE);
 
 test('#1143: every USAGE-table verb honors --help — usage text, exit 0, no lib call', () => {
-  for (const verb of VERBS) {
+  for (const verb of VERB_NAMES) {
     const result = runHook([verb, '--help']);
     assert.strictEqual(result.code, 0, `${verb} --help must exit 0`);
     assert.strictEqual(result.stdout, `claude-tweaks: usage: ${USAGE[verb]}\n`, `${verb} --help stdout must be exactly the usage line, nothing else`);
@@ -64,7 +59,7 @@ test('#1143: every USAGE-table verb honors --help — usage text, exit 0, no lib
 });
 
 test('#1143: every USAGE-table verb honors -h identically to --help', () => {
-  for (const verb of VERBS) {
+  for (const verb of VERB_NAMES) {
     const result = runHook([verb, '-h']);
     assert.strictEqual(result.code, 0, `${verb} -h must exit 0`);
     assert.strictEqual(result.stdout, `claude-tweaks: usage: ${USAGE[verb]}\n`, `${verb} -h stdout must match --help's`);
@@ -107,29 +102,37 @@ test('#1143: AC2 — the documented state-mutating verbs named in the issue each
   }
 });
 
-// review 3c (medium, direct-verification-confirmed): the tests above only
-// prove every USAGE-table key gets a guard — none of them prove the reverse,
-// that every argv-dispatched verb IN hooks.js's main() has a USAGE entry. A
-// future subcommand added to main()'s `cmd === '...'` chain without a
-// matching USAGE entry would silently ship with no --help guard at all,
-// reintroducing the exact hazard this record exists to close, and none of
-// the tests above would catch it (they only ever iterate Object.keys(USAGE),
-// never hooks.js's actual dispatch branches). This test closes that gap by
-// scanning main()'s own source text for every `cmd === '...'` branch and
-// asserting each one is a USAGE key — EVENTS names are dispatched via a
-// separate `EVENTS.includes(cmd)` check (line ~818), never a `cmd === 'x'`
-// branch, so they're correctly excluded by construction, not by an allowlist
-// that could itself drift.
-test('#1143: every cmd === \'...\' dispatch branch in main() has a matching USAGE entry (guard coverage cannot silently regress)', () => {
-  const source = readText(HOOKS);
-  const mainStart = source.indexOf('async function main(');
-  assert.ok(mainStart !== -1, 'main() not found in hooks.js — has it been renamed?');
-  const mainEnd = source.indexOf('\nif (require.main === module)', mainStart);
-  assert.ok(mainEnd !== -1, 'end-of-main marker not found in hooks.js — has the require.main guard moved?');
-  const mainBody = source.slice(mainStart, mainEnd);
-  const dispatchedVerbs = [...mainBody.matchAll(/cmd === '([a-z-]+)'/g)].map((m) => m[1]);
-  assert.ok(dispatchedVerbs.length >= 14, `expected at least the 14 documented verbs, found ${dispatchedVerbs.length} — has the extraction regex broken?`);
-  for (const verb of dispatchedVerbs) {
-    assert.ok(USAGE[verb], `main() dispatches '${verb}' via cmd === '${verb}' but USAGE has no entry for it — that verb gets no --help guard`);
+test('AC3.1: every VERBS entry carries its own usage line and a run handler, and USAGE is derived from it', () => {
+  assert.ok(Object.keys(VERBS).length >= 21, 'expected at least the 21 documented verbs');
+  for (const [verb, entry] of Object.entries(VERBS)) {
+    assert.strictEqual(typeof entry.usage, 'string', `${verb} usage must be a string`);
+    assert.ok(entry.usage === verb || entry.usage.startsWith(`${verb} `), `${verb}'s usage line must start with its own key`);
+    assert.strictEqual(typeof entry.run, 'function', `${verb} must carry a run handler`);
+  }
+  assert.deepStrictEqual(USAGE, Object.fromEntries(Object.entries(VERBS).map(([v, e]) => [v, e.usage])));
+});
+
+test('AC3.1: every table key appears in the unknown-verb usage output', () => {
+  const r = runHook(['no-such-verb'], { input: '{}' });
+  assert.strictEqual(r.code, 1);
+  for (const [verb, entry] of Object.entries(VERBS)) {
+    assert.ok(r.stderr.includes(`\n  ${entry.usage}\n`), `usage output must list ${verb}: ${entry.usage}`);
+  }
+  assert.ok(r.stderr.includes('\n  <event>  (harness hook events, JSON on stdin: session-start, '), 'usage output must end with the hook-events line');
+});
+
+test('AC2.1: an unknown or missing verb prints the table-derived usage text after its error line', () => {
+  for (const args of [['no-such-verb'], []]) {
+    const r = runHook(args, { input: '{}' });
+    assert.strictEqual(r.code, 1);
+    assert.match(r.stderr, /^claude-tweaks: (unrecognized hooks\.js subcommand 'no-such-verb'|no hooks\.js subcommand given)[^\n]*\nclaude-tweaks: hooks\.js usage:\n/);
+  }
+});
+
+test('prototype-chain names are unrecognized verbs, never dispatched', () => {
+  for (const args of [['constructor'], ['toString', '--help'], ['__proto__']]) {
+    const r = runHook(args, { input: '{}' });
+    assert.strictEqual(r.code, 1, `${args.join(' ')} must exit 1`);
+    assert.match(r.stderr, /unrecognized hooks\.js subcommand/);
   }
 });
