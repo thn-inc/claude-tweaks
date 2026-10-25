@@ -34,6 +34,10 @@ function collapse(s) {
   return s.replace(/\s+/g, ' ');
 }
 
+// The shipped line is one physical line on its own: every placement and sweep predicate matches it
+// that way, so a hard-wrapped or inlined copy is reported rather than tolerated by one and not another.
+const LINE_RE = new RegExp(`^${RETURN_LINE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[ \\t]*$`, 'm');
+
 function walkMarkdown(root) {
   const corpus = new Map();
   const visit = (dir) => {
@@ -62,7 +66,7 @@ function outputToCallerFiles(corpus) {
 }
 
 function lacksLine(text) {
-  return !collapse(text).includes(collapse(RETURN_LINE));
+  return !LINE_RE.test(text);
 }
 
 // The single `## Step 3: Render` / `### Step 3: Render` heading's section, up to the next
@@ -82,7 +86,7 @@ function placementOk(text) {
   try { section = renderSection(text); } catch { return false; }
   const open = section.indexOf('```');
   const close = open === -1 ? -1 : section.indexOf('```', open + 3);
-  const line = section.indexOf(RETURN_LINE);
+  const line = LINE_RE.exec(section)?.index ?? -1;
   return open !== -1 && close !== -1 && line !== -1 && line > close;
 }
 
@@ -100,7 +104,7 @@ function outputSection(text) {
 function outputSectionOk(text) {
   let section;
   try { section = outputSection(text); } catch { return false; }
-  const line = section.indexOf(RETURN_LINE);
+  const line = LINE_RE.exec(section)?.index ?? -1;
   const lastFence = section.lastIndexOf('```');
   return line !== -1 && lastFence !== -1 && line > lastFence;
 }
@@ -176,6 +180,25 @@ test('Output to caller placement go-red: the line moved above the last shape blo
   assert.notEqual(permuted, original);
   assert.equal(outputSectionOk(permuted), false);
   assert.deepEqual(offenders(new Map(CORPUS).set(rel, permuted)), [rel]);
+});
+
+test('malformed shapes fail closed: a missing or doubled heading is rejected, never skipped', () => {
+  const fenced = '```\nX: y\n```\n';
+  assert.equal(placementOk(`intro\n\n${fenced}\n${RETURN_LINE}\n`), false, 'no Step 3: Render heading');
+  assert.equal(placementOk(`## Step 3: Render\n\n${fenced}\n## Step 3: Render\n\n${fenced}\n${RETURN_LINE}\n`), false, 'two Step 3: Render headings');
+  assert.equal(outputSectionOk(`intro\n\n${fenced}\n${RETURN_LINE}\n`), false, 'no Output to caller heading');
+  assert.equal(outputSectionOk(`## Output to caller\n\n${fenced}\n## Output to caller\n\n${fenced}\n${RETURN_LINE}\n`), false, 'two Output to caller headings');
+});
+
+test('own-line match: a hard-wrapped or inlined copy of the line is reported by every predicate', () => {
+  const wrapped = RETURN_LINE.replace('control returns', 'control\nreturns');
+  const inlined = `Note: ${RETURN_LINE}`;
+  const fenced = '```\nX: y\n```\n';
+  for (const [name, variant] of [['wrapped', wrapped], ['inlined', inlined]]) {
+    assert.equal(lacksLine(`Output ONLY these lines:\n\n${fenced}\n${variant}\n`), true, `${name}: sweep`);
+    assert.equal(placementOk(`## Step 3: Render\n\n${fenced}\n${variant}\n`), false, `${name}: render placement`);
+    assert.equal(outputSectionOk(`## Output to caller\n\n${fenced}\n${variant}\n`), false, `${name}: output section`);
+  }
 });
 
 test('walker go-red: a nested "Output ONLY" file without the line is found and reported', () => {
