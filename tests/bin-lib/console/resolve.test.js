@@ -288,7 +288,7 @@ test('AC1.4: a reflect file with no Category line classifies exactly as before â
 });
 
 test('AC3 (classification): a legacy reflect file with no destination line classifies to Skill updates (#4168)', () => {
-  const text = fs.readFileSync(path.join(ROOT, 'tests', 'bin-lib', 'console', 'fixtures', 'staged', 'reflect-ledger-3876.md'), 'utf8');
+  const text = readText(path.join(ROOT, 'tests', 'bin-lib', 'console', 'fixtures', 'staged', 'reflect-ledger-3876.md'));
   assert.ok(!/\*\*Destination:\*\*/.test(text), 'the real legacy fixture carries no destination line');
   assert.deepStrictEqual(classifyStagedItem('reflect-1.md', text), { section: 'Skill updates' });
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': text }, headers: [7] }), policy: 'console-auto', deps: deps() });

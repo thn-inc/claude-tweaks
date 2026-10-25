@@ -241,7 +241,7 @@ test('console-execution.md: an unticked reflect row declines through reflect-app
 const MULTI_CONSOLE_PATH = path.join(ROOT, 'plugin', 'skills', 'flow', 'multispec-review-console.md');
 const MULTI_CONSOLE = readAt('flow', 'multispec-review-console.md');
 const MULTI_TEMPLATE = readAt('flow', 'multispec-console-template.md');
-const MULTI_CONSOLE_RAIL = 52500;
+const { RAIL_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'skill-audit', 'budgets'));
 
 // The list line that starts with `prefix` (e.g. "2. For each `spec-{N}/`"), within the section that
 // starts at `head` — one line, both anchors asserted.
@@ -305,7 +305,7 @@ test('multispec-console-template.md: the Skill updates section renders the stage
   assertEachFactGoesRed(section, MULTI_TEMPLATE_FACTS);
 });
 
-test(`multispec-review-console.md stays under its ${MULTI_CONSOLE_RAIL} B size rail`, () => {
+test('multispec-review-console.md stays under the Read-limit rail (budgets.js RAIL_BYTES)', () => {
   const size = fs.statSync(MULTI_CONSOLE_PATH).size;
-  assert.ok(size < MULTI_CONSOLE_RAIL, `multispec-review-console.md is ${size} B, rail ${MULTI_CONSOLE_RAIL} B`);
+  assert.ok(size < RAIL_BYTES, `multispec-review-console.md is ${size} B, rail ${RAIL_BYTES} B`);
 });

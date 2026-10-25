@@ -62,6 +62,7 @@ const { appendEntry } = require('./lib/log-decision/append');
 const { recordDecline } = require('./lib/declined-learning/store');
 const { readWorkTypes } = require('./lib/work-backend');
 const { defaultRunner } = require('./lib/feedback/file-feedback');
+const { lstatType } = require('./lib/path-guard');
 const {
   applyReflectItems, listApplicable, markApplied, declineItem, emptyResult, APPLIED_KINDS,
 } = require('./lib/console/reflect-apply');
@@ -101,7 +102,8 @@ const realDeps = {
   readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
   writeFile: (p, s) => fs.writeFileSync(p, s),
   mkdir: (p) => fs.mkdirSync(p, { recursive: true }),
-  exists: (p) => fs.existsSync(p),
+  // An edit target must be a file the session can edit (or a symlink to one), not merely present.
+  exists: (p) => ['file', 'symlink'].includes(lstatType(p).type),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
   now: () => Date.now(),

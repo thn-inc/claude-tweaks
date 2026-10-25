@@ -13,6 +13,7 @@ const { findingDescription, parseReflectDestination } = require(path.join(ROOT, 
 const { createFingerprint } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'health-core', 'fingerprint'));
 const { formatEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'append'));
 const { parseWorkTypes, readWorkTypes } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'work-backend'));
+const { readText } = require('../../helpers/read-skill');
 
 const fixtureRoots = [];
 after(() => { for (const r of fixtureRoots) fs.rmSync(r, { recursive: true, force: true }); });
@@ -60,7 +61,7 @@ const RECORD = '# Reflect — staged finding 1\n\n**Category:** observation\n**S
 const DECLINE = '# Reflect — staged finding 2\n\n**Category:** convention\n**Severity:** low\n**Reversibility:** high\n**Destination:** decline already covered by CLAUDE.md\n**Source:** full mode, lens "Approach"\n**Files:** general\n\n## Finding\n\nA convention that CLAUDE.md already states.\n';
 const EDIT = '# Reflect — staged finding 5\n\n**Category:** convention\n**Destination:** edit plugin/skills/review/SKILL.md\n**Files:** plugin/skills/review/SKILL.md\n\n## Finding\n\nReview should say X.\n';
 const BAD_DEFER = RECORD.replace('Defer-reason: genuinely-larger', 'Defer-reason: because');
-const LEGACY = fs.readFileSync(path.join(ROOT, 'tests', 'bin-lib', 'console', 'fixtures', 'staged', 'reflect-ledger-3876.md'), 'utf8');
+const LEGACY = readText(path.join(ROOT, 'tests', 'bin-lib', 'console', 'fixtures', 'staged', 'reflect-ledger-3876.md'));
 
 const consoleDeps = () => ({
   readFile: (p) => fs.readFileSync(p, 'utf8'),

@@ -1,7 +1,6 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
@@ -9,8 +8,9 @@ const {
   DESTINATION_VERBS, RECORD_PROPOSAL_HEADING, APPLICABLE_CATEGORIES, REFLECT_NO_DESTINATION,
   parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem, findingDescription,
 } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'reflect-destination'));
+const { readText } = require('../../helpers/read-skill');
 
-const LEGACY = fs.readFileSync(path.join(__dirname, 'fixtures', 'staged', 'reflect-ledger-3876.md'), 'utf8');
+const LEGACY = readText(path.join(__dirname, 'fixtures', 'staged', 'reflect-ledger-3876.md'));
 
 function file({ category = 'observation', destination, extra = '' } = {}) {
   const dest = destination === undefined ? '' : `**Destination:** ${destination}\n`;
