@@ -36,12 +36,12 @@ function rowFor(text, action) {
 function assertArchiveBackfill(text) {
   const archive = rowFor(text, 'Archive');
   assert.ok(archive, 'Action Vocabulary has an Archive row');
-  for (const s of ['kind: pipeline-run', 'wrap-up/cleanup-procedures.md` Section B', 'bin/hooks.js" archive-run --run', '.claude-tweaks/pipelines/archive/', 'remedy: record', "step-6-auto.md`'s two **Archive** rows"]) {
+  for (const s of ['kind: pipeline-run', 'wrap-up/cleanup-procedures-execution.md` Section B step 4', 'claude-tweaks: archived {run-id}', 'never moved','bin/hooks.js" archive-run --run "{run-dir}"','.claude-tweaks/pipelines/archive/', 'remedy: record', "step-6-auto.md`'s two **Archive** rows"]) {
     assert.ok(archive.includes(s), `Archive row names ${s}`);
   }
   const backfill = rowFor(text, 'Backfill');
   assert.ok(backfill, 'Action Vocabulary has a Backfill row');
-  for (const s of ['kind: release', 'bin/lib/residue/probes/release.js', '## [X.Y.Z](compare-url) (date)', 'remedy: record', "step-6-auto.md`'s two **Backfill** rows"]) {
+  for (const s of ['kind: release', 'bin/lib/residue/probes/release.js', '## [X.Y.Z](compare-url) (date)', 'remedy: record', 'no tag is created or pushed', 'ran: false',"step-6-auto.md`'s two **Backfill** rows"]) {
     assert.ok(backfill.includes(s), `Backfill row names ${s}`);
   }
   for (const row of [archive, backfill]) {
@@ -66,7 +66,9 @@ test('AC1.1: tidy/SKILL.md\'s Action Vocabulary has Archive and Backfill rows, a
 });
 
 test('AC1.1: the recipes the rows cite exist', () => {
-  assert.ok(fs.existsSync(path.join(REPO_ROOT, 'plugin/skills/wrap-up/cleanup-procedures.md')));
+  const sectionB = fs.readFileSync(path.join(REPO_ROOT, 'plugin/skills/wrap-up/cleanup-procedures-execution.md'), 'utf8');
+  assert.match(sectionB, /^## B\. Pipeline run directory/m, 'cleanup-procedures-execution.md has Section B');
+  assert.match(sectionB, /archive-run --run/, 'Section B names the archive-run verb');
   assert.ok(fs.existsSync(path.join(REPO_ROOT, 'plugin/bin/lib/residue/probes/release.js')));
   const archiveRows = STEP6_AUTO.split('\n').filter((l) => l.startsWith('| **Archive** ('));
   const backfillRows = STEP6_AUTO.split('\n').filter((l) => l.startsWith('| **Backfill** ('));
@@ -97,4 +99,14 @@ test('AC1.1 go-red: deleting the Archived verification line fails the assertion'
 test('AC1.1 go-red: deleting the Backfilled verification line fails the assertion', () => {
   const mutated = withoutLine(SKILL, '- [x] Backfilled: ');
   assertMutantFails(mutated, /Backfilled verification line/);
+});
+
+test('AC1.1 go-red: dropping the stdout-success contract from the Archive row fails the assertion', () => {
+  const mutated = SKILL.replace('claude-tweaks: archived {run-id}', 'archived');
+  assertMutantFails(mutated, /Archive row names claude-tweaks: archived/);
+});
+
+test('AC1.1 go-red: dropping the unconfirmed-probe caveat from the Backfill row fails the assertion', () => {
+  const mutated = SKILL.replace('`ran: false`', 'nothing');
+  assertMutantFails(mutated, /Backfill row names ran: false/);
 });
