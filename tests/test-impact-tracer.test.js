@@ -255,6 +255,7 @@ test('AC1.1: bash -o / -euo, sh +e and env wrappers are read as the command they
     assert.ok(h.has(rec('c', p)), `the wrapped git ls-files records c ${p}`);
   }
   assert.ok(!h.has(rec('c', '')), 'every wrapped call records its own cwd, never the root');
+  assert.ok(h.has(rec('f', 'docs/note.md')), 'a node child under env -i is not self-tracing, so its path arguments are recorded');
 });
 
 test('absolute path never consults process.cwd', { skip: process.platform === 'win32' && 'win32: a process cwd cannot be removed' }, () => {

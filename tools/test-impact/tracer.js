@@ -32,6 +32,8 @@
 // Node children trace themselves; for other children the in-repo path arguments are recorded here.
 // `env [options] cmd` and `sh|bash -c` with option clusters (`-o pipefail`, `-euo pipefail`, `+e`) are
 // read as the command they run; an `env` option this does not know falls back to the generic recording.
+// A node child whose env was stripped of the trace (`env -i`, `-u NODE_OPTIONS`, a `NODE_OPTIONS=` or
+// `CT_TRACE_*=` assignment) cannot trace itself, so it is recorded like any other child.
 //
 // Invariants (each one broke the full suite in the spike): wrapped functions copy the original's own
 // property descriptors (util.promisify.custom — `promisify(execFile)` must keep resolving
@@ -700,6 +702,8 @@ function install() {
   }
 
   const isShell = (cmd) => ['sh', 'bash', 'zsh', 'dash', 'ksh'].includes(path.basename(cmd).toLowerCase());
+  // The names that carry the trace into a node child (it traces itself only while it inherits them).
+  const dropsTrace = (name) => name === 'NODE_OPTIONS' || name.startsWith('CT_TRACE_');
   const isEnv = (cmd) => {
     const base = path.basename(cmd).toLowerCase();
     return base === 'env' || base === 'env.exe';
@@ -726,16 +730,22 @@ function install() {
   }
 
   // `env [options] [NAME=value ...] command ...` as the command it runs: { words (the assignments kept),
-  // base (moved by -C/--chdir) }, or null for an option this does not know (the caller then records the
-  // arguments generically, as for any other command).
+  // base (moved by -C/--chdir), stripped (the env no longer carries the trace) }, or null for an option this
+  // does not know (the caller then records the arguments generically, as for any other command).
   function envCommand(words, base) {
     let j = 1;
+    let stripped = false;
     for (; j < words.length; j++) {
       const t = words[j];
       if (t === '--') { j++; break; }
-      if (['-i', '-0', '-v', '-', '--ignore-environment', '--null', '--debug'].includes(t)) continue;
-      if (t === '-u' || t === '--unset' || t === '-P') { j++; continue; }
-      if ((t.startsWith('-u') && !t.startsWith('--')) || t.startsWith('--unset=')) continue;
+      if (['-i', '-', '--ignore-environment'].includes(t)) { stripped = true; continue; }
+      if (['-0', '-v', '--null', '--debug'].includes(t)) continue;
+      if (t === '-u' || t === '--unset') { j++; if (j < words.length && dropsTrace(words[j])) stripped = true; continue; }
+      if (t === '-P') { j++; continue; }
+      if (t.startsWith('--unset=') || (t.startsWith('-u') && !t.startsWith('--'))) {
+        if (dropsTrace(t.slice(t.startsWith('--') ? '--unset='.length : 2))) stripped = true;
+        continue;
+      }
       if (t === '-C' || t === '--chdir' || t.startsWith('--chdir=')) {
         const dir = t.startsWith('--chdir=') ? t.slice('--chdir='.length) : words[++j];
         if (dir === undefined) return null;
@@ -746,29 +756,35 @@ function install() {
       if (t.startsWith('-')) return null;
       break;
     }
-    return { words: words.slice(j), base };
+    return { words: words.slice(j), base, stripped };
   }
 
   // One child command (its words) run from `base` (absolute; undefined = the process cwd). Leading
   // `NAME=value` assignments are skipped; `env [options] cmd ...` is read as `cmd`; `sh -c "<script>"` is
   // read as the shell string it runs; a git command the git rule does not cover falls through with its
   // global options and their values dropped.
-  function recordCommand(commandWords, base) {
+  // `stripped`: an enclosing env or assignment removed or replaced the trace variables, so a node child is not
+  // self-tracing and is recorded like any other child.
+  function recordCommand(commandWords, base, strippedIn) {
     let words = commandWords;
+    let stripped = strippedIn === true;
     let first = 0;
-    while (first < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[first])) first++;
+    while (first < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[first])) {
+      if (dropsTrace(words[first].slice(0, words[first].indexOf('=')))) stripped = true;
+      first++;
+    }
     if (first === words.length) return;
     if (first) words = words.slice(first);
     const cmd = words[0];
     if (isEnv(cmd)) {
       const e = envCommand(words, base);
-      if (e) { recordCommand(e.words, e.base); return; }
+      if (e) { recordCommand(e.words, e.base, stripped || e.stripped); return; }
     }
-    if (isNode(cmd)) return;
+    if (isNode(cmd) && !stripped) return;
     if (isShell(cmd)) {
       const script = shellScript(words);
       if (script !== null) {
-        for (const c of shellCommands(script)) recordCommand(c, base);
+        for (const c of shellCommands(script)) recordCommand(c, base, stripped);
         return;
       }
     }

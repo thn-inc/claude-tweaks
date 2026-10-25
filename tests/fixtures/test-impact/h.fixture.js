@@ -29,3 +29,9 @@ test('env VAR=value cmd', skip, () => {
 test('env -u NAME cmd', skip, () => {
   execFileSync('env', ['-u', 'FOO', 'git', 'ls-files'], quiet(path.join(__dirname, 'bin')));
 });
+
+// `env -i` strips NODE_OPTIONS and CT_TRACE_*, so this node child cannot trace itself (and -i strips PATH,
+// hence the absolute execPath): the parent must record its path argument. `node -e 0` ignores the extra argv.
+test('env -i node', skip, () => {
+  execFileSync('env', ['-i', process.execPath, '-e', '0', 'docs/note.md'], quiet(__dirname));
+});
