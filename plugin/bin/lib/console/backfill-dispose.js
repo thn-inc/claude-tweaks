@@ -119,7 +119,8 @@ function result(item, action, source, extra) {
 }
 
 // The can't-tell record shape composeFindingProposal reads, built from a work item. A finding with no
-// line has none to cite, so the record names `unknown` rather than printing "null".
+// line passes its null line through; composeFindingProposal cites it by path alone. A staged finding
+// file (backfill.js stagedFindingItem) passes its own title, body and stated severity (#4136).
 function findingProposal(item, verdict, runId, confirmed) {
   const f = item.finding;
   const composed = composeFindingProposal({
@@ -128,7 +129,7 @@ function findingProposal(item, verdict, runId, confirmed) {
         id: item.itemId,
         lens: f.lens,
         path: f.path,
-        line: f.line === null || f.line === undefined ? 'unknown' : f.line,
+        line: f.line,
         severity: verdict.severity || f.reporterSeverity,
         reason: verdict.reason || 'unspecified',
         recommendation: verdict.recommendation,
@@ -136,6 +137,7 @@ function findingProposal(item, verdict, runId, confirmed) {
     },
     finding: { claim: item.claimText },
     runId,
+    staged: item.stagedFinding,
     ...(confirmed ? { verdict: { kind: 'confirmed', evidence: verdict.evidence, mainSha: confirmed.mainSha } } : {}),
   });
   // The record is filed under its claim fingerprint (the first marker, which extractFingerprint reads);

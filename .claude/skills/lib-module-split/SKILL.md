@@ -323,6 +323,19 @@ This one is silent, not wrong prose, so it is the easiest to skip:
 - After a split, edits land in the sub-modules, so a journey that lists only the facade stops
   matching both.
 
+## A leaf module when the facade reaches the caller
+
+The facade shape assumes the importers sit outside the module family. When a module the facade
+transitively requires also needs one of the family's functions, importing the facade closes a cycle
+(#4153: `run-liveness/index.js` reaches `hooks/context.js` through `hooks/run-integrity.js` and
+`run-liveness/probes.js`, so `context.js` could not require `index.js`). Move that function, and the
+helpers it uses, into a leaf sub-module that requires nothing (`run-liveness/owner-pid-probe.js`),
+and have the facade and the other importer both require the leaf. Check 3 of the pure-move proof
+still applies. The leaf's requires-nothing property is what the proof does not state, so pin it with
+its own test: strip comments with the shared stripper, assert no `require(` remains, and assert the
+export keys (`tests/bin-lib/run-liveness/owner-pid-probe.test.js`). Register that test as a
+stripper caller (`bin-source-scan-conformance`).
+
 ## Update `docs/plugin-structure.md`
 
 The `plugin/bin/lib/{family}/` line there is the single module-family entry (for #2805, the

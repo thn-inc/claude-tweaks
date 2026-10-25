@@ -12,6 +12,7 @@ const path = require('path');
 const {
   DIGEST_REASONS, areaFor, disposeItem, planBatch,
 } = require('../../../plugin/bin/lib/console/backfill-dispose');
+const { consoleWorkItems } = require('../../../plugin/bin/lib/console/backfill');
 const { BACKFILL_OUTCOMES, BACKFILL_SOURCES } = require('../../../plugin/bin/lib/console/backfill-apply');
 const { findingFingerprint } = require('../../../plugin/bin/lib/console/finding-filing');
 const { extractFingerprint } = require('../../../plugin/bin/lib/issues/record');
@@ -147,6 +148,11 @@ test('a defaulted medium reporter severity files a can\'t-tell', () => {
 test('a finding with no line files without printing "null" as a location', () => {
   const d = dispose(findingItem({ finding: { ...findingItem().finding, line: null } }), consoleV);
   assert.doesNotMatch(d.proposal.text, /:null/);
+});
+
+test('no composed finding body cites a line as :unknown', () => {
+  const item = findingItem({ finding: { ...findingItem().finding, line: null } });
+  for (const v of [consoleV, confirmed()]) assert.doesNotMatch(dispose(item, v).proposal.text, /:unknown\b/);
 });
 
 test('disposition: no-claim item digests with the no-claim reason, naming why', () => {
@@ -308,6 +314,23 @@ const stagedDigest = (stagedName, staged, fixtureName) => dispose(
   undefined,
   () => fixture(fixtureName),
 ).digest.entry;
+
+test('#4136: a staged can\'t-tell finding files under its Title: line with its claim and dispositions', () => {
+  const [item] = consoleWorkItems({
+    consoleDir: CONSOLE_DIR,
+    consoleJson: { items: [{ id: 'review-unconfirmed-3.md', section: 'Low-confidence findings', resolution: 'keep-staged', reason: 'r' }] },
+    decisions: '',
+    readStaged: () => fixture('review-unconfirmed-3880.md'),
+    runId: RUN_ID,
+  });
+  const d = dispose(item, consoleV);
+  assert.strictEqual(d.proposal.title, 'decideConsoleExecute skips the sdd-ruling gate when ctx.rulingTexts is absent (fail-open default on an exported pure function)');
+  assert.ok(d.proposal.text.includes('`decideConsoleExecute` yields `rulingGateGaps: []` when `ctx.rulingTexts` is absent'), d.proposal.text);
+  assert.ok(d.proposal.text.includes('Dispositions: apply'), d.proposal.text);
+  assert.doesNotMatch(d.proposal.text, /:unknown\b/);
+  assert.doesNotMatch(d.proposal.text, /\(severity /, 'the file states no Severity:');
+  assert.strictEqual(d.proposal.fingerprint, findingFingerprint({ lens: '3c', path: 'plugin/bin/lib/reconcile/console-execute.js', claim: item.claimText }));
+});
 
 test('R14b: a table-shaped reflect file digests as its first insight, not the table header', () => {
   const e = stagedDigest('reflect-1.md', { section: 'Pending review', reason: 'non-tangential-category:observation' }, 'reflect-table-3877.md');

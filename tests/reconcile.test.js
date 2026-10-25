@@ -21,7 +21,9 @@ const { gitRepo } = require('./helpers/git-fixtures');
 const { skipUnderRoot } = require('./helpers/root');
 const { readText } = require('./helpers/read-skill');
 
-const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
+const PATH_STUB_SKIP = process.platform === 'win32' && 'win32: execFileSync("gh") never spawns a #!/bin/sh stub named gh on PATH';
+
+const HOOKS =path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
 // #1130: never let an omitted cwd fall through to the spawned subprocess's
 // own process.cwd() — that is the test runner's real working directory, and
@@ -869,6 +871,53 @@ test('archiveMerged: a still-live ad-hoc-standalone dir (worktree exists) is nev
   } finally {
     git(['worktree', 'remove', '--force', wtDir], root);
   }
+});
+
+test('AC1.1 AC4.1 #4179: archiveMerged archives a main-checkout ad-hoc dir whose session is dead and past the grace period', () => {
+  const { archiveMerged, ADHOC_SESSION_ENDED_GRACE_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const root = bareRepoRoot();
+  const runId = '2026-08-01T200000-adhoc-standalone';
+  const dir = mintAdHocDir(root, runId, { worktree: root, status: 'interrupted', sessionId: 'sess-1', lastEvent: 'session-end' }, ADHOC_SESSION_ENDED_GRACE_MS * 2);
+  const result = archiveMerged({ cwd: root, liveness: () => 'dead' });
+  assert.ok(!fs.existsSync(dir));
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)));
+  assert.ok(result.archived.includes(dir));
+});
+
+test('AC2.1 #4179: archiveMerged leaves a main-checkout ad-hoc dir in place while its session is live', () => {
+  const { archiveMerged, ADHOC_SESSION_ENDED_GRACE_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const root = bareRepoRoot();
+  const dir = mintAdHocDir(root, '2026-08-01T210000-adhoc-standalone', { worktree: root, status: 'active', sessionId: 'sess-1' }, ADHOC_SESSION_ENDED_GRACE_MS * 3);
+  const result = archiveMerged({ cwd: root, liveness: () => 'live' });
+  assert.ok(fs.existsSync(dir));
+  assert.ok(!result.archived.includes(dir));
+});
+
+test('#4179: adHocSessionLiveness reads a legacy main-checkout ad-hoc dir with a 5-day-silent events log as dead, where runLiveness as-is does not', () => {
+  const { adHocSessionLiveness } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { runLiveness } = require('../plugin/bin/lib/run-liveness');
+  const root = bareRepoRoot(); // its seed commit is seconds old: last-commit reads positive as-is
+  const dir = mintAdHocDir(root, '2026-08-01T220000-adhoc-standalone', { worktree: root, status: 'interrupted', sessionId: 'sess-1', lastEvent: 'session-end' });
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), `${JSON.stringify({ type: 'gate-denial', ts: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString(), sessionId: 'sess-1' })}\n`);
+  assert.equal(adHocSessionLiveness(dir), 'dead');
+  assert.notEqual(runLiveness(dir).verdict, 'dead');
+});
+
+test('#4179: archiveMerged with the production-default liveness archives a legacy main-checkout ad-hoc dir silent for 5 days', () => {
+  const { archiveMerged, ADHOC_SESSION_ENDED_GRACE_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const root = bareRepoRoot();
+  const runId = '2026-08-01T230000-adhoc-standalone';
+  const dir = mintAdHocDir(root, runId, { worktree: root, status: 'interrupted', sessionId: 'sess-1', lastEvent: 'session-end' });
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), `${JSON.stringify({ type: 'gate-denial', ts: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString(), sessionId: 'sess-1' })}\n`);
+  // Backdate AFTER the events write — writing into the dir moved its mtime.
+  const backdated = new Date(Date.now() - ADHOC_SESSION_ENDED_GRACE_MS * 2);
+  fs.utimesSync(dir, backdated, backdated);
+
+  const result = archiveMerged({ cwd: root, sessionId: 'other-session' }); // no `liveness` injection
+
+  assert.ok(!fs.existsSync(dir));
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)));
+  assert.ok(result.archived.includes(dir));
 });
 
 // --- isWorktreeLocked: reused verbatim from worktree-reap.js (not a copy) ---
@@ -2946,7 +2995,7 @@ test('reconcile(): a dry run still creates one resolver per pass but never persi
   assert.ok(r.timings.phases.archive && r.timings.phases.reap && r.timings.phases.finalize);
 });
 
-test('reconcile(): release, archive and reap all use the pass\'s one resolver (#4032)', async () => {
+test('reconcile(): release, archive and reap all use the pass\'s one resolver (#4032)', { skip: PATH_STUB_SKIP }, async () => {
   const { r, instances, events } = await reconcileWithRecordedResolver({ full: true });
   assert.equal(instances.length, 1);
   assert.ok(!r.skipped.some((s) => s.check === 'release'), `release must have run, got ${JSON.stringify(r.skipped)}`);

@@ -659,6 +659,9 @@ async function resolveConsoleExecution(runDir, {
   }
 
   // 3. console.json.executedAt + resolved (true only when every item cleared), together, in one write.
+  // The same write also records each item's outcome (and its note, when the
+  // outcome carries one) on the item itself, which console/residue.js reads
+  // to tell failed outcomes apart from settled ones.
   // Guarded (unlike the two gh calls above, this is the only I/O in the
   // function with no injected-failure return shape of its own): by this
   // point both gh writes have already landed for real, so an uncaught throw
@@ -666,7 +669,18 @@ async function resolveConsoleExecution(runDir, {
   // `.catch(() => process.exit(0))` and exit silently successful — this
   // module's own header names that exact hazard as one a sibling code path
   // was already patched to avoid.
-  const nextConsoleJson = { ...consoleJson, executedAt: new Date(now).toISOString(), resolved: allCleared };
+  const nextConsoleJson = {
+    ...consoleJson,
+    ...(Array.isArray(consoleJson.items) ? {
+      items: consoleJson.items.map((item, i) => ({
+        ...item,
+        outcome: outcomes[i].outcome,
+        ...(outcomes[i].note ? { note: outcomes[i].note } : {}),
+      })),
+    } : {}),
+    executedAt: new Date(now).toISOString(),
+    resolved: allCleared,
+  };
   try {
     deps.writeFile(path.join(runDir, 'console.json'), JSON.stringify(nextConsoleJson, null, 2));
   } catch (err) {

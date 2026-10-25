@@ -95,7 +95,9 @@ reverse. Post one reply comment (`<!-- console-item: executed -->`) summarizing 
 dropped / filing-failed for a finding row, then edit the
 console comment's first line to add `<!-- claude-tweaks-console-resolved -->`, then write
 `console.json.executedAt` and `console.json.resolved` (`true` only when every item cleared) together,
-in one write. The comment
+in one write. The same write records each item's `outcome` (and `note`, for a non-executed item)
+on its `console.json` item; a `filing-failed` or `reverse-failed` outcome is console residue — archival
+refuses (`console-residue`) until `console-residue.js --ack` (#4172). The comment
 marker is the source of truth; the `console.json` completion fields are the local cache. A split-brain
 (reply posted, marker edit failed partway) is repaired by the next detection pass: it keys
 "already executed" off the reply comment's presence on the PR, not off `console.json` alone, so a

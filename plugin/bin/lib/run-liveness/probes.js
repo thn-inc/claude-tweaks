@@ -31,6 +31,46 @@ function lockInUse(worktree) {
   throw new Error(`worktree lock state is ${verdict} for ${worktree}`);
 }
 
+// #1737: one read of events.jsonl (via context.js's shared readEventLines)
+// answering both questions archive-merged.js's `isAbandonedInterrupted` used to
+// ask via two separate reads. `readable` is distinct from `lastOwnMs`'s own
+// `null`, which conflates two different things: "the log is readable but has no
+// qualifying (non-fallback, parseable-ts) event" and "the log couldn't be read
+// in the first place." Only callers that must tell those apart read `readable`
+// (archive-merged.js's isAbandonedInterrupted path and `ownEventAt` below; #1673
+// F9 review finding): a genuinely unreadable/absent log is UNKNOWN evidence, not
+// proof of staleness.
+//
+// `lastOwnMs` is the newest event this run can actually claim as its own, in
+// ms — or null when there are none. Deliberately NOT run-state's `updatedAt`,
+// and deliberately excluding `attribution: 'fallback'` lines: a fallback
+// event is one ANOTHER session's hook guessed into this run because the run
+// had no provable owner (context.js's resolveRun). Those lines advance
+// `updatedAt` without this run being alive at all, which is precisely how an
+// abandoned run looks perpetually busy and never becomes closeable (#1673
+// Deliverable 4).
+//
+// Deliberately asymmetric with context.js's `scanWrapupEvents` (read by
+// `checkRunIntegrity`), which does NOT filter fallback-attributed lines: a
+// run whose events.jsonl holds ONLY fallback-attributed lines can therefore
+// read as both "abandoned" here (no self-attributed activity) AND "shipped"
+// there (>=1 skill_invoked still counts, fallback or not). That combination
+// is coherent and intended, not a bug to reconcile: the work shipped, and
+// nothing THIS run itself produced has touched it since — a future reader
+// should not "fix" the two filters into agreement.
+function ownEventRecency(runDir) {
+  const lines = readEventLines(runDir);
+  if (lines === null) return { readable: false, lastOwnMs: null };
+  let newest = null;
+  for (const ev of lines) {
+    if (!ev || ev.attribution === 'fallback') continue;
+    const t = Date.parse(ev.ts);
+    if (Number.isNaN(t)) continue;
+    if (newest === null || t > newest) newest = t;
+  }
+  return { readable: true, lastOwnMs: newest };
+}
+
 // { lastOwnMs, lastSessionEndMs } over the run's events.jsonl. Both ignore
 // `attribution: 'fallback'` lines (another session's hook guessed them into this
 // run). Throws when the log is absent/unreadable — that is unknown evidence, not
@@ -40,8 +80,6 @@ function lockInUse(worktree) {
 // resolving this run with non-fallback attribution can append one; lastOwnMs is
 // unchanged.
 function ownEventAt(runDir, ownerSessionId) {
-  // Lazy: archive-merged.js is a large module most callers never need.
-  const { ownEventRecency } = require('../reconcile/archive-merged');
   const { readable, lastOwnMs } = ownEventRecency(runDir);
   if (!readable) throw new Error(`could not read events.jsonl in ${runDir}`);
   let lastSessionEndMs = null;
@@ -64,4 +102,4 @@ const DEFAULT_PROBES = {
   ownEventAt,
 };
 
-module.exports = { DEFAULT_PROBES };
+module.exports = { DEFAULT_PROBES, ownEventRecency };

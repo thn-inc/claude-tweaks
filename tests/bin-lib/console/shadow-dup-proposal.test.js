@@ -11,6 +11,7 @@ const { run, USAGE, readNoFollow } = require(path.join(ROOT, 'plugin', 'bin', 's
 const { fencedBlock, extractFingerprint, DEFER_REASONS } =require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'record'));
 const { resolveAll, SHADOW_DUP_RE } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'resolve'));
 const { unresolvedItems } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
+const { shapeGate } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'materialize-format'));
 
 const COPY = '## Finding\r\n\nuses ```js fences``` and `ticks`  \n';
 
@@ -333,5 +334,31 @@ test('AC4 e2e (spec AC5, shadow-dup half): a console-auto run with one copy per 
       assert.equal(code, 2, item.id);
       assert.equal(fs.existsSync(out), false, item.id);
     }
+  }
+});
+
+const LEFTOVER_COPY = [
+  'Title: Leftover thing',
+  'Type: task',
+  '',
+  '## Current State',
+  'copy state',
+  '',
+  '## Deliverables',
+  '- [ ] copy deliverable',
+  '',
+  '## Acceptance Criteria',
+  '1. copy AC',
+  '',
+  '## Release Note',
+  'copy note',
+].join('\n');
+
+test('AC2.1: shapeGate on a proposal quoting a spec-shaped copy reports the record\'s own shape (Open Question, not Acceptance Criteria)', () => {
+  for (const anchorText of ['a different anchor', undefined]) {
+    const r = composeShadowDupProposal({ name: 'leftover-x.md.shadow-dup', text: LEFTOVER_COPY, anchorText, runId: 'run-1' });
+    assert.equal(r.ok, true);
+    assert.match(r.proposal, /^## Open Question$/m);
+    assert.deepEqual(shapeGate(r.proposal), { ok: false, missing: ['Acceptance Criteria'] });
   }
 });

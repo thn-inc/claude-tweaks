@@ -16,6 +16,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const post = require('../plugin/bin/lib/hooks/post-tool-use');
 const { gitRepo, harnessWorktreeOf } = require('./helpers/git-fixtures');
+const { shellQuote } = require('./helpers/shell-quote');
 
 test('warns with a re-anchor pointer after ExitWorktree (action: remove) tears down the worktree', () => {
   const main = gitRepo();
@@ -43,7 +44,7 @@ test('warns after a sanctioned Bash `git worktree remove` of a worktree other th
   const main = gitRepo();
   const wt = harnessWorktreeOf(main);
   execFileSync('git', ['-C', main, 'worktree', 'remove', '--force', wt]);
-  const command = `git worktree remove ${wt}`;
+  const command = `git worktree remove ${shellQuote(wt)}`;
   const input = { tool_name: 'Bash', tool_input: { command }, cwd: main };
   const out = post.run({ input, cwd: main });
   assert.ok(out.json && typeof out.json.systemMessage === 'string');

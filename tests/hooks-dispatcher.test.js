@@ -10,6 +10,7 @@ const { readRunState } = require('../plugin/bin/lib/hooks/context');
 const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { linkedWorktreeOf } = require('./helpers/git-fixtures');
 const { skipUnderRoot } = require('./helpers/root');
+const { shellQuote } = require('./helpers/shell-quote');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -1068,7 +1069,7 @@ test('an existing, never-added file that is NOT gitignored stays denied (no gate
   const target = path.join(project, 'scratch.txt');
   fs.writeFileSync(target, 'pre-existing, never git-added, not ignored');
   const result = runHook(['pre-tool-use'], {
-    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: `cp source.txt ${target}` } }),
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: `cp source.txt ${shellQuote(target)}` } }),
     cwd: project,
   });
   assert.strictEqual(result.code, 0);
@@ -1087,7 +1088,7 @@ function runBashPreToolUse(command, cwd) {
 test('#3080 AC: bare redirection writes from a worktree-always main checkout are DENIED', () => {
   const { project } = policyRepoWithRun();
   const target = path.join(project, 'tracked-file.js');
-  for (const command of [`echo x > ${target}`, `printf y >> ${target}`, `cat a > ${target}`]) {
+  for (const command of [`echo x > ${shellQuote(target)}`, `printf y >> ${shellQuote(target)}`, `cat a > ${shellQuote(target)}`]) {
     const result = runBashPreToolUse(command, project);
     assert.strictEqual(result.code, 0, command);
     assert.match(result.stdout, /"permissionDecision":"deny"/, command);
@@ -1105,11 +1106,11 @@ test('#3080 AC: /dev/null, fd duplication, a gitignored target, and a pipeline-b
   }
 
   fs.writeFileSync(path.join(project, '.gitignore'), '*.log\n');
-  const ignoredResult = runBashPreToolUse(`echo x > ${path.join(project, 'ignored.log')}`, project);
+  const ignoredResult = runBashPreToolUse(`echo x > ${shellQuote(path.join(project, 'ignored.log'))}`, project);
   assert.strictEqual(ignoredResult.code, 0);
   assert.doesNotMatch(ignoredResult.stdout, /"permissionDecision":"deny"/, 'a gitignored redirection target must be allowed');
 
-  const pipelineResult = runBashPreToolUse(`echo x > ${path.join(run, 'work', 'x')}`, project);
+  const pipelineResult = runBashPreToolUse(`echo x > ${shellQuote(path.join(run, 'work', 'x'))}`, project);
   assert.strictEqual(pipelineResult.code, 0);
   assert.doesNotMatch(pipelineResult.stdout, /"permissionDecision":"deny"/, 'a .claude-tweaks/pipelines/ redirection target must be allowed');
 });
@@ -1183,7 +1184,7 @@ test('#3989 AC1: the frozen queue-pull grouping snippet (a `>` inside its heredo
 test('#3989 AC2: the same snippet with a real top-level redirect into the repo after the delimiter IS denied', () => {
   const { project } = policyRepoWithRun();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3989-queue-'));
-  const command = `${frozenSnippet(path.join(tmp, 'plugin'), tmp)}\necho x > ${path.join(project, 'tracked-file.js')}`;
+  const command = `${frozenSnippet(path.join(tmp, 'plugin'), tmp)}\necho x > ${shellQuote(path.join(project, 'tracked-file.js'))}`;
   const result = runBashPreToolUse(command, project);
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /"permissionDecision":"deny"/, 'a redirect after the closing delimiter must still be scanned');

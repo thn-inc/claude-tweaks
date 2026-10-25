@@ -16,6 +16,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { readText } = require('./helpers/read-skill');
+const { shellQuote } = require('./helpers/shell-quote');
 const { isPolicyOnlyCommit, POLICY_COMMIT_ALLOWLIST, isDeleteOnlyPush, DELETE_ONLY_PUSH_ALLOWLIST } = pre;
 
 // Sibling suites contending for the same machine can push a plain git init/
@@ -257,8 +258,8 @@ test('a Bash WRITE SHAPE (tee/cp) targeting policy.yml stays denied — the exem
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   const abs = path.join(repo, '.claude-tweaks', 'policy.yml');
-  assertDenied(pre.run({ input: bashInput('tee ' + abs, repo), runDir: null, runState: null, cwd: repo }));
-  assertDenied(pre.run({ input: bashInput('cp /tmp/x ' + abs, repo), runDir: null, runState: null, cwd: repo }));
+  assertDenied(pre.run({ input: bashInput('tee ' + shellQuote(abs), repo), runDir: null, runState: null, cwd: repo }));
+  assertDenied(pre.run({ input: bashInput('cp /tmp/x ' + shellQuote(abs), repo), runDir: null, runState: null, cwd: repo }));
   // The file-tool form of the same target is the exemption's whole point:
   assertAllowed(pre.run({ input: editInput(abs), runDir: null, runState: null, cwd: repo }));
 });

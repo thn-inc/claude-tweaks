@@ -123,7 +123,7 @@ test('record-pr is cited as the sanctioned run-state write path, not a direct wr
 });
 
 test('git-discipline.md states the phase-exit push rule once, cites the spike headroom, and never persists a degrade flag', () => {
-  assert.match(GIT_DISCIPLINE, /## Phase-exit push \(`integration-model: pr-first` only\)/);
+  assert.match(GIT_DISCIPLINE, /## Phase exit — one `phase-exit\.js` call/);
   assert.match(GIT_DISCIPLINE, /≥50× headroom/);
   assert.match(
     GIT_DISCIPLINE,
@@ -230,7 +230,8 @@ test('#3319: steps-and-gates.md phase-exit paragraph routes a non-frontend polis
 });
 
 test('bin/hooks.js record-pr verb writes run-state.json.pr through writeRunState, mirroring record-worktree', () => {
-  assert.match(HOOKS_JS, /if \(cmd === 'record-pr'\)/);
+  assert.match(HOOKS_JS, /'record-pr': \{[^}\n]*\brun: runRecordPr\b/);
+  assert.match(HOOKS_JS, /^async function runRecordPr\(argv\) \{/m);
   // Anchored on the property this test is named for — run-state reaches disk
   // only through the sanctioned `writeRunState` writer (CLAUDE.md's
   // write-ownership rule), and the field it writes is `pr` — rather than on the

@@ -3,6 +3,7 @@
 // against every existing record, and write the proposals that remain (#3949).
 //   node bin/console-filings.js --run <run-dir> --existing <issues.json> --out-dir <dir> [--only <item,...>] [--help]
 //   node bin/console-filings.js --run <run-dir> --list
+//   node bin/console-filings.js --run <run-dir> --fyi
 // Plans one filing per can't-tell item (a console item carrying `tiebreak`,
 // bin/lib/console/resolve.js's findingItems; bin/lib/console/finding-filing.js
 // composes each). The default selection is every such item — the unattended rule,
@@ -15,7 +16,13 @@
 // remaining proposal is written to <out-dir>/console-filing-{n}.md. The Review
 // Console's Queue-writes step files those proposals. Never calls gh.
 // Prints JSON: { file: [{ item, fingerprint, title, proposal: <path>, claimMissing? }],
-//                deduped: [{ item, fingerprint, number }] }
+//                deduped: [{ item, fingerprint, number }], logFailures: [{ item, error }] }
+// Each deduped entry's trace is appended to the run's decisions.md under `## /wrap-up`
+// (#4026): `AUTO {time} — Queue write: {item} already filed as #{number}
+// (work-fingerprint {fingerprint}). Reversibility: n/a.`, the line review-console.md's
+// Can't-tell filings told the caller to log. A failed append lands in logFailures (always
+// present, empty when none) with one stderr line; it never changes the exit code. --list
+// and every non-zero exit log nothing.
 // claimMissing (true, else absent) marks a proposal whose finding has no entry in the run's
 // review-findings.json: it names the location but not the claim, and stderr says so per item.
 // --list is read-only (no --existing, --out-dir or --only; nothing written): it
@@ -23,13 +30,18 @@
 // human-present console renders — as JSON [{ id, section, recommendation,
 // severity, lens, path, line, resolution, cantTell }]: resolution is the
 // Approve-all default, cantTell marks the ids --only accepts.
+// --fyi is read-only too (same refusals as --list, and not combinable with it): it prints
+// the Low-confidence / Contested / Dropped-by-tiebreak sections the auto-merge short-circuit's
+// FYI shows (lib/console/finding-outcomes.js's renderFindingFyi — each can't-tell finding with the
+// record it is filed as), then a newline; nothing when the run holds no finding (#4171).
 // Exit 0 on success; 2 on a malformed invocation (a missing/unknown flag, an
 // unreadable or unparseable --existing, an --only naming no can't-tell item —
 // the message lists the valid ids); 3
 // when the run dir is missing or not anchored under the main checkout (a
 // worktree-local shadow — _shared/pipeline-run-dir.md's Anchoring section,
 // [IL-127]), or --out-dir is unwritable. This is the Sanctioned-writer vocabulary
-// (no exit 1), though the run dir is only read: the writes are the caller-named
+// (no exit 1), though the run dir's only write is those appended decisions.md
+// lines: the other writes are the caller-named
 // --out-dir's files, create-or-overwrite with no lock, so a caller reusing a
 // directory owns what an earlier run left in it.
 'use strict';
@@ -37,24 +49,28 @@
 const fs = require('fs');
 const path = require('path');
 const { resolveTarget } = require('./lib/stage-item/write');
+const { formatEntry, appendEntry } = require('./lib/log-decision/append');
 const { findingItems, runIdOf } = require('./lib/console/resolve');
 const { planFilings, fingerprintMap } = require('./lib/console/finding-filing');
 const { checkFingerprint } = require('./lib/issues/record');
+const { cantTellOutcomes, renderFindingFyi } = require('./lib/console/finding-outcomes');
 
 const USAGE = 'usage: console-filings.js --run <run-dir> --existing <issues.json> --out-dir <dir> [--only <item,...>] [--help]\n'
   + '       console-filings.js --run <run-dir> --list\n'
+  + '       console-filings.js --run <run-dir> --fyi\n'
   + '  exit 0 ok; 2 malformed invocation or unparseable --existing; 3 run dir missing/not anchored, or --out-dir unwritable\n';
 
 const VALUE_FLAGS = { '--run': 'run', '--existing': 'existing', '--out-dir': 'outDir', '--only': 'only' };
 
 function parseArgs(argv) {
   const o = {
-    run: null, existing: null, outDir: null, only: null, list: false, help: false,
+    run: null, existing: null, outDir: null, only: null, list: false, fyi: false, help: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { o.help = true; continue; }
     if (a === '--list') { o.list = true; continue; }
+    if (a === '--fyi') { o.fyi = true; continue; }
     if (!Object.hasOwn(VALUE_FLAGS, a)) return { error: `unknown argument: ${a}` };
     const v = argv[++i];
     if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: `${a} requires a value` };
@@ -72,6 +88,8 @@ const realDeps = {
   mkdir: (p) => fs.mkdirSync(p, { recursive: true }),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  now: () => Date.now(),
+  appendDecision: appendEntry,
 };
 
 // One --list row: the item's console fields plus its tiebreak verdict's, null when it has none.
@@ -83,15 +101,18 @@ function listRow(i) {
   };
 }
 
-function run(argv, deps = realDeps) {
+function run(argv, overrides = {}) {
+  const deps = { ...realDeps, ...overrides };
   const o = parseArgs(argv);
   const usageError = (message) => { deps.stderr(`console-filings.js: ${message}\n${USAGE}`); return 2; };
   if (o.error) return usageError(o.error);
   if (o.help) { deps.stdout(USAGE); return 0; }
   if (!o.run) return usageError('--run <run-dir> is required');
-  if (o.list && (o.existing || o.outDir || o.only !== null)) return usageError('--list takes no --existing, --out-dir or --only');
-  if (!o.list && !o.existing) return usageError('--existing <issues.json> is required');
-  if (!o.list && !o.outDir) return usageError('--out-dir <dir> is required');
+  if (o.list && o.fyi) return usageError('--list and --fyi are mutually exclusive');
+  const readOnly = o.list || o.fyi;
+  if (readOnly && (o.existing || o.outDir || o.only !== null)) return usageError(`${o.list ? '--list' : '--fyi'} takes no --existing, --out-dir or --only`);
+  if (!readOnly && !o.existing) return usageError('--existing <issues.json> is required');
+  if (!readOnly && !o.outDir) return usageError('--out-dir <dir> is required');
   let only = null;
   if (o.only !== null) {
     only = o.only.split(',').map((s) => s.trim()).filter(Boolean);
@@ -107,6 +128,12 @@ function run(argv, deps = realDeps) {
     if (target.reason === 'missing') deps.stderr(`console-filings.js: run dir does not exist: ${o.run}\n`);
     else deps.stderr(`console-filings.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
+  }
+
+  if (o.fyi) {
+    const text = renderFindingFyi(cantTellOutcomes({ runDir: target.dir, deps }));
+    if (text) deps.stdout(text + '\n');
+    return 0;
   }
 
   const { items: findingRows, findings } = findingItems({ runDir: target.dir, deps });
@@ -133,7 +160,7 @@ function run(argv, deps = realDeps) {
   const planned = planFilings({ items: items.map((i) => ({ ...i, resolution: 'filed' })), findings, runId: runIdOf(target.dir) });
 
   const known = fingerprintMap(rows);
-  const result = { file: [], deduped: [] };
+  const result = { file: [], deduped: [], logFailures: [] };
   const toWrite = [];
   for (const p of planned) {
     if (p.claimMissing) deps.stderr(`console-filings.js: ${p.item}: the finding's claim text is unavailable (review-findings.json has no entry for its tiebreak id) — its proposal names the location only\n`);
@@ -153,6 +180,17 @@ function run(argv, deps = realDeps) {
   } catch (err) {
     deps.stderr(`console-filings.js: could not write --out-dir ${o.outDir} (${err && err.message})\n`);
     return 3;
+  }
+  const now = deps.now();
+  for (const d of result.deduped) {
+    const text = `${d.item} already filed as #${d.number} (work-fingerprint ${d.fingerprint})`;
+    try {
+      deps.appendDecision({ runDir: target.dir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now, step: 'Queue write', text, reversibility: 'n/a' }) });
+    } catch (err) {
+      const error = String((err && err.message) || err);
+      result.logFailures.push({ item: d.item, error });
+      deps.stderr(`console-filings.js: could not append the decisions.md entry for ${d.item}: ${error}\n`);
+    }
   }
   deps.stdout(JSON.stringify(result) + '\n');
   return 0;

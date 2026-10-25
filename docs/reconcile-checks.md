@@ -238,12 +238,34 @@ run skipped here escalates through the same structurally-stuck path as the main 
 `hooks.js archive-run` refuses on the same two conditions, after its own guards, and
 `review-coordination.js check-coverage` prints the same coverage result without refusing anything.
 
+**An unfiled can't-tell finding blocks archival of an auto-merge run (#4171).** An auto-merge
+path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) renders no Review Console
+and writes no `console.json`, so a can't-tell tiebreak
+finding the run held would otherwise be lost at archive. `unfiledCantTellFindings` (in
+`archive-merged.js`) returns `[]` unless `readTopLevelConsoleState` is `none` and
+`consoleReplacedByAutoMerge` is true; otherwise it names, via `console/finding-outcomes.js`'s
+`unfiledCantTell`, each finding of the run dir and of every `spec-*/` dir (prefixed `spec-N/`)
+with no `AUTO … filed as #{n} (work-fingerprint {fp})` line in that dir's `decisions.md`. A read
+failure fails closed. `runTiebreakCoverage` carries the list as `unfiledCantTell`, and
+`archiveUnlessTiebreakGap`, the single choke point every archive decision that carries a run dir passes (`decideArchive`'s thin wrapper holds none, so it never evaluates the guard), evaluates it
+last, after the artifact checks above: the skip reason is **`cant-tell-unfiled`**, carrying
+`unfiled` and `CANT_TELL_UNFILED_HINT`. It is in `STRUCTURALLY_STUCK_REASONS`, the `status: clean`
+sweep's `onSkip` tracks it, and a rendered console (a `console.json` or a `Review Console:
+terminal decision` line) turns the guard off. `hooks.js archive-run` refuses the same condition, inside its
+`console-never-rendered-staged-pending` block and after that refusal, printing the hint with the
+real run dir in place of `{run-dir}`. The remedy is to file each finding through
+`wrap-up/review-console.md`'s Can't-tell filings: a `spec-N/`-prefixed id is filed and logged with
+`--run {run-dir}/spec-N` (its own `decisions.md`). Every other run archives exactly as before.
+
 **Console residue (#3949).** `readConsoleState` returns `residue` when a run's console resolved
 (or wrote no top-level `console.json`) but `console/residue.js`'s `readRunResidue` still reports an
-unacknowledged console holding `pending`/`keep-staged` items, or an unreadable one (fail closed).
+unacknowledged console holding `pending`/`keep-staged` items (or a PR console item whose outcome is
+`filing-failed`/`reverse-failed`), or an unreadable one (fail closed).
 Every site that skips `console-unresolved` — `decideArchiveCore`, the `status: clean` by-number
 sweep, `hooks.js archive-run` — skips or refuses `console-residue` too, which a human clears with
-`console-residue.js --ack` (an unreadable `console.json` must be repaired or removed instead). It is
+`console-residue.js --ack` (an unreadable `console.json` must be repaired or removed instead). The
+skip carries a `hint` naming the open items and any unreadable
+`console.json`, which `reconcile/index.js` passes through to `result.runs` (#4172). It is
 deliberately not in `STRUCTURALLY_STUCK_REASONS`: an acknowledgement, not a re-run, converges it.
 
 **Residue pruning.** After every `archive` pass, `cache.js`'s `pruneResidueFailures` drops any
@@ -278,26 +300,28 @@ effect to its own memoized array directly rather than serving a stale read. Scop
 
 `archiveMerged()`'s main loop no longer carries five independent, interleaved detection
 mechanisms as separate early-return branches. `classifyRunDir(ctx, now)` is the single function
-that owns every mtime-TTL comparison (via `isStaleDir`) and the events-log recency comparison
-(via `ownEventRecency`), returning `{ kind, ttlMs, evidence }` with
-`kind ∈ { 'orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'merged',
-'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
+that owns every mtime-TTL comparison (via `isStaleDir`), the events-log recency comparison
+(via `ownEventRecency`), and the liveness verdict `adhoc-session-ended` consults (through the injectable
+`liveness` argument, default `adHocSessionLiveness`), returning `{ kind, ttlMs, evidence }` with
+`kind ∈ { 'orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended',
+'merged', 'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
 The five pre-consolidation predicates (`isOrphanedMint`, `isAbandonedInterrupted`,
 `isAdHocStandaloneSuperseded`, `decideArchive`, `isStructurallyStuck`) are now thin wrappers that
 call `classifyRunDir` with `ctx.kinds` scoped to their own one kind — this is what keeps a
 standalone call (a unit test constructing a bare fixture dir, or `trackStuckSkip`'s own narrower
 question) answering exactly what it always asked, unaffected by whether the same dir would ALSO
-match some other, higher-precedence kind under the full order. Only `archiveMerged()`'s own main
+match some other, higher-precedence kind under the full order. `adhoc-session-ended` was added
+later (#4179) and has no wrapper predicate. Only `archiveMerged()`'s own main
 loop passes the full, ordered kind set.
 
 The `checkRunIntegrity` shipped-unclosed evidence gate for `abandoned-interrupted` stays
 call-site-only, never folded into the classifier itself (folding it in would misattribute the
-`explicit: true` archival path's justification) — the main loop re-classifies scoped to just
-`adhoc-superseded` when that companion check fails, so a dir that superficially reads
+`explicit: true` archival path's justification) — the main loop re-classifies scoped to
+`adhoc-superseded` and `adhoc-session-ended` when that companion check fails, so a dir that superficially reads
 `abandoned-interrupted` but fails the gate still falls through to the next-lower-precedence kind,
 matching the pre-consolidation `&&`-chained early-return exactly.
 
-The `structurally-stuck` branch exempts an ad-hoc dir at `no-branch`/`no-worktree`/`no-pr` (`isAdHocIntrinsicSkip`, #2724) — that is an ad-hoc dir's normal state, and `adhoc-superseded` archives it once its linked worktree is no longer registered and `ADHOC_SUPERSEDED_TTL_MS` (30 days) has passed — but only when its recorded worktree is a linked worktree: a dir stamped with the main checkout can never be claimed by `adhoc-superseded`, so it stays tracked and keeps escalating. `trackStuckSkip` clears an exempted dir's cache entry (`clearResidue`) and, if it was already escalated, resolves its path off the consolidated record. Unlike Residue pruning above, an escalated entry is dropped only after that resolve lands (`closed`, `path-removed`, `not-found` or `already-closed`): the dir still exists, so a throw or any other status keeps the entry and the next pass retries. The resolve comment says the path is an ad-hoc session directory rather than "no longer exists on disk" (`resolveResidue`'s optional `why`), and under `reconcile --dry-run` the whole clear is skipped, the same guard `pruneResidueFailures` sits behind.
+The `structurally-stuck` branch exempts every genuine ad-hoc dir at `no-branch`/`no-worktree`/`no-pr` (`isAdHocIntrinsicSkip`, #2724, widened by #4179) — that is an ad-hoc dir's normal state. A linked-worktree dir is archived by `adhoc-superseded`, once its worktree is no longer registered and `ADHOC_SUPERSEDED_TTL_MS` (30 days) has passed. A main-checkout dir is archived by `adhoc-session-ended` (never for the caller's own session: a dir whose run-state `sessionId` equals the caller's is skipped, mirroring `abandoned-interrupted`'s `ownLive`), once its session reads `dead` from `adHocSessionLiveness` (`runLiveness` with the worktree probes neutralised, since the main checkout's lock and last commit belong to every session) and `ADHOC_SESSION_ENDED_GRACE_MS` (7 days) has passed by dir mtime. A main-checkout dir whose verdict stays `unknown` is left in place, neither swept nor escalated. `trackStuckSkip` clears an exempted dir's cache entry (`clearResidue`) and, if it was already escalated, resolves its path off the consolidated record. Unlike Residue pruning above, an escalated entry is dropped only after that resolve lands (`closed`, `path-removed`, `not-found` or `already-closed`): the dir still exists, so a throw or any other status keeps the entry and the next pass retries. The resolve comment says the path is an ad-hoc session directory rather than "no longer exists on disk" (`resolveResidue`'s optional `why`), and under `reconcile --dry-run` the whole clear is skipped, the same guard `pruneResidueFailures` sits behind.
 
 ## No-run-state.json terminal path and consolidated escalation (#1811)
 
@@ -334,7 +358,9 @@ main loop, landed via #1962/#2226/#2228/#2231):
   `tiebreak-coverage-missing` and `tiebreak-artifact-invalid` (a run whose `review-findings.json`
   lists a finding with no tiebreak verdict line in `decisions.md`, or is malformed; the skip carries
   `missing` ids and a `hint`, which `reconcile/index.js` passes through to `result.runs`, and the body
-  carries their remedy line after the `merged-partial` one). `no-repo-slug` is also in
+  carries their remedy line after the `merged-partial` one), and #4171's `cant-tell-unfiled` (an
+  auto-merge run holding a can't-tell finding with no filed record, carried as `unfiled` on the
+  skip, with its own remedy line after the tiebreak one). `no-repo-slug` is also in
   `STRUCTURALLY_STUCK_REASONS` but is not listed here: it can never be filed into this record, because
   with no repo slug `findOrCreateIssue` returns `escalation-failed`, so it shows only in the residue
   summary's stuck count. Each path's own reason is its

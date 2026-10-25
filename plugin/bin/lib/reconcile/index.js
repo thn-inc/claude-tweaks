@@ -532,6 +532,7 @@ async function reconcileInner(opts, state) {
         reason: s.reason,
         ...(s.unclosed !== undefined ? { unclosed: s.unclosed } : {}),
         ...(s.missing !== undefined ? { missing: s.missing } : {}),
+        ...(s.unfiled !== undefined ? { unfiled: s.unfiled } : {}),
         ...(s.hint !== undefined ? { hint: s.hint } : {}),
       })));
     result.residuePlan = r.residuePlan === undefined ? null : r.residuePlan;

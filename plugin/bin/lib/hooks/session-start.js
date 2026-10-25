@@ -73,7 +73,9 @@ function resolveBuildLine(env = process.env) {
 // dead owner and stamp a live run. A resume is the one SessionStart that is the
 // owning session returning rather than a new session starting, so it re-stamps.
 // Only an already-stamped run is touched (an unstamped run keeps failing open),
-// and only a run this session owns by id — never a `fallback` guess.
+// and only a run this session owns by id — never a `fallback` guess. #4153:
+// `refreshOwnerBlock` re-stamps `owner.pid` for the same resume, and this function is
+// deleted when `ownerPid` is retired (docs/hooks.md's owner-block paragraph).
 function restampOwnerPidOnResume(ctx) {
   const input = ctx.input;
   if (!input || typeof input !== 'object' || input.source !== 'resume') return;

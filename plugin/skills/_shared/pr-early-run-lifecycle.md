@@ -5,7 +5,7 @@ Canonical procedure for making a `pr-first` (`_shared/integration-model.md`) pip
 commit lands, before any implementation work — not only when a run happens to reach
 `pending-review` (`docs/incident-log.md`'s `[IL-128]` records the narrower, dispatch-only
 procedure this generalizes and replaces). Every later phase exit pushes
-(`_shared/git-discipline.md`'s Phase-exit push section, including its Post-push merge-state
+(`_shared/git-discipline.md`'s Phase exit section, including its Post-push merge-state
 check) and updates the PR's phase checklist, so
 the PR always reflects live progress rather than only the state as of run start or only the state
 as of `pending-review`.

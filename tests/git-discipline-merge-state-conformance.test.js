@@ -7,7 +7,7 @@ const { readText } = require('./helpers/read-skill');
 const { STATES, PHASE_SECTIONS } = require('../plugin/bin/pr-merge-state');
 // #2986: the Post-push merge-state check is prose (the CLI it drives is covered by
 // tests/bin-lib/pr-merge-state/cli.test.js) — a conflicting run PR gets no pull_request CI
-// runs, so the phase-exit push section tells the run to read the merge state once per phase
+// runs, so the Phase exit section tells the run to read the merge state once per phase
 // and, in auto mode, catch the branch up. These pins catch the doc drifting out from under
 // its ACs.
 
@@ -23,11 +23,11 @@ const HEADING = '### Post-push merge-state check';
 function assertMergeStateSection(text) {
   const start = text.indexOf(HEADING);
   assert.ok(start !== -1, `AC1.1: "${HEADING}" subsection not found`);
-  const phaseExit = text.indexOf('## Phase-exit push');
+  const phaseExit = text.indexOf('## Phase exit — one `phase-exit.js` call');
   const catchUp = text.indexOf('## Catching a branch up with `main`');
   assert.ok(
     phaseExit !== -1 && phaseExit < start && start < catchUp,
-    'AC1.1: the subsection sits after "## Phase-exit push" and before "## Catching a branch up with `main`"',
+    'AC1.1: the subsection sits after "## Phase exit — one `phase-exit.js` call" and before "## Catching a branch up with `main`"',
   );
   // Whitespace-collapsed so a re-wrap of the prose never breaks a pin.
   const section = text.slice(start, catchUp).replace(/\s+/g, ' ');

@@ -2,7 +2,7 @@
 
 **Goal:** `isDocsPath` (`plugin/bin/lib/dispatch/ceremony-derive.js`) counts a `docs/plans/*.html` diagram as docs, so a docs-only record that ships a `/claude-tweaks:visualize` diagram can derive `fast-lane`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-25T080723-record-4187/work/4187-spec.md` (materialized from GitHub issue #4187)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-25T080723-record-4187/work/4187-spec.md` (materialized from GitHub issue #4187)
 
 ---
 
