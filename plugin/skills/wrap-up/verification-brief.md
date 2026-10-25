@@ -47,7 +47,7 @@ restated here) now, before the Parent-Gate Procedure or the Oversight-floor gate
 to the session-scoped file that `/claude-tweaks:flow`'s Pipeline Summary reads back:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" TRY_IT=try-it-{N}.md)"
+TRY_IT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value try-it-{N}.md)"
 ```
 
 Write the composed block to `"$TRY_IT"`. Shell variables do not survive between calls, so any
@@ -66,7 +66,7 @@ qualification the `verdict` kind uses (`_shared/pr-run-comments.md`'s "Multi-spe
 comments" section):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" TRY_IT=try-it-{N}.md)"
+TRY_IT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value try-it-{N}.md)"
 KIND=try-it; [ -n "$MULTISPEC_PARENT_DIR" ] && KIND="try-it:{N}"
 printf '<!-- run-comment: %s -->\n\n' "$KIND" | cat - "$TRY_IT" > "$TRY_IT.pr"
 # find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=$KIND, against {pr-number}

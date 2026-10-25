@@ -759,3 +759,51 @@ test('real fs: --out-dir creates the directory and writes the files', (t) => {
   assert.equal(fs.readFileSync(path.join(dir, 'body.md'), 'utf8'), body);
   assert.equal(fs.readFileSync(path.join(dir, 'message.txt'), 'utf8'), title + '\n\n' + body);
 });
+
+// #4199: --keep-open names records the merge must not close. They still compose the subject,
+// Type and Release Note; only their body line changes from `Fixes #n` to `Refs #n`.
+test('--keep-open: a kept-open record renders Refs #n and no Fixes #n', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2251', '--keep-open', '2251'], deps), 0, out.stderr);
+  const parsed = JSON.parse(out.stdout);
+  assert.equal(parsed.title, 'feat: Merge-time conventional subject (#2251)');
+  assert.equal(parsed.body, 'Makes the merge subject conventional.\n\nRelease-Note: Made merge subjects Conventional Commits shaped.\n\nRefs #2251');
+  assert.doesNotMatch(parsed.body, /Fixes #/);
+});
+
+test('--keep-open: a bundle mixes one Fixes and one Refs line, Type still aggregated across both', () => {
+  const { deps, out } = fakeDeps();
+  // 2250 is type:task and the subject record; 2251 is type:feature and kept open: still feat:.
+  assert.equal(run(['2250,2251', '--tag', 'auto-merge', '--keep-open', '2251'], deps), 0, out.stderr);
+  const parsed = JSON.parse(out.stdout);
+  assert.equal(parsed.title, 'feat: Lowest is a task (#2250)');
+  assert.ok(parsed.body.endsWith('\n\nFixes #2250\nRefs #2251'), parsed.body);
+  assert.match(parsed.body, /Release-Note: Added task overview support\./);
+});
+
+test('--keep-open: a number outside the record list, or a malformed value, exits 1 before any gh call', () => {
+  const bad = [['2251', '--keep-open', '2252'], ['2251', '--keep-open'], ['2251', '--keep-open', '--tag'],
+    ['2251', '--keep-open', ''], ['2251', '--keep-open', '0'], ['2251', '--keep-open', '2251,x']];
+  for (const argv of bad) {
+    const { deps, out } = fakeDeps();
+    assert.equal(run(argv, deps), 1, argv.join(' '));
+    assert.equal(out.calls.length, 0, argv.join(' '));
+    assert.equal(out.stdout, '');
+  }
+  const { deps, out } = fakeDeps();
+  run(['2251', '--keep-open', '2252,2251'], deps);
+  assert.match(out.stderr, /--keep-open names #2252, not in the record list/);
+});
+
+test('--keep-open absent: the body is byte-identical to the pre-#4199 composer, JSON and --out-dir alike', () => {
+  const PRE_4199_BODY = 'Makes the merge subject conventional.\n\n[auto-merge]\n\nRelease-Note: Made merge subjects Conventional Commits shaped.\n\nFixes #2251\nFixes #2252';
+  const json = fakeDeps();
+  assert.equal(run(['2251,2252', '--tag', 'auto-merge'], json.deps), 0, json.out.stderr);
+  assert.equal(json.out.stdout, `${JSON.stringify({ title: 'feat: Merge-time conventional subject (#2251)', body: PRE_4199_BODY })}\n`);
+  const files = fakeDeps();
+  assert.equal(run(['2251,2252', '--tag', 'auto-merge', '--out-dir', '/x/subj'], files.deps), 0, files.out.stderr);
+  assert.equal(files.out.files[require('node:path').join('/x/subj', 'body.md')], PRE_4199_BODY);
+  assert.deepEqual(parseArgs(['2251']).keepOpen, []);
+  const { USAGE } = require('../../plugin/bin/lib/compose-subject.js');
+  assert.match(USAGE, /\[--keep-open <n>\[,<m>\.\.\.\]\]/);
+});

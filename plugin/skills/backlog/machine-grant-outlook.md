@@ -31,7 +31,7 @@ candidate count by that population — one more reason it means "reaches the gra
 grant-check on a future firing", never "is on the headless posture's list this run".
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_OVERVIEW_TRUST_ROWS=backlog-overview-trust-rows.json)"
+ST_BACKLOG_OVERVIEW_TRUST_ROWS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-overview-trust-rows.json)"
 ```
 
 `trustRows` re-reads from `"$ST_BACKLOG_OVERVIEW_TRUST_ROWS"` rather than re-fetched. Phase-1 gates only (ceiling,
