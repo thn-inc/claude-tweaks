@@ -87,6 +87,8 @@ const FACTS = [
     /A non-zero exit, or stdout that does not parse as one JSON object, is `failed`, reason `release-tip-check did not produce a verdict`, nothing merged/],
   ['block', 'the comparison reads the last recorded reviewed tip, never re-derived',
     /reads the reviewed tip from the last line[^\n]*`decisions\.md`[^\n]*`at reviewed tip`[^\n]*never re-derived/],
+  ['block', 'the fold takes its pre-major flags from the pack, never from release-please-config.json',
+    /`release-preflight\.json`'s `proposedVersion\.value`: `preMajor`, `bumpMinorPreMajor` and `bumpPatchForMinorPreMajor`, never re-read from `release-please-config\.json`/],
   ['block', 'an unmoved branch is logged and merges',
     /Step 5: origin\/\{branch\} still at reviewed tip \{short\}; merging\./],
   ['block', '`{m}`, `{bound}` and `{source}` are the verdict\'s `move`, `bound` and `source`',
