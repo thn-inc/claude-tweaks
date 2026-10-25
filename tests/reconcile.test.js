@@ -871,6 +871,36 @@ test('archiveMerged: a still-live ad-hoc-standalone dir (worktree exists) is nev
   }
 });
 
+test('AC1.1 AC4.1 #4179: archiveMerged archives a main-checkout ad-hoc dir whose session is dead and past the grace period', () => {
+  const { archiveMerged, ADHOC_SESSION_ENDED_GRACE_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const root = bareRepoRoot();
+  const runId = '2026-08-01T200000-adhoc-standalone';
+  const dir = mintAdHocDir(root, runId, { worktree: root, status: 'interrupted', sessionId: 'sess-1', lastEvent: 'session-end' }, ADHOC_SESSION_ENDED_GRACE_MS * 2);
+  const result = archiveMerged({ cwd: root, liveness: () => 'dead' });
+  assert.ok(!fs.existsSync(dir));
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)));
+  assert.ok(result.archived.includes(dir));
+});
+
+test('AC2.1 #4179: archiveMerged leaves a main-checkout ad-hoc dir in place while its session is live', () => {
+  const { archiveMerged, ADHOC_SESSION_ENDED_GRACE_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const root = bareRepoRoot();
+  const dir = mintAdHocDir(root, '2026-08-01T210000-adhoc-standalone', { worktree: root, status: 'active', sessionId: 'sess-1' }, ADHOC_SESSION_ENDED_GRACE_MS * 3);
+  const result = archiveMerged({ cwd: root, liveness: () => 'live' });
+  assert.ok(fs.existsSync(dir));
+  assert.ok(!result.archived.includes(dir));
+});
+
+test('#4179: adHocSessionLiveness reads a legacy main-checkout ad-hoc dir with a 5-day-silent events log as dead, where runLiveness as-is does not', () => {
+  const { adHocSessionLiveness } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { runLiveness } = require('../plugin/bin/lib/run-liveness');
+  const root = bareRepoRoot(); // its seed commit is seconds old: last-commit reads positive as-is
+  const dir = mintAdHocDir(root, '2026-08-01T220000-adhoc-standalone', { worktree: root, status: 'interrupted', sessionId: 'sess-1', lastEvent: 'session-end' });
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), `${JSON.stringify({ type: 'gate-denial', ts: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString(), sessionId: 'sess-1' })}\n`);
+  assert.equal(adHocSessionLiveness(dir), 'dead');
+  assert.notEqual(runLiveness(dir).verdict, 'dead');
+});
+
 // --- isWorktreeLocked: reused verbatim from worktree-reap.js (not a copy) ---
 
 test('isWorktreeLocked: a plain unlocked linked worktree is not locked', () => {

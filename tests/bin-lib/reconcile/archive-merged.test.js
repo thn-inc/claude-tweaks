@@ -14,7 +14,7 @@ const {
   archiveMerged, prefetchArchivePrStates, lastOwnEventMs, isAbandonedInterrupted, archiveOrphanedMint, ORPHAN_MINT_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS, isStaleDir,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin, resolveIdenticalWorkTwin,
-  classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
+  classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, unclosedRecords, runRecordSet, inFlightRecords,
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
@@ -2090,6 +2090,47 @@ test('#2724 trackStuckSkip: an exempted ad-hoc dir with no entry writes nothing 
   assert.equal(resolved.length, 0);
   assert.deepEqual(listResidueFailures(root), []);
   assert.equal(fs.existsSync(cachePath(root)), false);
+});
+
+// --- #4179: a main-checkout ad-hoc dir is swept by session liveness, not by worktree registration ---
+
+test('AC1.1 #4179: a main-checkout ad-hoc dir past the grace period with a dead session classifies adhoc-session-ended', () => {
+  const { dir } = mkAdHocRunDir({ ageMs: ADHOC_SESSION_ENDED_GRACE_MS * 2, worktree: (root) => root });
+  const r = classifyRunDir({ dir, kinds: ['adhoc-session-ended'], liveness: () => 'dead' });
+  assert.equal(r.kind, 'adhoc-session-ended');
+  assert.equal(r.ttlMs, ADHOC_SESSION_ENDED_GRACE_MS);
+});
+
+test('AC2.1 #4179: a live or unknown session is never adhoc-session-ended, however old', () => {
+  const { dir } = mkAdHocRunDir({ ageMs: ADHOC_SESSION_ENDED_GRACE_MS * 10, worktree: (root) => root });
+  for (const v of ['live', 'unknown']) {
+    assert.equal(classifyRunDir({ dir, kinds: ['adhoc-session-ended'], liveness: () => v }).kind, 'none', v);
+  }
+});
+
+test('#4179: a dead session inside the grace period is not yet adhoc-session-ended, and liveness is not asked', () => {
+  const { dir } = mkAdHocRunDir({ ageMs: 60 * 60 * 1000, worktree: (root) => root });
+  let asked = 0;
+  assert.equal(classifyRunDir({ dir, kinds: ['adhoc-session-ended'], liveness: () => { asked++; return 'dead'; } }).kind, 'none');
+  assert.equal(asked, 0);
+});
+
+test('#4179: a throwing liveness function reads as not dead', () => {
+  const { dir } = mkAdHocRunDir({ ageMs: ADHOC_SESSION_ENDED_GRACE_MS * 2, worktree: (root) => root });
+  assert.equal(classifyRunDir({ dir, kinds: ['adhoc-session-ended'], liveness: () => { throw new Error('boom'); } }).kind, 'none');
+});
+
+test('#4179: a linked-worktree ad-hoc dir never reaches the liveness function', () => {
+  const { dir } = mkAdHocRunDir({ ageMs: ADHOC_SESSION_ENDED_GRACE_MS * 2 });
+  let asked = 0;
+  assert.equal(classifyRunDir({ dir, kinds: ['adhoc-session-ended'], liveness: () => { asked++; return 'dead'; } }).kind, 'none');
+  assert.equal(asked, 0);
+  assert.equal(isMainCheckoutAdHoc(dir), false);
+});
+
+test('#4179: a non-ad-hoc dir stamped with the main checkout is not adhoc-session-ended', () => {
+  const { dir } = mkAdHocRunDir({ ageMs: ADHOC_SESSION_ENDED_GRACE_MS * 2, worktree: (root) => root, basename: '2026-10-17T081451-record-1' });
+  assert.equal(classifyRunDir({ dir, kinds: ['adhoc-session-ended'], liveness: () => 'dead' }).kind, 'none');
 });
 
 // One real archiveMerged() pass, well under the 3-pass escalation threshold
