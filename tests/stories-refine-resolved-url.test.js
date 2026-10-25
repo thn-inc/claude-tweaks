@@ -49,6 +49,8 @@ function assertRefine5b(section) {
   assert.ok(!section.includes("Re-open the story's URL"), 'refine 5b never re-opens the raw story URL');
 }
 
+// Matches single-quoted messages only, so an assertion message containing an apostrophe is skipped here;
+// the coverage deepEqual below then fails loudly on the mismatch, so keep messages apostrophe-free.
 function declaredMessages() {
   const source = readText(__filename);
   return [...source.matchAll(/^\s+assert\.(?:ok|match)\(.*, '([^']+)'\);$/gm)].map((m) => m[1]);
