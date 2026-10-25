@@ -740,7 +740,6 @@ test('4220 AC1.1: a diff whose files sum above the budget yields bytes at or und
   assert.ok(result.bytes <= budgetBytes, `bundle ${result.bytes} B over the ${budgetBytes} B budget`);
   const stubbed = stubbedPaths(bundle);
   assert.ok(stubbed.length > 0, 'the fixture must actually exceed the budget');
-  for (const p of stubbed) assert.ok(result.oversizeSections.includes(p), `${p} stubbed but not in oversizeSections`);
   assert.deepStrictEqual([...result.oversizeSections].sort(), [...stubbed].sort());
 });
 
