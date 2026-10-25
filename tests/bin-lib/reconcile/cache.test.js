@@ -641,6 +641,25 @@ test('#4180 recordResidueError: sets lastResidueError on an existing entry', () 
   assert.deepEqual(listResidueFailures(root)[0].lastResidueError, { op: 'escalate', reason: 'nope', at: 1234 });
 });
 
+test('#4180 recordResidueError: a multi-line gh failure is stored as one line capped at 200 characters', () => {
+  const root = tmpRoot();
+  recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  recordResidueError(root, 'move-failed', '/x/m', { op: 'escalate', error: `Command failed: gh issue create\n${'HTTP 502\n'.repeat(100)}` });
+  const stored = listResidueFailures(root)[0].lastResidueError.reason;
+  assert.equal(stored.length, 200);
+  assert.ok(!/\s{2}|\n/.test(stored));
+  assert.ok(stored.startsWith('Command failed: gh issue create HTTP 502'));
+});
+
+test('#4180 pruneResidueFailures: a long multi-line resolve failure is returned as one capped line', () => {
+  const root = tmpRoot();
+  const gonePath = path.join(root, 'gone');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'move-failed', gonePath, { lastError: 'EBUSY' });
+  const out = pruneResidueFailures(root, 'o/r', { resolve: () => ({ status: 'resolution-failed', reason: `a\n${'b'.repeat(500)}` }) });
+  assert.equal(out.failures[0].error.length, 200);
+  assert.ok(!out.failures[0].error.includes('\n'));
+});
+
 test('#4180 recordResidueError: through a cache batch, lands on commit', () => {
   const root = tmpRoot();
   const batch = beginCacheBatch(root);

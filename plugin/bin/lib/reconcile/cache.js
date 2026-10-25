@@ -247,6 +247,14 @@ function ownedPathExists(target) {
   };
 }
 
+// #4180: a failed `gh` call's text (message + stderr + stdout) is multi-line and unbounded, and it
+// reaches one-line surfaces — the residue summary and SessionStart's model context. Collapse it to
+// one line and cap it at the same 200 characters the background status file's failure message uses.
+const RESIDUE_ERROR_MAX_CHARS = 200;
+function boundedError(error) {
+  return String(error).replace(/\s+/g, ' ').trim().slice(0, RESIDUE_ERROR_MAX_CHARS);
+}
+
 // #4180: the one channel for a swallowed escalate/resolve failure — the reason sits on the
 // still-tracked entry (`lastResidueError`) so the caller can surface it instead of the next pass
 // retrying in silence. A no-op when there is no entry (nothing to attach to). recordResidueFailure
@@ -259,7 +267,7 @@ function recordResidueError(target, reason, targetPath, { op, error, now = Date.
   const key = residueKey(reason, targetPath);
   const existing = cache.residueFailures[key];
   if (!existing) return;
-  const failures = { ...cache.residueFailures, [key]: { ...existing, lastResidueError: { op, reason: error, at: now } } };
+  const failures = { ...cache.residueFailures, [key]: { ...existing, lastResidueError: { op, reason: boundedError(error), at: now } } };
   const nextCache = { ...cache, residueFailures: failures };
   if (batch) { target.cache = nextCache; target.dirty = true; } else { writeCache(target, nextCache); }
 }
@@ -400,7 +408,7 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
         const resolved = resolve({ repo: repoSlug, reason, targetPath, runner, pathExists: ownedPathExists(root) });
         if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) error = unresolvedReason(resolved);
       } catch (err) { error = errorText(err); }
-      if (error !== null) resolveFailures.push({ reason, path: targetPath, op: 'resolve', error });
+      if (error !== null) resolveFailures.push({ reason, path: targetPath, op: 'resolve', error: boundedError(error) });
     }
   }
   if (changed) writeCache(root, { ...cache, residueFailures: failures });
