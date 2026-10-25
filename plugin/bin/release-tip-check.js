@@ -50,6 +50,10 @@ function parseArgs(argv) {
   return out;
 }
 
+function booleanOrUndefined(value) {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
 // The pre-major flags the pack's proposedVersion reported — the fold reads them
 // here, never from release-please-config.json. Absent, unparseable or not ok →
 // preMajor false and both flags undefined; a flag that is not a boolean is
@@ -64,11 +68,10 @@ function readPreflightFlags(runDir) {
   }
   const pv = pack && typeof pack === 'object' ? pack.proposedVersion : null;
   if (!pv || pv.ok !== true || !pv.value) return flags;
-  const bool = (v) => (typeof v === 'boolean' ? v : undefined);
   return {
     preMajor: pv.value.preMajor === true,
-    bumpMinorPreMajor: bool(pv.value.bumpMinorPreMajor),
-    bumpPatchForMinorPreMajor: bool(pv.value.bumpPatchForMinorPreMajor),
+    bumpMinorPreMajor: booleanOrUndefined(pv.value.bumpMinorPreMajor),
+    bumpPatchForMinorPreMajor: booleanOrUndefined(pv.value.bumpPatchForMinorPreMajor),
   };
 }
 
