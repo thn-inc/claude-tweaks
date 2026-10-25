@@ -152,6 +152,22 @@ for (const [label, arrange] of ACCEPTED) {
   });
 }
 
+test('after the override lands, the checkout with archive commits rebases onto it as the reviewed-tip comparison does and passes the review-tree check again', () => {
+  const fences = liveCheck();
+  const ov = liveOverride();
+  withFixture('release-as-anchor-rebase-', (fx) => {
+    runDirCommit(fx, 1);
+    runDirCommit(fx, 2);
+    const r = runOverride(fx, fences, ov);
+    assert.equal(r.pushed.status, 0, `the push must land: ${r.pushed.stderr}`);
+    assert.notEqual(runCheck(fences, fx).status, 0, 'before the pull the checkout is one commit behind, so the check must stop');
+    fx.run(fx.work, ['pull', '--rebase', '--no-autostash', 'origin', BRANCH]);
+    const again = runCheck(fences, fx);
+    assert.equal(again.status, 0, `after the rebase the check must pass: ${again.stderr}`);
+    assert.equal(again.tip, r.sha, 'the printed tip must be the override commit');
+  });
+});
+
 const STOPPED = [
   ['behind origin', (fx) => pushUpstream(fx)],
   ['diverged: a run-dir commit plus an upstream push', (fx) => { runDirCommit(fx, 1); pushUpstream(fx); }],
