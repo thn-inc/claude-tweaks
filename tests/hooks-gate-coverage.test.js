@@ -913,7 +913,7 @@ for (const [label, cmd] of [
     ['a cd inside an assigned backtick', 'cd /main && x=`true && cd /tmp` && cp a f.js', [main('copy')]],
     ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); cp a f.js', [main('copy')]],
     ['a cd after a lone & that follows a $( )', 'echo $(true; true) & cd /main; cp a f.js', [main('copy')]],
-    ['a cd after a $( ) in a pass read again flat', `echo $(true) ${'"$('.repeat(40)}x${')"'.repeat(40)}; cd /main; cp a f.js`, [main('copy')]],
+    ['a cd after a $( ) in a pass read again flat', `echo $(true) ${'"$('.repeat(40)}x${')"'.repeat(40)}; cd /main; (true); cp a f.js`, [main('copy')]],
     ['a quoted ) inside "$( )", in a fresh quoting context', 'cd /main && echo "$(echo ")")" && cp a f.js', [main('copy')]],
     ['a subshell inside "$( )", whose ) closes only it', 'cd /main && echo "$( (true) ; echo "&" )" && cp a f.js', [main('copy')]],
     ['a quoted } inside a ${ } default', 'x=; cd /main && echo "${x:-"a}b"}" && cp a f.js', [main('copy')]],
@@ -934,6 +934,7 @@ for (const [label, cmd] of [
     ['a nest past the cap holding backticks', `cd /main && echo ${'` "$('.repeat(33)}x${')"`'.repeat(33)} && cp a f.js`, [main('copy')]],
     ['a nest past the cap whose fallback would restart the nested reading', `cd /main && echo ${'"\'$('.repeat(31)}x${')"'.repeat(31)}; cp a f.js`, [main('copy')]],
     ['a ${ } nest past the cap (the flat pass takes ${ plainly)', `cd /main && echo ${'"\'${x:-'.repeat(31)}x${'}"'.repeat(31)}; cp a f.js`, [main('copy')]],
+    ['a quoted ${ } nest past the cap before a lone & (the flat pass takes ${ plainly)', `echo ${'\'"${x:-'.repeat(36)}x${'}"'.repeat(36)} & cp a /main/f.js`, [main('copy')]],
     ['a nest past the cap before a lone & (the flat pass takes a backtick plainly)', `echo ${'"$(;`'.repeat(34)}x${'`)"'.repeat(34)} & cp a /main/f.js`, [main('copy')]],
     ['a nest past the cap before a lone & (groupEvents re-reads from its starting group state)', `echo ${'$(`"'.repeat(36)}x${'"`)'.repeat(36)} & cp a /main/f.js`, [main('copy')]],
   ]) {
