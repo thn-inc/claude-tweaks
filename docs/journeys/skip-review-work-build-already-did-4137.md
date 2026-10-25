@@ -32,16 +32,16 @@ files:
 
 ### 3. Watch /review Step 5 skip the simplify re-run
 - **URL:** `/claude-tweaks:review` Step 5 (Simplify Changed Code), reading `$PIPELINE_RUN_DIR/decisions.md`.
-- **Action:** Review takes the last `Common Step 3: simplify: scope simplified at {sha}` line and checks two things. First, that `git merge-base --is-ancestor {sha} HEAD` exits 0. Second, that neither `git diff --name-only {sha}` (the working tree) nor `git ls-files --others --exclude-standard` lists an in-scope source file. When both hold, it logs `SKIP … Step 5 simplify (skipped): condition: build Common Step 3 simplified this scope at {sha}, no in-scope source file changed since → fallback: /claude-tweaks:simplify not re-run.` and moves on.
+- **Action:** Review takes the last `Common Step 3: simplify: scope simplified at {sha}` line whose `{sha}` is 7-40 hex characters and checks two things. First, that `git merge-base --is-ancestor {sha} HEAD` exits 0. Second, that `git diff --name-only {sha}` (the working tree) and `git ls-files --others --exclude-standard` both exit 0 and neither lists an in-scope source file. When both hold, it logs `SKIP … Step 5 simplify (skipped): condition: build Common Step 3 simplified this scope at {sha}, no in-scope source file changed since → fallback: /claude-tweaks:simplify not re-run.` and moves on.
 - **Should feel:** Like a correct shortcut. The pipeline carries on with no simplifier dispatch.
-- **Should understand:** A build fix or review fix to an in-scope source file, committed or not, puts the simplify re-run back. So does a rebased branch, or a run whose `/build` predates this change and wrote free-form prose.
+- **Should understand:** A build fix or review fix to an in-scope source file, committed or not, puts the simplify re-run back. So does a rebased branch, a `{sha}` that is not 7-40 hex characters, a listing command that exits non-zero, or a run whose `/build` predates this change and wrote free-form prose.
 - **Red flags:** A skip after an uncommitted Fix-now edit to a source file. A skip with no `SKIP` line in `decisions.md`.
 
 ### 4. Watch lens 3i drop the docs /build already cleared
 - **URL:** `/claude-tweaks:review` lens 3i (`step3-doc-freshness-lens.md` step 4).
-- **Action:** For each registry entry whose doc was not updated in this work's commits, review looks for the matching `docs sync: {doc} assessed at {sha}, no stale text` line. If that `{sha}` is in `HEAD`'s history and no file matching the entry's Auto-detect patterns has changed since (working tree plus untracked), review emits no finding for it. It then logs one `SKIP … Lens 3i doc freshness (skipped)` line listing the dropped docs.
+- **Action:** For each registry entry whose doc was not updated in this work's commits, review looks for the matching `docs sync: {doc} assessed at {sha}, no stale text` line. If that `{sha}` is 7-40 hex characters and in `HEAD`'s history, and no file matching the entry's Auto-detect patterns has changed since (working tree plus untracked, both listing commands exiting 0), review emits no finding for it. It then logs one `SKIP … Lens 3i doc freshness (skipped)` line listing the dropped docs.
 - **Should feel:** Quieter. A doc `/build` already read against the same source no longer shows up as a "Review in wrap-up" row.
-- **Should understand:** A doc whose matched sources changed after `/build`'s check is still flagged. Build's verdict covered the old source, not the new one.
+- **Should understand:** A doc whose matched sources changed after `/build`'s check, or whose check failed, is still flagged. Build's verdict covered the old source, not the new one.
 - **Red flags:** A doc dropped even though a review fix touched its matched source file. Docs dropped with no `SKIP` trace naming them.
 
 ### 5. Read the review summary
