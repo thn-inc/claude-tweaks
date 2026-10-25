@@ -41,4 +41,5 @@ files:
 
 ## Origin
 - Created during the build of #4015. The #3989 build found that `REDIRECT_OP_RE` only matched an operator at the start of a token, so `echo foo>x` reached the main checkout unseen (its ledger item 9). `tokenize` now carries a `doubleQuoted` flag beside `singleQuoted`. The final whole-branch review added the `(` exclusion (bash arithmetic) and the fd-close exclusion.
+- Updated during build of #4149. The one-word subshell `(ls)>out` left step 3's list of shapes that resolve no target: the shell walk now cuts the segment at the group's `)`, so `>out` reaches the redirect scan as its own token.
 - Related journeys: `run-a-heredoc-node-script-from-the-main-checkout-3989.md` (the heredoc-body carve-out on the same scan), and `run-shell-loops-without-a-hook-storm-3074.md` (the prefilter that fronts it).
