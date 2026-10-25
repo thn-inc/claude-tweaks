@@ -371,6 +371,7 @@ const DISPOSITION_SCOPE = [
   [/`STAGED` line whose stage path is absent or names no existing file/, 'inventory: a decisions.md-only STAGED line is a finding'],
   [/counted once by its stage path/, 'inventory: a STAGED line naming a listed file is de-duplicated by stage path'],
   [/An absent or empty `staged\/` means no staged files/, 'inventory: an absent or empty staged/ means no staged files'],
+  [/Any other read error on `staged\/` or `decisions\.md`[\s\S]{0,120}is a failure, not an empty inventory[\s\S]{0,80}blocks archival/, 'inventory: a read error other than "does not exist" on staged/ or decisions.md is a failure that blocks archival'],
   [/When Step 3 logged no `## \/review` marker this run[\s\S]{0,200}read no `decisions\.md` line at all/, 'inventory: with no Step 3 marker, no decisions.md line is read'],
   [/`staged\/reflect-\*`, `staged\/simplify-\*` and `staged\/deepen-\*`/, 'inventory: reflect, simplify and deepen files'],
 ];
