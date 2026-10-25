@@ -805,6 +805,24 @@ test('#4281: a leading-escaped redirect word is a file argument', () => {
   assert.deepStrictEqual(fileWriteTargets('cp a \\>x', '/r'), [{ action: 'copy', file: path.resolve('/r', '>x') }]);
 });
 
+test('#4281: an escaped character anywhere in a redirect operator makes the word a file argument', () => {
+  // bash 3.2 and 5 write 2> and f1 for `tee 2\> f1`, f0, 2> and f1 for `tee f0 2\> f1`, 2> and f1 for
+  // `truncate -s 1 2\> f1`, 1> and f1 for `tee 1\> f1`, and 2>> and f1 for `tee 2\>\> f1`: no
+  // redirect runs, so the word after the escaped operator is a file operand. `cp a 2\> f1` names f1
+  // as cp's destination (bash 3.2 and 5 write f1/a when f1 is a directory). A bare `2>` stays a
+  // redirect: bash 3.2 and 5 write f0 and f1 for `tee f0 2> f1`.
+  const at = (action, f) => ({ action, file: path.resolve('/r', f) });
+  for (const [cmd, expected] of [
+    ['tee 2\\> f1', [at('write', '2>'), at('write', 'f1')]],
+    ['tee f0 2\\> f1', [at('write', 'f0'), at('write', '2>'), at('write', 'f1')]],
+    ['truncate -s 1 2\\> f1', [at('truncate', '2>'), at('truncate', 'f1')]],
+    ['cp a 2\\> f1', [at('copy', 'f1')]],
+    ['tee 1\\> f1', [at('write', '1>'), at('write', 'f1')]],
+    ['tee 2\\>\\> f1', [at('write', '2>>'), at('write', 'f1')]],
+    ['tee f0 2> f1', [at('write', 'f1'), at('write', 'f0')]],
+  ]) assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected, cmd);
+});
+
 // #4281: the Windows shapes, proven on any host through an injected path.win32 (#3314's pattern).
 // bash 3.2 and 5: "D:\repo\a.js", "D:\repo\x", "D:\repo\wt" and "D:\repo" are those exact values;
 // unquoted, D:\repo\a.js and D:\repo are D:repoa.js and D:repo.

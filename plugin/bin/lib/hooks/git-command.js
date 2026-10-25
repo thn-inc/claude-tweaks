@@ -2221,20 +2221,21 @@ const REDIRECTION_TOKEN_RE = /^(?:\d+|&)?(?:>>|>\||>&|<>|<&|>|<)(?![<(])/;
 // stands alone (`<< EOF`, `> /dev/null`), so none is read as a write shape's files; the
 // redirection's own target is reported by redirectWriteTargets. A token that begins with a
 // quoted span (`'<<'`, `'>f'`) is a literal argument, not an operator, and stays
-// (`leadQuoted`, from tokenize). So does one that begins with an escaped character
-// (`\>x` is the word `>x`, #4281: its first spanKinds character is `e`).
-function dropRedirections(tokens, leadQuoted, spanKinds) {
+// (`leadQuoted`, from tokenize). #4281: the operator is matched on the word before expansion
+// (`raw`) with every non-bare character masked out (`spanKinds`), so an escaped or quoted
+// character anywhere in it makes the word literal: `\>x` is the word `>x` and `2\>` the word `2>`.
+function dropRedirections(tokens, { raw, leadQuoted, spanKinds }) {
   const out = [];
   for (let i = 0; i < tokens.length; i += 1) {
-    const tok = tokens[i];
-    if ((leadQuoted && leadQuoted[i]) || (spanKinds && spanKinds[i][0] === 'e')) { out.push(tok); continue; }
-    if (tok.startsWith('<<')) {
-      if (/^<<<?-?$/.test(tok)) i += 1;
+    if (leadQuoted[i]) { out.push(tokens[i]); continue; }
+    const bare = [...raw[i]].map((c, j) => (spanKinds[i][j] === 'b' ? c : '\0')).join('');
+    if (bare.startsWith('<<')) {
+      if (/^<<<?-?$/.test(bare)) i += 1;
       continue;
     }
-    const m = REDIRECTION_TOKEN_RE.exec(tok);
-    if (!m) { out.push(tok); continue; }
-    if (tok.length === m[0].length) i += 1;
+    const m = REDIRECTION_TOKEN_RE.exec(bare);
+    if (!m) { out.push(tokens[i]); continue; }
+    if (bare.length === m[0].length) i += 1;
   }
   return out;
 }
@@ -2248,7 +2249,7 @@ function fileWriteTargets(command, cwd, opts) {
     for (const file of redirectWriteTargets(tokens, effCwd, quoting)) targets.push({ action: 'write', file });
     // A heredoc/here-string operator is input and a redirection is reported above, so
     // neither is a file the shape writes.
-    const t = dropRedirections(tokens, quoting.leadQuoted, quoting.spanKinds);
+    const t = dropRedirections(tokens, quoting);
     if (!WRITE_SHAPES.includes(t[0])) return;
     if (t[0] === 'tee') {
       // tee genuinely writes to EVERY non-flag argument, not just the
