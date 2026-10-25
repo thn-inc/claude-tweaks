@@ -46,14 +46,17 @@ Route surviving findings by `classification`:
 - **`restructural`** → file as a `by:docs-health` GitHub issue via the existing dedup/filing CLI machinery, scoped to exactly this run's touched-doc IDs instead of a `next-target` rotation pick. This index build is issue-backed (`gh issue list`), so on `gh`-absent it routes through `_shared/github-write-transport.md`'s `list_issues` mapping instead of running the command below — never invoke `validate-findings --issues` against a file this branch didn't write. Resolve this run's session-scoped temp paths first, per `_shared/session-tmp-root.md` (cited throughout this file rather than restated):
 
   ```bash
-  eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" WRAPUP_DOCS_HEALTH_ISSUES_RAW=wrapup-docs-health-issues-raw.json WRAPUP_DOCS_HEALTH_ISSUES=wrapup-docs-health-issues.json)"
+  WRAPUP_DOCS_HEALTH_ISSUES_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrapup-docs-health-issues-raw.json)"
+  WRAPUP_DOCS_HEALTH_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrapup-docs-health-issues.json)"
   gh issue list --label by:docs-health --state all --json number,state,labels,body --limit 500 > "$WRAPUP_DOCS_HEALTH_ISSUES_RAW"
   ```
 
   Parse via `extractFingerprint` (`bin/lib/issues/record.js`) into `{ number, state, labels, fingerprint }` objects, same as `/claude-tweaks:docs-health` Step 4, and write to `$WRAPUP_DOCS_HEALTH_ISSUES`. Write this check's `restructural` findings to this run's session-scoped `wrapup-docs-health-findings.json` in the same finding shape `_shared/criteria-docs-diataxis.md`'s "Emitting a finding" section defines, then re-resolve this fence's session-scoped paths (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit the prior fence's shell variable):
 
   ```bash
-  eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" WRAPUP_DOCS_HEALTH_FINDINGS=wrapup-docs-health-findings.json WRAPUP_DOCS_HEALTH_ISSUES=wrapup-docs-health-issues.json WRAPUP_DOCS_HEALTH_PAYLOADS=wrapup-docs-health-payloads.json)"
+  WRAPUP_DOCS_HEALTH_FINDINGS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrapup-docs-health-findings.json)"
+  WRAPUP_DOCS_HEALTH_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrapup-docs-health-issues.json)"
+  WRAPUP_DOCS_HEALTH_PAYLOADS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrapup-docs-health-payloads.json)"
   node "${CLAUDE_PLUGIN_ROOT}/bin/docs-health.js" validate-findings "$WRAPUP_DOCS_HEALTH_FINDINGS" \
     --root "${ROOT:-$PWD}" --issues "$WRAPUP_DOCS_HEALTH_ISSUES" --dry-run \
     > "$WRAPUP_DOCS_HEALTH_PAYLOADS"

@@ -172,7 +172,7 @@ An unreadable state is Step 2.5's own first row, unchanged in substance: never m
 
 ```bash
 git -C "$RUN_ROOT" fetch --quiet origin {branch} \
-  && [ "$(git -C "$RUN_ROOT" rev-parse origin/{branch})" = "{reviewed-tip}" ]
+  && git -C "$RUN_ROOT" rev-parse origin/{branch} | grep -qxF '{reviewed-tip}'
 ```
 
 `--quiet` is load-bearing: without it a fetch that moves the ref prints its `From …` summary to stderr, and a move would read as a git error.

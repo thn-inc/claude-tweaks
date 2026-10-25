@@ -36,15 +36,8 @@ A self-report filed without it is unactionable, because the two explanations it 
 A failure on this form needs a durable trace instead of a message nobody sees. Before stopping on any of the triggers this file accompanies (see Ordering above for the full list), search for an existing open report first, to avoid re-filing on every firing — never via `gh issue list --search`, which rides GitHub's eventually-consistent search index (the same anti-pattern documented in `_shared/github-write-transport.md`); use the same plain-list + marker-match idiom instead:
 
 ```bash
-eval "$(node -e "
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  const os = require('os'); const path = require('path');
-  const files = { SELFREPORT_ISSUES: '{caller}-selfreport-issues.json', SELFREPORT_LOOKUP: '{caller}-selfreport-lookup.json' };
-  for (const [varName, filename] of Object.entries(files)) {
-    const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-    console.log(varName + '=' + JSON.stringify(p));
-  }
-")"
+SELFREPORT_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value {caller}-selfreport-issues.json)"
+SELFREPORT_LOOKUP="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value {caller}-selfreport-lookup.json)"
 
 gh issue list --label by:{caller} --state open --json number,title,body,createdAt --limit 500 > "$SELFREPORT_ISSUES"
 

@@ -38,7 +38,9 @@ Not for: reporting how the harness itself performed (`/claude-tweaks:feedback`'s
 Resolve this run's session-scoped temp paths (`_shared/session-tmp-root.md`), then run the gather CLI — the only place `gh` is called:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ACTIVITY_FACTS=activity-facts.json ACTIVITY_NARRATIVES=activity-narratives.json ACTIVITY_REPORT=activity-report.md)"
+ACTIVITY_FACTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value activity-facts.json)"
+ACTIVITY_NARRATIVES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value activity-narratives.json)"
+ACTIVITY_REPORT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value activity-report.md)"
 ```
 
 ```bash

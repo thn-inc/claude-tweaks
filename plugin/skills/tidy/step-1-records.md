@@ -21,12 +21,12 @@ Read the `work-backend` field from the project's CLAUDE.md (under a `## Work rec
 
 One query per driver feeds every finding shape below — the record store itself is the current landscape; there is no separate directory or index file to read (`_shared/work-record.md`). This single step replaces the old file-scan (former Step 1), spec-directory scan (former Step 2), and the backlog-issue portion of Step 4.8's `repo-wide` scan — all three read from the same record taxonomy now, so they collapse into one query + one facet parse.
 
-Resolve this step's session-scoped temp paths once, per `_shared/session-tmp-root.md` (cited throughout this file rather than restated): `eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" TIDY_RECORDS=tidy-records.json TIDY_RECORDS_FACETED=tidy-records-faceted.json TIDY_UNSYNCED=tidy-unsynced.json)"`. Fetch and facet-parse the queue per `_shared/record-queue-fetch.md` — the dispatcher inlines that file's `work-backend` resolution, both drivers' fetch commands (including the Session-scoped record snapshot section, so this fetch shares one `gh issue list --state all` pull per session with `/backlog`/`/capture`/`/specify`/`/help`/`/visualize` instead of paying for its own), and the Staleness clock and Threshold resolution sections into this agent's prompt (the same pattern already used for `_shared/github-pr-scan.md`), with `{tmp-records-file}` = `$TIDY_RECORDS`, `{tmp-faceted-file}` = `$TIDY_RECORDS_FACETED` — the legacy-taxonomy shape below (**Shape 5.5**) needs the raw `labels` array, not just the parsed `facets`, and the shared fetch's script already preserves both (its spread keeps `labels` alongside the derived `facets`).
+Resolve this step's session-scoped temp paths once, per `_shared/session-tmp-root.md` (cited throughout this file rather than restated): `TIDY_RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-records.json)"`, `TIDY_RECORDS_FACETED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-records-faceted.json)"` and `TIDY_UNSYNCED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-unsynced.json)"`. Fetch and facet-parse the queue per `_shared/record-queue-fetch.md` — the dispatcher inlines that file's `work-backend` resolution, both drivers' fetch commands (including the Session-scoped record snapshot section, so this fetch shares one `gh issue list --state all` pull per session with `/backlog`/`/capture`/`/specify`/`/help`/`/visualize` instead of paying for its own), and the Staleness clock and Threshold resolution sections into this agent's prompt (the same pattern already used for `_shared/github-pr-scan.md`), with `{tmp-records-file}` = `$TIDY_RECORDS`, `{tmp-faceted-file}` = `$TIDY_RECORDS_FACETED` — the legacy-taxonomy shape below (**Shape 5.5**) needs the raw `labels` array, not just the parsed `facets`, and the shared fetch's script already preserves both (its spread keeps `labels` alongside the derived `facets`).
 
 Also pull any local fallback records left behind by a failed GitHub write — these feed the Sync shape below:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" TIDY_UNSYNCED=tidy-unsynced.json)"
+TIDY_UNSYNCED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-unsynced.json)"
 node -e "
   const { queryRecords } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
   console.log(JSON.stringify(queryRecords('specs', { unsynced: true })));
@@ -135,7 +135,7 @@ a scan error for that record, never a match. `release-note-repair.js scan` appli
 its output:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" TIDY_RECORDS_FACETED=tidy-records-faceted.json)"
+TIDY_RECORDS_FACETED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-records-faceted.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" scan --driver {work-backend} --records "$TIDY_RECORDS_FACETED" --out "{release-note-candidates-file}"
 ```
 
@@ -281,7 +281,7 @@ node -e "
     .filter((f) => exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds)
     .filter((f) => parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) === 'due')
     .forEach((f) => console.log(f.path + '\t[parent-gate] ' + f.id + ': ' + f.title + ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ' + f.id));
-" "$RISK_FLOOR"
+" -- "$RISK_FLOOR"
 ```
 
 Each line is `{path}<TAB>{finding}` — the path fills the row's `Path:Line` column (`SKILL.md`'s
@@ -378,7 +378,7 @@ node -e "
       stateReason: r.facets.notPlanned ? 'NOT_PLANNED' : undefined,
     }))
     .forEach((r) => console.log(r.path + '\t[acceptance-gap] ' + r.id + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo ' + r.id));
-" "$RISK_FLOOR" "$SIZE_FLOOR"
+" -- "$RISK_FLOOR" "$SIZE_FLOOR"
 ```
 
 Each line is `{path}<TAB>{finding}`, the same shape Shape 7 emits — the path fills the row's

@@ -38,26 +38,16 @@ must not be normalized into each other:
 Every temp file this mode writes below resolves through `bin/lib/session-tmp.js`'s `sessionTmpPath`, per `_shared/session-tmp-root.md`'s session-scoped temp-root convention (cited once here, not restated per script).
 
 ```bash
-eval "$(node -e "
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  const os = require('os'); const path = require('path');
-  const files = {
-    ST_BACKLOG_ATTENTION_SNAPSHOT_RAW: 'backlog-attention-snapshot-raw.json',
-    ST_BACKLOG_ATTENTION_SNAPSHOT_FILTERED: 'backlog-attention-snapshot-filtered.json',
-    ST_BACKLOG_ATTENTION_SOLUTION_UNJUSTIFIED: 'backlog-attention-solution-unjustified.json',
-    ST_BACKLOG_ATTENTION_SHAPED_HEADLESS: 'backlog-attention-shaped-headless.json',
-  };
-  for (const [varName, filename] of Object.entries(files)) {
-    const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-    console.log(varName + '=' + JSON.stringify(p));
-  }
-")"
+ST_BACKLOG_ATTENTION_SNAPSHOT_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-snapshot-raw.json)"
+ST_BACKLOG_ATTENTION_SNAPSHOT_FILTERED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-snapshot-filtered.json)"
+ST_BACKLOG_ATTENTION_SOLUTION_UNJUSTIFIED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-solution-unjustified.json)"
+ST_BACKLOG_ATTENTION_SHAPED_HEADLESS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-shaped-headless.json)"
 SNAPSHOT=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').snapshotPath(process.env.CLAUDE_CODE_SESSION_ID) || '')")
 TTL=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values record-snapshot-ttl-seconds)
 if [ -n "$SNAPSHOT" ] && node -e "
   const { isFresh } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js');
   process.exit(isFresh(process.argv[1], Number(process.argv[2])) ? 0 : 1)
-" "$SNAPSHOT" "$TTL"; then
+" -- "$SNAPSHOT" "$TTL"; then
   cp "$SNAPSHOT" "$ST_BACKLOG_ATTENTION_SNAPSHOT_RAW"
 else
   FIELDS=$(node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').UNION_FIELDS)")
@@ -116,20 +106,10 @@ to a live `gh issue view {n} --json comments` call, mirroring `grant-lane-decisi
 comment-query shape.
 
 ```bash
-eval "$(node -e "
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  const os = require('os'); const path = require('path');
-  const files = {
-    ST_BACKLOG_ATTENTION_SNAPSHOT_FILTERED: 'backlog-attention-snapshot-filtered.json',
-    ST_BACKLOG_ATTENTION_SOLUTION_UNJUSTIFIED: 'backlog-attention-solution-unjustified.json',
-    ST_BACKLOG_ATTENTION_SHAPED_HEADLESS: 'backlog-attention-shaped-headless.json',
-    ST_BACKLOG_ATTENTION_MERGED: 'backlog-attention-merged.json',
-  };
-  for (const [varName, filename] of Object.entries(files)) {
-    const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-    console.log(varName + '=' + JSON.stringify(p));
-  }
-")"
+ST_BACKLOG_ATTENTION_SNAPSHOT_FILTERED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-snapshot-filtered.json)"
+ST_BACKLOG_ATTENTION_SOLUTION_UNJUSTIFIED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-solution-unjustified.json)"
+ST_BACKLOG_ATTENTION_SHAPED_HEADLESS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-shaped-headless.json)"
+ST_BACKLOG_ATTENTION_MERGED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-merged.json)"
 node -e "
   const { execFileSync } = require('child_process');
   const { isTrustedComment, untrustedSkipNote } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/comment-trust.js');
@@ -195,18 +175,8 @@ Priority band first (`priority:high` > `priority:medium` > `priority:low`), then
 label sorts after every banded record, ordered among themselves by `createdAt` only.
 
 ```bash
-eval "$(node -e "
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  const os = require('os'); const path = require('path');
-  const files = {
-    ST_BACKLOG_ATTENTION_MERGED: 'backlog-attention-merged.json',
-    ST_BACKLOG_ATTENTION_RANKED: 'backlog-attention-ranked.json',
-  };
-  for (const [varName, filename] of Object.entries(files)) {
-    const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-    console.log(varName + '=' + JSON.stringify(p));
-  }
-")"
+ST_BACKLOG_ATTENTION_MERGED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-merged.json)"
+ST_BACKLOG_ATTENTION_RANKED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-ranked.json)"
 node -e "
   const { parseRecordFacets } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const BAND_ORDER = { high: 0, medium: 1, low: 2 };
@@ -256,7 +226,7 @@ Glob `{$RUN_ROOT}/.claude-tweaks/pipelines/*-tidy-standalone*/staged/` and
 `{$RUN_ROOT}/.claude-tweaks/pipelines/*-sweep-standalone*/staged/` together — a `*-sweep-standalone*`
 run's staged items originate from tidy's own Step 1 component run inside sweep's shared run dir,
 so they carry the same approvable shape as a standalone tidy run's — with `$RUN_ROOT` resolved
-per `_shared/pipeline-run-dir.md`'s Anchoring section (`git rev-parse --git-common-dir`, normalized
+per `_shared/pipeline-run-dir.md`'s Anchoring section (`hooks.js resolve-run-dir --root-only`
 — never a bare relative path, `[IL-127]`). Take the newest matching run directory across both
 globs by its ISO-timestamp prefix. When that directory's `staged/` holds one or more files, render:
 

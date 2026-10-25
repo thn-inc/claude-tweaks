@@ -17,6 +17,11 @@
 // d directory listing (readdir/opendir), c content prefix (a cp of a directory, a non-node child's in-repo
 // directory argument, or a content-reading git subcommand — its cwd, or a pathspec's literal prefix). Paths
 // under `.git/` and outside the root are dropped; `''` is the root itself.
+// A trace write that fails (EMFILE, ENOSPC) marks the process lost: `{pid}-{ms}-{rand}.lost` beside the trace
+// file holds `["T", test]`, written with the unpatched appendFileSync. If that marker cannot be written either,
+// an exit listener retries it once and, when it still fails in a process that would exit 0, sets exit code 1
+// and writes a diagnostic to fd 2, so the traced test fails. build-map counts the markers and trace refuses
+// to write a map while any exists.
 //
 // Children: a child_process call with an explicit `env` gets CT_TRACE_* and the CT_TRACE_REQUIRE token
 // (`--require "{abs tracer}"`) appended to its NODE_OPTIONS, so a test spawning node with a clean env
@@ -126,6 +131,41 @@ function install() {
   const out = path.join(DIR_ENV, `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.trace`);
   const seen = new Set();
   let headerWritten = false;
+  // The loss marker: written once (writeLost), retried by markLost and, at exit, by onExit.
+  const lostOut = out.replace(/\.trace$/, '.lost');
+  const LOST_LINE = `${JSON.stringify(['T', test])}\n`;
+  let lostWritten = false;
+  let lostListening = false;
+  function writeLost() {
+    try {
+      appendFileSync(lostOut, LOST_LINE);
+      lostWritten = true;
+    } catch (_) {
+      // retried by the exit listener
+    }
+  }
+  function onExit(code) {
+    try {
+      if (!lostWritten) writeLost();
+      if (lostWritten || code) return;
+      process.exitCode = 1;
+      fs.writeSync(2, `tracer: a trace write failed and its loss marker could not be written (${lostOut}) — exiting 1 so the traced test fails\n`);
+    } catch (_) {
+      // never break the traced process
+    }
+  }
+  // Idempotent: the marker is attempted until it lands, and the exit listener is registered once.
+  function markLost() {
+    try {
+      if (!lostWritten) writeLost();
+      if (!lostListening) {
+        lostListening = true;
+        process.once('exit', onExit);
+      }
+    } catch (_) {
+      // never break the traced process
+    }
+  }
   function emit(kind, r) {
     const line = JSON.stringify([kind, r]);
     if (seen.has(line)) return;
@@ -139,7 +179,7 @@ function install() {
       // look recorded, so the next identical read retries it instead of being deduped away.
       seen.add(line);
     } catch (_) {
-      // never break the traced process
+      markLost();
     }
   }
   failClosed = () => emit('c', '');
