@@ -86,7 +86,19 @@ function sectionText(body, name) {
     offset += line.length + 1;
   }
   const fencedSpans = fencedLineRanges(lines).map(([s, e]) => [lineStarts[s], lineStarts[e] + lines[e].length]);
-  const inFence = (pos) => fencedSpans.some(([from, to]) => pos >= from && pos < to);
+  // Spans are sorted and disjoint, so a binary search keeps a body packed with fences linear-ish.
+  const inFence = (pos) => {
+    let lo = 0;
+    let hi = fencedSpans.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const [from, to] = fencedSpans[mid];
+      if (pos < from) hi = mid - 1;
+      else if (pos >= to) lo = mid + 1;
+      else return true;
+    }
+    return false;
+  };
   let start = body.indexOf(heading);
   while (start !== -1 && inFence(start)) start = body.indexOf(heading, start + 1);
   if (start === -1) return null;
