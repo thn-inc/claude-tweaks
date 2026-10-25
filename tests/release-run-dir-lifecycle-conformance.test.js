@@ -666,16 +666,16 @@ function assertNoUnrouted(corpus, roster) {
   assert.deepEqual(unrouted, [], 'staged/ names with no roster row: ' + unrouted.map((u) => u.name + ' (in ' + u.file + ')').join(', '));
 }
 
+const routingTableLines = (text) => sliceBetween(text, '## Routing table', '## Approval').split('\n').filter((line) => line.startsWith('|'));
+
 // The Routing table row whose Finding cell keys on the route word, or undefined.
 function routingRowOf(text, route) {
-  return sliceBetween(text, '## Routing table', '## Approval').split('\n')
-    .find((line) => line.startsWith('|') && cellsOf(line)[0].includes(tick(route)));
+  return routingTableLines(text).find((line) => cellsOf(line)[0].includes(tick(route)));
 }
 
 // Roster rows whose route no Routing table row keys on. A `note` row is keyed in the Inventory's exclusion sentence.
 function unkeyedRows(roster, text) {
-  const routingFindings = sliceBetween(text, '## Routing table', '## Approval').split('\n')
-    .filter((line) => line.startsWith('|')).map((line) => cellsOf(line)[0]);
+  const routingFindings = routingTableLines(text).map((line) => cellsOf(line)[0]);
   const exclusion = sliceBetween(text, '## Inventory', '## Routing table').split(/\n\s*\n/)
     .filter((p) => p.includes('which is not a finding')).join('\n');
   return roster
@@ -707,7 +707,10 @@ function rosterLine(text, prefix) {
   return line;
 }
 const withoutRosterRow = (text, prefix) => text.replace(rosterLine(text, prefix) + '\n', '');
-const withRosterRoute = (text, prefix, word) => text.replace(rosterLine(text, prefix), rosterLine(text, prefix).replace(/`[^`]*` \|$/, tick(word) + ' |'));
+const withRosterRoute = (text, prefix, word) => {
+  const line = rosterLine(text, prefix);
+  return text.replace(line, line.replace(/`[^`]*` \|$/, tick(word) + ' |'));
+};
 
 function assertDesignDecisionRouted(text) {
   const row = classify('design-decision-1.md', parseRoster(text));
