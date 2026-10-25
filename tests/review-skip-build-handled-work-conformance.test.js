@@ -157,14 +157,13 @@ function selectSha(decisionsText, regionText, doc) {
     .join('([0-9a-f]{7,40})');
   const re = new RegExp(pattern);
   let sha = null;
-  let current = null;
+  let inBuildSection = false;
   for (const line of decisionsText.split('\n')) {
-    const h = line.match(/^## (.+)$/);
-    if (h) {
-      current = `## ${h[1]}`;
+    if (line.startsWith('## ')) {
+      inBuildSection = line === '## /build';
       continue;
     }
-    if (current !== '## /build') continue;
+    if (!inBuildSection) continue;
     const m = line.match(re);
     if (m) sha = m[1];
   }
