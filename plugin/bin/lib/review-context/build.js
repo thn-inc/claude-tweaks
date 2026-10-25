@@ -311,9 +311,31 @@ function buildContext({
   const chunkText = chunks.map(renderChunk);
   const sectionText = sections.map(renderSection);
   let total = [...chunkText, ...sectionText].reduce((n, t) => n + Buffer.byteLength(t), 0);
+  // Re-render every piece of file `f` from the current elision flags and return the byte change.
+  // Rendering is a pure function of those flags, so calling it again after flipping one back
+  // restores the earlier text.
+  function rerenderFile(f) {
+    let delta = 0;
+    chunks.forEach((c, i) => {
+      if (c.file !== f) return;
+      const next = renderChunk(c);
+      delta += Buffer.byteLength(next) - Buffer.byteLength(chunkText[i]);
+      chunkText[i] = next;
+    });
+    sections.forEach((s, i) => {
+      if (s.file !== f) return;
+      const next = renderSection(s);
+      delta += Buffer.byteLength(next) - Buffer.byteLength(sectionText[i]);
+      sectionText[i] = next;
+    });
+    return delta;
+  }
   // Total budget (#4220): stub the largest remaining pieces first until the bundle fits. Sizes
   // are measured once, before any stub; each stub re-renders every piece of its file, since
-  // eliding a chunk changes the pointer that file's section stub gives.
+  // eliding a chunk changes the pointer that file's section stub gives. A piece whose stub is
+  // not smaller than the piece (a few lines changed in a tiny file) is left whole, so a budget
+  // that cannot be reached never leaves the bundle larger than the unbudgeted one. A chunk with
+  // no parseable path (`file` null) is never a candidate: a marker line has no path to name.
   if (total > budgetBytes) {
     const candidates = [
       ...chunks.flatMap((c, i) => (c.file !== null && !c.elided ? [{ chunk: c, size: Buffer.byteLength(chunkText[i]) }] : [])),
@@ -321,21 +343,16 @@ function buildContext({
     ].sort((a, b) => b.size - a.size);
     for (const candidate of candidates) {
       if (total <= budgetBytes) break;
-      if (candidate.chunk) candidate.chunk.elided = true;
-      else candidate.section.budgetStubbed = true;
-      const f = candidate.chunk ? candidate.chunk.file : candidate.section.file;
-      chunks.forEach((c, i) => {
-        if (c.file !== f) return;
-        const next = renderChunk(c);
-        total += Buffer.byteLength(next) - Buffer.byteLength(chunkText[i]);
-        chunkText[i] = next;
-      });
-      sections.forEach((s, i) => {
-        if (s.file !== f) return;
-        const next = renderSection(s);
-        total += Buffer.byteLength(next) - Buffer.byteLength(sectionText[i]);
-        sectionText[i] = next;
-      });
+      const piece = candidate.chunk || candidate.section;
+      const flag = candidate.chunk ? 'elided' : 'budgetStubbed';
+      piece[flag] = true;
+      const delta = rerenderFile(piece.file);
+      if (delta >= 0) {
+        piece[flag] = false;
+        rerenderFile(piece.file);
+      } else {
+        total += delta;
+      }
     }
   }
   const out = chunkText.join('') + sectionText.join('');

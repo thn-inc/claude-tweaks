@@ -766,6 +766,67 @@ test('4220: under the default budget the same diff is untouched', () => {
   assert.strictEqual(sectionOf(bundle, 'a.txt'), budgetLines('a.txt', 8, 'new'));
 });
 
+// The edge shapes of the budget: a deleted file, a modified markdown file (its section is already
+// a stub, only its hunk can still be cut), two plain files, and a file so small that its
+// stub is larger than it is.
+function makeBudgetEdgeRepo() {
+  const repo = initRepo('review-ctx-budget-edge-');
+  for (const name of ['big.txt', 'gone.txt', 'notes.md', 'out.txt']) fs.writeFileSync(path.join(repo, name), budgetLines(name, 6, 'old'));
+  fs.writeFileSync(path.join(repo, 'tiny.txt'), 'one\n');
+  startFeatureBranch(repo);
+  for (const name of ['big.txt', 'notes.md', 'out.txt']) fs.writeFileSync(path.join(repo, name), budgetLines(name, 6, 'new'));
+  fs.writeFileSync(path.join(repo, 'tiny.txt'), 'two\n');
+  fs.rmSync(path.join(repo, 'gone.txt'));
+  commitAll(repo, 'edit and delete');
+  return repo;
+}
+
+// A budget no bundle can meet: every piece that has a smaller stub is stubbed.
+const UNREACHABLE_BUDGET = 1;
+
+test('4220: a budget-elided deleted file gets the deleted-and-elided pointer and stays in emptySections', () => {
+  const { result, bundle } = buildFrom(makeBudgetEdgeRepo(), { budgetBytes: UNREACHABLE_BUDGET });
+  assert.deepStrictEqual(result.emptySections, ['gone.txt']);
+  assert.ok(result.oversizeSections.includes('gone.txt'));
+  const section = sectionOf(bundle, 'gone.txt');
+  assert.ok(section.startsWith('[section omitted: gone.txt — the file is deleted and its diff was elided'), section);
+  assert.ok(section.includes("`git diff main...feature -- 'gone.txt'`"), section);
+});
+
+test('4220: a budget-elided markdown hunk re-points the markdown stub at the git diff command', () => {
+  const { result, bundle, diffPart } = buildFrom(makeBudgetEdgeRepo(), { budgetBytes: UNREACHABLE_BUDGET });
+  assert.match(diffPart, /^\[\d+ bytes of diff elided for notes\.md — see oversizeSections\]$/m);
+  const section = sectionOf(bundle, 'notes.md');
+  assert.match(section, /^\[section omitted: notes\.md is \d+ bytes of markdown, not inlined; its diff was elided too/);
+  assert.ok(section.includes("`git diff main...feature -- 'notes.md'`"), section);
+  assert.strictEqual(result.oversizeSections.filter((p) => p === 'notes.md').length, 1);
+});
+
+test('4220: a budget below the floor stubs every piece that shrinks and still builds', () => {
+  const { result } = buildFrom(makeBudgetEdgeRepo(), { budgetBytes: UNREACHABLE_BUDGET });
+  assert.ok(result.bytes > UNREACHABLE_BUDGET, 'the headers and stubs alone exceed it');
+  for (const f of ['big.txt', 'out.txt', 'notes.md', 'gone.txt']) assert.ok(result.oversizeSections.includes(f), f);
+});
+
+test('4220: a piece whose stub would be larger than it is stays whole even when the budget cannot be met', () => {
+  const { bundle } = buildFrom(makeBudgetEdgeRepo(), { budgetBytes: UNREACHABLE_BUDGET });
+  assert.strictEqual(sectionOf(bundle, 'tiny.txt'), 'two\n');
+});
+
+test('4220: --files-from scope still reports a path outside the list whose hunk the budget elided', () => {
+  const repo = makeBudgetEdgeRepo();
+  const dir = resolveDir({});
+  const listPath = path.join(dir, 'own-work.txt');
+  fs.writeFileSync(listPath, 'tiny.txt\n');
+  const result = buildContext({ base: 'main', branch: 'feature', dir, filesFrom: listPath, budgetBytes: UNREACHABLE_BUDGET, ...repoDeps(repo) });
+  const bundle = fs.readFileSync(result.contextPath, 'utf8');
+  for (const f of ['big.txt', 'out.txt']) {
+    assert.ok(result.oversizeSections.includes(f), f);
+    assert.ok(!bundle.includes(`===== ${f} =====`), `${f} has no section outside the list`);
+  }
+  assert.strictEqual(result.files, 1);
+});
+
 test('CLI: malformed invocations exit 2 with usage', () => {
   for (const args of [[], ['build'], ['frobnicate']]) {
     let code = 0;
