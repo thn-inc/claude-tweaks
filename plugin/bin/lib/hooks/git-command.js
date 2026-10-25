@@ -233,20 +233,25 @@ const VAR_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
 // substituted value is a literal already proven not to contain `$` (by
 // updateAssignment's own isUnresolvable check at assignment time), so there
 // is nothing left to re-scan.
-function substituteVars(tokens, vars, singleQuoted) {
+function substituteVars(tokens, vars, singleQuoted, spanKinds) {
   if (!vars.size) return tokens;
   return tokens.map((tok, i) => {
     // Real bash never expands `$NAME` inside single quotes — a token built
     // from a single-quoted span is never a variable reference, regardless of
     // its text. Skip it untouched; it falls through to the existing
     // isUnresolvable()/null-target behavior unmodified (see tokenize()'s
-    // singleQuoted comment for why this guard exists).
-    if (singleQuoted && singleQuoted[i]) return tok;
+    // singleQuoted comment for why this guard exists). With the per-character
+    // span mask (#4210) the test is on the `$` itself, below, so `'hi'>$WT/x`
+    // still expands its bare `$WT`; without a mask, any single-quoted span skips.
+    const kinds = spanKinds && spanKinds[i];
+    if (!kinds && singleQuoted && singleQuoted[i]) return tok;
     if (!tok.includes('$') || tok.includes('`')) return tok;
     const matches = [...tok.matchAll(VAR_REF_RE)];
     if (matches.length !== 1) return tok;
     if ((tok.match(/\$/g) || []).length !== 1) return tok;
     const m = matches[0];
+    // A `$` inside single quotes, or backslash-escaped, is literal text.
+    if (kinds && (kinds[m.index] === 's' || kinds[m.index] === 'e')) return tok;
     const name = m[1] || m[2];
     if (!vars.has(name)) return tok;
     return tok.slice(0, m.index) + vars.get(name) + tok.slice(m.index + m[0].length);
@@ -282,7 +287,7 @@ function forEachCommandSegment(command, cwd, handler) {
     });
     if (!rawT.length) continue;
     if (updateAssignment(vars, rawT)) continue;
-    const t = substituteVars(rawT, vars, singleQuoted);
+    const t = substituteVars(rawT, vars, singleQuoted, spanKinds);
     // `FOO=1 cd /path` really does change the shell's cwd — a preceding
     // assignment on a regular (non-special) builtin like `cd` is scoped only
     // to that command's own execution environment, but `cd` has no
@@ -591,7 +596,8 @@ function matchRedirectOperator(tok) {
 }
 
 // One group: `(ls)`, `$(date)`, `<(b)` — no nesting, and no `$`, backtick, backslash, `<`, `>` or quote inside.
-const BALANCED_GROUP_RE = /^[$<]?\([^()\\$`<>"']*\)$/;
+// Fd digits may follow the `)` (`(ls)2>x` is a subshell with a `2>` redirect).
+const BALANCED_GROUP_RE = /^[$<]?\([^()\\$`<>"']*\)\d*$/;
 
 // #4015/#4210: bash ends a word at an unquoted `>`, so `echo foo>x` redirects exactly
 // like `echo foo > x`, and the word before it may hold quoted spans (`echo "hi">x`).
@@ -960,11 +966,16 @@ function stripHeredocBodies(command) {
 // comparison (`[[ a>b ]]`, `(( x>y ))`), never a redirection, so the redirect scan
 // starts at the token after the closing word. 0 for any other segment; an
 // unterminated body (a glued closer such as `y))`) is skipped whole, which fails
-// open (#4015).
+// open (#4015). A compound command may follow a control keyword on the same
+// segment (`if (( x>y ))`, `while [[ a>b ]]`), so the keywords are skipped first.
+const COMPOUND_LEAD_WORDS = new Set(['if', 'elif', 'while', 'until', 'then', 'do', 'else', '!']);
+
 function compoundBodyEnd(t) {
-  const closer = t[0] === '[[' ? ']]' : t[0] === '((' ? '))' : null;
+  let lead = 0;
+  while (lead < t.length && COMPOUND_LEAD_WORDS.has(t[lead])) lead += 1;
+  const closer = t[lead] === '[[' ? ']]' : t[lead] === '((' ? '))' : null;
   if (closer === null) return 0;
-  const end = t.indexOf(closer);
+  const end = t.indexOf(closer, lead);
   return end === -1 ? t.length : end + 1;
 }
 
