@@ -38,10 +38,10 @@ files:
 
 ### 3. Ad-hoc session dirs stay out of the list — same pass
 - **URL:** —
-- **Action:** For a `{ts}-adhoc-standalone` dir skipped at `no-branch`, `no-worktree` or `no-pr` whose `run-state.json` records a linked worktree, `isAdHocIntrinsicSkip` is true. `classifyRunDir` then does not classify it `structurally-stuck`. If the dir already has an escalated cache entry, `trackStuckSkip` resolves its path off the record with a comment saying it is an ad-hoc session dir, and clears the entry only once the resolve lands.
-- **Should feel:** Quiet. Ad-hoc dirs wait for their own 30-day `adhoc-superseded` sweep without ever appearing in the record.
+- **Action:** For a `{ts}-adhoc-standalone` dir skipped at `no-branch`, `no-worktree` or `no-pr` whose `run-state.json` records a worktree (linked worktree or main checkout), `isAdHocIntrinsicSkip` is true. `classifyRunDir` then does not classify it `structurally-stuck`. If the dir already has an escalated cache entry, `trackStuckSkip` resolves its path off the record with a comment saying it is an ad-hoc session dir, and clears the entry only once the resolve lands.
+- **Should feel:** Quiet. Ad-hoc dirs wait for their own sweep (`adhoc-superseded` after 30 days for a linked worktree, `adhoc-session-ended` once the session is dead plus 7 days for the main checkout) without ever appearing in the record.
 - **Should understand:**
-  - An ad-hoc dir stamped with the main checkout keeps escalating. The main checkout is always registered, so `adhoc-superseded` can never claim it.
+  - An ad-hoc dir stamped with the main checkout no longer escalates: `adhoc-session-ended` archives it once its session is dead (#4179). One whose liveness stays `unknown` stays in place.
   - An ad-hoc dir stuck at any other tracked reason (`merged-partial`, `pr-not-found`) keeps escalating too.
   - A failed resolve keeps the cache entry, so the next pass retries.
   - `reconcile --dry-run` skips this clear entirely.
