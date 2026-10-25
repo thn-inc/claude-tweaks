@@ -131,8 +131,9 @@ function buildFailure(err) {
 // deterministically. Production callers omit it.
 //
 // opts.env, when set, is the spawn's environment; when absent the child inherits
-// process.env as before. Pass repoPinnedEnv() to keep `-C <cwd>` in charge of
-// which repo git operates on.
+// process.env as before. An object is used as given, so `{}` is an empty
+// environment (no PATH), not "unset". Pass repoPinnedEnv() to keep `-C <cwd>` in
+// charge of which repo git operates on.
 function runGit(args, cwd, opts = {}) {
   const timeout = resolveTimeout(opts);
   return runClassified(

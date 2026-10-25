@@ -339,3 +339,20 @@ test('runGit: opts.env is the spawn environment — a pinned env restores -C rep
   const pinned = runGit(['rev-parse', '--absolute-git-dir'], a, { env: repoPinnedEnv(foreign) });
   assert.strictEqual(pinned.stdout, fs.realpathSync(path.join(a, '.git')));
 });
+
+test('repoPinnedEnv: with no argument it reads process.env, dropping the four vars and keeping the rest (#4178)', () => {
+  const keys = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'];
+  const prior = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  for (const k of keys) process.env[k] = `/x/${k}`;
+  try {
+    const out = repoPinnedEnv();
+    for (const k of keys) assert.ok(!(k in out), `${k} must be dropped`);
+    assert.strictEqual(out.PATH, process.env.PATH, 'the rest of process.env must survive');
+    for (const k of keys) assert.strictEqual(process.env[k], `/x/${k}`, 'process.env itself must not be mutated');
+  } finally {
+    for (const k of keys) {
+      if (prior[k] === undefined) delete process.env[k];
+      else process.env[k] = prior[k];
+    }
+  }
+});
