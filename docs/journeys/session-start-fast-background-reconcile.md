@@ -12,6 +12,8 @@ files:
   - plugin/bin/lib/reconcile/pr-state.js
   - plugin/bin/lib/reconcile/origin-head.js
   - plugin/bin/lib/reconcile/ledger-residue.js
+  - plugin/bin/lib/reconcile/background-spawn.js
+  - plugin/bin/lib/reconcile/pr-state-cache.js
   - plugin/bin/hooks.js
 ---
 
@@ -31,10 +33,10 @@ files:
 - **Red flags:** A visible multi-second-to-minutes stall before the first message; a mirror/red-tip summary that silently omits a real problem because a network call timed out with no explanation; every check skipped as `no-remote` in a checkout that plainly has a working `origin`.
 
 ### 2. The background pass is dispatched, detached
-- **Action:** After the fast pass returns, `session-start.js` checks its own background-status file's freshness and, if stale enough, spawns `node bin/hooks.js reconcile-background` as a genuinely detached child process (`spawn(..., {detached: true, stdio: 'ignore'}).unref()`) — this process runs `release`, `archive`, `archive-branches`, `remote-prune`, `ledger-residue`, and `reap` (in that fixed order — `reap` last, since it physically removes worktrees the other checks derive branches from) and writes its outcome to a status file, unrelated to the session's own process lifetime.
+- **Action:** After the fast pass returns, `session-start.js` checks its own background-status file's freshness and, if stale enough, spawns `node bin/hooks.js reconcile-background` as a genuinely detached child process (`spawn(..., {detached: true, stdio: 'ignore'}).unref()`) — this process runs `release`, `archive`, `archive-branches`, `remote-prune`, `ledger-residue`, and `reap` (in that fixed order — `reap` last, since it physically removes worktrees the other checks derive branches from) and writes its outcome to a status file, unrelated to the session's own process lifetime. The spawn decision lives in `background-spawn.js`'s `spawnBackgroundIfStale`, which the unscoped `hooks.js reconcile` CLI shares: that CLI defers `archive-branches`, `remote-prune` and `ledger-residue` to this same pass (#4032). The pass runs under its own 120 s ceiling (`BACKGROUND_BUDGET_MS`), not the 18 s hot-path one; under the 18 s ceiling, its GraphQL-heavy checks used to starve `remote-prune`, `ledger-residue` and `reap` on every pass.
 - **Should feel:** Invisible — nothing about this step is part of the user's interaction; the session is already usable.
 - **Should understand:** Nothing yet — this step has no immediate output. Its result surfaces at the *next* session start (Step 3).
-- **Red flags:** The spawn silently failing to fire (no background reconcile ever runs, stale state accumulates indefinitely); the spawn blocking the parent process despite being "detached."
+- **Red flags:** The spawn silently failing to fire (no background reconcile ever runs, stale state accumulates indefinitely); the spawn blocking the parent process despite being "detached"; a background status whose `skipped` lists `remote-prune,ledger-residue,reap` as `budget-exceeded` on every pass (the starvation the 120 s ceiling closed).
 
 ### 3. The next session start surfaces what the background pass did
 - **Action:** The following `SessionStart` reads the background-status file once and, if it holds a result not yet shown, renders a "background reconcile (from a prior session)" summary in `additionalContext` — what was released/archived/pruned/reaped, whether a residue-ledger removal PR was opened, and what was skipped and why (e.g. a locked worktree with a live owner, or a residue ledger left on the integration branch because it still has open rows or its removal PR is still open).
@@ -50,3 +52,4 @@ files:
 - Updated during build of #3249 (fast-lane pr-first merges never release their claim or archive their run — console-never-rendered) — Step 3's release/archive convergence promise now holds for a torn-down worktree/branch and a never-rendered console with nothing staged; the residual pending-staged-items gap is tracked as #3297
 - Updated during build of #3412 (reconciler released a run's unfinished record when the run's PR merged without closing it) — Step 3's release promise now requires the merged PR to close the record; a merged-but-not-closing PR keeps the claim (`pr-merged-not-closing` / `pr-merged-closing-unknown`)
 - Updated during build of #3812 (residue ledgers reaching main through PRs merged outside a run's teardown) — the background pass gains `ledger-residue`, and Step 3 surfaces its removal PRs and notable kept ledgers
+- Updated during build of #4032 (Cut hooks.js reconcile from ~63 s per call). In Step 2, the spawn decision moved to `background-spawn.js`, which the unscoped CLI shares (the CLI defers three checks to this pass), and the pass gained its own 120 s ceiling. See `find-where-a-reconcile-call-spent-its-time-4032.md`.
