@@ -90,7 +90,13 @@ governs the separate interactive suggestion-menu render, not this summary.
 (`$RUN_DIR_FILE`) is closed on every exit after that mint — nothing eligible,
 drained, budget exhausted, and a firing-ending failure
 (`next-mode-shape.md`'s Failure self-report) — not only on the paths that
-render the summary above; the nothing-eligible exit still renders nothing:
+render the summary above; the nothing-eligible exit still renders nothing.
+**Created** means the directory did not exist before `## Drain start`'s own
+resolution ran — its mint created it; a directory that resolver returned from
+`$PIPELINE_RUN_DIR` (a `/claude-tweaks:sweep` parent, `--source sweep`) or a
+most-recent-matching (step 2) match is **inherited**.
+An **inherited** directory is never closed here — the parent pipeline owns that
+close, so skip the call below. For a created directory:
 
 ```bash
 RUN_DIR_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rundir.txt)"
@@ -100,11 +106,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$(cat "$RUN_DIR_FILE"
 This is the run directory's own close, separate from `next-mode-shape.md`'s
 `## Release`, which releases one record's claim. A specify drain directory
 records no owning session, so session end never marks it `interrupted`: left
-alone, it stays `active`. The directory is **inherited** when `$PIPELINE_RUN_DIR`
-was already set at the firing's start and `## Drain start`'s resolver returned it
-(a `/claude-tweaks:sweep` parent, `--source sweep`).
-An **inherited** directory is never closed here — the parent pipeline owns that
-close. A specify drain archives nothing.
+alone, it stays `active`. A specify drain archives nothing.
 
 **Under `--source sweep`,** this firing is a component step of `/claude-tweaks:sweep`
 — the close-out counts above render as the step's report to the parent, never a

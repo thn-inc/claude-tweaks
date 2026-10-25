@@ -23,7 +23,7 @@ const EXEMPT_FILES = {
   'flow/materialize.md': "/build's record-mode directory is run-dir-resolution.md step 3, not step 4: it is deliberately inherited by the record's later standalone /test, /review and /wrap-up, whose cleanup item 8 closes and archives it",
 };
 const EXEMPT_SKILLS = {
-  capture: "on step 4's allowlist but mints nothing; it logs only when a directory already resolves (capture/routing.md:38)",
+  capture: "on step 4's allowlist but its prose has no mint site (the exempt-non-minter test below pins that); it logs to decisions.md only when a directory already resolves (routing.md's Headless bar, \"If a run directory resolves, log …\")",
 };
 
 const P_STATEMENT = [/\*\*Every exit runs the close-out\.\*\*/, 'the minter states every exit runs the close-out'];
@@ -43,7 +43,7 @@ const PINS = {
     { file: 'specify/next-mode-shape.md', from: '## Failure self-report', to: null, patterns: [[/next-mode-closeout\.md`'s close-out still runs/, 'a firing-ending failure still runs the close-out']] },
   ],
   backlog: [
-    { file: 'backlog/SKILL.md', from: '## Component-Skill Contract', to: '## Anti-Patterns', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/--reset-breaker[\s\S]{0,300}overview[\s\S]{0,300}attention|overview[\s\S]{0,300}attention[\s\S]{0,300}--reset-breaker/, 'the statement covers every mode that resolves its own directory']] },
+    { file: 'backlog/SKILL.md', from: '## Component-Skill Contract', to: '## Anti-Patterns', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/any `refine` form that resolves it[^\n]{0,120}?`#N\[,#M\.\.\.\]`, or `--reset-breaker`/, 'the statement covers every refine form that resolves its own directory'], [/`overview` and `attention` never resolve or write a run directory/, 'overview and attention mint nothing to close']] },
     { file: 'backlog/refine-closing-summary.md', from: '**Close the run dir.**', to: null, patterns: [P_INHERITED] },
     { file: 'backlog/refine-headless.md', from: '## Step 5: Report', to: '## Cap tracking', patterns: [P_CLOSE] },
   ],
@@ -51,7 +51,7 @@ const PINS = {
     { file: 'dispatch/SKILL.md', from: '### Step 1:', to: '### Step 2:', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED] },
     { file: 'dispatch/SKILL.md', from: '### Step 3:', to: '### Step 4:', patterns: [[/Step 1's close-out still runs/, 'the zero-eligible stop still runs Step 1\'s close-out']] },
   ],
-  init: { file: 'init/SKILL.md', from: '## Phase 9: Present Summary and Confirm', to: '## Important Notes', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/Stop here/, 'the Scope Gate stop is named']] },
+  init: { file: 'init/SKILL.md', from: '## Phase 9: Present Summary and Confirm', to: '## Important Notes', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/Interactive's per-phase "Done" \("Stop here"\) once the mint has run/, 'the per-phase "Done" stop is named'], [/Scope Selection Gate's own "Done" \(Option 4\) stops after Phase 0, before any mint/, 'the Scope Gate\'s "Done" precedes the mint']] },
   'harness-health': { file: 'harness-health/dream-pass.md', from: '## Running it', to: '## Reviewing proposals', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED] },
   'wrap-up': { file: 'wrap-up/SKILL.md', from: '### Establish the run directory (unconditional)', to: '### Diff-derived ceremony default', patterns: [P_STATEMENT, P_CLOSE, [/Stop and re-engage/, 'the resumable halt stays open'], [/A `--dry-run` run skips execution entirely/, 'a --dry-run run, which skips item 8, closes a created directory itself'], [/a verify exit 3 too, since Execute approved actions runs item 8 before its Verify execution/, 'a verify exit 3 still reaches item 8']] },
   tidy: { file: 'tidy/SKILL.md', from: '## Step 7.5: Verify Execution', to: '## Routine Configuration', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/--approve[\s\S]{0,300}archiv/, 'archival stays with --approve']] },
@@ -180,17 +180,43 @@ test('AC1.1: run-dir-resolution.md step 4 states the every-exit close-out duty (
   ], 'run-dir-resolution.md step 4 must state the every-exit close-out duty');
 });
 
-// A key present in MINTERS but absent from `pins` — the same assertion the live test and its go-red share.
-const assertEveryMinterPinned = (pins) => assert.deepEqual(MINTERS.filter((m) => !pins[m]), []);
+// Every minter in MINTERS needs at least one entry in `pins`, every entry at least one pattern, and
+// P_STATEMENT among that minter's patterns — the same assertion the live test and its go-reds share.
+// An empty entry list or an entry with `patterns: []` would otherwise pass the per-minter loop vacuously.
+function assertEveryMinterPinned(pins) {
+  const gaps = MINTERS.flatMap((m) => {
+    const entries = [].concat(pins[m] || []);
+    if (entries.length === 0) return [`${m}: no pin entry`];
+    const out = entries.filter((e) => !e.patterns || e.patterns.length === 0).map((e) => `${m}: ${e.file} (${e.from}) pins no pattern`);
+    if (!entries.some((e) => (e.patterns || []).includes(P_STATEMENT))) out.push(`${m}: no entry pins P_STATEMENT`);
+    return out;
+  });
+  assert.deepEqual(gaps, []);
+}
 
-test('AC1.1: every enumerated minter carries a pin', () => {
+test('AC1.1: every enumerated minter carries a pin that includes the statement', () => {
   assertEveryMinterPinned(PINS);
 });
 
 test('AC1.1 go-red: dropping a minter\'s pin from a copy of PINS is reported by name', () => {
   const { 'harness-health': dropped, ...rest } = PINS;
   assert.ok(dropped, 'the live PINS carries no harness-health key — the go-red cannot discriminate');
-  assert.throws(() => assertEveryMinterPinned(rest), /harness-health/);
+  assert.throws(() => assertEveryMinterPinned(rest), /harness-health: no pin entry/);
+});
+
+test('AC1.1 go-red: a minter whose pin is an empty entry list is reported', () => {
+  assert.throws(() => assertEveryMinterPinned({ ...PINS, release: [] }), /release: no pin entry/);
+});
+
+test('AC1.1 go-red: an entry with no patterns is reported', () => {
+  const [first, ...others] = [].concat(PINS.sweep);
+  assert.ok(others.length > 0, 'the live sweep pin has one entry — the go-red cannot isolate an empty-patterns entry');
+  assert.throws(() => assertEveryMinterPinned({ ...PINS, sweep: [first, { ...others[0], patterns: [] }] }), /sweep: sweep\/SKILL\.md \(## Failure propagation\) pins no pattern/);
+});
+
+test('AC1.1 go-red: a minter whose entries omit P_STATEMENT is reported', () => {
+  const stripped = [].concat(PINS.dispatch).map((e) => ({ ...e, patterns: e.patterns.filter((p) => p !== P_STATEMENT) }));
+  assert.throws(() => assertEveryMinterPinned({ ...PINS, dispatch: stripped }), /dispatch: no entry pins P_STATEMENT/);
 });
 
 for (const [key, pin] of Object.entries(PINS)) {
