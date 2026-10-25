@@ -476,4 +476,8 @@ test('#4281: a drive-relative redirect is a hit whatever the placeholder cwd, so
     assert.strictEqual(hasFileRedirection(command, win), true, command);
   }
   assert.strictEqual(hasFileRedirection('echo x > /dev/null', win), false);
+  // bash 3.2 writes a, bash 5 writes a\: one Windows file, so the walk's own pathImpl settles the
+  // stray backslash and it counts; under POSIX the two files differ and it is unprovable.
+  assert.strictEqual(hasFileRedirection('echo x > a\\', win), true);
+  assert.strictEqual(hasFileRedirection('echo x > a\\', { pathImpl: path.posix }), false);
 });
