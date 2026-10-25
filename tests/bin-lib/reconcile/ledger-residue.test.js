@@ -6,10 +6,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
+const { skipUnderRoot } = require('../../helpers/root');
 const {
   LEDGER_RESIDUE_MARKER, QUIET_SKIP_REASONS, residueLedgerPaths, removalBranchName, ledgerFeatureSlug, runDirNamesNumber,
   attributedRunDir, classifyLedgerCandidate, partitionByRemovalPrs, decideLedgerResidue, defaultListRunDirs,
-  defaultListRemovalPrs, defaultCreatePr, ledgerResidue,
+  defaultListRemovalPrs, defaultCreatePr, referencingRecords, defaultListOpenRecords, ledgerResidue,
 } = require('../../../plugin/bin/lib/reconcile/ledger-residue');
 const { reconcile, ALL_CHECKS } = require('../../../plugin/bin/lib/reconcile');
 const { formatSummary } = require('../../../plugin/bin/lib/reconcile/format-summary');
@@ -62,9 +63,9 @@ test('attributedRunDir: #N tokens on the first line decide; the filename slug on
   assert.strictEqual(attributedRunDir('docs/plans/2026-10-20-other-ledger.md', ledgerText({ heading: '# Open Items — other' }), dirs), null);
 });
 
-test('classifyLedgerCandidate: signature, open rows, unrecognized status, run-dir scan, live run — in that order', () => {
+test('classifyLedgerCandidate: signature, open rows, unrecognized status, run-dir scan, live run, record scan, referencing record — in that order', () => {
   const p = 'docs/plans/2026-10-22-x-ledger.md';
-  const c = (text, runDirNames = []) => classifyLedgerCandidate({ path: p, text, runDirNames });
+  const c = (text, runDirNames = [], loadOpenRecords = () => []) => classifyLedgerCandidate({ path: p, text, runDirNames, loadOpenRecords });
   assert.strictEqual(c(null), 'ledger-read-failed');
   assert.strictEqual(c('# ledger\n'), 'not-a-ledger');
   assert.strictEqual(c('# Open Items — x\n\nno table here\n'), 'not-a-ledger');
@@ -74,6 +75,14 @@ test('classifyLedgerCandidate: signature, open rows, unrecognized status, run-di
   assert.strictEqual(c(ledgerText(), null), 'run-dir-scan-failed');
   assert.strictEqual(c(ledgerText(), ['2026-10-22T000000-record-9001']), 'run-live');
   assert.strictEqual(c(ledgerText(), ['2026-10-22T000000-record-9002']), null);
+  // An omitted loader must fail closed. Passing undefined through `c` would trigger its default loader, so call the classifier directly.
+  assert.strictEqual(classifyLedgerCandidate({ path: p, text: ledgerText(), runDirNames: [] }), 'record-scan-failed');
+  assert.strictEqual(c(ledgerText(), [], () => null), 'record-scan-failed');
+  assert.strictEqual(c(ledgerText(), [], () => 'gh-absent'), 'gh-absent');
+  assert.strictEqual(c(ledgerText(), [], () => 'network-failure'), 'network-failure');
+  assert.strictEqual(c(ledgerText(), [], () => [{ number: 5, body: `see ${p}`, labels: [] }]), 'referenced-by-open-record');
+  assert.strictEqual(c(ledgerText(), ['2026-10-22T000000-record-9001'], () => { throw new Error('must not load'); }), 'run-live');
+  assert.strictEqual(c(ledgerText(), null, () => { throw new Error('must not load'); }), 'run-dir-scan-failed');
   assert.strictEqual(c(ledgerText({ rows: [] })), null, 'a zero-row ledger has no open row');
   assert.strictEqual(c(ledgerText().replace(/\n/g, '\r\n')), null, 'CRLF blob still carries the signature');
 });
@@ -242,12 +251,71 @@ test('defaultCreatePr: parses the PR URL gh prints; bad output and failures are 
   assert.strictEqual(defaultCreatePr(arg, () => { throw new Error('HTTP 422'); }), 'network-failure');
 });
 
+test('referencingRecords: namedTarget path, ledger filename, or feature slug in an open record\'s body', () => {
+  const p = 'docs/plans/2026-10-22-widget-cache-ledger.md';
+  assert.deepStrictEqual(referencingRecords(p, [{ number: 1, body: `Ledger ${p} still has follow-ups`, labels: [] }]), [1]);
+  assert.deepStrictEqual(referencingRecords(p, [{ number: 2, body: 'see 2026-10-22-widget-cache-ledger.md', labels: [] }]), [2]);
+  assert.deepStrictEqual(referencingRecords(p, [{ number: 3, body: 'the widget-cache work', labels: [] }]), [3]);
+  assert.deepStrictEqual(referencingRecords(p, [{
+    number: 4, body: '**Doc:** docs/plans/2026-10-22-widget-cache-ledger.md | stale', labels: [{ name: 'by:docs-health' }],
+  }]), [4]);
+  assert.deepStrictEqual(referencingRecords(p, [{ number: 5, body: 'unrelated body', labels: [] }]), []);
+  assert.deepStrictEqual(referencingRecords(p, [{ number: 6, body: undefined, labels: [] }, { number: 7, body: 42, labels: [] }]), []);
+  assert.deepStrictEqual(referencingRecords(p, [{ number: 9, body: 'widget-cache' }, { number: 3, body: 'widget-cache' }]), [3, 9]);
+});
+
+test('defaultListOpenRecords: gh issue list on the github-issues path; failures classified; a non-array is a network failure', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-records-'));
+  const calls = [];
+  const exec = (bin, args, opts) => { calls.push({ bin, args, opts }); return JSON.stringify([{ number: 1, body: 'b', labels: [] }]); };
+  assert.deepStrictEqual(defaultListOpenRecords(root, exec), [{ number: 1, body: 'b', labels: [] }]);
+  assert.strictEqual(calls[0].bin, 'gh');
+  assert.deepStrictEqual(calls[0].args.slice(0, 4), ['issue', 'list', '--state', 'open']);
+  assert.strictEqual(calls[0].args[calls[0].args.indexOf('--json') + 1], 'number,body,labels');
+  const enoent = Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' });
+  assert.strictEqual(defaultListOpenRecords(root, () => { throw enoent; }), 'gh-absent');
+  assert.strictEqual(defaultListOpenRecords(root, () => { throw new Error('HTTP 502'); }), 'network-failure');
+  assert.strictEqual(defaultListOpenRecords(root, () => '{"a":1}'), 'network-failure');
+});
+
+test('defaultListOpenRecords: work-backend local-files reads specs/ and never calls gh; a missing specs/ dir is no records', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-local-'));
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'work-backend: local-files\n');
+  assert.deepStrictEqual(defaultListOpenRecords(root, mustNotCall('exec')), []);
+  fs.mkdirSync(path.join(root, 'specs'));
+  fs.writeFileSync(path.join(root, 'specs', '7-foo.md'), '# Foo\n\nsee x\n');
+  assert.deepStrictEqual(defaultListOpenRecords(root, mustNotCall('exec')), [{ number: 7, body: 'see x', labels: [] }]);
+});
+
+test('defaultListOpenRecords: work-backend local-files fails closed (null) when a record file or the specs/ dir cannot be read',
+  { skip: skipUnderRoot('root ignores mode bits').skip || (process.platform === 'win32' && 'chmod does not deny reads on win32') }, () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-unreadable-'));
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'work-backend: local-files\n');
+    const specs = path.join(root, 'specs');
+    fs.mkdirSync(specs);
+    const file = path.join(specs, '7-foo.md');
+    fs.writeFileSync(file, '# Foo\n\nsee x\n');
+    fs.chmodSync(file, 0o000);
+    try {
+      assert.strictEqual(defaultListOpenRecords(root, mustNotCall('exec')), null);
+    } finally {
+      fs.chmodSync(file, 0o644); // root-safe
+    }
+    fs.chmodSync(specs, 0o000);
+    try {
+      assert.strictEqual(defaultListOpenRecords(root, mustNotCall('exec')), null);
+    } finally {
+      fs.chmodSync(specs, 0o755); // root-safe
+    }
+  });
+
 test('QUIET_SKIP_REASONS: expected and transient reasons only — open PRs, unresolved ledgers and write failures surface', () => {
   for (const r of ['dry-run', 'run-live', 'not-a-ledger', 'removal-pr-declined', 'gh-absent', 'network-failure', 'ref-check-failed']) {
     assert.ok(QUIET_SKIP_REASONS.has(r), r);
   }
   for (const r of ['removal-pr-open', 'ledger-has-open-rows', 'ledger-status-unrecognized', 'removal-merged-but-present',
-    'commit-failed', 'committer-identity-unset', 'push-failed', 'pr-create-failed', 'ledger-read-failed', 'run-dir-scan-failed']) {
+    'commit-failed', 'committer-identity-unset', 'push-failed', 'pr-create-failed', 'ledger-read-failed', 'run-dir-scan-failed',
+    'referenced-by-open-record', 'record-scan-failed']) {
     assert.ok(!QUIET_SKIP_REASONS.has(r), r);
   }
 });
@@ -287,12 +355,13 @@ function makeCreatePr(result = { number: 77, url: 'https://github.com/o/r/pull/7
 const mustNotCall = (name) => () => { throw new Error(`${name} must not be called`); };
 const noRuns = () => [];
 const noPrs = () => [];
+const noRecords = () => [];
 
 test('AC1.1: a resolved ledger merged onto origin/main is reported and a removal PR is opened', () => {
   const { dir, origin } = makeRepo();
   const headBefore = git(dir, 'rev-parse', 'HEAD').trim();
   const createPr = makeCreatePr();
-  const r = ledgerResidue({ cwd: dir, integration: 'main', listRemovalPrs: noPrs, listRunDirs: noRuns, refExists: () => false, createPr });
+  const r = ledgerResidue({ cwd: dir, integration: 'main', listRemovalPrs: noPrs, listRunDirs: noRuns, listOpenRecords: noRecords, refExists: () => false, createPr });
   const branch = removalBranchName([LEDGER]);
   assert.strictEqual(r.failure, null);
   assert.deepStrictEqual(r.entries, [{
@@ -333,6 +402,46 @@ test('AC2.1: an in-flight draft PR branch carrying its ledger is not flagged', (
   assert.strictEqual(r.failure, null);
 });
 
+test('referencing record: an open record naming the ledger path keeps it — skipped with the reason and the record numbers, nothing pushed', () => {
+  const { dir, origin } = makeRepo();
+  const r = ledgerResidue({
+    cwd: dir, integration: 'main', listRunDirs: noRuns,
+    listOpenRecords: () => [{ number: 42, body: `Ledger \`${LEDGER}\` still has follow-ups`, labels: [] }],
+    listRemovalPrs: mustNotCall('listRemovalPrs'), refExists: mustNotCall('refExists'), createPr: mustNotCall('createPr'),
+  });
+  assert.strictEqual(r.failure, null);
+  assert.deepStrictEqual(r.entries, [{ path: LEDGER, kind: 'ledger', action: 'skip', reason: 'referenced-by-open-record', records: [42] }]);
+  assert.deepStrictEqual(originRefs(origin), ['refs/heads/main']);
+});
+
+test('a failed open-record read keeps every ledger that reaches it with the classified reason — read once, nothing pushed', () => {
+  for (const failure of [null, 'gh-absent', 'network-failure']) {
+    const LEDGER2 = 'docs/plans/2026-10-21-second-ledger.md';
+    const { dir, origin } = makeRepo({ ledgers: { [LEDGER]: ledgerText(), [LEDGER2]: ledgerText({ heading: '# Open Items — #14' }) } });
+    let loads = 0;
+    const r = ledgerResidue({
+      cwd: dir, integration: 'main', listRunDirs: noRuns,
+      listOpenRecords: () => { loads += 1; return failure; },
+      listRemovalPrs: mustNotCall('listRemovalPrs'), refExists: mustNotCall('refExists'), createPr: mustNotCall('createPr'),
+    });
+    const reason = failure || 'record-scan-failed';
+    assert.deepStrictEqual(r.entries.map((e) => [e.path, e.reason]), [[LEDGER, reason], [LEDGER2, reason]], String(failure));
+    assert.strictEqual(loads, 1, `${failure}: a failed read is memoized, not retried per ledger`);
+    assert.deepStrictEqual(originRefs(origin), ['refs/heads/main']);
+  }
+});
+
+test('the open-record list is fetched once per pass, however many ledgers reach the record scan', () => {
+  const LEDGER2 = 'docs/plans/2026-10-21-second-ledger.md';
+  const { dir } = makeRepo({ ledgers: { [LEDGER]: ledgerText(), [LEDGER2]: ledgerText({ heading: '# Open Items — #14' }) } });
+  let loads = 0;
+  ledgerResidue({
+    cwd: dir, integration: 'main', listRunDirs: noRuns, listRemovalPrs: noPrs, refExists: () => false, createPr: makeCreatePr(),
+    listOpenRecords: () => { loads += 1; return []; },
+  });
+  assert.strictEqual(loads, 1);
+});
+
 test('tidy alignment: an open-row ledger, an unrecognized-status ledger, a live run and a non-ledger are kept, never pushed', () => {
   const OPEN = 'docs/plans/2026-10-20-open-ledger.md';
   const ODD = 'docs/plans/2026-10-20-odd-ledger.md';
@@ -347,7 +456,7 @@ test('tidy alignment: an open-row ledger, an unrecognized-status ledger, a live 
     },
   });
   const r = ledgerResidue({
-    cwd: dir, integration: 'main', listRunDirs: () => ['2026-10-20T000000-record-13'],
+    cwd: dir, integration: 'main', listRunDirs: () => ['2026-10-20T000000-record-13'], listOpenRecords: mustNotCall('listOpenRecords'),
     listRemovalPrs: mustNotCall('listRemovalPrs'), refExists: mustNotCall('refExists'), createPr: mustNotCall('createPr'),
   });
   assert.strictEqual(r.failure, null);
@@ -366,7 +475,7 @@ test('tidy alignment: only the removable ledger goes into the PR, and the branch
     ledgers: { [LEDGER]: ledgerText(), [OPEN]: ledgerText({ heading: '# Open Items — #11', rows: [['1', 'review', 'x', 'open', '—']] }) },
   });
   const createPr = makeCreatePr();
-  const r = ledgerResidue({ cwd: dir, integration: 'main', listRemovalPrs: noPrs, listRunDirs: noRuns, refExists: () => false, createPr });
+  const r = ledgerResidue({ cwd: dir, integration: 'main', listRemovalPrs: noPrs, listRunDirs: noRuns, listOpenRecords: noRecords, refExists: () => false, createPr });
   const branch = removalBranchName([LEDGER]);
   assert.deepStrictEqual(r.entries.map((e) => [e.path, e.reason]), [[LEDGER, 'removal-pr-opened'], [OPEN, 'ledger-has-open-rows']]);
   assert.strictEqual(createPr.calls[0].head, branch);
@@ -380,7 +489,7 @@ test('an open removal PR skips every path without pushing, carrying its number',
   const { dir, origin } = makeRepo();
   const createPr = makeCreatePr();
   const r = ledgerResidue({
-    cwd: dir, integration: 'main', listRunDirs: noRuns, listRemovalPrs: () => [pr(5, 'OPEN', ['docs/plans/other-ledger.md'])],
+    cwd: dir, integration: 'main', listRunDirs: noRuns, listOpenRecords: noRecords, listRemovalPrs: () => [pr(5, 'OPEN', ['docs/plans/other-ledger.md'])],
     refExists: mustNotCall('refExists'), createPr,
   });
   assert.strictEqual(r.failure, null);
@@ -394,7 +503,7 @@ test('a declined path stays declined after the residue set changes; the new path
   const { dir } = makeRepo({ ledgers: { [LEDGER]: ledgerText(), [NEW]: ledgerText({ heading: '# Open Items — #14' }) } });
   const createPr = makeCreatePr();
   const r = ledgerResidue({
-    cwd: dir, integration: 'main', listRunDirs: noRuns, listRemovalPrs: () => [pr(4, 'CLOSED', [LEDGER])], refExists: () => false, createPr,
+    cwd: dir, integration: 'main', listRunDirs: noRuns, listOpenRecords: noRecords, listRemovalPrs: () => [pr(4, 'CLOSED', [LEDGER])], refExists: () => false, createPr,
   });
   assert.deepStrictEqual(r.entries.map((e) => [e.path, e.reason, e.prNumber]), [
     [LEDGER, 'removal-pr-declined', 4], [NEW, 'removal-pr-opened', 77],
@@ -406,7 +515,7 @@ test('a declined path stays declined after the residue set changes; the new path
 test('a path a merged removal PR named but still present is reported, never re-proposed', () => {
   const { dir, origin } = makeRepo();
   const r = ledgerResidue({
-    cwd: dir, integration: 'main', listRunDirs: noRuns, listRemovalPrs: () => [pr(6, 'MERGED', [LEDGER])],
+    cwd: dir, integration: 'main', listRunDirs: noRuns, listOpenRecords: noRecords, listRemovalPrs: () => [pr(6, 'MERGED', [LEDGER])],
     refExists: mustNotCall('refExists'), createPr: mustNotCall('createPr'),
   });
   assert.deepStrictEqual(r.entries, [{ path: LEDGER, kind: 'ledger', action: 'skip', reason: 'removal-merged-but-present', prNumber: 6 }]);
@@ -416,7 +525,7 @@ test('a path a merged removal PR named but still present is reported, never re-p
 test('a removal-PR list failure is a per-path skip, never a throw', () => {
   const { dir } = makeRepo();
   const r = ledgerResidue({
-    cwd: dir, integration: 'main', listRunDirs: noRuns, listRemovalPrs: () => 'gh-absent', refExists: mustNotCall('refExists'), createPr: mustNotCall('createPr'),
+    cwd: dir, integration: 'main', listRunDirs: noRuns, listOpenRecords: noRecords, listRemovalPrs: () => 'gh-absent', refExists: mustNotCall('refExists'), createPr: mustNotCall('createPr'),
   });
   assert.deepStrictEqual(r.entries, [{ path: LEDGER, kind: 'ledger', action: 'skip', reason: 'gh-absent' }]);
 });
@@ -425,7 +534,7 @@ test('refExists is asked about the remaining set\'s branch', () => {
   const { dir } = makeRepo();
   const seen = [];
   ledgerResidue({
-    cwd: dir, integration: 'main', listRunDirs: noRuns, listRemovalPrs: noPrs, createPr: makeCreatePr(), dryRun: true,
+    cwd: dir, integration: 'main', listRunDirs: noRuns, listOpenRecords: noRecords, listRemovalPrs: noPrs, createPr: makeCreatePr(), dryRun: true,
     refExists: (root, branch) => { seen.push(branch); return false; },
   });
   assert.deepStrictEqual(seen, [removalBranchName([LEDGER])]);
@@ -435,7 +544,7 @@ test('branch already on origin without a PR: no re-push, PR still created', () =
   const { dir, origin } = makeRepo();
   const createPr = makeCreatePr();
   const before = originRefs(origin);
-  const r = ledgerResidue({ cwd: dir, integration: 'main', listRunDirs: noRuns, listRemovalPrs: noPrs, refExists: () => true, createPr });
+  const r = ledgerResidue({ cwd: dir, integration: 'main', listRunDirs: noRuns, listOpenRecords: noRecords, listRemovalPrs: noPrs, refExists: () => true, createPr });
   assert.strictEqual(createPr.calls.length, 1);
   assert.strictEqual(r.entries[0].action, 'pr-opened');
   assert.deepStrictEqual(originRefs(origin), before);
@@ -446,7 +555,7 @@ test('dry-run reports without writing', () => {
   const createPr = makeCreatePr();
   let listCalls = 0;
   const r = ledgerResidue({
-    cwd: dir, integration: 'main', dryRun: true, listRunDirs: noRuns, refExists: () => false, createPr, listRemovalPrs: () => { listCalls += 1; return []; },
+    cwd: dir, integration: 'main', dryRun: true, listRunDirs: noRuns, listOpenRecords: noRecords, refExists: () => false, createPr, listRemovalPrs: () => { listCalls += 1; return []; },
   });
   assert.deepStrictEqual(r.entries, [{ path: LEDGER, kind: 'ledger', action: 'skip', reason: 'dry-run', branch: removalBranchName([LEDGER]) }]);
   assert.deepStrictEqual(originRefs(origin), ['refs/heads/main']);
@@ -456,7 +565,7 @@ test('dry-run reports without writing', () => {
 
 test('pr create failure is a reported skip', () => {
   const { dir } = makeRepo();
-  const r = ledgerResidue({ cwd: dir, integration: 'main', listRunDirs: noRuns, listRemovalPrs: noPrs, refExists: () => false, createPr: () => 'network-failure' });
+  const r = ledgerResidue({ cwd: dir, integration: 'main', listRunDirs: noRuns, listOpenRecords: noRecords, listRemovalPrs: noPrs, refExists: () => false, createPr: () => 'network-failure' });
   assert.strictEqual(r.entries.length, 1);
   assert.strictEqual(r.entries[0].action, 'skip');
   assert.strictEqual(r.entries[0].reason, 'pr-create-failed');
@@ -479,7 +588,7 @@ test('commit-tree failures: identity unset is its own reason, anything else is c
     const { dir, origin } = makeRepo();
     const err = Object.assign(new Error('Command failed: git commit-tree'), { stderr });
     const r = ledgerResidue({
-      cwd: dir, integration: 'main', git: gitFailing(dir, 'commit-tree', err), listRunDirs: noRuns, listRemovalPrs: noPrs,
+      cwd: dir, integration: 'main', git: gitFailing(dir, 'commit-tree', err), listRunDirs: noRuns, listOpenRecords: noRecords, listRemovalPrs: noPrs,
       refExists: () => false, createPr: mustNotCall('createPr'),
     });
     assert.deepStrictEqual(r.entries, [{ path: LEDGER, kind: 'ledger', action: 'skip', reason, branch: removalBranchName([LEDGER]) }], stderr);
@@ -490,7 +599,7 @@ test('commit-tree failures: identity unset is its own reason, anything else is c
 test('push failure is a reported skip and no PR is created', () => {
   const { dir } = makeRepo();
   const r = ledgerResidue({
-    cwd: dir, integration: 'main', git: gitFailing(dir, 'push', new Error('rejected')), listRunDirs: noRuns, listRemovalPrs: noPrs,
+    cwd: dir, integration: 'main', git: gitFailing(dir, 'push', new Error('rejected')), listRunDirs: noRuns, listOpenRecords: noRecords, listRemovalPrs: noPrs,
     refExists: () => false, createPr: mustNotCall('createPr'),
   });
   assert.deepStrictEqual(r.entries, [{ path: LEDGER, kind: 'ledger', action: 'skip', reason: 'push-failed', branch: removalBranchName([LEDGER]) }]);

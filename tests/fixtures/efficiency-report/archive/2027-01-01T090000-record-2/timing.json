@@ -1,0 +1,8 @@
+{
+  "generatedAt": "2027-01-01T09:40:00.000Z",
+  "phases": [
+    { "phase": "tasks", "verify": [{ "mode": "full", "durationMs": 90000 }, { "mode": "full", "durationMs": 90000 }] },
+    { "phase": "review", "verify": [] }
+  ],
+  "totals": { "minutes": 20, "procedureBytes": 20480, "toolRoundTrips": 300 }
+}

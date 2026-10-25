@@ -63,7 +63,7 @@
 //    is PRESENT yet identical to the same event's own transcript_path — the
 //    dispatching session's own file, not a distinct subagent session. This
 //    happens while a main session ends its turn per the documented async-wait
-//    convention (agent-tool-async-wait-pattern.md: status message, no tool
+//    convention (plugin/skills/_shared/dispatch-waiting.md: status message, no tool
 //    call, while awaiting an Agent-tool dispatch's async notification) —
 //    claude-code#27755's unreliable SubagentStop firing attributes that
 //    narration turn to "agent_transcript_path" instead of leaving the field

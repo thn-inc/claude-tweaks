@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const path = require('path');
 const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
-const { DEFER_REASONS } = require('../issues/record');
+const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
 const { planFilings } = require('./finding-filing');
 const { FINDINGS_ARTIFACT } = require('../tiebreak');
 
@@ -79,7 +79,7 @@ const SECTION_MAP = [
   // premise-satisfied- (#3488): bin/materialize.js stages a proposal to close a record
   // whose premise check already passes; closing is a human call, so it resolves pending.
   [/^premise-satisfied-/, SECTIONS.QUEUE, 'premise-satisfied-close-proposal'],
-  [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|tidy|plan-retention|feedback-drafts|review-followup|build-followup|reconcile-live-run-archived|wrap-up-cleanup-ordering)(-|\b)/, SECTIONS.QUEUE],
+  [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|efficiency-budget|tidy|plan-retention|feedback-drafts|review-followup|build-followup|reconcile-live-run-archived|wrap-up-cleanup-ordering)(-|\b)/, SECTIONS.QUEUE],
   [/^wrap-up-memory-/, SECTIONS.MEMORY],
   [/^wrap-up-upstream-/, SECTIONS.UPSTREAM],
   // upstream-draft- (#3488): feedback/upstream-draft.md's hand-off draft. The console
@@ -109,7 +109,7 @@ const CANONICAL_PREFIXES = [
   'wrap-up-claude-md-', 'wrap-up-adr-',
   'wrap-up-journey-', 'journeys-',
   'reflect-', 'digest-promotion-', 'leftover-', 'ledger-record-', 'upstream-unfiled-', 'red-team-',
-  'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
+  'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'efficiency-budget-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
   'review-followup-', 'build-followup-', 'reconcile-live-run-archived-', 'wrap-up-cleanup-ordering-',
   'premise-satisfied-',
   'wrap-up-memory-',
@@ -228,44 +228,6 @@ function parseCategory(text) {
   if (!text) return null;
   const m = /^\*\*Category:\*\*\s*(\S+)/m.exec(text);
   return m ? m[1] : null;
-}
-
-// #3880: an `sdd-ruling-*` proposal that defers work must carry a valid defer
-// reason before it may auto-ratify. The header is the lines before the first
-// blank line; a Defer-reason: key anywhere else (the Ruling: line, the body)
-// never counts. Prose twin: wrap-up/review-console-appendix.md's sdd-ruling-*
-// bullet. Returns null when the item may resolve as today, else the reason it
-// resolves pending under.
-// `UNREADABLE` is decided by the callers that attempted the read (`stagedItems` here,
-// `decideConsoleExecute` in `reconcile/console-execute.js`), never by
-// `sddRulingDeferralReason`, which only ever sees text (#4049).
-const SDD_RULING_REASONS = Object.freeze({
-  NO_DEFER_REASON: 'sdd-ruling-deferral-no-defer-reason',
-  UNCLASSIFIED: 'sdd-ruling-unclassified',
-  UNREADABLE: 'sdd-ruling-unreadable',
-});
-
-function sddRulingDeferralReason(text) {
-  if (text === null || text === undefined) return SDD_RULING_REASONS.UNCLASSIFIED;
-  const header = [];
-  for (const raw of String(text).split(/\r?\n/)) {
-    const line = raw.replace(/\s+$/, '');
-    if (line === '') break;
-    header.push(line);
-  }
-  // Both header keys match case-insensitively; the reason VALUE check below stays exact. More than one
-  // `Defers:` line fails closed (the first line must not silently win).
-  const defersMatches = header.map((l) => /^defers:[ \t]*(\S+)$/i.exec(l)).filter(Boolean);
-  if (defersMatches.length > 1) return SDD_RULING_REASONS.UNCLASSIFIED;
-  const defers = defersMatches.length ? defersMatches[0][1].toLowerCase() : null;
-  // Every header line beginning with `Defer-reason:` is a reason line, whatever its value looks like
-  // (#3880 fix round 1): a malformed one must fail closed, not fall through as if it were absent.
-  const reasons = header.map((l) => /^defer-reason:(.*)$/i.exec(l)).filter(Boolean).map((m) => m[1].trim());
-  if (defers === 'yes' || reasons.length > 0) {
-    return reasons.length === 1 && DEFER_REASONS.includes(reasons[0]) ? null : SDD_RULING_REASONS.NO_DEFER_REASON;
-  }
-  if (defers === 'no') return null;
-  return SDD_RULING_REASONS.UNCLASSIFIED;
 }
 
 // `text` is the staged file's own content, when the caller has it (readSnapshot loads it for

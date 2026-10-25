@@ -20,6 +20,11 @@ const RECORDS = {
   2250: { number: 2250, title: 'Lowest is a task', body: '## Overview\n\nTask overview.\n\n## Release Note\n\nAdded task overview support.\n', labels: [{ name: 'type:task' }], issueType: null },
   2267: { number: 2267, title: "It's Bob's `x` $(echo PWNED)", body: '## Overview\n\nShell metacharacters in the title.\n\n## Release Note\n\nAdded metacharacter-safe titles.\n', labels: [{ name: 'type:bug' }], issueType: null },
   2290: { number: 2290, title: 'No release note', body: '## Overview\n\nSomething.\n', labels: [{ name: 'type:task' }], issueType: null },
+  2268: { number: 2268, title: 'Specshaped footer', body: '## Overview\n\nFooter shape one.\n\n## Release Note\n\nNote with specShapedBody footer.\n\n_Filed by `x` via specShapedBody._', labels: [{ name: 'type:task' }], issueType: null },
+  2269: { number: 2269, title: 'Wontfix footer', body: '## Overview\n\nFooter shape two.\n\n## Release Note\n\nNote with wontfix footer.\n\n_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._', labels: [{ name: 'type:task' }], issueType: null },
+  2271: { number: 2271, title: 'Footer-only release note', body: '## Overview\n\nOnly a footer.\n\n## Release Note\n\n_Filed by `x` via specShapedBody._', labels: [{ name: 'type:task' }], issueType: null },
+  2272: { number: 2272, title: 'CRLF footer', body: '## Overview\r\n\r\nCRLF footer.\r\n\r\n## Release Note\r\n\r\nNote with CRLF footer.\r\n\r\n_Filed by `x` via specShapedBody._\r\n', labels: [{ name: 'type:task' }], issueType: null },
+  2273: { number: 2273, title: 'Footer-shaped prose mid-note', body: '## Overview\n\nMid-note line.\n\n## Release Note\n\n_Filed by the planner_\n\nMore note after.\n\n_Filed by `x` via specShapedBody._', labels: [{ name: 'type:task' }], issueType: null },
 };
 
 function fakeDeps({
@@ -99,6 +104,37 @@ test('exit 1: a record with no ## Release Note section fails loudly, regardless 
   assert.equal(run(['2290'], deps), 1);
   assert.match(out.stderr, /record\(s\) #2290 carry no non-empty "## Release Note" section/);
   assert.ok(out.stderr.startsWith('compose-subject.js:'), out.stderr);
+});
+
+// specShapedBody ends a Release Note section with an italic `_Filed by …_` footer; the
+// footer is provenance, never release-note text, so it must not reach Release-Note:.
+test('Release Note stops at the trailing "_Filed by …_" footer, for both specShapedBody footer shapes', () => {
+  let r = fakeDeps();
+  assert.equal(run(['2268'], r.deps), 0, r.out.stderr);
+  assert.equal(JSON.parse(r.out.stdout).body, 'Footer shape one.\n\nRelease-Note: Note with specShapedBody footer.\n\nFixes #2268');
+  r = fakeDeps();
+  assert.equal(run(['2269'], r.deps), 0, r.out.stderr);
+  assert.equal(JSON.parse(r.out.stdout).body, 'Footer shape two.\n\nRelease-Note: Note with wontfix footer.\n\nFixes #2269');
+});
+
+test('Release Note footer cut holds for a CRLF body, and spares a footer-shaped line that is not the last content', () => {
+  let r = fakeDeps();
+  assert.equal(run(['2272'], r.deps), 0, r.out.stderr);
+  const crlf = JSON.parse(r.out.stdout).body;
+  assert.match(crlf, /Release-Note: Note with CRLF footer\./);
+  assert.doesNotMatch(crlf, /Filed by/);
+  r = fakeDeps();
+  assert.equal(run(['2273'], r.deps), 0, r.out.stderr);
+  const mid = JSON.parse(r.out.stdout).body;
+  assert.match(mid, /_Filed by the planner_/);
+  assert.match(mid, /More note after\./);
+  assert.doesNotMatch(mid, /via specShapedBody/);
+});
+
+test('a Release Note section holding only the footer counts as empty — exit 1, same as a missing section', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2271'], deps), 1);
+  assert.match(out.stderr, /record\(s\) #2271 carry no non-empty "## Release Note" section/);
 });
 
 test('exit 1: a companion record with no ## Release Note section fails loudly even though the subject record has one', () => {

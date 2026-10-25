@@ -20,7 +20,7 @@
 // (#1966). `mergeGrantGap` on a `ready` result names the withholding member
 // the same way `mergeCheckVerdict` names a withheld needs-human verdict.
 // #3880: the third, narrowest exception — a ruling row (`isRulingRow: true`)
-// whose staged file does not show it safe to ratify (`console/resolve.js`'s
+// whose staged file does not show it safe to ratify (`console/sdd-ruling.js`'s
 // `sddRulingDeferralReason`) is named in `rulingGateGaps` and withheld the
 // same way; `readRulingTexts` reads those staged files for detect.
 'use strict';
@@ -34,7 +34,7 @@ const { runWithConcurrency } = require('./gh-pool');
 const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
-const { sddRulingDeferralReason, SDD_RULING_REASONS } = require('../console/resolve');
+const { sddRulingDeferralReason, SDD_RULING_REASONS } = require('../console/sdd-ruling');
 const { canonicalRealpath, resolveLeaf, isAncestorOrSelf } = require('../path-guard');
 
 const execFileAsync = promisify(execFile);
