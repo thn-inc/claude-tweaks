@@ -3,6 +3,7 @@
 // against every existing record, and write the proposals that remain (#3949).
 //   node bin/console-filings.js --run <run-dir> --existing <issues.json> --out-dir <dir> [--only <item,...>] [--help]
 //   node bin/console-filings.js --run <run-dir> --list
+//   node bin/console-filings.js --run <run-dir> --fyi
 // Plans one filing per can't-tell item (a console item carrying `tiebreak`,
 // bin/lib/console/resolve.js's findingItems; bin/lib/console/finding-filing.js
 // composes each). The default selection is every such item — the unattended rule,
@@ -23,6 +24,10 @@
 // human-present console renders — as JSON [{ id, section, recommendation,
 // severity, lens, path, line, resolution, cantTell }]: resolution is the
 // Approve-all default, cantTell marks the ids --only accepts.
+// --fyi is read-only too (same refusals as --list, and not combinable with it): it prints
+// the Low-confidence / Contested / Dropped-by-tiebreak sections the auto-merge short-circuit's
+// FYI shows (lib/console/finding-outcomes.js's renderFindingFyi — each can't-tell finding with the
+// record it is filed as), then a newline; nothing when the run holds no finding (#4171).
 // Exit 0 on success; 2 on a malformed invocation (a missing/unknown flag, an
 // unreadable or unparseable --existing, an --only naming no can't-tell item —
 // the message lists the valid ids); 3
@@ -40,21 +45,24 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { findingItems, runIdOf } = require('./lib/console/resolve');
 const { planFilings, fingerprintMap } = require('./lib/console/finding-filing');
 const { checkFingerprint } = require('./lib/issues/record');
+const { cantTellOutcomes, renderFindingFyi } = require('./lib/console/finding-outcomes');
 
 const USAGE = 'usage: console-filings.js --run <run-dir> --existing <issues.json> --out-dir <dir> [--only <item,...>] [--help]\n'
   + '       console-filings.js --run <run-dir> --list\n'
+  + '       console-filings.js --run <run-dir> --fyi\n'
   + '  exit 0 ok; 2 malformed invocation or unparseable --existing; 3 run dir missing/not anchored, or --out-dir unwritable\n';
 
 const VALUE_FLAGS = { '--run': 'run', '--existing': 'existing', '--out-dir': 'outDir', '--only': 'only' };
 
 function parseArgs(argv) {
   const o = {
-    run: null, existing: null, outDir: null, only: null, list: false, help: false,
+    run: null, existing: null, outDir: null, only: null, list: false, fyi: false, help: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { o.help = true; continue; }
     if (a === '--list') { o.list = true; continue; }
+    if (a === '--fyi') { o.fyi = true; continue; }
     if (!Object.hasOwn(VALUE_FLAGS, a)) return { error: `unknown argument: ${a}` };
     const v = argv[++i];
     if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: `${a} requires a value` };
@@ -89,9 +97,11 @@ function run(argv, deps = realDeps) {
   if (o.error) return usageError(o.error);
   if (o.help) { deps.stdout(USAGE); return 0; }
   if (!o.run) return usageError('--run <run-dir> is required');
-  if (o.list && (o.existing || o.outDir || o.only !== null)) return usageError('--list takes no --existing, --out-dir or --only');
-  if (!o.list && !o.existing) return usageError('--existing <issues.json> is required');
-  if (!o.list && !o.outDir) return usageError('--out-dir <dir> is required');
+  if (o.list && o.fyi) return usageError('--list and --fyi are mutually exclusive');
+  const readOnly = o.list || o.fyi;
+  if (readOnly && (o.existing || o.outDir || o.only !== null)) return usageError(`${o.list ? '--list' : '--fyi'} takes no --existing, --out-dir or --only`);
+  if (!readOnly && !o.existing) return usageError('--existing <issues.json> is required');
+  if (!readOnly && !o.outDir) return usageError('--out-dir <dir> is required');
   let only = null;
   if (o.only !== null) {
     only = o.only.split(',').map((s) => s.trim()).filter(Boolean);
@@ -107,6 +117,12 @@ function run(argv, deps = realDeps) {
     if (target.reason === 'missing') deps.stderr(`console-filings.js: run dir does not exist: ${o.run}\n`);
     else deps.stderr(`console-filings.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
+  }
+
+  if (o.fyi) {
+    const text = renderFindingFyi(cantTellOutcomes({ runDir: target.dir, deps }));
+    if (text) deps.stdout(text + '\n');
+    return 0;
   }
 
   const { items: findingRows, findings } = findingItems({ runDir: target.dir, deps });
