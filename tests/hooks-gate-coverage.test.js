@@ -1556,6 +1556,26 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       assert.deepStrictEqual(files(cmd), [MAIN_F]);
     });
   }
+  // A deeper `$( )`, `<( )` or a `$( )` inside a top-level backtick runs in its own subshell, so its
+  // cd never reaches the level around it: leaving a level restores the cwd that level began at.
+  // bash 3.2 and 5 write the file each row names.
+  for (const [cmd, expected] of [
+    ['x=$(true; cd /main; echo $(true; cd /tmp); cp a f.js)', [MAIN_F]],                       // bash: M/f
+    ['x=$(echo $(true; cd /tmp); cp a f.js)', [here]],                                         // bash: ./f
+    ['x=$(true; cd /main; cat <(true; cd /tmp) >/dev/null; cp a f.js)', [MAIN_F]],             // bash: M/f
+    ['x=$(true; cd /main; echo $(true; cd /tmp) x; cp a f.js)', [MAIN_F]],                     // bash: M/f
+    ['x=$(true; cd /main; echo $(true; cd /tmp) && cp a f.js)', [MAIN_F]],                     // bash: M/f
+    ['x=$(true; cd /main; echo $(true; echo $(true; cd /tmp); cd /var); cp a f.js)', [MAIN_F]], // bash: M/f
+    ['x=$(true; cd /main; echo $(true; echo $(true; cd /tmp); cp a f.js))', [MAIN_F]],         // bash: M/f
+    // Two levels end at once: the cwd returns to the shallower one's start, not the deeper one's.
+    ['x=$(true; cd /main; echo $(true; cd /var; echo $(true; cd /tmp)); cp a f.js)', [MAIN_F]], // bash: M/f
+    ['echo `true; cd /main; echo $(true; cd /tmp); cp a f.js; true`', [MAIN_F]],               // bash: M/f
+    ['echo `true; echo $(true; cd /tmp); cp a f.js; true`', [here]],                           // bash: ./f
+  ]) {
+    test(`#4303 and-or: \`${cmd}\` keeps a deeper substitution's cd inside it`, () => {
+      assert.deepStrictEqual(files(cmd), expected);
+    });
+  }
 }
 
 // #4149: inside a double-quoted span, `$( … )`, backticks and `${ … }` nest as in

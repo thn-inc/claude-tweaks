@@ -1947,7 +1947,8 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // end, the walk continues under every cwd the list could have left, so after `cd x && cmd;` a
 // later write resolves under x and under the cwd before the list (failing closed). Each element of
 // a pipeline runs in a subshell from the cwd the pipeline began at, and its `cd` ends there. A
-// substitution's separators act on the substitution's own list, never the outer one.
+// substitution's separators act on the substitution's own list, never the outer one, and a cd
+// inside a substitution nested in another ends at its closer, as the outer walk's does.
 //
 // The walk carries at most CWD_SET_CAP cwds at once. Each brace group's `}` and each tail can add
 // a cwd, and every later piece is visited once per cwd, so a command with many distinct `cd`
@@ -2039,23 +2040,31 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
   // same run of sub pieces, never for the outer walk. A group opened inside the substitution is
   // scoped within that run (its saved cwd is the sub cwd), so its events do not end the run; the
   // next outer piece (the text after the substitution's closer among them) or outer group event does.
-  // The run keeps one and-or list per substitution level (`subLists`, keyed by nesting depth, a
+  // The run keeps one and-or list per substitution level (`subLevels`, keyed by nesting depth, a
   // top-level backtick span counting as one more level), so a separator or a lone `&` inside a
   // substitution acts on that substitution's own list only, never an enclosing one's or the outer
-  // walk's. A level's list ends when the walk reaches a piece or event at a shallower level.
+  // walk's. A level ends when the walk reaches a piece or event at a shallower level: each level is
+  // a subshell of its own, so the cwd returns to the one the level began at, and a cd inside a
+  // deeper `$( )` never reaches the commands after it in the level around it.
   let subCur = null;
   let subVars = null;
-  let subLists = null;
+  let subLevels = null; // level → { entry: the cwds the level began at, list: its innermost list }
   const startSubRun = () => {
     if (subCur !== null) return;
     subCur = cur;
     subVars = new Map(vars);
-    subLists = new Map();
+    subLevels = new Map();
   };
-  const subListAt = (level) => {
-    for (const k of subLists.keys()) if (k > level) subLists.delete(k);
-    if (!subLists.has(level)) subLists.set(level, freshList(subCur));
-    return subLists.get(level);
+  const subLevelAt = (level) => {
+    let left = null; // the shallowest of the levels the walk has just left
+    for (const [k, rec] of subLevels) {
+      if (k <= level) continue;
+      if (left === null || k < left.k) left = { k, entry: rec.entry };
+      subLevels.delete(k);
+    }
+    if (left !== null) subCur = left.entry;
+    if (!subLevels.has(level)) subLevels.set(level, { entry: subCur, list: freshList(subCur) });
+    return subLevels.get(level);
   };
   // A tail piece (the rest of a command after a substitution's closer) is visited on its own, so
   // whether a `cd` or an assignment in it runs (`x=$(…) cd /x`) or is an argument (`echo $(…) cd
@@ -2083,15 +2092,16 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
         if (ev.open) {
           ev.open.inSubRun = true;
           ev.open.level = ev.open.nesting + inBacktick;
+          const at = subLevelAt(ev.open.level);
           ev.open.saved = subCur;
-          ev.open.savedList = subListAt(ev.open.level);
-          subLists.set(ev.open.level, freshList(subCur));
+          ev.open.savedList = at.list;
+          at.list = freshList(subCur);
         } else if (ev.close) {
           const { saved, level } = ev.close;
+          const at = subLevelAt(level);
           subCur = ev.close.kind === '(' ? saved : joinCwds(saved, subCur, overflow);
-          subListAt(level);
-          subLists.set(level, closeGroup(ev.close, subCur));
-        } else subCur = background(subListAt(ev.nesting + inBacktick));
+          at.list = closeGroup(ev.close, subCur);
+        } else subCur = background(subLevelAt(ev.nesting + inBacktick).list);
         continue;
       }
       if (ev.open) {
@@ -2105,7 +2115,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
       } else if (ev.bg) cur = background(list);
       else if (ev.sub || span.sub) {
         startSubRun();
-        subListAt(ev.nesting + inBacktick);
+        subLevelAt(ev.nesting + inBacktick);
         subCur = visitPiece(ev, subCur, subVars);
         continue;
       } else cur = visitPiece(ev, cur, vars);
@@ -2120,7 +2130,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
     const level = g.nesting + (span.endsInSub ? 1 : 0);
     if (level > 0) {
       startSubRun();
-      subCur = endCommand(subListAt(level), subCur, op);
+      const at = subLevelAt(level);
+      subCur = endCommand(at.list, subCur, op);
     } else cur = endCommand(list, cur, op);
   }
   runBodies(Infinity, cur);
