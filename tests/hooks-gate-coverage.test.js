@@ -384,6 +384,30 @@ test('AC1.2 AC2.1 #4015: a `>` that is quoted, escaped, expanded, an fd dup, a s
   }
 });
 
+// #4210: the word before a glued `>` may hold a quoted span — only the `>`
+// itself has to be bare. A `>` inside any quote, or escaped, stays literal.
+test('AC1.1 #4210: a redirect glued to a word that holds a quoted span resolves its target', () => {
+  for (const [command, file] of [
+    ['echo "hi">x', 'x'], ['printf "%s\\n" "$v">out.txt', 'out.txt'], ['echo foo>"x y"', 'x y'],
+    ["echo 'hi'>>x", 'x'], ['echo "hi">\'x\'', 'x'], ['echo "hi"> x', 'x'], ['WT=/w; echo "hi">$WT/x', '/w/x'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+});
+
+test('AC1.1 #4210: a quoted, escaped, or unterminated `>` beside a bare span resolves no target', () => {
+  for (const command of [
+    'echo "foo>x"', "echo 'foo>x'", 'echo foo">"x', 'node -e "x>y"',
+    'echo "a\\">x"', 'echo "hi"\\>x', 'echo "hi>x', 'echo "hi">x"',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+test('#4210: a mid-word quote merges the way bash does, so `cd foo"bar"` changes into foobar', () => {
+  assert.deepStrictEqual(fileWriteTargets('cd foo"bar"; echo x > a', '/r'), [{ action: 'write', file: path.resolve('/r', 'foobar', 'a') }]);
+});
+
 // #3989: a heredoc body is data for the reading program, not shell — its `>`
 // is not a redirection. The opener line and whatever follows the closing
 // delimiter still are scanned.

@@ -81,7 +81,7 @@ function stripQuotes(s) {
 // only ever see the quoted portion in isolation, judge it fully resolvable, and
 // silently drop the unresolvable suffix that would otherwise poison the target.
 //
-// Returns `{ tokens, singleQuoted, doubleQuoted }` — `singleQuoted[i]` is true
+// Returns `{ tokens, singleQuoted, doubleQuoted, spanKinds }` — `singleQuoted[i]` is true
 // when any part of `tokens[i]` was assembled from a single-quoted span, and
 // `doubleQuoted[i]` likewise for a double-quoted span (#4015: the redirect scan
 // treats a `>` in either as literal text). Real bash never performs
@@ -91,29 +91,49 @@ function stripQuotes(s) {
 // `'$WT/a.js'` and `"$WT/a.js"` are indistinguishable post-tokenize, and the
 // substitution step would wrongly expand the single-quoted (never-expanded)
 // form, fabricating a target real bash would never produce for that command.
+//
+// `spanKinds[i]` (#4210) is a string exactly as long as `tokens[i]`, one character
+// per character of the token: `b` bare, `e` backslash-escaped (the `\` and the
+// character it escapes, in a bare span), `s` single-quoted, `d` double-quoted, `x`
+// stray (an unterminated quote character or a lone trailing backslash). Quote
+// delimiters are not part of the token, so they carry no mask character. The
+// per-token flags above say only THAT a span was quoted; the mask says WHERE, which
+// is what lets the glued-redirect scan accept `echo "hi">x` yet refuse `echo "a>b"`.
+// Two alternative changes make the mask truthful: a bare run now stops at a quote
+// (so `foo"bar"` is a bare span plus a double-quoted span, merged into one token as
+// bash does), and a double-quoted span is backslash-aware (`\"` does not close it,
+// and its value keeps the backslashes as typed).
 function tokenize(seg) {
   const out = [];
   const singleQuoted = [];
   const doubleQuoted = [];
-  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  const spanKinds = [];
+  const re = /"((?:[^"\\]|\\[\s\S])*)"|'([^']*)'|((?:\\[\s\S]|[^\s"'\\])+)|(\S)/g;
   let m;
   let prevEnd = -1;
   while ((m = re.exec(seg)) !== null) {
-    const val = m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3];
+    const val = m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4];
     const isSQ = m[2] !== undefined;
     const isDQ = m[1] !== undefined;
+    let kinds;
+    if (isDQ) kinds = 'd'.repeat(val.length);
+    else if (isSQ) kinds = 's'.repeat(val.length);
+    else if (m[3] !== undefined) kinds = val.replace(/\\[\s\S]|[\s\S]/g, (u) => (u.length === 2 ? 'ee' : 'b'));
+    else kinds = 'x';
     if (out.length && m.index === prevEnd) {
       out[out.length - 1] += val;
+      spanKinds[spanKinds.length - 1] += kinds;
       if (isSQ) singleQuoted[singleQuoted.length - 1] = true;
       if (isDQ) doubleQuoted[doubleQuoted.length - 1] = true;
     } else {
       out.push(val);
+      spanKinds.push(kinds);
       singleQuoted.push(isSQ);
       doubleQuoted.push(isDQ);
     }
     prevEnd = re.lastIndex;
   }
-  return { tokens: out, singleQuoted, doubleQuoted };
+  return { tokens: out, singleQuoted, doubleQuoted, spanKinds };
 }
 
 // Global git flags that consume the NEXT token as a value.
@@ -235,8 +255,9 @@ function substituteVars(tokens, vars, singleQuoted) {
 // splits the command into shell segments, tokenizes each, and tracks `cd` to
 // keep the effective cwd in sync. `handler(t, effCwd, quoting)` is invoked for
 // every non-cd, non-empty segment with the cwd value in effect for it (string,
-// or null meaning UNKNOWN); `quoting` is `{ raw, singleQuoted, doubleQuoted }`,
-// the pre-substitution tokens and their per-token quote flags (#4015). Also
+// or null meaning UNKNOWN); `quoting` is `{ raw, singleQuoted, doubleQuoted, spanKinds }`,
+// the pre-substitution tokens, their per-token quote flags (#4015) and their
+// per-character span kinds (#4210, see tokenize). Also
 // tracks same-command literal `NAME=value` assignments (see
 // updateAssignment/substituteVars above) and substitutes them into every other
 // segment's tokens before `handler`/the `cd` branch sees them — one shared
@@ -246,7 +267,7 @@ function forEachCommandSegment(command, cwd, handler) {
   let effCwd = cwd || '.'; // string, or null meaning UNKNOWN
   const vars = new Map(); // name -> literal value, same-command only, no chaining
   for (const seg of splitSegments(command)) {
-    const { tokens: rawT, singleQuoted, doubleQuoted } = tokenize(seg.trim());
+    const { tokens: rawT, singleQuoted, doubleQuoted, spanKinds } = tokenize(seg.trim());
     if (!rawT.length) continue;
     if (updateAssignment(vars, rawT)) continue;
     const t = substituteVars(rawT, vars, singleQuoted);
@@ -265,7 +286,7 @@ function forEachCommandSegment(command, cwd, handler) {
       effCwd = resolveCd(effCwd, t[cdLead + 1]);
       continue;
     }
-    handler(t, effCwd, { raw: rawT, singleQuoted, doubleQuoted });
+    handler(t, effCwd, { raw: rawT, singleQuoted, doubleQuoted, spanKinds });
   }
 }
 
@@ -552,18 +573,36 @@ function isFdDupTarget(raw) {
 const REDIRECT_OP_RE = /^\d*(>>|>\||>)(.*)$/;
 const AMP_REDIRECT_OP_RE = /^&(>>|>)(.*)$/;
 
-// #4015: bash ends a word at an unquoted `>`, so `echo foo>x` redirects exactly
-// like `echo foo > x`. The prefix excludes quotes, backslash, `$` and backtick
-// because each can make the `>` literal or put it inside an expansion, and `(`
-// because an unquoted `(` inside a bare word is only arithmetic (`((i>0))`, where
-// `>` is a comparison), `$(`, `<(` or extglob syntax; ambiguity resolves to no
-// target. Used only on a token the start-anchored scan above did not match, and
-// only when the caller's quoting flags say the token was bare.
-const GLUED_REDIRECT_RE = /^[^"'\\$`>(]+(>>|>\||>)(.*)$/;
-
 function matchRedirectOperator(tok) {
   const m = REDIRECT_OP_RE.exec(tok) || AMP_REDIRECT_OP_RE.exec(tok);
   return m ? m[2] : null;
+}
+
+// #4015/#4210: bash ends a word at an unquoted `>`, so `echo foo>x` redirects exactly
+// like `echo foo > x`, and the word before it may hold quoted spans (`echo "hi">x`).
+// `kinds` is the token's per-character span mask (tokenize): only a BARE `>` is an
+// operator, so a `>` inside any quote or escaped stays literal. Returns the index just
+// past the glued operator in `raw`, or null when the token holds none.
+//
+// The prefix before the operator is accepted only when every character is quoted
+// (`s`/`d`) or bare and not `$`, backtick or `(` — each of those can put the `>` inside
+// an expansion, and an unquoted `(` inside a bare word is only arithmetic
+// (`((i>0))`, where `>` is a comparison), `$(`, `<(` or extglob syntax. An escaped or
+// stray character in the prefix rejects it; ambiguity resolves to no target. A
+// leading `>` (k === 0) is the start-anchored scan's case, not this one.
+function gluedRedirectOpEnd(raw, kinds) {
+  let k = 0;
+  while (k < raw.length && !(raw[k] === '>' && kinds[k] === 'b')) k += 1;
+  if (k === 0 || k === raw.length) return null;
+  for (let j = 0; j < k; j += 1) {
+    const kind = kinds[j];
+    if (kind === 's' || kind === 'd') continue;
+    if (kind === 'b' && !'$`('.includes(raw[j])) continue;
+    return null;
+  }
+  const second = raw[k + 1];
+  const twoChar = (second === '>' || second === '|') && kinds[k + 1] === 'b';
+  return k + (twoChar ? 2 : 1);
 }
 
 // #3989 heredoc-body stripping (see stripHeredocBodies below). Program words
@@ -847,12 +886,13 @@ function compoundBodyEnd(t) {
 // fed to a shell keeps its redirects visible, because that text runs as shell
 // (see stripHeredocBodies for the carve-out).
 //
-// Glued-word redirects (#4015): given `quoting` (forEachCommandSegment's third
-// handler argument), a token the start-anchored scan misses (`foo>x`) is also
-// tried against GLUED_REDIRECT_RE. Eligibility is tested on the PRE-substitution
-// token and the unquoted flags, so a quoted or `$`-expanded `>` never counts;
-// the target is read from the post-substitution token, so `>$WT/x` still
-// resolves. Without `quoting` the scan is start-anchored only.
+// Glued-word redirects (#4015, #4210): given `quoting` (forEachCommandSegment's third
+// handler argument), a token the start-anchored scan misses (`foo>x`, `"hi">x`) is
+// also tried against gluedRedirectOpEnd. Eligibility is tested on the
+// PRE-substitution token and its per-character span mask, so a quoted, escaped or
+// `$`-expanded `>` never counts; the target is read from the post-substitution
+// token, so `>$WT/x` still resolves. Without `quoting.spanKinds` the scan is
+// start-anchored only.
 //
 // A `[[ … ]]` or `(( … ))` segment holds a comparison, not a redirection
 // (compoundBodyEnd), so the scan starts after its closing word.
@@ -860,10 +900,18 @@ function redirectWriteTargets(t, effCwd, quoting) {
   const out = [];
   for (let i = compoundBodyEnd(t); i < t.length; i += 1) {
     let rawTarget = matchRedirectOperator(t[i]);
-    if (rawTarget === null && quoting && !quoting.singleQuoted[i] && !quoting.doubleQuoted[i]
-      && GLUED_REDIRECT_RE.test(quoting.raw[i])) {
-      const glued = GLUED_REDIRECT_RE.exec(t[i]);
-      if (glued) rawTarget = glued[2];
+    if (rawTarget === null && quoting && quoting.spanKinds) {
+      const raw = quoting.raw[i];
+      const opEnd = gluedRedirectOpEnd(raw, quoting.spanKinds[i]);
+      if (opEnd !== null) {
+        // substituteVars rewrites at most one `$` reference per token, so exactly one
+        // side of the operator changed: read the target from whichever side survived.
+        const head = raw.slice(0, opEnd);
+        const tail = raw.slice(opEnd);
+        if (t[i] === raw) rawTarget = tail;
+        else if (t[i].startsWith(head)) rawTarget = t[i].slice(head.length);
+        else if (t[i].endsWith(tail)) rawTarget = tail;
+      }
     }
     if (rawTarget === null) continue;
     if (rawTarget === '') {
