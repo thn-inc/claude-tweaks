@@ -2,3 +2,7 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD minor (Task 2): the trace-env unit test in tests/test-impact-cli.test.js derives its expected `req` from requireOption itself, so it cannot catch a helper regression | deferred | Final review triage: leave. The helper pin covers regressions on Linux, and the post-merge Windows job catches a revert to native quoting |
+| 2 | build | SDD minor (Task 2): tests/test-impact-tracer.test.js win32 skips at :145/:158/:220 (no ls, no cat, cwd not removable) remain | deferred | Final review triage: leave. They are not among the 20 absorbed tests, and they exercise tools win32 lacks |
+| 3 | build | SDD minor (Task 3): on win32 with Node < 22, an overflowing subset prints "running the full suite instead" and then exits 1 with the existing "Node >= 22" error | deferred | Final review triage: leave. Exit 1 with an explicit message is right, it was an opaque ENAMETOOLONG before, and the Windows CI job pins Node 22 |
+| 4 | build | SDD ruling — verify.js reports an impact subset as selected while run-tests.js may fall back to the full suite on win32: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
