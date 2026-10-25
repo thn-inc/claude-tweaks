@@ -33,6 +33,13 @@ So the default liveness function MUST neutralise the worktree probes; consuming 
 
 Deliverable 3 ("Until then, add one remedy line … to `structurallyStuckBody`") is conditioned on Deliverable 1 not having landed. Deliverables 1 and 2 land in this same change, after which no main-checkout ad-hoc dir escalates (Task 2), and an already-escalated one is resolved off the record by `trackStuckSkip`. A remedy line would describe a state the record can no longer reach. `escalate-residue.js` is therefore not modified. This is recorded as a decision in the run's `decisions.md` and named in the PR body; it is not a silent skip.
 
+## Build deviations (Common Step 4.5, recorded after execution)
+
+- **Own-session guard (Beneficial).** `adhoc-session-ended` skips a dir whose run-state `sessionId` equals the reconcile caller's `sessionId`. This mirrors `abandoned-interrupted`'s `ownLive` and was added from the whole-branch review (ab3f1794a). The spec does not ask for it; it is defense in depth.
+- **Production-default liveness integration test (Beneficial).** `archiveMerged({ cwd, sessionId })` with no `liveness` stub sweeps a real legacy fixture end to end (ab3f1794a).
+- **Docs beyond `docs/reconcile-checks.md` (Beneficial).** `docs/hooks.md`, `docs/plugin-structure.md`, the #2724 journey, and the `run-liveness/index.js` header comment carried claims this change made false ("keeps escalating", "No caller consumes the verdict yet"), so they were swept too (107af4c50, ab3f1794a).
+- **Deliverable 3 (Update the spec).** Not built — see "Deliverable 3 disposition" above. Staged for the Review Console as `staged/build-deviation-1.md`.
+
 ## Scope sweep (plan-audit Check B)
 
 The keyword sweep also matched two historical plans, reviewed and deliberately not modified — a shipped plan is a record of what was decided then, not live documentation:
