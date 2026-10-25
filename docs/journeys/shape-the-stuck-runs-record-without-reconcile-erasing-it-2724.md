@@ -39,7 +39,7 @@ files:
 ### 3. Ad-hoc session dirs stay out of the list — same pass
 - **URL:** —
 - **Action:** For a `{ts}-adhoc-standalone` dir skipped at `no-branch`, `no-worktree` or `no-pr` whose `run-state.json` records a worktree (linked worktree or main checkout), `isAdHocIntrinsicSkip` is true. `classifyRunDir` then does not classify it `structurally-stuck`. If the dir already has an escalated cache entry, `trackStuckSkip` resolves its path off the record with a comment saying it is an ad-hoc session dir, and clears the entry only once the resolve lands.
-- **Should feel:** Quiet. Ad-hoc dirs wait for their own sweep (`adhoc-superseded` after 30 days for a linked worktree, `adhoc-session-ended` once the session is dead plus 7 days for the main checkout) without ever appearing in the record.
+- **Should feel:** Quiet. Ad-hoc dirs wait for their own sweep (`adhoc-superseded` for a linked worktree, once the worktree is unregistered and the dir has sat untouched for 30 days; `adhoc-session-ended` for the main checkout, once the session reads dead and the dir has sat untouched for 7 days) without ever appearing in the record.
 - **Should understand:**
   - An ad-hoc dir stamped with the main checkout no longer escalates: `adhoc-session-ended` archives it once its session is dead (#4179). One whose liveness stays `unknown` stays in place.
   - An ad-hoc dir stuck at any other tracked reason (`merged-partial`, `pr-not-found`) still escalates.
