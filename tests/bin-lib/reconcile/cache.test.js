@@ -252,6 +252,33 @@ test('trackResidue: forwards an injected `runner` into the escalate call', () =>
   assert.equal(calls[0].runner, runner, 'the escalate call must receive the same runner reference this call was given');
 });
 
+// #4202: the predicate handed to escalate/resolve judges only this checkout's own
+// run-dir tree; a path from another checkout/machine always counts as present.
+function assertOwnedPathPredicate(pathExists, root) {
+  assert.equal(typeof pathExists, 'function');
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  fs.mkdirSync(pipelines, { recursive: true });
+  const present = path.join(pipelines, 'present-run');
+  fs.mkdirSync(present);
+  assert.equal(pathExists(path.join(pipelines, 'missing-run')), false, 'a missing path under this checkout\'s pipelines dir is gone');
+  assert.equal(pathExists(present), true, 'an existing path under this checkout\'s pipelines dir is present');
+  assert.equal(pathExists('/other-machine/repo/.claude-tweaks/pipelines/x'), true, 'a path outside this checkout\'s pipelines dir is never judged');
+  assert.equal(pathExists(pipelines), true, 'the pipelines dir itself is never judged');
+  assert.equal(pathExists('missing-run'), true, 'a relative listed path is never judged');
+  assert.equal(pathExists(`${pipelines}/missing-run/../present-run`), true, 'an un-normalized listed path is never judged');
+}
+
+test('#4202 trackResidue: passes a checkout-scoped pathExists into the escalate call', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reconcile-cache-pathexists-'));
+  const calls = [];
+  const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    trackResidue(root, 'o/r', 'structurally-stuck', '/x/wt-exists', { failed: true, lastError: 'x' }, { escalate });
+  }
+  assert.equal(calls.length, 1);
+  assertOwnedPathPredicate(calls[0].pathExists, root);
+});
+
 test('trackResidue: omitting `runner` is unaffected — escalate receives runner: undefined, same as before this change', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reconcile-cache-runner-'));
   const calls = [];
@@ -345,6 +372,18 @@ test('pruneResidueFailures: forwards an injected `runner` into the resolve call'
   assert.equal(calls[0].runner, runner);
 });
 
+test('#4202 pruneResidueFailures: passes a checkout-scoped pathExists into the resolve call', () => {
+  const root = tmpRoot();
+  const gonePath = path.join(root, 'gone-pathexists');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    recordResidueFailure(root, 'structurally-stuck', gonePath, { lastError: 'x' });
+  }
+  const calls = [];
+  pruneResidueFailures(root, 'o/r', { resolve: (args) => { calls.push(args); return { status: 'closed', number: 1 }; } });
+  assert.equal(calls.length, 1);
+  assertOwnedPathPredicate(calls[0].pathExists, root);
+});
+
 // --- #2724: clearResidue drops an escalated entry only once its GitHub
 // resolution actually landed, so a failed resolve is retried on the next pass.
 
@@ -394,6 +433,14 @@ test('#2724 clearResidue: an unescalated entry is cleared without calling resolv
   assert.deepEqual(result, { cleared: true, resolved: null });
   assert.equal(called, 0);
   assert.deepEqual(listResidueFailures(root), []);
+});
+
+test('#4202 clearResidue: passes a checkout-scoped pathExists into the resolve call', () => {
+  const { root, p } = escalatedEntryRoot();
+  const calls = [];
+  clearResidue(root, 'o/r', 'structurally-stuck', p, { resolve: (args) => { calls.push(args); return { status: 'closed' }; } });
+  assert.equal(calls.length, 1);
+  assertOwnedPathPredicate(calls[0].pathExists, root);
 });
 
 test('#2724 clearResidue: no entry returns cleared:false and writes nothing', () => {

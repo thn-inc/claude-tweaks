@@ -296,9 +296,12 @@ When mechanizing a prose heuristic into a deterministic check:
 15. **A transform in front of a scanner owes its own could-not-parse verdict.** A scan over
     transformed text reads whatever the transform wrongly removed as "nothing here", so a
     transform that mis-parses produces a clean scan. `tests/helpers/strip-comments.js`'s
-    `stripComments` blanks comments to spaces before the windows-hide, git-status, path-guard,
-    path-containment, porcelain-cwd-compare, staged-id producer, exit-code and wall-clock-budget
-    conformance scans count tokens. It models regex literals (#3585); its residual
+    `stripComments` blanks comments to spaces before its callers' scans count tokens. Its
+    callers, by test-file stem: `backfill-cli`, `exit-code`, `git-status-optional-locks`,
+    `hooks-harness-refusal`, `path-containment`, `path-guard`, `porcelain-cwd-compare`,
+    `raw-markdown-read`, `staged-id-producers`, `wall-clock-budget` and `windows-hide-spawn`.
+    `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
+    tree. It models regex literals (#3585); its residual
     ambiguity is a regex right after `)` or `}`, which it reads as division. In
     `if (b) /"/.test(b); const c = "//"; fs.existsSync(c);` the quote inside the regex pairs with a
     later string, the `//` after it opens a line comment, and the guarded call counted as zero.
