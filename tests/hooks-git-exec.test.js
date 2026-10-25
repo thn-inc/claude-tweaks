@@ -8,7 +8,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv } = require('../plugin/bin/lib/hooks/git-exec');
-const { gitRepo } = require('./helpers/git-fixtures');
+const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
+const { splitNul } = require('../plugin/bin/lib/git-z');
 
 test('runGit: success returns trimmed stdout and a null failure', () => {
   const dir = gitRepo();
@@ -355,4 +356,53 @@ test('repoPinnedEnv: with no argument it reads process.env, dropping the four va
       else process.env[k] = prior[k];
     }
   }
+});
+
+// #3900: runGit trims stdout, which eats the leading space of a `-z` stream's
+// first path (" lead.txt" -> "lead.txt") and sends the reader to a path that
+// does not exist. `opts.raw` is the opt-in for the four -z readers.
+function repoWithLeadingSpacePath() {
+  const repo = gitRepo();
+  fs.writeFileSync(path.join(repo, ' lead.txt'), 'lead\n');
+  fs.writeFileSync(path.join(repo, 'b.txt'), 'b\n');
+  fixtureGit(['-C', repo, 'add', '--', ' lead.txt', 'b.txt']);
+  fixtureGit(['-C', repo, 'commit', '-q', '-m', 'add paths']);
+  return repo;
+}
+
+test('AC3.1: runGit raw:true keeps a -z path list byte-exact, leading space included', () => {
+  const repo = repoWithLeadingSpacePath();
+  const { stdout, failure } = runGit(['ls-files', '-z'], repo, { raw: true });
+  assert.strictEqual(failure, null);
+  assert.deepStrictEqual(splitNul(stdout), [' lead.txt', 'b.txt']);
+});
+
+test('AC3.1: runGitAsync raw:true keeps a -z path list byte-exact', async () => {
+  const repo = repoWithLeadingSpacePath();
+  const { stdout, failure } = await runGitAsync(['ls-files', '-z'], repo, { raw: true });
+  assert.strictEqual(failure, null);
+  assert.deepStrictEqual(splitNul(stdout), [' lead.txt', 'b.txt']);
+});
+
+test('runGit without raw still trims (callers relying on trim keep it)', () => {
+  const repo = repoWithLeadingSpacePath();
+  assert.ok(!runGit(['ls-files', '-z'], repo).stdout.startsWith(' '), 'default stdout must stay trimmed');
+  assert.ok(!runGit(['rev-parse', 'HEAD'], repo).stdout.endsWith('\n'), 'default stdout must stay trimmed');
+});
+
+test('runGit/runGitAsync: only raw === true opts out of trimming (truthy non-true values keep the trim)', async () => {
+  const repo = repoWithLeadingSpacePath();
+  for (const raw of [undefined, false, 0, 1, 'true', null]) {
+    assert.ok(!runGit(['ls-files', '-z'], repo, { raw }).stdout.startsWith(' '), `raw=${String(raw)} must trim`);
+    assert.ok(!(await runGitAsync(['ls-files', '-z'], repo, { raw })).stdout.startsWith(' '), `async raw=${String(raw)} must trim`);
+  }
+});
+
+test('runGit raw:true leaves the failure shape unchanged', () => {
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-raw-fail-'));
+  const { stdout, failure, stderr, exitCode } = runGit(['ls-files', '-z'], dir, { raw: true });
+  assert.strictEqual(stdout, null);
+  assert.strictEqual(failure, FAILURE.GIT_ERROR);
+  assert.match(stderr, /not a git repository/);
+  assert.strictEqual(exitCode, 128);
 });

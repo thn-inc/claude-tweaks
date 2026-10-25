@@ -1486,7 +1486,7 @@ function archiveRunDir(root, runDir) {
   // tracked file this function doesn't know how to move, on either a
   // tidy-standalone run or any other — still refuses exactly as before.
   if (fs.existsSync(runDir)) {
-    const lsFiles = runGit(['ls-files', '-z', '--', runDir], root);
+    const lsFiles = runGit(['ls-files', '-z', '--', runDir], root, { raw: true });
     if (lsFiles.failure) return refuseAfterMarker('ls-files-failed');
     const workDir = path.join(runDir, 'work');
     const trackedOutsideWork = splitNul(lsFiles.stdout)

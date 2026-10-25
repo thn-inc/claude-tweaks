@@ -350,7 +350,7 @@ const POLICY_COMMIT_STATUSES = new Set(['A', 'M', 'D']);
 function isPolicyOnlyCommit(command, cwd) {
   if (typeof command !== 'string' || !POLICY_COMMIT_ALLOWLIST.test(command)) return false;
   try {
-    const { stdout, failure } = runGit(['diff', '--cached', '--name-status', '-z'], cwd);
+    const { stdout, failure } = runGit(['diff', '--cached', '--name-status', '-z'], cwd, { raw: true });
     if (failure !== null || typeof stdout !== 'string') return false;
     const records = parseNameStatusZ(stdout);
     if (records.length !== 1) return false;

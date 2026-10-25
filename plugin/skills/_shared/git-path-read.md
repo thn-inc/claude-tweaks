@@ -12,7 +12,7 @@ The rule for any `plugin/bin` code that reads a git path list: `--name-only`, `-
 
 ## Parsers
 
-`plugin/bin/lib/git-z.js` exports `splitNul` (verbatim NUL tokens), `parseNameStatusZ` (`STATUS\0path\0`, two paths for `R`/`C`), `splitLogZ` (a `log -z --format=<header>` stream), `parseNumstatZ`, `parseStatusPorcelainZ` (a rename lists the new path first), and `parseLsTreeZ`. `git log -z` puts one leading `\n` on the first path (or status) token of each commit that lists any files; an empty commit's header is followed directly by the next header. `splitLogZ` strips the `\n` before testing for a header.
+`plugin/bin/lib/git-z.js` exports `splitNul` (verbatim NUL tokens), `parseNameStatusZ` (`STATUS\0path\0`, two paths for `R`/`C`), `splitLogZ` (a `log -z --format=<header>` stream), `parseNumstatZ`, `parseStatusPorcelainZ` (a rename lists the new path first), and `parseLsTreeZ`. `git log -z` puts one leading `\n` on the first path (or status) token of each commit that lists any files; an empty commit's header is followed directly by the next header. `splitLogZ` strips the `\n` before testing for a header. `runGit`/`runGitAsync` (`plugin/bin/lib/hooks/git-exec.js`) trim stdout by default; a `-z` reader passes `{ raw: true }` so a leading-space first path survives.
 
 A patch's `diff --git` headers have no `-z`, so they stay C-quoted: `unquoteCPath` decodes one, and `plugin/bin/lib/design-detect/surface-lines.js` applies it.
 

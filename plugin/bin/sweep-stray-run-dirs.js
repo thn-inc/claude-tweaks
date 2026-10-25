@@ -70,7 +70,7 @@ function parseArgs(argv) {
 function hasTrackedWork(root, runDir) {
   const rel = path.relative(root, runDir);
   // #4178: pin the env so an inherited GIT_DIR cannot redirect -C root to a linked worktree's index.
-  const res = runGit(['ls-files', '-z', '--', rel], root, { env: repoPinnedEnv() });
+  const res = runGit(['ls-files', '-z', '--', rel], root, { env: repoPinnedEnv(), raw: true });
   if (res.failure || !res.stdout) return false;
   return splitNul(res.stdout).some((p) => /(^|\/)work\//.test(p));
 }
