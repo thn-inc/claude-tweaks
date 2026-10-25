@@ -1699,6 +1699,7 @@ function groupEventsWith(seg, g, spans, undo) {
   let pieceNesting = g.nesting; // the nesting the current piece began at
   let tail = false; // the current piece follows the closer of a substitution: the rest of its command
   const setCaseDepth = (frame, d) => { const was = frame.caseDepth; frame.caseDepth = d; undo.push(() => { frame.caseDepth = was; }); };
+  const setBrackets = (frame, d) => { const was = frame.brackets; frame.brackets = d; undo.push(() => { frame.brackets = was; }); };
   const cut = (at, ev) => {
     if (at > start) events.push({ text: seg.slice(start, at), sub: inSub, tail });
     if (ev) events.push(ev);
@@ -1707,8 +1708,12 @@ function groupEventsWith(seg, g, spans, undo) {
     pieceNesting = g.nesting;
     tail = false;
   };
-  const nest = (n, cmd) => {
-    for (let k = 0; k < n; k += 1) push({ kind: 'p', caseDepth: 0, arith: n === 2 });
+  // Every frame carries `cmd`: whether a lone `&` in it backgrounds a command list. `$(`, `<(`/`>(`,
+  // groups and the root do; arithmetic (`$((`/`((`, `$[`) does not. A bare `(` not at command
+  // position takes its parent's: inside arithmetic it is a parenthesized operand, and anywhere else
+  // (a function body `f() ( … )`, `coproc ( … )`) it may be a subshell, so an `&` there still cuts.
+  const nest = (n, cmd, frameCmd = cmd) => {
+    for (let k = 0; k < n; k += 1) push({ kind: 'p', caseDepth: 0, cmd: frameCmd });
     atCmd = cmd;
   };
   let parens = null; // parenMatches(seg), computed at the first `((` at command position
@@ -1726,10 +1731,10 @@ function groupEventsWith(seg, g, spans, undo) {
         if (inner !== undefined && seg[inner + 1] === ')') { nest(2, false); i += 2; continue; }
       }
       if (atCmd) {
-        const frame = { kind: '(', caseDepth: 0, sub: g.nesting > 0 };
+        const frame = { kind: '(', caseDepth: 0, cmd: true, sub: g.nesting > 0 };
         push(frame);
         cut(i, { open: frame });
-      } else nest(1, false);
+      } else nest(1, false, top().cmd);
       i += 1;
       continue;
     }
@@ -1757,8 +1762,9 @@ function groupEventsWith(seg, g, spans, undo) {
         // the segment it is the `&` of `|&` (segmentSpans has cut the `|`), which pipes on: it is
         // dropped from the text, with no background. Inside a substitution or a group in one it
         // backgrounds that subshell's own list (`sub`: the walk resets the sub run, never the outer
-        // cwd); inside `$(( ))` it is arithmetic, so it is left alone.
-        if (!top().arith) cut(i, i > 0 ? { bg: true, sub: g.nesting > 0 } : null);
+        // cwd); in a frame that is no command list (`$(( ))`, `$[ ]`, a bare `(` inside one) it is
+        // arithmetic, so it is left alone.
+        if (top().cmd) cut(i, i > 0 ? { bg: true, sub: g.nesting > 0 } : null);
         atCmd = true;
       }
       // Any other operator is a redirection. Its target is read as an ordinary word, which ends
@@ -1769,7 +1775,7 @@ function groupEventsWith(seg, g, spans, undo) {
     const wStart = i;
     let w = '';
     let plain = true;
-    let subst = 0; // 1 for `$(`, 2 for `$((`
+    let subst = 0; // 1 for `$(`, 2 for `$((`, -1 for `$[`
     while (i < seg.length && !/[\s()<>&;|]/.test(seg[i])) {
       const ch = seg[i];
       if (ch === '\\') { i += 2; plain = false; continue; }
@@ -1796,15 +1802,31 @@ function groupEventsWith(seg, g, spans, undo) {
         continue;
       }
       if (ch === '$' && seg[i + 1] === '(') { subst = seg[i + 2] === '(' ? 2 : 1; break; }
+      // `$[ … ]` is arithmetic, closed by the `]` that matches it past any nested `[ … ]` (an array
+      // subscript), as scanHeredocs reads it.
+      if (ch === '$' && seg[i + 1] === '[') { subst = -1; break; }
+      if ((ch === '[' || ch === ']') && top().bracket) {
+        const t = top();
+        if (ch === '[') setBrackets(t, t.brackets + 1);
+        else if (t.brackets > 0) setBrackets(t, t.brackets - 1);
+        else {
+          pop();
+          if (g.nesting < pieceNesting) { cut(i, null); tail = true; }
+        }
+        i += 1;
+        plain = false;
+        continue;
+      }
       w += ch;
       i += 1;
     }
+    if (subst === -1) { push({ kind: 'p', caseDepth: 0, cmd: false, bracket: true, brackets: 0 }); atCmd = false; i += 2; continue; }
     if (subst) { nest(subst, subst === 1); i += 1 + subst; continue; }
     if (i === wStart) { i += 1; continue; } // a stray separator character: never a word
     if (!plain || !atCmd) { atCmd = false; continue; }
     const t = top();
     if (w === '{') {
-      const frame = { kind: '{', caseDepth: 0, sub: g.nesting > 0 };
+      const frame = { kind: '{', caseDepth: 0, cmd: true, sub: g.nesting > 0 };
       push(frame);
       cut(wStart, { open: frame });
       continue; // still at command position
@@ -1902,7 +1924,7 @@ function joinCwds(a, b, overflow) {
 
 function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
   const { outer, bodies } = plan && depth < MAX_HEREDOC_NESTING ? stripHeredocBodies(text) : { outer: text, bodies: [] };
-  const g = { root: { kind: 'root', caseDepth: 0 }, stack: [], nesting: 0 };
+  const g = { root: { kind: 'root', caseDepth: 0, cmd: true }, stack: [], nesting: 0 };
   let cur = cwds;
   // A piece inside a substitution or a backtick span runs in a subshell: it is visited from the
   // cwd and assignments in effect, and what it changes holds only for the pieces after it in the

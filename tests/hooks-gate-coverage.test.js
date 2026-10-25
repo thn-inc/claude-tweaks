@@ -1331,6 +1331,52 @@ test('#4303: an assignment whose `${` or `$[` never closes is no cd lead (delibe
   }
 }
 
+// #4303: inside `$(( ))` or `$[ ]`, `&` is bitwise and, also inside a bare `(` there, so the cd
+// before it holds. bash 3.2 and 5: `cd M; y=$(( (1 & 3) )); echo x > f` and `x=$[1 & 3]; cd M; …`
+// write M/f, and the S49 shape commits in M. The first four rows sit inside `x=$(true; … )`: at the top
+// level an `&` in a bare `(` is already routed as a sub-run background, so only a substitution
+// reaches the frame check. bash 3.2 and 5 write M/f.js for each row, and S49 runs `git commit` in M.
+for (const [cmd, expected] of [
+  ['x=$(true; cd /main && y=$(( (1 & 3) )) && cp a f.js)', [{ action: 'copy', file: MAIN_F }]],
+  ['x=$(true; cd /main && y=$[1 & 3] && cp a f.js)', [{ action: 'copy', file: MAIN_F }]],
+  ['x=$(true; cd /main && y=$[ (1 & 3) + a[1] ] && cp a f.js)', [{ action: 'copy', file: MAIN_F }]],
+  ['x=$(true; cd /main && (( (1 & 3) )) && cp a f.js)', [{ action: 'copy', file: MAIN_F }]],
+  ['cd /main && y=$[1 & 3] && cp a f.js', [{ action: 'copy', file: MAIN_F }]],
+  // A subscript before the `&`: `$[` closes at its own `]`, past the subscript's.
+  ['cd /main && y=$[ a[1] & 3 ] && cp a f.js', [{ action: 'copy', file: MAIN_F }]],
+  // An assignment holding `$[ … & … ]` is one word, so the cd after it changes the shell's cwd.
+  ['x=$[1 & 3] cd /main; cp a f.js', [{ action: 'copy', file: MAIN_F }]],
+]) {
+  test(`#4303: \`${cmd}\` keeps the cd past an arithmetic &`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
+  });
+}
+test('#4303: the S49 shape commits in the main checkout', () => {
+  assert.ok(gitTargets('x=$(true; cd /main && y=$(( (1 & 3) )) && git commit -am x)', '/r').some((t) => t.dir === path.resolve('/main')));
+});
+// #4303: an `&` after the `]` still backgrounds, and the text after a `]` that closes a piece cut
+// inside it is the outer command's (its redirect writes from the outer cwd). bash 3.2 and 5 write
+// f.js in the starting directory for both.
+test('#4303: the `]` of `$[ … ]` ends the arithmetic', () => {
+  assert.deepStrictEqual(fileWriteTargets('cd /main && y=$[1 & 3] & cp a f.js', '/r'), [{ action: 'copy', file: path.resolve('/r/f.js') }]);
+  assert.deepStrictEqual(fileWriteTargets('y=$[ $(true; cd /tmp; true & true) + 1 ] > f.js', '/r'), [{ action: 'write', file: path.resolve('/r/f.js') }]);
+});
+// #4303: a process substitution is a command list, and a bare `(` outside arithmetic may be a
+// subshell (a function body, `coproc`), so an `&` in either still cuts and the command after it is
+// read. bash 3.2 and 5 write M/f.js for the `<( )` and /r2/f.js for the function body; bash 3.2
+// cannot parse `coproc`, and bash 5 writes /r2/f.js (the pin sides with 5).
+test('#4303: an & in a process substitution or a bare ( outside arithmetic still cuts', () => {
+  assert.deepStrictEqual(fileWriteTargets('cd /main && cat <(true & cp a f.js) >/dev/null', '/r'), [{ action: 'copy', file: MAIN_F }]);
+  for (const cmd of ['f() ( true & cp a /r2/f.js ); f', 'coproc ( true & cp a /r2/f.js )']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'copy', file: path.resolve('/r2/f.js') }], cmd);
+  }
+});
+// #4303 (S51): an `&` inside a top-level backtick backgrounds only the backtick's own list.
+// bash 3.2 and 5 write M/f.js.
+test('#4303: an & inside a top-level backtick does not undo the outer cd', () => {
+  assert.deepStrictEqual(fileWriteTargets('cd /main && x=`true | true & true` && echo x > f.js', '/r'), [{ action: 'write', file: MAIN_F }]);
+});
+
 // #4149: inside a double-quoted span, `$( … )`, backticks and `${ … }` nest as in
 // bash, and a quote inside `$(` starts a fresh quoting context; an unquoted `${ … }` nests too. So no
 // `&`, `;`, `(`, `)` or newline inside them is structural, and an earlier `cd` survives. Every case
