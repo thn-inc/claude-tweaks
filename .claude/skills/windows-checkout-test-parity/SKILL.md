@@ -7,7 +7,7 @@ description: Use when writing or reviewing code or a test in this repo whose beh
 
 ## Overview
 
-`.github/workflows/test.yml` runs `npm test` on `ubuntu-latest` only, and this repo's `.gitattributes` pins only `tools/upstream-drift/fixtures/**` (`-text`, so those hashed fixture bytes stay exact). A Windows checkout with Git's default `core.autocrlf=true` therefore reads every tracked text file with `\r\n` line endings (`git ls-files --eol` reports `i/lf w/crlf`), and Node spawns launchers differently on win32. Code that breaks only there is invisible to the merge gate: it stays green on every PR, then shows up as extra failures in a Windows `npm test` run or as a bug on a user's Windows machine. #3040 closed four such gaps in one build and used the same moves each time. This skill names them so the next platform branch gets its pin when it is written.
+`.github/workflows/test.yml` runs `npm test` on `ubuntu-latest` only, and this repo's `.gitattributes` marks only a few byte-pinned fixture paths `-text` (`tools/upstream-drift/fixtures/**` and the others listed there, so those bytes stay exact). A Windows checkout with Git's default `core.autocrlf=true` therefore reads every tracked text file with `\r\n` line endings (`git ls-files --eol` reports `i/lf w/crlf`), and Node spawns launchers differently on win32. Code that breaks only there is invisible to the merge gate: it stays green on every PR, then shows up as extra failures in a Windows `npm test` run or as a bug on a user's Windows machine. #3040 closed four such gaps in one build and used the same moves each time. This skill names them so the next platform branch gets its pin when it is written.
 
 ## Key Patterns
 
