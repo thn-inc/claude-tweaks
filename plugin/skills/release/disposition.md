@@ -14,21 +14,38 @@ SKIP {HH:MM:SS} — Step 8 disposition (skipped): condition: inherited run direc
 
 ## Inventory
 
-Read `{run-dir}/staged/` once and list every file in it except `release-held.md`, which is not a finding: it stays where it is and is archived with the run. An absent or empty `staged/` means no staged files. When Step 3 logged no `## /review` marker this run (an early exit before Step 3: a Step 1 or Step 2 stop, a refused `--train`), read no `decisions.md` line at all. Otherwise read `{run-dir}/decisions.md`'s `## /review` block — only the lines after Step 3's carried marker `{k}`, never the whole block — and add every `STAGED` line whose stage path is absent or names no existing file. `_shared/auto-decision-log.md` counts those as staged findings with no `staged/` file: `review/step3-lens-dispatch.md`'s `not reproduced` lines, the gap sweep's, the earlier line a tiebreak `console` outcome leaves standing (`review/step3-tiebreak.md`), and a failed tiebreak's. A line whose stage path names a listed file is that file's finding, counted once by its stage path.
+Read `{run-dir}/staged/` once and list every file in it except `release-held.md`, which is not a finding, and a file on a `note` roster row (below), which is not one either: each stays where it is and is archived with the run. An absent or empty `staged/` means no staged files. Any other read error on `staged/`, or on the `decisions.md` read below (EACCES, EIO — anything but "does not exist"), is a failure, not an empty inventory: it writes the FAILED line below and blocks archival. When Step 3 logged no `## /review` marker this run (an early exit before Step 3: a Step 1 or Step 2 stop, a refused `--train`), read no `decisions.md` line at all. Otherwise read `{run-dir}/decisions.md`'s `## /review` block — only the lines after Step 3's carried marker `{k}`, never the whole block — and add every `STAGED` line whose stage path is absent or names no existing file. `_shared/auto-decision-log.md` counts those as staged findings with no `staged/` file: `review/step3-lens-dispatch.md`'s `not reproduced` lines, the gap sweep's, the earlier line a tiebreak `console` outcome leaves standing (`review/step3-tiebreak.md`), and a failed tiebreak's. A line whose stage path names a listed file is that file's finding, counted once by its stage path.
 
-- Each `staged/review-{n}.{md,patch}` — a confirmed finding, one per file, its severity read from the file's `Finding: {severity} {category} — …` line. A critical finding lands here too, because `review/step3-routing.md`'s KEPT-PROMPT row stages a patch as well as surfacing it inline.
-- Each entry line of `staged/review-unconfirmed-{n}.md` — a finding the tiebreak left unconfirmed (`_shared/multi-agent-coordination.md`).
-- Each `staged/review-contested-{n}.md` and `staged/review-debate-{n}.md` — a finding two lenses disagreed on, both verdicts side by side (`review/step3-debate-and-refutation.md`).
-- Each `staged/reflect-*`, `staged/simplify-*` and `staged/deepen-*` file — the review's own `/claude-tweaks:reflect` and `/claude-tweaks:simplify` passes (`review/code-mode-steps.md` Steps 4-5) and any deepen candidate list.
+- Every other staged file is matched against the review staging roster below by its longest matching prefix, and counted as that row's `Counted as` column says.
 - Each `decisions.md`-only `STAGED` line, its severity read from the line when it names one.
 
-Any other file in `staged/` is unrecognised: it has no route and counts as a failure (below), so the run is not archived with a finding nobody read.
+A file matching no roster row, or only a `not staged by review` row, is unrecognised: it has no route and counts as a failure (below), so the run is not archived with a finding nobody read. A producer that starts staging a new prefix adds its roster row in the same change, and `tests/release-run-dir-lifecycle-conformance.test.js` fails on a staged prefix with no row.
 
-With nothing to dispose, write one `SCANNED` line and do nothing else:
+With nothing to dispose and no read failure above, write one `SCANNED` line and do nothing else. A read failure is never "nothing": that run writes its FAILED line instead, and no `SCANNED` line, because it cannot claim to have scanned what it could not read:
 
 ```
 SCANNED {HH:MM:SS} — Step 8 disposition: no staged review findings. Reversibility: n/a.
 ```
+
+### Review staging roster
+
+`Route` is one value from the closed set `confirmed`, `unconfirmed`, `contested`, `proposal`, `note`, `not staged by review`. The Routing table keys on that value, never on a prefix. `review-{n}` means `review-` followed by a number, so a `review-foo.md` matches no row.
+
+| Prefix | Example | Staged by | Counted as | Route |
+|---|---|---|---|---|
+| `review-{n}` | `staged/review-{n}.{md,patch}` | `review/step3-routing.md` (Step 3; a critical lands here too, because the KEPT-PROMPT row stages a patch as well as surfacing it inline) | one confirmed finding per file, its severity read from the file's `Finding: {severity} {category} — …` line | `confirmed` |
+| `review-unconfirmed-` | `staged/review-unconfirmed-{n}.md` | `_shared/multi-agent-coordination.md` (Step 3 tiebreak) | one finding per entry line | `unconfirmed` |
+| `review-contested-` | `staged/review-contested-{n}.md` | `review/step3-debate-and-refutation.md` (Step 3) | one finding per file, both verdicts side by side | `contested` |
+| `review-debate-` | `staged/review-debate-{n}.md` | `_shared/multi-agent-coordination.md` (Step 3) | one finding per file, both verdicts side by side | `contested` |
+| `reflect-` | `staged/reflect-{n}.md` | `reflect/SKILL.md` (Step 4's hindsight pass) | one finding per file | `proposal` |
+| `simplify-` | `staged/simplify-{n}.md` | `simplify/SKILL.md` (Step 5) | one finding per file | `proposal` |
+| `deepen-` | `staged/deepen-{n}.md`, `staged/deepen-collapse-{n}.patch` | `deepen/SKILL.md` (any deepen candidate list) | one finding per file | `proposal` |
+| `design-decision-` | `staged/design-decision-*.md` | `design-wrapper/modes/review.md` (Step 6.5) | one finding per file | `proposal` |
+| `test-fix-` | `staged/test-fix-{n}.patch` | `test/fix-mode.md` (Step 1.5's test gate) | one finding per file | `proposal` |
+| `flaky-allowlist-` | `staged/flaky-allowlist-{slug}.md` | `test/flake-handling.md` (Step 1.5's test gate) | one finding per file | `proposal` |
+| `visual-review-` | `staged/visual-review-skipped.md`, `staged/visual-review-dev-url.md` | `visual-review/SKILL.md` (Step 6's skip notes) | not a finding | `note` |
+| `wrap-up-reflect-` | `staged/wrap-up-reflect-insights.md` | `reflect/full-mode.md` (`--source wrap-up` only) | — | `not staged by review` |
+| `specify-redteam-` | `staged/specify-redteam-{n}.md` | `_shared/multi-agent-coordination.md` (`/claude-tweaks:specify`'s red team) | — | `not staged by review` |
 
 ## Routing table
 
@@ -36,14 +53,14 @@ The Recommended column is what the batch table below pre-fills for each row.
 
 | Finding | Recommended disposition |
 |---|---|
-| Confirmed, any severity | Defer per `review/step3-routing.md`'s Defer bullet: compose the body with `specShapedBody`, file it with `recordPayload`, born-ready. Apply that bullet's materiality-floor test (`_shared/materiality-floor.md`) first: a finding that fails the floor is `Digest — below floor`, appended only once the row is approved, after the dedup check. Use `Defer-reason: pre-existing-outside-diff` — a release reviews already-merged history and has no diff of its own — and `provenance.origin: /claude-tweaks:release v{version} release-gate review (run {run-id})`. |
-| An unconfirmed critical/high finding | The same Defer |
-| Contested or debate, critical/high in either verdict | The same Defer, both verdicts quoted in the body |
-| Unconfirmed medium/low/info | `declined (unconfirmed: one reproduction agent of the pair)` |
-| Contested or debate, otherwise | `declined (contested: {verdicts})` |
+| A `confirmed` file, any severity | Defer per `review/step3-routing.md`'s Defer bullet: compose the body with `specShapedBody`, file it with `recordPayload`, born-ready. Apply that bullet's materiality-floor test (`_shared/materiality-floor.md`) first: a finding that fails the floor is `Digest — below floor`, appended only once the row is approved, after the dedup check. Use `Defer-reason: pre-existing-outside-diff` — a release reviews already-merged history and has no diff of its own — and `provenance.origin: /claude-tweaks:release v{version} release-gate review (run {run-id})`. |
+| An `unconfirmed` entry at critical/high | The same Defer |
+| A `contested` file at critical/high in either verdict | The same Defer, both verdicts quoted in the body |
+| An `unconfirmed` entry at medium/low/info | `declined (unconfirmed: one reproduction agent of the pair)` |
+| A `contested` file, otherwise | `declined (contested: {verdicts})` |
 | A `decisions.md`-only `STAGED` line at critical/high | The same Defer |
 | A `decisions.md`-only `STAGED` line, otherwise | `declined (unconfirmed: {the line's own reason, e.g. not reproduced})` |
-| A `reflect-*`, `simplify-*` or `deepen-*` file | The same Defer path and Defer-reason, so the materiality floor routes a small one to the digest. Severity is read from the file when it carries one, else treated as medium for the floor test |
+| A file on a `proposal` roster row | The same Defer path and Defer-reason, so the materiality floor routes a small one to the digest. Severity is read from the file when it carries one, else treated as medium for the floor test |
 | Any other staged file | No route: a failure (below), never archived unread |
 | An open record already covering the same file and defect, found by searching open records for the finding's path | `declined (covered by #{n})` |
 
@@ -84,7 +101,7 @@ A filing or digest write that fails leaves that staged file where it is and writ
 FAILED {HH:MM:SS} — Step 8 disposition: {staged path} — {file|digest} failed: {message}. Reversibility: n/a (write did not land).
 ```
 
-An unrecognised file takes the same line with `unrecognised staged file, no route` in place of `{file|digest} failed: {message}`, and `Reversibility: n/a (nothing written).` Any failure means Step 8 skips archival for this run and names the failed paths in its summary. The closed directory stays in place with the unread finding still in `staged/`, and the next release will not adopt it (Step 0 refuses a terminal directory).
+An unrecognised file takes the same line with `unrecognised staged file, no route` in place of `{file|digest} failed: {message}`, and `Reversibility: n/a (nothing written).` An unreadable `staged/` or `decisions.md` (per Inventory) takes the same line with `read failed: {message}` in place of `{file|digest} failed: {message}`, `{staged path}` naming the unreadable path, and `Reversibility: n/a (nothing read).` It counts toward `{k} failed` in the summary line. Any failure means Step 8 skips archival for this run and names the failed paths in its summary. The closed directory stays in place with the unread finding still in `staged/`, and the next release will not adopt it (Step 0 refuses a terminal directory).
 
 ## Anti-Patterns
 

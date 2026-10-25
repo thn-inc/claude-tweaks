@@ -146,7 +146,7 @@ for spec in $PLUGIN_SPECS; do
 
     const drift = installed === "none" || (expected !== "unversioned" && installed !== expected);
     console.log([installed, expected, drift ? "DRIFT" : "ok", (entry && entry.installPath) || "-"].join("\t"));
-  ' "$spec" "$CC_INSTALLED" "$CC_MARKETPLACES" || true)
+  ' -- "$spec" "$CC_INSTALLED" "$CC_MARKETPLACES" || true)
   # `|| true` inside the substitution, because this loop is diagnostic-and-repair, not a
   # prerequisite: under `set -e` an unreadable manifest would otherwise abort the script here.
   if [ -z "$VERDICT" ]; then

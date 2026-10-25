@@ -129,11 +129,17 @@ function buildFailure(err) {
 //
 // opts.timeoutMs overrides the budget; tests use it to force the timeout branch
 // deterministically. Production callers omit it.
+//
+// opts.env, when set, is the spawn's environment; when absent the child inherits
+// process.env as before. An object is used as given, so `{}` is an empty
+// environment (no PATH), not "unset". Pass repoPinnedEnv() to keep `-C <cwd>` in
+// charge of which repo git operates on.
 function runGit(args, cwd, opts = {}) {
   const timeout = resolveTimeout(opts);
   return runClassified(
     () => buildSuccess(execFileSyncTimed('git', ['-C', cwd, ...args], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout,
+      ...(opts.env ? { env: opts.env } : {}),
       // Node defaults windowsHide to FALSE, which hands a child console
       // process a console of its OWN whenever the parent has none to
       // inherit. session-start.js's `reconcile-background` child is exactly
@@ -175,6 +181,20 @@ async function runGitAsync(args, cwd, opts = {}) {
   );
 }
 
+// A copy of `env` without the four repo-locating variables. An inherited GIT_DIR
+// (or GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR) overrides `git -C <dir>`'s
+// repo discovery, so a child spawned from a linked worktree's session would
+// commit onto that worktree's branch instead of the repo `-C` names (#4178).
+// The list deliberately matches staged-patch/stack-check.js's gitEnv (the four
+// variables); git's own `git rev-parse --local-env-vars` list is wider
+// (GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_SHALLOW_FILE, ...),
+// and widening it is a separate decision.
+function repoPinnedEnv(env = process.env) {
+  const out = { ...env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete out[k];
+  return out;
+}
+
 // origin remote URL -> 'owner/repo' slug, or null when unparseable/absent.
 // Moved here from reconcile/release-merged.js (#1082) — pr-state.js is a
 // second consumer, and a third copy of this parse is how drift starts.
@@ -185,4 +205,4 @@ function repoSlugOf(repoRoot) {
   return m ? m[1] : null;
 }
 
-module.exports = { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoSlugOf };
+module.exports = { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoSlugOf, repoPinnedEnv };

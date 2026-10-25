@@ -42,12 +42,13 @@ usage: /claude-tweaks:release [--dry-run] [--train] [--as <version>] [--allow-bl
 
 Under `--train`, read `## --train semantics` first — its two policy levers are checked here, before anything else, and a refusal is logged from this step.
 
-**Resolve `$RUN_ROOT` first.** Every later command in this skill that names it — `git -C "$RUN_ROOT"`, `--root "$RUN_ROOT"` — re-resolves it with exactly these two lines, because an `export` does not survive into the next Bash call. This is `_shared/pipeline-run-dir.md`'s Anchoring snippet, verbatim:
+**Resolve `$RUN_ROOT` first.** Every later command in this skill that names it — `git -C "$RUN_ROOT"`, `--root "$RUN_ROOT"` — re-resolves it with exactly this line, because an `export` does not survive into the next Bash call. This is `_shared/pipeline-run-dir.md`'s Anchoring snippet, verbatim:
 
 ```bash
-RUN_ROOT=$(git rev-parse --git-common-dir)
-RUN_ROOT=$(cd "$(dirname "$RUN_ROOT")" && pwd)
+RUN_ROOT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only) || exit 1
 ```
+
+A non-zero exit stops the call: report its stderr and go no further.
 
 Then resolve the run directory per `_shared/run-dir-resolution.md` (steps 1-2: `PIPELINE_RUN_DIR`, then the most-recent matching directory), anchored to that `$RUN_ROOT`. When neither resolves, create the standalone fallback and stamp it — `release` has its own every-mode clause under that file's step 4, the same shape as wrap-up's and not the `auto`-gated allowlist (which is why the snippet below omits `--mode`), and this stamp is the second of the two direct `run-state.json` writes it names:
 
@@ -56,7 +57,7 @@ RUN_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug 
 REFUSED_DIR=
 # A resolved directory that is terminal, or is a prior release run's own, is refused (#3898) — unless it IS the directory
 # PIPELINE_RUN_DIR names: a stale value (missing dir, archived run-id) falls through to step 2 and is checked like any step-2 directory.
-if [ -n "$RUN_DIR" ] && PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" ENV_RUN_DIR="$PIPELINE_RUN_DIR" node -e 'const { NON_TERMINAL } = require(process.env.PLUGIN_ROOT + "/bin/lib/hooks/run-integrity.js"); const real = (d) => { try { return require("fs").realpathSync(d); } catch { return null; } }; const e = real(process.env.ENV_RUN_DIR || ""); if (e !== null && e === real(process.argv[1])) process.exit(1); const r = JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")); const s = r.status; process.exit((typeof s === "string" && !NON_TERMINAL.has(s)) || r.createdBy === "release-standalone" ? 0 : 1)' "$RUN_DIR" 2>/dev/null; then REFUSED_DIR=$RUN_DIR; RUN_DIR=; fi
+if [ -n "$RUN_DIR" ] && PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" ENV_RUN_DIR="$PIPELINE_RUN_DIR" node -e 'const { NON_TERMINAL } = require(process.env.PLUGIN_ROOT + "/bin/lib/hooks/run-integrity.js"); const real = (d) => { try { return require("fs").realpathSync(d); } catch { return null; } }; const e = real(process.env.ENV_RUN_DIR || ""); if (e !== null && e === real(process.argv[1])) process.exit(1); const r = JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")); const s = r.status; process.exit((typeof s === "string" && !NON_TERMINAL.has(s)) || r.createdBy === "release-standalone" ? 0 : 1)' -- "$RUN_DIR" 2>/dev/null; then REFUSED_DIR=$RUN_DIR; RUN_DIR=; fi
 if [ -z "$RUN_DIR" ]; then
   # Steps 1-2 found nothing, or the guard above refused a prior release run's directory (or step 1's
   # adoption-time anchoring check rejected a worktree-trapped PIPELINE_RUN_DIR, [IL-127]) — clear
@@ -65,7 +66,7 @@ if [ -z "$RUN_DIR" ]; then
   printf '{"status":"active","createdBy":"release-standalone"}\n' > "$RUN_DIR/run-state.json"
 fi
 echo "$RUN_DIR"
-[ -z "$REFUSED_DIR" ] || echo "refused: $REFUSED_DIR (status $(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")).status))' "$REFUSED_DIR"))"
+[ -z "$REFUSED_DIR" ] || echo "refused: $REFUSED_DIR (status $(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")).status))' -- "$REFUSED_DIR"))"
 ```
 
 `$RUN_ROOT` is the main checkout, never a worktree cwd — a bare relative path silently shadows the main copy (`[IL-127]`). Later steps use the carried `{run-dir}` path, a fact of this run, and never re-run the fence above: re-running it would now refuse this run's own directory and mint a stray one. The two-line `$RUN_ROOT` snippet keeps its own re-resolve rule.
@@ -145,21 +146,25 @@ Resolve the base, then invoke:
 
 - `lastTag.ok` → base is `{lastTag.value.tag}`.
 - `lastTag` degraded, but `proposedVersion.value.baseSource` is `manifest` → the project has released before without tagging, so the root commit would put its whole history under review. Base is the first-parent commit that last set the manifest to `{proposedVersion.value.base}` — `git log -1 --first-parent --format=%H -S'"version": "{base}"' {tipRef} -- {manifest path}`, the path the pack's own manifest probe read. Empty output falls through to the root commit below.
-- `lastTag` degraded with no manifest version either (no `v*` tag reachable; `unreleased.value.since` is `null`) → base is the root commit: `$(git rev-list --max-parents=0 origin/{branch} | tail -1)`, where `{branch}` is the pack's own `branch` field.
+- `lastTag` degraded with no manifest version either (no `v*` tag reachable; `unreleased.value.since` is `null`) → base is the root commit: the last line `git rev-list --max-parents=0 origin/{branch}` prints, run as its own call, where `{branch}` is the pack's own `branch` field.
 
 Log which of the three resolved, and why — the review's scope is never a silent choice.
 
 Invoke `/claude-tweaks:review base:{base}` (Input rule 9 — a whole-branch scope: every first-parent commit from the base to `origin/{integration-branch}`, spanning many already-merged PRs) with `$PIPELINE_RUN_DIR={run-dir}` set, so its findings stage into this run's own `staged/` directory per `_shared/staged-patch.md` and its decisions land in this run's `decisions.md`. Review is a component skill here: it renders no Next Actions of its own.
 
-**Invoke it from `$RUN_ROOT`, standing at the fetched tip.** Fetch, then run this check; it exits 0 exactly when the review may run, and on that exit prints `{tip-sha}` (its only stdout line):
+**Invoke it from `$RUN_ROOT`, standing at the fetched tip.** The review-tree check is two calls. First fetch and resolve the tip once, as its own call; on exit 0 it prints `{tip-sha}` (its only stdout line):
 
 ```bash
 git -C "$RUN_ROOT" fetch origin {branch} \
-  && TIP=$(git -C "$RUN_ROOT" rev-parse --verify origin/{branch}) \
-  && [ "$(git -C "$RUN_ROOT" rev-parse --abbrev-ref HEAD)" = "{branch}" ] \
-  && [ "$(git -C "$RUN_ROOT" rev-list --count "HEAD..$TIP")" = 0 ] \
-  && git -C "$RUN_ROOT" diff --quiet "$TIP" HEAD -- ':!.claude-tweaks/pipelines' \
-  && echo "$TIP"
+  && git -C "$RUN_ROOT" rev-parse --verify origin/{branch}
+```
+
+Then run the tree check with that printed sha pasted in literally as `{tip-sha}` (carrying it in a `$(git …)` substitution inside one call is a shape the worktree guard refuses, `_shared/scratch-worktree.md` §7); it exits 0 exactly when the review may run:
+
+```bash
+git -C "$RUN_ROOT" rev-parse --abbrev-ref HEAD | grep -qxF '{branch}' \
+  && git -C "$RUN_ROOT" rev-list --count HEAD..{tip-sha} | grep -qx 0 \
+  && git -C "$RUN_ROOT" diff --quiet {tip-sha} HEAD -- ':!.claude-tweaks/pipelines'
 ```
 
 `/claude-tweaks:review`'s own test gate verifies the tree it is standing in (`review/code-mode-steps.md`'s Step 1.5), so a review invoked from a feature-branch worktree would gate the release on a tree the reviewed range does not contain. Commits ahead are tolerated because reconcile's `[reconcile] archive run …` commits (`plugin/bin/lib/reconcile/archive-merged.js`) stay local and touch only `.claude-tweaks/pipelines/`, which never ships; the comparison is of trees, so a change reverted outside run dirs also passes.
@@ -182,7 +187,7 @@ AUTO {HH:MM:SS} — Step 3: whole-branch review starting, base {base}..{branch} 
 
 The optional `review tree HEAD` clause is written only when `rev-parse HEAD` differs from `{tip-sha}`, tracing the review's test-gate evidence to the tagged tip.
 
-`{tip-sha}` is the full 40-hex sha that the check above prints: `origin/{branch}` resolved once, before the trees are compared, so `HEAD` is compared against the same literal that is recorded. Never re-read it with a second `rev-parse` after the check: a sibling session's fetch into the shared `$RUN_ROOT` in between would record a tip whose tree the review's test gate never ran on. This is the tip this review covers, recorded as a run fact. Step 5 compares `origin/{branch}` against it before the merge (`execute.md`) and cites this value, never re-deriving it.
+`{tip-sha}` is the full 40-hex sha that the check's first call prints: `origin/{branch}` resolved once, before the trees are compared, so `HEAD` is compared against the same literal that is recorded. Never re-read it with a second `rev-parse` after the check: a sibling session's fetch into the shared `$RUN_ROOT` in between would record a tip whose tree the review's test gate never ran on. This is the tip this review covers, recorded as a run fact. Step 5 compares `origin/{branch}` against it before the merge (`execute.md`) and cites this value, never re-deriving it.
 
 When it returns, read **only the lines this run appended after index `{k}`** in `{run-dir}/decisions.md`'s `## /review` block — never the whole block — and classify **against the log lines `/claude-tweaks:review` actually writes**, not against a severity field it does not emit. Its two routing shapes (`review/step3-routing.md`'s routing table) are:
 
@@ -243,7 +248,7 @@ Render one summary block:
 release: {version} — {released | dry-run | HELD | PARTIAL | failed}
 engine:  {pr-first | local-merge}
 records: {n} {shipped | would ship}{, m unattributed commits}
-{findings: {f} filed, {d} digest, {x} declined{, k failed — {paths}}, when disposition inventoried any finding}
+{findings: {f} filed, {d} digest, {x} declined{, k failed — {paths}}, when disposition inventoried any finding or reported a failure}
 {bookkeeping: {k} of {n} failed — #a (read), #b (close), when Step 7 reported k > 0}
 {partial state and recovery command, when the outcome is PARTIAL}
 {gate and staged path, when the outcome is HELD — printed last, after the archival below}
@@ -258,7 +263,7 @@ The `records:` line varies with the outcome, because "shipped" is only true when
 
 **The `bookkeeping:` line renders only when `{k} > 0`, and is omitted entirely when `{k}` is `0`.** Its `{k}`, `{n}` and per-record entries come from Step 7's own tally — `bookkeeping.md`'s `{n} records commented, {m} closed, {k} failed` summary line and its per-record `FAILED` lines — with each failed record named by number and by the verb from its `FAILED` line (`read`, `comment`, `close`, `shipped`, or the step-level `commit`). Without it a run whose every record failed to book still renders `released` and nothing else, and the unbooked records are discoverable only by reading `decisions.md`.
 
-**The `findings:` line renders only when disposition inventoried a finding, and names every failed staged path when any failed.** A run with a failed path is not archived below, so the line is where that finding is named for the reader.
+**The `findings:` line renders only when disposition inventoried a finding or reported a failure (an unreadable `staged/` or `decisions.md` is a failure with no finding behind it), and names every failed staged path when any failed.** A run with a failed path is not archived below, so the line is where that finding is named for the reader.
 
 The five outcomes are distinct and never folded together:
 

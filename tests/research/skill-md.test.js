@@ -251,7 +251,10 @@ test('source-registry.md keys every entry by what it falsifies, not by tool', ()
 
 test('source-registry.md runtime entry cites the bounded-output form', () => {
   const body = readSourceRegistry();
-  assert.match(body, /exit=/, 'must show the bounded-output exit-status capture');
+  assert.match(body, /```bash\s*\nmktemp\s*\n```/, 'the temp path must come from its own plain call');
+  assert.match(body, /Exit code \{n\}/, 'must name the exit-status source the Bash tool reports');
+  assert.match(body, /scratch-worktree\.md` §7/, 'must cite the shell constraint');
+  assert.doesNotMatch(body, /;\s*echo\s+["']?exit=\$\?/, 'must not chain an exit-status echo onto a command');
   assert.match(body, /judge-procedure\.md/, 'must cite docs-health as the technique it reuses');
 });
 

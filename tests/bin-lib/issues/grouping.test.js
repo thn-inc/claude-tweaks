@@ -833,6 +833,47 @@ test('requesting nothing returns no selected groups and no notFound', () => {
   assert.deepStrictEqual(result.notFound, []);
 });
 
+// #4219: selection follows the order the records were named, not pool order.
+const g = (...nums) => nums.map((number) => ({ number }));
+const nums = (groupList) => groupList.map((group) => group.map((issue) => issue.number));
+
+test('AC1.1: selectedGroups follow the requested order, not pool order', () => {
+  const result = selectGroupsForExplicitList([4026, 4028, 4032, 4029], [g(4032), g(4029), g(4028), g(4026)]);
+  assert.deepStrictEqual(nums(result.selectedGroups), [[4026], [4028], [4032], [4029]]);
+  assert.deepStrictEqual(result.deferredByCap, []);
+});
+
+test('AC2.1: a bundle sorts at the earliest requested position any member holds', () => {
+  // request [A,B,C,D] = [1,2,3,4]; the bundle holds B and D; pool order is C, bundle, A
+  const result = selectGroupsForExplicitList([1, 2, 3, 4], [g(3), g(2, 4), g(1)]);
+  assert.deepStrictEqual(nums(result.selectedGroups), [[1], [2, 4], [3]]);
+});
+
+test('AC3.1: batchSize caps the ordered list and reports every requested record it leaves out', () => {
+  const result = selectGroupsForExplicitList([4026, 4028, 4032, 4029], [g(4032), g(4029), g(4028), g(4026)], 3);
+  assert.deepStrictEqual(nums(result.selectedGroups), [[4026], [4028], [4032]]);
+  assert.deepStrictEqual(result.deferredByCap, [4029]);
+  assert.deepStrictEqual(result.notFound, []);
+});
+
+test('deferredByCap names only requested members of a cap-deferred bundle, in requested order', () => {
+  const result = selectGroupsForExplicitList([5, 1, 9], [g(1), g(9, 7, 5)], 1);
+  assert.deepStrictEqual(nums(result.selectedGroups), [[9, 7, 5]]);
+  assert.deepStrictEqual(result.deferredByCap, [1]);
+});
+
+test('batchSize larger than the selection defers nothing', () => {
+  const result = selectGroupsForExplicitList([2, 1], [g(1), g(2)], 5);
+  assert.deepStrictEqual(nums(result.selectedGroups), [[2], [1]]);
+  assert.deepStrictEqual(result.deferredByCap, []);
+});
+
+test('a batchSize that is not a positive integer throws', () => {
+  for (const bad of [0, -1, 1.5, null, 'all', Number.NaN]) {
+    assert.throws(() => selectGroupsForExplicitList([1], [g(1)], bad), TypeError);
+  }
+});
+
 // #1557's incident shape, reproduced: ~70 otherwise-unrelated records, each
 // citing one item-specific file plus one of a handful of "core" files each
 // cited well above the hub-path threshold (#1365's HUB_PATH_MIN_COUNT=3) —

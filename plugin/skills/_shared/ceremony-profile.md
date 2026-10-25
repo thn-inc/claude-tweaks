@@ -51,7 +51,6 @@ Lines that pair `fast-lane` with `skip` without skipping a step. The conformance
 | `review/review-effort-derivation.md` | `Step 1 is skipped under \`ceremony-profile: fast-lane\`` | An aside explaining why the label read is independent of Step 1 |
 | `wrap-up/SKILL.md` | `Skip entirely when \`config.yml\`'s \`ceremony-profile\` is not \`fast-lane\`` | The escape hatch's own gate |
 | `wrap-up/SKILL.md` | `the downgrade covers only this run's remaining wrap-up steps` | The escape hatch's re-run-is-fast-lane-again truth statement (#1926 I1) |
-| `wrap-up/review-console.md` | `tag: fast-lane` | A merge-tag literal, not a ceremony skip |
 | `wrap-up/ceremony-derivation.md` | `Skip this file.` | Derivation has nothing to do when the profile is already set |
 | `_shared/ceremony-check-invocation.md` | `Skip the call entirely when \`facets.ceremony\`` | The ceremony-check CLI is skipped when a label already exists, at any profile |
 | `_shared/fast-lane-digest.md` | `skips or narrows` | A restatement file that defers to this roster |

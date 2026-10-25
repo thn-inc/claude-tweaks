@@ -25,7 +25,7 @@ const MARKETPLACES_JSON = '/tmp/cc-marketplaces.json';
 // Structurally anchored on the shell substitution markers around the VERDICT node -e block,
 // not on any prose sentence inside it — a rewording of the comments cannot break extraction.
 function extractVerdictSnippet(scriptSource) {
-  const m = scriptSource.match(/VERDICT=\$\(node -e '\n([\s\S]*?)\n {2}' "\$spec" "\$CC_INSTALLED" "\$CC_MARKETPLACES" \|\| true\)/);
+  const m = scriptSource.match(/VERDICT=\$\(node -e '\n([\s\S]*?)\n {2}' -- "\$spec" "\$CC_INSTALLED" "\$CC_MARKETPLACES" \|\| true\)/);
   assert.ok(
     m,
     'extraction pattern is out of sync with scripts/claude-cloud-setup.sh — the VERDICT node -e block moved or was reworded',

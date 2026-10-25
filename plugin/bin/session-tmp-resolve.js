@@ -8,9 +8,13 @@
 // follow-up for files pushed near the then-40 KB skill-file ceiling by it).
 //
 // Usage: session-tmp-resolve.js VAR=filename [VAR=filename ...]
-// Output: one `VAR=path` line per argument, in argument order — eval-ready
-// (`eval "$(node session-tmp-resolve.js ...)"`). Reads
-// process.env.CLAUDE_CODE_SESSION_ID directly; no flags, no other env deps.
+//        session-tmp-resolve.js --value filename
+// Output: the VAR= form prints one `VAR="path"` line per argument, in argument
+// order (evaluable shell assignments); `--value` prints exactly the one resolved
+// path plus a newline, for a per-variable `VAR="$(node … --value file)"`
+// substitution — the eval-free multi-path form, since the worktree guard refuses
+// `eval` (`_shared/scratch-worktree.md` §7, #4028). The two forms do not mix.
+// Reads process.env.CLAUDE_CODE_SESSION_ID directly; no other env deps.
 'use strict';
 const os = require('os');
 const path = require('path');
@@ -27,11 +31,29 @@ function formatPrintedPath(resolved, { platform = process.platform, sep = path.s
   return platform === 'win32' ? resolved.split(sep).join('/') : resolved;
 }
 
+const USAGE = 'Usage: session-tmp-resolve.js VAR=filename [VAR=filename ...] | --value filename';
+
+function resolvePrinted(filename) {
+  const resolved = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
+  return formatPrintedPath(resolved);
+}
+
 function main() {
   const args = process.argv.slice(2);
   if (args.length === 0) {
-    console.error('Usage: session-tmp-resolve.js VAR=filename [VAR=filename ...]');
+    console.error(USAGE);
     process.exitCode = 1;
+    return;
+  }
+
+  if (args.includes('--value')) {
+    // Exactly `--value <filename>`: no missing operand, no VAR= pairs mixed in.
+    if (args.length !== 2 || args[0] !== '--value' || args[1].includes('=') || args[1] === '') {
+      console.error(USAGE);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(resolvePrinted(args[1]));
     return;
   }
 
@@ -44,9 +66,7 @@ function main() {
     }
     const varName = arg.slice(0, eq);
     const filename = arg.slice(eq + 1);
-    const resolved = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-    const printed = formatPrintedPath(resolved);
-    console.log(`${varName}=${JSON.stringify(printed)}`);
+    console.log(`${varName}=${JSON.stringify(resolvePrinted(filename))}`);
   }
 }
 

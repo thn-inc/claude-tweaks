@@ -32,7 +32,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { runGit } = require('./lib/hooks/git-exec');
+const { runGit, repoPinnedEnv } = require('./lib/hooks/git-exec');
 const { splitNul } = require('./lib/git-z');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { archiveRunDir, listSpecDirs } = require('./lib/reconcile/archive-merged');
@@ -69,7 +69,8 @@ function parseArgs(argv) {
 // bug this script targets.
 function hasTrackedWork(root, runDir) {
   const rel = path.relative(root, runDir);
-  const res = runGit(['ls-files', '-z', '--', rel], root);
+  // #4178: pin the env so an inherited GIT_DIR cannot redirect -C root to a linked worktree's index.
+  const res = runGit(['ls-files', '-z', '--', rel], root, { env: repoPinnedEnv() });
   if (res.failure || !res.stdout) return false;
   return splitNul(res.stdout).some((p) => /(^|\/)work\//.test(p));
 }

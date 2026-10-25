@@ -49,7 +49,7 @@ function fenceContaining(executeText, needle, reviewedTip, tipSha) {
 
 // The fence that compares origin/{branch} with the reviewed tip.
 function comparisonFence(executeText, reviewedTip) {
-  return fenceContaining(executeText, 'rev-parse origin/{branch})" = "{reviewed-tip}"', reviewedTip);
+  return fenceContaining(executeText, "rev-parse origin/{branch} | grep -qxF '{reviewed-tip}'", reviewedTip);
 }
 
 // Runs body against a fresh fixture and always removes it afterwards.
@@ -144,7 +144,7 @@ test('AC1.2: go-red: dropping the compare clause lets the moved row exit 0', () 
   withFixture('release-reviewed-tip-nocompare-', (fx) => {
     const tip = reviewedTipOf(fx);
     const fence = comparisonFence(readText(EXECUTE), tip);
-    const clause = ` \\\n  && [ "$(git -C "$RUN_ROOT" rev-parse origin/${BRANCH})" = "${tip}" ]`;
+    const clause = ` \\\n  && git -C "$RUN_ROOT" rev-parse origin/${BRANCH} | grep -qxF '${tip}'`;
     assert.ok(fence.includes(clause), 'anchor text for the compare clause not found — proof cannot discriminate');
     const doctored = fence.replace(clause, '');
     assert.notEqual(doctored, fence, 'dropping the compare clause must change the fence');
@@ -192,8 +192,8 @@ function blockOf(executeText) {
 const FACTS = [
   ['skill', 'the Step 3 marker carries the unbraced `at reviewed tip {tip-sha};` and keeps the optional review-tree clause',
     /whole-branch review starting, base \{base\}\.\.\{branch\} at reviewed tip \{tip-sha\}; ## \/review marker: \{k\} existing lines\{; review tree HEAD \{head-sha\} is origin\/\{branch\} \{tip-sha\} plus run-dir-only commits\}\. Reversibility: n\/a \(marker\)\./],
-  ['skill', '{tip-sha} is the sha the check above prints, resolved once before the trees are compared',
-    /`\{tip-sha\}` is the full 40-hex sha that the check above prints: `origin\/\{branch\}` resolved once, before the trees are compared/],
+  ['skill', '{tip-sha} is the sha the check\'s first call prints, resolved once before the trees are compared',
+    /`\{tip-sha\}` is the full 40-hex sha that the check's first call prints: `origin\/\{branch\}` resolved once, before the trees are compared/],
   ['skill', 'Step 8 HELD names `integration branch kept moving`',
     /and `integration branch kept moving`, where/],
   ['console', 'console.md names the reviewed-tip comparison among the HELD stops',
@@ -266,8 +266,8 @@ const FACTS = [
     /re-run SKILL\.md Step 3's review-tree check; any failure is `failed`, reported with Step 3's stop line and reason under this step's prefix and without its `switch` recovery/],
   ['block', 'a failing `rev-list --count` is `failed`, stderr verbatim, nothing merged',
     /`\{n\}` is `git -C "\$RUN_ROOT" rev-list --count \{reviewed-tip\}\.\.\{tip-sha\}`; a non-zero exit from it is `failed`, stderr verbatim, nothing merged/],
-  ['block', 'step 5 reads {tip-sha} as the sha the re-run check printed, never a second rev-parse',
-    /`\{tip-sha\}` is the sha that check printed, never a second `rev-parse` of `origin\/\{branch\}`/],
+  ['block', 'step 5 reads {tip-sha} as the sha the re-run check\'s first call printed, never a second rev-parse',
+    /`\{tip-sha\}` is the sha that check's first call printed, never a second `rev-parse` of `origin\/\{branch\}`/],
   ['block', 'the new tip\'s test gate is the review\'s own Step 1.5',
     /the review's own Step 1\.5/],
   ['block', 'the delta marker line',
