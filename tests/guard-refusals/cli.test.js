@@ -149,6 +149,22 @@ test('CLI exits 2 with a message when --projects-dir exists but cannot be listed
   assert.equal(c.out.length, 0);
 });
 
+test('CLI exits 2 with a message when the store passes the pre-check but fails to read mid-scan, instead of crashing', () => {
+  const store = copyStore();
+  let calls = 0;
+  const flaky = { ...fs, readdirSync: (p, ...rest) => {
+    if (path.resolve(String(p)) === path.resolve(store) && (calls += 1) > 1) {
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    }
+    return fs.readdirSync(p, ...rest);
+  } };
+  const c = capture();
+  assert.equal(run({ argv: ['--projects-dir', store, '--until', UNTIL, '--json'], deps: { ...c.deps, fs: flaky } }), 2);
+  assert.ok(calls > 1, 'the scan reached the store root after the pre-check listed it');
+  assert.match(c.err.join('\n'), /the scan could not read its input \(EACCES\)/);
+  assert.equal(c.out.length, 0);
+});
+
 test('CLI perPipeline counts a clean run as zero, so the mean can fall below 1 and the median is over every run', () => {
   const store = copyStore();
   const c = capture();

@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { readText } = require('../helpers/read-skill');
+const { RULE_IDS } = require('../../plugin/bin/lib/hooks/guard-rewrite');
 
 // #4028 AC3: the PreToolUse `updatedInput` vs worktree-isolation-guard probe outcome lives in
 // docs/reference/pretooluse-updatedinput-worktree-guard.md. Every line below is copied from that doc,
@@ -63,8 +64,19 @@ test('AC3.1: docs/hooks.md carries the measured ordering and the shipped doc poi
     // control: the same doc with the citation removed must fail the same check
     assert.ok(!doc.split(REF_PATH).join('').includes(REF_PATH), `${name} control did not strip the citation`);
   }
-  for (const id of ['inline-literal-assignment', 'plugin-root-placeholder', 'node-eval-separator', 'quote-escaped-space', 'drop-redundant-cd']) {
-    assert.ok(hooks.includes(id), `docs/hooks.md must name the rule id ${id}`);
-  }
   assert.ok(hooks.includes('guard-rewrite.js'), 'docs/hooks.md must name guard-rewrite.js');
+});
+
+test('AC3.1: the rule ids the prose lists are the rule ids the normalizer runs', () => {
+  const hooks = readText(path.join(ROOT, 'docs', 'hooks.md'));
+  // Derived from the code, not retyped: a sixth rule, or a rename, goes red here until the prose follows.
+  assert.strictEqual(RULE_IDS.length, 5,
+    'docs/hooks.md, the probe reference doc and scratch-worktree.md section 7 say "five shapes" — update them with the rule count');
+  for (const id of RULE_IDS) {
+    assert.ok(hooks.includes(id), `docs/hooks.md must name the rule id ${id}`);
+    assert.ok(REF.includes(id), `${REF_PATH} must name the rule id ${id}`);
+    // control: the same doc without the id must fail the same check
+    assert.ok(!hooks.split(id).join('').includes(id), `control did not strip ${id}`);
+  }
+  assert.ok(RULE_IDS.length === new Set(RULE_IDS).size, 'rule ids are unique');
 });

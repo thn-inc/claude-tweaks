@@ -29,7 +29,7 @@
 //   top         up to 20 sample commands per reason, cut to 300 chars
 //
 // Exit codes: 0 success; 2 malformed invocation, a missing --projects-dir / --skills-root, or a
-// --projects-dir / --skills-root that exists but cannot be read.
+// --projects-dir / --skills-root that exists but cannot be read, up front or mid-scan.
 //
 // Seam: run({ argv, deps }) returns the exit code; deps holds fs, env, now, homedir, log and err.
 
@@ -217,8 +217,17 @@ function run({ argv, deps: given = {} }) {
 
   const sinceMs = untilMs - days * DAY_MS;
   const window = { since: new Date(sinceMs).toISOString(), until: new Date(untilMs).toISOString() };
-  const scan = scanStore({ projectsDir, match: o['--match'] || null, since: sinceMs, until: untilMs, fs: deps.fs });
-  const index = buildFenceIndex(skillsRoot);
+  let scan;
+  let index;
+  try {
+    scan = scanStore({ projectsDir, match: o['--match'] || null, since: sinceMs, until: untilMs, fs: deps.fs });
+    index = buildFenceIndex(skillsRoot);
+  } catch (err) {
+    // A directory that passed the pre-check above can still fail mid-walk (permissions, a file removed
+    // under the scan): report it like the pre-check does, never a stack trace and a half-read summary.
+    deps.err(`guard-refusals.js: the scan could not read its input (${err.code || err.message})\n${USAGE}`);
+    return 2;
+  }
   const out = summarize({ window, scan, index });
   deps.log(o['--json'] ? JSON.stringify(out) : renderTable(out));
   return 0;

@@ -603,6 +603,8 @@ function nodeEvalSeparator(s) {
       }
     }
     if (!laterSeparator) inserts.push(a);
+    // Resume the global regex after the segment just scanned, so a `node -e` inside this
+    // segment's own arguments is never matched (and given a second `--`) as a command of its own.
     NODE_EVAL.lastIndex = Math.max(NODE_EVAL.lastIndex, p);
   }
   if (!inserts.length) return null;
@@ -662,6 +664,11 @@ function dropRedundantCd(s, { cwd }) {
   return rest;
 }
 
+// The order is load-bearing: each rule reads the previous rule's output. drop-redundant-cd runs
+// first so the leading `A=1; …` assignments that inline-literal-assignment and plugin-root-placeholder
+// look for sit at the start of the command once a redundant `cd <cwd> &&` is gone; the node-eval and
+// quote rules only reshape arguments and run last. The ids are exported (RULE_IDS) so a test pins
+// them against the prose that lists them (docs/hooks.md, the probe reference doc, scratch-worktree §7).
 const RULES = [
   ['drop-redundant-cd', dropRedundantCd],
   ['inline-literal-assignment', inlineLiteralAssignment],
@@ -669,6 +676,7 @@ const RULES = [
   ['node-eval-separator', nodeEvalSeparator],
   ['quote-escaped-space', quoteEscapedSpace],
 ];
+const RULE_IDS = RULES.map(([id]) => id);
 
 // Walk up from `cwd` to the first `.git` entry: a file marks a linked worktree
 // (its gitdir pointer); a directory, or anything unreadable, does not.
@@ -725,4 +733,4 @@ function guardRewriteOutput(input, rewrite = module.exports.rewriteForGuard) {
   }
 }
 
-module.exports = { rewriteForGuard, guardRewriteOutput, isLinkedWorktree };
+module.exports = { rewriteForGuard, guardRewriteOutput, isLinkedWorktree, RULE_IDS };
