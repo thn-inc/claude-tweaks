@@ -6,7 +6,8 @@
 // block: the last full-sha `at reviewed tip`, the Step 3 review's tip, how
 // many delta moves were already counted since it, and the last delta verdict
 // line's `base..tip` since it (the delta whose arrived commits are folded
-// into the verdict's `arrived`). Only a 40-hex sha is a tip —
+// into the verdict's `arrived`; a line that reads as one but does not parse comes
+// back as `malformedDelta` and fails the check, never a delta skipped). Only a 40-hex sha is a tip —
 // a short sha after "at reviewed tip" (e.g. "still at reviewed tip 0ecde186c")
 // is prose, not a record of what was reviewed. The advance line a run-dir-only
 // move writes carries the new tip but is never a counted move.
@@ -18,9 +19,13 @@ const { readBumpFlags } = require('../release-local/manifest.js');
 const REVIEWED_TIP_RE = /at reviewed tip ([0-9a-f]{40})(?![0-9a-f])/;
 const DELTA_VERDICT_RE = /delta review base ([0-9a-f]{40})\.\.[^:\s]+: .*at reviewed tip ([0-9a-f]{40})(?![0-9a-f])/;
 const STEP3_MARKER = 'whole-branch review starting';
+// A line that reads as a delta verdict (it names a base and a reviewed tip) but
+// fails DELTA_VERDICT_RE is skill drift, never a delta to skip silently.
+const DELTA_VERDICT_HINT_RE = /delta review base .*at reviewed tip/;
 
 function movedLineRe(branch) {
-  return new RegExp(`origin/${escapeRegExp(branch)} moved [0-9a-f]{4,40} →`);
+  // The lookbehind keeps a longer token that merely ends in `origin/{branch}` from counting.
+  return new RegExp(`(?<![\\w./-])origin/${escapeRegExp(branch)} moved [0-9a-f]{4,40} →`);
 }
 
 function releaseBlock(decisionsText) {
@@ -41,17 +46,19 @@ function parseReleaseLog(decisionsText, branch) {
     if (m) reviewedTip = m[1];
     if (line.includes(STEP3_MARKER)) step3Index = i;
   });
-  if (step3Index === -1) return { reviewedTip, step3Tip: null, priorMoves: 0, lastDelta: null };
+  if (step3Index === -1) return { reviewedTip, step3Tip: null, priorMoves: 0, lastDelta: null, malformedDelta: null };
   const step3Match = REVIEWED_TIP_RE.exec(block[step3Index]);
   const moved = movedLineRe(branch);
   const since = block.slice(step3Index + 1);
   const priorMoves = since.filter((l) => moved.test(l)).length;
   let lastDelta = null;
+  let malformedDelta = null;
   for (const line of since) {
     const m = DELTA_VERDICT_RE.exec(line);
     if (m) lastDelta = { base: m[1], tip: m[2] };
+    else if (DELTA_VERDICT_HINT_RE.test(line)) malformedDelta = line;
   }
-  return { reviewedTip, step3Tip: step3Match ? step3Match[1] : null, priorMoves, lastDelta };
+  return { reviewedTip, step3Tip: step3Match ? step3Match[1] : null, priorMoves, lastDelta, malformedDelta };
 }
 
 function advanceText({ branch, from, to, commits }) {
@@ -60,7 +67,7 @@ function advanceText({ branch, from, to, commits }) {
 
 class GitError extends Error {
   constructor(args, status, stderr) {
-    super(`git ${args.join(' ')} exited ${status}: ${String(stderr).trim()}`);
+    super(`git ${args.join(' ')} ${status === null ? 'could not be spawned' : `exited ${status}`}: ${String(stderr ?? '').trim()}`);
     this.name = 'GitError';
     this.args = args;
     this.status = status;
@@ -91,18 +98,22 @@ function arrivedPart({ git, base, tip, preMajor }) {
 const MAX_ADVANCES = 20;
 const RUN_DIR_PATHSPEC = ':!.claude-tweaks/pipelines';
 
+// { value, source } for a readable lever, else { detail } naming the first reason it
+// was not — the resolver's own stderr when it printed one.
 function readBound(r) {
-  if (!r || r.status !== 0) return null;
+  if (!r) return { detail: 'resolve-policy.js produced no result' };
+  if (r.status !== 0) return { detail: String(r.stderr || '').trim() || `resolve-policy.js exited ${r.status}` };
   let parsed;
   try {
     parsed = JSON.parse(r.stdout);
   } catch {
-    return null;
+    return { detail: 'resolve-policy.js output is not JSON' };
   }
   const entry = parsed && typeof parsed === 'object' ? parsed['release-tip-moves'] : null;
-  if (!entry || typeof entry !== 'object' || entry.invalid === true) return null;
-  if (!Number.isInteger(entry.value) || entry.value < 0) return null;
-  return { value: entry.value, source: entry.source };
+  if (!entry || typeof entry !== 'object') return { detail: 'release-tip-moves is missing from the resolver output' };
+  if (entry.invalid === true) return { detail: 'release-tip-moves holds an invalid value' };
+  if (!Number.isInteger(entry.value) || entry.value < 0) return { detail: 'release-tip-moves is not a non-negative integer' };
+  return { value: entry.value, source: typeof entry.source === 'string' ? entry.source : null };
 }
 
 // The Step 5 verdict, last before the merge: `merge` (origin/{branch} still at
@@ -125,7 +136,10 @@ function checkReviewedTip({ decisionsText, branch, asGiven, preMajor }, { git, r
   };
   const out = (verdict, reason = null, detail = null) => ({ verdict, reason, detail, ...state });
 
-  if (!state.reviewedTip || !state.step3Tip) return out('failed', 'no reviewed tip recorded');
+  if (!state.reviewedTip || !state.step3Tip) {
+    return out('failed', 'no reviewed tip recorded', 'the ## /release block has no Step 3 whole-branch-review marker line carrying a 40-hex `at reviewed tip`');
+  }
+  if (!asGiven && parsed.malformedDelta) return out('failed', 'delta verdict line unparseable', parsed.malformedDelta);
 
   if (!asGiven && parsed.lastDelta) {
     try {
@@ -167,7 +181,7 @@ function checkReviewedTip({ decisionsText, branch, asGiven, preMajor }, { git, r
   if (!codeMove) return out('failed', 'run-dir-only advances did not converge');
 
   const bound = readBound(resolveBound());
-  if (!bound) return out('failed', 'release-tip-moves unreadable');
+  if (bound.value === undefined) return out('failed', 'release-tip-moves unreadable', bound.detail);
   state.bound = bound.value;
   state.source = bound.source;
   state.move = parsed.priorMoves + 1;

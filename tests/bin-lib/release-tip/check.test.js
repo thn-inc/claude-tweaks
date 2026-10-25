@@ -184,21 +184,34 @@ test('bound equal to move is not exceeded', () => {
 
 test('unreadable lever → failed', () => {
   const cases = [
-    ['non-zero exit', { status: 1, stdout: '', stderr: 'boom' }],
-    ['not JSON', { status: 0, stdout: 'nope', stderr: '' }],
-    ['invalid: true', boundOf(2, 'policy', { invalid: true })],
-    ['negative', boundOf(-1)],
-    ['fractional', boundOf(1.5)],
+    ['non-zero exit', { status: 1, stdout: '', stderr: 'boom' }, /^boom$/],
+    ['non-zero exit, silent', { status: 3, stdout: '', stderr: '' }, /exited 3/],
+    ['not JSON', { status: 0, stdout: 'nope', stderr: '' }, /not JSON/],
+    ['entry missing', { status: 0, stdout: '{}', stderr: '' }, /missing from the resolver output/],
+    ['invalid: true', boundOf(2, 'policy', { invalid: true }), /invalid value/],
+    ['negative', boundOf(-1), /non-negative integer/],
+    ['fractional', boundOf(1.5), /non-negative integer/],
   ];
   withFixture((fx) => {
     const tip = originTip(fx);
     pushUpstream(fx);
-    for (const [name, bound] of cases) {
+    for (const [name, bound, detail] of cases) {
       const { v } = check(fx, { decisionsText: decisions([step3Line(tip)]), bound });
       assert.strictEqual(v.verdict, 'failed', name);
       assert.strictEqual(v.reason, 'release-tip-moves unreadable', name);
       assert.strictEqual(v.bound, null, name);
+      assert.match(v.detail, detail, name);
     }
+  });
+});
+
+test('a non-string source is carried as null, not passed through', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    pushUpstream(fx);
+    const { v } = check(fx, { decisionsText: decisions([step3Line(tip)]), bound: boundOf(2, 42) });
+    assert.strictEqual(v.verdict, 'delta');
+    assert.strictEqual(v.source, null);
   });
 });
 
@@ -213,7 +226,20 @@ test('no reviewed tip → failed, and no git call runs', () => {
     const { v } = check(null, { decisionsText, git });
     assert.strictEqual(v.verdict, 'failed');
     assert.strictEqual(v.reason, 'no reviewed tip recorded');
+    assert.match(v.detail, /Step 3 whole-branch-review marker/);
   }
+});
+
+test('a malformed delta verdict line → failed before any git call, unless --as exempts the arrived check', () => {
+  const short = `- AUTO 10:20:00 — Step 5: delta review base ${'c'.repeat(9)}..main: review: clean. Findings staged at none; at reviewed tip ${'d'.repeat(40)}. Reversibility: n/a (gate evaluation).`;
+  const text = decisions([step3Line('a'.repeat(40)), short]);
+  const refuse = () => { throw new Error('no git call may run'); };
+  const { v } = check(null, { decisionsText: text, git: refuse });
+  assert.strictEqual(v.verdict, 'failed');
+  assert.strictEqual(v.reason, 'delta verdict line unparseable');
+  assert.strictEqual(v.detail, short);
+  const exempt = check(null, { decisionsText: text, git: stubGit({ diffStatus: 1 }), asGiven: true });
+  assert.notStrictEqual(exempt.v.reason, 'delta verdict line unparseable', '--as never reads the delta, so a malformed line is not its concern');
 });
 
 test('fetch failure → failed with stderr', () => {

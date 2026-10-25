@@ -32,6 +32,7 @@ test('parses the real 2026-10-24 release block', () => {
     step3Tip: '1813941ecfe019b89307ea75526f2c863ffb5e1e',
     priorMoves: 1,
     lastDelta: { base: '1813941ecfe019b89307ea75526f2c863ffb5e1e', tip: '0ecde186ccb4a2d176d86f359699b006014852e6' },
+    malformedDelta: null,
   });
 });
 
@@ -74,18 +75,53 @@ test('counts every earlier delta marker whatever short sha it names', () => {
 
 test('no Step 3 marker → nulls and 0', () => {
   const text = ['## /release', '- AUTO 10:00:00 — Step 1: pack read. Reversibility: n/a.'].join('\n');
-  assert.deepStrictEqual(parseReleaseLog(text, 'main'), { reviewedTip: null, step3Tip: null, priorMoves: 0, lastDelta: null });
+  assert.deepStrictEqual(parseReleaseLog(text, 'main'), { reviewedTip: null, step3Tip: null, priorMoves: 0, lastDelta: null, malformedDelta: null });
+});
+
+test('no Step 3 marker still returns the last reviewed tip a later line carries', () => {
+  const verdict = `- AUTO 10:00:00 — Step 5: delta review base ${A}..main: review: clean. Findings staged at none; at reviewed tip ${B}. Reversibility: n/a (gate evaluation).`;
+  assert.deepStrictEqual(parseReleaseLog(['## /release', verdict].join('\n'), 'main'), { reviewedTip: B, step3Tip: null, priorMoves: 0, lastDelta: null, malformedDelta: null });
 });
 
 test('no ## /release heading → nulls and 0', () => {
   const text = ['## /review', step3(A), '- origin/main moved 1111111 → 2222222'].join('\n');
   assert.deepStrictEqual(releaseBlock(text), []);
-  assert.deepStrictEqual(parseReleaseLog(text, 'main'), { reviewedTip: null, step3Tip: null, priorMoves: 0, lastDelta: null });
+  assert.deepStrictEqual(parseReleaseLog(text, 'main'), { reviewedTip: null, step3Tip: null, priorMoves: 0, lastDelta: null, malformedDelta: null });
 });
 
 test('branch is regex-escaped', () => {
   assert.strictEqual(movedLineRe('release/1.x').test('origin/release/1.x moved abc1234 → def5678'), true);
   assert.strictEqual(movedLineRe('release/1.x').test('origin/release/1Xx moved abc1234 → def5678'), false);
+});
+
+test('a token that merely ends in origin/{branch} is not a counted move', () => {
+  assert.strictEqual(movedLineRe('main').test('xorigin/main moved abc1234 → def5678'), false);
+  assert.strictEqual(movedLineRe('main').test('refs/remotes/origin/main moved abc1234 → def5678'), false);
+  assert.strictEqual(movedLineRe('main').test('Step 5: origin/main moved abc1234 → def5678'), true);
+});
+
+test('the last Step 3 marker wins over an earlier one, and only moves after it count', () => {
+  const text = [
+    '## /release',
+    '- AUTO 08:00:00 — Step 5: origin/main moved 0000000 → 1111111 before the merge.',
+    step3(A),
+    '- AUTO 09:00:00 — Step 5: origin/main moved 1111111 → 2222222 before the merge — move 1 of 2.',
+    step3(B),
+    '- AUTO 10:00:00 — Step 5: origin/main moved 2222222 → 3333333 before the merge — move 1 of 2.',
+  ].join('\n');
+  const parsed = parseReleaseLog(text, 'main');
+  assert.strictEqual(parsed.step3Tip, B);
+  assert.strictEqual(parsed.priorMoves, 1);
+});
+
+test('a delta verdict line that names a base and a reviewed tip but does not parse is reported, not skipped', () => {
+  const short = `- AUTO 10:00:00 — Step 5: delta review base ${A.slice(0, 9)}..main: review: clean. Findings staged at none; at reviewed tip ${B}. Reversibility: n/a (gate evaluation).`;
+  const held = `- AUTO 10:00:00 — Step 5: delta review base ${A}..main: review: blocking. Findings staged at staged/review-1.md. Reversibility: n/a (gate evaluation).`;
+  const bad = parseReleaseLog(['## /release', step3(A), short].join('\n'), 'main');
+  assert.strictEqual(bad.lastDelta, null);
+  assert.strictEqual(bad.malformedDelta, short);
+  const fine = parseReleaseLog(['## /release', step3(A), held].join('\n'), 'main');
+  assert.strictEqual(fine.malformedDelta, null, 'a held verdict carries no tip clause and is not a delta of the reviewed tip');
 });
 
 test('advance text carries the tip and is not a counted move', () => {

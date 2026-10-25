@@ -37,7 +37,7 @@ function pushRunDirUpstream(fx) {
   fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
 }
 
-function cli(argv, { cwd = process.cwd(), mainRoot } = {}) {
+function cli(argv, { cwd = process.cwd(), mainRoot, spawn } = {}) {
   let out = '';
   let err = '';
   const code = run(argv, {
@@ -46,6 +46,7 @@ function cli(argv, { cwd = process.cwd(), mainRoot } = {}) {
     now: () => new Date(2026, 9, 25, 11, 0, 0).getTime(),
     cwd: () => cwd,
     mainRoot,
+    spawn,
   });
   return { code, out, err };
 }
@@ -74,6 +75,13 @@ test('a value flag with no value → 2', () => {
   }
 });
 
+test('--help prints the usage line and exits 0 without touching anything', () => {
+  const r = cli(['--help']);
+  assert.strictEqual(r.code, 0);
+  assert.match(r.out, /^usage: release-tip-check\.js --run <run-dir> --root <checkout> --branch <name> \[--as\]\n$/);
+  assert.strictEqual(r.err, '');
+});
+
 test('run dir missing → 3', () => {
   withFixture((fx) => {
     const r = cli(['--run', path.join(fx.work, 'no-such-run'), '--root', fx.work, '--branch', BRANCH], { mainRoot: fx.work });
@@ -95,6 +103,26 @@ test('end to end on a fixture prints a merge verdict and exits 0', () => {
     assert.strictEqual(v.branch, BRANCH);
     assert.strictEqual(v.tipSha, tip);
     assert.strictEqual(v.reviewedTip, tip);
+  });
+});
+
+test('a git that never spawned fails with the spawn error as detail, not null', () => {
+  withFixture((fx) => {
+    fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisions([step3Line(originTip(fx))]));
+    const spawn = () => ({ status: null, stdout: null, stderr: null, error: new Error('spawn git ENOENT') });
+    const r = cli(argsFor(fx), { mainRoot: fx.work, spawn });
+    assert.strictEqual(r.code, 0, r.err);
+    const v = JSON.parse(r.out);
+    assert.strictEqual(v.verdict, 'failed');
+    assert.strictEqual(v.reason, 'fetch failed');
+    assert.strictEqual(v.detail, 'spawn git ENOENT');
+  });
+});
+
+test('a decisions.md that exists but cannot be read is an undecided crash, not an empty log', () => {
+  withFixture((fx) => {
+    fs.mkdirSync(path.join(fx.runDir, 'decisions.md'));
+    assert.throws(() => cli(argsFor(fx), { mainRoot: fx.work }), (err) => err.code === 'EISDIR');
   });
 });
 

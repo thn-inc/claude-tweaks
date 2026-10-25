@@ -8,8 +8,8 @@
 // or unparseable → false), runs git in --root, resolves release-tip-moves
 // through resolve-policy.js, and appends a run-dir-only advance line under
 // decisions.md's `## /release` through lib/log-decision/append.js.
-// Exit 0 whenever a verdict was printed — `failed` is a verdict the skill
-// routes on, never an exit code. Exit 2 on a malformed invocation (a missing
+// Exit 0 whenever a verdict was printed (or --help printed the usage line) —
+// `failed` is a verdict the skill routes on, never an exit code. Exit 2 on a malformed invocation (a missing
 // --run/--root/--branch, an unknown flag, a flag with no value). Exit 3 when
 // --run does not resolve under the main checkout ([IL-127]) or does not
 // exist — nothing is read or written. An undecided crash (a throw reaching
@@ -60,12 +60,27 @@ function readPreMajor(runDir) {
   return Boolean(pv && pv.ok === true && pv.value && pv.value.preMajor === true);
 }
 
+// A spawn that never ran (no git on PATH, a bad cwd) comes back with status null,
+// no stderr and the cause in `error`. Carry that cause as stderr so a `failed`
+// verdict names it instead of reading "exited null: undefined".
+function normalizeSpawn(r) {
+  return {
+    status: r.status,
+    stdout: r.stdout == null ? '' : r.stdout,
+    stderr: r.stderr || (r.error ? r.error.message : ''),
+  };
+}
+
 function run(argv, deps = {}) {
   const stdout = deps.stdout || ((s) => process.stdout.write(s));
   const stderr = deps.stderr || ((s) => process.stderr.write(s));
   const now = deps.now || (() => Date.now());
   const cwd = deps.cwd || (() => process.cwd());
   const spawn = deps.spawn || ((cmd, args, opts) => spawnSync(cmd, args, { ...opts, windowsHide: true }));
+  if (argv.includes('--help')) {
+    stdout(`${USAGE}\n`);
+    return 0;
+  }
   let o;
   try { o = parseArgs(argv); } catch (err) {
     if (!(err instanceof UsageError)) throw err;
@@ -88,8 +103,8 @@ function run(argv, deps = {}) {
   const verdict = checkReviewedTip(
     { decisionsText, branch: o.branch, asGiven: o.as, preMajor: readPreMajor(runDir) },
     {
-      git: (args) => spawn('git', args, { cwd: root, encoding: 'utf8', windowsHide: true }),
-      resolveBound: () => spawn(process.execPath, [path.join(__dirname, 'resolve-policy.js'), '--run', runDir, 'release-tip-moves'], { cwd: root, encoding: 'utf8', windowsHide: true }),
+      git: (args) => normalizeSpawn(spawn('git', args, { cwd: root, encoding: 'utf8', windowsHide: true })),
+      resolveBound: () => normalizeSpawn(spawn(process.execPath, [path.join(__dirname, 'resolve-policy.js'), '--run', runDir, 'release-tip-moves'], { cwd: root, encoding: 'utf8', windowsHide: true })),
       appendLog: (text) => appendEntry({
         runDir,
         section: '/release',

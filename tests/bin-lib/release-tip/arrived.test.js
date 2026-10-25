@@ -71,17 +71,44 @@ test('pre-major with bump-minor-pre-major false stays major', () => {
   }, { files: { 'release-please-config.json': '{"bump-minor-pre-major": false}' } });
 });
 
+test('a --no-ff merge range follows every parent: the side commit counts, not just the merge subject', () => {
+  const fx = originWithTwoClones('release-tip-arrived-');
+  try {
+    const git = runner(fx.work, fx.env);
+    const base = git(['rev-parse', 'HEAD']).stdout.trim();
+    fx.run(fx.work, ['checkout', '-q', '-b', 'side']);
+    fs.writeFileSync(path.join(fx.work, 'side.txt'), 'x');
+    fx.run(fx.work, ['add', 'side.txt']);
+    fx.run(fx.work, ['commit', '-q', '-m', 'feat!: side']);
+    fx.run(fx.work, ['checkout', '-q', 'main']);
+    fx.run(fx.work, ['merge', '--no-ff', '-q', '-m', 'Merge branch side', 'side']);
+    const tip = git(['rev-parse', 'HEAD']).stdout.trim();
+    const r = arrivedPart({ git, base, tip, preMajor: false });
+    assert.strictEqual(r.part, 'major', 'a first-parent walk would see only the unconventional merge subject');
+    assert.strictEqual(r.shas.length, 2);
+  } finally {
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
 test('real range from the 2026-10-24 release', (t) => {
   const git = runner(REPO_ROOT, process.env);
-  if (git(['cat-file', '-e', '0ecde186c']).status !== 0) {
-    t.skip('0ecde186c not in this clone (shallow)');
-    return;
-  }
   const base = '1813941ecfe019b89307ea75526f2c863ffb5e1e';
   const tip = '0ecde186ccb4a2d176d86f359699b006014852e6';
+  if (git(['cat-file', '-e', `${base}^{commit}`]).status !== 0 || git(['cat-file', '-e', `${tip}^{commit}`]).status !== 0) {
+    t.skip('the release range is not in this clone (shallow)');
+    return;
+  }
   const r = arrivedPart({ git, base, tip, preMajor: false });
   assert.strictEqual(r.part, 'minor');
   assert.strictEqual(r.shas.length, 5);
+});
+
+test('GitError reads as a spawn failure when git never ran, and as an exit otherwise', () => {
+  const spawnFailure = new GitError(['log'], null, 'spawn git ENOENT');
+  assert.match(spawnFailure.message, /could not be spawned: spawn git ENOENT/);
+  assert.doesNotMatch(spawnFailure.message, /exited/);
+  assert.match(new GitError(['log'], 128, 'fatal: bad\n').message, /exited 128: fatal: bad$/);
 });
 
 test('unresolvable base throws GitError', () => {
