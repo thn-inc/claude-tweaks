@@ -38,7 +38,7 @@ git branch --show-current
 ```
 
 ```bash
-gh repo view --json nameWithOwner -q .nameWithOwner
+gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null
 ```
 
 Then run the check from the worktree as one command, both values pasted in literally — the module

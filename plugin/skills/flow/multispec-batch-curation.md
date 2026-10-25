@@ -44,7 +44,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch
 ```
 
 ```bash
-git symbolic-ref --quiet --short refs/remotes/origin/HEAD
+git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null
 ```
 
 `{merge-base}` is what this prints:

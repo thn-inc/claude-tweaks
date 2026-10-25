@@ -58,11 +58,13 @@ VAR1="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value file1.js
 VAR2="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value file2.md)"
 ```
 
-`--value <filename>` prints exactly the resolved path and a newline. Do not use the older
+`--value <filename>` prints exactly the resolved path and a newline: the form for a path a
+fence substitutes in the same call. The `VAR=filename` form, run as a plain call
+(`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" A=a.json B=b.md`), prints one
+`NAME="path"` line per pair for the agent to read and paste literally into later commands; that
+use is valid. Only `eval` of its output is retired — do not use the older
 `eval "$(node …/session-tmp-resolve.js VAR1=file1.json VAR2=file2.md)"` form in new prose: a
-worktree-isolated session's guard refuses `eval` (`_shared/scratch-worktree.md` §7). The
-`VAR=filename` CLI form still works unchanged (older installed builds' prose uses it) but only
-feeds an `eval`; it is not the form to write.
+worktree-isolated session's guard refuses `eval` (`_shared/scratch-worktree.md` §7).
 
 All three forms resolve through the same `sessionTmpPath` and degrade identically; pick whichever
 reads better at the call site, and prefer the shorter CLI form once a file nears `RAIL_BYTES`,
