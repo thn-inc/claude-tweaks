@@ -370,6 +370,8 @@ After the Isolated Write Step lands, surface what was created as a `| Action | D
 
 Execute only after user confirmation.
 
+**Every exit runs the close-out.** When this invocation created an `{ISO}-init-standalone/` directory (the auto-mode logging in `phase-3-classification.md` / `update-mode.md`), close it on every exit after the mint, not only a run that reaches this phase's write — Phase 9's confirm or decline, Update Mode's 1u.6 early exit (which skips to Phase 9), the Scope Gate's "Stop here", a per-phase "Done", and any other stop: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "{run-dir}"`. An init directory records no owning session, so session end never marks it `interrupted`: left alone, it stays `active`. Init created the directory only when `$PIPELINE_RUN_DIR` was unset at invocation; when a parent handed it down and the resolver returned it, the directory is **inherited**. An **inherited** directory is never closed here — the parent owns that close. The close runs before "Worktree Policy Finalization", which stays the last filesystem action of the invocation.
+
 ### Worktree Policy Finalization
 
 If Step 6 queued a `worktree-always` decision, write it now, bundled into "Isolated Write Step"'s worktree/commit/merge; early-exit paths that skip Phase 9 write it standalone the same way. Still the last filesystem action of the invocation. Read `worktree-policy-finalization.md` for merge-don't-overwrite mechanics and the "Yes" message.
