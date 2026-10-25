@@ -31,7 +31,15 @@ if (require.main === module) {
   try {
     EARLY = require('./lib/hooks/bash-prefilter').earlyGate(process.argv[2]);
   } catch { EARLY = null; }
-  if (EARLY && EARLY.skip) process.exit(0);
+  if (EARLY && EARLY.skip) {
+    // #4028: a skip may carry the guard normalizer's updatedInput. writeSync is
+    // synchronous, so the exit below cannot truncate it; a failed write is
+    // swallowed, leaving the plain silent skip.
+    if (EARLY.json) {
+      try { require('fs').writeSync(1, JSON.stringify(EARLY.json)); } catch { /* never breaks a session */ }
+    }
+    process.exit(0);
+  }
 }
 const fs = require('fs');
 const path = require('path');
@@ -97,41 +105,57 @@ function pluginRoot() {
   return process.env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
 }
 
-// #1143: usage strings for every documented `hooks.js` subcommand (the
-// dispatch table's own record-worktree/close-run/teardown-run/archive-run/
-// resolve-run-dir/delete-ledger/resolve-ledger/record-pr/spec-status/manifest-init/check-resume-freshness/check-staged-
-// inventory/check-pass-reentry/check-sibling-sessions/sweep-shadow/adopt-run-dir/reconcile/
-// reconcile-background/reconcile-summary set — see docs/plugin-structure.md's
-// hooks.js line). Doubles as the membership table for the `--help`/`-h` intercept
-// below: a verb absent from this map gets no guard, by design — the six
-// EVENTS names are invoked by the harness via stdin JSON, never probed with
-// a `--help` flag, and never fell through to the implicit-run-dir-guess
-// hazard this record closes. record-pr's and spec-status's own internal
-// "usage:" error strings (printed on malformed non-help args) reuse these
-// same entries rather than a second, driftable copy of the same text.
-const USAGE = {
-  'record-worktree': 'record-worktree --run <dir> <worktree-path> [--dispatch]',
-  'resolve-run-dir': 'resolve-run-dir [--spec-slug <slug>] [--mode <mode>] [--standalone <value>] [--create] [--root-only]',
-  'sweep-shadow': 'sweep-shadow [--run <dir>] [--worktree <path>]',
-  'adopt-run-dir': 'adopt-run-dir --run <main-checkout-run-dir> --worktree <worktree-path>',
-  'record-pr': 'record-pr [--run <dir>] <number> <url>',
-  'manifest-init': 'manifest-init --run <parent-dir> --specs <n1,n2,...>',
-  'spec-status': 'spec-status --run <parent-dir> --spec <n> --status <pending|running|complete|failed|not-run> --phase <phase>',
-  'close-run': 'close-run [--run <dir>]',
-  'delete-ledger': 'delete-ledger --run <dir> [--ledger <path>]',
-  'resolve-ledger': 'resolve-ledger --run <dir>',
-  'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]',
-  'archive-run': 'archive-run [--run <dir>]',
-  'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>] [--filing-failed <id,id,...>]',
-  'check-resume-freshness': 'check-resume-freshness [--run <dir>]',
-  'check-staged-inventory': 'check-staged-inventory [--run <dir>]',
-  'check-session-residue': 'check-session-residue [--run <dir>]',
-  'check-pass-reentry': 'check-pass-reentry --run <dir> [--online]',
-  'check-sibling-sessions': 'check-sibling-sessions --record <id-or-slug>',
-  reconcile: 'reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]',
-  'reconcile-summary': 'reconcile-summary',
-  'reconcile-background': 'reconcile-background',
+// #1143: the one verb table. Each key is a dispatch key — the `hooks.js <verb>`
+// argv token — and each entry carries that verb's usage line and its `run(argv)`
+// handler (the `run{Verb}` functions below, one per verb; see docs/plugin-structure.md's
+// hooks.js line). One table feeds the `--help`/`-h` intercept in main() below
+// (membership: a verb absent from here gets no guard, by design — the EVENTS
+// names are invoked by the harness via stdin JSON, never probed with a `--help`
+// flag, and never fell through to the implicit-run-dir-guess hazard #1143
+// closed), the derived `USAGE` map, dispatch, and the usage listing an unknown
+// or missing verb prints. record-pr's and spec-status's own internal "usage:"
+// error strings (printed on malformed non-help args) reuse these same usage
+// lines rather than a second, driftable copy of the same text.
+const VERBS = {
+  'record-worktree': { usage: 'record-worktree --run <dir> <worktree-path> [--dispatch]', run: runRecordWorktree },
+  'resolve-run-dir': { usage: 'resolve-run-dir [--spec-slug <slug>] [--mode <mode>] [--standalone <value>] [--create] [--root-only]', run: runResolveRunDir },
+  'sweep-shadow': { usage: 'sweep-shadow [--run <dir>] [--worktree <path>]', run: runSweepShadow },
+  'adopt-run-dir': { usage: 'adopt-run-dir --run <main-checkout-run-dir> --worktree <worktree-path>', run: runAdoptRunDir },
+  'record-pr': { usage: 'record-pr [--run <dir>] <number> <url>', run: runRecordPr },
+  'manifest-init': { usage: 'manifest-init --run <parent-dir> --specs <n1,n2,...>', run: runManifestInit },
+  'spec-status': { usage: 'spec-status --run <parent-dir> --spec <n> --status <pending|running|complete|failed|not-run> --phase <phase>', run: runSpecStatus },
+  'close-run': { usage: 'close-run [--run <dir>]', run: runCloseRun },
+  'delete-ledger': { usage: 'delete-ledger --run <dir> [--ledger <path>]', run: runDeleteLedger },
+  'resolve-ledger': { usage: 'resolve-ledger --run <dir>', run: runResolveLedger },
+  'teardown-run': { usage: 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]', run: runTeardownRun },
+  'archive-run': { usage: 'archive-run [--run <dir>]', run: runArchiveRun },
+  'resolve-console': { usage: 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>] [--filing-failed <id,id,...>]', run: runResolveConsole },
+  'check-resume-freshness': { usage: 'check-resume-freshness [--run <dir>]', run: runCheckResumeFreshness },
+  'check-staged-inventory': { usage: 'check-staged-inventory [--run <dir>]', run: runCheckStagedInventory },
+  'check-session-residue': { usage: 'check-session-residue [--run <dir>]', run: runCheckSessionResidue },
+  'check-pass-reentry': { usage: 'check-pass-reentry --run <dir> [--online]', run: runCheckPassReentry },
+  'check-sibling-sessions': { usage: 'check-sibling-sessions --record <id-or-slug>', run: runCheckSiblingSessions },
+  reconcile: { usage: 'reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]', run: runReconcile },
+  'reconcile-summary': { usage: 'reconcile-summary', run: runReconcileSummary },
+  'reconcile-background': { usage: 'reconcile-background', run: runReconcileBackground },
 };
+
+// Derived view of VERBS — verb -> usage line — so no second copy can drift.
+const USAGE = Object.fromEntries(Object.entries(VERBS).map(([verb, { usage }]) => [verb, usage]));
+
+// Own-property lookup: a prototype-chain name (`constructor`, `toString`, `__proto__`)
+// is never a verb.
+function verbFor(cmd) {
+  return Object.hasOwn(VERBS, cmd) ? VERBS[cmd] : null;
+}
+
+// The usage listing printed after the unknown-verb / no-verb error line: one
+// line per VERBS entry, then the harness hook events.
+function usageText() {
+  return 'claude-tweaks: hooks.js usage:\n'
+    + Object.values(VERBS).map(({ usage }) => `  ${usage}\n`).join('')
+    + `  <event>  (harness hook events, JSON on stdin: ${EVENTS.join(', ')})\n`;
+}
 
 const HELP_FLAGS = new Set(['--help', '-h']);
 
@@ -158,7 +182,7 @@ const KNOWN_FLAGS = {
   // (`wrap-up/cleanup-procedures-execution.md` Section C steps 5 and 5.5, `flow/multispec-review-console.md`
   // Shared teardown step 7) and from their pins in `tests/scratch-worktree-remote-branch-delete.test.js`,
   // and every other prose mention or pin of it (`git grep -n -F -- --remote-ref-only`), in any release after the one that ships #3490. (2) Only in a release after (1) has shipped, remove
-  // it from `KNOWN_FLAGS` and `USAGE` here. Until then a session can still hold pre-(1) prose in context
+  // it from `KNOWN_FLAGS` and from its `VERBS` usage line here. Until then a session can still hold pre-(1) prose in context
   // while the running build's hooks.js is newer, and the unknown-flag guard would refuse that call.
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed', '--filing-failed'],
@@ -632,1210 +656,1239 @@ function copyRunDirAuditFiles(runDir, destDir) {
   return copied;
 }
 
+async function runRecordWorktree(argv) {
+  // --run <path> pins the target run dir explicitly, mirroring close-run
+  // below — without it, this always fell through to resolveRunDir's
+  // "newest non-terminal run" fallback, which a stale never-closed run
+  // could win over the run genuinely making this call.
+  const {
+    runDir, invalidRunArg, rest, worktreeLocalFallback, explicit,
+  } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { allowUninitialized: true });
+  // #3225: `--dispatch` (boolean, any position) marks the run as bound by
+  // /claude-tweaks:dispatch before call 1 — checkDispatchConfigGate
+  // (bin/lib/hooks/pre-tool-use.js) then denies git writes in this worktree
+  // until /claude-tweaks:flow Step 3 writes config.yml. Stripped before the
+  // positional lookup so it can never be read as the worktree path.
+  const dispatch = rest.includes('--dispatch');
+  const positional = rest.filter((a) => a !== '--dispatch');
+  const worktreeArg = positional[0];
+  // #1124: every real caller already passes --run explicitly (build's
+  // worktree-setup.md Step 4.5, the run-resume-freshness re-stamp, the
+  // subagent-output-contract re-stamp) — nothing legitimate depends on the
+  // implicit fallback below. An invocation that omits --run previously fell
+  // through to resolveRunDir's "newest non-terminal run" GUESS and could
+  // silently clobber a DIFFERENT live session's run-state.json (reproduced
+  // 3x independently on 2026-08-20, across three different dispatched
+  // subagents). Never guess here: refuse loudly, before this handler ever
+  // gets a chance to WRITE anything — a true no-op, non-zero exit. (A bare
+  // or malformed `--help` no longer reaches this branch at all — #1143's
+  // dedicated guard above intercepts it first, before `resolveRunArg` ever
+  // runs. `resolveRunArg` itself still runs unconditionally on every other
+  // no-`--run` path below, and still calls `ctxLib.resolveRunDir` — a real
+  // scan of sibling run-state.json files — whose result this branch simply
+  // discards; the guarantee here is "no write," not "no read.")
+  if (!explicit) {
+    process.stdout.write('claude-tweaks: record-worktree requires --run — worktree not recorded\n');
+    return 1;
+  }
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+  if (invalidRunArg) {
+    process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — worktree not recorded\n`);
+  } else if (worktreeArg && worktreeArg.startsWith('-')) {
+    // An unrecognized flag landing in the worktree-path position must
+    // never be treated as a literal path — this is the exact shape every
+    // observed incident hit (a stray --help specifically no longer reaches
+    // this far — #1143's dedicated guard above intercepts it first).
+    process.stdout.write(`claude-tweaks: unrecognized argument ${worktreeArg} — worktree not recorded\n`);
+    return 1;
+  } else if (runDir && worktreeArg) {
+    // Stamp the owning session so E1 can scope enforcement to it. Absent env
+    // var: omit the key rather than write null — an env-less re-record must
+    // not clobber a previous stamp.
+    const patch = { worktree: path.resolve(worktreeArg), status: 'active' };
+    if (process.env.CLAUDE_CODE_SESSION_ID) patch.sessionId = process.env.CLAUDE_CODE_SESSION_ID;
+    // #3845: the owning Claude Code process, so session-end can tell a nested
+    // `claude -p` from the owner. Omitted when absent, like sessionId.
+    Object.assign(patch, ctxLib.ownerPidPatch(process.env));
+    if (dispatch) {
+      // Permanent for the run's lifetime: only ever written true, never
+      // false, so a later plain re-stamp (no --dispatch) cannot clear it.
+      patch.dispatched = true;
+      // #3711: the session that ran `--dispatch`, written ONLY by that flag. A plain
+      // re-stamp — a human resuming the run (run-resume-freshness.md) — overwrites
+      // sessionId but never writes or clears this, so bin/lib/dispatch/task-call.js
+      // can tell the dispatching session from a later resumer. With no session id it
+      // is written as null, not omitted: an absent key reads as a pre-#3711 run-state
+      // and falls back to sessionId, which a later resume re-stamps with the resumer's
+      // id — null is present but never matches, so that resume reads as human-run.
+      patch.dispatchSessionId = process.env.CLAUDE_CODE_SESSION_ID || null;
+      if (!patch.dispatchSessionId) {
+        process.stderr.write('claude-tweaks: record-worktree --dispatch without CLAUDE_CODE_SESSION_ID — dispatchSessionId recorded as null; wrap-up will treat this run as human-run\n');
+      }
+    }
+    // #3973: the owner block, only with a session id (record-worktree is the adoption
+    // path, so it replaces another session's block).
+    const result = ctxLib.writeRunState(runDir,
+      ctxLib.patchWithOwnerBlock(patch, process.env.CLAUDE_CODE_SESSION_ID, { replacesSessionId: true }));
+    if (result) {
+      process.stdout.write(`claude-tweaks: worktree recorded for ${path.basename(runDir)}\n`);
+    } else {
+      process.stdout.write(`claude-tweaks: failed to record worktree for ${path.basename(runDir)} — run-state.json could not be written\n`);
+    }
+  } else {
+    // runDir resolved but worktreeArg is falsy — the only remaining case
+    // in this chain (with --run now required above, invalidRunArg is
+    // falsy here only when runDir already resolved to a real directory —
+    // see resolveRunArg: runDir is null iff invalidRunArg is truthy).
+    // Without this branch, a call that omits the worktree positional
+    // (e.g. "record-worktree --run <dir>" with nothing after)
+    // printed nothing and exited 0, indistinguishable from success.
+    process.stdout.write(`claude-tweaks: no worktree path given for ${path.basename(runDir)} — worktree not recorded\n`);
+  }
+  return 0;
+}
+
+async function runResolveRunDir(argv) {
+  // #692: the tool _shared/pipeline-run-dir.md's Anchoring section points
+  // callers at, so a skill step gets the anchored $RUN_ROOT/run directory
+  // as one command instead of composing `git rev-parse --git-common-dir`
+  // inline — the composition that produced the worktree-local shadow
+  // ([IL-127]) this command exists to stop happening again. Unlike every
+  // other subcommand in this dispatcher, this one has a genuine non-zero
+  // exit code: it is invoked directly from skill prose (never as a hook
+  // event), and a skill step needs a real signal to branch on when nothing
+  // resolves or an inherited PIPELINE_RUN_DIR turns out to be a shadow.
+  const args = argv.slice(3);
+  let result;
+  try {
+    result = require('./lib/hooks/run-dir-resolve').resolve({
+      cwd: process.cwd(),
+      env: process.env,
+      specSlug: flagVal(args, '--spec-slug'),
+      mode: flagVal(args, '--mode'),
+      standalone: flagVal(args, '--standalone'),
+      create: args.includes('--create'),
+      rootOnly: args.includes('--root-only'),
+    });
+  } catch (e) {
+    process.stderr.write(`claude-tweaks: resolve-run-dir: unexpected error — ${e && e.message ? e.message : e}\n`);
+    return 1;
+  }
+  if (result.ok) {
+    process.stdout.write(result.path + '\n');
+    return 0;
+  }
+  process.stderr.write(`claude-tweaks: resolve-run-dir: ${result.message}\n`);
+  return 1;
+}
+
+async function runSweepShadow(argv) {
+  // Promotes curation-engine.md §4's post-fan-out shadow sweep from an
+  // inline bash snippet to this verb (#738). --run/--worktree are the raw
+  // PIPELINE_RUN_DIR/WORKTREE values as a judge dispatch would set them —
+  // sweepShadow() itself does the `pwd -P`-style normalization and the
+  // anchoring/same-path checks, so unlike record-worktree/record-pr/
+  // close-run this does NOT go through resolveRunArg: --worktree is
+  // legitimately a linked worktree, which resolveRunArg's anchoring check
+  // would reject outright, and --run's own "is it under the main
+  // checkout" question is exactly the sweep's own diagnostic, not a
+  // separate gate ahead of it.
+  const args = argv.slice(3);
+  const runArg = flagVal(args, '--run');
+  const worktreeArg = flagVal(args, '--worktree');
+  const mainRoot = wtDetect.mainCheckoutRoot(process.cwd());
+  if (!mainRoot) {
+    process.stdout.write(`sweep: ${wtDetect.unanchoredRunDirNoRepoMessage(process.cwd())} — not swept\n`);
+    return 1;
+  }
+  const { sweepShadow } = require('./lib/hooks/sweep-shadow');
+  const result = sweepShadow({
+    runRoot: mainRoot,
+    pipelineRunDir: runArg ? path.resolve(process.cwd(), runArg) : runArg,
+    worktree: worktreeArg ? path.resolve(process.cwd(), worktreeArg) : worktreeArg,
+  });
+  for (const line of result.lines) process.stdout.write(line + '\n');
+  return result.diagnostic ? 1 : 0;
+}
+
+async function runAdoptRunDir(argv) {
+  // #2409: copies a run dir's decisions.md/report.md/staged/** from the
+  // main checkout into a worktree's own copy of that path — the
+  // sanctioned procedure tidy/step-7-5-worktree-always.md's
+  // copy-then-commit paragraph documents (mirroring work/{n}-spec.md's
+  // exception, _shared/pipeline-run-dir.md's Anchoring section). Exists
+  // because checkPipelineShadowGuard (the PreToolUse guard refusing to
+  // CREATE a new top-level pipeline run dir inside a linked worktree)
+  // pattern-matches literal mkdir/cp/redirect shell syntax in a Bash
+  // command's text — a plain Node CLI whose own invocation carries none
+  // of those tokens sidesteps that guard the same way bin/log-decision.js/
+  // bin/stage-item.js/bin/set-config.js/bin/set-verify-expectations.js
+  // already do, without special-casing this procedure inside the guard
+  // itself. Unlike those four (anchored --run only), this verb also
+  // validates --worktree is a real linked worktree of THIS repo
+  // (worktree-detect.js's repoInfo(), _shared/worktree-setup.md's
+  // "Adopt-or-create" section), which is why it lives here as a hooks.js
+  // subcommand rather than another
+  // standalone sibling CLI (docs/hooks.md's "state genuinely coupled to
+  // hook enforcement itself" carve-out).
+  //
+  // Exit codes mirror bin/log-decision.js's scheme (2 malformed
+  // invocation, 3 run dir/worktree invalid), not the six EVENTS' own
+  // always-exit-0 invariant: like resolve-run-dir above, this verb is
+  // invoked directly from skill prose, never as a harness-dispatched hook
+  // event, so a real, meaningful non-zero exit is safe here.
+  const args = argv.slice(3);
+  const runArg = flagVal(args, '--run');
+  const worktreeArg = flagVal(args, '--worktree');
+  if (!runArg || !worktreeArg) {
+    process.stderr.write(`claude-tweaks: usage: ${USAGE['adopt-run-dir']}\n`);
+    return 2;
+  }
+  let target;
+  try {
+    // mainRoot: null deliberately bypasses resolveTarget's own cwd-derived
+    // domain match (it would otherwise anchor against process.cwd()'s repo,
+    // which is not necessarily either side of the --worktree/--run pairing
+    // this verb actually compares) while still enforcing its structural
+    // check: a `.git` FILE ancestor (a linked worktree/submodule) is always
+    // refused, never adopted as if it were the main checkout.
+    target = require('./lib/log-decision/append').resolveTarget({ runDir: runArg, cwd: process.cwd(), mainRoot: null });
+  } catch (err) {
+    process.stderr.write(`claude-tweaks: adopt-run-dir: ${err && err.message}\n`);
+    return 3;
+  }
+  if (!target.ok) {
+    if (target.reason === 'missing') {
+      process.stderr.write(`claude-tweaks: adopt-run-dir: run dir does not exist: ${runArg}\n`);
+    } else {
+      process.stderr.write(`claude-tweaks: adopt-run-dir: run dir is not anchored under the main checkout (a worktree-local shadow): ${runArg} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    }
+    return 3;
+  }
+  const runDir = path.dirname(target.file);
+  // Derived from the run dir itself, not process.cwd(): "this repo" for the
+  // --worktree domain-match below must be the run dir's own repo, so a
+  // caller invoked from an unrelated cwd (or from a foreign worktree) still
+  // gets a correct verdict rather than one that accidentally reflects cwd's
+  // repo instead. Guaranteed non-null: target.ok above already proved the
+  // nearest .git ancestor of runDir is a DIRECTORY (not a worktree/submodule
+  // file pointer), and mainCheckoutRoot's walk-up hits that exact same
+  // directory first.
+  const mainRoot = wtDetect.mainCheckoutRoot(runDir);
+  const resolvedWorktree = path.resolve(process.cwd(), worktreeArg);
+  if (!isDirectory(resolvedWorktree)) {
+    process.stderr.write(`claude-tweaks: adopt-run-dir: --worktree does not exist or is not a directory: ${worktreeArg}\n`);
+    return 3;
+  }
+  const info = wtDetect.repoInfo(resolvedWorktree);
+  if (info.indeterminate || !info.isLinkedWorktree || wtDetect.mainCheckoutRoot(resolvedWorktree) !== mainRoot) {
+    process.stderr.write(`claude-tweaks: adopt-run-dir: --worktree ${worktreeArg} is not a linked git worktree of this repo\n`);
+    return 3;
+  }
+  const destDir = path.join(resolvedWorktree, '.claude-tweaks', 'pipelines', path.basename(runDir));
+  const copied = copyRunDirAuditFiles(runDir, destDir);
+  if (copied.length === 0) {
+    process.stdout.write(`claude-tweaks: adopt-run-dir: nothing to copy for ${path.basename(runDir)} (no decisions.md, report.md, or staged/ present)\n`);
+    return 0;
+  }
+  for (const name of copied) process.stdout.write(`copied: ${name}\n`);
+  return 0;
+}
+
+async function runRecordPr(argv) {
+  // Mirrors record-worktree's shape: --run <path> pins the target run dir
+  // explicitly (falls back to #1012's unambiguous-only resolution when
+  // absent), positional args after it are the PR number and URL.
+  // run-state.json is written only through hooks.js verbs (CLAUDE.md's
+  // write-ownership rule) — this is the sanctioned verb for the pr-early
+  // run lifecycle's { number, url } field (#409).
+  const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+  const {
+    runDir, invalidRunArg, rest, worktreeLocalFallback, explicit, candidates,
+  } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+  const numberArg = rest[0];
+  const urlArg = rest[1];
+  const number = Number(numberArg);
+  // #1012: an implicit resolution (no --run) whose resolved run still
+  // classifies 'foreign' (only reachable via the env-var arm — steps 2/3
+  // already exclude foreign candidates by construction) refuses the write.
+  // Explicit --run always bypasses this, same as close-run's advisory.
+  const implicitForeign = !explicit && runDir
+    && ctxLib.classifyOwnership(callerIdentity, ctxLib.readRunState(runDir)) === 'foreign';
+  if (invalidRunArg) {
+    process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — PR not recorded\n`);
+  } else if (candidates) {
+    process.stdout.write(`${renderCandidateRefusal('record-pr', candidates)}\nPR not recorded.\n`);
+  } else if (!runDir) {
+    process.stdout.write('claude-tweaks: no pipeline run dir found — PR not recorded\n');
+  } else if (implicitForeign) {
+    process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session/worktree — refusing to record a PR against it without an explicit --run\n`);
+  } else if (!numberArg || !Number.isInteger(number) || number <= 0 || !urlArg) {
+    process.stdout.write(`claude-tweaks: usage: ${USAGE['record-pr']} — PR not recorded\n`);
+  } else {
+    // Record the branch alongside the PR while the worktree is still live —
+    // this is the one moment it is reliably knowable. run-integrity.js's
+    // torn-down-worktree fallback (#1672) reads it back later, when
+    // `git worktree list` no longer has an entry to derive it from.
+    // Best-effort: a run with no recorded worktree, or a derivation that
+    // comes back null, simply records {number, url} as before.
+    // Guarded because this is the first external-process call in a verb that
+    // previously had none: main()'s own `.catch(() => process.exit(0))` would
+    // swallow a throw here and skip writeRunState entirely, exiting 0 with no
+    // output — the PR silently never recorded, while every other failure
+    // branch in this verb prints a "not recorded" notice. Degrading to the
+    // pre-#1672 {number, url} write is the correct best-effort outcome.
+    let prBranch = null;
+    try {
+      prBranch = deriveBranch(repoRootOf(runDir), ctxLib.readRunState(runDir)?.worktree || null);
+    } catch { prBranch = null; }
+    const prField = prBranch ? { number, url: urlArg, branch: prBranch } : { number, url: urlArg };
+    const result = ctxLib.writeRunState(runDir, { pr: prField });
+    if (result) {
+      process.stdout.write(`claude-tweaks: PR #${number} recorded for ${path.basename(runDir)}\n`);
+    } else {
+      process.stdout.write(`claude-tweaks: failed to record PR for ${path.basename(runDir)} — run-state.json could not be written\n`);
+    }
+  }
+  return 0;
+}
+
+async function runManifestInit(argv) {
+  // Creates a multi-spec parent run dir's manifest.yml (#3035) — the
+  // counterpart to spec-status, which only updates an existing one. Same
+  // --run shape and implicit-foreign guard as spec-status. Idempotent: an
+  // existing manifest keeps every spec's status/startedAt/phases[].
+  const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+  const {
+    runDir, invalidRunArg, rest, worktreeLocalFallback, explicit, candidates,
+  } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+  const specsArg = flagVal(rest, '--specs');
+  const implicitForeign = !explicit && runDir
+    && ctxLib.classifyOwnership(callerIdentity, ctxLib.readRunState(runDir)) === 'foreign';
+  if (invalidRunArg) {
+    process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — manifest not initialized\n`);
+  } else if (candidates) {
+    process.stdout.write(`${renderCandidateRefusal('manifest-init', candidates)}\nManifest not initialized.\n`);
+  } else if (!runDir) {
+    process.stdout.write('claude-tweaks: no pipeline run dir found — manifest not initialized\n');
+  } else if (implicitForeign) {
+    process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session/worktree — refusing to initialize its manifest without an explicit --run\n`);
+  } else if (!specsArg) {
+    process.stdout.write(`claude-tweaks: usage: ${USAGE['manifest-init']} — manifest not initialized\n`);
+  } else {
+    const result = specStatusLib.manifestInit({
+      runDir,
+      specs: specsArg.split(','),
+      parent: `.claude-tweaks/pipelines/${path.basename(runDir)}/`,
+    });
+    if (!result.ok) {
+      process.stdout.write(`claude-tweaks: manifest not initialized for ${path.basename(runDir)} (${result.reason})\n`);
+    } else {
+      process.stdout.write(`claude-tweaks: manifest.yml ready at ${path.basename(runDir)} — ${result.manifest.multispec.specs.length} specs (${result.added.length} added, ${result.existing.length} already present)\n`);
+    }
+  }
+  return 0;
+}
+
+async function runSpecStatus(argv) {
+  // Couples a multi-spec manifest.yml status transition to the
+  // `## Flow: Running ...` progress banner (#690) — one call does both,
+  // so a phase transition can't happen without the banner (and vice
+  // versa). --run mirrors record-worktree/record-pr's shape: it names
+  // the multi-spec PARENT run dir (where manifest.yml lives — see
+  // multi-spec.md's "Run directory layout"), never a per-spec
+  // PIPELINE_RUN_DIR subdirectory.
+  const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+  const {
+    runDir, invalidRunArg, rest, worktreeLocalFallback, explicit, candidates,
+  } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+  const specArg = flagVal(rest, '--spec');
+  const statusArg = flagVal(rest, '--status');
+  const phaseArg = flagVal(rest, '--phase');
+  const nowArg = flagVal(rest, '--now'); // test-only clock override; real callers omit it
+  // #1012: see record-pr's identical guard above.
+  const implicitForeign = !explicit && runDir
+    && ctxLib.classifyOwnership(callerIdentity, ctxLib.readRunState(runDir)) === 'foreign';
+  if (invalidRunArg) {
+    process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — spec status not recorded\n`);
+  } else if (candidates) {
+    process.stdout.write(`${renderCandidateRefusal('spec-status', candidates)}\nSpec status not recorded.\n`);
+  } else if (!runDir) {
+    process.stdout.write('claude-tweaks: no pipeline run dir found — spec status not recorded\n');
+  } else if (implicitForeign) {
+    process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session/worktree — refusing to record spec status against it without an explicit --run\n`);
+  } else if (!specArg || !statusArg || !phaseArg) {
+    process.stdout.write(`claude-tweaks: usage: ${USAGE['spec-status']} — spec status not recorded\n`);
+  } else {
+    const result = specStatusLib.transitionSpec({
+      runDir, specId: specArg, status: statusArg, phase: phaseArg,
+      now: nowArg ? new Date(nowArg) : new Date(),
+    });
+    if (!result.ok) {
+      const detail = result.reason === 'no-manifest'
+        ? `no manifest.yml at ${path.basename(runDir)} — create it first: node "${pluginRoot()}/bin/hooks.js" manifest-init --run "${runDir}" --specs <n1,n2,...>`
+        : `no manifest.yml at ${path.basename(runDir)}, or spec/status/phase invalid`;
+      process.stdout.write(`claude-tweaks: spec status not recorded for spec #${specArg} (${result.reason}) — ${detail}\n`);
+    } else {
+      process.stdout.write(result.banner + '\n');
+      if (result.summaryLine) process.stdout.write(result.summaryLine + '\n');
+    }
+  }
+  return 0;
+}
+
+async function runCloseRun(argv) {
+  // #1012: unambiguousOnly replaces the old includeWorktreeForeign
+  // opt-out — that existed only so a bare close-run could still FIND a
+  // worktree-foreign run in order to report it via closeRunState's own
+  // foreignOwner advisory. The new resolution already reports exactly
+  // that: when the only candidate is foreign, it refuses and lists it
+  // (annotated) rather than silently resolving into it.
+  const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+  const {
+    runDir, invalidRunArg, explicit, worktreeLocalFallback, candidates,
+  } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+  if (invalidRunArg) {
+    process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — run not closed\n`);
+    return 1;
+  } else if (candidates) {
+    process.stdout.write(`${renderCandidateRefusal('close-run', candidates)}\nRun not closed.\n`);
+  } else if (runDir) {
+    const r = closeRunState(runDir, { explicit, callerIdentity });
+    if (r.status === 'missing') {
+      process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} no longer exists on disk (already archived or removed) — run not closed\n`);
+      return 0;
+    }
+    if (r.status === 'refused-foreign') {
+      process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session — refusing to close it without an explicit --run\n`);
+      return 0;
+    }
+    if (r.status === 'refused-live-worktree') {
+      process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} still has a live worktree on disk — refusing to close it without an explicit --run\n`);
+      return 0;
+    }
+    if (r.foreignOwner) {
+      process.stdout.write(`claude-tweaks: closing run ${path.basename(runDir)} recorded by another session\n`);
+    }
+    if (!r.wrapupSeen) {
+      process.stdout.write(
+        `claude-tweaks: closing run ${path.basename(runDir)} with no recorded wrap-up invocation — ` +
+        'expected if wrap-up was run manually (typed slash commands leave no ledger event); ' +
+        'otherwise consider /claude-tweaks:wrap-up before closing. Event recorded: close-without-wrapup.\n',
+      );
+    }
+    if (r.notYetArchived) {
+      process.stdout.write(
+        `claude-tweaks: run ${path.basename(runDir)} still holds un-archived work/ content — ` +
+        'expected at this point in the normal wrap-up sequence (close-run always runs before archive-run); ' +
+        'archival is still pending and will happen via the next routine reconcile pass, or you can archive it now: ' +
+        `node "${pluginRoot()}/bin/hooks.js" archive-run --run "${runDir}"\n`,
+      );
+    }
+    if (!r.writeOk) {
+      process.stdout.write(`claude-tweaks: failed to close run ${path.basename(runDir)} — run-state.json could not be written\n`);
+    }
+  } else {
+    // No --run was given (or it resolved to nothing) and resolveRunDir's
+    // fallback also found no run dir — the only remaining case in this
+    // chain. Without this branch, a call that can't resolve any run dir
+    // printed nothing and exited 0, indistinguishable from success.
+    process.stdout.write('claude-tweaks: no pipeline run dir found — run not closed\n');
+  }
+  return 0;
+}
+
+async function runDeleteLedger(argv) {
+  // #2546: gives wrap-up cleanup item 2 (ledger deletion) a verb — before
+  // this, deleting the run's ledger file was a hand-run `rm`/Bash call with
+  // no sanctioned CLI path. --run mirrors record-pr/spec-status's shape
+  // (unambiguous-only resolution, explicit --run always wins); --ledger
+  // overrides resolveLedgerPath's own run-dir-first/docs-plans-fallback
+  // resolution for the rare case (2+ owned *-ledger.md candidates, or
+  // ownership not computable) it can't disambiguate on its own. The
+  // fallback only considers the docs/plans ledger this branch owns
+  // (merge-base diff or untracked, #3566) — an inherited one is never
+  // deleted from here. #3686: the not-found report names those inherited
+  // ledgers (read-only, via describeRunLedgers) so "not found" says why.
+  const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+  const {
+    runDir, invalidRunArg, rest, worktreeLocalFallback, candidates,
+  } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+  const ledgerArg = flagVal(rest, '--ledger');
+  if (invalidRunArg) {
+    process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — ledger not deleted\n`);
+  } else if (candidates) {
+    process.stdout.write(`${renderCandidateRefusal('delete-ledger', candidates)}\nLedger not deleted.\n`);
+  } else if (!runDir) {
+    process.stdout.write('claude-tweaks: no pipeline run dir found — ledger not deleted\n');
+  } else {
+    const { resolveLedgerPath, describeRunLedgers } = require('./lib/wrap-up/ledger-write');
+    const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
+    const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg || null });
+    if (!resolved.ok && resolved.reason === 'ambiguous') {
+      process.stdout.write(`claude-tweaks: delete-ledger: ${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}\nLedger not deleted.\n`);
+    } else if (!resolved.ok && resolved.reason === 'rejected') {
+      process.stdout.write(`claude-tweaks: delete-ledger: --ledger ${resolved.candidates[0]} rejected (${resolved.detail}) — ledger not deleted\n`);
+    } else if (!resolved.ok && resolved.reason === 'unattributable') {
+      process.stdout.write(`claude-tweaks: delete-ledger: cannot attribute docs/plans ledgers to ${path.basename(runDir)} (${resolved.detail}) — pass --ledger <path> explicitly; ledger not deleted\n`);
+    } else if (!resolved.ok) {
+      // #3686: with no --ledger, an inherited-only docs/plans set is named here.
+      let inherited = '';
+      if (!ledgerArg) {
+        const { report, others } = describeRunLedgers({ runDir, worktree });
+        if (report === 'none' && others.length > 0) {
+          inherited = ` — only inherited ledgers found: ${others.join(', ')}`;
+        }
+      }
+      process.stdout.write(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)}${inherited} — not found\n`);
+    } else {
+      try {
+        fs.unlinkSync(resolved.path);
+        process.stdout.write(`claude-tweaks: deleted ledger ${resolved.path}\n`);
+      } catch (e) {
+        process.stdout.write(`claude-tweaks: delete-ledger: failed to delete ${resolved.path} (${e.message})\n`);
+      }
+    }
+  }
+  return 0;
+}
+
+async function runResolveLedger(argv) {
+  // #3897: the read-only twin of delete-ledger — same run-arg resolution,
+  // same refusals, but it only reports (describeRunLedgers) and never
+  // touches a file. _shared/ledger-format.md's resolution rule cites this
+  // verb instead of having a skill list docs/plans itself. stdout is
+  // reserved for the report (its first line is what the rule reads), so the
+  // fallback disclosure and every refusal go to stderr; exit stays 0.
+  const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+  const {
+    runDir, invalidRunArg, worktreeLocalFallback, candidates,
+  } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
+  if (invalidRunArg) {
+    process.stderr.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — ledger not resolved\n`);
+  } else if (candidates) {
+    process.stderr.write(`${renderCandidateRefusal('resolve-ledger', candidates)}\nLedger not resolved.\n`);
+  } else if (!runDir) {
+    process.stderr.write('claude-tweaks: no pipeline run dir found — ledger not resolved\n');
+  } else {
+    const { describeRunLedgers, formatLedgerReport } = require('./lib/wrap-up/ledger-write');
+    const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
+    const text = formatLedgerReport(describeRunLedgers({ runDir, worktree }));
+    await new Promise((resolve) => process.stdout.write(text, resolve));
+  }
+  return 0;
+}
+
+async function runTeardownRun(argv) {
+  const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+  const { runDir, invalidRunArg, worktreeLocalFallback, candidates } = resolveRunArg(
+    argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity },
+  );
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+  const mode = argv.includes('--merged') ? 'merged' : (argv.includes('--abandoned') ? 'abandoned' : null);
+  if (invalidRunArg) {
+    process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — run not torn down\n`);
+  } else if (candidates) {
+    process.stdout.write(`${renderCandidateRefusal('teardown-run', candidates)}\nRun not torn down.\n`);
+  } else if (runDir) {
+    const result = teardownRun(runDir, { mode, sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() });
+    process.stdout.write(`claude-tweaks: teardown-run ${path.basename(runDir)}\n${result.lines.map((l) => `  ${l}`).join('\n')}\n`);
+  } else {
+    process.stdout.write('claude-tweaks: no pipeline run dir found — run not torn down\n');
+  }
+  return 0;
+}
+
+async function runArchiveRun(argv) {
+  const {
+    archiveRunDir, readConsoleState, consoleResidue, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
+    TIEBREAK_COVERAGE_HINT,
+  } = require('./lib/reconcile/archive-merged');
+  const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
+  const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(
+    argv.slice(3), process.cwd(), process.env, { allowUninitialized: true },
+  );
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+  if (invalidRunArg) {
+    process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — run not archived\n`);
+    return 0;
+  }
+  if (!runDir) {
+    process.stdout.write('claude-tweaks: no pipeline run dir found — run not archived\n');
+    return 0;
+  }
+  const state = ctxLib.readRunState(runDir);
+  if (!state) {
+    process.stdout.write(
+      `claude-tweaks: ${path.basename(runDir)} has no readable run-state.json — not archived; ` +
+      'a state-less dir is reconcile\'s orphaned-mint sweep\'s job (archiveOrphanedMint, or archiveRunDir when it still holds tracked content — #2227), not this verb\'s\n',
+    );
+    return 0;
+  }
+  if (NON_TERMINAL.has(state.status)) {
+    process.stdout.write(
+      `claude-tweaks: ${path.basename(runDir)} is ${state.status} — not archived; ` +
+      'run close-run first (or let the owning session finish)\n',
+    );
+    return 0;
+  }
+  // #1130 AC4: same console gate decideArchive enforces on the reconcile
+  // path. A rendered-but-unanswered console (`unresolved`) always blocks.
+  // 'none' is allowed in general — terminal status means close-run ran, i.e.
+  // wrap-up's own flow (incl. the empty-console fast path) completed. #3668
+  // narrows that: an auto-merge path renders no console and no human ever
+  // sees its staged/ items, so a 'none' run whose decisions.md carries that
+  // path's auto-merge line (the wrap-up short-circuit's, or the dispatch
+  // bundle Auto-merge gate's, #3740) is refused while staged/ holds pending
+  // items. Other 'none' runs that keep staged/ (in-terminal consoles,
+  // fleet-approved closes, tidy --approve) still archive.
+  const consoleState = readConsoleState(runDir);
+  if (consoleState === 'unresolved') {
+    process.stdout.write('claude-tweaks: archival refused — console-unresolved (console.json rendered but not resolved; answer or resolve the console first)\n');
+    return 0;
+  }
+  // #3949: a resolved console can still hold an item no human has reviewed.
+  if (consoleState === 'residue') {
+    // --ack skips an unparseable console, so an unreadable one's remedy is repairing the file.
+    const { items, unreadable } = consoleResidue(runDir);
+    const what = [];
+    const remedies = [];
+    if (items > 0) {
+      what.push(`${items} unresolved item(s) no human has reviewed`);
+      remedies.push(`review them, then run console-residue.js --ack --run "${runDir}"`);
+    }
+    if (unreadable.length > 0) {
+      what.push(`${unreadable.length} console.json file(s) could not be read`);
+      remedies.push(`repair or remove ${unreadable.join(', ')}, then re-run archive-run`);
+    }
+    process.stdout.write(`claude-tweaks: archival refused — console-residue (${what.join(' and ')}; ${remedies.join('; ')})\n`);
+    return 0;
+  }
+  if (consoleState === 'none' && consoleReplacedByAutoMerge(runDir)) {
+    const pending = listStagedItems(runDir);
+    if (pending.length) {
+      process.stdout.write(`claude-tweaks: archival refused — console-never-rendered-staged-pending (an auto-merge path — the wrap-up short-circuit or the dispatch bundle Auto-merge gate — rendered no console; pending: ${pending.join(', ')}) — apply or delete the pending staged/ items (and any spec-*/staged/), or write a resolved console.json, then re-run archive-run\n`);
+      return 0;
+    }
+  }
+  // #3945: evaluated after the guards above. A findings artifact that is
+  // present but unreadable/malformed is refused under its own reason, before
+  // the per-id coverage gap is looked at.
+  const tiebreakCoverage = require('./lib/tiebreak').checkRunTiebreakCoverage(runDir, listSpecDirs(runDir));
+  const tiebreakHint = `${TIEBREAK_COVERAGE_HINT}, then re-run archive-run`;
+  if (tiebreakCoverage.artifactValid === false) {
+    process.stdout.write(`claude-tweaks: archival refused — tiebreak-artifact-invalid (review-findings.json is present but unreadable or malformed) — ${tiebreakHint}\n`);
+    return 0;
+  }
+  if (tiebreakCoverage.missing.length > 0) {
+    process.stdout.write(`claude-tweaks: archival refused — tiebreak-coverage-missing (${tiebreakCoverage.missing.length} listed finding(s) have no tiebreak verdict line: ${tiebreakCoverage.missing.join(', ')}) — ${tiebreakHint}\n`);
+    return 0;
+  }
+  const mainRoot = wtDetect.mainCheckoutRoot(process.cwd());
+  if (!mainRoot) {
+    process.stdout.write('claude-tweaks: could not resolve the main checkout root — run not archived\n');
+    return 0;
+  }
+  // #1452: a worktree-local-fallback resolved runDir has no anchored copy
+  // under mainRoot (reportWorktreeLocalFallback's own message says so).
+  // archiveRunDir's work/ move is a `git -C mainRoot mv <src> <dest>` —
+  // src pointing at a path inside a *different* worktree's working tree is
+  // structurally invisible to that git invocation (separate index, separate
+  // working directory, same object store), so the mv deterministically
+  // fails every time work/ is git-tracked (materialize.md: always, for any
+  // real pipeline run). Detecting that in advance and refusing here with a
+  // distinct, correctly-scoped message avoids running (and reporting) a
+  // doomed git mv as if it were a genuine, actionable 'git-mv-failed' —
+  // the transient condition self-resolves once this run's branch merges
+  // and the content becomes reachable from mainRoot's own working tree.
+  if (worktreeLocalFallback) {
+    const hasTrackedWork = fs.existsSync(path.join(runDir, 'work'))
+      || listSpecDirs(runDir).some((spec) => fs.existsSync(path.join(runDir, spec, 'work')));
+    if (hasTrackedWork) {
+      process.stdout.write(
+        `claude-tweaks: archival deferred — ${path.basename(runDir)}'s tracked work/ content lives only in ` +
+        'this worktree, not yet reachable from the main checkout; `git mv` cannot move it across worktree ' +
+        'boundaries. Merge this run\'s branch first — reconcile\'s routine sweep (or a direct archive-run from ' +
+        'the main checkout, once merged) will archive it automatically.\n',
+      );
+      return 0;
+    }
+  }
+  // Output below is informational human text, never parsed by any caller
+  // (skills/flow/multispec-review-console.md's parent-dir archival is a
+  // future caller of this verb, not a consumer of this stdout format).
+  // The "moved:" lines are read from archiveRunDir's own movedEntries
+  // return value — never a hardcoded guess at the run dir's shape, which
+  // is the exact fixed-list drift this whole record eliminates.
+  const result = archiveRunDir(mainRoot, runDir);
+  if (!result.ok) {
+    // #1982: every refusal reason carries its own recovery `hint`
+    // (co-located with the detector in archive-merged.js's `refusal()`
+    // constructor) — this branch is now a generic reader of `reason`/
+    // `hint`, never a string match against a specific reason code.
+    const hintSuffix = typeof result.hint === 'string' && result.hint.length ? ` — ${result.hint}` : '';
+    process.stdout.write(`claude-tweaks: archival refused — ${result.reason}${hintSuffix}\n`);
+    return 0;
+  }
+  for (const name of result.movedEntries) {
+    process.stdout.write(`moved: ${name}\n`);
+  }
+  process.stdout.write(`claude-tweaks: archived ${path.basename(runDir)}\n`);
+  return 0;
+}
+
+async function runResolveConsole(argv) {
+  // #2568: --run is required, no implicit "newest non-terminal run"
+  // fallback — same discipline record-worktree already enforces (a
+  // guessed run dir here could resolve/execute a DIFFERENT console than
+  // the one the calling session actually answered).
+  const {
+    runDir, invalidRunArg, worktreeLocalFallback, explicit,
+  } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
+  if (!explicit) {
+    process.stdout.write(`claude-tweaks: ${USAGE['resolve-console']} — --run is required, console not resolved\n`);
+    return 1;
+  }
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+  if (invalidRunArg) {
+    process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — console not resolved\n`);
+    return 1;
+  }
+  if (!runDir) {
+    process.stdout.write('claude-tweaks: no pipeline run dir found — console not resolved\n');
+    return 1;
+  }
+  const splitIds = (raw) => (raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : []);
+  const approve = splitIds(flagVal(argv.slice(3), '--approve'));
+  const decline = splitIds(flagVal(argv.slice(3), '--decline'));
+  const reverseFailed = splitIds(flagVal(argv.slice(3), '--reverse-failed'));
+  const filingFailed = splitIds(flagVal(argv.slice(3), '--filing-failed'));
+
+  const mainRoot = wtDetect.mainCheckoutRoot(process.cwd()) || process.cwd();
+  const execFileAsync = promisify(execFile);
+  const RESOLVE_CONSOLE_GH_TIMEOUT_MS = 15000;
+  const deps = {
+    now: () => Date.now(),
+    writeFile: (p, content) => fs.writeFileSync(p, content),
+    gh: async (args) => {
+      const { stdout } = await execFileAsync('gh', args, {
+        cwd: mainRoot, encoding: 'utf8', timeout: RESOLVE_CONSOLE_GH_TIMEOUT_MS, windowsHide: true,
+      });
+      return stdout;
+    },
+  };
+  const { resolveConsoleExecution, renderExecutedLines } = require('./lib/reconcile/console-execute');
+  const result = await resolveConsoleExecution(runDir, {
+    approve, decline, reverseFailed, filingFailed,
+  }, deps);
+  if (result.status === 'executed') {
+    process.stdout.write(renderExecutedLines(result, path.basename(runDir)));
+    return 0;
+  }
+  if (result.status === 'noop') {
+    process.stdout.write(`claude-tweaks: console already ${result.reason === 'claimed' ? 'claimed by another execution' : 'resolved'} for ${path.basename(runDir)} — nothing written\n`);
+    return 0;
+  }
+  if (result.reason === 'unknown-item-ids') {
+    process.stdout.write(`claude-tweaks: unknown item id(s) ${result.ids.join(', ')} — no matching console-item row found, console not resolved\n`);
+    return 1;
+  }
+  if (result.reason === 'not-ruling-items') {
+    process.stdout.write(`claude-tweaks: --reverse-failed id(s) ${result.ids.join(', ')} are not sdd-ruling items (no isRulingRow flag), console not resolved\n`);
+    return 1;
+  }
+  if (result.reason === 'not-finding-items') {
+    process.stdout.write(`claude-tweaks: --filing-failed id(s) ${result.ids.join(', ')} are not finding rows (no findingItem), console not resolved\n`);
+    return 1;
+  }
+  process.stdout.write(`claude-tweaks: console resolution failed for ${path.basename(runDir)} — ${result.reason}${result.error ? `: ${result.error}` : ''}\n`);
+  return 1;
+}
+
+async function runCheckResumeFreshness(argv) {
+  // Read-only: never writes run-state.json. Skills call this immediately
+  // before any of the three resume paths' safe-to-resume ruling
+  // (skills/_shared/run-resume-freshness.md).
+  const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+  if (invalidRunArg) {
+    process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — resume freshness not checked\n`);
+    return 0;
+  }
+  if (!runDir) {
+    process.stdout.write('claude-tweaks: no pipeline run dir found — resume freshness not checked\n');
+    return 0;
+  }
+  const result = resumeFreshness.checkResumeFreshness(runDir, {
+    sessionId: process.env.CLAUDE_CODE_SESSION_ID,
+  });
+  const runId = path.basename(runDir);
+  if (result.safe) {
+    process.stdout.write(`claude-tweaks: resume freshness OK for ${runId} (${result.verdict})\n`);
+  } else {
+    process.stdout.write(`claude-tweaks: resume freshness BLOCKED for ${runId} — run appears actively owned (${result.reason})\n`);
+  }
+  return 0;
+}
+
+async function runCheckStagedInventory(argv) {
+  // Read-only, non-blocking companion to check-resume-freshness: reports
+  // whether decisions.md's STAGED entries all have a backing staged/
+  // file, but never gates a resume (#1269).
+  const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+  if (invalidRunArg) {
+    process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — staged inventory not checked\n`);
+    return 0;
+  }
+  if (!runDir) {
+    process.stdout.write('claude-tweaks: no pipeline run dir found — staged inventory not checked\n');
+    return 0;
+  }
+  const result = stagedInventory.checkStagedInventory(runDir);
+  const runId = path.basename(runDir);
+  if (result.missing.length === 0) {
+    process.stdout.write(`claude-tweaks: staged inventory OK for ${runId} (${result.checked} STAGED entries)\n`);
+  } else {
+    process.stdout.write(`claude-tweaks: staged inventory MISMATCH for ${runId} — ${result.missing.length} of ${result.checked} STAGED entries missing from staged/: ${result.missing.join(', ')}\n`);
+  }
+  return 0;
+}
+
+async function runCheckSessionResidue(argv) {
+  // #2736: read-only companion to session-start.js's own advisory banners
+  // (session-residue.js is the shared detection both call into) — wrap-up's
+  // Review Console runs this to re-check, at render time, whether any
+  // residue flagged at this session's start is still unresolved, so a long
+  // session doesn't rely on that one-time SessionStart notice for its whole
+  // duration. `--run`, when given, excludes that run dir from both lists —
+  // a wrap-up console must never report its own in-flight run as residue.
+  const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+  if (invalidRunArg) {
+    process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — session residue not checked\n`);
+    return 0;
+  }
+  const root = pluginRoot();
+  const staleEntries = sessionResidue.collectStaleRuns(process.cwd(), { exclude: runDir, pluginRoot: root });
+  const approvableEntries = sessionResidue.collectApprovableStandalone(process.cwd(), { exclude: runDir });
+  const { runs: consoleEntries, more: moreConsoles } = sessionResidue.scanUnresolvedConsoles(process.cwd(), { exclude: runDir, pluginRoot: root });
+  if (!staleEntries.length && !approvableEntries.length && !consoleEntries.length) {
+    process.stdout.write('claude-tweaks: no pending residue from session start\n');
+    return 0;
+  }
+  // Each line names the item; the resolution command follows on its own
+  // line right after — an ordinary stale entry's own line carries no
+  // command of its own (only a shipped-unclosed or pass-re-entry line embeds one), so
+  // this mirrors session-start.js's own banner trailer rather than
+  // leaving that category's rows without a pointer.
+  const blocks = [];
+  if (staleEntries.length) {
+    blocks.push(
+      `${staleEntries.map((e) => e.line).join('\n')}\n` +
+        `  resolve with: review {run}/decisions.md and staged/ to resume, or close a finished run with: node "${root}/bin/hooks.js" close-run --run <dir>`,
+    );
+  }
+  if (approvableEntries.length) {
+    blocks.push(approvableEntries.map((e) => e.line).join('\n'));
+  }
+  if (consoleEntries.length) {
+    const lines = consoleEntries.flatMap((e) => e.lines);
+    if (moreConsoles) lines.push(sessionResidue.CONSOLE_OVERFLOW_LINE);
+    lines.push(sessionResidue.consoleAckAllLine(root));
+    blocks.push(lines.join('\n'));
+  }
+  process.stdout.write(
+    `claude-tweaks: pending residue from session start still unresolved:\n${blocks.join('\n')}\n`,
+  );
+  return 0;
+}
+
+async function runCheckPassReentry(argv) {
+  // #3553: prints consolidated-pass.js's checkPassReentry verdict for
+  // flow/multispec-review-console.md's re-entry step. Unlike its sibling
+  // check-* verbs this exits 1 on refusal (nothing on stdout): that caller
+  // treats a non-zero exit or non-JSON stdout as a stop, so a refused --run
+  // must never read as a verdict.
+  const { runDir, invalidRunArg, worktreeLocalFallback, explicit } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
+  if (!explicit) {
+    process.stderr.write('claude-tweaks: check-pass-reentry requires --run — pass re-entry not checked\n');
+    return 1;
+  }
+  if (invalidRunArg) {
+    process.stderr.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — pass re-entry not checked\n`);
+    return 1;
+  }
+  // Disclosure goes to stderr: stdout is reserved for the verdict JSON alone.
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
+  let verdict;
+  try {
+    verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
+      online: argv.slice(3).includes('--online'),
+      sessionId: process.env.CLAUDE_CODE_SESSION_ID,
+    });
+  } catch (e) {
+    process.stderr.write(`claude-tweaks: check-pass-reentry failed — ${e.message}\n`);
+    return 1;
+  }
+  await new Promise((resolve) => process.stdout.write(`${JSON.stringify(verdict)}\n`, resolve));
+  return 0;
+}
+
+async function runCheckSiblingSessions(argv) {
+  // [IL-107]: before claiming a record, enumerate live worktrees and their
+  // lock-owning pids — branches/claims/labels alone stayed silent while a
+  // sibling session sat eleven commits deep in an unpushed worktree — and
+  // also read the claims registry for a live claim held by another session
+  // (a sibling on another machine, whose worktree lock this host cannot
+  // see). This fails OPEN by construction: an unresolvable --record, an
+  // unparseable lock, a dead pid, or a claim read failure (offline, auth,
+  // unresolved repo slug, unreadable blob) all read as "no conflict", never
+  // as a block with no way forward (see sibling-sessions.js's own header
+  // comment).
+  const args = argv.slice(3);
+  const flagIdx = args.indexOf('--record');
+  const recordRef = flagIdx !== -1 ? args[flagIdx + 1] : null;
+  if (!recordRef) {
+    process.stdout.write('claude-tweaks: --record <id-or-slug> is required — sibling-session check not run\n');
+    return 0;
+  }
+  const match = siblingSessions.findConflictingSession(recordRef, { cwd: process.cwd() });
+  if (match) {
+    process.stdout.write(
+      `claude-tweaks: sibling session may already hold record ${recordRef} — ` +
+      `worktree ${match.path} (branch ${match.branch || '(none)'}, pid ${match.pid}) is in use by a live session; ` +
+      `verify before claiming\n`,
+    );
+    return 0;
+  }
+  // The worktree lock above sees only local siblings; the live claim is the
+  // remote-facing half (another machine, the cloud, no worktree yet).
+  const claim = siblingSessions.findLiveClaim(recordRef, { cwd: process.cwd() });
+  if (claim) {
+    process.stdout.write(
+      `claude-tweaks: sibling session may already hold record ${recordRef} — ` +
+      `live claim by run ${claim.runId || '(unknown)'} (session ${claim.sessionId || '(unknown)'}, ` +
+      `host ${claim.host || '(unknown)'}, claimed ${claim.claimedAt || '(unknown)'}); ` +
+      `verify before claiming\n`,
+    );
+  } else {
+    process.stdout.write(`claude-tweaks: no sibling-session conflict found for record ${recordRef}\n`);
+  }
+  return 0;
+}
+
+async function runReconcile(argv) {
+  // Thin wrapper over bin/lib/reconcile's one exported entry point —
+  // session-start.js calls reconcile() the same way, in-process (#408),
+  // so both surfaces are guaranteed to behave identically by construction
+  // rather than by a parity test re-deriving the same logic twice.
+  const args = argv.slice(3);
+  // #1558: --mcp-reachable asserts the CALLER (an agent, inside its own
+  // turn) has already confirmed GitHub reachability via its own MCP probe
+  // (mcp-transport.md's Preflight probe) — same contract as
+  // resolve-policy.js's own --mcp-reachable flag. Forwards into
+  // reconcile()'s integration-model resolution so a gh-absent-but-MCP-
+  // reachable sandbox doesn't silently downgrade to local-merge.
+  // #1543: --checks narrows the sweep to a caller-chosen subset of
+  // ALL_CHECKS (a full sweep dominated by remote-prune's --prune all-refs
+  // fetch is what tripped the harness's default command timeout twice per
+  // dispatch firing) — a thin pass-through to reconcile()'s existing
+  // `opts.checks` seam (already used internally, e.g. reconcile-summary's
+  // own `checks: ['mirror']` call). A missing/empty/all-whitespace value
+  // yields `undefined`, and reconcile() itself already falls back to
+  // ALL_CHECKS on any non-array or empty array — no validation needed here
+  // beyond producing that safe shape.
+  const checksRaw = flagVal(args, '--checks');
+  const checksList = typeof checksRaw === 'string'
+    ? checksRaw.split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+  const opts = {
+    dryRun: args.includes('--dry-run'),
+    cwd: process.cwd(),
+    mcpReachable: args.includes('--mcp-reachable'),
+    // Unscoped: run everything except the janitorial checks deferred to the
+    // background pass (#4032); FAST_CHECKS stays inside the inline set, so the
+    // freshness stamp below is still truthful.
+    // Filled inside the try below for the unscoped call, so a module-load
+    // failure still reaches the reconcile-threw fallback (#4032).
+    checks: checksList.length ? checksList : undefined,
+    // An explicit --checks subset is the caller naming which checks must
+    // run (plus any prerequisite reconcile() adds, #3630) — don't let the
+    // SessionStart hot-path time ceiling (#820 D4) skip them; an unscoped
+    // pass keeps the default ceiling (#3026).
+    budgetMs: checksList.length ? Infinity : undefined,
+    // An explicit subset cannot claim the whole fast pass ran, so it must
+    // not stamp the shared freshness key — otherwise the next SessionStart
+    // inside the TTL skips its red-tip/console checks (the #644 hazard,
+    // same opt-out reconcile-summary already uses; #3026 ledger follow-up).
+    skipCacheStamp: checksList.length ? true : undefined,
+  };
+  const jsonOut = args.includes('--json');
+  let out;
+  // Everything that can throw on the way to the JSON — the module load, the
+  // unscoped inline-set derivation, reconcile() itself and the deferral
+  // post-processing — sits in this one try, so dispatch's parser always gets a
+  // JSON document (the reconcile-threw fallback) rather than a bare stack.
+  try {
+    const reconcileLib = require('./lib/reconcile');
+    if (!checksList.length) {
+      opts.checks = reconcileLib.ALL_CHECKS.filter((c) => !CLI_DEFERRED_CHECKS.includes(c));
+    }
+    out = await reconcileLib.reconcile(opts);
+    if (!checksList.length) {
+      // #4032: report the deferral, and hand the deferred checks to the
+      // detached background pass (TTL-gated by its own status file) — but only
+      // when this pass converged: a no-repo/no-remote/local-merge/preflight/
+      // threw result already says why nothing ran (reconcile's
+      // NOT_CONVERGED_REASONS), and a dry run must never spawn a mutating
+      // child. A report-only skip (e.g. non-canonical-run-dir) does not count.
+      const { NOT_CONVERGED_REASONS } = reconcileLib;
+      const skippedIn = out.skipped || [];
+      const converged = !skippedIn.some((s) => s && NOT_CONVERGED_REASONS.has(s.reason));
+      let background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
+      if (converged) {
+        out.skipped = [...skippedIn, { check: CLI_DEFERRED_CHECKS.join(','), reason: 'deferred-to-background' }];
+        background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'dry-run' };
+        if (!opts.dryRun) {
+          const cwd = process.cwd();
+          const r = require('./lib/reconcile/background-spawn').spawnBackgroundIfStale({
+            root: wtDetect.mainCheckoutRoot(cwd),
+            cwd,
+            sessionId: process.env.CLAUDE_CODE_SESSION_ID || undefined,
+          });
+          background = { checks: CLI_DEFERRED_CHECKS, spawned: r.spawned, reason: r.reason };
+        }
+      } else {
+        // A gh-preflight failure skipped the inline gh-dependent checks; the
+        // three deferred ones never got the chance to run either, so keep
+        // them accounted for in `skipped` under the same reason, as before
+        // the deferral. Every other not-converged reason already says "all".
+        const pf = skippedIn.find((s) => s && typeof s.reason === 'string' && s.reason.startsWith('preflight-'));
+        if (pf) out.skipped = [...skippedIn, { check: CLI_DEFERRED_CHECKS.join(','), reason: pf.reason }];
+      }
+      out.background = background;
+    }
+  } catch {
+    out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
+    if (!checksList.length) out.background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
+  }
+  if (jsonOut) {
+    // The full per-item census, not #638's compact summary: no key a JSON
+    // consumer already reads (dispatch/tidy reading `console.ready` off this)
+    // moved. #4032 only ADDED keys — `timings` always, `background` on an
+    // unscoped call.
+    process.stdout.write(JSON.stringify(out) + '\n');
+  } else {
+    // New default (#638): a compact human-readable summary instead of the
+    // full per-item census — see format-summary.js for the aggregation.
+    process.stdout.write(require('./lib/reconcile/format-summary').formatSummary(out) + '\n');
+  }
+  return 0;
+}
+
+async function runReconcileSummary(argv) {
+  // #644 Deliverable 3 — the plain one-line residue summary
+  // `/claude-tweaks:flow`'s closing report shells out for. Composed
+  // without re-running the background checks (release/archive/
+  // archive-branches/remote-prune/ledger-residue/reap already ran off the hot path via
+  // `reconcile-background`, most recently under `session-start.js`) —
+  // this reads that persisted `summary.archived` count plus the residue
+  // cache both `archive`/`reap` already maintain (Deliverable 2), and
+  // runs only the cheap, git-only `mirror` check fresh (mirror-ff.js
+  // never shells to `gh` — see index.js's own preflight comment on why
+  // it's excluded from the gh-health gate), since mirror's own RESULT
+  // never persists anywhere (it only ever runs inline at SessionStart —
+  // see that file's FAST_CHECKS comment). The call itself still reaches
+  // reconcile()'s end-of-pass freshness stamp, though, which is a
+  // DIFFERENT persistence path this call must opt out of — see
+  // `skipCacheStamp` below.
+  const cwd = process.cwd();
+  const root = wtDetect.mainCheckoutRoot(cwd) || cwd;
+  const statusPath = path.join(root, '.claude-tweaks', require('./lib/reconcile/background-spawn').STATUS_FILENAME);
+  let archivedCount = 0;
+  try {
+    const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+    archivedCount = (status.summary && typeof status.summary.archived === 'number') ? status.summary.archived : 0;
+  } catch { /* no background pass has completed yet — 0 archived is accurate */ }
+
+  let mirror = null;
+  try {
+    // skipCacheStamp: true — this narrow mirror-only probe must not stamp
+    // the shared reconcile-cache.json `lastRunAt` session-start.js's own
+    // FAST_CHECKS call gates its `skipIfFresh` freshness check on; doing
+    // so would make the next SessionStart within DEFAULT_TTL_MS believe
+    // its own mirror/red-tip/console pass already ran and skip it,
+    // silently suppressing red-tip's CI-failure surfacing after every
+    // successful `/claude-tweaks:flow` completion (see index.js's own
+    // comment on this option).
+    const mirrorResult = await require('./lib/reconcile').reconcile({ cwd, checks: ['mirror'], skipCacheStamp: true });
+    mirror = mirrorResult.mirror;
+  } catch { /* best-effort — mirror shows n/a rather than blocking this summary */ }
+
+  const { formatReconcileSummary } = require('./lib/reconcile/residue-summary');
+  process.stdout.write(formatReconcileSummary(root, { archivedCount, mirror }) + '\n');
+  return 0;
+}
+
+async function runReconcileBackground(argv) {
+  // Detached-process counterpart to the `reconcile` subcommand above:
+  // session-start.js's fast path spawns this (see that file's own header
+  // comment on the fast/background split, #820 D8) to run only the
+  // write-only janitorial checks off the hot path. Never a session-
+  // blocking failure — this process is detached (spawn'd with
+  // `detached: true, stdio: 'ignore'` and unref'd) and nothing reads its
+  // exit code or stdout, so every path below returns 0 and best-effort
+  // swallows its own errors rather than surfacing them anywhere.
+  const cwd = process.cwd();
+  const { reconcile } = require('./lib/reconcile');
+  const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
+  const { isFresh } = require('./lib/reconcile/cache');
+  const { BACKGROUND_BUDGET_MS } = require('./lib/reconcile/budget');
+  const { STATUS_FILENAME } = require('./lib/reconcile/background-spawn');
+  const { QUIET_SKIP_REASONS } = require('./lib/hooks/worktree-reap');
+  const { QUIET_SKIP_REASONS: LEDGER_RESIDUE_QUIET_SKIP_REASONS } = require('./lib/reconcile/ledger-residue');
+  const { latestResidueError } = require('./lib/reconcile/residue-summary');
+  const root = mainCheckoutRoot(cwd) || cwd;
+  // #1687: session-start.js's spawn site now threads the spawning session's
+  // id into this dedicated env var (never `CLAUDE_CODE_SESSION_ID` — see
+  // that file's own comment on why). `|| undefined` rather than `|| null`
+  // matches reconcile()'s own opts contract (`sessionId?: string`) and lets
+  // archiveMerged's destructuring default apply the same way an omitted key
+  // would. Absent (no spawning session id was ever known) leaves this
+  // exactly as unresolvable as before this fix — the other two gates
+  // (24h staleness, shipped-unclosed evidence) still govern alone.
+  const sessionId = process.env.CLAUDE_TWEAKS_SESSION_ID || undefined;
+  const statusPath = path.join(root, '.claude-tweaks', STATUS_FILENAME);
+
+  // Freshness is decided from THIS status file's own `completedAt` —
+  // deliberately NOT reconcile()'s shared reconcile-cache.json `lastRunAt`
+  // stamp. That stamp fires unconditionally at the end of ANY
+  // fully-completed pr-first pass regardless of which `checks` subset ran,
+  // so session-start.js's own FAST_CHECKS call (mirror/red-tip/console)
+  // also stamps it moments before this process starts — reusing it here
+  // would make this process (and the spawn-gate that decided to launch it)
+  // see a false "fresh" from a pass that never touched
+  // release/archive/archive-branches/remote-prune/ledger-residue/reap, and the
+  // background checks would never run. Caught by task review against a
+  // real pr-first remote (#820 Task 10 fix-up); reconcile()'s own
+  // lastRunAt/cache.js contract is untouched by this fix.
+  let existingStatus = null;
+  try { existingStatus = JSON.parse(fs.readFileSync(statusPath, 'utf8')); } catch { /* none yet */ }
+  const alreadyFresh = isFresh(
+    { lastRunAt: existingStatus && typeof existingStatus.completedAt === 'number' ? existingStatus.completedAt : null },
+    Date.now(),
+  );
+  if (alreadyFresh) {
+    // A very recent background pass already ran — do nothing, not even a
+    // status-file touch (surfaced/completedAt are left exactly as they
+    // are), since nothing new happened. Same stdout line as a completed
+    // run: nothing reads this detached process's stdout or exit code, so
+    // there is no caller to distinguish the two for.
+    process.stdout.write('claude-tweaks: reconcile-background complete\n');
+    return 0;
+  }
+
+  // Mutex — session-start.js's spawn-decision TTL gate is best-effort, not
+  // a lock, and can still let two sessions starting within the same short
+  // window each spawn a background pass (review finding). Only one
+  // process may actually run reconcile() at a time; a losing process does
+  // nothing, not even a status-file touch — the winner's write already
+  // covers this window and a losing process has nothing new to report.
+  const { acquireBackgroundLock, releaseBackgroundLock } = require('./lib/reconcile/background-lock');
+  const lock = acquireBackgroundLock(root);
+  if (!lock) {
+    process.stdout.write('claude-tweaks: reconcile-background complete (already running)\n');
+    return 0;
+  }
+
+  let summary = {};
+  try {
+    const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
+    summary = {
+      released: (r.claims || []).filter((c) => c.action === 'released').length,
+      archived: (r.runs || []).filter((x) => x.action === 'archived').length,
+      archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,
+      prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,
+      // Distinct removal PRs opened this pass (#3812) — at most one today.
+      ledgerResiduePrOpened: new Set((r.ledgerResidue || []).filter((e) => e.action === 'pr-opened').map((e) => e.prNumber)).size,
+      // Residue ledgers left on the integration branch and why, minus the
+      // expected/transient reasons ledger-residue.js keeps quiet.
+      notableLedgerResidue: (r.ledgerResidue || [])
+        .filter((e) => e.action === 'skip' && !LEDGER_RESIDUE_QUIET_SKIP_REASONS.has(e.reason))
+        .map((e) => (e.prNumber !== undefined ? { path: e.path, reason: e.reason, prNumber: e.prNumber } : { path: e.path, reason: e.reason })),
+      reaped: (r.worktrees || []).filter((w) => w.action === 'reaped').length,
+      // Individually-named worktrees left in place and why — a more
+      // granular signal than the check-level `skipped` array below.
+      // Restores the pre-#820-D8 inline block's diagnostic, filtered the
+      // same way that block filtered it (routine/expected skip reasons
+      // stay quiet — see worktree-reap.js's QUIET_SKIP_REASONS).
+      notableWorktrees: (r.worktrees || [])
+        .filter((w) => w.action === 'skipped' && !QUIET_SKIP_REASONS.has(w.reason))
+        .map((w) => ({ path: w.path, reason: w.reason })),
+      // Swallowed escalate/resolve failures this pass saw (#4180): a count plus the latest one — the
+      // prune half exists only in this pass's in-memory result, so this file is its one durable trace.
+      // Prune failures carry `at: null` (this pass), so they rank newest.
+      residueErrors: (r.residueErrors || []).length,
+      lastResidueError: latestResidueError(r.residueErrors),
+      skipped: r.skipped || [],
+    };
+  } catch (e) {
+    // The reason rides in the status file: this process is detached with
+    // stdio ignored, so it is the only trace the next SessionStart can surface.
+    summary = { failed: true, error: String((e && e.message) || e).slice(0, 200) };
+  } finally {
+    releaseBackgroundLock(lock);
+  }
+  try {
+    fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+    fs.writeFileSync(statusPath, JSON.stringify({ completedAt: Date.now(), summary, surfaced: false }));
+  } catch { /* best-effort — this process is detached and unwatched either way */ }
+  process.stdout.write('claude-tweaks: reconcile-background complete\n');
+  return 0;
+}
+
 async function main(argv) {
   const cmd = argv[2];
-  // #1143: dumb, verb-agnostic --help/-h intercept — ahead of every branch
-  // below, before any lib call or resolveRunArg scan. Every subcommand here
+  const verb = verbFor(cmd);
+  // #1143: dumb, verb-agnostic --help/-h intercept — ahead of dispatch,
+  // before any lib call or resolveRunArg scan. Every subcommand here
   // (other than record-worktree, hardened separately by #1124) previously
   // fell through to its normal dispatch on a stray --help, and several of
   // those paths implicitly guess a target run dir (resolveRunDir's "newest
   // non-terminal run") when --run is absent — the exact cross-session
   // corruption hazard observed 2026-08-20 (see the now-removed docs/donts.md
-  // bridging rule). Checked against the USAGE table, not a hardcoded verb
-  // list, so a verb with no usage entry gets no guard by design.
+  // bridging rule). Checked against the VERBS table, not a hardcoded verb
+  // list, so a verb with no table entry gets no guard by design.
   // #1012: for the flag-strict verbs (the KNOWN_FLAGS table), ANY undeclared --* argument (--help
   // included — it is never declared) intercepts here, before resolveRunArg
-  // or any lib call ever runs. Every other USAGE-table verb keeps the
+  // or any lib call ever runs. Every other VERBS-table verb keeps the
   // narrower HELP_FLAGS-only guard unchanged.
-  if (KNOWN_FLAGS[cmd]) {
+  if (verb && Object.hasOwn(KNOWN_FLAGS, cmd)) {
     // -h is a single-dash short flag, so firstUnknownFlag's `--`-prefixed
     // scan never sees it as a token to classify — checked separately here,
     // same as --help itself (also never declared for any of these
     // verbs, so it always falls out as "unknown" via the scan below too).
     const argsAfterCmd = argv.slice(3);
     if (argsAfterCmd.includes('-h') || firstUnknownFlag(KNOWN_FLAGS[cmd], argsAfterCmd)) {
-      process.stdout.write(`claude-tweaks: usage: ${USAGE[cmd]}\n`);
+      process.stdout.write(`claude-tweaks: usage: ${verb.usage}\n`);
       return 0;
     }
-  } else if (USAGE[cmd] && argv.slice(3).some((a) => HELP_FLAGS.has(a))) {
-    process.stdout.write(`claude-tweaks: usage: ${USAGE[cmd]}\n`);
+  } else if (verb && argv.slice(3).some((a) => HELP_FLAGS.has(a))) {
+    process.stdout.write(`claude-tweaks: usage: ${verb.usage}\n`);
     return 0;
   }
-  if (cmd === 'record-worktree') {
-    // --run <path> pins the target run dir explicitly, mirroring close-run
-    // below — without it, this always fell through to resolveRunDir's
-    // "newest non-terminal run" fallback, which a stale never-closed run
-    // could win over the run genuinely making this call.
-    const {
-      runDir, invalidRunArg, rest, worktreeLocalFallback, explicit,
-    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { allowUninitialized: true });
-    // #3225: `--dispatch` (boolean, any position) marks the run as bound by
-    // /claude-tweaks:dispatch before call 1 — checkDispatchConfigGate
-    // (bin/lib/hooks/pre-tool-use.js) then denies git writes in this worktree
-    // until /claude-tweaks:flow Step 3 writes config.yml. Stripped before the
-    // positional lookup so it can never be read as the worktree path.
-    const dispatch = rest.includes('--dispatch');
-    const positional = rest.filter((a) => a !== '--dispatch');
-    const worktreeArg = positional[0];
-    // #1124: every real caller already passes --run explicitly (build's
-    // worktree-setup.md Step 4.5, the run-resume-freshness re-stamp, the
-    // subagent-output-contract re-stamp) — nothing legitimate depends on the
-    // implicit fallback below. An invocation that omits --run previously fell
-    // through to resolveRunDir's "newest non-terminal run" GUESS and could
-    // silently clobber a DIFFERENT live session's run-state.json (reproduced
-    // 3x independently on 2026-08-20, across three different dispatched
-    // subagents). Never guess here: refuse loudly, before this handler ever
-    // gets a chance to WRITE anything — a true no-op, non-zero exit. (A bare
-    // or malformed `--help` no longer reaches this branch at all — #1143's
-    // dedicated guard above intercepts it first, before `resolveRunArg` ever
-    // runs. `resolveRunArg` itself still runs unconditionally on every other
-    // no-`--run` path below, and still calls `ctxLib.resolveRunDir` — a real
-    // scan of sibling run-state.json files — whose result this branch simply
-    // discards; the guarantee here is "no write," not "no read.")
-    if (!explicit) {
-      process.stdout.write('claude-tweaks: record-worktree requires --run — worktree not recorded\n');
-      return 1;
-    }
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
-    if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — worktree not recorded\n`);
-    } else if (worktreeArg && worktreeArg.startsWith('-')) {
-      // An unrecognized flag landing in the worktree-path position must
-      // never be treated as a literal path — this is the exact shape every
-      // observed incident hit (a stray --help specifically no longer reaches
-      // this far — #1143's dedicated guard above intercepts it first).
-      process.stdout.write(`claude-tweaks: unrecognized argument ${worktreeArg} — worktree not recorded\n`);
-      return 1;
-    } else if (runDir && worktreeArg) {
-      // Stamp the owning session so E1 can scope enforcement to it. Absent env
-      // var: omit the key rather than write null — an env-less re-record must
-      // not clobber a previous stamp.
-      const patch = { worktree: path.resolve(worktreeArg), status: 'active' };
-      if (process.env.CLAUDE_CODE_SESSION_ID) patch.sessionId = process.env.CLAUDE_CODE_SESSION_ID;
-      // #3845: the owning Claude Code process, so session-end can tell a nested
-      // `claude -p` from the owner. Omitted when absent, like sessionId.
-      Object.assign(patch, ctxLib.ownerPidPatch(process.env));
-      if (dispatch) {
-        // Permanent for the run's lifetime: only ever written true, never
-        // false, so a later plain re-stamp (no --dispatch) cannot clear it.
-        patch.dispatched = true;
-        // #3711: the session that ran `--dispatch`, written ONLY by that flag. A plain
-        // re-stamp — a human resuming the run (run-resume-freshness.md) — overwrites
-        // sessionId but never writes or clears this, so bin/lib/dispatch/task-call.js
-        // can tell the dispatching session from a later resumer. With no session id it
-        // is written as null, not omitted: an absent key reads as a pre-#3711 run-state
-        // and falls back to sessionId, which a later resume re-stamps with the resumer's
-        // id — null is present but never matches, so that resume reads as human-run.
-        patch.dispatchSessionId = process.env.CLAUDE_CODE_SESSION_ID || null;
-        if (!patch.dispatchSessionId) {
-          process.stderr.write('claude-tweaks: record-worktree --dispatch without CLAUDE_CODE_SESSION_ID — dispatchSessionId recorded as null; wrap-up will treat this run as human-run\n');
-        }
-      }
-      // #3973: the owner block, only with a session id (record-worktree is the adoption
-      // path, so it replaces another session's block).
-      const result = ctxLib.writeRunState(runDir,
-        ctxLib.patchWithOwnerBlock(patch, process.env.CLAUDE_CODE_SESSION_ID, { replacesSessionId: true }));
-      if (result) {
-        process.stdout.write(`claude-tweaks: worktree recorded for ${path.basename(runDir)}\n`);
-      } else {
-        process.stdout.write(`claude-tweaks: failed to record worktree for ${path.basename(runDir)} — run-state.json could not be written\n`);
-      }
-    } else {
-      // runDir resolved but worktreeArg is falsy — the only remaining case
-      // in this chain (with --run now required above, invalidRunArg is
-      // falsy here only when runDir already resolved to a real directory —
-      // see resolveRunArg: runDir is null iff invalidRunArg is truthy).
-      // Without this branch, a call that omits the worktree positional
-      // (e.g. "record-worktree --run <dir>" with nothing after)
-      // printed nothing and exited 0, indistinguishable from success.
-      process.stdout.write(`claude-tweaks: no worktree path given for ${path.basename(runDir)} — worktree not recorded\n`);
-    }
-    return 0;
-  }
-  if (cmd === 'resolve-run-dir') {
-    // #692: the tool _shared/pipeline-run-dir.md's Anchoring section points
-    // callers at, so a skill step gets the anchored $RUN_ROOT/run directory
-    // as one command instead of composing `git rev-parse --git-common-dir`
-    // inline — the composition that produced the worktree-local shadow
-    // ([IL-127]) this command exists to stop happening again. Unlike every
-    // other subcommand in this dispatcher, this one has a genuine non-zero
-    // exit code: it is invoked directly from skill prose (never as a hook
-    // event), and a skill step needs a real signal to branch on when nothing
-    // resolves or an inherited PIPELINE_RUN_DIR turns out to be a shadow.
-    const args = argv.slice(3);
-    let result;
-    try {
-      result = require('./lib/hooks/run-dir-resolve').resolve({
-        cwd: process.cwd(),
-        env: process.env,
-        specSlug: flagVal(args, '--spec-slug'),
-        mode: flagVal(args, '--mode'),
-        standalone: flagVal(args, '--standalone'),
-        create: args.includes('--create'),
-        rootOnly: args.includes('--root-only'),
-      });
-    } catch (e) {
-      process.stderr.write(`claude-tweaks: resolve-run-dir: unexpected error — ${e && e.message ? e.message : e}\n`);
-      return 1;
-    }
-    if (result.ok) {
-      process.stdout.write(result.path + '\n');
-      return 0;
-    }
-    process.stderr.write(`claude-tweaks: resolve-run-dir: ${result.message}\n`);
-    return 1;
-  }
-  if (cmd === 'sweep-shadow') {
-    // Promotes curation-engine.md §4's post-fan-out shadow sweep from an
-    // inline bash snippet to this verb (#738). --run/--worktree are the raw
-    // PIPELINE_RUN_DIR/WORKTREE values as a judge dispatch would set them —
-    // sweepShadow() itself does the `pwd -P`-style normalization and the
-    // anchoring/same-path checks, so unlike record-worktree/record-pr/
-    // close-run this does NOT go through resolveRunArg: --worktree is
-    // legitimately a linked worktree, which resolveRunArg's anchoring check
-    // would reject outright, and --run's own "is it under the main
-    // checkout" question is exactly the sweep's own diagnostic, not a
-    // separate gate ahead of it.
-    const args = argv.slice(3);
-    const runArg = flagVal(args, '--run');
-    const worktreeArg = flagVal(args, '--worktree');
-    const mainRoot = wtDetect.mainCheckoutRoot(process.cwd());
-    if (!mainRoot) {
-      process.stdout.write(`sweep: ${wtDetect.unanchoredRunDirNoRepoMessage(process.cwd())} — not swept\n`);
-      return 1;
-    }
-    const { sweepShadow } = require('./lib/hooks/sweep-shadow');
-    const result = sweepShadow({
-      runRoot: mainRoot,
-      pipelineRunDir: runArg ? path.resolve(process.cwd(), runArg) : runArg,
-      worktree: worktreeArg ? path.resolve(process.cwd(), worktreeArg) : worktreeArg,
-    });
-    for (const line of result.lines) process.stdout.write(line + '\n');
-    return result.diagnostic ? 1 : 0;
-  }
-  if (cmd === 'adopt-run-dir') {
-    // #2409: copies a run dir's decisions.md/report.md/staged/** from the
-    // main checkout into a worktree's own copy of that path — the
-    // sanctioned procedure tidy/step-7-5-worktree-always.md's
-    // copy-then-commit paragraph documents (mirroring work/{n}-spec.md's
-    // exception, _shared/pipeline-run-dir.md's Anchoring section). Exists
-    // because checkPipelineShadowGuard (the PreToolUse guard refusing to
-    // CREATE a new top-level pipeline run dir inside a linked worktree)
-    // pattern-matches literal mkdir/cp/redirect shell syntax in a Bash
-    // command's text — a plain Node CLI whose own invocation carries none
-    // of those tokens sidesteps that guard the same way bin/log-decision.js/
-    // bin/stage-item.js/bin/set-config.js/bin/set-verify-expectations.js
-    // already do, without special-casing this procedure inside the guard
-    // itself. Unlike those four (anchored --run only), this verb also
-    // validates --worktree is a real linked worktree of THIS repo
-    // (worktree-detect.js's repoInfo(), _shared/worktree-setup.md's
-    // "Adopt-or-create" section), which is why it lives here as a hooks.js
-    // subcommand rather than another
-    // standalone sibling CLI (docs/hooks.md's "state genuinely coupled to
-    // hook enforcement itself" carve-out).
-    //
-    // Exit codes mirror bin/log-decision.js's scheme (2 malformed
-    // invocation, 3 run dir/worktree invalid), not the six EVENTS' own
-    // always-exit-0 invariant: like resolve-run-dir above, this verb is
-    // invoked directly from skill prose, never as a harness-dispatched hook
-    // event, so a real, meaningful non-zero exit is safe here.
-    const args = argv.slice(3);
-    const runArg = flagVal(args, '--run');
-    const worktreeArg = flagVal(args, '--worktree');
-    if (!runArg || !worktreeArg) {
-      process.stderr.write(`claude-tweaks: usage: ${USAGE['adopt-run-dir']}\n`);
-      return 2;
-    }
-    let target;
-    try {
-      // mainRoot: null deliberately bypasses resolveTarget's own cwd-derived
-      // domain match (it would otherwise anchor against process.cwd()'s repo,
-      // which is not necessarily either side of the --worktree/--run pairing
-      // this verb actually compares) while still enforcing its structural
-      // check: a `.git` FILE ancestor (a linked worktree/submodule) is always
-      // refused, never adopted as if it were the main checkout.
-      target = require('./lib/log-decision/append').resolveTarget({ runDir: runArg, cwd: process.cwd(), mainRoot: null });
-    } catch (err) {
-      process.stderr.write(`claude-tweaks: adopt-run-dir: ${err && err.message}\n`);
-      return 3;
-    }
-    if (!target.ok) {
-      if (target.reason === 'missing') {
-        process.stderr.write(`claude-tweaks: adopt-run-dir: run dir does not exist: ${runArg}\n`);
-      } else {
-        process.stderr.write(`claude-tweaks: adopt-run-dir: run dir is not anchored under the main checkout (a worktree-local shadow): ${runArg} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
-      }
-      return 3;
-    }
-    const runDir = path.dirname(target.file);
-    // Derived from the run dir itself, not process.cwd(): "this repo" for the
-    // --worktree domain-match below must be the run dir's own repo, so a
-    // caller invoked from an unrelated cwd (or from a foreign worktree) still
-    // gets a correct verdict rather than one that accidentally reflects cwd's
-    // repo instead. Guaranteed non-null: target.ok above already proved the
-    // nearest .git ancestor of runDir is a DIRECTORY (not a worktree/submodule
-    // file pointer), and mainCheckoutRoot's walk-up hits that exact same
-    // directory first.
-    const mainRoot = wtDetect.mainCheckoutRoot(runDir);
-    const resolvedWorktree = path.resolve(process.cwd(), worktreeArg);
-    if (!isDirectory(resolvedWorktree)) {
-      process.stderr.write(`claude-tweaks: adopt-run-dir: --worktree does not exist or is not a directory: ${worktreeArg}\n`);
-      return 3;
-    }
-    const info = wtDetect.repoInfo(resolvedWorktree);
-    if (info.indeterminate || !info.isLinkedWorktree || wtDetect.mainCheckoutRoot(resolvedWorktree) !== mainRoot) {
-      process.stderr.write(`claude-tweaks: adopt-run-dir: --worktree ${worktreeArg} is not a linked git worktree of this repo\n`);
-      return 3;
-    }
-    const destDir = path.join(resolvedWorktree, '.claude-tweaks', 'pipelines', path.basename(runDir));
-    const copied = copyRunDirAuditFiles(runDir, destDir);
-    if (copied.length === 0) {
-      process.stdout.write(`claude-tweaks: adopt-run-dir: nothing to copy for ${path.basename(runDir)} (no decisions.md, report.md, or staged/ present)\n`);
-      return 0;
-    }
-    for (const name of copied) process.stdout.write(`copied: ${name}\n`);
-    return 0;
-  }
-  if (cmd === 'record-pr') {
-    // Mirrors record-worktree's shape: --run <path> pins the target run dir
-    // explicitly (falls back to #1012's unambiguous-only resolution when
-    // absent), positional args after it are the PR number and URL.
-    // run-state.json is written only through hooks.js verbs (CLAUDE.md's
-    // write-ownership rule) — this is the sanctioned verb for the pr-early
-    // run lifecycle's { number, url } field (#409).
-    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
-    const {
-      runDir, invalidRunArg, rest, worktreeLocalFallback, explicit, candidates,
-    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
-    const numberArg = rest[0];
-    const urlArg = rest[1];
-    const number = Number(numberArg);
-    // #1012: an implicit resolution (no --run) whose resolved run still
-    // classifies 'foreign' (only reachable via the env-var arm — steps 2/3
-    // already exclude foreign candidates by construction) refuses the write.
-    // Explicit --run always bypasses this, same as close-run's advisory.
-    const implicitForeign = !explicit && runDir
-      && ctxLib.classifyOwnership(callerIdentity, ctxLib.readRunState(runDir)) === 'foreign';
-    if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — PR not recorded\n`);
-    } else if (candidates) {
-      process.stdout.write(`${renderCandidateRefusal('record-pr', candidates)}\nPR not recorded.\n`);
-    } else if (!runDir) {
-      process.stdout.write('claude-tweaks: no pipeline run dir found — PR not recorded\n');
-    } else if (implicitForeign) {
-      process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session/worktree — refusing to record a PR against it without an explicit --run\n`);
-    } else if (!numberArg || !Number.isInteger(number) || number <= 0 || !urlArg) {
-      process.stdout.write(`claude-tweaks: usage: ${USAGE['record-pr']} — PR not recorded\n`);
-    } else {
-      // Record the branch alongside the PR while the worktree is still live —
-      // this is the one moment it is reliably knowable. run-integrity.js's
-      // torn-down-worktree fallback (#1672) reads it back later, when
-      // `git worktree list` no longer has an entry to derive it from.
-      // Best-effort: a run with no recorded worktree, or a derivation that
-      // comes back null, simply records {number, url} as before.
-      // Guarded because this is the first external-process call in a verb that
-      // previously had none: main()'s own `.catch(() => process.exit(0))` would
-      // swallow a throw here and skip writeRunState entirely, exiting 0 with no
-      // output — the PR silently never recorded, while every other failure
-      // branch in this verb prints a "not recorded" notice. Degrading to the
-      // pre-#1672 {number, url} write is the correct best-effort outcome.
-      let prBranch = null;
-      try {
-        prBranch = deriveBranch(repoRootOf(runDir), ctxLib.readRunState(runDir)?.worktree || null);
-      } catch { prBranch = null; }
-      const prField = prBranch ? { number, url: urlArg, branch: prBranch } : { number, url: urlArg };
-      const result = ctxLib.writeRunState(runDir, { pr: prField });
-      if (result) {
-        process.stdout.write(`claude-tweaks: PR #${number} recorded for ${path.basename(runDir)}\n`);
-      } else {
-        process.stdout.write(`claude-tweaks: failed to record PR for ${path.basename(runDir)} — run-state.json could not be written\n`);
-      }
-    }
-    return 0;
-  }
-  if (cmd === 'manifest-init') {
-    // Creates a multi-spec parent run dir's manifest.yml (#3035) — the
-    // counterpart to spec-status, which only updates an existing one. Same
-    // --run shape and implicit-foreign guard as spec-status. Idempotent: an
-    // existing manifest keeps every spec's status/startedAt/phases[].
-    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
-    const {
-      runDir, invalidRunArg, rest, worktreeLocalFallback, explicit, candidates,
-    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
-    const specsArg = flagVal(rest, '--specs');
-    const implicitForeign = !explicit && runDir
-      && ctxLib.classifyOwnership(callerIdentity, ctxLib.readRunState(runDir)) === 'foreign';
-    if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — manifest not initialized\n`);
-    } else if (candidates) {
-      process.stdout.write(`${renderCandidateRefusal('manifest-init', candidates)}\nManifest not initialized.\n`);
-    } else if (!runDir) {
-      process.stdout.write('claude-tweaks: no pipeline run dir found — manifest not initialized\n');
-    } else if (implicitForeign) {
-      process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session/worktree — refusing to initialize its manifest without an explicit --run\n`);
-    } else if (!specsArg) {
-      process.stdout.write(`claude-tweaks: usage: ${USAGE['manifest-init']} — manifest not initialized\n`);
-    } else {
-      const result = specStatusLib.manifestInit({
-        runDir,
-        specs: specsArg.split(','),
-        parent: `.claude-tweaks/pipelines/${path.basename(runDir)}/`,
-      });
-      if (!result.ok) {
-        process.stdout.write(`claude-tweaks: manifest not initialized for ${path.basename(runDir)} (${result.reason})\n`);
-      } else {
-        process.stdout.write(`claude-tweaks: manifest.yml ready at ${path.basename(runDir)} — ${result.manifest.multispec.specs.length} specs (${result.added.length} added, ${result.existing.length} already present)\n`);
-      }
-    }
-    return 0;
-  }
-  if (cmd === 'spec-status') {
-    // Couples a multi-spec manifest.yml status transition to the
-    // `## Flow: Running ...` progress banner (#690) — one call does both,
-    // so a phase transition can't happen without the banner (and vice
-    // versa). --run mirrors record-worktree/record-pr's shape: it names
-    // the multi-spec PARENT run dir (where manifest.yml lives — see
-    // multi-spec.md's "Run directory layout"), never a per-spec
-    // PIPELINE_RUN_DIR subdirectory.
-    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
-    const {
-      runDir, invalidRunArg, rest, worktreeLocalFallback, explicit, candidates,
-    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
-    const specArg = flagVal(rest, '--spec');
-    const statusArg = flagVal(rest, '--status');
-    const phaseArg = flagVal(rest, '--phase');
-    const nowArg = flagVal(rest, '--now'); // test-only clock override; real callers omit it
-    // #1012: see record-pr's identical guard above.
-    const implicitForeign = !explicit && runDir
-      && ctxLib.classifyOwnership(callerIdentity, ctxLib.readRunState(runDir)) === 'foreign';
-    if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — spec status not recorded\n`);
-    } else if (candidates) {
-      process.stdout.write(`${renderCandidateRefusal('spec-status', candidates)}\nSpec status not recorded.\n`);
-    } else if (!runDir) {
-      process.stdout.write('claude-tweaks: no pipeline run dir found — spec status not recorded\n');
-    } else if (implicitForeign) {
-      process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session/worktree — refusing to record spec status against it without an explicit --run\n`);
-    } else if (!specArg || !statusArg || !phaseArg) {
-      process.stdout.write(`claude-tweaks: usage: ${USAGE['spec-status']} — spec status not recorded\n`);
-    } else {
-      const result = specStatusLib.transitionSpec({
-        runDir, specId: specArg, status: statusArg, phase: phaseArg,
-        now: nowArg ? new Date(nowArg) : new Date(),
-      });
-      if (!result.ok) {
-        const detail = result.reason === 'no-manifest'
-          ? `no manifest.yml at ${path.basename(runDir)} — create it first: node "${pluginRoot()}/bin/hooks.js" manifest-init --run "${runDir}" --specs <n1,n2,...>`
-          : `no manifest.yml at ${path.basename(runDir)}, or spec/status/phase invalid`;
-        process.stdout.write(`claude-tweaks: spec status not recorded for spec #${specArg} (${result.reason}) — ${detail}\n`);
-      } else {
-        process.stdout.write(result.banner + '\n');
-        if (result.summaryLine) process.stdout.write(result.summaryLine + '\n');
-      }
-    }
-    return 0;
-  }
-  if (cmd === 'close-run') {
-    // #1012: unambiguousOnly replaces the old includeWorktreeForeign
-    // opt-out — that existed only so a bare close-run could still FIND a
-    // worktree-foreign run in order to report it via closeRunState's own
-    // foreignOwner advisory. The new resolution already reports exactly
-    // that: when the only candidate is foreign, it refuses and lists it
-    // (annotated) rather than silently resolving into it.
-    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
-    const {
-      runDir, invalidRunArg, explicit, worktreeLocalFallback, candidates,
-    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
-    if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — run not closed\n`);
-      return 1;
-    } else if (candidates) {
-      process.stdout.write(`${renderCandidateRefusal('close-run', candidates)}\nRun not closed.\n`);
-    } else if (runDir) {
-      const r = closeRunState(runDir, { explicit, callerIdentity });
-      if (r.status === 'missing') {
-        process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} no longer exists on disk (already archived or removed) — run not closed\n`);
-        return 0;
-      }
-      if (r.status === 'refused-foreign') {
-        process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session — refusing to close it without an explicit --run\n`);
-        return 0;
-      }
-      if (r.status === 'refused-live-worktree') {
-        process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} still has a live worktree on disk — refusing to close it without an explicit --run\n`);
-        return 0;
-      }
-      if (r.foreignOwner) {
-        process.stdout.write(`claude-tweaks: closing run ${path.basename(runDir)} recorded by another session\n`);
-      }
-      if (!r.wrapupSeen) {
-        process.stdout.write(
-          `claude-tweaks: closing run ${path.basename(runDir)} with no recorded wrap-up invocation — ` +
-          'expected if wrap-up was run manually (typed slash commands leave no ledger event); ' +
-          'otherwise consider /claude-tweaks:wrap-up before closing. Event recorded: close-without-wrapup.\n',
-        );
-      }
-      if (r.notYetArchived) {
-        process.stdout.write(
-          `claude-tweaks: run ${path.basename(runDir)} still holds un-archived work/ content — ` +
-          'expected at this point in the normal wrap-up sequence (close-run always runs before archive-run); ' +
-          'archival is still pending and will happen via the next routine reconcile pass, or you can archive it now: ' +
-          `node "${pluginRoot()}/bin/hooks.js" archive-run --run "${runDir}"\n`,
-        );
-      }
-      if (!r.writeOk) {
-        process.stdout.write(`claude-tweaks: failed to close run ${path.basename(runDir)} — run-state.json could not be written\n`);
-      }
-    } else {
-      // No --run was given (or it resolved to nothing) and resolveRunDir's
-      // fallback also found no run dir — the only remaining case in this
-      // chain. Without this branch, a call that can't resolve any run dir
-      // printed nothing and exited 0, indistinguishable from success.
-      process.stdout.write('claude-tweaks: no pipeline run dir found — run not closed\n');
-    }
-    return 0;
-  }
-  if (cmd === 'delete-ledger') {
-    // #2546: gives wrap-up cleanup item 2 (ledger deletion) a verb — before
-    // this, deleting the run's ledger file was a hand-run `rm`/Bash call with
-    // no sanctioned CLI path. --run mirrors record-pr/spec-status's shape
-    // (unambiguous-only resolution, explicit --run always wins); --ledger
-    // overrides resolveLedgerPath's own run-dir-first/docs-plans-fallback
-    // resolution for the rare case (2+ owned *-ledger.md candidates, or
-    // ownership not computable) it can't disambiguate on its own. The
-    // fallback only considers the docs/plans ledger this branch owns
-    // (merge-base diff or untracked, #3566) — an inherited one is never
-    // deleted from here. #3686: the not-found report names those inherited
-    // ledgers (read-only, via describeRunLedgers) so "not found" says why.
-    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
-    const {
-      runDir, invalidRunArg, rest, worktreeLocalFallback, candidates,
-    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
-    const ledgerArg = flagVal(rest, '--ledger');
-    if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — ledger not deleted\n`);
-    } else if (candidates) {
-      process.stdout.write(`${renderCandidateRefusal('delete-ledger', candidates)}\nLedger not deleted.\n`);
-    } else if (!runDir) {
-      process.stdout.write('claude-tweaks: no pipeline run dir found — ledger not deleted\n');
-    } else {
-      const { resolveLedgerPath, describeRunLedgers } = require('./lib/wrap-up/ledger-write');
-      const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
-      const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg || null });
-      if (!resolved.ok && resolved.reason === 'ambiguous') {
-        process.stdout.write(`claude-tweaks: delete-ledger: ${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}\nLedger not deleted.\n`);
-      } else if (!resolved.ok && resolved.reason === 'rejected') {
-        process.stdout.write(`claude-tweaks: delete-ledger: --ledger ${resolved.candidates[0]} rejected (${resolved.detail}) — ledger not deleted\n`);
-      } else if (!resolved.ok && resolved.reason === 'unattributable') {
-        process.stdout.write(`claude-tweaks: delete-ledger: cannot attribute docs/plans ledgers to ${path.basename(runDir)} (${resolved.detail}) — pass --ledger <path> explicitly; ledger not deleted\n`);
-      } else if (!resolved.ok) {
-        // #3686: with no --ledger, an inherited-only docs/plans set is named here.
-        let inherited = '';
-        if (!ledgerArg) {
-          const { report, others } = describeRunLedgers({ runDir, worktree });
-          if (report === 'none' && others.length > 0) {
-            inherited = ` — only inherited ledgers found: ${others.join(', ')}`;
-          }
-        }
-        process.stdout.write(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)}${inherited} — not found\n`);
-      } else {
-        try {
-          fs.unlinkSync(resolved.path);
-          process.stdout.write(`claude-tweaks: deleted ledger ${resolved.path}\n`);
-        } catch (e) {
-          process.stdout.write(`claude-tweaks: delete-ledger: failed to delete ${resolved.path} (${e.message})\n`);
-        }
-      }
-    }
-    return 0;
-  }
-  if (cmd === 'resolve-ledger') {
-    // #3897: the read-only twin of delete-ledger — same run-arg resolution,
-    // same refusals, but it only reports (describeRunLedgers) and never
-    // touches a file. _shared/ledger-format.md's resolution rule cites this
-    // verb instead of having a skill list docs/plans itself. stdout is
-    // reserved for the report (its first line is what the rule reads), so the
-    // fallback disclosure and every refusal go to stderr; exit stays 0.
-    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
-    const {
-      runDir, invalidRunArg, worktreeLocalFallback, candidates,
-    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
-    if (invalidRunArg) {
-      process.stderr.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — ledger not resolved\n`);
-    } else if (candidates) {
-      process.stderr.write(`${renderCandidateRefusal('resolve-ledger', candidates)}\nLedger not resolved.\n`);
-    } else if (!runDir) {
-      process.stderr.write('claude-tweaks: no pipeline run dir found — ledger not resolved\n');
-    } else {
-      const { describeRunLedgers, formatLedgerReport } = require('./lib/wrap-up/ledger-write');
-      const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
-      const text = formatLedgerReport(describeRunLedgers({ runDir, worktree }));
-      await new Promise((resolve) => process.stdout.write(text, resolve));
-    }
-    return 0;
-  }
-  if (cmd === 'teardown-run') {
-    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
-    const { runDir, invalidRunArg, worktreeLocalFallback, candidates } = resolveRunArg(
-      argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity },
-    );
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
-    const mode = argv.includes('--merged') ? 'merged' : (argv.includes('--abandoned') ? 'abandoned' : null);
-    if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — run not torn down\n`);
-    } else if (candidates) {
-      process.stdout.write(`${renderCandidateRefusal('teardown-run', candidates)}\nRun not torn down.\n`);
-    } else if (runDir) {
-      const result = teardownRun(runDir, { mode, sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() });
-      process.stdout.write(`claude-tweaks: teardown-run ${path.basename(runDir)}\n${result.lines.map((l) => `  ${l}`).join('\n')}\n`);
-    } else {
-      process.stdout.write('claude-tweaks: no pipeline run dir found — run not torn down\n');
-    }
-    return 0;
-  }
-  if (cmd === 'archive-run') {
-    const {
-      archiveRunDir, readConsoleState, consoleResidue, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
-      TIEBREAK_COVERAGE_HINT,
-    } = require('./lib/reconcile/archive-merged');
-    const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
-    const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(
-      argv.slice(3), process.cwd(), process.env, { allowUninitialized: true },
-    );
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
-    if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — run not archived\n`);
-      return 0;
-    }
-    if (!runDir) {
-      process.stdout.write('claude-tweaks: no pipeline run dir found — run not archived\n');
-      return 0;
-    }
-    const state = ctxLib.readRunState(runDir);
-    if (!state) {
-      process.stdout.write(
-        `claude-tweaks: ${path.basename(runDir)} has no readable run-state.json — not archived; ` +
-        'a state-less dir is reconcile\'s orphaned-mint sweep\'s job (archiveOrphanedMint, or archiveRunDir when it still holds tracked content — #2227), not this verb\'s\n',
-      );
-      return 0;
-    }
-    if (NON_TERMINAL.has(state.status)) {
-      process.stdout.write(
-        `claude-tweaks: ${path.basename(runDir)} is ${state.status} — not archived; ` +
-        'run close-run first (or let the owning session finish)\n',
-      );
-      return 0;
-    }
-    // #1130 AC4: same console gate decideArchive enforces on the reconcile
-    // path. A rendered-but-unanswered console (`unresolved`) always blocks.
-    // 'none' is allowed in general — terminal status means close-run ran, i.e.
-    // wrap-up's own flow (incl. the empty-console fast path) completed. #3668
-    // narrows that: an auto-merge path renders no console and no human ever
-    // sees its staged/ items, so a 'none' run whose decisions.md carries that
-    // path's auto-merge line (the wrap-up short-circuit's, or the dispatch
-    // bundle Auto-merge gate's, #3740) is refused while staged/ holds pending
-    // items. Other 'none' runs that keep staged/ (in-terminal consoles,
-    // fleet-approved closes, tidy --approve) still archive.
-    const consoleState = readConsoleState(runDir);
-    if (consoleState === 'unresolved') {
-      process.stdout.write('claude-tweaks: archival refused — console-unresolved (console.json rendered but not resolved; answer or resolve the console first)\n');
-      return 0;
-    }
-    // #3949: a resolved console can still hold an item no human has reviewed.
-    if (consoleState === 'residue') {
-      // --ack skips an unparseable console, so an unreadable one's remedy is repairing the file.
-      const { items, unreadable } = consoleResidue(runDir);
-      const what = [];
-      const remedies = [];
-      if (items > 0) {
-        what.push(`${items} unresolved item(s) no human has reviewed`);
-        remedies.push(`review them, then run console-residue.js --ack --run "${runDir}"`);
-      }
-      if (unreadable.length > 0) {
-        what.push(`${unreadable.length} console.json file(s) could not be read`);
-        remedies.push(`repair or remove ${unreadable.join(', ')}, then re-run archive-run`);
-      }
-      process.stdout.write(`claude-tweaks: archival refused — console-residue (${what.join(' and ')}; ${remedies.join('; ')})\n`);
-      return 0;
-    }
-    if (consoleState === 'none' && consoleReplacedByAutoMerge(runDir)) {
-      const pending = listStagedItems(runDir);
-      if (pending.length) {
-        process.stdout.write(`claude-tweaks: archival refused — console-never-rendered-staged-pending (an auto-merge path — the wrap-up short-circuit or the dispatch bundle Auto-merge gate — rendered no console; pending: ${pending.join(', ')}) — apply or delete the pending staged/ items (and any spec-*/staged/), or write a resolved console.json, then re-run archive-run\n`);
-        return 0;
-      }
-    }
-    // #3945: evaluated after the guards above. A findings artifact that is
-    // present but unreadable/malformed is refused under its own reason, before
-    // the per-id coverage gap is looked at.
-    const tiebreakCoverage = require('./lib/tiebreak').checkRunTiebreakCoverage(runDir, listSpecDirs(runDir));
-    const tiebreakHint = `${TIEBREAK_COVERAGE_HINT}, then re-run archive-run`;
-    if (tiebreakCoverage.artifactValid === false) {
-      process.stdout.write(`claude-tweaks: archival refused — tiebreak-artifact-invalid (review-findings.json is present but unreadable or malformed) — ${tiebreakHint}\n`);
-      return 0;
-    }
-    if (tiebreakCoverage.missing.length > 0) {
-      process.stdout.write(`claude-tweaks: archival refused — tiebreak-coverage-missing (${tiebreakCoverage.missing.length} listed finding(s) have no tiebreak verdict line: ${tiebreakCoverage.missing.join(', ')}) — ${tiebreakHint}\n`);
-      return 0;
-    }
-    const mainRoot = wtDetect.mainCheckoutRoot(process.cwd());
-    if (!mainRoot) {
-      process.stdout.write('claude-tweaks: could not resolve the main checkout root — run not archived\n');
-      return 0;
-    }
-    // #1452: a worktree-local-fallback resolved runDir has no anchored copy
-    // under mainRoot (reportWorktreeLocalFallback's own message says so).
-    // archiveRunDir's work/ move is a `git -C mainRoot mv <src> <dest>` —
-    // src pointing at a path inside a *different* worktree's working tree is
-    // structurally invisible to that git invocation (separate index, separate
-    // working directory, same object store), so the mv deterministically
-    // fails every time work/ is git-tracked (materialize.md: always, for any
-    // real pipeline run). Detecting that in advance and refusing here with a
-    // distinct, correctly-scoped message avoids running (and reporting) a
-    // doomed git mv as if it were a genuine, actionable 'git-mv-failed' —
-    // the transient condition self-resolves once this run's branch merges
-    // and the content becomes reachable from mainRoot's own working tree.
-    if (worktreeLocalFallback) {
-      const hasTrackedWork = fs.existsSync(path.join(runDir, 'work'))
-        || listSpecDirs(runDir).some((spec) => fs.existsSync(path.join(runDir, spec, 'work')));
-      if (hasTrackedWork) {
-        process.stdout.write(
-          `claude-tweaks: archival deferred — ${path.basename(runDir)}'s tracked work/ content lives only in ` +
-          'this worktree, not yet reachable from the main checkout; `git mv` cannot move it across worktree ' +
-          'boundaries. Merge this run\'s branch first — reconcile\'s routine sweep (or a direct archive-run from ' +
-          'the main checkout, once merged) will archive it automatically.\n',
-        );
-        return 0;
-      }
-    }
-    // Output below is informational human text, never parsed by any caller
-    // (skills/flow/multispec-review-console.md's parent-dir archival is a
-    // future caller of this verb, not a consumer of this stdout format).
-    // The "moved:" lines are read from archiveRunDir's own movedEntries
-    // return value — never a hardcoded guess at the run dir's shape, which
-    // is the exact fixed-list drift this whole record eliminates.
-    const result = archiveRunDir(mainRoot, runDir);
-    if (!result.ok) {
-      // #1982: every refusal reason carries its own recovery `hint`
-      // (co-located with the detector in archive-merged.js's `refusal()`
-      // constructor) — this branch is now a generic reader of `reason`/
-      // `hint`, never a string match against a specific reason code.
-      const hintSuffix = typeof result.hint === 'string' && result.hint.length ? ` — ${result.hint}` : '';
-      process.stdout.write(`claude-tweaks: archival refused — ${result.reason}${hintSuffix}\n`);
-      return 0;
-    }
-    for (const name of result.movedEntries) {
-      process.stdout.write(`moved: ${name}\n`);
-    }
-    process.stdout.write(`claude-tweaks: archived ${path.basename(runDir)}\n`);
-    return 0;
-  }
-  if (cmd === 'resolve-console') {
-    // #2568: --run is required, no implicit "newest non-terminal run"
-    // fallback — same discipline record-worktree already enforces (a
-    // guessed run dir here could resolve/execute a DIFFERENT console than
-    // the one the calling session actually answered).
-    const {
-      runDir, invalidRunArg, worktreeLocalFallback, explicit,
-    } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
-    if (!explicit) {
-      process.stdout.write(`claude-tweaks: ${USAGE['resolve-console']} — --run is required, console not resolved\n`);
-      return 1;
-    }
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
-    if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — console not resolved\n`);
-      return 1;
-    }
-    if (!runDir) {
-      process.stdout.write('claude-tweaks: no pipeline run dir found — console not resolved\n');
-      return 1;
-    }
-    const splitIds = (raw) => (raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : []);
-    const approve = splitIds(flagVal(argv.slice(3), '--approve'));
-    const decline = splitIds(flagVal(argv.slice(3), '--decline'));
-    const reverseFailed = splitIds(flagVal(argv.slice(3), '--reverse-failed'));
-    const filingFailed = splitIds(flagVal(argv.slice(3), '--filing-failed'));
-
-    const mainRoot = wtDetect.mainCheckoutRoot(process.cwd()) || process.cwd();
-    const execFileAsync = promisify(execFile);
-    const RESOLVE_CONSOLE_GH_TIMEOUT_MS = 15000;
-    const deps = {
-      now: () => Date.now(),
-      writeFile: (p, content) => fs.writeFileSync(p, content),
-      gh: async (args) => {
-        const { stdout } = await execFileAsync('gh', args, {
-          cwd: mainRoot, encoding: 'utf8', timeout: RESOLVE_CONSOLE_GH_TIMEOUT_MS, windowsHide: true,
-        });
-        return stdout;
-      },
-    };
-    const { resolveConsoleExecution, renderExecutedLines } = require('./lib/reconcile/console-execute');
-    const result = await resolveConsoleExecution(runDir, {
-      approve, decline, reverseFailed, filingFailed,
-    }, deps);
-    if (result.status === 'executed') {
-      process.stdout.write(renderExecutedLines(result, path.basename(runDir)));
-      return 0;
-    }
-    if (result.status === 'noop') {
-      process.stdout.write(`claude-tweaks: console already ${result.reason === 'claimed' ? 'claimed by another execution' : 'resolved'} for ${path.basename(runDir)} — nothing written\n`);
-      return 0;
-    }
-    if (result.reason === 'unknown-item-ids') {
-      process.stdout.write(`claude-tweaks: unknown item id(s) ${result.ids.join(', ')} — no matching console-item row found, console not resolved\n`);
-      return 1;
-    }
-    if (result.reason === 'not-ruling-items') {
-      process.stdout.write(`claude-tweaks: --reverse-failed id(s) ${result.ids.join(', ')} are not sdd-ruling items (no isRulingRow flag), console not resolved\n`);
-      return 1;
-    }
-    if (result.reason === 'not-finding-items') {
-      process.stdout.write(`claude-tweaks: --filing-failed id(s) ${result.ids.join(', ')} are not finding rows (no findingItem), console not resolved\n`);
-      return 1;
-    }
-    process.stdout.write(`claude-tweaks: console resolution failed for ${path.basename(runDir)} — ${result.reason}${result.error ? `: ${result.error}` : ''}\n`);
-    return 1;
-  }
-  if (cmd === 'check-resume-freshness') {
-    // Read-only: never writes run-state.json. Skills call this immediately
-    // before any of the three resume paths' safe-to-resume ruling
-    // (skills/_shared/run-resume-freshness.md).
-    const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
-    if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — resume freshness not checked\n`);
-      return 0;
-    }
-    if (!runDir) {
-      process.stdout.write('claude-tweaks: no pipeline run dir found — resume freshness not checked\n');
-      return 0;
-    }
-    const result = resumeFreshness.checkResumeFreshness(runDir, {
-      sessionId: process.env.CLAUDE_CODE_SESSION_ID,
-    });
-    const runId = path.basename(runDir);
-    if (result.safe) {
-      process.stdout.write(`claude-tweaks: resume freshness OK for ${runId} (${result.verdict})\n`);
-    } else {
-      process.stdout.write(`claude-tweaks: resume freshness BLOCKED for ${runId} — run appears actively owned (${result.reason})\n`);
-    }
-    return 0;
-  }
-  if (cmd === 'check-staged-inventory') {
-    // Read-only, non-blocking companion to check-resume-freshness: reports
-    // whether decisions.md's STAGED entries all have a backing staged/
-    // file, but never gates a resume (#1269).
-    const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
-    if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — staged inventory not checked\n`);
-      return 0;
-    }
-    if (!runDir) {
-      process.stdout.write('claude-tweaks: no pipeline run dir found — staged inventory not checked\n');
-      return 0;
-    }
-    const result = stagedInventory.checkStagedInventory(runDir);
-    const runId = path.basename(runDir);
-    if (result.missing.length === 0) {
-      process.stdout.write(`claude-tweaks: staged inventory OK for ${runId} (${result.checked} STAGED entries)\n`);
-    } else {
-      process.stdout.write(`claude-tweaks: staged inventory MISMATCH for ${runId} — ${result.missing.length} of ${result.checked} STAGED entries missing from staged/: ${result.missing.join(', ')}\n`);
-    }
-    return 0;
-  }
-  if (cmd === 'check-session-residue') {
-    // #2736: read-only companion to session-start.js's own advisory banners
-    // (session-residue.js is the shared detection both call into) — wrap-up's
-    // Review Console runs this to re-check, at render time, whether any
-    // residue flagged at this session's start is still unresolved, so a long
-    // session doesn't rely on that one-time SessionStart notice for its whole
-    // duration. `--run`, when given, excludes that run dir from both lists —
-    // a wrap-up console must never report its own in-flight run as residue.
-    const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
-    if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — session residue not checked\n`);
-      return 0;
-    }
-    const root = pluginRoot();
-    const staleEntries = sessionResidue.collectStaleRuns(process.cwd(), { exclude: runDir, pluginRoot: root });
-    const approvableEntries = sessionResidue.collectApprovableStandalone(process.cwd(), { exclude: runDir });
-    const { runs: consoleEntries, more: moreConsoles } = sessionResidue.scanUnresolvedConsoles(process.cwd(), { exclude: runDir, pluginRoot: root });
-    if (!staleEntries.length && !approvableEntries.length && !consoleEntries.length) {
-      process.stdout.write('claude-tweaks: no pending residue from session start\n');
-      return 0;
-    }
-    // Each line names the item; the resolution command follows on its own
-    // line right after — an ordinary stale entry's own line carries no
-    // command of its own (only a shipped-unclosed or pass-re-entry line embeds one), so
-    // this mirrors session-start.js's own banner trailer rather than
-    // leaving that category's rows without a pointer.
-    const blocks = [];
-    if (staleEntries.length) {
-      blocks.push(
-        `${staleEntries.map((e) => e.line).join('\n')}\n` +
-          `  resolve with: review {run}/decisions.md and staged/ to resume, or close a finished run with: node "${root}/bin/hooks.js" close-run --run <dir>`,
-      );
-    }
-    if (approvableEntries.length) {
-      blocks.push(approvableEntries.map((e) => e.line).join('\n'));
-    }
-    if (consoleEntries.length) {
-      const lines = consoleEntries.flatMap((e) => e.lines);
-      if (moreConsoles) lines.push(sessionResidue.CONSOLE_OVERFLOW_LINE);
-      lines.push(sessionResidue.consoleAckAllLine(root));
-      blocks.push(lines.join('\n'));
-    }
-    process.stdout.write(
-      `claude-tweaks: pending residue from session start still unresolved:\n${blocks.join('\n')}\n`,
-    );
-    return 0;
-  }
-  if (cmd === 'check-pass-reentry') {
-    // #3553: prints consolidated-pass.js's checkPassReentry verdict for
-    // flow/multispec-review-console.md's re-entry step. Unlike its sibling
-    // check-* verbs this exits 1 on refusal (nothing on stdout): that caller
-    // treats a non-zero exit or non-JSON stdout as a stop, so a refused --run
-    // must never read as a verdict.
-    const { runDir, invalidRunArg, worktreeLocalFallback, explicit } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
-    if (!explicit) {
-      process.stderr.write('claude-tweaks: check-pass-reentry requires --run — pass re-entry not checked\n');
-      return 1;
-    }
-    if (invalidRunArg) {
-      process.stderr.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — pass re-entry not checked\n`);
-      return 1;
-    }
-    // Disclosure goes to stderr: stdout is reserved for the verdict JSON alone.
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
-    let verdict;
-    try {
-      verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
-        online: argv.slice(3).includes('--online'),
-        sessionId: process.env.CLAUDE_CODE_SESSION_ID,
-      });
-    } catch (e) {
-      process.stderr.write(`claude-tweaks: check-pass-reentry failed — ${e.message}\n`);
-      return 1;
-    }
-    await new Promise((resolve) => process.stdout.write(`${JSON.stringify(verdict)}\n`, resolve));
-    return 0;
-  }
-  if (cmd === 'check-sibling-sessions') {
-    // [IL-107]: before claiming a record, enumerate live worktrees and their
-    // lock-owning pids — branches/claims/labels alone stayed silent while a
-    // sibling session sat eleven commits deep in an unpushed worktree — and
-    // also read the claims registry for a live claim held by another session
-    // (a sibling on another machine, whose worktree lock this host cannot
-    // see). This fails OPEN by construction: an unresolvable --record, an
-    // unparseable lock, a dead pid, or a claim read failure (offline, auth,
-    // unresolved repo slug, unreadable blob) all read as "no conflict", never
-    // as a block with no way forward (see sibling-sessions.js's own header
-    // comment).
-    const args = argv.slice(3);
-    const flagIdx = args.indexOf('--record');
-    const recordRef = flagIdx !== -1 ? args[flagIdx + 1] : null;
-    if (!recordRef) {
-      process.stdout.write('claude-tweaks: --record <id-or-slug> is required — sibling-session check not run\n');
-      return 0;
-    }
-    const match = siblingSessions.findConflictingSession(recordRef, { cwd: process.cwd() });
-    if (match) {
-      process.stdout.write(
-        `claude-tweaks: sibling session may already hold record ${recordRef} — ` +
-        `worktree ${match.path} (branch ${match.branch || '(none)'}, pid ${match.pid}) is in use by a live session; ` +
-        `verify before claiming\n`,
-      );
-      return 0;
-    }
-    // The worktree lock above sees only local siblings; the live claim is the
-    // remote-facing half (another machine, the cloud, no worktree yet).
-    const claim = siblingSessions.findLiveClaim(recordRef, { cwd: process.cwd() });
-    if (claim) {
-      process.stdout.write(
-        `claude-tweaks: sibling session may already hold record ${recordRef} — ` +
-        `live claim by run ${claim.runId || '(unknown)'} (session ${claim.sessionId || '(unknown)'}, ` +
-        `host ${claim.host || '(unknown)'}, claimed ${claim.claimedAt || '(unknown)'}); ` +
-        `verify before claiming\n`,
-      );
-    } else {
-      process.stdout.write(`claude-tweaks: no sibling-session conflict found for record ${recordRef}\n`);
-    }
-    return 0;
-  }
-  if (cmd === 'reconcile') {
-    // Thin wrapper over bin/lib/reconcile's one exported entry point —
-    // session-start.js calls reconcile() the same way, in-process (#408),
-    // so both surfaces are guaranteed to behave identically by construction
-    // rather than by a parity test re-deriving the same logic twice.
-    const args = argv.slice(3);
-    // #1558: --mcp-reachable asserts the CALLER (an agent, inside its own
-    // turn) has already confirmed GitHub reachability via its own MCP probe
-    // (mcp-transport.md's Preflight probe) — same contract as
-    // resolve-policy.js's own --mcp-reachable flag. Forwards into
-    // reconcile()'s integration-model resolution so a gh-absent-but-MCP-
-    // reachable sandbox doesn't silently downgrade to local-merge.
-    // #1543: --checks narrows the sweep to a caller-chosen subset of
-    // ALL_CHECKS (a full sweep dominated by remote-prune's --prune all-refs
-    // fetch is what tripped the harness's default command timeout twice per
-    // dispatch firing) — a thin pass-through to reconcile()'s existing
-    // `opts.checks` seam (already used internally, e.g. reconcile-summary's
-    // own `checks: ['mirror']` call). A missing/empty/all-whitespace value
-    // yields `undefined`, and reconcile() itself already falls back to
-    // ALL_CHECKS on any non-array or empty array — no validation needed here
-    // beyond producing that safe shape.
-    const checksRaw = flagVal(args, '--checks');
-    const checksList = typeof checksRaw === 'string'
-      ? checksRaw.split(',').map((s) => s.trim()).filter(Boolean)
-      : [];
-    const opts = {
-      dryRun: args.includes('--dry-run'),
-      cwd: process.cwd(),
-      mcpReachable: args.includes('--mcp-reachable'),
-      // Unscoped: run everything except the janitorial checks deferred to the
-      // background pass (#4032); FAST_CHECKS stays inside the inline set, so the
-      // freshness stamp below is still truthful.
-      // Filled inside the try below for the unscoped call, so a module-load
-      // failure still reaches the reconcile-threw fallback (#4032).
-      checks: checksList.length ? checksList : undefined,
-      // An explicit --checks subset is the caller naming which checks must
-      // run (plus any prerequisite reconcile() adds, #3630) — don't let the
-      // SessionStart hot-path time ceiling (#820 D4) skip them; an unscoped
-      // pass keeps the default ceiling (#3026).
-      budgetMs: checksList.length ? Infinity : undefined,
-      // An explicit subset cannot claim the whole fast pass ran, so it must
-      // not stamp the shared freshness key — otherwise the next SessionStart
-      // inside the TTL skips its red-tip/console checks (the #644 hazard,
-      // same opt-out reconcile-summary already uses; #3026 ledger follow-up).
-      skipCacheStamp: checksList.length ? true : undefined,
-    };
-    const jsonOut = args.includes('--json');
-    let out;
-    // Everything that can throw on the way to the JSON — the module load, the
-    // unscoped inline-set derivation, reconcile() itself and the deferral
-    // post-processing — sits in this one try, so dispatch's parser always gets a
-    // JSON document (the reconcile-threw fallback) rather than a bare stack.
-    try {
-      const reconcileLib = require('./lib/reconcile');
-      if (!checksList.length) {
-        opts.checks = reconcileLib.ALL_CHECKS.filter((c) => !CLI_DEFERRED_CHECKS.includes(c));
-      }
-      out = await reconcileLib.reconcile(opts);
-      if (!checksList.length) {
-        // #4032: report the deferral, and hand the deferred checks to the
-        // detached background pass (TTL-gated by its own status file) — but only
-        // when this pass converged: a no-repo/no-remote/local-merge/preflight/
-        // threw result already says why nothing ran (reconcile's
-        // NOT_CONVERGED_REASONS), and a dry run must never spawn a mutating
-        // child. A report-only skip (e.g. non-canonical-run-dir) does not count.
-        const { NOT_CONVERGED_REASONS } = reconcileLib;
-        const skippedIn = out.skipped || [];
-        const converged = !skippedIn.some((s) => s && NOT_CONVERGED_REASONS.has(s.reason));
-        let background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
-        if (converged) {
-          out.skipped = [...skippedIn, { check: CLI_DEFERRED_CHECKS.join(','), reason: 'deferred-to-background' }];
-          background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'dry-run' };
-          if (!opts.dryRun) {
-            const cwd = process.cwd();
-            const r = require('./lib/reconcile/background-spawn').spawnBackgroundIfStale({
-              root: wtDetect.mainCheckoutRoot(cwd),
-              cwd,
-              sessionId: process.env.CLAUDE_CODE_SESSION_ID || undefined,
-            });
-            background = { checks: CLI_DEFERRED_CHECKS, spawned: r.spawned, reason: r.reason };
-          }
-        } else {
-          // A gh-preflight failure skipped the inline gh-dependent checks; the
-          // three deferred ones never got the chance to run either, so keep
-          // them accounted for in `skipped` under the same reason, as before
-          // the deferral. Every other not-converged reason already says "all".
-          const pf = skippedIn.find((s) => s && typeof s.reason === 'string' && s.reason.startsWith('preflight-'));
-          if (pf) out.skipped = [...skippedIn, { check: CLI_DEFERRED_CHECKS.join(','), reason: pf.reason }];
-        }
-        out.background = background;
-      }
-    } catch {
-      out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
-      if (!checksList.length) out.background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
-    }
-    if (jsonOut) {
-      // The full per-item census, not #638's compact summary: no key a JSON
-      // consumer already reads (dispatch/tidy reading `console.ready` off this)
-      // moved. #4032 only ADDED keys — `timings` always, `background` on an
-      // unscoped call.
-      process.stdout.write(JSON.stringify(out) + '\n');
-    } else {
-      // New default (#638): a compact human-readable summary instead of the
-      // full per-item census — see format-summary.js for the aggregation.
-      process.stdout.write(require('./lib/reconcile/format-summary').formatSummary(out) + '\n');
-    }
-    return 0;
-  }
-  if (cmd === 'reconcile-summary') {
-    // #644 Deliverable 3 — the plain one-line residue summary
-    // `/claude-tweaks:flow`'s closing report shells out for. Composed
-    // without re-running the background checks (release/archive/
-    // archive-branches/remote-prune/ledger-residue/reap already ran off the hot path via
-    // `reconcile-background`, most recently under `session-start.js`) —
-    // this reads that persisted `summary.archived` count plus the residue
-    // cache both `archive`/`reap` already maintain (Deliverable 2), and
-    // runs only the cheap, git-only `mirror` check fresh (mirror-ff.js
-    // never shells to `gh` — see index.js's own preflight comment on why
-    // it's excluded from the gh-health gate), since mirror's own RESULT
-    // never persists anywhere (it only ever runs inline at SessionStart —
-    // see that file's FAST_CHECKS comment). The call itself still reaches
-    // reconcile()'s end-of-pass freshness stamp, though, which is a
-    // DIFFERENT persistence path this call must opt out of — see
-    // `skipCacheStamp` below.
-    const cwd = process.cwd();
-    const root = wtDetect.mainCheckoutRoot(cwd) || cwd;
-    const statusPath = path.join(root, '.claude-tweaks', require('./lib/reconcile/background-spawn').STATUS_FILENAME);
-    let archivedCount = 0;
-    try {
-      const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
-      archivedCount = (status.summary && typeof status.summary.archived === 'number') ? status.summary.archived : 0;
-    } catch { /* no background pass has completed yet — 0 archived is accurate */ }
-
-    let mirror = null;
-    try {
-      // skipCacheStamp: true — this narrow mirror-only probe must not stamp
-      // the shared reconcile-cache.json `lastRunAt` session-start.js's own
-      // FAST_CHECKS call gates its `skipIfFresh` freshness check on; doing
-      // so would make the next SessionStart within DEFAULT_TTL_MS believe
-      // its own mirror/red-tip/console pass already ran and skip it,
-      // silently suppressing red-tip's CI-failure surfacing after every
-      // successful `/claude-tweaks:flow` completion (see index.js's own
-      // comment on this option).
-      const mirrorResult = await require('./lib/reconcile').reconcile({ cwd, checks: ['mirror'], skipCacheStamp: true });
-      mirror = mirrorResult.mirror;
-    } catch { /* best-effort — mirror shows n/a rather than blocking this summary */ }
-
-    const { formatReconcileSummary } = require('./lib/reconcile/residue-summary');
-    process.stdout.write(formatReconcileSummary(root, { archivedCount, mirror }) + '\n');
-    return 0;
-  }
-  if (cmd === 'reconcile-background') {
-    // Detached-process counterpart to the `reconcile` subcommand above:
-    // session-start.js's fast path spawns this (see that file's own header
-    // comment on the fast/background split, #820 D8) to run only the
-    // write-only janitorial checks off the hot path. Never a session-
-    // blocking failure — this process is detached (spawn'd with
-    // `detached: true, stdio: 'ignore'` and unref'd) and nothing reads its
-    // exit code or stdout, so every path below returns 0 and best-effort
-    // swallows its own errors rather than surfacing them anywhere.
-    const cwd = process.cwd();
-    const { reconcile } = require('./lib/reconcile');
-    const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
-    const { isFresh } = require('./lib/reconcile/cache');
-    const { BACKGROUND_BUDGET_MS } = require('./lib/reconcile/budget');
-    const { STATUS_FILENAME } = require('./lib/reconcile/background-spawn');
-    const { QUIET_SKIP_REASONS } = require('./lib/hooks/worktree-reap');
-    const { QUIET_SKIP_REASONS: LEDGER_RESIDUE_QUIET_SKIP_REASONS } = require('./lib/reconcile/ledger-residue');
-    const root = mainCheckoutRoot(cwd) || cwd;
-    // #1687: session-start.js's spawn site now threads the spawning session's
-    // id into this dedicated env var (never `CLAUDE_CODE_SESSION_ID` — see
-    // that file's own comment on why). `|| undefined` rather than `|| null`
-    // matches reconcile()'s own opts contract (`sessionId?: string`) and lets
-    // archiveMerged's destructuring default apply the same way an omitted key
-    // would. Absent (no spawning session id was ever known) leaves this
-    // exactly as unresolvable as before this fix — the other two gates
-    // (24h staleness, shipped-unclosed evidence) still govern alone.
-    const sessionId = process.env.CLAUDE_TWEAKS_SESSION_ID || undefined;
-    const statusPath = path.join(root, '.claude-tweaks', STATUS_FILENAME);
-
-    // Freshness is decided from THIS status file's own `completedAt` —
-    // deliberately NOT reconcile()'s shared reconcile-cache.json `lastRunAt`
-    // stamp. That stamp fires unconditionally at the end of ANY
-    // fully-completed pr-first pass regardless of which `checks` subset ran,
-    // so session-start.js's own FAST_CHECKS call (mirror/red-tip/console)
-    // also stamps it moments before this process starts — reusing it here
-    // would make this process (and the spawn-gate that decided to launch it)
-    // see a false "fresh" from a pass that never touched
-    // release/archive/archive-branches/remote-prune/ledger-residue/reap, and the
-    // background checks would never run. Caught by task review against a
-    // real pr-first remote (#820 Task 10 fix-up); reconcile()'s own
-    // lastRunAt/cache.js contract is untouched by this fix.
-    let existingStatus = null;
-    try { existingStatus = JSON.parse(fs.readFileSync(statusPath, 'utf8')); } catch { /* none yet */ }
-    const alreadyFresh = isFresh(
-      { lastRunAt: existingStatus && typeof existingStatus.completedAt === 'number' ? existingStatus.completedAt : null },
-      Date.now(),
-    );
-    if (alreadyFresh) {
-      // A very recent background pass already ran — do nothing, not even a
-      // status-file touch (surfaced/completedAt are left exactly as they
-      // are), since nothing new happened. Same stdout line as a completed
-      // run: nothing reads this detached process's stdout or exit code, so
-      // there is no caller to distinguish the two for.
-      process.stdout.write('claude-tweaks: reconcile-background complete\n');
-      return 0;
-    }
-
-    // Mutex — session-start.js's spawn-decision TTL gate is best-effort, not
-    // a lock, and can still let two sessions starting within the same short
-    // window each spawn a background pass (review finding). Only one
-    // process may actually run reconcile() at a time; a losing process does
-    // nothing, not even a status-file touch — the winner's write already
-    // covers this window and a losing process has nothing new to report.
-    const { acquireBackgroundLock, releaseBackgroundLock } = require('./lib/reconcile/background-lock');
-    const lock = acquireBackgroundLock(root);
-    if (!lock) {
-      process.stdout.write('claude-tweaks: reconcile-background complete (already running)\n');
-      return 0;
-    }
-
-    let summary = {};
-    try {
-      const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
-      summary = {
-        released: (r.claims || []).filter((c) => c.action === 'released').length,
-        archived: (r.runs || []).filter((x) => x.action === 'archived').length,
-        archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,
-        prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,
-        // Distinct removal PRs opened this pass (#3812) — at most one today.
-        ledgerResiduePrOpened: new Set((r.ledgerResidue || []).filter((e) => e.action === 'pr-opened').map((e) => e.prNumber)).size,
-        // Residue ledgers left on the integration branch and why, minus the
-        // expected/transient reasons ledger-residue.js keeps quiet.
-        notableLedgerResidue: (r.ledgerResidue || [])
-          .filter((e) => e.action === 'skip' && !LEDGER_RESIDUE_QUIET_SKIP_REASONS.has(e.reason))
-          .map((e) => (e.prNumber !== undefined ? { path: e.path, reason: e.reason, prNumber: e.prNumber } : { path: e.path, reason: e.reason })),
-        reaped: (r.worktrees || []).filter((w) => w.action === 'reaped').length,
-        // Individually-named worktrees left in place and why — a more
-        // granular signal than the check-level `skipped` array below.
-        // Restores the pre-#820-D8 inline block's diagnostic, filtered the
-        // same way that block filtered it (routine/expected skip reasons
-        // stay quiet — see worktree-reap.js's QUIET_SKIP_REASONS).
-        notableWorktrees: (r.worktrees || [])
-          .filter((w) => w.action === 'skipped' && !QUIET_SKIP_REASONS.has(w.reason))
-          .map((w) => ({ path: w.path, reason: w.reason })),
-        skipped: r.skipped || [],
-      };
-    } catch (e) {
-      // The reason rides in the status file: this process is detached with
-      // stdio ignored, so it is the only trace the next SessionStart can surface.
-      summary = { failed: true, error: String((e && e.message) || e).slice(0, 200) };
-    } finally {
-      releaseBackgroundLock(lock);
-    }
-    try {
-      fs.mkdirSync(path.dirname(statusPath), { recursive: true });
-      fs.writeFileSync(statusPath, JSON.stringify({ completedAt: Date.now(), summary, surfaced: false }));
-    } catch { /* best-effort — this process is detached and unwatched either way */ }
-    process.stdout.write('claude-tweaks: reconcile-background complete\n');
-    return 0;
-  }
+  if (verb) return verb.run(argv);
   if (!EVENTS.includes(cmd)) {
-    // #1586: every recognized subcommand above already returned before this
-    // point — reaching here means `cmd` is neither a hook event (EVENTS) nor
-    // any of the named subcommands (USAGE's keys). This used to silently
+    // #1586: every table verb already dispatched before this point — reaching
+    // here means `cmd` is neither a hook event (EVENTS) nor any of the named
+    // subcommands (VERBS' keys). This used to silently
     // exit 0 with no output, which is exactly what let `log-decision` (not a
     // hooks.js subcommand at all — the correct tool is the separate
     // bin/log-decision.js CLI, a different script entirely that only
@@ -1845,27 +1898,22 @@ async function main(argv) {
     // exit here is safe — this is the same class of direct, skill-invoked
     // CLI call as resolve-run-dir's own non-zero exit above, not a
     // harness-dispatched hook the "never break a session" invariant covers.
-    // Deliberately written with the string literal first (reversed operand
-    // order) — hooks-help-guard.test.js's coverage test scans main() for the
-    // literal source shape "cmd ===" followed by a quoted verb and requires a
-    // matching USAGE entry for every hit; this verb deliberately has none (it
-    // isn't a real hooks.js subcommand — that's the whole point of this
-    // branch), so the comparison must not match that scan pattern.
-    if ('log-decision' === cmd) {
+    if (cmd === 'log-decision') {
       process.stderr.write(
         'claude-tweaks: hooks.js has no \'log-decision\' subcommand — did you mean the separate '
         + `bin/log-decision.js CLI? Run: node "${pluginRoot()}/bin/log-decision.js" --run <dir> --status <status> --reversibility <level> --text "..."\n`,
       );
       return 1;
     }
-    const known = [...Object.keys(USAGE), ...EVENTS];
     if (!cmd) {
-      process.stderr.write(`claude-tweaks: no hooks.js subcommand given — known subcommands: ${known.join(', ')}\n`);
+      process.stderr.write('claude-tweaks: no hooks.js subcommand given\n');
+      process.stderr.write(usageText());
       return 1;
     }
-    const suggestion = closestVerb(cmd, known);
-    const hint = suggestion ? ` — did you mean '${suggestion}'?` : ` — known subcommands: ${known.join(', ')}`;
+    const suggestion = closestVerb(cmd, [...Object.keys(USAGE), ...EVENTS]);
+    const hint = suggestion ? ` — did you mean '${suggestion}'?` : '';
     process.stderr.write(`claude-tweaks: unrecognized hooks.js subcommand '${cmd}'${hint}\n`);
+    process.stderr.write(usageText());
     return 1;
   }
   const mod = loadModule(cmd);
@@ -1921,7 +1969,7 @@ if (require.main === module) {
   main(process.argv).then((code) => process.exit(code)).catch(() => process.exit(0));
 }
 
-// USAGE exported so tests/hooks-help-guard.test.js's table-driven suite
-// iterates the SAME verb list this dispatcher's --help/-h guard checks
-// membership against, rather than a second, driftable copy of it.
-module.exports = { main, BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, USAGE };
+// VERBS and its derived USAGE exported so tests/hooks-help-guard.test.js's
+// table-driven suite iterates the SAME verb table this dispatcher's --help/-h
+// guard and dispatch use, rather than a second, driftable copy of it.
+module.exports = { main, BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, USAGE, VERBS };

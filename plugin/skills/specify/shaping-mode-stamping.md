@@ -113,12 +113,20 @@ promoted via /specify — {date}\n\n` to it, write the result to this run's sess
 (`_shared/session-tmp-root.md`), and edit the comment in place — the identical
 `updateIssueComment` GraphQL mutation `_shared/pr-run-comments.md`'s Post-or-update procedure Step
 2 uses for PR comments, applied here to an issue comment's node ID instead of a PR's (same
-`IssueComment` type, same mutation shape):
+`IssueComment` type, same mutation shape). The worktree guard refuses that mutation inline, and a
+`gh` argument held in a runtime variable (`_shared/scratch-worktree.md` §7), so both files go by
+literal path. This prints the two session-scoped paths, one `NAME="path"` line each:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" "NEEDS_DECISION_RESOLVED_BODY=needs-decision-resolved-{n}-{found-id}.md")"
-gh api graphql -f query='mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}' \
-  -f id="{found-id}" -F body=@"$NEEDS_DECISION_RESOLVED_BODY"
+node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" BODY="needs-decision-resolved-{n}-{found-id}.md" QUERY=update-issue-comment.graphql
+```
+
+Write the resolved body to `BODY`'s path and
+`mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}`
+to `QUERY`'s, each with the `Write` tool, then pass them as `{body-file}` and `{query-file}`:
+
+```bash
+gh api graphql -F query=@"{query-file}" -f id="{found-id}" -F body=@"{body-file}"
 ```
 
 Do this for every unresolved comment found — a record refused by both `backlog-refine` and
@@ -200,7 +208,7 @@ One further flag is keyed to the **entry path**, not to any verdict: when this p
 ```bash
 node -e "const {writeRecord}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
   writeRecord(process.argv[1], { title: process.argv[2], body: process.argv[3], facets: JSON.parse(process.argv[4]) });
-" "$RECORD_PATH" "$TITLE" "$SHAPED_BODY" "$FACETS_JSON"
+" -- "$RECORD_PATH" "$TITLE" "$SHAPED_BODY" "$FACETS_JSON"
 ```
 
 then commit — a local record is a tracked file, unlike a GitHub issue edit. On a comma-list batch, commit **once per record**, immediately after that record's `writeRecord` — never leave some records written and uncommitted while the next one is being shaped:

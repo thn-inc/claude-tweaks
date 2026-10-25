@@ -55,20 +55,57 @@ test('the roster names the ten expected skip tags and the never-skipped floor (#
   }
 });
 
-test('every skill line pairing fast-lane with skip carries a roster tag or is a rostered non-skip mention (#1926 AC5)', () => {
-  const offenders = [];
+// Every skill line (outside the roster itself) that pairs fast-lane with skip — the population both sweeps judge.
+function fastLaneSkipLines() {
+  const out = [];
   for (const file of walk(SKILLS)) {
     if (file === ROSTER) continue;
     const rel = path.relative(SKILLS, file);
     readText(file).split('\n').forEach((line, i) => {
       const lower = line.toLowerCase();
-      if (!(lower.includes('fast-lane') && lower.includes('skip'))) return;
-      const tagged = skipTags.some((t) => line.includes(`roster tag \`${t}\``) || line.includes(`tag \`${t}\``));
-      const exempt = mentions.some((m) => rel === m.file && line.includes(m.contains));
-      if (!tagged && !exempt) offenders.push(`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`);
+      if (lower.includes('fast-lane') && lower.includes('skip')) out.push({ rel, line, n: i + 1 });
     });
   }
+  return out;
+}
+
+const citesTag = (line, t) => line.includes(`roster tag \`${t}\``) || line.includes(`tag \`${t}\``);
+
+// Reverse staleness: a Mentions row no live fast-lane skip line matches, or a skip tag no live line cites.
+function staleMentions(ms, skipLines) {
+  return ms.filter((m) => !skipLines.some((l) => l.rel === m.file && l.line.includes(m.contains))).map((m) => `${m.file} | ${m.contains}`);
+}
+
+function uncitedTags(tags, skipLines) {
+  return tags.filter((t) => !skipLines.some((l) => citesTag(l.line, t)));
+}
+
+test('every skill line pairing fast-lane with skip carries a roster tag or is a rostered non-skip mention (#1926 AC5)', () => {
+  const offenders = [];
+  for (const { rel, line, n } of fastLaneSkipLines()) {
+    const tagged = skipTags.some((t) => citesTag(line, t));
+    const exempt = mentions.some((m) => rel === m.file && line.includes(m.contains));
+    if (!tagged && !exempt) offenders.push(`${rel}:${n}: ${line.trim().slice(0, 100)}`);
+  }
   assert.deepStrictEqual(offenders, [], `unrostered fast-lane skip lines:\n${offenders.join('\n')}`);
+});
+
+test('every Mentions row still matches a live fast-lane skip line, and every skip tag is still cited by one (#4185 reverse staleness)', () => {
+  const skipLines = fastLaneSkipLines();
+  assert.ok(skipLines.length > 0, 'no fast-lane skip lines found — the sweep is vacuous');
+  assert.deepStrictEqual(staleMentions(mentions, skipLines), [], 'stale Mentions row(s) — prune them from the roster');
+  assert.deepStrictEqual(uncitedTags(skipTags, skipLines), [], 'skip tag(s) no live line cites — the roster row covers nothing');
+});
+
+test('go-red: the reverse checks report exactly a planted stale Mentions row and a planted uncited tag (#4185)', () => {
+  const skipLines = fastLaneSkipLines();
+  const realFile = mentions[0].file;
+  const planted = [
+    { file: realFile, contains: 'zzz-no-such-line-4185' }, // live file, text no line carries
+    { file: 'zzz/no-such-file-4185.md', contains: mentions[0].contains }, // live text, file no line is in
+  ];
+  assert.deepStrictEqual(staleMentions([...mentions, ...planted], skipLines), planted.map((m) => `${m.file} | ${m.contains}`));
+  assert.deepStrictEqual(uncitedTags([...skipTags, 'zzz-no-such-tag-4185'], skipLines), ['zzz-no-such-tag-4185']);
 });
 
 test('build/dispatch.md gates the single-task skip on all three conditions and carries the SKIP literal; flow rows carry fast-lane (#1926 AC3, AC4)', () => {

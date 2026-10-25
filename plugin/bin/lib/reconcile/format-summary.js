@@ -89,6 +89,20 @@ function formatOriginHeadRepairLine(originHeadRepair) {
   return `origin/HEAD repair: ${outcome}${reason ? ` (${reason})` : ''}`;
 }
 
+// #4180: a dry run's residue plan (index.js's `residuePlan`) — what escalation tracking WOULD have
+// done, since a dry run files and writes nothing. `would-resolve` counts with `would-clear`: both
+// drop the entry. Zero parts are omitted; a null/empty plan renders nothing.
+function formatResiduePlanLine(plan) {
+  if (!Array.isArray(plan) || plan.length === 0) return null;
+  const count = (...actions) => plan.filter((e) => actions.includes(e.action)).length;
+  const parts = [
+    [count('would-escalate'), 'would escalate'],
+    [count('would-track'), 'would track'],
+    [count('would-clear', 'would-resolve'), 'would clear'],
+  ].filter(([n]) => n > 0).map(([n, label]) => `${label} ${n}`);
+  return parts.length ? `residue (dry run): ${parts.join(', ')}` : null;
+}
+
 function formatConsoleReadyLine(console_) {
   const ready = console_ && console_.ready;
   if (!Array.isArray(ready) || ready.length === 0) return null;
@@ -190,6 +204,9 @@ function formatSummary(result) {
     const taken = scopedEntries(cat, arr).filter((e) => cat.takenActions.includes(e.action));
     if (taken.length) lines.push(`${cat.verb}: ${taken.length} ${pluralize(cat.unit, taken.length)}`);
   }
+
+  const residuePlanLine = formatResiduePlanLine(result.residuePlan);
+  if (residuePlanLine) lines.push(residuePlanLine);
 
   const consoleReadyLine = formatConsoleReadyLine(result.console);
   if (consoleReadyLine) lines.push(consoleReadyLine);

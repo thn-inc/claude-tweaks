@@ -9,6 +9,7 @@ files:
   - plugin/hooks/hooks.json
   - plugin/bin/friction-events.js
   - plugin/skills/reflect/full-mode.md
+  - plugin/bin/lib/reconcile/archive-merged.js
 ---
 
 # See an Ad-hoc Session's Friction at Wrap-up
@@ -51,7 +52,7 @@ files:
 - **URL:** `/claude-tweaks:wrap-up`, whose reflect Friction Lens runs `node plugin/bin/friction-events.js --run <wrap-up run dir>`
 - **Action:** the developer runs wrap-up after the worktree is gone. The CLI combines three sources: the wrap-up run's own events, ad-hoc dirs recorded against the current worktree path, and ad-hoc dirs owned by the current session id (`--session`, default `CLAUDE_CODE_SESSION_ID`). Each dir is read once. The worktree-path match is case-canonical (#3836): on a case-insensitive volume, a worktree path typed with different letter casing finds the same ad-hoc dirs as the on-disk spelling.
 - **Should feel:** an accurate reflection. The Friction Lens names the refusals the session actually hit, with the run dir each was logged in.
-- **Should understand:** the session-id match is what finds the dir once the worktree path no longer resolves. A dir bound to a still-live worktree is skipped, because session-id equality is not ownership: subagents share the id. There is one documented limit. If the session id changed between the friction and the wrap-up (for example, a resumed or account-switched session that got a new id), the earlier dir is found only by worktree path, so only from inside that still-live worktree.
+- **Should understand:** the session-id match is what finds the dir once the worktree path no longer resolves. A dir bound to a still-live worktree is skipped, because session-id equality is not ownership: subagents share the id. There is one documented limit. If the session id changed between the friction and the wrap-up (for example, a resumed or account-switched session that got a new id), the earlier dir is found only by worktree path, so only from inside that still-live worktree. Wrap-up reads an ad-hoc dir only while it is still live under `.claude-tweaks/pipelines/`. Both sweeps count from the dir's last write (its mtime), not from when the session ended. Reconcile archives a linked-worktree one once it has sat untouched for 30 days and its worktree is no longer registered (`adhoc-superseded`). It archives a main-checkout one once it has sat untouched for 7 days and its session reads dead (`adhoc-session-ended`, #4179). A wrap-up later than that reads nothing from it.
 - **Red flags:**
   - `friction-events.js` returns `[]` for a session that visibly hit refusals;
   - the output includes a sibling subagent's friction from a worktree that is still live.
@@ -63,3 +64,4 @@ files:
 - Updated during build of #3836: step 4's worktree-path lookup (`findRunsByWorktreePath`) compares case-canonical real paths
 - Updated during build of #3304: step 2's refusal text now lives in `plugin/bin/lib/hooks/harness-refusal.js`, and a Claude Code rewording surfaces as upstream drift (see `notice-a-reworded-isolation-refusal-3304.md`)
 - Updated during build of #3811: steps 1-2's porcelain worktree lookups now go through worktree-reap.js's shared `findWorktreeEntry`, so they match on Windows
+- Updated during build of #4179: step 4 names the read window that reconcile's two ad-hoc sweeps bound (`adhoc-superseded` for a linked worktree, `adhoc-session-ended` for the main checkout)

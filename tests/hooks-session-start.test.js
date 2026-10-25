@@ -684,6 +684,21 @@ test('SessionStart surfaces a prior background pass that failed, with its reason
   );
 });
 
+test('SessionStart surfaces a prior background pass\'s residue errors with the latest one (#4180)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(),
+    surfaced: false,
+    summary: { residueErrors: 2, lastResidueError: { op: 'resolve', error: 'gh down' } },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    out.json.hookSpecificOutput.additionalContext,
+    /background reconcile \(from a prior session\) — 2 residue error\(s\) \(last: resolve — gh down\)\./,
+  );
+});
+
 test('SessionStart renders a prior background pass\'s ledger-residue PR count and notable residue (#3812)', async () => {
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });

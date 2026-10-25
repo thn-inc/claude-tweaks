@@ -38,10 +38,9 @@ JS source — a value containing a quote character would otherwise break out of 
 the same reason `code-health/focus-mode.md`'s F1 block passes its own values that way.
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" \
-  BACKLOG_REFINE_TRUST=backlog-refine-trust.json \
-  TT_RECORDS=trust-table-records.json \
-  TT_GIT_LOG=trust-table-git-log.txt)"
+BACKLOG_REFINE_TRUST="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-trust.json)"
+TT_RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-records.json)"
+TT_COMMIT_LOG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value trust-table-git-log.txt)"
 node -e "
   const fs = require('fs');
   const root = '${CLAUDE_PLUGIN_ROOT}';
@@ -49,7 +48,7 @@ node -e "
   const { resolveProvenance } = require(root + '/bin/lib/issues/provenance.js');
   const { resolveCeiling } = require(root + '/bin/lib/issues/autonomy.js');
   const issues = require('$TT_RECORDS').map((i) => ({ ...i, labels: i.labels.map((l) => l.name) }));
-  const gitLog = parseGitLog(fs.readFileSync('$TT_GIT_LOG', 'utf8'));
+  const gitLog = parseGitLog(fs.readFileSync('$TT_COMMIT_LOG', 'utf8'));
   const policy = { 'trust-revert-window-days': process.argv[1] };
   const rows = new Map(trustRows(issues, gitLog, Date.now(), policy).map((r) => [r.key, r]));
   const ceiling = resolveCeiling({ policy: '{resolved-ceiling}' });

@@ -100,7 +100,7 @@ One free-text prompt listing every `nudge` row's question. An answered row is re
 **Processing order**, fixed:
 
 1. Every `absorb:#N`, in fragment order, each its own `Skill(skill: "claude-tweaks:capture", args: "<text> --route=absorb:N --source intake")` call.
-2. The `file` batch: write `{title, body}` entries to a session-scoped JSON file resolved via `eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" INTAKE_BATCH=intake-batch.json)"`, then one `Skill(skill: "claude-tweaks:capture", args: "--batch $INTAKE_BATCH --route=keep --source intake")` call for the whole batch.
+2. The `file` batch: write `{title, body}` entries to a session-scoped JSON file resolved via `INTAKE_BATCH="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value intake-batch.json)"`, then one `Skill(skill: "claude-tweaks:capture", args: "--batch $INTAKE_BATCH --route=keep --source intake")` call for the whole batch.
 3. Every `upstream` and `upstream:<owner/name>`, in fragment order, each its own `Skill(skill: "claude-tweaks:feedback", args: "<text>")` call — plus ` --upstream <owner/name>` for the parameterized form. `/claude-tweaks:feedback`'s own scrub gate applies to both; its confirm gate applies to `upstream` only, since the parameterized form publishes nothing to confirm. No pre-approved fast-path flag is used here.
 4. Every `remember`, via `_shared/learning-routing.md`'s D4 procedure, inline.
 

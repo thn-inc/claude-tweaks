@@ -435,6 +435,17 @@ When mechanizing a prose heuristic into a deterministic check:
     evidence, and throw on a lookup miss the caller's own precondition says cannot happen. Pin
     each with a fixture the pre-fix code fails (`tests/bin-lib/run-liveness/index.test.js`,
     `probes.test.js`).
+    The reverse holds for a new consumer of such a verdict: a probe whose subject is a resource
+    many runs share answers for all of them, so its positive evidence can hold every real input at
+    `unknown`, and a sweep that acts only on `dead` then never fires and reports nothing. #4179's
+    premise probe ran `runLiveness` over the 30 main-checkout ad-hoc dirs on disk and got 30/30
+    `unknown`, because the `worktree-lock` and `last-commit` probes read the main checkout every
+    session shares. `plugin/bin/lib/reconcile/archive-merged.js`'s `adHocSessionLiveness`
+    therefore forces the `pathType` probe to `missing`, after which 19 of the 30 read `dead`.
+    Before wiring a verdict to a destructive consumer, measure its distribution over real inputs,
+    neutralise each probe whose subject is not the consumer's subject, and pin the production
+    default with a real fixture as well as an injected stub (`tests/reconcile.test.js`'s
+    production-default liveness case).
 22. **A check that reads its input from an optional context argument owes a fail-closed answer
     when the row it gates is present and the context is not.** A pure decision function that
     takes `ctx = {}` and wraps a check in `if (ctx.x present)` reads "the caller passed nothing" as

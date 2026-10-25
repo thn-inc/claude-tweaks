@@ -109,8 +109,8 @@ test("item 9's green-check filter treats SKIPPED as non-blocking, not a failure 
 
   // Source-text substitution standing in for bash's own $VAR expansion — the
   // script closes over these as the session-scoped shell variables
-  // github-pr-scan.md's own `eval "$(session-tmp-resolve.js ...)"` line
-  // resolves (_shared/session-tmp-root.md), never literal paths, so running
+  // github-pr-scan.md's own `VAR="$(session-tmp-resolve.js --value ...)"` lines
+  // resolve (_shared/session-tmp-root.md), never literal paths, so running
   // it standalone here (outside that bash fence) requires substituting them
   // ourselves first.
   const isolatedScript = isolateItem9(filterScript, { candidatesPath, inputPath });

@@ -1,6 +1,6 @@
 ---
 name: code-health-focus-vertical
-description: Use when adding a `/code-health focus=<vertical>` candidate generator — every registration site, the import-source (`./source-scan`) and anchor rules, and the real-input fixtures it needs. Keywords - require order, focus vertical, registerGenerator, FOCUS_GENERATORS, criteria fragment.
+description: Use when adding a `/code-health focus=<vertical>` candidate generator — every registration site, the import-source (`./source-scan`) and anchor rules, and the real-input fixtures it needs; or adding a candidate `kind` to an existing vertical — the grep-derived site list across `plugin/` (generator header, criteria fragment, `/review` summary and pre-check). Keywords - require order, focus vertical, registerGenerator, FOCUS_GENERATORS, criteria fragment, kind extension, existing vertical, grep kind.
 ---
 
 # Code-health focus vertical
