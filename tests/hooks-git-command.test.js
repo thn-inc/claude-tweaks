@@ -846,6 +846,21 @@ test('AC2.4 #4281: an unquoted native path is never its typed target (bash reads
   assert.deepStrictEqual(gitTargets('git -C D:\\repo commit -m x', 'C:\\x', win), []);
 });
 
+test('#4281: a quoted or escaped final backslash is a literal character, and a stray one resolves under path.win32', () => {
+  // bash 3.2 and 5: 'D:\repo\wt\' and "D:\repo\wt\\" are D:\repo\wt\, '/r/a\' is /r/a\, and 'D:\' is D:\.
+  // A stray final `\` splits them: wt\ is wt (3.2) or wt\ (5), the same Windows path; D:\ is D: (3.2,
+  // the drive's cwd) or D:\ (5, its root), two paths, so it stays unprovable.
+  const remove = (command) => realPreToolUse.teardownTargets(
+    { input: { tool_name: 'Bash', tool_input: { command } }, cwd: 'D:\\repo' }, { pathImpl: path.win32 },
+  );
+  assert.deepStrictEqual(remove("git worktree remove 'D:\\repo\\wt\\'"), [{ path: 'D:\\repo\\wt', source: 'bash' }]);
+  assert.deepStrictEqual(remove('git worktree remove "D:\\repo\\wt\\\\"'), [{ path: 'D:\\repo\\wt', source: 'bash' }]);
+  assert.deepStrictEqual(remove('git worktree remove wt\\'), [{ path: 'D:\\repo\\wt', source: 'bash' }]);
+  assert.deepStrictEqual(remove('git worktree remove D:\\'), []);
+  assert.deepStrictEqual(gitTargets("cd 'D:\\' && git commit -m x", 'C:\\x', { pathImpl: path.win32 }), [{ action: 'commit', dir: 'D:\\' }]);
+  assert.deepStrictEqual(fileWriteTargets("tee '/r/a\\'", '/r'), [{ action: 'write', file: path.resolve('/r/a\\') }]);
+});
+
 test('#4281: a single-positional ln names its link with the injected path module\'s basename', () => {
   // bash 3.2 and 5: "D:\src\a.js" is the value D:\src\a.js; ln -s creates a.js in the cwd.
   assert.deepStrictEqual(fileWriteTargets('ln -s "D:\\src\\a.js"', 'D:\\repo', { pathImpl: path.win32 }), [{ action: 'link', file: 'D:\\repo\\a.js' }]);

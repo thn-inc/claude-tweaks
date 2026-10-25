@@ -446,13 +446,11 @@ const UNPROVABLE_FLAGS = ['--git-dir', '--work-tree'];
 
 // A cd/-C argument (its value, from tokenize) that is unresolvable to a concrete,
 // literal path: no argument, "-", starts with "~", contains "$"/backtick,
-// contains a double-quote, or ends in a backslash. The tokenizer above hands over
-// each word's value (#4281), so a backslash inside it is a literal path character
-// (`"D:\a\x"` names `D:\a\x`), but a double-quote still marks an escaped-quote
-// sequence this module does not trust as a literal path. A value that ENDS in `\`
-// is the stray-backslash case, a `\` with nothing left to escape (`cd /x\` at the
-// end of the command): bash 3.2 drops it and bash 5 keeps it, so its value is
-// unprovable — never claim an unprovable target. Also unresolvable: anything else that looks
+// contains a double-quote, or holds the STRAY marker (settleStrayBackslash). The tokenizer
+// above hands over each word's value (#4281), so a backslash inside it, a final one
+// included (`'D:\'`, `"a\\"`, `a\\`), is a literal path character (`"D:\a\x"` names
+// `D:\a\x`), but a double-quote still marks an escaped-quote sequence this module does
+// not trust as a literal path. Never claim an unprovable target. Also unresolvable: anything else that looks
 // like a FLAG (starts with "-", length > 1) — cd's own flags (-L, -P, -e, -@,
 // --) are not path arguments; without this, `cd -P /other-repo` would resolve
 // "-P" itself as a literal (almost certainly nonexistent) child directory of
@@ -465,9 +463,31 @@ function isUnresolvable(raw) {
     raw.startsWith('~') ||
     raw.includes('$') ||
     raw.includes('`') ||
-    raw.endsWith('\\') ||
+    raw.includes(STRAY) ||
     raw.includes('"')
   );
+}
+
+// #4281: a stray final backslash, an unquoted `\` with nothing left to escape (`cd /x\` at the end
+// of the command; tokenize gives it kind `x`), is the one place bash versions split: bash 3.2
+// drops it and bash 5 keeps it. Under a win32 pathImpl `a` and `a\` name the same path, so the
+// stray `\` is dropped and the word resolves; under POSIX they differ, and so does `D:\` on win32
+// (3.2: `D:`, the drive's cwd; 5: `D:\`, its root). Each of those keeps its length with its final
+// `\` replaced by STRAY, a NUL no bash word can hold, which isUnresolvable rejects. Returns the
+// word values and spanKinds to walk, new arrays only when one changed.
+const STRAY = '\0';
+function settleStrayBackslash(tokens, spanKinds, pathImpl) {
+  const last = tokens.length - 1;
+  if (last < 0 || !tokens[last].endsWith('\\') || !spanKinds[last].endsWith('x')) return { tokens, spanKinds };
+  const settled = tokens[last].slice(0, -1);
+  const sameUnderWin32 = pathImpl.sep === '\\' && !/^[A-Za-z]:$/.test(settled);
+  const t = tokens.slice();
+  const k = spanKinds.slice();
+  if (sameUnderWin32) {
+    t[last] = settled;
+    k[last] = k[last].slice(0, -1);
+  } else t[last] = settled + STRAY;
+  return { tokens: t, spanKinds: k };
 }
 
 function isAbsolutePlain(raw, pathImpl = path) {
@@ -617,7 +637,8 @@ function forEachCommandSegment(command, cwd, handler, opts) {
 // `nestAt`, the nesting state at each token's start): updates `vars`, calls `handler` for a
 // non-cd, non-assignment segment, and returns the effective cwd after it.
 function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
-  const { tokens: rawT, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds } = tok;
+  const { typed, singleQuoted, doubleQuoted, leadQuoted } = tok;
+  const { tokens: rawT, spanKinds } = settleStrayBackslash(tok.tokens, tok.spanKinds, pathImpl);
   if (!rawT.length) return effCwd;
   if (updateAssignment(vars, rawT, spanKinds[0])) return effCwd;
   const t = substituteVars(rawT, vars, singleQuoted, spanKinds);
@@ -2045,6 +2066,13 @@ function compoundBodyEnd(t, quoting) {
 // (compoundBodyEnd), so the scan starts after its closing word. The walk keeps an
 // arithmetic `((…))` command in one piece (groupEvents), so its `((` reaches here.
 function redirectWriteTargets(t, effCwd, quoting) {
+  const pathImpl = quoting && quoting.pathImpl;
+  return redirectRawTargets(t, quoting).map((raw) => resolveWriteTarget(effCwd, raw, pathImpl)).filter(Boolean);
+}
+
+// The redirection targets of one segment as values, before any cwd resolves them: the scan
+// above without its last step. bash-prefilter.js's hasFileRedirection reads them (#4281).
+function redirectRawTargets(t, quoting) {
   const out = [];
   const kindsOf = quoting && quoting.spanKinds;
   for (let i = compoundBodyEnd(t, quoting); i < t.length; i += 1) {
@@ -2071,8 +2099,7 @@ function redirectWriteTargets(t, effCwd, quoting) {
       rawTarget = t[i];
     }
     if (rawTarget === undefined || isFdDupTarget(rawTarget) || rawTarget.startsWith('(')) continue;
-    const file = resolveWriteTarget(effCwd, rawTarget, quoting && quoting.pathImpl);
-    if (file) out.push(file);
+    out.push(rawTarget);
   }
   return out;
 }
@@ -2375,7 +2402,7 @@ function mkdirTargets(command, cwd, opts) {
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, redirectRawTargets, stripHeredocBodies, forEachShellSegment,
   // The heredoc reader vocabularies, pinned against policy-schema-coverage.md's prose (#4149).
   DATA_READER_WORDS, READER_WRAPPER_WORDS, GIT_DATA_SUBCOMMANDS, INERT_NEIGHBOUR_WORDS,
 };

@@ -466,3 +466,14 @@ test('e2e #4028: a throwing normalizer exits 0 with no stdout on the skip path a
     assert.strictEqual(stdout, '', command);
   }
 });
+
+test('#4281: a drive-relative redirect is a hit whatever the placeholder cwd, so the prefilter stays a superset under path.win32', () => {
+  // bash 3.2 and 5: `echo x > D:x; echo y >> d:notes.md` write the files D:x and d:notes.md. Under path.win32,
+  // fileWriteTargets resolves each against a cwd on that drive (D:\repo\x, d:\repo\notes.md) and
+  // against no other, so the prefilter's '.' placeholder must not hide them.
+  const win = { pathImpl: path.win32 };
+  for (const command of ['echo x > D:x', 'echo x >> d:notes.md', 'echo x > D:\\repo\\x']) {
+    assert.strictEqual(hasFileRedirection(command, win), true, command);
+  }
+  assert.strictEqual(hasFileRedirection('echo x > /dev/null', win), false);
+});

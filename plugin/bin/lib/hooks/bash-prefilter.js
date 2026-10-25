@@ -32,7 +32,8 @@
 // by a raw substring test on `claude-tweaks:` with no JSON parse.
 'use strict';
 const fs = require('fs');
-const { GUARDED_PROGRAM_WORDS, forEachShellSegment, redirectWriteTargets } = require('./git-command');
+const path = require('path');
+const { GUARDED_PROGRAM_WORDS, forEachShellSegment, redirectRawTargets, resolveWriteTarget } = require('./git-command');
 const { REFUSAL_SIGNATURE } = require('./harness-refusal');
 
 // Both word sets come from git-command.js, where the parsers that key on these
@@ -63,20 +64,27 @@ const PARAM_REFERENCE = /\$\{?[A-Za-z_]/;
 // commandWords() to key on, so it needs its own check. It reuses the parser's
 // own redirectWriteTargets (git-command.js is already loaded) rather than a
 // second scanner, so the prefilter matches exactly what the parser resolves.
+// It must stay a superset of what fileWriteTargets can report under ANY real cwd.
 // The '.' cwd is a placeholder: it only anchors relative targets, which this
 // boolean never inspects, and the DEVNULL_LIKE/fd-dup/unresolvable exclusions
 // are cwd-independent — so `2>&1` and `> /dev/null` still take the skip path.
+// The one cwd-dependent rule is the win32 drive-relative one (#4281): `D:x`
+// resolves against a cwd on drive D: and is unprovable against any other, so a
+// value that names a drive is anchored at that drive's root instead of '.', and
+// counts whenever some cwd would resolve it. `pathImpl` (default `path`) is
+// injectable so a path.win32 pin runs on any host.
 // It walks the same forEachShellSegment as fileWriteTargets (#3989/#4149): the
 // outer text and every kept heredoc body chunk, so a `>` inside a body the parser
 // drops does not send a call down the full path, while one in a kept body does.
 // The glued shapes `echo foo>x` (#4015), `echo "hi">x` and `(ls)>out` (#4210) are
 // reached because the handler's `quoting` object, `spanKinds` included, is forwarded
 // to redirectWriteTargets.
-function hasFileRedirection(command) {
+function hasFileRedirection(command, { pathImpl = path } = {}) {
   let found = false;
+  const anchorFor = (raw) => (/^[A-Za-z]:/.test(raw) ? `${raw.slice(0, 2)}\\` : '.');
   forEachShellSegment(command, '.', (t, _cwd, quoting) => {
-    if (!found && redirectWriteTargets(t, '.', quoting).length) found = true;
-  });
+    if (!found && redirectRawTargets(t, quoting).some((raw) => resolveWriteTarget(anchorFor(raw), raw, pathImpl))) found = true;
+  }, { pathImpl });
   return found;
 }
 
