@@ -89,26 +89,40 @@ function evaluateRecordEligibility(issue, opts) {
   return { number: issue && issue.number, eligible: reasons.length === 0, reasons, keyFiles };
 }
 
+// Key File comparison form: `\` as `/`, no leading `./`, on both sides.
+function keyFileForm(p) {
+  return String(p).replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
 // Every changed non-test, non-pipeline-artifact path must be a Key File and
 // count toward implLines; the protected and merge-sensitive checks apply to
-// every changed path, tests included.
+// every changed path, tests included, and to a rename's oldPath. A missing or
+// non-finite maxLines (e.g. Number() of a malformed policy value) fails closed.
 function evaluateDiffBounds(files, opts) {
   const { keyFiles = [], sensitivePaths = [], maxLines } = opts || {};
-  const classified = classifyDiffFiles(files, sensitivePaths);
-  const keySet = new Set(keyFiles);
+  const inputs = files || [];
+  const classified = classifyDiffFiles(inputs, sensitivePaths);
+  const keySet = new Set(keyFiles.map(keyFileForm));
   const violations = [];
   let implLines = 0;
 
   if (classified.length === 0) violations.push('no changes');
-  for (const f of classified) {
+  classified.forEach((f, i) => {
     if (!f.isTest && !f.isPipelineArtifact) {
       implLines += f.additions + f.deletions;
-      if (!keySet.has(f.path)) violations.push(`outside Key Files: ${f.path}`);
+      if (!keySet.has(keyFileForm(f.path))) violations.push(`outside Key Files: ${f.path}`);
     }
     if (isProtectedPath(f.path)) violations.push(REASONS.protectedPath(f.path));
     if (f.isSensitive) violations.push(REASONS.sensitivePath(f.path));
-  }
-  if (implLines > maxLines) violations.push(`${implLines} implementation lines > ${maxLines}`);
+    // classifyDiffFiles drops oldPath, so it is read from the input entry.
+    const { oldPath } = inputs[i];
+    if (oldPath && oldPath !== f.path) {
+      if (isProtectedPath(oldPath)) violations.push(REASONS.protectedPath(oldPath));
+      if (isSensitivePath(oldPath, sensitivePaths)) violations.push(REASONS.sensitivePath(oldPath));
+    }
+  });
+  if (!Number.isFinite(maxLines)) violations.push(`invalid maxLines: ${maxLines}`);
+  else if (implLines > maxLines) violations.push(`${implLines} implementation lines > ${maxLines}`);
 
   return { withinBounds: violations.length === 0, violations, implLines, changedFiles: classified.map((f) => f.path) };
 }

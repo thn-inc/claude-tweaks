@@ -157,6 +157,27 @@ test('evaluateDiffBounds', async (t) => {
     assert.deepStrictEqual(evaluateDiffBounds([f(p, 1)], { ...BOUNDS, keyFiles: [p] }).violations, [`protected path: ${p}`]);
     assert.ok(evaluateDiffBounds([f(p, 1)], BOUNDS).violations.includes(`protected path: ${p}`));
   });
+  await t.test('a missing maxLines fails closed', () => {
+    const out = evaluateDiffBounds([f('CLAUDE.md', 1)], { keyFiles: ELIGIBLE_KEYS, sensitivePaths: [] });
+    assert.deepStrictEqual(out.violations, ['invalid maxLines: undefined']);
+    assert.strictEqual(out.withinBounds, false);
+  });
+  await t.test('a NaN maxLines fails closed', () => {
+    const out = evaluateDiffBounds([f('CLAUDE.md', 1)], { ...BOUNDS, maxLines: NaN });
+    assert.deepStrictEqual(out.violations, ['invalid maxLines: NaN']);
+    assert.strictEqual(out.withinBounds, false);
+  });
+  await t.test('a ./-prefixed Key File matches the bare diff path', () => {
+    const out = evaluateDiffBounds([f('a.md', 3)], { ...BOUNDS, keyFiles: ['./a.md'] });
+    assert.deepStrictEqual(out.violations, []);
+    assert.strictEqual(out.withinBounds, true);
+  });
+  await t.test('a rename checks oldPath against protected and merge-sensitive paths', () => {
+    const renamed = { path: 'CLAUDE.md', oldPath: '.github/workflows/ci.yml', additions: 1, deletions: 0 };
+    assert.deepStrictEqual(evaluateDiffBounds([renamed], BOUNDS).violations, ['protected path: .github/workflows/ci.yml']);
+    const fromDocs = { path: 'CLAUDE.md', oldPath: 'docs/old.md', additions: 1, deletions: 0 };
+    assert.deepStrictEqual(evaluateDiffBounds([fromDocs], { ...BOUNDS, sensitivePaths: ['docs/**'] }).violations, ['merge-sensitive path: docs/old.md']);
+  });
   await t.test('protected and merge-sensitive checks apply to test files too', () => {
     const out = evaluateDiffBounds([f('CLAUDE.md', 1), f('tests/hooks/a.test.js', 1)], { ...BOUNDS, sensitivePaths: ['tests/**'] });
     assert.deepStrictEqual(out.violations, ['protected path: tests/hooks/a.test.js', 'merge-sensitive path: tests/hooks/a.test.js']);
