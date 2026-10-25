@@ -52,6 +52,7 @@ const PINS = {
     { file: 'dispatch/SKILL.md', from: '### Step 3:', to: '### Step 4:', patterns: [[/Step 1's close-out still runs/, 'the zero-eligible stop still runs Step 1\'s close-out']] },
   ],
   init: { file: 'init/SKILL.md', from: '## Phase 9: Present Summary and Confirm', to: '## Important Notes', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/Stop here/, 'the Scope Gate stop is named']] },
+  'wrap-up': { file: 'wrap-up/SKILL.md', from: '### Establish the run directory (unconditional)', to: '### Diff-derived ceremony default', patterns: [P_STATEMENT, P_CLOSE, [/Stop and re-engage/, 'the resumable halt is the one exception'], [/`BLOCKED`/, 'a BLOCKED verdict still closes a created directory']] },
   tidy: { file: 'tidy/SKILL.md', from: '## Step 7.5: Verify Execution', to: '## Routine Configuration', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/--approve[\s\S]{0,300}archiv/, 'archival stays with --approve']] },
 };
 
