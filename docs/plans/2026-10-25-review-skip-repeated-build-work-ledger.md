@@ -2,3 +2,12 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD minor: producerLine hardcoded --status AUTO instead of parsing it from the region | fixed | d2838d0b1 (final-review fix wave F5: producerLine parses --status) |
+| 2 | build | SDD minor: review Step 5 SKIP log command pinned as prose only, never run through log-decision run() | accepted | The SKIP line is a degrade trace no machine reader parses; log-decision.js validates its flags at runtime, and the whole-branch review triaged it fine-to-defer |
+| 3 | build | SDD minor: Step 5 skip diff compared commits only, so uncommitted review fixes were invisible | fixed | d2838d0b1 (final-review fix wave F1: working-tree diff plus untracked files) |
+| 4 | build | SDD minor: lens 3i step 4 says "carries a line" where Step 5 says "the last line" | accepted | Any qualifying line suffices because the ancestry and diff guards bound it; the whole-branch review accepted it |
+| 5 | build | SDD parked: _shared/ceremony-profile.md "Never skipped" row still lists review Step 5 | observation | Ruling: roster unchanged — the new skip is redundancy-driven, not ceremony-driven, so the row stays true; tests/ceremony-profile-roster.test.js pins that table |
+| 6 | build | SDD parked: build Common Step 3 lead sentence says "files changed during this build session" while the new log-line gate requires the whole-branch scope | observation | Ruling: code stands — the gate is a condition (omit the line otherwise) and the scopes coincide in a single-session /flow build; worst case review re-simplifies (today's behavior) |
+| 7 | build | SDD parked: lens 3i SKIP trace is silent on the nothing-dropped case | observation | Ruling: code stands — with no dropped docs there is nothing to list, so no line is written |
+| 8 | build | SDD ruling — deferred minor 'Step 5 diff compares commits only' promoted to must-fix (F1): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
+| 9 | build | SDD ruling — scope-coverage Minor 4 folded into the build writer gate instead of filed: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
