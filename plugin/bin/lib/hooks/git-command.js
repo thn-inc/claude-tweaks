@@ -508,7 +508,11 @@ function substituteVars(tokens, vars, singleQuoted) {
   });
 }
 
-// Shared segment/token walk used by both gitTargets and fileWriteTargets:
+// The handler-only entry to the shared segment/token walk, kept for the callers
+// that pass a handler and nothing walk-specific: gitTargets (via
+// resolvedGitSegments), mkdirTargets, powershellOpaqueCommand and pre-tool-use.js's
+// teardownTargets. It delegates to forEachShellSegment, which fileWriteTargets and
+// bash-prefilter.js's hasFileRedirection call directly. The walk
 // splits the command into shell segments, tokenizes each, and tracks `cd` to
 // keep the effective cwd in sync. `handler(t, effCwd, quoting, again)` is
 // invoked for every non-cd, non-empty segment with the cwd value in effect for
