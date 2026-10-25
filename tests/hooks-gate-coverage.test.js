@@ -1774,6 +1774,55 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       const files = fileWriteTargets(distinct((i) => `{ cd /a${i}; }; `, 20) + 'cp a f.js', '/r').map((t) => t.file);
       assert.ok(files.includes(path.resolve('/r/f.js')) && !files.includes(path.resolve('/a0/f.js')), JSON.stringify(files));
     });
+    // #4303 (S50): the group whose `}` overflows the cap keeps its own cwd. With a sibling-layout
+    // worktree, bash 3.2 and 5 write M/s0/f.js for `cp a ../f.js` after `{ cd M/s0/deep; }`.
+    test('#4303 cwd cap: the group that overflows the cap keeps its own cwd', () => {
+      const cmd = distinct((i) => `{ cd /a${i}; }; `, 15) + '{ cd /main/s0/deep; }; cp a ../f.js';
+      const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
+      assert.ok(files.includes(path.resolve('/main/s0/f.js')), JSON.stringify(files));
+    });
+    // #4303 (S50): an and-or list that overflows the cap keeps the cwds of the command that
+    // overflowed it (the walk's `ok`, `fail` and list-end joins each name that command's cwds).
+    // Each row: bash 3.2 and 5 write M/s0/f.js (the main checkout).
+    for (const [label, cmd] of [
+      // every /aN present: each cd succeeds, the last one into M/s0/deep (the list-end join)
+      ['an && chain whose last cd overflows', distinct((i) => `cd /a${i + 1} && `, 16) + 'cd /main/s0/deep; cp a ../f.js'],
+      // no /aN present: each cd fails until the last (the `ok` join)
+      ['an || chain whose last cd overflows', distinct((i) => `cd /a${i + 1} || `, 16) + 'cd /main/s0/deep; cp a ../f.js'],
+      // every /aN present, /nope absent: the failed cd leaves the shell in M/s0/deep (the `fail` join)
+      ['an && chain whose overflowing command fails', distinct((i) => `cd /a${i + 1} && `, 15) + 'cd /main/s0/deep && cd /nope && true; cp a ../f.js'],
+      // every /bN present: the first cd succeeds and the rest are skipped; the overflowing `cd deep`
+      // also lands on M/s0/deep, a cwd the list already holds, and keeps it
+      ['an || list whose overflowing cd lands on a cwd it already holds', distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; cd /main/s0/deep || cd /z || cd deep; cp a ../f.js'],
+    ]) {
+      test(`#4303 cwd cap: ${label} keeps its cwd`, () => {
+        const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
+        assert.ok(files.includes(path.resolve('/main/s0/f.js')), JSON.stringify(files));
+      });
+    }
+    test('#4303 cwd cap: a set past the cap holds at most CWD_SET_CAP + 2 cwds', () => {
+      // The handler's fourth argument is true on every visit of a piece after the first, so the run
+      // length of visits is the piece's cwd count.
+      let most = 0;
+      let n = 0;
+      forEachShellSegment(distinct((i) => `{ cd /a${i}; }; `, 40) + 'true', '/r', (t, cwd, q, repeat) => {
+        n = repeat ? n + 1 : 1;
+        most = Math.max(most, n);
+      }, opts);
+      assert.ok(most <= 18, `${most} cwds`);
+    });
+    // The relative cd in each tail moves every cwd, so without the CAP + 2 fallback each tail adds
+    // two (418 cwds after 200 tails); with it the set stays within 18.
+    test('#4303 cwd cap: relative-cd tails after the collapse stay within CWD_SET_CAP + 2 cwds', () => {
+      let most = 0;
+      let n = 0;
+      const cmd = distinct((i) => `{ cd /a${i}; }; `, 15) + '{ cd s; }; ' + 'echo $(true; true) cd t; '.repeat(200) + 'true';
+      forEachShellSegment(cmd, '/r', (t, cwd, q, repeat) => {
+        n = repeat ? n + 1 : 1;
+        most = Math.max(most, n);
+      }, opts);
+      assert.ok(most <= 18, `${most} cwds`);
+    });
   }
   // #4149: a pass's nested scans share a step budget, so a shape whose "$( runs off the end from
   // every top-level span (each falls back to the plain quote end and the next one rescans the same

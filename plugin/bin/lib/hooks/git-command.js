@@ -1956,8 +1956,11 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // a cwd, and every later piece is visited once per cwd, so a command with many distinct `cd`
 // paths would be quadratic. Past the cap the set collapses, failing closed, to the caller's
 // `opts.overflowCwd` (a path, or a function returning one, called at most once; pre-tool-use passes
-// the main checkout, so a relative target resolves where the worktree gate denies it) together
-// with the walk's own starting cwd (where a worktree-local shadow is denied).
+// the main checkout, so a relative target resolves where the worktree gate denies it), the walk's
+// own starting cwd (where a worktree-local shadow is denied), and the cwds of the step that
+// overflowed it (#4303: the group or tail that just ended, or the command an and-or list just
+// ran), so that step's `cd` stays visible. When that step alone carries more than the cap, the
+// set is the overflow and starting cwds only, so it never holds more than CWD_SET_CAP + 2.
 const CWD_SET_CAP = 16; // four groups each with a relative cd already make 2^4 cwds
 function forEachShellSegment(command, cwd, handler, opts = {}) {
   const start = cwd || '.';
@@ -1972,10 +1975,15 @@ function forEachShellSegment(command, cwd, handler, opts = {}) {
   walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow);
 }
 
-// The union of two cwd lists, collapsed to `overflow()` past CWD_SET_CAP.
-function joinCwds(a, b, overflow) {
+// The union of two cwd lists. Past CWD_SET_CAP it collapses to `overflow()` plus `fresh`, the one
+// of the two that carries the cwds of the step being joined, or to `overflow()` alone when that
+// would hold more than CWD_SET_CAP + 2.
+function joinCwds(a, b, overflow, fresh = b) {
   const out = [...a, ...b.filter((c) => !a.includes(c))];
-  return out.length > CWD_SET_CAP ? overflow() : out;
+  if (out.length <= CWD_SET_CAP) return out;
+  const o = overflow();
+  const kept = [...o, ...fresh.filter((c) => !o.includes(c))];
+  return kept.length > CWD_SET_CAP + 2 ? o : kept;
 }
 
 function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
@@ -2002,8 +2010,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
       at = L.pipeStart; // the pipeline ran in subshells: one command, which changed no cwd
       L.pipeStart = null;
     }
-    const ok = joinCwds(at, L.skipOk, overflow);
-    const fail = joinCwds(L.spanStart, L.skipFail, overflow);
+    const ok = joinCwds(at, L.skipOk, overflow, at);
+    const fail = joinCwds(L.spanStart, L.skipFail, overflow, L.spanStart);
     let next;
     if (op === '&&') {
       next = ok;
@@ -2014,7 +2022,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
       L.skipOk = ok;
       L.skipFail = [];
     } else {
-      next = joinCwds(ok, L.skipFail, overflow);
+      next = joinCwds(ok, L.skipFail, overflow, ok);
       L.skipOk = [];
       L.skipFail = [];
       L.listStart = next;
