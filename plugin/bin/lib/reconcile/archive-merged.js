@@ -30,7 +30,6 @@ const { closeRunState } = require('../hooks/close-run-state');
 const { checkRunIntegrity, fallbackBranch, worktreeListStdout } = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
-const { unfiledCantTell } = require('../console/finding-outcomes');
 const { readRunResidue } = require('../console/residue');
 
 // Orphan case introduced by the dispatch/flow run-identity unification:
@@ -457,6 +456,9 @@ function archiveUnlessTiebreakGap(coverage) {
 // them). A spec dir's items are `spec-N/`-prefixed. A read failure fails closed.
 function unfiledCantTellFindings(runDir) {
   if (readTopLevelConsoleState(runDir) !== 'none' || !consoleReplacedByAutoMerge(runDir)) return [];
+  // Lazy: finding-outcomes loads console/resolve.js, which loads wrap-up/pack.js — reconcile/index.js
+  // must not pull pack.js at module load (#4060).
+  const { unfiledCantTell } = require('../console/finding-outcomes');
   const deps = {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
