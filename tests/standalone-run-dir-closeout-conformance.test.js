@@ -134,6 +134,11 @@ function assertNoUncovered(corpus, allowlistText) {
   assert.deepEqual(misses, [], `a standalone run-dir mint site or allowlisted skill is neither an enumerated minter nor a recorded exemption: ${JSON.stringify(misses)}`);
 }
 
+function assertNoExemptSkillMints(corpus) {
+  const mints = exemptSkillMints(derivedMintSites(corpus));
+  assert.deepEqual(mints, [], `an exempt non-minter skill has a standalone run-dir mint site: ${JSON.stringify(mints)}`);
+}
+
 const CORPUS = walkMarkdown(SKILLS);
 const ALLOWLIST_TEXT = readText(RUN_DIR_RESOLUTION);
 
@@ -145,7 +150,7 @@ test('AC1.1: the mint-site derivation finds the known sentinel sites', () => {
 });
 
 test('AC1.1: every derived mint site and allowlisted skill is an enumerated minter or a recorded exemption', () => {
-  assert.deepEqual(uncovered(derivedMintSites(CORPUS), allowlistSkills(ALLOWLIST_TEXT)), []);
+  assertNoUncovered(CORPUS, ALLOWLIST_TEXT);
 });
 
 test('AC1.1 go-red: an allowlisted name that is not an enumerated minter is reported uncovered', () => {
@@ -158,7 +163,7 @@ test('AC1.1 go-red: an allowlist parenthetical naming no skill is not a clean pa
 });
 
 test('AC1.1: an exempt non-minter has no mint site', () => {
-  assert.deepEqual(exemptSkillMints(derivedMintSites(CORPUS)), []);
+  assertNoExemptSkillMints(CORPUS);
 });
 
 test('AC1.1 go-red: a fake skill\'s mint line is reported uncovered', () => {
@@ -168,9 +173,7 @@ test('AC1.1 go-red: a fake skill\'s mint line is reported uncovered', () => {
 
 test('AC1.1 go-red: a mint line added to capture is reported', () => {
   const corpus = [...CORPUS, { file: 'capture/SKILL.md', text: 'node x/bin/hooks.js resolve-run-dir --standalone capture --create' }];
-  const mints = exemptSkillMints(derivedMintSites(corpus));
-  assert.equal(mints.length, 1);
-  assert.equal(mints[0].file, 'capture/SKILL.md');
+  assert.throws(() => assertNoExemptSkillMints(corpus), /capture\/SKILL\.md/);
 });
 
 test('AC1.1: run-dir-resolution.md step 4 states the every-exit close-out duty (with go-red)', () => {
