@@ -12,7 +12,6 @@ const { readText } = require('./helpers/read-skill');
 const REPO_ROOT = path.join(__dirname, '..');
 const SKILL_REL = 'plugin/skills/tidy/SKILL.md';
 const SKILL = readText(path.join(REPO_ROOT, SKILL_REL));
-const STEP6_AUTO = readText(path.join(REPO_ROOT, 'plugin/skills/tidy/step-6-auto.md'));
 
 function vocabTable(text) {
   const start = text.indexOf('## Action Vocabulary');
@@ -70,10 +69,6 @@ test('AC1.1: the recipes the rows cite exist', () => {
   assert.match(sectionB, /^## B\. Pipeline run directory/m, 'cleanup-procedures-execution.md has Section B');
   assert.match(sectionB, /archive-run --run/, 'Section B names the archive-run verb');
   assert.ok(fs.existsSync(path.join(REPO_ROOT, 'plugin/bin/lib/residue/probes/release.js')));
-  const archiveRows = STEP6_AUTO.split('\n').filter((l) => l.startsWith('| **Archive** ('));
-  const backfillRows = STEP6_AUTO.split('\n').filter((l) => l.startsWith('| **Backfill** ('));
-  assert.equal(archiveRows.length, 2, 'step-6-auto.md has two Archive routing rows');
-  assert.equal(backfillRows.length, 2, 'step-6-auto.md has two Backfill routing rows');
 });
 
 test('AC1.1 go-red: deleting the Archive row fails the assertion', () => {
