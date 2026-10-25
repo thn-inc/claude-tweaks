@@ -32,6 +32,7 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { withLock } = require('./lib/file-lock');
+const { lstatType } = require('./lib/path-guard');
 const { CONSOLE_LOCK } = require('./lib/console/item-resolution');
 const { readVerifyResults } = require('./lib/wrap-up/verify-results');
 
@@ -74,7 +75,7 @@ function parseArgs(argv) {
 function acknowledge(consolePath, at, { readFile, writeFile }) {
   // withLock creates a missing lock parent, so a console whose directory moved under a concurrent
   // archival must be refused before the lock, or the ack would recreate an empty directory.
-  if (!fs.existsSync(path.dirname(consolePath))) return { status: 'failed', message: 'console directory no longer exists' };
+  if (lstatType(path.dirname(consolePath)).type === 'missing') return { status: 'failed', message: 'console directory no longer exists' };
   return withLock(path.join(path.dirname(consolePath), CONSOLE_LOCK), () => {
     let parsed;
     try { parsed = JSON.parse(readFile(consolePath)); } catch { return { status: 'unparseable' }; }
