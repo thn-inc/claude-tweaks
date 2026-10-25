@@ -147,7 +147,8 @@ gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/{branch}"
 ```
 
 Never `git push origin --delete {branch}` — the no-`git push`-in-the-main-checkout rule stated at
-the top of `pr-first-merge.md` stands, and the worktree-always gate denies the push there anyway.
+the top of `pr-first-merge.md` stands, and `gh api` keeps this step off git entirely (the
+worktree-always gate has exempted a branch-delete push since #658, `git -C` form included since #3900).
 Never `gh pr merge --delete-branch` either: by the time this step runs the worktree is already
 gone, but the dedicated ref-delete call keeps this step decoupled from whichever merge command
 Step 3 actually ran — simpler to reason about than retrofitting `--delete-branch` onto Step 3's
