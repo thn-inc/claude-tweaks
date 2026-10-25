@@ -119,6 +119,25 @@ test('run-dir-only advance writes its line under ## /release in decisions.md', (
   });
 });
 
+test('a code move reads the bound through the real resolve-policy.js spawn → delta', () => {
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisions([step3Line(tip)]));
+    fs.writeFileSync(path.join(fx.other, 'fix.txt'), 'fix: y');
+    fx.run(fx.other, ['add', 'fix.txt']);
+    fx.run(fx.other, ['commit', '-q', '-m', 'fix: y']);
+    fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
+    const r = cli(argsFor(fx), { mainRoot: fx.work });
+    assert.strictEqual(r.code, 0, r.err);
+    const v = JSON.parse(r.out);
+    assert.strictEqual(v.verdict, 'delta', JSON.stringify(v));
+    assert.strictEqual(v.move, 1);
+    assert.strictEqual(v.bound, 2);
+    assert.strictEqual(v.source, 'default');
+    assert.strictEqual(v.commits, 1);
+  });
+});
+
 test('preMajor read from release-preflight.json', () => {
   withFixture((fx) => {
     const base = originTip(fx);
