@@ -4,9 +4,9 @@
 // still names an ancestor of HEAD with no in-scope source change since.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const { run } = require('../plugin/bin/log-decision');
 
@@ -15,6 +15,7 @@ const build = readText(path.join(SKILLS, 'build', 'SKILL.md'));
 const steps = readText(path.join(SKILLS, 'review', 'code-mode-steps.md'));
 const docsSync = readText(path.join(SKILLS, 'build', 'docs-sync.md'));
 const docsLensText = readText(path.join(SKILLS, 'review', 'step3-doc-freshness-lens.md'));
+const summaryTemplate = readText(path.join(SKILLS, 'review', 'review-summary-template.md'));
 
 // Both anchors must resolve; the end anchor is searched after the start so a
 // repeated end string elsewhere in the file cannot pull the slice wider.
@@ -81,7 +82,33 @@ function missing(region, facts) {
 
 const NOW = new Date(2026, 7, 16, 9, 5, 7).getTime();
 const DOC = 'plugin/skills/build/SKILL.md';
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function escapeRe(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Every fact in every region matches exactly once.
+function assertFactsMatchOnce(factsByRegion, regions) {
+  for (const [regionName, facts] of Object.entries(factsByRegion)) {
+    const region = regions[regionName];
+    assert.deepStrictEqual(missing(region, facts), [], `${regionName}: missing facts`);
+    for (const { name, re } of facts) {
+      assert.strictEqual(countMatches(region, re), 1, `${name}: expected exactly one match`);
+    }
+  }
+}
+
+// Stripping any one fact from its region makes missing() report exactly that fact.
+function assertStrippingReportsFact(factsByRegion, regions) {
+  for (const [regionName, facts] of Object.entries(factsByRegion)) {
+    const original = regions[regionName];
+    for (const { name, re } of facts) {
+      const mutated = original.replace(re, '');
+      assert.notEqual(mutated, original, `${name}: regex did not match its region`);
+      assert.deepStrictEqual(missing(mutated, facts), [name], name);
+    }
+  }
+}
 
 // The writer's log-decision.js command, run through log-decision's own run() against a
 // fixture laid out like tests/bin-lib/log-decision/cli.test.js's fixture()/deps(). Returns
@@ -133,24 +160,11 @@ function selectSha(decisionsText, regionText, doc) {
 }
 
 test('AC1.1: every simplify-pair fact matches exactly once in its region', () => {
-  for (const [regionName, facts] of Object.entries(FACTS)) {
-    const region = REGIONS[regionName];
-    assert.deepStrictEqual(missing(region, facts), [], `${regionName}: missing facts`);
-    for (const { name, re } of facts) {
-      assert.strictEqual(countMatches(region, re), 1, `${name}: expected exactly one match`);
-    }
-  }
+  assertFactsMatchOnce(FACTS, REGIONS);
 });
 
 test('AC1.1 go-red: stripping each fact reports exactly that fact', () => {
-  for (const [regionName, facts] of Object.entries(FACTS)) {
-    const original = REGIONS[regionName];
-    for (const { name, re } of facts) {
-      const mutated = original.replace(re, '');
-      assert.notEqual(mutated, original, `${name}: regex did not match its region`);
-      assert.deepStrictEqual(missing(mutated, facts), [name], name);
-    }
-  }
+  assertStrippingReportsFact(FACTS, REGIONS);
 });
 
 const SHA = 'a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0';
@@ -181,39 +195,23 @@ test('AC3.1 twin go-red: rewording the writer text or the reader selector breaks
 });
 
 test('AC2.1: every docs-pair fact matches exactly once in its region', () => {
-  for (const [regionName, facts] of Object.entries(DOCS_FACTS)) {
-    const region = DOCS_REGIONS[regionName];
-    assert.deepStrictEqual(missing(region, facts), [], `${regionName}: missing facts`);
-    for (const { name, re } of facts) {
-      assert.strictEqual(countMatches(region, re), 1, `${name}: expected exactly one match`);
-    }
-  }
+  assertFactsMatchOnce(DOCS_FACTS, DOCS_REGIONS);
 });
 
 test('AC2.1 go-red: stripping each docs-pair fact reports exactly that fact', () => {
-  for (const [regionName, facts] of Object.entries(DOCS_FACTS)) {
-    const original = DOCS_REGIONS[regionName];
-    for (const { name, re } of facts) {
-      const mutated = original.replace(re, '');
-      assert.notEqual(mutated, original, `${name}: regex did not match its region`);
-      assert.deepStrictEqual(missing(mutated, facts), [name], name);
-    }
-  }
+  assertStrippingReportsFact(DOCS_FACTS, DOCS_REGIONS);
 });
 
-const summaryTemplate = readText(path.join(SKILLS, 'review', 'review-summary-template.md'));
 const SUMMARY_FACTS = [
   { name: 'compact form', re: /Simplification \{none needed \| skipped — \/build simplified at \{sha\}\}/ },
   { name: 'section variants', re: /\{summary of simplifier changes, "No simplifications needed", or "skipped — \/build simplified at \{sha\}"\}/ },
 ];
 
 test('AC1.1: the review summary template offers the skipped-Step-5 wording in both forms', () => {
-  assert.deepStrictEqual(missing(summaryTemplate, SUMMARY_FACTS), []);
-  for (const { name, re } of SUMMARY_FACTS) {
-    assert.strictEqual(countMatches(summaryTemplate, re), 1, `${name}: expected exactly one match`);
-    const mutated = summaryTemplate.replace(re, '');
-    assert.deepStrictEqual(missing(mutated, SUMMARY_FACTS), [name], `go-red: ${name}`);
-  }
+  const factsByRegion = { summaryTemplate: SUMMARY_FACTS };
+  const regions = { summaryTemplate };
+  assertFactsMatchOnce(factsByRegion, regions);
+  assertStrippingReportsFact(factsByRegion, regions);
 });
 
 const DOC_PLUGIN = 'docs/plugin-structure.md';
