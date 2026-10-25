@@ -299,7 +299,8 @@ When mechanizing a prose heuristic into a deterministic check:
     `stripComments` blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `backfill-cli`, `exit-code`, `git-status-optional-locks`,
     `hooks-harness-refusal`, `path-containment`, `path-guard`, `porcelain-cwd-compare`,
-    `raw-markdown-read`, `staged-id-producers`, `wall-clock-budget` and `windows-hide-spawn`.
+    `raw-markdown-read`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
+    `windows-hide-spawn`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
     tree. It models regex literals (#3585); its residual
     ambiguity is a regex right after `)` or `}`, which it reads as division. In
