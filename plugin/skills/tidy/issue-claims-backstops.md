@@ -119,7 +119,7 @@ silently-skipped log write leaves no trace anywhere except an empty file:
 
 ```bash
 cd "{RUN_ROOT}" && find .claude-tweaks/pipelines -maxdepth 1 -type d -name "*-standalone" 2>/dev/null | while read -r RUN_DIR; do
-  STATUS=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync(process.argv[1]+'/run-state.json','utf8')).status)}catch(e){console.log('unknown')}" "$RUN_DIR")
+  STATUS=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync(process.argv[1]+'/run-state.json','utf8')).status)}catch(e){console.log('unknown')}" -- "$RUN_DIR")
   [ "$STATUS" = "clean" ] || continue
   SIZE=$(wc -c < "$RUN_DIR/decisions.md" 2>/dev/null || echo 0)
   [ "$SIZE" -eq 0 ] && echo "$RUN_DIR"

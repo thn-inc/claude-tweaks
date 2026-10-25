@@ -197,7 +197,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir
 `{YYYYMMDDTHHMMSS}` before running:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" UPSTREAM_DRAFT=feedback-upstream-draft-{YYYYMMDDTHHMMSS}.md)"
+UPSTREAM_DRAFT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value feedback-upstream-draft-{YYYYMMDDTHHMMSS}.md)"
 ```
 
 Write the scrubbed body to `$UPSTREAM_DRAFT` with the Write tool and report that absolute path. A

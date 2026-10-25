@@ -106,7 +106,7 @@ test('Review Focus 4: a pull with no strong pair rewrites a stale pairs file to 
 });
 
 test('AC8.2: the files map, the in-flight fetch fields and the reason list carry the wiring', () => {
-  assert.ok(QUEUE_PULL.includes("DISPATCH_NEAR_DUP_PAIRS: 'dispatch-near-dup-pairs.json'"));
+  assert.ok(QUEUE_PULL.includes('DISPATCH_NEAR_DUP_PAIRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-near-dup-pairs.json)"'));
   assert.ok(QUEUE_PULL.includes('gh issue list --label bot:in-progress --state open --json number,title,body,labels --limit 200'));
   const bullet = QUEUE_PULL.slice(QUEUE_PULL.indexOf("- `reason: 'neighbour-in-flight'`"));
   const text = bullet.slice(0, bullet.indexOf('\n'));

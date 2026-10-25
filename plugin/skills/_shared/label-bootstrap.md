@@ -11,7 +11,7 @@ Given a `LABELS` array of `[name, description, color]` triples. Resolve this run
 temp path first, per `_shared/session-tmp-root.md`:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" LABEL_BOOTSTRAP_PAYLOADS=label-bootstrap-payloads.json)"
+LABEL_BOOTSTRAP_PAYLOADS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value label-bootstrap-payloads.json)"
 node -e "
   const { ensureLabelPayload } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/labels.js');
   const labels = ${LABELS_JSON};

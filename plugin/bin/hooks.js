@@ -31,7 +31,15 @@ if (require.main === module) {
   try {
     EARLY = require('./lib/hooks/bash-prefilter').earlyGate(process.argv[2]);
   } catch { EARLY = null; }
-  if (EARLY && EARLY.skip) process.exit(0);
+  if (EARLY && EARLY.skip) {
+    // #4028: a skip may carry the guard normalizer's updatedInput. writeSync is
+    // synchronous, so the exit below cannot truncate it; a failed write is
+    // swallowed, leaving the plain silent skip.
+    if (EARLY.json) {
+      try { require('fs').writeSync(1, JSON.stringify(EARLY.json)); } catch { /* never breaks a session */ }
+    }
+    process.exit(0);
+  }
 }
 const fs = require('fs');
 const path = require('path');

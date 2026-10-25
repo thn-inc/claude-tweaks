@@ -81,7 +81,7 @@ function stripQuotes(s) {
 // only ever see the quoted portion in isolation, judge it fully resolvable, and
 // silently drop the unresolvable suffix that would otherwise poison the target.
 //
-// Returns `{ tokens, singleQuoted, doubleQuoted }` — `singleQuoted[i]` is true
+// Returns `{ tokens, singleQuoted, doubleQuoted, spanKinds }` — `singleQuoted[i]` is true
 // when any part of `tokens[i]` was assembled from a single-quoted span, and
 // `doubleQuoted[i]` likewise for a double-quoted span (#4015: the redirect scan
 // treats a `>` in either as literal text). Real bash never performs
@@ -91,29 +91,50 @@ function stripQuotes(s) {
 // `'$WT/a.js'` and `"$WT/a.js"` are indistinguishable post-tokenize, and the
 // substitution step would wrongly expand the single-quoted (never-expanded)
 // form, fabricating a target real bash would never produce for that command.
+//
+// `spanKinds[i]` (#4210) is a string exactly as long as `tokens[i]`, one character
+// per character of the token: `b` bare, `e` backslash-escaped (the `\` and the
+// character it escapes, in a bare span), `s` single-quoted, `d` double-quoted, `x`
+// stray (an unterminated quote character or a lone trailing backslash). Quote
+// delimiters are not part of the token, so they carry no mask character. The
+// per-token flags above say only THAT a span was quoted; the mask says WHERE, which
+// is what lets the glued-redirect scan accept `echo "hi">x` yet refuse `echo "a>b"`.
+// Two changes to the token regex make the mask truthful: a bare run now stops at a quote
+// (so `foo"bar"` is a bare span plus a double-quoted span, merged into one token as
+// bash does), and a double-quoted span is backslash-aware (`\"` does not close it,
+// and its value keeps the backslashes as typed).
 function tokenize(seg) {
   const out = [];
   const singleQuoted = [];
   const doubleQuoted = [];
-  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  const spanKinds = [];
+  const re = /"((?:[^"\\]|\\[\s\S])*)"|'([^']*)'|((?:\\[\s\S]|[^\s"'\\])+)|(\S)/g;
   let m;
   let prevEnd = -1;
   while ((m = re.exec(seg)) !== null) {
-    const val = m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3];
+    const val = m[1] ?? m[2] ?? m[3] ?? m[4];
     const isSQ = m[2] !== undefined;
     const isDQ = m[1] !== undefined;
+    const isBare = m[3] !== undefined;
+    let kinds;
+    if (isDQ) kinds = 'd'.repeat(val.length);
+    else if (isSQ) kinds = 's'.repeat(val.length);
+    else if (isBare) kinds = val.replace(/\\[\s\S]|[\s\S]/g, (u) => (u.length === 2 ? 'ee' : 'b'));
+    else kinds = 'x';
     if (out.length && m.index === prevEnd) {
       out[out.length - 1] += val;
+      spanKinds[spanKinds.length - 1] += kinds;
       if (isSQ) singleQuoted[singleQuoted.length - 1] = true;
       if (isDQ) doubleQuoted[doubleQuoted.length - 1] = true;
     } else {
       out.push(val);
+      spanKinds.push(kinds);
       singleQuoted.push(isSQ);
       doubleQuoted.push(isDQ);
     }
     prevEnd = re.lastIndex;
   }
-  return { tokens: out, singleQuoted, doubleQuoted };
+  return { tokens: out, singleQuoted, doubleQuoted, spanKinds };
 }
 
 // Global git flags that consume the NEXT token as a value.
@@ -124,14 +145,14 @@ const UNPROVABLE_FLAGS = ['--git-dir', '--work-tree'];
 // A raw (unquote-stripped) cd/-C argument that is unresolvable to a concrete,
 // literal path: no argument, "-", starts with "~", contains "$"/backtick, or
 // contains a backslash/double-quote. The last two guard against token-level
-// ambiguity: the regex tokenizer below is not escape-aware, so a value that
-// still carries a backslash or stray quote (from an escaped-quote sequence
-// upstream) cannot be trusted as a literal path — never claim an unprovable
-// target. Also unresolvable: anything else that looks like a FLAG (starts
-// with "-", length > 1) — cd's own flags (-L, -P, -e, -@, --) are not path
-// arguments; without this, `cd -P /other-repo` would resolve "-P" itself as
-// a literal (almost certainly nonexistent) child directory of the current
-// cwd instead of recognizing the real target is unprovable from here.
+// ambiguity: the tokenizer above is escape-aware, but it keeps backslashes in
+// the token text as typed, so a value that still carries a backslash or stray
+// quote (from an escaped-quote sequence) cannot be trusted as a literal path —
+// never claim an unprovable target. Also unresolvable: anything else that looks
+// like a FLAG (starts with "-", length > 1) — cd's own flags (-L, -P, -e, -@,
+// --) are not path arguments; without this, `cd -P /other-repo` would resolve
+// "-P" itself as a literal (almost certainly nonexistent) child directory of
+// the current cwd instead of recognizing the real target is unprovable from here.
 function isUnresolvable(raw) {
   return (
     raw === undefined ||
@@ -166,10 +187,11 @@ function resolveCd(effCwd, raw) {
 
 // Matches a segment that is exactly one token shaped like a simple literal
 // variable assignment: NAME=value / NAME="value" / NAME='value' (bash
-// permits no space around `=`, and this regex requires no space inside the
-// value either — a value containing an unescaped space tokenizes into more
-// than one token, which the length check in updateAssignment below excludes;
-// that's an accepted narrowing, not a bug). No `export`, no arrays:
+// permits no space around `=`). A quoted value may hold a space —
+// `NAME="a b"` is one token and is tracked — but an unquoted, unescaped space
+// (`NAME=a b`) tokenizes into more than one token, which the length check in
+// updateAssignment below excludes; that's an accepted narrowing, not a bug,
+// since bash reads it as an assignment prefix on command `b`. No `export`, no arrays:
 // `export SP=/x` tokenizes to two tokens (`export`, `SP=/x`) and fails the
 // length check before this regex ever runs, so `export` needs no separate
 // rejection.
@@ -211,20 +233,25 @@ const VAR_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
 // substituted value is a literal already proven not to contain `$` (by
 // updateAssignment's own isUnresolvable check at assignment time), so there
 // is nothing left to re-scan.
-function substituteVars(tokens, vars, singleQuoted) {
+function substituteVars(tokens, vars, singleQuoted, spanKinds) {
   if (!vars.size) return tokens;
   return tokens.map((tok, i) => {
     // Real bash never expands `$NAME` inside single quotes — a token built
     // from a single-quoted span is never a variable reference, regardless of
     // its text. Skip it untouched; it falls through to the existing
     // isUnresolvable()/null-target behavior unmodified (see tokenize()'s
-    // singleQuoted comment for why this guard exists).
-    if (singleQuoted && singleQuoted[i]) return tok;
+    // singleQuoted comment for why this guard exists). With the per-character
+    // span mask (#4210) the test is on the `$` itself, below, so `'hi'>$WT/x`
+    // still expands its bare `$WT`; without a mask, any single-quoted span skips.
+    const kinds = spanKinds && spanKinds[i];
+    if (!kinds && singleQuoted && singleQuoted[i]) return tok;
     if (!tok.includes('$') || tok.includes('`')) return tok;
     const matches = [...tok.matchAll(VAR_REF_RE)];
     if (matches.length !== 1) return tok;
     if ((tok.match(/\$/g) || []).length !== 1) return tok;
     const m = matches[0];
+    // A `$` inside single quotes, or backslash-escaped, is literal text.
+    if (kinds && (kinds[m.index] === 's' || kinds[m.index] === 'e')) return tok;
     const name = m[1] || m[2];
     if (!vars.has(name)) return tok;
     return tok.slice(0, m.index) + vars.get(name) + tok.slice(m.index + m[0].length);
@@ -235,8 +262,13 @@ function substituteVars(tokens, vars, singleQuoted) {
 // splits the command into shell segments, tokenizes each, and tracks `cd` to
 // keep the effective cwd in sync. `handler(t, effCwd, quoting)` is invoked for
 // every non-cd, non-empty segment with the cwd value in effect for it (string,
-// or null meaning UNKNOWN); `quoting` is `{ raw, singleQuoted, doubleQuoted }`,
-// the pre-substitution tokens and their per-token quote flags (#4015). Also
+// or null meaning UNKNOWN); `quoting` is `{ raw, singleQuoted, doubleQuoted, spanKinds, nestAt }`,
+// the pre-substitution tokens, their per-token quote flags (#4015), their
+// per-character span kinds (#4210, see tokenize), and the nesting state at each
+// token's start (#4210, see advanceNesting). The nesting state carries across
+// segments, every segment included (cd and assignment ones too): splitSegments cuts
+// at a `|`/`;`/newline inside an inner quote of `"$( … )"`, and the nested context
+// must survive that cut. Also
 // tracks same-command literal `NAME=value` assignments (see
 // updateAssignment/substituteVars above) and substitutes them into every other
 // segment's tokens before `handler`/the `cd` branch sees them — one shared
@@ -245,11 +277,17 @@ function substituteVars(tokens, vars, singleQuoted) {
 function forEachCommandSegment(command, cwd, handler) {
   let effCwd = cwd || '.'; // string, or null meaning UNKNOWN
   const vars = new Map(); // name -> literal value, same-command only, no chaining
+  let nest = NOT_NESTED;
   for (const seg of splitSegments(command)) {
-    const { tokens: rawT, singleQuoted, doubleQuoted } = tokenize(seg.trim());
+    const { tokens: rawT, singleQuoted, doubleQuoted, spanKinds } = tokenize(seg.trim());
+    const nestAt = rawT.map((tok, i) => {
+      const at = nest;
+      nest = advanceNesting(nest, tok, spanKinds[i], tok.length);
+      return at;
+    });
     if (!rawT.length) continue;
     if (updateAssignment(vars, rawT)) continue;
-    const t = substituteVars(rawT, vars, singleQuoted);
+    const t = substituteVars(rawT, vars, singleQuoted, spanKinds);
     // `FOO=1 cd /path` really does change the shell's cwd — a preceding
     // assignment on a regular (non-special) builtin like `cd` is scoped only
     // to that command's own execution environment, but `cd` has no
@@ -265,7 +303,7 @@ function forEachCommandSegment(command, cwd, handler) {
       effCwd = resolveCd(effCwd, t[cdLead + 1]);
       continue;
     }
-    handler(t, effCwd, { raw: rawT, singleQuoted, doubleQuoted });
+    handler(t, effCwd, { raw: rawT, singleQuoted, doubleQuoted, spanKinds, nestAt });
   }
 }
 
@@ -552,19 +590,104 @@ function isFdDupTarget(raw) {
 const REDIRECT_OP_RE = /^\d*(>>|>\||>)(.*)$/;
 const AMP_REDIRECT_OP_RE = /^&(>>|>)(.*)$/;
 
-// #4015: bash ends a word at an unquoted `>`, so `echo foo>x` redirects exactly
-// like `echo foo > x`. The prefix excludes quotes, backslash, `$` and backtick
-// because each can make the `>` literal or put it inside an expansion, and `(`
-// because an unquoted `(` inside a bare word is only arithmetic (`((i>0))`, where
-// `>` is a comparison), `$(`, `<(` or extglob syntax; ambiguity resolves to no
-// target. Used only on a token the start-anchored scan above did not match, and
-// only when the caller's quoting flags say the token was bare.
-const GLUED_REDIRECT_RE = /^[^"'\\$`>(]+(>>|>\||>)(.*)$/;
-
 function matchRedirectOperator(tok) {
   const m = REDIRECT_OP_RE.exec(tok) || AMP_REDIRECT_OP_RE.exec(tok);
   return m ? m[2] : null;
 }
+
+// One group: `(ls)`, `$(date)`, `<(b)` — no nesting, and no `$`, backtick, backslash, `<`, `>` or quote inside.
+// Fd digits may follow the `)` (`(ls)2>x` is a subshell with a `2>` redirect).
+const BALANCED_GROUP_RE = /^[$<]?\([^()\\$`<>"']*\)\d*$/;
+
+// #4015/#4210: bash ends a word at an unquoted `>`, so `echo foo>x` redirects exactly
+// like `echo foo > x`, and the word before it may hold quoted spans (`echo "hi">x`).
+// `kinds` is the token's per-character span mask (tokenize): only a BARE `>` is an
+// operator, so a `>` inside any quote or escaped stays literal. Returns the index just
+// past the glued operator in `raw`, or null when the token holds none.
+//
+// The prefix before the operator is accepted only when every character is quoted
+// (`s`/`d`), escaped (`e`: `foo\ bar>x` is the word `foo bar`), or bare and not `$`,
+// backtick or `(` — each of those can put the `>` inside an expansion, and an unquoted
+// `(` inside a bare word is only arithmetic (`((i>0))`, where `>` is a comparison),
+// `$(`, `<(` or extglob syntax. A stray character in the prefix rejects it; ambiguity
+// resolves to no target. A leading `>` (k === 0) is leadingRedirectOpEnd's case.
+//
+// The one exception is a prefix that is exactly one all-bare, un-nested group: it ends
+// at its `)`, so the `>` after it is a redirect (BALANCED_GROUP_RE).
+//
+// `nest` is the nesting state at the token's start (advanceNesting); a `>` reached
+// inside a nested context is quoted in bash, so it yields null.
+function gluedRedirectOpEnd(raw, kinds, nest) {
+  let k = 0;
+  while (k < raw.length && !(raw[k] === '>' && kinds[k] === 'b')) k += 1;
+  if (k === 0 || k === raw.length || isNested(advanceNesting(nest, raw, kinds, k))) return null;
+  let plain = true;
+  for (let j = 0; j < k; j += 1) {
+    const kind = kinds[j];
+    if (kind === 's' || kind === 'd' || kind === 'e') continue;
+    if (kind === 'b' && !'$`('.includes(raw[j])) continue;
+    plain = false;
+    break;
+  }
+  if (!plain && !(kinds.slice(0, k) === 'b'.repeat(k) && BALANCED_GROUP_RE.test(raw.slice(0, k)))) return null;
+  const second = raw[k + 1];
+  const twoChar = (second === '>' || second === '|') && kinds[k + 1] === 'b';
+  return k + (twoChar ? 2 : 1);
+}
+
+// #4210 F3: the start-anchored operator (`>`, `>>`, `>|`, `N>`, `&>`, `&>>`) read on the
+// token as typed. Every operator character, fd digits and `&` included, must be bare: a
+// quoted leading `>` (`echo ">x"`, `--body "> reply"`) is a word, and so is a `>` that a
+// `$VAR` expands to. Returns the index just past the operator, or null.
+function leadingRedirectOpEnd(raw, kinds, nest) {
+  if (isNested(nest)) return null;
+  let k = 0;
+  const amp = raw[0] === '&' && kinds[0] === 'b';
+  if (amp) k = 1;
+  else while (k < raw.length && raw[k] >= '0' && raw[k] <= '9' && kinds[k] === 'b') k += 1;
+  if (raw[k] !== '>' || kinds[k] !== 'b') return null;
+  const second = raw[k + 1];
+  const twoChar = (second === '>' || (second === '|' && !amp)) && kinds[k + 1] === 'b';
+  return k + (twoChar ? 2 : 1);
+}
+
+// #4210 F1: a `$(`, `${` or backtick inside double quotes opens a nested context, and a
+// `"` inside it starts a NEW quote that the tokenizer reads as closing the outer one —
+// so a `>` bash keeps quoted (`echo "$(jq ".a>1" f)"`) gets kind `b`. Only the `d`
+// characters are real shell syntax at that level, so the walk reads only them: `$(`/`${`
+// open, a backtick toggles, and once nested a `(`/`{` opens, a `)`/`}` closes and a `'`
+// starts a span whose parens are literal. A `\` skips the next `d` character.
+// `stack` holds one character per open level: `c` for `$(` or `(`, `g` for a bare `{`,
+// `p` for `${`. Inside a `${ … }` the `(`, `)`, `{` and `'` are literal word text
+// (`"${x:-(}"`, `"${x:-it's}"`), so only a `}` closes it.
+// Over-counting only leaves the state nested, which resolves no target.
+function advanceNesting(nest, raw, kinds, end) {
+  let { stack, tick, sq } = nest;
+  for (let j = 0; j < end; j += 1) {
+    if (kinds[j] !== 'd') continue;
+    const c = raw[j];
+    if (sq) { if (c === "'") sq = false; continue; }
+    if (c === '\\') { if (kinds[j + 1] === 'd') j += 1; continue; }
+    if (c === '`') tick = !tick;
+    else if (c === '$' && (raw[j + 1] === '(' || raw[j + 1] === '{') && kinds[j + 1] === 'd') {
+      stack += raw[j + 1] === '(' ? 'c' : 'p';
+      j += 1;
+    } else if (stack !== '' || tick) {
+      const inParam = stack.endsWith('p');
+      if (inParam) { if (c === '}') stack = stack.slice(0, -1); }
+      else if (c === "'") sq = true;
+      else if (stack !== '' && (c === '(' || c === '{')) stack += c === '(' ? 'c' : 'g';
+      else if (stack !== '' && (c === ')' || c === '}')) stack = stack.slice(0, -1);
+    }
+  }
+  return { stack, tick, sq };
+}
+
+function isNested(nest) {
+  return nest.stack !== '' || nest.tick || nest.sq;
+}
+
+const NOT_NESTED = Object.freeze({ stack: '', tick: false, sq: false });
 
 // #3989 heredoc-body stripping (see stripHeredocBodies below). Program words
 // that run their input as shell text:
@@ -730,6 +853,7 @@ function planHeredocBodies(str, start, pending, lineText) {
 function scanHeredocs(str) {
   const out = [];
   let quote = null;
+  const subs = []; // paren depth of each open `"$( … )"` substitution (#4210)
   let parenDepth = 0; // unclosed `((` on the current logical line
   let pending = []; // heredocs opened on the current logical line, in order
   let lineStart = 0;
@@ -742,6 +866,15 @@ function scanHeredocs(str) {
       i += 1;
     } else if (ch === '\\' && i + 1 < str.length) {
       out.push(ch, str[i + 1]);
+      i += 2;
+    } else if (quote === '"' && ch === '$' && str[i + 1] === '(' && str[i + 2] !== '(') {
+      // #4210: `"$( … )"` is a command-substitution context whose text is shell again, so
+      // a heredoc opened inside it (`"$(cat <<'EOF' … EOF\n)"`, the commit-message idiom)
+      // is found, and its body no longer reads as quotes. `subs` holds one paren depth per
+      // open substitution; the `)` that closes the last one returns to the double quote.
+      out.push('$(');
+      subs.push(1);
+      quote = null;
       i += 2;
     } else if (quote === '"') {
       out.push(ch);
@@ -778,6 +911,14 @@ function scanHeredocs(str) {
       parenDepth -= 1;
       out.push('))');
       i += 2;
+    } else if (subs.length > 0 && (ch === '(' || ch === ')')) {
+      subs[subs.length - 1] += ch === '(' ? 1 : -1;
+      if (subs[subs.length - 1] === 0) {
+        subs.pop();
+        quote = '"';
+      }
+      out.push(ch);
+      i += 1;
     } else if (ch === '<' && str[i + 1] === '<' && str[i + 2] === '<') {
       out.push('<<<'); // a here-string is never a heredoc
       i += 3;
@@ -825,11 +966,16 @@ function stripHeredocBodies(command) {
 // comparison (`[[ a>b ]]`, `(( x>y ))`), never a redirection, so the redirect scan
 // starts at the token after the closing word. 0 for any other segment; an
 // unterminated body (a glued closer such as `y))`) is skipped whole, which fails
-// open (#4015).
+// open (#4015). A compound command may follow a control keyword on the same
+// segment (`if (( x>y ))`, `while [[ a>b ]]`), so the keywords are skipped first.
+const COMPOUND_LEAD_WORDS = new Set(['if', 'elif', 'while', 'until', 'then', 'do', 'else', '!']);
+
 function compoundBodyEnd(t) {
-  const closer = t[0] === '[[' ? ']]' : t[0] === '((' ? '))' : null;
+  let lead = 0;
+  while (lead < t.length && COMPOUND_LEAD_WORDS.has(t[lead])) lead += 1;
+  const closer = t[lead] === '[[' ? ']]' : t[lead] === '((' ? '))' : null;
   if (closer === null) return 0;
-  const end = t.indexOf(closer);
+  const end = t.indexOf(closer, lead);
   return end === -1 ? t.length : end + 1;
 }
 
@@ -847,23 +993,40 @@ function compoundBodyEnd(t) {
 // fed to a shell keeps its redirects visible, because that text runs as shell
 // (see stripHeredocBodies for the carve-out).
 //
-// Glued-word redirects (#4015): given `quoting` (forEachCommandSegment's third
-// handler argument), a token the start-anchored scan misses (`foo>x`) is also
-// tried against GLUED_REDIRECT_RE. Eligibility is tested on the PRE-substitution
-// token and the unquoted flags, so a quoted or `$`-expanded `>` never counts;
-// the target is read from the post-substitution token, so `>$WT/x` still
-// resolves. Without `quoting` the scan is start-anchored only.
+// Span-aware scan (#4015, #4210): given `quoting.spanKinds` (forEachCommandSegment's
+// third handler argument), the operator is found on the PRE-substitution token and its
+// per-character span mask, so a quoted, escaped or `$`-expanded `>` never counts — at
+// the token's start (leadingRedirectOpEnd: `echo ">x"` is a word) or glued to a word
+// (gluedRedirectOpEnd: `foo>x`, `"hi">x`). The target is read from the
+// post-substitution token, so `>$WT/x` still resolves. A prefix that is one balanced
+// one-word group (`(ls)>out`, `$(date)>x`, `<(b)>out`) also qualifies; `((i>0))` does
+// not. `quoting.nestAt[i]` is the nesting state (advanceNesting) at token i's start,
+// carried across tokens and segments by forEachCommandSegment, so a `>` inside
+// `"$( … )"` stays quoted even after a token or segment break. Without
+// `quoting.spanKinds` the scan is start-anchored on the substituted token only.
 //
 // A `[[ … ]]` or `(( … ))` segment holds a comparison, not a redirection
 // (compoundBodyEnd), so the scan starts after its closing word.
 function redirectWriteTargets(t, effCwd, quoting) {
   const out = [];
+  const kindsOf = quoting && quoting.spanKinds;
   for (let i = compoundBodyEnd(t); i < t.length; i += 1) {
-    let rawTarget = matchRedirectOperator(t[i]);
-    if (rawTarget === null && quoting && !quoting.singleQuoted[i] && !quoting.doubleQuoted[i]
-      && GLUED_REDIRECT_RE.test(quoting.raw[i])) {
-      const glued = GLUED_REDIRECT_RE.exec(t[i]);
-      if (glued) rawTarget = glued[2];
+    let rawTarget = null;
+    if (!kindsOf) rawTarget = matchRedirectOperator(t[i]);
+    else {
+      const raw = quoting.raw[i];
+      const nest = quoting.nestAt ? quoting.nestAt[i] : NOT_NESTED;
+      let opEnd = leadingRedirectOpEnd(raw, kindsOf[i], nest);
+      if (opEnd === null) opEnd = gluedRedirectOpEnd(raw, kindsOf[i], nest);
+      if (opEnd !== null) {
+        // substituteVars rewrites at most one `$` reference per token, so exactly one
+        // side of the operator changed: read the target from whichever side survived.
+        const head = raw.slice(0, opEnd);
+        const tail = raw.slice(opEnd);
+        if (t[i] === raw) rawTarget = tail;
+        else if (t[i].startsWith(head)) rawTarget = t[i].slice(head.length);
+        else if (t[i].endsWith(tail)) rawTarget = tail;
+      }
     }
     if (rawTarget === null) continue;
     if (rawTarget === '') {

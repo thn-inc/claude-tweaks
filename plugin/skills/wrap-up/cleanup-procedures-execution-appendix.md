@@ -27,7 +27,13 @@ Anchoring section) live under the **main checkout**, so Section B step 4 can rel
 being there and removing a worktree cannot destroy it. Runs created *before* that hold their
 only copy of `config.yml`, `decisions.md`, `events.jsonl` and `staged/` inside the worktree,
 where step 4 deletes them permanently — there is no git history to recover from, the
-same shape as `[IL-46]`. Copy them out first, from inside the worktree:
+same shape as `[IL-46]`. Copy them out first, from inside the worktree. Resolve the worktree root
+as its own call first (the worktree guard refuses `git` inside `$(...)`,
+`_shared/scratch-worktree.md` §7) and paste what it prints for `{worktree-root}`:
+
+```bash
+git rev-parse --show-toplevel
+```
 
 ```bash
 # pwd -P on the WT/RUN_REAL sides: on macOS the same directory reaches you as
@@ -35,8 +41,8 @@ same shape as `[IL-46]`. Copy them out first, from inside the worktree:
 # never matches — the guard then looks like a clean no-op while the state it
 # exists to save is still inside the worktree. resolve-run-dir --root-only
 # already returns a realpath'd MAIN, so it needs no separate pwd -P here.
-WT=$(cd "$(git rev-parse --show-toplevel)" && pwd -P)
-MAIN=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only)
+WT=$(cd "{worktree-root}" && pwd -P)
+MAIN=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only) || exit 1
 RUN_REAL=$(cd "$RUN_DIR" 2>/dev/null && pwd -P)
 case "${RUN_REAL:+$RUN_REAL/}" in
   "$WT"/*)

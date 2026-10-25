@@ -47,14 +47,14 @@ re-derived regexes.
 
 ## Procedure
 
-0. **Capture the expected base** — before creating anything, record the commit the worktree should start from:
+0. **Capture the expected base** — before creating anything, record the commit the worktree should start from, as its own call; the sha it prints is `{EXPECTED_BASE}`, pasted literally where it is used:
    ```bash
-   EXPECTED_BASE=$(git rev-parse HEAD)
+   git rev-parse HEAD
    ```
    This is a cheap value capture only — no verification, no STOP. It exists solely to feed Step 4's `{EXPECTED_BASE}` merge; nothing here compares it against the worktree's actual base.
 1. **Pre-flight branch-divergence check** — resolve the `branch-divergence-check` setting: `BRANCH_DIVERGENCE_CHECK=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values branch-divergence-check)`.
 
-   **Skip when already stamped by `/flow` (re-read cut).** When this invocation received `MERGE_CHECK_PASSED=true UPSTREAM_SHA={sha}` from `/flow`'s Step 2.5 (per `flow/validation.md`'s "Memo stamp" note), resolve `$UPSTREAM` the same way `_shared/worktree-setup.md`'s `## Pre-flight divergence check` does and compare `git rev-parse "$UPSTREAM"` against the stamped `{sha}`. A match means `/flow` already ran this exact check moments ago in this same run — skip the fetch and the divergence prompt entirely, and proceed straight to Step 2. A mismatch (the ref moved since the stamp — rare, but possible under a slow Manifesto or materialize step) or a missing stamp (standalone `/claude-tweaks:build`, no `/flow` parent) runs the full check below — **fail-open, never fail-skip**: an absent or stale stamp is not a reason to skip the safety check, only a matching one is.
+   **Skip when already stamped by `/flow` (re-read cut).** When this invocation received `MERGE_CHECK_PASSED=true UPSTREAM_SHA={sha}` from `/flow`'s Step 2.5 (per `flow/validation.md`'s "Memo stamp" note), resolve `{UPSTREAM}` the same way `_shared/worktree-setup.md`'s `## Pre-flight divergence check` does and compare what `git rev-parse {UPSTREAM}` prints against the stamped `{sha}`. A match means `/flow` already ran this exact check moments ago in this same run — skip the fetch and the divergence prompt entirely, and proceed straight to Step 2. A mismatch (the ref moved since the stamp — rare, but possible under a slow Manifesto or materialize step) or a missing stamp (standalone `/claude-tweaks:build`, no `/flow` parent) runs the full check below — **fail-open, never fail-skip**: an absent or stale stamp is not a reason to skip the safety check, only a matching one is.
 
    Otherwise, run `_shared/worktree-setup.md`'s `## Pre-flight divergence check` in full — the same procedure `/flow`'s own Step 2.5 runs (`flow/validation.md`), consolidated into one canonical copy rather than two independently maintained ones.
 1.5. **Stale same-name branch check** (#767) — the branch/worktree name derived in "## Worktree
