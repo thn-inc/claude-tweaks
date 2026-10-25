@@ -48,6 +48,16 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   rather than overriding them: under `--dry-run` it does not fast-forward (`mirror` reports
   `skipped` / `dry-run` — a `mirror` the caller named behaves the same), and when the gh preflight fails it is dropped along with the check it
   served, since only a `mirror` the caller named survives the preflight narrowing.
+- **`--dry-run` writes nothing, with one deliberate exception (#4180).** A dry run skips the end-of-pass
+  cache writes, every GitHub write, the declined-learning store prune, the `origin/HEAD` repair, and a
+  run's `worktree-reap-skipped` event append; what residue tracking would have done comes back as
+  `residuePlan`. The shared `git fetch` still runs and still refreshes remote-tracking refs (and prunes
+  them under an explicit `--checks remote-prune`) — a preview over stale refs would be inaccurate, so
+  this is the one write a dry run keeps. A new check's dry-run branch must write nothing else. Reads
+  stay live: the `gh` preflight probe and the PR-state lookups still run, since a preview that did not
+  consult GitHub would report nothing true — so "writes nothing" means no writes, never "makes zero `gh`
+  calls" (#4180's AC1 states the zero-call bar over a fixture where the preflight is stubbed and only
+  the archive check runs).
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
   `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `archive`, `archive-branches`, `remote-prune`,
@@ -82,7 +92,7 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `tests/reconcile.test.js` pins that list to `ALL_CHECKS`.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, runs, branches,
-   remoteBranches, ledgerResidue, console, skipped, timings }`), substituted only when `reconcile()` itself
+   remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }`), substituted only when `reconcile()` itself
    throws. If the new check populates a new top-level result key, this literal needs that key
    added too — an omission here doesn't throw or fail a lint; it just silently under-reports on the
    one code path (a genuine throw inside `reconcile()`) that almost never runs in normal testing,
@@ -397,8 +407,9 @@ would retry on every pass (SessionStart's inline pass AND its detached backgroun
 no-remote path returns before reconcile ever stamps `lastRunAt`, so `skipIfFresh` never short-
 circuits it. The outcome is recorded on the result as `originHeadRepair` —
 `{outcome: 'repaired', branch}`, `{outcome: 'failed', reason}`, or `{outcome: 'skipped',
-reason: 'recent-failure'}` (any of the three degrades to the `no-remote` skip when re-resolving
-still finds nothing, never throws), or `{outcome: 'unresolved'}` when a 'repaired' attempt's
+reason: 'recent-failure' | 'dry-run'}` (`dry-run`: under `--dry-run` neither `set-head` nor the
+failure stamp is attempted, #4180; any of the three degrades to the `no-remote` skip when
+re-resolving still finds nothing, never throws), or `{outcome: 'unresolved'}` when a 'repaired' attempt's
 re-resolve still came up empty — and the key is absent when no repair was attempted (no `origin`
 remote, or the branch already resolved). A failed or skipped outcome also carries `branch` when
 the re-resolve it triggers finds one anyway (the concurrent-winner case). The repair lives in

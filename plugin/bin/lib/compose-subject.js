@@ -14,9 +14,12 @@
 // bin/lib/release/subject.js's composeSubject() output. Skill prose reaches
 // the composer only through this CLI — the pure module has no shell surface.
 //
-// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--out-dir <dir>] [--help]
+// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--help]
 // Numbers may be comma-joined and/or space-separated; the subject record is
 // the lowest number, and the body carries one `Fixes #n` line per number.
+// `--keep-open` (#4199) names numbers from that list the merge must not
+// close: each still counts for the subject, Type aggregation and Release
+// Note, but its body line is `Refs #n`. Without it the output is unchanged.
 // Output: JSON {"title","body"} by default; `--out-dir <dir>` instead writes
 // <dir>/title.txt, <dir>/body.md and <dir>/message.txt (= title, blank line,
 // body; no trailing newline on any of them), creating <dir> recursively, and
@@ -26,10 +29,10 @@
 // `--shell` (eval-able SUBJECT_TITLE=/SUBJECT_BODY= assignments) was retired
 // in #3537 after #3522 moved every fence to `--out-dir`.
 // Exit codes (Split-1/2, mirroring bin/resolve-blockers.js): 0 composed; 1
-// malformed invocation (including --range with --pr, or commit-scope-paths
-// set with neither) OR a policy misconfiguration (a malformed
-// commit-scope-paths entry, a commit-scope token composeSubject rejects) OR a
-// record that cannot be composed (no resolvable Type, `breaking` label with no
+// malformed invocation (including --range with --pr, commit-scope-paths set
+// with neither, or a --keep-open number missing from the positional list) OR a
+// policy misconfiguration (a malformed commit-scope-paths entry, a
+// commit-scope token composeSubject rejects) OR a record that cannot be composed (no resolvable Type, `breaking` label with no
 // ## Breaking Change section — the composer's own usage error, message on
 // stderr); 2 `gh` absent or owner/repo unresolvable (no --repo and no readable
 // origin remote); 3 an external read failed — a `gh issue view` call, the
@@ -67,7 +70,7 @@ const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
 const { readCommitScope, readListKey } = require('./policy');
 const { parseScopePaths, resolveCommitScope, CommitScopeError } = require('./commit-scope');
 
-const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--out-dir <dir>] [--help]\n';
+const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--help]\n';
 // Decision (#2319): kept at the single-call convention, not widened. Each
 // `gh issue view` call below fetches exactly one record — unlike
 // fetch-sub-issues.js's 30000ms bound, which covers a single batched
@@ -91,10 +94,21 @@ function errMessage(err) {
 }
 
 function parseArgs(argv) {
-  const opts = { numbers: [], repo: null, tag: null, scope: null, range: null, pr: null, outDir: null, help: false };
+  const opts = { numbers: [], repo: null, tag: null, scope: null, range: null, pr: null, keepOpen: [], outDir: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { opts.help = true; return opts; }
+    if (a === '--keep-open') {
+      const v = argv[i + 1];
+      if (v === undefined || v.startsWith('--')) return { error: `missing value for ${a}` };
+      for (const part of v.split(',')) {
+        const n = Number(part);
+        if (part.trim() === '' || !isPos(n)) return { error: `malformed --keep-open number: ${JSON.stringify(part)}` };
+        opts.keepOpen.push(n);
+      }
+      i++;
+      continue;
+    }
     if (a === '--repo' || a === '--tag' || a === '--scope' || a === '--range' || a === '--pr' || a === '--out-dir') {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) return { error: `missing value for ${a}` };
@@ -114,6 +128,9 @@ function parseArgs(argv) {
   if (opts.numbers.length === 0) return { error: 'missing <n> argument' };
   if (opts.range !== null && opts.pr !== null) return { error: '--range and --pr are mutually exclusive' };
   opts.numbers = [...new Set(opts.numbers)].sort((a, b) => a - b);
+  const unknown = opts.keepOpen.filter((n) => !opts.numbers.includes(n));
+  if (unknown.length) return { error: `--keep-open names #${unknown.join(', #')}, not in the record list` };
+  opts.keepOpen = [...new Set(opts.keepOpen)].sort((a, b) => a - b);
   return opts;
 }
 
@@ -362,6 +379,7 @@ function run(argv, deps = realDeps) {
       migrationNote,
       releaseNote,
       fixes: opts.numbers,
+      keepOpen: opts.keepOpen,
       tag: opts.tag,
       breakingRecords: breakingRecords.map((r) => r.number),
     });

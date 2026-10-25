@@ -88,8 +88,12 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
   const watch = section.slice(section.indexOf('DEADLINE='), section.indexOf('\n```', section.indexOf('DEADLINE=')));
   const zeroBranch = watch.slice(watch.indexOf('0)'), watch.indexOf('1)'));
   assert.ok(zeroBranch.includes('gh run list'), 'bounded-watch 0) branch must count head runs');
-  // Signature (e): PR #3390 is the captured partial-rollup incident.
-  assert.ok(section.includes('#3390') && section.includes('39042323352'), 'Signatures list missing the #3390 capture (run 39042323352)');
+  // Signature (e): PR #3390 is the captured partial-rollup incident. The Signatures list moved to
+  // the appendix (#4199, composed-bundle byte rail); the gate section must still point at it.
+  assert.ok(section.includes("`pr-first-merge-appendix.md`'s Signatures section"), 'gate section must point at the appendix Signatures');
+  const appendix = read('_shared', 'pr-first-merge-appendix.md');
+  const signatures = appendix.slice(appendix.indexOf('## Signatures'), appendix.indexOf('\n## ', appendix.indexOf('## Signatures') + 1));
+  assert.ok(signatures.includes('#3390') && signatures.includes('39042323352'), 'Signatures list missing the #3390 capture (run 39042323352)');
   // The resume confirmation's one read-then-decide classifies from both reads, not the rollup alone.
   const resume = section.slice(section.indexOf('**Resume-to-merge is one-shot.**'));
   assert.ok(resume.includes('gh run list') && resume.includes('not-yet-completed head run reads pending'), 'resume paragraph must classify from the head-run read too');

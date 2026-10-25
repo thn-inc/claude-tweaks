@@ -26,7 +26,7 @@ On successful completion of all steps (`wrap-up` in the step list):
 
 **Release status:** {the one-line human form from `_shared/pr-first-merge-post-merge.md` Step 4.1, verbatim — `already carried by {tag}` | `not yet in a release — bump pending` | `release status unavailable — {reason}` | `n/a — not merged in this run (outcome: {armed | pending-review})`}
 
-**Reconcile:** {one line from `node "{pluginRoot}/bin/hooks.js" reconcile-summary`, run once here and printed verbatim — `reconcile: {archived} archived, {stuck} stuck (oldest {age}), mirror ff {ok | declined — {reason} | anomaly — {state} | skipped — {reason} | failed — {reason} | n/a}`}
+**Reconcile:** {one line from `node "{pluginRoot}/bin/hooks.js" reconcile-summary`, run once here and printed verbatim — `reconcile: {archived} archived, {stuck} stuck (oldest {age}), mirror ff {ok | declined — {reason} | anomaly — {state} | skipped — {reason} | failed — {reason} | n/a}[, {n} residue error(s) (last: {op} — {reason})]` — the bracketed tail appears only when an escalate or resolve failure is recorded}
 
 ### Needs a human
 

@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { formatReconcileSummary, archivedCountFromRunsResult, humanAge, mirrorFfPart } = require('../../../plugin/bin/lib/reconcile/residue-summary');
-const { recordResidueFailure } = require('../../../plugin/bin/lib/reconcile/cache');
+const { recordResidueFailure, recordResidueError } = require('../../../plugin/bin/lib/reconcile/cache');
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-residue-summary-'));
@@ -63,4 +63,35 @@ test('formatReconcileSummary: oldest is the earliest firstFailedAt across every 
   recordResidueFailure(root, 'removal-failed', '/x/new', { now: now - 1 * 24 * 60 * 60 * 1000 });
   const line = formatReconcileSummary(root, { archivedCount: 0, mirror: null }, now);
   assert.equal(line, 'reconcile: 0 archived, 2 stuck (oldest 5d), mirror ff n/a');
+});
+
+test('#4180 formatReconcileSummary: names the latest residue error', () => {
+  const root = tmpRoot();
+  recordResidueFailure(root, 'move-failed', '/x/a', { now: 1 });
+  recordResidueFailure(root, 'move-failed', '/x/b', { now: 1 });
+  recordResidueError(root, 'move-failed', '/x/a', { op: 'escalate', error: 'older failure', now: 1 });
+  recordResidueError(root, 'move-failed', '/x/b', { op: 'resolve', error: 'HTTP 502', now: 2 });
+  const line = formatReconcileSummary(root, { archivedCount: 0, mirror: null }, 10_000_000);
+  assert.match(line, /^reconcile: 0 archived, 2 stuck \(oldest \d+[dhm]\), mirror ff n\/a, 2 residue error\(s\) \(last: resolve — HTTP 502\)$/);
+});
+
+test('#4180 formatReconcileSummary: an entry without lastResidueError adds nothing to the line', () => {
+  const root = tmpRoot();
+  recordResidueFailure(root, 'move-failed', '/x/a', { now: 1 });
+  const line = formatReconcileSummary(root, { archivedCount: 0, mirror: null }, 10_000_000);
+  assert.doesNotMatch(line, /residue error/);
+});
+
+test('#4180 latestResidueError: the newest entry as { op, error }; a prune failure (at: null) outranks any recorded at; empty is null', () => {
+  const { latestResidueError } = require('../../../plugin/bin/lib/reconcile/residue-summary');
+  assert.equal(latestResidueError([]), null);
+  assert.equal(latestResidueError(null), null);
+  assert.deepEqual(
+    latestResidueError([{ op: 'escalate', error: 'old', at: 1 }, { op: 'resolve', error: 'new', at: 9 }, { op: 'escalate', error: 'older', at: 5 }]),
+    { op: 'resolve', error: 'new' },
+  );
+  assert.deepEqual(
+    latestResidueError([{ op: 'escalate', error: 'recorded', at: 99 }, { op: 'resolve', error: 'this pass', at: null }]),
+    { op: 'resolve', error: 'this pass' },
+  );
 });

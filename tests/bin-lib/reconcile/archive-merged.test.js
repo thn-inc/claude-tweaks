@@ -2092,6 +2092,139 @@ test('#2724 trackStuckSkip: an exempted ad-hoc dir with no entry writes nothing 
   assert.equal(fs.existsSync(cachePath(root)), false);
 });
 
+test('#4180 trackStuckSkip: dryRun on a past-threshold stuck dir neither escalates nor writes, and returns would-escalate', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const stuckDir = mkDirWithMtime(STRUCTURALLY_STUCK_TTL_MS * 2);
+  const escalated = [];
+  const escalate = (a) => { escalated.push(a); };
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) trackStuckSkip(root, 'o/r', stuckDir, 'no-branch', { escalate });
+  assert.equal(escalated.length, 0);
+  const snapshot = listResidueFailures(root);
+  const before = fs.readFileSync(cachePath(root));
+  const plan = trackStuckSkip(root, 'o/r', stuckDir, 'no-branch', { escalate, dryRun: true });
+  assert.equal(escalated.length, 0);
+  assert.deepEqual(listResidueFailures(root), snapshot);
+  assert.deepEqual(fs.readFileSync(cachePath(root)), before);
+  assert.equal(plan.action, 'would-escalate');
+  assert.equal(plan.reason, 'structurally-stuck');
+  assert.equal(plan.path, stuckDir);
+});
+
+test('#4180 trackStuckSkip: dryRun on a dir that is not stuck returns undefined and writes nothing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const freshDir = mkDirWithMtime(0);
+  assert.equal(trackStuckSkip(root, 'o/r', freshDir, 'no-branch', { dryRun: true }), undefined);
+  assert.equal(fs.existsSync(cachePath(root)), false);
+});
+
+test('#4180 trackStuckSkip: dryRun on an exempted ad-hoc dir with an escalated entry returns would-resolve', () => {
+  const { root, dir } = mkAdHocRunDir({ ageMs: STRUCTURALLY_STUCK_TTL_MS * 2 });
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck at no-branch' });
+  const before = fs.readFileSync(cachePath(root));
+  const plan = trackStuckSkip(root, 'o/r', dir, 'no-branch', {
+    escalate: () => { throw new Error('must not escalate'); },
+    resolve: () => { throw new Error('must not resolve'); },
+    dryRun: true,
+  });
+  assert.deepEqual(plan, { action: 'would-resolve', reason: 'structurally-stuck', path: dir });
+  assert.deepEqual(fs.readFileSync(cachePath(root)), before);
+});
+
+test('#4180 trackStuckSkip: a real run still returns undefined', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const stuckDir = mkDirWithMtime(STRUCTURALLY_STUCK_TTL_MS * 2);
+  assert.equal(trackStuckSkip(root, 'o/r', stuckDir, 'no-branch', { escalate: () => {} }), undefined);
+});
+
+test('#4180 trackArchiveResult: dryRun on a move-failed result calls no escalate and writes nothing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', 'run-x');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) recordResidueFailure(root, 'move-failed', dir, { lastError: 'EBUSY' });
+  const before = fs.readFileSync(cachePath(root));
+  const escalated = [];
+  const plan = trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'move-failed', lastError: 'EBUSY' }, { escalate: (a) => { escalated.push(a); }, dryRun: true });
+  assert.equal(escalated.length, 0);
+  assert.deepEqual(fs.readFileSync(cachePath(root)), before);
+  assert.deepEqual(plan, { action: 'would-escalate', reason: 'move-failed', path: dir, count: RESIDUE_ESCALATE_THRESHOLD });
+});
+
+test('#4180 trackArchiveResult: dryRun on an ok result clears nothing and resolves nothing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', 'run-y');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    recordResidueFailure(root, 'move-failed', dir, { lastError: 'EBUSY' });
+    recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck' });
+  }
+  const before = fs.readFileSync(cachePath(root));
+  trackArchiveResult(root, 'o/r', dir, { ok: true }, { resolve: () => { throw new Error('must not resolve'); }, dryRun: true });
+  assert.deepEqual(fs.readFileSync(cachePath(root)), before);
+});
+
+// The real success path clears `structurally-stuck` (resolving an escalated record); a dry run
+// returns that clear as its plan instead of nothing.
+test('#4180 trackArchiveResult: dryRun on an ok result returns the structurally-stuck clear it would do', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', 'run-z');
+  assert.deepEqual(
+    trackArchiveResult(root, 'o/r', dir, { ok: true }, { dryRun: true }),
+    { action: 'none', reason: 'structurally-stuck', path: dir },
+  );
+  recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck', threshold: 5 });
+  assert.deepEqual(
+    trackArchiveResult(root, 'o/r', dir, { ok: true }, { dryRun: true }),
+    { action: 'would-clear', reason: 'structurally-stuck', path: dir },
+  );
+  recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck', threshold: 1 });
+  assert.deepEqual(
+    trackArchiveResult(root, 'o/r', dir, { ok: true }, { dryRun: true }),
+    { action: 'would-resolve', reason: 'structurally-stuck', path: dir },
+  );
+});
+
+function seedStuckDir4180(root, id) {
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: path.join(root, 'long-gone'), sessionId: 'sess-1' }));
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(dir, backdated, backdated);
+  return dir;
+}
+
+test('#4180 archiveMerged: a dry run over a past-threshold stuck dir returns its would-escalate plan, makes no runner call, and leaves the cache byte-identical', () => {
+  const root = fs.realpathSync(makeRepo());
+  const dir = seedStuckDir4180(root, '2026-01-01T000000-stuck-4180');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck at no-branch' });
+  const before = fs.readFileSync(cachePath(root));
+  const calls = [];
+  const result = archiveMerged({ cwd: root, dryRun: true, runner: (argv) => { calls.push(argv); throw new Error('no gh on a dry run'); } });
+  assert.deepEqual(calls, []);
+  assert.deepEqual(fs.readFileSync(cachePath(root)), before);
+  assert.deepEqual(result.residueErrors, []);
+  assert.deepEqual(result.residuePlan, [{ action: 'would-escalate', reason: 'structurally-stuck', path: dir, count: RESIDUE_ESCALATE_THRESHOLD }]);
+});
+
+test('#4180 archiveMerged: a dry run with nothing stuck returns an empty residuePlan array', () => {
+  const root = fs.realpathSync(makeRepo());
+  const result = archiveMerged({ cwd: root, dryRun: true });
+  assert.deepEqual(result.residuePlan, []);
+  assert.deepEqual(result.residueErrors, []);
+});
+
+test('#4180 archiveMerged: a real run returns residuePlan null and surfaces a failed prune resolve in residueErrors', () => {
+  const root = fs.realpathSync(makeRepo());
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  const gone = path.join(root, '.claude-tweaks', 'pipelines', 'gone-4180');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'move-failed', gone, { lastError: 'EBUSY' });
+  const result = archiveMerged({ cwd: root, runner: () => { throw new Error('gh down'); } });
+  assert.equal(result.residuePlan, null);
+  assert.equal(result.residueErrors.length, 1);
+  assert.equal(result.residueErrors[0].reason, 'move-failed');
+  assert.equal(result.residueErrors[0].path, gone);
+  assert.equal(result.residueErrors[0].op, 'resolve');
+  assert.equal(typeof result.residueErrors[0].error, 'string');
+});
+
 // One real archiveMerged() pass, well under the 3-pass escalation threshold
 // (so the real, non-injectable escalateResidue is never actually invoked) —
 // proves the trackStuckSkip wiring doesn't alter archiveMerged's own skip
