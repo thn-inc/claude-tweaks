@@ -804,6 +804,44 @@ test('dispatcher: AskUserQuestion with the Review Console header in an owned una
   assert.strictEqual(events.filter((e) => e.type === 'gate-denial' && e.gate === 'review-console-ask').length, 1);
 });
 
+// #4028 end-to-end: an assignment plus a $ reference takes the full handler, so the
+// guard normalizer's rewrite arrives through pre-tool-use.js's run() and
+// bin/hooks.js's main() — exit 0, updatedInput only, never a permissionDecision.
+test('dispatcher: a P=…; node $P/x.js call from a linked worktree gets updatedInput and no permissionDecision', () => {
+  const main = gitRepo();
+  execFileSync('git', ['-C', main, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  const wt = linkedWorktreeOf(main);
+  const result = runHook(['pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'P=/opt/x; node $P/x.js' }, session_id: 'sess-4028', cwd: wt }),
+    cwd: wt,
+  });
+  assert.strictEqual(result.code, 0);
+  const spec = JSON.parse(result.stdout).hookSpecificOutput;
+  assert.deepStrictEqual(spec, { hookEventName: 'PreToolUse', updatedInput: { command: 'P=/opt/x; node /opt/x/x.js' } });
+  assert.ok(!('permissionDecision' in spec));
+});
+
+// Review fix: guard-rewrite.js is required lazily, so a load-time fault in it
+// costs only the rewrite. Required at pre-tool-use.js's top level, the same
+// fault failed loadModule('pre-tool-use') and switched off every deny gate.
+test('dispatcher: when guard-rewrite.js throws at require time, deny gates still deny', () => {
+  const project = gitRepo();
+  writeWorktreeAlwaysPolicy(project);
+  const preload = path.join(HOOK_SANDBOX, 'guard-rewrite-require-throws.js');
+  fs.writeFileSync(preload, [
+    "const Module = require('module');",
+    'const load = Module._load;',
+    "Module._load = function (request, ...rest) { if (/guard-rewrite(\\.js)?$/.test(request)) throw new Error('guard-rewrite load fault'); return load.call(this, request, ...rest); };",
+    '',
+  ].join('\n'));
+  const stdout = execFileSync('node', ['--require', preload, HOOKS, 'pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: project }),
+    cwd: project, encoding: 'utf8',
+    env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
+  });
+  assert.strictEqual(JSON.parse(stdout).hookSpecificOutput.permissionDecision, 'deny');
+});
+
 test("hooks.json's PreToolUse Bash handler is unconditional and the prefilter covers git worktree", () => {
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = config.hooks.PreToolUse.find((e) => e.matcher === 'Bash');

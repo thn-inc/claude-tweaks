@@ -57,7 +57,7 @@ test('the post-or-update procedure finds by marker via GraphQL node id, never a 
 test('the find/update/create steps are host-qualified — --repo carries {host} and the GraphQL update passes --hostname (#2021)', () => {
   assert.match(COMMENTS, /gh repo view --json nameWithOwner,url/);
   assert.match(COMMENTS, /gh pr view \{pr-number\} --repo \{host\}\/\{owner\}\/\{repo\} --json comments/);
-  assert.match(COMMENTS, /gh api graphql --hostname \{host\} -f query=/);
+  assert.match(COMMENTS, /gh api graphql --hostname \{host\} -F query=@/);
   assert.match(COMMENTS, /gh pr comment \{pr-number\} --repo \{host\}\/\{owner\}\/\{repo\} --body-file/);
 });
 

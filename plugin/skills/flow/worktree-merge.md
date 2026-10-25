@@ -70,9 +70,8 @@ For each completed branch (in order):
 2. **Pre-merge checks, from the main checkout — nothing mutated.** Verify the main checkout is on `{base-branch}` — a concurrent session may have switched it underfoot (`[IL-05]`) — then compose the subject and predict the merge. For record-derived runs (any materialized file under `{run-dir}/work/` on the branch carries a `record:` field in its header — see `materialize.md`), the merge commit message carries the closing keywords — one line per issue (see "Close-via-merge" in `_shared/issue-claims.md`):
 
    ```bash
-   CURRENT=$(git branch --show-current)
-   if [ "$CURRENT" != "{base-branch}" ]; then
-     echo "Main checkout is on '$CURRENT', not '{base-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+   if ! git branch --show-current | grep -qxF '{base-branch}'; then
+     echo "Main checkout is not on '{base-branch}' — a concurrent session switched it. Abort, do not merge." >&2
      exit 1
    fi
    node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --range {base-branch}...{branch} --out-dir "{subject-dir}" || exit 1
@@ -97,9 +96,8 @@ For each completed branch (in order):
 4. **Merge, from the main checkout.** The guard repeats step 2's check as the race backstop:
 
    ```bash
-   CURRENT=$(git branch --show-current)
-   if [ "$CURRENT" != "{base-branch}" ]; then
-     echo "Main checkout is on '$CURRENT', not '{base-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+   if ! git branch --show-current | grep -qxF '{base-branch}'; then
+     echo "Main checkout is not on '{base-branch}' — a concurrent session switched it. Abort, do not merge." >&2
      exit 1
    fi
    git merge --no-ff {branch} -F "{subject-dir}/message.txt"
@@ -131,7 +129,7 @@ For each completed branch (in order):
      If `worktree-always: true` is set, don't resolve "Resolve now" directly in the main checkout — `Edit`/`Write` there is denied regardless of `close-run` (see above). Instead, provision a scratch worktree off `{base-branch}` per `_shared/scratch-worktree.md` §2 (native `EnterWorktree` when available, `git worktree add` under `.worktrees/` as the documented fallback only — never under `.claude/worktrees/`, that section's own ADR-0004 domain rule), re-run step 4's merge (`git merge --no-ff {branch} -F "{subject-dir}/message.txt"`) there, resolve and commit inside that worktree (a linked worktree, so both gates pass), verify, then fast-forward the main checkout to the result the same way `_shared/scratch-worktree.md` §5 does — verifying the branch in the same compound command so a concurrent session that switched it underfoot can't merge onto the wrong branch (`[IL-05]`; same shape as the precedent in `dispatch/settle-and-merge.md`'s local-merge fallback):
 
      ```bash
-     [ "$(git branch --show-current)" = "{base-branch}" ] && git merge --ff-only <sha>
+     git branch --show-current | grep -qxF '{base-branch}' && git merge --ff-only <sha>
      ```
 
      `<sha>` is the scratch worktree's HEAD after resolving and committing — resolve it there with `git rev-parse HEAD` and paste the literal value in (`_shared/scratch-worktree.md` §7). `git merge` itself is ungated and this fast-forward creates no new commit. Tear the scratch worktree down via `ExitWorktree` per that file's §6 — never a raw `git worktree remove`, which fails on the worktree's own live lock (`[IL-58]`); the same Teardown ordering invariant `wrap-up/cleanup-procedures-execution.md` Section C states for a run's own worktree applies here — removal is the last action against the scratch worktree, only after the fast-forward above has landed. This scratch-worktree ceremony is `local-merge`-only — the `pr-first` path above never needs it, since its own conflict path surfaces inside the run's own real worktree, not the main checkout.

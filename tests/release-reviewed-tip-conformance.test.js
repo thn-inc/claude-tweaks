@@ -49,7 +49,7 @@ function fenceContaining(executeText, needle, reviewedTip, tipSha) {
 
 // The fence that compares origin/{branch} with the reviewed tip.
 function comparisonFence(executeText, reviewedTip) {
-  return fenceContaining(executeText, 'rev-parse origin/{branch})" = "{reviewed-tip}"', reviewedTip);
+  return fenceContaining(executeText, "rev-parse origin/{branch} | grep -qxF '{reviewed-tip}'", reviewedTip);
 }
 
 // Runs body against a fresh fixture and always removes it afterwards.
@@ -144,7 +144,7 @@ test('AC1.2: go-red: dropping the compare clause lets the moved row exit 0', () 
   withFixture('release-reviewed-tip-nocompare-', (fx) => {
     const tip = reviewedTipOf(fx);
     const fence = comparisonFence(readText(EXECUTE), tip);
-    const clause = ` \\\n  && [ "$(git -C "$RUN_ROOT" rev-parse origin/${BRANCH})" = "${tip}" ]`;
+    const clause = ` \\\n  && git -C "$RUN_ROOT" rev-parse origin/${BRANCH} | grep -qxF '${tip}'`;
     assert.ok(fence.includes(clause), 'anchor text for the compare clause not found — proof cannot discriminate');
     const doctored = fence.replace(clause, '');
     assert.notEqual(doctored, fence, 'dropping the compare clause must change the fence');

@@ -74,7 +74,7 @@ read -r OWNER REPO <<< "$(gh repo view --json owner,name -q '.owner.login + " " 
 node -e "
   const { probeCapabilities } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/capabilities-probe.js');
   console.log(JSON.stringify(probeCapabilities({ owner: process.argv[1], repo: process.argv[2] })));
-" "$OWNER" "$REPO"
+" -- "$OWNER" "$REPO"
 ```
 
 Write the results to **two different files** — the two keys no longer share a home:

@@ -568,20 +568,34 @@ function parseExplicitIssueList(argString) {
 // computed groups (arrays of full issue objects), returns the deduplicated
 // groups containing at least one requested number, plus any requested
 // numbers found in none of them (not currently eligible — already claimed,
-// grant stripped, or never existed).
-function selectGroupsForExplicitList(requestedNumbers, groups) {
-  const requested = new Set(requestedNumbers);
-  const selectedGroups = [];
+// grant stripped, or never existed). selectedGroups are in named order: each
+// group sits at the earliest position any of its members holds in
+// requestedNumbers, ties keeping pool order (#4219). With batchSize (dispatch-
+// batch-size), only the first batchSize ordered groups are selected and the
+// requested numbers in the rest come back as deferredByCap, in requested order.
+function selectGroupsForExplicitList(requestedNumbers, groups, batchSize) {
+  if (batchSize !== undefined && !(Number.isInteger(batchSize) && batchSize > 0)) {
+    throw new TypeError(`batchSize must be a positive integer, got ${batchSize}`);
+  }
+  const position = new Map();
+  requestedNumbers.forEach((n, i) => { if (!position.has(n)) position.set(n, i); });
+  const matched = [];
   const foundNumbers = new Set();
   for (const group of groups) {
     const groupNumbers = group.map((issue) => issue.number);
-    if (groupNumbers.some((n) => requested.has(n))) {
-      selectedGroups.push(group);
+    const ranks = groupNumbers.filter((n) => position.has(n)).map((n) => position.get(n));
+    if (ranks.length > 0) {
+      matched.push({ group, rank: Math.min(...ranks) });
       groupNumbers.forEach((n) => foundNumbers.add(n));
     }
   }
+  matched.sort((a, b) => a.rank - b.rank); // Array#sort is stable: ties keep pool order
+  const ordered = matched.map((m) => m.group);
+  const selectedGroups = batchSize === undefined ? ordered : ordered.slice(0, batchSize);
+  const deferred = new Set(ordered.slice(selectedGroups.length).flatMap((group) => group.map((issue) => issue.number)));
+  const deferredByCap = [...position.keys()].filter((n) => deferred.has(n));
   const notFound = requestedNumbers.filter((n) => !foundNumbers.has(n));
-  return { selectedGroups, notFound };
+  return { selectedGroups, deferredByCap, notFound };
 }
 
 module.exports = { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, hasOrigin, detectCrossPRFileOverlap, CROSS_PR_HUB_MIN_COUNT, CROSS_PR_HUB_FRACTION, directOverlaps, findInFlightNeighbours, buildDispatchGroups };

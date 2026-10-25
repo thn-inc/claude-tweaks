@@ -116,14 +116,20 @@ Present a summary. The `Collapse outcome` line below renders in every decomposit
 **Resolving a `### Staged for caller` row.** Decide the resolution (an `AskUserQuestion` call or your own judgment), then apply it with `bin/resolve-ambiguity.js`, one row at a time, since each row re-fetches the body the previous one wrote. `{n}` below is the bare issue number: `#{n}` would start a bash comment.
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RA_BODY=resolve-ambiguity-body.txt RA_MARKER=resolve-ambiguity-marker.txt RA_RESOLUTION=resolve-ambiguity-resolution.txt RA_OUT=resolve-ambiguity-out.txt)"
+RA_BODY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value resolve-ambiguity-body.txt)"
+RA_MARKER="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value resolve-ambiguity-marker.txt)"
+RA_RESOLUTION="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value resolve-ambiguity-resolution.txt)"
+RA_OUT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value resolve-ambiguity-out.txt)"
 gh issue view {n} --json body -q .body > "$RA_BODY" && echo "$RA_MARKER $RA_RESOLUTION"
 ```
 
 Write the row's Flagged text to `$RA_MARKER` and your resolution to `$RA_RESOLUTION` with the Write tool, never through the shell, because record text carries backticks, `$` and quotes a shell would run or rewrite. For an Open Questions row, first fold its answer into the right section of `$RA_BODY`, then use an empty resolution file: that deletes the row, and the section goes with its last row. Then apply and write back:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RA_BODY=resolve-ambiguity-body.txt RA_MARKER=resolve-ambiguity-marker.txt RA_RESOLUTION=resolve-ambiguity-resolution.txt RA_OUT=resolve-ambiguity-out.txt)"
+RA_BODY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value resolve-ambiguity-body.txt)"
+RA_MARKER="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value resolve-ambiguity-marker.txt)"
+RA_RESOLUTION="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value resolve-ambiguity-resolution.txt)"
+RA_OUT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value resolve-ambiguity-out.txt)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-ambiguity.js" "$RA_BODY" --marker-file "$RA_MARKER" --resolution-file "$RA_RESOLUTION" --out "$RA_OUT" && gh issue edit {n} --body-file "$RA_OUT"
 ```
 
