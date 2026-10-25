@@ -10,3 +10,5 @@
 | 6 | build | new test's fixture git() helper inherits process env — a suite launched under a GIT_DIR-exporting hook would affect the fixture itself | deferred | — |
 | 7 | build | archive-linked-wt temp dirs not cleaned up (matches sibling suites) | deferred | — |
 | 8 | build | tests/sweep-stray-run-dirs.test.js has no GIT_DIR-set case proving hasTrackedWork's pin (re-review out-of-scope gap) | deferred | — |
+| 9 | build | Architecture alignment deviation 1 (Update the spec): #4178's Current State / Deliverable 1 premise was disproven, and no archival commit site takes `root` from cwd. A comment on #4178 recording the corrected mechanism is staged for the Review Console (staged/build-deviation-2.md). | open | — |
+| 10 | build/skill | `gh-api-module-pattern`'s env-carried-git rule names only `stack-check.js`'s `gitEnv`, which also switches config off. This build adds `hooks/git-exec.js`'s `repoPinnedEnv()` for a `git -C <root>` caller that must keep the user's config (a commit needs user.name/email) but drop the four repo-locating vars. The skill should name it as the pick when config must survive (extends the pattern). | open | — |
