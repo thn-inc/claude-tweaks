@@ -129,6 +129,12 @@ Expected: PASS, 0 failures (drop any path that does not exist from the list; ver
 
 - [ ] **Step 6: Commit** — message `Add runGit raw option for -z readers — refs #3900`.
 
+## As-built addendum (whole-branch review fix wave, e232e852a)
+
+- Beyond Task 3, `tests/git-path-read-conformance.test.js` gained `findUnrawRunGitZ` (fixture, live-corpus and go-red tests): every `plugin/bin` line calling `runGit(`/`runGitAsync(` with `'-z'` must also carry `raw: true`, so Deliverable 3 cannot silently regress. `_shared/git-path-read.md`'s "Pinned by" names the rule.
+- Tests this branch added carry a `#3900 ` name prefix (their `AC*` ids are spec-local and collided with an unrelated `AC2.1:` in `tests/hooks-pre-tool-use.test.js`).
+- One more Task 1 behavior case: the `-C` exemption holds when cwd is an unrelated non-repo directory.
+
 ## Spec coverage map
 
 | Spec item | Task |
