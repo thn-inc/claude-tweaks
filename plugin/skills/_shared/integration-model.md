@@ -46,7 +46,7 @@ Populated as each pr-first sub-issue lands; a consumer citing this file *and* ro
 |---|---|
 | `/claude-tweaks:init` (Step 20 — `bootstrap/step-20-integration-model.md`) | Offering the explicit policy value to GitHub-backed projects at setup time |
 | `/claude-tweaks:build` (`build/worktree-setup.md` Step 6, `_shared/pr-early-run-lifecycle.md`) | Routing run-start draft-PR creation — `pr-first` opens the PR, `local-merge` skips the step entirely |
-| `_shared/git-discipline.md` (Phase-exit push section) | Routing whether build/test/review/polish/wrap-up push at every phase exit (`pr-first`) or only once at finish (`local-merge`) |
+| `_shared/git-discipline.md` (Phase exit section) | Routing whether build/test/review/polish/wrap-up push at every phase exit (`pr-first`) or only once at finish (`local-merge`) |
 | `/claude-tweaks:build`, `/claude-tweaks:test`, `/claude-tweaks:review`, `/claude-tweaks:flow` (`flow/steps-and-gates.md`'s polish-phase decision tree), `/claude-tweaks:wrap-up` (`wrap-up/execution-and-verification.md`) | Each phase's own phase-exit push + PR checklist update |
 | `/claude-tweaks:tidy` (`tidy/scan-procedures.md`'s PR-state override) | Routing Step 4.5's worktree/branch classification through live PR state instead of run-dir status alone |
 | `/claude-tweaks:tidy` (`tidy/SKILL.md` Step 7.5's `worktree-always` handling and the housekeeping-marker note below it) | Under `worktree-always: true`, routing whether the Step 7 commit lands via `_shared/scratch-worktree.md`'s merge-back (`local-merge`) or a pushed branch + marker-stamped PR reusing `_shared/pr-early-run-lifecycle.md`'s create/reopen shape (`pr-first`) — `local-merge` and the no-`worktree-always` path are unchanged either way |

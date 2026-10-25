@@ -26,9 +26,16 @@
 // works identically whether `gh` is on PATH or not); and each target's
 // committed spec via `git cat-file` at the recorded worktree's HEAD.
 //
+// The no-valid-pin degrade line also appends its own SKIP to decisions.md
+// (#4026) — `condition: {that stderr line} → fallback: PR-bookend check not
+// run`, reversibility n/a, no step or section, the line the caller prose had
+// log-decision.js write — only into a run dir anchored under the main
+// checkout. Every envelope carries `logged`: true when that entry landed,
+// false when nothing degraded or the append failed (one more stderr line).
+//
 // Usage: node bin/verify-run-bookends.js --run <dir> --targets <n,n,...> [--help]
-// Exit 0 = every bookend confirmed — {ok:true, confirmed:{...}}.
-// Exit 1 = one or more missing/unconfirmed — {ok:false, missing:[...]}. A
+// Exit 0 = every bookend confirmed — {ok:true, confirmed:{...}, logged}.
+// Exit 1 = one or more missing/unconfirmed — {ok:false, missing:[...], logged}. A
 //          caller reaching exit 1 must report BLOCKED/build-test-blocked,
 //          never DONE/build-test-ok (#1728's Acceptance Criteria).
 // Exit 2 = malformed invocation.
@@ -42,6 +49,7 @@ const { execFileSync } = require('child_process');
 const { GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { RUN_ID_RE } = require('./lib/hooks/context');
 const { hasCanonicalClaimLogFor } = require('./lib/log-decision/claim-log');
+const { resolveTarget, appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { lstatType } = require('./lib/path-guard');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
@@ -51,7 +59,8 @@ const USAGE = 'usage: verify-run-bookends.js --run <dir> --targets <n,n,...> [--
   + '  exit 0 = every bookend confirmed (worktree stamp, PR under pr-first, a live claim, a committed work/{n}-spec.md\n'
   + '           and the canonical Step 2.8 claim-log line per target)\n'
   + '  exit 1 = one or more missing/unconfirmed -- {ok:false, missing:[...]}\n'
-  + '  exit 2 = malformed invocation\n';
+  + '  exit 2 = malformed invocation\n'
+  + '  a "degraded" stderr line also appends its SKIP to decisions.md; logged: true when it landed\n';
 
 function parseArgs(argv) {
   const opts = { runDir: null, targetsRaw: null, help: false };
@@ -186,9 +195,26 @@ function run(argv, deps) {
     missing.push({ bookend: 'worktree', remedy: `${hooks} record-worktree --run "${runDir}" "<worktree>"` });
   }
 
+  // The degrade line also logs itself (#4026): the SKIP the prose had the caller
+  // write, `condition: {stderr line} → fallback: PR-bookend check not run`, no
+  // --step or --section. A failed append never changes the exit code: one
+  // stderr line, logged:false, and the caller writes it by hand.
+  let logged = false;
   const integrationModel = deps.readIntegrationModel(runDir);
   if (integrationModel !== 'pr-first' && integrationModel !== 'local-merge') {
-    deps.stderr(`verify-run-bookends: degraded — ${runDir}/config.yml carries no valid integration-model pin (${integrationModel ?? 'absent'}); PR bookend not checked (_shared/integration-model.md's Run-scoped stability)\n`);
+    const line = `verify-run-bookends: degraded — ${runDir}/config.yml carries no valid integration-model pin (${integrationModel ?? 'absent'}); PR bookend not checked (_shared/integration-model.md's Run-scoped stability)`;
+    deps.stderr(`${line}\n`);
+    try {
+      deps.appendDecision({
+        runDir,
+        entry: formatEntry({
+          status: 'SKIP', now: deps.now(), text: `condition: ${line} → fallback: PR-bookend check not run`.replace(/\s+/g, ' '), reversibility: 'n/a',
+        }),
+      });
+      logged = true;
+    } catch (e) {
+      deps.stderr(`verify-run-bookends: could not append the decisions.md entry: ${(e && e.message) || e}\n`);
+    }
   }
   const prRequired = integrationModel === 'pr-first';
   if (prRequired && (!runState || !runState.pr)) {
@@ -255,7 +281,7 @@ function run(argv, deps) {
   }
 
   if (missing.length) {
-    deps.stdout(JSON.stringify({ ok: false, missing }));
+    deps.stdout(JSON.stringify({ ok: false, missing, logged }));
     return 1;
   }
   deps.stdout(JSON.stringify({
@@ -263,11 +289,21 @@ function run(argv, deps) {
     confirmed: {
       worktree: true, pr: prRequired ? true : 'n/a', claims: targets, materialize: targets, claimLog: targets,
     },
+    logged,
   }));
   return 0;
 }
 
+// Appends only to a run dir anchored under the main checkout -- never a
+// worktree-local shadow ([IL-127]); a refusal throws, which run() reports.
+function appendDecision({ runDir, entry }) {
+  const target = resolveTarget({ runDir });
+  if (!target.ok) throw new Error(target.reason === 'missing' ? `run dir does not exist: ${runDir}` : `run dir is not anchored under the main checkout: ${runDir}`);
+  return appendEntry({ runDir, entry });
+}
+
 const realDeps = {
+  appendDecision,
   readRunState,
   readIntegrationModel: readConfigIntegrationModel,
   readClaimBlobGit,

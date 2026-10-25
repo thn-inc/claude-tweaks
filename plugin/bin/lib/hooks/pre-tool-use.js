@@ -1946,6 +1946,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   }
 
   if (!runState.pr) {
+    // lib/phase-exit/phase-exit.js prPushReleased applies this branch's release rules to the
+    // push phase-exit.js makes itself (#4026) -- a change to them here belongs there too.
     // Model resolution moved ahead of the #989 exemption below (#1800) — the
     // exemption's own precondition now depends on `model` (a resolved
     // `local-merge` run never runs pr-early-run-lifecycle.md's Step 1 at all,
@@ -2360,6 +2362,10 @@ module.exports = {
   checkDispatchConfigGate,
   hasLoggedPrDegrade,
   hasPrEarlyStep1LineFor,
+  // Exported for bin/lib/phase-exit/phase-exit.js (#4026), whose push applies the
+  // same pr-first no-PR release conditions as checkBookkeepingStampsGate's PR-stamp branch.
+  hasLoggedPrEarlyStep1,
+  hasNoUpstreamYet,
   // Exported for check-pr-bookkeeping.js's phase-boundary precondition check
   // (#2472) to reuse rather than reimplement — the same integration-model
   // resolution checkBookkeepingStampsGate's own PR-stamp branch already uses.
