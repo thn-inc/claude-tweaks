@@ -156,6 +156,10 @@ function filingRerunCommand({ consoleDir, ids, pluginRoot }) {
   return `${bin} --run "${consoleDir}" --existing <issues.json> --out-dir <dir> --only '${only}'`;
 }
 
+// #4170: a `filing-pending` item clears only on a logged filed/deduped line (FILED_LINE_RE), so the remedy
+// names the log lines, not just the create — a session that died after the create re-runs to a `deduped` entry.
+const FILING_LOG_REMEDY = "file each printed `file` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', log each `deduped` entry as '{item} already filed as #{n} (work-fingerprint {fp})', via log-decision.js `--run` that console's dir, per wrap-up/review-console.md's Can't-tell filings";
+
 // One item line plus its pointer: a `cat` of the staged file, or for a
 // `decision:` item (no staged file — it lives in decisions.md) a `see` line.
 // An item without a usable id is still listed, as `(no id)`, but gets no
@@ -173,7 +177,7 @@ function itemLines(item, consoleDir, pluginRoot) {
   if (fs.existsSync(staged)) lines.push(`    cat "${staged}"`);
   if (item.resolution === FILING_PENDING_RESOLUTION) {
     lines.push(`    re-run filing: ${filingRerunCommand({ consoleDir, ids: [item.id], pluginRoot })}`);
-    lines.push('      (<issues.json>: gh issue list --state all --json number,body --limit <N>; file each printed proposal through wrap-up/review-console.md step 7)');
+    lines.push(`      (<issues.json>: gh issue list --state all --json number,body --limit <N>; ${FILING_LOG_REMEDY})`);
   }
   return lines;
 }
@@ -209,7 +213,7 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
 }
 
 module.exports = {
-  UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, FILED_LINE_RE,
+  UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, FILED_LINE_RE, FILING_LOG_REMEDY,
   filedRecords, unresolvedItems, pendingFilings, consoleResidueItems, splitMissing, filingRerunCommand,
   readRunResidue, formatResidueLines,
 };

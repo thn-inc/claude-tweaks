@@ -31,7 +31,7 @@ const { closeRunState } = require('../hooks/close-run-state');
 const { checkRunIntegrity, fallbackBranch, worktreeListStdout } = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
-const { readRunResidue, FILING_PENDING_RESOLUTION, filingRerunCommand } = require('../console/residue');
+const { readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, filingRerunCommand } = require('../console/residue');
 
 // #4178: every call here addresses `root` via `-C`; an inherited GIT_DIR /
 // GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR would silently override that
@@ -589,7 +589,7 @@ function filingRerunRemedy(runDir) {
     return ids.length > 0 ? [filingRerunCommand({ consoleDir: path.dirname(c.path), ids })] : [];
   });
   if (commands.length === 0) return '';
-  return `re-run the planned filing(s): ${commands.join('; ')}, then file each printed proposal through wrap-up/review-console.md step 7`;
+  return `re-run the planned filing(s): ${commands.join('; ')}, then ${FILING_LOG_REMEDY}`;
 }
 
 // The recovery line for a console-residue skip: name the open items, the
