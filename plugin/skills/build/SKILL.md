@@ -247,6 +247,8 @@ The simplify skill handles scope resolution, running the code-simplifier subagen
 
 If the simplifier makes changes, commit them separately.
 
+**Log the simplified tree (`$PIPELINE_RUN_DIR` set).** Once `/claude-tweaks:simplify` returns `STATUS: DONE` (its changes committed, or none made), write `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/build" --status AUTO --step "Common Step 3" --text "simplify: scope simplified at {sha}" --reversibility n/a`, `{sha}` being `git rev-parse HEAD` after that commit. `/review` Step 5 reads this line to skip re-simplifying an unchanged tree (`review/code-mode-steps.md`); any other outcome writes no line.
+
 **If the `/claude-tweaks:simplify` dispatch itself fails transiently** (not a simplification finding — the dispatch call erroring out), see `failure-recovery.md`'s **Anything else** row: verify actual state (`git diff`, `git log`) before redoing, then retry rather than improvising.
 
 ### Common Step 4: Handle Blocked Work
