@@ -177,11 +177,23 @@ test('wrapped execFile keeps promisify.custom', () => {
   assert.ok(c.has(rec('c', 'docs')), 'a promisified git content call records c');
 });
 
-test('a relative require records its resolution candidates as s', () => {
+test('AC1.1: a require records its candidates up to the one it resolves to, minus those under an earlier probe', () => {
   const a = recordsOf('a.test.js');
-  for (const p of ['lib/x', 'lib/x.js', 'lib/x.json', 'lib/x/index.js', 'lib/x/package.json']) {
-    assert.ok(a.has(rec('s', p)), `a must record s ${p}`);
+  for (const p of ['lib/x', 'lib/x.js']) assert.ok(a.has(rec('s', p)), `a must record s ${p}`);
+  for (const p of ['lib/x.json', 'lib/x.node', 'lib/x.cjs', 'lib/x/index.js', 'lib/x/package.json']) {
+    assert.ok(!a.has(rec('s', p)), `a must not record s ${p} (after the winner, or under s lib/x)`);
   }
+  const g = recordsOf('g.test.js');
+  for (const p of ['lib/pkg', 'lib/pkg.js', 'lib/pkg.json', 'lib/pkg.node']) assert.ok(g.has(rec('s', p)), `g must record s ${p}`);
+  assert.ok(g.has(rec('f', 'lib/pkg/package.json')), 'the package.json a directory require reads is kept');
+  // lib/pkg/entry.js (the winner, under s lib/pkg) is still recorded as s — by Node's own realpathSync of the
+  // resolved file, not by the candidate list — so the nested drop is pinned on the candidate no read touches.
+  assert.ok(!g.has(rec('s', 'lib/pkg/index.js')), 'lib/pkg/index.js is under s lib/pkg');
+  for (const p of ['lib/missing', 'lib/missing.js', 'lib/missing.json', 'lib/missing.node']) {
+    assert.ok(g.has(rec('s', p)), `an unresolved require keeps every candidate: ${p}`);
+  }
+  assert.ok(!g.has(rec('s', 'lib/missing/index.js')), 'still minus those under s lib/missing');
+  assert.ok(g.has(rec('s', 'node_modules/nodep/package.json')), 'an absent package.json an exports lookup probes is kept');
 });
 
 test('AC1.1: a require resolves the way Node does — paths option, package.json main, bare node_modules lookups', () => {

@@ -20,3 +20,11 @@ test('a bare specifier resolves through node_modules main and exports', () => {
   assert.strictEqual(require.resolve('dep', { paths: [__dirname] }), path.join(__dirname, 'node_modules', 'dep', 'lib', 'main.js'));
   assert.strictEqual(require.resolve('exp', { paths: [__dirname] }), path.join(__dirname, 'node_modules', 'exp', 'src', 'index.js'));
 });
+
+test('a require that does not resolve', () => {
+  assert.throws(() => require.resolve('./lib/missing'), { code: 'MODULE_NOT_FOUND' });
+});
+
+test('a bare specifier with no package.json does not resolve', () => {
+  assert.throws(() => require.resolve('nodep/sub', { paths: [__dirname] }), { code: 'MODULE_NOT_FOUND' });
+});

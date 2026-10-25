@@ -14,7 +14,9 @@
 // unpatched appendFileSync. JSON, not tab-separated, because fixture paths hold tabs and newlines.
 // Kinds: f content read (read/open/copy source/stat/lstat/module load/cp of a file, and a package.json a
 // require reads for main or exports), s existence probe (exists/access/realpath/readlink, and every
-// candidate a require probes — relative, absolute, node_modules, require.resolve paths), d directory
+// candidate a require probes up to the one it resolves to — relative, absolute, node_modules,
+// require.resolve paths — minus those nested under an earlier probe, which impact.js's reads() ancestor
+// rule for an `s` entry already covers), d directory
 // listing (readdir/opendir), c content prefix (a cp of a directory, a non-node child's in-repo
 // directory argument, or a content-reading git subcommand — its cwd, or a pathspec's literal prefix). Paths
 // under `.git/` and outside the root are dropped; `''` is the root itself.
@@ -206,20 +208,41 @@ function install() {
 
   const CUSTOM = util.promisify.custom;
   // A wrapper that runs `before(arguments)` (guarded) and then the original, carrying the original's
-  // own properties. A promisify.custom implementation calls the unwrapped original directly, so it is
-  // replaced by a wrapped copy under the original's attributes — and left out of the bulk copy, since
-  // Node defines it non-configurable (copied first, it could never be replaced).
+  // own properties. A `before` that returns a function `done` gets it called after the original, as
+  // `done(result, false)` or — when the original throws — `done(undefined, true)` before the original
+  // error is rethrown unchanged; a throwing `done` fails closed and is never rethrown.
+  // A promisify.custom implementation calls the unwrapped original directly, so it is replaced by a
+  // wrapped copy under the original's attributes — and left out of the bulk copy, since Node defines it
+  // non-configurable (copied first, it could never be replaced).
   // A promisified function's own custom slot points at itself (Node sets it so promisify is idempotent):
   // that self-reference maps to the wrapper, and only the top level's custom implementation is wrapped.
   function wrapFn(orig, before, nested = false) {
     const wrapped = function traced() {
+      let done;
       try {
-        before(arguments);
+        done = before(arguments);
       } catch (_) {
         // never break the traced process
         failClosed();
       }
-      return orig.apply(this, arguments);
+      if (typeof done !== 'function') return orig.apply(this, arguments);
+      const after = (result, threw) => {
+        try {
+          done(result, threw);
+        } catch (_) {
+          // never break the traced process
+          failClosed();
+        }
+      };
+      let result;
+      try {
+        result = orig.apply(this, arguments);
+      } catch (err) {
+        after(undefined, true);
+        throw err;
+      }
+      after(result, false);
+      return result;
     };
     const descriptors = Object.getOwnPropertyDescriptors(orig);
     const customDesc = descriptors[CUSTOM];
@@ -366,7 +389,7 @@ function install() {
               add('s', pkgDir, true);
               continue;
             }
-          }
+          } else add('s', pkgJson);
         }
         base = toAbs(request, dirAbs);
       }
@@ -391,14 +414,48 @@ function install() {
     return list;
   }
 
-  // Every candidate is emitted before the original runs (the hook's `before` style), in-root ones only.
+  // The index of the candidate `result` came from: the first whose path is the result (or, with `cover`,
+  // holds it), else — Node returns a realpath — the first whose realpath is; -1 when none is.
+  function winnerIndex(candidates, result) {
+    const at = candidates.findIndex((c) => c.abs === result || (c.cover === true && result.startsWith(c.abs + path.sep)));
+    if (at !== -1) return at;
+    return candidates.findIndex((c) => {
+      try {
+        return realpathNative(c.abs) === result;
+      } catch (_) {
+        return false;
+      }
+    });
+  }
+
+  // Emitted after the original returns, so the candidates can be cut at the winner: one after the winner
+  // cannot change the result while the winner exists, and the winner's own deletion is still recorded
+  // because the winner stays in the list. A resolution that throws (or whose winner cannot be found) keeps
+  // the whole list. Every earlier candidate is kept, except an `s` nested under an earlier kept `s` — the
+  // add and delete of a nested path is already covered by impact.js's reads() ancestor rule (an `s` entry
+  // selects a test for an added or deleted path equal to it or under it), and a nested path's modification
+  // never affects resolution. `f` entries are never dropped: a package.json's content does.
   patch(Module, '_resolveFilename', (args) => {
     const candidates = resolutionCandidates(args[0], args[1], args[3]);
-    if (candidates === null) return;
-    for (const c of candidates) {
-      const r = relOf(c.abs);
-      if (r !== null) emit(c.kind, r);
-    }
+    if (candidates === null) return undefined;
+    return (result, threw) => {
+      let last = candidates.length - 1;
+      if (!threw && typeof result === 'string') {
+        const w = winnerIndex(candidates, result);
+        if (w !== -1) last = w;
+      }
+      const keptS = [];
+      for (let i = 0; i <= last; i++) {
+        const c = candidates[i];
+        const r = relOf(c.abs);
+        if (r === null) continue;
+        if (c.kind === 's') {
+          if (keptS.some((k) => r === k || r.startsWith(`${k}/`))) continue;
+          keptS.push(r);
+        }
+        emit(c.kind, r);
+      }
+    };
   });
 
   // ---- child processes ----
