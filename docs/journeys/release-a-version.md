@@ -9,6 +9,8 @@ files:
   - plugin/bin/release-preflight.js
   - plugin/bin/lib/release-preflight/pack.js
   - plugin/bin/release-local.js
+  - plugin/bin/release-tip-check.js
+  - plugin/bin/lib/release-tip/check.js
   - plugin/skills/review/SKILL.md
 ---
 
@@ -69,10 +71,10 @@ files:
 
 ### 7. `main` moves while the release is in flight
 - **URL:** `/claude-tweaks:release` (pr-first) on a busy repo where teammates keep merging PRs during Step 3's review or the release PR's check watch
-- **Action:** Step 3's marker line records the tip it reviewed (`at reviewed tip {sha}`). Immediately before `gh pr merge`, Step 5 fetches and compares `origin/main` with that tip:
+- **Action:** Step 3's marker line records the tip it reviewed (`at reviewed tip {sha}`). Immediately before `gh pr merge`, Step 5 runs `bin/release-tip-check.js`. It fetches, compares `origin/main` with that tip, and prints one JSON verdict that the step routes on (#4152):
   - **Unmoved:** the merge proceeds.
   - **Only run-dir archive commits arrived:** the reviewed tip advances, and nothing else happens.
-  - **Real commits arrived:** Step 5 asserts the main checkout is on `main` and pulls it to the new tip. It runs a delta review over just the arrived commits, then re-enters the PR-check gate. That re-entry re-gates the bump on the arrived commits as well as the PR title.
+  - **Real commits arrived:** Step 5 asserts the main checkout is on `main` and pulls it to the new tip. It runs a delta review over just the arrived commits, then re-enters the PR-check gate. On that re-entry the check runs again and reports the arrived commits' bump part. A major among them takes the same major-bump gate as a re-rendered title before anything else is routed. An interactive `Proceed` there continues with the comparison's verdict.
   - **Blocking delta finding:** the release is held, the same `review: blocking` gate as Step 4.
   - **Bound passed:** once more moves arrive than `release-tip-moves` allows (default 2), the run stops `HELD — integration branch kept moving`. It prints the arrived commits under the HELD line and suggests pausing merges (#4041).
 - **Should feel:** The release never ships a commit nobody reviewed, and a quiet repo never notices the check.
@@ -93,3 +95,4 @@ files:
 - Steps 2-3 updated and Step 5 added for #3898 (release run-dir lifecycle: Step 0 refuses a prior release's directory, every exit closes out, Step 8 disposes of staged findings and archives the created directory)
 - Step 6 added for #4012 (Step 3's review-tree check accepts run-dir-only commits ahead, stops on a failed fetch, and names counts plus a recovery chosen by the failing clause)
 - Step 7 added for #4041 (Step 5 compares `origin/main` with Step 3's reviewed tip before the merge, delta-reviews arrived commits, and holds past `release-tip-moves`)
+- Step 7 updated for #4152 (the comparison now runs as the tested CLI `bin/release-tip-check.js`; the arrived-commit major is gated per delta, and an interactive Proceed continues with the verdict)
