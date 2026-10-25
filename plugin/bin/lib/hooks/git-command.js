@@ -542,6 +542,14 @@ function isAssignmentWord(tok, kinds) {
   return kinds.slice(0, eq + 1) === 'b'.repeat(eq + 1);
 }
 
+// #4281: `<` and `>` are metacharacters, so a bare one ends a word: `A=x>f1` is the assignment
+// `A=x` plus a redirect to f1 (bash 3.2 and 5), while a quoted or escaped one (`A="x>f1"`,
+// `A=x\>f1`) is value text. The index of the first bare one in `tok`, or its length.
+function bareWordEnd(tok, kinds) {
+  for (let j = 0; j < tok.length; j += 1) if ((tok[j] === '>' || tok[j] === '<') && kinds[j] === 'b') return j;
+  return tok.length;
+}
+
 // Classifies raw (pre-substitution) token array `t` as a simple same-command
 // assignment and updates `vars` in place; returns whether it was one (the
 // caller `continue`s past handler/cd on true, the same way an existing `cd`
@@ -555,10 +563,10 @@ function isAssignmentWord(tok, kinds) {
 // keeps a chained reference (`B=$A/y`) from ever resolving through a second
 // hop: `$A/y`'s raw value still contains `$`, so isUnresolvable rejects it
 // here, before substitution would otherwise have had a chance to touch it.
-// `kinds` is the token's spanKinds (isAssignmentWord).
+// `kinds` is the token's spanKinds (isAssignmentWord). The value ends at bareWordEnd.
 function updateAssignment(vars, t, kinds) {
   if (t.length !== 1 || !isAssignmentWord(t[0], kinds)) return false;
-  const m = SIMPLE_ASSIGNMENT_RE.exec(t[0]);
+  const m = SIMPLE_ASSIGNMENT_RE.exec(t[0].slice(0, bareWordEnd(t[0], kinds)));
   const [, name, value] = m;
   if (isUnresolvable(value)) vars.delete(name);
   else vars.set(name, value);
@@ -644,7 +652,9 @@ function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
   const { typed, singleQuoted, doubleQuoted, leadQuoted } = tok;
   const { tokens: rawT, spanKinds } = settleStrayBackslash(tok.tokens, tok.spanKinds, pathImpl);
   if (!rawT.length) return effCwd;
-  if (updateAssignment(vars, rawT, spanKinds[0])) return effCwd;
+  // An assignment word ended by a bare `<`/`>` (bareWordEnd) carries a redirect, so it still
+  // reaches the handler; bash assigns before it expands that redirect (`A=f0; A=x>$A` writes x).
+  if (updateAssignment(vars, rawT, spanKinds[0]) && bareWordEnd(rawT[0], spanKinds[0]) === rawT[0].length) return effCwd;
   const t = substituteVars(rawT, vars, singleQuoted, spanKinds);
   // `FOO=1 cd /path` really does change the shell's cwd — a preceding
   // assignment on a regular (non-special) builtin like `cd` is scoped only

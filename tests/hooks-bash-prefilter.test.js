@@ -43,6 +43,8 @@ const DIFFERENTIAL_CORPUS = [
   'echo x > "D:\\r\\tracked.js"',
   // #4281: a redirect on a cd line.
   '\\cd sub > tracked.js', 'cd sub > tracked.js',
+  // #4281: a redirect glued to an assignment word.
+  'A=x>tracked.js', '\\\nA=x>tracked.js',
 ];
 const teardown = (command) => teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: CWD });
 const powershell = (command) => (powershellOpaqueCommand(command, CWD) ? [{ action: 'powershell-opaque' }] : []);

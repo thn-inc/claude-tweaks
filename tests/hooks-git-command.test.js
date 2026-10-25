@@ -843,6 +843,20 @@ test('#4281: a cd line\'s redirect writes in the cwd before the cd, and the cd s
   assert.strictEqual(powershellOpaqueCommand('cd pwsh -Command > f1', '/r'), false);
 });
 
+test('#4281: a bare > glued to an assignment word is a redirect, and the assignment keeps the value before it', () => {
+  // bash 3.2 and 5 write f1 for `A=x>f1`, `\`+newline+`A=x>f1`, `A=x\`+newline+`>f1` and `A=x >f1`,
+  // and nothing for `A="x>f1"` or `A=x\>f1` (each assigns the literal x>f1). After `A=x>f1`, $A is x,
+  // so `A=sub>f1; cd $A && echo y > f2` writes f1 and sub/f2. The assignment comes before the
+  // redirect expands: `A=f0; A=x>$A` writes x.
+  const at = (f) => ({ action: 'write', file: path.resolve('/r', f) });
+  for (const cmd of ['A=x>f1', '\\\nA=x>f1', 'A=x\\\n>f1', 'A=x >f1']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [at('f1')], JSON.stringify(cmd));
+  }
+  for (const cmd of ['A="x>f1"', 'A=x\\>f1']) assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+  assert.deepStrictEqual(fileWriteTargets('A=sub>f1; cd $A && echo y > f2', '/r'), [at('f1'), at('sub/f2')]);
+  assert.deepStrictEqual(fileWriteTargets('A=f0; A=x>$A', '/r'), [at('x')]);
+});
+
 // #4281: the Windows shapes, proven on any host through an injected path.win32 (#3314's pattern).
 // bash 3.2 and 5: "D:\repo\a.js", "D:\repo\x", "D:\repo\wt" and "D:\repo" are those exact values;
 // unquoted, D:\repo\a.js and D:\repo are D:repoa.js and D:repo.
