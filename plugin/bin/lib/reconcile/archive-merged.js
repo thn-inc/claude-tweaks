@@ -1721,7 +1721,11 @@ function isStructurallyStuck(dir, reason, now = Date.now()) {
 //
 // I/O-free apart from the one mtime stat (via isStaleDir) and the one
 // events.jsonl read (via ownEventRecency) that the mtime-based kinds and
-// abandoned-interrupted's recency check respectively need — every other
+// abandoned-interrupted's recency check respectively need — and the
+// `adhoc-session-ended` kind's own I/O: it reads run-state.json (the ad-hoc
+// stamp, and the own-session guard when `state` is not passed), does a
+// realpath, and calls the injectable `liveness` function (which spawns `ps`
+// and reads events), evaluated LAST after every cheap gate. Every other
 // input (state, worktrees, sessionId, prState, consoleState, skipReason) is
 // pre-computed by the caller, per this file's own Gotchas: the merged-PR
 // path's prState/consoleState inputs, and — deliberately excluded from this
@@ -1772,8 +1776,13 @@ function classifyRunDir(ctx, now = Date.now()) {
     } else if (kind === 'adhoc-session-ended') {
       // Cheap, I/O-light gates first; liveness spawns processes, so it runs
       // last. Only an exact 'dead' counts — 'live', 'unknown' and a throwing
-      // liveness function all leave the dir alone.
-      if (dir && isMainCheckoutAdHoc(dir) && isStaleDir(dir, ADHOC_SESSION_ENDED_GRACE_MS, now)) {
+      // liveness function all leave the dir alone. The caller's own session is
+      // never swept (mirrors abandoned-interrupted's `ownLive`): it is live by
+      // definition, whatever the liveness probe reads.
+      const ownState = state || (sessionId && dir ? readRunState(dir) : null);
+      const ownerId = ownState && typeof ownState.sessionId === 'string' && ownState.sessionId ? ownState.sessionId : null;
+      const ownSession = !!(ownerId && sessionId && ownerId === sessionId);
+      if (!ownSession && dir && isMainCheckoutAdHoc(dir) && isStaleDir(dir, ADHOC_SESSION_ENDED_GRACE_MS, now)) {
         let verdict;
         try {
           verdict = liveness(dir);
@@ -2174,9 +2183,10 @@ function archiveMerged({
     // iterRunDirsWithState already excludes status: 'clean' — every dir
     // reached here is genuinely non-terminal.
     //
-    // #1732: one classification call covering the three TTL-based lifecycle
-    // kinds this loop used to check as separate, interleaved early-return
-    // branches (orphaned-mint, abandoned-interrupted, adhoc-superseded), then
+    // #1732: one classification call covering the four TTL-based lifecycle
+    // kinds (orphaned-mint, abandoned-interrupted, adhoc-superseded, and —
+    // #4179 — adhoc-session-ended; the first three this loop used to check as
+    // separate, interleaved early-return branches), then
     // one dispatch per kind below — a per-kind action table, not a
     // detector-specific chain. Precedence is classifyRunDir's own
     // first-match order, unchanged from what this loop checked before
@@ -2193,9 +2203,9 @@ function archiveMerged({
     // that kind — it falls through to the next-lower-precedence kind
     // (adhoc-superseded) exactly as the pre-consolidation `&&`-chained
     // early-return did, via one small follow-up classify call scoped to just
-    // that remaining kind.
+    // the two remaining kinds (adhoc-superseded, adhoc-session-ended).
     if (kind === 'abandoned-interrupted' && checkRunIntegrity(dir, { cache }).state !== 'shipped-unclosed') {
-      kind = classifyRunDir({ dir, state, worktrees, liveness, kinds: ['adhoc-superseded', 'adhoc-session-ended'] }).kind;
+      kind = classifyRunDir({ dir, state, worktrees, sessionId, liveness, kinds: ['adhoc-superseded', 'adhoc-session-ended'] }).kind;
     }
 
     if (kind === 'orphaned-mint') {

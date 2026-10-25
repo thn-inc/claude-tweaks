@@ -1988,13 +1988,14 @@ test('trackStuckSkip: never escalates an ordinary in-flight dir, no matter how m
 
 // run-state.json is written FIRST, then the dir is backdated — writing a file
 // into the dir moves its mtime and would defeat the TTL.
-function mkAdHocRunDir({ ageMs, worktree, basename = '2026-10-17T081451-adhoc-standalone' } = {}) {
+function mkAdHocRunDir({ ageMs, worktree, sessionId, basename = '2026-10-17T081451-adhoc-standalone' } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-adhoc-'));
   const dir = path.join(root, '.claude-tweaks', 'pipelines', basename);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({
     status: 'interrupted',
     worktree: typeof worktree === 'function' ? worktree(root) : (worktree || path.join(root, '.claude/worktrees/gone')),
+    ...(sessionId ? { sessionId } : {}),
   }));
   const backdated = new Date(Date.now() - ageMs);
   fs.utimesSync(dir, backdated, backdated);
@@ -2142,6 +2143,14 @@ test('#4179: a linked-worktree ad-hoc dir never reaches the liveness function', 
   assert.equal(classifyRunDir({ dir, kinds: ['adhoc-session-ended'], liveness: () => { asked++; return 'dead'; } }).kind, 'none');
   assert.equal(asked, 0);
   assert.equal(isMainCheckoutAdHoc(dir), false);
+});
+
+test('#4179: a main-checkout ad-hoc dir owned by the caller\'s own session is never adhoc-session-ended', () => {
+  const { dir } = mkAdHocRunDir({ ageMs: ADHOC_SESSION_ENDED_GRACE_MS * 2, worktree: (root) => root, sessionId: 'sess-own' });
+  const own = classifyRunDir({ dir, sessionId: 'sess-own', kinds: ['adhoc-session-ended'], liveness: () => 'dead' });
+  assert.equal(own.kind, 'none');
+  const other = classifyRunDir({ dir, sessionId: 'someone-else', kinds: ['adhoc-session-ended'], liveness: () => 'dead' });
+  assert.equal(other.kind, 'adhoc-session-ended');
 });
 
 test('#4179: a non-ad-hoc dir stamped with the main checkout is not adhoc-session-ended', () => {

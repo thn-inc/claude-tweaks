@@ -12,7 +12,7 @@ files:
 **Entry point:** Any reconcile pass that adds or removes a stuck path on the consolidated issue: session start's `node plugin/bin/hooks.js reconcile-background` in any session, or a `/claude-tweaks:tidy` sweep.
 **Success state:**
 - The issue body still carries every heading and line the maintainer wrote. Only the lines between `<!-- stuck-paths -->` and `<!-- /stuck-paths -->` changed, and the thread has an "Also stuck: …" comment for each added path.
-- An ad-hoc session dir stamped with a linked worktree is never added, and one already listed is removed with a comment saying why.
+- An ad-hoc session dir is never added, and one already listed is removed with a comment saying why.
 - A listed dir that reconcile archives comes off the list in the same pass, and the record closes itself when the list empties. Paths another checkout listed stay put.
 - The maintainer should feel the record is theirs to shape and reconcile only keeps its path list honest.
 
@@ -42,10 +42,10 @@ files:
 - **Should feel:** Quiet. Ad-hoc dirs wait for their own sweep (`adhoc-superseded` after 30 days for a linked worktree, `adhoc-session-ended` once the session is dead plus 7 days for the main checkout) without ever appearing in the record.
 - **Should understand:**
   - An ad-hoc dir stamped with the main checkout no longer escalates: `adhoc-session-ended` archives it once its session is dead (#4179). One whose liveness stays `unknown` stays in place.
-  - An ad-hoc dir stuck at any other tracked reason (`merged-partial`, `pr-not-found`) keeps escalating too.
+  - An ad-hoc dir stuck at any other tracked reason (`merged-partial`, `pr-not-found`) still escalates.
   - A failed resolve keeps the cache entry, so the next pass retries.
   - `reconcile --dry-run` skips this clear entirely.
-- **Red flags:** A linked-worktree ad-hoc path appended to the record. A listed ad-hoc path that never leaves the record after a `gh` failure. A `--dry-run` pass that edits the issue for an ad-hoc dir.
+- **Red flags:** An ad-hoc path appended to the record. A listed ad-hoc path that never leaves the record after a `gh` failure. A `--dry-run` pass that edits the issue for an ad-hoc dir.
 
 ### 4. An archived dir leaves the list, and the record closes itself — the pass that archives it
 - **URL:** `https://github.com/{owner}/{repo}/issues/{n}`
