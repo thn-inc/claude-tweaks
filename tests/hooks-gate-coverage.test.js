@@ -18,7 +18,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { GATE_COVERAGE } = require('../plugin/bin/lib/hooks/pre-tool-use');
-const { WRITE_SHAPES, fileWriteTargets, gitTargets, stripHeredocBodies } = require('../plugin/bin/lib/hooks/git-command');
+const { WRITE_SHAPES, fileWriteTargets, forEachShellSegment, gitTargets, mkdirTargets, stripHeredocBodies } = require('../plugin/bin/lib/hooks/git-command');
 const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { readText } = require('./helpers/read-skill');
 
@@ -1039,7 +1039,6 @@ for (const [label, cmd] of [
   // walk's own cwd: a relative target past the cap resolves there, an absolute one stays put, and
   // a handful of groups never collapses.
   {
-    const { forEachShellSegment, mkdirTargets } = require('../plugin/bin/lib/hooks/git-command');
     const distinct = (f, k) => Array.from({ length: k }, (_, i) => f(i)).join('');
     const routes = [
       ['brace groups', (k, last) => distinct((i) => `{ cd /a${i}; }; true; `, k) + last],

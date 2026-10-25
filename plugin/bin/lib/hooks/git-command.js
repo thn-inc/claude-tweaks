@@ -521,7 +521,7 @@ function forEachCommandSegment(command, cwd, handler, opts) {
   forEachShellSegment(command, cwd, handler, opts);
 }
 
-// One segment of forEachCommandSegment's walk: updates `vars`, calls `handler`
+// One segment of forEachShellSegment's walk: updates `vars`, calls `handler`
 // for a non-cd, non-assignment segment, and returns the effective cwd after it.
 function visitSegment(seg, effCwd, vars, handler) {
   const { tokens: rawT, singleQuoted, leadQuoted } = tokenize(seg.trim());
@@ -875,9 +875,8 @@ function programNames(tok) {
 // `str` with its quoted spans removed, read the way splitSegments reads quotes: outside
 // quotes and inside double quotes a backslash escapes the next character (an escaped
 // quote opens or closes nothing), a double-quoted span nests as skipDoubleQuoted reads it,
-// and single quotes have no escapes. An escaped pair
-// outside quotes is kept as written. An unterminated span is kept, so text the shell
-// might still run stays visible.
+// and single quotes have no escapes. An escaped pair outside quotes is kept as written. An
+// unterminated span is kept, so text the shell might still run stays visible.
 function removeQuotedSpans(str) {
   return scanPass((spans) => removeQuotedSpansWith(str, spans));
 }
@@ -969,28 +968,7 @@ function isInertNeighbour(tokens, p) {
     && !tokens.some((t) => t.startsWith('--pathspec-f'));
 }
 
-// True when every command on the opener's logical line is a known data reader, so
-// the body it receives is data. The line is cut into commands at segment separators and at
-// every lone `&` (splitOnLoneAmpersand). Per command: a group or process-substitution token
-// (`(`, `{`, `}`, `>(`, `<(`) fails (its consumer may sit on a later line or inside
-// the substitution); after NAME=value assignments, an inert neighbour (isInertNeighbour)
-// passes; reader wrappers (sudo, env, ...) are skipped together with the flags and
-// assignments that follow a wrapper, so a wrapper option's value (`sudo -u bob`) lands on
-// the program slot and fails, and an `env` program-choosing flag (-S, -P) fails; the program word
-// must then resolve ($NAME and backticks do not), be a bare name or an absolute path,
-// and every spelling the parser can read from it must be a reader; `git` is a reader
-// only for a data subcommand (GIT_DATA_SUBCOMMANDS), found past its global flags, and only
-// when the command does not configure it (gitIsConfigured; an assignment behind a wrapper
-// counts too, as in `env GIT_CONFIG_COUNT=1 git commit`). The
-// group check reads the segment with its quoted spans removed (tokenize has already
-// dropped the quotes), so a quoted `(.a)` is data, not a group. A command that carries a
-// command substitution (hasCommandSubstitution) anywhere, quoted or not, is neither a reader nor
-// a neighbour, unless it is the heredoc's own command (it holds an unquoted `<<`), no pipe feeds
-// it and every substitution stands before its first `<<`: bash expands those words before it
-// attaches the heredoc, so they read the shell's stdin, while a redirection word after the `<<`
-// is expanded with the body already on fd 0 (`cat <<'EOF' > "$(bash)"` runs the body), and in a
-// piped-to element a substitution reads the pipe (`| jq "$(bash)"` runs the body, and so does
-// `cat <<'A' | jq "$(sh)" <<'B'`). Fails closed, so the body stays visible to the scan.
+// A heredoc operator (`<<`, but not the here-string `<<<`) in a command's text.
 const OWN_HEREDOC_OPENER_RE = /(^|[^<])<<(?!<)/;
 
 // Whether `text` holds a command substitution: a backtick, a `$(`, or a `$((` that bash does not
@@ -1016,6 +994,28 @@ function hasCommandSubstitution(text) {
   return arith.length > 0;
 }
 
+// True when every command on the opener's logical line is a known data reader, so
+// the body it receives is data. The line is cut into commands at segment separators and at
+// every lone `&` (splitOnLoneAmpersand). Per command: a group or process-substitution token
+// (`(`, `{`, `}`, `>(`, `<(`) fails (its consumer may sit on a later line or inside
+// the substitution); after NAME=value assignments, an inert neighbour (isInertNeighbour)
+// passes; reader wrappers (sudo, env, ...) are skipped together with the flags and
+// assignments that follow a wrapper, so a wrapper option's value (`sudo -u bob`) lands on
+// the program slot and fails, and an `env` program-choosing flag (-S, -P) fails; the program word
+// must then resolve ($NAME and backticks do not), be a bare name or an absolute path,
+// and every spelling the parser can read from it must be a reader; `git` is a reader
+// only for a data subcommand (GIT_DATA_SUBCOMMANDS), found past its global flags, and only
+// when the command does not configure it (gitIsConfigured; an assignment behind a wrapper
+// counts too, as in `env GIT_CONFIG_COUNT=1 git commit`). The
+// group check reads the segment with its quoted spans removed (tokenize has already
+// dropped the quotes), so a quoted `(.a)` is data, not a group. A command that carries a
+// command substitution (hasCommandSubstitution) anywhere, quoted or not, is neither a reader nor
+// a neighbour, unless it is the heredoc's own command (it holds an unquoted `<<`), no pipe feeds
+// it and every substitution stands before its first `<<`: bash expands those words before it
+// attaches the heredoc, so they read the shell's stdin, while a redirection word after the `<<`
+// is expanded with the body already on fd 0 (`cat <<'EOF' > "$(bash)"` runs the body), and in a
+// piped-to element a substitution reads the pipe (`| jq "$(bash)"` runs the body, and so does
+// `cat <<'A' | jq "$(sh)" <<'B'`). Fails closed, so the body stays visible to the scan.
 function lineFeedsOnlyDataReaders(lineText) {
   const lineSpans = segmentSpans(lineText);
   for (let s = 0; s < lineSpans.length; s += 1) {
@@ -1603,7 +1603,7 @@ function visitUnderEach(text, cwds, vars, handler) {
   return next;
 }
 
-// forEachCommandSegment over every piece of text the shell may run (#3989/#4149): the
+// The walk behind forEachCommandSegment, over every piece of text the shell may run (#3989/#4149): the
 // outer text, then each kept heredoc body as its own chunk, right after the segment
 // that holds its opener. A chunk starts from fresh quote state, the cwd in effect at
 // its opener and a copy of the outer assignments; whatever cwd or assignment it changes
