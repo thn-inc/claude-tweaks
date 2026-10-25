@@ -407,8 +407,9 @@ would retry on every pass (SessionStart's inline pass AND its detached backgroun
 no-remote path returns before reconcile ever stamps `lastRunAt`, so `skipIfFresh` never short-
 circuits it. The outcome is recorded on the result as `originHeadRepair` —
 `{outcome: 'repaired', branch}`, `{outcome: 'failed', reason}`, or `{outcome: 'skipped',
-reason: 'recent-failure'}` (any of the three degrades to the `no-remote` skip when re-resolving
-still finds nothing, never throws), or `{outcome: 'unresolved'}` when a 'repaired' attempt's
+reason: 'recent-failure' | 'dry-run'}` (`dry-run`: under `--dry-run` neither `set-head` nor the
+failure stamp is attempted, #4180; any of the three degrades to the `no-remote` skip when
+re-resolving still finds nothing, never throws), or `{outcome: 'unresolved'}` when a 'repaired' attempt's
 re-resolve still came up empty — and the key is absent when no repair was attempted (no `origin`
 remote, or the branch already resolved). A failed or skipped outcome also carries `branch` when
 the re-resolve it triggers finds one anyway (the concurrent-winner case). The repair lives in
