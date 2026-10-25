@@ -23,9 +23,9 @@
 // closing keyword will close, polls the issue (one 3 s re-read per step, at
 // most floor(--settle-ms / 3000) of them -- GitHub closes about 2 s after the
 // merge), and reopens it when it closed at or after mergedAt. Prints {action:
-// reopened | reopen-failed | nothing-closed | not-merged | no-fixes-span |
-// no-pr | gh-absent, pr, candidates, willClose, reopened, failed, stillOpen,
-// closedBefore} (plus messageUnread: true when the merge message could not be
+// reopened | reopen-failed | close-pending | nothing-closed | not-merged
+// (carries state) | no-fixes-span | no-pr | gh-absent, pr, candidates,
+// willClose, reopened, failed, stillOpen, pendingClose, closedBefore} (plus messageUnread: true when the merge message could not be
 // read). A `logFailed: true` key means a decisions.md line could not be
 // appended; the PR/issue work still landed.
 //
@@ -35,7 +35,9 @@
 //   shadow -- _shared/pipeline-run-dir.md, [IL-127]).
 // 4 run-marker mismatch (pre-merge only): the PR body's first line names a
 //   different run (or none) -- refused, nothing written.
-// 5 `gh pr view` / `gh pr edit` failed, or the body was not a string.
+// 5 `gh pr view` / `gh pr edit` failed, or a required read came back
+//   malformed (non-string body, non-array links, links with no repository,
+//   missing/unparseable url or mergedAt).
 'use strict';
 
 const path = require('path');
@@ -51,7 +53,7 @@ const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-merge> [--settle-ms <n>] [--help]\n'
   + '  pre-merge: unlinks closing references to records the PR\'s Fixes block does not name\n'
-  + '  post-merge: reopens a keep-open record the merge closed anyway (--settle-ms: poll budget, default 15000, 0 = no re-read)\n'
+  + '  post-merge: reopens a keep-open record the merge closed anyway (--settle-ms: poll budget, default 15000, max 60000, 0 = no re-read)\n'
   + '  prints one JSON line; action: unlinked | still-linked | clean | reopened | reopen-failed | nothing-closed | not-merged | no-fixes-span | no-pr | gh-absent\n'
   + '  exit 0 done or status-as-data\n'
   + '       2 malformed invocation\n'
@@ -62,6 +64,7 @@ const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-me
 const MODES = ['pre-merge', 'post-merge'];
 const VALUE_FLAGS = { '--run': 'run', '--mode': 'mode', '--settle-ms': 'settleMs' };
 const DEFAULT_SETTLE_MS = 15000;
+const MAX_SETTLE_MS = 60000;
 const POLL_STEP_MS = 3000;
 
 function parseArgs(argv) {
@@ -76,6 +79,7 @@ function parseArgs(argv) {
     if (a === '--settle-ms') {
       if (!/^\d+$/.test(v)) return { error: `--settle-ms takes a non-negative integer: ${v}` };
       o.settleMs = Number(v);
+      if (o.settleMs > MAX_SETTLE_MS) return { error: `--settle-ms is capped at ${MAX_SETTLE_MS}: ${v}` };
     } else {
       o[VALUE_FLAGS[a]] = v;
     }
@@ -103,7 +107,13 @@ function errText(e) {
   return [e && e.message, e && e.stderr, e && e.stdout].filter(Boolean).join(' ').trim() || String(e);
 }
 
-const uniqueSorted = (numbers) => [...new Set(numbers)].sort((a, b) => a - b);
+// An array whose non-empty content carries repository objects. Without them
+// sameRepoNumbers would read every link as cross-repo and the guard would
+// silently do nothing, so that shape is a malformed response.
+const refsWellFormed = (refs) => Array.isArray(refs)
+  && (refs.length === 0 || refs.some((r) => r && typeof r.repository === 'object' && r.repository !== null));
+
+const uniqueSorted =(numbers) => [...new Set(numbers)].sort((a, b) => a - b);
 
 function run(argv, overrides = {}) {
   // Tests pass only the seams they fake; the rest stay real.
@@ -162,8 +172,13 @@ function run(argv, overrides = {}) {
     return 5;
   }
   const repo = pr && prRepoFromUrl(pr.url);
-  if (!pr || typeof pr.body !== 'string' || !Array.isArray(pr.closingIssuesReferences) || !repo) {
-    deps.stderr(`closing-links.js: gh pr view on PR #${n} returned no string body, closingIssuesReferences array, or PR url\n`);
+  if (!pr || typeof pr.body !== 'string' || !refsWellFormed(pr.closingIssuesReferences) || !repo) {
+    deps.stderr(`closing-links.js: gh pr view on PR #${n} returned no string body, usable closingIssuesReferences (an array whose entries carry a repository), or PR url\n`);
+    return 5;
+  }
+  // A MERGED PR with no readable mergedAt cannot tell a post-merge close from an earlier one.
+  if (o.mode === 'post-merge' && pr.state === 'MERGED' && Number.isNaN(Date.parse(pr.mergedAt))) {
+    deps.stderr(`closing-links.js: gh pr view on PR #${n} returned a MERGED PR with no parseable mergedAt\n`);
     return 5;
   }
   const scope = { owner: repo.owner, repo: repo.repo };
@@ -179,15 +194,16 @@ function run(argv, overrides = {}) {
     const base = { pr: n, expected, keepOpen, linked, unwanted };
     if (unwanted.length === 0) return print({ action: 'clean', ...base, unlinked: [], stillLinked: [], neutralized: 0 });
 
-    // 7a. Rewrite the unwanted phrases; write only what changed. The marker
-    // check guards the write, so with nothing to write it is skipped.
+    // 7a. Prove the PR is this run's before anything is written or logged (a
+    // no-write path still logs into this run), then rewrite the unwanted
+    // phrases and write only what changed.
     const { text: newBody, neutralized } = neutralizeClosingPhrases(pr.body, { targets: unwanted, ...scope });
+    const found = firstLineRunId(newBody);
+    if (found !== runId) {
+      deps.stderr(`closing-links.js: run marker mismatch on PR #${n}: body names run ${found || 'none'}, expected ${runId} — nothing written\n`);
+      return 4;
+    }
     if (newBody !== pr.body) {
-      const found = firstLineRunId(newBody);
-      if (found !== runId) {
-        deps.stderr(`closing-links.js: run marker mismatch on PR #${n}: body names run ${found || 'none'}, expected ${runId} — nothing written\n`);
-        return 4;
-      }
       try {
         deps.gh(['pr', 'edit', String(n), '--body-file', '-'], newBody);
       } catch (e) {
@@ -200,7 +216,7 @@ function run(argv, overrides = {}) {
     let relinked;
     try {
       const reread = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', 'closingIssuesReferences']));
-      if (!reread || !Array.isArray(reread.closingIssuesReferences)) throw new Error('no closingIssuesReferences array');
+      if (!reread || !refsWellFormed(reread.closingIssuesReferences)) throw new Error('no usable closingIssuesReferences');
       relinked = sameRepoNumbers(reread.closingIssuesReferences, scope);
     } catch (e) {
       deps.stderr(`closing-links.js: gh pr view failed on PR #${n}: ${errText(e)}\n`);
@@ -268,7 +284,7 @@ function run(argv, overrides = {}) {
     if (!(Date.parse(state.closedAt) >= mergedAt)) { closedBefore.push(issue); continue; }
     try {
       deps.gh(['issue', 'reopen', String(issue), '--comment',
-        `Reopened by claude-tweaks: PR #${n}'s merge closed this record, but the run left it open (not in the PR's Fixes block).`]);
+        `Reopened by claude-tweaks: this record was closed after PR #${n} merged, but the run left it open (not in the PR's Fixes block).`]);
       reopened.push(issue);
     } catch (e) {
       failed.push({ issue, error: errText(e) });
@@ -277,9 +293,19 @@ function run(argv, overrides = {}) {
   for (const issue of reopened) log(`reopened #${issue} after PR #${n}'s merge closed it (closing link or merge-commit keyword)`, 'high');
   for (const f of failed) log(`could not reopen #${f.issue} after PR #${n}'s merge (${f.error}) — reopen it by hand`, 'n/a');
 
+  // A will-close record still OPEN after the poll window may yet close: that
+  // is pending, not clean.
+  const pendingClose = willClose.filter((x) => stillOpen.includes(x));
+  for (const issue of pendingClose) {
+    log(`#${issue} still open ${o.settleMs / 1000}s after PR #${n} merged though the merge will close it — re-run --mode post-merge or reopen it by hand if it closes`, 'n/a');
+  }
+  let action = 'nothing-closed';
+  if (reopened.length) action = 'reopened';
+  else if (failed.length) action = 'reopen-failed';
+  else if (pendingClose.length) action = 'close-pending';
+
   return done({
-    action: reopened.length ? 'reopened' : (failed.length ? 'reopen-failed' : 'nothing-closed'),
-    pr: n, candidates, willClose, reopened, failed, stillOpen, closedBefore,
+    action, pr: n, candidates, willClose, reopened, failed, stillOpen, pendingClose, closedBefore,
     ...(messageUnread ? { messageUnread: true } : {}),
   });
 }

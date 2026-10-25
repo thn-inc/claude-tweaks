@@ -12,7 +12,7 @@ const PR_URL = 'https://github.com/thn-inc/claude-tweaks/pull/7';
 const MERGED_AT = '2026-10-24T18:52:32Z';
 const CLOSED_AFTER = '2026-10-24T18:52:34Z';
 const CLOSED_BEFORE = '2026-10-24T10:00:00Z';
-const REOPEN_COMMENT = 'Reopened by claude-tweaks: PR #7\'s merge closed this record, but the run left it open (not in the PR\'s Fixes block).';
+const REOPEN_COMMENT = 'Reopened by claude-tweaks: this record was closed after PR #7 merged, but the run left it open (not in the PR\'s Fixes block).';
 
 const created = [];
 test.after(() => {
@@ -137,6 +137,8 @@ test('parseArgs: shapes and rejections', () => {
   assert.ok(parseArgs(['--run', 'r', '--mode', 'pre-merge', '--settle-ms']).error);
   assert.ok(parseArgs(['--run', 'r', '--mode', 'pre-merge', '--settle-ms', '-1']).error);
   assert.ok(parseArgs(['--run', 'r', '--mode', 'pre-merge', '--settle-ms', '1.5']).error);
+  assert.equal(parseArgs(['--run', 'r', '--mode', 'pre-merge', '--settle-ms', '60000']).settleMs, 60000);
+  assert.match(parseArgs(['--run', 'r', '--mode', 'pre-merge', '--settle-ms', '60001']).error, /capped at 60000/);
   assert.ok(parseArgs(['--run', '', '--mode', 'pre-merge']).error);
   // Object.hasOwn: an inherited key is not a flag.
   assert.ok(parseArgs(['constructor']).error);
@@ -249,6 +251,17 @@ test('pre-merge refuses another run\'s PR: exit 4, nothing written', () => {
   assert.equal(h.edits().length, 0);
 });
 
+test('pre-merge marker refusal is unconditional: a foreign body with no closing phrase is exit 4, no re-read, no edit, no log', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const plain = body({ runId: FOREIGN_RUN_ID, summary: 'No phrase.', span: ['Fixes #3997', 'Refs #2724 — deferred: pending'] });
+  const h = makeDeps(main, { prReads: [preView(plain, [2724, 3997])], rereads: [refsOf(2724, 3997)] });
+  assert.equal(run(['--run', runDir, ...PRE], h.deps), 4);
+  assert.match(h.err.join(''), /run marker mismatch on PR #7/);
+  assert.equal(h.edits().length, 0);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.log(runDir), '');
+});
+
 test('pre-merge gh view failure is exit 5', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, { prReads: [new Error('network down')] });
@@ -337,6 +350,7 @@ test('usage errors exit 2', () => {
   assert.equal(exit(['--run', runDir, '--mode', 'pre-merge', '--settle-ms']), 2);
   assert.equal(exit(['--run', runDir, '--mode', 'pre-merge', '--settle-ms', '-1']), 2);
   assert.equal(exit(['--run', runDir, '--mode', 'pre-merge', '--settle-ms', '']), 2);
+  assert.equal(exit(['--run', runDir, '--mode', 'post-merge', '--settle-ms', '60001']), 2);
 });
 
 test('--help exits 0 without touching gh', () => {
@@ -396,11 +410,64 @@ test('post-merge polling is bounded by re-read count, floor(settleMs / 3000)', (
   // A constant clock must not hang the loop.
   assert.equal(run(['--run', runDir, ...POST, '--settle-ms', '7000'], { ...h.deps, now: () => new Date(0) }), 0);
   const j = h.json();
-  assert.equal(j.action, 'nothing-closed');
+  assert.equal(j.action, 'close-pending');
   assert.deepEqual(j.stillOpen, [2724]);
+  assert.deepEqual(j.pendingClose, [2724]);
   assert.deepEqual(h.sleeps, [3000, 3000]);
   assert.equal(h.issueReads().length, 3);
   assert.equal(h.reopens().length, 0);
+});
+
+test('post-merge close-pending: a will-close record still OPEN after the window is logged, not reported clean', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'OPEN', closedAt: null }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, '--settle-ms', '6000'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'close-pending');
+  assert.deepEqual(j.pendingClose, [2724]);
+  assert.match(h.log(runDir), /#2724 still open 6s after PR #7 merged though the merge will close it — re-run --mode post-merge or reopen it by hand if it closes/);
+});
+
+test('post-merge: a pending record does not mask a reopen or a failure', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: ['Fixes #3997', 'Refs #2724 — deferred: a', 'Refs #2725 — deferred: b'] }), [2724, 2725, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }], 2725: [{ state: 'OPEN', closedAt: null }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, '--settle-ms', '0'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'reopened');
+  assert.deepEqual(j.pendingClose, [2725]);
+});
+
+test('post-merge: a MERGED PR with an unparseable mergedAt is exit 5', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prReads: [mergedView(body(), [2724, 3997], { mergedAt: null })] });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 5);
+  assert.match(h.err.join(''), /no parseable mergedAt/);
+  assert.equal(h.issueReads().length, 0);
+});
+
+test('a non-empty closingIssuesReferences with no repository objects is exit 5, pre- and post-merge', () => {
+  const bare = [{ number: 2724 }, { number: 3997 }];
+  const a = fixture({ pr: { number: 7 } });
+  const hPre = makeDeps(a.main, { prReads: [{ body: body(), closingIssuesReferences: bare, url: PR_URL }] });
+  assert.equal(run(['--run', a.runDir, ...PRE], hPre.deps), 5);
+  assert.match(hPre.err.join(''), /repository/);
+  assert.equal(hPre.edits().length, 0);
+
+  const b = fixture({ pr: { number: 7 } });
+  const hPost = makeDeps(b.main, { prReads: [mergedView(body(), [], { closingIssuesReferences: bare })] });
+  assert.equal(run(['--run', b.runDir, ...POST], hPost.deps), 5);
+  assert.equal(hPost.issueReads().length, 0);
+
+  // The re-read is held to the same standard.
+  const c = fixture({ pr: { number: 7 } });
+  const hRe = makeDeps(c.main, { prReads: [preView(body(), [2724, 3997])], rereads: [bare] });
+  assert.equal(run(['--run', c.runDir, ...PRE], hRe.deps), 5);
 });
 
 test('post-merge --settle-ms 0 reads once and never sleeps', () => {
