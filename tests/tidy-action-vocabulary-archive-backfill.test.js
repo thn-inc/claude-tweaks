@@ -66,7 +66,7 @@ test('AC1.1: tidy/SKILL.md\'s Action Vocabulary has Archive and Backfill rows, a
 });
 
 test('AC1.1: the recipes the rows cite exist', () => {
-  const sectionB = fs.readFileSync(path.join(REPO_ROOT, 'plugin/skills/wrap-up/cleanup-procedures-execution.md'), 'utf8');
+  const sectionB = readText(path.join(REPO_ROOT, 'plugin/skills/wrap-up/cleanup-procedures-execution.md'));
   assert.match(sectionB, /^## B\. Pipeline run directory/m, 'cleanup-procedures-execution.md has Section B');
   assert.match(sectionB, /archive-run --run/, 'Section B names the archive-run verb');
   assert.ok(fs.existsSync(path.join(REPO_ROOT, 'plugin/bin/lib/residue/probes/release.js')));
