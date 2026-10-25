@@ -5,15 +5,20 @@
 //             record (--issue, always the fresh labels) or an agent-fetched array
 //             (--records-json, the gh-absent MCP path: zero gh calls, no gh probe);
 //             --run adds "already escalated in this run" from decisions.md.
-//   check     after the build: the runner pass stamp first, then the diff bounds;
-//             logs a proceed line or an escalation line under ## /express-lane.
+//   check     after the build: the runner pass stamp first, then the diff bounds —
+//             both against the worktree run-state.json records (never the process
+//             cwd); logs a proceed line or an escalation line under ## /express-lane.
 //   escalate  writes the escalation line; the detail comes from a file, never argv.
-//   verify    the express path's bookend artifacts (claim log, check line, PR).
+//   verify    the express path's bookend artifacts (claim log, an unsuperseded check
+//             line, PR).
 //   samples   merged express PRs owing a post-merge review, reviewed ones dropped.
+// Escalation is only possible before the push: escalate, and check's escalation
+// branches, refuse (exit 1, nothing written) once run-state.json carries `pr`.
 // Exit codes (Combined-2 base plus the sanctioned writers' 3): 0 success — gate and
 // check exit 0 whatever their verdict, which is on stdout; 1 a well-formed verb whose
-// answer is "no" (verify: an artifact is missing) or an upstream failure (gate --issue's
-// fetch, samples' fetches, a policy read); 2 malformed invocation (an unreadable or
+// answer is "no" (verify: an artifact is missing; an escalation after the PR exists) or
+// an upstream failure (gate --issue's fetch, samples' fetches or a search at its
+// 1000-result cap, a policy read); 2 malformed invocation (an unreadable or
 // mis-shaped --records-json / --record-json / --detail-file included) or `gh` absent
 // where it is needed; 3 the --run dir is missing or not anchored under the main checkout
 // (log-decision/append.js's resolveTarget, [IL-127]), or (escalate only) decisions.md is
@@ -44,7 +49,8 @@ const USAGE = [
   '       express-lane.js escalate --run <dir> --issue <n> --reason <failing-test|out-of-bounds|gate-denial|express-error> --detail-file <file>',
   '       express-lane.js verify --run <dir> --issue <n>',
   '       express-lane.js samples [--every <n>] [--repo owner/name]',
-  'exit: 0 success (gate/check: verdict JSON on stdout whatever it is); 1 verify found an artifact missing, or an upstream fetch failed;',
+  'exit: 0 success (gate/check: verdict JSON on stdout whatever it is); 1 verify found an artifact missing, an escalation was refused',
+  '      because run-state.json already records the PR, or an upstream fetch failed (samples: also a search at its 1000-result cap);',
   '      2 malformed invocation or `gh` absent; 3 --run missing or not anchored under the main checkout, or (escalate) decisions.md unwritable;',
   '      check reports its own failed decisions.md append as `logged: false` in the JSON, exit 0',
   '',
@@ -56,6 +62,14 @@ const ESCALATION_STEP = 'Express lane';
 const CHECK_STEP = 'Express lane check';
 const ESCALATION_REVERSIBILITY = 'high (worktree and branch kept)';
 const ISSUE_FIELDS = 'number,title,body,labels';
+const NO_WORKTREE = 'no worktree recorded in run-state.json';
+// gh pr list's own result cap: a search that fills it may have dropped older merges,
+// which would shift every ordinal — refused, never sampled.
+const SAMPLES_SEARCH_LIMIT = 1000;
+// The merged-PR search returns up to SAMPLES_SEARCH_LIMIT bodies; it gets its own
+// bound (materialize.js's SIBLING_PREMISE_SEARCH_TIMEOUT_MS precedent), never shorter
+// than the shared gh bound.
+const SAMPLES_SEARCH_TIMEOUT_MS = 60000;
 const REPO_RE = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*\/[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
 const VERB_FLAGS = {
   gate: ['--issue', '--records-json', '--run', '--repo'],
@@ -116,12 +130,21 @@ function entriesOf(decisionsText) {
   return String(decisionsText || '').split(/\r?\n/).map(parseEntry).filter(Boolean);
 }
 
+const isEscalationOf = (e, n) => e.location === ESCALATION_STEP && e.action.startsWith(`escalated #${n} to /flow`);
+const isProceedOf = (e, n) => e.location === CHECK_STEP && e.action.startsWith(`#${n} proceed`);
+
 function hasEscalation(decisionsText, n) {
-  return entriesOf(decisionsText).some((e) => e.location === ESCALATION_STEP && e.action.startsWith(`escalated #${n} to /flow`));
+  return entriesOf(decisionsText).some((e) => isEscalationOf(e, n));
 }
 
+// A proceed line counts only when no escalation for the same record follows it.
 function hasProceed(decisionsText, n) {
-  return entriesOf(decisionsText).some((e) => e.location === CHECK_STEP && e.action.startsWith(`#${n} proceed`));
+  let proceeded = false;
+  for (const e of entriesOf(decisionsText)) {
+    if (isProceedOf(e, n)) proceeded = true;
+    else if (isEscalationOf(e, n)) proceeded = false;
+  }
+  return proceeded;
 }
 
 // A gh-issue-view-shaped record: {number, body, labels} (title optional).
@@ -177,8 +200,8 @@ function readDecisions(deps, file) {
 // whole job) turns a failed append into exit 3; check reports it as data instead
 // (`logged: false` plus a stderr line, the self-logging CLIs' shape).
 function append(deps, runDir, step, text, reversibility, strict) {
-  const entry = formatEntry({ status: 'AUTO', now: deps.now(), step, text, reversibility });
   try {
+    const entry = formatEntry({ status: 'AUTO', now: deps.now(), step, text, reversibility });
     appendEntry({ runDir, section: SECTION, entry });
     return true;
   } catch (err) {
@@ -194,7 +217,23 @@ function emit(deps, envelope, logged) {
   return 0;
 }
 
-function escalate(deps, runDir, n, reason, detail, strict = false) {
+// run-state.json parsed, or null when absent/unreadable/not an object.
+function readRunState(deps, runDir) {
+  try {
+    const state = JSON.parse(deps.readFile(path.join(runDir, 'run-state.json')));
+    return state && typeof state === 'object' && !Array.isArray(state) ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+// `state` is the run's run-state.json: once it records the PR the branch is pushed,
+// and escalation (which keeps the worktree and branch for /flow) is no longer possible.
+function escalate(deps, runDir, n, reason, detail, state, strict = false) {
+  if (state && state.pr) {
+    deps.stderr(`express-lane.js: refusing to escalate #${n} (${reason}) — the PR already exists (run-state.json records pr ${JSON.stringify(state.pr.number ?? null)}); escalation is only possible before the push\n`);
+    return 1;
+  }
   const oneLine = String(detail).replace(/\s+/g, ' ').trim() || 'no detail';
   const logged = append(deps, runDir, ESCALATION_STEP, escalationText(n, reason, oneLine), ESCALATION_REVERSIBILITY, strict);
   return emit(deps, { action: 'escalate', reason, detail: oneLine }, logged);
@@ -247,26 +286,33 @@ function runCheck(deps, flags) {
   }
   anchoredDecisions(deps, runDir);
 
+  // One tree for both judgments: checkFirstCallStamp verifies run-state.json's
+  // worktree, so the bounds' git calls run there too, never in the process cwd.
+  const state = readRunState(deps, runDir);
+  const worktree = state && typeof state.worktree === 'string' && state.worktree.trim() ? state.worktree : null;
+  if (worktree === null) return escalate(deps, runDir, n, 'express-error', NO_WORKTREE, state);
+
   let stamp;
   try { stamp = deps.stampCheck({ runDir }); } catch (err) {
-    return escalate(deps, runDir, n, 'express-error', `runner stamp read failed: ${err && err.message}`);
+    return escalate(deps, runDir, n, 'express-error', `runner stamp read failed: ${err && err.message}`, state);
   }
   if (!stamp || stamp.verified !== true) {
-    return escalate(deps, runDir, n, 'failing-test', `no runner pass stamp verifies HEAD (${stamp && stamp.reason})`);
+    return escalate(deps, runDir, n, 'failing-test', `no runner pass stamp verifies HEAD (${stamp && stamp.reason})`, state);
   }
 
   let bounds;
   let mergeVerification;
   try {
     if (!record) record = fetchIssue(deps, flags, n);
-    const { files } = gatherDiffFiles({ base: flags['--base'], integrationBranch: flags['--integration-branch'] }, { git: deps.git });
-    const config = resolveBlastRadiusConfig({ git: deps.git, readFile: deps.readFile, runDir });
+    const git = (args) => deps.git(args, { cwd: worktree });
+    const { files } = gatherDiffFiles({ base: flags['--base'], integrationBranch: flags['--integration-branch'] }, { git });
+    const config = deps.blastRadiusConfig({ git, readFile: deps.readFile, runDir });
     bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, maxLines: config.autoMergeMaxLines });
     if (bounds.withinBounds) mergeVerification = expressMergeVerification(deps.resolvePolicy(['merge-verification'], { runDir })['merge-verification'].value);
   } catch (err) {
-    return escalate(deps, runDir, n, 'express-error', String(err && err.message));
+    return escalate(deps, runDir, n, 'express-error', String(err && err.message), state);
   }
-  if (!bounds.withinBounds) return escalate(deps, runDir, n, 'out-of-bounds', bounds.violations.join('; '));
+  if (!bounds.withinBounds) return escalate(deps, runDir, n, 'out-of-bounds', bounds.violations.join('; '), state);
 
   const k = bounds.changedFiles.length;
   const logged = append(deps, runDir, CHECK_STEP, `#${n} proceed — ${k} changed file(s), ${bounds.implLines} implementation line(s) within bounds; runner stamp verifies HEAD.`);
@@ -280,7 +326,7 @@ function runEscalate(deps, flags) {
   const detail = raw === null ? '' : raw.split(/\r?\n/)[0].trim();
   if (!detail) throw new UsageError('--detail-file must exist and hold a non-empty first line');
   anchoredDecisions(deps, flags['--run']);
-  return escalate(deps, flags['--run'], flags['--issue'], flags['--reason'], detail, true);
+  return escalate(deps, flags['--run'], flags['--issue'], flags['--reason'], detail, readRunState(deps, flags['--run']), true);
 }
 
 function runVerify(deps, flags) {
@@ -307,8 +353,12 @@ function runSamples(deps, flags) {
   let every = flags['--every'];
   try {
     if (every === undefined) every = deps.resolvePolicy(['express-review-sample-every'], { runDir: null })['express-review-sample-every'].value;
-    const merges = JSON.parse(deps.gh(['pr', 'list', ...repoArgs(flags), '--state', 'merged', '--search', 'claude-tweaks-express in:body', '--json', 'number,mergedAt,mergeCommit,body', '--limit', '1000']));
+    const listArgs = ['pr', 'list', ...repoArgs(flags), '--state', 'merged', '--search', 'claude-tweaks-express in:body', '--json', 'number,mergedAt,mergeCommit,body', '--limit', String(SAMPLES_SEARCH_LIMIT)];
+    const merges = JSON.parse(deps.gh(listArgs, { timeout: Math.max(SAMPLES_SEARCH_TIMEOUT_MS, sharedPrimitives.GH_TIMEOUT_MS) }));
     if (!Array.isArray(merges)) throw new Error('gh pr list did not return an array');
+    if (merges.length >= SAMPLES_SEARCH_LIMIT) {
+      throw new Error(`the merged-PR search returned ${merges.length} results, its ${SAMPLES_SEARCH_LIMIT}-result search cap — older express merges may be missing, so ordinals cannot be trusted`);
+    }
     const byNumber = new Map(merges.map((m) => [m.number, m]));
     const expressMerges = merges.filter((m) => m && isExpressPr(m.body) && Number.isFinite(Date.parse(m.mergedAt))).length;
     const sampled = [];
@@ -341,8 +391,8 @@ function run(argv, deps = realDeps) {
   }
 }
 
-function defaultGit(args) {
-  return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+function defaultGit(args, opts = {}) {
+  return execFileSync('git', args, { cwd: opts.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 }
 
 function defaultReadFile(p) {
@@ -358,10 +408,11 @@ function defaultResolvePolicy(keys, { runDir = null } = {}) {
 }
 
 const realDeps = {
-  gh: (args) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GH_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true }),
+  gh: (args, opts = {}) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: opts.timeout || sharedPrimitives.GH_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true }),
   ghAvailable: () => ghAvailable(),
   git: defaultGit,
   readFile: defaultReadFile,
+  blastRadiusConfig: resolveBlastRadiusConfig,
   resolvePolicy: defaultResolvePolicy,
   stampCheck: ({ runDir }) => checkFirstCallStamp({ runDir }),
   now: () => Date.now(),

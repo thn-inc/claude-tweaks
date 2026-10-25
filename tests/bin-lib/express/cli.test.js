@@ -11,7 +11,7 @@ const {
 } = require(path.join(LIB, 'express', 'cli.js'));
 const { REASONS } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { expressMarker, REVIEW_COMMENT_MARKER } = require(path.join(LIB, 'express', 'sampling.js'));
-const { BlastRadiusError } = require(path.join(LIB, 'blast-radius-cli.js'));
+const { BlastRadiusError, resolveBlastRadiusConfig } = require(path.join(LIB, 'blast-radius-cli.js'));
 const { computeAdoption } = require(path.join(LIB, 'flow', 'preflight.js'));
 
 const NOW = new Date(2026, 9, 25, 9, 5, 7).getTime();
@@ -47,7 +47,7 @@ function fixture() {
   fs.mkdirSync(path.join(main, '.git'), { recursive: true });
   fs.writeFileSync(path.join(wt, '.git'), 'gitdir: ../../../.git/worktrees/express-7\n');
   const file = (name, text) => { const p = path.join(root, name); fs.writeFileSync(p, text); return p; };
-  return { root, main, runDir, shadow, file };
+  return { root, main, wt, runDir, shadow, file };
 }
 
 const POLICY = {
@@ -81,6 +81,7 @@ function harness(fx, over = {}, policy = {}) {
       calls.resolvePolicy.push({ keys, opts });
       return Object.fromEntries(keys.map((k) => [k, { value: { ...POLICY, ...policy }[k], source: 'policy' }]));
     },
+    blastRadiusConfig: resolveBlastRadiusConfig,
     stampCheck: () => ({ verified: true, reason: null }),
     now: () => NOW,
     cwd: () => fx.main,
@@ -239,7 +240,14 @@ test('gate --run marks a record already escalated in this run (Review Focus 4)',
 
 // --- check ----------------------------------------------------------------------
 
+// check reads run-state.json's worktree; seed it (the linked worktree, never the cwd) unless a test already did.
+function seedRunState(fx, state = { worktree: fx.wt, dispatched: true }) {
+  const p = path.join(fx.runDir, 'run-state.json');
+  if (!fs.existsSync(p)) fs.writeFileSync(p, JSON.stringify(state));
+}
+
 function checkArgv(fx, extra = []) {
+  seedRunState(fx);
   return ['check', '--run', fx.runDir, '--issue', '7', '--base', 'abc123', '--record-json', fx.file('r7.json', JSON.stringify(record(7))), ...extra];
 }
 
@@ -291,6 +299,7 @@ test('check fetches the record live when no --record-json is given, and --integr
     gh: (args) => { h.calls.gh.push(args); return JSON.stringify(record(7)); },
     git: (args) => { gitCalls.push(args); return git(args); },
   });
+  seedRunState(fx);
   assert.strictEqual(run(['check', '--run', fx.runDir, '--issue', '7', '--integration-branch', 'main'], h.deps), 0);
   assert.strictEqual(h.json().action, 'proceed');
   assert.deepStrictEqual(h.calls.gh, [['issue', 'view', '--json', 'number,title,body,labels', '--', '7']]);
@@ -348,6 +357,71 @@ test('an unwritable decisions.md: check reports logged:false and exits 0; escala
   const detail = fx.file('d.txt', 'x\n');
   assert.strictEqual(run(['escalate', '--run', fx.runDir, '--issue', '7', '--reason', 'gate-denial', '--detail-file', detail], e.deps), 3);
   assert.strictEqual(e.out.join(''), '');
+});
+
+test('check runs every bounds git call in the recorded worktree, never the process cwd', () => {
+  const fx = fixture();
+  const seen = [];
+  const inner = fakeGit(fx, numstat([[3, 1, KEY_FILES[0]]]));
+  const h = harness(fx, { git: (args, opts) => { seen.push({ args, cwd: opts && opts.cwd }); return inner(args); } });
+  assert.notStrictEqual(h.deps.cwd(), fx.wt);
+  assert.strictEqual(run(checkArgv(fx), h.deps), 0);
+  assert.strictEqual(h.json().action, 'proceed');
+  assert.ok(seen.some((c) => c.args[0] === 'diff'), 'the diff was gathered');
+  assert.ok(seen.some((c) => c.args.includes('--show-toplevel')), 'the bounds config resolves through the same tree');
+  for (const c of seen) assert.strictEqual(c.cwd, fx.wt, c.args.join(' '));
+});
+
+test('check with no worktree recorded in run-state.json escalates as express-error, never a proceed', () => {
+  for (const state of ['{"dispatched":true}', '{"worktree":"  "}', 'not json', null]) {
+    const fx = fixture();
+    if (state !== null) fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), state);
+    const h = harness(fx, { git: () => { throw new Error('no git call without a worktree'); } });
+    const argv = ['check', '--run', fx.runDir, '--issue', '7', '--base', 'abc123', '--record-json', fx.file('r7.json', JSON.stringify(record(7)))];
+    assert.strictEqual(run(argv, h.deps), 0, String(state));
+    assert.deepStrictEqual(h.json(), { action: 'escalate', reason: 'express-error', detail: 'no worktree recorded in run-state.json' }, String(state));
+    assert.match(decisions(fx), ESCALATION_RE(7, 'express-error', 'no worktree recorded in run-state\\.json'));
+  }
+});
+
+test('check: an injected merge-sensitive path or auto-merge-max-lines escalates out-of-bounds', () => {
+  const sensitive = fixture();
+  const s = harness(sensitive, { blastRadiusConfig: () => ({ mergeSensitivePaths: ['plugin/skills/**'], autoMergeMaxLines: 40, autoMergeMaxFiles: 2 }) });
+  assert.strictEqual(run(checkArgv(sensitive), s.deps), 0);
+  assert.strictEqual(s.json().reason, 'out-of-bounds');
+  assert.match(s.json().detail, /merge-sensitive path: plugin\/skills\/init\/claude-md-template\.md/);
+
+  const lines = fixture();
+  const l = harness(lines, { blastRadiusConfig: () => ({ mergeSensitivePaths: [], autoMergeMaxLines: 3, autoMergeMaxFiles: 2 }) });
+  assert.strictEqual(run(checkArgv(lines), l.deps), 0);
+  assert.deepStrictEqual(l.json(), { action: 'escalate', reason: 'out-of-bounds', detail: '4 implementation lines > 3' });
+});
+
+test('escalation is refused once run-state.json records the PR: exit 1, nothing written', () => {
+  const fx = fixture();
+  fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: fx.wt, dispatched: true, pr: { number: 12, branch: 'b' } }));
+  const detail = fx.file('d.txt', 'late\n');
+  const e = harness(fx);
+  assert.strictEqual(run(['escalate', '--run', fx.runDir, '--issue', '7', '--reason', 'gate-denial', '--detail-file', detail], e.deps), 1);
+  const c = harness(fx, { stampCheck: () => ({ verified: false, reason: 'stamp-absent' }) });
+  assert.strictEqual(run(checkArgv(fx), c.deps), 1);
+  for (const h of [e, c]) {
+    assert.strictEqual(h.out.join(''), '');
+    assert.match(h.err.join(''), /PR already exists/);
+    assert.match(h.err.join(''), /only possible before the push/);
+  }
+  assert.strictEqual(fs.existsSync(path.join(fx.runDir, 'decisions.md')), false);
+});
+
+test('check: a throwing clock still prints the verdict with logged:false, exit 0; escalate exits 3', () => {
+  const fx = fixture();
+  const h = harness(fx, { now: () => { throw new Error('clock unavailable'); } });
+  assert.strictEqual(run(checkArgv(fx), h.deps), 0);
+  assert.strictEqual(h.json().action, 'proceed');
+  assert.strictEqual(h.json().logged, false);
+  const e = harness(fx, { now: () => { throw new Error('clock unavailable'); } });
+  assert.strictEqual(run(['escalate', '--run', fx.runDir, '--issue', '7', '--reason', 'gate-denial', '--detail-file', fx.file('d.txt', 'x\n')], e.deps), 3);
+  assert.strictEqual(fs.existsSync(path.join(fx.runDir, 'decisions.md')), false);
 });
 
 // --- escalate -------------------------------------------------------------------
@@ -414,6 +488,20 @@ test('verify: every artifact present → ok, exit 0; each missing artifact is na
   }
 });
 
+test('verify: an escalation for the record after its proceed line supersedes it', () => {
+  const fx = fixture();
+  seedVerify(fx);
+  const later = '- AUTO 09:02:00 — Express lane: escalated #7 to /flow (reason: express-error) — gh failed. Reversibility: high (worktree and branch kept).\n';
+  const other = '- AUTO 09:02:00 — Express lane: escalated #8 to /flow (reason: express-error) — gh failed. Reversibility: high (worktree and branch kept).\n';
+  fs.appendFileSync(path.join(fx.runDir, 'decisions.md'), other);
+  const before = harness(fx);
+  assert.strictEqual(run(['verify', '--run', fx.runDir, '--issue', '7'], before.deps), 0, 'another record\'s escalation does not count');
+  fs.appendFileSync(path.join(fx.runDir, 'decisions.md'), later);
+  const h = harness(fx);
+  assert.strictEqual(run(['verify', '--run', fx.runDir, '--issue', '7'], h.deps), 1);
+  assert.deepStrictEqual(h.json(), { ok: false, missing: ['express-check'] });
+});
+
 // --- samples --------------------------------------------------------------------
 
 function merges() {
@@ -461,6 +549,24 @@ test('samples: every 5th express merge is sampled; a reviewed one is excluded', 
   const h = samplesHarness(fx, new Set([105]));
   assert.strictEqual(run(['samples', '--every', '5'], h.deps), 0);
   assert.deepStrictEqual(h.json().sampled, [{ pr: 110, ordinal: 10, mergedAt: '2026-10-10T12:00:00Z', mergeSha: 'sha110', records: [909, 959] }]);
+});
+
+test('samples: the merged-PR search gets its own longer timeout; a result at the 1000 cap exits 1, never sampled', () => {
+  const fx = fixture();
+  const opts = [];
+  const ok = samplesHarness(fx);
+  const inner = ok.deps.gh;
+  ok.deps.gh = (args, o) => { opts.push({ verb: args[1], o }); return inner(args); };
+  assert.strictEqual(run(['samples', '--every', '5'], ok.deps), 0);
+  const list = opts.find((x) => x.verb === 'list');
+  assert.ok(list.o && list.o.timeout >= 60000, JSON.stringify(list.o));
+
+  const full = Array.from({ length: 1000 }, (_, i) => ({ number: i + 1, mergedAt: '2026-10-01T12:00:00Z', mergeCommit: { oid: `s${i}` }, body: expressMarker(`r${i}`) }));
+  const capped = harness(fx, { gh: (args) => { capped.calls.gh.push(args); return JSON.stringify(full); } });
+  assert.strictEqual(run(['samples', '--every', '5'], capped.deps), 1);
+  assert.strictEqual(capped.out.join(''), '');
+  assert.match(capped.err.join(''), /1000-result search cap/);
+  assert.strictEqual(capped.calls.gh.length, 1, 'no pr view runs on a capped search');
 });
 
 test('samples: --every absent resolves express-review-sample-every', () => {
