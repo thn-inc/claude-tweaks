@@ -1,11 +1,12 @@
 // bin/lib/console/finding-outcomes.js — which can't-tell findings a run holds, and which of them
 // are already filed (#4171).
 //
-// The auto-merge short-circuit merges with no Review Console, so a can't-tell tiebreak finding the
-// run held could be lost at archive time. Two producers write the filed evidence this module reads,
-// both as an `AUTO` decisions.md line naming the finding's `work-fingerprint`:
-// `wrap-up/auto-merge-short-circuit.md`'s Can't-tell findings step and `wrap-up/review-console.md`'s
-// Can't-tell filings step. Consumers: `console-filings.js --fyi` (the FYI table) and the archive
+// An auto-merge path merges with no Review Console, so a can't-tell tiebreak finding the run held
+// could be lost at archive time. One producer writes the filed evidence this module reads, as an
+// `AUTO` decisions.md line naming the finding's `work-fingerprint`: `wrap-up/review-console.md`'s
+// Can't-tell filings commands, invoked from the console itself and also from
+// `wrap-up/auto-merge-short-circuit.md`'s Can't-tell findings step and the dispatch bundle
+// Auto-merge gate (`dispatch/settle-and-merge.md`). Consumers: `console-filings.js --fyi` (the FYI table) and the archive
 // guard in `reconcile/archive-merged.js` (refuses to archive a run with an unfiled finding).
 // Read-only over the run dir; never calls `gh` — evidence is the run's own decisions.md.
 'use strict';
