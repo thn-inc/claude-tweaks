@@ -307,8 +307,11 @@ test('isDeadRunDir: malformed run-state.json fails open (not dead) rather than t
 // `adoptionRefusal`, which `newestMatch` consults instead of `isDeadRunDir` alone (#1962).
 test('#4151 AC1.1: adoptionRefusal names each refusal reason', () => {
   const main = gitRepo();
-  let n = 0;
-  const fresh = () => mkRunDir(main, `2026-01-01T0000${String(n += 1).padStart(2, '0')}-record-refusal`);
+  let count = 0;
+  const fresh = () => {
+    count += 1;
+    return mkRunDir(main, `2026-01-01T0000${String(count).padStart(2, '0')}-record-refusal`);
+  };
   const withState = (state) => { const d = fresh(); writeRunState(d, state); return d; };
   const withRaw = (raw) => { const d = fresh(); fs.writeFileSync(path.join(d, 'run-state.json'), raw); return d; };
   const withDirAsFile = () => { const d = fresh(); fs.mkdirSync(path.join(d, 'run-state.json')); return d; };
@@ -329,31 +332,31 @@ test('#4151 AC1.1: adoptionRefusal names each refusal reason', () => {
   assert.strictEqual(adoptionRefusal(fresh()), null);
 });
 
+function assertReleaseSlugUnresolved(main) {
+  const out = resolve({ cwd: main, env: {}, specSlug: 'release' });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
+}
+
 test('#4151 AC1.1: --spec-slug release never returns a terminal release dir', () => {
   const main = gitRepo();
   const dir = mkRunDir(main, '2026-10-01T100000-release-standalone');
   writeRunState(dir, { status: 'clean', createdBy: 'release-standalone' });
-  const out = resolve({ cwd: main, env: {}, specSlug: 'release' });
-  assert.strictEqual(out.ok, false);
-  assert.strictEqual(out.reason, 'unresolved');
+  assertReleaseSlugUnresolved(main);
 });
 
 test('#4151 AC1.1: --spec-slug release never returns an active release-standalone dir', () => {
   const main = gitRepo();
   const dir = mkRunDir(main, '2026-10-01T100000-release-standalone');
   writeRunState(dir, { status: 'active', createdBy: 'release-standalone' });
-  const out = resolve({ cwd: main, env: {}, specSlug: 'release' });
-  assert.strictEqual(out.ok, false);
-  assert.strictEqual(out.reason, 'unresolved');
+  assertReleaseSlugUnresolved(main);
 });
 
 test('#4151 AC1.1: --spec-slug release never returns a dir whose run-state.json cannot be parsed', () => {
   const main = gitRepo();
   const dir = mkRunDir(main, '2026-10-01T100000-release');
   fs.writeFileSync(path.join(dir, 'run-state.json'), '{not json');
-  const out = resolve({ cwd: main, env: {}, specSlug: 'release' });
-  assert.strictEqual(out.ok, false);
-  assert.strictEqual(out.reason, 'unresolved');
+  assertReleaseSlugUnresolved(main);
 });
 
 test('#4151: a refused newest match falls through to an older adoptable one', () => {
