@@ -228,6 +228,20 @@ run skipped here escalates through the same structurally-stuck path as the main 
 `hooks.js archive-run` refuses on the same two conditions, after its own guards, and
 `review-coordination.js check-coverage` prints the same coverage result without refusing anything.
 
+**An unfiled can't-tell finding blocks archival of an auto-merge run (#4171).** The auto-merge
+short-circuit renders no Review Console and writes no `console.json`, so a can't-tell tiebreak
+finding the run held would otherwise be lost at archive. `unfiledCantTellFindings` (in
+`archive-merged.js`) returns `[]` unless `readTopLevelConsoleState` is `none` and
+`consoleReplacedByAutoMerge` is true; otherwise it names, via `console/finding-outcomes.js`'s
+`unfiledCantTell`, each finding of the run dir and of every `spec-*/` dir (prefixed `spec-N/`)
+with no `AUTO … filed as #{n} (work-fingerprint {fp})` line in that dir's `decisions.md`. A read
+failure fails closed. `runTiebreakCoverage` carries the list as `unfiledCantTell`, and
+`archiveUnlessTiebreakGap`, the single choke point every archive decision passes, evaluates it
+last, after the artifact checks above: the skip reason is **`cant-tell-unfiled`**, carrying
+`unfiled` and `CANT_TELL_UNFILED_HINT`. It is in `STRUCTURALLY_STUCK_REASONS`, the `status: clean`
+sweep's `onSkip` tracks it, and a rendered console (a `console.json` or a `Review Console:
+terminal decision` line) turns the guard off. Every other run archives exactly as before.
+
 **Console residue (#3949).** `readConsoleState` returns `residue` when a run's console resolved
 (or wrote no top-level `console.json`) but `console/residue.js`'s `readRunResidue` still reports an
 unacknowledged console holding `pending`/`keep-staged` items, or an unreadable one (fail closed).
@@ -324,7 +338,9 @@ main loop, landed via #1962/#2226/#2228/#2231):
   `tiebreak-coverage-missing` and `tiebreak-artifact-invalid` (a run whose `review-findings.json`
   lists a finding with no tiebreak verdict line in `decisions.md`, or is malformed; the skip carries
   `missing` ids and a `hint`, which `reconcile/index.js` passes through to `result.runs`, and the body
-  carries their remedy line after the `merged-partial` one). `no-repo-slug` is also in
+  carries their remedy line after the `merged-partial` one), and #4171's `cant-tell-unfiled` (an
+  auto-merge run holding a can't-tell finding with no filed record, carried as `unfiled` on the
+  skip, with its own remedy line after the tiebreak one). `no-repo-slug` is also in
   `STRUCTURALLY_STUCK_REASONS` but is not listed here: it can never be filed into this record, because
   with no repo slug `findOrCreateIssue` returns `escalation-failed`, so it shows only in the residue
   summary's stuck count. Each path's own reason is its

@@ -16,8 +16,9 @@ const {
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin, resolveIdenticalWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, unclosedRecords, runRecordSet, inFlightRecords,
-  listStagedItems, hasStagedItems, consoleReplacedByAutoMerge,
+  listStagedItems, hasStagedItems, consoleReplacedByAutoMerge, unfiledCantTellFindings, CANT_TELL_UNFILED_HINT,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
+const { unfiledCantTell } = require('../../../plugin/bin/lib/console/finding-outcomes');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure, cachePath, beginCacheBatch, commitCacheBatch } = require('../../../plugin/bin/lib/reconcile/cache');
 const { structurallyStuckBody, parseStuckPaths } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
@@ -4825,6 +4826,70 @@ test('by-number path: a merged-partial settled to archive still refuses a tiebre
   assert.deepStrictEqual(result.skipped.find((s) => s.runDir === runDir), {
     runDir, reason: 'tiebreak-coverage-missing', missing: ['abc123def456'], hint: TIEBREAK_HINT,
   });
+});
+
+// #4171: an auto-merge run with no Review Console holds can't-tell findings nobody filed.
+const AUTO_MERGE_LINE = '- AUTO 09:59:00 — Fast-lane auto-merge: issue #12, assess-agent-autonomy verdict auto-merge. Reversibility: high.';
+const cantTellFinding = { id: '0123456789ab', lens: '3a', path: 'src/a.js', line: 10, claim: 'The guard runs after the read', reporterSeverity: 'medium', kind: 'unconfirmed' };
+const cantTellVerdict = (id) => `- STAGED 10:00:00 — Tiebreak tiebreak:${id}: lens "3a" finding src/a.js:10 console: verdict:cant-tell. Severity: medium. Recommendation: file.`;
+const unfiledDeps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+
+function seedCantTellRun({ autoMerge = true, extraLines = [], consoleJson = null, specDir = null } = {}) {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cant-tell-unfiled-'));
+  const write = (dir, name, body) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, name), body); };
+  const target = specDir ? path.join(runDir, specDir) : runDir;
+  const lines = [...(autoMerge && !specDir ? [AUTO_MERGE_LINE] : []), cantTellVerdict(cantTellFinding.id), ...extraLines];
+  if (specDir) write(runDir, 'decisions.md', autoMerge ? `${AUTO_MERGE_LINE}\n` : '');
+  write(target, 'decisions.md', `${lines.join('\n')}\n`);
+  write(target, 'review-findings.json', JSON.stringify([cantTellFinding]));
+  if (consoleJson) write(runDir, 'console.json', consoleJson);
+  return runDir;
+}
+
+test('AC1.1: decideArchiveCore skips cant-tell-unfiled when coverage names unfiled findings (#4171)', () => {
+  const coverage = { artifactPresent: false, artifactValid: true, missing: [], unfiledCantTell: ['tiebreak:abc'] };
+  assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'none', false, undefined, coverage),
+    { action: 'skip', reason: 'cant-tell-unfiled', unfiled: ['tiebreak:abc'], hint: CANT_TELL_UNFILED_HINT });
+  assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'none', false, undefined, { ...coverage, unfiledCantTell: [] }), { action: 'archive' });
+  // The tiebreak artifact checks keep precedence when an artifact is present.
+  assert.equal(decideArchiveCore(TIEBREAK_MERGED_PR, 'none', false, undefined,
+    { artifactPresent: true, artifactValid: false, missing: [], unfiledCantTell: ['tiebreak:abc'] }).reason, 'tiebreak-artifact-invalid');
+});
+
+test('AC1.1: unfiledCantTellFindings names an auto-merge run\'s unfiled can\'t-tell finding, then clears once filed (#4171)', () => {
+  const runDir = seedCantTellRun();
+  try {
+    assert.deepStrictEqual(unfiledCantTellFindings(runDir), [`tiebreak:${cantTellFinding.id}`]);
+    const [{ fingerprint }] = unfiledCantTell({ runDir, deps: unfiledDeps });
+    fs.appendFileSync(path.join(runDir, 'decisions.md'),
+      `- AUTO 10:01:00 — Queue write: tiebreak:${cantTellFinding.id} filed as #501 (work-fingerprint ${fingerprint}). Reversibility: n/a.\n`);
+    assert.deepStrictEqual(unfiledCantTellFindings(runDir), []);
+  } finally { fs.rmSync(runDir, { recursive: true, force: true }); }
+});
+
+test('a rendered console turns the cant-tell-unfiled guard off (#4171)', () => {
+  const resolved = seedCantTellRun({ consoleJson: '{"resolved":true}' });
+  const terminal = seedCantTellRun({ extraLines: ['- AUTO 10:02:00 — Review Console: terminal decision. Reversibility: n/a.'] });
+  try {
+    assert.deepStrictEqual(unfiledCantTellFindings(resolved), []);
+    assert.deepStrictEqual(unfiledCantTellFindings(terminal), []);
+  } finally { for (const d of [resolved, terminal]) fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test('a non-auto-merge run is never guarded by cant-tell-unfiled (#4171)', () => {
+  const runDir = seedCantTellRun({ autoMerge: false });
+  try { assert.deepStrictEqual(unfiledCantTellFindings(runDir), []); } finally { fs.rmSync(runDir, { recursive: true, force: true }); }
+});
+
+test('a spec dir\'s unfiled can\'t-tell finding is spec-prefixed (#4171)', () => {
+  const runDir = seedCantTellRun({ specDir: 'spec-7' });
+  try {
+    assert.deepStrictEqual(unfiledCantTellFindings(runDir), [`spec-7/tiebreak:${cantTellFinding.id}`]);
+  } finally { fs.rmSync(runDir, { recursive: true, force: true }); }
+});
+
+test('cant-tell-unfiled is structurally stuck (#4171)', () => {
+  assert.ok(STRUCTURALLY_STUCK_REASONS.has('cant-tell-unfiled'));
 });
 
 // #4032: `prStates` (the pass-shared resolver) replaces archiveMerged's live PR
