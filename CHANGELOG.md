@@ -53,6 +53,15 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.155.1](https://github.com/thn-inc/claude-tweaks/compare/v6.155.0...v6.155.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* Shipped-candidate detector reads a PR's own filed… ([#4314](https://github.com/thn-inc/claude-tweaks/issues/4314)) ([da3a174](https://github.com/thn-inc/claude-tweaks/commit/da3a174e7cfbdc9934e211ffaa3b9884203aaa06))
+* Skip fenced code blocks when the shared section parsers… ([#4169](https://github.com/thn-inc/claude-tweaks/issues/4169)) ([8fe0d7b](https://github.com/thn-inc/claude-tweaks/commit/8fe0d7b4e1dacf64fedc367e9e2116e044694ba5))
+* Windows: worktree and write guards fail open when a Bash… ([#4281](https://github.com/thn-inc/claude-tweaks/issues/4281)) ([1961010](https://github.com/thn-inc/claude-tweaks/commit/1961010a1851e11afabfe52422651a19361586e2))
+
 ## [6.155.0](https://github.com/thn-inc/claude-tweaks/compare/v6.154.1...v6.155.0) (2026-10-25)
 
 
