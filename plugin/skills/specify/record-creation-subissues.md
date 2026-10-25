@@ -19,7 +19,7 @@ SPECIFY_DECOMP_MANIFEST=$(node -e "
   const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
   console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-decomp-manifest.json') || require('path').join(require('os').tmpdir(), 'specify-decomp-manifest.json'))
 ")
-node -e "require('fs').writeFileSync(process.argv[1], '[]')" "$SPECIFY_DECOMP_MANIFEST"
+node -e "require('fs').writeFileSync(process.argv[1], '[]')" -- "$SPECIFY_DECOMP_MANIFEST"
 ```
 
 **Origin-set carve-out (1-unit collapse).** When Step 2.6 returned a 1-unit collapse *and* `$ORIGIN_RECORD_NUM` is set (`SKILL.md`'s `needs:definition` redirect, Resolve-the-input case 1), that unit gets **no fresh create**: compose its body exactly as below, then write it onto the origin record in place — `gh issue edit "$ORIGIN_RECORD_NUM" --body-file` plus the labels the create call would have applied and `--remove-label "needs:definition"` in the same edit; under `local-files`, `writeRecord` with those same facets and `facets.needsDefinition` cleared (the record is now defined — the redirect that routed here must not re-fire) — carrying the `{design-doc-slug}:{unit-slug}` fingerprint into that body so the Idempotency map above resolves it on any resumed run. **This write replaces the origin's own body, so preserve that body as a `## Original request` block in the composed one** — shaping mode's ground-truth rule (`shaping-mode.md`), and the last record of what was originally asked once Step 7 deletes the design doc. Treat `$ORIGIN_RECORD_NUM` as this unit's `$SUB_ISSUE_NUM`/`$SUB_ISSUE_ID` from here on: Step 4's linking, Step 5's red-team and Step 6's self-review all run against it as an ordinary produced record, and Step 9 then only skips its closure. With `$ORIGIN_RECORD_NUM` unset (every other entry path), a 1-unit collapse creates one fresh standalone ready record, exactly as below.
@@ -55,7 +55,7 @@ UNIT_SLUG=$(node -e "const fs=require('fs');
   const onDisk=fs.existsSync(dir)
     ? fs.readdirSync(dir).map((n)=>/^\d+-(.+)\.md$/.exec(n)).filter(Boolean).map((m)=>m[1])
     : [];
-  console.log(deriveSlug(process.argv[1], ['parent', ...onDisk]))" "$SUB_ISSUE_TITLE")
+  console.log(deriveSlug(process.argv[1], ['parent', ...onDisk]))" -- "$SUB_ISSUE_TITLE")
 ```
 
 Reuse this same `$UNIT_SLUG` value below for both the fingerprint and, under `work-backend: local-files`, the record's own slug — do not re-derive it separately at write time.
@@ -97,7 +97,7 @@ SPECIFY_SUB_ISSUE_EXISTING=$(node -e "
   const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
   const n = checkFingerprint(map, process.argv[1]);
   console.log(n === null ? '' : n);
-" "${DESIGN_DOC_SLUG}:${UNIT_SLUG}")
+" -- "${DESIGN_DOC_SLUG}:${UNIT_SLUG}")
 ```
 
 **`work-backend: github-issues`** — same Type expression branch as the parent. The `recordPayload` call above never passes `solutionUnjustified`, so its `.labels` cover only `risk:{tier}`, `size:{tier}`, `ceremony:{tier}`, `ready`, and no `by:*` label — a decomposition is human-shaped work, not a health-skill filing. The `--label` flags below are exactly that set; `solution:unjustified` is added separately, below the create blocks, once the Framing verdict is known:
@@ -129,7 +129,7 @@ else
     const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
     recordFingerprint(map, process.argv[1], Number(process.argv[2]));
     fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
-  " "${DESIGN_DOC_SLUG}:${UNIT_SLUG}" "$SUB_ISSUE_NUM"
+  " -- "${DESIGN_DOC_SLUG}:${UNIT_SLUG}" "$SUB_ISSUE_NUM"
 fi
 ```
 
@@ -154,7 +154,7 @@ else
       body,
       facets: { type: process.argv[3], risk: process.argv[4], size: process.argv[5], ceremony: process.argv[6], stage: 'ready' }
     });
-    console.log(record.id)" "$UNIT_SLUG" "$SUB_ISSUE_TITLE" "$SUB_ISSUE_TYPE" "$SUB_ISSUE_RISK" "$SUB_ISSUE_SIZE" "$SUB_ISSUE_CEREMONY" "$SPECIFY_SUB_ISSUE_BODY")
+    console.log(record.id)" -- "$UNIT_SLUG" "$SUB_ISSUE_TITLE" "$SUB_ISSUE_TYPE" "$SUB_ISSUE_RISK" "$SUB_ISSUE_SIZE" "$SUB_ISSUE_CEREMONY" "$SPECIFY_SUB_ISSUE_BODY")
 
   node -e "
     const fs = require('fs');
@@ -162,7 +162,7 @@ else
     const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
     recordFingerprint(map, process.argv[1], Number(process.argv[2]));
     fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
-  " "${DESIGN_DOC_SLUG}:${UNIT_SLUG}" "$SUB_ISSUE_ID"
+  " -- "${DESIGN_DOC_SLUG}:${UNIT_SLUG}" "$SUB_ISSUE_ID"
 fi
 ```
 
@@ -182,7 +182,7 @@ node -e "const fs=require('fs');
   const entry={title:process.argv[2], num:process.argv[3], body:fs.readFileSync(process.argv[4],'utf8'), ceremony:process.argv[5]};
   const list=fs.existsSync(path)?JSON.parse(fs.readFileSync(path,'utf8')):[];
   list.push(entry);
-  fs.writeFileSync(path, JSON.stringify(list))" "$SPECIFY_DECOMP_MANIFEST" "$SUB_ISSUE_TITLE" "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" "$SPECIFY_SUB_ISSUE_BODY" "$SUB_ISSUE_CEREMONY"
+  fs.writeFileSync(path, JSON.stringify(list))" -- "$SPECIFY_DECOMP_MANIFEST" "$SUB_ISSUE_TITLE" "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" "$SPECIFY_SUB_ISSUE_BODY" "$SUB_ISSUE_CEREMONY"
 ```
 
 **Write-path resilience.** A `gh` create failure for one sub-issue (any kept parent already exists on GitHub by this point) falls back to `local-store.js` for that sub-issue only — write it locally with `unsynced: true` (fingerprint preserved, so a later sync still dedups correctly) and continue with the rest of the batch rather than aborting the whole decomposition over one failure. `/tidy`'s Sync finding reconciles it onto GitHub on a later pass. The same rule applies to Step 4's linking edits below — a failed link is noted and the pass continues; nothing already created rolls back.
@@ -203,7 +203,7 @@ node -e "const {crossReferenceKeyFiles}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/i
     try { return execFileSync('git', ['grep', '-l', '-F', ident], { encoding: 'utf8' }).trim().split('\n').filter(Boolean); }
     catch { return []; }
   };
-  console.log(JSON.stringify(crossReferenceKeyFiles(units, grep)))" "$SPECIFY_DECOMP_MANIFEST"
+  console.log(JSON.stringify(crossReferenceKeyFiles(units, grep)))" -- "$SPECIFY_DECOMP_MANIFEST"
 ```
 
 For each returned `{title, addedFiles}` entry, append `addedFiles` (`- \`{path}\` — {note}`, `spec-template.md`'s Key Files item format) to that sub-issue's own `### Key Files` list and write the updated body back — `gh issue edit {num} --body-file` (`work-backend: github-issues`) or `local-store.js`'s `updateRecord` (`work-backend: local-files`) — per **Write-path resilience** above: a failed edit is noted and the pass continues, nothing already created rolls back. No returned entries (the common case — no genuine cross-reference in this batch) is a silent no-op, not an error.
@@ -263,7 +263,7 @@ if [ "$SPECIFY_DECOMP_LOG" = "true" ]; then
     fs.mkdirSync('docs', { recursive: true });
     fs.writeFileSync(logPath, existing + entry);
     console.error('Ceremony tally: ' + standard.length + ' ceremony:standard sub-issues — appended to ' + logPath);
-  " "$SPECIFY_DECOMP_MANIFEST"
+  " -- "$SPECIFY_DECOMP_MANIFEST"
 fi
 ```
 

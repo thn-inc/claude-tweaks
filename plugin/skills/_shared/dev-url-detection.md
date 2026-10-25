@@ -96,14 +96,19 @@ This lease-membership check applies regardless of `PRIMARY`/`WORKTREE` status �
 node -e "const { repoInfo } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js'); console.log(repoInfo(process.cwd()).isLinkedWorktree ? 'WORKTREE' : 'PRIMARY')"
 ```
 
-When the result is `WORKTREE`, for **each responding port** verify it is serving the active worktree before accepting it:
+When the result is `WORKTREE`, resolve the worktree root once, as its own call (the worktree guard refuses `git` inside `$(...)`, `_shared/scratch-worktree.md` §7), and paste what it prints for `{worktree-root}` below:
+
+```bash
+git rev-parse --show-toplevel
+```
+
+Then, for **each responding port**, verify it is serving the active worktree before accepting it:
 
 ```bash
 # Resolve the listening process's working directory and compare to the worktree root
 PID=$(lsof -nP -iTCP:{PORT} -sTCP:LISTEN -t 2>/dev/null | head -1)
 SRV_CWD=$(lsof -a -p "$PID" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
-WT_ROOT=$(git rev-parse --show-toplevel)
-[ "$SRV_CWD" = "$WT_ROOT" ] && echo "MATCH" || echo "FOREIGN"
+[ "$SRV_CWD" = "{worktree-root}" ] && echo "MATCH" || echo "FOREIGN"
 ```
 
 - **MATCH** → the responding server serves this worktree. Accept it as in Step 3.

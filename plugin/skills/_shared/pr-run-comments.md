@@ -139,18 +139,18 @@ plugin's PR-comment surface that edits rather than always-appends.
    `OWNER/REPO` handed to `--repo` is resolved by `gh` against its default host, `github.com`,
    unless the value carries the host as `HOST/OWNER/REPO`).
 
-   Before either route below, resolve the payload and body paths as one plain call with no `eval`
-   (`_shared/session-tmp-root.md`):
+   Before either route below, resolve the payload, body and mutation paths as one plain call with
+   no `eval` (`_shared/session-tmp-root.md`):
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" COMMENTS={kind}-comments-{n}.json BODY={kind}-comment-{n}.md
+   node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" COMMENTS={kind}-comments-{n}.json BODY={kind}-comment-{n}.md MUTATION={kind}-comment-mutation-{n}.graphql
    ```
 
-   It prints `COMMENTS="{path}"` and `BODY="{path}"`. Substitute each printed literal path for its
-   placeholder: `{comments-path}` for the payload (the worktree-safe fetch below), `{body-path}` for
-   the body (steps 2 and 3; a worktree session refuses a runtime variable path,
-   `_shared/scratch-worktree.md` §7). The caller writes the comment body to `{body-path}`, marker as
-   its first line, before step 2 or 3.
+   It prints `COMMENTS="{path}"`, `BODY="{path}"` and `MUTATION="{path}"`. Substitute each printed
+   literal path for its placeholder: `{comments-path}` for the payload (the worktree-safe fetch
+   below), `{body-path}` for the body (steps 2 and 3), `{mutation-path}` for the update mutation
+   (step 2) — a worktree session refuses a runtime variable path, `_shared/scratch-worktree.md` §7.
+   The caller writes the comment body to `{body-path}`, marker as its first line, before step 2 or 3.
 
    In a worktree-isolated session, use the worktree-safe form; it also runs outside one. Each block
    is its own plain Bash call, with no chain, no `--jq`, and no host in `--repo`:
@@ -198,10 +198,13 @@ plugin's PR-comment surface that edits rather than always-appends.
 2. **Found → update in place**, preserving the comment's identity (same GraphQL id, no new
    comment created, no reordering in the thread). `--hostname {host}` is required here even
    though `--repo` is host-qualified elsewhere — the two flags are independent in `gh`, and
-   `gh api graphql` targets `github.com` unless `--hostname` is given:
+   `gh api graphql` targets `github.com` unless `--hostname` is given. Write the mutation
+   `mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}`
+   to `{mutation-path}` with the `Write` tool and pass it by file — the worktree guard refuses it
+   inline (`_shared/scratch-worktree.md` §7, the multi-variable mutation row):
 
    ```bash
-   gh api graphql --hostname {host} -f query='mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}' \
+   gh api graphql --hostname {host} -F query=@"{mutation-path}" \
      -f id="{found-id}" -F body=@"{body-path}"
    ```
 

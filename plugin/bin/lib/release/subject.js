@@ -8,10 +8,11 @@
 // _shared/github-pr-scan.md's auto-merged-this-week metric matches the tag
 // anywhere in the message), a required `Release-Note: {line}` paragraph
 // (single-line by construction — see the inline comment at its push site),
-// `Fixes #n` footer lines, and a trailing `BREAKING CHANGE: {note}` footer
-// when `breaking` is set. release-please and the local release engine both
-// parse exactly this shape back out, which is why there is one writer and no
-// per-site variation. Pure function, zero deps.
+// `Fixes #n` footer lines (`Refs #n` for a `keepOpen` number: it still counts
+// for everything else, but the merge never closes it, #4199), and a trailing
+// `BREAKING CHANGE: {note}` footer when `breaking` is set. release-please and
+// the local release engine both parse exactly this shape back out, which is why
+// there is one writer and no per-site variation. Pure function, zero deps.
 'use strict';
 
 const TYPE_PREFIX = { feature: 'feat', bug: 'fix', task: 'chore' };
@@ -51,12 +52,12 @@ function truncateHead(head, prefix, suffixLength) {
   return cut.replace(/[\s.,;:—-]+$/u, '') + ELLIPSIS;
 }
 
-// { type, title, number, scope?, breaking?, summary?, migrationNote?, releaseNote, fixes?, tag?, breakingRecords? } -> { title, body }
+// { type, title, number, scope?, breaking?, summary?, migrationNote?, releaseNote, fixes?, keepOpen?, tag?, breakingRecords? } -> { title, body }
 // `scope` is Conventional Commits' optional `type(scope):` noun (#3028) — for a
 // project whose own commit convention requires one; omitted or blank, the
 // subject is unscoped. One token only: `(`/`)`/whitespace would break the
 // prefix grammar release-please parses back out.
-function composeSubject({ type, title, number, scope, breaking = false, summary, migrationNote, releaseNote, fixes, tag, breakingRecords } = {}) {
+function composeSubject({ type, title, number, scope, breaking = false, summary, migrationNote, releaseNote, fixes, keepOpen, tag, breakingRecords } = {}) {
   // number is validated first so the type/title usage errors below can cite "for #{number}".
   if (!Number.isInteger(number) || number <= 0) throw usage(`number must be a positive integer, got ${JSON.stringify(number)}`);
   const prefixBase = TYPE_PREFIX[type];
@@ -91,6 +92,10 @@ function composeSubject({ type, title, number, scope, breaking = false, summary,
   for (const n of fixList) {
     if (!Number.isInteger(n) || n <= 0) throw usage(`fixes entries must be positive integers, got ${JSON.stringify(n)}`);
   }
+  const keep = new Set(Array.isArray(keepOpen) ? keepOpen : []);
+  for (const n of keep) {
+    if (!fixList.includes(n)) throw usage(`keepOpen entries must also be in fixes, got ${JSON.stringify(n)}`);
+  }
   const paragraphs = [];
   const cleanSummary = typeof summary === 'string' ? summary.trim() : '';
   if (cleanSummary) paragraphs.push(cleanSummary);
@@ -101,7 +106,7 @@ function composeSubject({ type, title, number, scope, breaking = false, summary,
   // function performs no truncation itself: it writes cleanReleaseNote verbatim (multi-line
   // included), exactly like migrationNote/BREAKING CHANGE: already does.
   paragraphs.push(`Release-Note: ${cleanReleaseNote}`);
-  paragraphs.push(fixList.map((n) => `Fixes #${n}`).join('\n'));
+  paragraphs.push(fixList.map((n) => `${keep.has(n) ? 'Refs' : 'Fixes'} #${n}`).join('\n'));
   if (breaking) paragraphs.push(`BREAKING CHANGE: ${note}`);
 
   return { title: head + suffix, body: paragraphs.join('\n\n') };

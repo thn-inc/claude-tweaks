@@ -48,7 +48,7 @@ files:
 - **URL:** `plugin/skills/build/micro-plan.md` (Applicability gate), `{run-dir}/work/{n}-spec.md`, `{run-dir}/decisions.md`
 - **Action:** Dispatch a `ceremony:fast-lane`, `size:low` record whose Key Files names one implementation file (plus, optionally, its test).
 - **Should feel:** A one-file fix goes straight to a one-task plan — no writing-plans dispatch, no plan audit.
-- **Should understand:** Condition 3 counts implementation files only (tests, `*.test.*`/`*.spec.*`, and markdown that is not prompt prose such as `docs/**` excluded; markdown under `skills/`, `agents/`, or `commands/` counts as implementation — the same split `computeDiffFacts` applies, #3477), and `extractKeyFilesSection` returns the bullets' backticked paths. A record with no Key Files section still falls through ("could not parse" is never "parsed to zero").
+- **Should understand:** Condition 3 counts implementation files only (tests, `*.test.*`/`*.spec.*`, markdown that is not prompt prose such as `docs/**`, and a top-level `docs/plans/*.html` diagram (#4187) excluded; markdown under `skills/`, `agents/`, or `commands/` counts as implementation — the same split `computeDiffFacts` applies, #3477), and `extractKeyFilesSection` returns the bullets' backticked paths. A record with no Key Files section still falls through ("could not parse" is never "parsed to zero").
 - **Red flags:** `decisions.md` shows a full `/superpowers:writing-plans` dispatch for a fast-lane single-file record that carries Key Files; `extractKeyFilesSection` returning `[]` on a body that visibly has the section.
 
 ## Origin

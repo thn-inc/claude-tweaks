@@ -28,12 +28,25 @@ actual current branch (`git branch --show-current`) — never a name this run wo
 
 The heredoc delimiter is unquoted so `${CLAUDE_PLUGIN_ROOT}` expands — keep the body free of any other `$` or unescaped backtick, per `bin/node-eval-file.js`'s header.
 
-Run it from the worktree as one command — the module has no CLI of its own, and a hand-rolled
-multi-line `node -e` silently no-ops on Windows Git Bash (`bin/node-eval-file.js`'s header), which
-would read as a clean result:
+Resolve its two inputs first, from the worktree, each as its own plain call — the worktree guard
+refuses `git` inside `$(...)` (`_shared/scratch-worktree.md` §7). `{branch}` is what the first
+prints; `{repo}` is what the second prints, or empty when it fails (no `gh`, offline), which skips
+the PR lookup below:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$(git branch --show-current)" "$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" "{records}" <<NODE_EVAL_EOF
+git branch --show-current
+```
+
+```bash
+gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null
+```
+
+Then run the check from the worktree as one command, both values pasted in literally — the module
+has no CLI of its own, and a hand-rolled multi-line `node -e` silently no-ops on Windows Git Bash
+(`bin/node-eval-file.js`'s header), which would read as a clean result:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "{branch}" "{repo}" "{records}" <<NODE_EVAL_EOF
 const m = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/worktree/remote-branch-collision.js');
 const [branch, repo, recordList] = process.argv.slice(1);
 const r = m.classifyRemoteBranch({ branch });

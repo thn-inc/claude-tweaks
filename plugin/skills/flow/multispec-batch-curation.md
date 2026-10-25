@@ -37,12 +37,25 @@ If any insight is "Implement now", the reflect skill handles it before returning
 
 Run once, against the **parent** run directory — never any `spec-{N}/` — so its `engine-state.json` and row records can't collide with (or be silently skipped by) any per-spec engine state:
 
+Resolve its two values first, each as its own plain call (the worktree guard refuses `git` inside `$(...)`, `_shared/scratch-worktree.md` §7), and paste each literally into the next. `{integration-branch}` is what the first call prints or, when it prints nothing, what the second prints minus its `origin/` prefix — deliberately no `@{upstream}` fallback: inside the shared worktree it names the run's own pushed branch, so a merge-base against it is ≈ `HEAD` and the batch diff comes out empty:
+
 ```bash
-# deliberately no @{upstream} fallback: inside the shared worktree it names the run's own pushed branch — merge-base against it ≈ HEAD, an empty batch diff
-INTEGRATION_BRANCH=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch)
-[ -n "$INTEGRATION_BRANCH" ] || INTEGRATION_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
+node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch
+```
+
+```bash
+git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null
+```
+
+`{merge-base}` is what this prints:
+
+```bash
+git merge-base --end-of-options HEAD "origin/{integration-branch}"
+```
+
+```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" plan --run-dir "$MULTISPEC_PARENT_DIR" \
-  --base "$(git merge-base --end-of-options HEAD "origin/${INTEGRATION_BRANCH}")" \
+  --base "{merge-base}" \
   --ceremony "{batch ceremony}" --signals '{...}'
 ```
 

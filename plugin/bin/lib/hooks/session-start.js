@@ -348,6 +348,13 @@ async function run(ctx) {
             `worktree(s) left in place: ${s.notableWorktrees.map((w) => `${path.basename(w.path)} (${w.reason})`).join(', ')}`,
           );
         }
+        // Escalate/resolve failures the pass swallowed (#4180) — a count plus the latest one; absent
+        // (an older status file) or zero renders nothing.
+        if (typeof s.residueErrors === 'number' && s.residueErrors > 0) {
+          const last = s.lastResidueError;
+          const lastPart = last && typeof last.op === 'string' ? ` (last: ${last.op} — ${last.error})` : '';
+          lines.push(`${s.residueErrors} residue error(s)${lastPart}`);
+        }
         if (lines.length) {
           parts.push(`claude-tweaks: background reconcile (from a prior session) — ${lines.join('; ')}.`);
         }

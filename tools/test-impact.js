@@ -6,7 +6,8 @@
 //     Runs the full suite (`node {repo}/tools/run-tests.js`) under tools/test-impact/tracer.js and folds
 //     the trace files into a map (tools/test-impact/build-map.js) recording HEAD and the suite's exit
 //     code — a failing suite still writes its map, which verify.js then refuses as
-//     map-from-failing-suite. Refuses a tree with tracked changes unless --allow-dirty (untracked files
+//     map-from-failing-suite. A run in which a traced process could not record a read (a `.lost` marker)
+//     writes no map. Refuses a tree with tracked changes unless --allow-dirty (untracked files
 //     do not count). Prints `trace: {n} test file(s), {paths} path(s), suite exit {code} → {out} ({bytes} bytes)`.
 //   fetch [--repo owner/name] [--out <path>]
 //     Downloads the map CI built: of the last 30 successful `test-impact-map.yml` runs on main, the
@@ -17,9 +18,9 @@
 // --out defaults to `{git-common-dir}/claude-tweaks-test-impact.json` (shared by every worktree); the
 // map is written atomically. The repo root is `git rev-parse --show-toplevel` of the cwd.
 //
-// Exit codes: 0 map written (or, for fetch, already current); 1 failure (no trace data, gh/git
-// failure, an invalid or unusable artifact, no ancestor map) with a message on stderr; 2 malformed
-// invocation or, for trace, a dirty tree.
+// Exit codes: 0 map written (or, for fetch, already current); 1 failure (no trace data, a trace run whose
+// tracer lost a read, gh/git failure, an invalid or unusable artifact, no ancestor map) with a message on
+// stderr; 2 malformed invocation or, for trace, a dirty tree.
 //
 // Seam: run({ argv, deps }) returns the exit code; deps holds git(args, {cwd}) and gh(args, {cwd})
 // (stdout; throw on failure), spawn(cmd, args, opts) (→ {status, signal, error}), fs, now, env,
@@ -159,6 +160,11 @@ function trace(args, deps) {
     const exitCode = result && Number.isInteger(result.status) ? result.status : 1;
 
     const built = buildMap({ traceDir, commit, exitCode, node: process.version, now: deps.now, fsImpl: deps.fs });
+    if (built.lost > 0) {
+      const named = built.lostTests.length ? built.lostTests.join(', ') : 'unknown';
+      deps.err(`test-impact.js trace: ${built.lost} traced process(es) could not record a read (tests: ${named}) — no map written`);
+      return 1;
+    }
     const tests = Object.keys(built.map.tests).length;
     if (tests === 0) {
       deps.err(`test-impact.js trace: the run left no parseable trace file in ${traceDir} — no map written`);

@@ -30,9 +30,11 @@ files:
   - Every worktree of the checkout shares one map under the git common dir.
   - A map from a red suite is never served, and neither is a map built by a pull-request run: only `push` and dispatch runs on main count.
   - The map is read only when selection needs it. A delta that no impact rule matches never reads the map or runs `fetch`.
+  - A traced run that could not record a read (a trace write failed, e.g. EMFILE or ENOSPC) writes no map. `trace` exits 1 and names the tests that lost a read: `test-impact.js trace: {n} traced process(es) could not record a read (tests: …) — no map written`. When even the loss marker cannot be written, the traced process exits 1 instead, so the suite, and any map it would record, is red.
 - **Red flags:**
   - A build step that starts a traced full-suite run.
   - A fetch that replaces the cache with a map whose commit is not an ancestor of HEAD.
+  - A `trace` run that exits 0 after a trace write failed.
 
 ### 2. Re-verify a skill-prose edit
 - **URL:** the verify output, and `{git-dir}/claude-tweaks-verify/report.json`.
@@ -68,4 +70,5 @@ files:
 
 ## Origin
 - Created during the build of #4024. A 14-day transcript analysis found verify and `npm test` consumed about 78 hours of tool time, roughly a quarter of dispatch-agent wall time. #3968, a two-line markdown change, still paid a 476-second full run.
+- Updated during the build of #4158: a failed trace write now fails the trace closed, where before it was silently dropped.
 - Related: `declare-a-verify-scope-1924.md` (the declaration this extends) and `run-the-suite-alongside-sibling-sessions-3969.md` (the suite slot a subset run holds for less time).

@@ -40,7 +40,11 @@ primary lane, never double-counted under Priority or Dependency-repair too.
 Resolve this run's session-scoped actions-file paths once, up front (`_shared/session-tmp-root.md`) — every lane below writes its actions to its own variable instead of a literal `/tmp` path:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ST_BACKLOG_REFINE_ACTIONS_REAUTHORIZE=backlog-refine-actions-reauthorize.json ST_BACKLOG_REFINE_ACTIONS_GRANT=backlog-refine-actions-grant.json ST_BACKLOG_REFINE_ACTIONS_FLAGBACK=backlog-refine-actions-flagback.json ST_BACKLOG_REFINE_ACTIONS_NEEDSDECISION=backlog-refine-actions-needsdecision.json ST_BACKLOG_REFINE_ACTIONS_PRIORITY=backlog-refine-actions-priority.json)"
+ST_BACKLOG_REFINE_ACTIONS_REAUTHORIZE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-actions-reauthorize.json)"
+ST_BACKLOG_REFINE_ACTIONS_GRANT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-actions-grant.json)"
+ST_BACKLOG_REFINE_ACTIONS_FLAGBACK="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-actions-flagback.json)"
+ST_BACKLOG_REFINE_ACTIONS_NEEDSDECISION="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-actions-needsdecision.json)"
+ST_BACKLOG_REFINE_ACTIONS_PRIORITY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-actions-priority.json)"
 ```
 
 ## Resolve

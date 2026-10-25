@@ -9,11 +9,11 @@ choice, so both still dispatch; this step names the conflict and the merge order
 ## Procedure
 
 1. Read this firing's `$DISPATCH_NEAR_DUP_PAIRS` (`dispatch-near-dup-pairs.json`, session-scoped per
-   `_shared/session-tmp-root.md`). Re-run `queue-pull-script.md`'s opening `eval` to recover the path in a fresh shell. The
+   `_shared/session-tmp-root.md`). Re-run `queue-pull-script.md`'s `DISPATCH_NEAR_DUP_PAIRS="$(node … --value dispatch-near-dup-pairs.json)"` line to recover the path in a fresh shell. The
    file holds `[{records: [A, B], signals, sharedAnchors}]` — strong pairs only (`isStrongNearDuplicate`), rewritten
    by every queue pull; weak pairs never reach it.
-2. Call `predictedConflicts(pairs, selectedGroups)` from `bin/lib/dispatch/near-dup-pairs.js`, with `selectedGroups` truncated to
-   the first `dispatch-batch-size` groups (the ones that dispatch this firing). It keeps only the pairs
+2. Call `predictedConflicts(pairs, selectedGroups)` from `bin/lib/dispatch/near-dup-pairs.js`, with `selectedGroups` as returned —
+   already capped at `dispatch-batch-size`, the groups that dispatch this firing. It keeps only the pairs
    whose two members sit in two *different* selected groups (a same-group pair is co-built; omit it) and returns
    `[{first, second, signals, sharedAnchors}]`, `first`/`second` being issue numbers.
 3. Per entry, print one line before Step 4:

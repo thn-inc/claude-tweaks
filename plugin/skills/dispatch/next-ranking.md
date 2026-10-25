@@ -27,16 +27,9 @@ group and reproduces the identical stop. All three reasons are checked together,
 `groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight'])` call — no separate key derivation for each.
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" <<NODE_EVAL_EOF
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  const os = require('os'); const path = require('path');
-  const files = { DISPATCH_GROUPS: 'dispatch-groups.json', DISPATCH_EXCLUSIONS: 'dispatch-exclusions.json', DISPATCH_NEXT_PICK: 'dispatch-next-pick.json' };
-  for (const [varName, filename] of Object.entries(files)) {
-    const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-    console.log(varName + '=' + JSON.stringify(p));
-  }
-NODE_EVAL_EOF
-)"
+DISPATCH_GROUPS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-groups.json)"
+DISPATCH_EXCLUSIONS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-exclusions.json)"
+DISPATCH_NEXT_PICK="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-next-pick.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$PRIORITY_FILTER" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "$DISPATCH_NEXT_PICK" <<NODE_EVAL_EOF
   const { readExclusions, groupIsExcluded } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const RANK = { high: 0, medium: 1, low: 2 };
