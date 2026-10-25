@@ -578,6 +578,9 @@ function matchRedirectOperator(tok) {
   return m ? m[2] : null;
 }
 
+// One group: `(ls)`, `$(date)`, `<(b)` — no nesting, and no `$`, backtick, backslash, `<`, `>` or quote inside.
+const BALANCED_GROUP_RE = /^[$<]?\([^()\\$`<>"']*\)$/;
+
 // #4015/#4210: bash ends a word at an unquoted `>`, so `echo foo>x` redirects exactly
 // like `echo foo > x`, and the word before it may hold quoted spans (`echo "hi">x`).
 // `kinds` is the token's per-character span mask (tokenize): only a BARE `>` is an
@@ -590,16 +593,22 @@ function matchRedirectOperator(tok) {
 // (`((i>0))`, where `>` is a comparison), `$(`, `<(` or extglob syntax. An escaped or
 // stray character in the prefix rejects it; ambiguity resolves to no target. A
 // leading `>` (k === 0) is the start-anchored scan's case, not this one.
+//
+// The one exception is a prefix that is exactly one all-bare, un-nested group: it ends
+// at its `)`, so the `>` after it is a redirect (BALANCED_GROUP_RE).
 function gluedRedirectOpEnd(raw, kinds) {
   let k = 0;
   while (k < raw.length && !(raw[k] === '>' && kinds[k] === 'b')) k += 1;
   if (k === 0 || k === raw.length) return null;
+  let plain = true;
   for (let j = 0; j < k; j += 1) {
     const kind = kinds[j];
     if (kind === 's' || kind === 'd') continue;
     if (kind === 'b' && !'$`('.includes(raw[j])) continue;
-    return null;
+    plain = false;
+    break;
   }
+  if (!plain && !(kinds.slice(0, k) === 'b'.repeat(k) && BALANCED_GROUP_RE.test(raw.slice(0, k)))) return null;
   const second = raw[k + 1];
   const twoChar = (second === '>' || second === '|') && kinds[k + 1] === 'b';
   return k + (twoChar ? 2 : 1);
@@ -891,8 +900,9 @@ function compoundBodyEnd(t) {
 // also tried against gluedRedirectOpEnd. Eligibility is tested on the
 // PRE-substitution token and its per-character span mask, so a quoted, escaped or
 // `$`-expanded `>` never counts; the target is read from the post-substitution
-// token, so `>$WT/x` still resolves. Without `quoting.spanKinds` the scan is
-// start-anchored only.
+// token, so `>$WT/x` still resolves. A prefix that is one balanced one-word group
+// (`(ls)>out`, `$(date)>x`, `<(b)>out`) also qualifies; `((i>0))` does not. Without
+// `quoting.spanKinds` the scan is start-anchored only.
 //
 // A `[[ … ]]` or `(( … ))` segment holds a comparison, not a redirection
 // (compoundBodyEnd), so the scan starts after its closing word.

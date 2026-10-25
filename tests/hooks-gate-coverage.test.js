@@ -408,6 +408,22 @@ test('#4210: a mid-word quote merges the way bash does, so `cd foo"bar"` changes
   assert.deepStrictEqual(fileWriteTargets('cd foo"bar"; echo x > a', '/r'), [{ action: 'write', file: path.resolve('/r', 'foobar', 'a') }]);
 });
 
+// #4210: a one-word subshell, command substitution, or process substitution
+// ends at its `)`, so a `>` right after it is a redirect. `((` is arithmetic.
+test('AC2.1 #4210: a redirect after a balanced one-word subshell or substitution resolves its target', () => {
+  for (const [command, file] of [
+    ['(ls)>out', 'out'], ['(ls)>>out', 'out'], ['diff <(a) <(b)>out', 'out'], ['echo $(date)>x', 'x'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', file) }], command);
+  }
+});
+
+test('AC2.1 #4210: arithmetic and nested groups stay target-free', () => {
+  for (const command of ['((i>0))', '(( x>y ))', '((i>0))>x', '(a(b))>x', '$((1))>x', '"a"(ls)>x']) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
 // #3989: a heredoc body is data for the reading program, not shell — its `>`
 // is not a redirection. The opener line and whatever follows the closing
 // delimiter still are scanned.
