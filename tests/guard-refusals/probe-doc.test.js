@@ -16,10 +16,12 @@ const REF = readText(path.join(ROOT, REF_PATH));
 const PINNED = [
   '- **Claude Code version:** 2.1.302',
   '- **Date measured:** 2026-10-24',
-  '- **Variant 1, control (no hook):** `echo complete PROBE_MARKER` was **refused** by the isolation guard.',
-  '- **Variant 2, rewrite of a refused command:** the hook rewrote `echo complete PROBE_MARKER` to `echo REWRITTEN_BY_HOOK`, and the rewritten command **ran**.',
-  '- **Variant 3, rewrite into a refused command:** the hook rewrote a plain `echo hello …` into `echo complete …`, and the rewritten command was **refused**.',
-  '- **Variant 4, rewrite with no decision:** `updatedInput` was applied with **no** `permissionDecision` field, and the rewrite **ran**.',
+  '- **Setup (as recorded):** Claude Code 2.1.302, `claude -p -w`, model `haiku`, a scratch `PreToolUse` hook, 2026-10-24.',
+  '- **(a) Applied before the guard:** `updatedInput` is applied **before** the isolation guard: a refused `echo complete PROBE_MARKER` rewritten to `echo REWRITTEN_BY_HOOK` ran.',
+  '- **(b) The guard re-checks the rewritten command:** the guard re-checks the **rewritten** command: a plain `echo hello …` rewritten into `echo complete …` was refused.',
+  '- **(c) No `permissionDecision`:** `updatedInput` applies with **no** `permissionDecision` field.',
+  '- **Not recorded:** a separate no-hook control run. The "refused" in (a) is the guard\'s documented refusal of `echo complete` (`plugin/skills/_shared/scratch-worktree.md` §7, the `complete` row: "runs a string through complete, which can\'t be verified to stay inside the worktree").',
+  '- The decision-log entry and the Probe 2 evidence files live in a pipeline run directory, which is ephemeral and gets archived. The quoted findings above are the durable record.',
   '- **Ordering:** a PreToolUse `updatedInput` is applied before the isolation guard, and the guard re-checks the rewritten command.',
   '- **Consequence:** a rewrite can normalize, never bypass. The plugin never emits `permissionDecision: \'allow\'` alongside a rewrite.',
   '- **Plugin probe (Task 8, 2026-10-24):** with the plugin, `P=/bin; $P/echo ok` and `node -e \'console.log(process.argv[1])\' "$HOME"` both ran, and no hook output carried a `permissionDecision`.',
@@ -31,7 +33,7 @@ function hasLine(doc, line) {
 }
 
 test('AC3.1: the probe outcome doc records each variant result, the version and the date', () => {
-  assert.ok(PINNED.length >= 10, 'the pinned set must not shrink silently');
+  assert.ok(PINNED.length >= 11, 'the pinned set must not shrink silently');
   for (const line of PINNED) {
     assert.ok(hasLine(REF, line), `${REF_PATH} lost the pinned line: ${line}`);
     const stripped = REF.split(/\r?\n/).filter((l) => l !== line).join('\n');

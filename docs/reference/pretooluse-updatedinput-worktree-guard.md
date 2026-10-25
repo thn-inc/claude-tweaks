@@ -4,7 +4,7 @@ Record #4028 (stop worktree-isolation refusals by making skill prose emit only g
 
 - **Claude Code version:** 2.1.302
 - **Date measured:** 2026-10-24
-- **Surface:** `claude -p -w <name>` (a headless session in a fresh linked worktree), model `haiku`, a scratch `PreToolUse` hook for the first probe and the plugin's own hook for the second.
+- **Surface:** `claude -p -w <name>`, model `haiku`, a scratch `PreToolUse` hook for the first probe and the plugin's own hook for the second.
 
 ## What the guard is
 
@@ -12,19 +12,24 @@ The harness refuses a Bash call it cannot cheaply prove stays inside the worktre
 
 ## Probe 1: ordering, measured with a scratch hook
 
-A scratch repo, a `claude -p -w` session, and a scratch `PreToolUse` hook in throwaway hook settings that returned `updatedInput` for the commands under test. Four variants:
+- **Setup (as recorded):** Claude Code 2.1.302, `claude -p -w`, model `haiku`, a scratch `PreToolUse` hook, 2026-10-24.
 
-- **Variant 1, control (no hook):** `echo complete PROBE_MARKER` was **refused** by the isolation guard.
-- **Variant 2, rewrite of a refused command:** the hook rewrote `echo complete PROBE_MARKER` to `echo REWRITTEN_BY_HOOK`, and the rewritten command **ran**.
-- **Variant 3, rewrite into a refused command:** the hook rewrote a plain `echo hello …` into `echo complete …`, and the rewritten command was **refused**.
-- **Variant 4, rewrite with no decision:** `updatedInput` was applied with **no** `permissionDecision` field, and the rewrite **ran**.
+Three findings, worded as the two sources word them (the plan's Global Constraints "Premise probe result", and the decision log's "Deliverable 4 premise probe" entry):
+
+- **(a) Applied before the guard:** `updatedInput` is applied **before** the isolation guard: a refused `echo complete PROBE_MARKER` rewritten to `echo REWRITTEN_BY_HOOK` ran.
+- **(b) The guard re-checks the rewritten command:** the guard re-checks the **rewritten** command: a plain `echo hello …` rewritten into `echo complete …` was refused.
+- **(c) No `permissionDecision`:** `updatedInput` applies with **no** `permissionDecision` field.
 
 Readings:
 
 - **Ordering:** a PreToolUse `updatedInput` is applied before the isolation guard, and the guard re-checks the rewritten command.
 - **Consequence:** a rewrite can normalize, never bypass. The plugin never emits `permissionDecision: 'allow'` alongside a rewrite.
 
-Provenance, stated plainly: the scratch hook and its settings were throwaway and were not kept, and the transcript of this first probe was not archived. The variants above are the record of it (decision log entry "Deliverable 4 premise probe", run `2026-10-24T193452-record-4028`). The refusal wording of variant 1 is the guard's `complete` row in `_shared/scratch-worktree.md` §7 ("runs a string through complete, which can't be verified to stay inside the worktree"). The permission mode of this probe was not recorded.
+What the record does not say:
+
+- **Not recorded:** a separate no-hook control run. The "refused" in (a) is the guard's documented refusal of `echo complete` (`plugin/skills/_shared/scratch-worktree.md` §7, the `complete` row: "runs a string through complete, which can't be verified to stay inside the worktree").
+- Nothing else about the setup is recorded: neither a scratch repo nor hook settings are named, the scratch hook and the transcript were not kept, and the permission mode was not recorded.
+- The decision-log entry and the Probe 2 evidence files live in a pipeline run directory, which is ephemeral and gets archived. The quoted findings above are the durable record.
 
 ## Probe 2: the plugin's own normalizer, measured live
 
@@ -75,7 +80,7 @@ So the one measured refused shape inline-literal-assignment turns into an accept
 
 Two things the rewrites are *not*:
 
-- **Not a bypass.** The guard re-checks the rewritten text (variant 3), so a rewrite into a refused form is refused. A rewrite cannot launder a command the guard would reject.
+- **Not a bypass.** The guard re-checks the rewritten text (finding (b)), so a rewrite into a refused form is refused. A rewrite cannot launder a command the guard would reject.
 - **Not always argv-identical.** `node-eval-separator` inserts `--`; for a runtime value that starts with `-`, the original hands it to node as an option and the rewrite hands it to the script. Accepted by ruling (it closes the option injection the guard refuses over); measured on node 22 (`node -e '<s>' --flag a` exits 9 with `bad option: --flag`; `node -e '<s>' -- --flag a` prints `["--flag","a"]`).
 
 ## Not measured
