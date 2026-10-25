@@ -1811,7 +1811,9 @@ function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalat
 // no-ops, and returns the plan.
 function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = escalateResidue, resolve = resolveResidue, runner, dryRun = false } = {}) {
   if (result.ok) {
-    if (dryRun) return;
+    // The real success path below clears `structurally-stuck` (resolving an escalated record), so a
+    // dry run returns that clear as its plan.
+    if (dryRun) return planClear(cacheTarget, 'structurally-stuck', dir);
     recordResidueSuccess(cacheTarget, 'move-failed', dir);
     // #1613: a dir that just successfully archived can no longer be
     // structurally stuck — clear any prior tracking so a future, unrelated

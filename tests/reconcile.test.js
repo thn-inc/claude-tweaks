@@ -3126,7 +3126,7 @@ test('#4180 AC2.1: a recorded resolve failure appears in reconcile JSON residueE
   const r = await run({});
   assert.deepEqual(r.residueErrors.map(({ at, ...e }) => e), [{ reason: 'structurally-stuck', path: p, op: 'resolve', error: 'HTTP 502' }]);
   assert.equal(typeof r.residueErrors[0].at, 'number');
-  assert.match(r.residueSummary, /1 escalation error\(s\) \(last: resolve — HTTP 502\)/);
+  assert.match(r.residueSummary, /1 residue error\(s\) \(last: resolve — HTTP 502\)/);
   assert.equal(r.residuePlan, null);
 });
 
@@ -3186,4 +3186,59 @@ test('#4180 repairOriginHead: dryRun never runs set-head or stamps a failure, an
   assert.equal(fs.existsSync(cachePath(root)), false);
   const noOrigin = () => ({ stdout: '', failure: 'git-error', stderr: 'fatal: No such remote' });
   assert.strictEqual(repairOriginHead(root, { runGit: noOrigin, dryRun: true }), null);
+});
+
+// #4180: `residueErrors` is computed on every return path with a root, not only finalize. A budget
+// that trips once the archive check's prune has dropped the gone path's entry returns before
+// finalize; the prune failure (its entry is gone, so only this pass's memory holds it) must still
+// reach the result, with `at: null`.
+test('#4180 reconcile: an over-budget return after archive still reports a prune resolve failure in residueErrors', async () => {
+  const { root, run } = dryRunFixture();
+  const gone = path.join(root, '.claude-tweaks', 'pipelines', 'gone-4180');
+  recordResidueFailure(root, 'move-failed', gone, { lastError: 'EBUSY', threshold: 1 }); // escalated, path absent
+  const budgetMod = require('../plugin/bin/lib/reconcile/budget');
+  const originalBudget = budgetMod.createBudget;
+  budgetMod.createBudget = () => ({
+    exceeded: () => !listResidueFailures(root).some((e) => e.path === gone),
+    remainingMs: () => 0,
+  });
+  let r;
+  try {
+    r = await run({});
+  } finally {
+    budgetMod.createBudget = originalBudget;
+  }
+  assert.equal(listResidueFailures(root).some((e) => e.path === gone), false, 'the prune dropped the entry');
+  assert.equal(r.residueSummary, undefined, 'the pass returned before finalize');
+  assert.equal(r.residueErrors.length, 1);
+  assert.deepEqual(
+    { reason: r.residueErrors[0].reason, path: r.residueErrors[0].path, op: r.residueErrors[0].op, at: r.residueErrors[0].at },
+    { reason: 'move-failed', path: gone, op: 'resolve', at: null },
+  );
+  assert.equal(typeof r.residueErrors[0].error, 'string');
+});
+
+test('#4180 reconcile: residueErrors is null when there is no repo', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-4180-norepo-'));
+  const r = await reconcile({ cwd: dir, checks: ['mirror'] });
+  assert.deepEqual(r.skipped, [{ check: 'all', reason: 'no-repo' }]);
+  assert.equal(r.residueErrors, null);
+});
+
+// #4180: the declined-learning prune rewrites its store (and takes a lock directory), so a dry
+// run skips it; a real pass still runs it exactly once.
+test('#4180 reconcile: a dry run skips the declined-learning prune; a real run still runs it', async () => {
+  const { run } = dryRunFixture();
+  const store = require('../plugin/bin/lib/declined-learning/store');
+  const original = store.pruneDeclines;
+  let calls = 0;
+  store.pruneDeclines = () => { calls += 1; return 0; };
+  try {
+    await run({ dryRun: true });
+    assert.equal(calls, 0, 'a dry run must not prune the declined-learning store');
+    await run({});
+    assert.equal(calls, 1, 'a real pass prunes once');
+  } finally {
+    store.pruneDeclines = original;
+  }
 });

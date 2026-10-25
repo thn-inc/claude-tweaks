@@ -96,7 +96,8 @@ function expandChecks(checks) {
 // A dry run writes neither the cache nor GitHub (#4180): `residuePlan` lists what the residue
 // tracking would have done (an array on a dry run when archive ran, null otherwise), and
 // `residueErrors` lists the escalate/resolve failures recorded on tracked entries plus this
-// pass's prune failures (null until a pass reaches its finalize phase).
+// pass's prune failures; it rides on EVERY return path that resolved a repo root (an early or
+// over-budget return included), and stays null only when there is no repo.
 // `sessionId`, when the caller has one, threads through to archiveMerged's
 // own `isAbandonedInterrupted` ownership check (archive-merged.js) — omitted
 // (undefined), archiveMerged falls back to its own
@@ -112,7 +113,10 @@ async function reconcile(opts = {}) {
   // timings edit at each return, so a new early return cannot forget it.
   const timings = createTimings();
   phaseOf(timings, 'setup');
-  const result = await withTimings(timings, () => reconcileInner(opts));
+  // #4180: what reconcileInner learns that the wrapper needs after ANY return — the resolved root
+  // and the archive check's prune failures (whose entries are already gone from the cache).
+  const state = { root: null, archiveResidueErrors: null };
+  const result = await withTimings(timings, () => reconcileInner(opts, state));
   // Measurement is best-effort: a summarizer fault reports no timings rather
   // than failing a pass whose real work already finished (never-break-a-session).
   try {
@@ -120,10 +124,24 @@ async function reconcile(opts = {}) {
   } catch {
     result.timings = null;
   }
+  // #4180: every swallowed escalate/resolve failure in one list — the reasons recorded on tracked
+  // entries (`lastResidueError`), then this pass's prune failures. Set here, not in finalize, so a
+  // pass that returned early (over-budget after archive, the background pass) still reports them.
+  // Best-effort like timings: a fault leaves null; no root (no-repo) leaves it null too.
+  try {
+    if (state.root) {
+      result.residueErrors = listResidueFailures(state.root)
+        .filter((e) => e.lastResidueError)
+        .map((e) => ({ reason: e.reason, path: e.path, op: e.lastResidueError.op, error: e.lastResidueError.reason, at: e.lastResidueError.at }))
+        .concat((state.archiveResidueErrors || []).map((e) => ({ reason: e.reason, path: e.path, op: e.op, error: e.error, at: null })));
+    }
+  } catch {
+    result.residueErrors = null;
+  }
   return result;
 }
 
-async function reconcileInner(opts) {
+async function reconcileInner(opts, state) {
   const dryRun = !!opts.dryRun;
   const requestedChecks = Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS;
   let checks = expandChecks(requestedChecks);
@@ -136,13 +154,17 @@ async function reconcileInner(opts) {
   // path is process.cwd()-relative (no root param on this module today, matching every existing
   // caller: /feedback and /reflect never pass one either), so this deliberately does not thread
   // `root` through. Best-effort: a prune failure never blocks the rest of the pass.
-  try {
-    require('../declined-learning/store').pruneDeclines();
-  } catch {
-    /* best-effort — never break reconcile over declined-learning maintenance */
+  // #4180: skipped on a dry run — the prune rewrites the store file (and takes its lock directory).
+  if (!dryRun) {
+    try {
+      require('../declined-learning/store').pruneDeclines();
+    } catch {
+      /* best-effort — never break reconcile over declined-learning maintenance */
+    }
   }
 
   const root = mainCheckoutRoot(cwd);
+  if (root) state.root = root;
   if (!root) {
     result.skipped.push({ check: 'all', reason: 'no-repo' });
     return result;
@@ -494,9 +516,6 @@ async function reconcileInner(opts) {
     }
   }
 
-  // The archive check's prune failures (#4180), kept for finalize's `residueErrors`; stays null
-  // when archive did not run, so that report appends nothing.
-  let archiveResidueErrors = null;
   if (overBudget(DISPATCH_ORDER.slice(4))) return result;
   if (checks.includes('archive')) {
     const r = await timePhase('archive', async () => {
@@ -516,7 +535,7 @@ async function reconcileInner(opts) {
         ...(s.hint !== undefined ? { hint: s.hint } : {}),
       })));
     result.residuePlan = r.residuePlan === undefined ? null : r.residuePlan;
-    archiveResidueErrors = Array.isArray(r.residueErrors) ? r.residueErrors : [];
+    state.archiveResidueErrors = Array.isArray(r.residueErrors) ? r.residueErrors : [];
   }
 
   // Same live-ref dependency as release/archive: derives branch state from
@@ -640,13 +659,6 @@ async function reconcileInner(opts) {
         writeCache(root, update);
       }
     }
-
-    // #4180: every swallowed escalate/resolve failure in one list — the reasons recorded on tracked
-    // entries (`lastResidueError`), then this pass's prune failures, whose entries are already gone.
-    result.residueErrors = listResidueFailures(root)
-      .filter((e) => e.lastResidueError)
-      .map((e) => ({ reason: e.reason, path: e.path, op: e.lastResidueError.op, error: e.lastResidueError.reason, at: e.lastResidueError.at }))
-      .concat((archiveResidueErrors || []).map((e) => ({ reason: e.reason, path: e.path, op: e.op, error: e.error, at: null })));
 
     // #644 Deliverable 3 — the one-line residue summary /claude-tweaks:flow's
     // closing report renders, attached to the same JSON this function already

@@ -2160,6 +2160,27 @@ test('#4180 trackArchiveResult: dryRun on an ok result clears nothing and resolv
   assert.deepEqual(fs.readFileSync(cachePath(root)), before);
 });
 
+// The real success path clears `structurally-stuck` (resolving an escalated record); a dry run
+// returns that clear as its plan instead of nothing.
+test('#4180 trackArchiveResult: dryRun on an ok result returns the structurally-stuck clear it would do', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', 'run-z');
+  assert.deepEqual(
+    trackArchiveResult(root, 'o/r', dir, { ok: true }, { dryRun: true }),
+    { action: 'none', reason: 'structurally-stuck', path: dir },
+  );
+  recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck', threshold: 5 });
+  assert.deepEqual(
+    trackArchiveResult(root, 'o/r', dir, { ok: true }, { dryRun: true }),
+    { action: 'would-clear', reason: 'structurally-stuck', path: dir },
+  );
+  recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck', threshold: 1 });
+  assert.deepEqual(
+    trackArchiveResult(root, 'o/r', dir, { ok: true }, { dryRun: true }),
+    { action: 'would-resolve', reason: 'structurally-stuck', path: dir },
+  );
+});
+
 function seedStuckDir4180(root, id) {
   const dir = path.join(root, '.claude-tweaks', 'pipelines', id);
   fs.mkdirSync(dir, { recursive: true });

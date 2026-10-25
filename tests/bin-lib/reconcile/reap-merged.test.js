@@ -155,6 +155,21 @@ test('reapMerged: a closed-unmerged PR is skipped (never reaped) and logs worktr
   assert.equal(skipEvent.reason, 'pr-closed-unmerged');
 });
 
+// #4180: a dry run writes nothing, so the skip is reported but never appended to events.jsonl.
+test('#4180 reapMerged: a dry run reports a closed-unmerged skip without appending a worktree-reap-skipped event', () => {
+  const { root, wtPath, runDir } = buildReapableFixture();
+  const wrapper = installGhWrapper([{ number: 7, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z' }]);
+  let result;
+  try {
+    result = reapMerged({ cwd: root, dryRun: true });
+  } finally {
+    wrapper.restore();
+  }
+  assert.deepEqual(result.skipped.map((s) => s.reason), ['pr-closed-unmerged']);
+  assert.equal(fs.existsSync(wtPath), true);
+  assert.equal(fs.existsSync(path.join(runDir, 'events.jsonl')), false, 'a dry run appends to no run\'s event log');
+});
+
 // QUIET_SKIP_REASONS ('in-use' among them) must stay quiet in events.jsonl
 // too — the same noise-reduction convention the SessionStart banner already
 // applies (worktree-reap.js), so a live session's own worktree doesn't get a

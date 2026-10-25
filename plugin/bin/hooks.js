@@ -1739,6 +1739,7 @@ async function main(argv) {
     const { STATUS_FILENAME } = require('./lib/reconcile/background-spawn');
     const { QUIET_SKIP_REASONS } = require('./lib/hooks/worktree-reap');
     const { QUIET_SKIP_REASONS: LEDGER_RESIDUE_QUIET_SKIP_REASONS } = require('./lib/reconcile/ledger-residue');
+    const { latestResidueError } = require('./lib/reconcile/residue-summary');
     const root = mainCheckoutRoot(cwd) || cwd;
     // #1687: session-start.js's spawn site now threads the spawning session's
     // id into this dedicated env var (never `CLAUDE_CODE_SESSION_ID` — see
@@ -1816,6 +1817,11 @@ async function main(argv) {
         notableWorktrees: (r.worktrees || [])
           .filter((w) => w.action === 'skipped' && !QUIET_SKIP_REASONS.has(w.reason))
           .map((w) => ({ path: w.path, reason: w.reason })),
+        // Swallowed escalate/resolve failures this pass saw (#4180): a count plus the latest one — the
+        // prune half exists only in this pass's in-memory result, so this file is its one durable trace.
+        // Prune failures carry `at: null` (this pass), so they rank newest.
+        residueErrors: (r.residueErrors || []).length,
+        lastResidueError: latestResidueError(r.residueErrors),
         skipped: r.skipped || [],
       };
     } catch (e) {
