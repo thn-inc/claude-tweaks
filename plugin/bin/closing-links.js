@@ -27,7 +27,7 @@
 // most floor(--settle-ms / 3000) of them -- GitHub closes about 2 s after the
 // merge), and reopens it when it closed at or after mergedAt. An unread merge
 // message (or a merge-commit oid that is not a hex sha) makes every candidate
-// will-close. Logs `reopened` (AUTO), `could not reopen` and `still open`
+// will-close. Logs `reopened` (AUTO), `could not read`, `could not reopen` and `still open`
 // (SKIP, degraded). Prints {action, pr, candidates, willClose, reopened,
 // failed, stillOpen, pendingClose, closedBefore} (plus messageUnread: true
 // when the merge message could not be read), with the worst outcome as the
@@ -113,8 +113,12 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
 };
 
+const ERR_TEXT_MAX = 300;
+
+// Bounded: errText lands in decisions.md, which the Review Console reads line by line.
 function errText(e) {
-  return [e && e.message, e && e.stderr, e && e.stdout].filter(Boolean).join(' ').trim() || String(e);
+  const text = [e && e.message, e && e.stderr, e && e.stdout].filter(Boolean).join(' ').trim() || String(e);
+  return text.length > ERR_TEXT_MAX ? `${text.slice(0, ERR_TEXT_MAX)}…` : text;
 }
 
 // An array whose non-empty content carries repository objects. Without them
@@ -240,6 +244,8 @@ function run(argv, overrides = {}) {
       relinked = sameRepoNumbers(reread.closingIssuesReferences, scope);
     } catch (e) {
       deps.stderr(`closing-links.js: gh pr view failed on PR #${n}: ${errText(e)}\n`);
+      // A body write already landed: leave a trace so the unlink is not unaudited.
+      if (newBody !== pr.body) degraded(`PR #${n} body rewritten (${neutralized.length} closing phrase(s) neutralized) but the re-read of its links failed`, 're-run --mode pre-merge to confirm #' + unwanted.join(', #') + ' unlinked');
       return 5;
     }
     const unlinked = unwanted.filter((x) => !relinked.includes(x));
@@ -298,7 +304,7 @@ function run(argv, overrides = {}) {
         state = read();
       }
     } catch (e) {
-      failed.push({ issue, error: errText(e) });
+      failed.push({ issue, error: errText(e), stage: 'read' });
       continue;
     }
     if (state.state === 'OPEN') { stillOpen.push(issue); continue; }
@@ -313,7 +319,10 @@ function run(argv, overrides = {}) {
     }
   }
   for (const issue of reopened) log(`reopened #${issue} after PR #${n}'s merge closed it (closing link or merge-commit keyword)`, 'high');
-  for (const f of failed) degraded(`could not reopen #${f.issue} after PR #${n}'s merge (${f.error})`, 'reopen it by hand');
+  for (const f of failed) {
+    if (f.stage === 'read') degraded(`could not read #${f.issue} after PR #${n}'s merge (${f.error})`, `check whether it closed, and reopen it by hand if it did`);
+    else degraded(`could not reopen #${f.issue} after PR #${n}'s merge (${f.error})`, 'reopen it by hand');
+  }
 
   // A will-close record still OPEN after the poll window may yet close: that
   // is pending, not clean.

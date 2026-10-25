@@ -294,6 +294,8 @@ test('pre-merge edit failure and re-read failure are exit 5', () => {
   const hRead = makeDeps(b.main, { prReads: [preView(body(), [2724, 3997])], rereads: [new Error('flaky')] });
   assert.equal(run(['--run', b.runDir, ...PRE], hRead.deps), 5);
   assert.match(hRead.err.join(''), /gh pr view failed on PR #7/);
+  // The body write landed before the failed re-read, so the unlink is not left unaudited.
+  assert.match(hRead.log(b.runDir), /^- SKIP \d{2}:\d{2}:\d{2} — Closing links \(degraded\): condition: PR #7 body rewritten \(\d+ closing phrase\(s\) neutralized\) but the re-read of its links failed → fallback: re-run --mode pre-merge to confirm #2724 unlinked/m);
 });
 
 test('a decisions.md write failure is swallowed into the envelope, never an exit change', () => {
@@ -624,6 +626,22 @@ test('post-merge issue-read failure is data', () => {
   const j = h.json();
   assert.equal(j.action, 'reopen-failed');
   assert.equal(j.failed[0].issue, 2724);
+  // A failed read is not a failed reopen: the record may never have closed.
+  assert.match(h.log(runDir), /could not read #2724 after PR #7's merge/);
+  assert.doesNotMatch(h.log(runDir), /could not reopen/);
+});
+
+test('an error text written to decisions.md is bounded', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+    reopenThrows: 'x'.repeat(5000),
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const line = h.log(runDir).split('\n').find((l) => l.includes('could not reopen #2724'));
+  assert.ok(line, 'the failed reopen is logged');
+  assert.ok(line.length < 600, `log line is bounded (was ${line.length})`);
 });
 
 test('post-merge merge-message read failure degrades to messageUnread, never exit 5', () => {

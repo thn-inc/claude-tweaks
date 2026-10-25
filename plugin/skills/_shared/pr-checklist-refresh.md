@@ -176,7 +176,7 @@ above), not necessarily every phase this run actually completed.
    lines to `closes issue #{n}` (GitHub links no such phrase), writes the body, re-reads, and logs
    `unlinked #{n}` or `#{n} still linked` to `decisions.md`.
    A `still-linked` result is left for `pr-first-merge-post-merge.md`'s Step 4.0. Exit 3-5:
-   warn and proceed (Step 4.0 is the backstop). `gh-absent`: one `SKIP` line
+   warn, log one `SKIP` line, and proceed (Step 4.0 is the backstop). `gh-absent`: one `SKIP` line
    (`_shared/auto-decision-log.md`'s Degrade-trace rule).
 <!-- /when -->
 3. Read the record's current title (`gh issue view {n} --json title -q .title` for the
