@@ -58,12 +58,6 @@ function advanceText({ branch, from, to, commits }) {
   return `origin/${branch} advanced ${from.slice(0, 7)} → ${to.slice(0, 7)} by run-dir-only commits (${commits} commits, nothing outside .claude-tweaks/pipelines); no review, not counted; at reviewed tip ${to}`;
 }
 
-// The bump part of the commits that arrived between two tips — the same
-// derivation the release engine applies (bumpPart over readCommits, flags
-// from release-please-config.json at the tip), never a re-implementation.
-// All parents are followed (`firstParent: false`), release-please's own range
-// semantics under pr-first. `git(args)` returns { status, stdout, stderr };
-// a failed `git log` throws GitError carrying git's stderr verbatim.
 class GitError extends Error {
   constructor(args, status, stderr) {
     super(`git ${args.join(' ')} exited ${status}: ${String(stderr).trim()}`);
@@ -74,6 +68,12 @@ class GitError extends Error {
   }
 }
 
+// The bump part of the commits that arrived between two tips — the same
+// derivation the release engine applies (bumpPart over readCommits, flags
+// from release-please-config.json at the tip), never a re-implementation.
+// All parents are followed (`firstParent: false`), release-please's own range
+// semantics under pr-first. `git(args)` returns { status, stdout, stderr };
+// a failed `git log` throws GitError carrying git's stderr verbatim.
 function arrivedPart({ git, base, tip, preMajor }) {
   const stdoutGit = (args) => {
     const r = git(args);
@@ -88,18 +88,6 @@ function arrivedPart({ git, base, tip, preMajor }) {
   return { base, tip, part: bumpPart(commits, { preMajor, ...flags }), shas: commits.map((c) => c.sha) };
 }
 
-// The Step 5 verdict, last before the merge: `merge` (origin/{branch} still at
-// the reviewed tip, after advancing over any run-dir-only moves), `delta` (a
-// code move within the release-tip-moves bound — review it), `held` (the bound
-// is exceeded), or `failed` (the comparison could not run — never read as
-// unmoved). `arrived` rides alongside every verdict as information, never as a
-// hold: the bump part of the last delta's arrived commits, read before the
-// fetch so a git failure stops first; null under `asGiven` or with no delta
-// since Step 3. The skill gates a major on it once per delta. A run-dir-only
-// advance is logged through `appendLog` before the loop re-compares, so a
-// resume reads the advanced tip. `resolveBound()` is the raw spawn result of
-// `resolve-policy.js --run <run> release-tip-moves`; no default is ever
-// substituted for a bound that could not be read.
 const MAX_ADVANCES = 20;
 const RUN_DIR_PATHSPEC = ':!.claude-tweaks/pipelines';
 
@@ -117,6 +105,18 @@ function readBound(r) {
   return { value: entry.value, source: entry.source };
 }
 
+// The Step 5 verdict, last before the merge: `merge` (origin/{branch} still at
+// the reviewed tip, after advancing over any run-dir-only moves), `delta` (a
+// code move within the release-tip-moves bound — review it), `held` (the bound
+// is exceeded), or `failed` (the comparison could not run — never read as
+// unmoved). `arrived` rides alongside every verdict as information, never as a
+// hold: the bump part of the last delta's arrived commits, read before the
+// fetch so a git failure stops first; null under `asGiven` or with no delta
+// since Step 3. The skill gates a major on it once per delta. A run-dir-only
+// advance is logged through `appendLog` before the loop re-compares, so a
+// resume reads the advanced tip. `resolveBound()` is the raw spawn result of
+// `resolve-policy.js --run <run> release-tip-moves`; no default is ever
+// substituted for a bound that could not be read.
 function checkReviewedTip({ decisionsText, branch, asGiven, preMajor }, { git, resolveBound, appendLog }) {
   const parsed = parseReleaseLog(decisionsText, branch);
   const state = {
