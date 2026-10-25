@@ -56,6 +56,11 @@ function withoutLine(text, prefix) {
   return text.split('\n').filter((l) => !l.startsWith(prefix)).join('\n');
 }
 
+function assertMutantFails(mutated, expectedError) {
+  assert.notEqual(mutated, SKILL, 'mutant differs from SKILL.md');
+  assert.throws(() => assertArchiveBackfill(mutated), expectedError);
+}
+
 test('AC1.1: tidy/SKILL.md\'s Action Vocabulary has Archive and Backfill rows, and Step 7.5 a verification line for each', () => {
   assertArchiveBackfill(SKILL);
 });
@@ -71,30 +76,25 @@ test('AC1.1: the recipes the rows cite exist', () => {
 
 test('AC1.1 go-red: deleting the Archive row fails the assertion', () => {
   const mutated = withoutLine(SKILL, '| **Archive** |');
-  assert.notEqual(mutated, SKILL, 'mutant differs from SKILL.md');
-  assert.throws(() => assertArchiveBackfill(mutated), /Archive row/);
+  assertMutantFails(mutated, /Archive row/);
 });
 
 test('AC1.1 go-red: deleting the Backfill row fails the assertion', () => {
   const mutated = withoutLine(SKILL, '| **Backfill** |');
-  assert.notEqual(mutated, SKILL, 'mutant differs from SKILL.md');
-  assert.throws(() => assertArchiveBackfill(mutated), /Backfill row/);
+  assertMutantFails(mutated, /Backfill row/);
 });
 
 test('AC1.1 go-red: restating a routing tier in the Archive row fails the assertion', () => {
   const mutated = SKILL.split('\n').map((l) => (l.startsWith('| **Archive** |') ? `${l} Auto-apply` : l)).join('\n');
-  assert.notEqual(mutated, SKILL, 'mutant differs from SKILL.md');
-  assert.throws(() => assertArchiveBackfill(mutated), /routing tiers/);
+  assertMutantFails(mutated, /routing tiers/);
 });
 
 test('AC1.1 go-red: deleting the Archived verification line fails the assertion', () => {
   const mutated = withoutLine(SKILL, '- [x] Archived: ');
-  assert.notEqual(mutated, SKILL, 'mutant differs from SKILL.md');
-  assert.throws(() => assertArchiveBackfill(mutated), /Archived verification line/);
+  assertMutantFails(mutated, /Archived verification line/);
 });
 
 test('AC1.1 go-red: deleting the Backfilled verification line fails the assertion', () => {
   const mutated = withoutLine(SKILL, '- [x] Backfilled: ');
-  assert.notEqual(mutated, SKILL, 'mutant differs from SKILL.md');
-  assert.throws(() => assertArchiveBackfill(mutated), /Backfilled verification line/);
+  assertMutantFails(mutated, /Backfilled verification line/);
 });
