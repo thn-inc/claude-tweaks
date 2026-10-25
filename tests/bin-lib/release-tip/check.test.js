@@ -19,7 +19,7 @@ const runner = (cwd, env) => (args) => spawnSync('git', args, { cwd, env, encodi
 
 const step3Line = (tip) => `- AUTO 10:00:00 — Step 3: whole-branch review starting, base v1.0.0..main at reviewed tip ${tip}; ## /review marker: 0 existing lines. Reversibility: n/a (marker).`;
 const deltaMarker = (n, of) => `- AUTO 10:10:00 — Step 5: origin/main moved aaaaaaa → bbbbbbb (1 commits) before the merge — move ${n} of ${of}; delta review starting, base ${'c'.repeat(40)}..main; ## /review marker: 3 existing lines. Reversibility: n/a (marker). [lever: release-tip-moves=${of} (default)]`;
-const deltaVerdict = (tip) => `- AUTO 10:20:00 — Step 5: delta review base ${'c'.repeat(40)}..main: review: clean. Findings staged at none; at reviewed tip ${tip}. Reversibility: n/a (gate evaluation).`;
+const deltaVerdict = (tip, base = 'c'.repeat(40)) => `- AUTO 10:20:00 — Step 5: delta review base ${base}..main: review: clean. Findings staged at none; at reviewed tip ${tip}. Reversibility: n/a (gate evaluation).`;
 const decisions = (lines) => ['# Decisions', '', '## /release', ...lines, ''].join('\n');
 
 const boundOf = (value, source = 'default', extra = {}) => ({
@@ -227,32 +227,68 @@ test('fetch failure → failed with stderr', () => {
   });
 });
 
+// `other` pushes a commit with `msg`, which `work` fetches; returns the new tip.
+function pushArrived(fx, name, msg) {
+  const before = originTip(fx);
+  commitMsg(fx, fx.other, name, msg);
+  fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
+  fx.run(fx.work, ['fetch', '-q', 'origin']);
+  const tip = originTip(fx);
+  assert.notStrictEqual(tip, before);
+  return tip;
+}
+
 // Step 3 reviewed `base`; a delta then reviewed a commit `other` pushed with
 // `msg`, which `work` has fetched.
 function arrivedAfterDelta(fx, msg) {
   const base = originTip(fx);
-  commitMsg(fx, fx.other, 'arrived.txt', msg);
-  fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
-  fx.run(fx.work, ['fetch', '-q', 'origin']);
-  const arrivedTip = originTip(fx);
-  assert.notStrictEqual(arrivedTip, base);
+  const arrivedTip = pushArrived(fx, 'arrived.txt', msg);
   return {
     base, arrivedTip,
-    decisionsText: decisions([step3Line(base), deltaMarker(1, 2), deltaVerdict(arrivedTip)]),
+    decisionsText: decisions([step3Line(base), deltaMarker(1, 2), deltaVerdict(arrivedTip, base)]),
   };
 }
 
-test('arrived major after a delta → held', () => {
+test('arrived major is reported, not a held verdict', () => {
   withFixture((fx) => {
     const { base, arrivedTip, decisionsText } = arrivedAfterDelta(fx, 'feat!: y');
     const { v } = check(fx, { decisionsText });
-    assert.strictEqual(v.verdict, 'held');
-    assert.strictEqual(v.reason, 're-rendered to a major after the console');
+    assert.strictEqual(v.verdict, 'merge', 'origin is unmoved since the delta: the comparison still runs');
+    assert.strictEqual(v.reason, null);
     assert.strictEqual(v.arrived.part, 'major');
     assert.strictEqual(v.arrived.base, base);
     assert.strictEqual(v.arrived.tip, arrivedTip);
+    assert.strictEqual(v.arrived.shas.length, 1);
     assert.strictEqual(v.step3Tip, base);
     assert.strictEqual(v.reviewedTip, arrivedTip);
+    assert.strictEqual(v.tipSha, arrivedTip);
+  });
+});
+
+test('arrived is per-delta: only the last delta\'s range is folded', () => {
+  withFixture((fx) => {
+    const base = originTip(fx);
+    const tip1 = pushArrived(fx, 'a1.txt', 'feat!: y');
+    const tip2 = pushArrived(fx, 'a2.txt', 'chore: x');
+    const decisionsText = decisions([
+      step3Line(base), deltaMarker(1, 2), deltaVerdict(tip1, base), deltaMarker(2, 2), deltaVerdict(tip2, tip1),
+    ]);
+    const { v } = check(fx, { decisionsText });
+    assert.strictEqual(v.verdict, 'merge');
+    assert.strictEqual(v.arrived.part, 'none', 'the major accepted at delta 1 is not re-gated');
+    assert.strictEqual(v.arrived.base, tip1);
+    assert.strictEqual(v.arrived.tip, tip2);
+  });
+});
+
+test('no delta since Step 3 → arrived null', () => {
+  withFixture((fx) => {
+    const base = originTip(fx);
+    const tip = pushArrived(fx, 'arrived.txt', 'feat!: y');
+    // A delta verdict from before this Step 3 review is not a delta of it.
+    const { v } = check(fx, { decisionsText: decisions([deltaVerdict(tip, base), step3Line(tip)]) });
+    assert.strictEqual(v.verdict, 'merge');
+    assert.strictEqual(v.arrived, null);
   });
 });
 
@@ -274,13 +310,17 @@ test('chore-only arrived range is none and does not hold', () => {
   });
 });
 
-test('an unresolvable Step 3 tip → failed, git error with stderr', () => {
+test('an unresolvable delta base → failed, git error with stderr, before any fetch', () => {
   withFixture((fx) => {
     const tip = originTip(fx);
-    const { v } = check(fx, { decisionsText: decisions([step3Line('e'.repeat(40)), deltaVerdict(tip)]) });
+    const calls = [];
+    const inner = runner(fx.work, fx.env);
+    const git = (args) => { calls.push(args[0]); return inner(args); };
+    const { v } = check(fx, { decisionsText: decisions([step3Line(tip), deltaVerdict(tip, 'e'.repeat(40))]), git });
     assert.strictEqual(v.verdict, 'failed');
     assert.strictEqual(v.reason, 'git error');
     assert.ok(typeof v.detail === 'string' && v.detail.trim() !== '');
+    assert.ok(!calls.includes('fetch'), `the arrived read runs before the fetch: ${calls.join(' ')}`);
   });
 });
 

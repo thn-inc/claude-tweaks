@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   REVIEWED_TIP_RE,
+  DELTA_VERDICT_RE,
   movedLineRe,
   releaseBlock,
   parseReleaseLog,
@@ -30,7 +31,25 @@ test('parses the real 2026-10-24 release block', () => {
     reviewedTip: '0ecde186ccb4a2d176d86f359699b006014852e6',
     step3Tip: '1813941ecfe019b89307ea75526f2c863ffb5e1e',
     priorMoves: 1,
+    lastDelta: { base: '1813941ecfe019b89307ea75526f2c863ffb5e1e', tip: '0ecde186ccb4a2d176d86f359699b006014852e6' },
   });
+});
+
+test('the real delta verdict line (archive line 8) matches DELTA_VERDICT_RE; its marker (line 7) does not', () => {
+  const m = DELTA_VERDICT_RE.exec(REAL_LINES[3]);
+  assert.ok(m, 'the archived delta verdict line must match');
+  assert.strictEqual(m[1], '1813941ecfe019b89307ea75526f2c863ffb5e1e');
+  assert.strictEqual(m[2], '0ecde186ccb4a2d176d86f359699b006014852e6');
+  assert.strictEqual(DELTA_VERDICT_RE.test(REAL_LINES[2]), false, 'the delta marker is not a verdict');
+});
+
+test('lastDelta is the last delta verdict after the Step 3 marker', () => {
+  const C = '3333333333333333333333333333333333333333';
+  const verdict = (base, tip) => `- AUTO 10:00:00 — Step 5: delta review base ${base}..main: review: clean. Findings staged at none; at reviewed tip ${tip}. Reversibility: n/a (gate evaluation).`;
+  const before = ['## /release', verdict(C, B), step3(A)];
+  assert.strictEqual(parseReleaseLog(before.join('\n'), 'main').lastDelta, null, 'a verdict before Step 3 is not a delta of this review');
+  const text = [...before, verdict(A, B), verdict(B, C)].join('\n');
+  assert.deepStrictEqual(parseReleaseLog(text, 'main').lastDelta, { base: B, tip: C });
 });
 
 test('a short sha after "at reviewed tip" is not a reviewed tip', () => {
@@ -55,13 +74,13 @@ test('counts every earlier delta marker whatever short sha it names', () => {
 
 test('no Step 3 marker → nulls and 0', () => {
   const text = ['## /release', '- AUTO 10:00:00 — Step 1: pack read. Reversibility: n/a.'].join('\n');
-  assert.deepStrictEqual(parseReleaseLog(text, 'main'), { reviewedTip: null, step3Tip: null, priorMoves: 0 });
+  assert.deepStrictEqual(parseReleaseLog(text, 'main'), { reviewedTip: null, step3Tip: null, priorMoves: 0, lastDelta: null });
 });
 
 test('no ## /release heading → nulls and 0', () => {
   const text = ['## /review', step3(A), '- origin/main moved 1111111 → 2222222'].join('\n');
   assert.deepStrictEqual(releaseBlock(text), []);
-  assert.deepStrictEqual(parseReleaseLog(text, 'main'), { reviewedTip: null, step3Tip: null, priorMoves: 0 });
+  assert.deepStrictEqual(parseReleaseLog(text, 'main'), { reviewedTip: null, step3Tip: null, priorMoves: 0, lastDelta: null });
 });
 
 test('branch is regex-escaped', () => {

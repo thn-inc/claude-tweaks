@@ -3,8 +3,10 @@
 // as tested code (#4152), replacing execute.md's prose state machine — the
 // deterministic logic that, written as prose, shipped a counting bug its pins
 // could not see (IL-168). This part reads the run's decisions.md `## /release`
-// block: the last full-sha `at reviewed tip`, the Step 3 review's tip, and how
-// many delta moves were already counted since it. Only a 40-hex sha is a tip —
+// block: the last full-sha `at reviewed tip`, the Step 3 review's tip, how
+// many delta moves were already counted since it, and the last delta verdict
+// line's `base..tip` since it (the delta whose arrived commits are folded
+// into the verdict's `arrived`). Only a 40-hex sha is a tip —
 // a short sha after "at reviewed tip" (e.g. "still at reviewed tip 0ecde186c")
 // is prose, not a record of what was reviewed. The advance line a run-dir-only
 // move writes carries the new tip but is never a counted move.
@@ -14,6 +16,7 @@ const { readCommits } = require('../release-local/commits.js');
 const { readBumpFlags } = require('../release-local/manifest.js');
 
 const REVIEWED_TIP_RE = /at reviewed tip ([0-9a-f]{40})(?![0-9a-f])/;
+const DELTA_VERDICT_RE = /delta review base ([0-9a-f]{40})\.\.[^:\s]+: .*at reviewed tip ([0-9a-f]{40})(?![0-9a-f])/;
 const STEP3_MARKER = 'whole-branch review starting';
 
 function movedLineRe(branch) {
@@ -38,11 +41,17 @@ function parseReleaseLog(decisionsText, branch) {
     if (m) reviewedTip = m[1];
     if (line.includes(STEP3_MARKER)) step3Index = i;
   });
-  if (step3Index === -1) return { reviewedTip, step3Tip: null, priorMoves: 0 };
+  if (step3Index === -1) return { reviewedTip, step3Tip: null, priorMoves: 0, lastDelta: null };
   const step3Match = REVIEWED_TIP_RE.exec(block[step3Index]);
   const moved = movedLineRe(branch);
-  const priorMoves = block.slice(step3Index + 1).filter((l) => moved.test(l)).length;
-  return { reviewedTip, step3Tip: step3Match ? step3Match[1] : null, priorMoves };
+  const since = block.slice(step3Index + 1);
+  const priorMoves = since.filter((l) => moved.test(l)).length;
+  let lastDelta = null;
+  for (const line of since) {
+    const m = DELTA_VERDICT_RE.exec(line);
+    if (m) lastDelta = { base: m[1], tip: m[2] };
+  }
+  return { reviewedTip, step3Tip: step3Match ? step3Match[1] : null, priorMoves, lastDelta };
 }
 
 function advanceText({ branch, from, to, commits }) {
@@ -82,8 +91,11 @@ function arrivedPart({ git, base, tip, preMajor }) {
 // The Step 5 verdict, last before the merge: `merge` (origin/{branch} still at
 // the reviewed tip, after advancing over any run-dir-only moves), `delta` (a
 // code move within the release-tip-moves bound — review it), `held` (the bound
-// is exceeded, or the arrived commits since Step 3 carry a major), or `failed`
-// (the comparison could not run — never read as unmoved). A run-dir-only
+// is exceeded), or `failed` (the comparison could not run — never read as
+// unmoved). `arrived` rides alongside every verdict as information, never as a
+// hold: the bump part of the last delta's arrived commits, read before the
+// fetch so a git failure stops first; null under `asGiven` or with no delta
+// since Step 3. The skill gates a major on it once per delta. A run-dir-only
 // advance is logged through `appendLog` before the loop re-compares, so a
 // resume reads the advanced tip. `resolveBound()` is the raw spawn result of
 // `resolve-policy.js --run <run> release-tip-moves`; no default is ever
@@ -115,14 +127,13 @@ function checkReviewedTip({ decisionsText, branch, asGiven, preMajor }, { git, r
 
   if (!state.reviewedTip || !state.step3Tip) return out('failed', 'no reviewed tip recorded');
 
-  if (!asGiven && state.step3Tip !== state.reviewedTip) {
+  if (!asGiven && parsed.lastDelta) {
     try {
-      state.arrived = arrivedPart({ git, base: state.step3Tip, tip: state.reviewedTip, preMajor });
+      state.arrived = arrivedPart({ git, base: parsed.lastDelta.base, tip: parsed.lastDelta.tip, preMajor });
     } catch (err) {
       if (err instanceof GitError) return out('failed', 'git error', err.stderr);
       throw err;
     }
-    if (state.arrived.part === 'major') return out('held', 're-rendered to a major after the console');
   }
 
   const countCommits = () => git(['rev-list', '--count', `${state.reviewedTip}..${state.tipSha}`]);
@@ -175,6 +186,6 @@ function checkReviewedTip({ decisionsText, branch, asGiven, preMajor }, { git, r
 }
 
 module.exports = {
-  REVIEWED_TIP_RE, movedLineRe, releaseBlock, parseReleaseLog, advanceText, arrivedPart, GitError,
+  REVIEWED_TIP_RE, DELTA_VERDICT_RE, movedLineRe, releaseBlock, parseReleaseLog, advanceText, arrivedPart, GitError,
   MAX_ADVANCES, checkReviewedTip,
 };

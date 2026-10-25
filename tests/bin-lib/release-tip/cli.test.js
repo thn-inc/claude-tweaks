@@ -12,7 +12,7 @@ const STEP5_ADVANCE_RE = /^- AUTO \d{2}:\d{2}:\d{2} — Step 5: origin\/main adv
 
 const step3Line = (tip) => `- AUTO 10:00:00 — Step 3: whole-branch review starting, base v1.0.0..main at reviewed tip ${tip}; ## /review marker: 0 existing lines. Reversibility: n/a (marker).`;
 const deltaMarker = (n, of) => `- AUTO 10:10:00 — Step 5: origin/main moved aaaaaaa → bbbbbbb (1 commits) before the merge — move ${n} of ${of}; delta review starting, base ${'c'.repeat(40)}..main; ## /review marker: 3 existing lines. Reversibility: n/a (marker). [lever: release-tip-moves=${of} (default)]`;
-const deltaVerdict = (tip) => `- AUTO 10:20:00 — Step 5: delta review base ${'c'.repeat(40)}..main: review: clean. Findings staged at none; at reviewed tip ${tip}. Reversibility: n/a (gate evaluation).`;
+const deltaVerdict = (tip, base) => `- AUTO 10:20:00 — Step 5: delta review base ${base}..main: review: clean. Findings staged at none; at reviewed tip ${tip}. Reversibility: n/a (gate evaluation).`;
 const decisions = (lines) => ['# Decisions', '', '## /release', ...lines, ''].join('\n');
 
 function withFixture(fn) {
@@ -148,20 +148,19 @@ test('preMajor read from release-preflight.json', () => {
     fx.run(fx.work, ['fetch', '-q', 'origin']);
     const arrivedTip = originTip(fx);
     assert.notStrictEqual(arrivedTip, base);
-    fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisions([step3Line(base), deltaMarker(1, 2), deltaVerdict(arrivedTip)]));
+    fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisions([step3Line(base), deltaMarker(1, 2), deltaVerdict(arrivedTip, base)]));
 
     const without = JSON.parse(cli(argsFor(fx), { mainRoot: fx.work }).out);
-    assert.strictEqual(without.verdict, 'held', 'no preflight file → preMajor false');
-    assert.strictEqual(without.arrived.part, 'major');
+    assert.strictEqual(without.arrived.part, 'major', 'no preflight file → preMajor false');
 
     fs.writeFileSync(path.join(fx.runDir, 'release-preflight.json'), 'not json');
-    assert.strictEqual(JSON.parse(cli(argsFor(fx), { mainRoot: fx.work }).out).verdict, 'held', 'unparseable → preMajor false');
+    assert.strictEqual(JSON.parse(cli(argsFor(fx), { mainRoot: fx.work }).out).arrived.part, 'major', 'unparseable → preMajor false');
 
     fs.writeFileSync(path.join(fx.runDir, 'release-preflight.json'), JSON.stringify({ proposedVersion: { ok: true, value: { preMajor: true } } }));
     const r = cli(argsFor(fx), { mainRoot: fx.work });
     assert.strictEqual(r.code, 0, r.err);
     const withPre = JSON.parse(r.out);
     assert.strictEqual(withPre.verdict, 'merge');
-    assert.notStrictEqual(withPre.arrived.part, 'major');
+    assert.strictEqual(withPre.arrived.part, 'minor');
   });
 });

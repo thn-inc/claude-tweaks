@@ -73,10 +73,14 @@ const FACTS = [
     /\n- `delta` → /],
   ['block', 'the `held` verdict for `integration branch kept moving` is routed',
     /\n- `held`, reason `integration branch kept moving` → /],
-  ['block', 'the `held` verdict for an arrived-commit major is routed',
-    /\n- `held`, reason `re-rendered to a major after the console` → /],
+  ['block', 'an arrived-commit major is checked first, before routing on `verdict`',
+    /First, whatever the verdict: when `arrived\.part` is `major`, take delta 5's/],
+  ['block', 'an interactive `Proceed` on the arrived major continues with the same verdict\'s routing',
+    /Under `interactive`, a `Proceed` there continues with this same verdict's routing below/],
   ['block', 'the `failed` verdict is routed',
     /\n- `failed` → /],
+  ['block', 'a `no reviewed tip recorded` stop names its recovery: a re-run records one at its own Step 3',
+    /For reason `no reviewed tip recorded`, a re-run of `\/claude-tweaks:release` records one at its own Step 3/],
   ['block', 'a missing or unparseable verdict is `failed`',
     /A non-zero exit, or stdout that does not parse as one JSON object, is `failed`, reason `release-tip-check did not produce a verdict`, nothing merged/],
   ['block', 'the comparison reads the last recorded reviewed tip, never re-derived',
@@ -133,8 +137,8 @@ const FACTS = [
     /For `integration branch kept moving`, the list of arrived commits \(`execute\.md`'s bound step\) prints beneath that line/],
   ['block', 'every release-held.md the block composes carries the --as warning (the Release-As commit is already on {branch})',
     /Every `release-held\.md` this block composes carries one more line when `--as` was given: the `Release-As:` commit is already on `\{branch\}`, so re-run without pushing a second override/],
-  ['block', '`--as` runs are exempt from the arrived-commit major hold (the Release-As override pins the shipped version)',
-    /the shipped version is pinned by the `Release-As:` override, and Step 4's `--as` major gate measures the `--as` value, not commit parts/],
+  ['block', 'the CLI is told to append `--as` when `--as` was given, which exempts the arrived-commit major (the Release-As override pins the shipped version)',
+    /Append `--as` when `--as` was given: [^\n]*the shipped version is pinned by the `Release-As:` override, and Step 4's `--as` major gate measures the `--as` value, not commit parts/],
   ['block', 'the delta marker carries no `at reviewed tip` clause, with the reason',
     /The marker deliberately carries no `at reviewed tip` clause: the delta has not been reviewed yet/],
   ['block', 'the delta verdict line carries the optional `at reviewed tip {tip-sha}` clause',
@@ -143,6 +147,8 @@ const FACTS = [
     /written only when the verdict is `clean`, `findings`, or an overridden `blocking`/],
   ['block', 'the re-entry runs again from the delta verdict line\'s `at reviewed tip`',
     /runs again from the delta verdict line's `at reviewed tip`/],
+  ['block', 'the re-entry re-gates a major once per delta, never again for an earlier accepted delta',
+    /On that re-entry, step 1 runs again: the CLI reads that line's tip and reports the arrived commits of the delta just reviewed, so step 2 re-gates a major once per delta, never again for an earlier delta already accepted/],
   ['block', 'a major from the arrived commits takes delta 5\'s HELD path with a reason naming the arrived commits',
     /delta 5's `re-rendered to a major after the console` HELD path, with the reason named `re-rendered to a major after the console — from the arrived commits \{shas\}, the release PR title still reads v\{title-version\}`/],
   ['skill', 'SKILL.md Step 5 summary mentions the reviewed-tip comparison',
@@ -401,11 +407,14 @@ test('twin pin: the delta verdict template carries the tip the CLI reads', () =>
   const parsed = parseReleaseLog(`${log.join('\n')}\n`, 'main');
   assert.equal(parsed.step3Tip, SHA_A, 'the Step 3 marker is the Step 3 tip');
   assert.equal(parsed.reviewedTip, SHA_B, 'the delta verdict line\'s {tip-sha} is the reviewed tip');
+  assert.deepEqual(parsed.lastDelta, { base: SHA_A, tip: SHA_B }, 'the delta verdict line is the delta whose arrived commits the CLI folds');
   const marker = render(deltaMarkerLine(block), { ...markerValues, 'reviewed-tip': SHA_B, 'tip-sha': SHA_C });
   const after = parseReleaseLog(`${[...log, marker].join('\n')}\n`, 'main');
   assert.equal(after.reviewedTip, SHA_B, 'a delta marker after the verdict must not move the reviewed tip');
   assert.equal(after.step3Tip, SHA_A, 'a delta marker after the verdict must not move the Step 3 tip');
   // go-red: a verdict template without the clause leaves the Step 3 tip as the reviewed one
   const bare = render(verdict.replace('{; at reviewed tip {tip-sha}}', ''), { branch: 'main', 'reviewed-tip': SHA_A, 'tip-sha': SHA_B });
-  assert.equal(parseReleaseLog(`${[log[0], log[1], bare].join('\n')}\n`, 'main').reviewedTip, SHA_A, 'go-red: dropping the clause must lose the new tip');
+  const bareParsed = parseReleaseLog(`${[log[0], log[1], bare].join('\n')}\n`, 'main');
+  assert.equal(bareParsed.reviewedTip, SHA_A, 'go-red: dropping the clause must lose the new tip');
+  assert.equal(bareParsed.lastDelta, null, 'go-red: dropping the clause must lose the delta');
 });
