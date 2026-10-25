@@ -607,7 +607,7 @@ test('an abbreviated flag form (-Com) is a deliberate, documented miss — not m
   assert.strictEqual(powershellOpaqueCommand('powershell -Com "git push"', '/repo'), false);
 });
 
-// #4149 round 2: gitTargets and mkdirTargets read a `cd` behind `(` or `{` the way the write walk does.
+// #4149: gitTargets and mkdirTargets read a `cd` behind `(` or `{` the way the write walk does.
 // A subshell's cwd ends at its `)`; after a brace group's `}` both cwds stand (its `cd` persists
 // unless the group is piped). A lone `&` ends a command and backgrounds it, so its `cd` does not move
 // the cwd. Each case was checked against real git and mkdir under bash 3.2 and 5.
@@ -619,16 +619,16 @@ for (const [label, cmd, expected] of [
   ['a commit after a backgrounded cd', 'cd /main & git commit -m x', [{ action: 'commit', dir: '/wt' }]],
   ['a commit after a backgrounded command', 'cd /main; true & git commit -m x', [{ action: 'commit', dir: path.resolve('/main') }]],
 ]) {
-  test(`#4149 round 2: gitTargets reads ${label} as bash runs it`, () => {
+  test(`#4149: gitTargets reads ${label} as bash runs it`, () => {
     assert.deepStrictEqual(gitTargets(cmd, '/wt'), expected);
   });
 }
 
-test('#4149 round 2: an absolute -C after a brace group is reported once', () => {
+test('#4149: an absolute -C after a brace group is reported once', () => {
   assert.deepStrictEqual(gitTargets('{ cd /main; }; git -C /x commit -m x', '/wt'), [{ action: 'commit', dir: path.resolve('/x') }]);
 });
 
-// #4149 round 3: a quoted body inside "$( )" nests, so an & in its prose is no background; and
+// #4149: a quoted body inside "$( )" nests, so an & in its prose is no background; and
 // group depth skips a heredoc body (data, or a kept body walked as its own chunk), so a body line
 // like `1) a` closes no outer `(`. Checked against bash 3.2 and 5 with a logging git stub.
 for (const [label, cmd, expected] of [
@@ -638,12 +638,12 @@ for (const [label, cmd, expected] of [
   ['a push after a commit body line `fix: a)`, inside a subshell', "(cd /main && git commit -F - <<'EOF'\nfix: a)\nEOF\ngit push)", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }]],
   ['a push inside a kept shell body, walked as its own chunk', "bash <<'EOF'\ncd /main && git push\nEOF", [{ action: 'push', dir: path.resolve('/main') }]],
 ]) {
-  test(`#4149 round 3: gitTargets reads ${label} as bash runs it`, () => {
+  test(`#4149: gitTargets reads ${label} as bash runs it`, () => {
     assert.deepStrictEqual(gitTargets(cmd, '/wt'), expected);
   });
 }
 
-// #4149 round 4: a ${ } honours its quotes (`'}'` closes nothing), `$'…'` inside "$( )" honours
+// #4149: a ${ } honours its quotes (`'}'` closes nothing), `$'…'` inside "$( )" honours
 // `\'`, and a cd inside a backtick or $( ) runs in a subshell, so the push stays at the earlier cd.
 // Checked against bash 3.2 and 5 with a logging git stub.
 for (const [label, cmd] of [
@@ -652,12 +652,12 @@ for (const [label, cmd] of [
   ['a cd inside a top-level backtick', 'cd /main && echo `true; cd /tmp`; git push'],
   ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); git push'],
 ]) {
-  test(`#4149 round 4: gitTargets keeps the push after ${label} at the earlier cd`, () => {
+  test(`#4149: gitTargets keeps the push after ${label} at the earlier cd`, () => {
     assert.deepStrictEqual(gitTargets(cmd, '/wt'), [{ action: 'push', dir: path.resolve('/main') }]);
   });
 }
 
-// #4149 round 5: a group inside a substitution is scoped within it, so a cd before the group holds
+// #4149: a group inside a substitution is scoped within it, so a cd before the group holds
 // for the push after it there; the rest of a command after a substitution's closer runs out there.
 // Checked against bash 3.2 and 5 with a logging git stub.
 for (const [label, cmd] of [
@@ -666,30 +666,30 @@ for (const [label, cmd] of [
   ['a push in a brace group after a nest left open inside a backtick', 'echo `true; echo $(`; cd /main; { git push; }'],
   ['a push after a $( ) holding a cd, in the same command', 'cd /main && x=$(true; cd /tmp; true) git push'],
 ]) {
-  test(`#4149 round 5: gitTargets reads ${label} at the cd`, () => {
+  test(`#4149: gitTargets reads ${label} at the cd`, () => {
     assert.deepStrictEqual(gitTargets(cmd, '/wt'), [{ action: 'push', dir: path.resolve('/main') }]);
   });
 }
 
-// #4149 round 6: a lone `&` in a group inside a substitution backgrounds that subshell's list
+// #4149: a lone `&` in a group inside a substitution backgrounds that subshell's list
 // only, so the outer cd before the substitution still holds. Checked against bash 3.2 and 5.
 for (const [label, cmd, expected] of [
   ['a push after a & in a brace group inside a $( )', 'cd /main && x=$( { true & } ) && git push', [{ action: 'push', dir: path.resolve('/main') }]],
   ['a commit after a & in a subshell inside a $( )', 'cd /main && pid=$( (sleep 0 & echo $!) ) && git commit -am x', [{ action: 'commit', dir: path.resolve('/main') }]],
 ]) {
-  test(`#4149 round 6: gitTargets reads ${label} at the outer cd`, () => {
+  test(`#4149: gitTargets reads ${label} at the outer cd`, () => {
     assert.deepStrictEqual(gitTargets(cmd, '/wt'), expected);
   });
 }
-test('#4149 round 6: mkdirTargets reads a mkdir after a & in a subshell inside a $( ) at the outer cd', () => {
+test('#4149: mkdirTargets reads a mkdir after a & in a subshell inside a $( ) at the outer cd', () => {
   assert.deepStrictEqual(mkdirTargets('cd /main && pid=$( (sleep 0 & echo $!) ) && mkdir d', '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
 });
 
-test('#4149 round 3: mkdirTargets skips a heredoc body when tracking group depth', () => {
+test('#4149: mkdirTargets skips a heredoc body when tracking group depth', () => {
   assert.deepStrictEqual(mkdirTargets("(cd /main && cat <<'EOF'\n1) a\nEOF\nmkdir d)", '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
 });
 
-test('#4149 round 2: mkdirTargets reads a cd behind ( or {', () => {
+test('#4149: mkdirTargets reads a cd behind ( or {', () => {
   assert.deepStrictEqual(mkdirTargets('(cd /main && mkdir d)', '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
   assert.deepStrictEqual(mkdirTargets('(cd /main && true); mkdir d', '/wt'), [{ action: 'mkdir', file: path.resolve('/wt/d') }]);
   assert.deepStrictEqual(mkdirTargets('{ cd /main; }; mkdir /x', '/wt'), [{ action: 'mkdir', file: path.resolve('/x') }]);

@@ -546,7 +546,7 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
   assert.deepStrictEqual(fileWriteTargets('echo "<<EOF"\necho x > f.js', '/r'), expected);
   assert.deepStrictEqual(fileWriteTargets('echo "<<EOF x"\necho x > f.js', '/r'), expected, 'a complete word inside double quotes is still not an opener');
   assert.deepStrictEqual(fileWriteTargets('echo hi # <<EOF\necho x > f.js', '/r'), expected);
-  // #4149 round 3: with a closing `EOF` line, only the comment rule keeps `echo x > f.js` out of a body.
+  // #4149: with a closing `EOF` line, only the comment rule keeps `echo x > f.js` out of a body.
   assert.deepStrictEqual(fileWriteTargets('echo hi # <<EOF\necho x > f.js\nEOF', '/r'), expected);
 });
 
@@ -574,14 +574,14 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['a path-qualified relative wrapper (./sudo node)', './sudo node x.js <<EOF\necho x > f.js\nEOF', f],
     ['a path-qualified relative wrapper (./env node)', './env node x.js <<EOF\necho x > f.js\nEOF', f],
     ['a program path with a variable directory (/$D/cat)', '/$D/cat <<EOF\necho x > f.js\nEOF', f],
-    // Residual fix (#4149, lone `&`): `&` ends a command, so an inert word or a reader before it
+    // #4149: `&` ends a command, so an inert word or a reader before it
     // never vouches for the backgrounded program after it.
     ['a shell after an inert echo and a lone & (echo hi & bash)', "echo hi & bash <<'EOF'\necho x > f.js\nEOF\nwait", f],
     ['a shell after an inert true and a lone & (true & sh)', "true & sh <<'EOF'\necho x > f.js\nEOF", f],
     ['a shell after an inert mkdir and a lone & (mkdir -p d & sh)', "mkdir -p d & sh <<'EOF'\necho x > f.js\nEOF", f],
     ['a shell after an inert cd and a lone & (cd . & bash)', "cd . & bash <<'EOF'\necho x > f.js\nEOF", f],
     ['a shell after a reader and a lone & (cat x & bash)', "cat x & bash <<'EOF'\necho x > f.js\nEOF", f],
-    // Residual fix (#4149, git add): `git add` is an inert neighbour only on its own, so these stay kept.
+    // #4149: `git add` is an inert neighbour only on its own, so these stay kept.
     ['git add reading pathspecs from stdin (--pathspec-from-file=-)', "cat <<'EOF' | git add --pathspec-from-file=-\necho x > f.js\nEOF", f],
     ['git add behind a wrapper (sudo git add)', "sudo git add . && cat <<'EOF'\necho x > f.js\nEOF", f],
     ['git add that runs a command substitution (| git add $(bash))', "cat <<'EOF' | git add $(bash)\necho x > f.js\nEOF", f],
@@ -589,7 +589,7 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['git add with a -c config flag (git -c core.fsmonitor=… add)', "cat <<'EOF' | git -c core.fsmonitor=x add .\necho x > f.js\nEOF", f],
     ['git add with a --config-env flag', "cat <<'EOF' | git --config-env=core.fsmonitor=V add .\necho x > f.js\nEOF", f],
     ['git add after an assignment (GIT_CONFIG_COUNT=1 git add)', "cat <<'EOF' | GIT_CONFIG_COUNT=1 git add .\necho x > f.js\nEOF", f],
-    // Round 2 (#4149): configuration can make any git subcommand run a command that reads stdin
+    // #4149: configuration can make any git subcommand run a command that reads stdin
     // (bash + git: `git -c core.fsmonitor='sh -s' commit -F -` runs the body), so git behind a
     // -c/--config-env flag or a NAME=value prefix is no reader, commit included.
     ['git commit with a -c config flag, piped', "cat <<'EOF' | git -c core.fsmonitor='sh -s' commit -F -\necho x > f.js\nEOF", f],
@@ -597,8 +597,8 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['git commit with a --config-env flag', "git --config-env=core.fsmonitor=V commit -F - <<'EOF'\necho x > f.js\nEOF", f],
     ['git commit after an assignment (GIT_CONFIG_COUNT=1 git commit)', "GIT_CONFIG_COUNT=1 git commit -F - <<'EOF'\necho x > f.js\nEOF", f],
     ['git commit after an assignment behind env (env GIT_CONFIG_COUNT=1 git commit)', "env GIT_CONFIG_COUNT=1 git commit -F - <<'EOF'\necho x > f.js\nEOF", f],
-    // Round 3 (#4149): a reader that a pipe feeds is no reader when it carries `$(` or a backtick:
-    // the substitution runs with that element's stdin (bash 3.2 and 5 run these bodies). Round 4: the
+    // #4149: a reader that a pipe feeds is no reader when it carries `$(` or a backtick:
+    // the substitution runs with that element's stdin (bash 3.2 and 5 run these bodies). The
     // heredoc's own command is refused too when a pipe feeds it, since its substitution reads the pipe.
     ['a reader piped on whose quoted argument runs $( ) (| jq "$(bash)")', "cat <<'EOF' | jq \"$(bash)\"\necho x > f.js\nEOF", f],
     ['a reader piped on whose argument runs $( ) (| jq $(bash))', "cat <<'EOF' | jq $(bash)\necho x > f.js\nEOF", f],
@@ -607,7 +607,7 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['a reader piped on with a $( ) inside a ${ } default (| jq "${x:-$(bash)}")', "cat <<'EOF' | jq \"${x:-$(bash)}\"\necho x > f.js\nEOF", f],
     ['a piped-to reader with its own heredoc whose argument runs $( ) (| jq "$(sh)" <<B)', "cat <<'EOF' | jq \"$(sh)\" <<'B'\necho x > f.js\nEOF\nb\nB", f],
     ['a reader piped on with |&, with its own heredoc, whose argument runs $( ) (|& jq "$(sh)" <<B)', "cat <<'EOF' |& jq \"$(sh)\" <<'B'\necho x > f.js\nEOF\nb\nB", f],
-    // Round 5 (#4149): a redirection word after the heredoc's `<<` is expanded with the body already
+    // #4149: a redirection word after the heredoc's `<<` is expanded with the body already
     // on fd 0 (bash 3.2 and 5 run each of these bodies), so the own command is exempt only for a
     // substitution before its first `<<`.
     ['its own command, with a quoted $( ) redirect after the << (> "$(bash)")', "cat <<'EOF' > \"$(bash)\"\necho x > f.js\nEOF", f],
@@ -621,7 +621,7 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['git commit as its own command, with a $( ) redirect after the <<', "git commit -F - <<'EOF' 2>\"$(bash)\"\necho x > f.js\nEOF", f],
     ['gh as its own command, with a $( ) redirect after the <<', "gh issue comment 1 --body-file - <<'EOF' >\"$(sh)\"\necho x > f.js\nEOF", f],
     ['env cat as its own command, with a $( ) redirect after the <<', "env cat <<'EOF' >\"$(bash)\"\necho x > f.js\nEOF", f],
-    // Round 5: `$((cmd) )` is a `$(` holding a `(cmd)` subshell, not arithmetic (bash 3.2 and 5 run
+    // #4149: `$((cmd) )` is a `$(` holding a `(cmd)` subshell, not arithmetic (bash 3.2 and 5 run
     // these bodies): a `$((` is arithmetic only when it closes as `))` past its own balanced parens.
     ['a reader piped on whose quoted argument is $((cmd) ) (| jq "$((bash) )")', "cat <<'EOF' | jq \"$((bash) )\"\necho x > f.js\nEOF", f],
     ['a reader piped on whose argument is $((cmd) ) (| jq $((bash) ))', "cat <<'EOF' | jq $((bash) )\necho x > f.js\nEOF", f],
@@ -648,13 +648,13 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['an absolute-path reader (/bin/cat)', '/bin/cat <<EOF\na > b\nEOF'],
     ['a quoted jq filter with parentheses', 'jq "(.a)" <<EOF\na > b\nEOF'],
     ['a quoted node -e with parentheses', "node -e '(async()=>{})()' <<EOF\na > b\nEOF"],
-    // Fix wave (#4149, inert-neighbour ruling): cd, mkdir, true, :, echo and printf neither read
+    // #4149: cd, mkdir, true, :, echo and printf neither read
     // stdin nor run an argument, so as stand-alone neighbour segments they pass. `cd x && node`
     // was a deliberate keep before this ruling; it now strips.
     ['a reader after a cd neighbour (cd x && node)', 'cd x && node y.js <<EOF\nif (a > 0) b();\nEOF'],
     ['a reader after a cd neighbour (cd x && node, quoted delimiter)', "cd x && node <<'EOF'\na > b\nEOF"],
     ['a reader after true, printf, echo and : neighbours', "true && printf x && echo y && : && cat <<'EOF'\na > b\nEOF"],
-    // Residual fix (#4149, lone `&`): the `&` of `|&` pipes on, so the program after it is the one checked.
+    // #4149: the `&` of `|&` pipes on, so the program after it is the one checked.
     ['a reader piped on with |& (cat |& cat)', "cat <<'EOF' |& cat\na > b\nEOF"],
   ];
   for (const [label, cmd] of stripCases) {
@@ -761,7 +761,7 @@ test('#4149: only an unquoted `$[` opens arithmetic, and a stray `]` never goes 
   assert.deepStrictEqual(fileWriteTargets('cat "$[" <<EOF\na > b\nEOF', '/r'), []);
   // A `]` with no open `$[` is ignored: the heredoc after it still opens.
   assert.deepStrictEqual(fileWriteTargets('cat ] <<EOF\na > b\nEOF', '/r'), []);
-  // Fix wave (#4149, m2): bash's `$[` spans lines, so the depth carries over the newline and the
+  // #4149: bash's `$[` spans lines, so the depth carries over the newline and the
   // `<<` on the next line is no opener; the body text stays visible.
   assert.deepStrictEqual(fileWriteTargets('cat $[1\ncat <<EOF\na > b\nEOF', '/r'), [{ action: 'write', file: path.resolve('/r', 'b') }]);
 });
@@ -769,14 +769,14 @@ test('#4149: only an unquoted `$[` opens arithmetic, and a stray `]` never goes 
 test('#3989: stripHeredocBodies keeps the opener line and its newline, and drops the body and closing delimiter', () => {
   assert.deepStrictEqual(stripHeredocBodies('cat <<EOF\nbody\nEOF\nB'), { outer: 'cat <<EOF\nB', bodies: [] });
   // #4149: a program that is not a known data reader keeps its body, as its own chunk anchored at its `<<`.
-  // Residual fix (#4149, m6): `shell` says the opener line names a known shell, so the chunk's own
+  // #4149: `shell` says the opener line names a known shell, so the chunk's own
   // openers are trusted; any other kept chunk is also scanned whole.
   assert.deepStrictEqual(stripHeredocBodies('A <<EOF\nbody\nEOF\nB'), { outer: 'A <<EOF\nB', bodies: [{ at: 2, text: 'body\n', shell: false }] });
   assert.deepStrictEqual(stripHeredocBodies('bash <<EOF\nbody\nEOF'), { outer: 'bash <<EOF\n', bodies: [{ at: 5, text: 'body\n', shell: true }] });
   assert.deepStrictEqual(stripHeredocBodies('cat <<<x'), { outer: 'cat <<<x', bodies: [] });
 });
 
-// Fix wave (#4149, F1): a kept body is scanned as its own chunk, from fresh quote state and the
+// #4149: a kept body is scanned as its own chunk, from fresh quote state and the
 // cwd in effect at its opener; the outer text resumes after the delimiter with the outer cwd.
 // So an odd quote in body prose never swallows a later command, and a body `cd` never moves it.
 {
@@ -791,18 +791,18 @@ test('#3989: stripHeredocBodies keeps the opener line and its newline, and drops
     ['a cd line in a body fed to grep', "grep -c x <<'EOF'\ncd /tmp\nEOF\ncp cmd.sh f.js", [r('copy', 'f.js')]],
     ['a cd line in a body fed to bash', "bash <<'EOF'\ncd /tmp\nEOF\ncp cmd.sh f.js", [r('copy', 'f.js')]],
     ['a body whose opener runs before a later cd on its line', "cd /main && bash <<'EOF' && cd /r\necho x > f.js\nEOF", [m('write')]],
-    // m6: a nested `<<` inside a kept body never plans an outer heredoc.
+    // #4149: a nested `<<` inside a kept body never plans an outer heredoc.
     ['a nested opener inside a kept body', "sh <<'EOF'\ncat <<'X'\nEOF\necho x > f.js\nX", [r('write', 'f.js')]],
     // A kept body's own openers are planned within the chunk, so its reader-fed inner body is data.
     ['an inner reader-fed body inside a kept body', "bash <<'EOF'\ncat > s.txt <<'X'\na > /main/b\nX\necho y > f.js\nEOF", [r('write', 's.txt'), r('write', 'f.js')]],
   ]) {
-    test(`#4149 F1: ${label} is scanned as its own chunk`, () => {
+    test(`#4149: ${label} is scanned as its own chunk`, () => {
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
     });
   }
 }
 
-// Fix wave (#4149, F2): a group, compound command or substitution left open on an earlier line can
+// #4149: a group, compound command or substitution left open on an earlier line can
 // hand a later body to a consumer that line cannot show, so every later body is kept (sticky).
 {
   const W = "cat <<'EOF'\necho x > f.js\nEOF";
@@ -822,24 +822,24 @@ test('#3989: stripHeredocBodies keeps the opener line and its newline, and drops
     ['a subshell whose case pattern `)` closes nothing', `( case x in a) true;; esac\n${W}\n) | bash`],
     ['a subshell with a `}` argument', `( echo }\n${W}\n) | bash`],
     ['a multi-line (( arithmetic', '(( x = 1 +\ncat << 2 ))\necho x > f.js\n2'],
-    // Residual fix (#4149, F2 bias rules): a closer word outside closer position closes nothing.
+    // #4149: a closer word outside closer position closes nothing.
     ['a brace group whose `}` argument closes nothing', `{ true }\n${W}\n} | bash`],
     ['if … fi with a `fi` argument', `if true; then true fi\n${W}\nfi | bash`],
     ['for … done with a `done` argument', `for i in 1; do true done\n${W}\ndone | bash`],
     ['case … esac with an `esac` argument', `case x in x) true esac\n${W}\n;; esac | bash`],
   ]) {
-    test(`#4149 F2: a body after ${label} opened on an earlier line stays visible`, () => {
+    test(`#4149: a body after ${label} opened on an earlier line stays visible`, () => {
       const targets = fileWriteTargets(cmd, '/r');
       assert.ok(targets.some((t) => t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
     });
   }
 
-  test('#4149 F2: an unclosed $( on the opener line itself keeps its body', () => {
+  test('#4149: an unclosed $( on the opener line itself keeps its body', () => {
     const targets = fileWriteTargets("cat <<'EOF' $(\necho x > f.js\nEOF\n)", '/r');
     assert.ok(targets.some((t) => t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
   });
 
-  test('#4149 F2: a structure opened and closed on one earlier line does not keep a later body', () => {
+  test('#4149: a structure opened and closed on one earlier line does not keep a later body', () => {
     assert.deepStrictEqual(fileWriteTargets("if true; then echo; fi\ngit commit -F - <<'EOF'\na > /main/x\nEOF", '/r'), []);
     assert.deepStrictEqual(fileWriteTargets("for v in a b; do echo $v; done\ncat > f <<'EOF'\na > /main/x\nEOF", '/r'), [{ action: 'write', file: path.resolve('/r', 'f') }]);
     assert.deepStrictEqual(fileWriteTargets("x=$(git rev-parse HEAD)\ngit commit -F - <<'EOF'\na > /main/x\nEOF", '/r'), []);
@@ -847,23 +847,23 @@ test('#3989: stripHeredocBodies keeps the opener line and its newline, and drops
 
   // `((` also opens nested subshells in bash (`((cd . && true) | cat)`): single parens inside it are
   // counted, so it closes at its final `)` and a later line's opener still opens.
-  test('#4149 F2: a one-line nested subshell spelled (( does not suppress a later opener', () => {
+  test('#4149: a one-line nested subshell spelled (( does not suppress a later opener', () => {
     const targets = fileWriteTargets("((cd . && true) | cat)\ncat <<'EOF'\ndon't\nEOF\necho x > f.js", '/r');
     assert.deepStrictEqual(targets, [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
   });
 }
 
-test("#4149 m1: an unquoted $' on an earlier line keeps every later body visible", () => {
+test("#4149: an unquoted $' on an earlier line keeps every later body visible", () => {
   const targets = fileWriteTargets("echo $'\\'\ncat <<EOF\n' ; echo x > f.js\nEOF", '/r');
   assert.ok(targets.some((t) => t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
 });
 
-test('#4149 m2: `$[` arithmetic spans lines, so a `<<` on its next line is no opener', () => {
+test('#4149: `$[` arithmetic spans lines, so a `<<` on its next line is no opener', () => {
   const targets = fileWriteTargets('echo $[1 +\ncat <<3]\necho x > f.js\n3]', '/r');
   assert.ok(targets.some((t) => t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
 });
 
-// Residual fix (#4149, m2): `((` and `$((` count the single parens inside them and span lines, so a
+// #4149: `((` and `$((` count the single parens inside them and span lines, so a
 // `<<` on a later line before the closing `))` is a shift, and `((…) …)` closes at its final `)`.
 for (const [label, cmd] of [
   ['a multi-line (( whose shift would hide a later cd', '(( x = 1 +\n1 << 2 ))\ncd /main\n2\ncp /etc/hosts f.js'],
@@ -873,12 +873,12 @@ for (const [label, cmd] of [
   ['a multi-line (( holding single parens', '(( (1) + (2) +\n1 << 2 ))\ncd /main\n2\ncp /etc/hosts f.js'],
   ['a multi-line $(( holding single parens', 'echo $(( (1) + (2) +\n1 << 2 ))\ncd /main\n2\ncp /etc/hosts f.js'],
 ]) {
-  test(`#4149 m2: ${label} reports the write`, () => {
+  test(`#4149: ${label} reports the write`, () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'copy', file: path.resolve('/main/f.js') }]);
   });
 }
 
-// Residual fix (#4149, group cd): a `cd` behind `(` or `{` is a `cd`. A subshell's cwd ends at its
+// #4149: a `cd` behind `(` or `{` is a `cd`. A subshell's cwd ends at its
 // `)`; a brace group's `cd` may outlive its `}` (unless the group is piped), so after a `}` a
 // relative target resolves under both the inner and the outer cwd.
 {
@@ -912,7 +912,7 @@ for (const [label, cmd] of [
   });
 }
 
-// Round 2 (#4149, lone `&`): the write walk cuts at an unquoted lone `&`, so the command after it is
+// #4149: the write walk cuts at an unquoted lone `&`, so the command after it is
 // read as a command; the backgrounded and-or list runs in a subshell, so its `cd` does not move the
 // cwd for what follows. `&&`, `&>`, `>&`, `<&`, `|&` and an `&` inside `$( )` are not cuts.
 {
@@ -938,7 +938,7 @@ for (const [label, cmd] of [
   }
 }
 
-// Round 3 (#4149, nesting): inside a double-quoted span, `$( … )`, backticks and `${ … }` nest as in
+// #4149: inside a double-quoted span, `$( … )`, backticks and `${ … }` nest as in
 // bash, and a quote inside `$(` starts a fresh quoting context; an unquoted `${ … }` nests too. So no
 // `&`, `;`, `(`, `)` or newline inside them is structural, and an earlier `cd` survives. Every case
 // was checked under bash 3.2 and 5 (bash 3.2 cannot parse the odd-quote heredoc one).
@@ -962,16 +962,16 @@ for (const [label, cmd] of [
     ['a single-quoted ) inside "$( )"', "cd /main && echo \"$(echo ')\"&\"')\" && cp a f.js", [main('copy')]],
     ['a comment holding a quote inside "$( )"', 'cd /main && echo "$(echo a # say "hi\n)" && cp a f.js', [main('copy')]],
     ['an ANSI-C quote inside "$( )"', "cd /main && echo \"$(echo $'a\\'b')\" && cp a f.js", [main('copy')]],
-    // Round 4: `$'…'` inside "$( )" honours its `\'`, so a later `)"` closes nothing early.
+    // #4149: `$'…'` inside "$( )" honours its `\'`, so a later `)"` closes nothing early.
     ['an ANSI-C \\\' inside "$( )", with a quoted )" later', "echo \"$(echo $'a\\'b')\" && cp a /main/f.js; echo ')\"'", [main('copy')]],
-    // Round 4: a ${ } honours its single quotes when it finds its closing brace.
+    // #4149: a ${ } honours its single quotes when it finds its closing brace.
     ['a quoted } inside an unquoted ${ }', "x=; echo ${x:-'}'} && cp a /main/f.js", [main('copy')]],
     ['a double quote inside single quotes inside a quoted ${ }', "x=; cd /main && echo \"${x:-'\"'}\" && cp a f.js", [main('copy')]],
     ['an ANSI-C \\\' inside an unquoted ${ }', "x=; echo ${x:-$'a\\'b'} && cp a /main/f.js", [main('copy')]],
     // A construct this scan reads as unclosed falls back to the plain quote end (bash rejects this
     // one; the fallback keeps the trailing write visible, failing closed).
     ['a construct read as unclosed, which falls back to the plain quote end', 'echo "${x:-$(echo)" && cp a /main/f.js', [main('copy')]],
-    // Round 4: a cd inside a backtick or $( ) runs in a subshell; the outer cwd stays.
+    // #4149: a cd inside a backtick or $( ) runs in a subshell; the outer cwd stays.
     ['a cd inside a top-level backtick', 'cd /main && echo `true; cd /tmp`; cp a f.js', [main('copy')]],
     ['a cd inside an assigned backtick', 'cd /main && x=`true && cd /tmp` && cp a f.js', [main('copy')]],
     ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); cp a f.js', [main('copy')]],
@@ -1013,11 +1013,11 @@ for (const [label, cmd] of [
     const targets = fileWriteTargets(`echo ${'"$('.repeat(40)}\ncp a /main/f.js`, '/r');
     assert.deepStrictEqual(targets, [main('copy')]);
   });
-  // Round 4: a cd inside a $( ) holds for the commands after it in the same substitution only.
+  // #4149: a cd inside a $( ) holds for the commands after it in the same substitution only.
   test('#4149 nesting: a cd inside a $( ) moves the commands after it there, not the outer walk', () => {
     assert.deepStrictEqual(fileWriteTargets('cd /main && echo $(true; cd /tmp; cp a b.js)', '/r'), [{ action: 'copy', file: path.resolve('/tmp/b.js') }]);
   });
-  // Round 5: a group inside a substitution is scoped within it, so the cd before the group holds
+  // #4149: a group inside a substitution is scoped within it, so the cd before the group holds
   // for the commands after it there, and the substitution's `)` ends its piece: the closer is part
   // of no word, and the rest of the command runs out there. A cd or an assignment inside a
   // substitution ends at the next outer piece. bash 3.2 and 5 write /main/f.js for each.
@@ -1044,7 +1044,7 @@ for (const [label, cmd] of [
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
     });
   }
-  // Round 5: a line whose quote scan spends the step budget (each "$( # comments to the line end,
+  // #4149: a line whose quote scan spends the step budget (each "$( # comments to the line end,
   // so every span rescans the rest of the line) leaves the structure open, failing closed, so the
   // next line's body stays kept. Without the comment's charge, or with the line's quotes read
   // outside the budget, the line reads closed, the body strips, and 1 MB of the line takes seconds.
@@ -1052,7 +1052,7 @@ for (const [label, cmd] of [
     const targets = fileWriteTargets(`echo ${'"$( #"'.repeat(2000)}\ncat <<'EOF'\ncp a /main/f.js\nEOF\n`, '/r');
     assert.deepStrictEqual(targets, [main('copy')]);
   });
-  // Round 6: a lone `&` inside a substitution, or in a group inside one, backgrounds that
+  // #4149: a lone `&` inside a substitution, or in a group inside one, backgrounds that
   // subshell's own list: it resets the sub run, never the outer cwd (bash 3.2 and 5 write
   // /main/f.js for each); inside `$(( ))` it is arithmetic. A group's assignment inside a
   // substitution stays there too.
@@ -1073,7 +1073,7 @@ for (const [label, cmd] of [
       assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
     });
   }
-  // Round 6: each brace group's `}`, each sub group's `}` and each tail can add a cwd, and every
+  // #4149: each brace group's `}`, each sub group's `}` and each tail can add a cwd, and every
   // later piece is visited once per cwd, so many distinct `cd` paths were quadratic. Past
   // CWD_SET_CAP the set collapses to `overflowCwd` (pre-tool-use passes the main checkout) plus the
   // walk's own cwd: a relative target past the cap resolves there, an absolute one stays put, and
@@ -1128,7 +1128,7 @@ for (const [label, cmd] of [
       assert.ok(files.includes(path.resolve('/r/f.js')) && !files.includes(path.resolve('/a0/f.js')), JSON.stringify(files));
     });
   }
-  // Round 4: a pass's nested scans share a step budget, so a shape whose "$( runs off the end from
+  // #4149: a pass's nested scans share a step budget, so a shape whose "$( runs off the end from
   // every top-level span (each falls back to the plain quote end and the next one rescans the same
   // text: here an unterminated heredoc) stays linear. The timing budget lives in
   // perf/heredoc-scan-linearity.test.js (a wall-clock assertion flakes under load); this pins the read.
@@ -1164,7 +1164,7 @@ for (const [label, cmd] of [
   for (const [label, cmd] of [
     ['a single quote inside a top-level backtick, before a lone & and a shell (splitOnLoneAmpersand)', "cat `'x` & bash <<'EOF'\necho x > f.js\nEOF"],
     ['an odd quote inside a top-level backtick, before a process substitution (removeQuotedSpans)', "tee `echo \"x` >(bash) \"y\" >/dev/null <<'EOF'\necho x > f.js\nEOF"],
-    // Round 4: the same seams read a single-quoted span whole, so a `"` inside one opens nothing.
+    // #4149: the same seams read a single-quoted span whole, so a `"` inside one opens nothing.
     ['a double quote inside single quotes, before a lone & and a shell (splitOnLoneAmpersand)', "jq '\"' & bash <<'EOF'\necho x > f.js\nEOF"],
     ['a double quote inside single quotes, around a process substitution (removeQuotedSpans)', "tee '\"' >(bash) '\"' >/dev/null <<'EOF'\necho x > f.js\nEOF"],
   ]) {
@@ -1175,7 +1175,7 @@ for (const [label, cmd] of [
   }
 }
 
-// Residual fix (#4149, redirect tokens): a redirection (`>/dev/null`, `2>&1`, `>>f`, `<in`, or an
+// #4149: a redirection (`>/dev/null`, `2>&1`, `>>f`, `<in`, or an
 // operator and its target word) is never a write shape's positional; its own target is still
 // reported by the redirection scan.
 for (const [label, cmd, expected] of [
@@ -1193,9 +1193,9 @@ for (const [label, cmd, expected] of [
   });
 }
 
-// Residual fix (#4149, m6): a kept body whose opener line names no known shell (make, at, ...) may
+// #4149: a kept body whose opener line names no known shell (make, at, ...) may
 // not run as one bash script, so it is also scanned whole, with no inner opener planned.
-test('#4149 m6: a make recipe heredoc inside a kept make body is scanned whole', () => {
+test('#4149: a make recipe heredoc inside a kept make body is scanned whole', () => {
   const targets = fileWriteTargets("make -s -f - <<'EOF'\nall:\n\tcat <<-X\n\techo x > f.js\n\tX\nEOF", '/r');
   assert.ok(targets.some((t) => t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
 });
@@ -1207,14 +1207,14 @@ for (const [label, cmd] of [
   ['a shell named by a variable ("$BASH")', `"$BASH" <<'EOF'\ncat <<'X'\ndon't\nX\ncp a f.js\nEOF`],
   ['a brace group piped to bash', "{\ncat <<'EOF'\ncat <<'X'\ndon't\nX\ncp a f.js\nEOF\n} | bash"],
 ]) {
-  test(`#4149 m6: an inner apostrophe in a body fed to ${label} does not hide a later line`, () => {
+  test(`#4149: an inner apostrophe in a body fed to ${label} does not hide a later line`, () => {
     const targets = fileWriteTargets(cmd, '/r');
     assert.ok(targets.some((t) => t.action === 'copy' && t.file === path.resolve('/r', 'f.js')), JSON.stringify(targets));
   });
 }
 
 for (const opener of ["env -S'bash -s' cat", 'env -S"bash -s" cat', "env -S 'bash -s' cat", "env --split-string='bash -s' cat", 'env -P/x cat', 'env -P /x cat', "env -iS'bash -s' cat"]) {
-  test(`#4149 m3: \`${opener}\` is not a reader`, () => {
+  test(`#4149: \`${opener}\` is not a reader`, () => {
     assert.deepStrictEqual(fileWriteTargets(`${opener} <<'EOF'\necho x > f.js\nEOF`, '/r'), [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
   });
 }
@@ -1249,7 +1249,7 @@ for (const opener of ["env -S'bash -s' cat", 'env -S"bash -s" cat', "env -S 'bas
     ["mkdir -p d && cat > d/f <<'EOF'", own('d/f')],
     ["git add -A && git commit -F - <<'EOF'", []],
     ["git -C x add f && git -C x commit -F - <<'EOF'", []],
-    // Round 4 (#4149): a substitution on the heredoc's own command, before its `<<`, reads the
+    // #4149: a substitution on the heredoc's own command, before its `<<`, reads the
     // shell's stdin (bash expands those words before it attaches the heredoc), so it refuses
     // nothing; `$((` is arithmetic.
     ["gh pr create --title \"$(git log -1 --format=%s)\" --body-file - <<'EOF'", []],
@@ -1260,7 +1260,7 @@ for (const opener of ["env -S'bash -s' cat", 'env -S"bash -s" cat', "env -S 'bas
     ["node \"$(bash)\" <<'EOF'", []],
     ["cat `sh` <<'EOF'", []],
     ["cat <<'EOF' | jq \"$((1))\"", []],
-    // Round 5: only a substitution at or after the `<<` refuses the own command, and arithmetic
+    // #4149: only a substitution at or after the `<<` refuses the own command, and arithmetic
     // with parens of its own still closes as `))`.
     ["node \"$(git rev-parse --show-toplevel)/x.js\" <<'EOF'", []],
     ["cat <<'EOF' | jq \"$((1+2))\"", []],
@@ -1270,7 +1270,7 @@ for (const opener of ["env -S'bash -s' cat", 'env -S"bash -s" cat', "env -S 'bas
       assert.deepStrictEqual(fileWriteTargets(`${opener}\n${BODY}EOF`, '/r'), expected);
     });
   }
-  // Round 4: after `||` (not a pipe), the next heredoc's own command reads no body through its
+  // #4149: after `||` (not a pipe), the next heredoc's own command reads no body through its
   // substitution, so both bodies strip.
   test("#4149 routine: `cat <<'A' || jq \"$(sh)\" <<'B'` strips both bodies", () => {
     assert.deepStrictEqual(fileWriteTargets(`cat <<'A' || jq "$(sh)" <<'B'\n${BODY}A\n${BODY}B`, '/r'), []);
@@ -1308,7 +1308,7 @@ test('e2e #3080: bare redirection from a worktree-always main checkout is DENIED
   }
 });
 
-// #4149 round 6: past the walk's cwd cap, pre-tool-use collapses the cwds to the main checkout (and
+// #4149: past the walk's cwd cap, pre-tool-use collapses the cwds to the main checkout (and
 // the worktree), so from a linked worktree a relative write, a push and a shadow mkdir after many
 // distinct `cd`s are DENIED; an absolute write outside the repo and a handful of groups are not.
 test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for a relative write, a push and a shadow mkdir', () => {
