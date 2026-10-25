@@ -117,7 +117,7 @@ function probePipelineRuns({ cwd, runId, worktreeRoot, scope } = {}) {
       remedy: lockedWorktree ? 'record' : 'auto',
       evidence: lockedWorktree
         ? `run-state.json status: clean, but recorded worktree is still locked — ${lockedEvidence(lockedWorktree, defaultIsPidAlive)}`
-        : 'run-state.json status: clean, not under .claude-tweaks/pipelines/archive/ — see wrap-up/cleanup-procedures.md Section B for the archival move',
+        : 'run-state.json status: clean, not under .claude-tweaks/pipelines/archive/ — see wrap-up/cleanup-procedures-execution.md Section B for the archival move',
     }));
   }
   return { ran: true, reason: null, findings };
