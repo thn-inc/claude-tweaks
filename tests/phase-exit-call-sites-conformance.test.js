@@ -157,6 +157,7 @@ const SELF_LOGGING_SOURCES = {
   'closing-links.js': ['plugin/bin/closing-links.js'],
   'verify-run-bookends.js': ['plugin/bin/verify-run-bookends.js'],
   'console-filings.js': ['plugin/bin/console-filings.js'],
+  'reflect-apply.js': ['plugin/bin/reflect-apply.js', 'plugin/bin/lib/console/reflect-apply.js'],
   'review-coordination.js resolve-tiebreak': ['plugin/bin/review-coordination.js'],
   'hooks.js delete-ledger': ['plugin/bin/hooks.js'],
 };

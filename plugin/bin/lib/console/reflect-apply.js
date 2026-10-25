@@ -18,6 +18,12 @@
 //
 // Every side effect goes through `deps`; the module never exits, reads argv, or touches real gh.
 // Each item runs in its own try/catch: one failure is that item's `failed` entry, never the batch's.
+//
+// A failed decisions.md append AFTER the outside effect landed (the issue is filed, the decline recorded) is
+// not a `failed` item — retrying it would repeat the effect. It is a `logFailures` entry
+// { item, error, line }, `line` the paste-ready command that logs it (`--applied filed --ref N` /
+// `--decline`), which the caller runs before anything re-runs the batch: until the line lands, a plain
+// re-run would file the record again.
 'use strict';
 
 const path = require('path');
@@ -77,6 +83,10 @@ function listApplicable({ runDir, deps }) {
   return out;
 }
 
+const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+const CLI_PATH = path.resolve(__dirname, '..', '..', 'reflect-apply.js');
+const cliLine = (runDir, tail) => `node ${shQuote(CLI_PATH)} --run ${shQuote(runDir)} ${tail}`;
+
 function logApplied({ runDir, text, reversibility, deps }) {
   deps.appendDecision({ runDir, section: SECTION, entry: formatEntry({ status: 'AUTO', now: deps.now(), step: STEP, text, reversibility }) });
 }
@@ -85,7 +95,7 @@ function declineFingerprint(description) {
   return createFingerprint('reflect', ['description']).fingerprint({ description });
 }
 
-// Records the decline and logs it. -> { applied } | { failed } | { applied, failed } (declined but unlogged).
+// Records the decline and logs it. -> { applied } | { failed } | { applied, logFailure } (declined but unlogged).
 function declineText({ runDir, item, text, reason, deps }) {
   const description = findingDescription(text);
   if (!description) return { failed: { item, error: `staged/${item} has no finding text to fingerprint` } };
@@ -99,13 +109,13 @@ function declineText({ runDir, item, text, reason, deps }) {
   try {
     logApplied({ runDir, text: `staged/${item} declined (${reason}); decline ${fp} recorded`, reversibility: 'high (clearDecline)', deps });
   } catch (err) {
-    return { applied, failed: { item, error: `declined (${fp} recorded) but the decisions.md append failed: ${errorText(err)}` } };
+    return { applied, logFailure: { item, error: errorText(err), line: cliLine(runDir, `--item ${shQuote(item)} --decline ${shQuote(reason)}`) } };
   }
   return { applied };
 }
 
 // A decline the console's Decline/Skip row asks for, whatever the file's own destination.
-// -> { alreadyApplied } | { applied } | { failed } | { applied, failed }
+// -> { alreadyApplied } | { applied } | { failed } | { applied, logFailure }
 function declineItem({ runDir, item, reason, deps }) {
   const line = appliedLine(runDir, item, deps);
   if (line) return { alreadyApplied: { item, line } };
@@ -136,10 +146,13 @@ function markApplied({ runDir, item, kind, ref, deps }) {
     carried = dest.target;
   } else if (kind === 'filed') {
     if (dest.kind !== 'record') return { error: `staged/${item}'s destination is not a record (it is ${dest.kind}) — --applied filed does not fit it` };
+    const problem = deferReasonProblem(dest.proposal);
+    if (problem !== null) return { error: `staged/${item}'s record has no valid Defer-reason (${problem}) — it is refused, never filed, so --applied filed does not fit it` };
     carried = normalizeRef(ref);
     logText = `staged/${item} filed as ${carried} (Defer-reason: ${dest.proposal.deferReason})`;
     reversibility = 'high (gh issue close)';
   } else {
+    if (dest.kind !== 'none') return { error: `staged/${item} has a destination line (${dest.kind}) — --applied digested only fits a legacy file with none` };
     logText = `staged/${item} digested (${ref})`;
     reversibility = 'high (entry remains promotable from the digest)';
   }
@@ -176,7 +189,7 @@ function emitProposal(proposal) {
 function applyReflectItems({
   runDir, only, transport = 'gh', outDir, repo, dryRun = false, deps,
 }) {
-  const res = { applied: [], session: [], refused: [], pending: [], alreadyApplied: [], failed: [] };
+  const res = { applied: [], session: [], refused: [], pending: [], alreadyApplied: [], failed: [], logFailures: [] };
   if (dryRun) res.planned = [];
   const wanted = Array.isArray(only) ? new Set(only) : null;
   let workTypes;
@@ -214,6 +227,7 @@ function applyReflectItems({
         const r = declineText({ runDir, item, text, reason: dest.reason, deps });
         if (r.applied) res.applied.push(r.applied);
         if (r.failed) res.failed.push(r.failed);
+        if (r.logFailure) res.logFailures.push(r.logFailure);
         continue;
       }
 
@@ -231,7 +245,7 @@ function applyReflectItems({
               entry: formatEntry({ status: 'REFUSED', now: deps.now(), step: `Queue write staged/${item}`, text: `no valid Defer-reason on staged/${item}; kept staged` }),
             });
           } catch (err) {
-            res.failed.push({ item, error: `refused, but the decisions.md append failed: ${errorText(err)}` });
+            res.logFailures.push({ item, error: errorText(err), line: cliLine(runDir, `--only ${shQuote(item)}`) });
           }
         }
         continue;
@@ -262,13 +276,13 @@ function applyReflectItems({
         ...recordLabels(proposal).flatMap((l) => ['--label', l]),
       ]);
       const m = /\/issues\/(\d+)/.exec(String(out));
-      if (!m) { res.failed.push({ item, error: `could not read the issue number from gh output: ${JSON.stringify(String(out))}` }); continue; }
+      if (!m) { res.failed.push({ item, error: `could not read the issue number from gh output: ${JSON.stringify(String(out))} — the issue may exist; check before re-running` }); continue; }
       const ref = `#${m[1]}`;
       res.applied.push({ item, outcome: 'filed', ref });
       try {
         logApplied({ runDir, text: `staged/${item} filed as ${ref} (Defer-reason: ${proposal.deferReason})`, reversibility: 'high (gh issue close)', deps });
       } catch (err) {
-        res.failed.push({ item, error: `filed as ${ref} but the decisions.md append failed: ${errorText(err)}` });
+        res.logFailures.push({ item, error: errorText(err), line: cliLine(runDir, `--item ${shQuote(item)} --applied filed --ref ${m[1]}`) });
       }
     } catch (err) {
       res.failed.push({ item, error: errorText(err) });

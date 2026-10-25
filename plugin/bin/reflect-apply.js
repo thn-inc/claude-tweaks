@@ -20,7 +20,9 @@
 // not accepted for edited) — which appends the AUTO line. `--decline <reason>` declines one item whatever
 // its destination (the Review Console's Decline/Skip row). Every applied line is
 // `AUTO … Reflect apply: staged/{name} {filed|declined|edited|digested} …` under decisions.md `## /wrap-up`;
-// an item that already has one is `alreadyApplied` and nothing runs again, so every call is safe to repeat.
+// an item that already has one is `alreadyApplied` and nothing runs again. That is what makes a repeat safe —
+// once the line has landed. A filing or decline whose append failed has NO line yet, so a re-run would file or
+// record it again: it is reported in `logFailures` instead (below), and its paste-ready `line` is run first.
 // A record whose Defer-reason fails the deferral gate is `refused` and logged once as a `REFUSED` Queue-write
 // line (kept staged); an invalid destination is `pending`; `--only`/`--item` naming a file that is absent or
 // not an applicable reflect finding is a malformed invocation.
@@ -28,14 +30,22 @@
 // Prints one JSON object, every key always present:
 //   { applied: [{ item, outcome: 'filed'|'declined'|'edited'|'digested', ref }],
 //     session: [{ item, outcome: 'edit', target } | { item, outcome: 'record', proposal } | { item, outcome: 'digest', line, fingerprint }],
-//     refused: [{ item, value }], pending: [{ item, reason }], alreadyApplied: [{ item, line }], failed: [{ item, error }] }
+//     refused: [{ item, value }], pending: [{ item, reason }], alreadyApplied: [{ item, line }], failed: [{ item, error }],
+//     logFailures: [{ item, error, line }] }
+// `logFailures` (#4026's shape: always present, empty when none) lists each decisions.md append that failed after
+// its effect landed — the issue filed, the decline recorded, the REFUSED line — with one stderr line
+// (`could not append the decisions.md entry for {item}: …`). It is never a `failed` item and never changes the
+// exit code; `line` is the command that logs it (`--item {name} --applied filed --ref {n}` for a filing,
+// `--item {name} --decline {reason}` for a decline, a plain `--only {name}` re-run for a refusal) — run it before
+// re-running the batch, since until it lands the filing has no line and a re-run files it again.
 // `--dry-run` (batch form only) calls nothing and writes nothing — no gh, no recordDecline, no file, no log
 // line — and adds `planned: [{ item, outcome }]` naming, per selected item, the outcome the real run reaches
 // (filed|declined|edit|record|digest|refused|pending|alreadyApplied|failed); `applied` and `session` stay empty.
 //
-// Exit codes: 0 ok (session work included); 1 any `failed` entry (a gh/recordDecline/write/append failure, a
-// missing edit target, a gh transport without `work-types: labels` — the other items still ran; a filing whose
-// decisions.md append failed is in both `applied` and `failed`, naming the issue); 2 malformed invocation
+// Exit codes: 0 ok (session work and `logFailures` included); 1 any `failed` entry (a gh/recordDecline/write
+// failure, a missing edit target, a gh transport without `work-types: labels`, an `--applied` whose own append
+// failed — the other items still ran, and re-running the failed items is safe: nothing was done for them, except
+// a gh reply with no issue number, whose error says the issue may exist — check before re-running); 2 malformed invocation
 // (a missing/unknown flag, a combination that does not fit, an item that is not an applicable reflect file —
 // the message lists the applicable names, an --applied that does not fit the file's destination); 3 the run dir
 // is missing or not anchored under the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md's
@@ -102,7 +112,7 @@ const realDeps = {
   tmpFile: (name) => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'reflect-apply-')), name),
 };
 
-const emptyResult = () => ({ applied: [], session: [], refused: [], pending: [], alreadyApplied: [], failed: [] });
+const emptyResult = () => ({ applied: [], session: [], refused: [], pending: [], alreadyApplied: [], failed: [], logFailures: [] });
 
 function run(argv, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
@@ -172,12 +182,14 @@ function run(argv, overrides = {}) {
     if (r.applied) result.applied.push(r.applied);
     if (r.alreadyApplied) result.alreadyApplied.push(r.alreadyApplied);
     if (r.failed) result.failed.push(r.failed);
+    if (r.logFailure) result.logFailures.push(r.logFailure);
   } else {
     result = applyReflectItems({
       runDir, only, transport: o.transport === null ? 'gh' : o.transport, outDir: o.outDir === null ? undefined : path.resolve(deps.cwd(), o.outDir), repo: o.repo === null ? undefined : o.repo, dryRun: o.dryRun, deps,
     });
   }
   for (const f of result.failed) deps.stderr(`reflect-apply.js: ${f.item}: ${f.error}\n`);
+  for (const l of result.logFailures) deps.stderr(`reflect-apply.js: could not append the decisions.md entry for ${l.item}: ${l.error} — hand-log it with:\n${l.line}\n`);
   deps.stdout(JSON.stringify(result) + '\n');
   return result.failed.length ? 1 : 0;
 }

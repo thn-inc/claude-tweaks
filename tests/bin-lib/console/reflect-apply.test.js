@@ -89,7 +89,8 @@ test('AC2.2: the record destination is written through the injected gh dep', () 
   assert.deepEqual(calls.gh[0], ['issue', 'create', '--title', 'Track the X', '--body-file', bodyFile, '--label', 'risk:low', '--label', 'type:task']);
   assert.equal(fs.readFileSync(bodyFile, 'utf8'), parseReflectDestination(RECORD).proposal.body);
   assert.deepEqual(result(out).applied, [{ item: 'reflect-1.md', outcome: 'filed', ref: '#901' }]);
-  assert.deepEqual(Object.keys(result(out)).sort(), ['alreadyApplied', 'applied', 'failed', 'pending', 'refused', 'session']);
+  assert.deepEqual(Object.keys(result(out)).sort(), ['alreadyApplied', 'applied', 'failed', 'logFailures', 'pending', 'refused', 'session']);
+  assert.deepEqual(result(out).logFailures, []);
 });
 
 test('--repo is forwarded to gh issue create', () => {
@@ -314,13 +315,85 @@ test('gh output with no issue url is a failed entry', () => {
   assert.ok(!decisionsOf(f).includes('Reflect apply'));
 });
 
-test('a failed decisions.md append after a successful filing is applied AND failed, naming the record', () => {
+test('a failed decisions.md append after a filing is a logFailures entry, not failed; its printed command logs it and no re-run refiles', () => {
   const f = fixture({ 'reflect-1.md': RECORD });
-  const { deps, out } = fakeDeps(f, { appendDecision: () => { throw new Error('disk full'); } });
-  assert.equal(run(['--run', f.runDir], deps), 1);
-  const r = result(out);
-  assert.equal(r.applied[0].ref, '#901');
-  assert.match(r.failed[0].error, /#901.*disk full/);
+  const first = fakeDeps(f, { appendDecision: () => { throw new Error('disk full'); } });
+  assert.equal(run(['--run', f.runDir], first.deps), 0, 'a failed append never changes the exit code');
+  const r = result(first.out);
+  assert.deepEqual(r.applied, [{ item: 'reflect-1.md', outcome: 'filed', ref: '#901' }]);
+  assert.deepEqual(r.failed, []);
+  assert.equal(r.logFailures.length, 1);
+  assert.equal(r.logFailures[0].item, 'reflect-1.md');
+  assert.equal(r.logFailures[0].error, 'disk full');
+  const cli = path.join(ROOT, 'plugin', 'bin', 'reflect-apply.js');
+  assert.equal(r.logFailures[0].line, `node '${cli}' --run '${fs.realpathSync(f.runDir)}' --item 'reflect-1.md' --applied filed --ref 901`);
+  assert.match(first.err.join(''), /^reflect-apply\.js: could not append the decisions\.md entry for reflect-1\.md: disk full — hand-log it with:\nnode /m);
+  assert.ok(first.err.join('').includes(r.logFailures[0].line));
+  assert.equal(first.calls.gh.length, 1);
+  assert.ok(!decisionsOf(f).includes('Reflect apply'), 'no line yet');
+
+  // Running the printed command (its argv, as the shell would split it) logs the filing ...
+  const [, item, kind, ref] = /--item '([^']+)' --applied (\w+) --ref (\S+)$/.exec(r.logFailures[0].line);
+  const logged = fakeDeps(f);
+  assert.equal(run(['--run', f.runDir, '--item', item, '--applied', kind, '--ref', ref], logged.deps), 0);
+  assert.match(decisionsOf(f), /Reflect apply: staged\/reflect-1\.md filed as #901 \(Defer-reason: genuinely-larger\)/);
+  // ... so a further plain run files nothing more.
+  const again = fakeDeps(f);
+  assert.equal(run(['--run', f.runDir], again.deps), 0);
+  assert.equal(again.calls.gh.length, 0);
+  assert.deepEqual(result(again.out).alreadyApplied.map((a) => a.item), ['reflect-1.md']);
+  assert.deepEqual(result(again.out).logFailures, []);
+});
+
+test('a failed append after a recorded decline is a logFailures entry whose line re-declines and logs', () => {
+  const reason = 'it\'s covered';
+  const f = fixture({ 'reflect-2.md': DECLINE.replace('already covered by CLAUDE.md', reason) });
+  const first = fakeDeps(f, { appendDecision: () => { throw new Error('disk full'); } });
+  assert.equal(run(['--run', f.runDir], first.deps), 0);
+  const r = result(first.out);
+  assert.equal(r.applied.length, 1);
+  assert.deepEqual(r.failed, []);
+  assert.ok(r.logFailures[0].line.endsWith(` --item 'reflect-2.md' --decline 'it'\\''s covered'`), r.logFailures[0].line);
+  const logged = fakeDeps(f);
+  assert.equal(run(['--run', f.runDir, '--item', 'reflect-2.md', '--decline', reason], logged.deps), 0);
+  assert.match(decisionsOf(f), /staged\/reflect-2\.md declined \(it's covered\); decline reflect-[0-9a-f]{8} recorded/);
+});
+
+test('a failed REFUSED append is a logFailures entry, and the next plain run logs it', () => {
+  const f = fixture({ 'reflect-4.md': BAD_DEFER });
+  const first = fakeDeps(f, { appendDecision: () => { throw new Error('disk full'); } });
+  assert.equal(run(['--run', f.runDir], first.deps), 0);
+  const r = result(first.out);
+  assert.equal(r.refused.length, 1);
+  assert.deepEqual(r.failed, []);
+  assert.equal(r.logFailures[0].item, 'reflect-4.md');
+  assert.equal(run(['--run', f.runDir], fakeDeps(f).deps), 0);
+  assert.equal(decisionsOf(f).split('\n').filter((l) => l.startsWith('- REFUSED ')).length, 1);
+});
+
+test('a failed append for --applied itself (the log is the whole effect) is failed, exit 1, and safe to repeat', () => {
+  const f = fixture({ 'reflect-3.md': LEGACY });
+  const argv = ['--run', f.runDir, '--item', 'reflect-3.md', '--applied', 'digested', '--ref', 'c1'];
+  const bad = fakeDeps(f, { appendDecision: () => { throw new Error('disk full'); } });
+  assert.equal(run(argv, bad.deps), 1);
+  assert.match(result(bad.out).failed[0].error, /disk full/);
+  assert.deepEqual(result(bad.out).logFailures, []);
+  assert.equal(run(argv, fakeDeps(f).deps), 0);
+  assert.match(decisionsOf(f), /staged\/reflect-3\.md digested \(c1\)/);
+});
+
+test('--applied digested on a file with a destination line, and --applied filed on a refused record, are exit 2 with nothing logged', () => {
+  const f = fixture({ 'reflect-1.md': RECORD, 'reflect-2.md': DECLINE, 'reflect-4.md': BAD_DEFER });
+  for (const [argv, re] of [
+    [['--item', 'reflect-1.md', '--applied', 'digested', '--ref', 'c1'], /destination line \(record\).*only fits a legacy file/],
+    [['--item', 'reflect-2.md', '--applied', 'digested', '--ref', 'c1'], /destination line \(decline\)/],
+    [['--item', 'reflect-4.md', '--applied', 'filed', '--ref', '5'], /no valid Defer-reason \(because\).*refused, never filed/],
+  ]) {
+    const { deps, err } = fakeDeps(f);
+    assert.equal(run(['--run', f.runDir, ...argv], deps), 2, argv.join(' '));
+    assert.match(err.join(''), re);
+  }
+  assert.equal(decisionsOf(f), '');
 });
 
 test('a recordDecline throw is that item\'s failed entry', () => {
