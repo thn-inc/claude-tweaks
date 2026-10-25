@@ -124,13 +124,20 @@ function shouldRunFull(event, input) {
   // #4281: bash drops a NUL from its input, and so does forEachShellSegment, so `gi<NUL>t commit`
   // is `git commit` to the parsers; the words are read the same way to stay their superset.
   const command = typed.replace(/\0/g, '');
-  if (ASSIGNMENT.test(command) && PARAM_REFERENCE.test(command)) return true;
+  // #4281: bash joins a backslash-newline, and so do the parsers, so `g\`+newline+`it commit` is `git
+  // commit`. The word checks read the command with every one removed as well as without: removing
+  // one bash keeps (inside single quotes, after an escaped `\`) only adds words. hasFileRedirection
+  // walks the parser itself, which joins them as bash does.
+  const readings = command.includes('\\\n') ? [command, command.replace(/\\\n/g, '')] : [command];
+  if (readings.some((c) => ASSIGNMENT.test(c) && PARAM_REFERENCE.test(c))) return true;
   // pre-tool-use only: fileWriteTargets, the sole consumer of redirection
   // targets, never runs in post-tool-use's handler, so checking there would be
   // pure cost.
   if (event === 'pre-tool-use' && hasFileRedirection(command)) return true;
-  const present = commandWords(command);
-  return covered.some((word) => present.has(word));
+  return readings.some((c) => {
+    const present = commandWords(c);
+    return covered.some((word) => present.has(word));
+  });
 }
 
 // #2783: post-tool-use-failure fires on EVERY failed Bash call, yet its handler

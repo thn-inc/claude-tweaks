@@ -45,6 +45,8 @@ const DIFFERENTIAL_CORPUS = [
   '\\cd sub > tracked.js', 'cd sub > tracked.js',
   // #4281: a redirect glued to an assignment word.
   'A=x>tracked.js', '\\\nA=x>tracked.js',
+  // #4281: a backslash-newline inside a program word, which bash and the parsers join.
+  'g\\\nit commit -m x', 't\\\nee tracked.js', '"g\\\nit" commit -m x',
 ];
 const teardown = (command) => teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: CWD });
 const powershell = (command) => (powershellOpaqueCommand(command, CWD) ? [{ action: 'powershell-opaque' }] : []);
@@ -493,6 +495,18 @@ test('#4281: a NUL in the command is dropped, so a parser target behind one take
     assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), true, JSON.stringify(command));
   }
   assert.strictEqual(shouldRunFull('post-tool-use', bash('gi\0t commit -m x')), true);
+});
+
+test('#4281: a backslash-newline inside a program word is joined, so the word reaches the full handler', () => {
+  // bash 3.2 and 5 join a backslash-newline: `t\`+newline+`ee f1` and `"t\`+newline+`ee" f1` write f1, and
+  // `g\`+newline+`it --version` runs git. After an escaped backslash the newline separates:
+  // `echo a\\`+newline+`tee f1` writes f1 too, and `x\\`+newline+`G=gi; ${G}t --version` runs git, an
+  // assignment only the unjoined reading sees.
+  for (const command of ['g\\\nit commit -m x', 't\\\nee f1', '"g\\\nit" commit -m x', 'echo a\\\\\ntee f1', 'x\\\\\nG=gi; ${G}t push']) {
+    assert.ok(targeted('pre-tool-use', command), JSON.stringify(command));
+    assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), true, JSON.stringify(command));
+  }
+  assert.strictEqual(shouldRunFull('post-tool-use', bash('g\\\nit commit -m x')), true);
 });
 
 test('#4281: a redirect on a cd line takes the full-handler path', () => {
