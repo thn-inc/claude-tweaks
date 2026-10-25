@@ -32,6 +32,8 @@ function segmentSpansWith(str, spans) {
   let sub = false; // the segment in progress began inside a top-level backtick span
   const cut = (at) => { segments.push({ text: current, end: at, sub }); current = ''; sub = false; };
   let quote = null; // null | "'" (a double-quoted span is consumed whole below)
+  let parens = null; // parenMatches from the first `((` or `$((` on, offset by parensFrom
+  let parensFrom = 0;
   for (let i = 0; i < str.length; i++) {
     const ch = str[i];
     if (quote === "'") {
@@ -78,6 +80,23 @@ function segmentSpansWith(str, spans) {
       current += str.slice(i, nested.end);
       i = nested.end - 1;
       continue;
+    }
+    // An unquoted `$((`, or a `((` at a word start, is arithmetic when the `(` after its first `(`
+    // closes at a `)` directly followed by `)` (the test groupEvents applies, #4303). It is one piece
+    // through that `))`, across lines: a `||`, `&&`, `|` or `;` inside it is an operator of the
+    // expression, not a separator. Any other one (`$((true); …)`, `((cd x && ls) | cat)`) holds a
+    // subshell, whose commands are cut as before, and so does a `((` glued to `<` or `>`.
+    const lead = ch === '$' && str[i + 1] === '(' && str[i + 2] === '(' ? i + 2
+      : ch === '(' && str[i + 1] === '(' && (i === 0 || /[\s;&|(]/.test(str[i - 1])) ? i + 1 : -1;
+    if (lead !== -1) {
+      if (parens === null) { parensFrom = i; parens = parenMatches(str.slice(i)); }
+      const inner = parens.get(lead - parensFrom);
+      if (inner !== undefined && str[parensFrom + inner + 1] === ')') {
+        const end = parensFrom + inner + 2;
+        current += str.slice(i, end);
+        i = end - 1;
+        continue;
+      }
     }
     if (ch === '&' && str[i + 1] === '&') { cut(i); i += 1; continue; }
     if (ch === '|' && str[i + 1] === '|') { cut(i); i += 1; continue; }
@@ -1716,7 +1735,7 @@ function groupEventsWith(seg, g, spans, undo) {
     for (let k = 0; k < n; k += 1) push({ kind: 'p', caseDepth: 0, cmd: frameCmd });
     atCmd = cmd;
   };
-  let parens = null; // parenMatches(seg), computed at the first `((` at command position
+  let parens = null; // parenMatches(seg), computed at the first `((` at command position or `$((`
   let i = 0;
   while (i < seg.length) {
     const c = seg[i];
@@ -1801,7 +1820,17 @@ function groupEventsWith(seg, g, spans, undo) {
         plain = false;
         continue;
       }
-      if (ch === '$' && seg[i + 1] === '(') { subst = seg[i + 2] === '(' ? 2 : 1; break; }
+      // A `$((` is arithmetic by the `((` command's test (#4303); any other is a `$(` holding a
+      // subshell (`$((cd x; …) )`), whose second `(` is then read at command position.
+      if (ch === '$' && seg[i + 1] === '(') {
+        subst = 1;
+        if (seg[i + 2] === '(') {
+          if (parens === null) parens = parenMatches(seg);
+          const inner = parens.get(i + 2);
+          if (inner !== undefined && seg[inner + 1] === ')') subst = 2;
+        }
+        break;
+      }
       // `$[ … ]` is arithmetic, closed by the `]` that matches it past any nested `[ … ]` (an array
       // subscript), as scanHeredocs reads it.
       if (ch === '$' && seg[i + 1] === '[') { subst = -1; break; }

@@ -581,6 +581,79 @@ test('AC2.1 #4210: arithmetic and nested groups stay target-free', () => {
   }
 });
 
+// #4303: `||`, `&&`, `|`, `;` and a newline inside an arithmetic `(( ))` are operators of the
+// expression, so nothing cuts there and the `>` stays a comparison. bash 3.2 and 5 write no file for
+// any row (a and b are 0, so the second row's cp never runs; the scanner keeps its target, which
+// does not depend on the arithmetic's value: the next test). A `((` glued after `(`, `;`, `&&` or
+// `|` is at a word start too.
+for (const cmd of [
+  '(( a>1 || b>2 ))', '(( a>1 && b>2 )) && cp a /main/f.js', '(( a>1 ||\n b>2 ))',
+  '((( a>1 || b>2 )) )', 'true;(( a>1 || b>2 ))', 'true&&(( a>1 || b>2 ))', 'true|(( a>1 || b>2 ))',
+]) {
+  test(`AC2.1 #4303: \`${cmd}\` resolves no comparison target`, () => {
+    const files = fileWriteTargets(cmd, '/r').map((t) => t.file);
+    assert.ok(!files.includes(path.resolve('/r/1')) && !files.includes(path.resolve('/r/2')), JSON.stringify(files));
+  });
+}
+test('#4303: a write after an arithmetic command is still read', () => {
+  assert.deepStrictEqual(fileWriteTargets('(( a>1 && b>2 )) && cp a /main/f.js', '/r'), [{ action: 'copy', file: MAIN_F }]);
+});
+// An arithmetic `$(( ))` is kept whole the same way; bash 3.2 and 5 write no file for either row. A
+// spaced `a>1` inside `$(( ))` still resolves `/r/1` today, as `echo $(( a>1 ))` with no separator
+// does: the redirect scan reads only a leading `((` as arithmetic. That is a pre-existing spurious
+// deny, which a follow-up covers, so these rows pin only that nothing cuts inside the `$(( ))`.
+for (const cmd of ['echo $(( a>1 || b>2 ))', 'x=$(( a>1 | b>2 ))']) {
+  test(`#4303: \`${cmd}\` keeps $(( )) whole`, () => {
+    assert.deepStrictEqual(gitCommand.splitSegments(cmd), [cmd]);
+  });
+}
+// `$((true); …)` is a `$(` holding a subshell, not arithmetic: bash 3.2 and 5 write M/f.
+test('#4303: a $(( that is a substitution holding a subshell still cuts its commands', () => {
+  assert.ok(fileWriteTargets('x=$((true); cd /main; cp a f.js)', '/r').some((t) => t.file === MAIN_F));
+});
+// A `((` or `$((` whose inner `(` closes directly before a `)` is arithmetic even when it holds
+// commands: bash 3.2 and 5 report an arithmetic syntax error and write nothing for each row.
+test('#4303: an arithmetic (( or $(( that holds command text runs none of it', () => {
+  for (const cmd of ['((cd /main; cp a f.js))', '((cd /main && cp a f.js)) || true', 'x=$((cd /main; cp a f.js))', 'echo $((cd /main\ncp a f.js))']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+  }
+});
+// A `((` glued to `<` or `>` is a process substitution holding a subshell: bash 3.2 and 5 write
+// files 1 and 2 for each `a>1 || b>2` row, and /main/f.js for each `cd` row.
+test('#4303: a (( right after < or > is no arithmetic', () => {
+  for (const cmd of ['<((a>1 || b>2))', 'cat <((a>1 || b>2))', 'echo >((a>1 || b>2))']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r/1'), path.resolve('/r/2')], cmd);
+  }
+  for (const cmd of ['cat <((cd /main; cp a f.js))', 'echo >((cd /main; cp a f.js))']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'copy', file: MAIN_F }], cmd);
+  }
+});
+// A `$((` whose inner `(` closes at a `)` not directly followed by `)` is a `$(` holding a subshell,
+// so the subshell's commands run: bash 3.2 and 5 write /main/f.js for each row (and g.js in the
+// outer cwd for the fourth). The last three hold no separator, so only the walk's own reading of
+// the `$((` places their command.
+for (const [cmd, expected] of [
+  ['x=$((cd /main; cp a f.js) )', [MAIN_F]],
+  ['x=$((cd /main && cp a f.js) || true)', [MAIN_F]],
+  ['echo $((cd /main; cp a f.js) )', [MAIN_F]],
+  ['x=$((cd /main; cp a f.js) ); cp a g.js', [MAIN_F, path.resolve('/r/g.js')]],
+  ['echo $((cp a /main/f.js) )', [MAIN_F]],
+  ['x=$((cp a /main/f.js) )', [MAIN_F]],
+  ['echo $((echo x > /main/f.js) )', [MAIN_F]],
+]) {
+  test(`#4303: \`${cmd}\` runs the subshell inside its $((`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), expected);
+  });
+}
+// Its neighbours: the subshell's cd ends at its `)` (bash 3.2 and 5 write f.js in the outer cwd), and
+// an arithmetic `$(( ))` holding single parens stays arithmetic (bash 3.2 and 5 write no file, and
+// M/f.js after the cd).
+test('#4303: a $(( subshell scopes its cd, and $(( (1+2)*3 )) stays arithmetic', () => {
+  assert.deepStrictEqual(fileWriteTargets('x=$((cd /main) ; cp a f.js)', '/r'), [{ action: 'copy', file: path.resolve('/r/f.js') }]);
+  assert.deepStrictEqual(fileWriteTargets('echo $(( (1+2)*3 ))', '/r'), []);
+  assert.deepStrictEqual(fileWriteTargets('cd /main; echo $(( (1+2)*3 )); cp a f.js', '/r'), [{ action: 'copy', file: MAIN_F }]);
+});
+
 // #4149 with #4210: `(a(b))>x` is a syntax error in bash 3.2 and 5, which write nothing. The shell
 // walk reads a `(` at command position as a subshell, so its `)>x` is the group's redirect, the same
 // reading that gives `(cd /m; echo x>f)>out` its `/r/out` target (deliberate fail-closed tradeoff:
