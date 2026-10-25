@@ -36,7 +36,9 @@ const { readRunResidue } = require('../console/residue');
 // GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR would silently override that
 // and commit to whatever repo it names (e.g. a linked worktree's branch). Pin
 // the spawn env so `-C <root>` stays in charge.
-const runGit = (args, cwd, opts = {}) => runGitInherited(args, cwd, { ...opts, env: repoPinnedEnv() });
+function runGit(args, cwd, opts = {}) {
+  return runGitInherited(args, cwd, { ...opts, env: repoPinnedEnv() });
+}
 
 // Orphan case introduced by the dispatch/flow run-identity unification:
 // dispatch mints an empty, anchored run directory (mkdir only, no
