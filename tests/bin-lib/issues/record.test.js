@@ -1240,3 +1240,59 @@ test('isRepoRelativeKeyFilePath agrees with specShapedBody on every keyFiles pat
     assert.doesNotThrow(compose(p));
   }
 });
+
+// ---- extractSection skips fenced headings (#4169) ----
+const QUOTED_COPY_BODY = [
+  '## Current State',
+  '',
+  'The staged copy follows verbatim.',
+  '',
+  '````',
+  '## Current State',
+  'quoted state',
+  '## Deliverables',
+  '- [ ] quoted deliverable',
+  '```',
+  '## Acceptance Criteria',
+  '```',
+  '1. quoted AC',
+  '## Release Note',
+  'quoted note',
+  '````',
+  '',
+  '~~~',
+  '## Open Question',
+  'tilde-quoted',
+  '~~~',
+  '',
+  '## Deliverables',
+  '- [ ] real deliverable',
+  '',
+  '## Open Question',
+  'Is it still wanted?',
+  '',
+  '## Release Note',
+  'No user-visible change.',
+].join('\n');
+
+test('AC1.1: extractSection returns empty for a heading that exists only inside a fence', () => {
+  assert.strictEqual(extractSection(QUOTED_COPY_BODY, 'Acceptance Criteria'), '');
+});
+
+test('AC1.1: extractSection returns the whole Current State, fenced blocks included', () => {
+  const cs = extractSection(QUOTED_COPY_BODY, 'Current State', { trim: true });
+  assert.ok(cs.startsWith('The staged copy follows verbatim.'));
+  assert.ok(cs.includes('## Acceptance Criteria\n```\n1. quoted AC'), 'the inner ``` does not close the 4-backtick fence');
+  assert.ok(cs.endsWith('~~~'), 'runs through the tilde fence up to the real ## Deliverables');
+  assert.ok(!cs.includes('real deliverable'));
+});
+
+test('extractSection: the record\'s own section wins over a fenced quote of the same heading', () => {
+  assert.strictEqual(extractSection(QUOTED_COPY_BODY, 'Deliverables', { trim: true }), '- [ ] real deliverable');
+  assert.strictEqual(extractSection(QUOTED_COPY_BODY, 'Release Note', { levelPattern: '2', stopPattern: '2', trim: true }), 'No user-visible change.');
+  assert.strictEqual(extractSection(QUOTED_COPY_BODY, 'Open Question', { trim: true }), 'Is it still wanted?');
+});
+
+test('extractSection: CRLF fenced quote is skipped too', () => {
+  assert.strictEqual(extractSection(QUOTED_COPY_BODY.replace(/\n/g, '\r\n'), 'Acceptance Criteria'), '');
+});
