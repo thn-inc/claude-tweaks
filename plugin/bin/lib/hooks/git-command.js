@@ -112,13 +112,14 @@ function tokenize(seg) {
   let m;
   let prevEnd = -1;
   while ((m = re.exec(seg)) !== null) {
-    const val = m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4];
+    const val = m[1] ?? m[2] ?? m[3] ?? m[4];
     const isSQ = m[2] !== undefined;
     const isDQ = m[1] !== undefined;
+    const isBare = m[3] !== undefined;
     let kinds;
     if (isDQ) kinds = 'd'.repeat(val.length);
     else if (isSQ) kinds = 's'.repeat(val.length);
-    else if (m[3] !== undefined) kinds = val.replace(/\\[\s\S]|[\s\S]/g, (u) => (u.length === 2 ? 'ee' : 'b'));
+    else if (isBare) kinds = val.replace(/\\[\s\S]|[\s\S]/g, (u) => (u.length === 2 ? 'ee' : 'b'));
     else kinds = 'x';
     if (out.length && m.index === prevEnd) {
       out[out.length - 1] += val;
@@ -147,12 +148,11 @@ const UNPROVABLE_FLAGS = ['--git-dir', '--work-tree'];
 // ambiguity: the tokenizer above is escape-aware, but it keeps backslashes in
 // the token text as typed, so a value that still carries a backslash or stray
 // quote (from an escaped-quote sequence) cannot be trusted as a literal path —
-// never claim an unprovable
-// target. Also unresolvable: anything else that looks like a FLAG (starts
-// with "-", length > 1) — cd's own flags (-L, -P, -e, -@, --) are not path
-// arguments; without this, `cd -P /other-repo` would resolve "-P" itself as
-// a literal (almost certainly nonexistent) child directory of the current
-// cwd instead of recognizing the real target is unprovable from here.
+// never claim an unprovable target. Also unresolvable: anything else that looks
+// like a FLAG (starts with "-", length > 1) — cd's own flags (-L, -P, -e, -@,
+// --) are not path arguments; without this, `cd -P /other-repo` would resolve
+// "-P" itself as a literal (almost certainly nonexistent) child directory of
+// the current cwd instead of recognizing the real target is unprovable from here.
 function isUnresolvable(raw) {
   return (
     raw === undefined ||
