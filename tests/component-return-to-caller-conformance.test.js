@@ -30,7 +30,9 @@ const ROSTER = [
   'challenge/SKILL.md',
 ];
 
-const collapse = (s) => s.replace(/\s+/g, ' ');
+function collapse(s) {
+  return s.replace(/\s+/g, ' ');
+}
 
 function walkMarkdown(root) {
   const corpus = new Map();
@@ -47,15 +49,21 @@ function walkMarkdown(root) {
   return corpus;
 }
 
+function sortedFilesWhere(corpus, predicate) {
+  return [...corpus].filter(([, text]) => predicate(text)).map(([rel]) => rel).sort();
+}
+
 function outputOnlyFiles(corpus) {
-  return [...corpus].filter(([, text]) => text.includes(OUTPUT_ONLY)).map(([rel]) => rel).sort();
+  return sortedFilesWhere(corpus, (text) => text.includes(OUTPUT_ONLY));
 }
 
 function outputToCallerFiles(corpus) {
-  return [...corpus].filter(([, text]) => OUTPUT_TO_CALLER_RE.test(text)).map(([rel]) => rel).sort();
+  return sortedFilesWhere(corpus, (text) => OUTPUT_TO_CALLER_RE.test(text));
 }
 
-const lacksLine = (text) => !collapse(text).includes(collapse(RETURN_LINE));
+function lacksLine(text) {
+  return !collapse(text).includes(collapse(RETURN_LINE));
+}
 
 // The single `## Step 3: Render` / `### Step 3: Render` heading's section, up to the next
 // heading of any level; the last section of a file runs to end of file (explicit fallback).
