@@ -657,6 +657,20 @@ for (const [label, cmd] of [
   });
 }
 
+// #4149 round 5: a group inside a substitution is scoped within it, so a cd before the group holds
+// for the push after it there; the rest of a command after a substitution's closer runs out there.
+// Checked against bash 3.2 and 5 with a logging git stub.
+for (const [label, cmd] of [
+  ['a brace group inside a $( ), between its cd and the push', 'x=$(true; cd /main; { true; }; git push )'],
+  ['a push in a brace group inside a $( ), after its cd', 'x=$(true; cd /main; { git push; } )'],
+  ['a push in a brace group after a nest left open inside a backtick', 'echo `true; echo $(`; cd /main; { git push; }'],
+  ['a push after a $( ) holding a cd, in the same command', 'cd /main && x=$(true; cd /tmp; true) git push'],
+]) {
+  test(`#4149 round 5: gitTargets reads ${label} at the cd`, () => {
+    assert.deepStrictEqual(gitTargets(cmd, '/wt'), [{ action: 'push', dir: path.resolve('/main') }]);
+  });
+}
+
 test('#4149 round 3: mkdirTargets skips a heredoc body when tracking group depth', () => {
   assert.deepStrictEqual(mkdirTargets("(cd /main && cat <<'EOF'\n1) a\nEOF\nmkdir d)", '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
 });

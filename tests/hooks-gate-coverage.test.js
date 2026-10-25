@@ -567,6 +567,29 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['a reader piped on with a $( ) inside a ${ } default (| jq "${x:-$(bash)}")', "cat <<'EOF' | jq \"${x:-$(bash)}\"\necho x > f.js\nEOF", f],
     ['a piped-to reader with its own heredoc whose argument runs $( ) (| jq "$(sh)" <<B)', "cat <<'EOF' | jq \"$(sh)\" <<'B'\necho x > f.js\nEOF\nb\nB", f],
     ['a reader piped on with |&, with its own heredoc, whose argument runs $( ) (|& jq "$(sh)" <<B)', "cat <<'EOF' |& jq \"$(sh)\" <<'B'\necho x > f.js\nEOF\nb\nB", f],
+    // Round 5 (#4149): a redirection word after the heredoc's `<<` is expanded with the body already
+    // on fd 0 (bash 3.2 and 5 run each of these bodies), so the own command is exempt only for a
+    // substitution before its first `<<`.
+    ['its own command, with a quoted $( ) redirect after the << (> "$(bash)")', "cat <<'EOF' > \"$(bash)\"\necho x > f.js\nEOF", f],
+    ['its own command, with an unquoted $( ) redirect after the << (>$(bash))', "cat <<'EOF' >$(bash)\necho x > f.js\nEOF", f],
+    ['its own command, with a backtick redirect after the << (> "`bash`")', "cat <<'EOF' > \"`bash`\"\necho x > f.js\nEOF", f],
+    ['its own command, with a stderr $( ) redirect after the << (jq . 2>"$(bash)")', "jq . <<'EOF' 2>\"$(bash)\"\necho x > f.js\nEOF", f],
+    ['its own command, with an appending $( ) redirect after the << (>>"$(bash)")', "tee -a /dev/null <<'EOF' >>\"$(bash)\"\necho x > f.js\nEOF", f],
+    ['its own command, with an input $( ) redirect after the << (<"$(bash)")', "cat <<'EOF' <\"$(bash)\"\necho x > f.js\nEOF", f],
+    ['its own command, with a $( ) here-string after the << (3<<<"$(bash)")', "cat <<'EOF' 3<<<\"$(bash)\"\necho x > f.js\nEOF", f],
+    ['its own command, with a $( ) redirect after a dup after the << (2>&1 >"$(bash)")', "cat <<'EOF' 2>&1 >\"$(bash)\"\necho x > f.js\nEOF", f],
+    ['git commit as its own command, with a $( ) redirect after the <<', "git commit -F - <<'EOF' 2>\"$(bash)\"\necho x > f.js\nEOF", f],
+    ['gh as its own command, with a $( ) redirect after the <<', "gh issue comment 1 --body-file - <<'EOF' >\"$(sh)\"\necho x > f.js\nEOF", f],
+    ['env cat as its own command, with a $( ) redirect after the <<', "env cat <<'EOF' >\"$(bash)\"\necho x > f.js\nEOF", f],
+    // Round 5: `$((cmd) )` is a `$(` holding a `(cmd)` subshell, not arithmetic (bash 3.2 and 5 run
+    // these bodies): a `$((` is arithmetic only when it closes as `))` past its own balanced parens.
+    ['a reader piped on whose quoted argument is $((cmd) ) (| jq "$((bash) )")', "cat <<'EOF' | jq \"$((bash) )\"\necho x > f.js\nEOF", f],
+    ['a reader piped on whose argument is $((cmd) ) (| jq $((bash) ))', "cat <<'EOF' | jq $((bash) )\necho x > f.js\nEOF", f],
+    ['a reader piped on whose argument is $((cmd) | cat)', "cat <<'EOF' | jq \"$((bash) | cat)\"\necho x > f.js\nEOF", f],
+    ['a reader piped on whose argument is $((cmd); true)', "cat <<'EOF' | jq \"$((bash); true)\"\necho x > f.js\nEOF", f],
+    ['node piped on whose argument is $((cmd) ) (| node "$((sh) )")', "cat <<'EOF' | node \"$((sh) )\"\necho x > f.js\nEOF", f],
+    ['its own command, with a $((cmd) ) redirect after the << (>"$((bash) )")', "cat <<'EOF' >\"$((bash) )\"\necho x > f.js\nEOF", f],
+    ['a reader piped on whose argument runs $( ) before a quoted ) (| jq "$(bash))")', "cat <<'EOF' | jq \"$(bash))\"\necho x > f.js\nEOF", f],
   ];
   for (const [label, cmd, expected] of keepCases) {
     test(`#4149: a body fed to ${label} stays visible`, () => {
@@ -913,7 +936,7 @@ for (const [label, cmd] of [
     ['a cd inside an assigned backtick', 'cd /main && x=`true && cd /tmp` && cp a f.js', [main('copy')]],
     ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); cp a f.js', [main('copy')]],
     ['a cd after a lone & that follows a $( )', 'echo $(true; true) & cd /main; cp a f.js', [main('copy')]],
-    ['a cd after a $( ) in a pass read again flat', `echo $(true) ${'"$('.repeat(40)}x${')"'.repeat(40)}; cd /main; (true); cp a f.js`, [main('copy')]],
+    ['a cd after a $( ) in a pass read again flat', `echo $(true) ${'"$('.repeat(40)}x${')"'.repeat(40)}; cd /main; true & cp a f.js`, [main('copy')]],
     ['a quoted ) inside "$( )", in a fresh quoting context', 'cd /main && echo "$(echo ")")" && cp a f.js', [main('copy')]],
     ['a subshell inside "$( )", whose ) closes only it', 'cd /main && echo "$( (true) ; echo "&" )" && cp a f.js', [main('copy')]],
     ['a quoted } inside a ${ } default', 'x=; cd /main && echo "${x:-"a}b"}" && cp a f.js', [main('copy')]],
@@ -952,7 +975,42 @@ for (const [label, cmd] of [
   });
   // Round 4: a cd inside a $( ) holds for the commands after it in the same substitution only.
   test('#4149 nesting: a cd inside a $( ) moves the commands after it there, not the outer walk', () => {
-    assert.deepStrictEqual(fileWriteTargets('cd /main && echo $(true; cd /tmp; cp a b.js)', '/r'), [{ action: 'copy', file: path.resolve('/tmp/b.js)') }]);
+    assert.deepStrictEqual(fileWriteTargets('cd /main && echo $(true; cd /tmp; cp a b.js)', '/r'), [{ action: 'copy', file: path.resolve('/tmp/b.js') }]);
+  });
+  // Round 5: a group inside a substitution is scoped within it, so the cd before the group holds
+  // for the commands after it there, and the substitution's `)` ends its piece: the closer is part
+  // of no word, and the rest of the command runs out there. A cd or an assignment inside a
+  // substitution ends at the next outer piece. bash 3.2 and 5 write /main/f.js for each.
+  const here = (action) => ({ action, file: path.resolve('/r', 'f.js') });
+  for (const [label, cmd, expected] of [
+    ['a brace group inside a $( ), after its cd', 'echo $(true; cd /main; { cp a f.js; } )', [main('copy')]],
+    ['a brace group inside a <( ), between its cd and the write', 'cat <(true; cd /main; { true; }; cp a f.js ) >/dev/null', [main('copy')]],
+    ['a subshell inside a $( ), between its cd and a write glued to the closer', 'echo $(true; cd /main; (true); cp a f.js)', [main('copy')]],
+    ['a brace group inside a backtick, between its cd and a write', 'echo `true; cd /main; { true; }; cp a f.js; true`', [main('copy')]],
+    ['a brace group inside a backtick, then an outer write', 'cd /main; echo `true; cd /tmp; { true; }`; cp a f.js', [main('copy')]],
+    ['a cd inside a brace group inside a $( ) (it persists past the })', 'echo $(true; { cd /main; }; cp a f.js )', [here('copy'), main('copy')]],
+    ['a cd inside a subshell inside a $( ) (it ends at the ))', 'cd /main && echo $(true; (cd /tmp); cp a f.js )', [main('copy')]],
+    ['a brace group after a nest left open inside a backtick', 'echo `true; echo $(`; cd /main; { cp a f.js; }', [main('copy')]],
+    ['a subshell after a nest left open inside a backtick', 'echo `true; echo $(`; cd /main; (cp a f.js)', [main('copy')]],
+    ['a redirect after a $( ) holding a cd', 'cd /main && echo $(true; cd /tmp; true) > f.js', [main('write')]],
+    ['a command after a $( ) holding a subshell', 'cd /main && x=$( (true) ) cp a f.js', [main('copy')]],
+    ['a cd word after a $( ), as an argument (both cwds stay)', 'cd /main; echo $(true; true) cd /tmp; cp a f.js', [main('copy'), { action: 'copy', file: path.resolve('/tmp/f.js') }]],
+    ['a cd word after a $( ) assignment, run (both cwds stay)', 'x=$(true; true) cd /main; cp a f.js', [here('copy'), main('copy')]],
+    ['an assignment word after a $( ), as an argument', 'D=/main; echo $(true; true) D=/tmp; cp a $D/f.js', [main('copy')]],
+    ['an outer cd between two $( ), the first holding a cd', 'echo $(true; cd /tmp); cd /main; echo $(true; cp a f.js )', [main('copy')]],
+    ['an assignment inside a $( ), shadowing an outer one', 'D=/main; echo $(true; D=/tmp); cp a $D/f.js', [main('copy')]],
+  ]) {
+    test(`#4149 nesting: ${label} is read as bash runs it`, () => {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
+    });
+  }
+  // Round 5: a line whose quote scan spends the step budget (each "$( # comments to the line end,
+  // so every span rescans the rest of the line) leaves the structure open, failing closed, so the
+  // next line's body stays kept. Without the comment's charge, or with the line's quotes read
+  // outside the budget, the line reads closed, the body strips, and 1 MB of the line takes seconds.
+  test('#4149 nesting: a line that spends the step budget keeps later bodies (lineLeavesStructureOpen)', () => {
+    const targets = fileWriteTargets(`echo ${'"$( #"'.repeat(2000)}\ncat <<'EOF'\ncp a /main/f.js\nEOF\n`, '/r');
+    assert.deepStrictEqual(targets, [main('copy')]);
   });
   // Round 4: a pass's nested scans share a step budget, so a shape whose "$( runs off the end from
   // every top-level span (each falls back to the plain quote end and the next one rescans the same
@@ -1078,8 +1136,9 @@ for (const opener of ["env -S'bash -s' cat", 'env -S"bash -s" cat', "env -S 'bas
     ["mkdir -p d && cat > d/f <<'EOF'", own('d/f')],
     ["git add -A && git commit -F - <<'EOF'", []],
     ["git -C x add f && git -C x commit -F - <<'EOF'", []],
-    // Round 4 (#4149): a substitution on the heredoc's own command reads the shell's stdin (bash
-    // expands the words before it attaches the heredoc), so it refuses nothing; `$((` is arithmetic.
+    // Round 4 (#4149): a substitution on the heredoc's own command, before its `<<`, reads the
+    // shell's stdin (bash expands those words before it attaches the heredoc), so it refuses
+    // nothing; `$((` is arithmetic.
     ["gh pr create --title \"$(git log -1 --format=%s)\" --body-file - <<'EOF'", []],
     ["gh pr create --title \"`date`\" --body-file - <<'EOF'", []],
     ["git -C \"$(git rev-parse --show-toplevel)\" commit -F - <<'EOF'", []],
@@ -1088,6 +1147,11 @@ for (const opener of ["env -S'bash -s' cat", 'env -S"bash -s" cat', "env -S 'bas
     ["node \"$(bash)\" <<'EOF'", []],
     ["cat `sh` <<'EOF'", []],
     ["cat <<'EOF' | jq \"$((1))\"", []],
+    // Round 5: only a substitution at or after the `<<` refuses the own command, and arithmetic
+    // with parens of its own still closes as `))`.
+    ["node \"$(git rev-parse --show-toplevel)/x.js\" <<'EOF'", []],
+    ["cat <<'EOF' | jq \"$((1+2))\"", []],
+    ["cat <<'EOF' | jq \"$(( (1+2)*3 ))\"", []],
   ]) {
     test(`#4149 routine: \`${opener}\` still strips its body`, () => {
       assert.deepStrictEqual(fileWriteTargets(`${opener}\n${BODY}EOF`, '/r'), expected);

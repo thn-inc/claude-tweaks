@@ -984,14 +984,38 @@ function isInertNeighbour(tokens, p) {
 // counts too, as in `env GIT_CONFIG_COUNT=1 git commit`). The
 // group check reads the segment with its quoted spans removed (tokenize has already
 // dropped the quotes), so a quoted `(.a)` is data, not a group. A command that carries a
-// command substitution (`$(` but not the arithmetic `$((`, or a backtick) anywhere, quoted or
-// not, is neither a reader nor a neighbour, unless it is the heredoc's own command (it holds an
-// unquoted `<<`) and no pipe feeds it: bash expands the words before it attaches the heredoc, so
-// the own command's substitution reads the shell's stdin, while in a piped-to element it reads
-// the pipe (`| jq "$(bash)"` runs the body, and so does `cat <<'A' | jq "$(sh)" <<'B'`). Fails
-// closed, so the body stays visible to the scan.
-const COMMAND_SUBSTITUTION_RE = /\$\((?!\()|`/;
+// command substitution (hasCommandSubstitution) anywhere, quoted or not, is neither a reader nor
+// a neighbour, unless it is the heredoc's own command (it holds an unquoted `<<`), no pipe feeds
+// it and every substitution stands before its first `<<`: bash expands those words before it
+// attaches the heredoc, so they read the shell's stdin, while a redirection word after the `<<`
+// is expanded with the body already on fd 0 (`cat <<'EOF' > "$(bash)"` runs the body), and in a
+// piped-to element a substitution reads the pipe (`| jq "$(bash)"` runs the body, and so does
+// `cat <<'A' | jq "$(sh)" <<'B'`). Fails closed, so the body stays visible to the scan.
 const OWN_HEREDOC_OPENER_RE = /(^|[^<])<<(?!<)/;
+
+// Whether `text` holds a command substitution: a backtick, a `$(`, or a `$((` that bash does not
+// close as arithmetic. Arithmetic ends at a `))` past its own balanced parens; a `$((` whose first
+// unbalanced `)` is not doubled (`$((bash) )`, `$((sh); true)`) is a `$(` holding a subshell, and
+// one that never closes is no arithmetic either.
+function hasCommandSubstitution(text) {
+  const arith = []; // per open `$((`: the parens opened inside it and not yet closed
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === '`') return true;
+    if (c === '$' && text[i + 1] === '(') {
+      if (text[i + 2] !== '(') return true;
+      arith.push(0);
+      i += 2;
+    } else if (arith.length && c === '(') arith[arith.length - 1] += 1;
+    else if (arith.length && c === ')') {
+      if (arith[arith.length - 1] > 0) arith[arith.length - 1] -= 1;
+      else if (text[i + 1] !== ')') return true;
+      else { arith.pop(); i += 1; }
+    }
+  }
+  return arith.length > 0;
+}
+
 function lineFeedsOnlyDataReaders(lineText) {
   const lineSpans = segmentSpans(lineText);
   for (let s = 0; s < lineSpans.length; s += 1) {
@@ -1001,7 +1025,10 @@ function lineFeedsOnlyDataReaders(lineText) {
       if (seg.trim() === '') continue; // the blank piece before a `|&`'s `&`
       const pipedInto = fed;
       fed = false;
-      if (COMMAND_SUBSTITUTION_RE.test(seg) && (pipedInto || !OWN_HEREDOC_OPENER_RE.test(removeQuotedSpans(seg)))) return false;
+      // The own command's words from its first `<<` on (the raw match, which comes no later than
+      // the unquoted one) must hold no substitution.
+      const own = !pipedInto && OWN_HEREDOC_OPENER_RE.test(removeQuotedSpans(seg));
+      if (hasCommandSubstitution(own ? seg.slice(seg.search(OWN_HEREDOC_OPENER_RE)) : seg)) return false;
       if (!checkReaderCommand(seg)) return false;
     }
   }
@@ -1448,14 +1475,19 @@ function groupEventsWith(seg, g, spans, undo) {
   const push = (frame) => { g.stack.push(frame); count(frame, 1); undo.push(() => { count(g.stack.pop(), -1); }); };
   const pop = () => { const frame = g.stack.pop(); count(frame, -1); undo.push(() => { g.stack.push(frame); count(frame, 1); }); };
   // Whether the current piece began inside a nesting frame (`$(`, `<(`, ...): its commands run in a
-  // subshell, so their `cd` and assignments never reach the outer walk.
+  // subshell, so their `cd` and assignments never reach the outer walk. A group frame opened there
+  // carries `sub` the same way.
   let inSub = g.nesting > 0;
+  let pieceNesting = g.nesting; // the nesting the current piece began at
+  let tail = false; // the current piece follows the closer of a substitution: the rest of its command
   const setCaseDepth = (frame, d) => { const was = frame.caseDepth; frame.caseDepth = d; undo.push(() => { frame.caseDepth = was; }); };
   const cut = (at, ev) => {
-    if (at > start) events.push({ text: seg.slice(start, at), sub: inSub });
+    if (at > start) events.push({ text: seg.slice(start, at), sub: inSub, tail });
     if (ev) events.push(ev);
     start = at + 1;
     inSub = g.nesting > 0;
+    pieceNesting = g.nesting;
+    tail = false;
   };
   const nest = (n, cmd) => {
     for (let k = 0; k < n; k += 1) push({ kind: 'p', caseDepth: 0 });
@@ -1467,7 +1499,7 @@ function groupEventsWith(seg, g, spans, undo) {
     if (c === ' ' || c === '\t' || c === '\r' || c === '\n') { i += 1; continue; }
     if (c === '(') {
       if (atCmd) {
-        const frame = { kind: '(', caseDepth: 0 };
+        const frame = { kind: '(', caseDepth: 0, sub: g.nesting > 0 };
         push(frame);
         cut(i, { open: frame });
       } else nest(1, false);
@@ -1476,7 +1508,14 @@ function groupEventsWith(seg, g, spans, undo) {
     }
     if (c === ')') {
       const t = top();
-      if (t.caseDepth === 0 && t.kind === 'p') { pop(); atCmd = false; }
+      if (t.caseDepth === 0 && t.kind === 'p') {
+        // The `)` of a substitution this piece began inside ends that piece, so the closer is part
+        // of no word (`cp a f.js )`), and the text after it is the rest of the command the
+        // substitution sits in, run out there (`$(true; cd /tmp) > f.js` writes from the outer cwd).
+        pop();
+        if (g.nesting < pieceNesting) { cut(i, null); tail = true; }
+        atCmd = false;
+      }
       else if (t.caseDepth === 0 && t.kind === '(') { pop(); cut(i, { close: t }); atCmd = false; }
       else { cut(i, null); atCmd = true; }
       i += 1;
@@ -1537,7 +1576,7 @@ function groupEventsWith(seg, g, spans, undo) {
     if (!plain || !atCmd) { atCmd = false; continue; }
     const t = top();
     if (w === '{') {
-      const frame = { kind: '{', caseDepth: 0 };
+      const frame = { kind: '{', caseDepth: 0, sub: g.nesting > 0 };
       push(frame);
       cut(wStart, { open: frame });
       continue; // still at command position
@@ -1547,7 +1586,7 @@ function groupEventsWith(seg, g, spans, undo) {
     else if (w === 'esac') setCaseDepth(t, Math.max(0, t.caseDepth - 1));
     atCmd = COMMAND_PREFIX_WORDS.has(w);
   }
-  if (seg.length > start) events.push({ text: seg.slice(start), sub: inSub });
+  if (seg.length > start) events.push({ text: seg.slice(start), sub: inSub, tail });
   return events;
 }
 
@@ -1586,10 +1625,21 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan) {
   let cur = cwds;
   // A piece inside a substitution or a backtick span runs in a subshell: it is visited from the
   // cwd and assignments in effect, and what it changes holds only for the pieces after it in the
-  // same run of sub pieces, never for the outer walk.
+  // same run of sub pieces, never for the outer walk. A group opened inside the substitution is
+  // scoped within that run (its saved cwd is the sub cwd), so its events do not end the run; the
+  // next outer piece (the text after the substitution's closer among them) or outer group event does.
   let subCur = null;
   let subVars = null;
   let listStart = cwds; // the cwds where the current and-or list began
+  // A tail piece (the rest of a command after a substitution's closer) is visited on its own, so
+  // whether a `cd` or an assignment in it runs (`x=$(…) cd /x`) or is an argument (`echo $(…) cd
+  // /x`) is unknown: its cwd is added to the ones in effect (failing closed), and what it assigns
+  // is dropped, as before the closer cut it (forgetting a name would drop the targets that use it).
+  const visitPiece = (ev, pieceCwds, pieceVars) => {
+    if (!ev.tail) return visitUnderEach(ev.text, pieceCwds, pieceVars, handler);
+    const next = visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler);
+    return [...pieceCwds, ...next.filter((c) => !pieceCwds.includes(c))];
+  };
   let b = 0;
   const runBodies = (until, bodyCwds) => {
     for (; b < bodies.length && bodies[b].at < until; b += 1) {
@@ -1600,6 +1650,17 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan) {
   for (const span of segmentSpans(outer)) {
     const before = cur;
     for (const ev of groupEvents(span.text, g)) {
+      if (ev.open ? ev.open.sub || span.sub : ev.close && ev.close.inSubRun) {
+        if (subCur === null) { subCur = cur; subVars = new Map(vars); }
+        if (ev.open) {
+          ev.open.inSubRun = true;
+          ev.open.saved = subCur;
+        } else {
+          const { saved } = ev.close;
+          subCur = ev.close.kind === '(' ? saved : [...saved, ...subCur.filter((c) => !saved.includes(c))];
+        }
+        continue;
+      }
       if (ev.open) {
         ev.open.saved = cur;
         ev.open.savedList = listStart;
@@ -1611,9 +1672,9 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan) {
       } else if (ev.bg) cur = listStart;
       else if (ev.sub || span.sub) {
         if (subCur === null) { subCur = cur; subVars = new Map(vars); }
-        subCur = visitUnderEach(ev.text, subCur, subVars, handler);
+        subCur = visitPiece(ev, subCur, subVars);
         continue;
-      } else cur = visitUnderEach(ev.text, cur, vars, handler);
+      } else cur = visitPiece(ev, cur, vars);
       subCur = null;
     }
     runBodies(span.end, before);
