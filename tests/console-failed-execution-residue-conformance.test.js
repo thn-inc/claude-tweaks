@@ -66,8 +66,29 @@ test('refused-proposals.md has the failed-execution section and its command', ()
 test('control: a renamed heading or an edited command fails the section check', () => {
   assert.throws(() => assertRefusedProposalsRoutesFailedExecution(doctor(REFUSED, HEADING, '## A failed execution')), { message: /no "## A failed execution is not a refusal" section/ });
   assert.throws(() => assertRefusedProposalsRoutesFailedExecution(doctor(REFUSED, '--resolution keep-staged', '--resolution apply')), { message: /lost its console-resolve\.js --set-item command/ });
-  const old = doctor(REFUSED, `\n${HEADING}\n`, 'renders in Queue writes as today.\n\n## Other\n');
-  assert.throws(() => assertRefusedProposalsRoutesFailedExecution(old));
+  const old = doctor(REFUSED, 'applied.\n\n## A failed', 'applied. A *failed* create (transport error on a valid proposal) is not a refusal — it renders in Queue writes as today.\n\n## A failed');
+  assert.throws(() => assertRefusedProposalsRoutesFailedExecution(old), { message: /still closes the dry-run paragraph/ });
+});
+
+// --- the exit-5 split --------------------------------------------------------------
+
+// Exit 5 is also an unknown/duplicate `{name}` or a non-rewritable item (item-resolution.js), so only a
+// `no console.json` refusal may be dismissed; every other one must send the reader back to console.json.
+function assertExit5Split(text) {
+  const body = failedExecutionSection(text).replace(/\s+/g, ' ');
+  assert.ok(body.includes('An exit 5 whose message names `no console.json`'), 'the section does not scope the nothing-to-do exit 5 to a `no console.json` message');
+  assert.ok(body.includes('Any other exit-5 refusal'), 'the section does not say what any other exit-5 refusal means');
+  assert.ok(!body.includes('Exit 5 means'), 'the section still treats every exit 5 as nothing to do');
+}
+
+test('the failed-execution section splits exit 5 into no-console.json and every other refusal', () => {
+  assertExit5Split(REFUSED);
+});
+
+test('control: each half of the exit-5 split is load-bearing', () => {
+  assert.throws(() => assertExit5Split(doctor(REFUSED, 'An exit 5 whose message names `no console.json`', 'An exit 5')), { message: /does not scope the nothing-to-do exit 5/ });
+  assert.throws(() => assertExit5Split(doctor(REFUSED, 'Any other exit-5 refusal', 'Any other failure')), { message: /does not say what any other exit-5 refusal means/ });
+  assert.throws(() => assertExit5Split(doctor(REFUSED, 'A can\'t-tell', 'Exit 5 means nothing. A can\'t-tell')), { message: /still treats every exit 5 as nothing to do/ });
 });
 
 // --- prose-code twin -------------------------------------------------------------
