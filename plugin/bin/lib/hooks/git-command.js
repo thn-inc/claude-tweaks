@@ -1960,7 +1960,7 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // own starting cwd (where a worktree-local shadow is denied), and the cwds of the step that
 // overflowed it (#4303: the group or tail that just ended, or the command an and-or list just
 // ran), so that step's `cd` stays visible. When that step alone carries more than the cap, the
-// set is the overflow and starting cwds only, so it never holds more than CWD_SET_CAP + 2.
+// set keeps its newest CWD_SET_CAP cwds, so it never holds more than CWD_SET_CAP + 2.
 const CWD_SET_CAP = 16; // four groups each with a relative cd already make 2^4 cwds
 function forEachShellSegment(command, cwd, handler, opts = {}) {
   const start = cwd || '.';
@@ -1976,14 +1976,14 @@ function forEachShellSegment(command, cwd, handler, opts = {}) {
 }
 
 // The union of two cwd lists. Past CWD_SET_CAP it collapses to `overflow()` plus `fresh`, the one
-// of the two that carries the cwds of the step being joined, or to `overflow()` alone when that
-// would hold more than CWD_SET_CAP + 2.
+// of the two that carries the cwds of the step being joined, keeping at most CWD_SET_CAP of them:
+// the newest, since a union appends a list's new cwds at its end and a collapse puts `fresh` after
+// `overflow()`. It never drops `fresh` whole, so a second collapse keeps the step's newest cwds.
 function joinCwds(a, b, overflow, fresh = b) {
   const out = [...a, ...b.filter((c) => !a.includes(c))];
   if (out.length <= CWD_SET_CAP) return out;
   const o = overflow();
-  const kept = [...o, ...fresh.filter((c) => !o.includes(c))];
-  return kept.length > CWD_SET_CAP + 2 ? o : kept;
+  return [...o, ...fresh.filter((c) => !o.includes(c)).slice(-CWD_SET_CAP)];
 }
 
 function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {

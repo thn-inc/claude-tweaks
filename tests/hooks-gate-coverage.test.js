@@ -1800,6 +1800,49 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
         assert.ok(files.includes(path.resolve('/main/s0/f.js')), JSON.stringify(files));
       });
     }
+    // #4303 (S50): a second collapse keeps the newest cwds, never the overflow cwd alone. The first
+    // collapse leaves 18 cwds; the next relative cd moves all 18, and the set keeps the newest 16 of
+    // them. Each row: every /bN, M/s0 and M/s0/deep present, q (and q2, q3) absent.
+    const mainDir = path.resolve('/main') + path.sep;
+    for (const [label, cmd, wrote] of [
+      // bash 3.2 and 5 write M/s0/f.js
+      ['a relative group after a relative group', distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd deep; }; { cd q; }; cp a ../f.js', '/main/s0/f.js'],
+      // bash 3.2 and 5 write M/s0/f.js
+      ['an || chain of relative cds after a relative group', distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd deep; }; cd q || cd q2 || cd q3; cp a ../f.js', '/main/s0/f.js'],
+      // bash 3.2 and 5 write M/f.js (the tail's cd is an echo argument)
+      ['a relative group after a relative-cd tail', distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; echo $(true; true) cd deep; { cd q; }; cp a ../f.js', '/main/f.js'],
+    ]) {
+      test(`#4303 cwd cap: ${label} past a second collapse still resolves into the main checkout`, () => {
+        const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
+        assert.ok(files.includes(path.resolve(wrote)) || files.some((f) => f.startsWith(mainDir)), JSON.stringify(files));
+      });
+    }
+    // #4303 (S50): the window keeps the newest fresh cwds. With every /bN, M/s0, M/s0/deep and
+    // M/s0/q present, bash 3.2 and 5 write M/s0/f.js; the oldest of the fresh cwds escape the main
+    // checkout under `../`, so keeping them instead drops the only cwd that lands there.
+    test('#4303 cwd cap: a second collapse keeps the newest of the fresh cwds', () => {
+      const cmd = distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd deep; }; { cd ../q; }; cp a ../f.js';
+      const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
+      assert.ok(files.includes(path.resolve('/main/s0/f.js')), JSON.stringify(files));
+    });
+    // #4303 (S50): the window holds CWD_SET_CAP fresh cwds, not fewer. With every /bN, M/s0 and
+    // M/s0/deep present (M/s0/deep/s0 and M/s0/deep/d1 absent), bash 3.2 and 5 write M/s0/f.js.
+    test('#4303 cwd cap: a second collapse keeps CWD_SET_CAP of the fresh cwds', () => {
+      const cmd = distinct((i) => `{ cd /b${i}; }; `, 13) + '{ cd /main; }; cd s0 && cd deep || cd .. && cd s0; { cd d1; }; cp a ../f.js';
+      const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
+      assert.ok(files.includes(path.resolve('/main/s0/f.js')), JSON.stringify(files));
+    });
+    // #4303 (S50), known open: a list-end join whose `fresh` is the list's last command keeps only
+    // that command's cwds past the cap, so the cwds where an earlier `&&` failed (skipFail) are
+    // dropped. With every /bN and M/s0/q present and M/s0/s0 absent, bash 3.2 and 5 write M/f.js
+    // (`cd s0` fails in M/s0/q); dbcab80 reported /main/f.js, the windowed collapse reports /f.js.
+    // A window over both sides fixes this one but loses more shapes than it saves (a fuller set
+    // collapses again sooner), so it stays open.
+    test.todo('#4303 cwd cap: a list-end collapse keeps the cwds where an earlier && failed', () => {
+      const cmd = distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd s0; }; { cd q; }; cd s0 && cd /main/s0 && cd ..; cp a ../../f.js';
+      const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
+      assert.ok(files.includes(path.resolve('/main/f.js')) || files.some((f) => f.startsWith(mainDir)), JSON.stringify(files));
+    });
     test('#4303 cwd cap: a set past the cap holds at most CWD_SET_CAP + 2 cwds', () => {
       // The handler's fourth argument is true on every visit of a piece after the first, so the run
       // length of visits is the piece's cwd count.
