@@ -30,6 +30,8 @@
 // (`--require "{abs tracer}"`) appended to its NODE_OPTIONS, so a test spawning node with a clean env
 // is still traced; an env already naming a different CT_TRACE_ROOT is a nested trace and left alone.
 // Node children trace themselves; for other children the in-repo path arguments are recorded here.
+// `env [options] cmd` and `sh|bash -c` with option clusters (`-o pipefail`, `-euo pipefail`, `+e`) are
+// read as the command they run; an `env` option this does not know falls back to the generic recording.
 //
 // Invariants (each one broke the full suite in the spike): wrapped functions copy the original's own
 // property descriptors (util.promisify.custom — `promisify(execFile)` must keep resolving
@@ -698,19 +700,59 @@ function install() {
   }
 
   const isShell = (cmd) => ['sh', 'bash', 'zsh', 'dash', 'ksh'].includes(path.basename(cmd).toLowerCase());
-  // The script of `sh [-opts] -c "<script>"` (a flag cluster holding `c` takes it), or null.
+  const isEnv = (cmd) => {
+    const base = path.basename(cmd).toLowerCase();
+    return base === 'env' || base === 'env.exe';
+  };
+  // The script of `sh [-opts] -c "<script>"` (a `-` cluster holding `c` makes the first operand the script),
+  // or null. A cluster holding `o`/`O` takes the next word as its option name (`-o pipefail`, `+O extglob`);
+  // `--rcfile`/`--init-file` take a value; `--` or `-` ends the options. A script file operand is not one.
   function shellScript(words) {
+    let sawC = false;
     for (let j = 1; j < words.length; j++) {
       const t = words[j];
-      if (!t.startsWith('-') || t === '--' || t === '-') return null;
-      if (/^-[A-Za-z]*c[A-Za-z]*$/.test(t)) return j + 1 < words.length ? words[j + 1] : null;
+      if (t === '--' || t === '-') return sawC && j + 1 < words.length ? words[j + 1] : null;
+      if (t === '--rcfile' || t === '--init-file') { j++; continue; }
+      if (t.startsWith('--')) continue;
+      if (/^[-+][A-Za-z]+$/.test(t)) {
+        if (t[0] === '-' && t.includes('c')) sawC = true;
+        if (/[oO]/.test(t)) j++;
+        continue;
+      }
+      if (t.startsWith('-') || t.startsWith('+')) return null;
+      return sawC ? t : null;
     }
     return null;
   }
 
+  // `env [options] [NAME=value ...] command ...` as the command it runs: { words (the assignments kept),
+  // base (moved by -C/--chdir) }, or null for an option this does not know (the caller then records the
+  // arguments generically, as for any other command).
+  function envCommand(words, base) {
+    let j = 1;
+    for (; j < words.length; j++) {
+      const t = words[j];
+      if (t === '--') { j++; break; }
+      if (['-i', '-0', '-v', '-', '--ignore-environment', '--null', '--debug'].includes(t)) continue;
+      if (t === '-u' || t === '--unset' || t === '-P') { j++; continue; }
+      if ((t.startsWith('-u') && !t.startsWith('--')) || t.startsWith('--unset=')) continue;
+      if (t === '-C' || t === '--chdir' || t.startsWith('--chdir=')) {
+        const dir = t.startsWith('--chdir=') ? t.slice('--chdir='.length) : words[++j];
+        if (dir === undefined) return null;
+        base = toAbs(dir, base);
+        if (base === null) return null;
+        continue;
+      }
+      if (t.startsWith('-')) return null;
+      break;
+    }
+    return { words: words.slice(j), base };
+  }
+
   // One child command (its words) run from `base` (absolute; undefined = the process cwd). Leading
-  // `NAME=value` assignments are skipped; `sh -c "<script>"` is read as the shell string it runs; a git
-  // command the git rule does not cover falls through with its global options and their values dropped.
+  // `NAME=value` assignments are skipped; `env [options] cmd ...` is read as `cmd`; `sh -c "<script>"` is
+  // read as the shell string it runs; a git command the git rule does not cover falls through with its
+  // global options and their values dropped.
   function recordCommand(commandWords, base) {
     let words = commandWords;
     let first = 0;
@@ -718,6 +760,10 @@ function install() {
     if (first === words.length) return;
     if (first) words = words.slice(first);
     const cmd = words[0];
+    if (isEnv(cmd)) {
+      const e = envCommand(words, base);
+      if (e) { recordCommand(e.words, e.base); return; }
+    }
     if (isNode(cmd)) return;
     if (isShell(cmd)) {
       const script = shellScript(words);

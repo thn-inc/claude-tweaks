@@ -16,7 +16,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const TRACER = path.join(ROOT, 'tools', 'test-impact', 'tracer.js');
 const FIXTURE = path.join(__dirname, 'fixtures', 'test-impact');
-const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js', 'e.test.js', 'f.test.js', 'g.test.js'];
+const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js', 'e.test.js', 'f.test.js', 'g.test.js', 'h.test.js'];
 
 function copyFixture(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
@@ -247,6 +247,14 @@ test('shell env prefixes and sh -c scripts are read as the command they run', ()
   const d = recordsOf('d.test.js');
   assert.ok(d.has(rec('c', 'bin')), 'FOO=1 git ls-files is a git content command');
   if (process.platform !== 'win32') assert.ok(d.has(rec('c', 'lib')), 'sh -c "git ls-files" is a git content command');
+});
+
+test('AC1.1: bash -o / -euo, sh +e and env wrappers are read as the command they run', { skip: process.platform === 'win32' && 'win32: no bash/sh/env' }, () => {
+  const h = recordsOf('h.test.js');
+  for (const p of ['docs/async-list', 'docs/promise-list', 'docs/copied', 'tools', 'bin']) {
+    assert.ok(h.has(rec('c', p)), `the wrapped git ls-files records c ${p}`);
+  }
+  assert.ok(!h.has(rec('c', '')), 'every wrapped call records its own cwd, never the root');
 });
 
 test('absolute path never consults process.cwd', { skip: process.platform === 'win32' && 'win32: a process cwd cannot be removed' }, () => {
