@@ -2,7 +2,7 @@
 
 **Goal:** Teach `.claude/skills/skill-prose-conformance-tests/SKILL.md` the roster-coverage pin pattern — a forward sweep that every live site is listed plus a reverse check that every listed site still exists — citing both instance tests by path.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-25T121000-record-4185/work/4185-spec.md` (materialized from GitHub issue #4185)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-25T121000-record-4185/work/4185-spec.md` (materialized from GitHub issue #4185)
 
 **Premise correction (logged to decisions.md):** only `tests/timing-nested-parent-roster.test.js` carries both halves (its second test fails on a stale `NESTED_PARENT` key). `tests/ceremony-profile-roster.test.js` carries the forward sweep and pins its skip-tag list exactly, but has no reverse check — a `Mentions that are not skips` row whose line is gone stays green. The prose must say so rather than claim both tests carry both halves.
 

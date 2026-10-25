@@ -60,7 +60,7 @@ files:
   - A verdict replaces the console item when the earlier STAGED line carries `lens "{lens}"` and `{path}:{line}`.
   - A staged review file that line names (`staged/review-contested-{N}.md`, for example) takes the verdict's outcome too, and does not linger on the console.
   - The run cannot archive while a listed finding lacks a verdict line (`clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`).
-  - A finding has no verdict when its `resolve-tiebreak` call exits non-zero, or when `log-decision.js` fails twice to write its line. Standalone, it is listed as `no verdict (resolve-tiebreak exited {exit})`. In a pipeline run, the summary names it and the archive gate refuses the run.
+  - A finding has no verdict when its `resolve-tiebreak` call exits non-zero, or when its line never lands: the resolver's own append fails, and then `log-decision.js` fails twice. Standalone, it is listed as `no verdict (resolve-tiebreak exited {exit})`. In a pipeline run, the summary names it and the archive gate refuses the run.
 - **Red flags:**
   - a can't-tell finding at `medium` or above appears in neither the console nor the closing output
   - a confirmed finding still shows as Low-confidence at the console

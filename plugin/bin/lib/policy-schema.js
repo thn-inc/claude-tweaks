@@ -490,7 +490,7 @@ function deriveHousekeepingAutoMerge(sources) {
   return autonomy === 'trusted' || autonomy === 'unattended';
 }
 
-function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw } = {}) {
+function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid } = {}) {
   const sources = [
     { name: 'run-config', raw: typeof runConfigRaw === 'string' ? runConfigRaw : null },
     { name: 'policy', raw: typeof policyRaw === 'string' ? policyRaw : null },
@@ -553,6 +553,9 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw } = {}) {
         // A typo must never activate a different configured value: resolve to
         // the schema default here, never the next source's value.
         resolved = { value: defaultValue, source: 'default', invalid: true };
+        // Side channel for a caller that reports the rejected raw value (#4141);
+        // the entry shape above is unchanged.
+        if (onInvalid) onInvalid(requested, raw);
       }
       if (hasOwn(source.renamedFrom, canonical)) resolved['renamed-from'] = source.renamedFrom[canonical];
       break;
@@ -683,7 +686,7 @@ function resolveIntegrationModel(repoRoot, opts = {}) {
 // rethrows the rest) — only the orchestration around them is shared. `root`
 // is returned too since a caller such as resolve-policy.js's
 // integration-model default needs it independent of any resolved key.
-function resolvePolicyConfig({ git, readFile, runDir = null, keys }) {
+function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid }) {
   let root;
   try {
     root = git(['rev-parse', '--show-toplevel']).trim();
@@ -692,7 +695,7 @@ function resolvePolicyConfig({ git, readFile, runDir = null, keys }) {
   }
   const policyRaw = readFile(path.join(root, '.claude-tweaks', 'policy.yml'));
   const runConfigRaw = runDir ? readFile(path.join(runDir, 'config.yml')) : null;
-  const result = resolvePolicyKeys(keys, { policyRaw, runConfigRaw });
+  const result = resolvePolicyKeys(keys, { policyRaw, runConfigRaw, onInvalid });
   return { root, policyRaw, runConfigRaw, result };
 }
 

@@ -125,7 +125,36 @@ function normalizeSection(section) {
   return section;
 }
 
+// Place one entry line into decisions.md's text: at the end with no section,
+// else as the last line under its `## {section}` heading (appending the
+// heading at the end when absent). Returns the new text, newline-terminated.
+function placeEntry(text, section, entry) {
+  if (text && !text.endsWith('\n')) text += '\n';
+  if (!section) return text + entry + '\n';
+  const heading = `## ${normalizeSection(section)}`;
+  const lines = text ? text.split('\n') : [];
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  const start = lines.indexOf(heading);
+  if (start === -1) {
+    lines.push(heading, entry);
+  } else {
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i++) { if (/^## /.test(lines[i])) { end = i; break; } }
+    lines.splice(end, 0, entry);
+  }
+  return lines.join('\n') + '\n';
+}
+
 // { runDir, section?, entry } -> { file, created }. Append-only; never rewrites prior lines.
+// A one-item appendEntries call.
+function appendEntry({ runDir, section, entry }) {
+  return appendEntries({ runDir, items: [{ section, entry }] });
+}
+
+// { runDir, items: [{ section?, entry }] } -> { file, created }. Places every
+// item in array order — each by appendEntry's placement rule, so the result is
+// byte-identical to calling appendEntry once per item — under one lock and one
+// atomic write. An empty batch touches nothing.
 //
 // Two concurrent invocations against the same run dir (e.g. two `node
 // bin/log-decision.js` processes) do a read-modify-write of decisions.md — an
@@ -140,10 +169,11 @@ function normalizeSection(section) {
 // lock is best-effort/fail-open (file-lock.js's own contract) — a write that
 // can't acquire it in time still proceeds unlocked rather than hang the
 // caller.
-function appendEntry({ runDir, section, entry }) {
+function appendEntries({ runDir, items }) {
+  const file = path.join(runDir, 'decisions.md');
+  if (!items.length) return { file, created: false };
   const lockPath = path.join(runDir, '.decisions.lock');
   return withLock(lockPath, () => {
-    const file = path.join(runDir, 'decisions.md');
     let created = false;
     let text;
     try {
@@ -153,29 +183,12 @@ function appendEntry({ runDir, section, entry }) {
       created = true;
       text = '';
     }
-    if (text && !text.endsWith('\n')) text += '\n';
-    let finalText;
-    if (!section) {
-      finalText = text + entry + '\n';
-    } else {
-      const heading = `## ${normalizeSection(section)}`;
-      const lines = text ? text.split('\n') : [];
-      if (lines.length && lines[lines.length - 1] === '') lines.pop();
-      const start = lines.indexOf(heading);
-      if (start === -1) {
-        lines.push(heading, entry);
-      } else {
-        let end = lines.length;
-        for (let i = start + 1; i < lines.length; i++) { if (/^## /.test(lines[i])) { end = i; break; } }
-        lines.splice(end, 0, entry);
-      }
-      finalText = lines.join('\n') + '\n';
-    }
-    writeFileAtomic(file, finalText);
+    for (const { section, entry } of items) text = placeEntry(text, section, entry);
+    writeFileAtomic(file, text);
     return { file, created };
   });
 }
 
 module.exports = {
-  STATUSES, formatEntry, parseEntry, resolveTarget, appendEntry, hms, normalizeSection,
+  STATUSES, formatEntry, parseEntry, resolveTarget, appendEntry, appendEntries, hms, normalizeSection,
 };

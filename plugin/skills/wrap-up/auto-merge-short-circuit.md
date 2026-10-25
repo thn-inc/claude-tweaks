@@ -171,7 +171,7 @@ git -C "$WORKTREE_PATH" rm "$LEDGER_FILE"
 git -C "$WORKTREE_PATH" commit -m "Wrap-up: delete resolved open items ledger for #{n} — auto-merge short-circuit"
 ```
 
-Every other report except `not found` leaves the ledger on disk: commit nothing and log one `SKIP` line via `log-decision.js` naming the report.
+Every other report except `not found` leaves the ledger on disk: commit nothing; the verb logs its `SKIP`, hand-log one where Item 2 says.
 
 **`integration-model: pr-first` only — push this commit now**, its own Bash call: `gh pr merge`
 below merges the PR's remote head, not this worktree's local state, so a commit left unpushed

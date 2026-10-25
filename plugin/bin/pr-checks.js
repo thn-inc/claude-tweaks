@@ -8,7 +8,7 @@
 // the workflow runs for the head sha (`gh run list --commit`, #3405), so a
 // workflow the rollup has not registered yet reads pending, not green.
 //
-//   node bin/pr-checks.js --run <run-dir> | --pr <n> [--help]
+//   node bin/pr-checks.js --run <run-dir> [--section "/<skill>"] | --pr <n> [--help]
 //
 // --pr <n> (#3469) classifies a PR by number for display-only readers that hold
 // a PR number and no local checkout of its branch: same JSON, `localHead: null`,
@@ -16,7 +16,8 @@
 // cannot occur. Exactly one of --run / --pr is required.
 //
 // Prints one JSON line: {state, failing:[{name,url,inherited?}], pending:[name],
-// headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?}. state
+// headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?,
+// logged? (--run only)}. state
 // is red | inherited-red | pending | stale | green | no-ci | read-failed | no-pr
 // | gh-absent.
 //
@@ -30,6 +31,16 @@
 // base read. A failed head-runs read that would leave a non-red verdict
 // (including inherited-red) is `read-failed`: the read is partial.
 //
+// Under --run (#4026) the CLI writes the gate's own decisions.md line, step
+// "PR-check gate", under --section (no heading without it) -- the line
+// _shared/pr-check-gate.md routes each state to: inherited-red, pending and stale
+// one AUTO caveat (reversibility high); no-pr, gh-absent, no-ci and read-failed
+// one SKIP degrade trace (n/a); green and red nothing. The envelope then gains
+// logged: true when the entry landed, false when the state logs nothing or the
+// append threw (one stderr line; exit code unchanged). --pr never writes and
+// never carries logged, so its envelope stays byte-identical. --section is valid
+// only with --run.
+//
 // Status is data: exit 0 in every state, including no-pr and read-failed.
 // 2 malformed invocation; 3 run dir missing or not anchored under the main
 // checkout (a worktree-local shadow -- _shared/pipeline-run-dir.md, [IL-127]).
@@ -38,21 +49,22 @@
 const { execFileSync } = require('child_process');
 const { classifyRollup, failingNamesAt, applyBaseComparison } = require('./lib/pr-checks/classify');
 const { resolveIntegrationBranch, bareIntegrationName } = require('./lib/hooks/worktree-reap');
-const { resolveTarget } = require('./lib/log-decision/append');
+const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
 const { readRunStateWithParent } = require('./lib/hooks/context');
 const { ghAvailable } = require('./lib/repo-resolve');
 const { hasPullRequestCi } = require('./lib/merge-verification');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 
-const USAGE = 'usage: pr-checks.js --run <run-dir> | --pr <n> [--help]\n'
+const USAGE = 'usage: pr-checks.js --run <run-dir> [--section "/<skill>"] | --pr <n> [--help]\n'
   + '  --pr <n> classifies a PR by number with no run dir: local HEAD is not compared (the PR\'s own head stands in), localHead is null, never stale, never no-pr\n'
-  + '  prints {state, failing, pending, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?};\n'
+  + '  prints {state, failing, pending, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?, logged? (--run only)};\n'
   + '  baseBranch: the branch compared on a red read -- the PR\'s own base, else the integration branch;\n'
   + '  state: red | inherited-red | pending | stale | green | no-ci | read-failed | no-pr | gh-absent\n'
+  + '  --run appends the PR-check gate line to decisions.md under --section and adds logged: AUTO on inherited-red | pending | stale; SKIP on no-pr | gh-absent | no-ci | read-failed\n'
   + '  exit 0 in every state; 2 malformed invocation; 3 run dir missing or not anchored\n';
 
 function parseArgs(argv) {
-  const o = { run: null, pr: null, help: false };
+  const o = { run: null, pr: null, section: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') o.help = true;
@@ -61,9 +73,14 @@ function parseArgs(argv) {
       const v = argv[++i];
       if (!/^[1-9]\d*$/.test(v ?? '')) return { error: `--pr needs a positive integer, got: ${v ?? '(none)'}` };
       o.pr = Number(v);
+    } else if (a === '--section') {
+      const v = argv[++i];
+      if (typeof v !== 'string' || !v.trim() || /[\r\n]/.test(v)) return { error: `--section needs a value ("/<skill>"), got: ${v === undefined ? '(none)' : JSON.stringify(v)}` };
+      o.section = v;
     } else return { error: `unknown argument: ${a}` };
   }
   if (o.run !== null && o.pr !== null) return { error: '--run and --pr are mutually exclusive' };
+  if (o.section !== null && o.run === null) return { error: '--section is valid only with --run' };
   return o;
 }
 
@@ -80,6 +97,8 @@ const realDeps = {
   readRunState: (runDir) => readRunStateWithParent(runDir, { requireRunIdParent: true }).state,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  appendDecision: (args) => appendEntry(args),
+  now: () => Date.now(),
 };
 
 function errText(e) {
@@ -117,8 +136,45 @@ function readBase(deps, repoRoot, prBase) {
   }
 }
 
-function report(deps, body) {
-  deps.stdout(`${JSON.stringify({ failing: [], pending: [], headRefOid: null, localHead: null, pr: null, ...body })}\n`);
+const DEGRADED = Object.freeze(['no-pr', 'gh-absent', 'no-ci', 'read-failed']);
+const short = (sha) => String(sha).slice(0, 7);
+
+// The decisions.md line _shared/pr-check-gate.md routes a state to, or null (green, red).
+function gateEntry(out) {
+  const { state, pr } = out;
+  if (state === 'inherited-red') {
+    return { status: 'AUTO', reversibility: 'high', text: `PR #${pr} checks red at ${short(out.headRefOid)}, but every failing check (${out.failing.map((f) => f.name).join(', ')}) is also failing on ${out.baseBranch} at ${short(out.baseSha)} — inherited, passed with caveat` };
+  }
+  if (state === 'pending' || state === 'stale') {
+    return { status: 'AUTO', reversibility: 'high', text: `PR #${pr} checks ${state} at ${short(out.headRefOid)} (${out.pending.length ? out.pending.join(', ') : (state === 'stale' ? 'HEAD not yet pushed' : 'no check reported yet')}) — passed with caveat` };
+  }
+  if (DEGRADED.includes(state)) {
+    return { status: 'SKIP', reversibility: 'n/a', text: `condition: pr-checks.js ${state}${out.reason ? `: ${out.reason}` : ''} → fallback: local verification only` };
+  }
+  return null;
+}
+
+// true when the gate's entry landed. A failed append never changes the exit code
+// or the state -- one stderr line, logged:false. A forge-supplied reason can carry
+// line breaks (gh stderr); collapsed, so the entry stays one decisions.md line.
+function logGateEntry(deps, { runDir, section }, out) {
+  const e = gateEntry(out);
+  if (!e) return false;
+  try {
+    const entry = formatEntry({ status: e.status, now: deps.now(), step: 'PR-check gate', text: e.text.replace(/\s+/g, ' '), reversibility: e.reversibility });
+    deps.appendDecision({ runDir, section, entry });
+    return true;
+  } catch (err) {
+    deps.stderr(`pr-checks.js: could not append the decisions.md entry: ${(err && err.message) || err}\n`);
+    return false;
+  }
+}
+
+// audit: { runDir, section } under --run, null under --pr (no write, no logged key).
+function report(deps, body, audit = null) {
+  const out = { failing: [], pending: [], headRefOid: null, localHead: null, pr: null, ...body };
+  if (audit) out.logged = logGateEntry(deps, audit, out);
+  deps.stdout(`${JSON.stringify(out)}\n`);
   return 0;
 }
 
@@ -126,10 +182,10 @@ function report(deps, body) {
 // base read -> report. `localHead` is the local checkout's HEAD (--run), or null
 // (--pr, #3469): the PR's own headRefOid then stands in for it, so `stale` cannot
 // occur and the reported localHead stays null.
-function classifyPr(deps, n, localHead) {
+function classifyPr(deps, n, localHead, audit) {
   let view;
   try { view = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', 'headRefOid,statusCheckRollup,baseRefName'])); } catch (e) {
-    return report(deps, { state: 'read-failed', pr: n, localHead, reason: `gh pr view failed: ${errText(e)}` });
+    return report(deps, { state: 'read-failed', pr: n, localHead, reason: `gh pr view failed: ${errText(e)}` }, audit);
   }
   // The full 40-char sha: an abbreviated --commit lists no runs (#3405).
   const headRefOid = view && view.headRefOid;
@@ -160,8 +216,8 @@ function classifyPr(deps, n, localHead) {
   }
   // A failed runs read cannot conclude a pass-class verdict (green/pending/inherited-red): a failing run
   // absent from the rollup would be invisible. Only a verdict still red is conclusive on its own.
-  if (runsFailure && final.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: runsFailure });
-  return report(deps, { ...final, localHead, pr: n });
+  if (runsFailure && final.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: runsFailure }, audit);
+  return report(deps, { ...final, localHead, pr: n }, audit);
 }
 
 function run(argv, overrides = {}) {
@@ -173,7 +229,7 @@ function run(argv, overrides = {}) {
   if (o.help) { deps.stdout(USAGE); return 0; }
   if (o.pr !== null) {
     if (!deps.ghAvailable()) return report(deps, { state: 'gh-absent', pr: o.pr });
-    return classifyPr(deps, o.pr, null);
+    return classifyPr(deps, o.pr, null, null);
   }
   if (!o.run) { deps.stderr(`pr-checks.js: exactly one of --run <run-dir> or --pr <n> is required\n${USAGE}`); return 2; }
   const target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot });
@@ -182,16 +238,17 @@ function run(argv, overrides = {}) {
     else deps.stderr(`pr-checks.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
+  const audit = { runDir: o.run, section: o.section };
   let state = null;
   try { state = deps.readRunState(o.run); } catch { state = null; }
   const n = state && state.pr && state.pr.number;
-  if (!Number.isInteger(n) || n <= 0) return report(deps, { state: 'no-pr' });
-  if (!deps.ghAvailable()) return report(deps, { state: 'gh-absent', pr: n });
+  if (!Number.isInteger(n) || n <= 0) return report(deps, { state: 'no-pr' }, audit);
+  if (!deps.ghAvailable()) return report(deps, { state: 'gh-absent', pr: n }, audit);
   let localHead;
   try { localHead = String(deps.git(['rev-parse', 'HEAD'])).trim(); } catch (e) {
-    return report(deps, { state: 'read-failed', pr: n, reason: `local HEAD unreadable: ${errText(e)}` });
+    return report(deps, { state: 'read-failed', pr: n, reason: `local HEAD unreadable: ${errText(e)}` }, audit);
   }
-  return classifyPr(deps, n, localHead);
+  return classifyPr(deps, n, localHead, audit);
 }
 
 module.exports = { run, parseArgs };

@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand, skipGlobalFlags,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand, skipGlobalFlags, tokenize, redirectWriteTargets,
 } = require('../plugin/bin/lib/hooks/git-command');
 
 test('plain commit resolves to cwd', () => {
@@ -693,4 +693,270 @@ test('#4149: mkdirTargets reads a cd behind ( or {', () => {
   assert.deepStrictEqual(mkdirTargets('(cd /main && mkdir d)', '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
   assert.deepStrictEqual(mkdirTargets('(cd /main && true); mkdir d', '/wt'), [{ action: 'mkdir', file: path.resolve('/wt/d') }]);
   assert.deepStrictEqual(mkdirTargets('{ cd /main; }; mkdir /x', '/wt'), [{ action: 'mkdir', file: path.resolve('/x') }]);
+});
+
+// #4281: each word's value as bash passes it to the program. The cases below, as tokenize sees them.
+const VALUE_CASES = [
+  // bash 3.2 and 5: "D:\a\_temp\x" and 'D:\a\_temp\x' are both the value D:\a\_temp\x.
+  ['tee "D:\\a\\_temp\\x"', ['tee', 'D:\\a\\_temp\\x']],
+  ["tee 'D:\\a\\_temp\\x'", ['tee', 'D:\\a\\_temp\\x']],
+  // bash 3.2 and 5: an unquoted D:\a\_temp\x is the value D:a_tempx.
+  ['tee D:\\a\\_temp\\x', ['tee', 'D:a_tempx']],
+  // bash 3.2 and 5: "a\$b" "a\`b" "a\"b" "a\\b" "a\xb" are a$b, a`b, a"b, a\b, a\xb.
+  ['p "a\\$b" "a\\`b" "a\\"b" "a\\\\b" "a\\xb"', ['p', 'a$b', 'a`b', 'a"b', 'a\\b', 'a\\xb']],
+  // bash 3.2 and 5: an unquoted a\ b is the one word a b.
+  ['p a\\ b', ['p', 'a b']],
+  // bash 3.2 and 5: a backslash-newline, bare or inside "…", is removed: ab.
+  ['p a\\\nb', ['p', 'ab']],
+  ['p "a\\\nb"', ['p', 'ab']],
+];
+
+test('#4281: tokenize returns each word\'s bash value', () => {
+  for (const [seg, expected] of VALUE_CASES) assert.deepStrictEqual(tokenize(seg).tokens, expected, seg);
+});
+
+test('#4281: spanKinds stays aligned with the value, and an escaped character is kind e', () => {
+  for (const [seg] of VALUE_CASES) {
+    const { tokens, spanKinds } = tokenize(seg);
+    tokens.forEach((tok, i) => assert.strictEqual(spanKinds[i].length, tok.length, `${seg} word ${i}`));
+  }
+  // bash 3.2 and 5: "a\$b" is a$b, its $ literal; an unquoted a\ b is a b, its space literal.
+  assert.strictEqual(tokenize('p "a\\$b"').spanKinds[1], 'ded');
+  assert.strictEqual(tokenize('p a\\ b').spanKinds[1], 'beb');
+});
+
+test('#4281: typed keeps the word as typed', () => {
+  assert.strictEqual(tokenize('tee D:\\a\\x').typed[1], 'D:\\a\\x');
+});
+
+test('#4281: a quoted backslash path is a provable cd target', () => {
+  // bash 3.2 and 5: '/tmp/a\b' is the value /tmp/a\b, a literal path.
+  assert.deepStrictEqual(gitTargets("cd '/tmp/a\\b' && git commit -m x", '/repo'), [{ action: 'commit', dir: path.resolve('/tmp/a\\b') }]);
+});
+
+test('#4281: a trailing stray backslash stays unresolvable (bash 3.2 drops it, bash 5 keeps it)', () => {
+  // bash 3.2: a\ at the end of the command is the value a; bash 5: a\. The versions disagree.
+  // POSIX paths; under path.win32 a and a\ are one path (the win32 test below).
+  const posix = { pathImpl: path.posix };
+  assert.deepStrictEqual(gitTargets('git commit -m x; cd /tmp/a\\', '/repo', posix), [{ action: 'commit', dir: '/repo' }]);
+  assert.deepStrictEqual(gitTargets('cd /tmp/a\\', '/repo', posix), []);
+  assert.deepStrictEqual(fileWriteTargets('tee /tmp/a\\', '/r', posix), []);
+});
+
+test('#4281: the walk drops a NUL in the command, as bash drops one from its input', () => {
+  // bash 3.2 and 5, fed through stdin: `echo x > b<NUL>junk` writes bjunk, and `git -C sub<NUL> commit -m x`
+  // runs git with `-C sub commit -m x`.
+  const posix = { pathImpl: path.posix };
+  assert.deepStrictEqual(fileWriteTargets('echo x > /main/b\0junk', '/wt', posix), [{ action: 'write', file: '/main/bjunk' }]);
+  assert.deepStrictEqual(gitTargets('git -C /main\0 commit -m x', '/wt', posix), [{ action: 'commit', dir: '/main' }]);
+});
+
+test('#4281: redirectWriteTargets with a null quoting resolves through the default path module', () => {
+  assert.deepStrictEqual(redirectWriteTargets(['echo', 'x', '>', '/main/f'], '/wt', null), [path.resolve('/main/f')]);
+});
+
+test('#4281: an escaped = is a command word, not an assignment', () => {
+  // bash 3.2 and 5: A\=/evil runs the command A=/evil (exit 127), so A stays unset.
+  assert.deepStrictEqual(gitTargets('A\\=/evil; cd $A && git commit -m x', '/repo'), []);
+});
+
+test('#4281: a quoted assignment name is a command word, not an assignment', () => {
+  // bash 3.2 and 5: "A"=/evil runs the command A=/evil (exit 127), so A stays unset.
+  assert.deepStrictEqual(gitTargets('"A"=/evil; cd $A && git commit -m x', '/repo'), []);
+});
+
+test('#4281: an assignment is read from the word before expansion', () => {
+  // bash 3.2 and 5: after `N=A` or `X=1`, `$N=/x cd /tmp` and `A$X=v cd /tmp` run the commands
+  // A=/x and A1=v (not found), so the cd never runs; `A=$X cd /tmp` is an assignment and does cd.
+  assert.deepStrictEqual(gitTargets('N=A; $N=/x cd /main; git commit -m x', '/wt'), [{ action: 'commit', dir: '/wt' }]);
+  assert.deepStrictEqual(gitTargets('X=1; A$X=v cd /main; git commit -m x', '/wt'), [{ action: 'commit', dir: '/wt' }]);
+  assert.deepStrictEqual(gitTargets('A=$X cd /main; git commit -m x', '/wt'), [{ action: 'commit', dir: path.resolve('/main') }]);
+});
+
+test('#4281: a word of backslash-newlines alone is no word', () => {
+  // bash 3.2 and 5: `a \` + newline + ` "" b` passes a, the empty word, b; `cd \` + newline + ` /tmp` changes to /tmp.
+  assert.deepStrictEqual(tokenize('p a \\\n "" b').tokens, ['p', 'a', '', 'b']);
+  assert.deepStrictEqual(gitTargets('cd \\\n /main && git commit -m x', '/wt'), [{ action: 'commit', dir: path.resolve('/main') }]);
+});
+
+test('#4281: an escaped or quoted [[, (( or keyword is a plain word, so its redirect runs', () => {
+  // bash 3.2 and 5: each line below creates its file (a quoted keyword is no reserved word, and the
+  // redirect runs before "command not found"); a bare `[[ x > f ]]` creates nothing.
+  for (const [cmd, file] of [
+    ['\\[\\[ x > /main/f1 \\]\\]', '/main/f1'],
+    ['\\(\\( 1 > /main/f2 \\)\\)', '/main/f2'],
+    ['\\if [[ x > /main/f4 ]]', '/main/f4'],
+    ['[\\[ x > /main/f5 ]]', '/main/f5'],
+    ['"[[" x > /main/f6 ]]', '/main/f6'],
+  ]) assert.deepStrictEqual(fileWriteTargets(cmd, '/wt'), [{ action: 'write', file: path.resolve(file) }], cmd);
+  assert.deepStrictEqual(fileWriteTargets('[[ x > /main/f3 ]]', '/wt'), []);
+});
+
+test('#4281: an escaped quote in a word is a literal character, never stripped as a delimiter', () => {
+  // bash 3.2 and 5: \'/tmp is the value '/tmp, and A=\"/main sets A to "/main (each a relative path).
+  assert.deepStrictEqual(gitTargets("cd \\'/tmp && git commit -m x", '/main'), [{ action: 'commit', dir: path.resolve('/main', "'/tmp") }]);
+  assert.deepStrictEqual(fileWriteTargets("tee \\'/main/x", '/wt'), [{ action: 'write', file: path.resolve('/wt', "'/main/x") }]);
+  assert.deepStrictEqual(gitTargets("A=\\'/main; cd $A && git commit -m x", '/wt'), [{ action: 'commit', dir: path.resolve('/wt', "'/main") }]);
+  assert.deepStrictEqual(gitTargets('A=\\"/main; cd $A && git commit -m x', '/wt'), []);
+});
+
+test('#4281: a leading-escaped redirect word is a file argument', () => {
+  // bash 3.2 and 5: \>x is the word >x, not a redirection.
+  assert.deepStrictEqual(fileWriteTargets('cp a \\>x', '/r'), [{ action: 'copy', file: path.resolve('/r', '>x') }]);
+});
+
+test('#4281: an escaped character anywhere in a redirect operator makes the word a file argument', () => {
+  // bash 3.2 and 5 write 2> and f1 for `tee 2\> f1`, f0, 2> and f1 for `tee f0 2\> f1`, 2> and f1 for
+  // `truncate -s 1 2\> f1`, 1> and f1 for `tee 1\> f1`, and 2>> and f1 for `tee 2\>\> f1`: no
+  // redirect runs, so the word after the escaped operator is a file operand. `cp a 2\> f1` names f1
+  // as cp's destination (bash 3.2 and 5 write f1/a when f1 is a directory). A bare `2>` stays a
+  // redirect: bash 3.2 and 5 write f0 and f1 for `tee f0 2> f1`.
+  const at = (action, f) => ({ action, file: path.resolve('/r', f) });
+  for (const [cmd, expected] of [
+    ['tee 2\\> f1', [at('write', '2>'), at('write', 'f1')]],
+    ['tee f0 2\\> f1', [at('write', 'f0'), at('write', '2>'), at('write', 'f1')]],
+    ['truncate -s 1 2\\> f1', [at('truncate', '2>'), at('truncate', 'f1')]],
+    ['cp a 2\\> f1', [at('copy', 'f1')]],
+    ['tee 1\\> f1', [at('write', '1>'), at('write', 'f1')]],
+    ['tee 2\\>\\> f1', [at('write', '2>>'), at('write', 'f1')]],
+    ['tee f0 2> f1', [at('write', 'f1'), at('write', 'f0')]],
+  ]) assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected, cmd);
+});
+
+test('#4281: a cd line\'s redirect writes in the cwd before the cd, and the cd still moves the later segments', () => {
+  // bash 3.2 and 5 write f1 in the starting cwd for `\cd sub > f1`, `c\d sub > f1` and `cd sub > f1`
+  // (bash applies the redirect before the builtin runs), and sub/f2 for `cd sub && echo x > f2`.
+  // `cd sub > f1; echo y > f2`, `A=1 cd sub > f1; echo y > f2` and `cd > f1 sub; echo y > f2` each
+  // write f1 and sub/f2: the redirect is no argument of cd.
+  const at = (f) => ({ action: 'write', file: path.resolve('/r', f) });
+  for (const cmd of ['\\cd sub > f1', 'c\\d sub > f1', 'cd sub > f1']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [at('f1')], cmd);
+  }
+  assert.deepStrictEqual(fileWriteTargets('cd sub && echo x > f2', '/r'), [at('sub/f2')]);
+  for (const cmd of ['cd sub > f1; echo y > f2', 'A=1 cd sub > f1; echo y > f2', 'cd > f1 sub; echo y > f2']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [at('f1'), at('sub/f2')], cmd);
+  }
+  // A cd segment reaches every walk consumer now, and none of them reads it as its own shape.
+  assert.deepStrictEqual(gitTargets('cd sub > f1 && git commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/r/sub') }]);
+  assert.deepStrictEqual(gitTargets('cd git > f1', '/r'), []);
+  assert.deepStrictEqual(mkdirTargets('cd mkdir > f1', '/r'), []);
+  assert.strictEqual(powershellOpaqueCommand('cd pwsh -Command > f1', '/r'), false);
+});
+
+test('#4281: a bare > glued to an assignment word is a redirect, and the assignment keeps the value before it', () => {
+  // bash 3.2 and 5 write f1 for `A=x>f1`, `\`+newline+`A=x>f1`, `A=x\`+newline+`>f1` and `A=x >f1`,
+  // and nothing for `A="x>f1"` or `A=x\>f1` (each assigns the literal x>f1). After `A=x>f1`, $A is x,
+  // so `A=sub>f1; cd $A && echo y > f2` writes f1 and sub/f2. The assignment comes before the
+  // redirect expands: `A=f0; A=x>$A` writes x.
+  const at = (f) => ({ action: 'write', file: path.resolve('/r', f) });
+  for (const cmd of ['A=x>f1', '\\\nA=x>f1', 'A=x\\\n>f1', 'A=x >f1']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [at('f1')], JSON.stringify(cmd));
+  }
+  for (const cmd of ['A="x>f1"', 'A=x\\>f1']) assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+  assert.deepStrictEqual(fileWriteTargets('A=sub>f1; cd $A && echo y > f2', '/r'), [at('f1'), at('sub/f2')]);
+  assert.deepStrictEqual(fileWriteTargets('A=f0; A=x>$A', '/r'), [at('x')]);
+});
+
+// #4281: the Windows shapes, proven on any host through an injected path.win32 (#3314's pattern).
+// bash 3.2 and 5: "D:\repo\a.js", "D:\repo\x", "D:\repo\wt" and "D:\repo" are those exact values;
+// unquoted, D:\repo\a.js and D:\repo are D:repoa.js and D:repo.
+const os = require('node:os');
+const fs = require('node:fs');
+const { after } = require('node:test');
+const realPreToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
+const TEARDOWN_CMD = 'cd "D:\\repo" && git worktree remove wt';
+const QUOTED_NATIVE_PINS = {
+  tee: (mod) => assert.deepStrictEqual(
+    mod.fileWriteTargets('tee "D:\\repo\\a.js"', 'D:\\repo', { pathImpl: path.win32 }).map((t) => t.file),
+    ['D:\\repo\\a.js'],
+  ),
+  mkdir: (mod) => assert.deepStrictEqual(
+    mod.mkdirTargets('mkdir -p "D:\\repo\\x"', 'D:\\repo', { pathImpl: path.win32 }),
+    [{ action: 'mkdir', file: 'D:\\repo\\x' }],
+  ),
+  gitC: (mod) => assert.deepStrictEqual(
+    mod.gitTargets('git -C "D:\\repo\\wt" push', 'D:\\repo', { pathImpl: path.win32 }),
+    [{ action: 'push', dir: 'D:\\repo\\wt' }],
+  ),
+  teardown: (_mod, preToolUse) => assert.deepStrictEqual(
+    preToolUse.teardownTargets({ input: { tool_name: 'Bash', tool_input: { command: TEARDOWN_CMD } }, cwd: 'D:\\x' }, { pathImpl: path.win32 }),
+    [{ path: 'D:\\repo\\wt', source: 'bash' }],
+  ),
+};
+function assertQuotedNativePins(mod, preToolUse, names = Object.keys(QUOTED_NATIVE_PINS)) {
+  for (const name of names) QUOTED_NATIVE_PINS[name](mod, preToolUse);
+}
+const realGitCommand = require('../plugin/bin/lib/hooks/git-command');
+
+test('AC2.1 AC2.2 #4281: a quoted native tee target resolves through path.win32, pinned as an exact string', () => {
+  assertQuotedNativePins(realGitCommand, realPreToolUse, ['tee']);
+});
+
+test('AC2.3 #4281: mkdir, git -C and a cd before worktree remove resolve through path.win32', () => {
+  assertQuotedNativePins(realGitCommand, realPreToolUse, ['mkdir', 'gitC', 'teardown']);
+});
+
+test('AC2.4 #4281: an unquoted native path is never its typed target (bash reads D:repoa.js, a drive-relative path)', () => {
+  // Windows resolves a drive-relative value against the cwd when the cwd is on that drive (letters
+  // compared case-insensitively), so the same-drive value is a provable literal, never D:\repo\a.js.
+  const win = { pathImpl: path.win32 };
+  assert.deepStrictEqual(fileWriteTargets('tee D:\\repo\\a.js', 'D:\\repo', win), [{ action: 'write', file: 'D:\\repo\\repoa.js' }]);
+  assert.deepStrictEqual(fileWriteTargets('tee d:a.js', 'D:\\repo', win), [{ action: 'write', file: 'd:\\repo\\a.js' }]);
+  assert.deepStrictEqual(gitTargets('cd D:\\repo && git commit -m x', 'D:\\x', win), [{ action: 'commit', dir: 'D:\\x\\repo' }]);
+  assert.deepStrictEqual(gitTargets('git -C D:\\repo commit -m x', 'D:\\x', win), [{ action: 'commit', dir: 'D:\\x\\repo' }]);
+  // Against another drive, or a cwd with no drive, that drive's own cwd is unknown: no target.
+  assert.deepStrictEqual(fileWriteTargets('tee D:a.js', 'C:\\x', win), []);
+  assert.deepStrictEqual(fileWriteTargets('tee D:a.js', '/x', win), []);
+  assert.deepStrictEqual(fileWriteTargets('tee D:a.js', 'D:', win), []);
+  assert.deepStrictEqual(gitTargets('cd D:repo && git commit -m x', 'C:\\x', win), []);
+  assert.deepStrictEqual(gitTargets('git -C D:\\repo commit -m x', 'C:\\x', win), []);
+});
+
+test('#4281: a quoted or escaped final backslash is a literal character, and a stray one resolves under path.win32', () => {
+  // bash 3.2 and 5: 'D:\repo\wt\' and "D:\repo\wt\\" are D:\repo\wt\, '/r/a\' is /r/a\, and 'D:\' is D:\.
+  // A stray final `\` splits them: wt\ is wt (3.2) or wt\ (5), the same Windows path; D:\ is D: (3.2,
+  // the drive's cwd) or D:\ (5, its root), two paths, so it stays unprovable.
+  const remove = (command) => realPreToolUse.teardownTargets(
+    { input: { tool_name: 'Bash', tool_input: { command } }, cwd: 'D:\\repo' }, { pathImpl: path.win32 },
+  );
+  assert.deepStrictEqual(remove("git worktree remove 'D:\\repo\\wt\\'"), [{ path: 'D:\\repo\\wt', source: 'bash' }]);
+  assert.deepStrictEqual(remove('git worktree remove "D:\\repo\\wt\\\\"'), [{ path: 'D:\\repo\\wt', source: 'bash' }]);
+  assert.deepStrictEqual(remove('git worktree remove wt\\'), [{ path: 'D:\\repo\\wt', source: 'bash' }]);
+  assert.deepStrictEqual(remove('git worktree remove D:\\'), []);
+  assert.deepStrictEqual(gitTargets("cd 'D:\\' && git commit -m x", 'C:\\x', { pathImpl: path.win32 }), [{ action: 'commit', dir: 'D:\\' }]);
+  assert.deepStrictEqual(fileWriteTargets("tee '/r/a\\'", '/r'), [{ action: 'write', file: path.resolve('/r/a\\') }]);
+});
+
+test('#4281: a single-positional ln names its link with the injected path module\'s basename', () => {
+  // bash 3.2 and 5: "D:\src\a.js" is the value D:\src\a.js; ln -s creates a.js in the cwd.
+  assert.deepStrictEqual(fileWriteTargets('ln -s "D:\\src\\a.js"', 'D:\\repo', { pathImpl: path.win32 }), [{ action: 'link', file: 'D:\\repo\\a.js' }]);
+});
+
+const MUTANT_DIR = path.join(os.tmpdir(), 'ct-4281-mutant-' + process.pid);
+after(() => fs.rmSync(MUTANT_DIR, { recursive: true, force: true }));
+
+test('AC3.1 AC3.2 #4281: go-red — putting the backslash rule back into isUnresolvable fails every quoted AC2 case', () => {
+  const src = fs.readFileSync(require.resolve('../plugin/bin/lib/hooks/git-command'), 'utf8');
+  // Anchored on the declaration, not a clause, so reordering the clauses or renaming the parameter
+  // keeps the control working. `isUnresolvable(undefined)` is a real call (a bare `cd`), hence the guard.
+  const decls = [...src.matchAll(/function isUnresolvable\s*\(\s*(\w+)\s*\)\s*\{/g)];
+  assert.strictEqual(decls.length, 1, 'the isUnresolvable declaration matches exactly once');
+  const [decl, param] = decls[0];
+  // A function replacement: a `$` in the replacement would otherwise be a special pattern.
+  const mutantSrc = src.replace(decl, () => `${decl}\n  if (${param} !== undefined && ${param}.includes('\\\\')) return true;`);
+  fs.mkdirSync(MUTANT_DIR, { recursive: true });
+  const mutantFile = path.join(MUTANT_DIR, 'git-command.js');
+  fs.writeFileSync(mutantFile, mutantSrc); // git-command.js requires only `path`
+  const mutant = require(mutantFile);
+  assert.throws(() => assertQuotedNativePins(mutant, realPreToolUse, ['tee']), { code: 'ERR_ASSERTION' });
+  assert.throws(() => assertQuotedNativePins(mutant, realPreToolUse, ['mkdir']), { code: 'ERR_ASSERTION' });
+  assert.throws(() => assertQuotedNativePins(mutant, realPreToolUse, ['gitC']), { code: 'ERR_ASSERTION' });
+  // Teardown, fallback form: pre-tool-use.js requires a dozen sibling modules, so binding its
+  // teardownTargets to the mutant would mean copying that tree. teardownTargets resolves its dir
+  // through resolveGitCommand, which resolvedGitSegments reports for every git segment (gitTargets
+  // never classifies `worktree remove`, so it would hold no D:\repo dir on either module): the real
+  // module walks into D:\repo, the mutant reads the cd as unprovable and reports no D:\repo dir.
+  const dirs = (mod) => mod.resolvedGitSegments(TEARDOWN_CMD, 'D:\\x', { pathImpl: path.win32 }).map((s) => s.dir);
+  assert.deepStrictEqual(dirs(realGitCommand), ['D:\\repo']);
+  assert.ok(!dirs(mutant).includes('D:\\repo'));
 });

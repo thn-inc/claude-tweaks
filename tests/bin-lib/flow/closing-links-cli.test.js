@@ -254,7 +254,7 @@ test('pre-merge refuses another run\'s PR: exit 4, nothing written', () => {
   assert.equal(h.edits().length, 0);
 });
 
-test('pre-merge marker refusal is unconditional: a foreign body with no closing phrase is exit 4, no re-read, no edit, no log', () => {
+test('pre-merge marker refusal is unconditional: a foreign body with no closing phrase is exit 4, no re-read, no edit, only the refusal logged', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const plain = body({ runId: FOREIGN_RUN_ID, summary: 'No phrase.', span: ['Fixes #3997', 'Refs #2724 — deferred: pending'] });
   const h = makeDeps(main, { prReads: [preView(plain, [2724, 3997])], rereads: [refsOf(2724, 3997)] });
@@ -262,7 +262,10 @@ test('pre-merge marker refusal is unconditional: a foreign body with no closing 
   assert.match(h.err.join(''), /run marker mismatch on PR #7/);
   assert.equal(h.edits().length, 0);
   assert.equal(h.calls.length, 1);
-  assert.equal(h.log(runDir), '');
+  // #4026: the refusal's own SKIP is the only line -- no unlink or still-linked outcome.
+  const lines = h.log(runDir).split('\n').filter((l) => l.startsWith('- '));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^- SKIP \d{2}:\d{2}:\d{2} — Closing links \(pre-merge\) \(degraded\): condition: closing-links\.js exit 4 run marker mismatch/);
 });
 
 test('pre-merge gh view failure is exit 5', () => {
@@ -697,4 +700,159 @@ test('post-merge gh view failure is exit 5', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, { prReads: [new Error('network down')] });
   assert.equal(run(['--run', runDir, ...POST], h.deps), 5);
+});
+
+// ---- #4026: gh-absent, exit 4 and exit 5 log their own SKIP line ----
+
+// Characterization (pre-#4026 behaviour that must not move): each refusal and
+// gh failure prints exactly this stderr text and no stdout, and gh-absent
+// prints exactly this envelope, in both modes.
+const EXIT_SITES = [
+  {
+    name: 'exit 4 run marker mismatch (pre-merge)', code: 4, mode: 'pre-merge',
+    opts: { prReads: [preView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997])] },
+    stderr: `closing-links.js: run marker mismatch on PR #7: body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID} — nothing written\n`,
+    condition: 'exit 4 run marker mismatch',
+  },
+  {
+    name: 'exit 5 pr view failed (pre-merge)', code: 5, mode: 'pre-merge',
+    opts: { prReads: [new Error('network down')] },
+    stderr: 'closing-links.js: gh pr view failed on PR #7: network down\n',
+    condition: 'exit 5 gh failure: gh pr view failed on PR #7: network down',
+  },
+  {
+    name: 'exit 5 pr view failed (post-merge)', code: 5, mode: 'post-merge',
+    opts: { prReads: [new Error('network down')] },
+    stderr: 'closing-links.js: gh pr view failed on PR #7: network down\n',
+    condition: 'exit 5 gh failure: gh pr view failed on PR #7: network down',
+  },
+  {
+    name: 'exit 5 malformed view (pre-merge)', code: 5, mode: 'pre-merge',
+    opts: { prReads: [{ body: null, closingIssuesReferences: [], url: PR_URL }] },
+    stderr: 'closing-links.js: gh pr view on PR #7 returned no string body, usable closingIssuesReferences (an array whose entries carry a repository), or PR url\n',
+    condition: 'exit 5 gh failure: gh pr view on PR #7 returned no string body, usable closingIssuesReferences (an array whose entries carry a repository), or PR url',
+  },
+  {
+    name: 'exit 5 unparseable mergedAt (post-merge)', code: 5, mode: 'post-merge',
+    opts: { prReads: [mergedView(body(), [2724, 3997], { mergedAt: null })] },
+    stderr: 'closing-links.js: gh pr view on PR #7 returned a MERGED PR with no parseable mergedAt\n',
+    condition: 'exit 5 gh failure: gh pr view on PR #7 returned a MERGED PR with no parseable mergedAt',
+  },
+  {
+    name: 'exit 5 pr edit failed (pre-merge)', code: 5, mode: 'pre-merge',
+    opts: { prReads: [preView(body(), [2724, 3997])], editThrows: 'edit refused' },
+    stderr: 'closing-links.js: gh pr edit failed on PR #7: edit refused\n',
+    condition: 'exit 5 gh failure: gh pr edit failed on PR #7: edit refused',
+  },
+  {
+    name: 'exit 5 re-read failed with no body write (pre-merge)', code: 5, mode: 'pre-merge',
+    opts: { prReads: [preView(body({ summary: 'No phrase.', span: ['Fixes #3997', 'Refs #2724 — deferred: pending'] }), [2724, 3997])], rereads: [new Error('flaky')] },
+    stderr: 'closing-links.js: gh pr view failed on PR #7: flaky\n',
+    condition: 'exit 5 gh failure: gh pr view failed on PR #7: flaky',
+  },
+];
+
+// A fixed local clock, so a whole decisions.md line can be compared.
+const FIXED_NOW = () => new Date(2026, 9, 25, 12, 0, 0);
+const skipLine = (mode, condition) => `- SKIP 12:00:00 — Closing links (${mode}) (degraded): condition: closing-links.js ${condition} → fallback: closing links not checked this merge. Reversibility: n/a.`;
+
+function siteDeps(main, site, over = {}) {
+  const { editThrows, ...opts } = site.opts;
+  const h = makeDeps(main, { now: FIXED_NOW, ...opts, ...over });
+  if (editThrows) {
+    const real = h.deps.gh;
+    h.deps.gh = (args, input) => {
+      if (args[1] === 'edit') { h.calls.push({ args, input }); throw new Error(editThrows); }
+      return real(args, input);
+    };
+  }
+  return h;
+}
+
+test('characterization: each exit-4/5 site prints its stderr line and no stdout', () => {
+  for (const site of EXIT_SITES) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = siteDeps(main, site);
+    assert.equal(run(['--run', runDir, '--mode', site.mode], h.deps), site.code, site.name);
+    assert.equal(h.err.join(''), site.stderr, site.name);
+    assert.equal(h.out.join(''), '', site.name);
+  }
+});
+
+test('characterization: gh-absent prints the bare envelope in both modes, no gh call, no stderr', () => {
+  for (const mode of ['pre-merge', 'post-merge']) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { ghAvailable: false, now: FIXED_NOW });
+    assert.equal(run(['--run', runDir, '--mode', mode], h.deps), 0, mode);
+    assert.equal(h.out.join(''), '{"action":"gh-absent","pr":7}\n', mode);
+    assert.equal(h.err.join(''), '', mode);
+    assert.equal(h.calls.length, 0, mode);
+  }
+});
+
+test('AC3.1: closing-links gh-absent logs one SKIP under /wrap-up, both modes', () => {
+  for (const mode of ['pre-merge', 'post-merge']) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { ghAvailable: false, now: FIXED_NOW });
+    assert.equal(run(['--run', runDir, '--mode', mode], h.deps), 0, mode);
+    assert.equal(h.log(runDir), `## /wrap-up\n${skipLine(mode, 'gh-absent')}\n`, mode);
+  }
+});
+
+test('AC3.1: closing-links exit 4 and every exit-5 site log one SKIP under /wrap-up', () => {
+  for (const site of EXIT_SITES) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = siteDeps(main, site);
+    assert.equal(run(['--run', runDir, '--mode', site.mode], h.deps), site.code, site.name);
+    assert.equal(h.log(runDir), `## /wrap-up\n${skipLine(site.mode, site.condition)}\n`, site.name);
+  }
+});
+
+test('AC3.1: an exit-5 SKIP carries only the first stderr line, without the program prefix', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prReads: [new Error('Command failed: gh pr view 7\nHTTP 502: Bad Gateway')], now: FIXED_NOW });
+  assert.equal(run(['--run', runDir, ...PRE], h.deps), 5);
+  assert.equal(h.log(runDir), `## /wrap-up\n${skipLine('pre-merge', 'exit 5 gh failure: gh pr view failed on PR #7: Command failed: gh pr view 7')}\n`);
+});
+
+test('AC3.1: a re-read failure after a body write keeps its own trace and adds the exit-5 SKIP', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prReads: [preView(body(), [2724, 3997])], rereads: [new Error('flaky')], now: FIXED_NOW });
+  assert.equal(run(['--run', runDir, ...PRE], h.deps), 5);
+  const lines = h.log(runDir).split('\n').filter(Boolean);
+  assert.equal(lines.length, 3, h.log(runDir));
+  assert.match(lines[0], /^- SKIP 12:00:00 — Closing links \(degraded\): condition: PR #7 body rewritten/);
+  assert.equal(lines[1], '## /wrap-up');
+  assert.equal(lines[2], skipLine('pre-merge', 'exit 5 gh failure: gh pr view failed on PR #7: flaky'));
+});
+
+test('exit 3 and no-pr log nothing', () => {
+  const a = fixture({ status: 'active' });
+  const hNo = makeDeps(a.main, { now: FIXED_NOW });
+  assert.equal(run(['--run', a.runDir, ...POST], hNo.deps), 0);
+  assert.equal(hNo.log(a.runDir), '');
+
+  const { main } = fixture({ pr: { number: 7 } });
+  const hMissing = makeDeps(main, { now: FIXED_NOW });
+  const missing = path.join(main, '.claude-tweaks', 'pipelines', 'nope');
+  assert.equal(run(['--run', missing, ...PRE], hMissing.deps), 3);
+  assert.equal(fs.existsSync(path.join(missing, 'decisions.md')), false);
+});
+
+test('a failed SKIP append keeps every exit code, adds one stderr line, and marks the gh-absent envelope', () => {
+  const failing = { appendDecision: () => { throw new Error('disk full'); } };
+  for (const site of EXIT_SITES) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = siteDeps(main, site, failing);
+    assert.equal(run(['--run', runDir, '--mode', site.mode], h.deps), site.code, site.name);
+    assert.equal(h.err.join(''), `${site.stderr}closing-links.js: could not append the decisions.md entry: disk full\n`, site.name);
+    assert.equal(h.out.join(''), '', site.name);
+  }
+  for (const mode of ['pre-merge', 'post-merge']) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { ghAvailable: false, now: FIXED_NOW, ...failing });
+    assert.equal(run(['--run', runDir, '--mode', mode], h.deps), 0, mode);
+    assert.deepEqual(h.json(), { action: 'gh-absent', pr: 7, logFailed: true }, mode);
+    assert.equal(h.err.join(''), 'closing-links.js: could not append the decisions.md entry: disk full\n', mode);
+  }
 });
