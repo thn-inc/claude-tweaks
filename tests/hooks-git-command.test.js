@@ -937,10 +937,13 @@ after(() => fs.rmSync(MUTANT_DIR, { recursive: true, force: true }));
 
 test('AC3.1 AC3.2 #4281: go-red — putting the backslash rule back into isUnresolvable fails every quoted AC2 case', () => {
   const src = fs.readFileSync(require.resolve('../plugin/bin/lib/hooks/git-command'), 'utf8');
-  const anchor = "raw.includes('$') ||";
-  assert.strictEqual(src.split(anchor).length - 1, 1, 'the isUnresolvable anchor matches exactly once');
-  // A function replacement: the anchor's `$'` would be a special pattern in a replacement string.
-  const mutantSrc = src.replace(anchor, () => "raw.includes('\\\\') || " + anchor);
+  // Anchored on the declaration, not a clause, so reordering the clauses or renaming the parameter
+  // keeps the control working. `isUnresolvable(undefined)` is a real call (a bare `cd`), hence the guard.
+  const decls = [...src.matchAll(/function isUnresolvable\s*\(\s*(\w+)\s*\)\s*\{/g)];
+  assert.strictEqual(decls.length, 1, 'the isUnresolvable declaration matches exactly once');
+  const [decl, param] = decls[0];
+  // A function replacement: a `$` in the replacement would otherwise be a special pattern.
+  const mutantSrc = src.replace(decl, () => `${decl}\n  if (${param} !== undefined && ${param}.includes('\\\\')) return true;`);
   fs.mkdirSync(MUTANT_DIR, { recursive: true });
   const mutantFile = path.join(MUTANT_DIR, 'git-command.js');
   fs.writeFileSync(mutantFile, mutantSrc); // git-command.js requires only `path`
