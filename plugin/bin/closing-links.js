@@ -118,10 +118,14 @@ function errText(e) {
 // An array whose non-empty content carries repository objects. Without them
 // sameRepoNumbers would read every link as cross-repo and the guard would
 // silently do nothing, so that shape is a malformed response.
-const refsWellFormed = (refs) => Array.isArray(refs)
-  && (refs.length === 0 || refs.some((r) => r && typeof r.repository === 'object' && r.repository !== null));
+function refsWellFormed(refs) {
+  return Array.isArray(refs)
+    && (refs.length === 0 || refs.some((r) => r && typeof r.repository === 'object' && r.repository !== null));
+}
 
-const uniqueSorted = (numbers) => [...new Set(numbers)].sort((a, b) => a - b);
+function uniqueSorted(numbers) {
+  return [...new Set(numbers)].sort((a, b) => a - b);
+}
 
 function run(argv, overrides = {}) {
   // Tests pass only the seams they fake; the rest stay real.
@@ -197,13 +201,13 @@ function run(argv, overrides = {}) {
   }
   const scope = { owner: repo.owner, repo: repo.repo };
   const span = parseFixesSpan(pr.body);
+  const expected = span.fixes;
+  const keepOpen = span.refs;
   const linked = sameRepoNumbers(pr.closingIssuesReferences, scope);
 
   if (o.mode === 'pre-merge') {
     // 6a. No fixes span means no statement of what the run keeps open.
     if (!span.found) return print({ action: 'no-fixes-span', pr: n });
-    const expected = span.fixes;
-    const keepOpen = span.refs;
     const unwanted = linked.filter((x) => !expected.includes(x));
     const base = { pr: n, expected, keepOpen, linked, unwanted };
     if (unwanted.length === 0) return print({ action: 'clean', ...base, unlinked: [], stillLinked: [], neutralized: 0 });
@@ -253,8 +257,6 @@ function run(argv, overrides = {}) {
   // 6b. post-merge: nothing to reopen until the PR merged.
   if (pr.state !== 'MERGED') return print({ action: 'not-merged', pr: n, state: pr.state });
   if (!span.found) return print({ action: 'no-fixes-span', pr: n });
-  const expected = span.fixes;
-  const keepOpen = span.refs;
 
   // 7b. The squash message is the second closing channel. A failed read (or
   // an oid that is not a commit sha, never put into the API path) degrades to
@@ -270,7 +272,7 @@ function run(argv, overrides = {}) {
     message = String(deps.gh(['api', `repos/{owner}/{repo}/commits/${oid}`, '--jq', '.commit.message']));
   } catch { messageUnread = true; }
   const messageCloses = findClosingRefs(message, scope).map((r) => r.number);
-  const candidates = uniqueSorted([...linked.filter((x) => !expected.includes(x)), ...keepOpen].filter((x) => !expected.includes(x)));
+  const candidates = uniqueSorted([...linked, ...keepOpen].filter((x) => !expected.includes(x)));
   const closers = new Set([...linked, ...messageCloses]);
   const willClose = messageUnread ? candidates : candidates.filter((x) => closers.has(x));
 

@@ -42,9 +42,10 @@ const CLOSING_SOURCE = '\\b' + CLOSING_KEYWORD_ALTERNATION + ':?[ \\t]+('
   + '|https?://([^/\\s]+)/([\\w.-]+)/([\\w.-]+)/issues/(\\d+)'
   + ')(?!\\w)';
 
-const sameRepo = (owner, repo, wantOwner, wantRepo) =>
-  String(owner).toLowerCase() === String(wantOwner).toLowerCase()
-  && String(repo).toLowerCase() === String(wantRepo).toLowerCase();
+function sameRepo(owner, repo, wantOwner, wantRepo) {
+  return String(owner).toLowerCase() === String(wantOwner).toLowerCase()
+    && String(repo).toLowerCase() === String(wantRepo).toLowerCase();
+}
 
 // Every phrase, in document order. `start`/`end` span keyword through
 // reference; `refStart` is where the reference itself begins (an internal
