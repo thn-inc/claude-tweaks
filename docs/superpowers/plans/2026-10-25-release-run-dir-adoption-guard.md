@@ -195,3 +195,11 @@ git commit -m "Replace release Step 0's inline adoption probe with the resolve-r
 | AC2.1 | Task 2 `#4151 AC2.1: Step 0 carries no inline node -e adoption probe` |
 | AC3.1 | Task 2 Step 1 (the conformance test is rewritten to the new contract) |
 | AC4.1 | Waived AC4.1: the full `npm test` is the build's Common Step 5 verification, not a task step |
+
+## As-built deviations (build Common Step 4.5)
+
+| # | Deviation | What the spec said | What was built | Classification |
+|---|---|---|---|---|
+| 1 | Wrap-up re-resolution migrated | Key Files: `run-dir-resolve.js`, `release/SKILL.md`, the conformance test | Also `wrap-up/SKILL.md`, `cleanup-procedures-execution.md`, `standalone-fast-path.md`, `curation-engine.md`, `summary-template.md`. Later wrap-up phases carry the Phase 1 run-dir path and never re-run the resolver. Without that, after `close-run` writes `status: clean`, step 2 would refuse the run's own directory. Found by the whole-branch review and fixed in `5d13f444a`. | Beneficial. Deliverable 1 ("so every caller gets it") requires every caller that re-resolves after a close to migrate in the same change. |
+| 2 | Release Step 0 no longer names the refused directory | Silent | The `refused: {dir} (status …)` stdout line and the `Step 0: … not adopted; minted {run-dir}` log line are gone. A refusal now happens inside `resolve-run-dir`, so the CLI-only fence (Deliverable 3) cannot see which directory was refused. | Beneficial. This is a direct consequence of Deliverable 3, and the step-2 skip is pinned by tests. |
+| 3 | Absent vs unreadable state | "Treat an unreadable or unparseable `run-state.json` as refuse adoption" | Only an existing-but-unreadable/unparseable/non-object file refuses. An absent file stays adoptable, because it is the bare mkdir-only mint shape `/dispatch` and `/flow` rely on (#1962). | Beneficial (a reading of the spec, not a contradiction). |
