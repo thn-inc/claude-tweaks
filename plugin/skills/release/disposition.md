@@ -14,14 +14,14 @@ SKIP {HH:MM:SS} — Step 8 disposition (skipped): condition: inherited run direc
 
 ## Inventory
 
-Read `{run-dir}/staged/` once and list every file in it except `release-held.md`, which is not a finding, and a file on a `note` roster row (below), which is not one either: each stays where it is and is archived with the run. An absent or empty `staged/` means no staged files. When Step 3 logged no `## /review` marker this run (an early exit before Step 3: a Step 1 or Step 2 stop, a refused `--train`), read no `decisions.md` line at all. Otherwise read `{run-dir}/decisions.md`'s `## /review` block — only the lines after Step 3's carried marker `{k}`, never the whole block — and add every `STAGED` line whose stage path is absent or names no existing file. `_shared/auto-decision-log.md` counts those as staged findings with no `staged/` file: `review/step3-lens-dispatch.md`'s `not reproduced` lines, the gap sweep's, the earlier line a tiebreak `console` outcome leaves standing (`review/step3-tiebreak.md`), and a failed tiebreak's. A line whose stage path names a listed file is that file's finding, counted once by its stage path.
+Read `{run-dir}/staged/` once and list every file in it except `release-held.md`, which is not a finding, and a file on a `note` roster row (below), which is not one either: each stays where it is and is archived with the run. An absent or empty `staged/` means no staged files. Any other read error on `staged/`, or on the `decisions.md` read below (EACCES, EIO — anything but "does not exist"), is a failure, not an empty inventory: it writes the FAILED line below and blocks archival. When Step 3 logged no `## /review` marker this run (an early exit before Step 3: a Step 1 or Step 2 stop, a refused `--train`), read no `decisions.md` line at all. Otherwise read `{run-dir}/decisions.md`'s `## /review` block — only the lines after Step 3's carried marker `{k}`, never the whole block — and add every `STAGED` line whose stage path is absent or names no existing file. `_shared/auto-decision-log.md` counts those as staged findings with no `staged/` file: `review/step3-lens-dispatch.md`'s `not reproduced` lines, the gap sweep's, the earlier line a tiebreak `console` outcome leaves standing (`review/step3-tiebreak.md`), and a failed tiebreak's. A line whose stage path names a listed file is that file's finding, counted once by its stage path.
 
 - Every other staged file is matched against the review staging roster below by its longest matching prefix, and counted as that row's `Counted as` column says.
 - Each `decisions.md`-only `STAGED` line, its severity read from the line when it names one.
 
 A file matching no roster row, or only a `not staged by review` row, is unrecognised: it has no route and counts as a failure (below), so the run is not archived with a finding nobody read. A producer that starts staging a new prefix adds its roster row in the same change, and `tests/release-run-dir-lifecycle-conformance.test.js` fails on a staged prefix with no row.
 
-With nothing to dispose, write one `SCANNED` line and do nothing else:
+With nothing to dispose and no read failure above, write one `SCANNED` line and do nothing else. A read failure is never "nothing": that run writes its FAILED line instead, and no `SCANNED` line, because it cannot claim to have scanned what it could not read:
 
 ```
 SCANNED {HH:MM:SS} — Step 8 disposition: no staged review findings. Reversibility: n/a.
@@ -101,7 +101,7 @@ A filing or digest write that fails leaves that staged file where it is and writ
 FAILED {HH:MM:SS} — Step 8 disposition: {staged path} — {file|digest} failed: {message}. Reversibility: n/a (write did not land).
 ```
 
-An unrecognised file takes the same line with `unrecognised staged file, no route` in place of `{file|digest} failed: {message}`, and `Reversibility: n/a (nothing written).` Any failure means Step 8 skips archival for this run and names the failed paths in its summary. The closed directory stays in place with the unread finding still in `staged/`, and the next release will not adopt it (Step 0 refuses a terminal directory).
+An unrecognised file takes the same line with `unrecognised staged file, no route` in place of `{file|digest} failed: {message}`, and `Reversibility: n/a (nothing written).` An unreadable `staged/` or `decisions.md` (per Inventory) takes the same line with `read failed: {message}` in place of `{file|digest} failed: {message}`, `{staged path}` naming the unreadable path, and `Reversibility: n/a (nothing read).` It counts toward `{k} failed` in the summary line. Any failure means Step 8 skips archival for this run and names the failed paths in its summary. The closed directory stays in place with the unread finding still in `staged/`, and the next release will not adopt it (Step 0 refuses a terminal directory).
 
 ## Anti-Patterns
 

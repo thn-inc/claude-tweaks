@@ -371,6 +371,8 @@ const DISPOSITION_SCOPE = [
   [/`STAGED` line whose stage path is absent or names no existing file/, 'inventory: a decisions.md-only STAGED line is a finding'],
   [/counted once by its stage path/, 'inventory: a STAGED line naming a listed file is de-duplicated by stage path'],
   [/An absent or empty `staged\/` means no staged files/, 'inventory: an absent or empty staged/ means no staged files'],
+  [/Any other read error on `staged\/`, or on the `decisions\.md` read below[\s\S]{0,120}is a failure, not an empty inventory[\s\S]{0,80}blocks archival/, 'inventory: a read error other than "does not exist" on staged/ or decisions.md is a failure that blocks archival'],
+  [/With nothing to dispose and no read failure above, write one `SCANNED` line[\s\S]{0,200}A read failure is never "nothing"/, 'inventory: the SCANNED line is for a clean empty inventory only, never a read failure'],
   [/When Step 3 logged no `## \/review` marker this run[\s\S]{0,200}read no `decisions\.md` line at all/, 'inventory: with no Step 3 marker, no decisions.md line is read'],
   [/\| `reflect-` \|[^\n]*\| `proposal` \|/, 'roster: reflect- files are routed proposal'],
   [/\| `simplify-` \|[^\n]*\| `proposal` \|/, 'roster: simplify- files are routed proposal'],
@@ -403,6 +405,7 @@ const DISPOSITION_APPROVAL = [
   [/AUTO \{HH:MM:SS\} — Step 8 disposition: \{staged path\}/, 'the per-finding log line'],
   [/exactly one/, 'exactly one log line per finding'],
   [/FAILED \{HH:MM:SS\} — Step 8 disposition:/, 'a failed write is a hand-composed FAILED line'],
+  [/An unreadable `staged\/` or `decisions\.md`[\s\S]{0,40}takes the same line with `read failed: \{message\}`[\s\S]{0,200}counts toward `\{k\} failed`/, 'an unreadable staged/ or decisions.md takes the FAILED line with read failed and counts toward k failed'],
   [/skip[\s\S]{0,60}archiv/, 'any failure skips archival'],
   [/--dry-run[\s\S]{0,160}still runs/, 'disposition still runs under --dry-run'],
   [/Below `unattended`, a human reachable in the session/, 'below unattended with a human reachable, the table renders and one question is asked'],
@@ -423,7 +426,7 @@ for (const [name, patterns] of [
 
 const STEP8_WIRING = [
   [/disposition\.md/, 'Step 8 reads disposition.md'],
-  [/findings: \{f\} filed, \{d\} digest, \{x\} declined\{, k failed — \{paths\}\}/, 'the summary block carries the findings: line, failed paths included'],
+  [/findings: \{f\} filed, \{d\} digest, \{x\} declined\{, k failed — \{paths\}\}, when disposition inventoried any finding or reported a failure\}/, 'the summary block carries the findings: line, failed paths included, rendered for a failure with no inventoried finding too'],
   [/hooks\.js" archive-run --run "\{run-dir\}"/, 'Step 8 runs archive-run on the run dir'],
   // Grouped: an ungrouped `a|Step 0` alternation would match any "Step 0" in the section and could never go red.
   [/Step 8 archival \(skipped\): condition: archive-run printed[\s\S]{0,200}(?:Step 0 refuses it|not adopted)/, 'a non-archival is a degrade-trace SKIP, non-fatal because Step 0 refuses the closed directory'],

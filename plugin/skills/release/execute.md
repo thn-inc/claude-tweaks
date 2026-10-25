@@ -166,68 +166,40 @@ An unreadable state is Step 2.5's own first row, unchanged in substance: never m
 
 **Reviewed-tip comparison — immediately before the merge.** The gate above can take fifteen minutes, and release-please squash-merges whatever `{branch}` holds when the merge call lands, so every commit that reached `{branch}` after Step 3's whole-branch review would ship in the tag unreviewed by the release gate. Compare once more, last. Every log line in this block goes through the same writer as the rest of this step (`bin/log-decision.js --section "/release"`). Every `release-held.md` this block composes carries one more line when `--as` was given: the `Release-As:` commit is already on `{branch}`, so re-run without pushing a second override — the same warning the poll-timeout state above gives.
 
-**1. The reviewed tip.** Read `{reviewed-tip}` from the last line of the `## /release` block in the run's `decisions.md` that carries `at reviewed tip` followed by a full 40-hex sha: Step 3's marker, a run-dir-only advance line (3a), a delta verdict line (6), or the `--as` advance line above. The delta marker is never such a line: it is written before its review has run. It is a run fact, never re-derived from `origin/{branch}`, `HEAD` or a fresh fetch, because a re-derived value always equals itself and would make the comparison vacuous. No such line → `failed`, reason `no reviewed tip recorded`: nothing merged, and a re-run of `/claude-tweaks:release` records one at its own Step 3.
-
-**2. Compare.** Exit `0` means unmoved:
+**1. Run the check.** It prints one JSON verdict:
 
 ```bash
-git -C "$RUN_ROOT" fetch --quiet origin {branch} \
-  && git -C "$RUN_ROOT" rev-parse origin/{branch} | grep -qxF '{reviewed-tip}'
+node "${CLAUDE_PLUGIN_ROOT}/bin/release-tip-check.js" --run "{run-dir}" --root "$RUN_ROOT" --branch {branch}
 ```
 
-`--quiet` is load-bearing: without it a fetch that moves the ref prints its `From …` summary to stderr, and a move would read as a git error.
+Append `--as` when `--as` was given: the verdict's `arrived` is then null, so step 2's arrived-commit major check never fires, because the shipped version is pinned by the `Release-As:` override, and Step 4's `--as` major gate measures the `--as` value, not commit parts. The CLI reads the reviewed tip from the last line of the `## /release` block in `decisions.md` that carries `at reviewed tip` and a full 40-hex sha, never re-derived from `origin/{branch}`, `HEAD` or a fresh fetch. It logs each run-dir-only advance itself, and never counts one as a move. It reads `release-tip-moves` fail-closed, never substituting a default for a value it could not read. It folds the commits that arrived in the last delta (the last delta verdict line's range) through the pack's own `bumpPart` into `arrived`, reported beside every verdict, never as a hold. A non-zero exit, or stdout that does not parse as one JSON object, is `failed`, reason `release-tip-check did not produce a verdict`, nothing merged. `{m}`, `{bound}` and `{source}` in this block's log lines are the verdict's `move`, `bound` and `source`. `{reviewed-tip}` below is the verdict's `reviewedTip`, which already includes any run-dir-only advance the CLI logged, and `{reviewed-short}` is its 7-character short form.
 
-**3. Classify the exit.**
+**2. Route on `verdict`.** First, unless the verdict is `failed` (route that one first: its reason is the one to act on), when `arrived.part` is `major`, take delta 5's `re-rendered to a major after the console` HELD path, with the reason named `re-rendered to a major after the console — from the arrived commits {shas}, the release PR title still reads v{title-version}` (`{shas}` from `arrived.shas`, `{title-version}` from the PR-check gate's title read), so a reader sees it did not come from the title. Under `interactive`, a `Proceed` there continues with this same verdict's routing below. When the verdict is also `held`, the one `release-held.md` that stages carries the bound step's content as well (its `arrivedLog`, `{m}`, `{bound}` and the pause-merges recovery), so the major does not hide why the branch kept moving.
 
-- Exit `0` — unmoved. Log the line below and go to **Merge**.
-- Non-zero with output on stderr — the comparison could not run: a failed fetch (origin unreachable) or any other git error (an unresolvable `origin/{branch}`) is `failed`, with git's stderr reported verbatim. Never merge on a comparison that did not run, and never read it as unmoved.
-- Non-zero with empty stderr — `origin/{branch}` moved, once confirmed: `git -C "$RUN_ROOT" rev-parse origin/{branch}` must differ from `{reviewed-tip}`. Equal means the comparison did not run (a fetch that failed silently, which 3a would then loop on forever): `failed`, nothing merged. A `rev-parse` that fails is `failed` with its stderr verbatim. Otherwise continue with 3a.
+- `merge` → log the line below, `{short}` from `tipSha`, and go to **Merge**.
+- `failed` → `failed`, reason `{reason}`, with `{detail}` (git's or the resolver's stderr, or the offending log line) reported verbatim; nothing merged. For reason `no reviewed tip recorded`, a re-run of `/claude-tweaks:release` records one at its own Step 3.
+- `held`, reason `integration branch kept moving` → the bound step below.
+- `delta` → continue with 3 to 5.
 
 ```
 AUTO {HH:MM:SS} — Step 5: origin/{branch} still at reviewed tip {short}; merging. Reversibility: n/a (gate evaluation).
 ```
 
-**3a. A run-dir-only move does not count.** Run directories never ship (Step 3's rule), so a move that touches nothing else needs no review and spends none of the bound. Resolve `{tip-sha}` once, as the full 40-hex sha of `git -C "$RUN_ROOT" rev-parse origin/{branch}`, and use that literal sha from here on, never the symbolic ref again: a sibling's fetch between a diff on `origin/{branch}` and a later `rev-parse` would advance the reviewed tip past an arrived commit nobody diffed. Compare the trees outside run dirs at that sha:
-
-```bash
-git -C "$RUN_ROOT" diff --quiet {reviewed-tip} {tip-sha} -- ':!.claude-tweaks/pipelines'
-```
-
-Exit `0` — every arrived commit is run-dir-only: do not count it toward the bound and run no review. Advance the reviewed tip instead, logging that same `{tip-sha}` after `at reviewed tip`, then go back to 1 and compare again. Exit `1` — a change outside run dirs arrived: continue with 4 to 7. Any other exit (`128` for a sha git cannot resolve, say) is a git error: `failed`, stderr verbatim, nothing merged.
-
-```
-AUTO {HH:MM:SS} — Step 5: origin/{branch} advanced {reviewed-short} → {tip-short} by run-dir-only commits ({n} commits, nothing outside .claude-tweaks/pipelines); no review, not counted; at reviewed tip {tip-sha}. Reversibility: n/a (gate evaluation).
-```
-
-**4. The bound.** Read the lever once, in its JSON form:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "{run-dir}" release-tip-moves
-```
-
-It prints `{"release-tip-moves":{"value":N,"source":S}}`. `{bound}` in this block's log lines is `N`, and `{source}` is `S` (`run-config`, `policy` or `default`). Fail closed — `failed`, reason `release-tip-moves unreadable`, nothing merged, never a default substituted for a value that could not be read — on any of: a non-zero exit; output that does not parse as that object; `"invalid": true` on the entry, because a present-but-invalid value (`abc`, `-1`) exits `0` and prints the schema default, so the flag is the only sign, and the `--values` form drops it; or a `value` that is not a non-negative integer.
-
-This is move `{m}`: one more than the number of lines in the `## /release` block below Step 3's last marker line that carry `origin/{branch} moved {any-short} →`, where `{any-short}` is whatever short sha that line names (the delta marker's own form; the STAGED line below and the run-dir-only line above do not carry it). Never match only the current `{reviewed-short}`: each delta marker names the tip reviewed before its own move, so a count keyed on the current tip finds at most one line and the bound never trips. When `{m}` is greater than `{bound}` (`0` holds on the first move), do not review and do not merge: the outcome is `HELD`, reason `integration branch kept moving`, because chasing a tip that keeps moving never converges. Nothing was merged and nothing was tagged, which is exactly what `HELD` asserts. Stage `release-held.md` through the Step 4 writer:
+**The bound step.** More moves than `release-tip-moves` allows: do not review and do not merge. The outcome is `HELD`, reason `integration branch kept moving`, because chasing a tip that keeps moving never converges. Nothing was merged and nothing was tagged, which is exactly what `HELD` asserts. Stage `release-held.md` through the Step 4 writer:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "{run-dir}" --id release-held --file {composed .md file}
 ```
 
-It carries the reason, the effective version and its base, the bound and `{m}`, the commits that arrived since Step 3 (`{step3-tip}` is the `{tip-sha}` on Step 3's last marker line; under `--as` the list opens with this run's own `chore: release` commit), and it suggests holding merges to `{branch}` until this release lands, or raising `release-tip-moves`, before re-running:
-
-```bash
-git -C "$RUN_ROOT" log --first-parent --oneline {step3-tip}..origin/{branch}
-```
-
-A non-zero exit from that `git log` is `failed`, stderr verbatim, nothing merged: a staged list that silently came back empty would hide what arrived. No question in any mode: this is a bound, not a Step 4 gate, and the staged file is the record, as for the `gh`-absent stop. Step 8's HELD summary also prints that `git log` output, the arrived commits, under its gate-and-staged-path line, so the reader sees what arrived without opening the staged file.
+It carries the reason, the effective version and its base, the bound and `{m}`, and the verdict's `arrivedLog` (the commits that arrived since Step 3, one first-parent line each; under `--as` the list opens with this run's own `chore: release` commit), and it suggests holding merges to `{branch}` until this release lands, or raising `release-tip-moves`, before re-running. No question in any mode: this is a bound, not a Step 4 gate, and the staged file is the record, as for the `gh`-absent stop. Step 8's HELD summary also prints that `arrivedLog`, the arrived commits, under its gate-and-staged-path line, so the reader sees what arrived without opening the staged file.
 
 ```
 STAGED {HH:MM:SS} — Step 5: origin/{branch} moved past the reviewed tip — move {m} exceeds release-tip-moves {bound}; release held. Stage path: staged/release-held.md. Reversibility: high. [lever: release-tip-moves={bound} ({source})]
 ```
 
-**5. Bring the checkout to the tip.** Every failure in this step is `failed`, reported as `stopped before the merge: {reason}`. Step 3's `stopped before the console` lines are not reused, because the console has already rendered. First assert the anchor is still on the integration branch: `git -C "$RUN_ROOT" rev-parse --abbrev-ref HEAD` must equal `{branch}`. Anything else is `failed`: report the current branch and stop, print no `switch` command, and pull nothing. `$RUN_ROOT` is the shared main checkout, and a sibling session owns its checkout state: a pull would rebase that session's branch, and a `switch` would clobber it. Then assert nothing outside run dirs changed locally since the reviewed tip: `git -C "$RUN_ROOT" diff --quiet {reviewed-tip} HEAD -- ':!.claude-tweaks/pipelines'`. Non-zero is `failed` and nothing is pulled, because a sibling's local shipped commits must not be rebased. Then `git -C "$RUN_ROOT" pull --rebase --no-autostash origin {branch}` (`--no-autostash` so a configured `rebase.autoStash` never stashes a sibling's work-in-progress). A rebase that refuses is `failed` with git's stderr verbatim. A rebase that stops mid-way on a conflict runs `git -C "$RUN_ROOT" rebase --abort` first, then reports `failed` with git's stderr verbatim, so the shared checkout is never left mid-rebase. Then re-run SKILL.md Step 3's review-tree check; any failure is `failed`, reported with Step 3's stop line and reason under this step's prefix and without its `switch` recovery. Read `{tip-sha}` as Step 3 does, right after the check passes: `git -C "$RUN_ROOT" rev-parse origin/{branch}`. `{n}` is `git -C "$RUN_ROOT" rev-list --count {reviewed-tip}..origin/{branch}`; a non-zero exit from it is `failed`, stderr verbatim, nothing merged.
+**3. Bring the checkout to the tip.** Every failure in this step is `failed`, reported as `stopped before the merge: {reason}`. Step 3's `stopped before the console` lines are not reused, because the console has already rendered. First assert the anchor is still on the integration branch: `git -C "$RUN_ROOT" rev-parse --abbrev-ref HEAD` must equal `{branch}`. Anything else is `failed`: report the current branch and stop, print no `switch` command, and pull nothing. `$RUN_ROOT` is the shared main checkout, and a sibling session owns its checkout state: a pull would rebase that session's branch, and a `switch` would clobber it. Then assert nothing outside run dirs changed locally since the reviewed tip: `git -C "$RUN_ROOT" diff --quiet {reviewed-tip} HEAD -- ':!.claude-tweaks/pipelines'`. Non-zero is `failed` and nothing is pulled, because a sibling's local shipped commits must not be rebased. Then `git -C "$RUN_ROOT" pull --rebase --no-autostash origin {branch}` (`--no-autostash` so a configured `rebase.autoStash` never stashes a sibling's work-in-progress). A rebase that refuses is `failed` with git's stderr verbatim. A rebase that stops mid-way on a conflict runs `git -C "$RUN_ROOT" rebase --abort` first, then reports `failed` with git's stderr verbatim, so the shared checkout is never left mid-rebase. Then re-run SKILL.md Step 3's review-tree check; any failure is `failed`, reported with Step 3's stop line and reason under this step's prefix and without its `switch` recovery. `{tip-sha}` is the sha that check's first call printed, never a second `rev-parse` of `origin/{branch}`. `{n}` is the verdict's `commits` when `{tip-sha}` equals the verdict's `tipSha`. When they differ (a commit reached `{branch}` between the check and the pull, so the delta reviews a longer range than the verdict counted), `{n}` is `git -C "$RUN_ROOT" rev-list --count {reviewed-tip}..{tip-sha}`; a non-zero exit from it is `failed`, stderr verbatim, nothing merged.
 
-**6. Delta review.** Count the `## /review` block's existing lines `{k}` (`0` when absent) and log the marker, with short shas for `{reviewed-short}` and `{tip-short}`:
+**4. Delta review.** Count the `## /review` block's existing lines `{k}` (`0` when absent) and log the marker, with short shas for `{reviewed-short}` and `{tip-short}`:
 
 ```
 AUTO {HH:MM:SS} — Step 5: origin/{branch} moved {reviewed-short} → {tip-short} ({n} commits) before the merge — move {m} of {bound}; delta review starting, base {reviewed-tip}..{branch}; ## /review marker: {k} existing lines. Reversibility: n/a (marker). [lever: release-tip-moves={bound} ({source})]
@@ -239,14 +211,12 @@ The marker deliberately carries no `at reviewed tip` clause: the delta has not b
 AUTO {HH:MM:SS} — Step 5: delta review base {reviewed-tip}..{branch}: review: {verdict}. Findings staged at {paths|none}{; at reviewed tip {tip-sha}}. Reversibility: n/a (gate evaluation).
 ```
 
-The clause is the only place the new tip becomes the reviewed one, so it is written only when the verdict is `clean`, `findings`, or an overridden `blocking` (log a `blocking` verdict after step 7's gate resolves); a held one carries none.
+The clause is the only place the new tip becomes the reviewed one, so it is written only when the verdict is `clean`, `findings`, or an overridden `blocking` (log a `blocking` verdict after step 5's gate resolves); a held one carries none.
 
-**7. Route the verdict.**
+**5. Route the verdict.**
 
 - `review: blocking` → `console.md`'s `review: blocking` gate, its `--allow-blocking` and `--train` rules unchanged (an override logs Step 3's lines; under `--train` it is ignored and the gate holds). A hold stages `release-held.md` through the Step 4 writer, naming the delta range and the findings' staged paths, and the outcome is `HELD`: nothing merged. Interactive asks `console.md`'s Gates question once, and an overridden or `Proceed`ed gate continues as clean.
-- `review: clean` or `review: findings (n medium/low, staged)` → re-enter at the PR-check gate, because its reads are stale after a delta and release-please re-renders the PR as commits land. This block then runs again from the delta verdict line's `at reviewed tip`, so a further move counts as move `{m}` + 1.
-
-  **On that re-entry, derive the bump part from the arrived commits too.** release-please may not have re-rendered the PR for the new tip yet, and delta 5 alone would then read a stale title: a `feat!` or `BREAKING CHANGE` among the arrived commits would ship as a minor without the major-bump HARD-GATE firing. `--as` runs are exempt from this hold: the shipped version is pinned by the `Release-As:` override, and Step 4's `--as` major gate measures the `--as` value, not commit parts. Otherwise read the subjects and bodies of `{reviewed-tip}..{tip-sha}` (`git -C "$RUN_ROOT" log --format=%B {reviewed-tip}..{tip-sha}`; `{reviewed-tip}` is the one before this delta, `{tip-sha}` the new tip; a non-zero exit is `failed`, stderr verbatim, nothing merged) and take the conventional-commit part: a `!` after a subject's type, or a `BREAKING CHANGE:` footer, is major; `feat` is minor; anything else is patch. Fold pre-major exactly as the pack's own `bumpPart` does, never from the digits alone: where `proposedVersion.value.preMajor` is `true` **and** `release-please-config.json` sets `bump-minor-pre-major` (top level or `packages["."]`, the keys `readBumpFlags` in `bin/lib/release-local/manifest.js` reads), a breaking marker counts as minor, not major; without that flag it stays major, as on 1.x. Only a major derived from the arrived commits changes the route: it takes delta 5's `re-rendered to a major after the console` HELD path, with the reason named `re-rendered to a major after the console — from the arrived commits {shas}, the release PR title still reads v{title-version}`, so a reader sees it did not come from the title. A minor or patch leaves delta 5's title rule standing, because the version the PR will carry is release-please's to render.
+- `review: clean` or `review: findings (n medium/low, staged)` → re-enter at the PR-check gate, because its reads are stale after a delta and release-please re-renders the PR as commits land. This block then runs again from the delta verdict line's `at reviewed tip`, so a further move counts as move `{m}` + 1. On that re-entry, step 1 runs again: the CLI reads that line's tip and reports the arrived commits of the delta just reviewed, so step 2 re-gates a major once per delta, never again for an earlier delta already accepted.
 
 Once the comparison passes, the remaining window is the merge call itself: a commit that lands inside that single call still ships, and no re-read can close it.
 

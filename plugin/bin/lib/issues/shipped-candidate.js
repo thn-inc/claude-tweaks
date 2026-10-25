@@ -34,6 +34,12 @@ const { tokenizeTitle, jaccard, DEFAULT_TITLE_SIMILARITY_THRESHOLD } = require('
 // requires a non-empty Key Files list, so an empty list can't vacuously
 // satisfy "every path is covered."
 //
+// A mention is skipped entirely (no tier, not even `weak`) when its PR was
+// already open before the record was created — a record filed during a PR's
+// build is that PR's by-product, not a deliverable it shipped (#4314:
+// #4135/PR #4035, #4191/PR #4144). A mention with no `createdAt` (or an
+// unparseable one) keeps the prior behavior.
+//
 // When more than one mention qualifies, `strong` always wins over `weak`;
 // among ties, the first qualifying mention in array order is reported —
 // mentions is small (dispatch fetches at most 20 per record) and the exact
@@ -52,6 +58,10 @@ function classifyShipped(record, mentions, opts = {}) {
     if (recordCreatedAtMs !== null && mention.mergedAt) {
       const mergedAtMs = new Date(mention.mergedAt).getTime();
       if (!(mergedAtMs > recordCreatedAtMs)) continue;
+    }
+    if (recordCreatedAtMs !== null && mention.createdAt) {
+      const prCreatedAtMs = new Date(mention.createdAt).getTime();
+      if (prCreatedAtMs < recordCreatedAtMs) continue;
     }
 
     const signals = ['merged-pr-mention-after-created'];

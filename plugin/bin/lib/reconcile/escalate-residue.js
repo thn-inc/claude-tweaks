@@ -118,13 +118,15 @@ function droppedNote(dropped) {
 
 function structurallyStuckBody(paths) {
   return [
-    'Reconcile has one or more run directories stuck at `structurally-stuck` past the escalation threshold. The skip reasons that feed this record are `no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending`, `pr-not-found`, `merged-partial`, `tiebreak-coverage-missing`, and `tiebreak-artifact-invalid`.',
+    'Reconcile has one or more run directories stuck at `structurally-stuck` past the escalation threshold. The skip reasons that feed this record are `no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending`, `pr-not-found`, `merged-partial`, `tiebreak-coverage-missing`, `tiebreak-artifact-invalid`, and `cant-tell-unfiled`.',
     '',
     "For a `console-never-rendered-staged-pending` directory, a merged run's `staged/` holds pending (or unreadable) items and no console was ever rendered — apply or delete the files under `staged/` (and any `spec-*/staged/`), or write a resolved `console.json`; the next reconcile then archives the dir and drops it from this record.",
     '',
     "For a `merged-partial` directory, the records the run's merged PR was meant to close (the closing-keyword links on that PR) are still open: ship them in a later PR, or close/release them if they were abandoned; the next reconcile then archives the dir and drops it from this record.",
     '',
     "For a `tiebreak-coverage-missing` or `tiebreak-artifact-invalid` directory, the run's review-findings.json lists a finding with no tiebreak verdict line in decisions.md, or is malformed: re-run the review step's findings writer and tiebreak for that run, or delete review-findings.json if the run predates the tiebreak; the next reconcile then archives the dir and drops it from this record.",
+    '',
+    "For a `cant-tell-unfiled` directory, the run merged through an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) with no Review Console and holds a can't-tell finding no record was filed for: file it through `wrap-up/review-console.md`'s Can't-tell filings step (`console-filings.js --run {run-dir}`; a `spec-N/`-prefixed id is filed and logged with `--run {run-dir}/spec-N`, its own `decisions.md`), logging `{item} filed as #{n} (work-fingerprint {fp})` for each, or write a resolved `console.json`; the next reconcile then archives the dir and drops it from this record.",
     '',
     "Each directory's exact reason is the `lastError` (`stuck at <reason>`) on its `structurally-stuck` entry under `residueFailures` in the main checkout's `.claude-tweaks/reconcile-cache.json`.",
     '',

@@ -67,3 +67,11 @@ test('the cited modules actually export classifyShipped and the extended fetchLi
   const linkedPrs = require('../plugin/bin/lib/issues/linked-prs');
   assert.strictEqual(typeof linkedPrs.fetchLinkedPRs, 'function');
 });
+
+test('#4314: both dispatch files state that a mention from a PR already open when the record was filed is skipped', () => {
+  const section = QUEUE_PULL.slice(QUEUE_PULL.indexOf('#1984: shipped-candidate classification'));
+  assert.match(section.slice(0, 2000), /#4314/);
+  assert.match(section.slice(0, 2000), /opened before the record was created/);
+  assert.match(DISPATCH_SKILL, /opened before the record was created/);
+  assert.match(DISPATCH_SKILL, /#4314/);
+});

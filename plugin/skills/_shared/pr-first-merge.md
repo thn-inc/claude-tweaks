@@ -325,6 +325,8 @@ fire (GitHub only auto-closes from a merge commit's message, or a PR body merged
 *default* branch — an explicit merge commit message is what makes closing work on any
 integration branch). `--squash` keeps one conventional commit per PR.
 
+When the caller supplies an expected head sha (today only `dispatch/close-out.md` after an update), append `--match-head-commit {expected-head}` to every `gh pr merge` command in this step, so a merge, or the arming of one, is accepted only against the head the caller verified; callers that supply none are unchanged.
+
 Run each fence as its own Bash call, never chained; if the composer exits non-zero, stop before any
 merge (its stderr names the reason). `{subject-dir}` is a literal path — resolve it once with
 `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" SUBJECT_DIR=merge-subject-{key}`

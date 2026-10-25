@@ -35,7 +35,7 @@ Pipeline config snapshot:
 - integration-model: pr-first
 
 ## /flow
-- AUTO 14:31:02 — Manifesto: levers written to /Users/x/project/.claude-tweaks/pipelines/2026-05-15T143207-spec-42/config.yml. (#1826/#1810: logs the absolute path so a shadow-path write is never indistinguishable from no write at all.)
+- AUTO 14:31:02 — Manifesto: levers written to /Users/x/project/.claude-tweaks/pipelines/2026-05-15T143207-spec-42/config.yml. (#1826/#1810: `set-config.js --set` logs the absolute path itself, so a shadow-path write is never indistinguishable from no write at all.)
 - SKIP 14:31:03 — Manifesto write skipped: interactive mode, no Manifesto this run. (#1826)
 - SKIP 14:31:03 — Manifesto write skipped: case 1 adoption, config.yml already present. (#1826)
 
@@ -72,6 +72,8 @@ caller per the shape below) and inserts it under the given `--section` heading (
 if absent) or at end of file otherwise. Every consumer of this file writes through it instead of
 hand-appending a formatted line per call site — with one documented exception: `FAILED`, which is
 hand-composed by its four writers (see the `STATUS` row below).
+
+**Batch form: `--entries`.** `bin/log-decision.js --run <run-dir> --entries <file> [--section "/<skill>"]` appends many entries under one lock: `<file>` holds a non-empty JSON array of `{ status, text, step?, spec?, reversibility?, lever?, section? }` (an element's `section` wins over `--section`), every element validated like the single-entry flags before any is written, and it takes none of `--status`/`--text`/`--text-file`/`--step`/`--spec`/`--reversibility`/`--lever`. Batch the model-judged entries a phase accumulates into one `--entries` call at phase end, before its `bin/phase-exit.js` call: resolve the file with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DECISION_ENTRIES=decision-entries-{run-id}-{phase}.json`, write the JSON with the Write tool — never through the shell, so no entry text passes through shell quoting — and pass `--entries "{path}"`. An entry something reads before the phase ends (a line a hook gate releases on, such as `PR-early run lifecycle: … FAILED`) is still written at once.
 
 **Text from git or a user: `--text-file`.** When the entry text interpolates anything git or a user supplied (a file name, an error message), never put it in a double-quoted `--text` — the shell expands `$(...)`, backticks and `$VAR` inside it. Instead resolve a session temp path with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DECISION_TEXT=decision-text-{run-id}-{step-slug}.md` (it prints `DECISION_TEXT="{path}"`; see `_shared/session-tmp-root.md`), write the one-line text there with the Write tool, and pass `--text-file "{path}"`. The entry is identical to what `--text` writes. The file must hold one line; a `--text-file` with an interior line break exits 2. `--text` and `--text-file` are mutually exclusive.
 
@@ -198,7 +200,7 @@ Skills append, never rewrite. Pattern:
 
 For the very first entry of a pipeline run, `/flow` (or the first standalone skill) writes the file header and the pipeline config snapshot. Subsequent entries are added under skill headings.
 
-**One command per entry.** `bin/log-decision.js` performs steps 1-3 for a single entry — format
+**One command per entry** (or per batch — `--entries`, Entry schema above). `bin/log-decision.js` performs steps 1-3 for a single entry — format
 per the Entry schema above; when `--section` is passed, the entry is placed under the `## /{skill}`
 heading (creating it when absent), otherwise appended at EOF. It refuses to write with exit `3`
 when the run dir is missing, not anchored under `$RUN_ROOT` (`_shared/pipeline-run-dir.md`'s
@@ -235,7 +237,16 @@ invocation and a second invocation clobbered the first's findings) — a collisi
 to the next free `{kind}-{n}` in that run dir's `staged/` instead of clobbering. See
 `bin/lib/stage-item/write.js`'s `writeStagedItem` for the full contract.
 
-**Regardless of worktree state.** `bin/log-decision.js` (above) is the sole append path for `decisions.md` — unconditional, regardless of whether the session sits in a worktree or the main checkout. The run directory is always anchored to the main checkout (`_shared/pipeline-run-dir.md`'s Anchoring section); a worktree session's `Edit`/`Write`/heredoc/redirect attempts against a file under it are refused by the harness regardless of whether a worktree exists for this run — worktree existence was never the deciding factor, and there is no separate append shape for the worktree case.
+**CLIs that log their own entries.** A bin CLI given `--run` appends the entry for a decision it reports as data itself, through `lib/log-decision/append.js` — #4026 moved these ones there: `phase-exit.js`, `pr-merge-state.js`, `pr-checklist.js`, `pr-checks.js`, `set-config.js --set`, `closing-links.js`, `verify-run-bookends.js`, `console-filings.js`, `review-coordination.js resolve-tiebreak`, `hooks.js delete-ledger`. A skill never re-logs an entry a CLI already wrote, and hand-logs it with `log-decision.js` only when the CLI reports the append failed — in its envelope (`logged: false` on a state that logs, `logFailed: true`, a `logFailures` element) or in a stderr line naming the failed `decisions.md` append (`could not append the decisions.md entry`, or `hooks.js delete-ledger`'s `decisions.md append failed … hand-log …`). These stay with the caller, by rule:
+
+- (a) an entry reporting a CLI's own failed invocation (`compose-subject.js` failing, a non-zero exit from `diff-facts.js`, `shadow-dup-proposal.js` or `phase-timing.js --check-budgets`, `record-worktree` not printing `worktree recorded`, `review-coordination.js write-findings` exit 3, `release-local.js`'s per-subprocess log) — a failing process cannot be trusted to have logged;
+- (b) a CLI that runs before the run directory exists (`preflight-records.js`) — its caller logs once the run directory exists;
+- (c) a read-only fact pack (`flow-preflight.js`, `wrap-up-pack.js`) — its contract is no writes beyond the pack;
+- (d) a resolver called from many sites where no entry is owed (`resolve-policy.js`, `resolve-profile.js`);
+- (e) an entry whose text depends on the caller's own retry state (`release-note-repair.js`'s second exit 4);
+- (f) a lib module run through `node -e`, which is not a bin CLI (`merge-verdict.js`, `exclusions.js`, `first-call-artifact-check.js`).
+
+**Regardless of worktree state.** `bin/log-decision.js` (above) is the sole append path a skill uses for `decisions.md` — unconditional, regardless of whether the session sits in a worktree or the main checkout. The run directory is always anchored to the main checkout (`_shared/pipeline-run-dir.md`'s Anchoring section); a worktree session's `Edit`/`Write`/heredoc/redirect attempts against a file under it are refused by the harness regardless of whether a worktree exists for this run — worktree existence was never the deciding factor, and there is no separate append shape for the worktree case.
 
 ## Reading the log (for /wrap-up Review Console)
 

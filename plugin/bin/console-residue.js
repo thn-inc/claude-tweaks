@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // plugin/bin/console-residue.js — show and acknowledge the Review Console items
 // an `unattended` run left `pending` / `keep-staged` that no human has reviewed
-// (#3370). Read-only toward staged/ and toward resolution; the only write is
+// (#3370), plus a PR console's `filing-failed` / `reverse-failed` items (#4172).
+// Read-only toward staged/ and toward resolution; the only write is
 // `--ack`, which adds `residueAcknowledgedAt` to a console.json and preserves
 // every other field.
 //   console-residue.js --run <dir>             print the residue block (nothing when none)

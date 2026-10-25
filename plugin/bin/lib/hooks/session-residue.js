@@ -142,7 +142,8 @@ function runIdNames(dir) {
 }
 
 // Closed (clean, top-level) and archived runs whose Review Console left
-// `pending` / `keep-staged` items no human has reviewed (#3370), newest first
+// `pending` / `keep-staged` items — or PR console items whose outcome is
+// `filing-failed` / `reverse-failed` (#4172) — no human has reviewed (#3370), newest first
 // by basename, capped at `limit` (default MAX_REPORTED). Candidates are the
 // newest `window` run-id names of the top level and archive/ merged, listed
 // without reading any state; a basename in both is kept once, top-level

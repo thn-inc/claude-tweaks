@@ -8,6 +8,8 @@ files:
   - plugin/skills/dispatch/exclusions-unreadable-report.md
   - plugin/bin/lib/dispatch/exclusions.js
   - plugin/skills/dispatch/neighbour-in-flight-report.md
+  - plugin/bin/lib/issues/shipped-candidate.js
+  - plugin/bin/lib/issues/linked-prs.js
 ---
 
 # Learn Why a Named Record Won't Dispatch
@@ -47,6 +49,13 @@ files:
 - **Should understand:** Unlike the step 1 reasons, this one never removes the record. Bare drain would wait for the neighbour, but `#N` builds now, and any overlap with `#m` resolves at merge through `_shared/pr-first-merge.md`'s Conflict path (#3278).
 - **Red flags:** `#N` refused or reported "absent from this firing's queue" over a neighbour-in-flight entry. The report line missing when a live neighbour exists.
 
+### 2d. A follow-up the PR itself filed is not "shipped" by it
+- **URL:** `plugin/skills/dispatch/SKILL.md` False-positive posture (#1984, #4314); `plugin/bin/lib/issues/shipped-candidate.js` `classifyShipped`; `plugin/bin/lib/issues/linked-prs.js` `fetchLinkedPRs` (each mention's `createdAt`)
+- **Action:** Name a follow-up record that a PR's own build filed while that PR was open — e.g. `/claude-tweaks:dispatch #4135`, filed at 12:33 by the reflect pass of PR #4035 (opened 08:24, merged 15:39), whose commit message lists it and whose diff covers its Key Files. The queue pull reads each mentioning PR's `createdAt` and skips PR #4035's mention because that PR was opened before the record was created, so `#4135` is not excluded as `shipped`, no Close proposal is staged, and it dispatches.
+- **Should feel:** Unremarkable. A record you granted builds when you name it, and you no longer have to drop a false Close proposal by hand at every firing.
+- **Should understand:** The `shipped` reason still fires for a PR opened after the record was filed that mentions it and matches its title or covers its Key Files. The new skip is per mention: a later, independent PR can still mark the same record shipped. The accepted cost is a PR that was already open when the record was filed and fixed it with only `refs #N`. That record now builds, and the build finds the work already done (#2502's already-shipped exit).
+- **Red flags:** `#4135`, or another follow-up from a still-open PR's build, reported as `shipped` by the PR whose build filed it. A Close proposal staged for it. A record genuinely shipped by a later PR now dispatching.
+
 ### 3. Name several records at once
 - **URL:** `plugin/skills/dispatch/SKILL.md` `#N[,#M,#O...]` bullet
 - **Action:** Run `/claude-tweaks:dispatch #N,#M` where `#N` is excluded and `#M` is eligible. `#N` appears in the `notFound` report with the same named reason as step 2; `#M`'s group proceeds to Step 4.
@@ -61,3 +70,4 @@ files:
 - Updated during build of #3104: Step 2b covers an unreadable or missing `dispatch-exclusions.json`, reported as reason unknown and never as absent; `exclusions-unreadable-report.md` and `exclusions.js` added to `files:`
 - Updated during wrap-up of the #3101-#3104 run: Step 2b names the failed-probe branch (#3104 review); Step 2 names the `blocked` report line and visits `blocked-exclusion-report.md` and `open-pr-exclusion-report.md`
 - Updated during build of #3278: Step 2c covers the non-removing `neighbour-in-flight` reason. `#N` prints the waits line and still dispatches. `neighbour-in-flight-report.md` added to `files:`
+- Updated during build of #4314: Step 2d covers a follow-up record filed during a PR's build, which is no longer read as `shipped` by that PR. `shipped-candidate.js` and `linked-prs.js` added to `files:`
