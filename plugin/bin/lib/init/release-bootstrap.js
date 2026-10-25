@@ -21,6 +21,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { compareVersions } = require('../changelog');
 const { isPathContained } = require('../shared-primitives');
+const { lstatType } = require('../path-guard');
 
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)$/;
 // Pre-release/build-metadata tags (e.g. `v2.0.0-rc.1`) are not full releases
@@ -461,25 +462,28 @@ function segmentsOf(rel, pathImpl = path) {
 // realpath boundary check after mkdirSync (in the caller) is the second,
 // belt-and-suspenders half of this — a TOCTOU between this check and the
 // write is still closed because mkdirSync/writeFileSync never themselves
-// follow a symlink into existence.
-function assertSafeWriteTarget(root, rel) {
-  const segments = segmentsOf(rel);
+// follow a symlink into existence. A segment or leaf that cannot be inspected
+// (EACCES, EIO) fails closed — it is not read as "doesn't exist yet".
+// pathImpl / fsImpl are injectable so the win32 path wiring is testable on
+// any host.
+function assertSafeWriteTarget(root, rel, { pathImpl = path, fsImpl = fs } = {}) {
+  const check = (p) => {
+    const { type, code } = lstatType(p, { fsImpl });
+    if (type === 'symlink') throw new Error(`refusing to write through a symlink: ${rel}`);
+    if (type === 'unreadable') throw new Error(`refusing to write ${rel}: cannot inspect ${pathImpl.relative(root, p)} (${code})`);
+    // 'missing' — doesn't exist yet; mkdirSync will create a real directory
+  };
   let cur = root;
-  for (const seg of segments) {
-    cur = path.join(cur, seg);
-    let st;
-    try { st = fs.lstatSync(cur); } catch { continue; } // doesn't exist yet — mkdirSync will create a real directory
-    if (st.isSymbolicLink()) throw new Error(`refusing to write through a symlink: ${rel}`);
+  for (const seg of segmentsOf(rel, pathImpl)) {
+    cur = pathImpl.join(cur, seg);
+    check(cur);
   }
-  const full = path.join(root, rel);
-  let targetStat;
-  try { targetStat = fs.lstatSync(full); } catch { targetStat = null; }
-  if (targetStat && targetStat.isSymbolicLink()) throw new Error(`refusing to write through a symlink: ${rel}`);
+  check(pathImpl.join(root, rel));
 }
 
 module.exports = {
   RELEASE_STACK_TABLE, RELEASE_TYPE_VALUES, CONFLICT_MARKERS, CONFIG_FILE, MANIFEST_FILE, WORKFLOW_FILE,
   isBootstrapShaped, detectReleaseProcess, resolveReleaseType, readStackManifestVersion, seedManifestVersion,
   isValidBranchName, renderWorkflowYaml, renderConfig, renderManifest, renderPolicyRows,
-  defaultListTags, bootstrapRelease, writeBootstrapFiles, segmentsOf,
+  defaultListTags, bootstrapRelease, writeBootstrapFiles, segmentsOf, assertSafeWriteTarget,
 };

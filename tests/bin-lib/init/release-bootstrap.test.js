@@ -566,3 +566,31 @@ test('#4282 AC2.1 AC2.2: segmentsOf splits a relative path on both separators, u
   assert.deepEqual(rb.segmentsOf('a\\b/x.yml', path.posix), ['a\\b']);
   assert.deepEqual(rb.segmentsOf('a\\b\\x.yml', path.win32), ['a', 'b']);
 });
+
+test("#4282: assertSafeWriteTarget lstats every intermediate segment of a '/'-separated rel under win32 path semantics", () => {
+  const rel = '.github/workflows/release-please.yml';
+  const errWith = (code) => Object.assign(new Error(code), { code });
+  const fakeFor = (onGithub) => {
+    const seen = [];
+    return {
+      seen,
+      lstatSync(p) {
+        seen.push(p);
+        if (p.endsWith('\\.github')) return onGithub();
+        throw errWith('ENOENT');
+      },
+    };
+  };
+  const symlinked = fakeFor(() => ({ isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false }));
+  assert.throws(
+    () => rb.assertSafeWriteTarget('C:\\repo', rel, { pathImpl: path.win32, fsImpl: symlinked }),
+    /refusing to write through a symlink: \.github\/workflows\/release-please\.yml/,
+  );
+  assert.ok(symlinked.seen.includes('C:\\repo\\.github'), `lstat saw ${JSON.stringify(symlinked.seen)}`);
+  // an uninspectable segment fails closed rather than reading as "doesn't exist yet"
+  const unreadable = fakeFor(() => { throw errWith('EACCES'); });
+  assert.throws(
+    () => rb.assertSafeWriteTarget('C:\\repo', rel, { pathImpl: path.win32, fsImpl: unreadable }),
+    /cannot inspect .*\.github.*EACCES/,
+  );
+});

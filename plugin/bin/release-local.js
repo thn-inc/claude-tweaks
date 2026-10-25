@@ -36,6 +36,7 @@ const { guardReleasableTree, pushAfterAncestryCheck } = require('./lib/release/r
 const { resolvePolicyKeys } = require('./lib/policy-schema.js');
 const { withIndexLockRetry } = require('./lib/git-retry.js');
 const { isPathContained } = require('./lib/shared-primitives.js');
+const { lstatType } = require('./lib/path-guard');
 
 const USAGE = [
   'usage: release-local.js [--dry-run] [--root <dir>] [--branch <name>] [--release-as <version>]',
@@ -314,13 +315,9 @@ function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
     try { fs.writeFileSync(fd, text); } finally { fs.closeSync(fd); }
     return;
   }
-  let before = null;
-  try {
-    before = fs.lstatSync(leaf);
-  } catch (e) {
-    if (e.code !== 'ENOENT') throw e;
-  }
-  if (before && before.isSymbolicLink()) throw symlinkError();
+  const before = lstatType(leaf);
+  if (before.type === 'symlink') throw symlinkError();
+  if (before.type === 'unreadable') throw new Error(`refusing to write ${p}: cannot inspect it (${before.code})`);
   // A leaf that was absent is created exclusively and one that was present is
   // opened without O_CREAT, so a leaf that changed since the lstat fails the open
   // (EEXIST / ENOENT) instead of leaving a freshly created file behind. That
@@ -328,7 +325,7 @@ function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
   // message; ELOOP / EMLINK are a symlink, as in the O_NOFOLLOW branch.
   let fd;
   try {
-    fd = fs.openSync(leaf, before ? O_WRONLY : O_WRONLY | O_CREAT | O_EXCL, 0o644);
+    fd = fs.openSync(leaf, before.type === 'missing' ? O_WRONLY | O_CREAT | O_EXCL : O_WRONLY, 0o644);
   } catch (e) {
     if (e.code === 'ELOOP' || e.code === 'EMLINK') throw symlinkError();
     if (e.code === 'EEXIST' || e.code === 'ENOENT') throw new Error(`refusing to write ${p}: it changed between the check and the open`);
