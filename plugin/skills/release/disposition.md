@@ -84,7 +84,7 @@ A filing or digest write that fails leaves that staged file where it is and writ
 FAILED {HH:MM:SS} — Step 8 disposition: {staged path} — {file|digest} failed: {message}. Reversibility: n/a (write did not land).
 ```
 
-An unrecognised file takes the same line with `unrecognised staged file, no route` in place of `{file|digest} failed: {message}`, and `Reversibility: n/a (nothing written).` An unreadable `staged/` or `decisions.md` (a read that fails with anything but "does not exist") takes the same line with `read failed: {message}` in place of `{file|digest} failed: {message}`, `{staged path}` naming the unreadable path, and `Reversibility: n/a (nothing read).` It counts toward `{k} failed` in the summary line. Any failure means Step 8 skips archival for this run and names the failed paths in its summary. The closed directory stays in place with the unread finding still in `staged/`, and the next release will not adopt it (Step 0 refuses a terminal directory).
+An unrecognised file takes the same line with `unrecognised staged file, no route` in place of `{file|digest} failed: {message}`, and `Reversibility: n/a (nothing written).` An unreadable `staged/` or `decisions.md` (per Inventory) takes the same line with `read failed: {message}` in place of `{file|digest} failed: {message}`, `{staged path}` naming the unreadable path, and `Reversibility: n/a (nothing read).` It counts toward `{k} failed` in the summary line. Any failure means Step 8 skips archival for this run and names the failed paths in its summary. The closed directory stays in place with the unread finding still in `staged/`, and the next release will not adopt it (Step 0 refuses a terminal directory).
 
 ## Anti-Patterns
 
