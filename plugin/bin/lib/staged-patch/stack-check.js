@@ -29,12 +29,21 @@ function gitEnv({ platform = process.platform, devNull = os.devNull, env = proce
   delete out.GIT_DIR;
   delete out.GIT_WORK_TREE;
   delete out.GIT_INDEX_FILE;
+  delete out.GIT_COMMON_DIR;
+  // GIT_DIFF_OPTS sets the context length of every diff git emits, including the re-derived patch.
+  delete out.GIT_DIFF_OPTS;
+  // Config carried in the environment (`git -c` exports GIT_CONFIG_PARAMETERS; GIT_CONFIG_COUNT and
+  // GIT_CONFIG_KEY_n/VALUE_n are git's own form) is not reached by GIT_CONFIG_GLOBAL or NOSYSTEM.
+  delete out.GIT_CONFIG_PARAMETERS;
+  delete out.GIT_CONFIG_COUNT;
+  for (const k of Object.keys(out)) if (/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(k)) delete out[k];
   return out;
 }
 
-// Every git call runs with the user's and system config switched off and the caller's repo
-// pointers removed: a user `diff.noprefix` or an inherited GIT_DIR would change what the check
-// reads and emits. `binary` returns stdout as a Buffer, for output that carries file bytes.
+// Every git call runs with the user's and system config switched off, including environment-carried
+// config (`git -c` / `GIT_CONFIG_*`), and the caller's repo pointers removed: a user `diff.noprefix`
+// or an inherited GIT_DIR would change what the check reads and emits. `binary` returns stdout as a
+// Buffer, for output that carries file bytes.
 function defaultGit(args, { cwd, binary = false }) {
   const r = spawnSync('git', args, { cwd, encoding: binary ? 'buffer' : 'utf8', env: gitEnv(), windowsHide: true });
   return { status: r.status, stdout: r.stdout || (binary ? Buffer.alloc(0) : ''), stderr: r.stderr ? r.stderr.toString() : '' };

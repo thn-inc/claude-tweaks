@@ -417,7 +417,7 @@ function namesRecordReference(resolution, excludeRecords) {
 // `Defer-reason:`. A row whose Item starts with the SDD ruling producer's
 // fixed `SDD ruling —` template is exempt too: a deferral ruling's reason
 // lives in its staged file's `Defer-reason:` header (gated by
-// console/resolve.js's sddRulingDeferralReason), not in the ledger row, and
+// console/sdd-ruling.js's sddRulingDeferralReason), not in the ledger row, and
 // the producer's no-run-dir and degraded stage-item.js paths emit it `open`
 // with no staged path (build/dispatch.md). A Resolution is valid iff it
 // carries exactly one token and its value is in DEFER_REASONS.

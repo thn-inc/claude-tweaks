@@ -13,6 +13,7 @@ const { splitNul } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
+const { canonicalRealpath, resolveLeaf } = require('../path-guard');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
@@ -20,9 +21,9 @@ const {
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
 const {
-  recordResidueSuccess, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
+  recordResidueSuccess, clearResidue, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 } = require('./cache');
-const { escalateResidue } = require('./escalate-residue');
+const { escalateResidue, resolveResidue } = require('./escalate-residue');
 const { isWorktreeAlwaysOn } = require('../policy');
 const { repoSlugOf, prClosesIssue } = require('./release-merged');
 const { closeRunState } = require('../hooks/close-run-state');
@@ -82,9 +83,40 @@ function isStaleDir(dir, ttlMs, now = Date.now()) {
 // through to the ordinary isOrphanedMint mtime sweep instead, same as any
 // other malformed mint.
 function isAdHocStandaloneMint(dir) {
-  if (!isAdHocRunDir(dir)) return false;
+  return !!readAdHocState(dir);
+}
+
+// The run-state of a genuine ad-hoc mint (the test above), or null — one read,
+// so a caller that needs the state too never re-reads a file that can vanish.
+function readAdHocState(dir) {
+  if (!isAdHocRunDir(dir)) return null;
   const state = readRunState(dir);
-  return !!(state && typeof state.worktree === 'string' && state.worktree);
+  return state && typeof state.worktree === 'string' && state.worktree ? state : null;
+}
+
+// #2724: an ad-hoc dir is a session friction log, "not a pipeline run"
+// (docs/hooks.md), so having no branch, worktree or PR is its normal state —
+// not stuckness — and `adhoc-superseded` archives it once its linked worktree is
+// no longer registered and ADHOC_SUPERSEDED_TTL_MS has passed.
+// That sweep only ever claims a dir whose recorded worktree is a linked
+// worktree, though: a dir stamped with the main checkout can never be
+// superseded, so it stays tracked and keeps escalating.
+const ADHOC_INTRINSIC_STUCK_REASONS = new Set(['no-branch', 'no-worktree', 'no-pr']);
+const ADHOC_EXEMPT_WHY = 'is an ad-hoc session directory: no branch, worktree or PR is its normal state, and the adhoc-superseded sweep archives it once its session has ended';
+
+function isAdHocIntrinsicSkip(dir, reason) {
+  if (!ADHOC_INTRINSIC_STUCK_REASONS.has(reason)) return false;
+  const state = readAdHocState(dir);
+  if (!state) return false;
+  // Compare real paths, so a dir reached through a symlink (/var vs /private/var)
+  // never reads a main-checkout stamp as linked. A recorded worktree that no
+  // longer exists cannot be the main checkout, which holds this dir; any other
+  // unprovable path fails closed (not exempt).
+  const mainRoot = canonicalRealpath(path.resolve(dir, '..', '..', '..'));
+  if (!mainRoot) return false;
+  const leaf = resolveLeaf(state.worktree);
+  if (leaf.state === 'resolved') return leaf.path !== mainRoot;
+  return leaf.state === 'missing';
 }
 
 // #1604: the "swept once genuinely superseded" half of #1117's own design
@@ -1725,7 +1757,8 @@ function classifyRunDir(ctx, now = Date.now()) {
         return { kind: 'none', ttlMs: null, evidence: { skipReason: decision.reason } };
       }
     } else if (kind === 'structurally-stuck') {
-      if (skipReason && STRUCTURALLY_STUCK_REASONS.has(skipReason) && isStaleDir(dir, STRUCTURALLY_STUCK_TTL_MS, now)) {
+      if (skipReason && STRUCTURALLY_STUCK_REASONS.has(skipReason) && !isAdHocIntrinsicSkip(dir, skipReason)
+          && isStaleDir(dir, STRUCTURALLY_STUCK_TTL_MS, now)) {
         return { kind: 'structurally-stuck', ttlMs: STRUCTURALLY_STUCK_TTL_MS, evidence: {} };
       }
     }
@@ -1744,7 +1777,13 @@ function classifyRunDir(ctx, now = Date.now()) {
 // unchanged) or a `beginCacheBatch` handle (#1235 — batched across
 // `archiveMerged`'s item loops); see cache.js's own comment on the two
 // shapes.
-function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalateResidue, runner } = {}) {
+function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalateResidue, resolve = resolveResidue, runner, dryRun = false } = {}) {
+  if (isAdHocIntrinsicSkip(dir, reason)) {
+    // #2724: clearing resolves a real GitHub record, so it sits behind the same dry-run guard as pruneResidueFailures.
+    if (dryRun) return;
+    clearResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { resolve, runner, why: ADHOC_EXEMPT_WHY });
+    return;
+  }
   if (!isStructurallyStuck(dir, reason)) return;
   trackResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { failed: true, lastError: `stuck at ${reason}` }, { escalate, runner });
 }
@@ -1760,19 +1799,22 @@ function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalat
 // `ls-files-failed`, `readdir-failed`, `tracked-entry`, `close-failed`) are
 // distinct failure classes the issue never named, and folding them into the
 // same counter would blur reasons that need different diagnosis.
-// `escalate` is injectable (defaults to the real `escalateResidue`, which
-// shells to `gh`) so a test can assert escalation actually fired — and how
-// many times — without touching real `gh` or the network.
+// `escalate` and `resolve` are injectable (default to the real
+// `escalateResidue` / `resolveResidue`, which shell to `gh`) so a test can
+// assert escalation and resolution fired — and how many times — without
+// touching real `gh` or the network.
 // `cacheTarget` — plain root string, or a `beginCacheBatch` handle (#1235) —
 // see `trackStuckSkip`'s own comment above.
-function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = escalateResidue, runner } = {}) {
+function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = escalateResidue, resolve = resolveResidue, runner } = {}) {
   if (result.ok) {
     recordResidueSuccess(cacheTarget, 'move-failed', dir);
     // #1613: a dir that just successfully archived can no longer be
     // structurally stuck — clear any prior tracking so a future, unrelated
     // reuse of this path (unlikely — paths are timestamp-uniqued, but cheap
     // to guard) starts a fresh count rather than resuming a stale one.
-    recordResidueSuccess(cacheTarget, 'structurally-stuck', dir);
+    // #4202: an escalated entry resolves off the consolidated record rather
+    // than being silently dropped; a failed resolve keeps it for the next pass.
+    clearResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { resolve, runner });
     return;
   }
   // Archive-specific vocabulary — not part of the shared branching cache.js's
@@ -2227,7 +2269,7 @@ function archiveMerged({
               const guard = byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug);
               if (guard) {
                 skipped.push(skippedEntry(dir, guard));
-                trackStuckSkip(cacheBatch, repoSlug, dir, guard.reason, { runner });
+                trackStuckSkip(cacheBatch, repoSlug, dir, guard.reason, { runner, dryRun });
                 continue;
               }
               finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
@@ -2247,14 +2289,14 @@ function archiveMerged({
             // its own tracked reason too.
             const consoleReason = byNumber.state === 'CLOSED' ? 'console-never-rendered-pr-closed' : 'console-never-rendered-staged-pending';
             skipped.push({ runDir: dir, reason: consoleReason });
-            trackStuckSkip(cacheBatch, repoSlug, dir, consoleReason, { runner });
+            trackStuckSkip(cacheBatch, repoSlug, dir, consoleReason, { runner, dryRun });
             continue;
           }
           if (byNumber.state === 'MERGED') {
             const guard = byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug);
             if (guard) {
               skipped.push(skippedEntry(dir, guard));
-              trackStuckSkip(cacheBatch, repoSlug, dir, guard.reason, { runner });
+              trackStuckSkip(cacheBatch, repoSlug, dir, guard.reason, { runner, dryRun });
               continue;
             }
           }
@@ -2263,14 +2305,14 @@ function archiveMerged({
         }
       }
       skipped.push({ runDir: dir, reason: skipReason });
-      trackStuckSkip(cacheBatch, repoSlug, dir, skipReason, { runner });
+      trackStuckSkip(cacheBatch, repoSlug, dir, skipReason, { runner, dryRun });
       continue;
     }
 
     const runResult = archiveMergedRun({
       root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
       recordCheck: { records, repoSlug },
-      onSkip: (reason) => trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner }),
+      onSkip: (reason) => trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun }),
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
     skipped.push(skippedEntry(dir, runResult));
@@ -2296,8 +2338,8 @@ function archiveMerged({
     const runResult = archiveMergedRun({
       root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
       onSkip: (reason) => {
-        if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner });
-        if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid') trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner });
+        if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun });
+        if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid') trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun });
       },
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
@@ -2312,11 +2354,13 @@ function archiveMerged({
   commitCacheBatch(cacheBatch);
 
   // #1892 Deliverable 3: prune residueFailures entries whose live path no
-  // longer exists — after every archival attempt this pass made, so a path
-  // this very pass just archived is pruned via recordResidueSuccess above,
-  // never re-examined here. A real GitHub write (closing an escalated
-  // record) belongs behind the same dry-run guard every other outward write
-  // in this module already respects.
+  // longer exists — after every archival attempt this pass made. A dir this
+  // pass just archived has its structurally-stuck entry cleared (or kept on a
+  // failed resolve) by trackArchiveResult's clearResidue (#4202); a kept
+  // entry's path is now gone, so the call below retries its resolve in this
+  // same pass and then drops the entry whatever that retry returns. A real
+  // GitHub write (closing an escalated record) belongs behind the same dry-run
+  // guard every other outward write in this module already respects.
   if (!dryRun) pruneResidueFailures(root, repoSlug, { runner });
 
   return { archived, skipped };
@@ -2325,7 +2369,7 @@ function archiveMerged({
 module.exports = {
   archiveMerged, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, archiveRunDir, listSpecDirs,
   isStaleDir, classifyRunDir,
-  isOrphanedMint, isAdHocStandaloneMint, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
+  isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
   isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,

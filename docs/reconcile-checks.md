@@ -232,7 +232,11 @@ whose tracked path no longer exists on disk: a path can never fail or succeed th
 must stop counting toward a fresh escalation streak. An entry that was already `escalated` also
 gets its filed backlog record resolved — `escalate-residue.js`'s `resolveResidue` comments ("no
 longer exists on disk — resolved by other means") and closes it, best-effort (a resolution failure
-still drops the cache entry; the record is left for a human to close manually). Escalation itself
+still drops the cache entry; a per-path record is left for a human to close manually, while a path
+left on the consolidated `structurally-stuck` record comes off at the next escalate or resolve edit
+a pass in this checkout makes — see the consolidated-escalation bullet below). A successful
+archive also resolves an escalated `structurally-stuck` entry, through `clearResidue` (#4202): it
+is kept on a failed resolve, retried once by the same pass's prune, then dropped. Escalation itself
 (`escalateResidue`) now dedups against **closed** records too, not just open ones: a marker match
 that is already closed gets a comment + reopened rather than a duplicate filing — one record per
 path across its whole open/closed/reopened lifetime.
@@ -273,6 +277,8 @@ call-site-only, never folded into the classifier itself (folding it in would mis
 `abandoned-interrupted` but fails the gate still falls through to the next-lower-precedence kind,
 matching the pre-consolidation `&&`-chained early-return exactly.
 
+The `structurally-stuck` branch exempts an ad-hoc dir at `no-branch`/`no-worktree`/`no-pr` (`isAdHocIntrinsicSkip`, #2724) — that is an ad-hoc dir's normal state, and `adhoc-superseded` archives it once its linked worktree is no longer registered and `ADHOC_SUPERSEDED_TTL_MS` (30 days) has passed — but only when its recorded worktree is a linked worktree: a dir stamped with the main checkout can never be claimed by `adhoc-superseded`, so it stays tracked and keeps escalating. `trackStuckSkip` clears an exempted dir's cache entry (`clearResidue`) and, if it was already escalated, resolves its path off the consolidated record. Unlike Residue pruning above, an escalated entry is dropped only after that resolve lands (`closed`, `path-removed`, `not-found` or `already-closed`): the dir still exists, so a throw or any other status keeps the entry and the next pass retries. The resolve comment says the path is an ad-hoc session directory rather than "no longer exists on disk" (`resolveResidue`'s optional `why`), and under `reconcile --dry-run` the whole clear is skipped, the same guard `pruneResidueFailures` sits behind.
+
 ## No-run-state.json terminal path and consolidated escalation (#1811)
 
 Two additions beyond the branchless MERGED-by-number probe (already covered by `state.pr.number`
@@ -296,7 +302,10 @@ main loop, landed via #1962/#2226/#2228/#2231):
   path-specific basis, unchanged), so every stuck dir's `trackResidue` call converges on the same
   marker. The record's body carries a `<!-- stuck-paths -->…<!-- /stuck-paths -->` block
   (`parseStuckPaths`/`renderStuckPathsBlock`) edited in place via `gh issue edit --body` on each new
-  path (plus a comment, so both the record body and its thread reflect the addition) — never a
+  path — the edit (`withStuckPaths`) replaces only the line-anchored block (both markers on their own
+  lines, CRLF tolerated), keeps every other byte of the body, and appends the block to a non-empty body
+  that lost it (#2724), except that a CLOSED record being reopened is re-rendered in full
+  (`structurallyStuckBody`: a reopen is a fresh incident, so its fixed remedy text refreshes) — plus a comment, so both the record body and its thread reflect the addition — never a
   second `issue create`. The body's fixed text names every skip reason that feeds the record
   (`no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending` (#3297), #3543's
   `pr-not-found` — a stamped `run-state.json` `pr.number` GitHub's structured GraphQL error confirms
@@ -325,9 +334,14 @@ main loop, landed via #1962/#2226/#2228/#2231):
   this record. `cache.js`'s per-path consecutive-failure counter (`trackResidue`,
   `RESIDUE_ESCALATE_THRESHOLD`) is unchanged and reason-agnostic already; only the filing/resolving
   side consolidates. Resolving one path (`resolveResidue` under `reason: 'structurally-stuck'`)
-  removes just that path from the shared record's body — the record only actually closes once every
-  path it named has resolved, so fixing directory A never silently closes the record while
-  directory B is still genuinely stuck.
+  removes just that path from the shared record's body — the record only actually closes once its
+  stuck-paths list empties, so fixing directory A never silently closes the record while
+  directory B is still genuinely stuck. Escalate and resolve edits also drop listed paths inside
+  this checkout's own `.claude-tweaks/pipelines/` that are gone from disk (#4202) — paths from
+  other checkouts are never judged, since every checkout of a repo appends to the same record —
+  and the record closes when that converged list empties. Only an absolute, normalized listed path
+  is judged; the list is editable issue text. A resolve whose edit emptied the list but whose
+  comment or close failed leaves an open record with nothing listed, and the retry closes it.
 
 ## gh-absent preflight: accepted MCP gap (#2523)
 

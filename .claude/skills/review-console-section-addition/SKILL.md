@@ -27,6 +27,8 @@ A section is not shipped until every applicable row lands in the same change. Si
 | 10 | `plugin/skills/flow/multispec-console-template.md`, plus `flow/multispec-review-console.md`'s step-2 read list and its Canonical render order | The multi-spec console's own heading, when a multi-spec run can stage the section's prefix, and the section in both of that file's lists — engine-rendered or not (#3946's `Dismissed duplicates` is not). | Per section only: `tests/console-shadow-dup-outcomes-conformance.test.js` pins `Dismissed duplicates`' heading and both lists, so a new section needs its own. |
 | 11 | `plugin/skills/wrap-up/SKILL.md`'s Review Console paragraph | Only for a named batch section: its parenthesized section list. | Unpinned. |
 
+**A new prefix in an existing section is a smaller change.** The section, its stance and its templates already exist, so only sites 2 and 3 move, plus the known-prefix case in `resolve.test.js`. #4029 added `efficiency-budget-` to the Queue writes row that way: two lines in `resolve.js` and one in the test.
+
 Find the prose sites by grep rather than from this table alone: `git grep -l -F 'Reference repairs' -- plugin docs tests` lists every file that enumerates the sections. Add the new section to each hit that lists its siblings.
 
 ## Decisions each section owes

@@ -274,6 +274,93 @@ test('#1929: joinTokens with no rows leaves zeroed columns and never throws on u
   assert.equal(joined.totals.toolRoundTrips, 0);
 });
 
+// #4029: the hand-counted turn-classes fixture, built inline. Ten turns k=1..10
+// (context k*1000 + k*10); m3 runs on sonnet, the rest on opus; the user rows
+// carry the per-class counts, so the 11 calls ride 10 round trips.
+const TC_EVENTS = [
+  { skill: 'claude-tweaks:flow', ts: '2026-10-24T10:00:00.000Z', type: 'skill_invoked' },
+  { skill: 'claude-tweaks:build', ts: '2026-10-24T10:01:00.000Z', type: 'skill_invoked' },
+  { mode: 'full', durationMs: 120000, pass: true, ts: '2026-10-24T10:20:00.000Z', type: 'verify' },
+  { ts: '2026-10-24T10:30:00.000Z', type: 'session-end' },
+];
+const TC_CLASS_BY_TURN = [
+  { procedure: 1 }, { orientation: 2 }, { edit: 1 }, { bookkeeping: 1 }, { 'guard-refusal': 1 },
+  { dispatch: 1 }, { explore: 1 }, { verify: 1 }, { read: 1 }, { other: 1 },
+];
+function turnClassRows() {
+  const rows = [];
+  for (let k = 1; k <= 10; k++) {
+    const mm = String(1 + k).padStart(2, '0');
+    rows.push(usageRow(`2026-10-24T10:${mm}:00.000Z`, { inputTokens: k * 10, outputTokens: 5, cacheRead: k * 1000, model: k === 3 ? 'claude-sonnet-5' : 'claude-opus-5-5', turnStart: true, contextTokens: k * 1010 }));
+    rows.push(usageRow(`2026-10-24T10:${mm}:05.000Z`, { role: 'user', toolRoundTrip: true, turnClasses: TC_CLASS_BY_TURN[k - 1] }));
+  }
+  // a repeat of m1's stream: not a turn start, never counted as a turn
+  rows.push(usageRow('2026-10-24T10:02:01.000Z', { model: 'claude-opus-5-5', turnStart: false, contextTokens: 0 }));
+  return rows;
+}
+const ZERO_CLASSES = { edit: 0, read: 0, explore: 0, procedure: 0, bookkeeping: 0, orientation: 0, verify: 0, 'guard-refusal': 0, dispatch: 0, other: 0 };
+
+test('#4029: joinTokens aggregates turn classes, context percentiles, model mix and ceremony share per phase', () => {
+  const out = derivePhases({ events: TC_EVENTS });
+  assert.equal(out.totals.verifyMinutes, 2);
+  const joined = joinTokens(out.phases, turnClassRows());
+  const hand = { edit: 1, read: 1, explore: 1, procedure: 1, bookkeeping: 1, orientation: 2, verify: 1, 'guard-refusal': 1, dispatch: 1, other: 1 };
+  const build = joined.phases.find((p) => p.phase === 'build');
+  for (const b of [build, joined.totals]) {
+    assert.deepEqual(b.turnClasses, hand);
+    assert.deepEqual(b.context, { turns: 10, p50: 5050, p90: 9090 });
+    assert.deepEqual(b.modelMix, { 'claude-opus-5-5': 9, 'claude-sonnet-5': 1 });
+    assert.equal(b.subagents, 1);
+    assert.equal(b.ceremonyShare, 0.455);
+    assert.equal(b.toolRoundTrips, 10);
+  }
+  // the internal samples never reach the output
+  for (const b of [build, joined.totals, joined.unattributed]) assert.deepEqual(Object.keys(b.context), ['turns', 'p50', 'p90']);
+  assert.deepEqual(joined.unattributed.turnClasses, ZERO_CLASSES);
+  assert.deepEqual(joined.phases.find((p) => p.phase === 'review').turnClasses, ZERO_CLASSES);
+});
+
+test('#4029: an empty bucket has zero-filled classes and null percentiles', () => {
+  const joined = joinTokens(derivePhases({ events: TC_EVENTS }).phases, []);
+  for (const b of [...joined.phases, joined.unattributed, joined.totals]) {
+    assert.deepEqual(b.turnClasses, ZERO_CLASSES);
+    assert.deepEqual(b.context, { turns: 0, p50: null, p90: null });
+    assert.deepEqual(b.modelMix, {});
+    assert.equal(b.subagents, 0);
+    assert.equal(b.ceremonyShare, null);
+  }
+});
+
+test('#4029: legacy rows without turn fields still join, and a null model keys as unknown', () => {
+  const joined = joinTokens(derivePhases({ events: TC_EVENTS }).phases, [
+    usageRow('2026-10-24T10:05:00.000Z', { inputTokens: 4 }),
+    usageRow('2026-10-24T10:06:00.000Z', { turnStart: true, contextTokens: 7, model: null }),
+  ]);
+  assert.equal(joined.totals.tokens.input, 4);
+  assert.deepEqual(joined.totals.context, { turns: 1, p50: 7, p90: 7 });
+  assert.deepEqual(joined.totals.modelMix, { unknown: 1 });
+  assert.deepEqual(joined.totals.turnClasses, ZERO_CLASSES);
+});
+
+test('#4029 M6: an unknown turn-class key folds into other, never a new bucket key', () => {
+  const joined = joinTokens(derivePhases({ events: TC_EVENTS }).phases, [
+    usageRow('2026-10-24T10:05:00.000Z', { role: 'user', toolRoundTrip: true, turnClasses: { frobnicate: 2, edit: 1 } }),
+    // an inherited Object.prototype name is not a class either
+    usageRow('2026-10-24T10:06:00.000Z', { role: 'user', toolRoundTrip: true, turnClasses: { toString: 1 } }),
+  ]);
+  for (const b of [joined.totals, joined.phases.find((p) => p.phase === 'build')]) {
+    assert.deepEqual(b.turnClasses, { ...ZERO_CLASSES, edit: 1, other: 3 });
+    assert.deepEqual(Object.keys(b.turnClasses), Object.keys(ZERO_CLASSES));
+  }
+});
+
+test('#4029: verifyMinutes sums every verify durationMs to one decimal, 0 with none', () => {
+  const ev = (d) => ({ ts: '2026-10-24T10:20:00.000Z', type: 'verify', durationMs: d });
+  assert.equal(derivePhases({ events: [ev(100000), ev(50000)] }).totals.verifyMinutes, 2.5);
+  assert.equal(derivePhases({ events: [ev(null), { ts: '2026-10-24T10:21:00.000Z', type: 'verify' }] }).totals.verifyMinutes, 0);
+  assert.equal(derivePhases({ events: [] }).totals.verifyMinutes, 0);
+});
+
 test('#1929: countGuardEvents counts the three guard event types and ignores the rest', () => {
   const events = [
     { ts: 't', type: 'gate-denial' }, { ts: 't', type: 'gate-denial' },
