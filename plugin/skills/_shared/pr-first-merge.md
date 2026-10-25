@@ -294,7 +294,7 @@ merge (capture (a)), so the confirmation itself carries the choice: wait for gre
 **Creation-time caller:** `tidy/SKILL.md`'s Step 7.5 `pr-first` branch invokes only this step's initial compose + `gh pr merge --auto` fences at PR-creation time, with the degrade chain below replaced by leave-unarmed + report — see that step's own text for the full routing.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir "{subject-dir}"
+node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --keep-open {keep-open} --pr {pr-number} --out-dir "{subject-dir}"
 ```
 
 ```bash
@@ -311,9 +311,11 @@ three. `{issue-list}` is the record numbers — the manifest's `complete` specs 
 (#2015; rest release via their own `never-started:`/`abandoned:` reason). `human-approved`:
 `dispatch/close-out.md`'s human-confirmed merge (that metric excludes it). `{scope}`
 resolves inside the composer from the `commit-scope`/`commit-scope-paths` policy keys (`_shared/policy-schema.md`) over the PR's own changed files (`gh pr diff --name-only` behind the `--pr` above — no local branch or checkout needed, so `dispatch/close-out.md`'s and `tidy`'s later-session callers compose the same subject); an explicit `--scope {scope}` overrides both. The composer writes
-the Conventional-Commits subject and one `Fixes #{n}` line per record. Same set the
-PR body's own `Fixes` lines already carry (`_shared/pr-checklist-refresh.md`'s pre-merge
-refresh), restated here because the merge commit's own message is what GitHub scans for
+the Conventional-Commits subject and one `Fixes #{n}` line per record, `Refs #{n}` for a
+`{keep-open}` one: the comma-joined `{issue-list}` numbers on a `Refs` line of the post-refresh
+PR body (`closing-links.js --mode pre-merge`'s `keepOpen`, or `parseFixesSpan(body).refs`);
+omit `--keep-open {keep-open}` when none. So the message's `Fixes` lines are the PR body's
+(`_shared/pr-checklist-refresh.md`'s pre-merge refresh), restated here because the merge commit's own message is what GitHub scans for
 closing keywords on a non-default integration branch, where the PR body's keywords don't
 fire (GitHub only auto-closes from a merge commit's message, or a PR body merged into the
 *default* branch — an explicit merge commit message is what makes closing work on any
@@ -354,7 +356,7 @@ the result:
      behavior):
 
      ```bash
-     node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir "{subject-dir}"
+     node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --keep-open {keep-open} --pr {pr-number} --out-dir "{subject-dir}"
      ```
 
      ```bash

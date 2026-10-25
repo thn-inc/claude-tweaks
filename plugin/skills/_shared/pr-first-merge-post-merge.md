@@ -20,12 +20,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/closing-links.js" --run "$PIPELINE_RUN_DIR" --mo
 
 It reopens every record the PR's fixes block names on a `Refs` line, and every stray linked
 record, that the merge closed after `mergedAt`. That covers a closing link that survived the
-pre-merge check, and a squash message whose `Fixes #{n}` names a deferred single record. It polls a
+pre-merge check, and a squash message composed without `--keep-open` (Step 3). It polls a
 will-close record up to 15 s, since GitHub closes it about 2 s after the merge, and logs `reopened
-#{n}` per record to `decisions.md`. `reopen-failed` names each record to reopen by hand;
-`close-pending` names each record the merge will still close — re-run the step once, then reopen it
-by hand if it closed. Report it in the closing summary, never as anything but `merged`. Exit 3-5 or
-`gh-absent`: one `SKIP` line, then continue to Step 4.1.
+#{n}` per record to `decisions.md`. Whatever the `action`, report each `failed[]` record (reopen it
+by hand) and each `pendingClose[]` record (the merge may still close it — re-run the step once,
+then reopen it by hand if it closed) in the closing summary, never as anything but `merged`. Exit
+3-5 or `gh-absent`: one `SKIP` line, then continue to Step 4.1. An `armed` outcome never reaches
+this step, and the reconciler does not run the CLI; with `--keep-open` on the composer, only a
+Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
 
 ### Step 4.1: Which release carried this? (before reconcile)
 

@@ -175,9 +175,9 @@ above), not necessarily every phase this run actually completed.
    it reads `closingIssuesReferences`, rewrites every phrase naming a record outside the `Fixes`
    lines to `closes issue #{n}` (GitHub links no such phrase), writes the body, re-reads, and logs
    `unlinked #{n}` or `#{n} still linked` to `decisions.md`.
-   A `still-linked` result is left for `pr-first-merge-post-merge.md`'s Step 4.0. Exit 4 or 5:
-   warn and proceed (Step 4.0 is the backstop). `gh-absent`: one `SKIP` line, per "Merge-time
-   gh-absent degrade" below.
+   A `still-linked` result is left for `pr-first-merge-post-merge.md`'s Step 4.0. Exit 3-5:
+   warn and proceed (Step 4.0 is the backstop). `gh-absent`: one `SKIP` line
+   (`_shared/auto-decision-log.md`'s Degrade-trace rule).
 <!-- /when -->
 3. Read the record's current title (`gh issue view {n} --json title -q .title` for the
    lowest-numbered record). If it no longer matches the PR's own title (the record was retitled
