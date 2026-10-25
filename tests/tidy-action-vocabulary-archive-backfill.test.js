@@ -36,16 +36,16 @@ function rowFor(text, action) {
 function assertArchiveBackfill(text) {
   const archive = rowFor(text, 'Archive');
   assert.ok(archive, 'Action Vocabulary has an Archive row');
-  for (const s of ['kind: pipeline-run', 'wrap-up/cleanup-procedures.md` Section B', '.claude-tweaks/pipelines/archive/', 'remedy: record', "step-6-auto.md`'s two **Archive** rows"]) {
+  for (const s of ['kind: pipeline-run', 'wrap-up/cleanup-procedures.md` Section B', 'bin/hooks.js" archive-run --run', '.claude-tweaks/pipelines/archive/', 'remedy: record', "step-6-auto.md`'s two **Archive** rows"]) {
     assert.ok(archive.includes(s), `Archive row names ${s}`);
   }
   const backfill = rowFor(text, 'Backfill');
   assert.ok(backfill, 'Action Vocabulary has a Backfill row');
-  for (const s of ['kind: release', 'bin/lib/residue/probes/release.js', '## v{version} — {summary}', 'remedy: record', "step-6-auto.md`'s two **Backfill** rows"]) {
+  for (const s of ['kind: release', 'bin/lib/residue/probes/release.js', '## [X.Y.Z](compare-url) (date)', 'remedy: record', "step-6-auto.md`'s two **Backfill** rows"]) {
     assert.ok(backfill.includes(s), `Backfill row names ${s}`);
   }
   for (const row of [archive, backfill]) {
-    assert.doesNotMatch(row, /Auto-apply|\bconservative\b|\bmoderate\b|\baggressive\b/, 'row does not restate step-6-auto.md routing tiers');
+    assert.doesNotMatch(row, /Auto-apply|Auto \(no-op|\bStage\b|\bconservative\b|\bmoderate\b|\baggressive\b/, 'row does not restate step-6-auto.md routing tiers');
   }
   const verify = verificationBlock(text);
   assert.match(verify, /^- \[x\] Archived: /m, 'Step 7.5 has an Archived verification line');
@@ -85,6 +85,12 @@ test('AC1.1 go-red: restating a routing tier in the Archive row fails the assert
   const mutated = SKILL.split('\n').map((l) => (l.startsWith('| **Archive** |') ? `${l} Auto-apply` : l)).join('\n');
   assert.notEqual(mutated, SKILL, 'mutant differs from SKILL.md');
   assert.throws(() => assertArchiveBackfill(mutated), /routing tiers/);
+});
+
+test('AC1.1 go-red: deleting the Archived verification line fails the assertion', () => {
+  const mutated = withoutLine(SKILL, '- [x] Archived: ');
+  assert.notEqual(mutated, SKILL, 'mutant differs from SKILL.md');
+  assert.throws(() => assertArchiveBackfill(mutated), /Archived verification line/);
 });
 
 test('AC1.1 go-red: deleting the Backfilled verification line fails the assertion', () => {
