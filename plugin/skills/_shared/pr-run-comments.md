@@ -37,6 +37,7 @@ so it skips this gate, and a failed find or write stops the update instead of fa
 | `failure` | `/claude-tweaks:dispatch`'s Settle step, on HARD-GATE failure | `<!-- run-comment: failure -->` |
 | `release-status` | `_shared/pr-first-merge-post-merge.md` Step 4.1, on outcome `merged` when a CHANGELOG backfill is needed | `<!-- run-comment: release-status -->` |
 | `close-out-update` | `/claude-tweaks:dispatch close-out`, before the call that lands an update (`dispatch/close-out-update.md`'s Update marker) | `<!-- run-comment: close-out-update -->` — one per PR, rewritten `cleared (…)` after the verified merge, a decline, or a landing that landed nothing |
+| `express-review` | `_shared/express-lane.md`'s Post-merge sampling, once per sampled merged express PR, findings or none | `<!-- run-comment: express-review -->` — the review-done marker `express-lane.js samples` reads (trusted authors only), so a reviewed PR is never sampled again |
 
 Each kind's marker is the **first line** of its comment body, unconditionally — the same
 first-line-marker convention `_shared/pr-early-run-lifecycle.md`'s PR body uses for its own
