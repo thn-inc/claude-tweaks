@@ -210,6 +210,49 @@ test('Fixes-ish is not a keyword phrase', () => {
   assert.deepEqual(findClosingRefs('Fixes-ish #5'), []);
 });
 
+// --- Fix round 2: a backtick never pairs across a block start ---
+
+test('list items are separate blocks: stray backticks on other items do not mask the phrase', () => {
+  const text = '- use ` char\n- closes #5\n- `x`';
+  assert.deepEqual(findClosingRefs(text).map((r) => r.number), [5]);
+  const result = assertNeutralized(text, 5);
+  assert.ok(result.text.includes('closes #5'));
+  assert.notEqual(result.text, text);
+});
+
+test('an ATX heading is a one-line block', () => {
+  const text = '# h `a\ncloses #5 `b';
+  assert.deepEqual(findClosingRefs(text).map((r) => r.number), [5]);
+  assertNeutralized(text, 5);
+  assert.deepEqual(findClosingRefs('# `a`\ncloses #5').map((r) => r.number), [5]);
+  assert.deepEqual(findClosingRefs('# closes #5 `a`\n`b closes #6`').map((r) => r.number), [5]);
+});
+
+test('blockquote lines are separate blocks', () => {
+  const text = '> a `b\n> closes #5\n> c `d';
+  assert.deepEqual(findClosingRefs(text).map((r) => r.number), [5]);
+  assertNeutralized(text, 5);
+});
+
+test('a thematic break is a one-line block', () => {
+  for (const rule of ['---', '***', '___', '- - -', ' * * *']) {
+    const text = `a \`b\n${rule}\ncloses #5 \`c`;
+    assert.deepEqual(findClosingRefs(text).map((r) => r.number), [5], rule);
+    assertNeutralized(text, 5);
+  }
+});
+
+test('an ordered list item starts a new block', () => {
+  const text = '1. a `b\n2) closes #5 `c';
+  assert.deepEqual(findClosingRefs(text).map((r) => r.number), [5]);
+  assertNeutralized(text, 5);
+});
+
+test('a plain continuation line still pairs with its paragraph', () => {
+  assert.deepEqual(findClosingRefs('- a `b\n  closes #5 c`'), []);
+  assert.deepEqual(findClosingRefs('words `b\ncloses #5 c`'), []);
+});
+
 test('sameRepoNumbers skips entries without a positive integer number', () => {
   const repository = { name: 'claude-tweaks', owner: { login: 'thn-inc' } };
   const refs = [

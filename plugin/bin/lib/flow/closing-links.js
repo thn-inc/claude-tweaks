@@ -16,15 +16,18 @@
 // of backticks; closer of the same character, at least as long, whitespace
 // only after; an unclosed fence runs to the end of the text) and inline code
 // spans. Inline spans are paragraph-scoped, not line-scoped: a paragraph is a
-// run of non-blank lines outside fences, and inside it a backtick run of
+// run of non-blank lines outside fences that no block start interrupts (an
+// ATX heading or thematic break is a one-line paragraph; a list-item or
+// blockquote line starts a new one), and inside it a backtick run of
 // length L opens a span that the next run of exactly length L closes; an
 // unmatched run is literal. Indented code blocks are deliberately not masked
 // (over-neutralizing is the safe direction).
 //
 // Neutralizing wraps a phrase in a backtick run whose length matches no
-// backtick run already in its paragraph (one backtick normally, two when
-// single backticks are present, and so on), so the wrapper can never pair with
-// a stray run. The result is re-scanned; `stillLive` lists any target number
+// backtick run already in its block region (the non-blank, non-fence lines
+// around it; one backtick normally, two when single backticks are present, and
+// so on), so the wrapper can never pair with a stray run, even under a renderer
+// that pairs across a block start the splitter treats as a boundary. The result is re-scanned; `stillLive` lists any target number
 // still found live, which should be empty in practice.
 //
 // Exports:
@@ -48,6 +51,10 @@ const CLOSING_SOURCE = '\\b' + CLOSING_KEYWORD_ALTERNATION + ':?[ \\t]+(?:'
 
 const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+const ATX_HEADING_RE = /^ {0,3}#{1,6}(?:[ \t]|$)/;
+const LIST_ITEM_RE = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+const BLOCKQUOTE_RE = /^ {0,3}>/;
+const THEMATIC_BREAK_RE = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 
 // Pairs the backtick runs of one paragraph (text[start, end)) into inline code
 // spans: a run of length L is closed by the next run of exactly length L; an
@@ -63,27 +70,42 @@ function paragraphSpans(text, start, end) {
     spans.push([start + open.index, start + close.index + close[0].length]);
     i = closeIdx;
   }
-  return {
-    spans,
-    lengths: new Set(runs.map((r) => r[0].length)),
-  };
+  return spans;
 }
+
+const runLengths = (text, start, end) =>
+  new Set([...text.slice(start, end).matchAll(/`+/g)].map((r) => r[0].length));
 
 // Code regions of `text`: `masks` is a list of [start, end) ranges where a
 // phrase is not a link (fenced blocks, inline spans); `paragraphs` carries
-// each paragraph's offsets and the backtick run lengths it contains.
+// each paragraph's offsets and the backtick run lengths of its whole block
+// region (the non-blank, non-fence lines around it). Spans pair within a
+// paragraph, but a wrapper must also avoid every run length in the region, so
+// it stays safe if a renderer pairs across a block start we split on.
 function codeRegions(text) {
   const masks = [];
   const paragraphs = [];
   let fence = null; // { ch, len, start }
   let parStart = -1;
   let parEnd = -1;
+  let regionStart = -1;
+  let regionEnd = -1;
+  let regionParagraphs = [];
   const flush = () => {
     if (parStart === -1) return;
-    const { spans, lengths } = paragraphSpans(text, parStart, parEnd);
-    masks.push(...spans);
-    paragraphs.push({ start: parStart, end: parEnd, lengths });
+    masks.push(...paragraphSpans(text, parStart, parEnd));
+    const paragraph = { start: parStart, end: parEnd, lengths: null };
+    paragraphs.push(paragraph);
+    regionParagraphs.push(paragraph);
     parStart = -1;
+  };
+  const endRegion = () => {
+    flush();
+    if (regionStart === -1) return;
+    const lengths = runLengths(text, regionStart, regionEnd);
+    for (const paragraph of regionParagraphs) paragraph.lengths = lengths;
+    regionStart = -1;
+    regionParagraphs = [];
   };
   let offset = 0;
   for (const raw of text.split('\n')) {
@@ -98,19 +120,28 @@ function codeRegions(text) {
     } else {
       const open = FENCE_OPEN_RE.exec(line);
       if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
-        flush();
+        endRegion();
         fence = { ch: open[1][0], len: open[1].length, start: offset };
       } else if (line.trim() === '') {
-        flush();
+        endRegion();
       } else {
+        if (regionStart === -1) regionStart = offset;
+        regionEnd = lineEnd;
+        // Block starts end the running paragraph (a backtick never pairs
+        // across blocks); a heading or thematic break is a one-line block, so
+        // the paragraph ends after it too. Splitting eagerly only
+        // over-neutralizes, which is the safe direction.
+        const singleLine = ATX_HEADING_RE.test(line) || THEMATIC_BREAK_RE.test(line);
+        if (singleLine || LIST_ITEM_RE.test(line) || BLOCKQUOTE_RE.test(line)) flush();
         if (parStart === -1) parStart = offset;
         parEnd = lineEnd;
+        if (singleLine) flush();
       }
     }
     offset = lineEnd + 1;
   }
   if (fence) masks.push([fence.start, text.length]);
-  flush();
+  endRegion();
   return { masks, paragraphs };
 }
 
