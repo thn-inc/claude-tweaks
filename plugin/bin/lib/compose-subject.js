@@ -30,9 +30,9 @@
 // in #3537 after #3522 moved every fence to `--out-dir`.
 // Exit codes (Split-1/2, mirroring bin/resolve-blockers.js): 0 composed; 1
 // malformed invocation (including --range with --pr, commit-scope-paths set
-// with neither, or a --keep-open number missing from the positional list) OR a policy misconfiguration (a malformed
-// commit-scope-paths entry, a commit-scope token composeSubject rejects) OR a
-// record that cannot be composed (no resolvable Type, `breaking` label with no
+// with neither, or a --keep-open number missing from the positional list) OR a
+// policy misconfiguration (a malformed commit-scope-paths entry, a
+// commit-scope token composeSubject rejects) OR a record that cannot be composed (no resolvable Type, `breaking` label with no
 // ## Breaking Change section — the composer's own usage error, message on
 // stderr); 2 `gh` absent or owner/repo unresolvable (no --repo and no readable
 // origin remote); 3 an external read failed — a `gh issue view` call, the
