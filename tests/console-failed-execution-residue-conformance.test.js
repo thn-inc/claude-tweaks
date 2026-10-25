@@ -219,3 +219,32 @@ test('control: a rewrite command with a flag console-resolve.js lacks is refused
   assert.equal(await RESOLVE.run(rewriteArgv(mutated, { '{item-run-dir}': fx.runDir, '{name}': 'leftover-1.md', '{why}': 'x' }), refused.d), 2);
   assert.equal(consoleJson(fx.runDir).items[0].resolution, 'apply');
 });
+
+// --- the notification carries post-execution residue ------------------------------
+
+// The Needs-a-human block console-resolve.js prints is computed before "On approval" executes, so it
+// cannot list a Queue write a failed execution rewrote keep-staged; the PushNotification and the final
+// stop carry `console-residue.js --run`'s stdout after execution instead.
+const SHORT_CIRCUIT_HEADING = '## Auto-resolution short-circuit (`consoleAutoResolve`)';
+const CARRIES_AFTER_EXECUTION = 'carry the residue as printed after that execution — the stdout of `node "${CLAUDE_PLUGIN_ROOT}/bin/console-residue.js" --run "$PIPELINE_RUN_DIR"`';
+const STALE_CARRY = 'carry that block verbatim';
+
+function assertNotificationCarriesPostExecutionResidue(text) {
+  const start = text.indexOf(`\n${SHORT_CIRCUIT_HEADING}\n`);
+  assert.notEqual(start, -1, `review-console.md has no "${SHORT_CIRCUIT_HEADING}" section`);
+  const end = text.indexOf('\n## ', start + SHORT_CIRCUIT_HEADING.length + 2);
+  const body = text.slice(start, end === -1 ? undefined : end).replace(/\s+/g, ' ');
+  assert.ok(body.includes(CARRIES_AFTER_EXECUTION), 'the short-circuit does not say the PushNotification carries console-residue.js --run output printed after execution');
+  assert.ok(!body.includes(STALE_CARRY), 'the short-circuit still carries the pre-execution Needs-a-human block verbatim');
+  assert.ok(body.includes('after "On approval" has executed, carrying that `console-residue.js --run` output'), 'the PushNotification sentence is not ordered after execution');
+}
+
+test('the short-circuit carries console-residue.js --run output, printed after execution, into the PushNotification', () => {
+  assertNotificationCarriesPostExecutionResidue(REVIEW_CONSOLE);
+});
+
+test('control: each half of the post-execution carry is load-bearing', () => {
+  assert.throws(() => assertNotificationCarriesPostExecutionResidue(doctor(REVIEW_CONSOLE, 'carry the residue as printed after that execution', 'carry that block')), { message: /does not say the PushNotification carries console-residue\.js --run output/ });
+  assert.throws(() => assertNotificationCarriesPostExecutionResidue(doctor(REVIEW_CONSOLE, 'render it with the table but do not carry it', 'carry that block verbatim')), { message: /still carries the pre-execution Needs-a-human block verbatim/ });
+  assert.throws(() => assertNotificationCarriesPostExecutionResidue(doctor(REVIEW_CONSOLE, 'after "On approval" has executed, carrying', 'carrying')), { message: /not ordered after execution/ });
+});
