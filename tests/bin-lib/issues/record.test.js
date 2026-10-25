@@ -1294,5 +1294,31 @@ test('extractSection: the record\'s own section wins over a fenced quote of the 
 });
 
 test('extractSection: CRLF fenced quote is skipped too', () => {
-  assert.strictEqual(extractSection(QUOTED_COPY_BODY.replace(/\n/g, '\r\n'), 'Acceptance Criteria'), '');
+  const crlf = QUOTED_COPY_BODY.replace(/\n/g, '\r\n');
+  assert.strictEqual(extractSection(crlf, 'Acceptance Criteria'), '');
+  // The record's own sections must still be found: a CR left on a closing fence line that
+  // stopped it closing would make every fence run to end of text and hide them.
+  assert.strictEqual(extractSection(crlf, 'Deliverables', { trim: true }), '- [ ] real deliverable');
+  assert.strictEqual(extractSection(crlf, 'Open Question', { trim: true }), 'Is it still wanted?');
+});
+
+test('extractSection: a fence is closed only by its own character, at least as long as its opener', () => {
+  const section = (...lines) => extractSection(lines.join('\n'), 'Acceptance Criteria', { trim: true });
+  // A backtick line inside a tilde fence is content, not a closer: the heading after it stays quoted.
+  assert.strictEqual(section('~~~', '```', '## Acceptance Criteria', 'quoted', '~~~', '', '## Deliverables', 'x'), '');
+  // A tilde line inside a backtick fence likewise.
+  assert.strictEqual(section('```', '~~~', '## Acceptance Criteria', 'quoted', '```', '', '## Deliverables', 'x'), '');
+  // A longer closer closes a shorter opener, so the heading after it is the record's own.
+  assert.strictEqual(section('~~~~~', 'quoted', '~~~~~~~', '## Acceptance Criteria', '1. real'), '1. real');
+  assert.strictEqual(section('```', 'quoted', '`````', '## Acceptance Criteria', '1. real'), '1. real');
+  // A shorter closer does not close a longer opener.
+  assert.strictEqual(section('~~~~~', '~~~', '## Acceptance Criteria', 'quoted', '~~~~~', '## Deliverables', 'x'), '');
+  // An opener carrying an info string still opens a fence.
+  assert.strictEqual(section('```md', '## Acceptance Criteria', 'quoted', '```', '## Deliverables', 'x'), '');
+});
+
+test('extractSection: an unclosed fence hides every later heading (CommonMark: it runs to end of text)', () => {
+  const body = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
+  assert.strictEqual(extractSection(body, 'Deliverables'), '');
+  assert.ok(extractSection(body, 'Current State').endsWith('- [ ] d'));
 });

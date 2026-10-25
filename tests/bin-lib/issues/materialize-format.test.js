@@ -532,6 +532,19 @@ test('shapeGate: a fenced quote of a spec-shaped document does not supply the re
   assert.deepEqual(shapeGate(QUOTED_BODY), { ok: false, missing: ['Acceptance Criteria'] });
 });
 
+test('sectionText: tilde fences hide quoted headings and close only on their own character, at least as long as the opener', () => {
+  const section = (name, ...lines) => sectionText(lines.join('\n'), name);
+  assert.equal(section('Deliverables', '## Current State', '~~~', '## Deliverables', 'quoted', '~~~', '', '## Release Note', 'n'), null);
+  // A backtick line inside a tilde fence is content, not a closer.
+  assert.equal(section('Deliverables', '## Current State', '~~~', '```', '## Deliverables', 'quoted', '~~~', '', '## Release Note', 'n'), null);
+  // A longer closer closes a shorter opener; the heading after it is the record's own.
+  assert.equal(section('Deliverables', '~~~~~', 'quoted', '~~~~~~~', '## Deliverables', '- [ ] real'), '- [ ] real');
+  // A shorter closer does not close a longer opener.
+  assert.equal(section('Deliverables', '~~~~~', '~~~', '## Deliverables', 'quoted', '~~~~~', '## Release Note', 'n'), null);
+  // An opener carrying an info string still opens a fence.
+  assert.equal(section('Deliverables', '```md', '## Deliverables', 'quoted', '```', '## Release Note', 'n'), null);
+});
+
 test('sectionText: an unclosed fence hides every later heading (CommonMark: it runs to end of text)', () => {
   const body = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
   assert.equal(sectionText(body, 'Deliverables'), null);
