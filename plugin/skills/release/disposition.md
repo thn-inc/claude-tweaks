@@ -14,7 +14,7 @@ SKIP {HH:MM:SS} — Step 8 disposition (skipped): condition: inherited run direc
 
 ## Inventory
 
-Read `{run-dir}/staged/` once and list every file in it except `release-held.md`, which is not a finding: it stays where it is and is archived with the run. An absent or empty `staged/` means no staged files. Any other read error on `staged/` or `decisions.md` (EACCES, EIO — anything but "does not exist") is a failure, not an empty inventory: it writes the FAILED line below and blocks archival. When Step 3 logged no `## /review` marker this run (an early exit before Step 3: a Step 1 or Step 2 stop, a refused `--train`), read no `decisions.md` line at all. Otherwise read `{run-dir}/decisions.md`'s `## /review` block — only the lines after Step 3's carried marker `{k}`, never the whole block — and add every `STAGED` line whose stage path is absent or names no existing file. `_shared/auto-decision-log.md` counts those as staged findings with no `staged/` file: `review/step3-lens-dispatch.md`'s `not reproduced` lines, the gap sweep's, the earlier line a tiebreak `console` outcome leaves standing (`review/step3-tiebreak.md`), and a failed tiebreak's. A line whose stage path names a listed file is that file's finding, counted once by its stage path.
+Read `{run-dir}/staged/` once and list every file in it except `release-held.md`, which is not a finding: it stays where it is and is archived with the run. An absent or empty `staged/` means no staged files. Any other read error on `staged/`, or on the `decisions.md` read below (EACCES, EIO — anything but "does not exist"), is a failure, not an empty inventory: it writes the FAILED line below and blocks archival. When Step 3 logged no `## /review` marker this run (an early exit before Step 3: a Step 1 or Step 2 stop, a refused `--train`), read no `decisions.md` line at all. Otherwise read `{run-dir}/decisions.md`'s `## /review` block — only the lines after Step 3's carried marker `{k}`, never the whole block — and add every `STAGED` line whose stage path is absent or names no existing file. `_shared/auto-decision-log.md` counts those as staged findings with no `staged/` file: `review/step3-lens-dispatch.md`'s `not reproduced` lines, the gap sweep's, the earlier line a tiebreak `console` outcome leaves standing (`review/step3-tiebreak.md`), and a failed tiebreak's. A line whose stage path names a listed file is that file's finding, counted once by its stage path.
 
 - Each `staged/review-{n}.{md,patch}` — a confirmed finding, one per file, its severity read from the file's `Finding: {severity} {category} — …` line. A critical finding lands here too, because `review/step3-routing.md`'s KEPT-PROMPT row stages a patch as well as surfacing it inline.
 - Each entry line of `staged/review-unconfirmed-{n}.md` — a finding the tiebreak left unconfirmed (`_shared/multi-agent-coordination.md`).
@@ -24,7 +24,7 @@ Read `{run-dir}/staged/` once and list every file in it except `release-held.md`
 
 Any other file in `staged/` is unrecognised: it has no route and counts as a failure (below), so the run is not archived with a finding nobody read.
 
-With nothing to dispose, write one `SCANNED` line and do nothing else:
+With nothing to dispose and no read failure above, write one `SCANNED` line and do nothing else. A read failure is never "nothing": that run writes its FAILED line instead, and no `SCANNED` line, because it cannot claim to have scanned what it could not read:
 
 ```
 SCANNED {HH:MM:SS} — Step 8 disposition: no staged review findings. Reversibility: n/a.

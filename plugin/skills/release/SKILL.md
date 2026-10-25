@@ -241,7 +241,7 @@ Render one summary block:
 release: {version} — {released | dry-run | HELD | PARTIAL | failed}
 engine:  {pr-first | local-merge}
 records: {n} {shipped | would ship}{, m unattributed commits}
-{findings: {f} filed, {d} digest, {x} declined{, k failed — {paths}}, when disposition inventoried any finding}
+{findings: {f} filed, {d} digest, {x} declined{, k failed — {paths}}, when disposition inventoried any finding or reported a failure}
 {bookkeeping: {k} of {n} failed — #a (read), #b (close), when Step 7 reported k > 0}
 {partial state and recovery command, when the outcome is PARTIAL}
 {gate and staged path, when the outcome is HELD — printed last, after the archival below}
@@ -256,7 +256,7 @@ The `records:` line varies with the outcome, because "shipped" is only true when
 
 **The `bookkeeping:` line renders only when `{k} > 0`, and is omitted entirely when `{k}` is `0`.** Its `{k}`, `{n}` and per-record entries come from Step 7's own tally — `bookkeeping.md`'s `{n} records commented, {m} closed, {k} failed` summary line and its per-record `FAILED` lines — with each failed record named by number and by the verb from its `FAILED` line (`read`, `comment`, `close`, `shipped`, or the step-level `commit`). Without it a run whose every record failed to book still renders `released` and nothing else, and the unbooked records are discoverable only by reading `decisions.md`.
 
-**The `findings:` line renders only when disposition inventoried a finding, and names every failed staged path when any failed.** A run with a failed path is not archived below, so the line is where that finding is named for the reader.
+**The `findings:` line renders only when disposition inventoried a finding or reported a failure (an unreadable `staged/` or `decisions.md` is a failure with no finding behind it), and names every failed staged path when any failed.** A run with a failed path is not archived below, so the line is where that finding is named for the reader.
 
 The five outcomes are distinct and never folded together:
 
