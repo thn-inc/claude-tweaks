@@ -184,6 +184,27 @@ test('git push origin :my-branch (refspec-delete form) from a non-isolated check
   assertAllowed(out);
 });
 
+test('AC1.1: git -C "<repo>" push origin --delete feature-x from a non-isolated checkout is allowed', () => {
+  const repo = gitRepoWithCommit();
+  withPolicy(repo, 'worktree-always: true\n');
+  const out = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete feature-x`, repo), runDir: null, runState: null, cwd: repo });
+  assertAllowed(out);
+});
+
+test('AC1.1: git -C "<repo>" push origin feature-x (a content push) stays denied', () => {
+  const repo = gitRepoWithCommit();
+  withPolicy(repo, 'worktree-always: true\n');
+  const out = pre.run({ input: bashInput(`git -C "${repo}" push origin feature-x`, repo), runDir: null, runState: null, cwd: repo });
+  assertDenied(out);
+});
+
+test('AC1.1: git -C "<repo>" push origin --delete a && rm -rf x stays denied, fail-closed', () => {
+  const repo = gitRepoWithCommit();
+  withPolicy(repo, 'worktree-always: true\n');
+  const out = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete a && rm -rf x`, repo), runDir: null, runState: null, cwd: repo });
+  assertDenied(out);
+});
+
 test('an ordinary content push (git push origin main) stays denied', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
@@ -221,6 +242,11 @@ test('DELETE_ONLY_PUSH_ALLOWLIST matches exactly the admitted shapes', () => {
     'git push origin :my-branch',
     'git push origin --delete feature/my-branch',
     '  git   push   origin   --delete   my-branch  ',
+    'git -C . push origin --delete my-branch',
+    'git -C "/some/worktree" push origin --delete feature-x',
+    "git -C '/a b/wt' push origin --delete feature-x",
+    'git -C /p push origin :feature-x',
+    'git -C "/Users/x/Code Workspaces/repo" push origin --delete feature-x',
   ];
   for (const command of shouldMatch) {
     assert.ok(DELETE_ONLY_PUSH_ALLOWLIST.test(command), `expected a match: ${JSON.stringify(command)}`);
@@ -232,9 +258,16 @@ test('DELETE_ONLY_PUSH_ALLOWLIST matches exactly the admitted shapes', () => {
     'git push origin --delete',
     'FOO=1 git push origin --delete my-branch',
     '/usr/bin/git push origin --delete my-branch',
-    'git -C . push origin --delete my-branch',
     'git push -f origin --delete my-branch',
     'git push origin --delete my-branch extra-branch',
+    'git -C /p push origin feature-x',
+    'git -C /p push origin --delete a && rm -rf x',
+    'git -C /a b push origin --delete x',
+    'git -C /p -C /q push origin --delete x',
+    'git push -C /p origin --delete x',
+    'git -C "$WT" push origin --delete x',
+    'git -C /p push origin --delete x --force',
+    'git -C push origin --delete x',
   ];
   for (const command of shouldNotMatch) {
     assert.ok(!DELETE_ONLY_PUSH_ALLOWLIST.test(command), `expected no match: ${JSON.stringify(command)}`);
