@@ -52,6 +52,7 @@ const PINS = {
     { file: 'dispatch/SKILL.md', from: '### Step 3:', to: '### Step 4:', patterns: [[/Step 1's close-out still runs/, 'the zero-eligible stop still runs Step 1\'s close-out']] },
   ],
   init: { file: 'init/SKILL.md', from: '## Phase 9: Present Summary and Confirm', to: '## Important Notes', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/Stop here/, 'the Scope Gate stop is named']] },
+  'harness-health': { file: 'harness-health/dream-pass.md', from: '## Running it', to: '## Reviewing proposals', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED] },
   'wrap-up': { file: 'wrap-up/SKILL.md', from: '### Establish the run directory (unconditional)', to: '### Diff-derived ceremony default', patterns: [P_STATEMENT, P_CLOSE, [/Stop and re-engage/, 'the resumable halt is the one exception'], [/`BLOCKED`/, 'a BLOCKED verdict still closes a created directory']] },
   tidy: { file: 'tidy/SKILL.md', from: '## Step 7.5: Verify Execution', to: '## Routine Configuration', patterns: [P_STATEMENT, P_CLOSE, P_INHERITED, [/--approve[\s\S]{0,300}archiv/, 'archival stays with --approve']] },
 };
@@ -177,6 +178,19 @@ test('AC1.1: run-dir-resolution.md step 4 states the every-exit close-out duty (
     [/closes a directory it created on every exit after its mint/, 'every minter closes a directory it created on every exit after its mint'],
     [/standalone-run-dir-closeout-conformance\.test\.js/, 'the conformance suite that enumerates the minters is named'],
   ], 'run-dir-resolution.md step 4 must state the every-exit close-out duty');
+});
+
+// A key present in MINTERS but absent from `pins` — the same assertion the live test and its go-red share.
+const assertEveryMinterPinned = (pins) => assert.deepEqual(MINTERS.filter((m) => !pins[m]), []);
+
+test('AC1.1: every enumerated minter carries a pin', () => {
+  assertEveryMinterPinned(PINS);
+});
+
+test('AC1.1 go-red: dropping a minter\'s pin from a copy of PINS is reported by name', () => {
+  const { 'harness-health': dropped, ...rest } = PINS;
+  assert.ok(dropped, 'the live PINS carries no harness-health key — the go-red cannot discriminate');
+  assert.throws(() => assertEveryMinterPinned(rest), /harness-health/);
 });
 
 for (const [key, pin] of Object.entries(PINS)) {
