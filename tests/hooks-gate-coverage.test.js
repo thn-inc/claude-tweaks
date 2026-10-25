@@ -18,7 +18,8 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { GATE_COVERAGE } = require('../plugin/bin/lib/hooks/pre-tool-use');
-const { WRITE_SHAPES, fileWriteTargets, forEachShellSegment, gitTargets, mkdirTargets, stripHeredocBodies } = require('../plugin/bin/lib/hooks/git-command');
+const gitCommand = require('../plugin/bin/lib/hooks/git-command');
+const { WRITE_SHAPES, fileWriteTargets, forEachShellSegment, gitTargets, mkdirTargets, stripHeredocBodies } = gitCommand;
 const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { readText } = require('./helpers/read-skill');
 
@@ -96,6 +97,34 @@ test('policy-schema-coverage.md\'s coverage block lists exactly the gate\'s exem
   assert.deepStrictEqual(tokensFor(coverageBlock(), 'Exemptions'), expected,
     'GATE_COVERAGE.exemptions and the canonical prose have diverged — update the coverage block in skills/_shared/policy-schema-coverage.md');
 });
+
+// #4149: the heredoc paragraph ("Bare shell redirection is covered (#3080).") restates the four reader
+// vocabularies stripHeredocBodies decides by. Each list is sliced out of the prose between two
+// anchor phrases (each must appear exactly once, so a reworded sentence fails loud rather than
+// parsing nothing) and pinned equal, as a set, to the constant the code reads.
+function proseList(text, from, to) {
+  const at = text.indexOf(from);
+  assert.ok(at !== -1 && text.indexOf(from, at + 1) === -1, `policy-schema-coverage.md must carry the phrase ${JSON.stringify(from)} exactly once`);
+  const end = text.indexOf(to, at + from.length);
+  assert.ok(end !== -1, `policy-schema-coverage.md must follow ${JSON.stringify(from)} with ${JSON.stringify(to)}`);
+  const words = (text.slice(at + from.length, end).match(/`([^`]+)`/g) || []).map((t) => t.slice(1, -1));
+  assert.ok(words.length > 0, `no backtick-quoted word between ${JSON.stringify(from)} and ${JSON.stringify(to)}`);
+  return words;
+}
+
+for (const [label, name, from, to] of [
+  ['data readers', 'DATA_READER_WORDS', 'every command on the opener line is a data reader: ', ' given a data subcommand ('],
+  ['reader wrappers', 'READER_WRAPPER_WORDS', 'may sit behind a reader wrapper (', '; its option flags'],
+  ['git data subcommands', 'GIT_DATA_SUBCOMMANDS', 'given a data subcommand (', ", found after git's global flags"],
+  ['inert neighbours', 'INERT_NEIGHBOUR_WORDS', 'A neighbour command whose own program is ', ' also passes'],
+]) {
+  test(`#4149: policy-schema-coverage.md names exactly the heredoc ${label} git-command.js's ${name} holds`, () => {
+    const words = proseList(readText(SCHEMA), from, to);
+    assert.strictEqual(new Set(words).size, words.length, `the prose names a ${label} word twice: ${words.join(', ')}`);
+    assert.deepStrictEqual([...words].sort(), [...gitCommand[name]].sort(),
+      `${name} and the heredoc paragraph in skills/_shared/policy-schema-coverage.md have diverged`);
+  });
+}
 
 test('GATE_COVERAGE is frozen, so a caller cannot mutate the contract at runtime', () => {
   assert.ok(Object.isFrozen(GATE_COVERAGE));
