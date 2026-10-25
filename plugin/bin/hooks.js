@@ -1891,13 +1891,12 @@ async function main(argv) {
       );
       return 1;
     }
-    const known = [...Object.keys(USAGE), ...EVENTS];
     if (!cmd) {
       process.stderr.write('claude-tweaks: no hooks.js subcommand given\n');
       process.stderr.write(usageText());
       return 1;
     }
-    const suggestion = closestVerb(cmd, known);
+    const suggestion = closestVerb(cmd, [...Object.keys(USAGE), ...EVENTS]);
     const hint = suggestion ? ` — did you mean '${suggestion}'?` : '';
     process.stderr.write(`claude-tweaks: unrecognized hooks.js subcommand '${cmd}'${hint}\n`);
     process.stderr.write(usageText());
