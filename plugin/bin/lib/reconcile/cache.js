@@ -285,8 +285,8 @@ const RESIDUE_RESOLVED_STATUSES = new Set(['closed', 'path-removed', 'not-found'
 function planClear(target, reason, targetPath) {
   const cache = isCacheBatch(target) ? target.cache : readCache(target);
   const entry = cache.residueFailures[residueKey(reason, targetPath)];
-  const action = !entry ? 'none' : entry.escalated ? 'would-resolve' : 'would-clear';
-  return { action, reason, path: targetPath };
+  if (!entry) return { action: 'none', reason, path: targetPath };
+  return { action: entry.escalated ? 'would-resolve' : 'would-clear', reason, path: targetPath };
 }
 
 function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveResidue, runner, why } = {}) {

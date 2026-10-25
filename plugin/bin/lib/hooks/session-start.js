@@ -352,7 +352,8 @@ async function run(ctx) {
         // (an older status file) or zero renders nothing.
         if (typeof s.residueErrors === 'number' && s.residueErrors > 0) {
           const last = s.lastResidueError;
-          lines.push(`${s.residueErrors} residue error(s)${last && typeof last.op === 'string' ? ` (last: ${last.op} — ${last.error})` : ''}`);
+          const lastPart = last && typeof last.op === 'string' ? ` (last: ${last.op} — ${last.error})` : '';
+          lines.push(`${s.residueErrors} residue error(s)${lastPart}`);
         }
         if (lines.length) {
           parts.push(`claude-tweaks: background reconcile (from a prior session) — ${lines.join('; ')}.`);

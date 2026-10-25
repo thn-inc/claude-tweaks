@@ -164,11 +164,11 @@ async function reconcileInner(opts, state) {
   }
 
   const root = mainCheckoutRoot(cwd);
-  if (root) state.root = root;
   if (!root) {
     result.skipped.push({ check: 'all', reason: 'no-repo' });
     return result;
   }
+  state.root = root;
 
   // #848: a non-canonical (dash-less) run-dir name is invisible to
   // iterRunDirsWithState's RUN_ID_RE filter, so every check below silently
