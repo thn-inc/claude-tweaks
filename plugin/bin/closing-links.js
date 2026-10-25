@@ -14,20 +14,26 @@
 // closing phrase naming one (`closes #5` -> `closes issue #5`), writes the
 // body when it changed, re-reads closingIssuesReferences (always, even with no
 // write -- a Development-sidebar link has no phrase to rewrite), and logs per
-// issue `unlinked` or `still linked` to decisions.md. Prints {action: clean |
-// unlinked | still-linked | no-fixes-span | no-pr | gh-absent, pr, expected,
-// keepOpen, linked, unwanted, unlinked, stillLinked, neutralized}.
+// issue `unlinked` (AUTO) or `still linked` (SKIP, degraded) to decisions.md.
+// Prints {action: clean | unlinked | still-linked | no-fixes-span | no-pr |
+// gh-absent, pr, expected, keepOpen, linked, unwanted, unlinked, stillLinked,
+// neutralized}.
 //
 // post-merge: for every keep-open candidate (a linked record outside the Fixes
 // span, or a `Refs #N` record) that the PR link or the squash message's
 // closing keyword will close, polls the issue (one 3 s re-read per step, at
 // most floor(--settle-ms / 3000) of them -- GitHub closes about 2 s after the
-// merge), and reopens it when it closed at or after mergedAt. Prints {action:
-// reopened | reopen-failed | close-pending | nothing-closed | not-merged
-// (carries state) | no-fixes-span | no-pr | gh-absent, pr, candidates,
-// willClose, reopened, failed, stillOpen, pendingClose, closedBefore} (plus messageUnread: true when the merge message could not be
-// read). A `logFailed: true` key means a decisions.md line could not be
-// appended; the PR/issue work still landed.
+// merge), and reopens it when it closed at or after mergedAt. An unread merge
+// message (or a merge-commit oid that is not a hex sha) makes every candidate
+// will-close. Logs `reopened` (AUTO), `could not reopen` and `still open`
+// (SKIP, degraded). Prints {action, pr, candidates, willClose, reopened,
+// failed, stillOpen, pendingClose, closedBefore} (plus messageUnread: true
+// when the merge message could not be read), with the worst outcome as the
+// action: reopen-failed > close-pending > reopened > nothing-closed; or
+// not-merged (carries state) | no-fixes-span | no-pr | gh-absent. Callers
+// report failed[] and pendingClose[] whatever the action. A `logFailed: true`
+// key means a decisions.md line could not be appended; the PR/issue work
+// still landed.
 //
 // Status is data: exit 0 for every action above, a failed reopen included.
 // 2 malformed invocation.
@@ -54,12 +60,14 @@ const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-merge> [--settle-ms <n>] [--help]\n'
   + '  pre-merge: unlinks closing references to records the PR\'s Fixes block does not name\n'
   + '  post-merge: reopens a keep-open record the merge closed anyway (--settle-ms: poll budget, default 15000, max 60000, 0 = no re-read)\n'
-  + '  prints one JSON line; action: unlinked | still-linked | clean | reopened | reopen-failed | nothing-closed | not-merged | no-fixes-span | no-pr | gh-absent\n'
+  + '  prints one JSON line; action:\n'
+  + '    pre-merge: unlinked | still-linked | clean | no-fixes-span | no-pr | gh-absent\n'
+  + '    post-merge (worst wins): reopen-failed > close-pending > reopened > nothing-closed; or not-merged | no-fixes-span | no-pr | gh-absent\n'
   + '  exit 0 done or status-as-data\n'
   + '       2 malformed invocation\n'
   + '       3 run dir missing or not anchored under the main checkout\n'
   + '       4 run marker mismatch (pre-merge) -- refused, nothing written\n'
-  + '       5 gh pr view / gh pr edit failed\n';
+  + '       5 gh pr view / gh pr edit failed, or a required read came back malformed\n';
 
 const MODES = ['pre-merge', 'post-merge'];
 const VALUE_FLAGS = { '--run': 'run', '--mode': 'mode', '--settle-ms': 'settleMs' };
@@ -113,7 +121,7 @@ function errText(e) {
 const refsWellFormed = (refs) => Array.isArray(refs)
   && (refs.length === 0 || refs.some((r) => r && typeof r.repository === 'object' && r.repository !== null));
 
-const uniqueSorted =(numbers) => [...new Set(numbers)].sort((a, b) => a - b);
+const uniqueSorted = (numbers) => [...new Set(numbers)].sort((a, b) => a - b);
 
 function run(argv, overrides = {}) {
   // Tests pass only the seams they fake; the rest stay real.
@@ -147,16 +155,22 @@ function run(argv, overrides = {}) {
   if (!deps.ghAvailable()) return print({ action: 'gh-absent', pr: n });
 
   let logFailed = false;
-  const log = (text, reversibility) => {
+  const log = (text, reversibility, status = 'AUTO', step = 'Closing links') => {
     try {
       deps.appendDecision({
         runDir: o.run,
         entry: formatEntry({
-          status: 'AUTO', now: deps.now(), step: 'Closing links', text: text.replace(/\s+/g, ' '), reversibility,
+          status, now: deps.now(), step, text: text.replace(/\s+/g, ' '), reversibility,
         }),
       });
     } catch { logFailed = true; }
   };
+  // A guard that did not land (still linked, could not reopen, still open) is
+  // not an auto-applied decision: _shared/auto-decision-log.md's Degrade-trace
+  // rule makes "the step ran, but to a lesser fallback, no staged artifact" a
+  // SKIP line tagged (degraded), Reversibility n/a. KEPT-PROMPT would claim a
+  // user was asked inline, and STAGED needs a staged/ file; neither happened.
+  const degraded = (condition, fallback) => log(`condition: ${condition} → fallback: ${fallback}`, 'n/a', 'SKIP', 'Closing links (degraded)');
   const done = (envelope) => print({ ...envelope, ...(logFailed ? { logFailed: true } : {}) });
 
   // 5. Read the live PR. A body that is not a string, or links that are not an
@@ -229,7 +243,7 @@ function run(argv, overrides = {}) {
       log(`unlinked #${issue} from PR #${n} before merge (neutralized ${k} closing-keyword phrase(s))`, 'high');
     }
     for (const issue of stillLinked) {
-      log(`#${issue} still linked to PR #${n} after neutralizing — post-merge step reopens it if the merge closes it`, 'high');
+      degraded(`#${issue} still linked to PR #${n} after neutralizing`, 'the post-merge step reopens it if the merge closes it');
     }
     return done({
       action: stillLinked.length ? 'still-linked' : 'unlinked', ...base, unlinked, stillLinked, neutralized: neutralized.length,
@@ -242,19 +256,23 @@ function run(argv, overrides = {}) {
   const expected = span.fixes;
   const keepOpen = span.refs;
 
-  // 7b. The squash message is the second closing channel. A failed read
-  // degrades to "no message" and says so; it never blocks the reopen.
+  // 7b. The squash message is the second closing channel. A failed read (or
+  // an oid that is not a commit sha, never put into the API path) degrades to
+  // "unread" and says so; it never blocks the reopen. Unread, any candidate
+  // may be named by a closing keyword, so every one counts as will-close and
+  // is polled -- otherwise a record the message closes ~2 s later reads OPEN
+  // once and is missed.
   let message = '';
   let messageUnread = false;
   try {
     const oid = pr.mergeCommit && pr.mergeCommit.oid;
-    if (typeof oid !== 'string' || !oid) throw new Error('no merge commit oid');
+    if (typeof oid !== 'string' || !/^[0-9a-f]{7,40}$/.test(oid)) throw new Error('no usable merge commit oid');
     message = String(deps.gh(['api', `repos/{owner}/{repo}/commits/${oid}`, '--jq', '.commit.message']));
   } catch { messageUnread = true; }
   const messageCloses = findClosingRefs(message, scope).map((r) => r.number);
   const candidates = uniqueSorted([...linked.filter((x) => !expected.includes(x)), ...keepOpen].filter((x) => !expected.includes(x)));
   const closers = new Set([...linked, ...messageCloses]);
-  const willClose = candidates.filter((x) => closers.has(x));
+  const willClose = messageUnread ? candidates : candidates.filter((x) => closers.has(x));
 
   // 8b. Per candidate: read, re-read while a will-close one still reads OPEN
   // (bounded by re-read count, never by the clock), reopen what closed at or
@@ -291,18 +309,20 @@ function run(argv, overrides = {}) {
     }
   }
   for (const issue of reopened) log(`reopened #${issue} after PR #${n}'s merge closed it (closing link or merge-commit keyword)`, 'high');
-  for (const f of failed) log(`could not reopen #${f.issue} after PR #${n}'s merge (${f.error}) — reopen it by hand`, 'n/a');
+  for (const f of failed) degraded(`could not reopen #${f.issue} after PR #${n}'s merge (${f.error})`, 'reopen it by hand');
 
   // A will-close record still OPEN after the poll window may yet close: that
   // is pending, not clean.
   const pendingClose = willClose.filter((x) => stillOpen.includes(x));
+  const windowSeconds = maxRereads * (POLL_STEP_MS / 1000);
   for (const issue of pendingClose) {
-    log(`#${issue} still open ${o.settleMs / 1000}s after PR #${n} merged though the merge will close it — re-run --mode post-merge or reopen it by hand if it closes`, 'n/a');
+    degraded(`#${issue} still open ${windowSeconds}s after PR #${n} merged though the merge may close it`, 're-run --mode post-merge, or reopen it by hand if it closes');
   }
+  // Worst outcome wins: a reopen never hides a failure or a pending close.
   let action = 'nothing-closed';
-  if (reopened.length) action = 'reopened';
-  else if (failed.length) action = 'reopen-failed';
+  if (failed.length) action = 'reopen-failed';
   else if (pendingClose.length) action = 'close-pending';
+  else if (reopened.length) action = 'reopened';
 
   return done({
     action, pr: n, candidates, willClose, reopened, failed, stillOpen, pendingClose, closedBefore,

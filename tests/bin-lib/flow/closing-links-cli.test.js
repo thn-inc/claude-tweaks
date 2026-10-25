@@ -184,6 +184,9 @@ test('AC2.1 pre-merge reports a link that survives neutralizing', () => {
   assert.match(log, /#2724 still linked to PR #7 after neutralizing/);
   assert.match(log, /post-merge step reopens it/);
   assert.ok(!/unlinked #2724/.test(log));
+  // Not acted on, no staged artifact: a Degrade-trace SKIP line, never AUTO.
+  assert.match(log, /^- SKIP \d{2}:\d{2}:\d{2} — Closing links \(degraded\): condition: #2724 still linked .* → fallback: .*Reversibility: n\/a\.$/m);
+  assert.doesNotMatch(log, /^- AUTO /m);
 });
 
 test('AC3.1 a stale reference with no keyword phrase is still reported', () => {
@@ -360,6 +363,8 @@ test('--help exits 0 without touching gh', () => {
   const usage = h.out.join('');
   assert.match(usage, /usage: closing-links\.js --run <run-dir> --mode/);
   assert.match(usage, /4 run marker mismatch/);
+  assert.match(usage, /reopen-failed > close-pending > reopened > nothing-closed/);
+  assert.match(usage, /5 gh pr view \/ gh pr edit failed, or a required read came back malformed/);
   assert.equal(h.calls.length, 0);
 });
 
@@ -381,8 +386,7 @@ test('AC2.1 post-merge reopens a deferred record the merge closed', () => {
   assert.equal(h.reopens().length, 1);
   assert.deepEqual(h.reopens()[0].args, ['issue', 'reopen', '2724', '--comment', REOPEN_COMMENT]);
   const log = h.log(runDir);
-  assert.match(log, /reopened #2724 after PR #7's merge closed it \(closing link or merge-commit keyword\)/);
-  assert.match(log, /Closing links/);
+  assert.match(log, /^- AUTO \d{2}:\d{2}:\d{2} — Closing links: reopened #2724 after PR #7's merge closed it \(closing link or merge-commit keyword\)/m);
   assert.match(log, /Reversibility: high/);
   // The merge message was read through the commits API.
   assert.ok(h.calls.some((c) => c.args[0] === 'api' && c.args[1] === 'repos/{owner}/{repo}/commits/d36f5f6a0000000000000000000000000000abcd'));
@@ -416,6 +420,8 @@ test('post-merge polling is bounded by re-read count, floor(settleMs / 3000)', (
   assert.deepEqual(h.sleeps, [3000, 3000]);
   assert.equal(h.issueReads().length, 3);
   assert.equal(h.reopens().length, 0);
+  // The log names the window actually polled (2 re-reads x 3 s), not settleMs / 1000.
+  assert.match(h.log(runDir), /#2724 still open 6s after PR #7 merged/);
 });
 
 test('post-merge close-pending: a will-close record still OPEN after the window is logged, not reported clean', () => {
@@ -428,10 +434,10 @@ test('post-merge close-pending: a will-close record still OPEN after the window 
   const j = h.json();
   assert.equal(j.action, 'close-pending');
   assert.deepEqual(j.pendingClose, [2724]);
-  assert.match(h.log(runDir), /#2724 still open 6s after PR #7 merged though the merge will close it — re-run --mode post-merge or reopen it by hand if it closes/);
+  assert.match(h.log(runDir), /^- SKIP \d{2}:\d{2}:\d{2} — Closing links \(degraded\): condition: #2724 still open 6s after PR #7 merged though the merge may close it → fallback: re-run --mode post-merge, or reopen it by hand if it closes\. Reversibility: n\/a\.$/m);
 });
 
-test('post-merge: a pending record does not mask a reopen or a failure', () => {
+test('post-merge: a pending close outranks a reopen in the action, and both stay listed', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, {
     prReads: [mergedView(body({ span: ['Fixes #3997', 'Refs #2724 — deferred: a', 'Refs #2725 — deferred: b'] }), [2724, 2725, 3997])],
@@ -439,8 +445,23 @@ test('post-merge: a pending record does not mask a reopen or a failure', () => {
   });
   assert.equal(run(['--run', runDir, ...POST, '--settle-ms', '0'], h.deps), 0);
   const j = h.json();
-  assert.equal(j.action, 'reopened');
+  assert.equal(j.action, 'close-pending');
+  assert.deepEqual(j.reopened, [2724]);
   assert.deepEqual(j.pendingClose, [2725]);
+});
+
+test('post-merge: one reopened and one failed record is reopen-failed, never reopened', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: ['Fixes #3997', 'Refs #2724 — deferred: a', 'Refs #2725 — deferred: b'] }), [2724, 2725, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+    issueThrows: { 2725: true },
+  });
+  assert.equal(run(['--run', runDir, ...POST, '--settle-ms', '0'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'reopen-failed');
+  assert.deepEqual(j.reopened, [2724]);
+  assert.deepEqual(j.failed.map((f) => f.issue), [2725]);
 });
 
 test('post-merge: a MERGED PR with an unparseable mergedAt is exit 5', () => {
@@ -565,6 +586,7 @@ test('post-merge reopen failure is data', () => {
   assert.deepEqual(j.reopened, []);
   assert.match(h.log(runDir), /could not reopen #2724 after PR #7's merge/);
   assert.match(h.log(runDir), /reopen it by hand/);
+  assert.match(h.log(runDir), /^- SKIP \d{2}:\d{2}:\d{2} — Closing links \(degraded\): condition: could not reopen #2724 .*Reversibility: n\/a\.$/m);
 });
 
 test('post-merge issue-read failure is data', () => {
@@ -587,6 +609,42 @@ test('post-merge merge-message read failure degrades to messageUnread, never exi
   const j = h.json();
   assert.equal(j.messageUnread, true);
   assert.equal(j.action, 'reopened');
+});
+
+test('post-merge: an unread merge message makes a Refs-only candidate will-close, so it is polled and reopened', () => {
+  // No closing link and no readable message: only the widening can see that the
+  // squash message may close #10 about 2 s after the merge.
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const single = body({ summary: 'No phrase.', span: ['Refs #10 — deferred: x'] });
+  const h = makeDeps(main, {
+    prReads: [mergedView(single, [])],
+    messageThrows: true,
+    issues: { 10: [{ state: 'OPEN', closedAt: null }, { state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.messageUnread, true);
+  assert.deepEqual(j.willClose, [10]);
+  assert.deepEqual(j.reopened, [10]);
+  assert.equal(j.action, 'reopened');
+  assert.deepEqual(h.sleeps, [3000]);
+  assert.equal(h.reopens().length, 1);
+});
+
+test('post-merge: a merge-commit oid that is not a hex sha never reaches the API path and reads as unread', () => {
+  for (const oid of ['../../etc', 'ABCDEF1', 'abc12', `${'a'.repeat(41)}`, 'd36f5f6 --jq']) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const single = body({ summary: 'No phrase.', span: ['Refs #10 — deferred: x'] });
+    const h = makeDeps(main, {
+      prReads: [mergedView(single, [], { mergeCommit: { oid } })],
+      issues: { 10: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+    });
+    assert.equal(run(['--run', runDir, ...POST], h.deps), 0, oid);
+    const j = h.json();
+    assert.equal(j.messageUnread, true, oid);
+    assert.deepEqual(j.willClose, [10], oid);
+    assert.equal(h.calls.filter((c) => c.args[0] === 'api').length, 0, oid);
+  }
 });
 
 test('post-merge gh view failure is exit 5', () => {
