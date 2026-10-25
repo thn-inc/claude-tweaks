@@ -34,6 +34,8 @@ const BEGIN = '<!-- gate-coverage:begin -->';
 const END = '<!-- gate-coverage:end -->';
 const TEARDOWN_BEGIN = '<!-- teardown-gate-coverage:begin -->';
 const TEARDOWN_END = '<!-- teardown-gate-coverage:end -->';
+// The main-checkout write target the tests below expect, as a native path on win32 too.
+const MAIN_F = path.resolve('/main/f.js');
 
 function coverageBlock() {
   const text = readText(SCHEMA);
@@ -717,15 +719,15 @@ test("#4149: a data-only body on a line with $'...' is deliberately kept visible
 });
 
 test('#4149: the word after a bare << is the delimiter, not a copy destination', () => {
-  assert.deepStrictEqual(fileWriteTargets('cp a.js /main/f.js << EOF\nx\nEOF', '/r'), [{ action: 'copy', file: path.resolve('/main/f.js') }]);
+  assert.deepStrictEqual(fileWriteTargets('cp a.js /main/f.js << EOF\nx\nEOF', '/r'), [{ action: 'copy', file: MAIN_F }]);
 });
 
 test('#4149: a quoted << argument is a file argument, not a heredoc operator', () => {
   const tee = fileWriteTargets("tee '<<' /main/f.js", '/r');
-  assert.ok(tee.some((t) => t.action === 'write' && t.file === path.resolve('/main/f.js')), JSON.stringify(tee));
-  assert.deepStrictEqual(fileWriteTargets("cp a.js '<<' /main/f.js", '/r'), [{ action: 'copy', file: path.resolve('/main/f.js') }]);
+  assert.ok(tee.some((t) => t.action === 'write' && t.file === MAIN_F), JSON.stringify(tee));
+  assert.deepStrictEqual(fileWriteTargets("cp a.js '<<' /main/f.js", '/r'), [{ action: 'copy', file: MAIN_F }]);
   const dq = fileWriteTargets('tee "<<x" /main/f.js', '/r');
-  assert.ok(dq.some((t) => t.action === 'write' && t.file === path.resolve('/main/f.js')), JSON.stringify(dq));
+  assert.ok(dq.some((t) => t.action === 'write' && t.file === MAIN_F), JSON.stringify(dq));
   // An unquoted operator with a quoted delimiter is still a heredoc operator.
   assert.deepStrictEqual(fileWriteTargets("tee out.txt <<'EOF'\na > b\nEOF", '/r'), [{ action: 'write', file: path.resolve('/r', 'out.txt') }]);
 });
@@ -810,7 +812,7 @@ test('#3989: stripHeredocBodies keeps the opener line and its newline, and drops
 // So an odd quote in body prose never swallows a later command, and a body `cd` never moves it.
 {
   const r = (action, file) => ({ action, file: path.resolve('/r', file) });
-  const m = (action) => ({ action, file: path.resolve('/main/f.js') });
+  const m = (action) => ({ action, file: MAIN_F });
   for (const [label, cmd, expected] of [
     ['an apostrophe in a body fed to grep', "grep -c x <<'EOF'\ndon't\nEOF\ncp cmd.sh /main/f.js", [m('copy')]],
     ['an apostrophe in a body after a mkdir neighbour', "mkdir -p d && cat > d/n <<'EOF'\nit's\nEOF\nsed -i s/a/b/ /main/f.js", [r('write', 'd/n'), m('edit')]],
@@ -903,7 +905,7 @@ for (const [label, cmd] of [
   ['a multi-line $(( holding single parens', 'echo $(( (1) + (2) +\n1 << 2 ))\ncd /main\n2\ncp /etc/hosts f.js'],
 ]) {
   test(`#4149: ${label} reports the write`, () => {
-    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'copy', file: path.resolve('/main/f.js') }]);
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'copy', file: MAIN_F }]);
   });
 }
 
@@ -911,7 +913,7 @@ for (const [label, cmd] of [
 // `)`; a brace group's `cd` may outlive its `}` (unless the group is piped), so after a `}` a
 // relative target resolves under both the inner and the outer cwd.
 {
-  const main = (action) => ({ action, file: path.resolve('/main/f.js') });
+  const main = (action) => ({ action, file: MAIN_F });
   for (const [label, cmd, expected] of [
     ['(cd … && bash <<EOF … )', "(cd /main && bash <<'EOF'\necho x > f.js\nEOF\n)", [main('write')]],
     ['{ cd … && bash <<EOF … }', "{ cd /main && bash <<'EOF'\necho x > f.js\nEOF\n}", [main('write')]],
@@ -937,7 +939,7 @@ for (const [label, cmd] of [
 
   test('#4149 group cd: after a brace group closes, a relative target resolves under both cwds', () => {
     const targets = fileWriteTargets('{ cd /main; }; cp a f.js', '/r').map((t) => t.file);
-    assert.ok(targets.includes(path.resolve('/main/f.js')) && targets.includes(path.resolve('/r', 'f.js')), JSON.stringify(targets));
+    assert.ok(targets.includes(MAIN_F) && targets.includes(path.resolve('/r', 'f.js')), JSON.stringify(targets));
   });
 }
 
@@ -945,7 +947,7 @@ for (const [label, cmd] of [
 // read as a command; the backgrounded and-or list runs in a subshell, so its `cd` does not move the
 // cwd for what follows. `&&`, `&>`, `>&`, `<&`, `|&` and an `&` inside `$( )` are not cuts.
 {
-  const main = (action) => ({ action, file: path.resolve('/main/f.js') });
+  const main = (action) => ({ action, file: MAIN_F });
   const here = (action) => ({ action, file: path.resolve('/r', 'f.js') });
   for (const [label, cmd, expected] of [
     ['a write after a backgrounded command (true & cp)', 'true & cp /etc/hosts /main/f.js', [main('copy')]],
@@ -972,7 +974,7 @@ for (const [label, cmd] of [
 // `&`, `;`, `(`, `)` or newline inside them is structural, and an earlier `cd` survives. Every case
 // was checked under bash 3.2 and 5 (bash 3.2 cannot parse the odd-quote heredoc one).
 {
-  const main = (action) => ({ action, file: path.resolve('/main/f.js') });
+  const main = (action) => ({ action, file: MAIN_F });
   const B = "<<'EOF'";
   for (const [label, cmd, expected] of [
     ['an & in a quoted string inside "$( )"', 'cd /main && echo "$(echo "a&b")" && cp a f.js', [main('copy')]],
@@ -1118,7 +1120,7 @@ for (const [label, cmd] of [
     for (const [route, build] of routes) {
       test(`#4149 cwd cap: ${route} past the cap resolve a relative write in the overflow cwd and the walk's own`, () => {
         const files = fileWriteTargets(build(20, 'cp a f.js'), '/r', opts).map((t) => t.file);
-        assert.ok(files.includes(path.resolve('/main/f.js')) && files.includes(path.resolve('/r/f.js')), JSON.stringify(files));
+        assert.ok(files.includes(MAIN_F) && files.includes(path.resolve('/r/f.js')), JSON.stringify(files));
         assert.ok(files.length <= 9, JSON.stringify(files));
       });
       test(`#4149 cwd cap: ${route} past the cap leave an absolute write as written`, () => {
@@ -1150,7 +1152,7 @@ for (const [label, cmd] of [
     test('#4149 cwd cap: a kept shell body past the cap collapses to the overflow cwd too', () => {
       const body = distinct((i) => `{ cd /a${i}; }; `, 20) + 'cp a f.js';
       const files = fileWriteTargets(`bash <<'EOF'\n${body}\nEOF`, '/r', opts).map((t) => t.file);
-      assert.ok(files.includes(path.resolve('/main/f.js')), JSON.stringify(files));
+      assert.ok(files.includes(MAIN_F), JSON.stringify(files));
     });
     test('#4149 cwd cap: without an overflowCwd the set collapses to the walk\'s own cwd', () => {
       const files = fileWriteTargets(distinct((i) => `{ cd /a${i}; }; `, 20) + 'cp a f.js', '/r').map((t) => t.file);
@@ -1210,12 +1212,12 @@ for (const [label, cmd] of [
 for (const [label, cmd, expected] of [
   ['tee -a f >/dev/null', 'tee -a f >/dev/null', [{ action: 'write', file: path.resolve('/r', 'f') }]],
   ['tee a >>f', 'tee a >>f', [{ action: 'write', file: path.resolve('/r', 'f') }, { action: 'write', file: path.resolve('/r', 'a') }]],
-  ['cp a /main/f.js 2>/dev/null', 'cp a /main/f.js 2>/dev/null', [{ action: 'copy', file: path.resolve('/main/f.js') }]],
-  ['cp a /main/f.js 2>&1', 'cp a /main/f.js 2>&1', [{ action: 'copy', file: path.resolve('/main/f.js') }]],
-  ['cp a /main/f.js > /dev/null', 'cp a /main/f.js > /dev/null', [{ action: 'copy', file: path.resolve('/main/f.js') }]],
-  ['cp a /main/f.js <in', 'cp a /main/f.js <in', [{ action: 'copy', file: path.resolve('/main/f.js') }]],
+  ['cp a /main/f.js 2>/dev/null', 'cp a /main/f.js 2>/dev/null', [{ action: 'copy', file: MAIN_F }]],
+  ['cp a /main/f.js 2>&1', 'cp a /main/f.js 2>&1', [{ action: 'copy', file: MAIN_F }]],
+  ['cp a /main/f.js > /dev/null', 'cp a /main/f.js > /dev/null', [{ action: 'copy', file: MAIN_F }]],
+  ['cp a /main/f.js <in', 'cp a /main/f.js <in', [{ action: 'copy', file: MAIN_F }]],
   // A process substitution is a file argument (bash copies `<(…)`), never a redirection to drop.
-  ['cp <(true) /main/f.js', 'cp <(true) /main/f.js', [{ action: 'copy', file: path.resolve('/main/f.js') }]],
+  ['cp <(true) /main/f.js', 'cp <(true) /main/f.js', [{ action: 'copy', file: MAIN_F }]],
 ]) {
   test(`#4149 redirect tokens: \`${label}\` reads no redirection as a positional`, () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
