@@ -1,0 +1,96 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert');
+const path = require('node:path');
+
+const {
+  EXPRESS_MARKER_RE, REVIEW_COMMENT_MARKER, expressMarker, isExpressPr, selectReviewSamples, isReviewed, fixesRecords,
+} = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'sampling.js'));
+
+// Ten express merges, one per day, numbers 101..110 in merge order.
+function expressMerges() {
+  return Array.from({ length: 10 }, (_, i) => ({
+    number: 101 + i,
+    mergedAt: `2026-10-${String(i + 1).padStart(2, '0')}T12:00:00Z`,
+    body: `Summary line.\n\n${expressMarker(`run-${i + 1}`)}\n\nFixes #${900 + i}`,
+  }));
+}
+
+// A fixed shuffle so the test does not depend on input order matching merge order.
+function shuffled(list) {
+  const order = [6, 2, 9, 0, 4, 7, 1, 8, 3, 5];
+  return order.map((i) => list[i]);
+}
+
+test('expressMarker renders the line EXPRESS_MARKER_RE matches; isExpressPr reads it', () => {
+  assert.strictEqual(expressMarker('2026-10-25T10-00-00Z-x'), 'claude-tweaks-express: 2026-10-25T10-00-00Z-x');
+  const m = `Body.\n${expressMarker('r1')}\nmore`.match(EXPRESS_MARKER_RE);
+  assert.strictEqual(m && m[1], 'r1');
+  assert.strictEqual(isExpressPr(`Body.\n${expressMarker('r1')}`), true);
+  assert.strictEqual(isExpressPr('Body without marker'), false);
+  assert.strictEqual(isExpressPr(`see claude-tweaks-express: r1 inline`), false);
+  assert.strictEqual(isExpressPr(undefined), false);
+});
+
+test('AC5.1: across 10 express merges, every=5 samples exactly 2', () => {
+  const merges = shuffled(expressMerges());
+  const five = selectReviewSamples(merges, 5);
+  assert.strictEqual(five.length, 2);
+  assert.deepStrictEqual(five.map((s) => s.ordinal), [5, 10]);
+  assert.deepStrictEqual(five.map((s) => s.number), [105, 110]);
+  assert.deepStrictEqual(five[0], { number: 105, ordinal: 5, mergedAt: '2026-10-05T12:00:00Z' });
+
+  const three = selectReviewSamples(merges, 3);
+  assert.strictEqual(three.length, 3);
+  assert.deepStrictEqual(three.map((s) => s.ordinal), [3, 6, 9]);
+
+  assert.strictEqual(selectReviewSamples(merges, 1).length, 10);
+  assert.strictEqual(selectReviewSamples(merges, 11).length, 0);
+
+  const reversed = expressMerges().reverse();
+  assert.deepStrictEqual(selectReviewSamples(reversed, 5), five);
+  assert.deepStrictEqual(selectReviewSamples(reversed, 3), three);
+});
+
+test('selectReviewSamples breaks a mergedAt tie by PR number', () => {
+  const tied = [
+    { number: 7, mergedAt: '2026-10-01T00:00:00Z', body: expressMarker('b') },
+    { number: 3, mergedAt: '2026-10-01T00:00:00Z', body: expressMarker('a') },
+  ];
+  assert.deepStrictEqual(selectReviewSamples(tied, 1).map((s) => s.number), [3, 7]);
+});
+
+test('non-express PRs interleaved among the ten do not consume ordinals', () => {
+  const plain = [
+    { number: 200, mergedAt: '2026-10-02T18:00:00Z', body: 'Ordinary PR.\n\nFixes #1' },
+    { number: 201, mergedAt: '2026-10-07T18:00:00Z', body: 'Another ordinary PR.' },
+  ];
+  const merges = shuffled(expressMerges()).concat(plain);
+  assert.strictEqual(merges.length, 12);
+  const out = selectReviewSamples(merges, 5);
+  assert.deepStrictEqual(out.map((s) => [s.number, s.ordinal]), [[105, 5], [110, 10]]);
+});
+
+test('every of 0, -1, NaN samples nothing (fail closed)', () => {
+  const merges = expressMerges();
+  for (const every of [0, -1, NaN]) {
+    assert.deepStrictEqual(selectReviewSamples(merges, every), [], `every=${every}`);
+  }
+});
+
+test('isReviewed: only a trusted comment that starts with the marker counts', () => {
+  const body = `${REVIEW_COMMENT_MARKER}\nPost-merge review: no findings.`;
+  assert.strictEqual(REVIEW_COMMENT_MARKER, '<!-- run-comment: express-review -->');
+  assert.strictEqual(isReviewed([{ authorAssociation: 'OWNER', body }]), true);
+  assert.strictEqual(isReviewed([{ author_association: 'OWNER', body }]), true);
+  assert.strictEqual(isReviewed([{ authorAssociation: 'NONE', body }]), false);
+  assert.strictEqual(isReviewed([{ authorAssociation: 'OWNER', body: `Quoting: ${REVIEW_COMMENT_MARKER}` }]), false);
+  assert.strictEqual(isReviewed([]), false);
+  assert.strictEqual(isReviewed(undefined), false);
+});
+
+test('fixesRecords returns Fixes #N line numbers in order, deduplicated', () => {
+  assert.deepStrictEqual(fixesRecords('Fixes #12\nRefs #13\nFixes #14\nFixes #12'), [12, 14]);
+  assert.deepStrictEqual(fixesRecords('See Fixes #5 inline'), []);
+  assert.deepStrictEqual(fixesRecords(undefined), []);
+});
