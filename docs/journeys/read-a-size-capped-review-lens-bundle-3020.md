@@ -35,7 +35,7 @@ files:
 
 ### 3. Lens agent meets a stubbed section
 - **URL:** `===== {file} =====` sections in `context.md`
-- **Action:** **Lens agent** reads a section that is a single line starting `[section omitted: {file} …`. It says "is {N} bytes, over the 65536-byte per-file cap", "always stubbed (lockfile or .jsonl)", "is {N} bytes of markdown, not inlined; …" (any readable `.md`/`.markdown` file, whatever its size), or, for a deleted file over the cap, gives no reason and goes straight to where to look. Every stub line ends with where to look.
+- **Action:** **Lens agent** reads a section that is a single line starting `[section omitted: {file} …`. It says "is {N} bytes, over the 65536-byte per-file cap", "always stubbed (lockfile or .jsonl)", "is {N} bytes of markdown, not inlined; …" (any readable `.md`/`.markdown` file, whatever its size), "is {N} bytes, stubbed to fit the 262144-byte bundle budget" (an over-budget bundle, step 5), or, for a deleted file over the cap, gives no reason and goes straight to where to look. Every stub line ends with where to look.
 - **Should feel:** Clearly a marker, never mistakable for file content. Lens findings cite `Path:Line` from the live file, and a stub line has no line numbers to confuse that.
 - **Should understand:** The stub says exactly what is still available:
   - "its change is in the diff above": the hunk is still inline.
