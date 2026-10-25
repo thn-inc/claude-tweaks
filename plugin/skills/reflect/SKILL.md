@@ -119,9 +119,9 @@ When a pipeline run directory exists, route findings by category without prompti
 | Finding type | Default routing | Log entry |
 |---|---|---|
 | Safety regression (security, data loss, broken invariants — e.g., token expiry bug, auth bypass, dropped writes, resource leak, race condition on shared state) | KEPT-PROMPT — surfaces inline; cannot defer safety findings autonomously | `KEPT-PROMPT {time} — Step 3: safety finding "{summary}". Surfaced inline.` |
-| Convention drift, code smell, simplification opportunity | STAGED — write to `staged/reflect-{n}.md`. Surface at Wrap-Up Review Console. | `STAGED {time} — Step 3: convention finding "{summary}". Stage path: staged/reflect-{n}.md.` |
+| Convention drift, code smell, simplification opportunity | STAGED — write to `staged/reflect-{n}.md` with a `**Destination:**` line (below). Resolves in the Review Console's Skill updates section. | `STAGED {time} — Step 3: convention finding "{summary}". Stage path: staged/reflect-{n}.md.` |
 | Tangential idea (new feature, alternative design) | STAGED → backlog work-record candidate. Surfaces at the Wrap-Up Review Console's Queue writes section, following `_shared/auto-mode-contract.md`'s tiered stance — folded into the batch "Approve all" at `supervised`/`trusted`, auto-resolved with zero `AskUserQuestion` calls under `consoleAutoResolve` at `unattended`. | `STAGED {time} — Step 3: tangential idea "{summary}" — backlog candidate — landing: {born-ready|needs:definition} (defer-reason: tangential). Surface at the Queue writes gate.` |
-| Pattern observation, design tradeoff acknowledgment | STAGED — write to `staged/reflect-{n}.md`. Most go to skill updates handled by `/claude-tweaks:wrap-up`'s Skills curation row. | `STAGED {time} — Step 3: pattern observation "{summary}". Stage path: staged/reflect-{n}.md.` |
+| Pattern observation, design tradeoff acknowledgment | STAGED — write to `staged/reflect-{n}.md` with a `**Destination:**` line (below). Resolves in the Review Console's Skill updates section. | `STAGED {time} — Step 3: pattern observation "{summary}". Stage path: staged/reflect-{n}.md.` |
 
 Default behavior: **defer everything** to the Review Console. The exception is safety regressions, which always surface inline.
 
@@ -131,6 +131,7 @@ Default behavior: **defer everything** to the Review Console. The exception is s
 # Reflect — staged finding {n}
 
 **Category:** {convention | tangential | observation}
+**Destination:** {edit {repo-relative path} | record | decline {reason}}
 **Severity:** {low | med | high}
 **Reversibility:** {high | med | low}
 **Source:** {full | hindsight | light} mode, lens "{lens name}"
@@ -149,6 +150,8 @@ Default behavior: **defer everything** to the Review Console. The exception is s
 
 {Copy the matching `STAGED …` line from `decisions.md` so the Console can cross-link.}
 ```
+
+**Destination (observation/convention only).** Write exactly one `**Destination:**` line, chosen by reflect, on every `observation` or `convention` file; omit it on a `tangential` file. `edit {path}` when the fix is a small, clear change to a named skill file (a path with a `skills/` segment), a `rules/` file, or a `CLAUDE.md` — the console session makes the edit. `record` when it is real work beyond an edit — append a final `## Record proposal` section holding `Title:`/`Type:`/`Labels:`/`Defer-reason:` lines, a blank line, then the body composed via `specShapedBody` exactly as the tangential variant below composes it (`filedBy: 'reflect'`, `provenance.deferReason` from `_shared/deferral-gate.md`'s vocabulary, `openQuestion` → `needs:definition`). `decline {reason}` when no action is warranted. The Record proposal section sits in the body, not as a top header, so the file is never read as a Queue write. The Finding and the record body must never start a line with `**Destination:**` — the parser counts every line-start occurrence and two of them make the file malformed. The console classifies these files into Skill updates and `bin/reflect-apply.js` applies them; a file with no Destination line (staged before this line existed) is digested with Defer-reason `reflect-no-destination`; a malformed line stays in Pending review; a `record` whose `Defer-reason:` is invalid is refused (`wrap-up/refused-proposals.md`).
 
 For a **tangential** finding specifically — the one category that becomes a Queue-writes record
 proposal (see `review-console.md`'s "On approval" step 5 and `flow/multispec-review-console.md`,

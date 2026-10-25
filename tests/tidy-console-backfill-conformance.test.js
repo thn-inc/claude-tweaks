@@ -10,6 +10,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
+const { REFLECT_NO_DESTINATION } = require('../plugin/bin/lib/console/reflect-destination');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(ROOT, rel));
@@ -144,14 +145,14 @@ test('SKILL.md routes --console-backfill to console-backfill.md', () => {
   assert.doesNotMatch(body.replace(/`console-backfill\.md`/g, ''), ROUTE, 'the pattern must go red without the file name');
 });
 
-test('materiality-floor.md documents the three console-backfill Entry-format values, outside DEFER_REASONS', () => {
+test('materiality-floor.md documents the three console-backfill values and reflect-no-destination as Entry-format values, outside DEFER_REASONS', () => {
   const floor = read('plugin/skills/_shared/materiality-floor.md');
   const at = floor.indexOf('### Console backfill values');
   const prev = floor.indexOf("### Tiebreak can't-tell value");
   const next = floor.indexOf('### Digest URL and count surfacing');
   assert.ok(prev !== -1 && at > prev && next > at, 'subsection sits between Tiebreak can\'t-tell value and Digest URL and count surfacing');
   const section = floor.slice(at, next);
-  for (const v of ['console-backfill-no-claim', 'console-backfill-unmapped-kind', 'console-backfill-confirmed-low']) {
+  for (const v of ['console-backfill-no-claim', 'console-backfill-unmapped-kind', 'console-backfill-confirmed-low', REFLECT_NO_DESTINATION]) {
     assert.ok(section.includes(`\`${v}\``), `${v} is named`);
     assert.ok(!DEFER_REASONS.includes(v), `${v} must not be in DEFER_REASONS`);
   }

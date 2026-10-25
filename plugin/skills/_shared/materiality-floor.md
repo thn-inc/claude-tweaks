@@ -112,8 +112,10 @@ closed runs left in their Review Consoles, and digests three kinds with a value 
 `console-backfill-no-claim` (a stored line with no recoverable claim),
 `console-backfill-unmapped-kind` (a staged file no filing shape fits), and
 `console-backfill-confirmed-low` (a tiebreak-confirmed finding at severity `low` or `info`). A
-can't-tell finding digests as `tiebreak-cant-tell`, above. All three are Entry-format values only,
-like the two before them. Deliberately **not** in `DEFER_REASONS`: none is a fix-now failure.
+can't-tell finding digests as `tiebreak-cant-tell`, above. A reflect observation or convention
+staged with no `**Destination:**` line digests as `reflect-no-destination`, at the live console
+(`bin/reflect-apply.js`) and in this backfill alike. All four are Entry-format values only, like the
+two before them. Deliberately **not** in `DEFER_REASONS`: none is a fix-now failure.
 Dedup and Digest URL and count surfacing apply unchanged; `bin/lib/console/backfill-dispose.js`
 owns the table.
 
