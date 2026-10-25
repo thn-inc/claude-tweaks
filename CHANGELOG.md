@@ -53,6 +53,24 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.154.0](https://github.com/thn-inc/claude-tweaks/compare/v6.153.0...v6.154.0) (2026-10-25)
+
+
+### Features
+
+* give every Review Console item a final outcome and backfill the console backlog ([#3992](https://github.com/thn-inc/claude-tweaks/issues/3992)) ([6510874](https://github.com/thn-inc/claude-tweaks/commit/6510874174729159ee6f724f746a5c5dd208843a)), closes [#3816](https://github.com/thn-inc/claude-tweaks/issues/3816) [#3946](https://github.com/thn-inc/claude-tweaks/issues/3946) [#3949](https://github.com/thn-inc/claude-tweaks/issues/3949) [#3950](https://github.com/thn-inc/claude-tweaks/issues/3950)
+
+
+### Bug Fixes
+
+* compose-pr-body.js: parseArgs accepts inherited object… ([#4021](https://github.com/thn-inc/claude-tweaks/issues/4021)) ([8c725c7](https://github.com/thn-inc/claude-tweaks/commit/8c725c7b56f18fa5f5a1025d415e8a3ae11f126b))
+* compose-subject renders the record's "Filed by" footer as… ([#4014](https://github.com/thn-inc/claude-tweaks/issues/4014)) ([9908c65](https://github.com/thn-inc/claude-tweaks/commit/9908c65a477f539f289092d7bf802efcf1c70746))
+* reconcile: archiving an escalated stuck dir drops its… ([#4202](https://github.com/thn-inc/claude-tweaks/issues/4202)) ([04078e6](https://github.com/thn-inc/claude-tweaks/commit/04078e6240839551d0459bbdd32bff6e5a1f68ac))
+* reflect's integration-branch probe reads a failed fetch… ([#4069](https://github.com/thn-inc/claude-tweaks/issues/4069)) ([bddfa50](https://github.com/thn-inc/claude-tweaks/commit/bddfa50bbacec82a8887edb0684b6a5095c13b74))
+* staged-patch gitEnv leaks env-injected git config… ([#3997](https://github.com/thn-inc/claude-tweaks/issues/3997)) ([d36f5f6](https://github.com/thn-inc/claude-tweaks/commit/d36f5f6a54367f74e589527555a81ab403ba3058))
+* Windows regression: 1 test file(s) newly failing after… ([#4177](https://github.com/thn-inc/claude-tweaks/issues/4177)) ([42aacbb](https://github.com/thn-inc/claude-tweaks/commit/42aacbbbd5a6c76731d011189fc0d31b1677d9ed))
+* worktree-always redirect scan misses a redirect glued to… ([#4015](https://github.com/thn-inc/claude-tweaks/issues/4015)) ([5d66bf3](https://github.com/thn-inc/claude-tweaks/commit/5d66bf378f00ed495a4b18013350d53be8f0b3bb))
+
 ## [6.153.0](https://github.com/thn-inc/claude-tweaks/compare/v6.152.0...v6.153.0) (2026-10-24)
 
 
