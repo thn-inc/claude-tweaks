@@ -60,6 +60,11 @@ const SEPARATORS = /[\s;&|()<>`{}=]+/;
 const ASSIGNMENT = /(^|[\s;&|(`])[A-Za-z_][A-Za-z0-9_]*=/;
 const PARAM_REFERENCE = /\$\{?[A-Za-z_]/;
 
+// The cwd a redirect value is resolved against: a drive-named value gets that drive's root, any other '.'.
+function anchorFor(raw) {
+  return /^[A-Za-z]:/.test(raw) ? `${raw.slice(0, 2)}\\` : '.';
+}
+
 // #3080: bare shell redirection (`>`, `>>`, ...) has no command word for
 // commandWords() to key on, so it needs its own check. It reuses the parser's
 // own redirectWriteTargets (git-command.js is already loaded) rather than a
@@ -81,7 +86,6 @@ const PARAM_REFERENCE = /\$\{?[A-Za-z_]/;
 // to redirectWriteTargets.
 function hasFileRedirection(command, { pathImpl = path } = {}) {
   let found = false;
-  const anchorFor = (raw) => (/^[A-Za-z]:/.test(raw) ? `${raw.slice(0, 2)}\\` : '.');
   forEachShellSegment(command, '.', (t, _cwd, quoting) => {
     if (!found && redirectRawTargets(t, quoting).some((raw) => resolveWriteTarget(anchorFor(raw), raw, pathImpl))) found = true;
   }, { pathImpl });
