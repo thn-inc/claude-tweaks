@@ -50,6 +50,7 @@ test('batch branch refuses a digest element per element and excludes it from the
   const src = readFlat('plugin/skills/specify/SKILL.md');
   assert.ok(src.includes('A **digest element** (the digest-container guard above) is the one per-element stop: it is refused alone'), 'per-element digest refusal missing from the batch branch');
   assert.ok(src.includes('the remaining elements still shape'), 'per-element digest refusal must leave the other elements shaping');
+  assert.ok(src.includes('It is not a resolution failure, so it never joins the fail-all set above'), 'digest refusal must be excluded from the fail-all set');
   assert.ok(src.includes('a batch whose every element is a digest container shapes nothing'), 'all-digest batch rule missing from the batch branch');
 });
 
