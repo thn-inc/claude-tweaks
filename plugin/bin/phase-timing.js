@@ -3,7 +3,7 @@
 // a transcript, its per-phase tokens (#1929).
 //
 //   node bin/phase-timing.js --run <dir> [--json] [--markdown]
-//        [--transcript <path> ...] [--auto-transcript]
+//        [--transcript <path> ...] [--auto-transcript] [--check-budgets]
 //
 // Reads {run-dir}/events.jsonl (per-line JSON; a malformed line is skipped,
 // a missing file is an empty run), {run-dir}/manifest.yml (optional) and
@@ -31,22 +31,45 @@
 // the subagent transcripts under each {session}/subagents/ directory,
 // aggregated by tier and role, clipped to the run's event window, and printed
 // after the phase table; the key is absent without a transcript flag.
+//
+// --check-budgets (#4029) compares the run's totals with the efficiency
+// ceilings for its {run-dir}/config.yml `ceremony-profile` (absent or invalid
+// reads as `standard`, with a stderr note) from the checkout's policy.yml, found
+// as the parent of the run dir's `.claude-tweaks` ancestor (bin/lib/timing/
+// budget.js). It adds a `budget` key to timing.json — { profile, profileSource,
+// checks, staged }, or { skipped } with no ancestor — and prints one
+// `Budget (...)` line last (no line under --json, whose `budget` key carries
+// it). Round trips and procedure KB need a transcript; without one they read
+// `unmeasured`. A breach stages an `efficiency-budget-{run-id}` proposal for the
+// Review Console's Queue writes section and logs it STAGED (a multi-spec run's
+// spec-N dir stages into the parent, keyed on the parent id), unless an open
+// record already carries the profile's work fingerprint: then `budget.trackedBy`
+// names it and the decision is logged AUTO (a failed gh lookup fails open, with
+// a `budget.notes` line). A staging failure
+// goes to stderr and `budget.stageError`, and the exit code stays 0. A breach
+// left unstaged and any unmeasured metric each also append a SKIP line to the
+// run's decisions.md (the Degrade-trace rule). Without the flag the output is
+// unchanged, and timing.json differs only by carrying an existing timing.json's
+// `budget` key forward untouched.
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, TIERS, ROLE_PATTERNS } = require('./lib/timing/derive');
 const { locateTranscripts, readUsage, subagentsDirFor, readDispatches } = require('./lib/timing/transcript');
 const { readManifest } = require('./lib/flow/manifest');
+const { TURN_CLASSES, CEREMONY_CLASSES } = require('./lib/timing/turn-class');
+const { checkBudgets } = require('./lib/timing/budget');
 
-const USAGE = 'usage: phase-timing.js --run <dir> [--json] [--markdown] [--transcript <path> ...] [--auto-transcript]\n';
+const USAGE = 'usage: phase-timing.js --run <dir> [--json] [--markdown] [--transcript <path> ...] [--auto-transcript] [--check-budgets]\n';
 
 function parseArgs(argv) {
-  const o = { run: null, json: false, markdown: false, transcripts: [], autoTranscript: false };
+  const o = { run: null, json: false, markdown: false, transcripts: [], autoTranscript: false, checkBudgets: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--run') { o.run = argv[i + 1]; i++; if (o.run === undefined) return null; continue; }
     if (a === '--transcript') { const v = argv[i + 1]; i++; if (v === undefined) return null; o.transcripts.push(v); continue; }
     if (a === '--auto-transcript') { o.autoTranscript = true; continue; }
+    if (a === '--check-budgets') { o.checkBudgets = true; continue; }
     if (a === '--json') { o.json = true; continue; }
     if (a === '--markdown') { o.markdown = true; continue; }
     return null;
@@ -119,6 +142,30 @@ function renderCollapsedSummary(tokens, notes, guard) {
   return lines.join('\n') + '\n';
 }
 
+// [name, count] entries: highest count first, ties by name in code-unit order.
+function byCountThenName([nameA, countA], [nameB, countB]) {
+  if (countA !== countB) return countB - countA;
+  if (nameA < nameB) return -1;
+  return nameA > nameB ? 1 : 0;
+}
+
+// #4029: the run-wide turn-class and context lines, from a joinTokens totals
+// bucket. Per-phase values stay in timing.json.
+function renderTurnLines(totals) {
+  const k = (n) => (typeof n === 'number' ? `${(n / 1000).toFixed(1)}k` : '—');
+  const classes = TURN_CLASSES.map((c) => `${c} ${totals.turnClasses[c]}`).join(' · ');
+  // From the integer counts, not the 3dp ceremonyShare float, which can round twice.
+  const calls = TURN_CLASSES.reduce((sum, c) => sum + totals.turnClasses[c], 0);
+  const ceremony = CEREMONY_CLASSES.reduce((sum, c) => sum + totals.turnClasses[c], 0);
+  const share = calls > 0 ? `${Math.round((ceremony * 100) / calls)}%` : '—';
+  const models = Object.entries(totals.modelMix).sort(byCountThenName).map(([m, n]) => `${m} ×${n}`).join(', ') || '—';
+  const turns = `${totals.context.turns} ${totals.context.turns === 1 ? 'turn' : 'turns'}`;
+  return [
+    `Turn classes (tool calls): ${classes} — ceremony share ${share}`,
+    `Context per turn: p50 ${k(totals.context.p50)} · p90 ${k(totals.context.p90)} tokens over ${turns} · models: ${models} · subagents: ${totals.subagents}`,
+  ];
+}
+
 // out: derivePhases result; tokens: joinTokens result or null (no transcript
 // requested); notes: lines printed before the table.
 function renderMarkdown(out, tokens = null, guard = null, notes = []) {
@@ -147,6 +194,7 @@ function renderMarkdown(out, tokens = null, guard = null, notes = []) {
   if (guard) {
     lines.push('', `Guard denials: ${guard.gateDenial} gate · ${guard.wdAmbiguous} wd-ambiguous · ${guard.wdDeny} wd-deny`);
     lines.push('Tokens (in/out) sum the transcript\'s raw input_tokens/output_tokens; cache reads and creation are separate fields in timing.json.');
+    if (tokens) lines.push(...renderTurnLines(tokens.totals));
   }
   return lines.join('\n') + '\n';
 }
@@ -303,16 +351,35 @@ async function main(argv) {
     timing.totals.tokens = tokens.totals.tokens;
     timing.totals.procedureBytes = tokens.totals.procedureBytes;
     timing.totals.toolRoundTrips = tokens.totals.toolRoundTrips;
+    for (const k of ['turnClasses', 'context', 'modelMix', 'subagents', 'ceremonyShare']) timing.totals[k] = tokens.totals[k];
     timing.totals.guard = guard;
     timing.transcripts = transcripts;
     if (notes.length) timing.notes = notes;
     timing.dispatches = await collectDispatches(paths, events.events);
   }
+  // #4029: the efficiency-budget check. A transcript that yielded no rows leaves
+  // the transcript-backed totals out, so they read as unmeasured, never as 0 -> ok.
+  let budgetLine = null;
+  if (o.checkBudgets) {
+    const measured = { ...timing.totals };
+    if (!tokens || tokens.totals.rows === 0) { delete measured.toolRoundTrips; delete measured.procedureBytes; }
+    const checked = checkBudgets({ runDir, totals: measured, unattributed: timing.unattributed });
+    timing.budget = checked.budget;
+    budgetLine = checked.line;
+    for (const line of checked.stderr) process.stderr.write(line + '\n');
+  }
   const timingPath = path.join(runDir, 'timing.json');
+  // A rewrite without --check-budgets keeps the last budget verdict rather than dropping it.
+  if (!o.checkBudgets) {
+    const previous = readJsonOrNull(timingPath);
+    if (previous && typeof previous === 'object' && Object.hasOwn(previous, 'budget')) timing.budget = previous.budget;
+  }
   fs.writeFileSync(timingPath, JSON.stringify(timing, null, 2) + '\n');
   if (o.markdown) process.stdout.write(renderMarkdown(out, tokens, guard, notes) + renderDispatches(timing.dispatches));
   else if (o.json) process.stdout.write(JSON.stringify(timing, null, 2) + '\n');
   else process.stdout.write(`timing: wrote ${timingPath}\n`);
+  // Under --json stdout stays one JSON document; the budget rides in its `budget` key.
+  if (budgetLine && !o.json) process.stdout.write(budgetLine + '\n');
   return 0;
 }
 

@@ -40,6 +40,23 @@ function tmpGitRepo() {
   return { repo, git, gitDir: path.join(repo, '.git') };
 }
 
+// Builds a `node -e` fixture command that runs the same under /bin/sh and
+// cmd.exe. verify.js runs every --cmd through spawn(cmd, { shell: true }), and
+// cmd.exe gives ' no meaning, so a POSIX-only single-quoted -e script exits 1
+// on Windows. The script reads paths and values from argv (process.argv[1],
+// ...) and never has them spliced into its text, so no quoting is needed.
+function nodeCmd(script, ...args) {
+  const scriptBad = script.match(/["$`\\%]/);
+  if (scriptBad) throw new Error(`nodeCmd: script contains ${JSON.stringify(scriptBad[0])}, which /bin/sh or cmd.exe interprets; pass the value as an argument instead`);
+  for (const arg of args) {
+    // A doubled backslash collapses to one inside /bin/sh double quotes but
+    // stays doubled in cmd.exe's argv, so it is refused like the rest.
+    const argBad = arg.match(/["$`%]|\\\\/);
+    if (argBad || arg.endsWith('\\')) throw new Error(`nodeCmd: argument ${JSON.stringify(arg)} contains ${argBad ? JSON.stringify(argBad[0]) : 'a trailing backslash'}, which /bin/sh or cmd.exe interprets`);
+  }
+  return [`node -e "${script}"`, ...args.map((a) => `"${a}"`)].join(' ');
+}
+
 test('recorded exitCode is the check command own exit code (AC4)', async () => {
   const logDir = tmpDir();
   const { code } = await runCli([
@@ -211,7 +228,7 @@ test('an unreadable tests log under --count-stamp prints the CAVEAT line too, di
   // created the file, so unlinkSync throws ENOENT and the child exits 1
   // instead of 0. Poll for the file's existence first (bounded, pure JS,
   // no external `sleep` binary) so the unlink always targets a real file.
-  const unlinkOwnLog = `node -e "console.log('will vanish'); const fs=require('fs'); const p='${logPath}'; const deadline=Date.now()+5000; while(!fs.existsSync(p)){ if(Date.now()>deadline){ console.error('log file never appeared: '+p); process.exit(1); } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50); } fs.unlinkSync(p)"`;
+  const unlinkOwnLog = nodeCmd("console.log('will vanish'); const fs=require('fs'); const p=process.argv[1]; const deadline=Date.now()+5000; while(!fs.existsSync(p)){ if(Date.now()>deadline){ console.error('log file never appeared: '+p); process.exit(1); } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50); } fs.unlinkSync(p)", logPath);
   const { code, stdout } = await runCli([
     '--log-dir', logDir, '--count-stamp', countStamp, '--cmd', `tests=${unlinkOwnLog}`]);
   assert.strictEqual(code, 0, 'an unreadable log must not fail an otherwise-passing tests check (exitCode still decides pass/fail)');
@@ -325,7 +342,7 @@ test('#2341 documented workaround: a compound --cmd types="a && b" runs both hal
   const { repo, gitDir } = tmpGitRepo();
   const markerA = path.join(repo, 'a.marker');
   const markerB = path.join(repo, 'b.marker');
-  const compound = `node -e 'require("fs").writeFileSync(${JSON.stringify(markerA)}, "ran")' && node -e 'require("fs").writeFileSync(${JSON.stringify(markerB)}, "ran"); process.exit(1)'`;
+  const compound = `${nodeCmd("require('fs').writeFileSync(process.argv[1], 'ran')", markerA)} && ${nodeCmd("require('fs').writeFileSync(process.argv[1], 'ran'); process.exit(1)", markerB)}`;
   const { code, stdout } = await runCli(['--cmd', `types=${compound}`, '--cmd', 'tests=node -e 0'], { cwd: repo });
   assert.strictEqual(code, 1);
   assert.ok(fs.existsSync(markerA), 'first half of the compound command must run');
@@ -703,12 +720,11 @@ function scopedRepo(rules, extra = {}) {
   fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
   r.git('add', '.claude-tweaks/verify-scope.json');
   r.git('commit', '-q', '-m', 'declare verify scope');
-  // Shell-quoted with an outer single-quoted -e script: JSON.stringify's
-  // double-quoted path literal must never sit inside an outer double-quoted
-  // -e script (spawn's shell:true runs this through /bin/sh -c) — nesting
-  // "..." inside "..." closes the shell's quoting early and corrupts the
-  // path into a bareword the JS parser then misreads as a regex literal.
-  const unitCmd = `node -e 'require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")'`;
+  // Built with nodeCmd: the script takes the marker path from argv, never from
+  // its text. verify.js runs --cmd through shell:true, and cmd.exe gives '
+  // no meaning, so a path spliced into a single-quoted -e script breaks on
+  // Windows, while a double-quoted one nests quotes the shell closes early.
+  const unitCmd = nodeCmd("require('fs').writeFileSync(process.argv[1], 'ran')", marker);
   // The temp repo has no origin, so --integration-branch names its own local
   // branch — whatever init.defaultBranch made it (master on this machine).
   const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
@@ -904,11 +920,10 @@ test('--scope: an absolute path is used as-is, --cwd-resolution is for relative 
 test('--scope tool-scoped: {base} is substituted into the single tests command and fullSha never advances (#1922 Gotchas)', async () => {
   const r = tmpGitRepo();
   const out = path.join(r.repo, 'base-seen.txt');
-  // Same outer-single-quote shape as scopedRepo's unitCmd above: a
-  // JSON.stringify'd double-quoted path must never sit inside a
-  // double-quoted -e script.
+  // Built with nodeCmd (see scopedRepo's unitCmd): the path and the {base}
+  // placeholder both ride in argv, so neither is quoted inside the script text.
   const decl = {
-    checks: { tests: `node -e 'require("fs").writeFileSync(${JSON.stringify(out)}, "{base}")'` },
+    checks: { tests: nodeCmd("require('fs').writeFileSync(process.argv[1], process.argv[2])", out, '{base}') },
     rules: [{ match: 'src/**', suites: [], static: true }, { match: 'docs/**', suites: [], static: false }],
   };
   fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
@@ -948,8 +963,8 @@ test('--scope with no --cmd and nothing declared for a static check is not requi
   fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify({
     checks: {
       tests: {
-        unit: `node -e 'require("fs").writeFileSync(${JSON.stringify(unitMarker)}, "ran")'`,
-        other: `node -e 'require("fs").writeFileSync(${JSON.stringify(otherMarker)}, "ran")'`,
+        unit: nodeCmd("require('fs').writeFileSync(process.argv[1], 'ran')", unitMarker),
+        other: nodeCmd("require('fs').writeFileSync(process.argv[1], 'ran')", otherMarker),
       },
     },
     rules: [{ match: 'src/**', suites: ['unit'], static: true }],
@@ -1019,14 +1034,14 @@ test('--scope: a --cmd override wins over a declared command for that suite, and
   const overrideMarker = path.join(r.repo, 'override.marker');
   fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
   const decl = {
-    checks: { tests: { unit: `node -e 'require("fs").writeFileSync(${JSON.stringify(declaredMarker)}, "ran")'` } },
+    checks: { tests: { unit: nodeCmd("require('fs').writeFileSync(process.argv[1], 'ran')", declaredMarker) } },
     rules: [{ match: 'src/**', suites: ['unit'], static: false }],
   };
   fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
   r.git('add', '.claude-tweaks/verify-scope.json');
   r.git('commit', '-q', '-m', 'declare');
   const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
-  const overrideCmd = `node -e 'require("fs").writeFileSync(${JSON.stringify(overrideMarker)}, "ran")'`;
+  const overrideCmd = nodeCmd("require('fs').writeFileSync(process.argv[1], 'ran')", overrideMarker);
   const run = await runCli(
     ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd', `unit=${overrideCmd}`],
     { cwd: r.repo },
@@ -1043,7 +1058,7 @@ test('--scope: --cmd-env attaches to a declared-only suite with no matching --cm
   const marker = path.join(r.repo, 'env.marker');
   fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
   const decl = {
-    checks: { tests: { unit: `node -e 'require("fs").writeFileSync(${JSON.stringify(marker)}, process.env.FOO || "")'` } },
+    checks: { tests: { unit: nodeCmd("require('fs').writeFileSync(process.argv[1], process.env.FOO || '')", marker) } },
     rules: [{ match: 'src/**', suites: ['unit'], static: false }],
   };
   fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
@@ -1076,8 +1091,8 @@ test('--scope: a scoped (non-full) selection runs only the selected suite\'s dec
   const decl = {
     checks: {
       tests: {
-        unit: `node -e 'require("fs").writeFileSync(${JSON.stringify(unitMarker)}, "ran")'`,
-        other: `node -e 'require("fs").writeFileSync(${JSON.stringify(otherMarker)}, "ran")'`,
+        unit: nodeCmd("require('fs').writeFileSync(process.argv[1], 'ran')", unitMarker),
+        other: nodeCmd("require('fs').writeFileSync(process.argv[1], 'ran')", otherMarker),
       },
     },
     rules: [
@@ -1280,7 +1295,7 @@ test('--scope: a tool-scoped run neither caveats nor rewrites the count stamp �
   // this tool-scoped; embedding it inside a console.log argument is a
   // harmless extra output line once {base} is substituted with the
   // resolved anchor sha.
-  const declTests = 'node -e \'console.log("{base}"); console.log("# tests 3"); console.log("# pass 3"); console.log("# fail 0")\'';
+  const declTests = nodeCmd("console.log(process.argv[1]); console.log('# tests 3'); console.log('# pass 3'); console.log('# fail 0')", '{base}');
   const decl = {
     checks: { tests: declTests },
     rules: [{ match: 'src/**', suites: [], static: false }],
@@ -1296,7 +1311,7 @@ test('--scope: a tool-scoped run neither caveats nor rewrites the count stamp �
   // run 1 has no prior stamp, so it is mode 'full' regardless of the
   // tool-scoped declaration — its own --cmd runs verbatim and establishes
   // the count-stamp baseline at 500.
-  const run1Cmd = 'node -e \'console.log("# tests 500"); console.log("# pass 500"); console.log("# fail 0")\'';
+  const run1Cmd = nodeCmd("console.log('# tests 500'); console.log('# pass 500'); console.log('# fail 0')");
   const run1 = await runCli(['--scope', declPath, '--integration-branch', branch, '--cmd', `tests=${run1Cmd}`], { cwd: r.repo });
   assert.strictEqual(run1.code, 0, run1.stderr);
   assert.match(run1.stdout, /^Scope: full/m);
@@ -2040,13 +2055,9 @@ test('#1801 shape: a ledger-row commit after a full pass resolves to none — st
   fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
   r.git('add', '.claude-tweaks/verify-scope.json');
   r.git('commit', '-q', '-m', 'declare verify scope');
-  // Single-quoted -e with a double-quoted JSON.stringify path inside (per
-  // the scopedRepo() unitCmd comment above): spawn's shell:true runs this
-  // through /bin/sh -c, and the brief's original double-quoted -e nested
-  // JSON.stringify's own double quotes, which the shell closed early —
-  // corrupting the path into a bareword node then misread as a regex
-  // literal ("Invalid regular expression flags").
-  const testsCmd = `node -e 'require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")'`;
+  // Built with nodeCmd (see scopedRepo's unitCmd): the marker path rides in
+  // argv, so no quoting of it is needed inside the script text.
+  const testsCmd = nodeCmd("require('fs').writeFileSync(process.argv[1], 'ran')", marker);
   const args = ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd', `tests=${testsCmd}`];
   const full = await runCli(args, { cwd: r.repo });
   assert.strictEqual(full.code, 0, full.stderr);
@@ -2721,9 +2732,10 @@ test('#2779: tool-scoped mode\'s synthesized tests command runs with the tests c
   const r = tmpGitRepo();
   const out = path.join(r.repo, 'env-seen.txt');
   // The {base} placeholder is what makes a string-form tests check
-  // tool-scoped; it rides in a JS comment since this test reads the env.
+  // tool-scoped; it rides as an unused trailing argv value since this test
+  // reads the env.
   const decl = {
-    checks: { tests: `node -e 'require("fs").writeFileSync(${JSON.stringify(out)}, String(process.env.${ENV_VAR})) /* {base} */'` },
+    checks: { tests: nodeCmd(`require('fs').writeFileSync(process.argv[1], String(process.env.${ENV_VAR}))`, out, '{base}') },
     rules: [{ match: 'src/**', suites: [], static: true }, { match: 'docs/**', suites: [], static: false }],
   };
   fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
@@ -3453,4 +3465,23 @@ test('--baseline: a SIGINT mid-run removes the scratch worktree and exits 130, l
   assert.strictEqual(code, 130);
   const list = r.git('worktree', 'list', '--porcelain');
   assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, 'no registered scratch worktree afterwards');
+});
+
+test('#4177 AC1/AC3: no fixture command uses the POSIX-only single-quoted node -e form — cmd.exe gives \' no meaning', () => {
+  // Whole-text scan, so a run of spaces or a line break between the tokens
+  // still counts; offenders are reported as line numbers.
+  const src = readText(__filename);
+  const offenders = [...src.matchAll(/node\s+-e\s+\\?'/g)].map((m) => src.slice(0, m.index).split('\n').length);
+  assert.deepStrictEqual(offenders, [], 'build the command with nodeCmd(script, ...args) instead');
+});
+
+test('#4177 AC4: nodeCmd refuses a script or argument whose meaning differs between /bin/sh and cmd.exe', () => {
+  assert.strictEqual(nodeCmd("console.log(process.argv[1])", 'C:\\x\\y.txt'), 'node -e "console.log(process.argv[1])" "C:\\x\\y.txt"');
+  for (const [bad, ch] of [['a"b', '"'], ['a$b', '$'], ['a`b', '`'], ['a\\b', '\\'], ['a%b', '%']]) {
+    assert.throws(() => nodeCmd(bad), (e) => e.message.startsWith(`nodeCmd: script contains ${JSON.stringify(ch)},`), `script ${bad} names ${ch}`);
+  }
+  for (const [bad, ch] of [['a"b', '"'], ['a$b', '$'], ['a`b', '`'], ['a%b', '%'], ['C:\\a\\\\b', '\\\\']]) {
+    assert.throws(() => nodeCmd('0', bad), (e) => e.message.endsWith(`contains ${JSON.stringify(ch)}, which /bin/sh or cmd.exe interprets`), `argument ${bad} names ${ch}`);
+  }
+  assert.throws(() => nodeCmd('0', 'C:\\dir\\'), (e) => e.message.endsWith('contains a trailing backslash, which /bin/sh or cmd.exe interprets'));
 });

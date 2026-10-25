@@ -79,7 +79,7 @@ const SECTION_MAP = [
   // premise-satisfied- (#3488): bin/materialize.js stages a proposal to close a record
   // whose premise check already passes; closing is a human call, so it resolves pending.
   [/^premise-satisfied-/, SECTIONS.QUEUE, 'premise-satisfied-close-proposal'],
-  [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|tidy|plan-retention|feedback-drafts|review-followup|build-followup|reconcile-live-run-archived|wrap-up-cleanup-ordering)(-|\b)/, SECTIONS.QUEUE],
+  [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|efficiency-budget|tidy|plan-retention|feedback-drafts|review-followup|build-followup|reconcile-live-run-archived|wrap-up-cleanup-ordering)(-|\b)/, SECTIONS.QUEUE],
   [/^wrap-up-memory-/, SECTIONS.MEMORY],
   [/^wrap-up-upstream-/, SECTIONS.UPSTREAM],
   // upstream-draft- (#3488): feedback/upstream-draft.md's hand-off draft. The console
@@ -109,7 +109,7 @@ const CANONICAL_PREFIXES = [
   'wrap-up-claude-md-', 'wrap-up-adr-',
   'wrap-up-journey-', 'journeys-',
   'reflect-', 'digest-promotion-', 'leftover-', 'ledger-record-', 'upstream-unfiled-', 'red-team-',
-  'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
+  'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'efficiency-budget-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
   'review-followup-', 'build-followup-', 'reconcile-live-run-archived-', 'wrap-up-cleanup-ordering-',
   'premise-satisfied-',
   'wrap-up-memory-',
