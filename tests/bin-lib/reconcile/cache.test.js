@@ -7,7 +7,7 @@ const path = require('path');
 const {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS,
   RESIDUE_ESCALATE_THRESHOLD, recordResidueFailure, recordResidueSuccess, listResidueFailures,
-  trackResidue, pruneResidueFailures, clearResidue, beginCacheBatch, commitCacheBatch, recordResidueError,
+  trackResidue, pruneResidueFailures, clearResidue, beginCacheBatch, commitCacheBatch, recordResidueError, planClear,
 } = require('../../../plugin/bin/lib/reconcile/cache');
 
 function tmpRoot() {
@@ -661,4 +661,88 @@ test('#4180 recordResidueFailure carries lastResidueError forward on the next fa
   const [e] = listResidueFailures(root);
   assert.equal(e.count, RESIDUE_ESCALATE_THRESHOLD + 1);
   assert.deepEqual(e.lastResidueError, before);
+});
+
+const cacheBytes = (root) => fs.readFileSync(path.join(root, '.claude-tweaks', CACHE_FILENAME));
+
+test('#4180 dry-run trackResidue: past threshold plans would-escalate, calls no escalate, writes nothing', () => {
+  const root = almostEscalatedRoot();
+  const before = cacheBytes(root);
+  let calls = 0;
+  const plan = trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'e' }, { escalate: () => { calls++; }, dryRun: true });
+  assert.deepEqual(plan, { action: 'would-escalate', reason: 'move-failed', path: '/x/m', count: RESIDUE_ESCALATE_THRESHOLD });
+  assert.equal(calls, 0);
+  assert.deepEqual(cacheBytes(root), before);
+});
+
+test('#4180 dry-run trackResidue: below threshold plans would-track; success with an entry plans would-clear; success without plans none', () => {
+  const root = tmpRoot();
+  const noEscalate = () => { throw new Error('must not escalate'); };
+  assert.deepEqual(
+    trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'e' }, { escalate: noEscalate, dryRun: true }),
+    { action: 'would-track', reason: 'move-failed', path: '/x/m', count: 1 },
+  );
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', CACHE_FILENAME)), false);
+  assert.deepEqual(
+    trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: false }, { dryRun: true }),
+    { action: 'none', reason: 'move-failed', path: '/x/m' },
+  );
+  recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  const before = cacheBytes(root);
+  assert.deepEqual(
+    trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: false }, { dryRun: true }),
+    { action: 'would-clear', reason: 'move-failed', path: '/x/m' },
+  );
+  assert.deepEqual(cacheBytes(root), before);
+});
+
+test('#4180 dry-run trackResidue: an already-escalated entry past threshold plans would-track, not a second escalation', () => {
+  const root = tmpRoot();
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  const plan = trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true }, { dryRun: true });
+  assert.deepEqual(plan, { action: 'would-track', reason: 'move-failed', path: '/x/m', count: RESIDUE_ESCALATE_THRESHOLD + 1 });
+});
+
+test('#4180 dry-run trackResidue reads an existing batch entry', () => {
+  const root = tmpRoot();
+  const batch = beginCacheBatch(root);
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) recordResidueFailure(batch, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  const cacheBefore = batch.cache;
+  const plan = trackResidue(batch, 'o/r', 'move-failed', '/x/m', { failed: true }, { escalate: () => { throw new Error('must not escalate'); }, dryRun: true });
+  assert.equal(plan.action, 'would-escalate');
+  assert.equal(plan.count, RESIDUE_ESCALATE_THRESHOLD);
+  assert.equal(batch.cache, cacheBefore);
+  assert.equal(batch.cache.residueFailures['move-failed:/x/m'].count, RESIDUE_ESCALATE_THRESHOLD - 1);
+});
+
+test('#4180 dry-run trackResidue: a batch that was never dirtied stays clean', () => {
+  const root = tmpRoot();
+  const batch = beginCacheBatch(root);
+  trackResidue(batch, 'o/r', 'move-failed', '/x/m', { failed: true }, { dryRun: true });
+  assert.equal(batch.dirty, false);
+});
+
+test('#4180 commitCacheBatch: dryRun never writes a dirty batch', () => {
+  const root = tmpRoot();
+  const batch = beginCacheBatch(root);
+  recordResidueFailure(batch, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  assert.equal(batch.dirty, true);
+  commitCacheBatch(batch, { dryRun: true });
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', CACHE_FILENAME)), false);
+  commitCacheBatch(batch);
+  assert.equal(listResidueFailures(root).length, 1);
+});
+
+test('#4180 planClear: escalated entry plans would-resolve, unescalated would-clear, absent none; reads only', () => {
+  const root = tmpRoot();
+  assert.deepEqual(planClear(root, 'move-failed', '/x/m'), { action: 'none', reason: 'move-failed', path: '/x/m' });
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', CACHE_FILENAME)), false);
+  recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  assert.deepEqual(planClear(root, 'move-failed', '/x/m'), { action: 'would-clear', reason: 'move-failed', path: '/x/m' });
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'move-failed', '/x/m', { lastError: 'EBUSY' });
+  const before = cacheBytes(root);
+  assert.deepEqual(planClear(root, 'move-failed', '/x/m'), { action: 'would-resolve', reason: 'move-failed', path: '/x/m' });
+  assert.deepEqual(cacheBytes(root), before);
+  const batch = beginCacheBatch(root);
+  assert.equal(planClear(batch, 'move-failed', '/x/m').action, 'would-resolve');
 });

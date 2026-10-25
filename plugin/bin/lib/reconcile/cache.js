@@ -167,8 +167,10 @@ function beginCacheBatch(root) {
 
 // Best-effort, like `writeCache` itself — a no-op when nothing changed
 // (`dirty` stays false for a pass that recorded zero updates), so callers
-// can always call this unconditionally at the end of their loop.
-function commitCacheBatch(batch) {
+// can always call this unconditionally at the end of their loop. #4180: a no-op
+// whenever `dryRun` is true — a dry run never persists a batch.
+function commitCacheBatch(batch, { dryRun = false } = {}) {
+  if (dryRun) return;
   if (batch && batch.dirty) writeCache(batch.root, batch.cache);
 }
 
@@ -277,6 +279,16 @@ function unresolvedReason(resolved) {
 // same pass's pruneResidueFailures retries the resolve once).
 const RESIDUE_RESOLVED_STATUSES = new Set(['closed', 'path-removed', 'not-found', 'already-closed']);
 
+// #4180: the read-only twin of clearResidue's first branches — what a clear would do for this
+// entry, without touching the cache or GitHub. An escalated entry resolves its filed record, an
+// unescalated one is just dropped, an absent one is nothing.
+function planClear(target, reason, targetPath) {
+  const cache = isCacheBatch(target) ? target.cache : readCache(target);
+  const entry = cache.residueFailures[residueKey(reason, targetPath)];
+  const action = !entry ? 'none' : entry.escalated ? 'would-resolve' : 'would-clear';
+  return { action, reason, path: targetPath };
+}
+
 function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveResidue, runner, why } = {}) {
   const cache = isCacheBatch(target) ? target.cache : readCache(target);
   const entry = cache.residueFailures[residueKey(reason, targetPath)];
@@ -309,7 +321,18 @@ function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveR
 // archive-merged.js's `result.reason !== 'move-failed'` early-return guard
 // in particular stays there, not here, since it's archive-specific and
 // unrelated to this branching.
-function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError, dirtyFiles }, { escalate = escalateResidue, runner } = {}) {
+// #4180: with `dryRun` it returns before any cache write, `escalate` call, or `target.dirty`
+// change, and returns the plan it would have executed (`{ action, reason, path[, count] }`); a
+// real run returns undefined.
+function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError, dirtyFiles }, { escalate = escalateResidue, runner, dryRun = false } = {}) {
+  if (dryRun) {
+    const cache = isCacheBatch(target) ? target.cache : readCache(target);
+    const existing = cache.residueFailures[residueKey(reason, targetPath)];
+    if (!failed) return { action: existing ? 'would-clear' : 'none', reason, path: targetPath };
+    const count = (existing ? existing.count : 0) + 1;
+    const action = count >= RESIDUE_ESCALATE_THRESHOLD && !(existing && existing.escalated) ? 'would-escalate' : 'would-track';
+    return { action, reason, path: targetPath, count };
+  }
   if (!failed) {
     recordResidueSuccess(target, reason, targetPath);
     return;
@@ -387,5 +410,5 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
 module.exports = {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
   RESIDUE_ESCALATE_THRESHOLD, residueKey, recordResidueFailure, recordResidueSuccess, clearResidue, listResidueFailures,
-  recordResidueError, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
+  recordResidueError, planClear, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 };
