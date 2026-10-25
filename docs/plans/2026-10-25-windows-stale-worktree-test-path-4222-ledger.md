@@ -3,3 +3,4 @@
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
 | 1 | flow | Step 2.5 pre-flight: origin/main was 3+ commits ahead of local main (release 6.154.0 and its changelog, #4067, then #4032), and local main carried one local-only reconcile archival commit | fixed | Post-creation catch-up merged origin/main 853e54f95 into the worktree branch (4a9cadc22) before any build commit; the archival commit rides along as expected under worktree.baseRef head |
+| 2 | wrap-up | Reflect (light, Near-misses): the AC3 Windows proof was dispatched before simplify changed the matcher, so run 40176119616 proved a superseded head and was cancelled and re-dispatched (40176299536) | deferred | Staged as staged/reflect-1.md, a memory-bound observation, for the Review Console |
