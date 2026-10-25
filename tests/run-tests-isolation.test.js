@@ -703,7 +703,7 @@ test('#4134 AC2.1: a win32 --files-from subset too long for the command line run
     fs.writeFileSync(list, names.join('\n') + '\n');
     const preload = path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'win32-node22-spawn-capture-preload.js');
     const result = spawnSync(process.execPath, ['-r', preload, path.join(root, 'tools', 'run-tests.js'), '--files-from', list], {
-      cwd: root, env: { ...sb.env, CT_TEST_SUITE_SLOT_HELD: '1' }, encoding: 'utf8', timeout: 60000,
+      cwd: root, env: sb.env, encoding: 'utf8', timeout: 60000,
     });
     assert.strictEqual(result.status, 0, result.stdout + result.stderr);
     assert.match(
@@ -715,5 +715,9 @@ test('#4134 AC2.1: a win32 --files-from subset too long for the command line run
     const spawned = JSON.parse(line.slice('SPAWN-ARGS: '.length));
     assert.deepStrictEqual(spawned.slice(-2), ['tests/**/*.test.js', 'tools/upstream-drift/tests/**/*.test.js']);
     for (const name of names) assert.ok(!spawned.includes(name), `${name} should not be passed`);
+    // The stub exits before the runner releases its slot, so the lock marks the lane it waited in:
+    // the full-suite lane is the slot dir itself, the subset lane its `subset/` child.
+    assert.strictEqual(SLOT_LOCKS(sb.slotDir).length, 1, fs.readdirSync(sb.slotDir).join(', '));
+    assert.ok(!fs.existsSync(path.join(sb.slotDir, 'subset')), 'a fallen-back run must not take the subset lane');
   });
 });

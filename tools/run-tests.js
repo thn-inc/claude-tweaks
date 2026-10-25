@@ -171,8 +171,10 @@ const WIN32_COMMAND_LINE_MAX = 32767;
 
 // Why an explicit `--files-from` subset cannot be passed to `node --test` as-is: null when it
 // fits (always off win32), else a sentence naming the line length and the limit. The line is
-// counted as the quoted, space-separated `execPath args...` — each argument costs its length
-// plus two quotes and a separator, and the last separator does not exist. `args` is `--test`,
+// counted as the space-separated `execPath args...` with every argument charged its length plus
+// two quotes and a separator, and the last separator does not exist. That is an upper bound, not
+// the exact length: libuv quotes an argument only when it holds a space, tab or quote, so most
+// arguments cost two characters less. Keep the estimate pessimistic. `args` is `--test`,
 // `--test-concurrency=<n>` and then the files, so the file count is `args.length - 2`.
 // Pure: `platform` is a parameter, never read from `process`.
 function subsetFallbackReason(execPath, args, { platform }) {
