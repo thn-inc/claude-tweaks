@@ -1090,14 +1090,11 @@ for (const [label, cmd] of [
   }
   // Round 4: a pass's nested scans share a step budget, so a shape whose "$( runs off the end from
   // every top-level span (each falls back to the plain quote end and the next one rescans the same
-  // text: here an unterminated heredoc) stays linear. Unbudgeted, 60 KB of it takes seconds;
-  // budgeted, about 10 ms.
-  test('#4149 nesting: a "$( that runs off the end from every span stays linear', () => {
-    const t = process.hrtime.bigint();
+  // text: here an unterminated heredoc) stays linear. The timing budget lives in
+  // perf/heredoc-scan-linearity.test.js (a wall-clock assertion flakes under load); this pins the read.
+  test('#4149 nesting: a "$( that runs off the end from every span still reports the later write', () => {
     const targets = fileWriteTargets(`echo ${'"$(<<X\n"'.repeat(7500)} && cp a /main/f.js`, '/r');
-    const ms = Number(process.hrtime.bigint() - t) / 1e6;
     assert.deepStrictEqual(targets, [main('copy')]);
-    assert.ok(ms < 750, `took ${ms.toFixed(0)} ms`);
   });
   test('#4149 nesting: a closed nest deeper than the cap takes the plain quote reading', { timeout: 10000 }, () => {
     const targets = fileWriteTargets(`echo ${'"$('.repeat(5000)}${')"'.repeat(5000)} && cp a /main/f.js`, '/r');
