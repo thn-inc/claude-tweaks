@@ -70,9 +70,9 @@ test('the rule is stated and pinned: labels never lower a tier the diff already 
 });
 
 test('AC2: when labels and diff agree, the derivation keeps the record-labels source', () => {
-  const agreement = paragraphWith(DERIVATION, 'agree');
-  assert.ok(agreement, 'derivation must state the agreement case');
-  assert.ok(agreement.includes(RECORD_LABELS_FORM), 'agreement case must keep the record labels source');
+  const agreement = DERIVATION.match(/When the two agree, the recorded source stays `record labels: risk:\{x\} × size:\{y\}`/);
+  assert.ok(agreement, 'derivation must state the "When the two agree" sentence with the record-labels source');
+  assert.doesNotMatch(DERIVATION, /stop at the first that applies/, 'resolution lead-in must not say to stop at the first step');
 });
 
 test('code-mode-steps.md Step 2.5 records both the record-labels form and the both-inputs form', () => {
