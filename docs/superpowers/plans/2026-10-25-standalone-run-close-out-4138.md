@@ -173,6 +173,12 @@ Prose: after `dream-scan.js` returns — any proposal count, zero included, or a
 
 ---
 
+## As-built deviations (Common Step 4.5 — all Beneficial)
+
+1. **Residue probe code change (beyond the prose-only plan).** `plugin/bin/lib/residue/probes/pipeline-runs.js` now skips a clean `*-tidy-standalone*` / `*-sweep-standalone*` run dir whose `staged/` is non-empty (93a13b750, tests in `tests/bin-lib/residue/probes-pipeline-runs.test.js`). Without it, closing those dirs (Tasks 2 and 6) exposed their staged items to the next `/tidy` pass's `remedy: auto` archive, hiding them from `/claude-tweaks:tidy --approve` — the final whole-branch review's Important 1.
+2. **Wrap-up exits (Task 8).** No `BLOCKED` exit skips item 8 (verify runs after it); the real item-8-skipping exits are `--dry-run` (now closes a created directory) and the resumable "Stop and re-engage" halt (left open; its resume gap is filed as #4312). bcd113450.
+3. **Created vs inherited, uniform rule.** Every stamp-less minter states created = the directory did not exist before this invocation's own resolution ran; anything the resolver returned (from `$PIPELINE_RUN_DIR` or a step-2 match) is inherited. Backlog's statement covers only the `refine` forms that resolve the directory (overview/attention never do). Capture's exemption reason no longer cites a line number. b44743eac.
+
 ## Notes
 
 - Follow-up for `/build` Common Step 4 (not in this plan's scope): wrap-up's "Stop and re-engage" on a **created** standalone directory leaves it `active`; its `run-state.json` carries no `sessionId`, so session end never marks it `interrupted`, and `resume` (which requires `interrupted`) can never find it. File via `/claude-tweaks:capture`.
