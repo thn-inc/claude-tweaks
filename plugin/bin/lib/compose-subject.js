@@ -132,6 +132,18 @@ function extractSection(body, heading) {
   return extractSectionShared(body, heading, { levelPattern: '2', stopPattern: '2', trim: true });
 }
 
+// The release note is the ## Release Note section cut at its trailing italic
+// `_Filed by …_` provenance footer (specShapedBody's last paragraph, which has no
+// heading after it when there is no ### Key Files). A section holding only the
+// footer is empty. extractSection itself is left heading-bounded only. The footer
+// must be the section's last non-blank content (the lookahead), so a note line that
+// merely starts `_Filed by` and ends `_` mid-prose is never cut.
+function releaseNoteOf(body) {
+  const note = extractSection(body, 'Release Note');
+  const footer = /^_Filed by\b.*_[ \t]*$(?![\s\S]*\S)/m.exec(note);
+  return footer ? note.slice(0, footer.index).trim() : note;
+}
+
 // Decision (#2319): a `.` immediately preceded by one of these tokens (case-insensitive,
 // e.g./i.e./etc.) or by a version-number/decimal token (`6.34`, `v6.34`) is not treated as a
 // sentence terminator — an Overview opening with "e.g. " or "v6.34. " no longer truncates the
@@ -298,13 +310,13 @@ function run(argv, deps = realDeps) {
     deps.stderr(`compose-subject.js: breaking is set on #${missing.map((r) => r.number).join(', #')} but the record carries no non-empty "## Breaking Change" section\n`);
     return 1;
   }
-  const releaseNoteMissing = records.filter((r) => !extractSection(r.body, 'Release Note'));
+  const releaseNoteMissing = records.filter((r) => !releaseNoteOf(r.body));
   if (releaseNoteMissing.length) {
     deps.stderr(`compose-subject.js: record(s) #${releaseNoteMissing.map((r) => r.number).join(', #')} carry no non-empty "## Release Note" section\n`);
     return 1;
   }
   const migrationNote = breakingRecords.map((r) => extractSection(r.body, 'Breaking Change')).filter(Boolean).join('\n\n');
-  const releaseNote = extractSection(subjectRecord.body, 'Release Note');
+  const releaseNote = releaseNoteOf(subjectRecord.body);
 
   let scope = opts.scope;
   if (scope === null) {

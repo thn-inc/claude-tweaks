@@ -8,11 +8,12 @@ files:
 # Shape the Stuck-Runs Record Without Reconcile Erasing It
 
 **Persona:** A claude-tweaks maintainer working through the backlog, who has just shaped reconcile's consolidated `reconcile: structurally-stuck run directories` issue into a spec with `/claude-tweaks:specify`. Background reconcile passes from every other open session keep touching that issue while they work.
-**Goal:** The spec text they wrote stays on the record while reconcile keeps its stuck-path list current, and ad-hoc session dirs that clean themselves up never land in that list.
+**Goal:** The spec text they wrote stays on the record while reconcile keeps its stuck-path list current. Ad-hoc session dirs that clean themselves up never land in that list, and once every listed dir is gone the record closes without a hand edit.
 **Entry point:** Any reconcile pass that adds or removes a stuck path on the consolidated issue: session start's `node plugin/bin/hooks.js reconcile-background` in any session, or a `/claude-tweaks:tidy` sweep.
 **Success state:**
 - The issue body still carries every heading and line the maintainer wrote. Only the lines between `<!-- stuck-paths -->` and `<!-- /stuck-paths -->` changed, and the thread has an "Also stuck: …" comment for each added path.
 - An ad-hoc session dir stamped with a linked worktree is never added, and one already listed is removed with a comment saying why.
+- A listed dir that reconcile archives comes off the list in the same pass, and the record closes itself when the list empties. Paths another checkout listed stay put.
 - The maintainer should feel the record is theirs to shape and reconcile only keeps its path list honest.
 
 ## Steps
@@ -32,6 +33,7 @@ files:
   - A CRLF body saved from the web editor stays CRLF.
   - A body that lost its block entirely gets the block appended rather than overwritten.
   - Only a CLOSED record being reopened is re-rendered in full, because a reopen is a fresh incident.
+  - The same edit also drops any listed path under this checkout's own `.claude-tweaks/pipelines/` that is already gone, and the comment names each dropped path (step 4).
 - **Red flags:** The issue's edit history showing the whole body replaced by the generic "Reconcile has one or more run directories stuck…" text while the record is open. Mixed line endings in a CRLF body.
 
 ### 3. Ad-hoc session dirs stay out of the list — same pass
@@ -45,7 +47,24 @@ files:
   - `reconcile --dry-run` skips this clear entirely.
 - **Red flags:** A linked-worktree ad-hoc path appended to the record. A listed ad-hoc path that never leaves the record after a `gh` failure. A `--dry-run` pass that edits the issue for an ad-hoc dir.
 
+### 4. An archived dir leaves the list, and the record closes itself — the pass that archives it
+- **URL:** `https://github.com/{owner}/{repo}/issues/{n}`
+- **Action:**
+  - When reconcile archives a listed dir, `trackArchiveResult` clears its escalated cache entry through `clearResidue`. That resolves the path off the record with a "no longer exists on disk" comment.
+  - The same edit drops any other listed path under this checkout's own `.claude-tweaks/pipelines/` that is already gone. Those paths are named in the comment.
+  - When nothing is left, the record closes with a comment.
+- **Should feel:** Self-maintaining. The list only ever names dirs that are still stuck, and an emptied list closes the issue with no trip to the GitHub editor.
+- **Should understand:**
+  - Every checkout of the repo shares this one record, because its fingerprint ignores the path. So a pass judges only paths inside its own run-dir tree. A path from another machine or another clone is never dropped, even though it is absent from this disk.
+  - A resolve that fails keeps the cache entry. The same pass's prune retries it once, then drops the entry.
+  - Re-escalating a path the record already names makes no edit, so stale paths wait for the next real edit.
+- **Red flags:**
+  - An archived dir still listed after the pass that archived it succeeded.
+  - A record that stays open with an empty list.
+  - A path another checkout added disappearing from the list while that checkout's dir is still stuck.
+
 ## Origin
 - Created during build of #2724 (reconcile: structurally-stuck run directories). The record's own shaped body had been erased by escalation passes on 2026-09-30, 2026-10-21 and 2026-10-24.
-- Steps 1-3 built in this session.
+- Steps 1-3 built in that session.
+- Step 4 added during build of #4202 (reconcile: archiving an escalated stuck dir drops its cache entry without resolving it). That build followed a 2026-10-24 hand cleanup that removed 20 archived-but-still-listed paths before #2724 could close.
 - Related journeys: `recover-a-run-stranded-by-a-stale-pr-number-3543.md`, `learn-a-merged-run-needs-you-3297.md` (other reasons that feed the same record).
