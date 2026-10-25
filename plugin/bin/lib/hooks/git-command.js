@@ -2073,14 +2073,19 @@ function partitionArgs(rest, valueFlags) {
 // what keeps the shape from denying ordinary inspection commands.
 //
 // Detection can't just look for a literal `-i`: GNU attaches the backup suffix
-// (`-i.bak`), and short flags bundle (`perl -pi -e`, `sed -ni`).
-function hasInPlaceFlag(flags) {
+// (`-i.bak`), and short flags bundle (`perl -pi -e`, `sed -ni`, `perl -0pi`,
+// `perl -pi.bak`). A cluster is read the way getopt reads it (readShortCluster):
+// `i` and the options that take a value each end it, so the first of them
+// decides, and every other letter or digit is a plain switch (#4303). perl's
+// -d is a plain switch unless written `-d:MOD`, and BSD sed's -l is one, so
+// neither is listed: `perl -dpi` and BSD `sed -li.bak` edit in place.
+const IN_PLACE_CLUSTER_LETTERS = Object.freeze({ sed: 'ief', perl: 'ieEImMFxDC' });
+function hasInPlaceFlag(flags, cmd) {
   return flags.some((f) => {
     if (f === '--in-place' || f.startsWith('--in-place=')) return true;
     if (f.startsWith('--') || !f.startsWith('-')) return false;
-    if (f.startsWith('-I')) return false; // perl's include path — not in-place
-    if (f.startsWith('-i')) return true; // -i, -i.bak
-    return /^-[A-Za-z]+$/.test(f) && f.includes('i'); // bundled: -pi, -ni
+    const opt = readShortCluster(f, IN_PLACE_CLUSTER_LETTERS[cmd]);
+    return opt !== null && opt.letter === 'i';
   });
 }
 
@@ -2127,14 +2132,48 @@ const INSTALL_VALUE_FLAGS = new Set(['-m', '--mode', '-o', '--owner', '-g', '--g
 const LN_VALUE_FLAGS = new Set(['-t', '--target-directory', '-S', '--suffix']);
 const TRUNCATE_VALUE_FLAGS = new Set(['-s', '--size', '-r', '--reference', '-o', '--io-blocks']);
 
+// Reads a short-option cluster (`-vtM`) the way getopt does: left to right, each
+// letter a plain switch until the first one in valueLetters, which takes the rest
+// of the cluster as its value — or, when nothing follows it, the next word
+// (value null here). Returns that letter and value, or null when no letter in the
+// cluster takes a value.
+function readShortCluster(word, valueLetters) {
+  for (let j = 1; j < word.length; j++) {
+    if (valueLetters.includes(word[j])) return { letter: word[j], value: j + 1 < word.length ? word.slice(j + 1) : null };
+  }
+  return null;
+}
+
 // `-t DIR` / `--target-directory[=]DIR` names the destination explicitly, which
 // makes EVERY positional a source rather than the last one being the target.
-// Shared by cp/mv/install/ln, all of which accept it.
-function explicitTargetDir(rest) {
+// Shared by cp/mv/install/ln, all of which accept it. GNU getopt also reads `-t`
+// inside a cluster (`-rt DIR`, `-tDIR`, `-vtDIR`) and accepts any `--t…` prefix
+// of `--target-directory`, since none of the four has another `--t…` option.
+// valueLetters are the command's short options that take a value: the first one
+// in a cluster ends it, so `cp -tr DIR` targets `r` and `cp -St DIR` has no -t
+// (#4303). `--` ends option parsing.
+function explicitTargetDir(rest, valueLetters) {
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
-    if ((a === '-t' || a === '--target-directory') && i + 1 < rest.length) return rest[i + 1];
-    if (a.startsWith('--target-directory=')) return a.slice('--target-directory='.length);
+    if (a === '--') break;
+    if (a.startsWith('--')) {
+      const eq = a.indexOf('=');
+      const name = eq === -1 ? a : a.slice(0, eq);
+      if (!'--target-directory'.startsWith(name)) continue;
+      if (eq !== -1) return a.slice(eq + 1);
+      if (i + 1 < rest.length) return rest[i + 1];
+      continue;
+    }
+    if (!a.startsWith('-')) continue;
+    const opt = readShortCluster(a, valueLetters);
+    if (opt === null) continue;
+    let value = opt.value;
+    if (value === null) {
+      if (i + 1 >= rest.length) continue;
+      i += 1;
+      value = rest[i];
+    }
+    if (opt.letter === 't') return value;
   }
   return null;
 }
@@ -2142,9 +2181,9 @@ function explicitTargetDir(rest) {
 // sed and perl share a program/file split: with -e/-f supplying the program,
 // EVERY positional is a file; without one, the FIRST positional IS the program
 // and only the rest are files.
-function inPlaceEditTargets(rest, valueFlags, scriptFlags) {
+function inPlaceEditTargets(rest, valueFlags, scriptFlags, cmd) {
   const { positionals, flags } = partitionArgs(rest, valueFlags);
-  if (!hasInPlaceFlag(flags)) return []; // read-only invocation — nothing written
+  if (!hasInPlaceFlag(flags, cmd)) return []; // read-only invocation — nothing written
   const programSupplied = flags.some((f) => scriptFlags.some((s) => f === s || f.startsWith(`${s}=`)));
   return programSupplied ? positionals : positionals.slice(1);
 }
@@ -2204,11 +2243,14 @@ function fileWriteTargets(command, cwd, opts) {
       // the destination" rule below only applies when neither form is
       // present.
       const rest = t.slice(1);
-      const targetDirRaw = explicitTargetDir(rest);
+      const targetDirRaw = explicitTargetDir(rest, 'St');
+      // Read only when no -t resolved, so a `-t` word here is -S's value or a
+      // trailing -t with no argument (cp refuses it). After `--` every word is
+      // an operand (`cp -- -tfoo dest`).
       const nonFlags = [];
       for (let i = 0; i < rest.length; i++) {
         const a = rest[i];
-        if (a === '-t' || a === '--target-directory') { i += 1; continue; }
+        if (a === '--') { nonFlags.push(...rest.slice(i + 1)); break; }
         if (a.startsWith('-')) continue; // other flags — never a positional
         nonFlags.push(a);
       }
@@ -2231,6 +2273,7 @@ function fileWriteTargets(command, cwd, opts) {
         t.slice(1),
         isSed ? SED_VALUE_FLAGS : PERL_VALUE_FLAGS,
         isSed ? ['-e', '-f', '--expression', '--file'] : ['-e', '-E'],
+        t[0],
       );
       for (const arg of raw) {
         const file = resolveWriteTarget(effCwd, arg);
@@ -2244,7 +2287,7 @@ function fileWriteTargets(command, cwd, opts) {
       // is a directory being created rather than a source.
       const rest = t.slice(1);
       const { positionals, flags } = partitionArgs(rest, INSTALL_VALUE_FLAGS);
-      const targetDirRaw = explicitTargetDir(rest);
+      const targetDirRaw = explicitTargetDir(rest, 'mogSt');
       if (targetDirRaw !== null) {
         const file = resolveWriteTarget(effCwd, targetDirRaw);
         if (file) targets.push({ action: 'install', file });
@@ -2269,7 +2312,7 @@ function fileWriteTargets(command, cwd, opts) {
       // The LINK name is what gets created — the last positional. With a single
       // positional the link lands in the cwd under the source's basename.
       const rest = t.slice(1);
-      const targetDirRaw = explicitTargetDir(rest);
+      const targetDirRaw = explicitTargetDir(rest, 'St');
       const { positionals } = partitionArgs(rest, LN_VALUE_FLAGS);
       if (targetDirRaw !== null) {
         const file = resolveWriteTarget(effCwd, targetDirRaw);

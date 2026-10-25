@@ -407,6 +407,96 @@ test('#4303: `>&` with an fd, `-`, or a non-stdout fd prefix resolves no target'
   }
 });
 
+// #4303: GNU getopt reads `-t` inside a short-option cluster: its value is the rest of the
+// cluster, else the next word, and `--target-directory` may be abbreviated (cp, mv, install and
+// ln have no other `--t…` option). bash 3.2 and 5 with GNU cp: `cp -rt M src` writes M/src;
+// `cp -tM src`, `cp -vtM src` and `cp --target=M src` target M; `cp -tr M src` targets r.
+for (const [cmd, dir] of [
+  ['cp -rt /main a', '/main'], ['cp -tM a', 'M'], ['cp -vt/main a', '/main'], ['cp --target=/main a', '/main'],
+  ['cp --targ /main a', '/main'], ['mv -vt /main a', '/main'], ['install -Dt /main f', '/main'], ['ln -st /main a', '/main'],
+  ['cp -tr /main a', 'r'],
+]) {
+  test(`#4303: \`${cmd}\` resolves its -t directory`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', dir)]);
+  });
+}
+// #4303: the -t forms that resolved before the cluster reading still resolve. bash 3.2 and 5 with
+// GNU coreutils write M/a or M/f for `cp -t M a`, `mv -t M a`, `cp --target-directory=M a`,
+// `cp --target-directory M a`, `install -t M f`, `install -m644 -t M f`, `install -m 644 -t M f`
+// and `ln -t M a`, and for `cp a -tM` (getopt permutes, so an option after the operands counts).
+// The first value-taking letter ends the cluster: `cp -St M/g a` and `cp -S -t M/g a` copy M/g
+// to a (`t`, then the word `-t`, is -S's backup suffix), `cp -S -tfoo a M/g` writes M/g, and
+// `cp -S .bak -t M a` writes M/a; `install -m -t M/g h` writes h (`-t` is the mode), and
+// `ln -St M/g a` links a to M/g.
+for (const [cmd, file] of [
+  ['cp -t /main a', '/main'], ['mv -t /main a', '/main'], ['cp --target-directory=/main a', '/main'],
+  ['cp --target-directory /main a', '/main'], ['install -t /main f', '/main'], ['install -m644 -t /main f', '/main'],
+  ['install -m 644 -t /main f', '/main'], ['ln -t /main a', '/main'], ['cp a -t/main', '/main'],
+  ['cp -St /main/f.js a', 'a'], ['cp -S -t /main/f.js a', 'a'], ['cp -S -tfoo a /main/f.js', '/main/f.js'],
+  ['cp -S .bak -t /main a', '/main'], ['install -m -t /main/f.js g', 'g'], ['ln -St /main/f.js a', 'a'],
+]) {
+  test(`#4303: \`${cmd}\` resolves the file it writes`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', file)]);
+  });
+}
+// #4303: `--` ends option parsing, so a `-t…` word after it is a source file and the last
+// operand is the destination. bash 3.2 and 5 with GNU coreutils: `cp -- a -t M`, `install -- a
+// -t M` and `ln -- a -t M` write M/a (each fails to stat `-t` and still writes a); `cp -- -tfoo
+// M/g` and `mv -- -tfoo M/g` write M/g; `cp -tM -- -tfoo` writes M/-tfoo.
+for (const [cmd, file] of [
+  ['cp -- a -t /main', '/main'], ['install -- a -t /main', '/main'], ['ln -- a -t /main', '/main'],
+  ['cp -- -tfoo /main/f.js', '/main/f.js'], ['mv -- -tfoo /main/f.js', '/main/f.js'], ['cp -t/main -- -tfoo', '/main'],
+]) {
+  test(`#4303: \`${cmd}\` reads -- as the end of options`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', file)]);
+  });
+}
+// #4303: a digit or a backup suffix in a cluster does not hide -i. bash 3.2 and 5: perl -0pi,
+// -00pi and -l0pi edit M/g; perl -pi.bak edits M/g and writes M/g.bak.
+for (const cmd of ["perl -0pi -e 's/a/b/' /main/f.js", "perl -00pi -e 's/a/b/' /main/f.js", "perl -l0pi -e 's/a/b/' /main/f.js",
+  "perl -0777pi -e 's/a/b/' /main/f.js", "perl -pi.bak -e 's/a/b/' /main/f.js", "sed -ni.bak 's/a/b/p' /main/f.js"]) {
+  test(`#4303: \`${cmd}\` is an in-place edit`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'edit', file: MAIN_F }]);
+  });
+}
+// A value-taking letter before i ends the cluster, so its i is that option's value, not -i.
+for (const cmd of ["perl -Mi -e 'print' /main/f.js", "perl -0p -e 's/a/b/' /main/f.js", "sed -n -e 'p' /main/f.js"]) {
+  test(`#4303: \`${cmd}\` is a read, not an edit`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), []);
+  });
+}
+// #4303: every letter that is not a value-taking option is a plain switch, so an i after it is
+// still -i. bash 3.2 and 5 (Homebrew perl 5.44, macOS sed): perl -pi, -i -pe, -wpi, -0api,
+// -lapi, and `-dpi` and `-pdi` under PERLDB_OPTS=NonStop edit M/g (perl's -d takes a value only
+// as `-d:MOD`, so d is a plain switch here, and a `-d:…pi` reading as in-place is the deliberate
+// fail-closed side); macOS sed -i.bak, -i.bak -n, -Ei.bak and -li.bak edit M/g (BSD sed's -l is a
+// plain switch; where GNU sed's -l takes a value instead, reading l as a plain switch can only
+// add a target, the fail-closed side). `sed -ni` is #70's GNU form: macOS sed takes the next
+// word as its suffix and fails without writing, so the edit pinned here is GNU's (no GNU sed on
+// the oracle machine) and the fail-closed side on macOS.
+for (const cmd of ["perl -pi -e 's/a/b/' /main/f.js", "perl -i -pe 's/a/b/' /main/f.js", "perl -wpi -e 's/a/b/' /main/f.js",
+  "perl -0api -e 's/a/b/' /main/f.js", "perl -lapi -e 's/a/b/' /main/f.js", "perl -dpi -e 's/a/b/' /main/f.js",
+  "perl -pdi -e 's/a/b/' /main/f.js", "sed -i.bak 's/a/b/' /main/f.js", "sed -ni 's/a/b/p' /main/f.js",
+  "sed -i.bak -n 's/a/b/p' /main/f.js", "sed -Ei.bak 's/a/b/' /main/f.js", "sed -li.bak 's/a/b/' /main/f.js"]) {
+  test(`#4303: \`${cmd}\` is an in-place edit, its other letters plain switches`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'edit', file: MAIN_F }]);
+  });
+}
+// #4303: each of perl's -e -E -I -m -M -F -x -D -C and sed's -e -f takes the rest of the cluster.
+// bash 3.2 and 5 write nothing for perl -Ilib, -Ipi, -Fpi, -Cpi (an unknown Unicode letter),
+// -Dpi (no -DDEBUGGING), -xpi (no script found), -mpi (no pi.pm), and `-ei -e 1` and `-Epi -e 1`
+// (a syntax error), nor for macOS sed `-ei.bak -e p` and `-fi.bak -e p` (each an error). The
+// separate `-e` makes every positional a file, so a reading of e, E or f as a plain switch would
+// report M/g.
+for (const cmd of ["perl -Ilib -e 'print 1' /main/f.js", "perl -Ipi -e 's/a/b/' /main/f.js", "perl -Fpi -e 's/a/b/' /main/f.js",
+  "perl -Cpi -e 's/a/b/' /main/f.js", "perl -Dpi -e 's/a/b/' /main/f.js", "perl -xpi -e 's/a/b/' /main/f.js",
+  "perl -mpi -e 's/a/b/' /main/f.js", 'perl -ei -e 1 /main/f.js', 'perl -Epi -e 1 /main/f.js', 'sed -ei.bak -e p /main/f.js',
+  'sed -fi.bak -e p /main/f.js']) {
+  test(`#4303: \`${cmd}\` is a read, its i inside a value`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), []);
+  });
+}
+
 // #4015: bash ends a word at an unquoted `>`, so a redirect glued to a
 // preceding word writes its target just like a spaced one.
 test('AC1.1 AC2.1 #4015: a redirect glued to a preceding unquoted word resolves its target', () => {
