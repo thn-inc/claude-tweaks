@@ -184,6 +184,10 @@ async function runGitAsync(args, cwd, opts = {}) {
 // (or GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR) overrides `git -C <dir>`'s
 // repo discovery, so a child spawned from a linked worktree's session would
 // commit onto that worktree's branch instead of the repo `-C` names (#4178).
+// The list deliberately matches staged-patch/stack-check.js's gitEnv (the four
+// variables); git's own `git rev-parse --local-env-vars` list is wider
+// (GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_SHALLOW_FILE, ...),
+// and widening it is a separate decision.
 function repoPinnedEnv(env = process.env) {
   const out = { ...env };
   for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete out[k];
