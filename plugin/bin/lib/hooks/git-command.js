@@ -125,20 +125,19 @@ const NEST_LEVEL_CAP = 32;
 const NEST_STEPS_PER_CHAR = 8;
 const NEST_STEPS_FLOOR = 4096;
 let nestMemo = null; // the current top-level call's memo
-let nestBudget = null; // { left }: the steps the pass (or lone top-level call) in progress may still take
+// { left }: the steps the pass in progress may still take. Every nested scan is entered through a
+// pass's reader (topLevelSpans), which sets it for the call.
+let nestBudget = null;
 const cappedEnd = (str) => ({ end: str.length, closed: false, capped: true });
 // Charges `n` steps to the budget in force; true once it is spent. Outside a nested scan (a
 // top-level reader's own backtick or flat quote scan) nothing is charged.
 const overBudget = (n) => nestBudget !== null && (nestBudget.left -= n) < 0;
 
 function nestMemoized(kind, str, i, level, scan) {
-  if (level > NEST_LEVEL_CAP) return cappedEnd(str);
+  if (level > NEST_LEVEL_CAP || overBudget(0)) return cappedEnd(str);
   const top = nestMemo === null;
-  const ownBudget = top && nestBudget === null;
   if (top) nestMemo = new Map();
-  if (ownBudget) nestBudget = { left: NEST_STEPS_PER_CHAR * (str.length - i) + NEST_STEPS_FLOOR };
   try {
-    if (nestBudget.left < 0) return cappedEnd(str);
     const key = i * 3 + kind;
     let r = nestMemo.get(key);
     if (r === undefined) {
@@ -148,7 +147,6 @@ function nestMemoized(kind, str, i, level, scan) {
     return r;
   } finally {
     if (top) nestMemo = null;
-    if (ownBudget) nestBudget = null;
   }
 }
 
@@ -956,12 +954,12 @@ function gitIsConfigured(tokens, p, sub, assigned) {
   return assigned || tokens.slice(p + 1, sub).some((t) => t === '-c' || t.startsWith('--config-env'));
 }
 
-// True when the program at `tokens[p]` neither reads stdin nor runs an argument, in a segment with
-// no command substitution: an INERT_NEIGHBOUR_WORDS program, or `git add` (past git's global flags,
-// and not configured by the command: gitIsConfigured) without --pathspec-from-file (its
-// abbreviations included), which reads pathspecs from stdin.
-function isInertNeighbour(tokens, p, seg) {
-  if (p >= tokens.length || !isBareOrAbsoluteProgram(tokens[p]) || /\$\(|`/.test(seg)) return false;
+// True when the program at `tokens[p]` neither reads stdin nor runs an argument: an
+// INERT_NEIGHBOUR_WORDS program, or `git add` (past git's global flags, and not configured by the
+// command: gitIsConfigured) without --pathspec-from-file (its abbreviations included), which reads
+// pathspecs from stdin. A command substitution is lineFeedsOnlyDataReaders' check.
+function isInertNeighbour(tokens, p) {
+  if (p >= tokens.length || !isBareOrAbsoluteProgram(tokens[p])) return false;
   const names = programNames(tokens[p]);
   if (names.every((n) => INERT_NEIGHBOUR_WORDS.has(n))) return true;
   if (!names.every((n) => n === 'git')) return false;
@@ -1017,7 +1015,7 @@ function checkReaderCommand(seg) {
   const { tokens } = tokenize(seg.trim());
   let p = 0;
   while (p < tokens.length && SIMPLE_ASSIGNMENT_RE.test(tokens[p])) p += 1;
-  if (isInertNeighbour(tokens, p, seg)) return true;
+  if (isInertNeighbour(tokens, p)) return true;
   let assigned = p > 0;
   while (p < tokens.length && isBareOrAbsoluteProgram(tokens[p]) && programNames(tokens[p]).every((n) => READER_WRAPPER_WORDS.has(n))) {
     const isEnv = programNames(tokens[p]).includes('env');
@@ -1198,10 +1196,10 @@ function lineLeavesStructureOpen(line) {
     if (c === '\\') { word += c + (line[i + 1] || ''); plain = false; i += 1; continue; }
     if (c === '"') {
       // Nested as bash reads it (skipDoubleQuoted), so a `)` inside a quoted "$( )" closes nothing.
-      // A span left open, or a capped one (topLevelSpans: the line's spans share one step budget),
-      // leaves the line open (fail closed).
+      // A span left open, a capped one among them (the line's spans share one step budget:
+      // topLevelSpans), leaves the line open (fail closed).
       const r = spans.dq(line, i + 1);
-      if (!r.closed || spans.capped) return true;
+      if (!r.closed) return true;
       word += line.slice(i, r.end);
       plain = false;
       i = r.end - 1;

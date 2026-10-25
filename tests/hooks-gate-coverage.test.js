@@ -566,6 +566,7 @@ test('#3989: a here-string, an arithmetic shift, a quoted `<<`, and a comment ar
     ['node piped on with a $( ) argument (| node "$(bash)")', "cat <<'EOF' | node \"$(bash)\"\necho x > f.js\nEOF", f],
     ['a reader piped on with a $( ) inside a ${ } default (| jq "${x:-$(bash)}")', "cat <<'EOF' | jq \"${x:-$(bash)}\"\necho x > f.js\nEOF", f],
     ['a piped-to reader with its own heredoc whose argument runs $( ) (| jq "$(sh)" <<B)', "cat <<'EOF' | jq \"$(sh)\" <<'B'\necho x > f.js\nEOF\nb\nB", f],
+    ['a reader piped on with |&, with its own heredoc, whose argument runs $( ) (|& jq "$(sh)" <<B)', "cat <<'EOF' |& jq \"$(sh)\" <<'B'\necho x > f.js\nEOF\nb\nB", f],
   ];
   for (const [label, cmd, expected] of keepCases) {
     test(`#4149: a body fed to ${label} stays visible`, () => {
@@ -911,6 +912,8 @@ for (const [label, cmd] of [
     ['a cd inside a top-level backtick', 'cd /main && echo `true; cd /tmp`; cp a f.js', [main('copy')]],
     ['a cd inside an assigned backtick', 'cd /main && x=`true && cd /tmp` && cp a f.js', [main('copy')]],
     ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); cp a f.js', [main('copy')]],
+    ['a cd after a lone & that follows a $( )', 'echo $(true; true) & cd /main; cp a f.js', [main('copy')]],
+    ['a cd after a $( ) in a pass read again flat', `echo $(true) ${'"$('.repeat(40)}x${')"'.repeat(40)}; cd /main; cp a f.js`, [main('copy')]],
     ['a quoted ) inside "$( )", in a fresh quoting context', 'cd /main && echo "$(echo ")")" && cp a f.js', [main('copy')]],
     ['a subshell inside "$( )", whose ) closes only it', 'cd /main && echo "$( (true) ; echo "&" )" && cp a f.js', [main('copy')]],
     ['a quoted } inside a ${ } default', 'x=; cd /main && echo "${x:-"a}b"}" && cp a f.js', [main('copy')]],
@@ -946,12 +949,17 @@ for (const [label, cmd] of [
     const targets = fileWriteTargets(`echo ${'"$('.repeat(40)}\ncp a /main/f.js`, '/r');
     assert.deepStrictEqual(targets, [main('copy')]);
   });
+  // Round 4: a cd inside a $( ) holds for the commands after it in the same substitution only.
+  test('#4149 nesting: a cd inside a $( ) moves the commands after it there, not the outer walk', () => {
+    assert.deepStrictEqual(fileWriteTargets('cd /main && echo $(true; cd /tmp; cp a b.js)', '/r'), [{ action: 'copy', file: path.resolve('/tmp/b.js)') }]);
+  });
   // Round 4: a pass's nested scans share a step budget, so a shape whose "$( runs off the end from
   // every top-level span (each falls back to the plain quote end and the next one rescans the same
-  // text) stays linear. Unbudgeted, 60 KB of `"$( #"` took about 1.6 s; budgeted, about 10 ms.
+  // text: here an unterminated heredoc) stays linear. Unbudgeted, 60 KB of it takes seconds;
+  // budgeted, about 10 ms.
   test('#4149 nesting: a "$( that runs off the end from every span stays linear', () => {
     const t = process.hrtime.bigint();
-    const targets = fileWriteTargets(`echo ${'"$( #"'.repeat(10000)} && cp a /main/f.js`, '/r');
+    const targets = fileWriteTargets(`echo ${'"$(<<X\n"'.repeat(7500)} && cp a /main/f.js`, '/r');
     const ms = Number(process.hrtime.bigint() - t) / 1e6;
     assert.deepStrictEqual(targets, [main('copy')]);
     assert.ok(ms < 750, `took ${ms.toFixed(0)} ms`);
@@ -1084,6 +1092,11 @@ for (const opener of ["env -S'bash -s' cat", 'env -S"bash -s" cat', "env -S 'bas
       assert.deepStrictEqual(fileWriteTargets(`${opener}\n${BODY}EOF`, '/r'), expected);
     });
   }
+  // Round 4: after `||` (not a pipe), the next heredoc's own command reads no body through its
+  // substitution, so both bodies strip.
+  test("#4149 routine: `cat <<'A' || jq \"$(sh)\" <<'B'` strips both bodies", () => {
+    assert.deepStrictEqual(fileWriteTargets(`cat <<'A' || jq "$(sh)" <<'B'\n${BODY}A\n${BODY}B`, '/r'), []);
+  });
   // The message read from a quoted "$(cat <<'EOF' … EOF)": the inner cat is the reader, and the outer
   // command, whose segment carries the substitution, receives no heredoc stdin.
   for (const outer of ['git commit -m', 'git -C /wt/x commit -m', 'gh pr create --title t --body']) {
