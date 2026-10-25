@@ -517,8 +517,8 @@ function substituteVars(tokens, vars, singleQuoted) {
 // `(`/`{` is read with the same scope rules and `handler` may run once per cwd for a segment (its
 // fourth argument true on a repeat visit); and heredoc bodies, so a data body's text (a commit
 // message line like `1) a`) never reaches the group depth, while a kept body walks as its own chunk.
-function forEachCommandSegment(command, cwd, handler) {
-  walkShellChunk(String(command || ''), [cwd || '.'], new Map(), handler, 0, true);
+function forEachCommandSegment(command, cwd, handler, opts) {
+  forEachShellSegment(command, cwd, handler, opts);
 }
 
 // One segment of forEachCommandSegment's walk: updates `vars`, calls `handler`
@@ -705,7 +705,7 @@ const PLUMBING_WRITE_SUBCOMMANDS = new Set(['mv', 'rm', 'update-ref', 'apply']);
 // over its result (gitTargetsFrom below) is what tells "commit"/"push"/plumbing
 // apart from "stash" apart from everything else — the traversal itself stays
 // ignorant of which subcommand pre-tool-use.js's callers each care about.
-function resolvedGitSegments(command, cwd) {
+function resolvedGitSegments(command, cwd, opts) {
   const segments = [];
   let pieceStart = 0; // where the current piece's first-cwd visit began pushing
   forEachCommandSegment(command, cwd, (t, effCwd, _leadQuoted, again) => {
@@ -715,7 +715,7 @@ function resolvedGitSegments(command, cwd) {
     // A repeat visit under another cwd (after a brace group) that resolves to the same dir adds nothing.
     if (again && segments.slice(pieceStart).some((s) => s.dir === resolved.dir && s.index === resolved.index)) return;
     segments.push({ tokens: t, index: resolved.index, dir: resolved.dir });
-  });
+  }, opts);
   return segments;
 }
 
@@ -734,8 +734,8 @@ function gitTargetsFrom(segments) {
   return targets;
 }
 
-function gitTargets(command, cwd) {
-  return gitTargetsFrom(resolvedGitSegments(command, cwd));
+function gitTargets(command, cwd, opts) {
+  return gitTargetsFrom(resolvedGitSegments(command, cwd, opts));
 }
 
 // #3061: does this command invoke `powershell`/`pwsh` with `-Command` or
@@ -1490,7 +1490,7 @@ function groupEventsWith(seg, g, spans, undo) {
     tail = false;
   };
   const nest = (n, cmd) => {
-    for (let k = 0; k < n; k += 1) push({ kind: 'p', caseDepth: 0 });
+    for (let k = 0; k < n; k += 1) push({ kind: 'p', caseDepth: 0, arith: n === 2 });
     atCmd = cmd;
   };
   let i = 0;
@@ -1528,9 +1528,10 @@ function groupEventsWith(seg, g, spans, undo) {
       if (c === '&' && j === i + 1) {
         // A lone `&` ends the and-or list before it and runs it in the background. When it starts
         // the segment it is the `&` of `|&` (segmentSpans has cut the `|`), which pipes on: it is
-        // dropped from the text, with no background. In a `$( )`/`<( )` it ends that subshell's
-        // own list, so it is left alone.
-        if (top().kind !== 'p') cut(i, i > 0 ? { bg: true } : null);
+        // dropped from the text, with no background. Inside a substitution or a group in one it
+        // backgrounds that subshell's own list (`sub`: the walk resets the sub run, never the outer
+        // cwd); inside `$(( ))` it is arithmetic, so it is left alone.
+        if (!top().arith) cut(i, i > 0 ? { bg: true, sub: g.nesting > 0 } : null);
         atCmd = true;
       }
       // Any other operator is a redirection. Its target is read as an ordinary word, which ends
@@ -1615,11 +1616,34 @@ function visitUnderEach(text, cwds, vars, handler) {
 // the outer cwd, so `handler` may run once per cwd for a segment (visitUnderEach). A lone `&`
 // backgrounds the and-or list before it, which runs in a subshell: the cwd returns to what it was
 // where that list began (after the last `;`, newline, `&` or group opener).
-function forEachShellSegment(command, cwd, handler) {
-  walkShellChunk(String(command || ''), [cwd || '.'], new Map(), handler, 0, true);
+//
+// The walk carries at most CWD_SET_CAP cwds at once. Each brace group's `}` and each tail can add
+// a cwd, and every later piece is visited once per cwd, so a command with many distinct `cd`
+// paths would be quadratic. Past the cap the set collapses, failing closed, to the caller's
+// `opts.overflowCwd` (a path, or a function returning one, called at most once; pre-tool-use passes
+// the main checkout, so a relative target resolves where the worktree gate denies it) together
+// with the walk's own starting cwd (where a worktree-local shadow is denied).
+const CWD_SET_CAP = 16; // four groups each with a relative cd already make 2^4 cwds
+function forEachShellSegment(command, cwd, handler, opts = {}) {
+  const start = cwd || '.';
+  let collapsed = null;
+  const overflow = () => {
+    if (collapsed === null) {
+      const o = typeof opts.overflowCwd === 'function' ? opts.overflowCwd() : opts.overflowCwd;
+      collapsed = o && o !== start ? [o, start] : [start];
+    }
+    return collapsed;
+  };
+  walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow);
 }
 
-function walkShellChunk(text, cwds, vars, handler, depth, plan) {
+// The union of two cwd lists, collapsed to `overflow()` past CWD_SET_CAP.
+function joinCwds(a, b, overflow) {
+  const out = [...a, ...b.filter((c) => !a.includes(c))];
+  return out.length > CWD_SET_CAP ? overflow() : out;
+}
+
+function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
   const { outer, bodies } = plan && depth < MAX_HEREDOC_NESTING ? stripHeredocBodies(text) : { outer: text, bodies: [] };
   const g = { root: { kind: 'root', caseDepth: 0 }, stack: [], nesting: 0 };
   let cur = cwds;
@@ -1628,8 +1652,16 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan) {
   // same run of sub pieces, never for the outer walk. A group opened inside the substitution is
   // scoped within that run (its saved cwd is the sub cwd), so its events do not end the run; the
   // next outer piece (the text after the substitution's closer among them) or outer group event does.
+  // The run keeps its own and-or list start, so a lone `&` inside it backgrounds only the run's list.
   let subCur = null;
   let subVars = null;
+  let subListStart = null;
+  const startSubRun = () => {
+    if (subCur !== null) return;
+    subCur = cur;
+    subVars = new Map(vars);
+    subListStart = cur;
+  };
   let listStart = cwds; // the cwds where the current and-or list began
   // A tail piece (the rest of a command after a substitution's closer) is visited on its own, so
   // whether a `cd` or an assignment in it runs (`x=$(…) cd /x`) or is an argument (`echo $(…) cd
@@ -1638,27 +1670,30 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan) {
   const visitPiece = (ev, pieceCwds, pieceVars) => {
     if (!ev.tail) return visitUnderEach(ev.text, pieceCwds, pieceVars, handler);
     const next = visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler);
-    return [...pieceCwds, ...next.filter((c) => !pieceCwds.includes(c))];
+    return joinCwds(pieceCwds, next, overflow);
   };
   let b = 0;
   const runBodies = (until, bodyCwds) => {
     for (; b < bodies.length && bodies[b].at < until; b += 1) {
-      walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, true);
-      if (!bodies[b].shell) walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, false);
+      walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, true, overflow);
+      if (!bodies[b].shell) walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, false, overflow);
     }
   };
   for (const span of segmentSpans(outer)) {
     const before = cur;
     for (const ev of groupEvents(span.text, g)) {
-      if (ev.open ? ev.open.sub || span.sub : ev.close && ev.close.inSubRun) {
-        if (subCur === null) { subCur = cur; subVars = new Map(vars); }
+      if (ev.open ? ev.open.sub || span.sub : ev.close ? ev.close.inSubRun : ev.bg && (ev.sub || span.sub)) {
+        startSubRun();
         if (ev.open) {
           ev.open.inSubRun = true;
           ev.open.saved = subCur;
-        } else {
+          ev.open.savedList = subListStart;
+          subListStart = subCur;
+        } else if (ev.close) {
           const { saved } = ev.close;
-          subCur = ev.close.kind === '(' ? saved : [...saved, ...subCur.filter((c) => !saved.includes(c))];
-        }
+          subCur = ev.close.kind === '(' ? saved : joinCwds(saved, subCur, overflow);
+          subListStart = ev.close.savedList;
+        } else subCur = subListStart;
         continue;
       }
       if (ev.open) {
@@ -1667,11 +1702,11 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan) {
         listStart = cur;
       } else if (ev.close) {
         const { saved } = ev.close;
-        cur = ev.close.kind === '(' ? saved : [...saved, ...cur.filter((c) => !saved.includes(c))];
+        cur = ev.close.kind === '(' ? saved : joinCwds(saved, cur, overflow);
         listStart = ev.close.savedList;
       } else if (ev.bg) cur = listStart;
       else if (ev.sub || span.sub) {
-        if (subCur === null) { subCur = cur; subVars = new Map(vars); }
+        startSubRun();
         subCur = visitPiece(ev, subCur, subVars);
         continue;
       } else cur = visitPiece(ev, cur, vars);
@@ -1679,7 +1714,10 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan) {
     }
     runBodies(span.end, before);
     // `&&`, `||` and `|` continue the and-or list; `;`, a newline or the end start a new one.
-    if (outer[span.end] !== '&' && outer[span.end] !== '|') listStart = cur;
+    if (outer[span.end] !== '&' && outer[span.end] !== '|') {
+      listStart = cur;
+      if (subCur !== null) subListStart = subCur;
+    }
   }
   runBodies(Infinity, cur);
 }
@@ -1841,7 +1879,7 @@ function dropRedirections(tokens, leadQuoted) {
   return out;
 }
 
-function fileWriteTargets(command, cwd) {
+function fileWriteTargets(command, cwd, opts) {
   const targets = [];
   forEachShellSegment(command, cwd, (tokens, effCwd, leadQuoted) => {
     // Redirection has no command word, so it runs for every segment
@@ -1972,7 +2010,7 @@ function fileWriteTargets(command, cwd) {
       }
       return;
     }
-  });
+  }, opts);
   // forEachShellSegment may visit a segment under two cwds, or a kept body twice (planned and
   // whole), so the same target can come back more than once: report each one once.
   const seen = new Set();
@@ -1993,7 +2031,7 @@ function fileWriteTargets(command, cwd) {
 // with a positional except -m/--mode; every other positional is a target — mkdir
 // can create several directories in one invocation.
 const MKDIR_VALUE_FLAGS = new Set(['-m', '--mode']);
-function mkdirTargets(command, cwd) {
+function mkdirTargets(command, cwd, opts) {
   const targets = [];
   let pieceStart = 0; // where the current piece's first-cwd visit began pushing
   forEachCommandSegment(command, cwd, (t, effCwd, _leadQuoted, again) => {
@@ -2005,7 +2043,7 @@ function mkdirTargets(command, cwd) {
       // A repeat visit under another cwd (after a brace group) adds an absolute path only once.
       if (file && !(again && targets.slice(pieceStart).some((x) => x.file === file))) targets.push({ action: 'mkdir', file });
     }
-  });
+  }, opts);
   return targets;
 }
 

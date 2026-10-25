@@ -1012,6 +1012,83 @@ for (const [label, cmd] of [
     const targets = fileWriteTargets(`echo ${'"$( #"'.repeat(2000)}\ncat <<'EOF'\ncp a /main/f.js\nEOF\n`, '/r');
     assert.deepStrictEqual(targets, [main('copy')]);
   });
+  // Round 6: a lone `&` inside a substitution, or in a group inside one, backgrounds that
+  // subshell's own list: it resets the sub run, never the outer cwd (bash 3.2 and 5 write
+  // /main/f.js for each); inside `$(( ))` it is arithmetic. A group's assignment inside a
+  // substitution stays there too.
+  for (const [label, cmd, expected] of [
+    ['a & in a subshell inside a $( ), after an outer cd in the same list', 'cd /main && pid=$( (sleep 0 & echo $!) ) && cp a f.js', [main('copy')]],
+    ['a & in a subshell inside a <( ), after an outer cd in the same list', 'cd /main && cat <( (true &) ) >/dev/null && cp a f.js', [main('copy')]],
+    ['a & directly inside a $( ), backgrounding its cd', 'cd /main && echo $(cd /tmp & cp a f.js)', [main('copy')]],
+    ['a & in a brace group inside a $( ), backgrounding the group\'s list only', 'echo $(true; cd /main; { cd /tmp & true; }; cp a f.js )', [main('copy')]],
+    ['a & inside $(( )) in a $( ) list (arithmetic, no background)', 'echo $(true; cd /main && echo $((1 & 3)) > f.js )', [main('write')]],
+    ['an assignment in a brace group inside a $( )', 'D=/main; echo $( { D=/tmp; } ); cp a $D/f.js', [main('copy')]],
+    // The sub run keeps its own and-or list start: a `;` inside it starts a new list, a group inside
+    // it starts one and its close restores the one before it.
+    ['a & after a ; inside a $( ), backgrounding only the cd after it', 'echo $(true; cd /main; cd /tmp & cp a f.js )', [main('copy')]],
+    ['a & in a subshell inside a $( ), after a cd in the same list', 'echo $(true; cd /main && ( cd /tmp & cp a f.js ) )', [main('copy')]],
+    ['a & after a brace group inside a $( ), backgrounding the list the group began', 'cd /main && echo $(true; { cd /tmp; } && cd /var & cp a f.js )', [main('copy')]],
+  ]) {
+    test(`#4149 nesting: ${label} is read as bash runs it`, () => {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
+    });
+  }
+  // Round 6: each brace group's `}`, each sub group's `}` and each tail can add a cwd, and every
+  // later piece is visited once per cwd, so many distinct `cd` paths were quadratic. Past
+  // CWD_SET_CAP the set collapses to `overflowCwd` (pre-tool-use passes the main checkout) plus the
+  // walk's own cwd: a relative target past the cap resolves there, an absolute one stays put, and
+  // a handful of groups never collapses.
+  {
+    const { forEachShellSegment, mkdirTargets } = require('../plugin/bin/lib/hooks/git-command');
+    const distinct = (f, k) => Array.from({ length: k }, (_, i) => f(i)).join('');
+    const routes = [
+      ['brace groups', (k, last) => distinct((i) => `{ cd /a${i}; }; true; `, k) + last],
+      ['substitution tails', (k, last) => distinct((i) => `echo $(true; true) cd /a${i}; true; `, k) + last],
+      ['brace groups inside a $( )', (k, last) => `echo $(true; ${distinct((i) => `{ cd /a${i}; }; true; `, k)}${last} )`],
+    ];
+    const opts = { overflowCwd: '/main' };
+    for (const [route, build] of routes) {
+      test(`#4149 cwd cap: ${route} past the cap resolve a relative write in the overflow cwd and the walk's own`, () => {
+        const files = fileWriteTargets(build(20, 'cp a f.js'), '/r', opts).map((t) => t.file);
+        assert.ok(files.includes(path.resolve('/main/f.js')) && files.includes(path.resolve('/r/f.js')), JSON.stringify(files));
+        assert.ok(files.length <= 9, JSON.stringify(files));
+      });
+      test(`#4149 cwd cap: ${route} past the cap leave an absolute write as written`, () => {
+        assert.deepStrictEqual(fileWriteTargets(build(20, 'cp a /x/f.js'), '/r', opts), [{ action: 'copy', file: path.resolve('/x/f.js') }]);
+      });
+      test(`#4149 cwd cap: ${route} below the cap keep every cwd`, () => {
+        const files = fileWriteTargets(build(4, 'cp a f.js'), '/r', opts).map((t) => t.file);
+        assert.deepStrictEqual(files, ['/r', '/a0', '/a1', '/a2', '/a3'].map((d) => path.resolve(d, 'f.js')));
+      });
+      // Timing-free: the handler runs once per cwd per piece, so the visit count is the cost. Each
+      // repetition holds at most three visited pieces, each visited under at most the cap's 16 cwds
+      // plus one (head: 2,700 to 8,100 visits; uncapped: 45,000 to 136,000).
+      test(`#4149 cwd cap: ${route} stay linear (visits per group bounded by the cap)`, () => {
+        let visits = 0;
+        forEachShellSegment(build(300, 'true'), '/r', () => { visits += 1; }, opts);
+        assert.ok(visits < 300 * 3 * 17, `${visits} visits`);
+      });
+    }
+    test('#4149 cwd cap: a push and a mkdir past the cap resolve in the overflow cwd', () => {
+      const cmd = (last) => distinct((i) => `{ cd /a${i}; }; `, 20) + last;
+      assert.ok(gitTargets(cmd('git push'), '/r', opts).some((t) => t.dir === path.resolve('/main')));
+      assert.ok(mkdirTargets(cmd('mkdir d'), '/r', opts).some((t) => t.file === path.resolve('/main/d')));
+    });
+    test('#4149 cwd cap: four groups with relative cds (2^4 cwds) stay below the cap', () => {
+      const files = fileWriteTargets('{ cd a; ls; }; { cd b; ls; }; { cd c; ls; }; { cd d; ls; }; cp x y', '/r', opts).map((t) => t.file);
+      assert.strictEqual(files.length, 16, JSON.stringify(files));
+      assert.ok(!files.includes(path.resolve('/main/y')) && files.includes(path.resolve('/r/a/b/c/d/y')), JSON.stringify(files));
+    });
+    test('#4149 cwd cap: a kept shell body past the cap collapses to the overflow cwd too', () => {
+      const body = distinct((i) => `{ cd /a${i}; }; `, 20) + 'cp a f.js';
+      const files = fileWriteTargets(`bash <<'EOF'\n${body}\nEOF`, '/r', opts).map((t) => t.file);
+      assert.ok(files.includes(path.resolve('/main/f.js')), JSON.stringify(files));
+    });
+    test('#4149 cwd cap: without an overflowCwd the set collapses to the walk\'s own cwd', () => {
+      const files = fileWriteTargets(distinct((i) => `{ cd /a${i}; }; `, 20) + 'cp a f.js', '/r').map((t) => t.file);
+      assert.ok(files.includes(path.resolve('/r/f.js')) && !files.includes(path.resolve('/a0/f.js')), JSON.stringify(files));
+    });
+  }
   // Round 4: a pass's nested scans share a step budget, so a shape whose "$( runs off the end from
   // every top-level span (each falls back to the plain quote end and the next one rescans the same
   // text: here an unterminated heredoc) stays linear. Unbudgeted, 60 KB of it takes seconds;
@@ -1193,6 +1270,43 @@ test('e2e #3080: bare redirection from a worktree-always main checkout is DENIED
   for (const command of ['echo x > /dev/null', 'cmd 2>&1']) {
     assert.notStrictEqual(decisionFor(command), 'deny', command);
   }
+});
+
+// #4149 round 6: past the walk's cwd cap, pre-tool-use collapses the cwds to the main checkout (and
+// the worktree), so from a linked worktree a relative write, a push and a shadow mkdir after many
+// distinct `cd`s are DENIED; an absolute write outside the repo and a handful of groups are not.
+test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for a relative write, a push and a shadow mkdir', () => {
+  const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
+  const os = require('os');
+  const { execFileSync } = require('child_process');
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4149-cap-')));
+  const main = path.join(tmp, 'main');
+  const wt = path.join(tmp, 'wt');
+  fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
+  const git = (...args) => execFileSync('git', ['-C', main, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdio: 'pipe' });
+  git('init', '-q');
+  git('add', '-A');
+  git('commit', '-qm', 'init');
+  git('worktree', 'add', '-q', wt);
+  const decisionFor = (command) => {
+    const out = preToolUse.run({
+      input: { tool_name: 'Bash', tool_input: { command }, cwd: wt },
+      runDir: null, runState: null, ownedRun: {}, cwd: wt,
+    });
+    return out.json && out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision;
+  };
+  const many = Array.from({ length: 20 }, (_, i) => `{ cd /tmp/ct-4149-a${i}; }; `).join('');
+  const few = Array.from({ length: 4 }, (_, i) => `{ cd /tmp/ct-4149-a${i}; }; `).join('');
+  for (const command of [`${many}cp a f.js`, `${many}git push`, `${many}git commit -m x`, `${many}mkdir -p .claude-tweaks/pipelines/2026-x`]) {
+    assert.strictEqual(decisionFor(command), 'deny', command.slice(-40));
+  }
+  for (const command of [`${many}cp a /tmp/ct-4149-f.js`, `${few}cp a f.js`]) {
+    assert.notStrictEqual(decisionFor(command), 'deny', command.slice(-40));
+  }
+  // The teardown gate's walk resolves a relative `worktree remove` path in the main checkout too.
+  const removed = preToolUse.teardownTargets({ input: { tool_name: 'Bash', tool_input: { command: `${many}git worktree remove x` } }, cwd: wt }).map((t) => t.path);
+  assert.ok(removed.includes(path.join(main, 'x')) && removed.includes(path.join(wt, 'x')), JSON.stringify(removed));
 });
 
 test('e2e #3989: a `>` in a heredoc body from a worktree-always main checkout is ALLOWED; a top-level redirect after the delimiter is DENIED', () => {

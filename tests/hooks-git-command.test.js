@@ -671,6 +671,20 @@ for (const [label, cmd] of [
   });
 }
 
+// #4149 round 6: a lone `&` in a group inside a substitution backgrounds that subshell's list
+// only, so the outer cd before the substitution still holds. Checked against bash 3.2 and 5.
+for (const [label, cmd, expected] of [
+  ['a push after a & in a brace group inside a $( )', 'cd /main && x=$( { true & } ) && git push', [{ action: 'push', dir: path.resolve('/main') }]],
+  ['a commit after a & in a subshell inside a $( )', 'cd /main && pid=$( (sleep 0 & echo $!) ) && git commit -am x', [{ action: 'commit', dir: path.resolve('/main') }]],
+]) {
+  test(`#4149 round 6: gitTargets reads ${label} at the outer cd`, () => {
+    assert.deepStrictEqual(gitTargets(cmd, '/wt'), expected);
+  });
+}
+test('#4149 round 6: mkdirTargets reads a mkdir after a & in a subshell inside a $( ) at the outer cd', () => {
+  assert.deepStrictEqual(mkdirTargets('cd /main && pid=$( (sleep 0 & echo $!) ) && mkdir d', '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
+});
+
 test('#4149 round 3: mkdirTargets skips a heredoc body when tracking group depth', () => {
   assert.deepStrictEqual(mkdirTargets("(cd /main && cat <<'EOF'\n1) a\nEOF\nmkdir d)", '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
 });

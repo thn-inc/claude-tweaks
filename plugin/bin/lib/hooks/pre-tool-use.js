@@ -44,6 +44,17 @@ const { readWorkBackend } = require('../work-backend');
 // Every realpath resolution in this file goes through canonicalRealpath (#3682); lexical containment checks (isPipelineBookkeeping) resolve nothing.
 const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
 
+// #4149: the options the worktree-required, E1 and teardown walks pass the shell scanner. A walk that
+// carries more distinct cwds than its cap (brace groups and substitution tails whose scope end it
+// cannot place) collapses them, failing closed, to this repo's main checkout plus the walk's own
+// cwd: a relative write, a git target or a `worktree remove` path then resolves in the main
+// checkout too, where checkWorktreeRequired denies it. checkPipelineShadowGuard passes none: the
+// walk's own cwd, which the collapse always keeps, is where it denies a shadow run dir. Resolved
+// only when a walk overflows (wtDetect.mainCheckoutRoot walks the fs).
+function walkOptions(cwd) {
+  return { overflowCwd: () => (cwd ? wtDetect.mainCheckoutRoot(cwd) || cwd : null) };
+}
+
 function pluginRoot() {
   return process.env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
 }
@@ -498,7 +509,8 @@ function teardownTargets(ctx) {
   }
   if (toolName !== 'Bash' || !toolInput || typeof toolInput.command !== 'string') return [];
   const out = [];
-  forEachCommandSegment(toolInput.command, ctx.cwd || process.cwd(), (toks, effCwd) => {
+  const cwd = ctx.cwd || process.cwd();
+  forEachCommandSegment(toolInput.command, cwd, (toks, effCwd) => {
     // Shares gitTargets' own findGitLead -> skipGlobalFlags preamble via
     // resolveGitCommand: findGitLead walks past a leading NAME=value
     // assignment and/or the env builtin (with env's own flags, including
@@ -522,7 +534,7 @@ function teardownTargets(ctx) {
     const rest = toks.slice(i + 2).filter((t) => t !== '--force' && t !== '-f' && t !== '--');
     if (rest.length !== 1 || rest[0].startsWith('-')) return; // unconfident -> allow
     out.push({ path: path.resolve(dir, rest[0]), source: 'bash' });
-  });
+  }, walkOptions(cwd));
   return out;
 }
 
@@ -961,13 +973,13 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
       // ...`, or a git commit alongside a separate cp/mv/tee write), and
       // each one is checked on its own below: a violation later in the
       // chain must not be masked by an earlier, compliant target.
-      const targets = precomputedGitTargets || gitTargets(command, ctx.cwd);
+      const targets = precomputedGitTargets || gitTargets(command, ctx.cwd, walkOptions(ctx.cwd));
       const gitTargetPaths = targets
         .filter((t) => GATE_COVERAGE.gitActions.includes(t.action))
         .map((t) => ({ path: t.dir, exemptible: false, action: t.action }));
       // Non-git direct file writes (tee, cp, mv) — best-effort,
       // not exhaustive (see fileWriteTargets' own header comment).
-      const writeTargetPaths = fileWriteTargets(command, ctx.cwd).map((t) => ({ path: t.file, exemptible: true }));
+      const writeTargetPaths = fileWriteTargets(command, ctx.cwd, walkOptions(ctx.cwd)).map((t) => ({ path: t.file, exemptible: true }));
       targetPaths = [...gitTargetPaths, ...writeTargetPaths];
     }
   }
@@ -2117,7 +2129,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   // checkWorktreeRequired's Bash branch above, and the E1 loop below —
   // parsing the same command/cwd through a quote-aware segment/token walk
   // three times per invocation (once per consumer) was pure repeated work.
-  const segments = command ? resolvedGitSegments(command, ctx.cwd) : null;
+  const segments = command ? resolvedGitSegments(command, ctx.cwd, walkOptions(ctx.cwd)) : null;
   checkGitStashWarn(segments, warnings);
   const commandGitTargets = segments ? gitTargetsFrom(segments) : null;
 
