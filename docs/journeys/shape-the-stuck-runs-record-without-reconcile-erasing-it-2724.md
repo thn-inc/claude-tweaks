@@ -67,4 +67,5 @@ files:
 - Created during build of #2724 (reconcile: structurally-stuck run directories). The record's own shaped body had been erased by escalation passes on 2026-09-30, 2026-10-21 and 2026-10-24.
 - Steps 1-3 built in that session.
 - Step 4 added during build of #4202 (reconcile: archiving an escalated stuck dir drops its cache entry without resolving it). That build followed a 2026-10-24 hand cleanup that removed 20 archived-but-still-listed paths before #2724 could close.
+- Step 3 widened during build of #4179 (reconcile: sweep main-checkout ad-hoc session dirs by session liveness). Main-checkout ad-hoc dirs are now exempt too, because `adhoc-session-ended` archives them once their session reads dead and 7 days have passed.
 - Related journeys: `recover-a-run-stranded-by-a-stale-pr-number-3543.md`, `learn-a-merged-run-needs-you-3297.md` (other reasons that feed the same record).
