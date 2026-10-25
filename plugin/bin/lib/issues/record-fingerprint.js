@@ -44,6 +44,16 @@ function extractFingerprint(body) {
   return plain ? plain[1] : null;
 }
 
+// Producer-supplied text quoted into a record body must not spell a fingerprint marker.
+// A fence does not stop extractFingerprint above, which takes the FIRST marker in the proposal:
+// a quoted `<!-- work-fingerprint: X -->` (or a `work-fingerprint: X` line, the form read once the
+// transport strips HTML comments) would hijack the planned fingerprint and dedup against the wrong
+// key. So a quoting composer defuses every producer-supplied value before it interpolates it:
+// `<!--` becomes `<! --` (which also disarms the legacy `<!-- *-health-fingerprint: -->` markers)
+// and `work-fingerprint:` becomes `work-fingerprint :`, anywhere, any case. A fingerprint is
+// computed from the raw values, so the key stays stable.
+const defuse = (s) => String(s).replace(/<!--/g, '<! --').replace(/work-fingerprint:/gi, (m) => `${m.slice(0, -1)} :`);
+
 // (#2658) `specify/record-creation.md`'s Idempotency (resume path) section
 // documents a check-before-create + update-after-create discipline against a
 // fingerprint->number map, but names it only as a paragraph of prose — there
@@ -91,5 +101,5 @@ function recordFingerprint(map, fingerprint, number) {
 }
 
 module.exports = {
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, checkFingerprint, recordFingerprint,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, defuse, checkFingerprint, recordFingerprint,
 };

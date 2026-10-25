@@ -66,11 +66,13 @@ const PARAM_REFERENCE = /\$\{?[A-Za-z_]/;
 // boolean never inspects, and the DEVNULL_LIKE/fd-dup/unresolvable exclusions
 // are cwd-independent — so `2>&1` and `> /dev/null` still take the skip path.
 // It scans stripHeredocBodies' output too (#3989), so a `>` inside a heredoc
-// body the parser ignores does not send a call down the full path.
+// body the parser ignores does not send a call down the full path. The
+// glued-word shape (`echo foo>x`, #4015) is reached because the handler's
+// quoting flags are forwarded to redirectWriteTargets.
 function hasFileRedirection(command) {
   let found = false;
-  forEachCommandSegment(stripHeredocBodies(command), '.', (t) => {
-    if (!found && redirectWriteTargets(t, '.').length) found = true;
+  forEachCommandSegment(stripHeredocBodies(command), '.', (t, _cwd, quoting) => {
+    if (!found && redirectWriteTargets(t, '.', quoting).length) found = true;
   });
   return found;
 }

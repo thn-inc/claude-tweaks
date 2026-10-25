@@ -13,6 +13,8 @@ const { decideReap } = require('../plugin/bin/lib/reconcile/reap-merged');
 const { decideRelease } = require('../plugin/bin/lib/reconcile/release-merged');
 const { decideArchive, readConsoleState, localHasMerge } = require('../plugin/bin/lib/reconcile/archive-merged');
 const { formatSummary } = require('../plugin/bin/lib/reconcile/format-summary');
+const { recordResidueFailure, listResidueFailures } = require('../plugin/bin/lib/reconcile/cache');
+const { structurallyStuckBody } = require('../plugin/bin/lib/reconcile/escalate-residue');
 const { isWorktreeLocked } = require('../plugin/bin/lib/hooks/worktree-reap');
 const { reconcile, PREREQUISITES } = require('../plugin/bin/lib/reconcile');
 const { gitRepo } = require('./helpers/git-fixtures');
@@ -1427,7 +1429,9 @@ test('AC2 (#3630): dispatch-style checks release,archive,reap sees the asynchron
 // AC2 end to end: the real archiveMerged (no stub) over a PR GitHub merged
 // asynchronously — origin's main holds the merge commit, the clone's local main
 // does not. Without the added mirror, the run skips as local-behind-merge.
-async function archiveAsyncMergedRun(checks) {
+// extra: { dryRun?, stuck? } — stuck seeds an escalated structurally-stuck entry for the run dir
+// and serves a consolidated stuck-paths record naming it; out.ghIssueCalls logs every `gh issue` argv.
+async function archiveAsyncMergedRun(checks, extra = {}) {
   const { seedDir, mainDir } = pairedFixture();
   writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\nintegration-branch: main\n');
   fs.writeFileSync(path.join(seedDir, 'merged.txt'), 'merged\n');
@@ -1450,8 +1454,17 @@ async function archiveAsyncMergedRun(checks) {
     mergeCommit: { oid: NEW }, closingIssuesReferences: [],
   };
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-async-gh-'));
+  const issueLog = path.join(wrapperDir, 'issue-calls.log');
+  const listing = path.join(wrapperDir, 'stuck-listing.json');
+  if (extra.stuck) {
+    const stuckDir = fs.realpathSync(runDir);
+    recordResidueFailure(mainDir, 'structurally-stuck', stuckDir, { lastError: 'stuck at no-pr', threshold: 1 });
+    fs.writeFileSync(listing, JSON.stringify([{ number: 2724, title: 't', body: structurallyStuckBody([stuckDir]), createdAt: '2024-01-01T00:00:00Z', state: 'OPEN' }]));
+  }
   fs.writeFileSync(path.join(wrapperDir, 'gh'), [
     '#!/bin/sh',
+    `if [ "$1" = "issue" ]; then echo "$*" >> '${issueLog}'; fi`,
+    `if [ "$1" = "issue" ] && [ "$2" = "list" ] && [ -f '${listing}' ]; then cat '${listing}'; exit 0; fi`,
     'if [ "$1" = "issue" ]; then echo \'{"state":"CLOSED"}\'; exit 0; fi',
     `cat <<'EOF'\n${JSON.stringify(pr)}\nEOF`,
     '',
@@ -1463,13 +1476,14 @@ async function archiveAsyncMergedRun(checks) {
   process.env.PATH = `${wrapperDir}${path.delimiter}${original.path}`;
   let r;
   try {
-    r = await reconcile({ cwd: mainDir, checks });
+    r = await reconcile({ cwd: mainDir, checks, dryRun: extra.dryRun });
   } finally {
     process.env.PATH = original.path;
     preflight.ghHealthCheck = original.health;
     preflight.ghHealthCheckAsync = original.healthAsync;
   }
-  return { r, runDir, mainDir, NEW };
+  const ghIssueCalls = fs.existsSync(issueLog) ? fs.readFileSync(issueLog, 'utf8').trim().split('\n') : [];
+  return { r, runDir, mainDir, NEW, ghIssueCalls };
 }
 
 test('AC2 end to end (#3630): reconcile checks archive archives a PR GitHub merged asynchronously', async () => {
@@ -1478,6 +1492,20 @@ test('AC2 end to end (#3630): reconcile checks archive archives a PR GitHub merg
   assert.ok(!(r.runs || []).some((x) => x.reason === 'local-behind-merge'), JSON.stringify(r.runs));
   // basename, not the path: reconcile reports the realpath of the temp dir (/private/var on macOS).
   assert.deepEqual((r.runs || []).map((x) => ({ run: path.basename(x.runDir), action: x.action })), [{ run: path.basename(runDir), action: 'archived' }]);
+});
+
+test('#4202 end to end: archiving an escalated stuck run dir edits the consolidated record and clears its entry', async () => {
+  const { r, mainDir, ghIssueCalls } = await archiveAsyncMergedRun(['archive'], { stuck: true });
+  assert.deepEqual((r.runs || []).map((x) => x.action), ['archived'], JSON.stringify(r.runs));
+  assert.ok(ghIssueCalls.some((c) => c.startsWith('issue edit 2724')), ghIssueCalls.join('\n'));
+  assert.deepEqual(listResidueFailures(mainDir), []);
+});
+
+test('#4202 end to end: a dry-run pass over the same run neither edits the record nor clears the entry', async () => {
+  const { r, mainDir, ghIssueCalls } = await archiveAsyncMergedRun(['archive'], { stuck: true, dryRun: true });
+  assert.deepEqual((r.runs || []).map((x) => x.action), ['archived'], JSON.stringify(r.runs));
+  assert.ok(!ghIssueCalls.some((c) => /^issue (edit|comment|close) /.test(c)), ghIssueCalls.join('\n'));
+  assert.deepEqual(listResidueFailures(mainDir).map((e) => e.reason), ['structurally-stuck']);
 });
 
 test('(#3630): dryRun with an added mirror prerequisite moves nothing but archive still sees origin\'s merge', async () => {

@@ -24,7 +24,7 @@ files:
 ### 2. Read the confirmed findings — the review summary
 - **URL:** the review summary's `### Code Review Findings (confirmed)` table, then the Review Console's Low-confidence section
 - **Action:** look for the multi-line finding both agents reported.
-- **Should feel:** confident. The finding is confirmed because the two agents agreed, not because the reviewer had to read the source and invoke the direct-verification override.
+- **Should feel:** confident. The finding is confirmed because the two agents agreed, not because the finding had to wait for a Step 3.7 tiebreak verdict.
 - **Should understand:** the confirmed entry carries agent A's own line. Two unrelated issues 3-5 lines apart still stay separate `unconfirmed` entries, and a wide-band miss never gets a `nearLocation` pointer. That pointer is kept for a ±2 pair that shares a location but not substance (#1980).
 - **Red flags:** the same finding appears once under `confirmed` and again under Low-confidence. Two different issues inside one statement are merged into one confirmed finding. An agent's exact-line match lands in Low-confidence while a farther line is confirmed.
 

@@ -140,8 +140,9 @@ test('POLICY_KEYS entries are unique', () => {
   // 73 -> 74, #3298 (merge-subject scope source): commit-scope — string, no default — the constant Conventional-Commits scope token
   // 74 -> 75, #3298: commit-scope-paths — list, default [] — comma-separated prefix=token pairs resolved against a merge's changed files
   // 75 -> 76, #4041: release-tip-moves — integer, default 2 — caps how far origin/{branch} may move past /release Step 3's reviewed tip before Step 5 holds the release
-  assert.strictEqual(POLICY_KEYS.length, 76);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 76);
+  // 76 -> 82, #4029: the six {fast-lane,standard}-run-{round-trip,procedure-kb,verify-minutes}-ceiling efficiency budgets — integer, min 0 (0 disables), p90-derived defaults
+  assert.strictEqual(POLICY_KEYS.length, 82);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 82);
 });
 
 test('dispatch-batch-size is registered alongside its deprecated alias', () => {
@@ -912,4 +913,14 @@ test('design-critique is registered as an enum off|auto|full defaulting to auto 
   assert.strictEqual(lever.category, 'pipeline-behavior');
   assert.strictEqual(lever.tier, 'advanced');
   assert.ok(!POLICY_KEYS.some((k) => k.key === 'design.critique'), 'the dotted spelling must not be registered — keys are flat kebab-case');
+});
+
+test('#4029 M4: the procedure-kb ceiling summaries say a run may read its procedure KB, not load it', () => {
+  // procedure KB counts the bytes skill-file Reads returned, not what the harness loaded
+  for (const key of ['fast-lane-run-procedure-kb-ceiling', 'standard-run-procedure-kb-ceiling']) {
+    const { summary } = POLICY_KEYS.find((k) => k.key === key);
+    assert.match(summary, / may read before /, key);
+    assert.doesNotMatch(summary, /may load/, key);
+    assert.ok(summary.length <= 140, `${key}: ${summary.length} chars`);
+  }
 });

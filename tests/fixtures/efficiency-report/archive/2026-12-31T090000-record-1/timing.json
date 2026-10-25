@@ -1,0 +1,5 @@
+{
+  "generatedAt": "2026-12-31T09:30:00.000Z",
+  "phases": [],
+  "totals": { "minutes": 10, "verifyMinutes": 2, "procedureBytes": 10240, "toolRoundTrips": 100, "ceremonyShare": 0.2 }
+}

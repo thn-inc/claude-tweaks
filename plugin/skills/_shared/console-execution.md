@@ -61,6 +61,19 @@ once the record exists; when the record is refused or not created, log that caus
 (`REFUSED` when `wrap-up/refused-proposals.md` refuses it, else `SKIP` — `FAILED` is reserved for
 its two refine writers) — never `declined`, and never `reversed` without a record number.
 
+**Except a finding row** (`findingItem` on its item — a can't-tell Low-confidence/Contested row,
+`_shared/console-on-pr.md`'s Row shape, #3949): ticked, it files through `wrap-up/review-console.md`
+step 7's can't-tell clause, `--only` naming the ticked rows' `findingItem` ids and `{item-run-dir}`
+the run dir whose findings hold them (on a multi-spec console, the `spec-{N}` dir its spec slug
+names); unticked at Resolve time, or named in `resolve-console --decline`, it is **dropped** —
+nothing filed, logged as Override's `drop {#}` is (`wrap-up/review-console-interactive.md`), and
+`resolve-console` records it `dropped`, which counts as cleared. Its tick is read from whichever
+console comment carries its row (an overflow comment included); a row no comment carries is
+recorded `declined`, not cleared — a drop needs the untick. A ticked row whose filing failed
+(a non-zero `console-filings.js` exit, or a failed create) goes in `resolve-console --filing-failed`:
+its reply reads `filing failed — see decisions.md`, Resolve stays unticked, and it is carried as
+step 7 carries a failed filing — never recorded `executed`.
+
 **Staged-file drift check, before executing any item that reads one:** verify the item's staged
 file (`staged/...`) still exists, and re-hash its current content against `console.json`'s recorded
 `stagedHash` for that item. Missing → unexecutable, report it as such (not an error — the file may
@@ -78,7 +91,8 @@ when it happens anyway, surface it rather than executing: there is nowhere to ap
 
 **Reply comment first, then the resolved marker edit** on the console comment itself — never the
 reverse. Post one reply comment (`<!-- console-item: executed -->`) summarizing per-item outcomes
-(executed / declined / reversed / reverse-failed / unexecutable / unexecutable-stale), then edit the
+(executed / declined / reversed / reverse-failed / unexecutable / unexecutable-stale), plus
+dropped / filing-failed for a finding row, then edit the
 console comment's first line to add `<!-- claude-tweaks-console-resolved -->`, then write
 `console.json.executedAt` and `console.json.resolved` (`true` only when every item cleared) together,
 in one write. The comment
@@ -109,7 +123,7 @@ just posted to the PR. Two surfaces, one answer: whichever resolves first wins.
 
 - **Chat answers first:** execute directly via this file's Execution routing above, then perform
   the same Write order (reply comment, resolved marker, `console.json.executedAt`/`resolved`) —
-  `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-console --run {run-dir} --approve {ids} --decline {ids} [--reverse-failed {ids}]`
+  `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-console --run {run-dir} --approve {ids} --decline {ids} [--reverse-failed {ids}] [--filing-failed {ids}]`
   is the concrete mechanism: it performs the three coupled writes in the documented order (reusing
   `console-execute.js`'s own read/parse/decide helpers rather than re-deriving console state), so a
   later reconciler pass detects the resolved marker and no-ops rather than re-asking.
@@ -165,6 +179,10 @@ the general per-item floor predicate #347 (autonomy-tiered console resolution) i
 later — it exists solely to close the specific correctness gap #1294 found; do not generalize it
 into a broader test or pre-implement #347's predicate here (Related, not merged scope, same as
 `_shared/console-on-pr.md`'s own note on #347).
+
+**A finding row is floor-clearing and is ticked whatever its pre-tick** (#3949): at `unattended`
+every can't-tell item files, its recommendation notwithstanding (`_shared/autonomy-ceiling.md`'s
+`consoleAutoResolve` row), so this wiring never drops one — it files it per Execution routing above.
 
 **Second narrower exception (#1802):** the same `isMergeRow: true` item is also **not**
 floor-clearing when a live re-fetch shows any group member currently lacking both `auto:merge`

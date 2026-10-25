@@ -164,6 +164,86 @@ test('archive-run: archives a terminal run whose console.json carries executedAt
   assert.ok(fs.existsSync(path.join(archiveDir, 'config.yml')));
 });
 
+// #3949: a resolved console that still holds an unresolved item no human has
+// reviewed (it stays resolved for the executor, but archival is the last chance
+// to surface it) blocks archival until `console-residue.js --ack`.
+function residueConsole(runDir, { dir = runDir, resolution = 'keep-staged', extra = {} } = {}) {
+  const id = 'review-debate-deviation.md';
+  fs.mkdirSync(path.join(dir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'staged', id), '# proposal\n');
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({
+    resolved: true, mode: 'auto-resolve', items: [{ id, section: 'Contested findings', resolution, reason: 'r' }], ...extra,
+  }));
+}
+
+test('AC6: archive-run refuses a resolved console holding a keep-staged item (console-residue)', () => {
+  const { root, runDir } = runDirFixture('clean');
+  residueConsole(runDir);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\) no human has reviewed; review them, then run console-residue\.js --ack --run /);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('AC2: archive-run refuses a resolved console holding a pending item', () => {
+  const { root, runDir } = runDirFixture('clean');
+  residueConsole(runDir, { resolution: 'pending' });
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('archive-run archives a residue console once a human has acknowledged it', () => {
+  const { root, runDir, runId } = runDirFixture('clean');
+  residueConsole(runDir, { extra: { residueAcknowledgedAt: '2026-10-24T10:00:00Z' } });
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'config.yml')));
+});
+
+test('archive-run refuses when only a spec-N console holds residue', () => {
+  const { root, runDir } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true, items: [] }));
+  residueConsole(runDir, { dir: path.join(runDir, 'spec-12') });
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\)/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('archive-run refuses when there is no top-level console.json and only a spec-N console holds a keep-staged item', () => {
+  const { root, runDir } = runDirFixture('clean');
+  residueConsole(runDir, { dir: path.join(runDir, 'spec-12') });
+  assert.strictEqual(fs.existsSync(path.join(runDir, 'console.json')), false, 'fixture: no top-level console.json');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\)/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('archive-run refuses when a spec-N console.json is unreadable (fails closed)', () => {
+  const { root, runDir } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true, items: [] }));
+  fs.mkdirSync(path.join(runDir, 'spec-12'));
+  fs.writeFileSync(path.join(runDir, 'spec-12', 'console.json'), '{not json');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue/);
+  // --ack skips an unparseable console, so it is no remedy here: name the file to repair.
+  assert.ok(result.stdout.includes(`repair or remove ${path.join(runDir, 'spec-12', 'console.json')}, then re-run archive-run`), result.stdout);
+  assert.doesNotMatch(result.stdout, /--ack/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('archive-run names both remedies when residue items and an unreadable console.json both block', () => {
+  const { root, runDir } = runDirFixture('clean');
+  residueConsole(runDir);
+  fs.mkdirSync(path.join(runDir, 'spec-12'));
+  fs.writeFileSync(path.join(runDir, 'spec-12', 'console.json'), '{not json');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\) no human has reviewed and 1 console\.json file\(s\) could not be read;/);
+  assert.match(result.stdout, /console-residue\.js --ack --run /);
+  assert.ok(result.stdout.includes(`repair or remove ${path.join(runDir, 'spec-12', 'console.json')}`), result.stdout);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
 // #1130 AC2: the two-call dispatch handoff shape, walked end-to-end on ONE
 // run dir — call 1 (build,test) parks the run with a rendered-but-unanswered
 // PR console; between calls the run is closed terminal (close-run) but its

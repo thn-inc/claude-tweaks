@@ -53,6 +53,25 @@ test('UNRESOLVED_RESOLUTIONS is exactly pending and keep-staged', () => {
   assert.deepStrictEqual([...UNRESOLVED_RESOLUTIONS].sort(), ['keep-staged', 'pending']);
 });
 
+// #3949 AC3: a console.json written before `dropped`/`filed` existed holds its
+// contested findings as `keep-staged`; they must keep counting as residue on both
+// the run-level reader and the session-start banner scan.
+test('AC3: a legacy console.json keep-staged item still counts in readRunResidue and scanUnresolvedConsoles', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'console-residue-legacy-'));
+  const run = path.join(project, '.claude-tweaks', 'pipelines', 'archive', '2026-10-16T210949-spec-2821');
+  fs.mkdirSync(path.join(run, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(run, 'staged', 'review-debate-deviation.md'), 'x');
+  fs.writeFileSync(path.join(run, 'console.json'), JSON.stringify({
+    resolved: true, mode: 'auto-resolve',
+    items: [{ id: 'review-debate-deviation.md', section: 'Contested findings', resolution: 'keep-staged', reason: 'debate inconclusive — no Approve-all default; never auto-applied' }],
+  }));
+  const [c] = readRunResidue(run).consoles;
+  assert.deepStrictEqual(c.items.map((i) => i.resolution), ['keep-staged']);
+  assert.strictEqual(c.acknowledged, false);
+  const { runs } = require(path.join(MOD, '..', '..', 'hooks', 'session-residue')).scanUnresolvedConsoles(project, { pluginRoot: '/p' });
+  assert.deepStrictEqual(runs.map((r) => r.dir), [run]);
+});
+
 test('unresolvedItems returns exactly the four pending/keep-staged items of the #2821 console', () => {
   assert.deepStrictEqual(unresolvedItems(CONSOLE_2821).map((i) => i.id), [
     'reflect-1.md',
@@ -80,6 +99,15 @@ test('readRunResidue skips an unparseable console.json and reads spec-*/console.
   assert.strictEqual(res.consoles[0].path, path.join(dir, 'spec-12', 'console.json'));
   assert.strictEqual(res.consoles[0].items.length, 1);
   assert.deepStrictEqual(res.unreadable, [path.join(dir, 'console.json')], 'an existing but unparseable console.json is reported, not silently dropped');
+});
+
+test('readRunResidue reports a spec console.json holding JSON null as unreadable instead of throwing', () => {
+  const dir = tmpRun();
+  fs.mkdirSync(path.join(dir, 'spec-12'));
+  fs.writeFileSync(path.join(dir, 'spec-12', 'console.json'), 'null');
+  const res = readRunResidue(dir);
+  assert.deepStrictEqual(res.consoles, []);
+  assert.deepStrictEqual(res.unreadable, [path.join(dir, 'spec-12', 'console.json')]);
 });
 
 test('readRunResidue reports no unreadable console for an absent console.json or an absent run dir', () => {

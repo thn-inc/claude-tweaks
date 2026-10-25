@@ -10,9 +10,10 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { FIXTURE_TIMEOUT_MS } = require('../../helpers/git-fixtures');
 const { run } = require('../../../plugin/bin/check-staged-stack');
+const { gitEnv } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 const { readText } = require('../../helpers/read-skill');
 
-const FIXTURE_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+const FIXTURE_ENV = gitEnv();
 const BASE = ['l1', 'l2', 'l3', 'l4', 'anchor', 'a1', 'a2', 'a3'].join('\n') + '\n';
 const NINE = ['l1', 'l2', 'l3', 'l4', 'l5', 'l6', 'l7', 'l8', 'l9'].join('\n') + '\n';
 const PREAMBLE = 'Target: f.txt\nInvariant: x\n\n';

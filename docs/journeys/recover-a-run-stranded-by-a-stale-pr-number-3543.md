@@ -24,10 +24,10 @@ files:
 
 ### 2. The stale stamp escalates once the run dir is stuck — same sweep, past the 7-day TTL
 - **URL:** `https://github.com/{owner}/{repo}/issues?q=label%3Abug+%22structurally-stuck+run+directories%22`
-- **Action:** `trackStuckSkip` counts the `pr-not-found` skip toward the `structurally-stuck` residue streak (reconcile-cache.json `residueFailures`, `lastError: stuck at pr-not-found`); at the escalation threshold the reconciler files or updates the consolidated `reconcile: structurally-stuck run directories` issue, whose body lists the stuck run dir and the `pr-not-found` remedy.
+- **Action:** `trackStuckSkip` counts the `pr-not-found` skip toward the `structurally-stuck` residue streak (reconcile-cache.json `residueFailures`, `lastError: stuck at pr-not-found`); at the escalation threshold the reconciler files or updates the consolidated `reconcile: structurally-stuck run directories` issue, whose body lists the stuck run dir and the `pr-not-found` remedy. The remedy is written when the issue is filed or reopened; an issue that is already open is edited only inside its stuck-paths block, so a body a maintainer has shaped keeps their text (#2724).
 - **Should feel:** Like a precise bug report — the issue names the dir and the fix, not a generic "stuck" state.
 - **Should understand:** A fresh typo stays quiet for 7 days (the existing stuck TTL, no second clock); a dir whose branch is also gone gets the same `pr-not-found` reason through the no-branch by-number path.
-- **Red flags:** An issue that only says no-worktree/no-branch/no-pr for a dir whose real problem is the stamp; a second issue filed per dir instead of one consolidated record.
+- **Red flags:** A newly filed or reopened issue that only says no-worktree/no-branch/no-pr for a dir whose real problem is the stamp; a second issue filed per dir instead of one consolidated record.
 
 ### 3. Fix the stamp — edit or clear `run-state.json`'s `pr.number`
 - **URL:** —

@@ -28,7 +28,7 @@ const {
 } = require('./record-payload');
 
 const {
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, checkFingerprint, recordFingerprint,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, defuse, checkFingerprint, recordFingerprint,
 } = require('./record-fingerprint');
 
 const {
@@ -39,7 +39,7 @@ const {
 
 module.exports = {
   ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, normalizeLabelNames, parseRecordFacets,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, defuse, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, normalizeLabelNames, parseRecordFacets,
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, CLASSIFICATION_SCORING, fenceFor, fencedBlock, parseSubIssues,
   buildNativeSubIssuesQuery, buildNativeParentQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
