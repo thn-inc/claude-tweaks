@@ -193,6 +193,16 @@ test('#3315: isProcedurePath strips a win32 worktree prefix, so a worktree path 
   assert.equal(isProcedurePath('/work/skills/repo/docs/notes.md', '/work/skills/repo'), false);
 });
 
+test('#3315: isProcedurePath strips the worktree prefix only at a segment boundary, case-insensitively on win32', () => {
+  const W = path.win32;
+  // A lower-case drive letter is still inside the worktree, so the skills/ in the worktree path is stripped.
+  assert.equal(isProcedurePath('C:\\work\\skills\\repo\\docs\\notes.md', 'c:\\work\\skills\\repo', W), false);
+  // A trailing separator on the worktree changes nothing.
+  assert.equal(isProcedurePath('C:\\repo\\plugin\\skills\\review\\SKILL.md', 'C:\\repo\\', W), true);
+  // `/x/skill` is a prefix of `/x/skills/…` but not its ancestor: no strip, so skills/ still matches.
+  assert.equal(isProcedurePath('/x/skills/a.md', '/x/skill'), true);
+});
+
 test('#1929 AC2: readUsage streams rows, sums procedure bytes for skills Reads only, flags tool round-trips', async () => {
   const rows = await readUsage(FIX, { worktree: '/repo' });
   assert.equal(rows.length, 8);
