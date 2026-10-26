@@ -43,6 +43,8 @@ const STEP2_FACTS = [
   [/read `express-entry\.md` in this skill's directory and follow it before Step 3/, 'cites express-entry.md before Step 3'],
   [/every `\/claude-tweaks:dispatch` call passes one, so a dispatched call never enters it/, 'a dispatched call never enters it'],
   [/, mode `auto` and the `worktree` strategy/, 'auto mode only'],
+  // M1: the cheap policy read is the first condition, so a lane-off project reads nothing more.
+  [/`express-lane` resolves `true` \(checked first: `resolve-policy\.js --values express-lane`\), one record reference/, 'the express-lane policy is the first condition'],
 ];
 
 test('SKILL.md Step 2 lists the 2.9 express route citing express-entry.md', () => {
@@ -96,6 +98,7 @@ const ENTRY_FACTS = [
   [/hooks\.js" record-worktree --run "\$PIPELINE_RUN_DIR" "\{worktree\}"`/, 'record-worktree --run'],
   [/Never `--dispatch`: this run is not dispatch-bound/, 'bound without --dispatch'],
   [/Run `_shared\/express-lane\.md`'s Procedure from step 2/, 'the procedure from step 2'],
+  [/when Step 1 detected `pre-authorize-merge`, step 7 appends `,merge-authorization=pre-authorized` to step 5's `configSet`/, 'M11: a typed pre-authorize-merge reaches config.yml'],
   [/\*\*`express-escalated`\*\* — continue at Step 3, unchanged/, 'escalation → Step 3'],
   [/reads the run dir as case 3/, 'the adoption pack reads case 3'],
   [/render the note below and end the run: no Manifesto, no Pipeline Summary/, 'other outcomes → the note, then end'],

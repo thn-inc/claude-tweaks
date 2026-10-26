@@ -148,7 +148,7 @@ Four checks, then a route, before pipeline starts. Each check can return OK / WA
   A contested target stops the pipeline before the Config Manifesto — no worktree, nothing to
   tear down. `keep-going` (multi-target runs) downgrades a contested target to a skip instead of
   aborting the whole run.
-- 2.9 — Express route. One record reference, no step list (every `/claude-tweaks:dispatch` call passes one, so a dispatched call never enters it), `PIPELINE_RUN_DIR` unset on entry, mode `auto` and the `worktree` strategy → read `express-entry.md` in this skill's directory and follow it before Step 3: an eligible `express-lane.js gate` verdict takes `_shared/express-lane.md`'s single agent instead of Step 3 onward. Otherwise skip the read.
+- 2.9 — Express route. `express-lane` resolves `true` (checked first: `resolve-policy.js --values express-lane`), one record reference, no step list (every `/claude-tweaks:dispatch` call passes one, so a dispatched call never enters it), `PIPELINE_RUN_DIR` unset on entry, mode `auto` and the `worktree` strategy → read `express-entry.md` in this skill's directory and follow it before Step 3: an eligible `express-lane.js gate` verdict takes `_shared/express-lane.md`'s single agent instead of Step 3 onward. Otherwise skip the read.
 
 Any hard fail, rejection, or claim contest stops the pipeline before the Config Manifesto runs. Read `validation.md` in this skill's directory for 2.5-2.7's detailed procedure; `claim-targets.md` for 2.8's.
 

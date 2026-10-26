@@ -34,6 +34,7 @@ function sectionOf(text, h) {
 const FACTS = [
   ...SECTIONS.map((h) => ({ section: 'whole', re: headingRe(h), name: `heading ${h}` })),
   { section: PREAMBLE, re: /`\{branch\}` is what `git -C "\{wt\}" branch --show-current` prints/, name: 'branch from the worktree, not run-state.json' },
+  { section: PREAMBLE, re: /`\$PIPELINE_RUN_DIR`, wherever a procedure this file cites reads it, is `\{run-dir\}`/, name: 'M4: $PIPELINE_RUN_DIR is bound to {run-dir}' },
   { section: ELIG, re: /express-lane\.js" gate --issue \{n\} --run "\{run-dir\}"/, name: 'gate verb' },
   { section: ELIG, re: /The lane requires `gh`: with `gh` absent the express path is never taken/, name: 'the lane requires gh' },
   { section: PROC, re: /express-lane\.js" check --run "\{run-dir\}" --issue \{n\} --integration-branch \{ref\}/, name: 'check verb' },
@@ -46,6 +47,10 @@ const FACTS = [
   { section: PROC, re: /`escalated #\{n\} to \/flow \(reason: \{reason\}\) — \{detail\}`[^\n]*--step "Express lane" --reversibility "high \(worktree and branch kept\)" --text-file/, name: 'logged:false escalation hand-log shape' },
   { section: PROC, re: /A failed call in this step → outcome `blocked`: the branch is pushed, so it cannot escalate/, name: 'step-7 failure is blocked' },
   { section: PROC, re: /except a working-directory denial that repeats after the one `record-worktree` re-stamp, which is outcome `blocked`/, name: 'a repeated working-directory denial is blocked, not gate-denial' },
+  { section: PROC, re: /only when `git -C "\{wt\}" rev-parse HEAD` prints step 5's `head`; otherwise [^\n]*re-run step 5/, name: 'M7: push only the HEAD check verified' },
+  { section: PROC, re: /`wrap-up\/manifesto-authorized-merge\.md`'s Applicability check passes for `\{run-dir\}`/, name: 'M11: merge per the resolved merge-authorization' },
+  { section: PROC, re: /closing-links\.js" --run "\{run-dir\}" --mode pre-merge`/, name: 'M5: stray closing-link check before merge' },
+  { section: PROC, re: /A repo with no PR CI parks every express merge/, name: 'M2: the lane needs PR CI' },
   { section: ESC, re: /express-lane\.js" escalate --run "\{run-dir\}" --issue \{n\} --reason \{reason\} --detail-file "\{detail-file\}"/, name: 'escalate verb' },
   { section: ESC, re: /`failing-test`, `out-of-bounds`, `gate-denial`, `express-error`/, name: 'the four escalation reasons' },
   { section: ESC, re: /only before the push/, name: 'escalation only before the push' },
@@ -59,12 +64,17 @@ const FACTS = [
   { section: OUT, re: /a pushed branch and draft PR stay open/, name: 'blocked from /dispatch: branch and draft PR stay open' },
   { section: OUT, re: /From `\/claude-tweaks:flow`, whatever already exists — worktree, branch, claim, run dir — stays for a human/, name: 'blocked from /flow: everything stays' },
   { section: OUT, re: /express-lane\.js" verify --run "\{run-dir\}" --issue \{n\}/, name: 'verify verb' },
+  { section: OUT, re: /it reads the `archive\/\{run-id\}` copy/, name: 'C1: verify reads an archived run dir' },
   { section: SAMP, re: /Every git call runs in the main checkout, `git -C "\$RUN_ROOT" …`/, name: 'sampling git runs in the main checkout' },
+  { section: SAMP, re: /It runs only at the end of a bare `\/claude-tweaks:dispatch` drain/, name: 'I4: sampling runs only at a drain\'s end' },
   { section: SAMP, re: /express-lane\.js" samples`/, name: 'samples verb' },
+  { section: SAMP, re: /merged within the last 30 days[^\n]*at most 3 per firing, oldest first/, name: 'I3: lookback and per-firing cap' },
   { section: SAMP, re: /or 2 \(`gh` absent\) → no sweep this time: report it and do not retry/, name: 'samples exit 1 or 2: no sweep, no retry' },
   { section: SAMP, re: /A `mergeSha` of `null` → mint nothing/, name: 'null mergeSha mints nothing' },
+  { section: SAMP, re: /`mkdir -p "\{run-dir\}\/context"`/, name: 'M8: context/ is created before the writes' },
   { section: SAMP, re: /does not list as deleted \(`D`\)/, name: 'no git show for a deleted path' },
-  { section: SAMP, re: /`bookkeepingPermissions\(ceiling\)\.consoleAutoResolve`/, name: 'consoleAutoResolve gates filing' },
+  { section: SAMP, re: /at every `autonomy` ceiling[^\n]*`_shared\/health-filing-gate\.md`'s Applicability/, name: 'I2: every finding is filed, at every ceiling' },
+  { section: SAMP, re: /a failed capture/, name: 'I2: a failed capture is an incomplete review' },
   { section: SAMP, re: /only after every dispatched lens returned `DONE` or `DONE_WITH_CONCERNS`/, name: 'marker only after every lens finished' },
   { section: SAMP, re: /`<!-- run-comment: express-review -->`/, name: 'express-review marker' },
   { section: SAMP, re: /`gh pr comment \{pr\} --body-file "\{body-file\}"`/, name: 'the posting command' },
@@ -170,5 +180,27 @@ test('go-red control: removing one express-review pin reports exactly that pin',
     const removed = COMMENTS.replace(p.re, '');
     assert.notEqual(removed, COMMENTS, `anchor for "${p.name}" not found`);
     assert.deepEqual(missingPins(removed), [p.name]);
+  }
+});
+
+// I1: an escalation hands the normal path a worktree whose HEAD already holds the express
+// edit commit, so build's Already-shipped assessment judges such a run against
+// origin/{integration-branch} too, naming the CLI's own escalation detector.
+const SHIPPED = readText(path.join(__dirname, '..', 'plugin', 'skills', 'build', 'already-shipped-assessment.md'));
+const SHIPPED_PINS = [
+  [/After a `prior-attempt` adoption \(`build\/adopted-branch-collision-check\.md`\), or in a run whose `decisions\.md` carries an express escalation line \(`Express lane: escalated #\{n\} to \/flow`, the line `bin\/lib\/express\/cli\.js`'s `hasEscalation` matches[^\n]*judge "already shipped" against `origin\/\{integration-branch\}` only/, 'an express escalation shares the origin-only guard'],
+  [/the adopted attempt's or the express edit's commits are this run's own unmerged work, never evidence the record shipped/, 'the express edit is never evidence the record shipped'],
+];
+const missingShipped = (text) => SHIPPED_PINS.filter(([re]) => !re.test(text)).map(([, name]) => name);
+
+test('already-shipped-assessment.md judges an express-escalated run against origin only', () => {
+  assert.deepEqual(missingShipped(SHIPPED), []);
+});
+
+test('go-red control: removing one already-shipped pin reports exactly that pin', () => {
+  for (const [re, name] of SHIPPED_PINS) {
+    const removed = SHIPPED.replace(re, '');
+    assert.notEqual(removed, SHIPPED, `anchor for "${name}" not found`);
+    assert.deepEqual(missingShipped(removed), [name]);
   }
 });

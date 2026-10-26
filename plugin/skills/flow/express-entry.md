@@ -16,7 +16,7 @@ All five must hold:
 
 1. **Worktree.** Create or adopt this run's worktree per `_shared/worktree-setup.md`'s Adopt-or-create (not isolated → its Pre-creation reconcile, then `EnterWorktree` named per `build/worktree-setup.md`'s Worktree name derivation), then its Post-creation catch-up, unconditionally.
 2. **Bind.** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$PIPELINE_RUN_DIR" "{worktree}"`, and confirm its `worktree recorded` line. Never `--dispatch`: this run is not dispatch-bound, so the #3225 dispatch config gate — which denies a commit in a `dispatched: true` run with no `config.yml` — stays off while the procedure commits before any `config.yml` exists.
-3. **Procedure.** Run `_shared/express-lane.md`'s Procedure from step 2 (Step 2.8 already claimed), with `{run-dir}` = `$PIPELINE_RUN_DIR`.
+3. **Procedure.** Run `_shared/express-lane.md`'s Procedure from step 2 (Step 2.8 already claimed), with `{run-dir}` = `$PIPELINE_RUN_DIR`; when Step 1 detected `pre-authorize-merge`, step 7 appends `,merge-authorization=pre-authorized` to step 5's `configSet` (the Manifesto that writes it on the normal path never runs here), so step 9's merge authorization reads it.
 
 ## On the outcome
 

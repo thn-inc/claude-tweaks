@@ -59,7 +59,7 @@ const STEP5_FACTS = [
   [/When `express-lane` resolves `true` \(`resolve-policy\.js --values express-lane`, read once per firing\)/, 'no gate call when the lane is off'],
   [/express-lane\.js" gate --issue \{n\} --run "\{minted-run-dir\}"/, 'gate before the first call'],
   [/after Step 4's mint and before `sibling-session-check\.md`'s bind/, 'gate between the mint and the bind'],
-  [/or exit 1 or 2, is not eligible: take the normal path/, 'gate exit 1 or 2 → the normal path'],
+  [/or any non-zero exit, is not eligible: take the normal path/, 'any non-zero gate exit → the normal path'],
   [/An eligible singleton is bound without `--dispatch` — the #3225 config gate guards a `\/flow`-framed run, and the express agent writes `config\.yml` only once its PR exists/, 'eligible singleton bound without --dispatch, and why'],
   [/`express-prompt\.md`'s express call/, 'eligible → the express call from express-prompt.md'],
   [/`sequential-execution\.md`'s status-line check applies/, 'the status-line check applies'],
@@ -107,7 +107,7 @@ const EXPRESS_FACTS = [
 const REVIEW_FACTS = [
   [/\{context-pack\}/, 'context pack'],
   [/^PR: #\{pr\}$/m, 'PR line'],
-  [/^FINDINGS: \{k\} \(\{filed as #a, #b \| listed on the PR\}\)$/m, 'FINDINGS line'],
+  [/^FINDINGS: \{k\} \(filed as #a, #b\)$/m, 'FINDINGS line'],
   [/`STATUS: \{WORD\}`/, 'status line'],
   [/^\[Use: Standard\] -- /m, 'Use: Standard'],
   [/resolve-profile\.js" standard`/, 'standard resolve-profile call'],
@@ -203,6 +203,7 @@ const HEADLESS_FACTS = [
 ];
 const REVIEW_PREAMBLE_FACTS = [
   [/this session then runs that section's close-run for `\{minted-run-dir\}`/, 'the dispatching session closes the sampling run dir'],
+  [/a `reviewed` reply's `FINDINGS` line, filed record numbers included, goes into this firing's report/, 'I2: the filed findings reach the drain report'],
 ];
 // The marker never lives inside the fenced block: no placeholder, no literal first line.
 const markerInBlock = (block) => block.includes('{headless-marker}') || /^DISPATCH_HEADLESS=1/m.test(block);
