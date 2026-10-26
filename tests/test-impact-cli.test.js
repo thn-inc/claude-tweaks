@@ -163,6 +163,9 @@ function fakeChild({ status = 0, signal = null, body = () => {}, hold = false, e
   return child;
 }
 
+// How many handlers a run left on the injected signal handle (the three signals the CLI catches).
+const listenerTotal = (signals) => ['SIGHUP', 'SIGINT', 'SIGTERM'].reduce((n, sig) => n + signals.listenerCount(sig), 0);
+
 const mapText = (commit, exitCode = 0, dirty) => `${JSON.stringify(encodeImpactMap({
   commit, tracedAt: '2026-10-24T00:00:00.000Z', exitCode, node: 'v22.0.0', tests: { 'tests/a.test.js': { f: ['lib/x.js'] } }, dirty,
 }))}\n`;
@@ -197,7 +200,7 @@ test('trace runs the suite under the tracer env and writes the map, recording a 
     const signals = new EventEmitter();
     const { deps, out, errs } = makeDeps({ git, spawn, signals, env, cwd: dir });
     assert.strictEqual(await run({ argv: ['trace', '--allow-dirty'], deps }), 0);
-    assert.strictEqual(signals.listenerCount('SIGINT') + signals.listenerCount('SIGTERM'), 0, 'a finished run leaves no signal handler');
+    assert.strictEqual(listenerTotal(signals), 0, 'a finished run leaves no signal handler');
     const req = `--require "${path.join(dir, 'tools', 'test-impact', 'tracer.js')}"`;
     assert.strictEqual(seen.cmd, process.execPath);
     assert.deepStrictEqual(seen.args, [path.join(dir, 'tools', 'run-tests.js')]);
@@ -334,41 +337,19 @@ async function interruptedTrace(dir, fire) {
   return { code, signals, errs, out, ...seen };
 }
 
-test('AC2.1: SIGINT during the suite forwards to the suite, removes the trace dir and writes no map', async () => {
-  await withTempDirAsync(async (dir) => {
-    const r = await interruptedTrace(dir, (signals) => signals.emit('SIGINT', 'SIGINT'));
-    assert.strictEqual(r.code, 130);
-    assert.deepStrictEqual(r.child.kills, ['SIGINT']);
-    assert.strictEqual(fs.existsSync(r.traceDir), false);
-    assert.strictEqual(fs.readFileSync(r.out, 'utf8'), 'previous map\n', 'an interrupt never replaces the map');
-    assert.deepStrictEqual(r.errs, ['test-impact.js trace: interrupted by SIGINT — no map written']);
-    assert.strictEqual(r.signals.listenerCount('SIGINT') + r.signals.listenerCount('SIGTERM'), 0, 'handlers are removed');
+for (const [sig, exitCode] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+  test(`AC2.1: ${sig} during the suite forwards ${sig}, exits ${exitCode}, removes the trace dir and writes no map`, async () => {
+    await withTempDirAsync(async (dir) => {
+      const r = await interruptedTrace(dir, (signals) => signals.emit(sig, sig));
+      assert.strictEqual(r.code, exitCode);
+      assert.deepStrictEqual(r.child.kills, [sig]);
+      assert.strictEqual(fs.existsSync(r.traceDir), false);
+      assert.strictEqual(fs.readFileSync(r.out, 'utf8'), 'previous map\n', 'an interrupt never replaces the map');
+      assert.deepStrictEqual(r.errs, [`test-impact.js trace: interrupted by ${sig} — no map written`]);
+      assert.strictEqual(listenerTotal(r.signals), 0, 'handlers are removed');
+    });
   });
-});
-
-test('AC2.1: SIGTERM during the suite forwards SIGTERM, exits 143, removes the trace dir and writes no map', async () => {
-  await withTempDirAsync(async (dir) => {
-    const r = await interruptedTrace(dir, (signals) => signals.emit('SIGTERM', 'SIGTERM'));
-    assert.strictEqual(r.code, 143);
-    assert.deepStrictEqual(r.child.kills, ['SIGTERM']);
-    assert.strictEqual(fs.existsSync(r.traceDir), false);
-    assert.strictEqual(fs.readFileSync(r.out, 'utf8'), 'previous map\n');
-    assert.deepStrictEqual(r.errs, ['test-impact.js trace: interrupted by SIGTERM — no map written']);
-    assert.strictEqual(r.signals.listenerCount('SIGINT') + r.signals.listenerCount('SIGTERM'), 0);
-  });
-});
-
-test('AC2.1: SIGHUP during the suite forwards SIGHUP, exits 129, removes the trace dir and writes no map', async () => {
-  await withTempDirAsync(async (dir) => {
-    const r = await interruptedTrace(dir, (signals) => signals.emit('SIGHUP', 'SIGHUP'));
-    assert.strictEqual(r.code, 129);
-    assert.deepStrictEqual(r.child.kills, ['SIGHUP']);
-    assert.strictEqual(fs.existsSync(r.traceDir), false);
-    assert.strictEqual(fs.readFileSync(r.out, 'utf8'), 'previous map\n');
-    assert.deepStrictEqual(r.errs, ['test-impact.js trace: interrupted by SIGHUP — no map written']);
-    assert.strictEqual(['SIGHUP', 'SIGINT', 'SIGTERM'].reduce((n, s) => n + r.signals.listenerCount(s), 0), 0);
-  });
-});
+}
 
 test('a signal queued right behind the suite\'s own exit still interrupts the trace', async () => {
   await withTempDirAsync(async (dir) => {
@@ -407,7 +388,7 @@ test('a signal before the suite is spawned skips the spawn, exits with its code 
     assert.deepStrictEqual(fs.readdirSync(tmp), []);
     assert.strictEqual(fs.existsSync(out), false);
     assert.deepStrictEqual(errs, ['test-impact.js trace: interrupted by SIGTERM — no map written']);
-    assert.strictEqual(['SIGHUP', 'SIGINT', 'SIGTERM'].reduce((n, s) => n + signals.listenerCount(s), 0), 0);
+    assert.strictEqual(listenerTotal(signals), 0);
   });
 });
 
@@ -441,7 +422,7 @@ test('a spawn error reports that the suite did not start, writes no map and remo
     assert.match(errs.join('\n'), /the suite did not start: spawn ENOENT/);
     assert.strictEqual(fs.existsSync(out), false);
     assert.strictEqual(fs.existsSync(traceDir), false);
-    assert.strictEqual(signals.listenerCount('SIGINT') + signals.listenerCount('SIGTERM'), 0);
+    assert.strictEqual(listenerTotal(signals), 0);
   });
 });
 
