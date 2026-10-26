@@ -178,11 +178,11 @@ const SH_STUB_SKIP = process.platform === 'win32'
 // rather than hardcoding them (_shared/session-tmp-root.md). The frozen pre-#860 body still
 // hardcodes `/tmp/cc-*.json` literals, so they are swapped to the per-test paths before spawning.
 function runVerdict(body, spec, curlDir, snapshots) {
-  const b = body
+  const patchedBody = body
     .split('"/tmp/cc-installed.json"').join(JSON.stringify(snapshots.installedJson))
     .split('"/tmp/cc-marketplaces.json"').join(JSON.stringify(snapshots.marketplacesJson));
-  assert.ok(!b.includes('/tmp/cc-'), 'a frozen VERDICT body still names a /tmp/cc-*.json literal the swap did not cover');
-  const result = spawnSync('node', ['-e', b, spec, snapshots.installedJson, snapshots.marketplacesJson], {
+  assert.ok(!patchedBody.includes('/tmp/cc-'), 'a frozen VERDICT body still names a /tmp/cc-*.json literal the swap did not cover');
+  const result = spawnSync('node', ['-e', patchedBody, spec, snapshots.installedJson, snapshots.marketplacesJson], {
     encoding: 'utf8',
     env: { ...process.env, PATH: prependPath(curlDir, process.env.PATH) },
     timeout: 15_000,

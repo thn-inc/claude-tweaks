@@ -229,7 +229,7 @@ test('an unusable cwd (no tool result, no resolvable worktree) never throws — 
 function withGitConfigEnv(vars, fn) {
   const prior = {};
   for (const [k, v] of Object.entries(vars)) {
-    prior[k] = Object.prototype.hasOwnProperty.call(process.env, k) ? process.env[k] : undefined;
+    prior[k] = process.env[k];
     process.env[k] = v;
   }
   try {
