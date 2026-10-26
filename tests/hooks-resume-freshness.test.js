@@ -135,6 +135,25 @@ test('AC1.2: a worktree git does not list is indeterminate', () => {
   assert.equal(result.verdict, 'indeterminate');
 });
 
+test('AC1.2: a positive beats an erroring probe — lock error + recent commit is recent-commit, commit error + live lock is locked', () => {
+  const now = Date.now();
+  const recent = probed(
+    { lockInUse: thrower('could not list worktrees from R: git timeout'), lastCommitAt: () => now - 60000 },
+    {},
+    now,
+  );
+  assert.equal(recent.verdict, 'recent-commit');
+  assert.equal(recent.safe, false);
+  assert.equal(recent.ageMs, 60000);
+  const locked = probed(
+    { lockInUse: () => true, lastCommitAt: thrower('could not read the last commit time of W: git error') },
+    {},
+    now,
+  );
+  assert.equal(locked.verdict, 'locked');
+  assert.equal(locked.safe, false);
+});
+
 test('AC1.2: an orphaned lock is unchanged — the old commit reads stale', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
