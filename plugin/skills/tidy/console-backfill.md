@@ -82,6 +82,7 @@ The non-finding items (digest, dismiss, file) need no tiebreak, and neither does
   ```
 
   Post each printed `path` with `gh issue comment {n} --body-file "{path}"`; the comment's URL is the ref of every item in that chunk's `itemIds`. A `digestDuplicates` item's ref is the comment holding its entry: one already posted carries that comment's URL in the plan; a same-pass repeat (the plan's `digest.sameAs`) takes its twin's comment URL — the settle fence below does this from `{REFS}`. The `digest` issue is a container, not a record: no label or state change on it here, and its comment-cap rollover stays `digest-sweep.md`'s.
+  A reflect observation or convention with no `**Destination:**` line (staged before destination lines existed) digests with `Defer-reason: reflect-no-destination`, the same rule the live console's `reflect-apply.js` applies; every other unmapped staged item keeps `console-backfill-unmapped-kind`.
 - **Failures.** A failed `gh` call leaves that item out of `{REFS}`. It stays unsettled, joins the failed set with the error, and the next run resumes it: a record created before a crash is found by its `work-fingerprint` in `{EXISTING}` and settles with no verdict, so nothing is filed twice and no filed record is orphaned.
 
 Drops and dismissals carry their evidence in the plan's `ref` already. Then **apply**: build the entries — the plan's `entries` with every null `ref` filled from `{REFS}`, a same-pass twin (a filing's or a digest line's) resolved, and any item still without a ref left out (a missing refs file reads as `{}`):
