@@ -24,9 +24,11 @@ rather than silently substituted. Never creates a directory unless `--create` is
 
 - No flags: steps 1-2 only (env var, then newest matching directory for `--spec-slug`). This is
   the read-only "where is the run I already have" call most steps need. Step 2 never adopts a
-  directory whose status is terminal, that carries `createdBy: "release-standalone"`, that is dead
-  (`interrupted`, or `active` with its stamped worktree gone), or whose `run-state.json` exists but
-  cannot be read as a JSON object; it skips such a directory for the next-newest match
+  directory whose status is terminal, that carries `createdBy: "release-standalone"`, that is
+  unresumable (`interrupted`, or `active` with its stamped worktree gone; liveness is not
+  consulted, so a crashed run whose worktree survives is still adopted), or whose
+  `run-state.json` exists but cannot be read as a JSON object; it skips such a directory for the
+  next-newest match
   (`adoptionRefusal`, #1962/#4151). An absent `run-state.json` (a bare mint) is still adopted, and
   step 1's `PIPELINE_RUN_DIR` directory is never refused. A caller therefore must not use step 2 to
   re-find a run it has already closed (`close-run` makes it `clean`) — carry the path instead.
