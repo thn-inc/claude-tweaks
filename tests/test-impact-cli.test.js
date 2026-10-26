@@ -136,6 +136,7 @@ function makeDeps(over) {
     now: () => 0,
     env: {},
     execPath: process.execPath,
+    signals: new EventEmitter(), // never the real process: a test that emits passes its own handle
     log: (s) => out.push(s),
     err: (s) => errs.push(s),
     spawn: () => { throw new Error('spawn must not be called'); },
@@ -227,7 +228,7 @@ test('trace on a clean tree writes dirty: false, with or without --allow-dirty',
         body: () => fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.trace'), traceText([['T', 'tests/a.test.js'], ['f', 'lib/x.js']])),
       });
       const out = path.join(dir, 'map.json');
-      const { deps, errs } = makeDeps({ git, spawn, signals: new EventEmitter(), cwd: dir });
+      const { deps, errs } = makeDeps({ git, spawn, cwd: dir });
       assert.strictEqual(await run({ argv: ['trace', '--out', out, ...extra], deps }), 0);
       const text = fs.readFileSync(out, 'utf8');
       assert.strictEqual(parseImpactMap(text).map.dirty, false, extra.join(' '));
@@ -244,7 +245,7 @@ test('trace exits 1 when the run left no parseable trace file', async () => {
       body: () => fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.trace'), traceText([['f', 'lib/x.js']])),
     });
     const out = path.join(dir, 'map.json');
-    const { deps, errs } = makeDeps({ git, spawn, signals: new EventEmitter(), cwd: dir });
+    const { deps, errs } = makeDeps({ git, spawn, cwd: dir });
     assert.strictEqual(await run({ argv: ['trace', '--out', out], deps }), 1);
     assert.match(errs.join('\n'), /no parseable trace/);
     assert.strictEqual(fs.existsSync(out), false);
@@ -261,7 +262,7 @@ test('trace refuses the map and exits 1 when a traced process lost a read, namin
       },
     });
     const out = path.join(dir, 'map.json');
-    const { deps, out: lines, errs } = makeDeps({ git, spawn, signals: new EventEmitter(), cwd: dir });
+    const { deps, out: lines, errs } = makeDeps({ git, spawn, cwd: dir });
     assert.strictEqual(await run({ argv: ['trace', '--out', out], deps }), 1);
     assert.strictEqual(fs.existsSync(out), false);
     assert.deepStrictEqual(errs, ['test-impact.js trace: 1 traced process(es) could not record a read (tests: tests/a.test.js) — no map written']);
@@ -282,7 +283,7 @@ test('trace names every test that lost a read, sorted and unique, past an unpars
       },
     });
     const out = path.join(dir, 'map.json');
-    const { deps, errs } = makeDeps({ git, spawn, signals: new EventEmitter(), cwd: dir });
+    const { deps, errs } = makeDeps({ git, spawn, cwd: dir });
     assert.strictEqual(await run({ argv: ['trace', '--out', out], deps }), 1);
     assert.strictEqual(fs.existsSync(out), false);
     assert.deepStrictEqual(errs, ['test-impact.js trace: 4 traced process(es) could not record a read (tests: tests/a.test.js, tests/z.test.js) — no map written']);
@@ -295,7 +296,7 @@ test('trace says "tests: unknown" when every lost marker header is unparseable',
     const spawn = (cmd, args, opts) => fakeChild({
       body: () => fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.lost'), '["T"'),
     });
-    const { deps, errs } = makeDeps({ git, spawn, signals: new EventEmitter(), cwd: dir });
+    const { deps, errs } = makeDeps({ git, spawn, cwd: dir });
     assert.strictEqual(await run({ argv: ['trace', '--out', path.join(dir, 'map.json')], deps }), 1);
     assert.deepStrictEqual(errs, ['test-impact.js trace: 1 traced process(es) could not record a read (tests: unknown) — no map written']);
   });
@@ -354,6 +355,59 @@ test('AC2.1: SIGTERM during the suite forwards SIGTERM, exits 143, removes the t
     assert.strictEqual(fs.readFileSync(r.out, 'utf8'), 'previous map\n');
     assert.deepStrictEqual(r.errs, ['test-impact.js trace: interrupted by SIGTERM — no map written']);
     assert.strictEqual(r.signals.listenerCount('SIGINT') + r.signals.listenerCount('SIGTERM'), 0);
+  });
+});
+
+test('AC2.1: SIGHUP during the suite forwards SIGHUP, exits 129, removes the trace dir and writes no map', async () => {
+  await withTempDirAsync(async (dir) => {
+    const r = await interruptedTrace(dir, (signals) => signals.emit('SIGHUP', 'SIGHUP'));
+    assert.strictEqual(r.code, 129);
+    assert.deepStrictEqual(r.child.kills, ['SIGHUP']);
+    assert.strictEqual(fs.existsSync(r.traceDir), false);
+    assert.strictEqual(fs.readFileSync(r.out, 'utf8'), 'previous map\n');
+    assert.deepStrictEqual(r.errs, ['test-impact.js trace: interrupted by SIGHUP — no map written']);
+    assert.strictEqual(['SIGHUP', 'SIGINT', 'SIGTERM'].reduce((n, s) => n + r.signals.listenerCount(s), 0), 0);
+  });
+});
+
+test('a signal queued right behind the suite\'s own exit still interrupts the trace', async () => {
+  await withTempDirAsync(async (dir) => {
+    const out = path.join(dir, 'map.json');
+    fs.writeFileSync(out, 'previous map\n');
+    const signals = new EventEmitter();
+    let traceDir = null;
+    const spawn = (cmd, args, opts) => {
+      traceDir = opts.env.CT_TRACE_DIR;
+      // The child's exit is queued first; the signal lands in the very next queued callback.
+      const child = fakeChild({
+        status: 0,
+        body: () => fs.writeFileSync(path.join(traceDir, '1-1-a.trace'), traceText([['T', 'tests/a.test.js'], ['f', 'lib/x.js']])),
+      });
+      setImmediate(() => signals.emit('SIGINT', 'SIGINT'));
+      return child;
+    };
+    const { deps, errs } = makeDeps({ git: fakeGit({ root: dir }), spawn, signals, cwd: dir });
+    assert.strictEqual(await run({ argv: ['trace', '--out', out], deps }), 130);
+    assert.strictEqual(fs.readFileSync(out, 'utf8'), 'previous map\n', 'the interrupted run replaced no map');
+    assert.strictEqual(fs.existsSync(traceDir), false);
+    assert.deepStrictEqual(errs, ['test-impact.js trace: interrupted by SIGINT — no map written']);
+  });
+});
+
+test('a signal before the suite is spawned skips the spawn, exits with its code and leaves no trace dir', async () => {
+  await withTempDirAsync(async (dir) => {
+    const signals = new EventEmitter();
+    // The injection point is a wrapped fs.mkdtempSync: the signal lands right after the temp dir exists.
+    const wrapped = { ...fs, mkdtempSync: (prefix) => { const made = fs.mkdtempSync(prefix); signals.emit('SIGTERM', 'SIGTERM'); return made; } };
+    const tmp = path.join(dir, 'tmp');
+    fs.mkdirSync(tmp);
+    const out = path.join(dir, 'map.json');
+    const { deps, errs } = makeDeps({ git: fakeGit({ root: dir }), fs: wrapped, signals, tmpdir: tmp, cwd: dir });
+    assert.strictEqual(await run({ argv: ['trace', '--out', out], deps }), 143, 'spawn would throw if it were called');
+    assert.deepStrictEqual(fs.readdirSync(tmp), []);
+    assert.strictEqual(fs.existsSync(out), false);
+    assert.deepStrictEqual(errs, ['test-impact.js trace: interrupted by SIGTERM — no map written']);
+    assert.strictEqual(['SIGHUP', 'SIGINT', 'SIGTERM'].reduce((n, s) => n + signals.listenerCount(s), 0), 0);
   });
 });
 
@@ -663,8 +717,10 @@ test('AC2.1: SIGINT to a running real trace leaves no ct-test-impact-trace-* dir
       while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
       assert.ok(fs.existsSync(ready), `the suite never signalled readiness: ${stderr}`);
       assert.strictEqual(leaks().length, 1, 'the probe sees the live trace dir, so it can see a leak');
+      const t0 = Date.now();
       cli.kill('SIGINT');
       const { code, signal } = await exited;
+      assert.ok(Date.now() - t0 < 20000, 'the signal reached the suite: the trace ended long before its 60 s idle');
       assert.deepStrictEqual({ code, signal }, { code: 130, signal: null }, stderr);
       assert.deepStrictEqual(leaks(), []);
       assert.strictEqual(fs.existsSync(out), false);

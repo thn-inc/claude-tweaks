@@ -78,6 +78,7 @@ test('AC1.2: the v1 reader shipped before the dirty field still parses dirty and
   const v1 = require(path.join(__dirname, '..', '..', 'fixtures', 'test-impact', 'parse-impact-map-v1.js'));
   for (const dirty of [true, false, undefined]) {
     const text = JSON.stringify(encodeImpactMap({ commit: SHA, tracedAt: 't', exitCode: 0, node: 'v', tests: { 'tests/a.test.js': { f: ['src/x.js'] } }, dirty }));
+    if (dirty !== undefined) assert.strictEqual(JSON.parse(text).dirty, dirty);
     const parsed = v1.parseImpactMap(text);
     assert.strictEqual(parsed.ok, true, `dirty ${dirty}: ${parsed.reason}`);
     assert.deepStrictEqual(parsed.map.tests['tests/a.test.js'].f, ['src/x.js']);

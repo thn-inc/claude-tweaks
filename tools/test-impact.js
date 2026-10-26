@@ -22,8 +22,8 @@
 //
 // Exit codes: 0 map written (or, for fetch, already current); 1 failure (no trace data, a trace run whose
 // tracer lost a read, gh/git failure, an invalid or unusable artifact, no ancestor map) with a message on
-// stderr; 2 malformed invocation or, for trace, a dirty tree; 130/143 trace interrupted by SIGINT/SIGTERM
-// (the suite is sent the signal, the temp dir removed, no map written).
+// stderr; 2 malformed invocation or, for trace, a dirty tree; 129/130/143 trace interrupted by
+// SIGHUP/SIGINT/SIGTERM (the suite is sent the signal, the temp dir removed, no map written).
 //
 // Seam: run({ argv, deps }) returns a Promise of the exit code; deps holds git(args, {cwd}) and
 // gh(args, {cwd}) (stdout; throw on failure), spawn(cmd, args, opts) (→ a child: an EventEmitter with
@@ -153,17 +153,27 @@ async function trace(args, deps) {
 
   let traceDir = null;
   let interrupted = null;
-  // A signal kills the process before `finally` runs, so the trace dir would leak: SIGINT/SIGTERM are caught
-  // here, forwarded to the suite (a second one is SIGKILL), and handled once the suite has exited.
+  // A signal kills the process before `finally` runs, so the trace dir would leak: SIGHUP/SIGINT/SIGTERM are
+  // caught from before the temp dir exists, forwarded to the suite (a second one is SIGKILL), and handled once
+  // the suite has exited. Before the suite is spawned a signal is only recorded; the spawn is then skipped.
   let child = null;
-  let killed = false;
-  const handlers = ['SIGINT', 'SIGTERM'].map((sig) => [sig, () => {
-    if (killed) return;
-    killed = Boolean(interrupted);
-    interrupted = interrupted || sig;
-    child.kill(killed ? 'SIGKILL' : sig);
+  let escalated = false;
+  const handlers = ['SIGHUP', 'SIGINT', 'SIGTERM'].map((sig) => [sig, () => {
+    if (escalated) return;
+    if (interrupted) {
+      escalated = true;
+      if (child) child.kill('SIGKILL');
+    } else {
+      interrupted = sig;
+      if (child) child.kill(sig);
+    }
   }]);
+  const interruptedExit = () => {
+    deps.err(`test-impact.js trace: interrupted by ${interrupted} — no map written`);
+    return 128 + os.constants.signals[interrupted];
+  };
   try {
+    for (const [sig, fn] of handlers) deps.signals.on(sig, fn);
     traceDir = deps.fs.mkdtempSync(path.join(deps.tmpdir || os.tmpdir(), 'ct-test-impact-trace-'));
     const realRoot = deps.fs.realpathSync(root);
     const req = `--require "${path.join(root, 'tools', 'test-impact', 'tracer.js')}"`;
@@ -179,15 +189,12 @@ async function trace(args, deps) {
     env.CT_TRACE_REQUIRE = req;
     env.NODE_OPTIONS = env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ${req}` : req;
 
-    for (const [sig, fn] of handlers) deps.signals.on(sig, fn);
+    if (interrupted) return interruptedExit();
     child = deps.spawn(deps.execPath, [path.join(root, 'tools', 'run-tests.js')], { cwd: root, env });
     const result = await waitForExit(child);
     // A signal delivered alongside the suite's own exit must run its handler before the check below.
     await new Promise((resolve) => setImmediate(resolve));
-    if (interrupted) {
-      deps.err(`test-impact.js trace: interrupted by ${interrupted} — no map written`);
-      return 128 + os.constants.signals[interrupted];
-    }
+    if (interrupted) return interruptedExit();
     if (result.error) deps.err(`test-impact.js trace: the suite did not start: ${errText(result.error)}`);
     const exitCode = Number.isInteger(result.status) ? result.status : 1;
 
