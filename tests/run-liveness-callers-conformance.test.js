@@ -29,14 +29,13 @@ const { readText } = require('./helpers/read-skill');
 // Recall limits, none matched; code review is the backstop for them:
 //   - a destructured `kill`, a `process['kill']` bracket form, an aliased
 //     `const k = process.kill`;
-//   - a `{ locked }` destructure;
+//   - a `{ locked }` destructure, or a bracket read with a space before the bracket
+//     (`entry ['locked']`);
 //   - `rev-list`/`for-each-ref` recency reads, `git show -s --format=%ct`, and
 //     committer-date formats other than %ct/%cI (`%ci`, `%cd`) with no count flag;
 //   - a git argv held in a nested or spread array, or a command split across the lines
 //     of a multi-line template literal;
-//   - an aliased destructure of a scoped token (`const { ownEventRecency: oer } = ...`);
-//   - a scoped token inside a string literal in the three non-archive files (the scoped
-//     rule reads blank-mode text).
+//   - an aliased destructure of a scoped token (`const { ownEventRecency: oer } = ...`).
 
 const REPO = path.join(__dirname, '..');
 const SCANNED = [
@@ -54,8 +53,9 @@ const RECENCY = /^(?:-1|-n\d*|--max-count(?:=.*)?|.*(?:%ct|%cI|committerdate).*)
 const LOG_WORD = /\blog\b/;
 const STRING_RECENCY = /(?:^|\s)(?:-1|-n\d*|--max-count)\b|%ct|%cI|committerdate/;
 const FIELD = /\.\s*(locked|lockReason)\b/g;
-// A bracket field read off a value (`entry['locked']`); a bare array literal does not count.
-const BRACKET_FIELD = /(?<=[\w$)\]]\s*)\[\s*(['"])(locked|lockReason)\1\s*\]/g;
+// A bracket field read off a value (`entry['locked']`, `entry?.['locked']`); an array
+// literal (`['locked']`, `return ['locked']`) does not count.
+const BRACKET_FIELD = /(?<=[\w$)\]]|\?\.)\[\s*(['"])(locked|lockReason)\1\s*\]/g;
 
 // Scoped rule: the two liveness tokens may appear in archive-merged.js only inside
 // classifyRunDir, lastOwnEventMs, the import and export lists, and the constant's own
@@ -65,7 +65,7 @@ const SCOPED = /\b(ownEventRecency|STALE_INTERRUPTED_TTL_MS)\b/g;
 const SCOPED_DECL = /^const\s+STALE_INTERRUPTED_TTL_MS\s*=/gm;
 const REQUIRE_DESTRUCTURE = /^const\s*\{[^}]*\}\s*=\s*require\s*\([^)]*\)/gm;
 const MODULE_EXPORTS = /\bmodule\s*\.\s*exports\s*=\s*\{/g;
-const EXPORT_BEFORE = /(?:[{,]|\b[\w$]+\s*:)\s*$/;
+const EXPORT_BEFORE = /[{,]\s*(?:[\w$]+\s*:)?\s*$/;
 const EXPORT_AFTER = /^[ \t]*(?:[,}]|\r?\n|$)/;
 // Allowed scoped-token sites located in archive-merged.js at the commit that landed the
 // scoped rule. Fewer means the matcher stopped matching: never lower this floor.
@@ -165,14 +165,16 @@ function allowedRegions(blank) {
 
 // -> { allowed, hits }: `allowed` counts the scoped-token sites the rule permits (only
 // archive-merged.js has any); `hits` lists the offending ones as [{ line, form }].
+// Tokens are matched over literal-keeping text, like the banned names, so a token in a
+// string counts; regions come from blank-mode text, which keeps every offset.
 function scopedSites(rel, raw) {
-  const blank = stripComments(raw, { literals: 'blank' });
+  const kept = stripComments(raw);
   const isArchive = rel === ARCHIVE;
-  const regions = isArchive ? allowedRegions(blank) : [];
+  const regions = isArchive ? allowedRegions(stripComments(raw, { literals: 'blank' })) : [];
   let allowed = 0;
   const hits = [];
-  for (const m of blank.matchAll(SCOPED)) {
-    const line = lineOf(blank, m.index);
+  for (const m of kept.matchAll(SCOPED)) {
+    const line = lineOf(kept, m.index);
     if (!isArchive) {
       hits.push({ line, form: `${m[1]} outside archive-merged.js` });
     } else if (regions.some(([s, e]) => m.index >= s && m.index < e)) {
@@ -277,6 +279,9 @@ test('matcher self-test: banned names and primitives are flagged at their lines'
     'const b = e["lockReason"];', // 23
     "const fields = ['locked'];", // 24
     'runGit([`log`, `--max-count=${n}`, `--format=%H`]);', // 25
+    "sh(['log', '-1', 'git log -1']);", // 26: argv and string on one line, one offender
+    'return [\'locked\'];', // 27
+    "const c = entry?.['locked'];", // 28
   ].join('\n');
   assert.deepEqual(
     bannedHits(planted).map((h) => `${h.line}:${h.form}`),
@@ -299,6 +304,8 @@ test('matcher self-test: banned names and primitives are flagged at their lines'
       '22:.locked',
       '23:.lockReason',
       `25:${COMMIT_FORM}`,
+      `26:${COMMIT_FORM}`,
+      '28:.locked',
     ],
   );
 });
@@ -327,6 +334,10 @@ test('AC2.1: reintroducing a retired probe into a scratch copy names the file an
       inject('plugin/bin/lib/reconcile/archive-merged.js', "\nrunGit(['log', '--max-count=1', '--format=%ct']);\n"),
     ),
     /plugin\/bin\/lib\/reconcile\/archive-merged\.js:\d+ git commit-recency read/,
+  );
+  assert.throws(
+    () => assertNoRetiredProbes(inject('plugin/bin/lib/hooks/run-dir-resolve.js', '\nconst busy = entry.locked;\n')),
+    /plugin\/bin\/lib\/hooks\/run-dir-resolve\.js:\d+ \.locked/,
   );
 });
 
@@ -381,14 +392,18 @@ test('scoped rule self-test: allowed sites pass, a sibling helper and the other 
   for (const rel of SCANNED) {
     assert.deepEqual(scopedHits(rel, '// ownEventRecency is the reader\nconst ok = 1;'), []);
   }
+  assert.deepEqual(fmt(scopedHits(others[0], "const f = probes['ownEventRecency'];")), [
+    '1:ownEventRecency outside archive-merged.js',
+  ]);
 });
 
 test('scoped rule self-test: only a bare token passes in the export list, only top-level declarations count', () => {
   const fmt = (hits) => hits.map((h) => `${h.line}:${h.form}`);
-  const exportsRow = 'module.exports = {\n  sneaky: (d) => ownEventRecency(d),\n  ownEventRecency,\n  alias: STALE_INTERRUPTED_TTL_MS,\n  wrapped: wrap(ownEventRecency),\n  a, ownEventRecency };';
+  const exportsRow = 'module.exports = {\n  sneaky: (d) => ownEventRecency(d),\n  ownEventRecency,\n  alias: STALE_INTERRUPTED_TTL_MS,\n  wrapped: wrap(ownEventRecency),\n  a, ownEventRecency,\n  pick: c ? x : ownEventRecency };';
   assert.deepEqual(fmt(scopedHits(ARCHIVE, exportsRow)), [
     '2:ownEventRecency outside classifyRunDir/lastOwnEventMs',
     '5:ownEventRecency outside classifyRunDir/lastOwnEventMs',
+    '7:ownEventRecency outside classifyRunDir/lastOwnEventMs',
   ]);
   const nested = "function inner() {\n  const STALE_INTERRUPTED_TTL_MS = 1;\n  const { ownEventRecency } = require('x');\n}";
   assert.deepEqual(fmt(scopedHits(ARCHIVE, nested)), [
