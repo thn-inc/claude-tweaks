@@ -340,7 +340,8 @@ test('AC3.1 AC3.2 #4419: step 2 adopts an active run whose worktree survives but
 
 // #4151: step 2 refuses what `/claude-tweaks:release`'s inline adoption guard used to refuse
 // (terminal status, `createdBy: release-standalone`), plus an unreadable run-state.json — via
-// `adoptionRefusal`, which `newestMatch` consults for its refusal reasons, the #1962 unresumable check among them.
+// `adoptionRefusal`, which `newestMatch` consults for its refusal reasons, the #1962
+// unresumable check among them.
 test('#4151 AC1.1: adoptionRefusal names each refusal reason', () => {
   const main = gitRepo();
   let count = 0;
