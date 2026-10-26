@@ -46,10 +46,10 @@ for (const [route, group] of [
   });
 }
 
-// #4303: the cwds a collapse keeps grew one segment per relative cd (78 s through the hook at
-// 44 KB before CWD_WINDOW_CAP and CWD_LENGTH_CAP), and every event scanned each open substitution
-// level (3 s through the hook for a 4,000-deep nest, 3 s in the function alone at 12,000, before
-// the level stack).
+// #4303: the real cwds a collapse kept grew one segment per relative cd (78 s through the hook at
+// 44 KB, before a collapse kept only the lost cwd, which never grows), and every event scanned
+// each open substitution level (3 s through the hook for a 4,000-deep nest, 3 s in the function
+// alone at 12,000, before the level stack).
 test('fileWriteTargets: 4,000 relative-cd brace groups stay linear', () => {
   const { ms } = timed(() => fileWriteTargets(`${distinct((i) => `{ cd a${i}; }; `, 4000)}cp a ../f.js`, '/r', { overflowCwd: '/main' }));
   assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);

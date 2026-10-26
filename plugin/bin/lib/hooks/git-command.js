@@ -491,11 +491,28 @@ function isAbsolutePlain(raw) {
 // pushd/popd support, etc.) can never land in one caller and not the other.
 function resolveCd(effCwd, raw) {
   if (isUnresolvable(raw)) return null;
-  if (effCwd === null) {
-    // Unknown cwd: only a plain absolute path restores provability.
-    return isAbsolutePlain(raw) ? path.resolve(raw) : null;
+  if (effCwd === null || effCwd instanceof LostCwd) {
+    // Unknown or lost cwd: only a plain absolute path makes it known; a relative one leaves it as it was.
+    return isAbsolutePlain(raw) ? path.resolve(raw) : effCwd;
   }
   return path.resolve(effCwd, stripQuotes(raw));
+}
+
+// A cwd the walk has lost past its cwd cap (#4303, see CWD_SET_CAP): the shell is somewhere under
+// `root` or anywhere a relative `cd` from there led. Only this module's own consumers see one.
+class LostCwd {
+  constructor(root) {
+    this.root = root;
+  }
+}
+
+// `rel` with every `..` that would climb above its start dropped (`a/../../b` reads `b`), so a
+// target resolved from a lost cwd stays under its root.
+function clampRel(rel, pathImpl = path) {
+  const parts = pathImpl.normalize(rel).split(/[\\/]/);
+  let k = 0;
+  while (k < parts.length && parts[k] === '..') k += 1;
+  return parts.slice(k).join(pathImpl.sep) || '.';
 }
 
 // Matches a segment that is exactly one token shaped like a simple literal
@@ -703,6 +720,8 @@ function skipGlobalFlags(t, i, dir, pathImpl = path) {
       } else if (dir === null) {
         // Relative -C while cwd is UNKNOWN — cannot prove the target.
         unprovable = true;
+      } else if (dir instanceof LostCwd) {
+        dir = pathImpl.resolve(dir.root, clampRel(raw, pathImpl)); // under the lost cwd's root (#4303)
       } else {
         dir = pathImpl.resolve(dir, raw);
       }
@@ -791,7 +810,8 @@ function resolveGitCommand(t, effCwd) {
   if (lead.index === -1) return null;
   const { index, dir, unprovable } = skipGlobalFlags(t, lead.index + 1, lead.dir);
   if (lead.unprovable || unprovable || dir === null) return null;
-  return { index, dir };
+  // A git command run from a lost cwd (#4303) runs somewhere under its root: the root is its dir.
+  return { index, dir: dir instanceof LostCwd ? dir.root : dir };
 }
 
 // #976 (IL-141): git-plumbing subcommands that mutate tracked state or refs
@@ -838,7 +858,7 @@ function resolvedGitSegments(command, cwd, opts) {
     // A repeat visit under another cwd (after a brace group) that resolves to the same dir adds nothing.
     if (again && segments.slice(pieceStart).some((s) => s.dir === resolved.dir && s.index === resolved.index)) return;
     segments.push({ tokens: t, index: resolved.index, dir: resolved.dir });
-  }, opts);
+  }, keepLost(opts));
   return segments;
 }
 
@@ -933,6 +953,7 @@ function resolveWriteTarget(effCwd, raw) {
   if (DEVNULL_LIKE.has(stripped)) return null;
   if (path.isAbsolute(stripped)) return path.resolve(stripped);
   if (effCwd === null) return null; // cwd UNKNOWN and a relative path — not provable
+  if (effCwd instanceof LostCwd) return path.resolve(effCwd.root, clampRel(stripped));
   return path.resolve(effCwd, stripped);
 }
 
@@ -1964,69 +1985,43 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 //
 // The walk carries at most CWD_SET_CAP cwds at once. Each brace group's `}` and each tail can add
 // a cwd, and every later piece is visited once per cwd, so a command with many distinct `cd`
-// paths would be quadratic. Past the cap the set collapses, failing closed, to the caller's
+// paths would be quadratic. Past the cap the set collapses, failing closed. With the caller's
 // `opts.overflowCwd` (a path, or a function returning one, called at most once; pre-tool-use passes
-// the main checkout, so a relative target resolves where the worktree gate denies it), the walk's
-// own starting cwd (where a worktree-local shadow is denied), and the cwds of the step that
-// overflowed it (#4303: the group or tail that just ended, or the command an and-or list just
-// ran), so that step's `cd` stays visible. When that step alone carries more than the cap, the
-// set keeps its newest CWD_SET_CAP cwds, so it never holds more than CWD_SET_CAP + 2.
+// the main checkout) it collapses to two lost cwds (LostCwd, #4303): the shell is somewhere the walk
+// no longer knows, rooted at the overflow cwd (where the worktree gate denies) and at the walk's
+// own starting cwd (where a worktree-local shadow is denied). A lost cwd is no path bash can climb
+// out of: a relative `cd` keeps it lost, an absolute one makes the cwd known again, and a relative
+// target resolves under its root, never above it (clampRel), so `cd ..; cp a ../../M/f.js` after
+// a collapse still reports a target in the main checkout. That is what keeps the collapse sound
+// (a real overflow path let `../` climb out of the main checkout while bash wrote into it), and it
+// keeps the walk linear: a lost cwd never grows. Without an overflowCwd the set collapses to the
+// starting cwd itself, a real path, as it always has; those callers (the shadow guard,
+// post-tool-use's log-tier read) resolve relative targets there.
 //
-// The cap bounds how many cwds the walk carries, not what each costs (#4303: 78 s through the hook
-// at 44 KB). The cwds a collapse keeps are the newest, and a run of relative `cd`s (`{ cd a1; };
-// { cd a2; }; …`) moves each of them one segment deeper per step, so they never reset to the short
-// overflow paths: every later `cd` resolves CWD_SET_CAP + 2 ever-longer paths, quadratic in
-// characters. Two bounds keep the walk linear, and each falls back onto `overflow()`, the cap's own
-// fail-closed set (without an overflowCwd, the walk's own cwd alone, as for the cap):
-// - Past CWD_WINDOW_CAP collapses in one walk, a collapse keeps `overflow()` alone, as every
-//   collapse did before #4303, so the kept cwds stop carrying on. A walk collapses only once it
-//   holds more than CWD_SET_CAP distinct cwds, and each join past the cap counts (an and-or
-//   separator makes up to three): #4303's fuzzed multi-collapse shapes (12 to 16 distinct groups,
-//   then up to ten more cd steps) reach 51, so 256 keeps the window for anything short of a
-//   generated command, and past it each step costs what the cap alone allowed.
-// - A cwd whose path is longer than CWD_LENGTH_CAP collapses onto `overflow()` (boundCwdLength), so
-//   a relative target after it resolves in the overflow cwd and the walk's own. That bounds a cwd
-//   that grows without the set collapsing (`cd a1; cd a2; …` after a collapse, 18 cwds deep). 4096
-//   is Linux's PATH_MAX, four times macOS's 1024: no path a command works in comes near it, and it
-//   keeps each resolve to a few kilobytes, whatever the command's length.
+// Only this module's own consumers (fileWriteTargets, mkdirTargets, gitTargets, through
+// KEEP_LOST) see a LostCwd; any other handler is given its root, the path the collapse handed out
+// before #4303, so the handler contract (a cwd string, or null for unknown) is unchanged.
 const CWD_SET_CAP = 16; // four groups each with a relative cd already make 2^4 cwds
-const CWD_WINDOW_CAP = 256;
-const CWD_LENGTH_CAP = 4096;
+const KEEP_LOST = Symbol('keepLostCwd');
+const keepLost = (opts) => ({ ...(opts || {}), [KEEP_LOST]: true });
 function forEachShellSegment(command, cwd, handler, opts = {}) {
   const start = cwd || '.';
   let collapsed = null;
   const overflow = () => {
     if (collapsed === null) {
       const o = typeof opts.overflowCwd === 'function' ? opts.overflowCwd() : opts.overflowCwd;
-      collapsed = o && o !== start ? [o, start] : [start];
+      collapsed = !o ? [start] : o === start ? [new LostCwd(start)] : [new LostCwd(o), new LostCwd(start)];
     }
     return collapsed;
   };
-  let windows = 0;
-  overflow.keepsWindow = () => (windows += 1) <= CWD_WINDOW_CAP; // counts this walk's collapses
-  walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow);
+  const h = opts[KEEP_LOST] ? handler : (t, c, q, again) => handler(t, c instanceof LostCwd ? c.root : c, q, again);
+  walkShellChunk(String(command || ''), [start], new Map(), h, 0, true, overflow);
 }
 
-// The union of two cwd lists. Past CWD_SET_CAP it collapses to `overflow()` plus `fresh`, the one
-// of the two that carries the cwds of the step being joined, keeping at most CWD_SET_CAP of them:
-// the newest, since a union appends a list's new cwds at its end and a collapse puts `fresh` after
-// `overflow()`. It never drops `fresh` whole, so a second collapse keeps the step's newest cwds;
-// past CWD_WINDOW_CAP collapses it keeps `overflow()` alone.
-function joinCwds(a, b, overflow, fresh = b) {
+// The union of two cwd lists, collapsing to `overflow()` past CWD_SET_CAP.
+function joinCwds(a, b, overflow) {
   const out = [...a, ...b.filter((c) => !a.includes(c))];
-  if (out.length <= CWD_SET_CAP) return out;
-  const o = overflow();
-  if (!overflow.keepsWindow()) return o;
-  return [...o, ...fresh.filter((c) => !o.includes(c)).slice(-CWD_SET_CAP)];
-}
-
-// A cwd longer than CWD_LENGTH_CAP replaced by `overflow()`, through the cap's own join, so the
-// set stays within CWD_SET_CAP + 2.
-function boundCwdLength(cwds, overflow) {
-  const tooLong = (c) => typeof c === 'string' && c.length > CWD_LENGTH_CAP;
-  if (!cwds.some(tooLong)) return cwds;
-  const kept = cwds.filter((c) => !tooLong(c));
-  return joinCwds(kept, overflow(), overflow, kept);
+  return out.length <= CWD_SET_CAP ? out : overflow();
 }
 
 function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
@@ -2053,8 +2048,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
       at = L.pipeStart; // the pipeline ran in subshells: one command, which changed no cwd
       L.pipeStart = null;
     }
-    const ok = joinCwds(at, L.skipOk, overflow, at);
-    const fail = joinCwds(L.spanStart, L.skipFail, overflow, L.spanStart);
+    const ok = joinCwds(at, L.skipOk, overflow);
+    const fail = joinCwds(L.spanStart, L.skipFail, overflow);
     let next;
     if (op === '&&') {
       next = ok;
@@ -2065,7 +2060,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
       L.skipOk = ok;
       L.skipFail = [];
     } else {
-      next = joinCwds(ok, L.skipFail, overflow, ok);
+      next = joinCwds(ok, L.skipFail, overflow);
       L.skipOk = [];
       L.skipFail = [];
       L.listStart = next;
@@ -2135,8 +2130,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
   // is dropped, as before the closer cut it (forgetting a name would drop the targets that use it).
   const nest = { value: NOT_NESTED }; // carried across this chunk's pieces in text order (#4210)
   const visitPiece = (ev, pieceCwds, pieceVars) => {
-    if (!ev.tail) return boundCwdLength(visitUnderEach(ev.text, pieceCwds, pieceVars, handler, nest), overflow);
-    const next = boundCwdLength(visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler, nest), overflow);
+    if (!ev.tail) return visitUnderEach(ev.text, pieceCwds, pieceVars, handler, nest);
+    const next = visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler, nest);
     return joinCwds(pieceCwds, next, overflow);
   };
   let b = 0;
@@ -2612,7 +2607,7 @@ function fileWriteTargets(command, cwd, opts) {
       }
       return;
     }
-  }, opts);
+  }, keepLost(opts));
   // forEachShellSegment may visit a segment under two cwds, or a kept body twice (planned and
   // whole), so the same target can come back more than once: report each one once.
   const seen = new Set();
@@ -2645,7 +2640,7 @@ function mkdirTargets(command, cwd, opts) {
       // A repeat visit under another cwd (after a brace group) adds an absolute path only once.
       if (file && !(again && targets.slice(pieceStart).some((x) => x.file === file))) targets.push({ action: 'mkdir', file });
     }
-  }, opts);
+  }, keepLost(opts));
   return targets;
 }
 

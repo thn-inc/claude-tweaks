@@ -1892,86 +1892,81 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       const files = fileWriteTargets(distinct((i) => `{ cd /a${i}; }; `, 20) + 'cp a f.js', '/r').map((t) => t.file);
       assert.ok(files.includes(path.resolve('/r/f.js')) && !files.includes(path.resolve('/a0/f.js')), JSON.stringify(files));
     });
-    // #4303 (S50): the group whose `}` overflows the cap keeps its own cwd. With a sibling-layout
-    // worktree, bash 3.2 and 5 write M/s0/f.js for `cp a ../f.js` after `{ cd M/s0/deep; }`.
-    test('#4303 cwd cap: the group that overflows the cap keeps its own cwd', () => {
-      const cmd = distinct((i) => `{ cd /a${i}; }; `, 15) + '{ cd /main/s0/deep; }; cp a ../f.js';
-      const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
-      assert.ok(files.includes(path.resolve('/main/s0/f.js')), JSON.stringify(files));
-    });
-    // #4303 (S50): an and-or list that overflows the cap keeps the cwds of the command that
-    // overflowed it (the walk's `ok`, `fail` and list-end joins each name that command's cwds).
-    // Each row: bash 3.2 and 5 write M/s0/f.js (the main checkout).
+    // #4303 (S50): past the cap the walk has lost the cwd bash is in, so it collapses to a lost cwd
+    // rooted at the overflow cwd and at its own: a relative target from there resolves under each
+    // root, never above it, so a `../` that climbs out of the overflow cwd still lands in the main
+    // checkout. Each row's step overflows the cap; bash 3.2 and 5 write M/s0/f.js for each (a
+    // sibling-layout worktree; the and-or rows as noted), and the scanner reports M/f.js (denied).
+    const mainDir = path.resolve('/main') + path.sep;
     for (const [label, cmd] of [
+      ['the group that overflows the cap', distinct((i) => `{ cd /a${i}; }; `, 15) + '{ cd /main/s0/deep; }; cp a ../f.js'],
       // every /aN present: each cd succeeds, the last one into M/s0/deep (the list-end join)
       ['an && chain whose last cd overflows', distinct((i) => `cd /a${i + 1} && `, 16) + 'cd /main/s0/deep; cp a ../f.js'],
       // no /aN present: each cd fails until the last (the `ok` join)
       ['an || chain whose last cd overflows', distinct((i) => `cd /a${i + 1} || `, 16) + 'cd /main/s0/deep; cp a ../f.js'],
       // every /aN present, /nope absent: the failed cd leaves the shell in M/s0/deep (the `fail` join)
       ['an && chain whose overflowing command fails', distinct((i) => `cd /a${i + 1} && `, 15) + 'cd /main/s0/deep && cd /nope && true; cp a ../f.js'],
-      // every /bN present: the first cd succeeds and the rest are skipped; the overflowing `cd deep`
-      // also lands on M/s0/deep, a cwd the list already holds, and keeps it
+      // every /bN present: the first cd succeeds and the rest are skipped
       ['an || list whose overflowing cd lands on a cwd it already holds', distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; cd /main/s0/deep || cd /z || cd deep; cp a ../f.js'],
+      // every /bN, M/s0, M/s0/deep and M/s0/q present
+      ['a relative group after the collapse', distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd deep; }; { cd ../q; }; cp a ../f.js'],
+      // every /bN, M/s0 and M/s0/deep present (M/s0/deep/s0 and M/s0/deep/d1 absent)
+      ['an and-or list of relative cds after the collapse', distinct((i) => `{ cd /b${i}; }; `, 13) + '{ cd /main; }; cd s0 && cd deep || cd .. && cd s0; { cd d1; }; cp a ../f.js'],
     ]) {
-      test(`#4303 cwd cap: ${label} keeps its cwd`, () => {
+      test(`#4303 cwd cap: ${label} resolves its ../ write into the main checkout`, () => {
         const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
-        assert.ok(files.includes(path.resolve('/main/s0/f.js')), JSON.stringify(files));
+        assert.ok(files.includes(MAIN_F), JSON.stringify(files));
       });
     }
-    // #4303 (S50): a second collapse keeps the newest cwds, never the overflow cwd alone. The first
-    // collapse leaves 18 cwds; the next relative cd moves all 18, and the set keeps the newest 16 of
-    // them. Each row: every /bN, M/s0 and M/s0/deep present, q (and q2, q3) absent.
-    const mainDir = path.resolve('/main') + path.sep;
-    for (const [label, cmd, wrote] of [
+    // #4303 (S50): a second collapse keeps the walk lost. Each row: every /bN, M/s0 and M/s0/deep
+    // present, q (and q2, q3) absent.
+    for (const [label, cmd] of [
       // bash 3.2 and 5 write M/s0/f.js
-      ['a relative group after a relative group', distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd deep; }; { cd q; }; cp a ../f.js', '/main/s0/f.js'],
+      ['a relative group after a relative group', distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd deep; }; { cd q; }; cp a ../f.js'],
       // bash 3.2 and 5 write M/s0/f.js
-      ['an || chain of relative cds after a relative group', distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd deep; }; cd q || cd q2 || cd q3; cp a ../f.js', '/main/s0/f.js'],
+      ['an || chain of relative cds after a relative group', distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd deep; }; cd q || cd q2 || cd q3; cp a ../f.js'],
       // bash 3.2 and 5 write M/f.js (the tail's cd is an echo argument)
-      ['a relative group after a relative-cd tail', distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; echo $(true; true) cd deep; { cd q; }; cp a ../f.js', '/main/f.js'],
+      ['a relative group after a relative-cd tail', distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; echo $(true; true) cd deep; { cd q; }; cp a ../f.js'],
     ]) {
       test(`#4303 cwd cap: ${label} past a second collapse still resolves into the main checkout`, () => {
         const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
-        assert.ok(files.includes(path.resolve(wrote)) || files.some((f) => f.startsWith(mainDir)), JSON.stringify(files));
+        assert.ok(files.some((f) => f.startsWith(mainDir)), JSON.stringify(files));
       });
     }
-    // #4303 (S50): the window keeps the newest fresh cwds. With every /bN, M/s0, M/s0/deep and
-    // M/s0/q present, bash 3.2 and 5 write M/s0/f.js; the oldest of the fresh cwds escape the main
-    // checkout under `../`, so keeping them instead drops the only cwd that lands there.
-    test('#4303 cwd cap: a second collapse keeps the newest of the fresh cwds', () => {
-      const cmd = distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd deep; }; { cd ../q; }; cp a ../f.js';
-      const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
-      assert.ok(files.includes(path.resolve('/main/s0/f.js')), JSON.stringify(files));
-    });
-    // #4303 (S50): the window holds CWD_SET_CAP fresh cwds, not fewer. With every /bN, M/s0 and
-    // M/s0/deep present (M/s0/deep/s0 and M/s0/deep/d1 absent), bash 3.2 and 5 write M/s0/f.js.
-    test('#4303 cwd cap: a second collapse keeps CWD_SET_CAP of the fresh cwds', () => {
-      const cmd = distinct((i) => `{ cd /b${i}; }; `, 13) + '{ cd /main; }; cd s0 && cd deep || cd .. && cd s0; { cd d1; }; cp a ../f.js';
-      const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
-      assert.ok(files.includes(path.resolve('/main/s0/f.js')), JSON.stringify(files));
-    });
-    // #4303 (S50), known open: a list-end join whose `fresh` is the list's last command keeps only
-    // that command's cwds past the cap, so the cwds where an earlier `&&` failed (skipFail) are
-    // dropped. With every /bN and M/s0/q present and M/s0/s0 absent, bash 3.2 and 5 write M/f.js
-    // (`cd s0` fails in M/s0/q); the windowed collapse reports only /f.js, and so does base
-    // d9aa6b82d, so this miss predates #4303 (dbcab80, mid-branch, reported /main/f.js).
-    // A window over both sides fixes this one but loses more shapes than it saves (a fuller set
-    // collapses again sooner), so it stays open (follow-up: collapse-marker record).
-    test.todo('#4303 cwd cap: a list-end collapse keeps the cwds where an earlier && failed', () => {
+    // #4303 (S50): a list-end join past the cap drops the cwds where an earlier `&&` failed; the lost
+    // cwd covers them. With every /bN and M/s0/q present and M/s0/s0 absent, bash 3.2 and 5 write
+    // M/f.js (`cd s0` fails in M/s0/q). Base d9aa6b82d and 40b34714a reported only /f.js (allowed).
+    test('#4303 cwd cap: a list-end collapse still resolves into the main checkout where an earlier && failed', () => {
       const cmd = distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd s0; }; { cd q; }; cd s0 && cd /main/s0 && cd ..; cp a ../../f.js';
       const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
-      assert.ok(files.includes(path.resolve('/main/f.js')) || files.some((f) => f.startsWith(mainDir)), JSON.stringify(files));
+      assert.ok(files.includes(MAIN_F), JSON.stringify(files));
     });
-    // #4303 (S50), known open: the `||` ok-join's `fresh` is the current command's cwds, so past the
-    // cap the cwds an earlier `cd` in the list succeeded in (skipOk) are dropped. With every /bN and
-    // M/q present, bash 3.2 and 5 write M/f.js (`cd q` succeeds in M and `cd ../q` is skipped; with
-    // M/q absent they write /f.js). Base d9aa6b82d never collapses here and reports /r, /b0../b13
-    // and /main/f.js (denied); the windowed collapse reports only /f.js (allowed), a regression over
-    // base in the same class as the list-end todo above (follow-up: collapse-marker record).
-    test.todo('#4303 cwd cap: an || ok-join collapse keeps the cwd where an earlier cd succeeded', () => {
+    // #4303 (S50): an `||` ok-join past the cap drops the cwd an earlier `cd` in the list succeeded
+    // in. With every /bN and M/q present, bash 3.2 and 5 write M/f.js (`cd q` succeeds in M and
+    // `cd ../q` is skipped; with M/q absent they write /f.js). Base d9aa6b82d never collapses here and
+    // denies; 40b34714a reported only /f.js (allowed).
+    test('#4303 cwd cap: an || ok-join collapse still resolves into the main checkout where an earlier cd succeeded', () => {
       const cmd = distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main; }; cd q || cd ../q; echo x > ../f.js';
       const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
       assert.ok(files.includes(MAIN_F), JSON.stringify(files));
+    });
+    // #4303: the lost cwd's three rules, exactly. A relative target resolves under each root with the
+    // `..` that would climb above it dropped; a relative cd keeps it lost; an absolute cd makes the
+    // cwd known again, and a target from there resolves as written (/t/../f.js is /f.js).
+    test('#4303 cwd cap: a lost cwd resolves a relative target under its roots, never above them', () => {
+      const past = distinct((i) => `{ cd /a${i}; }; `, 16); // the 16th group overflows, leaving only the lost cwd
+      assert.deepStrictEqual(fileWriteTargets(`${past}cd ..; cd q; cp a ../../x/f.js`, '/r', opts).map((t) => t.file),
+        [path.resolve('/main/x/f.js'), path.resolve('/r/x/f.js')]);
+      assert.deepStrictEqual(fileWriteTargets(`${past}cd /t; cp a ../f.js`, '/r', opts).map((t) => t.file), [path.resolve('/f.js')]);
+      assert.deepStrictEqual(gitTargets(`${past}git -C ../x commit -m m`, '/r', opts).map((t) => t.dir), [path.resolve('/main/x'), path.resolve('/r/x')]);
+      assert.deepStrictEqual(mkdirTargets(`${past}cd ../..; mkdir -p ../d`, '/r', opts).map((t) => t.file), [path.resolve('/main/d'), path.resolve('/r/d')]);
+    });
+    // #4303: any other handler is never handed a lost cwd: it gets the root, the path the collapse
+    // gave it before, so the handler contract (a cwd string, or null) holds.
+    test('#4303 cwd cap: a handler outside the module is given the lost cwd\'s roots as strings', () => {
+      const seen = new Set();
+      forEachShellSegment(distinct((i) => `{ cd /a${i}; }; `, 16) + 'cd q; true', '/r', (t, cwd) => { if (t[0] === 'true') seen.add(cwd); }, opts);
+      assert.deepStrictEqual([...seen], ['/main', '/r']);
     });
     test('#4303 cwd cap: a set past the cap holds at most CWD_SET_CAP + 2 cwds', () => {
       // The handler's fourth argument is true on every visit of a piece after the first, so the run
@@ -1984,8 +1979,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       }, opts);
       assert.ok(most <= 18, `${most} cwds`);
     });
-    // The relative cd in each tail moves every cwd, so without the CAP + 2 fallback each tail adds
-    // two (418 cwds after 200 tails); with it the set stays within 18.
+    // The relative cd in each tail moves every known cwd, and a lost one stays lost, so the set stays
+    // within 18 however many tails follow.
     test('#4303 cwd cap: relative-cd tails after the collapse stay within CWD_SET_CAP + 2 cwds', () => {
       let most = 0;
       let n = 0;
@@ -1996,30 +1991,39 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       }, opts);
       assert.ok(most <= 18, `${most} cwds`);
     });
-    // #4303: the cwds a collapse keeps move one segment deeper with every relative cd, so without a
-    // bound on what they cost the walk is quadratic in characters (78 s through the hook at 44 KB). With no aN present every cd fails, and bash 3.2 and 5 write ../f.js from the start
-    // cwd (R/f.js); the walk keeps that target and fails closed into the main checkout.
+    // #4303: a lost cwd never grows, so a relative cd costs nothing however many follow (a kept
+    // real path grew one segment per step: 78 s through the hook at 44 KB). With no aN present every
+    // cd fails, and bash 3.2 and 5 write ../f.js from the start cwd (R/f.js); the walk resolves it
+    // under the lost roots, failing closed into the main checkout.
     test('#4303 cwd cap: 4,000 relative-cd groups finish inside the bound and resolve into the main checkout', () => {
       const cmd = distinct((i) => `{ cd a${i}; }; `, 4000) + 'cp a ../f.js';
       const files = boundedTargets('fileWriteTargets', cmd, '/r/w', opts).map((t) => t.file);
-      assert.ok(files.includes(path.resolve('/r/f.js')) && files.includes(MAIN_F), JSON.stringify(files.slice(0, 20)));
+      assert.deepStrictEqual(files, [MAIN_F, path.resolve('/r/w/f.js')]);
     });
-    // #4303: past CWD_WINDOW_CAP collapses a collapse keeps the overflow cwd and the walk's own
-    // alone, as before the window, so the cwds stop growing (with the window kept they reach 1,900
-    // characters here). With no aN present, bash 3.2 and 5 write f.js in the start cwd.
-    test('#4303 cwd cap: past CWD_WINDOW_CAP collapses the kept cwds stop growing', () => {
-      const files = fileWriteTargets(distinct((i) => `{ cd a${i}; }; `, 400) + 'cp a f.js', '/r', opts).map((t) => t.file);
-      assert.ok(files.includes(path.resolve('/r/f.js')) && files.includes(MAIN_F), JSON.stringify(files));
-      assert.ok(files.every((f) => f.length < 100), JSON.stringify(files.map((f) => f.length)));
+    // #4303: the walk follows a cwd past 4,096 characters and back. From a tree of 2,100 nested `d`
+    // directories in the worktree, seven 300-level descents, seven 300-level climbs and `cd ../M`
+    // (10.6 KB) end in M: bash 5 writes M/leak.out (bash 3.2 did not finish within 1,000 s on the
+    // oracle machine; the re-review saw it write M/leak.out too). A length bound that collapsed the
+    // cwd onto the overflow path started the climbs from M and missed it.
+    test('#4303 cwd cap: a cwd that descends past 4,096 characters and climbs back resolves where bash is', () => {
+      const cmd = `cd ${'d/'.repeat(300)}; `.repeat(7) + `cd ${'../'.repeat(300)}; `.repeat(7) + 'cd ../M; echo x > leak.out';
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/s/wt', { overflowCwd: '/s/M' }).map((t) => t.file), [path.resolve('/s/M/leak.out')]);
     });
-    // #4303: a cwd longer than CWD_LENGTH_CAP (4,096) collapses onto the overflow cwd and the walk's
-    // own, so a relative write resolves there (failing closed). bash 3.2 and 5, from a tree of 2,100
-    // nested `d` directories in M, end 4,278 characters deep and write f.js there, in M; the
-    // scanner reports M/f.js. Six steps (3,605 characters) stay under the bound and keep the path.
-    test('#4303 cwd cap: a cwd past CWD_LENGTH_CAP collapses onto the overflow cwd', () => {
-      const steps = (k) => 'cd /main; ' + `cd ${'d/'.repeat(300)}; `.repeat(k) + 'cp a f.js';
-      assert.deepStrictEqual(fileWriteTargets(steps(7), '/r', opts).map((t) => t.file), [MAIN_F, path.resolve('/r/f.js')]);
-      assert.deepStrictEqual(fileWriteTargets(steps(6), '/r', opts).map((t) => t.file), [path.resolve(`/main/${'d/'.repeat(1800)}f.js`)]);
+    // #4303: however many collapses come first, the write after them resolves into the main
+    // checkout. N groups `{ cd /nonexistK; }` (each cd fails, so bash stays in the worktree) then
+    // `{ cd OTHER; }; echo x > ../../M/leak.out`: bash 3.2 and 5 write M/leak.out for N = 20, 2002,
+    // 2017, 3007, 3022, 4012 and 4027. A cap on the number of collapses that fell back to the overflow
+    // path alone dropped OTHER at some phases and allowed it. Now the phase only decides whether
+    // OTHER is still known (M/leak.out) or the group overflowed the cap and the lost cwd stands for
+    // it (M/M/leak.out, under the overflow root); every N from 1 to 60 is checked.
+    test('#4303 cwd cap: a write after any number of collapses resolves into the main checkout', () => {
+      const inM = path.resolve('/s/M') + path.sep;
+      const run = (n) => fileWriteTargets(`${distinct((i) => `{ cd /nonexist${i}; }; `, n)}{ cd /s/other/deep; }; echo x > ../../M/leak.out`, '/s/wt', { overflowCwd: '/s/M' }).map((t) => t.file);
+      for (const n of [...Array.from({ length: 60 }, (_, i) => i + 1), 2002, 2017, 3007, 3022, 4012, 4027]) {
+        const files = run(n);
+        assert.ok(files.some((f) => f.startsWith(inM)), `N=${n}: ${JSON.stringify(files)}`);
+      }
+      assert.ok(run(20).includes(path.resolve('/s/M/leak.out')), JSON.stringify(run(20)));
     });
   }
   // #4149: a pass's nested scans share a step budget, so a shape whose "$( runs off the end from
