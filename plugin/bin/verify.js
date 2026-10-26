@@ -622,7 +622,7 @@ async function main() {
       if (decl.impact) {
         const where = gitLocations({ cwd: parsed.cwd || process.cwd() });
         impactCtx = lazyImpactContext(() => (where === null
-          ? { map: null, problem: 'map-unlocatable', headTests: [], mapPath: null, mapCommit: null, distance: null, fetch: null }
+          ? { map: null, problem: 'map-unlocatable', headTests: [], driftTests: [], mapPath: null, mapCommit: null, distance: null, fetch: null }
           : loadImpactContext({ decl, ...where, runFetch: (command) => runImpactFetch(command, where.repoRoot) })));
       }
       const fallbackBase = !anchorSha && parsed.integrationBranch && !parsed.base ? resolvedBase : null;

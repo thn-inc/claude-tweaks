@@ -41,6 +41,8 @@ A prefix covers a path when `prefix === ''` (the repo root), `p === prefix`, or 
 
 **Selection.** Each changed path matched by an impact rule is checked against every map test still present at HEAD. A modified path (`M`) selects a test that content-read it (`f`) or holds a covering `c` prefix. An added, deleted or renamed path (`A`/`D`) also selects a test that probed it (`s`), listed a directory covering it (`d`), or probed or stat'd an ancestor directory of it (`s`/`f`, never the repo root `''`), since adding a directory's first file or deleting its last changes whether it exists. A path with no recorded status counts as `A`, the broader match. A changed test file also selects the other tests that read it by these rules (a test that reads or lists every test file); it is never `untraced-path`. The selected set is the matched tests, plus changed test files present at HEAD, plus test files at HEAD that the map does not know (untraced tests, which always run).
 
+Every test file the map knows, present at HEAD, whose content differs between the map's commit and HEAD (`git diff --no-renames {commit} HEAD`) is selected too, as untraced, since its recorded reads may be stale. This is a tree diff, so it holds whether or not the map's commit is an ancestor of the base. Only `map-not-ancestor` (the commit is not an ancestor of HEAD) stops it. With the map at the base, the drifted tests are the branch's own committed test edits, which are already changed tests, so the selection is unchanged.
+
 ## When the impact suite runs full
 
 `report.json`'s `scope.impact.fallback` names the reason:
@@ -55,6 +57,7 @@ A prefix covers a path when `prefix === ''` (the repo root), `p === prefix`, or 
 | `untraced-path: {p}` | A changed non-test path that no traced read covers. |
 | `head-tests-unreadable` | git could not list the test files at HEAD. |
 | `head-tests-empty` | The listing succeeded but named no test file (a sparse checkout, say), so no selection could be trusted. |
+| `map-drift-unreadable` | git could not list the test files that differ between the map's commit and HEAD. |
 | `map-unlocatable` | git could not name the checkout root or common dir. |
 | `files-list-unquotable: {reason}` | `{files}` could not be substituted safely. `{reason}` is `leading-dash` or `control-character` (the log dir's list path itself), `cmd-unquotable` (win32 `cmd`), or `template-quotes` (other quoting left in `command`). |
 | `files-list-unwritable: line break in {path}` | A selected path holds a line break, so the list file cannot carry it. |
@@ -70,7 +73,7 @@ Changed paths are diffed from the stamp's `fullSha`, as every scoped run is. Wit
 
 ## Report
 
-`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, superseded, mapPath, mapCommit, mapAgeCommits, fetch, listPath, selectedFiles}`. `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. The map is read only when selection needs it, so a delta no impact rule matches (or that a full-suite rule already supersedes) never reads the map or runs `fetch`: `mapPath`, `mapCommit`, `mapAgeCommits` and `fetch` are then `null`. Under `Scope:`, stdout prints one of:
+`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, driftTests, driftSelected, superseded, mapPath, mapCommit, mapAgeCommits, fetch, listPath, selectedFiles}`. `driftTests` names the drift-selected tests and `driftSelected` their count (`null` when no selection ran). `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. The map is read only when selection needs it, so a delta no impact rule matches (or that a full-suite rule already supersedes) never reads the map or runs `fetch`: `mapPath`, `mapCommit`, `mapAgeCommits` and `fetch` are then `null`. Under `Scope:`, stdout prints one of:
 
 - `Impact: {selected} of {n} test file(s) selected (map {commit9}, {age} commit(s) old)`
 - `Impact: {selected} of the {suite} test file(s) selected — no impact-rule path changed, map not read`
@@ -84,7 +87,6 @@ The map is built outside the runner by a traced full-suite run: a read tracer pr
 
 - **Module loads.** CommonJS loads and a relative or absolute `require`'s resolution candidates are traced. ESM `import` loads are seen only through the file-system calls the loader makes.
 - **Non-node children.** Reads by a non-node child process are approximated. Its in-repo path arguments are recorded, and a content-reading `git` subcommand records a content prefix.
-- **Map-to-base drift.** A test that started reading a file after the map's commit is not selected for that file until the map refreshes.
 - **POSIX only.** Tracing runs on POSIX: on win32, `NODE_OPTIONS` quoting drops the tracer path's backslashes.
 - **Trace environment.** The map records reads in the environment it was traced in (CI's, for a post-merge job). A test whose reads depend on the local environment (a skip gated on an installed plugin, say) can be under-selected locally.
 - **Tooling not shipped.** The tracer and map builder are the plugin repo's own tooling, not part of the plugin. Another project must produce a map in the format above itself.
