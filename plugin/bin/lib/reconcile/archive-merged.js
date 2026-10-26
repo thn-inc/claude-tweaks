@@ -1852,7 +1852,7 @@ function classifyRunDir(ctx, now = Date.now()) {
           const silentMs = ref === null ? null : now - ref;
           if (readable && silentMs !== null && silentMs > STALE_INTERRUPTED_TTL_MS) {
             let result = null;
-            try { result = runVerdict(dir, now); } catch { result = null; }
+            try { result = runVerdict(dir, now); } catch { /* a throwing hook reads as not abandoned */ }
             const evidence = result && Array.isArray(result.evidence) ? result.evidence : null;
             const verdict = result ? result.verdict : undefined;
             const dead = !!evidence && verdict === 'dead' && !evidence.some((e) => e && e.result === 'error');
@@ -2219,7 +2219,9 @@ async function prefetchArchivePrStates(root, prStates, { cache } = {}) {
   await prStates.prefetch({ branches });
 }
 
-const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+function isPlainObject(v) {
+  return Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+}
 
 // #4421: how many run dirs under the main checkout's pipelines/ have no owner block for
 // run-liveness to ask — an owner-less non-clean run state (a missing `status` counts), or no
