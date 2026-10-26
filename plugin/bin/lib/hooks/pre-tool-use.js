@@ -26,7 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const {
   gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, powershellOpaqueCommand, keepLost,
-  PIPELINE_STATE_DIR,
+  PIPELINE_STATE_DIR, namesPipelinesSegment,
 } = require('./git-command');
 const ctxLib = require('./context');
 const policy = require('../policy');
@@ -543,8 +543,9 @@ function teardownTargets(ctx) {
     // #4303: a relative path from a cwd the walk lost (past git-command.js's CWD_SET_CAP) names
     // no directory the gate can place; `path` is the lost cwd's stand-in and `lost` says so. An
     // absolute path does not depend on the cwd and keeps the ordinary checks.
-    if (lost && !path.isAbsolute(rest[0])) out.push({ path: path.resolve(dir, rest[0]), source: 'bash', lost: true });
-    else out.push({ path: path.resolve(dir, rest[0]), source: 'bash' });
+    const entry = { path: path.resolve(dir, rest[0]), source: 'bash' };
+    if (lost && !path.isAbsolute(rest[0])) entry.lost = true;
+    out.push(entry);
   }, keepLost(walkOptions(cwd))); // keepLost: the walk's lost cwd reaches resolveGitCommand, which reports it
   return out;
 }
@@ -742,18 +743,6 @@ function shadowPipelineRunDir(targetPath, { fsImpl } = {}) {
   try { exists = (fsImpl || fs).statSync(runDirCandidate).isDirectory(); } catch { /* not there yet — a genuinely new shadow */ }
   if (exists) return null;
   return { worktreeRoot: repoRoot, runDirCandidate };
-}
-
-// #4303: whether relative target text names a `.claude-tweaks/pipelines` segment on its way: a
-// `.claude-tweaks` component with a `pipelines` component anywhere after it. Read on the text as
-// written, never normalized, so a `x/../` cannot hide one; any later `pipelines` counts (failing
-// closed, as bash resolves `..` through links the text does not show), and case is ignored, since
-// a case-insensitive volume reads `.Claude-Tweaks` as the same directory.
-const [STATE_DIR_PART, PIPELINES_PART] = PIPELINE_STATE_DIR.split(path.sep);
-function namesPipelinesSegment(rel) {
-  const parts = String(rel).toLowerCase().split(/[\\/]+/);
-  const at = parts.indexOf(STATE_DIR_PART);
-  return at !== -1 && parts.indexOf(PIPELINES_PART, at + 1) !== -1;
 }
 
 function checkPipelineShadowGuard(ctx, deps = {}) {
@@ -1063,7 +1052,8 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
       else {
         const info = wtDetect.repoInfo(ctx.cwd);
         const root = info.repoRoot ? (main || info.repoRoot) : null;
-        sessionPolicy = info.indeterminate ? 'indeterminate' : root && policy.isWorktreeAlwaysOn(root) ? 'on' : 'off';
+        if (info.indeterminate) sessionPolicy = 'indeterminate';
+        else sessionPolicy = root && policy.isWorktreeAlwaysOn(root) ? 'on' : 'off';
       }
     }
     return sessionPolicy;

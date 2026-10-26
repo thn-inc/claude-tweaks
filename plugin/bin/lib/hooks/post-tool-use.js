@@ -646,15 +646,11 @@ function run(ctx) {
   const recentByDir = new Map();
   for (const [dir, count] of commitCountByDir) recentByDir.set(dir, recentCommits(dir, count).reverse());
   const dirCursor = new Map();
-  function peekCommitFor(dir) {
+  function nextCommitFor(dir) {
     const list = recentByDir.get(dir) || [];
     const idx = dirCursor.get(dir) || 0;
+    dirCursor.set(dir, idx + 1);
     return idx < list.length ? list[idx] : null;
-  }
-  function nextCommitFor(dir) {
-    const commit = peekCommitFor(dir);
-    dirCursor.set(dir, (dirCursor.get(dir) || 0) + 1);
-    return commit;
   }
   // #4303: the commit a lost commit target made. Each candidate offers its fresh commits (inside
   // COMMIT_FRESHNESS_WINDOW_SECONDS) that no other target's commit list above already holds, read
@@ -692,7 +688,7 @@ function run(ctx) {
         if (commit && !found.has(commit.hash)) found.set(commit.hash, { dir, commit });
       }
       if (found.size === 1) {
-        const match = [...found.values()][0];
+        const [match] = found.values();
         taken.add(match.commit.hash);
         lostCommitFor.set(t, match);
         judgedLostCommits.push(match.commit);
@@ -743,7 +739,9 @@ function run(ctx) {
       const lostCommit = lostCommitFor.get(target);
       if (lostCommit === null) continue; // #4303: a lost commit with no commit of its own logs nothing
       const dir = lostCommit ? lostCommit.dir : target.dir;
-      const commit = lostCommit ? lostCommit.commit : (target.action === 'commit' ? nextCommitFor(dir) : null);
+      let commit = null;
+      if (lostCommit) commit = lostCommit.commit;
+      else if (target.action === 'commit') commit = nextCommitFor(dir);
       const hash = commit ? commit.hash : (target.action === 'push' ? headHashFor(dir) : null);
       if (hash) {
         const key = `${target.action}\u0000${hash}\u0000${dir}`;

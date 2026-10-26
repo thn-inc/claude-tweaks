@@ -93,8 +93,9 @@ function segmentSpansWith(str, spans) {
     // quoted or not) is cut as before #4303 too: bash runs that substitution, and the cuts at its
     // separators are what expose its writes to the walk. An inner `$((` counts as such an opener
     // unless it passes the same arithmetic test (`$(( $((true); cp a f) ))` runs its cp).
-    const lead = ch === '$' && str[i + 1] === '(' && str[i + 2] === '(' ? i + 2
-      : ch === '(' && str[i + 1] === '(' && (i === 0 || /[\s;&|(]/.test(str[i - 1])) ? i + 1 : -1;
+    let lead = -1;
+    if (ch === '$' && str[i + 1] === '(' && str[i + 2] === '(') lead = i + 2;
+    else if (ch === '(' && str[i + 1] === '(' && (i === 0 || /[\s;&|(]/.test(str[i - 1]))) lead = i + 1;
     if (lead !== -1) {
       if (parens === null) {
         parensFrom = i;
@@ -527,6 +528,15 @@ const LOST_TRAIL = PIPELINE_STATE_DIR.split(path.sep);
 function spellTrail(text, trail) {
   for (const part of text.toLowerCase().split(/[\\/]+/)) if (part === LOST_TRAIL[trail]) trail += 1;
   return trail;
+}
+// Whether relative target text names a `.claude-tweaks/pipelines` segment on its way: a
+// `.claude-tweaks` component with a `pipelines` component anywhere after it, so the whole of
+// LOST_TRAIL is spelled. Read on the text as written, never normalized, so a `x/../` cannot hide
+// one; any later `pipelines` counts (failing closed, as bash resolves `..` through links the text
+// does not show), and case is ignored, since a case-insensitive volume reads `.Claude-Tweaks` as
+// the same directory.
+function namesPipelinesSegment(rel) {
+  return spellTrail(String(rel), 0) === LOST_TRAIL.length;
 }
 class LostCwd {
   constructor(root, overflow, trail = 0, family = null) {
@@ -2194,9 +2204,18 @@ function forEachShellSegment(command, cwd, handler, opts = {}) {
     // `.claude-tweaks/pipelines` directory starts each lost cwd with the whole segment spelled, and
     // one under a `.claude-tweaks` alone with its first part (spellTrail, as a relative cd spells it).
     const seed = set.reduce((most, x) => (typeof x === 'string' ? Math.max(most, spellTrail(x, 0)) : most), 0);
-    return collapsed.map((c) => c.withTrail(set.reduce((most, x) => (x instanceof LostCwd && x.family === c && x.trail > most ? x.trail : most), seed)));
+    return collapsed.map((c) => c.withTrail(set.reduce((most, x) => (x instanceof LostCwd && x.family === c ? Math.max(most, x.trail) : most), seed)));
   };
   walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow, !!opts[BASE_VIEW]);
+}
+
+// The and-or list operator the separator at `outer[at]` is: `&&`, `||`, `|`, or `;` for any other
+// (a `;`, a newline or the end).
+function separatorOp(outer, at) {
+  const c = outer[at];
+  if (c === '&') return '&&';
+  if (c !== '|') return ';';
+  return outer[at + 1] === '|' ? '||' : '|';
 }
 
 // The union of two cwd lists, collapsing to `overflow(union)` past CWD_SET_CAP.
@@ -2370,8 +2389,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     // The separator ends a command of the innermost list open where it stands: a substitution's
     // (by the nesting there, never by whether the sub run is active: an outer piece before the
     // separator has ended the run) or the outer walk's.
-    const c = outer[span.end];
-    const op = c === '&' ? '&&' : c === '|' ? (outer[span.end + 1] === '|' ? '||' : '|') : ';';
+    const op = separatorOp(outer, span.end);
     const level = g.nesting + (span.endsInSub ? 1 : 0);
     if (level > 0) {
       startSubRun();
@@ -2844,7 +2862,7 @@ function mkdirTargets(command, cwd, opts) {
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine, namesPipelinesSegment,
   // The heredoc reader vocabularies, pinned against policy-schema-coverage.md's prose (#4149).
   DATA_READER_WORDS, READER_WRAPPER_WORDS, GIT_DATA_SUBCOMMANDS, INERT_NEIGHBOUR_WORDS,
 };
