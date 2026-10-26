@@ -20,16 +20,18 @@
 //
 // Exit codes: 0 map written (or, for fetch, already current); 1 failure (no trace data, a trace run whose
 // tracer lost a read, gh/git failure, an invalid or unusable artifact, no ancestor map) with a message on
-// stderr; 2 malformed invocation or, for trace, a dirty tree.
+// stderr; 2 malformed invocation or, for trace, a dirty tree; 130/143 trace interrupted by SIGINT/SIGTERM
+// (the suite is sent the signal, the temp dir removed, no map written).
 //
-// Seam: run({ argv, deps }) returns the exit code; deps holds git(args, {cwd}) and gh(args, {cwd})
-// (stdout; throw on failure), spawn(cmd, args, opts) (→ {status, signal, error}), fs, now, env,
-// execPath, cwd, tmpdir and the log/err line writers.
+// Seam: run({ argv, deps }) returns a Promise of the exit code; deps holds git(args, {cwd}) and
+// gh(args, {cwd}) (stdout; throw on failure), spawn(cmd, args, opts) (→ a child: an EventEmitter with
+// kill(signal) emitting 'exit'(status, signal) and/or 'error'(err)), signals ({ on, removeListener },
+// default process), fs, now, env, execPath, cwd, tmpdir and the log/err line writers.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const { parseImpactMap, gitLocations, DEFAULT_MAP_NAME } = require('../plugin/bin/lib/verify/impact');
 const { writeFileAtomic } = require('../plugin/bin/lib/atomic-write');
 const { buildMap } = require('./test-impact/build-map');
@@ -53,7 +55,8 @@ function defaultDeps() {
   return {
     git: exec('git'),
     gh: exec('gh'),
-    spawn: (cmd, args, opts) => spawnSync(cmd, args, { ...opts, stdio: 'inherit' }),
+    spawn: (cmd, args, opts) => spawn(cmd, args, { ...opts, stdio: 'inherit' }),
+    signals: process,
     fs,
     now: Date.now,
     env: process.env,
@@ -106,7 +109,15 @@ function rmQuiet(deps, dir) {
   }
 }
 
-function trace(args, deps) {
+// Resolves once with { status, signal, error } on the child's first 'exit' or 'error'.
+function waitForExit(child) {
+  return new Promise((resolve) => {
+    child.once('exit', (status, signal) => resolve({ status, signal }));
+    child.once('error', (error) => resolve({ error }));
+  });
+}
+
+async function trace(args, deps) {
   const parsed = parseArgs(args, { '--out': 'value', '--allow-dirty': 'bool' });
   if (parsed.error) {
     deps.err(`test-impact.js trace: ${parsed.error}\n${USAGE}`);
@@ -139,6 +150,17 @@ function trace(args, deps) {
   const out = resolveOut(parsed.opts['--out'], loc, deps);
 
   let traceDir = null;
+  let interrupted = null;
+  // A signal kills the process before `finally` runs, so the trace dir would leak: SIGINT/SIGTERM are caught
+  // here, forwarded to the suite (a second one is SIGKILL), and handled once the suite has exited.
+  let child = null;
+  let killed = false;
+  const handlers = ['SIGINT', 'SIGTERM'].map((sig) => [sig, () => {
+    if (killed) return;
+    killed = Boolean(interrupted);
+    interrupted = interrupted || sig;
+    child.kill(killed ? 'SIGKILL' : sig);
+  }]);
   try {
     traceDir = deps.fs.mkdtempSync(path.join(deps.tmpdir || os.tmpdir(), 'ct-test-impact-trace-'));
     const realRoot = deps.fs.realpathSync(root);
@@ -155,9 +177,17 @@ function trace(args, deps) {
     env.CT_TRACE_REQUIRE = req;
     env.NODE_OPTIONS = env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ${req}` : req;
 
-    const result = deps.spawn(deps.execPath, [path.join(root, 'tools', 'run-tests.js')], { cwd: root, env });
-    if (result && result.error) deps.err(`test-impact.js trace: the suite did not start: ${errText(result.error)}`);
-    const exitCode = result && Number.isInteger(result.status) ? result.status : 1;
+    for (const [sig, fn] of handlers) deps.signals.on(sig, fn);
+    child = deps.spawn(deps.execPath, [path.join(root, 'tools', 'run-tests.js')], { cwd: root, env });
+    const result = await waitForExit(child);
+    // A signal delivered alongside the suite's own exit must run its handler before the check below.
+    await new Promise((resolve) => setImmediate(resolve));
+    if (interrupted) {
+      deps.err(`test-impact.js trace: interrupted by ${interrupted} — no map written`);
+      return 128 + os.constants.signals[interrupted];
+    }
+    if (result.error) deps.err(`test-impact.js trace: the suite did not start: ${errText(result.error)}`);
+    const exitCode = Number.isInteger(result.status) ? result.status : 1;
 
     const built = buildMap({ traceDir, commit, exitCode, node: process.version, now: deps.now, fsImpl: deps.fs });
     if (built.lost > 0) {
@@ -182,6 +212,7 @@ function trace(args, deps) {
     deps.err(`test-impact.js trace: ${errText(e)}`);
     return 1;
   } finally {
+    for (const [sig, fn] of handlers) deps.signals.removeListener(sig, fn);
     if (traceDir) rmQuiet(deps, traceDir);
   }
 }
@@ -282,7 +313,7 @@ function fetch(args, deps) {
   }
 }
 
-function run({ argv, deps: given = {} }) {
+async function run({ argv, deps: given = {} }) {
   const deps = { ...defaultDeps(), ...given };
   const [cmd, ...args] = argv;
   if (cmd === '--help' || cmd === '-h') {
@@ -298,5 +329,5 @@ function run({ argv, deps: given = {} }) {
 module.exports = { run };
 
 if (require.main === module) {
-  process.exitCode = run({ argv: process.argv.slice(2) });
+  run({ argv: process.argv.slice(2) }).then((code) => { process.exitCode = code; });
 }

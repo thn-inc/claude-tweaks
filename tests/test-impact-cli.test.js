@@ -10,7 +10,8 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { EventEmitter } = require('events');
+const { spawn: spawnProcess, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const CLI = path.join(ROOT, 'tools', 'test-impact.js');
@@ -27,6 +28,16 @@ function withTempDir(fn) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct impact-cli-')));
   try {
     return fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// The same for a test that awaits `run`: the dir outlives the awaited work.
+async function withTempDirAsync(fn) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct impact-cli-')));
+  try {
+    return await fn(dir);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -134,17 +145,34 @@ function makeDeps(over) {
   return { deps, out, errs };
 }
 
+// A fake child process (an EventEmitter with kill()): runs `body()` at spawn time (it may write trace
+// files), then emits 'exit' with `status`/`signal` on a later tick — or 'error' when `error` is set —
+// unless `hold` is set, in which case it exits only when killed (kill(sig) → 'exit'(null, sig)).
+// `kills` records every kill() signal.
+function fakeChild({ status = 0, signal = null, body = () => {}, hold = false, error = null } = {}) {
+  const child = new EventEmitter();
+  child.kills = [];
+  child.kill = (sig) => {
+    child.kills.push(sig);
+    if (hold) setImmediate(() => child.emit('exit', null, sig));
+    return true;
+  };
+  body();
+  if (!hold) setImmediate(() => (error ? child.emit('error', error) : child.emit('exit', status, signal)));
+  return child;
+}
+
 const mapText = (commit, exitCode = 0) => `${JSON.stringify(encodeImpactMap({
   commit, tracedAt: '2026-10-24T00:00:00.000Z', exitCode, node: 'v22.0.0', tests: { 'tests/a.test.js': { f: ['lib/x.js'] } },
 }))}\n`;
 
 // ---- trace ----
 
-test('trace refuses a dirty tree (exit 2) and runs nothing', () => {
-  withTempDir((dir) => {
+test('trace refuses a dirty tree (exit 2) and runs nothing', async () => {
+  await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir, status: ' M lib/x.js\n' });
     const { deps, errs } = makeDeps({ git, cwd: dir });
-    assert.strictEqual(run({ argv: ['trace'], deps }), 2);
+    assert.strictEqual(await run({ argv: ['trace'], deps }), 2);
     assert.match(errs.join('\n'), /dirty/);
     const statusCall = git.calls.find((c) => c.args.includes('status'));
     assert.ok(statusCall.args.includes('--untracked-files=no'), 'untracked files never count as dirty');
@@ -152,19 +180,23 @@ test('trace refuses a dirty tree (exit 2) and runs nothing', () => {
   });
 });
 
-test('trace runs the suite under the tracer env and writes the map, recording a failing suite', () => {
-  withTempDir((dir) => {
+test('trace runs the suite under the tracer env and writes the map, recording a failing suite', async () => {
+  await withTempDirAsync(async (dir) => {
     fs.mkdirSync(path.join(dir, '.git'));
     const git = fakeGit({ root: dir, status: ' M lib/x.js\n' });
     let seen = null;
     const spawn = (cmd, args, opts) => {
       seen = { cmd, args, opts };
-      fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.trace'), traceText([['T', 'tests/a.test.js'], ['f', 'lib/x.js']]));
-      return { status: 1, signal: null };
+      return fakeChild({
+        status: 1,
+        body: () => fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.trace'), traceText([['T', 'tests/a.test.js'], ['f', 'lib/x.js']])),
+      });
     };
     const env = { NODE_OPTIONS: '--max-old-space-size=4096', CT_TRACE_TEST: 'stale.test.js', KEEP: '1' };
-    const { deps, out } = makeDeps({ git, spawn, env, cwd: dir });
-    assert.strictEqual(run({ argv: ['trace', '--allow-dirty'], deps }), 0);
+    const signals = new EventEmitter();
+    const { deps, out } = makeDeps({ git, spawn, signals, env, cwd: dir });
+    assert.strictEqual(await run({ argv: ['trace', '--allow-dirty'], deps }), 0);
+    assert.strictEqual(signals.listenerCount('SIGINT') + signals.listenerCount('SIGTERM'), 0, 'a finished run leaves no signal handler');
     const req = `--require "${path.join(dir, 'tools', 'test-impact', 'tracer.js')}"`;
     assert.strictEqual(seen.cmd, process.execPath);
     assert.deepStrictEqual(seen.args, [path.join(dir, 'tools', 'run-tests.js')]);
@@ -185,77 +217,158 @@ test('trace runs the suite under the tracer env and writes the map, recording a 
   });
 });
 
-test('trace exits 1 when the run left no parseable trace file', () => {
-  withTempDir((dir) => {
+test('trace exits 1 when the run left no parseable trace file', async () => {
+  await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir });
-    const spawn = (cmd, args, opts) => {
-      fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.trace'), traceText([['f', 'lib/x.js']]));
-      return { status: 0, signal: null };
-    };
+    const spawn = (cmd, args, opts) => fakeChild({
+      body: () => fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.trace'), traceText([['f', 'lib/x.js']])),
+    });
     const out = path.join(dir, 'map.json');
-    const { deps, errs } = makeDeps({ git, spawn, cwd: dir });
-    assert.strictEqual(run({ argv: ['trace', '--out', out], deps }), 1);
+    const { deps, errs } = makeDeps({ git, spawn, signals: new EventEmitter(), cwd: dir });
+    assert.strictEqual(await run({ argv: ['trace', '--out', out], deps }), 1);
     assert.match(errs.join('\n'), /no parseable trace/);
     assert.strictEqual(fs.existsSync(out), false);
   });
 });
 
-test('trace refuses the map and exits 1 when a traced process lost a read, naming its test', () => {
-  withTempDir((dir) => {
+test('trace refuses the map and exits 1 when a traced process lost a read, naming its test', async () => {
+  await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir });
-    const spawn = (cmd, args, opts) => {
-      fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.trace'), traceText([['T', 'tests/a.test.js'], ['f', 'lib/x.js']]));
-      fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.lost'), traceText([['T', 'tests/a.test.js']]));
-      return { status: 0, signal: null };
-    };
+    const spawn = (cmd, args, opts) => fakeChild({
+      body: () => {
+        fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.trace'), traceText([['T', 'tests/a.test.js'], ['f', 'lib/x.js']]));
+        fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.lost'), traceText([['T', 'tests/a.test.js']]));
+      },
+    });
     const out = path.join(dir, 'map.json');
-    const { deps, out: lines, errs } = makeDeps({ git, spawn, cwd: dir });
-    assert.strictEqual(run({ argv: ['trace', '--out', out], deps }), 1);
+    const { deps, out: lines, errs } = makeDeps({ git, spawn, signals: new EventEmitter(), cwd: dir });
+    assert.strictEqual(await run({ argv: ['trace', '--out', out], deps }), 1);
     assert.strictEqual(fs.existsSync(out), false);
     assert.deepStrictEqual(errs, ['test-impact.js trace: 1 traced process(es) could not record a read (tests: tests/a.test.js) — no map written']);
     assert.deepStrictEqual(lines, []);
   });
 });
 
-test('trace names every test that lost a read, sorted and unique, past an unparseable marker, and writes no map', () => {
-  withTempDir((dir) => {
+test('trace names every test that lost a read, sorted and unique, past an unparseable marker, and writes no map', async () => {
+  await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir });
-    const spawn = (cmd, args, opts) => {
-      const td = opts.env.CT_TRACE_DIR;
-      fs.writeFileSync(path.join(td, '1-1-a.lost'), traceText([['T', 'tests/z.test.js']]));
-      fs.writeFileSync(path.join(td, '2-1-b.lost'), traceText([['T', 'tests/a.test.js']]));
-      fs.writeFileSync(path.join(td, '3-1-c.lost'), '["T"');
-      fs.writeFileSync(path.join(td, '4-1-d.lost'), traceText([['T', 'tests/a.test.js']]));
-      return { status: 0, signal: null };
-    };
+    const spawn = (cmd, args, opts) => fakeChild({
+      body: () => {
+        const td = opts.env.CT_TRACE_DIR;
+        fs.writeFileSync(path.join(td, '1-1-a.lost'), traceText([['T', 'tests/z.test.js']]));
+        fs.writeFileSync(path.join(td, '2-1-b.lost'), traceText([['T', 'tests/a.test.js']]));
+        fs.writeFileSync(path.join(td, '3-1-c.lost'), '["T"');
+        fs.writeFileSync(path.join(td, '4-1-d.lost'), traceText([['T', 'tests/a.test.js']]));
+      },
+    });
     const out = path.join(dir, 'map.json');
-    const { deps, errs } = makeDeps({ git, spawn, cwd: dir });
-    assert.strictEqual(run({ argv: ['trace', '--out', out], deps }), 1);
+    const { deps, errs } = makeDeps({ git, spawn, signals: new EventEmitter(), cwd: dir });
+    assert.strictEqual(await run({ argv: ['trace', '--out', out], deps }), 1);
     assert.strictEqual(fs.existsSync(out), false);
     assert.deepStrictEqual(errs, ['test-impact.js trace: 4 traced process(es) could not record a read (tests: tests/a.test.js, tests/z.test.js) — no map written']);
   });
 });
 
-test('trace says "tests: unknown" when every lost marker header is unparseable', () => {
-  withTempDir((dir) => {
+test('trace says "tests: unknown" when every lost marker header is unparseable', async () => {
+  await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir });
-    const spawn = (cmd, args, opts) => {
-      fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.lost'), '["T"');
-      return { status: 0, signal: null };
-    };
-    const { deps, errs } = makeDeps({ git, spawn, cwd: dir });
-    assert.strictEqual(run({ argv: ['trace', '--out', path.join(dir, 'map.json')], deps }), 1);
+    const spawn = (cmd, args, opts) => fakeChild({
+      body: () => fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.lost'), '["T"'),
+    });
+    const { deps, errs } = makeDeps({ git, spawn, signals: new EventEmitter(), cwd: dir });
+    assert.strictEqual(await run({ argv: ['trace', '--out', path.join(dir, 'map.json')], deps }), 1);
     assert.deepStrictEqual(errs, ['test-impact.js trace: 1 traced process(es) could not record a read (tests: unknown) — no map written']);
   });
 });
 
-test('trace and fetch reject unknown arguments with exit 2', () => {
+test('trace and fetch reject unknown arguments with exit 2', async () => {
   const { deps } = makeDeps({ git: () => { throw new Error('git must not be called'); }, cwd: os.tmpdir() });
-  assert.strictEqual(run({ argv: ['trace', '--bogus'], deps }), 2);
-  assert.strictEqual(run({ argv: ['fetch', '--repo'], deps }), 2);
-  assert.strictEqual(run({ argv: ['fetch', '--repo', '-x'], deps }), 2);
-  assert.strictEqual(run({ argv: ['nope'], deps }), 2);
-  assert.strictEqual(run({ argv: [], deps }), 2);
+  assert.strictEqual(await run({ argv: ['trace', '--bogus'], deps }), 2);
+  assert.strictEqual(await run({ argv: ['fetch', '--repo'], deps }), 2);
+  assert.strictEqual(await run({ argv: ['fetch', '--repo', '-x'], deps }), 2);
+  assert.strictEqual(await run({ argv: ['nope'], deps }), 2);
+  assert.strictEqual(await run({ argv: [], deps }), 2);
+});
+
+// ---- trace: interrupts and spawn errors ----
+
+// A git root with a held fake suite that has written one trace file; `fire` is called once the child exists.
+// Returns what the interrupt tests assert on.
+async function interruptedTrace(dir, fire) {
+  const out = path.join(dir, 'map.json');
+  fs.writeFileSync(out, 'previous map\n');
+  const signals = new EventEmitter();
+  const seen = { child: null, traceDir: null };
+  const spawn = (cmd, args, opts) => {
+    seen.traceDir = opts.env.CT_TRACE_DIR;
+    seen.child = fakeChild({
+      hold: true,
+      body: () => fs.writeFileSync(path.join(seen.traceDir, '1-1-a.trace'), traceText([['T', 'tests/a.test.js'], ['f', 'lib/x.js']])),
+    });
+    setImmediate(() => fire(signals, seen.child));
+    return seen.child;
+  };
+  const { deps, errs } = makeDeps({ git: fakeGit({ root: dir }), spawn, signals, cwd: dir });
+  const code = await run({ argv: ['trace', '--out', out], deps });
+  return { code, signals, errs, out, ...seen };
+}
+
+test('AC2.1: SIGINT during the suite forwards to the suite, removes the trace dir and writes no map', async () => {
+  await withTempDirAsync(async (dir) => {
+    const r = await interruptedTrace(dir, (signals) => signals.emit('SIGINT', 'SIGINT'));
+    assert.strictEqual(r.code, 130);
+    assert.deepStrictEqual(r.child.kills, ['SIGINT']);
+    assert.strictEqual(fs.existsSync(r.traceDir), false);
+    assert.strictEqual(fs.readFileSync(r.out, 'utf8'), 'previous map\n', 'an interrupt never replaces the map');
+    assert.deepStrictEqual(r.errs, ['test-impact.js trace: interrupted by SIGINT — no map written']);
+    assert.strictEqual(r.signals.listenerCount('SIGINT') + r.signals.listenerCount('SIGTERM'), 0, 'handlers are removed');
+  });
+});
+
+test('AC2.1: SIGTERM during the suite forwards SIGTERM, exits 143, removes the trace dir and writes no map', async () => {
+  await withTempDirAsync(async (dir) => {
+    const r = await interruptedTrace(dir, (signals) => signals.emit('SIGTERM', 'SIGTERM'));
+    assert.strictEqual(r.code, 143);
+    assert.deepStrictEqual(r.child.kills, ['SIGTERM']);
+    assert.strictEqual(fs.existsSync(r.traceDir), false);
+    assert.strictEqual(fs.readFileSync(r.out, 'utf8'), 'previous map\n');
+    assert.deepStrictEqual(r.errs, ['test-impact.js trace: interrupted by SIGTERM — no map written']);
+    assert.strictEqual(r.signals.listenerCount('SIGINT') + r.signals.listenerCount('SIGTERM'), 0);
+  });
+});
+
+test('a second signal while the suite still holds escalates to SIGKILL, and a signal after that is ignored', async () => {
+  await withTempDirAsync(async (dir) => {
+    const r = await interruptedTrace(dir, (signals, child) => {
+      child.kill = (sig) => { child.kills.push(sig); }; // a suite that ignores the first signals
+      signals.emit('SIGINT', 'SIGINT');
+      signals.emit('SIGINT', 'SIGINT');
+      signals.emit('SIGTERM', 'SIGTERM');
+      setImmediate(() => child.emit('exit', null, 'SIGKILL'));
+    });
+    assert.strictEqual(r.code, 130, 'the first signal names the exit code');
+    assert.deepStrictEqual(r.child.kills, ['SIGINT', 'SIGKILL']);
+    assert.strictEqual(fs.existsSync(r.traceDir), false);
+    assert.strictEqual(fs.readFileSync(r.out, 'utf8'), 'previous map\n');
+  });
+});
+
+test('a spawn error reports that the suite did not start, writes no map and removes the trace dir', async () => {
+  await withTempDirAsync(async (dir) => {
+    const out = path.join(dir, 'map.json');
+    let traceDir = null;
+    const spawn = (cmd, args, opts) => {
+      traceDir = opts.env.CT_TRACE_DIR;
+      return fakeChild({ error: new Error('spawn ENOENT') });
+    };
+    const signals = new EventEmitter();
+    const { deps, errs } = makeDeps({ git: fakeGit({ root: dir }), spawn, signals, cwd: dir });
+    assert.strictEqual(await run({ argv: ['trace', '--out', out], deps }), 1);
+    assert.match(errs.join('\n'), /the suite did not start: spawn ENOENT/);
+    assert.strictEqual(fs.existsSync(out), false);
+    assert.strictEqual(fs.existsSync(traceDir), false);
+    assert.strictEqual(signals.listenerCount('SIGINT') + signals.listenerCount('SIGTERM'), 0);
+  });
 });
 
 // ---- fetch ----
@@ -278,13 +391,13 @@ function fakeGh({ runs, download = {} }) {
   return gh;
 }
 
-test('fetch downloads the newest successful main map that is an ancestor of HEAD, passing --repo through', () => {
-  withTempDir((dir) => {
+test('fetch downloads the newest successful main map that is an ancestor of HEAD, passing --repo through', async () => {
+  await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir, ancestors: [SHA_A] });
     const gh = fakeGh({ runs: [{ databaseId: 7, headSha: SHA_B }, { databaseId: 6, headSha: SHA_A }], download: { 6: mapText(SHA_A) } });
     const out = path.join(dir, 'map.json');
     const { deps, out: lines } = makeDeps({ git, gh, cwd: dir });
-    assert.strictEqual(run({ argv: ['fetch', '--repo', 'o/r', '--out', out], deps }), 0);
+    assert.strictEqual(await run({ argv: ['fetch', '--repo', 'o/r', '--out', out], deps }), 0);
     assert.strictEqual(fs.readFileSync(out, 'utf8'), mapText(SHA_A));
     assert.deepStrictEqual(gh.calls[0], ['run', 'list', '--workflow', 'test-impact-map.yml', '--branch', 'main', '--status', 'success',
       '--limit', '30', '--json', 'databaseId,headSha,event', '--repo', 'o/r']);
@@ -299,8 +412,8 @@ test('fetch downloads the newest successful main map that is an ancestor of HEAD
   });
 });
 
-test('fetch skips a pull_request run even when its head branch is named main and it is an ancestor of HEAD', () => {
-  withTempDir((dir) => {
+test('fetch skips a pull_request run even when its head branch is named main and it is an ancestor of HEAD', async () => {
+  await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir, ancestors: [SHA_A, SHA_B] });
     const gh = fakeGh({
       runs: [{ databaseId: 7, headSha: SHA_B, event: 'pull_request' }, { databaseId: 6, headSha: SHA_A, event: 'workflow_dispatch' }],
@@ -308,45 +421,45 @@ test('fetch skips a pull_request run even when its head branch is named main and
     });
     const out = path.join(dir, 'map.json');
     const { deps } = makeDeps({ git, gh, cwd: dir });
-    assert.strictEqual(run({ argv: ['fetch', '--out', out], deps }), 0);
+    assert.strictEqual(await run({ argv: ['fetch', '--out', out], deps }), 0);
     assert.strictEqual(fs.readFileSync(out, 'utf8'), mapText(SHA_A), 'the dispatch run is chosen over the newer pull_request run');
     assert.strictEqual(gh.calls[1][2], '6');
   });
 });
 
-test('fetch is a no-op when the cached map already has the chosen commit', () => {
-  withTempDir((dir) => {
+test('fetch is a no-op when the cached map already has the chosen commit', async () => {
+  await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir, ancestors: [SHA_A] });
     const gh = fakeGh({ runs: [{ databaseId: 6, headSha: SHA_A }] });
     const out = path.join(dir, 'map.json');
     fs.writeFileSync(out, mapText(SHA_A));
     const { deps } = makeDeps({ git, gh, cwd: dir });
-    assert.strictEqual(run({ argv: ['fetch', '--out', out], deps }), 0);
+    assert.strictEqual(await run({ argv: ['fetch', '--out', out], deps }), 0);
     assert.strictEqual(gh.calls.length, 1, 'no download');
     assert.ok(!gh.calls[0].includes('--repo'));
   });
 });
 
-test('fetch exits 1 on a downloaded map whose commit is not the run headSha, leaving the cache alone', () => {
-  withTempDir((dir) => {
+test('fetch exits 1 on a downloaded map whose commit is not the run headSha, leaving the cache alone', async () => {
+  await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir, ancestors: [SHA_A] });
     const gh = fakeGh({ runs: [{ databaseId: 6, headSha: SHA_A }], download: { 6: mapText(SHA_B) } });
     const out = path.join(dir, 'map.json');
     fs.writeFileSync(out, mapText(SHA_C));
     const { deps, errs } = makeDeps({ git, gh, cwd: dir });
-    assert.strictEqual(run({ argv: ['fetch', '--out', out], deps }), 1);
+    assert.strictEqual(await run({ argv: ['fetch', '--out', out], deps }), 1);
     assert.match(errs.join('\n'), /commit/);
     assert.strictEqual(fs.readFileSync(out, 'utf8'), mapText(SHA_C));
   });
 });
 
-test('fetch exits 1 on a downloaded map from a failing suite', () => {
-  withTempDir((dir) => {
+test('fetch exits 1 on a downloaded map from a failing suite', async () => {
+  await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir, ancestors: [SHA_A] });
     const gh = fakeGh({ runs: [{ databaseId: 6, headSha: SHA_A }], download: { 6: mapText(SHA_A, 1) } });
     const out = path.join(dir, 'map.json');
     const { deps } = makeDeps({ git, gh, cwd: dir });
-    assert.strictEqual(run({ argv: ['fetch', '--out', out], deps }), 1);
+    assert.strictEqual(await run({ argv: ['fetch', '--out', out], deps }), 1);
     assert.strictEqual(fs.existsSync(out), false);
   });
 });
@@ -361,48 +474,48 @@ function ghDownloading(files) {
   };
 }
 
-test('fetch exits 1, leaving the cache alone, when the artifact holds no .json file or two', () => {
-  withTempDir((dir) => {
+test('fetch exits 1, leaving the cache alone, when the artifact holds no .json file or two', async () => {
+  await withTempDirAsync(async (dir) => {
     const out = path.join(dir, 'map.json');
     fs.writeFileSync(out, mapText(SHA_C));
     for (const [files, count] of [[{ 'notes.txt': 'x' }, 0], [{ 'a.json': mapText(SHA_A), 'b.json': mapText(SHA_A) }, 2]]) {
       const git = fakeGit({ root: dir, ancestors: [SHA_A] });
       const { deps, errs } = makeDeps({ git, gh: ghDownloading(files), cwd: dir });
-      assert.strictEqual(run({ argv: ['fetch', '--out', out], deps }), 1);
+      assert.strictEqual(await run({ argv: ['fetch', '--out', out], deps }), 1);
       assert.match(errs.join('\n'), new RegExp(`holds ${count} \\.json file\\(s\\), want exactly 1`));
       assert.strictEqual(fs.readFileSync(out, 'utf8'), mapText(SHA_C));
     }
   });
 });
 
-test('fetch exits 1, leaving the cache alone, on an artifact that does not parse as a map', () => {
-  withTempDir((dir) => {
+test('fetch exits 1, leaving the cache alone, on an artifact that does not parse as a map', async () => {
+  await withTempDirAsync(async (dir) => {
     const out = path.join(dir, 'map.json');
     fs.writeFileSync(out, mapText(SHA_C));
     const git = fakeGit({ root: dir, ancestors: [SHA_A] });
     const { deps, errs } = makeDeps({ git, gh: ghDownloading({ 'claude-tweaks-test-impact.json': '{"commit":' }), cwd: dir });
-    assert.strictEqual(run({ argv: ['fetch', '--out', out], deps }), 1);
+    assert.strictEqual(await run({ argv: ['fetch', '--out', out], deps }), 1);
     assert.match(errs.join('\n'), /map is invalid/);
     assert.strictEqual(fs.readFileSync(out, 'utf8'), mapText(SHA_C));
   });
 });
 
-test('fetch exits 1 when no successful main map is an ancestor of HEAD', () => {
-  withTempDir((dir) => {
+test('fetch exits 1 when no successful main map is an ancestor of HEAD', async () => {
+  await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir, ancestors: [] });
     const gh = fakeGh({ runs: [{ databaseId: 7, headSha: SHA_B }] });
     const { deps, errs } = makeDeps({ git, gh, cwd: dir });
-    assert.strictEqual(run({ argv: ['fetch', '--out', path.join(dir, 'map.json')], deps }), 1);
+    assert.strictEqual(await run({ argv: ['fetch', '--out', path.join(dir, 'map.json')], deps }), 1);
     assert.match(errs.join('\n'), /ancestor of HEAD/);
   });
 });
 
-test('fetch exits 1 when gh fails', () => {
-  withTempDir((dir) => {
+test('fetch exits 1 when gh fails', async () => {
+  await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir, ancestors: [SHA_A] });
     const gh = () => { throw new Error('gh: not logged in'); };
     const { deps, errs } = makeDeps({ git, gh, cwd: dir });
-    assert.strictEqual(run({ argv: ['fetch', '--out', path.join(dir, 'map.json')], deps }), 1);
+    assert.strictEqual(await run({ argv: ['fetch', '--out', path.join(dir, 'map.json')], deps }), 1);
     assert.match(errs.join('\n'), /not logged in/);
   });
 });
@@ -411,12 +524,13 @@ test('fetch exits 1 when gh fails', () => {
 
 // The space-path fixture root under `tmp`: tools/run-tests.js and the tracer, lib/x.js and lib/y.js, and two
 // tests (x loads lib/x.js, y reads lib/y.js), committed to a git repo. Returns the root, the env its runs take
-// and HEAD.
-function traceFixture(tmp) {
+// and HEAD. `runTests`, when given, replaces the committed tools/run-tests.js with that source.
+function traceFixture(tmp, runTests) {
   const root = path.join(tmp, 'fixture root');
   for (const dir of ['tests', 'lib', path.join('tools', 'test-impact')]) fs.mkdirSync(path.join(root, dir), { recursive: true });
   for (const dir of ['slots', 'tmp']) fs.mkdirSync(path.join(tmp, dir));
   fs.copyFileSync(path.join(ROOT, 'tools', 'run-tests.js'), path.join(root, 'tools', 'run-tests.js'));
+  if (runTests) fs.writeFileSync(path.join(root, 'tools', 'run-tests.js'), runTests);
   fs.copyFileSync(path.join(ROOT, 'tools', 'test-impact', 'tracer.js'), path.join(root, 'tools', 'test-impact', 'tracer.js'));
   const fixture = path.join(ROOT, 'tests', 'fixtures', 'test-impact');
   for (const f of ['x.js', 'y.js']) fs.copyFileSync(path.join(fixture, 'lib', f), path.join(root, 'lib', f));
@@ -481,6 +595,36 @@ test('a trace whose write fails exits 1, writes no map and names the test that l
     assert.strictEqual(r.status, 1, r.stdout + r.stderr);
     assert.strictEqual(fs.existsSync(out), false, 'no map is written');
     assert.match(r.stderr, /could not record a read \(tests: tests\/y\.test\.js\) — no map written/);
+  });
+});
+
+// A SIGINT sent to the CLI alone while its suite runs (#4131): the CLI forwards it, removes the trace dir
+// the suite was writing into, and writes no map. The stand-in suite signals readiness, then idles.
+test('AC2.1: SIGINT to a running real trace leaves no ct-test-impact-trace-* dir', { skip: process.platform === 'win32' && 'signals and tracing are POSIX-only' }, async () => {
+  await withTempDirAsync(async (tmp) => {
+    const idle = "require('fs').writeFileSync(process.env.CT_E2E_READY, ''); setTimeout(() => {}, 60000);\n"; // bounded, so a failed run strands no suite
+    const { root, env } = traceFixture(tmp, idle);
+    const out = path.join(tmp, 'map.json');
+    const ready = path.join(tmp, 'ready');
+    const leaks = () => fs.readdirSync(path.join(tmp, 'tmp')).filter((n) => n.startsWith('ct-test-impact-trace-'));
+    const cli = spawnProcess(process.execPath, [CLI, 'trace', '--out', out], { cwd: root, env: { ...env, CT_E2E_READY: ready }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    cli.stderr.on('data', (d) => { stderr += d; });
+    const exited = new Promise((resolve) => cli.on('exit', (code, signal) => resolve({ code, signal })));
+    try {
+      const deadline = Date.now() + 30000;
+      while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+      assert.ok(fs.existsSync(ready), `the suite never signalled readiness: ${stderr}`);
+      assert.strictEqual(leaks().length, 1, 'the probe sees the live trace dir, so it can see a leak');
+      cli.kill('SIGINT');
+      const { code, signal } = await exited;
+      assert.deepStrictEqual({ code, signal }, { code: 130, signal: null }, stderr);
+      assert.deepStrictEqual(leaks(), []);
+      assert.strictEqual(fs.existsSync(out), false);
+      assert.match(stderr, /interrupted by SIGINT — no map written/);
+    } finally {
+      if (cli.exitCode === null && cli.signalCode === null) cli.kill('SIGKILL');
+    }
   });
 });
 
