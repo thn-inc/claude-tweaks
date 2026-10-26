@@ -31,7 +31,7 @@ files:
   - `unlinked #{n} from PR #{pr} before merge` (AUTO)
   - `#{n} still linked to PR #{pr} after neutralizing` (SKIP, degraded)
 - **Should feel:** One log line, no prompt.
-- **Should understand:** The check refuses to edit a PR whose run marker does not match the run (exit 4). Exits 3 to 5 warn and the merge proceeds; the post-merge pass is the safety net.
+- **Should understand:** The check refuses to edit a PR whose run marker does not match the run (exit 4). Exits 3 to 5 warn and the merge proceeds; the post-merge pass is the safety net. `gh-absent`, exit 4 and exit 5 log their own `SKIP` under `## /wrap-up`; exit 3 is logged by hand.
 - **Red flags:** An `unlinked #{n}` entry while a live `gh pr view {pr} --json closingIssuesReferences` still lists `{n}`; any edit to a PR that belongs to a different run.
 
 ### 3. The squash merge composes `Refs #{n}` — `compose-subject.js --keep-open {n}`

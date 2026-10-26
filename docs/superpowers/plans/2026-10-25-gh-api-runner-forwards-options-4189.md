@@ -2,7 +2,7 @@
 
 **Goal:** Warn in `.claude/skills/gh-api-module-pattern/SKILL.md`'s injectable-runner section that a real-subprocess test runner can rebuild a narrowed options object and drop the caller's options, citing #2852.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-25T112311-record-4189/work/4189-spec.md` (materialized from GitHub issue #4189)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-25T112311-record-4189/work/4189-spec.md` (materialized from GitHub issue #4189)
 
 ---
 

@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
+const { shellQuote } = require('./helpers/shell-quote');
 
 const bashInput = (command, cwd) => ({ tool_name: 'Bash', tool_input: { command }, cwd });
 const editInput = (filePath) => ({ tool_name: 'Edit', tool_input: { file_path: filePath } });
@@ -41,7 +42,7 @@ test('AC: mkdir <worktree>/.claude-tweaks/pipelines/x is denied', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', 'x');
-  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
@@ -49,7 +50,7 @@ test('AC: mkdir <worktree>/.claude-tweaks/pipelines/x is denied', () => {
 test('AC: the same mkdir under the main checkout is allowed', () => {
   const main = gitRepo();
   const target = path.join(main, '.claude-tweaks', 'pipelines', 'x');
-  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, main), runDir: null, runState: null, cwd: main });
+  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, main), runDir: null, runState: null, cwd: main });
   assertAllowed(out);
 });
 
@@ -85,7 +86,7 @@ test('mkdir of a NEW subdirectory inside an already-existing (pre-anchoring) run
   const existingRunDir = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-4');
   fs.mkdirSync(existingRunDir, { recursive: true });
   const target = path.join(existingRunDir, 'staged');
-  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -101,7 +102,7 @@ test('a cp write shape creating a new pipelines run dir file inside a linked wor
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-6', 'decisions.md');
-  const out = pre.run({ input: bashInput(`cp source.md "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ input: bashInput(`cp source.md ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
 
@@ -115,7 +116,7 @@ test('#2282: a denied mkdir logs a wd-guard-refusal event (reason: shadow-run-di
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', 'x');
-  const input = { ...bashInput(`mkdir -p "${target}"`, wt), session_id: 'sess-2282-shadow' };
+  const input = { ...bashInput(`mkdir -p ${shellQuote(target)}`, wt), session_id: 'sess-2282-shadow' };
   const out = pre.run({ input, runDir: null, runState: null, cwd: wt });
   assertDenied(out);
   const pipelinesDir = path.join(main, '.claude-tweaks', 'pipelines');
@@ -154,7 +155,7 @@ test('#959 AC: mkdir -p of the work/ directory itself, run dir absent, is allowe
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-959', 'work');
-  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -200,7 +201,7 @@ test('#1778 AC: mkdir -p of {id}-sweep-standalone/staged, run dir absent, is all
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'staged');
-  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -208,7 +209,7 @@ test('#1778 AC: mkdir -p of {id}-tidy-standalone/staged, run dir absent, is allo
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-tidy-standalone', 'staged');
-  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -224,7 +225,7 @@ test('#1778 AC: a cp of report.md into {id}-sweep-standalone, run dir absent, is
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'report.md');
-  const out = pre.run({ input: bashInput(`cp source.md "${target}"`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ input: bashInput(`cp source.md ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -292,12 +293,12 @@ function shadowFixture3769(extraEntries = {}) {
 
 test('#3769: a NEW run directory is still denied when every probe resolves through an injected case-insensitive fsImpl', { skip: POSIX_ONLY }, () => {
   const { wt, fsImpl, target } = shadowFixture3769();
-  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt }, { fsImpl });
+  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt }, { fsImpl });
   assertDenied(out);
 });
 
 test('#3769: a run directory that exists only on the injected fsImpl counts as existing (allowed)', { skip: POSIX_ONLY }, () => {
   const { wt, fsImpl, target } = shadowFixture3769({ '2026-01-01T000000-spec-5': 'dir' });
-  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt }, { fsImpl });
+  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt }, { fsImpl });
   assertAllowed(out);
 });

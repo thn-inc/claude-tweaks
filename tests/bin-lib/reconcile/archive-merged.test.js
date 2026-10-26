@@ -16,8 +16,11 @@ const {
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin, resolveIdenticalWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, unclosedRecords, runRecordSet, inFlightRecords,
-  listStagedItems, hasStagedItems, consoleReplacedByAutoMerge,
+  listStagedItems, hasStagedItems, consoleReplacedByAutoMerge, consoleResidue, consoleResidueHint,
+  unfiledCantTellFindings, CANT_TELL_UNFILED_HINT,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
+const { unfiledCantTell } = require('../../../plugin/bin/lib/console/finding-outcomes');
+const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure, cachePath, beginCacheBatch, commitCacheBatch } = require('../../../plugin/bin/lib/reconcile/cache');
 const { structurallyStuckBody, parseStuckPaths } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
@@ -3076,6 +3079,36 @@ test('archiveMerged: same shape as above, but a resolved console holds a keep-st
   assert.equal(fs.existsSync(runDir), true);
 });
 
+test('archiveMerged: same shape as above, but a resolved PR console holds a filing-failed item (no staged file) — stays in place with console-residue and names it (#4172)', { skip: PATH_STUB_SKIP }, () => {
+  const root = fs.realpathSync(makeRepo());
+  const runId = '2026-08-01T090000-record-1962-nobranch-closedpr-prfailed';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-record-1962c'),
+    pr: { number: 1964, branch: 'worktree-record-1962-gone-c' },
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    prNumber: 1964, commentIds: ['IC_1'], executedAt: '2026-08-01T00:00:00.000Z', resolved: false,
+    items: [{ id: '1', kind: 'staged', summary: '1', outcome: 'executed' }, { id: 'f1', kind: 'staged', summary: 'f1', outcome: 'filing-failed' }],
+  }));
+
+  const wrapper = installGhWrapper({ number: 1964, state: 'CLOSED', mergedAt: null, updatedAt: '2026-08-01T00:00:00Z', mergeCommit: null });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir));
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-residue');
+  assert.match(skip.hint, /unresolved: f1 \(filing-failed\) — review them, then run console-residue\.js --ack --run /);
+  assert.equal(fs.existsSync(runDir), true);
+});
+
 test('archiveMerged: same shape as above, but the PR-by-number probe reports OPEN — falls back to the ordinary no-branch skip', { skip: PATH_STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   const runId = '2026-08-01T090000-record-1962-nobranch-openpr';
@@ -3361,7 +3394,7 @@ test('AC3.1: archiveMerged: a MERGED PR reached via the by-number fallback with 
 // `issueStates` answers `gh issue view` (installGhWrapper); `claudeMd` writes the
 // main checkout's CLAUDE.md.
 function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specStaged = {}, {
-  origin = false, closes = null, manifestSpecs = null, staleMs = null, issueStates = null, claudeMd = null, findings = null,
+  origin = false, closes = null, manifestSpecs = null, staleMs = null, issueStates = null, claudeMd = null, findings = null, decisions = null,
 } = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo(branch); // branch ref stays — fallbackBranch recovers it
   if (origin) git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
@@ -3392,6 +3425,8 @@ function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specSta
   }
   // #3945: an optional review-findings.json body (the tiebreak denominator).
   if (findings !== null) fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify(findings));
+  // #4171: an optional decisions.md body (the auto-merge line and tiebreak verdicts).
+  if (decisions !== null) fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);
   const pr = {
     number: 3249100, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
     mergeCommit: { oid: featureSha },
@@ -3537,6 +3572,42 @@ test('AC5.1 fail-closed: a spec-N/staged that exists as a file (ENOTDIR) counts 
   assert.equal(fs.existsSync(runDir), true);
 });
 
+// #4172: the branch-joined path (archiveMergedRun) reaches console-residue through
+// its own skip site, which must carry the item-naming hint like the by-number one.
+test('archiveMerged: ordinary branch-resolvable path — a PR console holding a filing-failed item skips console-residue and names it (#4172)', { skip: PATH_STUB_SKIP }, () => {
+  const branch = 'feat-4172-ordinary-prconsole';
+  const runId = '2026-10-25T090000-record-4172-ordinary-prconsole';
+  const { root, featureSha } = mergedFeatureBranchRepo(branch);
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', `gone-${runId}`),
+    pr: { number: 4172001, branch },
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    prNumber: 4172001, commentIds: ['IC_1'], executedAt: '2026-10-25T00:00:00.000Z', resolved: false,
+    items: [{ id: '1', kind: 'staged', summary: '1', outcome: 'executed' }, { id: 'f1', kind: 'staged', summary: 'f1', outcome: 'filing-failed' }],
+  }));
+  const wrapper = installGhWrapper([{
+    number: 4172001, state: 'MERGED', mergedAt: '2026-10-25T00:00:00Z', updatedAt: '2026-10-25T00:00:00Z',
+    mergeCommit: { oid: featureSha },
+  }]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir), 'a PR console holding a failed item must never be archived');
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-residue');
+  assert.match(skip.hint, /unresolved: f1 \(filing-failed\) — review them, then run console-residue\.js --ack --run /);
+  assert.equal(fs.existsSync(runDir), true);
+});
+
 test('isAbandonedInterrupted: false for a non-interrupted status', () => {
   assert.equal(isAbandonedInterrupted('/x', { status: 'active' }, 'sess-1', Date.now()), false);
 });
@@ -3630,6 +3701,44 @@ test('readConsoleState: no console anywhere still reads none', () => {
   assert.strictEqual(readConsoleState(fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-none-'))), 'none');
 });
 
+// #4172: a PR console's failed item is residue; executed/dropped items are not, and
+// consoleResidue names each open item as "{id} ({resolution})".
+function prConsoleRunDir(items) {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-pr-'));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    prNumber: 42, commentIds: ['IC_1'], executedAt: '2026-10-25T10:00:00.000Z', resolved: false,
+    items: items.map(([id, outcome]) => ({ id, kind: 'staged', summary: id, outcome })),
+  }));
+  return runDir;
+}
+test('consoleResidue: a PR console with a filing-failed item counts and names it; readConsoleState reads residue (#4172)', () => {
+  const runDir = prConsoleRunDir([['1', 'executed'], ['f1', 'filing-failed']]);
+  assert.deepStrictEqual(consoleResidue(runDir), { items: 1, unreadable: [], names: ['f1 (filing-failed)'] });
+  assert.strictEqual(readConsoleState(runDir), 'residue');
+});
+test('consoleResidue: a PR console with only executed/dropped items is not residue and reads resolved (#4172)', () => {
+  const runDir = prConsoleRunDir([['1', 'executed'], ['d1', 'dropped']]);
+  assert.deepStrictEqual(consoleResidue(runDir), { items: 0, unreadable: [], names: [] });
+  assert.strictEqual(readConsoleState(runDir), 'resolved');
+});
+
+test('consoleResidueHint: names the open items and the unreadable console.json when both block (#4172)', () => {
+  const runDir = prConsoleRunDir([['1', 'executed'], ['f1', 'filing-failed']]);
+  const badPath = path.join(runDir, 'spec-12', 'console.json');
+  fs.mkdirSync(path.dirname(badPath), { recursive: true });
+  fs.writeFileSync(badPath, '{not json');
+  const hint = consoleResidueHint(runDir);
+  assert.match(hint, /unresolved: f1 \(filing-failed\) — review them, then run console-residue\.js --ack --run /);
+  assert.ok(hint.includes(`repair or remove ${badPath}`), hint);
+});
+test('consoleResidueHint: names only the unreadable console.json when no item is open (#4172)', () => {
+  const runDir = prConsoleRunDir([['1', 'executed']]);
+  const badPath = path.join(runDir, 'spec-12', 'console.json');
+  fs.mkdirSync(path.dirname(badPath), { recursive: true });
+  fs.writeFileSync(badPath, '{not json');
+  assert.strictEqual(consoleResidueHint(runDir), `repair or remove ${badPath}`);
+});
+
 test('decideArchiveCore: invalid-arguments skips with reason invalid-arguments (#3416)', () => {
   assert.deepStrictEqual(decideArchiveCore('invalid-arguments', 'resolved'), { action: 'skip', reason: 'invalid-arguments' });
 });
@@ -3687,7 +3796,7 @@ test('STRUCTURALLY_STUCK_REASONS includes merged-partial and no-repo-slug but no
 // the PR's closingIssuesReferences name.
 // `issueStates` answers `gh issue view`; `consoleResolved` writes a resolved
 // console.json.
-function fixtureByNumberMergedRecordRun({ runId, closes, issueStates = null, consoleResolved = false, findings = null }) {
+function fixtureByNumberMergedRecordRun({ runId, closes, issueStates = null, consoleResolved = false, findings = null, decisions = null }) {
   const branch = 'feat-3503-bynumber';
   const { root, featureSha } = mergedFeatureBranchRepo(branch);
   git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
@@ -3703,15 +3812,18 @@ function fixtureByNumberMergedRecordRun({ runId, closes, issueStates = null, con
   if (consoleResolved) fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
   // #3945: an optional review-findings.json body (the tiebreak denominator).
   if (findings !== null) fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify(findings));
-  const wrapper = installGhWrapper({
+  // #4171: an optional decisions.md body (the auto-merge line and tiebreak verdicts).
+  if (decisions !== null) fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);
+  const pr = {
     number: 3503001, state: 'MERGED', mergedAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z',
     mergeCommit: { oid: featureSha }, closingIssuesReferences: closes.map((n) => ref(n)),
-  }, issueStates);
-  try {
-    return { root, runDir, result: archiveMerged({ cwd: root }) };
-  } finally {
-    wrapper.restore();
-  }
+  };
+  // `rerun` drives a second archiveMerged pass over the same fixture, with the same gh answers.
+  const rerun = () => {
+    const wrapper = installGhWrapper(pr, issueStates);
+    try { return archiveMerged({ cwd: root }); } finally { wrapper.restore(); }
+  };
+  return { root, runDir, result: rerun(), rerun };
 }
 
 // #3503 AC1.1/AC1.2/AC5.1: a multi-spec run (the #3311 incident shape) whose
@@ -5024,6 +5136,161 @@ test('by-number path: a merged-partial settled to archive still refuses a tiebre
   assert.deepStrictEqual(result.skipped.find((s) => s.runDir === runDir), {
     runDir, reason: 'tiebreak-coverage-missing', missing: ['abc123def456'], hint: TIEBREAK_HINT,
   });
+});
+
+// #4171: an auto-merge run with no Review Console holds can't-tell findings nobody filed.
+const AUTO_MERGE_LINE = '- AUTO 09:59:00 — Fast-lane auto-merge: issue #12, assess-agent-autonomy verdict auto-merge. Reversibility: high.';
+const cantTellFinding = { id: '0123456789ab', lens: '3a', path: 'src/a.js', line: 10, claim: 'The guard runs after the read', reporterSeverity: 'medium', kind: 'unconfirmed' };
+const cantTellVerdict = (id) => `- STAGED 10:00:00 — Tiebreak tiebreak:${id}: lens "3a" finding src/a.js:10 console: verdict:cant-tell. Severity: medium. Recommendation: file.`;
+const unfiledDeps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+// review-console.md's created filed line, built by the real producer (log-decision.js's formatEntry).
+const cantTellFiledLine = (fingerprint) => `${formatEntry({
+  status: 'AUTO', now: new Date(2026, 9, 25, 10, 1, 0), step: 'Queue write', reversibility: 'n/a',
+  text: `tiebreak:${cantTellFinding.id} filed as #501 (work-fingerprint ${fingerprint})`,
+})}\n`;
+
+function seedCantTellRun({ autoMerge = true, extraLines = [], consoleJson = null, specDir = null } = {}) {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cant-tell-unfiled-'));
+  const write = (dir, name, body) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, name), body); };
+  const target = specDir ? path.join(runDir, specDir) : runDir;
+  const lines = [...(autoMerge && !specDir ? [AUTO_MERGE_LINE] : []), cantTellVerdict(cantTellFinding.id), ...extraLines];
+  if (specDir) write(runDir, 'decisions.md', autoMerge ? `${AUTO_MERGE_LINE}\n` : '');
+  write(target, 'decisions.md', `${lines.join('\n')}\n`);
+  write(target, 'review-findings.json', JSON.stringify([cantTellFinding]));
+  if (consoleJson) write(runDir, 'console.json', consoleJson);
+  return runDir;
+}
+
+test('AC1.1: decideArchiveCore skips cant-tell-unfiled when coverage names unfiled findings (#4171)', () => {
+  const coverage = { artifactPresent: false, artifactValid: true, missing: [], unfiledCantTell: ['tiebreak:abc'] };
+  assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'none', false, undefined, coverage),
+    { action: 'skip', reason: 'cant-tell-unfiled', unfiled: ['tiebreak:abc'], hint: CANT_TELL_UNFILED_HINT });
+  assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'none', false, undefined, { ...coverage, unfiledCantTell: [] }), { action: 'archive' });
+  // The tiebreak artifact checks keep precedence when an artifact is present.
+  assert.equal(decideArchiveCore(TIEBREAK_MERGED_PR, 'none', false, undefined,
+    { artifactPresent: true, artifactValid: false, missing: [], unfiledCantTell: ['tiebreak:abc'] }).reason, 'tiebreak-artifact-invalid');
+});
+
+test('AC1.1: unfiledCantTellFindings names an auto-merge run\'s unfiled can\'t-tell finding, then clears once filed (#4171)', () => {
+  const runDir = seedCantTellRun();
+  try {
+    assert.deepStrictEqual(unfiledCantTellFindings(runDir), [`tiebreak:${cantTellFinding.id}`]);
+    const [{ fingerprint }] = unfiledCantTell({ runDir, deps: unfiledDeps });
+    fs.appendFileSync(path.join(runDir, 'decisions.md'), cantTellFiledLine(fingerprint));
+    assert.deepStrictEqual(unfiledCantTellFindings(runDir), []);
+  } finally { fs.rmSync(runDir, { recursive: true, force: true }); }
+});
+
+test('a rendered console turns the cant-tell-unfiled guard off (#4171)', () => {
+  const resolved = seedCantTellRun({ consoleJson: '{"resolved":true}' });
+  try { assert.deepStrictEqual(unfiledCantTellFindings(resolved), []); } finally { fs.rmSync(resolved, { recursive: true, force: true }); }
+  const terminal = seedCantTellRun({ extraLines: ['- AUTO 10:02:00 — Review Console: terminal decision. Reversibility: n/a.'] });
+  try { assert.deepStrictEqual(unfiledCantTellFindings(terminal), []); } finally { fs.rmSync(terminal, { recursive: true, force: true }); }
+});
+
+test('a non-auto-merge run is never guarded by cant-tell-unfiled (#4171)', () => {
+  const runDir = seedCantTellRun({ autoMerge: false });
+  try { assert.deepStrictEqual(unfiledCantTellFindings(runDir), []); } finally { fs.rmSync(runDir, { recursive: true, force: true }); }
+});
+
+test('a spec dir\'s unfiled can\'t-tell finding is spec-prefixed (#4171)', () => {
+  const runDir = seedCantTellRun({ specDir: 'spec-7' });
+  try {
+    assert.deepStrictEqual(unfiledCantTellFindings(runDir), [`spec-7/tiebreak:${cantTellFinding.id}`]);
+  } finally { fs.rmSync(runDir, { recursive: true, force: true }); }
+});
+
+test('a spec dir\'s finding clears only on a filed line in that spec dir\'s decisions.md (#4171)', () => {
+  const runDir = seedCantTellRun({ specDir: 'spec-7' });
+  try {
+    const [{ fingerprint }] = unfiledCantTell({ runDir: path.join(runDir, 'spec-7'), deps: unfiledDeps });
+    fs.appendFileSync(path.join(runDir, 'decisions.md'), cantTellFiledLine(fingerprint));
+    assert.deepStrictEqual(unfiledCantTellFindings(runDir), [`spec-7/tiebreak:${cantTellFinding.id}`], 'a top-level filed line does not clear a spec-prefixed item');
+    fs.appendFileSync(path.join(runDir, 'spec-7', 'decisions.md'), cantTellFiledLine(fingerprint));
+    assert.deepStrictEqual(unfiledCantTellFindings(runDir), []);
+  } finally { fs.rmSync(runDir, { recursive: true, force: true }); }
+});
+
+test('an unreadable decisions.md fails the cant-tell-unfiled guard closed, per dir (#4171)', () => {
+  const top = seedCantTellRun();
+  const spec = seedCantTellRun({ specDir: 'spec-7' });
+  try {
+    // decisions.md as a directory: readFileSync throws EISDIR, not ENOENT.
+    fs.rmSync(path.join(top, 'decisions.md'));
+    fs.mkdirSync(path.join(top, 'decisions.md'));
+    // The top-level file reads as "auto-merge" only when unreadable too (fail closed), so the guard is reached.
+    const topResult = unfiledCantTellFindings(top);
+    assert.equal(topResult.length, 1);
+    assert.match(topResult[0], /^\(unreadable: decisions\.md: .*EISDIR/);
+
+    fs.rmSync(path.join(spec, 'spec-7', 'decisions.md'));
+    fs.mkdirSync(path.join(spec, 'spec-7', 'decisions.md'));
+    const specResult = unfiledCantTellFindings(spec);
+    assert.equal(specResult.length, 1);
+    assert.match(specResult[0], /^\(unreadable: spec-7\/decisions\.md: .*EISDIR/);
+  } finally { for (const d of [top, spec]) fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test('cant-tell-unfiled is structurally stuck (#4171)', () => {
+  assert.ok(STRUCTURALLY_STUCK_REASONS.has('cant-tell-unfiled'));
+});
+
+// #4171 end to end: the real archiveMerged sweep over a merged, console-less auto-merge run.
+const CANT_TELL_DECISIONS = `${AUTO_MERGE_LINE}\n${cantTellVerdict(cantTellFinding.id)}\n`;
+
+test('by-number path: archiveMerged skips an unfiled can\'t-tell finding, then archives once it is filed (#4171)', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result, rerun } = fixtureByNumberMergedRecordRun({
+    runId: '2026-10-25T090000-record-4171', closes: [4171], findings: [cantTellFinding], decisions: CANT_TELL_DECISIONS,
+  });
+  assert.ok(!result.archived.includes(runDir), `expected ${runDir} NOT archived, got ${JSON.stringify(result)}`);
+  assert.deepStrictEqual(result.skipped.find((s) => s.runDir === runDir), {
+    runDir, reason: 'cant-tell-unfiled', unfiled: [`tiebreak:${cantTellFinding.id}`], hint: CANT_TELL_UNFILED_HINT,
+  });
+
+  const [{ fingerprint }] = unfiledCantTell({ runDir, deps: unfiledDeps });
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), cantTellFiledLine(fingerprint));
+  const second = rerun();
+  assert.ok(second.archived.includes(runDir), `expected ${runDir} archived once filed, got ${JSON.stringify(second)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+});
+
+test('branch-joined path: archiveMergedRun skips an unfiled can\'t-tell finding with unfiled and hint (#4171)', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-4171-cant-tell', '2026-10-25T090000-record-4171-cant-tell', [], {},
+    { findings: [cantTellFinding], decisions: CANT_TELL_DECISIONS },
+  );
+  assert.equal(fs.existsSync(runDir), true, 'the run dir must stay in place');
+  assert.deepStrictEqual(result.skipped.find((s) => s.runDir === runDir), {
+    runDir, reason: 'cant-tell-unfiled', unfiled: [`tiebreak:${cantTellFinding.id}`], hint: CANT_TELL_UNFILED_HINT,
+  });
+});
+
+// The clean-status sweep's onSkip tracks cant-tell-unfiled, as AC3.1 does for staged-pending (#3668).
+test('the clean-status sweep tracks a cant-tell-unfiled skip toward structurally-stuck escalation (#4171)', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-25T090000-record-4171-clean';
+  const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId, consoleResolved: false });
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), CANT_TELL_DECISIONS);
+  fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify([cantTellFinding]));
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, backdated, backdated);
+
+  const wrapper = installGhWrapper([{
+    number: 99, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', mergeCommit: { oid: featureSha },
+  }]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'cant-tell-unfiled');
+  assert.ok(
+    listResidueFailures(root).some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    'the clean sweep must start the structurally-stuck residue counter for a cant-tell-unfiled skip',
+  );
 });
 
 // #4032: `prStates` (the pass-shared resolver) replaces archiveMerged's live PR

@@ -404,3 +404,26 @@ test('merge-authorization: a run-config pre-authorized value wins over an unatte
   });
   assert.deepStrictEqual(result['merge-authorization'], { value: 'pre-authorized', source: 'run-config' });
 });
+
+test('onInvalid: called with (key, raw) for a present-but-invalid value, never for valid or absent keys; entry shape unchanged', () => {
+  const calls = [];
+  const onInvalid = (key, raw) => calls.push([key, raw]);
+  const invalid = resolvePolicyKeys(['trust-revert-window-days'], {
+    policyRaw: 'trust-revert-window-days: banana\n',
+    onInvalid,
+  });
+  assert.deepStrictEqual(calls, [['trust-revert-window-days', 'banana']]);
+  assert.deepStrictEqual(invalid['trust-revert-window-days'], { value: 14, source: 'default', invalid: true }, 'the callback adds no field to the entry');
+
+  calls.length = 0;
+  const valid = resolvePolicyKeys(['trust-revert-window-days', 'autonomy'], {
+    policyRaw: 'trust-revert-window-days: 21\nautonomy: trusted\n',
+    onInvalid,
+  });
+  assert.deepStrictEqual(calls, [], 'a valid value never triggers the callback');
+  assert.deepStrictEqual(valid['trust-revert-window-days'], { value: 21, source: 'policy' });
+
+  const absent = resolvePolicyKeys(['autonomy'], { policyRaw: null, runConfigRaw: null, onInvalid });
+  assert.deepStrictEqual(calls, [], 'an absent key never triggers the callback');
+  assert.deepStrictEqual(absent.autonomy, { value: 'supervised', source: 'default' });
+});

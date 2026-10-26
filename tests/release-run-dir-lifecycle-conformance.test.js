@@ -371,8 +371,12 @@ const DISPOSITION_SCOPE = [
   [/`STAGED` line whose stage path is absent or names no existing file/, 'inventory: a decisions.md-only STAGED line is a finding'],
   [/counted once by its stage path/, 'inventory: a STAGED line naming a listed file is de-duplicated by stage path'],
   [/An absent or empty `staged\/` means no staged files/, 'inventory: an absent or empty staged/ means no staged files'],
+  [/Any other read error on `staged\/`, or on the `decisions\.md` read below[\s\S]{0,120}is a failure, not an empty inventory[\s\S]{0,80}blocks archival/, 'inventory: a read error other than "does not exist" on staged/ or decisions.md is a failure that blocks archival'],
+  [/With nothing to dispose and no read failure above, write one `SCANNED` line[\s\S]{0,200}A read failure is never "nothing"/, 'inventory: the SCANNED line is for a clean empty inventory only, never a read failure'],
   [/When Step 3 logged no `## \/review` marker this run[\s\S]{0,200}read no `decisions\.md` line at all/, 'inventory: with no Step 3 marker, no decisions.md line is read'],
-  [/`staged\/reflect-\*`, `staged\/simplify-\*` and `staged\/deepen-\*`/, 'inventory: reflect, simplify and deepen files'],
+  [/\| `reflect-` \|[^\n]*\| `proposal` \|/, 'roster: reflect- files are routed proposal'],
+  [/\| `simplify-` \|[^\n]*\| `proposal` \|/, 'roster: simplify- files are routed proposal'],
+  [/\| `deepen-` \|[^\n]*\| `proposal` \|/, 'roster: deepen- files are routed proposal'],
 ];
 
 const DISPOSITION_ROUTING = [
@@ -386,7 +390,7 @@ const DISPOSITION_ROUTING = [
   [/covered by #\{n\}/, 'a finding an open record already covers is declined'],
   [/`decisions\.md`-only `STAGED` line at critical\/high \| The same Defer/, 'a decisions.md-only critical/high line takes the same Defer'],
   [/declined \(unconfirmed: \{the line's own reason/, 'any other decisions.md-only line is declined with its own reason'],
-  [/`reflect-\*`, `simplify-\*` or `deepen-\*` file \| The same Defer path and Defer-reason/, 'reflect/simplify/deepen files take the same Defer path'],
+  [/A file on a `proposal` roster row \| The same Defer path and Defer-reason/, 'a file on a proposal roster row takes the same Defer path and Defer-reason'],
   [/else treated as medium for the floor test/, 'a severity-less reflect/simplify/deepen file is medium for the floor'],
   [/Any other staged file \| No route/, 'any other staged file has no route'],
   [/_shared\/github-write-transport\.md/, 'filing and the covered-by lookup go through the write transport'],
@@ -401,6 +405,7 @@ const DISPOSITION_APPROVAL = [
   [/AUTO \{HH:MM:SS\} — Step 8 disposition: \{staged path\}/, 'the per-finding log line'],
   [/exactly one/, 'exactly one log line per finding'],
   [/FAILED \{HH:MM:SS\} — Step 8 disposition:/, 'a failed write is a hand-composed FAILED line'],
+  [/An unreadable `staged\/` or `decisions\.md`[\s\S]{0,40}takes the same line with `read failed: \{message\}`[\s\S]{0,200}counts toward `\{k\} failed`/, 'an unreadable staged/ or decisions.md takes the FAILED line with read failed and counts toward k failed'],
   [/skip[\s\S]{0,60}archiv/, 'any failure skips archival'],
   [/--dry-run[\s\S]{0,160}still runs/, 'disposition still runs under --dry-run'],
   [/Below `unattended`, a human reachable in the session/, 'below unattended with a human reachable, the table renders and one question is asked'],
@@ -421,7 +426,7 @@ for (const [name, patterns] of [
 
 const STEP8_WIRING = [
   [/disposition\.md/, 'Step 8 reads disposition.md'],
-  [/findings: \{f\} filed, \{d\} digest, \{x\} declined\{, k failed — \{paths\}\}/, 'the summary block carries the findings: line, failed paths included'],
+  [/findings: \{f\} filed, \{d\} digest, \{x\} declined\{, k failed — \{paths\}\}, when disposition inventoried any finding or reported a failure\}/, 'the summary block carries the findings: line, failed paths included, rendered for a failure with no inventoried finding too'],
   [/hooks\.js" archive-run --run "\{run-dir\}"/, 'Step 8 runs archive-run on the run dir'],
   // Grouped: an ungrouped `a|Step 0` alternation would match any "Step 0" in the section and could never go red.
   [/Step 8 archival \(skipped\): condition: archive-run printed[\s\S]{0,200}(?:Step 0 refuses it|not adopted)/, 'a non-archival is a degrade-trace SKIP, non-fatal because Step 0 refuses the closed directory'],
@@ -546,4 +551,245 @@ const GRAPH_ROWS = [
 
 test('AC3.1: docs/skill-graph.md release table lists every review contract disposition.md reads (with go-red)', () => {
   assertFactsAndGoRed(sliceBetween(readText(GRAPH), '## release', '## research'), GRAPH_ROWS, 'the ## release table must carry a row per staged-file contract disposition.md reads');
+});
+
+// --- Review staging roster: every staged/ prefix a review producer writes has one routed row (#4156) ---
+// disposition.md's roster is the only place a staged prefix is named. The producer corpus is derived from its
+// Staged by column, so a producer that starts staging a prefix with no row turns the corpus check red.
+// The scan's limit: the corpus is plugin/skills/review/** plus the producers the roster names, so a producer in a
+// skill directory no row names is not scanned.
+const SKILLS = path.join(ROOT, 'plugin', 'skills');
+const ROSTER_HEADING = '### Review staging roster';
+const ROUTES = ['confirmed', 'unconfirmed', 'contested', 'proposal', 'note', 'not staged by review'];
+const tick = (s) => '`' + s + '`';
+const unticked = (cell) => cell.replace(/`/g, '');
+const readSkillFile = (rel) => readText(path.join(SKILLS, rel));
+
+function cellsOf(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+}
+
+// The roster table under its heading. Throws on a missing heading, no table, no rows, or a Route outside the
+// closed set: a parse failure must never read as a table of zero rows.
+function parseRoster(text) {
+  const lines = text.split('\n');
+  const at = lines.indexOf(ROSTER_HEADING);
+  assert.notEqual(at, -1, `roster: disposition.md has no "${ROSTER_HEADING}" heading`);
+  const table = [];
+  for (const line of lines.slice(at + 1)) {
+    if (line.startsWith('#')) break;
+    if (!line.startsWith('|')) {
+      if (table.length > 0) break;
+      continue;
+    }
+    table.push(line);
+  }
+  assert.ok(table.length >= 2 && /^\|\s*-+/.test(table[1]), 'roster: no table with a header and a separator under the heading');
+  assert.equal(unticked(cellsOf(table[0])[0]), 'Prefix', 'roster: the table header must start with Prefix');
+  assert.ok(table.length > 2, `roster: the table under "${ROSTER_HEADING}" has no rows`);
+  return table.slice(2).map((line) => {
+    const cells = cellsOf(line);
+    assert.equal(cells.length, 5, `roster: a row does not have the five columns: ${line}`);
+    const prefix = unticked(cells[0]);
+    const stagedBy = /`([^`]+)`/.exec(cells[2]);
+    assert.ok(stagedBy, `roster row ${tick(prefix)} names no Staged by path`);
+    const route = unticked(cells[4]);
+    assert.ok(ROUTES.includes(route), `roster row ${tick(prefix)} has route "${route}", outside the closed set`);
+    return { prefix, stagedBy: stagedBy[1], route };
+  });
+}
+
+// The prefix a row covers at the start of a file name, or -1. `review-{n}` is the one placeholder form: `review-`
+// then a number.
+function prefixLength(prefix, fileName) {
+  if (prefix === 'review-{n}') return /^review-\d/.test(fileName) ? 'review-'.length : -1;
+  return fileName.startsWith(prefix) ? prefix.length : -1;
+}
+
+// The row whose prefix matches the file name the longest, or null when none does.
+function classify(fileName, roster) {
+  let best = null;
+  let bestLength = -1;
+  for (const row of roster) {
+    const length = prefixLength(row.prefix, fileName);
+    if (length > bestLength) {
+      best = row;
+      bestLength = length;
+    }
+  }
+  return best;
+}
+
+// Every staged/{name} literal in a text as one concrete name: {md,patch} keeps its first form, {n}/{N}/{slug}
+// become 1, * becomes x, and a sentence-ending period is dropped.
+function stagedNamesIn(text) {
+  return [...text.matchAll(/staged\/([a-zA-Z][\w{},.*-]*)/g)].map((m) => m[1]
+    .replace(/\{([^{},]+),[^{}]*\}/g, '$1')
+    .replace(/\{(?:n|N|slug)\}/g, '1')
+    .replace(/\*/g, 'x')
+    .replace(/\.$/, ''));
+}
+
+// Every .md under a directory, relative to plugin/skills/.
+function mdUnder(relDir) {
+  const found = [];
+  const walk = (rel) => {
+    for (const entry of fs.readdirSync(path.join(SKILLS, rel), { withFileTypes: true })) {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) walk(child);
+      else if (entry.name.endsWith('.md')) found.push(child);
+    }
+  };
+  walk(relDir);
+  return found;
+}
+
+// The producer corpus the roster names: every .md under review/, every .md under each other skill directory a row's
+// Staged by names, and each named _shared/ file (not the whole _shared/ directory).
+function corpusFor(roster) {
+  const dirs = new Set(['review']);
+  const files = new Set();
+  for (const { stagedBy } of roster) {
+    if (stagedBy.startsWith('_shared/')) files.add(stagedBy);
+    else dirs.add(stagedBy.split('/')[0]);
+  }
+  const rels = new Set([...files, ...[...dirs].flatMap((d) => mdUnder(d))]);
+  return [...rels].sort().map((file) => ({ file, text: readSkillFile(file) }));
+}
+
+// Each staged/ literal in the corpus that classifies to no roster row, as {file, name}.
+function unroutedIn(corpus, roster) {
+  return corpus.flatMap(({ file, text }) => stagedNamesIn(text)
+    .filter((name) => classify(name, roster) === null)
+    .map((name) => ({ file, name })));
+}
+
+function assertNoUnrouted(corpus, roster) {
+  const unrouted = unroutedIn(corpus, roster);
+  assert.deepEqual(unrouted, [], 'staged/ names with no roster row: ' + unrouted.map((u) => u.name + ' (in ' + u.file + ')').join(', '));
+}
+
+const routingTableLines = (text) => sliceBetween(text, '## Routing table', '## Approval').split('\n').filter((line) => line.startsWith('|'));
+
+// The Routing table row whose Finding cell keys on the route word, or undefined.
+function routingRowOf(text, route) {
+  return routingTableLines(text).find((line) => cellsOf(line)[0].includes(tick(route)));
+}
+
+// Roster rows whose route no Routing table row keys on. A `note` row is keyed in the Inventory's exclusion sentence.
+function unkeyedRows(roster, text) {
+  const routingFindings = routingTableLines(text).map((line) => cellsOf(line)[0]);
+  const exclusion = sliceBetween(text, '## Inventory', '## Routing table').split(/\n\s*\n/)
+    .filter((p) => p.includes('which is not a finding')).join('\n');
+  return roster
+    .filter((row) => row.route !== 'not staged by review')
+    .filter((row) => (row.route === 'note'
+      ? !exclusion.includes(tick('note'))
+      : !routingFindings.some((finding) => finding.includes(tick(row.route)))));
+}
+
+function assertKeyed(roster, text) {
+  const gaps = unkeyedRows(roster, text).map((row) => row.prefix);
+  assert.deepEqual(gaps, [], 'roster rows whose route no Routing table row keys on: ' + gaps.join(', '));
+}
+
+// Roster rows whose own Staged by file names no staged/ literal that classifies back to that row.
+function unprovenRows(roster, readFile) {
+  return roster.filter((row) => !stagedNamesIn(readFile(row.stagedBy)).some((name) => classify(name, roster) === row));
+}
+
+function assertProven(roster, readFile) {
+  const gaps = unprovenRows(roster, readFile).map((row) => row.prefix);
+  assert.deepEqual(gaps, [], 'roster rows whose Staged by file names no staged/ literal of that row: ' + gaps.join(', '));
+}
+
+// The roster row for a prefix, as its own line.
+function rosterLine(text, prefix) {
+  const line = text.split('\n').find((l) => l.startsWith('| ' + tick(prefix) + ' |'));
+  assert.ok(line, `anchor: no roster row for ${prefix} — proof cannot discriminate`);
+  return line;
+}
+const withoutRosterRow = (text, prefix) => text.replace(rosterLine(text, prefix) + '\n', '');
+const withRosterRoute = (text, prefix, word) => {
+  const line = rosterLine(text, prefix);
+  return text.replace(line, line.replace(/`[^`]*` \|$/, tick(word) + ' |'));
+};
+
+function assertDesignDecisionRouted(text) {
+  const row = classify('design-decision-1.md', parseRoster(text));
+  assert.ok(row && row.route === 'proposal', 'design-decision-1.md must classify to a proposal roster row (#4156)');
+  const routed = routingRowOf(text, 'proposal');
+  assert.ok(routed && routed.includes('The same Defer path and Defer-reason'), 'the proposal routing row must carry "The same Defer path and Defer-reason"');
+}
+
+test('AC1: design-decision-1.md routes to a proposal row, which the Routing table defers', () => {
+  assertDesignDecisionRouted(readDisposition());
+});
+
+test('AC1: classify pins the review prefixes and leaves an unknown prefix unrouted', () => {
+  const roster = parseRoster(readDisposition());
+  const expected = { 'review-3.patch': 'confirmed', 'review-unconfirmed-2.md': 'unconfirmed', 'review-debate-1.md': 'contested', 'visual-review-skipped.md': 'note' };
+  for (const [name, route] of Object.entries(expected)) assert.equal((classify(name, roster) || {}).route, route, name);
+  assert.equal(classify('brand-new-1.md', roster), null);
+  assert.equal(classify('review-foo.md', roster), null);
+});
+
+test('AC1: parseRoster throws on a missing heading, an empty table and an unknown route', () => {
+  assert.throws(() => parseRoster('no roster here'), /has no "### Review staging roster" heading/);
+  assert.throws(() => parseRoster(`${ROSTER_HEADING}\n\n| Prefix | Example | Staged by | Counted as | Route |\n|---|---|---|---|---|\n\nnext`), /has no rows/);
+});
+
+// The roster prose the checks rely on, each clause pinned with its own go-red.
+const ROSTER_PROSE = [
+  [/`review-\{n\}` means `review-` followed by a number, so a `review-foo\.md` matches no row/, 'the roster says review-{n} is review- then a number, so review-foo.md matches no row'],
+  [/matched against the review staging roster below by its longest matching prefix/, 'the Inventory matches every other staged file against the roster by its longest matching prefix'],
+  [/A producer that starts staging a new prefix adds its roster row in the same change/, 'a producer that starts staging a new prefix adds its roster row in the same change'],
+];
+
+test('roster-vs-routing: the roster prose clauses the checks rely on are stated (with go-red)', () => {
+  assertFactsAndGoRed(readDisposition(), ROSTER_PROSE, 'disposition.md must state the roster clauses (#4156)');
+});
+
+test('roster-vs-routing: every staged/ literal a review producer names classifies to a roster row', () => {
+  const roster = parseRoster(readDisposition());
+  assertNoUnrouted(corpusFor(roster), roster);
+});
+
+test('roster-vs-routing: every routed roster row is keyed in the Routing table (note in the Inventory exclusion)', () => {
+  const text = readDisposition();
+  assertKeyed(parseRoster(text), text);
+});
+
+test('roster-vs-routing: every roster row\'s Staged by file names a staged/ literal that classifies to that row', () => {
+  assertProven(parseRoster(readDisposition()), readSkillFile);
+});
+
+test('roster-vs-routing go-red: a fake staged/ prefix appended to a corpus file is reported', () => {
+  const roster = parseRoster(readDisposition());
+  const doctored = corpusFor(roster).map((f, i) => (i === 0 ? { ...f, text: `${f.text}\nWrites \`staged/brand-new-{n}.md\`.\n` } : f));
+  assert.throws(() => assertNoUnrouted(doctored, roster), /brand-new-1\.md \(in /);
+});
+
+test('roster-vs-routing go-red: deleting the design-decision- row reports its producer unrouted', () => {
+  const text = readDisposition();
+  const corpus = corpusFor(parseRoster(text));
+  const withoutDesignDecision = parseRoster(withoutRosterRow(text, 'design-decision-'));
+  assert.throws(() => assertNoUnrouted(corpus, withoutDesignDecision), /design-decision-x\.md \(in design-wrapper\/modes\/review\.md\)/);
+  assert.throws(() => assertDesignDecisionRouted(withoutRosterRow(text, 'design-decision-')), /design-decision-1\.md must classify/);
+});
+
+test('roster-vs-routing go-red: an unknown route word makes parseRoster throw', () => {
+  assert.throws(() => parseRoster(withRosterRoute(readDisposition(), 'design-decision-', 'not-a-route')), /outside the closed set/);
+});
+
+test('roster-vs-routing go-red: removing the proposal routing row trips the keyed check', () => {
+  const text = readDisposition();
+  const doctored = text.replace(routingRowOf(text, 'proposal') + '\n', '');
+  assert.notEqual(doctored, text, 'anchor: the proposal routing row not found — proof cannot discriminate');
+  assert.throws(() => assertKeyed(parseRoster(doctored), doctored), /design-decision-/);
+});
+
+test('roster-vs-routing go-red: a stale producer name trips the Staged by check', () => {
+  const stale = (rel) => (rel === 'visual-review/SKILL.md' ? readSkillFile(rel).replace(/staged\/visual-review-/g, 'staged/vr-') : readSkillFile(rel));
+  assert.throws(() => assertProven(parseRoster(readDisposition()), stale), /visual-review-/);
 });

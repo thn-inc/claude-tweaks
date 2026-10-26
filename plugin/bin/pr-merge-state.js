@@ -14,9 +14,13 @@
 // Prints one JSON line: {state, pr, mergeable, mergeStateStatus, phase, logged,
 // reason?}. state is conflicting | no-conflict | unknown | not-open | no-pr |
 // read-failed | gh-absent. A PR that is not OPEN (closed or merged) is no signal:
-// not-open, nothing written. On conflicting only, one AUTO entry naming the PR and
-// phase is appended to the run dir's decisions.md (logged:true; false if the
-// append threw).
+// not-open, nothing written. The CLI writes its own decisions.md trail under the
+// phase's section (a caller writes it only on logged:false): on conflicting, one AUTO entry
+// naming the PR and phase; on unknown, read-failed or gh-absent, one SKIP
+// degrade trace (`condition: pr-merge-state.js {state}[ ({reason})] → fallback:
+// no merge-state signal this phase`). logged:true when the entry landed, false if
+// the append threw (one stderr line) or the state is silent (no-conflict,
+// not-open, no-pr).
 //
 // Status is data: exit 0 in every state, including no-pr and read-failed.
 // 2 malformed invocation; 3 run dir missing or not anchored under the main
@@ -37,6 +41,7 @@ const STATES = Object.freeze(['conflicting', 'no-conflict', 'unknown', 'not-open
 const USAGE = 'usage: pr-merge-state.js --run <run-dir> --phase <build|test|review|polish|wrap-up> [--help]\n'
   + '  prints {state, pr, mergeable, mergeStateStatus, phase, logged, reason?};\n'
   + `  state: ${STATES.join(' | ')}\n`
+  + '  appends to decisions.md: AUTO on conflicting; SKIP on unknown | read-failed | gh-absent\n'
   + '  exit 0 in every state; 2 malformed invocation; 3 run dir missing or not anchored\n';
 
 function parseArgs(argv) {
@@ -79,6 +84,27 @@ function report(deps, body) {
   return 0;
 }
 
+// Append one entry under the phase's section; true when it landed. A failed append never
+// changes the exit code or the state -- one stderr line, logged:false.
+function logEntry(deps, runDir, phase, status, text) {
+  try {
+    const entry = formatEntry({ status, now: deps.now(), step: 'Post-push merge-state check', text, reversibility: 'n/a' });
+    deps.appendDecision({ runDir, section: PHASE_SECTIONS[phase], entry });
+    return true;
+  } catch (e) {
+    deps.stderr(`pr-merge-state.js: could not append the decisions.md entry: ${(e && e.message) || e}\n`);
+    return false;
+  }
+}
+
+// unknown | read-failed | gh-absent: report, plus the SKIP degrade trace
+// (_shared/auto-decision-log.md) the Post-push merge-state check names.
+function reportDegraded(deps, runDir, body) {
+  const stateText = body.reason ? `${body.state} (${body.reason})` : body.state;
+  const logged = logEntry(deps, runDir, body.phase, 'SKIP', `condition: pr-merge-state.js ${stateText} → fallback: no merge-state signal this phase`);
+  return report(deps, { ...body, logged });
+}
+
 function run(argv, overrides = {}) {
   // Tests pass only the seams they fake; readRunState stays the real
   // run-state.json reader unless a test overrides it.
@@ -101,11 +127,11 @@ function run(argv, overrides = {}) {
   const n = state && state.pr && state.pr.number;
   if (!Number.isInteger(n) || n <= 0) return report(deps, { state: 'no-pr', phase });
   let view;
-  try { view = deps.resolvePrState(deps.cwd(), n); } catch { return report(deps, { state: 'read-failed', pr: n, phase, reason: 'resolver-threw' }); }
+  try { view = deps.resolvePrState(deps.cwd(), n); } catch { return reportDegraded(deps, o.run, { state: 'read-failed', pr: n, phase, reason: 'resolver-threw' }); }
   if (view === null) return report(deps, { state: 'no-pr', phase });
-  if (view === 'gh-absent') return report(deps, { state: 'gh-absent', pr: n, phase });
-  if (view === 'network-failure' || view === 'invalid-arguments') return report(deps, { state: 'read-failed', pr: n, phase, reason: view });
-  if (typeof view !== 'object') return report(deps, { state: 'read-failed', pr: n, phase, reason: 'unparseable' });
+  if (view === 'gh-absent') return reportDegraded(deps, o.run, { state: 'gh-absent', pr: n, phase });
+  if (view === 'network-failure' || view === 'invalid-arguments') return reportDegraded(deps, o.run, { state: 'read-failed', pr: n, phase, reason: view });
+  if (typeof view !== 'object') return reportDegraded(deps, o.run, { state: 'read-failed', pr: n, phase, reason: 'unparseable' });
   const mergeable = isStr(view.mergeable) ? view.mergeable : null;
   const mergeStateStatus = isStr(view.mergeStateStatus) ? view.mergeStateStatus : null;
   // A closed or merged PR gets no pull_request runs whatever its mergeability says,
@@ -113,21 +139,9 @@ function run(argv, overrides = {}) {
   if (isStr(view.state) && view.state !== 'OPEN') return report(deps, { state: 'not-open', pr: n, mergeable, mergeStateStatus, phase });
   const verdict = classifyMergeState(view);
   const body = { state: verdict, pr: n, mergeable, mergeStateStatus, phase };
+  if (verdict === 'unknown') return reportDegraded(deps, o.run, body);
   if (verdict !== 'conflicting') return report(deps, body);
-  let logged = false;
-  try {
-    const entry = formatEntry({
-      status: 'AUTO',
-      now: deps.now(),
-      step: 'Post-push merge-state check',
-      text: `PR #${n} conflicts with the integration branch at ${phase} exit (mergeStateStatus ${mergeStateStatus}, mergeable ${mergeable}) — GitHub runs no pull_request workflows on it until the branch is caught up`,
-      reversibility: 'n/a',
-    });
-    deps.appendDecision({ runDir: o.run, section: PHASE_SECTIONS[phase], entry });
-    logged = true;
-  } catch (e) {
-    deps.stderr(`pr-merge-state.js: could not append the decisions.md entry: ${(e && e.message) || e}\n`);
-  }
+  const logged = logEntry(deps, o.run, phase, 'AUTO', `PR #${n} conflicts with the integration branch at ${phase} exit (mergeStateStatus ${mergeStateStatus}, mergeable ${mergeable}) — GitHub runs no pull_request workflows on it until the branch is caught up`);
   return report(deps, { ...body, logged });
 }
 

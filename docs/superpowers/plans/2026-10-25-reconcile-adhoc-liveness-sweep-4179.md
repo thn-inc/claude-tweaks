@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-25T111716-record-4179/work/4179-spec.md` (record #4179)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-25T111716-record-4179/work/4179-spec.md` (record #4179)
 
 Scope keywords: isAdHocIntrinsicSkip, adhoc-superseded, ADHOC_EXEMPT_WHY, classifyRunDir
 

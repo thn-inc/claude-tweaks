@@ -4,6 +4,7 @@ files:
   - plugin/bin/lib/hooks/context.js
   - plugin/bin/hooks.js
   - plugin/bin/lib/run-liveness/process-probe.js
+  - plugin/bin/lib/run-liveness/owner-pid-probe.js
 ---
 
 # Run a Nested Claude Session Inside a Pipeline Run
@@ -26,7 +27,7 @@ files:
 - **URL:** the nested session's own SessionEnd hook (`hooks.js session-end`)
 - **Action:** nothing to do. The hook compares the run's `ownerPid` with its own `CLAUDE_PID`, sees a different process while the owner is still alive, and writes nothing.
 - **Should feel:** invisible. The command returns and the agent reads the output.
-- **Should understand:** the guard writes nothing at all, neither the `interrupted` stamp nor an event breadcrumb, because another process ending is not this run's event. It applies only while the owner process is alive. A genuine owner session ending, or a crash followed by a resume in a new process, still stamps `interrupted` as before. Since #3973 the run also carries an `owner` block (`pid`, `pidStartedAt`, `heartbeatAt`, …). Every hook event of the nested session, its SessionEnd included, leaves that block alone while the owner process is alive with its stamped start time: it neither heartbeats it nor re-stamps `owner.pid` to the nested process, even when the nested session shares the owner's session id.
+- **Should understand:** the guard writes nothing at all, neither the `interrupted` stamp nor an event breadcrumb, because another process ending is not this run's event. It applies only while the owner process is alive. A genuine owner session ending, or a crash followed by a resume in a new process, still stamps `interrupted` as before. Since #3973 the run also carries an `owner` block (`pid`, `pidStartedAt`, `heartbeatAt`, …). Every hook event of the nested session, its SessionEnd included, leaves that block alone while the owner process is alive with its stamped start time: it neither heartbeats it nor re-stamps `owner.pid` to the nested process, even when the nested session shares the owner's session id. Since #4153 that guard asks the same owner-pid probe the run-liveness verdict uses (`run-liveness/owner-pid-probe.js`), so a live owner whose start time cannot be read also keeps its block.
 - **Red flags:** after a nested `claude -p` returns, the parent's `run-state.json` reads `status: interrupted` with `lastEvent: session-end`, or the next nested SessionStart banner lists the live run as interrupted. That is the #3845 defect reappearing. Check whether `run-state.json` carries an `ownerPid` at all; a run stamped before #3845, or without `CLAUDE_PID` in the environment, falls back to the old behaviour by design. A second red flag: after the nested session returns, `run-state.json`'s `owner.pid` names the nested process instead of the parent's `CLAUDE_PID`. That means the #3973 re-stamp guard let a live owner's block be taken over.
 
 ### 3. Continue the pipeline — pipeline worktree session
@@ -40,3 +41,4 @@ files:
 - Created during build of #3845. Run `2026-10-21T001740-record-3056` (#3056's /prompt-audit comparison) had its status flipped to `interrupted` three times by nested `claude -p "/doctor prompt-audit"` sessions, and recovered only because the agent noticed and restamped.
 - Related records: #3845, #3056, #62 (the bystander and guessed-run attribution rules this guard sits beside).
 - Updated during build of #3973 (run `2026-10-24T061105-record-3973`), which added the `owner` block and its re-stamp guard for nested sessions.
+- Updated during build of #4153 (run `2026-10-25T153206-record-4153`), which routed the re-stamp guard through run-liveness's owner-pid probe; retiring `ownerPid` in favour of `owner.pid` is tracked by #4318.

@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const ROOT = path.join(__dirname, '..');
 const SKILLS = path.join(ROOT, 'plugin', 'skills');
@@ -60,7 +61,8 @@ function fastLaneSkipLines() {
   const out = [];
   for (const file of walk(SKILLS)) {
     if (file === ROSTER) continue;
-    const rel = path.relative(SKILLS, file);
+    // Compared against the roster's `/`-separated File cells, so it is a display ID (#4296).
+    const rel = toPosix(path.relative(SKILLS, file));
     readText(file).split('\n').forEach((line, i) => {
       const lower = line.toLowerCase();
       if (lower.includes('fast-lane') && lower.includes('skip')) out.push({ rel, line, n: i + 1 });

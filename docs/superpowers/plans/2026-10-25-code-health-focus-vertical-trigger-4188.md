@@ -2,7 +2,7 @@
 
 **Goal:** Reword `.claude/skills/code-health-focus-vertical/SKILL.md`'s frontmatter `description` so it triggers both on adding a `/code-health focus=<vertical>` candidate generator and on adding a candidate kind to an existing shipped vertical.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-25T114616-record-4188/work/4188-spec.md` (materialized from GitHub issue #4188)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-25T114616-record-4188/work/4188-spec.md` (materialized from GitHub issue #4188)
 
 ---
 

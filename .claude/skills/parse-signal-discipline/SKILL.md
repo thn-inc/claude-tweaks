@@ -298,7 +298,7 @@ When mechanizing a prose heuristic into a deterministic check:
     transform that mis-parses produces a clean scan. `tests/helpers/strip-comments.js`'s
     `stripComments` blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `backfill-cli`, `exit-code`, `git-status-optional-locks`,
-    `hooks-harness-refusal`, `path-containment`, `path-guard`, `porcelain-cwd-compare`,
+    `hooks-harness-refusal`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`,
     `raw-markdown-read`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
     `windows-hide-spawn`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
@@ -323,6 +323,20 @@ When mechanizing a prose heuristic into a deterministic check:
     That turned "accurate enough" from a judgment into a count. Pair the comparison with a mutation
     check on every branch the corpus does not reach. A `${}` brace-depth mutant survived both
     every unit test and the whole corpus, so the corpus count says nothing about those branches.
+    A transform that bounds its own work owes a stated answer for the pass that hits the bound.
+    `plugin/bin/lib/hooks/git-command.js`'s heredoc scanner (#4149) caps nesting at
+    `NEST_LEVEL_CAP` and a pass's nested scans at `NEST_STEPS_PER_CHAR` steps per input character
+    plus `NEST_STEPS_FLOOR`, and its two capped outcomes lean opposite ways.
+    `lineLeavesStructureOpen` reads a capped span as a line left open, so every later body stays
+    visible (fail closed). `scanPass` reads a capped pass again whole in the flat, pre-#4149 quote
+    reading and reports no could-not-parse verdict. The #4149 build accepted that divergence from
+    this item as a tradeoff; it is not a shape to copy. The scanner's first capped version fell
+    back to the flat reading partway through a pass, and a reading that switches partway pairs
+    quotes unlike either reading, which can hide a separator both see (`246d40909`). Prefer the fail-closed
+    verdict. Where a capped pass must fall back instead, re-read the whole pass in one reading,
+    state the fallback's direction in the code comment, and pin a nest past the cap with its own
+    case (`tests/hooks-gate-coverage.test.js`'s "a nest past the cap whose fallback would restart
+    the nested reading").
 16. **A precondition probe does not cover the main probe's own failure to run.** Some tools exit
     with one code for both "not found" and "could not run", so item 8's exit-code branch has
     nothing to split on: `git cat-file -e HEAD:<path>` exits 128 for a path missing from HEAD and
@@ -480,6 +494,26 @@ When mechanizing a prose heuristic into a deterministic check:
     `sdd-ruling-unclassified`). Decide a read failure in the caller that attempted the read, never
     inside the pure classifier, let a recorded read error outrank any text for the same id, and pin
     each cause on each path with its own assertion.
+24. **A composer's validator owes its reader's sentinels and delimiters too, not only its skip set
+    (item 18).** A value the reader reads back as a *different valid value* is worse than one it
+    drops, because every misread answer is one the reader legitimately emits.
+    `plugin/bin/lib/dispatch/close-out-marker.js`'s `parseConflictedFiles` (#4331) reads the
+    `conflicted-files:` field as the sentinel `none` (no conflicts), the sentinel `unknown`, or a
+    `, `-joined path list with each entry trimmed. The field carries untrusted text, since a
+    conflicted path is attacker-nameable, and each of those reader rules is a channel a real path
+    can fall through: a path named `none` reads back as "no conflicts", and a path holding a comma
+    reads back as two paths. The build's tests covered awkward paths but no reserved literal, and
+    review found the `none` case (lenses 3b, 3c and 3f, `918f6db19`). `plugin/bin/close-out-marker.js`'s
+    `readPathsFile` now refuses a comma, a carriage return, a path equal to either sentinel, and a
+    path with leading or trailing whitespace (exit 1), and each refusal names the representable
+    fallback (`--conflicted-files unknown`), so the caller can still record the update. Derive the
+    reject list from every branch of the reader: each sentinel comparison, each split delimiter,
+    each `trim`. Then pin a write-then-read round trip per entry. The `trim` was the branch #4331
+    first missed: its ledger (row 16) accepted space-edged paths as a format limit on the premise
+    that `git diff --name-only` quotes such a path. But git quotes only control characters, `"`,
+    `\` and (under `core.quotePath`) non-ASCII bytes. A scratch merge conflicting on `trail ` and
+    ` lead` printed both bare, so the marker would have read them back as `trail` and `lead`. Probe
+    a format-limit premise before accepting it, as you would any other benign-failure claim.
 
 ## When to use
 

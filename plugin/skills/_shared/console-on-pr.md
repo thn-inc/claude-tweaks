@@ -40,7 +40,7 @@ section from Auto-applied through Cleanup actions — reusing the console's own 
 as `{n}`), `q` (Queue writes, `{n}` = the `Q#` number), `m` (Memory updates, `{n}` = the `M#`
 number), `u` (Upstream feedback, `{n}` = the `U#` number), or `r` (Reflection insights, `{n}` =
 the `R#` number). Low-confidence and Contested rows are `staged` rows, built from
-`console-filings.js --list` (Row shape below). The multi-spec console qualifies
+`console-filings.js --list` (Row shape below). A reflect Skill-updates row is a `staged` row like any batch row (its `#` from the global sequence). The multi-spec console qualifies
 every id with its spec slug — `{spec-slug}-{kind}-{n}` — so ids stay unique across every spec's
 rows sharing one comment set. One further id, always present, always last: `resolve`.
 
@@ -190,9 +190,10 @@ rendered the console, so the render-time short-circuit's session-scoped knowledg
 would otherwise be invisible to it — this field is the durable copy. See
 `_shared/console-execution.md`'s "consoleAutoResolve wiring" section for the read side.
 
-Two further optional fields arrive only after execution, never at render time: `executedAt` (ISO
-timestamp) and `resolved: true`, both written by `console-execution.md`'s Write order — see that
-file for the write order and what reads them.
+Further fields arrive only after execution, never at render time: `executedAt` (ISO timestamp) and
+`resolved: true`, both written by `console-execution.md`'s Write order — see that file for the write
+order and what reads them — and, on each item, `"outcome"` (plus `"note"` for a non-executed one),
+written by the same Write order.
 
 A stale or deleted comment id (the human deleted it, or it's simply gone) — recreate the comment
 fresh and update `console.json` with the new id; do not treat a missing comment as "already

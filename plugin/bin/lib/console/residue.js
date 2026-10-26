@@ -7,18 +7,31 @@
 // An unresolved item whose staged file has since vanished (a rename, a cleanup)
 // is `missing` (#3772): nothing exists at the id the console recorded, so there
 // is nothing a human can open from it; `splitMissing` takes it out of the count
-// and the banner names it once instead.
+// and the banner names it once instead. A PR console's `filing-failed` /
+// `reverse-failed` outcome is residue as well (#4172), with no staged file to check.
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 
 const UNRESOLVED_RESOLUTIONS = new Set(['pending', 'keep-staged']);
+// #4172: a PR console's item whose filing or reverse failed is residue too; its
+// `outcome` is the failed word, and its id names a PR row, not a staged file.
+const FAILED_OUTCOMES = new Set(['filing-failed', 'reverse-failed']);
 const MISSING_RESOLUTION = 'missing';
 
+// A live item is returned as-is; a PR item with a failed `outcome` is returned as
+// a normalized copy so the residue renderers read it like any other item.
 function unresolvedItems(consoleJson) {
   if (!consoleJson || typeof consoleJson !== 'object' || !Array.isArray(consoleJson.items)) return [];
-  return consoleJson.items.filter((i) => i && UNRESOLVED_RESOLUTIONS.has(i.resolution));
+  return consoleJson.items.flatMap((i) => {
+    if (!i) return [];
+    if (UNRESOLVED_RESOLUTIONS.has(i.resolution)) return [i];
+    if (FAILED_OUTCOMES.has(i.outcome)) {
+      return [{ ...i, section: i.section ?? i.kind, resolution: i.outcome, reason: i.reason ?? i.note }];
+    }
+    return [];
+  });
 }
 
 // Partition unresolved items into those a human can still review and those
@@ -26,13 +39,15 @@ function unresolvedItems(consoleJson) {
 // `decision:` item (it lives in decisions.md, not staged/), an engine-row id
 // (`docs:CLAUDE.md` — a `{row}:{label}` item with no staged file of its own),
 // or an id that is not a bare file name is never classified missing — only a
-// plain staged-file id can be proven absent.
+// plain staged-file id can be proven absent. A failed PR outcome (#4172) is never
+// missing either: its id is a PR row, so there is no staged file to be absent.
 function splitMissing(items, consoleDir, exists = fs.existsSync) {
   const kept = [];
   const missing = [];
   for (const item of items) {
     const id = item && item.id;
-    const checkable = typeof id === 'string' && id !== '' && !id.includes(':') && path.basename(id) === id;
+    const checkable = typeof id === 'string' && id !== '' && !id.includes(':') && path.basename(id) === id
+      && !FAILED_OUTCOMES.has(item.resolution);
     if (checkable && !exists(path.join(consoleDir, 'staged', id))) {
       missing.push({ ...item, resolution: MISSING_RESOLUTION, reason: `staged file absent (was ${item.resolution})` });
     } else {
@@ -131,4 +146,4 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
   return lines;
 }
 
-module.exports = { UNRESOLVED_RESOLUTIONS, MISSING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines };
+module.exports = { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines };
