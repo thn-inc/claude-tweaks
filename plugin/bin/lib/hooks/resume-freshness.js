@@ -30,7 +30,7 @@
 'use strict';
 const fs = require('fs');
 const ctxLib = require('./context');
-const { runLiveness, blocksResume } = require('../run-liveness');
+const { runLiveness, blocksResume, resumeEntries } = require('../run-liveness');
 const { DEFAULT_PROBES } = require('../run-liveness/probes');
 const { LIVE_WINDOW_MS } = require('../run-liveness/constants');
 
@@ -84,9 +84,7 @@ function checkResumeFreshness(runDir, opts = {}) {
   const lastCommitAt = (opts.probes && opts.probes.lastCommitAt) || DEFAULT_PROBES.lastCommitAt;
   const probes = { ...(opts.probes || {}), lastCommitAt: (wt) => (commitAt = lastCommitAt(wt)) };
   const result = runLiveness(runDir, { now, probes });
-  const entry = (name) => result.evidence.find((e) => e && e.probe === name) || { probe: name, result: 'error', detail: 'missing-evidence' };
-  const lock = entry('worktree-lock');
-  const commit = entry('last-commit');
+  const { lock, commit } = resumeEntries(result);
   if (lock.result === 'positive') return { safe: false, verdict: 'locked', reason: 'worktree lock held by a live process' };
   if (commit.result === 'positive') {
     return {

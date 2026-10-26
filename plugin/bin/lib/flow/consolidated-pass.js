@@ -20,7 +20,7 @@ const { lstatType } = require('../path-guard');
 const { checkBranchLanded, repoRootOf } = require('../hooks/run-integrity');
 const { resolvePrStateByNumber } = require('../reconcile/pr-state');
 const { checkResumeFreshness } = require('../hooks/resume-freshness');
-const { runLiveness, blocksResume } = require('../run-liveness');
+const { runLiveness, blocksResume, resumeEntries } = require('../run-liveness');
 const { safeReal } = require('../hooks/worktree-detect');
 
 // Evaluation order == this order; the first failing check wins.
@@ -57,9 +57,7 @@ function parentLiveDetail(runDir, runState, opts, deps) {
   const worktree = typeof runState.worktree === 'string' && runState.worktree ? runState.worktree : null;
   if (!worktree || lstatType(worktree).type === 'missing') return null;
   const result = runLiveness(runDir, { probes: deps.probes || {} });
-  const entry = (name) => result.evidence.find((e) => e && e.probe === name) || { probe: name, result: 'error', detail: 'missing-evidence' };
-  const lock = entry('worktree-lock');
-  const commit = entry('last-commit');
+  const { lock, commit } = resumeEntries(result);
   if (lock.result === 'positive') return 'worktree lock in-use';
   if (commit.result === 'positive') return 'worktree recently committed to';
   if (blocksResume(result)) return `indeterminate: ${(lock.result !== 'negative' ? lock : commit).detail}`;

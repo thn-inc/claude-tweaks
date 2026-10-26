@@ -207,12 +207,17 @@ function runLiveness(runDir, opts) {
 // only a `negative` on both entries lets a resume through: no evidence array, a
 // missing entry, or an unrecognised result all block.
 function blocksResume(result) {
-  const evidence = result && result.evidence;
-  if (!Array.isArray(evidence)) return true;
-  return ['worktree-lock', 'last-commit'].some((probe) => {
-    const e = evidence.find((x) => x && x.probe === probe);
-    return !e || e.result !== 'negative';
-  });
+  const { lock, commit } = resumeEntries(result);
+  return lock.result !== 'negative' || commit.result !== 'negative';
 }
 
-module.exports = { PROBE_ORDER, gatherEvidence, decideVerdict, runLiveness, blocksResume };
+// The two entries blocksResume reads, as its callers map them to a verdict. A
+// missing evidence array or entry reads as an `error` entry (detail
+// `missing-evidence`), so a caller can never read it as "no".
+function resumeEntries(result) {
+  const evidence = result && Array.isArray(result.evidence) ? result.evidence : [];
+  const entry = (probe) => evidence.find((e) => e && e.probe === probe) || { probe, result: 'error', detail: 'missing-evidence' };
+  return { lock: entry('worktree-lock'), commit: entry('last-commit') };
+}
+
+module.exports = { PROBE_ORDER, gatherEvidence, decideVerdict, runLiveness, blocksResume, resumeEntries };
