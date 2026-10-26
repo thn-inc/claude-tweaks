@@ -119,7 +119,7 @@ const XMAP = {
 
 test('M selects only content readers', () => {
   const r = select(XMAP, [{ path: 'src/x.js', status: 'M' }]);
-  assert.deepStrictEqual(r, { ok: true, tests: ['tests/a.test.js'], matched: ['tests/a.test.js'], changedTests: [], untracedTests: [] });
+  assert.deepStrictEqual(r, { ok: true, tests: ['tests/a.test.js'], matched: ['tests/a.test.js'], changedTests: [], untracedTests: [], driftTests: [] });
 });
 
 test('A selects existence and listing readers (AC3.1)', () => {
@@ -164,10 +164,10 @@ test('changed test files are selected directly', () => {
   assert.ok(added.tests.includes('tests/new.test.js'));
   // A modified test in the map is selected as a changed test.
   const modified = select(XMAP, [{ path: 'tests/a.test.js', status: 'M' }]);
-  assert.deepStrictEqual(modified, { ok: true, tests: ['tests/a.test.js'], matched: [], changedTests: ['tests/a.test.js'], untracedTests: [] });
+  assert.deepStrictEqual(modified, { ok: true, tests: ['tests/a.test.js'], matched: [], changedTests: ['tests/a.test.js'], untracedTests: [], driftTests: [] });
   // A deleted test (absent from headTests) is not selected and does not fail closed.
   const deleted = select(XMAP, [{ path: 'tests/b.test.js', status: 'D' }], ['tests/a.test.js']);
-  assert.deepStrictEqual(deleted, { ok: true, tests: [], matched: [], changedTests: [], untracedTests: [] });
+  assert.deepStrictEqual(deleted, { ok: true, tests: [], matched: [], changedTests: [], untracedTests: [], driftTests: [] });
 });
 
 test('a changed test file also selects the other tests that read it', () => {
@@ -179,17 +179,17 @@ test('a changed test file also selects the other tests that read it', () => {
   // Modified: the content reader (f) is selected; the listing (d) is not.
   const modified = select(meta, [{ path: 'tests/a.test.js', status: 'M' }]);
   assert.deepStrictEqual(modified, {
-    ok: true, tests: ['tests/a.test.js', 'tests/meta-read.test.js'], matched: ['tests/meta-read.test.js'], changedTests: ['tests/a.test.js'], untracedTests: [],
+    ok: true, tests: ['tests/a.test.js', 'tests/meta-read.test.js'], matched: ['tests/meta-read.test.js'], changedTests: ['tests/a.test.js'], untracedTests: [], driftTests: [],
   });
   // Added: the listing of tests (d) is selected alongside the new test itself.
   const head = [...Object.keys(meta), 'tests/new.test.js'];
   const added = select(meta, [{ path: 'tests/new.test.js', status: 'A' }], head);
   assert.deepStrictEqual(added, {
-    ok: true, tests: ['tests/meta-list.test.js', 'tests/new.test.js'], matched: ['tests/meta-list.test.js'], changedTests: ['tests/new.test.js'], untracedTests: ['tests/new.test.js'],
+    ok: true, tests: ['tests/meta-list.test.js', 'tests/new.test.js'], matched: ['tests/meta-list.test.js'], changedTests: ['tests/new.test.js'], untracedTests: ['tests/new.test.js'], driftTests: [],
   });
   // A test that reads itself is a changed test, not its own matched reader.
   const self = select({ 'tests/s.test.js': { f: ['tests/s.test.js'] } }, [{ path: 'tests/s.test.js', status: 'M' }]);
-  assert.deepStrictEqual(self, { ok: true, tests: ['tests/s.test.js'], matched: [], changedTests: ['tests/s.test.js'], untracedTests: [] });
+  assert.deepStrictEqual(self, { ok: true, tests: ['tests/s.test.js'], matched: [], changedTests: ['tests/s.test.js'], untracedTests: [], driftTests: [] });
 });
 
 test('A/D reach an f or s entry on an ancestor directory; M does not; \'\' never counts', () => {
@@ -211,8 +211,26 @@ test('A/D reach an f or s entry on an ancestor directory; M does not; \'\' never
 test('untraced tests at HEAD are selected', () => {
   const r = select(XMAP, [{ path: 'src/x.js', status: 'M' }], ['tests/a.test.js', 'tests/b.test.js', 'tests/new.test.js']);
   assert.deepStrictEqual(r, {
-    ok: true, tests: ['tests/a.test.js', 'tests/new.test.js'], matched: ['tests/a.test.js'], changedTests: [], untracedTests: ['tests/new.test.js'],
+    ok: true, tests: ['tests/a.test.js', 'tests/new.test.js'], matched: ['tests/a.test.js'], changedTests: [], untracedTests: ['tests/new.test.js'], driftTests: [],
   });
+});
+
+test('drifted tests the map knows and HEAD still has are selected as untraced (#4132)', () => {
+  const head = ['tests/a.test.js', 'tests/b.test.js', 'tests/new.test.js'];
+  const r = selectImpactTests({
+    map: mapOf(XMAP), changed: [{ path: 'src/x.js', status: 'M' }], headTests: head, isTestFile,
+    driftTests: ['tests/b.test.js', 'tests/new.test.js', 'tests/gone.test.js'],
+  });
+  // b: known + at HEAD → drift. new: unknown → untraced only. gone: absent at HEAD → never selected.
+  assert.deepStrictEqual(r, {
+    ok: true, tests: ['tests/a.test.js', 'tests/b.test.js', 'tests/new.test.js'], matched: ['tests/a.test.js'],
+    changedTests: [], untracedTests: ['tests/new.test.js'], driftTests: ['tests/b.test.js'],
+  });
+  // Go-red control: without the drift input b is not selected.
+  assert.deepStrictEqual(
+    selectImpactTests({ map: mapOf(XMAP), changed: [{ path: 'src/x.js', status: 'M' }], headTests: head, isTestFile }).tests,
+    ['tests/a.test.js', 'tests/new.test.js'],
+  );
 });
 
 test('untraced path fails closed', () => {
@@ -227,7 +245,7 @@ test('untraced path fails closed', () => {
 
 test('a map reader no longer present at HEAD is not selected', () => {
   const r = select(XMAP, [{ path: 'src/x.js', status: 'A' }], ['tests/a.test.js']);
-  assert.deepStrictEqual(r, { ok: true, tests: ['tests/a.test.js'], matched: ['tests/a.test.js'], changedTests: [], untracedTests: [] });
+  assert.deepStrictEqual(r, { ok: true, tests: ['tests/a.test.js'], matched: ['tests/a.test.js'], changedTests: [], untracedTests: [], driftTests: [] });
 });
 
 test('result tests are the sorted unique union', () => {
@@ -238,6 +256,7 @@ test('result tests are the sorted unique union', () => {
     matched: ['tests/a.test.js', 'tests/b.test.js'],
     changedTests: ['tests/a.test.js'],
     untracedTests: ['tests/c.test.js'],
+    driftTests: [],
   });
 });
 
@@ -297,6 +316,7 @@ function fakeGit(overrides = {}) {
     'ls-files': () => 'tests/a.test.js\0tests/b.test.js\0src/x.js\0tests/gone.test.js\0tests/a.test.js\0',
     'merge-base': () => '',
     'rev-list': () => '2\n',
+    diff: () => '',
     ...overrides,
   };
   const execImpl = (cmd, args, opts) => {
@@ -363,6 +383,30 @@ test('loadImpactContext: a fresh map loads, with every matching test present at 
   }
 });
 
+test('loadImpactContext: driftTests are the test-glob files differing between the map commit and HEAD (#4132)', () => {
+  const { execImpl, calls } = fakeGit({ diff: () => 'tests/b.test.js\0src/x.js\0tests/a.test.js\0' });
+  const ctx = loadImpactContext({ decl: declOf(), repoRoot: ROOT, commonDir: COMMON, execImpl, fsImpl: fakeFs({ [MAP_PATH]: mapText() }) });
+  assert.strictEqual(ctx.problem, null);
+  assert.deepStrictEqual(ctx.driftTests, ['tests/a.test.js', 'tests/b.test.js']);
+  const diff = calls.find((c) => c.args[0] === 'diff');
+  assert.deepStrictEqual(diff.args, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', SHA, 'HEAD']);
+  assert.strictEqual(diff.opts.cwd, ROOT);
+});
+
+test('loadImpactContext: an unreadable drift diff fails closed as map-drift-unreadable; a map problem skips the diff (#4132)', () => {
+  const failing = loadImpactContext({
+    decl: declOf(), repoRoot: ROOT, commonDir: COMMON,
+    execImpl: fakeGit({ diff: () => { throw new Error('bad object'); } }).execImpl, fsImpl: fakeFs({ [MAP_PATH]: mapText() }),
+  });
+  assert.strictEqual(failing.problem, 'map-drift-unreadable');
+  assert.deepStrictEqual(failing.driftTests, []);
+  const { execImpl, calls } = fakeGit();
+  const missing = loadImpactContext({ decl: declOf(), repoRoot: ROOT, commonDir: COMMON, execImpl, fsImpl: fakeFs({}) });
+  assert.strictEqual(missing.problem, 'map-missing');
+  assert.deepStrictEqual(missing.driftTests, []);
+  assert.strictEqual(calls.some((c) => c.args[0] === 'diff'), false);
+});
+
 test('loadImpactContext: missing, unreadable, invalid, non-ancestor, stale and unknown-distance maps', () => {
   const run = (files, overrides = {}, impact = {}) => loadImpactContext({
     decl: declOf(impact), repoRoot: ROOT, commonDir: COMMON, execImpl: fakeGit(overrides).execImpl, fsImpl: fakeFs(files),
@@ -393,11 +437,12 @@ test('loadImpactContext: an unreadable test listing fails closed, never an empty
 
 test('lazyImpactContext: nothing loads until a field is read, then it loads once', () => {
   let loads = 0;
-  const ctx = lazyImpactContext(() => { loads += 1; return { map: null, problem: 'map-missing', headTests: ['tests/a.test.js'], mapPath: '/m', mapCommit: null, distance: null, fetch: null }; });
+  const ctx = lazyImpactContext(() => { loads += 1; return { map: null, problem: 'map-missing', headTests: ['tests/a.test.js'], driftTests: [], mapPath: '/m', mapCommit: null, distance: null, fetch: null }; });
   assert.strictEqual(ctx.loaded, false);
   assert.strictEqual(loads, 0);
   assert.strictEqual(ctx.problem, 'map-missing');
   assert.deepStrictEqual(ctx.headTests, ['tests/a.test.js']);
+  assert.deepStrictEqual(ctx.driftTests, []);
   assert.strictEqual(ctx.mapPath, '/m');
   assert.strictEqual(ctx.loaded, true);
   assert.strictEqual(loads, 1);
@@ -425,13 +470,19 @@ test('loadImpactContext: git reads carry the shared large maxBuffer', () => {
 test('loadImpactContext: the fetch runs once on a problem and the map is reloaded', () => {
   const files = {};
   const commands = [];
-  const runFetch = (command) => { commands.push(command); files[MAP_PATH] = mapText(); return { ran: true, exitCode: 0, durationMs: 4 }; };
+  const fetched = 'fedcba9876543210fedcba9876543210fedcba98';
+  const runFetch = (command) => { commands.push(command); files[MAP_PATH] = mapText({ commit: fetched }); return { ran: true, exitCode: 0, durationMs: 4 }; };
+  const { execImpl, calls } = fakeGit();
   const ctx = loadImpactContext({
-    decl: declOf({ fetch: 'get-map' }), repoRoot: ROOT, commonDir: COMMON, execImpl: fakeGit().execImpl, fsImpl: fakeFs(files), runFetch,
+    decl: declOf({ fetch: 'get-map' }), repoRoot: ROOT, commonDir: COMMON, execImpl, fsImpl: fakeFs(files), runFetch,
   });
   assert.deepStrictEqual(commands, ['get-map']);
   assert.strictEqual(ctx.problem, null);
   assert.deepStrictEqual(ctx.fetch, { ran: true, exitCode: 0, durationMs: 4 });
+  // The drift read runs once, against the reloaded map's commit (#4132).
+  const diffs = calls.filter((c) => c.args[0] === 'diff');
+  assert.strictEqual(diffs.length, 1);
+  assert.strictEqual(diffs[0].args[5], fetched);
 });
 
 test('loadImpactContext: a failed fetch keeps the original problem; no problem or no fetch command never fetches', () => {

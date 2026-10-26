@@ -12,7 +12,8 @@
 //
 // The codec and selection are pure. The I/O helpers at the bottom
 // (gitLocations, loadImpactContext) read the map file, the test files present
-// at HEAD and the map commit's ancestry, every git call through an injectable
+// at HEAD, the map commit's ancestry and the test files that differ between
+// the map commit and HEAD (the drift), every git call through an injectable
 // execImpl; they never throw — an unreadable input is a named problem.
 'use strict';
 
@@ -106,7 +107,9 @@ function reads(entry, p, status) {
   return entry.f.some(ancestorOrSelf) || entry.s.some(ancestorOrSelf) || entry.d.some((pre) => under(p, pre));
 }
 
-function selectImpactTests({ map, changed, headTests, isTestFile }) {
+// `driftTests`: the test files that differ between the map commit and HEAD. One the map knows and HEAD still
+// has is selected like an untraced one — its traced reads describe the old file; unknown ones are untraced already.
+function selectImpactTests({ map, changed, headTests, isTestFile, driftTests = [] }) {
   const atHead = new Set(headTests);
   // A map reader no longer present at HEAD cannot run, so it never selects.
   const readers = Object.keys(map.tests).filter((t) => atHead.has(t));
@@ -125,12 +128,14 @@ function selectImpactTests({ map, changed, headTests, isTestFile }) {
   }
   if (untraced.length) return { ok: false, reason: `untraced-path: ${untraced.sort()[0]}` };
   const untracedTests = sortedUnique(headTests.filter((t) => !Object.hasOwn(map.tests, t)));
+  const drift = sortedUnique(driftTests.filter((t) => atHead.has(t) && Object.hasOwn(map.tests, t)));
   return {
     ok: true,
-    tests: sortedUnique([...matched, ...changedTests, ...untracedTests]),
+    tests: sortedUnique([...matched, ...changedTests, ...untracedTests, ...drift]),
     matched: [...matched].sort(),
     changedTests: [...changedTests].sort(),
     untracedTests,
+    driftTests: drift,
   };
 }
 
@@ -187,6 +192,19 @@ function listHeadTests({ decl, repoRoot, execImpl, fsImpl }) {
     && patterns.some((re) => re.test(p)) && lstatType(path.join(repoRoot, p), { fsImpl }).type !== 'missing'));
 }
 
+// The test files that differ between the map commit and HEAD — a two-revision tree diff, defined whether or
+// not the commit is an ancestor of the base. null when git cannot answer.
+function listDriftTests({ decl, repoRoot, commit, execImpl }) {
+  let out;
+  try {
+    out = git(execImpl, repoRoot, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', commit, 'HEAD']);
+  } catch {
+    return null;
+  }
+  const patterns = decl.impact.tests.map((g) => globToRegExp(g));
+  return sortedUnique(out.split('\0').filter((p) => p !== '' && patterns.some((re) => re.test(p))));
+}
+
 function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl }) {
   let parsed;
   try {
@@ -230,14 +248,22 @@ function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync,
     fetch = runFetch(decl.impact.fetch);
     if (fetch.exitCode === 0) state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl });
   }
+  // Only a usable map has a drift to read; an unreadable one fails closed like the head-test listing.
+  let driftTests = [];
+  let driftProblem = null;
+  if (!state.problem) {
+    const drift = listDriftTests({ decl, repoRoot, commit: state.mapCommit, execImpl });
+    if (drift === null) driftProblem = 'map-drift-unreadable';
+    else driftTests = drift;
+  }
   const headTests = listHeadTests({ decl, repoRoot, execImpl, fsImpl });
   // A listing that succeeded but names no test file (a sparse checkout, a pathspec oddity) would make
   // every reader "absent at HEAD" and a changed test select nothing — it fails closed like a failed one.
   let headProblem = null;
   if (headTests === null) headProblem = 'head-tests-unreadable';
   else if (headTests.length === 0) headProblem = 'head-tests-empty';
-  const problem = state.problem || headProblem;
-  return { ...state, problem, headTests: headTests || [], mapPath, fetch };
+  const problem = state.problem || driftProblem || headProblem;
+  return { ...state, problem, headTests: headTests || [], driftTests, mapPath, fetch };
 }
 
 // The same context, loaded on first read instead of up front: selectScope only reads it when an
@@ -255,6 +281,7 @@ function lazyImpactContext(load) {
     get map() { return get().map; },
     get problem() { return get().problem; },
     get headTests() { return get().headTests; },
+    get driftTests() { return get().driftTests; },
     get mapPath() { return get().mapPath; },
     get mapCommit() { return get().mapCommit; },
     get distance() { return get().distance; },
