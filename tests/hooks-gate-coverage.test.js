@@ -1458,7 +1458,7 @@ test('#4303: an appending assignment alone leaves the cwd as it was', () => {
   assert.deepStrictEqual(fileWriteTargets('x+=1; cp a /main/f.js', '/r'), [{ action: 'copy', file: MAIN_F }]);
 });
 // bash 3.2 and 5 refuse to parse this ("unexpected EOF") and write nothing; the scanner keeps
-// the trailing write as a deliberate fail-closed tradeoff (this pin passes today and must stay).
+// the trailing write as a deliberate fail-closed tradeoff, which this pin holds.
 test('#4303: an assignment whose substitution never closes is no cd lead (deliberate fail-closed tradeoff)', () => {
   assert.deepStrictEqual(fileWriteTargets('x=$(cd /tmp cd /main; cp a /r2/f.js', '/r').map((t) => t.file), [path.resolve('/r2/f.js')]);
 });
@@ -1542,9 +1542,10 @@ test('#4303: the cd after an assignment word that never closes is not followed',
 
 // #4303: inside `$(( ))` or `$[ ]`, `&` is bitwise and, also inside a bare `(` there, so the cd
 // before it holds. bash 3.2 and 5: `cd M; y=$(( (1 & 3) )); echo x > f` and `x=$[1 & 3]; cd M; …`
-// write M/f, and the S49 shape commits in M. The first four rows sit inside `x=$(true; … )`: at the top
-// level an `&` in a bare `(` is already routed as a sub-run background, so only a substitution
-// reaches the frame check. bash 3.2 and 5 write M/f.js for each row, and S49 runs `git commit` in M.
+// write M/f, and the S49 shape commits in M. The first four rows put the arithmetic `&` inside
+// `x=$(true; … )`, where it would otherwise cut that substitution's own list; the later rows put it
+// in the outer list and in an assignment word (the last two are the ones that reach a bare `(`'s
+// frame check). bash 3.2 and 5 write M/f.js for each row, and S49 runs `git commit` in M.
 for (const [cmd, expected] of [
   ['x=$(true; cd /main && y=$(( (1 & 3) )) && cp a f.js)', [{ action: 'copy', file: MAIN_F }]],
   ['x=$(true; cd /main && y=$[1 & 3] && cp a f.js)', [{ action: 'copy', file: MAIN_F }]],
@@ -1952,13 +1953,25 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // #4303 (S50), known open: a list-end join whose `fresh` is the list's last command keeps only
     // that command's cwds past the cap, so the cwds where an earlier `&&` failed (skipFail) are
     // dropped. With every /bN and M/s0/q present and M/s0/s0 absent, bash 3.2 and 5 write M/f.js
-    // (`cd s0` fails in M/s0/q); dbcab80 reported /main/f.js, the windowed collapse reports /f.js.
+    // (`cd s0` fails in M/s0/q); the windowed collapse reports only /f.js, and so does base
+    // d9aa6b82d, so this miss predates #4303 (dbcab80, mid-branch, reported /main/f.js).
     // A window over both sides fixes this one but loses more shapes than it saves (a fuller set
-    // collapses again sooner), so it stays open.
+    // collapses again sooner), so it stays open (follow-up: collapse-marker record).
     test.todo('#4303 cwd cap: a list-end collapse keeps the cwds where an earlier && failed', () => {
       const cmd = distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd s0; }; { cd q; }; cd s0 && cd /main/s0 && cd ..; cp a ../../f.js';
       const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
       assert.ok(files.includes(path.resolve('/main/f.js')) || files.some((f) => f.startsWith(mainDir)), JSON.stringify(files));
+    });
+    // #4303 (S50), known open: the `||` ok-join's `fresh` is the current command's cwds, so past the
+    // cap the cwds an earlier `cd` in the list succeeded in (skipOk) are dropped. With every /bN and
+    // M/q present, bash 3.2 and 5 write M/f.js (`cd q` succeeds in M and `cd ../q` is skipped; with
+    // M/q absent they write /f.js). Base d9aa6b82d never collapses here and reports /r, /b0../b13
+    // and /main/f.js (denied); the windowed collapse reports only /f.js (allowed), a regression over
+    // base in the same class as the list-end todo above (follow-up: collapse-marker record).
+    test.todo('#4303 cwd cap: an || ok-join collapse keeps the cwd where an earlier cd succeeded', () => {
+      const cmd = distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main; }; cd q || cd ../q; echo x > ../f.js';
+      const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
+      assert.ok(files.includes(MAIN_F), JSON.stringify(files));
     });
     test('#4303 cwd cap: a set past the cap holds at most CWD_SET_CAP + 2 cwds', () => {
       // The handler's fourth argument is true on every visit of a piece after the first, so the run

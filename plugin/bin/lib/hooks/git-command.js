@@ -2082,7 +2082,9 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
     return L.listStart;
   };
   // A group's close restores the list it opened in; the group is that list's current command,
-  // which may fail anywhere the group left the cwd.
+  // which may fail anywhere the group left the cwd. The join keeps the cwds the group's command
+  // began at too, a deliberate superset of `at` (#4303): `at` alone drops a target the join keeps
+  // where a group closes inside a pipeline (`… | { …; cd /nope && cd sub; } | { …`).
   const closeGroup = (frame, at) => {
     frame.savedList.spanStart = joinCwds(frame.savedList.spanStart, at, overflow);
     return frame.savedList;
@@ -2344,7 +2346,7 @@ function hasInPlaceFlag(flags, cmd) {
   return flags.some((f) => {
     if (f === '--in-place' || f.startsWith('--in-place=')) return true;
     if (f.startsWith('--') || !f.startsWith('-')) return false;
-    const opt = readShortCluster(f, IN_PLACE_CLUSTER_LETTERS[cmd]);
+    const opt = readShortCluster(f, IN_PLACE_CLUSTER_LETTERS[cmd] || ''); // never throw on a new cmd
     return opt !== null && (opt.letter === 'i' || (cmd === 'sed' && opt.letter === 'I'));
   });
 }
