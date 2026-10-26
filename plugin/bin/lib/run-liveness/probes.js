@@ -1,7 +1,8 @@
 'use strict';
 // bin/lib/run-liveness/probes.js — the default probes the run-liveness verdict
-// module (#3973) calls. Each is a thin wrapper over an existing reader and keeps
-// that reader's raw contract; the verdict module tags every call (ok / threw) so
+// module (#3973) calls. Each is a thin wrapper over an existing reader (or, for
+// lastCommitAt, over this file's own lastCommitMs, #4420) and keeps that reader's
+// raw contract; the verdict module tags every call (ok / threw) so
 // "could not ask" never reads as "the answer is no". Wrappers here therefore
 // THROW when the question went unanswered, and return null/false only for a real
 // answer.

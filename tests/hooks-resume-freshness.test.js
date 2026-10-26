@@ -9,6 +9,8 @@ const {
   RESUME_FRESHNESS_THRESHOLD_MS,
 } = require('../plugin/bin/lib/hooks/resume-freshness');
 const { LIVE_WINDOW_MS } = require('../plugin/bin/lib/run-liveness/constants');
+const { runLiveness } = require('../plugin/bin/lib/run-liveness');
+const { pidStartTime } = require('../plugin/bin/lib/run-liveness/process-probe');
 const { gitRepo, linkedWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
 
 function tmpRunDir(state) {
@@ -200,6 +202,28 @@ test('AC3.1: a real unborn-HEAD worktree is indeterminate', () => {
   const result = checkResumeFreshness(runDir, { sessionId: 'sess-b' });
   assert.equal(result.safe, false);
   assert.equal(result.verdict, 'indeterminate');
+  assert.ok(result.reason.length > 0);
+});
+
+// Spec Deliverable 7: the real runLiveness on real probes, with and without an owner
+// block. The block names this live test process, so its owner-pid and heartbeat
+// entries read positive on the real host, and still must not block.
+test('AC4.1: real probes — a quiet interrupted run is stale with or without a live owner block', () => {
+  for (const withOwner of [false, true]) {
+    const wt = linkedWorktreeOf(gitRepo());
+    fixtureGit(['-C', wt, 'commit', '--allow-empty', '-m', 'old work', '-q'], { env: OLD_ENV });
+    const owner = {
+      sessionId: 'sess-a', host: os.hostname(), pid: process.pid, pidSource: 'env',
+      pidStartedAt: pidStartTime(process.pid), heartbeatAt: new Date().toISOString(),
+    };
+    const runDir = tmpRunDir({ status: 'interrupted', sessionId: 'sess-a', worktree: wt, ...(withOwner ? { owner } : {}) });
+    if (withOwner) {
+      const results = Object.fromEntries(runLiveness(runDir).evidence.map((e) => [e.probe, e.result]));
+      assert.equal(results.heartbeat, 'positive', 'fixture: the heartbeat reads live');
+      if (owner.pidStartedAt) assert.equal(results['owner-pid'], 'positive', 'fixture: the owner pid reads live');
+    }
+    assert.deepStrictEqual(checkResumeFreshness(runDir, { sessionId: 'sess-b' }), { safe: true, verdict: 'stale' }, `owner block: ${withOwner}`);
+  }
 });
 
 test('AC4.1: owner-probe noise never blocks a quiet interrupted run', () => {

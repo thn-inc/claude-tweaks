@@ -559,3 +559,16 @@ test('blocksResume: owner-pid, heartbeat and owner-events never block, whatever 
 test('blocksResume: a result with no evidence array blocks (cannot tell)', () => {
   for (const r of [null, undefined, {}, { evidence: 'x' }]) assert.strictEqual(blocksResume(r), true);
 });
+
+test('blocksResume: a missing lock or commit entry, or an unrecognised result, blocks (cannot tell)', () => {
+  assert.strictEqual(blocksResume({ evidence: [] }), true, 'empty evidence');
+  for (const probe of ['worktree-lock', 'last-commit']) {
+    const without = evidenceWith({});
+    without.evidence = without.evidence.filter((e) => e.probe !== probe);
+    assert.strictEqual(blocksResume(without), true, `${probe} missing`);
+    assert.strictEqual(blocksResume(evidenceWith({ [probe]: { result: 'unknown' } })), true, `${probe} unknown result`);
+  }
+  const withNull = evidenceWith({});
+  withNull.evidence.unshift(null);
+  assert.strictEqual(blocksResume(withNull), false, 'a null entry beside two negatives is skipped');
+});

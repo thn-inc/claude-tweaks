@@ -7,7 +7,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { checkPassReentry, REENTRY_REASONS } = require('../../../plugin/bin/lib/flow/consolidated-pass');
-const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
+const { gitRepo, linkedWorktreeOf, fixtureGit } = require('../../helpers/git-fixtures');
+const { runLiveness } = require('../../../plugin/bin/lib/run-liveness');
+const { pidStartTime } = require('../../../plugin/bin/lib/run-liveness/process-probe');
 
 const NOT_LANDED = () => ({ landed: false, evidence: { branch: 'b', merged: false } });
 const NO_PR = () => { throw new Error('PR resolver must not be called'); };
@@ -197,6 +199,15 @@ test('AC1.2: an unlisted worktree now blocks the pass', () => {
   const r = checkPassReentry(run, { deps: deps({ probes: { lockInUse: thrower('W is not listed by git worktree list in R'), lastCommitAt: () => OLD } }) });
   assert.equal(r.reason, 'parent-live');
   assert.match(r.detail, /^indeterminate: .*not listed/);
+  // Real git, no injected probe: a plain subdirectory of a repo resolves a main
+  // checkout that does not list it. The old code read that as eligible (null).
+  const main = gitRepo();
+  fixtureGit(['-C', main, 'commit', '--allow-empty', '-m', 'old work', '-q'], { env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' } });
+  const sub = path.join(main, 'sub');
+  fs.mkdirSync(sub);
+  const real = checkPassReentry(makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: sub } }), { deps: deps() });
+  assert.equal(real.reason, 'parent-live');
+  assert.match(real.detail, /^indeterminate: .*not listed/);
 });
 
 // A real, unlocked linked worktree: the pre-#4420 code listed it, found a free
@@ -229,6 +240,37 @@ test('AC4.1: owner-probe noise never blocks a non-interrupted parent (parentLive
     assert.notEqual(r.reason, 'parent-live', label);
     assert.equal(r.reason, 'eligible', label);
   }
+});
+
+// Spec Deliverable 7: the real runLiveness on real probes, with and without an owner
+// block. The block names this live test process, so its owner-pid and heartbeat
+// entries read positive on the real host, and still must not block the pass.
+test('AC4.1: real probes — a quiet non-interrupted parent is eligible with or without a live owner block', () => {
+  const OLD_ENV = { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' };
+  for (const withOwner of [false, true]) {
+    const wt = linkedWorktreeOf(gitRepo());
+    fixtureGit(['-C', wt, 'commit', '--allow-empty', '-m', 'old work', '-q'], { env: OLD_ENV });
+    const owner = {
+      sessionId: 'parent', host: os.hostname(), pid: process.pid, pidSource: 'env',
+      pidStartedAt: pidStartTime(process.pid), heartbeatAt: new Date().toISOString(),
+    };
+    const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: wt, ...(withOwner ? { owner } : {}) } });
+    if (withOwner) {
+      const results = Object.fromEntries(runLiveness(run).evidence.map((e) => [e.probe, e.result]));
+      assert.equal(results.heartbeat, 'positive', 'fixture: the heartbeat reads live');
+      if (owner.pidStartedAt) assert.equal(results['owner-pid'], 'positive', 'fixture: the owner pid reads live');
+    }
+    assert.equal(checkPassReentry(run, { deps: deps() }).reason, 'eligible', `owner block: ${withOwner}`);
+  }
+});
+
+test('AC3.2: a real unborn-HEAD parent worktree is indeterminate: no-commits', () => {
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pass-reentry-unborn-'));
+  fixtureGit(['init', '-q', wt]);
+  const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: wt } });
+  const r = checkPassReentry(run, { deps: deps() });
+  assert.equal(r.reason, 'parent-live');
+  assert.equal(r.detail, 'indeterminate: no-commits');
 });
 
 test('AC1.2: a failed last-commit read now blocks a non-interrupted parent', () => {
@@ -289,7 +331,9 @@ test('#3497 I1 interrupted + recent commit -> parent-live', () => {
   assert.equal(stale.reason, 'eligible');
 });
 
-test('#3497 I1 orphaned lock -> continues to landed check', () => {
+// An orphaned lock reads as a free one inside run-liveness's lock probe
+// (tests/bin-lib/run-liveness/probes.test.js); here the probe's free answer is stubbed.
+test('#3497 I1 a free lock and an old commit -> continues to landed check', () => {
   const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
   const landedTrue = () => ({ landed: true, evidence: {} });
   const r = checkPassReentry(run, { deps: deps({ probes: { lockInUse: () => false, lastCommitAt: () => OLD }, checkBranchLanded: landedTrue }) });

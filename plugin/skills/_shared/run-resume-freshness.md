@@ -134,7 +134,10 @@ A `BLOCKED` result stops the resume; it does not mean the run is unrecoverable.
   failed, not that the run is busy. An **unknown lock** is the commonest cause: a worktree locked
   with a plain `git worktree lock --reason "..."` carries no pid, so the probe cannot tell whether
   anything still holds it. Confirm nothing does, then clear it (`git worktree unlock
-  "{worktree-path}"`) or claim the run (`record-worktree`, as under `locked` above).
+  "{worktree-path}"`) or claim the run (`record-worktree`, as under `locked` above). The `reason`
+  names the cause; two others are a recorded worktree path that is a regular file rather than a
+  directory, and a `run-state.json` that cannot be read as a JSON object (`unreadable-run-state`) —
+  fix the path or the file, then rerun.
 
 Never bypass a `BLOCKED` result by skipping the probe on a later attempt — always re-run it after
 taking one of the actions above, and only proceed once it reports `OK`.

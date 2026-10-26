@@ -203,14 +203,16 @@ function runLiveness(runDir, opts) {
 // (owner-pid, heartbeat, owner-events) stay informational here — widening this helper
 // to them turns every missing events.jsonl and every just-ended session into a blocked
 // resume (#3979 red-team). `last-commit` `negative`/`no-commits` does NOT block: both
-// callers handle that case themselves. A result with no evidence array is a missing
-// answer, which cannot be read as "no", so it blocks.
+// callers handle that case themselves. A missing answer cannot be read as "no", so
+// only a `negative` on both entries lets a resume through: no evidence array, a
+// missing entry, or an unrecognised result all block.
 function blocksResume(result) {
   const evidence = result && result.evidence;
   if (!Array.isArray(evidence)) return true;
-  return evidence.some((e) => e
-    && (e.probe === 'worktree-lock' || e.probe === 'last-commit')
-    && (e.result === 'positive' || e.result === 'error'));
+  return ['worktree-lock', 'last-commit'].some((probe) => {
+    const e = evidence.find((x) => x && x.probe === probe);
+    return !e || e.result !== 'negative';
+  });
 }
 
 module.exports = { PROBE_ORDER, gatherEvidence, decideVerdict, runLiveness, blocksResume };

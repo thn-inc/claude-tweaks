@@ -84,7 +84,7 @@ function checkResumeFreshness(runDir, opts = {}) {
   const lastCommitAt = (opts.probes && opts.probes.lastCommitAt) || DEFAULT_PROBES.lastCommitAt;
   const probes = { ...(opts.probes || {}), lastCommitAt: (wt) => (commitAt = lastCommitAt(wt)) };
   const result = runLiveness(runDir, { now, probes });
-  const entry = (name) => result.evidence.find((e) => e.probe === name);
+  const entry = (name) => result.evidence.find((e) => e && e.probe === name) || { probe: name, result: 'error', detail: 'missing-evidence' };
   const lock = entry('worktree-lock');
   const commit = entry('last-commit');
   if (lock.result === 'positive') return { safe: false, verdict: 'locked', reason: 'worktree lock held by a live process' };
@@ -99,7 +99,7 @@ function checkResumeFreshness(runDir, opts = {}) {
   // Fail CLOSED: a run genuinely stamped `interrupted` whose activity we
   // cannot verify is not safe-by-default — see the Global Constraints
   // note in the plan this module was built from.
-  if (blocksResume(result)) return { safe: false, verdict: 'indeterminate', reason: (lock.result === 'error' ? lock : commit).detail };
+  if (blocksResume(result)) return { safe: false, verdict: 'indeterminate', reason: (lock.result !== 'negative' ? lock : commit).detail };
   // An empty log / unborn HEAD is "no evidence of quiet", not "quiet".
   if (commit.detail === 'no-commits') return { safe: false, verdict: 'indeterminate', reason: 'could not determine worktree activity' };
 
