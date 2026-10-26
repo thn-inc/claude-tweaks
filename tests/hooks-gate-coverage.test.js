@@ -2179,13 +2179,9 @@ test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for
   assert.ok(removed.includes(path.join(main, 'x')) && removed.includes(path.join(wt, 'x')), JSON.stringify(removed));
 });
 
-// #4303: one shape per fix, run from a linked worktree with the main checkout's absolute path in
-// it. Bash 3.2 and 5, started in the worktree with every directory present, write into the main
-// checkout for each: U1 and U2 `main/f.js` (U2's tee row too), U3 `main/a` (cp -rt, mv -vt, GNU
-// install -Dt), U4 and U6 `main/f.js`, S49 runs `git commit` in main, S50 writes `main/s0/f.js`.
-// `cd ${wt} && cp a f.js` writes `wt/f.js`, and `(( a>1 || b>2 ))` writes nothing: from the main
-// checkout it resolved `main/1` and `main/2` before #4303 (U14), a spurious deny there.
-test('AC1.1 e2e #4303: every #4303 shape from a linked worktree into the main checkout is DENIED', () => {
+// #4303: a main checkout with a linked worktree beside it (as e2e #4149 sets up), and the hook's
+// decision for a command run from `cwd` (the worktree by default).
+function linkedWorktree4303() {
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
@@ -2206,6 +2202,20 @@ test('AC1.1 e2e #4303: every #4303 shape from a linked worktree into the main ch
     });
     return out.json && out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision;
   };
+  return { main, wt, decisionFor };
+}
+
+// #4303: one shape per fix, run from a linked worktree with the main checkout's absolute path in
+// it. Bash 3.2 and 5, started in the worktree with every directory present, write into the main
+// checkout for each: U1 and U2 `main/f.js` (U2's tee row too), U3 `main/a` (cp -rt, mv -vt, GNU
+// install -Dt), U4 and U6 `main/f.js`, S49 runs `git commit` in main, S50 writes `main/s0/f.js`;
+// `cd ${wt} && cp a f.js` writes `wt/f.js`. The commands carry the native temp path, which on win32
+// holds backslashes: the scanner reads a word with a `\` as unresolvable (isUnresolvable), so the
+// rows would resolve nothing there, which says nothing about the walk. Skipped on win32.
+test('AC1.1 e2e #4303: every #4303 shape from a linked worktree into the main checkout is DENIED', {
+  skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
+}, () => {
+  const { main, wt, decisionFor } = linkedWorktree4303();
   const groups = Array.from({ length: 15 }, (_, i) => `{ cd /tmp/ct-4303-a${i}; }; `).join('');
   const denied = [
     ['U1', `cd ${main} || cd /tmp; echo x > f.js`],
@@ -2222,6 +2232,12 @@ test('AC1.1 e2e #4303: every #4303 shape from a linked worktree into the main ch
   ];
   for (const [shape, command] of denied) assert.strictEqual(decisionFor(command), 'deny', `${shape}: ${command.slice(-60)}`);
   assert.notStrictEqual(decisionFor(`cd ${wt} && cp a f.js`), 'deny');
+});
+// #4303 (U14): bash 3.2 and 5 write nothing for `(( a>1 || b>2 ))`. From the main checkout it
+// resolved `main/1` and `main/2` before #4303, a spurious deny there. No path is spliced in, so
+// this runs on every platform.
+test('AC2.1 e2e #4303: `(( a>1 || b>2 ))` is not denied from the main checkout or a linked worktree', () => {
+  const { main, decisionFor } = linkedWorktree4303();
   assert.notStrictEqual(decisionFor('(( a>1 || b>2 ))', main), 'deny');
   assert.notStrictEqual(decisionFor('(( a>1 || b>2 ))'), 'deny');
 });
