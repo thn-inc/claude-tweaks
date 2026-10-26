@@ -129,7 +129,8 @@ test('#4303: a commit past the cwd cap that the walk also resolves in the main c
 
 // #4303: a candidate counts only with a fresh commit, so a newer but stale commit in the main
 // checkout is never logged as the lost commit's: with no fresh commit anywhere (the commit did not
-// land) the breadcrumb stays at the walk's start, as before #4303.
+// land) the lost commit leaves no breadcrumb at all, since which commit is its own is unknowable.
+// 71931bb44 logged the walk's start with that checkout's HEAD, as base d9aa6b82d did.
 test('#4303: a stale commit in another candidate checkout is never logged for a commit past the cwd cap', () => {
   const old = (date) => ({ env: { ...gitEnv(), GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date } });
   const main = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-dedup-')));
@@ -142,7 +143,7 @@ test('#4303: a stale commit in another candidate checkout is never logged for a 
   const groups = Array.from({ length: 20 }, (_, i) => `{ cd /tmp/ct-4303-n${i}; }; `).join('');
   runPost(wt, runDir, `${groups}cd ../../..; git commit --allow-empty -qm work`);
   const dirs = readEvents(runDir).filter((e) => e.type === 'commit').map((e) => path.resolve(e.dir));
-  assert.ok(dirs.includes(wt) && !dirs.includes(main), JSON.stringify(dirs));
+  assert.ok(!dirs.includes(wt) && !dirs.includes(main), JSON.stringify(dirs));
 });
 
 test('commit and push targets in ONE compound-resolved command never collide with each other\'s dedup key', () => {

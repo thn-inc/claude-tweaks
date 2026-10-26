@@ -188,9 +188,8 @@ test('#4303: a commit past the cwd cap that lands in a linked worktree is still 
 // "sibling work on #99" (another session's, within the freshness window), and from wt
 // `G20 git commit -qm "Fixes #12"` (every cd failing): bash 3.2 and 5 commit "Fixes #12" in wt.
 // e8473c015 judged every candidate's fresh commits and warned about w2's; base d9aa6b82d, 40b34714a,
-// 3b26440ad and 4e7d54a9d judged wt's alone and did not. With two candidates holding a fresh commit,
-// which one is this command's is unknowable from a lost cwd, and the check judges neither: no
-// warning beats one about another session's commit.
+// 3b26440ad and 4e7d54a9d judged wt's alone and did not. The lost commit is matched to the fresh
+// commit whose subject is its own `-m` text (wt's), so w2's is never judged.
 test('#4303: a commit past the cwd cap is not warned about for another checkout\'s fresh commit', () => {
   const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const main = gitRepoWithMessage('init', '2020-01-01T00:00:00');
@@ -248,6 +247,78 @@ test('#4303: a commit past the cwd cap is not warned about for the main checkout
     runDir: null, runState: null, cwd: wt,
   });
   assert.ok(!(out.json && /closing keyword/i.test(String(out.json.systemMessage))), JSON.stringify(out));
+});
+
+// #4303 (F1, F2): the same when this command's own commit does not land. From wt (nested at
+// M/.claude/worktrees/x), `G20 git commit -qm "Fixes #12"` with nothing staged: bash 3.2 and 5 make
+// no commit anywhere. w2 (F1) or the main checkout (F2) holds another session's fresh
+// "… on #99", the one fresh commit the candidates offer. 71931bb44 and e8473c015 took it for this
+// command's, warned about it and logged it as this command's breadcrumb; base d9aa6b82d, 40b34714a,
+// 3b26440ad and 4e7d54a9d did neither. Its subject is not this command's `-m` text, so it is
+// neither judged nor logged.
+for (const [shape, otherAt] of [['F1', 'w2'], ['F2', 'main']]) {
+  test(`#4303 (${shape}): a commit past the cwd cap that does not land is not matched to another session's fresh commit`, () => {
+    const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+    const main = gitRepoWithMessage('init', '2020-01-01T00:00:00');
+    const wt = path.join(main, '.claude', 'worktrees', 'x');
+    const w2 = path.join(main, '.claude', 'worktrees', 'y');
+    for (const w of [wt, w2]) execFileSync('git', ['-C', main, 'worktree', 'add', '-q', w]);
+    const other = otherAt === 'w2' ? w2 : main;
+    execFileSync('git', ['-C', other, 'commit', '--allow-empty', '-qm', 'other session on #99'], { env });
+    const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4303-run-'));
+    const out = post.run({
+      input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}git commit -qm "Fixes #12"` }, cwd: wt },
+      runDir, runState: { status: 'active' }, ownedRun: { dir: runDir, attribution: 'session' }, cwd: wt,
+    });
+    assert.ok(!(out.json && /closing keyword/i.test(String(out.json.systemMessage))), JSON.stringify(out));
+    let events = [];
+    try { events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { /* none logged */ }
+    const dirs = events.filter((e) => e.type === 'commit').map((e) => path.resolve(e.dir));
+    assert.ok(![wt, w2, main].some((d) => dirs.includes(d)), JSON.stringify(dirs));
+  });
+}
+
+// #4303: two checkouts offering a fresh commit with the command's own subject leave which one is
+// this command's unknowable. From wt (nested at M/.claude/worktrees/x), w2 holding another session's
+// fresh "work on #12" and `G20 cd ../../..; git commit -qm "work on #12"`: bash 3.2 and 5 commit in
+// M. 71931bb44 took neither commit (two offered) but logged wt's HEAD, the walk's start, as this
+// command's breadcrumb; a target that took the first offer would log w2's commit. Neither checkout is
+// logged.
+test('#4303: a commit past the cwd cap whose subject two checkouts offer logs neither', () => {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const main = gitRepoWithMessage('init', '2020-01-01T00:00:00');
+  const wt = path.join(main, '.claude', 'worktrees', 'x');
+  const w2 = path.join(main, '.claude', 'worktrees', 'y');
+  for (const w of [wt, w2]) execFileSync('git', ['-C', main, 'worktree', 'add', '-q', w]);
+  // w2's commit sits on a commit of its own, so the two are not one object.
+  execFileSync('git', ['-C', w2, 'commit', '--allow-empty', '-qm', 'other session'], { env });
+  for (const d of [w2, main]) execFileSync('git', ['-C', d, 'commit', '--allow-empty', '-qm', 'work on #12'], { env });
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4303-run-'));
+  post.run({
+    input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}cd ../../..; git commit --allow-empty -qm "work on #12"` }, cwd: wt },
+    runDir, runState: { status: 'active' }, ownedRun: { dir: runDir, attribution: 'session' }, cwd: wt,
+  });
+  let events = [];
+  try { events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { /* none logged */ }
+  const dirs = events.filter((e) => e.type === 'commit').map((e) => path.resolve(e.dir));
+  assert.ok(![wt, w2, main].some((d) => dirs.includes(d)), JSON.stringify(dirs));
+});
+
+// #4303: with no `-m` text to match (`-F`), the lost commit takes a fresh commit only when the
+// candidates offer exactly one. From wt (nested at M/.claude/worktrees/x), with M/msg holding
+// "work on #12", `G20 cd ../../..; git commit -qF msg`: bash 3.2 and 5 commit "work on #12" in M,
+// and every version but 4e7d54a9d warns.
+test('#4303: a commit past the cwd cap whose message is read from a file is still checked', () => {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const main = gitRepoWithMessage('init', '2020-01-01T00:00:00');
+  const wt = path.join(main, '.claude', 'worktrees', 'x');
+  execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt]);
+  execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-qm', 'work on #12'], { env });
+  const out = post.run({
+    input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}cd ../../..; git commit --allow-empty -qF msg` }, cwd: wt },
+    runDir: null, runState: null, cwd: wt,
+  });
+  assert.ok(out.json && /closing keyword/i.test(String(out.json.systemMessage)), JSON.stringify(out));
 });
 
 // #4303 (P3): a lost commit is also looked for where base's reading (`bases`) puts it. From a cwd
