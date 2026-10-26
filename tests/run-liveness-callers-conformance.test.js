@@ -26,9 +26,17 @@ const { readText } = require('./helpers/read-skill');
 // `git log -1` stays visible. A mis-parse by the stripper is an offender, not a clean
 // file (stripperVerdict).
 //
-// Recall limits: a destructured `kill`, a `process['kill']` bracket form, a `{ locked }`
-// destructure, and `rev-list`/`for-each-ref` recency reads are not matched. Code
-// review is the backstop for those.
+// Recall limits, none matched; code review is the backstop for them:
+//   - a destructured `kill`, a `process['kill']` bracket form, an aliased
+//     `const k = process.kill`;
+//   - a `{ locked }` destructure;
+//   - `rev-list`/`for-each-ref` recency reads, `git show -s --format=%ct`, and
+//     committer-date formats other than %ct/%cI (`%ci`, `%cd`) with no count flag;
+//   - a git argv held in a nested or spread array, or a command split across the lines
+//     of a multi-line template literal;
+//   - an aliased destructure of a scoped token (`const { ownEventRecency: oer } = ...`);
+//   - a scoped token inside a string literal in the three non-archive files (the scoped
+//     rule reads blank-mode text).
 
 const REPO = path.join(__dirname, '..');
 const SCANNED = [
@@ -39,22 +47,26 @@ const SCANNED = [
 ];
 const COMMIT_FORM = 'git commit-recency read';
 const NAMES = /\b(isDeadRunDir|lockVerdict|isPidAlive|lockInUse|lastCommitMs)\b/g;
-const PROCESS_KILL = /\bprocess\s*\.\s*kill\s*\(/g;
+const PROCESS_KILL = /\bprocess\s*\??\.\s*kill\s*\(/g;
 const ARGV = /\[[^\[\]]*\]/g;
 const LITERAL = /(['"`])((?:\\.|(?!\1).)*)\1/g;
-const RECENCY = /^(?:-1|-n|--max-count(?:=\d+)?|.*(?:%ct|%cI|committerdate).*)$/;
+const RECENCY = /^(?:-1|-n\d*|--max-count(?:=.*)?|.*(?:%ct|%cI|committerdate).*)$/;
 const LOG_WORD = /\blog\b/;
-const STRING_RECENCY = /(?:^|\s)(?:-1|-n|--max-count)\b|%ct|%cI|committerdate/;
+const STRING_RECENCY = /(?:^|\s)(?:-1|-n\d*|--max-count)\b|%ct|%cI|committerdate/;
 const FIELD = /\.\s*(locked|lockReason)\b/g;
+// A bracket field read off a value (`entry['locked']`); a bare array literal does not count.
+const BRACKET_FIELD = /(?<=[\w$)\]]\s*)\[\s*(['"])(locked|lockReason)\1\s*\]/g;
 
 // Scoped rule: the two liveness tokens may appear in archive-merged.js only inside
 // classifyRunDir, lastOwnEventMs, the import and export lists, and the constant's own
 // declaration. Neither token may appear in the other three scanned files.
 const ARCHIVE = 'plugin/bin/lib/reconcile/archive-merged.js';
 const SCOPED = /\b(ownEventRecency|STALE_INTERRUPTED_TTL_MS)\b/g;
-const SCOPED_DECL = /\bconst\s+STALE_INTERRUPTED_TTL_MS\s*=/g;
-const REQUIRE_DESTRUCTURE = /\bconst\s*\{[^}]*\}\s*=\s*require\s*\([^)]*\)/g;
+const SCOPED_DECL = /^const\s+STALE_INTERRUPTED_TTL_MS\s*=/gm;
+const REQUIRE_DESTRUCTURE = /^const\s*\{[^}]*\}\s*=\s*require\s*\([^)]*\)/gm;
 const MODULE_EXPORTS = /\bmodule\s*\.\s*exports\s*=\s*\{/g;
+const EXPORT_BEFORE = /(?:[{,]|\b[\w$]+\s*:)\s*$/;
+const EXPORT_AFTER = /^[ \t]*(?:[,}]|\r?\n|$)/;
 // Allowed scoped-token sites located in archive-merged.js at the commit that landed the
 // scoped rule. Fewer means the matcher stopped matching: never lower this floor.
 const SCOPED_SITE_FLOOR = 8;
@@ -73,6 +85,7 @@ function hitsIn(src) {
   for (const m of src.matchAll(NAMES)) hits.push({ line: lineOf(src, m.index), form: m[1] });
   for (const m of src.matchAll(PROCESS_KILL)) hits.push({ line: lineOf(src, m.index), form: 'process.kill(' });
   for (const m of src.matchAll(FIELD)) hits.push({ line: lineOf(src, m.index), form: `.${m[1]}` });
+  for (const m of src.matchAll(BRACKET_FIELD)) hits.push({ line: lineOf(src, m.index), form: `.${m[2]}` });
   // A git argv array: `log` as one element, and a recency element among the others.
   const argvSeen = new Set();
   for (const m of src.matchAll(ARGV)) {
@@ -132,10 +145,20 @@ function allowedRegions(blank) {
   }
   for (const m of blank.matchAll(REQUIRE_DESTRUCTURE)) regions.push([m.index, m.index + m[0].length]);
   for (const m of blank.matchAll(SCOPED_DECL)) regions.push([m.index, m.index + m[0].length]);
+  // The export list allows a scoped token only as a shorthand property or as the whole
+  // value of `key: TOKEN`: preceded by `{`, `,` or `key:`, and followed by `,`, `}` or a
+  // line end. An arrow or call around the token (`sneaky: (d) => ownEventRecency(d)`) is not.
   for (const m of blank.matchAll(MODULE_EXPORTS)) {
     const open = m.index + m[0].length - 1;
     const close = matchClose(blank, open, '{', '}');
-    if (close >= 0) regions.push([open, close + 1]);
+    if (close < 0) continue;
+    for (const t of blank.slice(open, close + 1).matchAll(SCOPED)) {
+      const start = open + t.index;
+      const end = start + t[0].length;
+      if (EXPORT_BEFORE.test(blank.slice(open, start)) && EXPORT_AFTER.test(blank.slice(end, close + 1))) {
+        regions.push([start, end]);
+      }
+    }
   }
   return regions;
 }
@@ -244,6 +267,16 @@ test('matcher self-test: banned names and primitives are flagged at their lines'
     "const msg = 'log rotated';", // 13
     "runGit(['status', '-1']);", // 14
     "const m = 'lockVerdict failed';", // 15
+    "runGit(['log', '-n1', '--format=%H']);", // 16
+    "runGit(['log', '--max-count=' + n]);", // 17
+    "execSync('git log -n1 --format=%H');", // 18
+    "runGit(['log', '--name-only']);", // 19
+    "execSync('git log --name-only');", // 20
+    'process?.kill(pid, 0);', // 21
+    "const a = entry['locked'];", // 22
+    'const b = e["lockReason"];', // 23
+    "const fields = ['locked'];", // 24
+    'runGit([`log`, `--max-count=${n}`, `--format=%H`]);', // 25
   ].join('\n');
   assert.deepEqual(
     bannedHits(planted).map((h) => `${h.line}:${h.form}`),
@@ -259,6 +292,13 @@ test('matcher self-test: banned names and primitives are flagged at their lines'
       '9:.locked',
       '10:.lockReason',
       '15:lockVerdict',
+      `16:${COMMIT_FORM}`,
+      `17:${COMMIT_FORM}`,
+      `18:${COMMIT_FORM}`,
+      '21:process.kill(',
+      '22:.locked',
+      '23:.lockReason',
+      `25:${COMMIT_FORM}`,
     ],
   );
 });
@@ -268,8 +308,12 @@ test('AC2.1: a multi-line argv commit-recency read is flagged at its opening lin
   assert.deepEqual(bannedHits(planted).map((h) => `${h.line}:${h.form}`), [`2:${COMMIT_FORM}`]);
 });
 
+// The four real files, with `appended` added to the end of the one named `rel`.
+function inject(rel, appended) {
+  return readEntries().map((e) => (e.rel === rel ? { ...e, raw: e.raw + appended } : e));
+}
+
 test('AC2.1: reintroducing a retired probe into a scratch copy names the file and the form', () => {
-  const inject = (rel, appended) => readEntries().map((e) => (e.rel === rel ? { ...e, raw: e.raw + appended } : e));
   assert.throws(
     () => assertNoRetiredProbes(inject('plugin/bin/lib/hooks/resume-freshness.js', '\nlockVerdict(entry);\n')),
     /plugin\/bin\/lib\/hooks\/resume-freshness\.js:\d+ lockVerdict/,
@@ -291,6 +335,17 @@ test('a comment-stripper mis-parse is reported as an offender, not passed as a c
   const planted = { rel: 'plugin/bin/lib/planted.js', raw: 'if (b) /"/.test(b); const c = "//"; lockVerdict(c);' };
   assert.equal(stripperVerdict(planted.raw, stripComments(planted.raw)), 'misparsed');
   assert.deepEqual(scan([planted]), [`${planted.rel}: ${STRIPPER_VERDICT_MESSAGES.misparsed}`]);
+});
+
+test('a blank-mode-only mis-parse is reported as an offender, not passed as a clean file', () => {
+  // Keep mode reads `/'/` as a regex (verdict ok); blank mode reads the regex body as a string
+  // opener (verdict misparsed). Without scan's blank-mode branch the live token below, in a
+  // non-archive file, would pass.
+  const raw = "if (b) /'/.test(b); const c = 'x'; ownEventRecency(c);";
+  const rel = SCANNED[0];
+  assert.equal(stripperVerdict(raw, stripComments(raw)), 'ok');
+  assert.equal(stripperVerdict(raw, stripComments(raw, { literals: 'blank' })), 'misparsed');
+  assert.deepEqual(scan([{ rel, raw }]), [`${rel}: ${STRIPPER_VERDICT_MESSAGES.misparsed}`]);
 });
 
 test('a live banned call after a fake comment opener in a string is still seen', () => {
@@ -326,6 +381,31 @@ test('scoped rule self-test: allowed sites pass, a sibling helper and the other 
   for (const rel of SCANNED) {
     assert.deepEqual(scopedHits(rel, '// ownEventRecency is the reader\nconst ok = 1;'), []);
   }
+});
+
+test('scoped rule self-test: only a bare token passes in the export list, only top-level declarations count', () => {
+  const fmt = (hits) => hits.map((h) => `${h.line}:${h.form}`);
+  const exportsRow = 'module.exports = {\n  sneaky: (d) => ownEventRecency(d),\n  ownEventRecency,\n  alias: STALE_INTERRUPTED_TTL_MS,\n  wrapped: wrap(ownEventRecency),\n  a, ownEventRecency };';
+  assert.deepEqual(fmt(scopedHits(ARCHIVE, exportsRow)), [
+    '2:ownEventRecency outside classifyRunDir/lastOwnEventMs',
+    '5:ownEventRecency outside classifyRunDir/lastOwnEventMs',
+  ]);
+  const nested = "function inner() {\n  const STALE_INTERRUPTED_TTL_MS = 1;\n  const { ownEventRecency } = require('x');\n}";
+  assert.deepEqual(fmt(scopedHits(ARCHIVE, nested)), [
+    '2:STALE_INTERRUPTED_TTL_MS outside classifyRunDir/lastOwnEventMs',
+    '3:ownEventRecency outside classifyRunDir/lastOwnEventMs',
+  ]);
+});
+
+test('AC2.1: scan applies the scoped rule to the real files', () => {
+  assert.throws(
+    () => assertNoRetiredProbes(inject(ARCHIVE, '\nfunction newHelper(d) {\n  return ownEventRecency(d);\n}\n')),
+    /archive-merged\.js:\d+ ownEventRecency outside classifyRunDir\/lastOwnEventMs/,
+  );
+  assert.throws(
+    () => assertNoRetiredProbes(inject(SCANNED[1], '\nconst x = ownEventRecency(d);\n')),
+    /resume-freshness\.js:\d+ ownEventRecency outside archive-merged\.js/,
+  );
 });
 
 test('boundary finder ignores braces inside string literals', () => {
