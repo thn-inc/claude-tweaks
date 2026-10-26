@@ -341,11 +341,10 @@ function install() {
       throw new Error('Module lookup helpers unavailable');
     }
     const exts = Object.keys(Module._extensions);
-    const absoluteRequest = path.isAbsolute(request);
 
     // Lookup dirs: Node's own derivation (a null entry = an absolute request, whose base is itself).
     let dirs;
-    if (absoluteRequest) dirs = [null];
+    if (path.isAbsolute(request)) dirs = [null];
     else if (options && typeof options === 'object' && Array.isArray(options.paths)) {
       if (request.startsWith('./') || request.startsWith('../') || (process.platform === 'win32' && (request.startsWith('.\\') || request.startsWith('..\\')))) {
         dirs = options.paths.map((p) => toAbs(p));
@@ -753,8 +752,9 @@ function install() {
   }
 
   // `env [options] [NAME=value ...] command ...` as the command it runs: { words (the assignments kept),
-  // base (moved by -C/--chdir, whose in-repo directory is recorded like any path argument), stripped (the env no longer carries the trace) }, or null for an option this
-  // does not know (the caller then records the arguments generically, as for any other command).
+  // base (moved by -C/--chdir, whose in-repo directory is recorded like any path argument), stripped (the
+  // env no longer carries the trace) }, or null for an option this does not know (the caller then records
+  // the arguments generically, as for any other command).
   function envCommand(words, base) {
     let j = 1;
     let stripped = false;
@@ -790,9 +790,8 @@ function install() {
   // global options and their values dropped.
   // `stripped`: an enclosing env or assignment removed or replaced the trace variables, so a node child is not
   // self-tracing: it records `c ''` (its reads are unknown) and its path arguments like any other child.
-  function recordCommand(commandWords, base, strippedIn) {
+  function recordCommand(commandWords, base, stripped = false) {
     let words = commandWords;
-    let stripped = strippedIn === true;
     let first = 0;
     while (first < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[first])) {
       if (dropsTrace(words[first].slice(0, words[first].indexOf('=')))) stripped = true;
