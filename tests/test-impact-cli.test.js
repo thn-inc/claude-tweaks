@@ -681,15 +681,19 @@ test('a trace whose write fails exits 1, writes no map and names the test that l
 });
 
 // A SIGINT sent to the CLI alone while its suite runs (#4131): the CLI forwards it, removes the trace dir
-// the suite was writing into, and writes no map. The stand-in suite signals readiness, then idles.
+// the suite was writing into, and writes no map. The stand-in suite signals readiness, then idles; it records
+// the signal it receives, so forwarding is proven by that record rather than by a wall-clock bound.
 test('AC2.1: SIGINT to a running real trace leaves no ct-test-impact-trace-* dir', { skip: process.platform === 'win32' && 'signals and tracing are POSIX-only' }, async () => {
   await withTempDirAsync(async (tmp) => {
-    const idle = "require('fs').writeFileSync(process.env.CT_E2E_READY, ''); setTimeout(() => {}, 60000);\n"; // bounded, so a failed run strands no suite
+    const idle = "const fs = require('fs');\n"
+      + "process.on('SIGINT', () => { fs.writeFileSync(process.env.CT_E2E_GOT, 'SIGINT'); process.exit(130); });\n"
+      + "fs.writeFileSync(process.env.CT_E2E_READY, ''); setTimeout(() => {}, 60000);\n"; // bounded, so a failed run strands no suite
     const { root, env } = traceFixture(tmp, idle);
     const out = path.join(tmp, 'map.json');
     const ready = path.join(tmp, 'ready');
+    const got = path.join(tmp, 'got-signal');
     const leaks = () => fs.readdirSync(path.join(tmp, 'tmp')).filter((n) => n.startsWith('ct-test-impact-trace-'));
-    const cli = spawnProcess(process.execPath, [CLI, 'trace', '--out', out], { cwd: root, env: { ...env, CT_E2E_READY: ready }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const cli = spawnProcess(process.execPath, [CLI, 'trace', '--out', out], { cwd: root, env: { ...env, CT_E2E_READY: ready, CT_E2E_GOT: got }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     cli.stderr.on('data', (d) => { stderr += d; });
     const exited = new Promise((resolve) => cli.on('exit', (code, signal) => resolve({ code, signal })));
@@ -698,10 +702,9 @@ test('AC2.1: SIGINT to a running real trace leaves no ct-test-impact-trace-* dir
       while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
       assert.ok(fs.existsSync(ready), `the suite never signalled readiness: ${stderr}`);
       assert.strictEqual(leaks().length, 1, 'the probe sees the live trace dir, so it can see a leak');
-      const t0 = Date.now();
       cli.kill('SIGINT');
       const { code, signal } = await exited;
-      assert.ok(Date.now() - t0 < 20000, 'the signal reached the suite: the trace ended long before its 60 s idle');
+      assert.strictEqual(fs.existsSync(got) && fs.readFileSync(got, 'utf8'), 'SIGINT', 'the CLI forwarded the signal to the suite');
       assert.deepStrictEqual({ code, signal }, { code: 130, signal: null }, stderr);
       assert.deepStrictEqual(leaks(), []);
       assert.strictEqual(fs.existsSync(out), false);
