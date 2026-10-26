@@ -29,6 +29,10 @@ Before calling a new rule kind or key done, confirm each of these:
    everything, current ones ignore it), pin that in `tests/verify-scope-declaration.test.js`, and
    record the removal condition beside the check in `declaration.js`. Prove it by running the
    previous reader over the file: `git show {base}:plugin/bin/lib/verify/declaration.js`.
+   Since #4135 `tests/verify-scope-declaration.test.js` runs that check itself: it materializes the
+   newest reachable `v*` tag's `declaration.js` (plus every relative require it reaches) in a temp
+   dir and fails, naming the reader's own error text, when it rejects the committed file; it skips
+   with a stated reason only in a clone with no release tag.
 3. **Anything the kind reads loads lazily.** A map, a fetch or a network call belongs behind a
    getter that runs only when selection reads it (`lazyImpactContext` in `plugin/bin/lib/verify/impact.js`),
    so a delta no such rule matches never pays for it; report fields for an unread input are `null`,
