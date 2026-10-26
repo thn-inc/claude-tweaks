@@ -10,12 +10,13 @@
 //
 // Test-impact selection (#4024), gated on decl.impact: a file matched by an
 // impact rule goes to impact.js's selectImpactTests, so impact.suite runs only
-// the test files a traced map says read it. Any reason the map cannot answer
-// (impact.problem, an untraced path) runs that suite full with the reason in
-// `fallback`; a non-impact rule (or an unmatched path) that selects the suite
-// supersedes the subset. Without a stamp, the caller's --integration-branch
-// merge-base (`fallbackBase`) anchors an impact declaration; an explicit
-// --base never does.
+// the test files a traced map says read it, plus the tests that drifted
+// between the map's commit and HEAD (driftTests, #4132). Any reason the map
+// cannot answer (impact.problem, an untraced path) runs that suite full with
+// the reason in `fallback`; a non-impact rule (or an unmatched path) that
+// selects the suite supersedes the subset. Without a stamp, the caller's
+// --integration-branch merge-base (`fallbackBase`) anchors an impact
+// declaration; an explicit --base never does.
 'use strict';
 
 const { globToRegExp } = require('../issues/blast-radius');
@@ -23,7 +24,7 @@ const { anchorOf } = require('./stamp');
 const { selectImpactTests } = require('./impact');
 
 function impactResult(suite, fields = {}) {
-  return { suite, files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], superseded: false, ...fields };
+  return { suite, files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], driftTests: [], driftSelected: null, superseded: false, ...fields };
 }
 
 // `ctx` is the caller's {map, problem, headTests}; a missing context or map
@@ -42,9 +43,9 @@ function resolveImpact(decl, paths, statuses, ctx) {
   // existence probes and directory listings too, the broader match — so a
   // missing status can only select more tests, never fewer (fail-conservative).
   const changed = paths.map((p) => ({ path: p, status: (statuses && statuses[p]) || 'A' }));
-  const r = selectImpactTests({ map: ctx.map, changed, headTests: ctx.headTests || [], isTestFile: (p) => patterns.some((re) => re.test(p)) });
+  const r = selectImpactTests({ map: ctx.map, changed, headTests: ctx.headTests || [], driftTests: ctx.driftTests || [], isTestFile: (p) => patterns.some((re) => re.test(p)) });
   if (!r.ok) return impactResult(suite, { fallback: r.reason });
-  return impactResult(suite, { files: r.tests, selected: r.tests.length, changedTests: r.changedTests, untracedTests: r.untracedTests });
+  return impactResult(suite, { files: r.tests, selected: r.tests.length, changedTests: r.changedTests, untracedTests: r.untracedTests, driftTests: r.driftTests, driftSelected: r.driftTests.length });
 }
 
 function selectScope({ decl, files, stamp, statuses = null, impact = null, fallbackBase = null }) {
@@ -91,7 +92,7 @@ function selectScope({ decl, files, stamp, statuses = null, impact = null, fallb
     if (all || selected.has(suite)) imp = impactResult(suite, { superseded: true });
     // Nothing selected it: the empty subset, so `files null` keeps meaning
     // "runs its full command".
-    else if (impactPaths.length === 0) imp = impactResult(suite, { files: [], selected: 0 });
+    else if (impactPaths.length === 0) imp = impactResult(suite, { files: [], selected: 0, driftSelected: 0 });
     else {
       imp = resolveImpact(decl, impactPaths, statuses, impact);
       // A full run (files null) or a non-empty subset selects the suite; an

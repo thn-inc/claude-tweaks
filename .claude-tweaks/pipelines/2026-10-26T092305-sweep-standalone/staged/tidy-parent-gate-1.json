@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "parent-gate",
+  "record": 3944,
+  "title": "Settle unconfirmed review findings with an agent …",
+  "action": "Compose Verification Brief, add demo:pending",
+  "command": "gh issue edit 3944 --repo thn-inc/claude-tweaks --add-label demo:pending"
+ }
+]

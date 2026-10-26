@@ -1,0 +1,8 @@
+## /tidy
+- AUTO 10:35:03 — Step 6: deleted 121 orphaned plans whose related records are closed (re-verified fresh, no citing repo file), one commit each on worktree-tidy-sweep-2026-10-26. Reversibility: high. [lever: tidy-aggressiveness=moderate (default)]
+- AUTO 10:35:03 — Step 6: deleted 3 orphaned ledgers (no open row, no live pipeline run): 2026-10-24-dispatch-shell-constraint-escaped-space-ledger.md, 2026-10-25-hooks-verb-table-ledger.md, 2026-10-25-reconcile-adhoc-liveness-sweep-4179-ledger.md. Reversibility: high. [lever: tidy-aggressiveness=moderate (default)]
+- SKIP 10:35:03 — Step 6: docs/superpowers/plans/2026-10-17-windows-regression-guard-3316.md: skip: cited by docs/reference/dispatch-cost-baseline.md. Reversibility: n/a. [lever: tidy-aggressiveness=moderate (default)]
+- AUTO 10:35:03 — Step 6: removed merged clean worktrees probe-4028-t8, probe-4028-t8-ctl (branches -d); dispatch-record-4133, backlog-refine-2718-2730 (branches kept for reconcile archive-branches). Reversibility: med. [lever: tidy-aggressiveness=moderate (default)]
+- STAGED 10:35:03 — Step 6: stale claim releases #3315 #3974 #3975 #3976. Stage path: staged/tidy-claim-releases-1.md. Reversibility: n/a. [lever: tidy-aggressiveness=moderate (default)]
+- STAGED 10:35:03 — Step 6: open parent gate #3944 (5/5 sub-issues closed, no disposition). Stage path: staged/tidy-parent-gate-1.md. Reversibility: n/a. [lever: tidy-aggressiveness=moderate (default)]
+- STAGED 10:35:03 — Step 6: 19 digest cluster proposals from #1426. Stage path: staged/digest-promotion-1.md .. digest-promotion-19.md. Reversibility: n/a. [lever: tidy-aggressiveness=moderate (default)]

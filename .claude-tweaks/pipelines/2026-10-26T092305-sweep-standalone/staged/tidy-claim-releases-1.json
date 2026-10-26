@@ -1,0 +1,30 @@
+[
+ {
+  "tag": "claim",
+  "record": 3315,
+  "title": "Fix latent Windows path producers found by the 2…",
+  "action": "Release stale claim (TTL expired 2026-10-25)",
+  "command": "release-claim.js 3315 --sweep  (full cmd: staged/tidy-claim-releases-1.md)"
+ },
+ {
+  "tag": "claim",
+  "record": 3974,
+  "title": "Resolve a run's spec header at its live or archiv…",
+  "action": "Release stale claim (TTL expired 2026-10-25)",
+  "command": "release-claim.js 3974 --sweep  (full cmd: staged/tidy-claim-releases-1.md)"
+ },
+ {
+  "tag": "claim",
+  "record": 3975,
+  "title": "Report stranded spec-shell dirs, ship a command t…",
+  "action": "Release stale claim (TTL expired 2026-10-25)",
+  "command": "release-claim.js 3975 --sweep  (full cmd: staged/tidy-claim-releases-1.md)"
+ },
+ {
+  "tag": "claim",
+  "record": 3976,
+  "title": "Archive the spec header on the run branch before …",
+  "action": "Release stale claim (TTL expired 2026-10-25)",
+  "command": "release-claim.js 3976 --sweep  (full cmd: staged/tidy-claim-releases-1.md)"
+ }
+]
