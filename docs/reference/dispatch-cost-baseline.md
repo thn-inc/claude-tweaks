@@ -17,7 +17,7 @@ only; there are no pricing or dollar values.
 | Field | Value |
 |---|---|
 | Run | `2026-10-17T110950-record-3316` (spec #3316, the post-merge Windows regression guard; PR #3390) |
-| Plan | `2026-10-17-windows-regression-guard-3316.md` (the plans directory on `origin/main`) |
+| Plan | `docs/superpowers/plans/2026-10-17-windows-regression-guard-3316.md` (deleted `a4c24ac6a`, PR #3390's merge commit) |
 | Plan tasks | 4 (`node plugin/bin/plan-audit.js {plan} --count-tasks` printed `{"tasks": 4, "batched": false}`) |
 | Dispatch shape | SDD per-task: `Implement Task 1: issue filer CLI`, `Implement Task 2: Windows workflow`, `Review Task 1 (spec + quality)`, `Review Task 2 (spec + quality)`, `Re-review Task 2 fix round 1`. The plan's Tasks 3 and 4 are main-session tasks by design (a real-input probe and live CI runs), so they have no SDD dispatch. |
 | `ceremony-profile` | `standard` (the run's `config.yml`) |
