@@ -478,7 +478,7 @@ function composedHeadroom(governedPaths, repoRoot, { report = composedBytesRepor
   }
   for (const row of rows) {
     if (!row.sources) continue; // unparsed call site — nothing to intersect
-    const relSources = row.sources.map((s) => toPosix(path.relative(repoRoot, s)));
+    const relSources = row.sources.map((s) => relativeDisplayId(repoRoot, s));
     if (!relSources.some((s) => governedPaths.has(s))) continue;
     if (row.error) {
       composedErrors.push({

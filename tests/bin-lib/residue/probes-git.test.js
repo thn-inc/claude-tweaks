@@ -390,7 +390,7 @@ test('AC1.1: probeWorktrees counts both git-style and native win32 paths as in t
   const ev = findings.map((f) => f.evidence);
   assert.match(ev[0], /, in reaper domain$/);
   assert.match(ev[1], /, in reaper domain$/);
-  assert.match(ev[2], /outside reaper domain/);
+  assert.match(ev[2], /, outside reaper domain \(no reaper collects it\)$/);
 });
 
 // Fixture-based: exercises the real `defaultIsDirty` (actual `git status
