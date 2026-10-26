@@ -13,6 +13,7 @@ const { pidStartTime } = require('../../../plugin/bin/lib/run-liveness/process-p
 
 const NOT_LANDED = () => ({ landed: false, evidence: { branch: 'b', merged: false } });
 const NO_PR = () => { throw new Error('PR resolver must not be called'); };
+const OLD_ENV = { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' };
 
 function manifestText(statuses) {
   const ids = [11, 12, 13, 14];
@@ -202,7 +203,7 @@ test('AC1.2: an unlisted worktree now blocks the pass', () => {
   // Real git, no injected probe: a plain subdirectory of a repo resolves a main
   // checkout that does not list it. The old code read that as eligible (null).
   const main = gitRepo();
-  fixtureGit(['-C', main, 'commit', '--allow-empty', '-m', 'old work', '-q'], { env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' } });
+  fixtureGit(['-C', main, 'commit', '--allow-empty', '-m', 'old work', '-q'], { env: OLD_ENV });
   const sub = path.join(main, 'sub');
   fs.mkdirSync(sub);
   const real = checkPassReentry(makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: sub } }), { deps: deps() });
@@ -246,7 +247,6 @@ test('AC4.1: owner-probe noise never blocks a non-interrupted parent (parentLive
 // block. The block names this live test process, so its owner-pid and heartbeat
 // entries read positive on the real host, and still must not block the pass.
 test('AC4.1: real probes — a quiet non-interrupted parent is eligible with or without a live owner block', () => {
-  const OLD_ENV = { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' };
   for (const withOwner of [false, true]) {
     const wt = linkedWorktreeOf(gitRepo());
     fixtureGit(['-C', wt, 'commit', '--allow-empty', '-m', 'old work', '-q'], { env: OLD_ENV });
