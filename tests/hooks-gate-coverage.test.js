@@ -421,6 +421,9 @@ test('#4303: `>&` with a file target resolves the file, as bash writes it', () =
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'write', file: MAIN_F }], cmd);
   }
 });
+// bash 3.2 and 5 write no file for any row: `>&2`, `>& 2` and `2>&1` duplicate a descriptor, `>&-`
+// closes stdout, `>&3-` fails on the unopened fd 3, and the `2>&`, `0>&` and `>>&` rows are the
+// ambiguous redirects and the syntax error noted above.
 test('#4303: `>&` with an fd, `-`, or a non-stdout fd prefix resolves no target', () => {
   for (const cmd of ['echo x >&2', 'echo x >& 2', 'echo x >&-', 'echo x >&3-', 'echo x 2>&1', 'echo x 2>&/main/f.js', 'echo x 0>&/main/f.js', 'echo x>>&/main/f.js']) {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
@@ -497,7 +500,9 @@ for (const cmd of ["perl -0pi -e 's/a/b/' /main/f.js", "perl -00pi -e 's/a/b/' /
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'edit', file: MAIN_F }]);
   });
 }
-// A value-taking letter before i ends the cluster, so its i is that option's value, not -i.
+// A value-taking letter before i ends the cluster, so in `perl -Mi` the i is -M's module name, not
+// -i; `perl -0p` and `sed -n -e p` hold no i at all, so nothing marks them in-place. bash 3.2 and 5
+// write nothing for any row (`-Mi` fails, finding no i.pm; the other two print the file).
 for (const cmd of ["perl -Mi -e 'print' /main/f.js", "perl -0p -e 's/a/b/' /main/f.js", "sed -n -e 'p' /main/f.js"]) {
   test(`#4303: \`${cmd}\` is a read, not an edit`, () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), []);
@@ -520,6 +525,12 @@ for (const cmd of ["perl -pi -e 's/a/b/' /main/f.js", "perl -i -pe 's/a/b/' /mai
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'edit', file: MAIN_F }]);
   });
 }
+// #4303: the deliberate fail-closed side named above: the letters of a `-d:MOD` module name are read
+// as plain switches, so an i among them reads as -i. bash 3.2 and 5 write nothing for this row (perl
+// finds no Devel::Tiny), and the scanner reports the edit, which this pin holds.
+test('#4303: an i in a `perl -d:MOD` module name reads as -i (deliberate fail-closed tradeoff)', () => {
+  assert.deepStrictEqual(fileWriteTargets('perl -d:Tiny -e 1 /main/f.js', '/r'), [{ action: 'edit', file: MAIN_F }]);
+});
 // #4303: each of perl's -e -E -I -m -M -F -x -D -C and sed's -e -f takes the rest of the cluster.
 // bash 3.2 and 5 write nothing for perl -Ilib, -Ipi, -Fpi, -Cpi (an unknown Unicode letter),
 // -Dpi (no -DDEBUGGING), -xpi (no script found), -mpi (no pi.pm), and `-ei -e 1` and `-Epi -e 1`
@@ -1475,6 +1486,14 @@ test('#4303: the assignment word ends at its closing backtick or paren', () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'copy', file: path.resolve('/r/f.js') }], cmd);
   }
 });
+// #4303: a bare `cd` after such a word is followed too. It goes to $HOME, a cwd the walk cannot read,
+// so nothing after it resolves, as for a bare `cd` alone (bash 3.2 and 5 write $HOME/f.js for both
+// rows). Before the word was read whole, the first row's `cd` was missed and /r/f.js resolved.
+test('#4303: a bare cd after an assignment word is followed as a bare cd is', () => {
+  for (const cmd of ['x=$(echo a b) cd; cp a f.js', 'cd; cp a f.js']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+  }
+});
 // #4303: the assignment word is read before substitution, so `$V=1` is a command name and the
 // `cd` after it an argument (bash 3.2 and 5: "x=1: command not found", and write f.js).
 test('#4303: an expanded `$V=1` is no assignment, so the cd after it changes nothing', () => {
@@ -1543,11 +1562,11 @@ test('#4303: the cd after an assignment word that never closes is not followed',
 }
 
 // #4303: inside `$(( ))` or `$[ ]`, `&` is bitwise and, also inside a bare `(` there, so the cd
-// before it holds. bash 3.2 and 5: `cd M; y=$(( (1 & 3) )); echo x > f` and `x=$[1 & 3]; cd M; …`
-// write M/f, and the S49 shape commits in M. The first four rows put the arithmetic `&` inside
-// `x=$(true; … )`, where it would otherwise cut that substitution's own list; the later rows put it
-// in the outer list and in an assignment word (the last two are the ones that reach a bare `(`'s
-// frame check). bash 3.2 and 5 write M/f.js for each row, and S49 runs `git commit` in M.
+// before it holds. The first four rows put the arithmetic `&` inside `x=$(true; … )`, where it would
+// otherwise cut that substitution's own list; the later rows put it in the outer list and in an
+// assignment word (the last two are the ones that reach a bare `(`'s frame check). bash 3.2 and 5
+// write M/f for `cd M; y=$(( (1 & 3) )); echo x > f` and `x=$[1 & 3]; cd M; echo x > f`, M/f.js for
+// each row, `x=$[1 & 3] cd /main; cp a f.js` among them, and run the S49 shape's `git commit` in M.
 for (const [cmd, expected] of [
   ['x=$(true; cd /main && y=$(( (1 & 3) )) && cp a f.js)', [{ action: 'copy', file: MAIN_F }]],
   ['x=$(true; cd /main && y=$[1 & 3] && cp a f.js)', [{ action: 'copy', file: MAIN_F }]],
