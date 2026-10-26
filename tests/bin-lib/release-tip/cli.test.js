@@ -190,5 +190,9 @@ test('preMajor read from release-preflight.json', () => {
     const withPre = JSON.parse(r.out);
     assert.strictEqual(withPre.verdict, 'merge');
     assert.strictEqual(withPre.arrived.part, 'minor');
+
+    fs.writeFileSync(path.join(fx.runDir, 'release-preflight.json'), JSON.stringify({ proposedVersion: { ok: true, value: { preMajor: true, bumpMinorPreMajor: false } } }));
+    const pinned = JSON.parse(cli(argsFor(fx), { mainRoot: fx.work }).out);
+    assert.strictEqual(pinned.arrived.part, 'major', 'the pack\'s bumpMinorPreMajor decides the fold, not bumpPart\'s default');
   });
 });
