@@ -13,7 +13,8 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf, harnessWorktreeOf } = require('./helpers/git-fixtures');
-const { resolve, formatTimestamp, isDeadRunDir, adoptionRefusal } = require('../plugin/bin/lib/hooks/run-dir-resolve');
+const { resolve, formatTimestamp, adoptionRefusal } = require('../plugin/bin/lib/hooks/run-dir-resolve');
+const { ownerBlock } = require('../plugin/bin/lib/hooks/context');
 
 function mkRunDir(main, name) {
   const dir = path.join(main, '.claude-tweaks', 'pipelines', name);
@@ -289,22 +290,48 @@ test('#1962: step 2 falls through to the next-newest match when the newest is de
   assert.strictEqual(out.path, older);
 });
 
-test('isDeadRunDir: no run-state.json at all (a bare mkdir-only mint) is never dead', () => {
+test('AC4.1 AC4.2: adoptionRefusal on a bare mkdir-only mint (no run-state.json) is adoptable and never throws', () => {
   const main = gitRepo();
   const bare = mkRunDir(main, '2026-01-01T000000-record-1');
-  assert.strictEqual(isDeadRunDir(bare), false);
+  let reason;
+  assert.doesNotThrow(() => { reason = adoptionRefusal(bare); });
+  assert.strictEqual(reason, null);
 });
 
-test('isDeadRunDir: malformed run-state.json fails open (not dead) rather than throwing', () => {
+test('AC4.1 AC4.2: adoptionRefusal on a malformed run-state.json is refused as unreadable rather than throwing', () => {
   const main = gitRepo();
   const dir = mkRunDir(main, '2026-01-01T000000-record-2');
   fs.writeFileSync(path.join(dir, 'run-state.json'), '{not json');
-  assert.strictEqual(isDeadRunDir(dir), false);
+  let reason;
+  assert.doesNotThrow(() => { reason = adoptionRefusal(dir); });
+  assert.strictEqual(reason, 'unreadable-run-state');
+});
+
+// #4419: adoption is not a liveness verdict. An `active` run whose worktree survives but
+// whose owner process is gone is exactly a crash a resuming session must adopt.
+test('AC3.1 AC3.2 #4419: step 2 adopts an active run whose worktree survives but whose owner pid is gone (crash-resume)', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const crashed = mkRunDir(main, '2026-01-01T000000-record-4419');
+  const owner = ownerBlock({
+    sessionId: 'crashed-session',
+    now: Date.parse('2026-01-01T00:00:00Z'),
+    deps: {
+      resolveOwnerPid: () => ({ pid: 2147483646, pidSource: 'env' }),
+      pidStartTime: () => 'T1',
+      hostname: () => 'h',
+    },
+  });
+  writeRunState(crashed, { status: 'active', worktree: wt, sessionId: 'crashed-session', owner });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'record-4419' });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, false);
+  assert.strictEqual(out.path, crashed);
 });
 
 // #4151: step 2 refuses what `/claude-tweaks:release`'s inline adoption guard used to refuse
 // (terminal status, `createdBy: release-standalone`), plus an unreadable run-state.json — via
-// `adoptionRefusal`, which `newestMatch` consults instead of `isDeadRunDir` alone (#1962).
+// `adoptionRefusal`, which `newestMatch` consults for its refusal reasons, the #1962 unresumable check among them.
 test('#4151 AC1.1: adoptionRefusal names each refusal reason', () => {
   const main = gitRepo();
   let count = 0;

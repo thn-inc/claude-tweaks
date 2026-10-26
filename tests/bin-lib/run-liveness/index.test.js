@@ -8,7 +8,7 @@ const path = require('path');
 const { PROBE_ORDER, gatherEvidence, decideVerdict, runLiveness } = require('../../../plugin/bin/lib/run-liveness');
 const { pidStartTime } = require('../../../plugin/bin/lib/run-liveness/process-probe');
 const ctxLib = require('../../../plugin/bin/lib/hooks/context');
-const { isDeadRunDir } = require('../../../plugin/bin/lib/hooks/run-dir-resolve');
+const { adoptionRefusal } = require('../../../plugin/bin/lib/hooks/run-dir-resolve');
 const { checkResumeFreshness } = require('../../../plugin/bin/lib/hooks/resume-freshness');
 const { skipUnderRoot } = require('../../helpers/root');
 
@@ -232,7 +232,7 @@ test('AC9.1 a fail-open variant (probe error mapped to dead) fails the probe-err
 test('AC11.1 a run-state with no owner key reads cleanly everywhere and is legacy to runLiveness', () => {
   const fx = fixture({ state: { status: 'active' } });
   assert.doesNotThrow(() => ctxLib.readRunState(fx.runDir));
-  assert.doesNotThrow(() => isDeadRunDir(fx.runDir));
+  assert.doesNotThrow(() => adoptionRefusal(fx.runDir));
   assert.doesNotThrow(() => checkResumeFreshness(fx.runDir));
   const res = verdictOf(fx);
   assert.strictEqual(entry(res, 'owner-pid').detail, 'no-owner-block');

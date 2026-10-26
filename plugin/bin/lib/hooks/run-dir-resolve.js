@@ -72,15 +72,15 @@ function archiveStatus(pipelinesRoot, runId) {
   }
 }
 
-function readRunStateSafe(dir) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(dir, 'run-state.json'), 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-function deadState(state) {
+// Adoption preconditions, not a liveness verdict (#1962, #4419): an adopted run needs a live
+// status — `interrupted` is an explicit can't-resume stamp — and, when `active`, its recorded
+// worktree on disk. `runLiveness` is deliberately not consulted here: a `dead` verdict on an
+// `active` run is the crash-resume (owner pid gone) or long-idle (legacy 72h) case, and both
+// must stay adoptable (#3979 red-team, #4419). Adopting an unresumable dir inherits a closed PR
+// number, a stale config.yml, stale staged/items and a foreign claim runId (observed 3 times in
+// one dispatch firing — this record's own Current State). A bare mkdir-only mint (no
+// run-state.json yet) is not unresumable; `adoptionRefusal` below adopts it.
+function unresumableState(state) {
   if (!state) return false;
   if (state.status === 'interrupted') return true;
   if (state.status === 'active' && typeof state.worktree === 'string' && state.worktree) {
@@ -89,26 +89,13 @@ function deadState(state) {
   return false;
 }
 
-// #1962: a matching run dir whose own bookkeeping shows it's already dead —
-// `interrupted`, or `active` with a stamped worktree that no longer exists on
-// disk — must never be silently adopted by step 2's slug match below.
-// Adopting it inherits a closed PR number, a stale config.yml, stale staged/
-// items and a foreign claim runId (observed 3 times in one dispatch firing —
-// this record's own Current State). Returns false (not dead) when
-// run-state.json is absent/unreadable — a bare mkdir-only mint (no
-// run-state.json written yet) is never itself "dead," just not yet adopted.
-// Step 2 refuses the unreadable case through `adoptionRefusal` below instead.
-function isDeadRunDir(dir) {
-  return deadState(readRunStateSafe(dir));
-}
-
 // #4151 (moved out of `/claude-tweaks:release`'s inline adoption guard, #3898): why step 2
 // must not adopt `dir`, or null when it may. Order: an unreadable run-state.json (a read
 // error other than ENOENT, a JSON.parse failure, or a value that is not a plain object — a
 // crash or truncated write must never read as "adopt"), a `createdBy: release-standalone`
 // directory, a terminal status (any string outside run-integrity's NON_TERMINAL), then the
-// #1962 dead check. An ABSENT run-state.json stays adoptable (a bare mkdir-only mint), and a
-// missing or non-string status is not terminal. Step 1's PIPELINE_RUN_DIR never reaches this.
+// #1962 unresumable check (`unresumableState` above). An ABSENT run-state.json stays adoptable
+// (a bare mkdir-only mint), and a missing or non-string status is not terminal. Step 1's PIPELINE_RUN_DIR never reaches this.
 function adoptionRefusal(dir) {
   // Lazy: run-integrity -> context.js -> this module is a load-time cycle if required at the top.
   const { NON_TERMINAL } = require('./run-integrity');
@@ -121,7 +108,7 @@ function adoptionRefusal(dir) {
   if (!state || typeof state !== 'object' || Array.isArray(state)) return 'unreadable-run-state';
   if (state.createdBy === 'release-standalone') return 'release-standalone';
   if (typeof state.status === 'string' && !NON_TERMINAL.has(state.status)) return 'terminal';
-  if (deadState(state)) return 'dead';
+  if (unresumableState(state)) return 'dead';
   return null;
 }
 
@@ -137,7 +124,7 @@ function hasSegment(name, slug) {
 // directory under `{pipelinesRoot}` whose name contains `specSlug` as a whole
 // segment (`hasSegment` above, #3865), matching the reference snippet's
 // segment-glob `find ... | grep canonical | sort | tail -n 1` — except that an
-// unadoptable candidate (`adoptionRefusal` above: dead per #1962, terminal,
+// unadoptable candidate (`adoptionRefusal` above: unresumable per #1962, terminal,
 // release-standalone or unreadable per #4151) is skipped in favor of the
 // next-newest match, rather than being adopted as-is. A non-canonical name
 // (`RUN_ID_RE` above) is never a candidate at all, as in the snippet: a plain
@@ -313,4 +300,4 @@ function resolve(opts = {}) {
   );
 }
 
-module.exports = { resolve, formatTimestamp, isDeadRunDir, adoptionRefusal, RUN_ID_RE };
+module.exports = { resolve, formatTimestamp, adoptionRefusal, RUN_ID_RE };
