@@ -34,6 +34,14 @@ function runCli(args, cwd) {
   });
 }
 
+// The command verify.js records for the subset run, derived from the list path
+// the report names — so the expectation tracks the platform's quoting.
+function expectedSubsetCommand(listPath) {
+  const sub = substituteFile('node scripts/subset.js {files}', listPath, { token: '{files}' });
+  assert.ok(sub.ok, `substituteFile refused the list path: ${sub.reason}`);
+  return sub.command;
+}
+
 const TAP = (n) => `console.log("TAP version 13\\nok 1 - x\\n1..${n}\\n# tests ${n}\\n# pass ${n}\\n# fail 0");`;
 const SCRIPTS = {
   'scripts/full.js': `require("fs").writeFileSync(".git/impact-marker", "FULL");\n${TAP(2)}\n`,
@@ -133,9 +141,7 @@ test('selects the subset (AC1.1 report shape)', async () => {
   assert.strictEqual(imp.fetch, null);
   assert.strictEqual(typeof report.durationMs, 'number');
   assert.strictEqual(report.scope.mode, 'scoped');
-  const sub = substituteFile('node scripts/subset.js {files}', imp.listPath, { token: '{files}' });
-  assert.ok(sub.ok, `substituteFile refused the list path: ${sub.reason}`);
-  assert.strictEqual(report.checks.tests.command, sub.command, 'the recorded command is the substituted subset command');
+  assert.strictEqual(report.checks.tests.command, expectedSubsetCommand(imp.listPath), 'the recorded command is the substituted subset command');
   assert.match(run.stdout, /^Impact: 1 of 2 test file\(s\) selected/m);
   assert.match(run.stdout, new RegExp(`^Scope: [^\\n]*\\nImpact: 1 of 2 test file\\(s\\) selected \\(map ${r.base.slice(0, 9)}, 1 commit\\(s\\) old\\)$`, 'm'), 'printed right after the Scope: line');
   const stamp = r.stamp();
@@ -262,9 +268,7 @@ test('{files} path with a space is quoted', async () => {
   const report = JSON.parse(fs.readFileSync(path.join(logDir, 'report.json'), 'utf8'));
   assert.strictEqual(report.scope.impact.selected, 1);
   assert.strictEqual(report.scope.impact.listPath, path.join(logDir, 'impact-files.txt'));
-  const sub = substituteFile('node scripts/subset.js {files}', report.scope.impact.listPath, { token: '{files}' });
-  assert.ok(sub.ok, `substituteFile refused the list path: ${sub.reason}`);
-  assert.strictEqual(report.checks.tests.command, sub.command, 'the recorded command is the substituted subset command, quoted');
+  assert.strictEqual(report.checks.tests.command, expectedSubsetCommand(report.scope.impact.listPath), 'the recorded command is the substituted subset command, quoted');
 });
 
 test('an impact.command with quotes of its own cannot take a path that needs quoting: full, files-list-unquotable', async () => {

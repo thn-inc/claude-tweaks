@@ -361,11 +361,11 @@ function defaultDeps(root) {
       }
     },
     // precheck's plan-claim source: a project without docs/superpowers/plans
-    // simply has no plan claims. Read
-    // and catch rather than exists-then-read — a sibling session can prune the
-    // directory between the two calls ([IL-146]); a vanished directory is "no
-    // plan claims", anything else propagates. The IDs are `/`-joined display IDs
-    // on every OS, rejoined to `root` by `deps.readFile`.
+    // simply has no plan claims. Read and catch rather than exists-then-read —
+    // a sibling session can prune the directory between the two calls
+    // ([IL-146]); a vanished directory is "no plan claims", anything else
+    // propagates. The IDs are `/`-joined display IDs on every OS, rejoined to
+    // `root` by `deps.readFile`.
     listPlanFiles: () => {
       let entries;
       try {
