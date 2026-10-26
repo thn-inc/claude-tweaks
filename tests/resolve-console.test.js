@@ -309,6 +309,23 @@ test('a finding row named in filingFailed reads filing-failed, uncleared, Resolv
   assert.equal(written.resolved, false);
 });
 
+test('#4172: console.json persists each item\'s outcome — filing-failed carries its note, executed carries none', async () => {
+  const { written } = await runRuling(FINDING_ITEMS, { approve: ['1', 'f1'], decline: [], filingFailed: ['f1'] });
+  const byId = Object.fromEntries(written.items.map((i) => [i.id, i]));
+  assert.equal(byId.f1.outcome, 'filing-failed');
+  assert.equal(byId.f1.note, FILING_FAILED_NOTE);
+  assert.equal(byId.f1.findingItem, 'tiebreak:3f2a9c1b7d04');
+  assert.equal(byId['1'].outcome, 'executed');
+  assert.equal('note' in byId['1'], false);
+});
+
+test('#4172: console.json persists a reverse-failed ruling outcome', async () => {
+  const { written } = await runRuling(RULING_ITEMS, { approve: ['1'], decline: [], reverseFailed: ['r1'] });
+  const r1 = written.items.find((i) => i.id === 'r1');
+  assert.equal(r1.outcome, 'reverse-failed');
+  assert.equal(r1.note, REVERSE_FAILED_NOTE);
+});
+
 // #3949 review: a long console splits into overflow comments, each carrying its own rows' ticks.
 async function runOverflow(overflowBody) {
   const dir = makeRunDir();

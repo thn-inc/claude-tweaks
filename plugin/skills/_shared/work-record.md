@@ -290,7 +290,7 @@ Two worked examples:
 
 What `ready` asserts and the gate re-verifies. **Deliberately structural-plus-minimal:**
 
-- The sections `Current State`, `Deliverables`, `Acceptance Criteria`, and `Release Note` are present.
+- The sections `Current State`, `Deliverables`, `Acceptance Criteria`, and `Release Note` are present. A section heading inside a fenced code block is quoted content, not the record's own section, and does not count (#4169).
 - Each of those sections is non-empty.
 - No unresolved placeholder markers (`TBD`, `TODO`, `<!-- ambiguity:`) anywhere in the body **outside the verbatim-preserved `## Original request` section** — everything from that heading to end of body is exempt: shaping-mode's preservation rule mandates that copy byte-exact, so a marker inherited there is the original capture's own text, not an unresolved authored placeholder (#1240) — or inside a fenced code block / inline code span, which quotes content rather than authoring it (#1839): a Deliverables fence quoting the exact line a change replaces (a harness-health drift record's Current/Proposed blocks, say) is not an unresolved placeholder just because the quoted text happens to contain the marker word. A bare marker in authored prose — not fenced, not inline-coded — still fails.
 

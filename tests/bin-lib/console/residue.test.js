@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'residue');
-const { UNRESOLVED_RESOLUTIONS, MISSING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines } = require(MOD);
+const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines } = require(MOD);
 
 // The items of the real archived #2821 console.json (#3370): 9 items, four of
 // them unresolved — copied verbatim, including the `skills:undefined` ids.
@@ -335,4 +335,67 @@ test('splitMissing never classifies a decision: item, an engine-row id, an id-le
   assert.deepStrictEqual(split.items, [here]);
   assert.deepStrictEqual(split.missing, [{ ...gone, resolution: 'missing', reason: 'staged file absent (was keep-staged)' }]);
   assert.deepStrictEqual(seen, [path.join('/c', 'staged', 'gone.md'), path.join('/c', 'staged', 'here.md')]);
+});
+
+// #4172: a PR-rendered console carries no staged files, so its failed outcomes
+// are residue by their `outcome` field alone (`executed`/`dropped`/`declined`/`reversed` never are).
+const PR_CONSOLE = (outcomes, extra = {}) => ({
+  prNumber: 42, commentIds: ['IC_1'], executedAt: '2026-10-25T10:00:00.000Z', resolved: false,
+  items: outcomes.map(([id, outcome, note]) => ({ id, kind: 'staged', summary: `s-${id}`, outcome, ...(note ? { note } : {}) })),
+  ...extra,
+});
+
+test('FAILED_OUTCOMES is exactly filing-failed and reverse-failed (#4172)', () => {
+  assert.deepStrictEqual([...FAILED_OUTCOMES].sort(), ['filing-failed', 'reverse-failed']);
+});
+
+test('AC1.1: an executed PR console holding a filing-failed item is residue, never missing (#4172)', () => {
+  const dir = tmpRun();
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify(PR_CONSOLE([
+    ['1', 'executed'], ['f1', 'filing-failed', 'filing failed — see decisions.md'], ['d1', 'dropped', 'dropped — nothing filed'],
+  ])));
+  const { consoles } = readRunResidue(dir);
+  assert.strictEqual(consoles.length, 1);
+  assert.deepStrictEqual(consoles[0].items.map((i) => [i.id, i.resolution, i.section, i.reason]), [['f1', 'filing-failed', 'staged', 'filing failed — see decisions.md']]);
+  assert.deepStrictEqual(consoles[0].missing, []);
+  assert.strictEqual(consoles[0].acknowledged, false);
+});
+
+test('#4172: a reverse-failed ruling item is residue (#4172)', () => {
+  const dir = tmpRun();
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify(PR_CONSOLE([['r1', 'reverse-failed', 'reverse not filed — see decisions.md']])));
+  assert.deepStrictEqual(readRunResidue(dir).consoles[0].items.map((i) => i.resolution), ['reverse-failed']);
+});
+
+test('AC2.1: an executed PR console with only executed/dropped/declined/reversed items is not residue (#4172)', () => {
+  const dir = tmpRun();
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify(PR_CONSOLE([
+    ['1', 'executed'], ['d1', 'dropped'], ['x', 'declined'], ['r1', 'reversed'],
+  ])));
+  assert.deepStrictEqual(readRunResidue(dir).consoles, []);
+});
+
+test('#4172: a spec-N PR console with a filing-failed item is residue for the parent run (#4172)', () => {
+  const dir = tmpRun();
+  fs.mkdirSync(path.join(dir, 'spec-12'));
+  fs.writeFileSync(path.join(dir, 'spec-12', 'console.json'), JSON.stringify(PR_CONSOLE([['f1', 'filing-failed', 'n']])));
+  assert.deepStrictEqual(readRunResidue(dir).consoles.map((c) => path.relative(dir, c.path)), [path.join('spec-12', 'console.json')]);
+});
+
+test('#4172: formatResidueLines names a filing-failed PR item with its note (#4172)', () => {
+  const dir = tmpRun();
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify(PR_CONSOLE([['f1', 'filing-failed', 'filing failed — see decisions.md']])));
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
+  assert.ok(lines.includes('  - f1 — staged: filing-failed (filing failed — see decisions.md)'), lines.join('\n'));
+});
+
+test('AC1.1: the SessionStart banner scan lists a clean run whose PR console holds a filing-failed item (#4172)', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'console-residue-pr-'));
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-10-25T100000-spec-4172');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'clean' }));
+  fs.writeFileSync(path.join(run, 'console.json'), JSON.stringify(PR_CONSOLE([['f1', 'filing-failed', 'filing failed — see decisions.md']])));
+  const { runs } = require(path.join(MOD, '..', '..', 'hooks', 'session-residue')).scanUnresolvedConsoles(project, { pluginRoot: '/p' });
+  assert.deepStrictEqual(runs.map((r) => r.dir), [run]);
+  assert.ok(runs[0].lines.some((l) => l.includes('f1 — staged: filing-failed')), runs[0].lines.join('\n'));
 });

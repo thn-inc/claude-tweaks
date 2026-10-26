@@ -212,7 +212,7 @@ test('auto-merge short-circuit commits only a tracked deletion and leaves the le
   const text = read('wrap-up/auto-merge-short-circuit.md');
   assert.match(text, /ls-files --error-unmatch -- "\$LEDGER_FILE"/);
   assert.match(text, /Only a tracked `docs\/plans\/` path gets the deletion staged and committed/);
-  assert.match(text, /Every other report except `not found` leaves the ledger on disk: commit nothing and log one `SKIP` line/);
+  assert.match(text, /Every other report except `not found` leaves the ledger on disk: commit nothing; the verb logs its `SKIP`, hand-log one where Item 2 says/);
 });
 
 test('AC2.1 go-red: the pre-#3687 reader sentences fail the no-bare-glob assertion', () => {

@@ -20,6 +20,7 @@ const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
 const SCAN = readText(path.join(ROOT, 'plugin/skills/tidy/scan-procedures.md'));
 const AUTO = readText(path.join(ROOT, 'plugin/skills/tidy/step-6-auto.md'));
+const SKILL = readText(path.join(ROOT, 'plugin/skills/tidy/SKILL.md'));
 
 // A collect template is a backticked span opening with a `[tag]` and carrying
 // a `{placeholder}` before its last ` — ` segment (the format-description
@@ -58,6 +59,15 @@ function assertEveryVerbRouted(scanText, autoText) {
   assert.deepStrictEqual(missing, [], `scan-procedures.md action verb(s) with no step-6-auto.md routing row: ${missing.join(', ')}`);
 }
 
+// #3904: the same coverage, against tidy/SKILL.md's Action Vocabulary table, the
+// skill's named per-action execution reference. Archive and Backfill had a
+// routing row but no vocabulary row until then.
+function assertEveryVerbInVocabulary(scanText, skillText) {
+  const labels = new Set(routingRows(skillText).map((r) => r.label));
+  const missing = scanActionVerbs(scanText).filter((v) => !labels.has(v));
+  assert.deepStrictEqual(missing, [], `scan-procedures.md action verb(s) with no SKILL.md Action Vocabulary row: ${missing.join(', ')}`);
+}
+
 function remedyRow(autoText, label, remedy) {
   const rows = routingRows(autoText).filter((r) => r.label === label && r.cells[0].includes(`\`remedy: ${remedy}\``));
   assert.strictEqual(rows.length, 1, `expected exactly one ${label} routing row for remedy: ${remedy}, found ${rows.length}`);
@@ -89,6 +99,15 @@ test('AC3.1: every action verb scan-procedures.md emits has a matching step-6-au
 test('AC3.1 go-red: deleting the Backfill rows makes the coverage check fail', () => {
   const withoutBackfill = AUTO.split('\n').filter((l) => !l.startsWith('| **Backfill**')).join('\n');
   assert.throws(() => assertEveryVerbRouted(SCAN, withoutBackfill), /Backfill/);
+});
+
+test('#3904: every action verb scan-procedures.md emits has a matching SKILL.md Action Vocabulary row', () => {
+  assertEveryVerbInVocabulary(SCAN, SKILL);
+});
+
+test('#3904 go-red: deleting the Archive vocabulary row makes the vocabulary check fail', () => {
+  const withoutArchive = SKILL.split('\n').filter((l) => !l.startsWith('| **Archive** |')).join('\n');
+  assert.throws(() => assertEveryVerbInVocabulary(SCAN, withoutArchive), /Archive/);
 });
 
 test('AC1.1: both release Backfill flavors state a tier at all three aggressiveness levels', () => {

@@ -2,10 +2,14 @@
 files:
   - plugin/bin/lib/console/resolve.js
   - plugin/bin/lib/console/finding-filing.js
+  - plugin/bin/lib/console/backfill.js
+  - plugin/bin/lib/console/backfill-dispose.js
   - plugin/bin/console-filings.js
   - plugin/bin/console-resolve.js
   - plugin/bin/lib/reconcile/archive-merged.js
   - plugin/bin/lib/reconcile/console-execute.js
+  - plugin/bin/lib/console/residue.js
+  - plugin/bin/console-residue.js
   - plugin/skills/wrap-up/review-console.md
   - plugin/skills/wrap-up/console-template.md
   - plugin/skills/wrap-up/review-console-interactive.md
@@ -85,18 +89,42 @@ files:
 
 ### 5. The run closes
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run {run-dir}`, or the reconciler's archive sweep
-- **Action:** a console whose every item reached a final outcome archives. A resolved console that still holds an unacknowledged `pending` or `keep-staged` item, such as a legacy finding with no tiebreak verdict, is refused: `archival refused — console-residue`.
+- **Action:** a console whose every item reached a final outcome archives. A resolved console that still holds an unacknowledged `pending` or `keep-staged` item, such as a legacy finding with no tiebreak verdict, is refused: `archival refused — console-residue`. So is an executed PR console (step 3's checkboxes) whose finding filing failed or whose ruling reverse failed: `resolve-console --filing-failed` / `--reverse-failed` records that item's `outcome` on `console.json`, and the refusal ends `— unresolved: {id} (filing-failed)` (#4172).
 - **Should feel:** clean. A finished run leaves nothing behind, or says exactly what is left.
 - **Should understand:**
   - The refusal lifts once someone reviews the items and runs `node "${CLAUDE_PLUGIN_ROOT}/bin/console-residue.js" --ack --run {run-dir}`. An unreadable console.json has to be repaired or removed instead; the refusal says which.
-  - The SessionStart banner lists the same runs.
+  - The SessionStart banner lists the same runs. A failed PR item has no `cat` line, since its id is a PR row, not a staged file; its detail is in the PR's executed reply and decisions.md.
+  - The reconciler's archive sweep skips the same run as `console-residue` and carries a `hint` naming the items.
+  - A PR console with only executed and dropped items archives as before.
 - **Red flags:**
   - a run with an unreviewed keep-staged item archives
+  - a PR console with a filing-failed item archives without a human's `--ack`
   - an acknowledged console still blocks
   - the refusal's remedy does nothing
 
+### 6. Read a filed can't-tell record
+- **URL:** the backlog record the console filed: in `/claude-tweaks:backlog attention`, or on GitHub. The same record shape comes from step 3/4's filings and from the `/claude-tweaks:tidy` console backfill, which files leftover staged `review-unconfirmed-*`/`review-contested-*` files from closed runs (`bin/console-backfill.js`).
+- **Action:** the operator (or `/claude-tweaks:specify #{n}`) opens the record to decide whether the finding holds.
+- **Should feel:** self-contained. The record states what was claimed and why, so nobody has to dig the archived run directory out first.
+- **Should understand:**
+  - A record filed from a staged finding file is titled with that file's own `Title:` line. A long title is cut on a word boundary with `…`, never mid-word.
+  - Other filed records keep the `Review finding (can't-tell): {path} — {claim}` title, with the claim also cut on a word boundary.
+  - `## Current State` fences the claim, then the staged file's text: its content header lines (`Invariant:`, `Lenses:`, `Target:` …), followed by its body, with the evidence and the apply/reverse dispositions.
+  - The bookkeeping header lines are left out: `Title:`, `Kind:`, `Finding:`, `Staged-at:`, `Ledger:`, `Severity:`.
+  - The severity shown is the staged file's own `Severity:` field. When the file states none, the record shows no severity rather than a defaulted `medium`.
+  - A finding with no line number cites the path alone. It never cites `path:unknown`.
+  - The fingerprint is unchanged, so a finding already filed under the old shape (#4048, for example) is still recognized and not filed again.
+- **Red flags:**
+  - the title is cut mid-word
+  - `## Current State` holds only the `Finding:` location string
+  - `:unknown` appears as a line reference
+  - a `(severity medium)` appears for a staged file that states no severity
+  - a re-run of the backfill files a second record for an already-filed finding
+
 ## Origin
 - Created during the build of #3949, the third step of the unconfirmed-findings tiebreak project. #3945 built the resolver and the archive coverage check; #3947 built the tiebreak step itself.
+- Updated during the build of #4172: a PR console's `filing-failed`/`reverse-failed` outcome now holds the run out of archival (step 5).
+- Step 6 added during the build of #4136. A filed can't-tell record now carries the staged finding's title, body and own severity, and omits an absent line instead of printing `:unknown`.
 - Related journeys:
   - `get-a-verdict-on-every-unverified-review-finding-3947.md`: how each finding gets the verdict this console acts on.
   - `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`: the archive refusal for a finding with no verdict line at all.

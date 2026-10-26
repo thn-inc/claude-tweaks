@@ -18,7 +18,7 @@ files:
 ### 1. Read the record's risk/size labels — worktree-isolated session
 - **URL:** `/claude-tweaks:review #{n}` with no effort token, Step 2.5 (Derive Review Effort), `work-backend: github-issues`
 - **Action:** the orchestrator mints `{ctx-dir}` with `build-review-context.js mint --print-dir`, then runs one command, `gh issue view {n} --json labels | node -e "…parseRecordFacets…"`, and reads the `{risk, size}` JSON line it prints.
-- **Should feel:** a single read. No intermediate file, no refused redirect, and the resolved tier comes from the record's own labels rather than the diff-heuristic fallback.
+- **Should feel:** a single read. No intermediate file, no refused redirect, and the label tier comes from the record's own labels rather than a fall-through to the diff heuristic alone (the diff tier still runs beside it, and the higher of the two resolves — `review-a-large-change-at-its-diff-tier-4221.md`).
 - **Should understand:** the labels pass through stdin, so nothing is written under `{ctx-dir}`. Under `--run`, `{ctx-dir}` is in the main checkout, where a worktree-isolated session is refused both a shell redirect and `Write`. The minted `{ctx-dir}` is still reused by Step 3's `build --dir {ctx-dir}`.
 - **Red flags:** a `gh issue view … > {ctx-dir}/record-{n}.json` redirect attempted (and refused); a labelled record whose tier silently fell through to the diff heuristic because the label read failed.
 

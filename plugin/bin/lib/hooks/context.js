@@ -12,6 +12,7 @@ const { classifyDecisions } = require('../log-decision/claim-log');
 const { canonicalRealpath } = require('../path-guard');
 const processProbe = require('../run-liveness/process-probe');
 const { HEARTBEAT_THROTTLE_MS } = require('../run-liveness/constants');
+const { probeOwnerPid } = require('../run-liveness/owner-pid-probe');
 const { claudePid } = processProbe;
 
 function readStdin() {
@@ -786,9 +787,12 @@ function isTrustedOwnedRun(ownedRun) {
 // still alive. A nested child's SessionEnd always fires while its parent is
 // alive (the parent's Bash tool is blocked on the child), so the incident case
 // keeps its protection. A dead owner is the crash + `claude --resume` shape: the
-// original process died without a SessionEnd, the resumed process (new pid, same
-// session id) never re-stamps ownerPid, and its ending is the run's real
-// interruption — suppressing it would regress to a never-flagged run. Probe
+// original process died without a SessionEnd, and a `resume` SessionStart
+// re-stamps ownerPid with the new process's pid (session-start.js's
+// restampOwnerPidOnResume); before that re-stamp — or for a run never resumed —
+// the dead owner is what isNestedSession sees, and the ending of the resumed
+// process (new pid, same session id) is the run's real interruption —
+// suppressing it would regress to a never-flagged run. Probe
 // errors other than "alive" fail open (never nested, never throw from a hook).
 // (claudePid itself lives in run-liveness/process-probe.js, imported above, so
 // the run-liveness modules can share it without requiring this file.)
@@ -796,7 +800,9 @@ function isTrustedOwnedRun(ownedRun) {
 // The run-state patch that stamps this process as the run's owner — empty when
 // the pid is unknown, so a stamp site never writes a garbled `ownerPid`. Shared
 // by every site that mints or re-stamps ownership (record-worktree, the ad-hoc
-// mints, the resume re-stamp in session-start.js).
+// mints, the resume re-stamp in session-start.js). #4153: `owner.pid` (#3973,
+// `ownerBlock` below) stamps the same process; `ownerPid`'s removal condition is in
+// docs/hooks.md's owner-block paragraph.
 function ownerPidPatch(env) {
   const pid = claudePid(env);
   return pid === null ? {} : { ownerPid: pid };
@@ -805,6 +811,8 @@ function ownerPidPatch(env) {
 // #3973: the run-state `owner` block — who owns this run and when it last proved it
 // was alive. `pidStartedAt` guards against pid reuse and is null whenever the pid is
 // unknown (the start time is then never probed). Pure but for the injected deps.
+// Its `pid` supersedes the top-level `ownerPid` (#3845, `ownerPidPatch` above), kept
+// only for `isNestedSession` (#4153).
 function ownerBlock({ sessionId, env = process.env, now = Date.now(), deps = {} } = {}) {
   const { pid, pidSource } = (deps.resolveOwnerPid || processProbe.resolveOwnerPid)(env);
   return {
@@ -837,20 +845,16 @@ function patchWithOwnerBlock(patch, sessionId, { replacesSessionId = false } = {
   return (current) => ({ ...patch, ...ownerStampPatch(current, sessionId, block, { replacesSessionId }) });
 }
 
-// Whether the process an owner block stamped is provably still running here. A failed
-// start-time probe (null) is unknown, never dead: only a probed start time that differs
-// from the stamped one is pid reuse. A probe that throws reads as alive (fail safe: never
-// take the block over on a question that could not be asked).
+// Whether the process an owner block stamped may still be running here — the takeover
+// gate. The verdict is run-liveness's owner-pid probe, the one judge runLiveness reports
+// too (#4153). Only a negative that rules the stamped process out (`other-host`, `no-pid`,
+// `gone`, `pid-reused`) allows takeover; `positive`, `alive-no-start-time`, and every
+// `error` (`start-time-unavailable`, `invalid-start-time`, a probe that threw) keep the
+// block — the `error` cases are what runLiveness reads as `unknown`, and a question that
+// could not be answered never takes a block over.
 function stampedOwnerProvablyAlive(owner, { hostname, aliveFn, startFn }) {
-  try {
-    const sameHostAlive = owner.host === hostname() && Number.isInteger(owner.pid) && aliveFn(owner.pid);
-    if (!sameHostAlive) return false;
-    if (owner.pidStartedAt == null) return true;
-    const startedAt = startFn(owner.pid);
-    return startedAt === null || startedAt === undefined || startedAt === owner.pidStartedAt;
-  } catch {
-    return true;
-  }
+  const { result, detail } = probeOwnerPid(owner, { hostname, pidAlive: aliveFn, pidStartTime: startFn });
+  return result !== 'negative' || detail === 'alive-no-start-time';
 }
 
 // #3973: the owner's own hooks keep the owner block fresh. Same pid as stamped: a
@@ -1010,7 +1014,7 @@ function resolveDenialRunDir(ctx) {
 // but empty, or readable with every line unparseable) stay distinguishable —
 // callers that need to tell "we don't know" from "we know there's nothing"
 // (run-integrity.js's checkRunIntegrity via scanWrapupEvents below,
-// archive-merged.js's ownEventRecency) rely on that split.
+// run-liveness/probes.js's ownEventRecency) rely on that split.
 function readEventLines(runDir) {
   let raw;
   try { raw = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'); } catch { return null; }

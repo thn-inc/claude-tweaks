@@ -8,6 +8,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 const ctxLib = require('../plugin/bin/lib/hooks/context');
+const { shellQuote } = require('./helpers/shell-quote');
 
 function gitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-'));
@@ -1357,7 +1358,7 @@ test('bookkeeping-stamps gate (I2.2): a Bash git commit targeting an unrelated r
   execFileSync('git', ['-C', foreign, 'add', 'a.txt']);
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
-    input: bashInput(`git -C ${foreign} commit -m "unrelated"`, wt),
+    input: bashInput(`git -C ${shellQuote(foreign)} commit -m "unrelated"`, wt),
     runDir: run,
     runState: { status: 'active' },
     cwd: wt,
@@ -1372,7 +1373,7 @@ test('bookkeeping-stamps gate (I2.2): one in-project git target is enough to kee
   const foreign = gitRepo();
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
-    input: bashInput(`git -C ${foreign} commit -m "unrelated" && git commit -m "ours"`, wt),
+    input: bashInput(`git -C ${shellQuote(foreign)} commit -m "unrelated" && git commit -m "ours"`, wt),
     runDir: run,
     runState: { status: 'active' },
     cwd: wt,
