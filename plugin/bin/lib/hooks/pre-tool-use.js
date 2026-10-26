@@ -53,26 +53,9 @@ const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
 // walk's own cwd, which the collapse always keeps, is where it denies a shadow run dir. Resolved
 // only when a walk overflows (wtDetect.mainCheckoutRoot walks the fs). #4303: every target the
 // collapse resolves from a lost cwd also carries `lost: true`, and each of those three gates
-// denies on it rather than trust the stand-in path. `onDroppedCwd` tells the scanner which cwds a
-// collapse may not drop unremarked (a lost target after one carries `droppedGuarded`): one in a
-// checkout whose main checkout has worktree-always on, read from the fs only (no git), cached
-// per walk; a read that throws counts as guarded.
+// denies on it rather than trust the stand-in path.
 function walkOptions(cwd) {
-  const seen = new Map();
-  const onDroppedCwd = (p) => {
-    if (!seen.has(p)) {
-      let guarded;
-      try {
-        const root = wtDetect.mainCheckoutRoot(p);
-        guarded = !!root && policy.isWorktreeAlwaysOn(root);
-      } catch {
-        guarded = true;
-      }
-      seen.set(p, guarded);
-    }
-    return seen.get(p);
-  };
-  return { overflowCwd: () => (cwd ? wtDetect.mainCheckoutRoot(cwd) || cwd : null), onDroppedCwd };
+  return { overflowCwd: () => (cwd ? wtDetect.mainCheckoutRoot(cwd) || cwd : null) };
 }
 
 function pluginRoot() {
@@ -729,18 +712,22 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
 function shadowPipelineRunDir(targetPath, { fsImpl } = {}) {
   if (typeof targetPath !== 'string' || !targetPath || !path.isAbsolute(targetPath)) return null;
   const resolved = path.resolve(targetPath);
-  const { repoRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(resolved);
-  if (indeterminate || !repoRoot || !isLinkedWorktree) return null;
-  // realTarget (below) now returns path-guard's case-canonical (.native) form,
-  // so the root it is compared against is canonicalised the same way (#3495);
-  // repoRoot is the JS form, which echoes casing on a case-insensitive volume.
-  // Both operands resolve through the same fsImpl so they land on one filesystem.
-  const pipelinesDir = path.join(canonicalRealpath(repoRoot, { fsImpl }) || repoRoot, PIPELINE_STATE_DIR);
   // realTarget follows an existing symlink chain the same way the policy.yml
   // exemption does; falls back to the literal resolved path when nothing
   // exists yet (a brand-new mkdir target has no leaf, sometimes not even a
   // parent, to realpath).
   const real = realTarget(resolved, { fsImpl }) || resolved;
+  // #4303: a path that lies inside a pipelines dir names a `.claude-tweaks/pipelines` segment (in
+  // any case), so one that names none is no shadow and needs no git spawn: a lost target's readings
+  // (git-command.js's LostCwd) can be many, and most name none.
+  if (!real.toLowerCase().includes((path.sep + PIPELINE_STATE_DIR).toLowerCase())) return null;
+  const { repoRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(resolved);
+  if (indeterminate || !repoRoot || !isLinkedWorktree) return null;
+  // realTarget (above) now returns path-guard's case-canonical (.native) form,
+  // so the root it is compared against is canonicalised the same way (#3495);
+  // repoRoot is the JS form, which echoes casing on a case-insensitive volume.
+  // Both operands resolve through the same fsImpl so they land on one filesystem.
+  const pipelinesDir = path.join(canonicalRealpath(repoRoot, { fsImpl }) || repoRoot, PIPELINE_STATE_DIR);
   if (!isPathContained(real, pipelinesDir)) return null;
   const relFromPipelines = path.relative(pipelinesDir, real);
   const relParts = relFromPipelines.split(path.sep);
@@ -1008,13 +995,22 @@ function checkPowershellOpaqueCommand(ctx) {
   );
 }
 
-// #4303: a target the shell scanner resolved from a lost cwd also carries `bases`, base d9aa6b82d's
-// readings of it (the walk's start, moved by each relative cd since the cwd was lost, unclamped).
-// Each is checked beside the lost entry as an ordinary target, through every containment and
-// policy check below exactly as base checked it, so a relative path that climbs from the start
-// into a worktree-always main checkout is denied as base denied it.
-function withBaseReadings(entry, bases) {
-  return [entry, ...(bases || []).map((b) => ({ path: b, exemptible: entry.exemptible, action: entry.action }))];
+// #4303: a target the shell scanner resolved from a lost cwd also carries `bases`, its readings:
+// the target from each cwd the collapse dropped, the main checkout and the walk's start, each
+// moved by every relative cd since the cwd was lost, unclamped (git-command.js's LostCwd). Each is
+// checked beside the lost entry as an ordinary target, through every containment and policy check
+// below exactly as base d9aa6b82d checked its own, so a relative path that lands in a
+// worktree-always main checkout from any cwd bash may be in is denied. A reading already checked
+// for the same kind of target (the same path, exemptibility and action) is not checked again.
+function withBaseReadings(entry, bases, checked) {
+  const readings = [];
+  for (const b of bases || []) {
+    const key = `${b}\0${entry.exemptible}\0${entry.action || ''}`;
+    if (checked.has(key)) continue;
+    checked.add(key);
+    readings.push({ path: b, exemptible: entry.exemptible, action: entry.action });
+  }
+  return [entry, ...readings];
 }
 
 function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets = []) {
@@ -1062,19 +1058,20 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
       // each one is checked on its own below: a violation later in the
       // chain must not be masked by an earlier, compliant target.
       const targets = precomputedGitTargets || gitTargets(command, ctx.cwd, walkOptions(ctx.cwd));
+      const checkedReadings = new Set();
       const gitTargetPaths = targets
         .filter((t) => GATE_COVERAGE.gitActions.includes(t.action))
-        .flatMap((t) => withBaseReadings({ path: t.dir, exemptible: false, action: t.action, lost: t.lost, droppedGuarded: t.droppedGuarded }, t.bases));
+        .flatMap((t) => withBaseReadings({ path: t.dir, exemptible: false, action: t.action, lost: t.lost, capped: t.capped }, t.bases, checkedReadings));
       // Non-git direct file writes (tee, cp, mv) — best-effort,
       // not exhaustive (see fileWriteTargets' own header comment).
       const writeTargetPaths = fileWriteTargets(command, ctx.cwd, walkOptions(ctx.cwd))
-        .flatMap((t) => withBaseReadings({ path: t.file, exemptible: true, lost: t.lost, rel: t.rel, droppedGuarded: t.droppedGuarded }, t.bases));
+        .flatMap((t) => withBaseReadings({ path: t.file, exemptible: true, lost: t.lost, rel: t.rel, capped: t.capped }, t.bases, checkedReadings));
       targetPaths = [...gitTargetPaths, ...writeTargetPaths];
     }
   }
   if (!targetPaths.length) return {};
 
-  for (const { path: targetPath, exemptible, fileTool, action, lost, rel, droppedGuarded } of targetPaths) {
+  for (const { path: targetPath, exemptible, fileTool, action, lost, rel, capped } of targetPaths) {
     // #4303: a relative write target, or a git command, resolved from a cwd the shell scanner lost
     // (past git-command.js's CWD_SET_CAP) lands in a directory the walk does not know: `targetPath`
     // is only a stand-in (the session's main checkout or its own cwd), so no exemption below can be
@@ -1082,19 +1079,20 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
     // provably opted out of worktree-always (its main checkout's policy is off or absent): then
     // the session's checkout has nothing for this gate to enforce. A stand-in outside any repo
     // proves nothing and is denied, unless no policy file exists anywhere above it, as the
-    // ordinary check below allows. Neither escape holds when the walk had dropped a cwd in a
-    // worktree-always checkout (`droppedGuarded`, walkOptions): bash may be there. An
-    // indeterminate repo status allows, as below, so a load spike never freezes a run. Base's
-    // readings of the same target (withBaseReadings) are checked after it as ordinary targets.
+    // ordinary check below allows. The target's readings (withBaseReadings), one per cwd bash may
+    // be in, are checked after it as ordinary targets, which is what lets either escape hold;
+    // neither holds for a `capped` target, whose readings are incomplete (past the scanner's
+    // DROPPED_CHECK_CAP). An indeterminate repo status allows, as below, so a load spike never
+    // freezes a run.
     if (lost) {
-      if (!droppedGuarded && !wtDetect.findPolicyFile(targetPath)) continue;
+      if (!capped && !wtDetect.findPolicyFile(targetPath)) continue;
       const lostInfo = wtDetect.repoInfo(targetPath);
       if (lostInfo.indeterminate) {
         indeterminateTargets.push(targetPath);
         continue;
       }
       const lostRoot = lostInfo.repoRoot ? (wtDetect.mainCheckoutRoot(targetPath) || lostInfo.repoRoot) : null;
-      if (!droppedGuarded && lostRoot && !policy.isWorktreeAlwaysOn(lostRoot)) continue;
+      if (!capped && lostRoot && !policy.isWorktreeAlwaysOn(lostRoot)) continue;
       const { dir: denialRunDir, attribution: denialAttribution } = ctxLib.resolveDenialRunDir(ctx);
       const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
       ctxLib.appendEvent(denialRunDir, 'gate-denial', { tool: toolName, path: rel || targetPath, gate: 'lost-cwd', ...testTag }, denialAttribution);

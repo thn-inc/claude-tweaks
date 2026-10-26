@@ -1978,32 +1978,86 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // additive marker, `lost: true` (a write or mkdir target also `rel`, its text as written), beside
     // the fields it always had, with an overflowCwd and without one. An absolute target, and a git
     // command after an absolute cd or `-C`, is known and carries none. 4e7d54a9d gave no marker.
-    // The lost cwd at the start also carries `bases`, base d9aa6b82d's reading of the target: the
-    // start, moved by the relative cds since the loss, unclamped (/r, then q, reads ../w/f.js as
-    // /r/w/f.js; from /r alone it is /w/f.js); the one at a distinct overflow root has none.
+    // Each lost target also carries `bases`, its readings: the target from every cwd the collapse
+    // dropped (here /r and each /aN: bash is in /a15 if it exists, in /r if no cd succeeded, or in
+    // the last /aN that did), from the overflow cwd and from the start, each moved by the relative
+    // cds since the loss, unclamped, and each unmoved too, as a plain relative cd may fail (after
+    // `cd q`, ../w/f.js reads /r/w/f.js, /main/w/f.js and each /aN/w/f.js where q is present, and
+    // /w/f.js where it is not; from depth one, /aN/.. and /r/.. are both /, so ../w/f.js reads
+    // /w/f.js alone). 71931bb44 gave the start's reading alone, and none at the overflow root. A lost
+    // commit also carries its message's `subject`.
     test('#4303 cwd cap: a target resolved from a lost cwd carries lost: true beside its stand-in path', () => {
       const past = distinct((i) => `{ cd /a${i}; }; `, 16);
-      const lostAt = (file, rel, action = 'write', bases) => ({ action, file, lost: true, rel, ...(bases && { bases: bases.map((b) => path.resolve(b)) }) });
-      assert.deepStrictEqual(fileWriteTargets(`${past}cd q; echo x > ../w/f.js; cp a /x/f.js`, '/r', opts),
-        [lostAt(MAIN_ROOT, '../w/f.js'), lostAt(path.resolve('/r/w/f.js'), '../w/f.js', 'write', ['/r/w/f.js']), { action: 'copy', file: path.resolve('/x/f.js') }]);
-      assert.deepStrictEqual(fileWriteTargets(`${past}tee ../w/f.js`, '/r'), [lostAt(path.resolve('/r/w/f.js'), '../w/f.js', 'write', ['/w/f.js'])]);
-      assert.deepStrictEqual(mkdirTargets(`${past}mkdir -p ../wt2/.claude-tweaks/pipelines/2026-x /x/d`, '/r/wt'), [
-        lostAt(path.resolve('/r/wt/wt2/.claude-tweaks/pipelines/2026-x'), '../wt2/.claude-tweaks/pipelines/2026-x', 'mkdir', ['/r/wt2/.claude-tweaks/pipelines/2026-x']),
+      const sorted = (ts) => ts.map((t) => (t.bases ? { ...t, bases: [...t.bases].sort() } : t));
+      const abs = (...ps) => ps.map((p) => path.resolve(p)).sort();
+      const each = (tail) => abs('/main' + tail, '/r' + tail, ...Array.from({ length: 16 }, (_, i) => `/a${i}${tail}`));
+      const lostAt = (file, rel, action = 'write', bases) => ({ action, file, lost: true, rel, ...(bases && { bases }) });
+      const afterQ = abs('/w/f.js', ...each('/w/f.js'));
+      assert.deepStrictEqual(sorted(fileWriteTargets(`${past}cd q; echo x > ../w/f.js; cp a /x/f.js`, '/r', opts)),
+        [lostAt(MAIN_ROOT, '../w/f.js', 'write', afterQ), lostAt(path.resolve('/r/w/f.js'), '../w/f.js', 'write', afterQ), { action: 'copy', file: path.resolve('/x/f.js') }]);
+      assert.deepStrictEqual(sorted(fileWriteTargets(`${past}tee ../w/f.js`, '/r')), [lostAt(path.resolve('/r/w/f.js'), '../w/f.js', 'write', abs('/w/f.js'))]);
+      assert.deepStrictEqual(sorted(mkdirTargets(`${past}mkdir -p ../wt2/.claude-tweaks/pipelines/2026-x /x/d`, '/r/wt')), [
+        lostAt(path.resolve('/r/wt/wt2/.claude-tweaks/pipelines/2026-x'), '../wt2/.claude-tweaks/pipelines/2026-x', 'mkdir',
+          abs('/r/wt2/.claude-tweaks/pipelines/2026-x', '/wt2/.claude-tweaks/pipelines/2026-x')),
         { action: 'mkdir', file: path.resolve('/x/d') },
       ]);
-      assert.deepStrictEqual(gitTargets(`${past}git commit -m m; git -C ../x push; git -C /t commit -m m`, '/r', opts), [
-        { action: 'commit', dir: MAIN_ROOT, lost: true }, { action: 'commit', dir: path.resolve('/r'), lost: true, bases: [path.resolve('/r')] },
-        { action: 'push', dir: MAIN_ROOT, lost: true }, { action: 'push', dir: path.resolve('/r'), lost: true, bases: [path.resolve('/x')] },
+      assert.deepStrictEqual(sorted(gitTargets(`${past}git commit -m m; git -C ../x push; git -C /t commit -m m`, '/r', opts)), [
+        { action: 'commit', dir: MAIN_ROOT, lost: true, bases: each(''), subject: 'm' }, { action: 'commit', dir: path.resolve('/r'), lost: true, bases: each(''), subject: 'm' },
+        { action: 'push', dir: MAIN_ROOT, lost: true, bases: abs('/x') }, { action: 'push', dir: path.resolve('/r'), lost: true, bases: abs('/x') },
         { action: 'commit', dir: path.resolve('/t') },
       ]);
       assert.deepStrictEqual(gitTargets(`${past}cd /t; git commit -m m`, '/r', opts), [{ action: 'commit', dir: path.resolve('/t') }]);
-      assert.deepStrictEqual(gitTargets(`${past}git commit -m m`, '/r'), [{ action: 'commit', dir: path.resolve('/r'), lost: true, bases: [path.resolve('/r')] }]);
+      assert.deepStrictEqual(sorted(gitTargets(`${past}git commit -m m`, '/r')),
+        [{ action: 'commit', dir: path.resolve('/r'), lost: true, bases: abs('/r', ...Array.from({ length: 16 }, (_, i) => `/a${i}`)), subject: 'm' }]);
       // A relative cd from the lost cwd that spells `.claude-tweaks` and then `pipelines` (here split
-      // across two cds, with other components between) is kept in `rel`, so `mkdir 2026-x` names it.
+      // across two cds, with other components between) is kept in `rel`, so `mkdir 2026-x` names it;
+      // each cd may also have failed, which leaves the trail as it was.
       assert.deepStrictEqual(mkdirTargets(`${past}cd ../w/.Claude-Tweaks; cd x/../Pipelines; mkdir 2026-x`, '/r').map((t) => t.rel),
-        ['.claude-tweaks/pipelines/2026-x']);
+        ['.claude-tweaks/pipelines/2026-x', '2026-x', '.claude-tweaks/2026-x']);
       assert.deepStrictEqual(mkdirTargets(`${past}cd ../w/pipelines/.claude-tweaks; mkdir pipelines/2026-x`, '/r').map((t) => t.rel),
-        ['.claude-tweaks/pipelines/2026-x']);
+        ['.claude-tweaks/pipelines/2026-x', 'pipelines/2026-x']);
+    });
+    // #4303: a collapse that drops a cwd the walk could not read (`cd $(x)` leaves it unknown) has
+    // incomplete readings: each lost target carries base d9aa6b82d's own reading alone (the overflow
+    // cwd's or the start's) and `capped: true`, whatever the other readings would have been.
+    test('#4303 cwd cap: a collapse that drops a cwd the walk could not read marks its lost targets capped', () => {
+      const past = distinct((i) => `{ cd /a${i}; }; `, 16);
+      assert.deepStrictEqual(fileWriteTargets(`cd $(x); ${past}echo x > f`, '/r', opts), [
+        { action: 'write', file: MAIN_ROOT, lost: true, rel: 'f', bases: [path.resolve('/main/f')], capped: true },
+        { action: 'write', file: path.resolve('/r/f'), lost: true, rel: 'f', bases: [path.resolve('/r/f')], capped: true },
+      ]);
+    });
+    // #4303: readings past DROPPED_CHECK_CAP (128) cap the target the same way, whether one collapse
+    // gathers them or one target joins them. 140 groups `{ cd /mN; }`, `{ cd /q/sub; }` and 16 more,
+    // then `cd .. && echo x > f`: a collapse that kept its first 128 readings alone would read every
+    // one moved by `..` to a handful of paths, none of them /q. 70 groups, then `cd s; echo x > f`:
+    // each collapse holds at most 70 readings (no cap there), and the write reads each of them both
+    // with and without `s` (the cd may fail), about 140 in all.
+    test('#4303 cwd cap: a lost target with more readings than the cap is capped', () => {
+      const lost = (cmd) => fileWriteTargets(cmd, '/r', opts).filter((t) => t.lost);
+      const many = distinct((i) => `{ cd /m${i}; }; `, 140);
+      const after = distinct((i) => `{ cd /a${i}; }; `, 16);
+      for (const t of lost(`${many}{ cd /q/sub; }; ${after}cd .. && echo x > f`)) assert.strictEqual(t.capped, true, JSON.stringify(t).slice(0, 200));
+      const seventy = distinct((i) => `{ cd /m${i}; }; `, 70);
+      for (const t of lost(`${seventy}echo x > f`)) assert.strictEqual(t.capped, undefined, JSON.stringify(t).slice(0, 200));
+      for (const t of lost(`${seventy}cd s; echo x > f`)) assert.strictEqual(t.capped, true, JSON.stringify(t).slice(0, 200));
+    });
+    // #4303: a lost commit carries the subject its own `-m`/`--message` text gives, which
+    // post-tool-use matches to the fresh commit it made. Real git (run by bash 3.2 and 5 in a fresh
+    // repo) gives each subject below; a message read from elsewhere (`-F`, `-C`, `--fixup`), an
+    // unset variable, an abbreviated long option (git took `--mess=x` as `--message`) and no
+    // message at all give none, so post-tool-use falls back to a lone fresh commit. `-F`'s value is
+    // read even when it looks like an option: `-F -mx` takes the message from a file named `-mx`.
+    test('#4303 cwd cap: a lost commit carries the subject of its own -m text', () => {
+      const past = distinct((i) => `{ cd /a${i}; }; `, 16);
+      const subjectOf = (form) => gitTargets(`${past}${form}`, '/r').map((t) => t.subject);
+      for (const [form, subject] of [
+        ['git commit -qm "a b"', 'a b'], ['git commit -m x -m y', 'x'], ['git commit -m "" -m z', 'z'], ['git commit --message=w', 'w'],
+        ['git commit --message v', 'v'], ['git commit -am u', 'u'], ['git commit -mt', 't'], ['git commit --amend --no-edit -m "s  "', 's'],
+        ['git commit -F f', undefined], ['git commit -C HEAD', undefined], ['git commit -m "$X"', undefined], ['git commit --mess=x', undefined],
+        ['git commit --fixup=HEAD -m y', undefined], ['git commit', undefined], ['git commit -F -mx', undefined],
+      ]) assert.deepStrictEqual(subjectOf(form), [subject], form);
+      assert.deepStrictEqual(subjectOf('git push'), [undefined]);
     });
     // #4303: a lost entry is never folded into a known entry for the same path, so the marker
     // survives the dedupe: here the known /r/w/f.js comes first and the lost one after it.
@@ -2012,20 +2066,25 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       assert.deepStrictEqual(fileWriteTargets(`cp a w/f.js; ${past}cp a w/f.js`, '/r').map((t) => !!t.lost), [false, true]);
       assert.deepStrictEqual(mkdirTargets(`mkdir w/d; ${past}mkdir w/d`, '/r').map((t) => !!t.lost), [false, true]);
     });
-    // #4303: base's readings follow every cwd the lost cwd may be in. From /r with every /aN absent
-    // (each cd fails) and /r/a, /r/b present, `G16 { cd a; }; { cd b; }; echo x > ../f.js`: bash 3.2
-    // and 5 write /r/f.js; with /r/a/b present instead, /r/a/f.js. The bases hold both and /f.js (no
-    // cd taken), unclamped; e8473c015 carried none. The lost visits of one target join one entry. A
-    // relative `git -C` or `env -C` moves the reading as it moves bash: `{ cd a; }; git -C ../M
-    // commit` runs in /r/M with /r/a present and in /M without.
-    test('#4303 cwd cap: a lost target carries base\'s reading under every cwd the lost cwd may be in', () => {
+    // #4303: the readings follow every cwd the lost cwd may be in. From /r with every /aN absent (each
+    // cd fails) and /r/a, /r/b present, `G16 { cd a; }; { cd b; }; echo x > ../f.js`: bash 3.2 and 5
+    // write /r/f.js; with /r/a/b present instead, /r/a/f.js; with /a15 present and /a15/a, /a15/b
+    // absent, /f.js; with /a15/a present, /a15/f.js. The bases hold each of those for the start, every
+    // /aN and the overflow cwd /main, under each way the two groups could have gone (no cd, a, b, a/b),
+    // unclamped; 71931bb44 held the start's three alone, and none on the overflow root's target. The
+    // lost visits of one target join one entry. A relative `git -C` or `env -C` moves the readings as
+    // it moves bash: `{ cd a; }; git -C ../M commit` runs in /r/M with /r/a present, in /M without,
+    // in /a15/M with /a15/a present.
+    test('#4303 cwd cap: a lost target carries a reading under every cwd the lost cwd may be in', () => {
       const past = distinct((i) => `{ cd /a${i}; }; `, 16);
-      const abs = (...ps) => ps.map((p) => path.resolve(p));
+      const abs = (...ps) => [...new Set(ps.map((p) => path.resolve(p)))].sort();
+      const dropped = ['/main', '/r', ...Array.from({ length: 16 }, (_, i) => `/a${i}`)];
       const [w] = fileWriteTargets(`${past}{ cd a; }; { cd b; }; echo x > ../f.js`, '/r', opts).filter((t) => t.file !== MAIN_ROOT);
-      assert.deepStrictEqual([w.lost, w.bases], [true, abs('/f.js', '/r/f.js', '/r/a/f.js')]);
+      assert.deepStrictEqual([w.lost, [...w.bases].sort()], [true, abs(...dropped.flatMap((d) => [`${d}/../f.js`, `${d}/a/../f.js`, `${d}/b/../f.js`, `${d}/a/b/../f.js`]))]);
       for (const cmd of [`${past}{ cd a; }; git -C ../M commit -m m`, `${past}{ cd a; }; env -C ../M git commit -m m`]) {
-        assert.deepStrictEqual(gitTargets(cmd, '/r', opts), [
-          { action: 'commit', dir: MAIN_ROOT, lost: true }, { action: 'commit', dir: path.resolve('/r'), lost: true, bases: abs('/M', '/r/M') },
+        const both = abs(...dropped.flatMap((d) => [`${d}/../M`, `${d}/a/../M`]));
+        assert.deepStrictEqual(gitTargets(cmd, '/r', opts).map((t) => ({ ...t, bases: [...t.bases].sort() })), [
+          { action: 'commit', dir: MAIN_ROOT, lost: true, bases: both, subject: 'm' }, { action: 'commit', dir: path.resolve('/r'), lost: true, bases: both, subject: 'm' },
         ], cmd.slice(-40));
       }
     });
@@ -2036,8 +2095,12 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // reported `2026-x` and `pipelines/2026-x`, naming no segment.
     test('#4303 cwd cap: a second collapse keeps the .claude-tweaks/pipelines trail spelled before it', () => {
       const past = distinct((i) => `{ cd /a${i}; }; `, 16);
-      assert.deepStrictEqual(mkdirTargets(`${past}cd .claude-tweaks/pipelines; ${past}mkdir 2026-x`, '/r').map((t) => t.rel), ['.claude-tweaks/pipelines/2026-x']);
-      assert.deepStrictEqual(mkdirTargets(`${past}cd .claude-tweaks; ${past}mkdir pipelines/2026-x`, '/r').map((t) => t.rel), ['.claude-tweaks/pipelines/2026-x']);
+      // (The lost cwd from before each relative cd carries on beside the moved one, so the second
+      // collapse comes three groups earlier and the last three /aN are known; only the lost target
+      // depends on the trail.)
+      const lostRels = (cmd) => mkdirTargets(cmd, '/r').filter((t) => t.lost).map((t) => t.rel);
+      assert.deepStrictEqual(lostRels(`${past}cd .claude-tweaks/pipelines; ${past}mkdir 2026-x`), ['.claude-tweaks/pipelines/2026-x']);
+      assert.deepStrictEqual(lostRels(`${past}cd .claude-tweaks; ${past}mkdir pipelines/2026-x`), ['.claude-tweaks/pipelines/2026-x']);
     });
     // #4303: any other handler is never handed a lost cwd. The set collapses to real paths, the
     // overflow cwd and the start, and a relative cd moves them, exactly as base d9aa6b82d did, so the
@@ -2517,10 +2580,10 @@ test('e2e #4303: past the cwd cap from a repo with no policy, a relative write o
 // succeeding) and `{ cd main/sub; }` overflow the cap, and the collapse drops main/sub; then
 // `echo x > leak.out` or `git commit`: bash 3.2 and 5 write main/sub/leak.out or commit in main.
 // From N, e8473c015, 4e7d54a9d, 3b26440ad and base d9aa6b82d allowed both; 40b34714a denied them
-// through its window. From outside any repo, e8473c015 and 40b34714a deny, the rest allowed. A
-// lost target after the walk dropped a cwd in a worktree-always checkout now takes neither escape
-// (its stand-in's opt-out, or no policy above it). Skipped on win32: the commands splice the
-// native temp path.
+// through its window. From outside any repo, e8473c015 and 40b34714a deny, the rest allowed. The
+// lost target's readings include the dropped main/sub (main/sub/leak.out, and main/sub for the
+// commit), each checked as an ordinary target. Skipped on win32: the commands splice the native
+// temp path.
 test('e2e #4303: past the cwd cap, a relative write or commit after the collapse dropped a cwd in the main checkout is DENIED', {
   skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
 }, () => {
@@ -2542,8 +2605,115 @@ test('e2e #4303: past the cwd cap, a relative write or commit after the collapse
       assert.strictEqual(decisionFor(`${ok15}{ cd ${main}/sub; }; ${tail}`, cwd), 'deny', `${path.basename(cwd)}: ${tail}`);
     }
   }
-  // With no dropped cwd in a worktree-always checkout (N/sub is N's), the same write stays allowed.
+  // With no reading in a worktree-always checkout (N/sub is N's), the same write stays allowed.
   assert.notStrictEqual(decisionFor(`${ok15}{ cd ${N}/sub; }; echo x > leak.out`, N), 'deny');
+});
+// #4303 (E1): bash may be in any cwd the collapse dropped, at any depth. From a cwd outside any repo
+// (a0, beside the main checkout and N, a repo with no policy), `{ cd ../N/sub; }` then
+// `groups4303(16)` (every one of those cds failing) leaves bash in N/sub, and
+// `echo x > ../../main/leak.out`, `git -C ../../main commit` and `cd ../../main && git commit`: bash
+// 3.2 and 5 write main/leak.out or commit in main. 71931bb44, 4e7d54a9d, 3b26440ad, 40b34714a and
+// base d9aa6b82d allowed all three (no policy above the stand-in a0, and base's reading from a0
+// lands above main); e8473c015 denied them. The same from N itself (E1N: `{ cd sub; }` first) was
+// allowed at every one of those versions, e8473c015 too (40b34714a's window denied it in a tree
+// with shorter paths). Each lost target now reads every dropped cwd, so
+// N/sub/../../main is checked as an ordinary target. Only relative paths are spliced in, so this
+// runs on every platform.
+test('e2e #4303: past the cwd cap, a write or commit from a dropped cwd in another repo into the main checkout is DENIED', () => {
+  const { main, decisionFor } = linkedWorktree4303();
+  const { execFileSync } = require('child_process');
+  const parent = path.dirname(main);
+  const N = path.join(parent, 'N');
+  fs.mkdirSync(path.join(N, 'sub'), { recursive: true });
+  execFileSync('git', ['-C', N, 'init', '-q']);
+  const a0 = path.join(parent, 'a0');
+  fs.mkdirSync(a0);
+  for (const [shape, command, cwd] of [
+    ['E1w', `{ cd ../N/sub; }; ${groups4303(16)}echo x > ../../main/leak.out`, a0],
+    ['E1g', `{ cd ../N/sub; }; ${groups4303(16)}git -C ../../main commit --allow-empty -qm leak`, a0],
+    ['E1c', `{ cd ../N/sub; }; ${groups4303(16)}cd ../../main && git commit --allow-empty -qm leak`, a0],
+    ['E1N', `{ cd sub; }; ${groups4303(16)}echo x > ../../main/leak.out`, N],
+  ]) assert.strictEqual(decisionFor(command, cwd), 'deny', `${shape}: ${command.slice(-50)}`);
+});
+// #4303: a plain relative cd after the loss may fail, and bash then stays where it was. From a0,
+// `{ cd ../N/sub/d; }`, `groups4303(16)` and `cd nope` (no such directory), then
+// `echo x > ../../../main/leak.out` or `git -C ../../../main commit`: bash 3.2 and 5 stay in N/sub/d
+// and write main/leak.out or commit in main. Every version from base d9aa6b82d to 71931bb44 but
+// e8473c015 allowed both: the readings moved by `nope` all land outside main (N/main, above the
+// parent). The lost cwd from before a relative cd now carries on beside the moved one. Only
+// relative paths are spliced in, so this runs on every platform.
+test('e2e #4303: past the cwd cap, a write or commit after a relative cd that fails is read from where bash stayed', () => {
+  const { main, decisionFor } = linkedWorktree4303();
+  const { execFileSync } = require('child_process');
+  const parent = path.dirname(main);
+  const N = path.join(parent, 'N');
+  fs.mkdirSync(path.join(N, 'sub', 'd'), { recursive: true });
+  execFileSync('git', ['-C', N, 'init', '-q']);
+  const a0 = path.join(parent, 'a0');
+  fs.mkdirSync(a0);
+  for (const tail of ['echo x > ../../../main/leak.out', 'git -C ../../../main commit --allow-empty -qm leak']) {
+    assert.strictEqual(decisionFor(`{ cd ../N/sub/d; }; ${groups4303(16)}cd nope; ${tail}`, a0), 'deny', tail);
+  }
+});
+// #4303: a lost target whose readings are incomplete takes neither escape (no policy above the
+// stand-in, or the stand-in's repo opted out). From a0 (outside any repo) and from N (a repo with
+// no policy), `cd $(echo ../main)` (a cwd the walk cannot read), `groups4303(16)` and
+// `echo x > leak.out`: bash 3.2 and 5 write main/leak.out. 71931bb44, 4e7d54a9d, 3b26440ad,
+// 40b34714a and base d9aa6b82d allowed it from both, e8473c015 from N (its stand-in's opt-out) and
+// not from a0. Only relative paths are spliced in, so this runs on every platform.
+test('e2e #4303: past the cwd cap after a cd the walk cannot read, a relative write is DENIED', () => {
+  const { main, decisionFor } = linkedWorktree4303();
+  const { execFileSync } = require('child_process');
+  const a0 = path.join(path.dirname(main), 'a0');
+  fs.mkdirSync(a0);
+  const N = path.join(path.dirname(main), 'N');
+  fs.mkdirSync(N);
+  execFileSync('git', ['-C', N, 'init', '-q']);
+  for (const cwd of [a0, N]) assert.strictEqual(decisionFor(`cd $(echo ../main); ${groups4303(16)}echo x > leak.out`, cwd), 'deny', path.basename(cwd));
+});
+// #4303: past 128 readings the target is capped the same way, and stays capped through every later
+// collapse. From a0, 140 failing groups (distinct paths, each collapse joining their readings), then
+// either `{ cd main/sub; }` and 16 more failing groups (E5), or `{ cd main/sub; }` first (E6), then
+// `echo x > leak.out`: bash 3.2 and 5 write main/sub/leak.out for both. 71931bb44 and e8473c015 deny
+// both; 4e7d54a9d, 3b26440ad, 40b34714a and base d9aa6b82d allowed both. A walk that kept only the
+// first 128 readings would miss main/sub in E5, and one that let a later collapse read a capped lost
+// cwd as complete would miss it in E6. Skipped on win32: the commands splice the native temp path.
+test('e2e #4303: past the cwd cap with more readings than the cap, a relative write is DENIED', {
+  skip: process.platform === 'win32' && 'win32: the command splices a native temp path, whose backslashes the scanner reads as escapes',
+}, () => {
+  const { main, decisionFor } = linkedWorktree4303();
+  const a0 = path.join(path.dirname(main), 'a0');
+  fs.mkdirSync(a0);
+  fs.mkdirSync(path.join(main, 'sub'));
+  const many = Array.from({ length: 140 }, (_, i) => `{ cd /tmp/ct-4303-m${i}; }; `).join('');
+  assert.strictEqual(decisionFor(`${many}{ cd ${main}/sub; }; ${groups4303(16)}echo x > leak.out`, a0), 'deny', 'E5');
+  assert.strictEqual(decisionFor(`{ cd ${main}/sub; }; ${many}${groups4303(16)}echo x > leak.out`, a0), 'deny', 'E6');
+});
+// #4303 (E2): from a subdirectory of a repo with no policy (N/sub), 16 groups `{ cd P/aK; }` (every
+// aK beside the main checkout present, each cd succeeding) overflow the cap with the cwd lost from
+// N, the overflow cwd: bash is in a15, and `echo x > ../main/leak.out`, `git -C ../main commit` and
+// `cd ../main && git commit` write main/leak.out or commit in main (bash 3.2 and 5). 71931bb44,
+// e8473c015, 4e7d54a9d and 3b26440ad allowed all three, the lost cwd at the overflow root carrying no
+// reading; base d9aa6b82d and 40b34714a deny. Each lost target now reads every dropped cwd (a15
+// among them) and the overflow cwd. Skipped on win32: the commands splice the native temp path.
+test('e2e #4303: past the cwd cap from a subdirectory of a repo with no policy, a write or commit into the main checkout is DENIED', {
+  skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
+}, () => {
+  const { main, decisionFor } = linkedWorktree4303();
+  const { execFileSync } = require('child_process');
+  const parent = path.dirname(main);
+  const N = path.join(parent, 'N');
+  fs.mkdirSync(path.join(N, 'sub'), { recursive: true });
+  execFileSync('git', ['-C', N, 'init', '-q']);
+  const ok16 = Array.from({ length: 16 }, (_, i) => {
+    fs.mkdirSync(path.join(parent, `a${i}`));
+    return `{ cd ${parent}/a${i}; }; `;
+  }).join('');
+  for (const [shape, tail] of [
+    ['E2w', 'echo x > ../main/leak.out'],
+    ['E2g', 'git -C ../main commit --allow-empty -qm leak'],
+    ['E2c', 'cd ../main && git commit --allow-empty -qm leak'],
+  ]) assert.strictEqual(decisionFor(`${ok16}${tail}`, path.join(N, 'sub')), 'deny', shape);
 });
 // #4303 (A1r): a cwd the collapse drops is checked by its base reading too. From N, beside the main
 // checkout, `G16 cd ../main/sub; G16 echo x > leak.out` (every group's cd failing): bash 3.2 and 5

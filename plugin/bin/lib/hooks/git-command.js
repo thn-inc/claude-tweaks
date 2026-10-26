@@ -515,20 +515,28 @@ const PIPELINE_STATE_DIR = path.join('.claude-tweaks', 'pipelines');
 // that `cd .claude-tweaks/pipelines; mkdir 2026-x` still names it (writeTarget prefixes it to
 // `rel`). It is a step count, 0 to LOST_TRAIL.length.
 //
-// `base` is base d9aa6b82d's reading of the same cwd: the walk's start (where bash is when every
-// `cd` the collapse dropped failed), moved by each relative `cd` since, unclamped. A target from a
-// lost cwd carries the path it resolves to from there (`bases` on a write, mkdir or git target, one
-// per variant of the lost cwd it was visited under), which a gate checks as an ordinary target
-// beside the lost one, as base did. The one
-// rooted at a distinct overflow cwd has none (null). Every lost cwd of one collapse shares
-// `family` (the one it began as), and two are the same cwd when their family, trail and base
-// match (sameCwd).
+// Bash is in one of the cwds the collapse dropped, moved by every relative `cd` since, so the lost
+// cwd keeps them all as its readings: `origin` holds every cwd in the collapsed set (a lost one by
+// its own readings), the overflow cwd and the walk's start, and `moved` the relative `cd`s since
+// the loss, joined into one relative path (resolving `p` against it is resolving it against each in
+// turn), so a reading is `path.resolve(p, moved)`, unclamped, and a `cd` costs one join, not one
+// resolve per reading. `base` is base d9aa6b82d's own reading (the overflow cwd for the one rooted
+// there, the start for the other), moved the same way. A target from a lost cwd carries the path
+// it resolves to from each (`bases` on a write, mkdir or git target, joined over every variant of
+// the lost cwd it was visited under), which a gate checks as an ordinary target beside the lost
+// one. Past DROPPED_CHECK_CAP readings, or when the set held a cwd the walk could not read (null)
+// or a lost cwd already past the cap, `origin` is null: the readings are incomplete, the target
+// carries base's alone and `capped: true`, and a gate fails closed on it (see CWD_SET_CAP). Every
+// lost cwd of one collapse shares `family` (the one it began as) and its `origin`, and two are the
+// same cwd when their family, trail, base and moves match (sameCwd).
 const LOST_TRAIL = PIPELINE_STATE_DIR.split(path.sep);
 class LostCwd {
-  constructor(root, overflow, base, trail = 0, family = null) {
+  constructor(root, overflow, base, origin, moved = '.', trail = 0, family = null) {
     this.root = root;
     this.overflow = overflow;
     this.base = base;
+    this.origin = origin;
+    this.moved = moved;
     this.trail = trail;
     this.family = family || this;
   }
@@ -536,30 +544,78 @@ class LostCwd {
   // This lost cwd after a relative `cd rel`: the same cwd, its trail advanced by each component of
   // `rel` that spells the next part of LOST_TRAIL (any components between are skipped, failing
   // closed: bash resolves a `..` through links the text does not show; case is ignored), and its
-  // base moved by `rel`.
+  // readings moved by `rel`.
   after(rel) {
     let trail = this.trail;
     for (const part of rel.toLowerCase().split(/[\\/]+/)) if (part === LOST_TRAIL[trail]) trail += 1;
-    const base = this.base === null ? null : path.resolve(this.base, rel);
-    if (trail === this.trail && base === this.base) return this;
-    return new LostCwd(this.root, this.overflow, base, trail, this.family);
+    const base = path.resolve(this.base, rel);
+    const moved = this.origin === null ? '.' : joinMoves(this.moved, rel);
+    if (trail === this.trail && base === this.base && moved === this.moved) return this;
+    return new LostCwd(this.root, this.overflow, base, this.origin, moved, trail, this.family);
   }
 
-  withTrail(trail) {
-    return trail === this.trail ? this : new LostCwd(this.root, this.overflow, this.base, trail, this.family);
-  }
-
-  // Whether the walk had dropped a cwd its caller guards before this target was resolved (see
-  // CWD_SET_CAP); `walk` is set on the collapse's own lost cwds.
-  get droppedGuarded() {
-    return !!(this.family.walk && this.family.walk.guarded);
+  // Every reading of this lost cwd (base's first), or null past the cap.
+  readings() {
+    if (this.origin === null) return null;
+    return [this.base, ...this.origin.map((p) => path.resolve(p, this.moved))];
   }
 }
 
-// Whether two cwds in the walk's set are one: the same path, or lost cwds alike in family, trail
-// and base.
+// `moved` joined with `rel`. Every lost cwd of a set takes the same `cd`, so the last join is kept
+// for the next one to reuse.
+let lastJoin = { moved: null, rel: null, out: null };
+function joinMoves(moved, rel) {
+  if (lastJoin.moved !== moved || lastJoin.rel !== rel) lastJoin = { moved, rel, out: path.join(moved, rel) };
+  return lastJoin.out;
+}
+
+// Whether two cwds in the walk's set are one: the same path, or lost cwds alike in family, trail,
+// base and moves (their origin is the family's).
 function sameCwd(a, b) {
-  return a === b || (a instanceof LostCwd && b instanceof LostCwd && a.family === b.family && a.trail === b.trail && a.base === b.base);
+  return a === b || (a instanceof LostCwd && b instanceof LostCwd && a.family === b.family && a.trail === b.trail
+    && a.base === b.base && a.origin === b.origin && a.moved === b.moved);
+}
+
+// The readings a lost target collects (#4303), kept beside the entry until its walk ends: `all`,
+// the target resolved from every reading of each lost cwd it was visited under (base's first), and
+// `core`, from base's alone. `finishReadings` turns them into the entry's `bases` (and `capped`).
+const LOST_READINGS = new WeakMap();
+function noteReadings(entry, cwd, rel) {
+  let r = LOST_READINGS.get(entry);
+  if (!r) LOST_READINGS.set(entry, (r = { core: new Set(), all: new Set(), capped: false }));
+  const at = (p) => (rel === undefined ? p : path.resolve(p, rel));
+  r.core.add(at(cwd.base));
+  if (r.capped) return;
+  const readings = cwd.readings();
+  if (readings === null) {
+    r.capped = true;
+    return;
+  }
+  // One cwd's readings hold at most DROPPED_CHECK_CAP (the collapse caps them, base among them);
+  // joining several entries' readings is what can pass it (mergeReadings).
+  for (const p of readings) r.all.add(at(p));
+}
+
+// Folds the readings `from` collected into `into`'s, the earlier entry for the same target.
+function mergeReadings(into, from) {
+  const f = LOST_READINGS.get(from);
+  if (!f) return;
+  let r = LOST_READINGS.get(into);
+  if (!r) LOST_READINGS.set(into, (r = { core: new Set(), all: new Set(), capped: false }));
+  for (const p of f.core) r.core.add(p);
+  if (r.capped || f.capped) {
+    r.capped = true;
+    return;
+  }
+  for (const p of f.all) r.all.add(p);
+  if (r.all.size > DROPPED_CHECK_CAP) r.capped = true;
+}
+
+function finishReadings(entry) {
+  const r = LOST_READINGS.get(entry);
+  if (!r) return;
+  entry.bases = [...(r.capped ? r.core : r.all)];
+  if (r.capped) entry.capped = true;
 }
 
 // `rel` with every `..` that would climb above its start dropped (`a/../../b` reads `b`), so a
@@ -858,7 +914,7 @@ function findGitLead(t, dir) {
 // flags, in the one index/unprovable/dir-null check sequence both gitTargets
 // and teardownTargets (pre-tool-use.js) need. Returns `{ index, dir }` (index
 // is the resolved SUBCOMMAND token position; plus `lost: true` when `dir` is a
-// lost cwd's stand-in, with `base`, base's reading, when it has one, #4303) or null when the segment isn't
+// lost cwd's stand-in, #4303, whose readings resolvedGitSegments reads off it) or null when the segment isn't
 // git, or the target is unprovable / cwd-unknown-with-no-provable--C. A
 // single shared point so a future fix to this preamble lands once for both
 // callers instead of drifting between two hand-kept copies — the exact gap
@@ -870,12 +926,11 @@ function resolveGitCommand(t, effCwd) {
   const { index, dir, unprovable } = skipGlobalFlags(t, lead.index + 1, lead.dir);
   if (lead.unprovable || unprovable || dir === null) return null;
   // A git command run from a lost cwd (#4303) runs somewhere the walk does not know: `dir` is the
-  // lost cwd's root, a stand-in, and `lost: true` says so (see CWD_SET_CAP); `base` is where base
-  // ran it (LostCwd), and `droppedGuarded` whether the walk had dropped a guarded cwd (CWD_SET_CAP).
+  // lost cwd's root, a stand-in, and `lost: true` says so (see CWD_SET_CAP); the lost cwd's readings
+  // (LostCwd), each a dir bash may run it in, are noted beside the result (noteReadings).
   if (dir instanceof LostCwd) {
     const out = { index, dir: dir.root, lost: true };
-    if (dir.base !== null) out.base = dir.base;
-    if (dir.droppedGuarded) out.droppedGuarded = true;
+    noteReadings(out, dir);
     return out;
   }
   return { index, dir };
@@ -924,16 +979,74 @@ function resolvedGitSegments(command, cwd, opts) {
     if (!resolved) return;
     // A repeat visit under another cwd (after a brace group) that resolves to the same dir adds nothing.
     const same = again && segments.slice(pieceStart).find((s) => s.dir === resolved.dir && s.index === resolved.index && s.lost === resolved.lost);
-    // ... though a lost one's base reading (#4303) from another variant of the lost cwd joins its `bases`.
+    // ... though a lost one's readings (#4303) from another variant of the lost cwd join its `bases`.
     if (same) {
-      if (resolved.base !== undefined && !(same.bases || []).includes(resolved.base)) same.bases = [...(same.bases || []), resolved.base];
+      mergeReadings(same, resolved);
       return;
     }
-    segments.push(resolved.lost
-      ? { tokens: t, index: resolved.index, dir: resolved.dir, lost: true, ...(resolved.base !== undefined && { bases: [resolved.base] }), ...(resolved.droppedGuarded && { droppedGuarded: true }) }
-      : { tokens: t, index: resolved.index, dir: resolved.dir });
+    if (!resolved.lost) {
+      segments.push({ tokens: t, index: resolved.index, dir: resolved.dir });
+      return;
+    }
+    const seg = { tokens: t, index: resolved.index, dir: resolved.dir, lost: true };
+    mergeReadings(seg, resolved);
+    segments.push(seg);
   }, keepLost(opts));
+  for (const seg of segments) finishReadings(seg);
   return segments;
+}
+
+// The subject a `git commit`'s own message gives (#4303): the first non-blank line of its `-m` /
+// `--message` values, joined as git joins them (a blank line between), trailing whitespace
+// dropped. `t[index]` is the `commit` subcommand. Null when the text cannot be read from the
+// command: no `-m`, a message taken from elsewhere (`-F`, `-C`, `-c`, `--fixup`, `--squash`), a
+// value the walk did not substitute (`$`, a backtick, a backslash), or an option this does not
+// know (git takes abbreviated long options, so an unknown one could be `--mess`).
+const COMMIT_NO_ARG_SHORT = new Set('apsneiovqz');
+const COMMIT_NO_ARG_LONG = new Set(['--all', '--patch', '--interactive', '--amend', '--edit', '--no-edit', '--verify', '--no-verify',
+  '--allow-empty', '--allow-empty-message', '--signoff', '--no-signoff', '--quiet', '--verbose', '--dry-run', '--short', '--branch',
+  '--porcelain', '--long', '--null', '--include', '--only', '--no-post-rewrite', '--reset-author', '--status', '--no-status',
+  '--no-gpg-sign', '--gpg-sign', '--untracked-files', '--no-trailer']);
+const COMMIT_VALUE_LONG = new Set(['--author', '--date', '--cleanup', '--template', '--trailer', '--pathspec-from-file']);
+function commitSubject(t, index) {
+  const msgs = [];
+  for (let i = index + 1; i < t.length; i += 1) {
+    const tok = t[i];
+    if (tok === '--') break;
+    if (tok.startsWith('--')) {
+      const eq = tok.indexOf('=');
+      const name = eq === -1 ? tok : tok.slice(0, eq);
+      if (name === '--message') {
+        if (eq !== -1) msgs.push(tok.slice(eq + 1));
+        else msgs.push(t[(i += 1)]);
+      } else if (COMMIT_VALUE_LONG.has(name)) {
+        if (eq === -1) i += 1;
+      } else if (!COMMIT_NO_ARG_LONG.has(name)) return null;
+      continue;
+    }
+    if (!tok.startsWith('-') || tok === '-') continue; // a pathspec
+    for (let k = 1; k < tok.length; k += 1) {
+      const c = tok[k];
+      if (c === 'm' || c === 't') {
+        const value = k + 1 < tok.length ? tok.slice(k + 1) : t[(i += 1)];
+        if (c === 'm') msgs.push(value);
+        break;
+      }
+      if (c === 'S' || c === 'u') break; // an optional value, attached only
+      if (!COMMIT_NO_ARG_SHORT.has(c)) return null; // -F, -C, -c, or one this does not know
+    }
+  }
+  if (!msgs.length || msgs.some((m) => typeof m !== 'string' || /[$`\\]/.test(m))) return null;
+  return subjectLine(msgs.join('\n\n'));
+}
+
+// A commit message's first non-blank line, trailing whitespace dropped; null when there is none.
+function subjectLine(message) {
+  for (const line of String(message).split('\n')) {
+    const s = line.replace(/\s+$/, '');
+    if (s) return s;
+  }
+  return null;
 }
 
 // Pure classification over an already-resolved segment list — no traversal of
@@ -942,14 +1055,17 @@ function resolvedGitSegments(command, cwd, opts) {
 // classify" in one call.
 function gitTargetsFrom(segments) {
   const targets = [];
-  for (const { tokens: t, index, dir, lost, bases, droppedGuarded } of segments) {
+  for (const { tokens: t, index, dir, lost, bases, capped } of segments) {
     const sub = t[index];
     if (sub === 'commit' || sub === 'push' || PLUMBING_WRITE_SUBCOMMANDS.has(sub)) {
       const target = { action: sub, dir };
       if (lost) {
         target.lost = true;
         if (bases !== undefined) target.bases = bases;
-        if (droppedGuarded) target.droppedGuarded = true;
+        if (capped) target.capped = true;
+        // #4303: post-tool-use matches a lost commit to the one this command made by its subject.
+        const subject = sub === 'commit' ? commitSubject(t, index) : null;
+        if (subject !== null) target.subject = subject;
       }
       targets.push(target);
     }
@@ -1042,24 +1158,17 @@ function resolveWriteTarget(effCwd, raw) {
 // target from a lost cwd (#4303) also carries `lost: true` and `rel`, the target as written (after
 // the lost cwd's trail, LostCwd): the walk does not know the directory it lands in, so `file` is
 // only the lost cwd's stand-in (resolveWriteTarget), and a consumer that reads the marker denies on
-// it (see CWD_SET_CAP). It also carries `bases`, the path base resolved it to, when the lost cwd
-// has one (the dedupes in fileWriteTargets and mkdirTargets join the readings of one target).
+// it (see CWD_SET_CAP). It also carries `bases`, the path it resolves to from each of the lost
+// cwd's readings, and `capped` past their cap (the dedupes in fileWriteTargets and mkdirTargets join
+// the readings of one target; finishReadings writes both when the walk ends).
 function writeTarget(action, effCwd, raw) {
   const file = resolveWriteTarget(effCwd, raw);
   if (!file) return null;
   const rel = stripQuotes(raw);
   if (!(effCwd instanceof LostCwd) || path.isAbsolute(rel)) return { action, file };
   const entry = { action, file, lost: true, rel: [...LOST_TRAIL.slice(0, effCwd.trail), rel].join('/') };
-  if (effCwd.base !== null) entry.bases = [path.resolve(effCwd.base, rel)];
-  if (effCwd.droppedGuarded) entry.droppedGuarded = true;
+  noteReadings(entry, effCwd, rel);
   return entry;
-}
-
-// Folds lost write entry `entry` into `into`, the earlier one for the same target: its base
-// readings join `into.bases`, and its droppedGuarded mark carries over (#4303).
-function joinBases(into, entry) {
-  for (const b of entry.bases || []) if (!(into.bases || []).includes(b)) into.bases = [...(into.bases || []), b];
-  if (entry.droppedGuarded) into.droppedGuarded = true;
 }
 
 // The word after a redirection's `&` that duplicates a file descriptor
@@ -2102,29 +2211,24 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // linked worktree or the exempt `.claude-tweaks/pipelines/` while bash wrote elsewhere in M. The
 // other is rooted at the walk's own starting cwd (the only one without an overflowCwd), and a
 // relative target from it resolves under the start, never above it (clampRel), so the shadow
-// guard still sees `start/.claude-tweaks/pipelines/…`. The one at the start also keeps base's
-// reading of the cwd (LostCwd's `base`), which a relative `cd` moves as it moved base's real path,
-// so its variants branch like any cwd and are bounded by the cap the same way; the one at the
-// overflow root never changes, and a later collapse starts each over at the start.
+// guard still sees `start/.claude-tweaks/pipelines/…`. A stand-in says nothing about where bash
+// is, so each lost cwd also keeps its readings (LostCwd): every cwd the collapse dropped, the
+// overflow cwd and the start, which a relative `cd` moves as it moves bash, so its variants branch
+// like any cwd and are bounded by the cap the same way; a later collapse starts each over with the
+// readings of the set it drops. Past DROPPED_CHECK_CAP readings, or with a cwd the walk could not
+// read among them, a lost cwd keeps base d9aa6b82d's reading alone and marks its targets capped.
 //
 // Those paths are stand-ins, never where bash is known to be, so every target resolved from a lost
 // cwd also carries an additive marker, `lost: true`, beside the fields it always had: a relative
 // write, mkdir or redirect target (writeTarget, which adds `rel`, the target as written), and a git
 // command run from a lost cwd or behind a relative `git -C` there (resolveGitCommand, then
-// resolvedGitSegments and gitTargets). Either also carries `bases`, base's readings of the target,
-// when its lost cwd has one. An absolute target, or a git command after an absolute `cd` or `-C`,
-// is known and carries none. Each consumer that reads the marker denies on it for its own concern
-// (pre-tool-use's worktree gate, pipeline shadow guard and teardown gate) or checks every candidate
-// repo (post-tool-use); the worktree gate and the shadow guard also check each of `bases` as an
-// ordinary target; any other consumer sees the stand-in as before.
-//
-// A stand-in also says nothing about the cwds the collapse dropped, and an absolute `cd` among them
-// may have put bash in a checkout the stand-in's repo knows nothing of. With the caller's
-// `opts.onDroppedCwd`, each collapse hands it every distinct cwd it drops (a lost one by its base),
-// up to DROPPED_CHECK_CAP per walk. A truthy answer (pre-tool-use: this cwd is in a checkout whose
-// worktree-always policy is on) marks the walk guarded, as passing the cap does, failing closed,
-// and every lost target resolved after that also carries `droppedGuarded: true`. post-tool-use
-// answers false and keeps the cwds, to look for a lost commit in their checkouts too.
+// resolvedGitSegments and gitTargets, which adds a commit's `subject` when its message can be read).
+// Either also carries `bases`, the target from each reading, and `capped: true` past the cap. An
+// absolute target, or a git command after an absolute `cd` or `-C`, is known and carries none.
+// Each consumer that reads the marker denies on it for its own concern (pre-tool-use's worktree
+// gate, failing closed on a capped one, pipeline shadow guard and teardown gate) or checks every
+// candidate repo (post-tool-use); the worktree gate and the shadow guard also check each of `bases`
+// as an ordinary target; any other consumer sees the stand-in as before.
 //
 // Any other handler (the prefilter, powershellOpaqueCommand) is never handed a lost cwd: the set
 // collapses to real paths, the overflow cwd and the start, exactly as before #4303, so the handler
@@ -2140,33 +2244,35 @@ const DROPPED_CHECK_CAP = 128;
 function forEachShellSegment(command, cwd, handler, opts = {}) {
   const start = cwd || '.';
   let collapsed = null;
-  const walk = { guarded: false, checked: new Set() };
-  const noteDropped = (set) => {
-    if (walk.guarded || typeof opts.onDroppedCwd !== 'function') return;
-    for (const x of set) {
-      const p = x instanceof LostCwd ? x.base : x;
-      if (p === null || walk.checked.has(p)) continue;
-      if (walk.checked.size >= DROPPED_CHECK_CAP || opts.onDroppedCwd(p)) {
-        walk.guarded = true;
-        return;
-      }
-      walk.checked.add(p);
-    }
-  };
   const overflow = (set) => {
     if (collapsed === null) {
       const o = typeof opts.overflowCwd === 'function' ? opts.overflowCwd() : opts.overflowCwd;
       if (!opts[KEEP_LOST]) collapsed = o && o !== start ? [o, start] : [start];
-      else if (!o) collapsed = [new LostCwd(start, false, start)];
-      else collapsed = o === start ? [new LostCwd(start, true, start)] : [new LostCwd(o, true, null), new LostCwd(start, false, start)];
-      for (const c of collapsed) if (c instanceof LostCwd) c.walk = walk;
+      else if (!o || o === start) collapsed = [new LostCwd(start, !!o, start, [start])];
+      else collapsed = [new LostCwd(o, true, o, [o, start]), new LostCwd(start, false, start, [o, start])];
     }
     if (!opts[KEEP_LOST]) return collapsed;
-    noteDropped(set);
-    // A later collapse starts each lost cwd over at its base (the start, as base's collapse did) but
-    // keeps the furthest trail the collapsing set had spelled, so a `.claude-tweaks/pipelines`
+    // Bash is in one of the cwds this collapse drops (a lost one in one of its readings), or, as
+    // base read it, at the overflow cwd or the start: those are the new lost cwds' readings, unless
+    // the set holds a cwd the walk could not read (null), a lost cwd already past the cap, or more
+    // than DROPPED_CHECK_CAP of them (LostCwd's `origin`, null then: fail closed).
+    const seen = new Set(collapsed[0].origin);
+    let complete = true;
+    for (const x of set) {
+      const readings = x instanceof LostCwd ? x.readings() : [x];
+      if (readings === null || readings.includes(null)) complete = false;
+      else for (const p of readings) seen.add(p);
+      if (!complete || seen.size > DROPPED_CHECK_CAP) {
+        complete = false;
+        break;
+      }
+    }
+    const origin = complete ? [...seen] : null;
+    // Each lost cwd starts over at base's reading (the overflow cwd or the start, as base's collapse
+    // did) but keeps the furthest trail the collapsing set had spelled, so a `.claude-tweaks/pipelines`
     // segment named before it still names one after.
-    return collapsed.map((c) => c.withTrail(set.reduce((most, x) => (x instanceof LostCwd && x.family === c.family && x.trail > most ? x.trail : most), 0)));
+    return collapsed.map((c) => new LostCwd(c.root, c.overflow, c.base, origin, '.',
+      set.reduce((most, x) => (x instanceof LostCwd && x.family === c && x.trail > most ? x.trail : most), 0), c));
   };
   walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow);
 }
@@ -2191,7 +2297,10 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
   // cwds the next command runs under. `&&` runs it where the command succeeded and `||` where it
   // failed; whatever the list skips past carries on to its end. A `;`, a newline or the end joins
   // every way the list could have gone, except the last command failing: as after any `cd x;`, the
-  // walk takes a command it does not branch on to succeed.
+  // walk takes a command it does not branch on to succeed. A lost cwd (#4303) is the exception: its
+  // readings are every cwd bash may be in, and a gate trusts them whole, so a relative `cd` that
+  // kept it lost may have failed too, and the lost cwd from before the command carries on beside the
+  // moved one (an absolute `cd`, which makes the cwd known, takes the same view as for any cwd).
   const endCommand = (L, at, op) => {
     if (op === '|') {
       if (L.pipeStart === null) L.pipeStart = L.spanStart;
@@ -2214,6 +2323,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
       L.skipFail = [];
     } else {
       next = joinCwds(ok, L.skipFail, overflow);
+      const kept = L.spanStart.filter((c) => c instanceof LostCwd && at.some((x) => x instanceof LostCwd && x.family === c.family));
+      if (kept.length) next = joinCwds(next, kept, overflow);
       L.skipOk = [];
       L.skipFail = [];
       L.listStart = next;
@@ -2762,18 +2873,20 @@ function fileWriteTargets(command, cwd, opts) {
   // forEachShellSegment may visit a segment under two cwds, or a kept body twice (planned and
   // whole), so the same target can come back more than once: report each one once. A lost entry
   // (#4303) is never folded into a known one, nor into a lost one written another way; a lost one
-  // written the same way keeps the other's base readings too.
+  // written the same way keeps the other's readings too.
   const seen = new Map();
-  return targets.filter((entry) => {
+  const out = targets.filter((entry) => {
     const { action, file, rel } = entry;
     const key = `${action}\0${file}\0${rel === undefined ? '' : `\0${rel}`}`;
     if (seen.has(key)) {
-      joinBases(seen.get(key), entry);
+      mergeReadings(seen.get(key), entry);
       return false;
     }
     seen.set(key, entry);
     return true;
   });
+  for (const entry of out) finishReadings(entry);
+  return out;
 }
 
 // mkdir target parser — deliberately separate from WRITE_SHAPES/fileWriteTargets
@@ -2796,15 +2909,16 @@ function mkdirTargets(command, cwd, opts) {
       const entry = writeTarget('mkdir', effCwd, arg);
       // A repeat visit under another cwd (after a brace group) adds an absolute path only once.
       const same = entry && again && targets.slice(pieceStart).find((x) => x.file === entry.file && x.rel === entry.rel);
-      if (same) joinBases(same, entry);
+      if (same) mergeReadings(same, entry);
       else if (entry) targets.push(entry);
     }
   }, keepLost(opts));
+  for (const entry of targets) finishReadings(entry);
   return targets;
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine,
   // The heredoc reader vocabularies, pinned against policy-schema-coverage.md's prose (#4149).
   DATA_READER_WORDS, READER_WRAPPER_WORDS, GIT_DATA_SUBCOMMANDS, INERT_NEIGHBOUR_WORDS,
 };

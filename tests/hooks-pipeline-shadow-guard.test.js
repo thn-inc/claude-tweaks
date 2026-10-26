@@ -376,6 +376,25 @@ test('#4303: past the cwd cap, a lost target that names no pipelines segment is 
   assertAllowed(pre.run({ input: bashInput(`${groups(20)}mkdir -p ../${name2}/build`, wt), runDir: null, runState: null, cwd: wt }));
 });
 
+// #4303: the guard skips git for a candidate whose real path names no `.claude-tweaks/pipelines`
+// segment, so the segment is read off the real path, through any link, never the text. With wt2/p a
+// link to wt2/.claude-tweaks/pipelines, `mkdir -p wt2/p/2026-x`: bash 3.2 and 5 create the run dir
+// wt2/.claude-tweaks/pipelines/2026-x (nested and sibling alike), and every version from base
+// d9aa6b82d to 71931bb44 denies it. Skipped on win32: a symlink there needs a privilege, and the
+// command splices the native temp path.
+test('#4303: a new run dir made through a link into a linked worktree\'s pipelines dir is denied', {
+  skip: process.platform === 'win32' && 'win32: symlink creation needs a privilege, and the command splices a native temp path',
+}, () => {
+  for (const nested of [true, false]) {
+    const { wt, wt2 } = twoWorktrees4303({ nested });
+    fs.mkdirSync(path.join(wt2, '.claude-tweaks', 'pipelines'), { recursive: true });
+    fs.symlinkSync(path.join(wt2, '.claude-tweaks', 'pipelines'), path.join(wt2, 'p'));
+    const out = pre.run({ input: bashInput(`mkdir -p ${wt2}/p/2026-x`, wt), runDir: null, runState: null, cwd: wt });
+    assertDenied(out);
+    assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /a NEW pipeline run directory inside a linked worktree/, `nested=${nested}`);
+  }
+});
+
 // --- #3769: the injected fsImpl reaches every probe in shadowPipelineRunDir ---
 // The fake models a case-insensitive volume whose canonical spelling of the
 // worktree (`WT`) differs from the real one (`wt`). The pipelines root, the
