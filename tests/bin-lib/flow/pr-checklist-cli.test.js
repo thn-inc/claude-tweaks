@@ -314,3 +314,83 @@ test('--help exits 0 without touching gh', () => {
   assert.match(usage, /4 run marker mismatch/);
   assert.equal(h.ghCalls.length, 0);
 });
+
+// Characterization (#4026): the exit-4 / exit-5 stderr lines and the empty stdout
+// they leave, pinned before the CLI started logging these outcomes itself.
+test('characterization: a mismatch exits 4 with one exact stderr line and no stdout', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prBody: earlyBody(FOREIGN_RUN_ID) });
+  assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), 4);
+  assert.equal(h.err.join(''), `pr-checklist.js: run marker mismatch on PR #7: body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID} — nothing written\n`);
+  assert.equal(h.out.join(''), '');
+  assert.equal(h.ghCalls.length, 1);
+});
+
+test('characterization: each gh failure exits 5 with its own stderr line and no stdout', () => {
+  const cases = [
+    { name: 'view throws', gh: () => { throw new Error('HTTP 503'); }, err: 'pr-checklist.js: gh pr view failed on PR #7: HTTP 503\n' },
+    { name: 'view unparseable', gh: () => 'not json', errRe: /^pr-checklist\.js: gh pr view failed on PR #7: .+\n$/ },
+    { name: 'view non-string body', prBody: null, err: 'pr-checklist.js: gh pr view on PR #7 returned no string body field\n' },
+    { name: 'edit throws', editThrows: true, err: 'pr-checklist.js: gh pr edit failed on PR #7: HTTP 502\n' },
+  ];
+  for (const c of cases) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { prBody: 'prBody' in c ? c.prBody : earlyBody(), ...(c.gh ? { gh: c.gh } : {}) });
+    if (c.editThrows) {
+      const view = h.deps.gh;
+      h.deps.gh = (args, input) => { if (args[1] === 'edit') throw new Error('HTTP 502'); return view(args, input); };
+    }
+    assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), 5, c.name);
+    const first = `${h.err.join('').split('\n')[0]}\n`;
+    if (c.err) assert.equal(first, c.err, c.name);
+    else assert.match(first, c.errRe, c.name);
+    assert.equal(h.out.join(''), '', c.name);
+  }
+});
+
+// #4026: the CLI writes its own exit-4 / exit-5 decisions.md lines.
+const NOW = () => new Date(2026, 9, 25, 10, 0, 0);
+const decisions = (runDir) => fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+
+test('AC3.1: a marker mismatch exits 4 and logs the refusal line', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prBody: earlyBody(FOREIGN_RUN_ID), now: NOW });
+  assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), 4);
+  assert.equal(h.edits.length, 0);
+  // The line _shared/pr-checklist-refresh.md's exit-4 bullet told the caller to write,
+  // its {stderr} being the CLI's own mismatch detail.
+  assert.ok(decisions(runDir).includes(`- AUTO 10:00:00 — PR checklist refresh: refused on PR #7 — run marker mismatch (body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID}). Reversibility: n/a.\n`));
+  assert.ok(h.err.join('').includes(`body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID}`));
+});
+
+test('a gh pr edit failure exits 5 and logs the warning line', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prBody: earlyBody(), now: NOW });
+  const view = h.deps.gh;
+  h.deps.gh = (args, input) => { if (args[1] === 'edit') throw new Error('HTTP 502'); return view(args, input); };
+  assert.equal(run(['--run', runDir, '--phase', 'review'], h.deps), 5);
+  assert.ok(decisions(runDir).includes('- AUTO 10:00:00 — PR checklist refresh: gh pr edit failed on PR #7 at review exit — row left for the pre-merge refresh. Reversibility: n/a.\n'));
+});
+
+test('a gh pr view failure exits 5 and logs the view warning', () => {
+  for (const over of [{ gh: () => { throw new Error('HTTP 503'); } }, { gh: () => 'not json' }, { prBody: null }]) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { prBody: earlyBody(), now: NOW, ...over });
+    assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), 5);
+    assert.equal(h.edits.length, 0);
+    assert.ok(decisions(runDir).includes('- AUTO 10:00:00 — PR checklist refresh: gh pr view failed on PR #7 at build exit — row left for the pre-merge refresh. Reversibility: n/a.\n'));
+  }
+});
+
+test('a failed exit-4 / exit-5 append keeps the exit code and adds one stderr line', () => {
+  const failing = { now: NOW, appendDecision: () => { throw new Error('disk full'); } };
+  for (const { prBody, code } of [{ prBody: earlyBody(FOREIGN_RUN_ID), code: 4 }, { prBody: null, code: 5 }]) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { prBody, ...failing });
+    assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), code);
+    const lines = h.err.join('').split('\n').filter(Boolean);
+    assert.equal(lines.length, 2, lines.join('\n'));
+    assert.match(lines[1], /^pr-checklist\.js: could not append the decisions\.md entry: disk full$/);
+    assert.equal(h.out.join(''), '');
+  }
+});

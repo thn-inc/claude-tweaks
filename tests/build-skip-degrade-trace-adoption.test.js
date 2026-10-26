@@ -70,7 +70,8 @@ const BUILD_STEP_SKIP_SITES = [
   { name: 'Common Step 4.5 (Architecture Alignment)', source: BUILD_SKILL, pattern: /\*\*On skip\*\* \(one of the three conditions fires — never for a normal run finding zero deviations\), write a `SKIP` entry/ },
   { name: 'Common Step 5.5 (Operational Checklist)', source: BUILD_SKILL, pattern: /Otherwise skip this step entirely\. \*\*On skip\*\*, write a `SKIP` entry per the degrade-trace rule \(condition: no schema\/env\/IaC\/CI\/platform-config files in diff\)/ },
   { name: 'Common Step 6.5 (Documentation Sync)', source: BUILD_SKILL, pattern: /skip this step entirely\. \*\*On skip\*\*, write a `SKIP` entry per the degrade-trace rule \(condition: no `docs\/REGISTRY\.md`\)/ },
-  { name: 'Common Step 7 (phase-exit push)', source: BUILD_SKILL, pattern: /A no-op under `local-merge` or `current-branch` mode\. \*\*On skip\*\*, write a `SKIP` entry/ },
+  // #4026: bin/phase-exit.js is called in every model and writes this SKIP itself.
+  { name: 'Common Step 7 (phase-exit push)', source: BUILD_SKILL, pattern: /in any model or mode; it pushes only under `pr-first` in `worktree` mode[^\n]*\*\*On skip\*\* \(`local-merge`, or `current-branch` with `--worktree` naming the checkout\), it writes the `SKIP` entry itself/ },
 ];
 
 for (const site of BUILD_STEP_SKIP_SITES) {

@@ -19,18 +19,19 @@ Root cause, and Resume sections to reach the content they actually need at merge
 
 ## Phase-checklist update (every phase exit)
 
-At each phase's own exit (build, test, review, polish, wrap-up — after that phase's own
-phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` field:
+At each phase's own exit (build, test, review, polish, wrap-up), `bin/phase-exit.js` runs this
+after its push (`_shared/git-discipline.md`), as `checklist`. By `run-state.json`'s `pr` field:
 
 - **Not set, `local-merge` run**: skip entirely — no PR to update.
-- **Not set, `pr-first` run (a degraded run)**: before skipping, check whether recovery is safe —
+- **Not set, `pr-first` run (a degraded run)**: reported with `phase-exit.js`'s `push.state:
+  'skipped'` (no recorded PR) → follow `_shared/git-discipline.md`'s route for it instead.
+  Otherwise, before skipping, check whether recovery is safe —
   `git rev-parse --abbrev-ref --symbolic-full-name @{u}` against the worktree branch. **Fails**
-  (no upstream configured — the branch never actually reached `origin`, regardless of which phase
-  degraded it): retry `_shared/pr-early-run-lifecycle.md`'s "Run start: push, then open (or reuse)
-  the draft PR" Steps 2-4 now, from this phase's own worktree — the `#989` one-shot push exemption
-  is guaranteed to apply cleanly on this attempt, since it keys on exactly this precondition.
-  **Succeeds** (upstream is set but no PR — a rarer case, e.g. an interrupted `gh pr create`): skip
-  this phase's checklist update as before; do not attempt recovery blind against a branch state
+  (no upstream — the branch never reached `origin`): retry `_shared/pr-early-run-lifecycle.md`'s
+  "Run start: push, then open (or reuse) the draft PR" Steps 2-4 now, from this phase's own
+  worktree — the `#989` one-shot push exemption applies, since it keys on exactly this precondition.
+  **Succeeds** (upstream is set but no PR, e.g. an interrupted `gh pr create`): skip
+  this phase's checklist update; do not attempt recovery blind against a branch state
   this section cannot fully diagnose.
 - **Set**, `gh` present: one call does the whole update —
 
@@ -45,9 +46,9 @@ phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` fie
   - **0**, by `action`: `written`/`no-op` done, but a flip's `row-absent`/`no-phases-span` checked
     nothing → warn; `logFailed` → hand-log the restore line (`bin/log-decision.js`); `no-pr` → the
     degraded-run recovery above; `gh-absent` → MCP below.
-  - **4** (run marker mismatch, nothing written): log `AUTO {time} — PR checklist refresh: refused
-    on PR #{number} — run marker mismatch ({stderr}). Reversibility: n/a.`; never edit by hand.
-  - **5** (`gh` failed): the "Best-effort" warning below.
+  - **4** (run marker mismatch, nothing written; never edit by hand), **5** (`gh` failed, the
+    "Best-effort" rule below): the CLI logs its own line — hand-log it only on a `could not
+    append` stderr line.
   - **2**, **3**: a bad call (flags, `--summary-file`, run dir) — fix, re-run.
 
   **Refresh the Spec summary after a premise reversal (#3050).** `bin/pr-checklist.js` reads this
@@ -175,9 +176,9 @@ above), not necessarily every phase this run actually completed.
    it reads `closingIssuesReferences`, rewrites every phrase naming a record outside the `Fixes`
    lines to `closes issue #{n}` (GitHub links no such phrase), writes the body, re-reads, and logs
    `unlinked #{n}` or `#{n} still linked` to `decisions.md`.
-   A `still-linked` result is left for `pr-first-merge-post-merge.md`'s Step 4.0. Exit 3-5:
-   warn, log one `SKIP` line, and proceed (Step 4.0 is the backstop). `gh-absent`: one `SKIP` line
-   (`_shared/auto-decision-log.md`'s Degrade-trace rule).
+   `still-linked` is left for `pr-first-merge-post-merge.md`'s Step 4.0. Exit 3-5:
+   warn and proceed (Step 4.0 is the backstop); 4-5 and `gh-absent` log their own `SKIP`, 3
+   needs one (`_shared/auto-decision-log.md`'s Degrade-trace rule).
 <!-- /when -->
 3. Read the record's current title (`gh issue view {n} --json title -q .title` for the
    lowest-numbered record). If it no longer matches the PR's own title (the record was retitled

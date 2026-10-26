@@ -278,7 +278,7 @@ test('staged-kind items carry classifyStagedItem\'s result', () => {
   mkConsole(run, [PENDING('reflect-1.md'), PENDING('zz-1.md'), PENDING('x-1.md.shadow-dup'), PENDING('docs:CLAUDE.md')]);
   const { items } = buildWorkList({ pipelinesRoot: pipelines, mainSha: MAIN_SHA }).runs[0];
   assert.deepStrictEqual(items.map((i) => i.kind), ['staged-kind', 'staged-kind', 'staged-kind', 'staged-kind']);
-  assert.strictEqual(items[0].staged.reason, 'non-tangential-category:observation');
+  assert.deepStrictEqual(items[0].staged, { name: 'reflect-1.md', section: 'Skill updates' });
   assert.strictEqual(items[1].staged.reason, 'unmapped-prefix');
   assert.strictEqual(items[2].staged.outcome, 'shadow-dup-duplicate');
   assert.deepStrictEqual(items[3].staged, { name: 'docs:CLAUDE.md', section: 'Pending review', reason: 'engine-row' });

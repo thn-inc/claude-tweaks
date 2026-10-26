@@ -15,6 +15,9 @@ const {
   run, parseArgs, parseTargets, USAGE, realDeps,
 } = require('../plugin/bin/verify-run-bookends');
 const { run: setConfigRun } = require('../plugin/bin/set-config');
+const { run: logDecisionRun } = require('../plugin/bin/log-decision');
+const { appendEntry, hms } = require('../plugin/bin/lib/log-decision/append');
+const { readText } = require('./helpers/read-skill');
 
 const canonicalClaim = (n) => `## /flow\n- AUTO 09:41:32 — Step 2.8: claimed #${n} (bin/claim-targets.js, transport: git). Reversibility: high.\n`;
 
@@ -42,7 +45,11 @@ function makeDeps({
   isSpecCommitted = () => true,
   readDecisions = () => `${canonicalClaim(1728)}${canonicalClaim(1729)}`,
 } = {}) {
+  // Every decisions.md append the CLI makes, recorded (#4026).
+  const appended = [];
   return {
+    appended,
+    appendDecision: (args) => { appended.push(args); },
     readRunState: () => runState,
     readIntegrationModel: () => integrationModel,
     isSpecCommitted,
@@ -484,4 +491,103 @@ test('isSpecCommitted: a git timeout or spawn error is undetermined (null), neve
   assert.strictEqual(realDeps.isSpecCommitted(args, catFileMissRevParseOk), false, 'git ran, HEAD resolves, spec absent');
   const catFileTimeoutRevParseOk = (cmd, argv) => { if (argv.includes('cat-file')) timeout(); };
   assert.strictEqual(realDeps.isSpecCommitted(args, catFileTimeoutRevParseOk), null, 'cat-file timed out: not provably absent');
+});
+
+// ---- #4026: the degrade line logs its own SKIP ----
+
+const degradeLine = (pin) => `verify-run-bookends: degraded — ${RUN_DIR}/config.yml carries no valid integration-model pin (${pin}); PR bookend not checked (_shared/integration-model.md's Run-scoped stability)\n`;
+const withoutLogged = ({ logged, ...rest }) => rest;
+
+// Characterization (pre-#4026 behaviour that must not move): the exact stderr
+// line, the exit code and every envelope key but the new `logged`.
+test('characterization: a degraded pin prints exactly one stderr line, exit and envelope unchanged', () => {
+  for (const pin of [null, 'bogus']) {
+    const ok = captured(makeDeps({ integrationModel: pin, claims: OWN_CLAIM }));
+    assert.strictEqual(run(['--run', RUN_DIR, '--targets', '1728'], ok), 0);
+    assert.deepStrictEqual(ok.err, [degradeLine(pin ?? 'absent')]);
+    assert.deepStrictEqual(withoutLogged(JSON.parse(ok.out[0])), {
+      ok: true,
+      confirmed: {
+        worktree: true, pr: 'n/a', claims: [1728], materialize: [1728], claimLog: [1728],
+      },
+    });
+
+    const miss = captured(makeDeps({ integrationModel: pin, claims: {} }));
+    assert.strictEqual(run(['--run', RUN_DIR, '--targets', '1728'], miss), 1);
+    assert.deepStrictEqual(miss.err, [degradeLine(pin ?? 'absent')]);
+    assert.deepStrictEqual(withoutLogged(JSON.parse(miss.out[0])).missing.map((m) => m.bookend), ['claim']);
+  }
+});
+
+test('AC3.1: verify-run-bookends degraded pin logs the SKIP line', () => {
+  for (const [pin, code, claims] of [[null, 0, OWN_CLAIM], ['bogus', 0, OWN_CLAIM], [null, 1, {}]]) {
+    const deps = captured(makeDeps({ integrationModel: pin, claims }));
+    assert.strictEqual(run(['--run', RUN_DIR, '--targets', '1728'], deps), code);
+    assert.strictEqual(deps.appended.length, 1);
+    const [{ runDir, section, entry }] = deps.appended;
+    assert.strictEqual(runDir, RUN_DIR);
+    assert.strictEqual(section, undefined, 'the prose passed no --section');
+    assert.strictEqual(entry, `- SKIP ${hms(NOW)} — log-decision: condition: ${degradeLine(pin ?? 'absent').trimEnd()} → fallback: PR-bookend check not run. Reversibility: n/a.`);
+    assert.strictEqual(JSON.parse(deps.out[0]).logged, true);
+  }
+});
+
+test('AC3.1: the self-logged line equals the one log-decision.js wrote from the prose\'s {text-file} template', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookends-parity-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, '.git'));
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
+  fs.mkdirSync(runDir, { recursive: true });
+  const template = 'condition: {stderr line} → fallback: PR-bookend check not run';
+  for (const rel of ['plugin/skills/dispatch/task-prompt.md', 'plugin/skills/flow/claim-targets.md']) {
+    assert.ok(readText(path.join(__dirname, '..', rel)).includes(template), `${rel} no longer carries the {text-file} template`);
+  }
+
+  const deps = captured({
+    ...makeDeps({ integrationModel: null, claims: OWN_CLAIM }),
+    appendDecision: (args) => appendEntry(args),
+  });
+  assert.strictEqual(run(['--run', runDir, '--targets', '1728'], deps), 0);
+  const selfLogged = readText(path.join(runDir, 'decisions.md'));
+
+  // The prose's hand log: {text-file} holds the template with the stderr line substituted.
+  const textFile = path.join(root, 'text.txt');
+  fs.writeFileSync(textFile, `${template.replace('{stderr line}', deps.err[0].trimEnd())}\n`);
+  fs.rmSync(path.join(runDir, 'decisions.md'));
+  const code = logDecisionRun(['--run', runDir, '--status', 'SKIP', '--text-file', textFile], {
+    cwd: () => root, mainRoot: root, now: () => NOW, stdout: () => {}, stderr: () => {},
+  });
+  assert.strictEqual(code, 0);
+  assert.strictEqual(selfLogged, readText(path.join(runDir, 'decisions.md')));
+});
+
+test('a valid pin appends nothing and reports logged:false', () => {
+  for (const pin of ['pr-first', 'local-merge']) {
+    const deps = captured(makeDeps({ integrationModel: pin, claims: OWN_CLAIM }));
+    assert.strictEqual(run(['--run', RUN_DIR, '--targets', '1728'], deps), 0);
+    assert.strictEqual(deps.appended.length, 0, pin);
+    assert.strictEqual(JSON.parse(deps.out[0]).logged, false, pin);
+  }
+});
+
+test('a failed SKIP append keeps the exit code, reports logged:false and adds one stderr line', () => {
+  for (const [code, claims] of [[0, OWN_CLAIM], [1, {}]]) {
+    const deps = captured({
+      ...makeDeps({ integrationModel: null, claims }),
+      appendDecision: () => { throw new Error('disk full'); },
+    });
+    assert.strictEqual(run(['--run', RUN_DIR, '--targets', '1728'], deps), code);
+    assert.strictEqual(JSON.parse(deps.out[0]).logged, false);
+    assert.deepStrictEqual(deps.err, [degradeLine('absent'), 'verify-run-bookends: could not append the decisions.md entry: disk full\n']);
+  }
+});
+
+test('realDeps.appendDecision refuses a run dir not anchored under the main checkout, writing nothing', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookends-shadow-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, '.git'), 'gitdir: /elsewhere\n');
+  const runDir = path.join(dir, '.claude-tweaks', 'pipelines', RUN_ID);
+  fs.mkdirSync(runDir, { recursive: true });
+  assert.throws(() => realDeps.appendDecision({ runDir, entry: '- SKIP 00:00:00 — x: y. Reversibility: n/a.' }), /not anchored/);
+  assert.strictEqual(fs.existsSync(path.join(runDir, 'decisions.md')), false);
 });

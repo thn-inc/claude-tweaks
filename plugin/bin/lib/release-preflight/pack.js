@@ -336,7 +336,7 @@ function prepare({ deps, rootArg, runDir }) {
       const preMajor = /^0\./.test(base);
       const { bumpMinorPreMajor, bumpPatchForMinorPreMajor } = readBumpFlags(showAtTip);
       const part = bumpPart(commits, { preMajor, bumpMinorPreMajor, bumpPatchForMinorPreMajor });
-      return { version: nextVersion(base, part), part, base, baseSource, preMajor, tipRef };
+      return { version: nextVersion(base, part), part, base, baseSource, preMajor, bumpMinorPreMajor, bumpPatchForMinorPreMajor, tipRef };
     },
     releasePr,
     // Ruling 11: GitHub is asked for the BRANCH by name, so it resolves its own

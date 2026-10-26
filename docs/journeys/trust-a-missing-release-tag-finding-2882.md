@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/residue/render.js
   - plugin/skills/tidy/scan-procedures.md
   - plugin/skills/tidy/step-6-auto.md
+  - plugin/skills/tidy/SKILL.md
 ---
 
 # Trust a Missing-Release-Tag Finding
@@ -41,9 +42,9 @@ files:
 - **URL:** `/claude-tweaks:tidy` in auto mode, at `conservative`, `moderate`, or `aggressive` (`tidy-aggressiveness` in `.claude-tweaks/policy.yml`)
 - **Action:** Read the Tidy Report's sections for the `[git] … — Backfill` rows, and check `step-6-auto.md`'s two **Backfill** routing rows when a row lands somewhere unexpected.
 - **Should feel:** Predictable. Each tier puts a given release finding in the same section every run.
-- **Should understand:** A missing-tag finding (`remedy: record`) always lands in **Yours**, never auto-applied at any tier. Choosing the commit to tag, and pushing the tag, are a human's call. A missing-heading finding (`remedy: auto`) lands in **Approve** at `conservative` and `moderate`. Only `aggressive` writes the CHANGELOG heading unreviewed. `tests/tidy-scan-action-routing.test.js` fails if any scan verb loses its routing row (#3291).
-- **Red flags:** A missing-tag row under **Applied automatically**. A Backfill row that stages run after run because no routing row names its tier.
+- **Should understand:** A missing-tag finding (`remedy: record`) always lands in **Yours**, never auto-applied at any tier. Choosing the commit to tag, and pushing the tag, are a human's call. A missing-heading finding (`remedy: auto`) lands in **Approve** at `conservative` and `moderate`. Only `aggressive` writes the CHANGELOG heading unreviewed. Whoever writes it uses the CHANGELOG's own release-please form, `## [X.Y.Z](compare-url) (date)`, or `## X.Y.Z (date)` when there is no repo URL; the Action Vocabulary's Backfill row in `SKILL.md` names this form (#3904). The finding clears on the first `bin/residue.js` run after the heading is committed, because the probe reads committed content. `tests/tidy-scan-action-routing.test.js` fails if any scan verb loses its routing row (#3291).
+- **Red flags:** A missing-tag row under **Applied automatically**. A Backfill row that stages run after run because no routing row names its tier. A backfilled heading in the legacy `## vX.Y.Z — {summary}` form, which no engine renders any more.
 
 ## Origin
 
-Created by `/claude-tweaks:build` for record #2882 (2026-10-16): the release probe now unions remote and local tags, falls back to local tags with a named reason, and marks missing-tag findings `remedy: record`. Updated by `/claude-tweaks:build` for record #3291 (2026-10-20): step 4 covers tidy's per-tier routing of both release flavors.
+Created by `/claude-tweaks:build` for record #2882 (2026-10-16): the release probe now unions remote and local tags, falls back to local tags with a named reason, and marks missing-tag findings `remedy: record`. Updated by `/claude-tweaks:build` for record #3291 (2026-10-20): step 4 covers tidy's per-tier routing of both release flavors. Updated by `/claude-tweaks:build` for record #3904 (2026-10-25): step 4 names the heading form a Backfill writes and the residue re-run that confirms it.

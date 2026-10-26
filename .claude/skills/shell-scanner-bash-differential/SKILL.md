@@ -23,6 +23,8 @@ The gate's tradeoff is that a spurious deny is acceptable and a leak is not. A s
 
 Every new rule can regress a shape that already worked. Run the full case list through `git-command.js` at the merge-base and at earlier revisions of the branch, in a scratch `git worktree add --detach`. Diff the targets. Anything that moves from denied to allowed needs its own bash verdict. The common shapes that must keep stripping live in the `#4149 routine` table in `tests/hooks-gate-coverage.test.js`. Add a shape there whenever a rule touches its neighbourhood.
 
+When the change threads a `pathImpl` through the resolvers, run that base comparison with `path.win32` injected on both sides too. HEAD under `path.win32` against HEAD under POSIX shows only where the platforms differ, not what the change moved: #4281's cross-drive drive-root regression passed that check, and the final review caught it.
+
 ### Fuzz differentially, then turn each divergence into a case
 
 Hand-picked cases find the bugs you already imagined. Generate commands from a small alphabet of the constructs the scanner models (quotes, `$( )`, backticks, `${ }`, `$(( ))`, groups, `&`, `|`, `&&`, `cd`, heredoc openers, redirects), run each one under both shells, and compare with the scanner's targets. A shell that writes where the scanner reports nothing is a leak: fix it and pin it. A target bash never wrote is a spurious deny: accept it only when it is the fail-closed side of a stated tradeoff.
@@ -34,6 +36,10 @@ The scanner runs on every Bash call, so a super-linear shape stalls the session.
 ### Every rule earns a mutant that turns a test red
 
 In a scratch worktree, delete or invert each rule one at a time and run the four suites. A mutant that every test survives means one of two things: a pin is missing (add a case that fails on the mutant), or the rule is dead (remove it). #4149 dropped six rules this way (`5f8729589`, `9ba9e4d4a`). Mutate the checks downstream of a rule too: a rule that is only reachable through another rule's branch can look pinned when it is not.
+
+### A change to what a word means re-opens every rule keyed on its spelling
+
+When the tokenizer's word changes meaning (#4281 turned it from typed text into the bash value, quotes and escapes removed), every rule that compares a word's spelling gains spellings bash reads differently: the `cd` lead in `visitSegment`, `REDIRECTION_TOKEN_RE` in `dropRedirections`, assignment detection (`isAssignmentWord`). `\cd sub > f`, `tee 2\> f` and a backslash-newline before `A=x>f` each leaked that way, past the differential fuzz and the whole-branch review, until real bash ran them at base and HEAD. List every spelling-keyed rule in the same change, pin each with an escaped and a quoted spelling, and add escapes inside operators (`2\>`), keywords (`\cd`, `c\d`) and before assignments to the fuzz alphabet. A normalization added to the parsers (the backslash-newline join) gets the same reading in `bash-prefilter.js`'s `shouldRunFull` in that change, with bash's parity rule: a backslash-newline joins only after an odd run of backslashes.
 
 ## Decision Framework
 
@@ -52,6 +58,7 @@ In a scratch worktree, delete or invert each rule one at a time and run the four
 - The fail-closed cases are stated once, in `plugin/skills/_shared/policy-schema-coverage.md`'s coverage block. Its reader lists are pinned to `DATA_READER_WORDS`, `READER_WRAPPER_WORDS`, `GIT_DATA_SUBCOMMANDS` and `INERT_NEIGHBOUR_WORDS`, so changing a list means editing the prose in the same change.
 - Test titles name the record and the behavior (`#4149: …`), never review-round labels (m1, F2, round N).
 - Expected paths the scanner resolves go through `path.resolve` (`MAIN_F` in `tests/hooks-gate-coverage.test.js`), or the pin fails on win32.
+- A marker the scanner plants in a word value (`STRAY`, a NUL, in `settleStrayBackslash`) needs every typed copy stripped from the input before the walk, or a typed one reads as the marker. `forEachShellSegment` and `shouldRunFull` both drop every NUL first, as bash does with one it reads (#4281).
 
 ## Common Operations
 
@@ -70,6 +77,7 @@ This session's Bash guard refuses heredocs, `cd` chains and any argument contain
 | Timing a shape by calling the function only | The hook adds the prefilter and three walks per call (worktree-required, E1, teardown); time `hooks.js pre-tool-use` |
 | Asserting wall clock in tests/ | It flakes under sibling-suite load; the timing-free cap pin goes in tests/, the clock in perf/ |
 | Re-checking main only at setup on a long scanner run | #4015 landed mid-run on the same functions and needed a semantic merge at review |
+| Fuzzing only the shapes the change targets | #4281's fuzz missed three escaped-spelling leaks (`\cd`, `2\>`, an escaped newline before an assignment) in rules the change never edited but whose input it redefined |
 
 ## Reference
 

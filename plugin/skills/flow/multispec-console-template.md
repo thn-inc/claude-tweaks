@@ -77,6 +77,8 @@ Generate the next five sections — Skill updates, Documentation updates, Journe
 | 11 | 157 | auth | Anti-Patterns | Add: "Don't share session tokens via querystring" |
 | 12 | 159 | NEW | session-management | Create new skill for session lifecycle patterns |
 
+A reflect observation or convention (`staged/reflect-{n}.md`) is not an engine finding: it renders as a row after the engine output, numbers continuing the global sequence, the contributing spec in the Spec column — same rule as `wrap-up/console-template.md`'s Skill updates.
+
 #### Documentation updates (from each spec's Docs curation row)
 
 | # | Spec | Type | Target | Change |

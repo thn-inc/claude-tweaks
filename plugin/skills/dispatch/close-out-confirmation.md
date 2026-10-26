@@ -15,9 +15,9 @@ session left to resume at all.
 - Option 1 — `label`: `"Merge"` (append `" (Recommended)"` per the Recommended-derivation rule below), `description`: `"Run the merge now — _shared/pr-first-merge.md's Step 3, arms or merges immediately depending on repo auto-merge settings"`
 - Option 2 — `label`: `"Skip"` (append `" (Recommended)"` instead when the rule below picks this option), `description`: `"Leave this PR pending-review; do nothing"`
 
-`{update-clause}`: when `close-out-update.md` ran for this candidate, `" Updated from {base} by close-out via
+`{update-clause}`: when `close-out-update.md` handed off a `{verified-sha}` for this candidate, `" Updated from {base} by close-out via
 {update-method}: conflicted files {conflicted-files}, resolution commit {resolution-commit} — review it before
-merging; any approval above predates it."`; empty (omitted) when no update ran, so the question reads as before.
+merging; any approval above predates it."`; empty (omitted) when none was handed off — a merge that brought in nothing hands off none — so the question reads as before.
 
 **Recommended-derivation rule.** Modeled on `resume-confirmation.md`'s own rule (same shape — a
 single-predicate Recommended pick, never both, never neither) but not identical, since this gate
@@ -54,5 +54,6 @@ job to duplicate — it only reports who approved, when known, so the human answ
 context.
 
 Declining (Option 2) stops here — the PR stays `pending-review` as it was (an update that already ran stays pushed), and
-`close-out.md`'s steps 5-7 never run for this candidate. On the bare form, move to the next
-candidate; on the `#N` form, this is the whole invocation's result.
+`close-out.md`'s steps 5-7 never run for this candidate. When `close-out-update.md` handed off a `{verified-sha}`, first clear its marker
+(`cleared (declined at confirmation gate)`, that file's **Update marker**) — this run verified that head and read its CI, so a re-run has nothing left to re-verify.
+On the bare form, move to the next candidate; on the `#N` form, this is the whole invocation's result.
