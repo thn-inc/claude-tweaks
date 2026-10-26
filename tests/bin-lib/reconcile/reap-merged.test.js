@@ -62,6 +62,23 @@ function installGitPorcelainSpy() {
   };
 }
 
+// Moves a registered linked worktree on disk and repoints its admin `gitdir`,
+// running no git command at `toPath`. `git worktree add`'s checkout child runs
+// with GIT_DIR=<wtPath>/.git, which git rejects as `'$GIT_DIR' too big` near
+// PATH_MAX - 40 on Windows even with core.longpaths (windows-regression run
+// 40323587454) — so a >= 240-char path is registered by moving an
+// ordinary-length one. The worktree's own `.git` file points at the admin dir,
+// which does not move, so it needs no edit.
+function relocateWorktree(root, fromPath, toPath) {
+  fs.mkdirSync(path.dirname(toPath), { recursive: true });
+  fs.renameSync(fromPath, toPath);
+  const gitdirFile = path.join(root, '.git', 'worktrees', path.basename(fromPath), 'gitdir');
+  const old = fs.readFileSync(gitdirFile, 'utf8').trim(); // "<fromPath as git spells it>/.git"
+  const fromSpelled = old.slice(0, -'/.git'.length);
+  const rel = path.relative(fromPath, toPath).split(path.sep).join('/');
+  fs.writeFileSync(gitdirFile, `${path.posix.join(fromSpelled, rel)}/.git\n`);
+}
+
 // Main checkout + a linked worktree under the harness domain (.claude/worktrees/,
 // the only domain reapMerged ever considers), plus a pipeline run dir whose
 // run-state.json names that worktree — the join reapMerged's own audit-trail
@@ -88,7 +105,11 @@ function buildReapableFixture({ worktreeDirName = 'issue-1' } = {}) {
   // long `wtPath` without touching every other test in this suite that
   // relies on the default ordinary-length path.
   const wtPath = path.join(root, '.claude', 'worktrees', worktreeDirName);
-  git(root, 'worktree', 'add', '-q', '-b', 'worktree-issue-1', wtPath);
+  const shortPath = path.join(root, '.claude', 'worktrees', 'issue-1');
+  git(root, 'worktree', 'add', '-q', '-b', 'worktree-issue-1', shortPath);
+  if (wtPath !== shortPath) relocateWorktree(root, shortPath, wtPath);
+  const listed = git(root, 'worktree', 'list', '--porcelain').replace(/\\/g, '/');
+  assert.ok(listed.includes(`worktree ${wtPath.replace(/\\/g, '/')}\n`), `git does not list the fixture worktree at ${wtPath}`);
 
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-test-run');
   fs.mkdirSync(runDir, { recursive: true });
@@ -639,7 +660,9 @@ function induceMidDeleteFailure(wtPath) {
 // Long enough that the pre-follow-up length gate (>= 240 chars) WOULD have
 // engaged — used where a test must prove length no longer opens the
 // fallback. Several short segments, each far under a 255-byte filesystem
-// name limit, so no POSIX host ever hits a real name-too-long error.
+// name limit, so no POSIX host ever hits a real name-too-long error. The
+// fixture registers it via relocateWorktree (git itself cannot `worktree add`
+// at this length on Windows).
 const LONG_DIR_NAME = path.join(...Array(5).fill('x'.repeat(50)));
 
 test('gitCommittedToRemoval: false for a worktree git refused to remove (still registered), true once git abandoned it mid-deletion', MID_DELETE_SKIP, () => {
@@ -747,6 +770,7 @@ test('attemptLongPathRemoval: a non-win32 platform is a pure no-op — fsRmSync 
 
 test('attemptLongPathRemoval: on win32, a LONG-path worktree git refused (locked) is a pure no-op — path length never opens the fallback', () => {
   const { root, wtPath } = buildReapableFixture({ worktreeDirName: LONG_DIR_NAME });
+  assert.ok(wtPath.length >= 240, `fixture path is ${wtPath.length} chars — the pre-follow-up length gate (>= 240) must have engaged`);
   execFileSync('git', ['worktree', 'lock', wtPath, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
   let called = false;
   const result = attemptLongPathRemoval(wtPath, root, { fsRmSync: () => { called = true; }, platform: 'win32' });
@@ -786,6 +810,7 @@ test('#2566: reapMerged on win32 finishes a removal git abandoned mid-deletion u
 
 test('#2566: a DIRTY worktree at a long path on win32 is never force-removed — its uncommitted file survives and the refusal escalates', () => {
   const { root, wtPath } = buildReapableFixture({ worktreeDirName: LONG_DIR_NAME });
+  assert.ok(wtPath.length >= 240, `fixture path is ${wtPath.length} chars — the pre-follow-up length gate (>= 240) must have engaged`);
   const wrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   fs.writeFileSync(path.join(wtPath, 'stray.txt'), 'uncommitted work\n');
   let fsRmSyncCalled = false;
