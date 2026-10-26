@@ -17,9 +17,10 @@ const {
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, unclosedRecords, runRecordSet, inFlightRecords,
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge, consoleResidue, consoleResidueHint, filingRerunRemedy,
-  unfiledCantTellFindings, CANT_TELL_UNFILED_HINT, defaultRunVerdict, countOwnerlessNonClean,
+  unfiledCantTellFindings, CANT_TELL_UNFILED_HINT, defaultRunVerdict, countOwnerlessNonClean, STALE_INTERRUPTED_TTL_MS,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { PROBE_ORDER, LIVE_PROBES, runLiveness } = require('../../../plugin/bin/lib/run-liveness');
+const { LEGACY_DEAD_MS } = require('../../../plugin/bin/lib/run-liveness/constants');
 const { unfiledCantTell } = require('../../../plugin/bin/lib/console/finding-outcomes');
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure, cachePath, beginCacheBatch, commitCacheBatch } = require('../../../plugin/bin/lib/reconcile/cache');
@@ -2980,6 +2981,38 @@ test('AC3.2: a dead owner-block run is never abandoned sooner than 24 hours afte
     assert.equal(ownerPidEntry(rung).detail, 'gone');
     assert.equal(isAbandonedInterrupted(dir, state, OTHER, now), want, `real probes at ${ageMs / H}h`);
   }
+});
+
+test('the 24h and 72h floors are strict: silence exactly at the floor is not abandoned, one millisecond past it is', () => {
+  const now = Date.now();
+  const at = (ageMs, runVerdict) => {
+    const { dir, state } = interruptedRun({ ageMs, now });
+    return isAbandonedInterrupted(dir, state, OTHER, now, { runVerdict });
+  };
+  // Route (a): a dead verdict clears STALE_INTERRUPTED_TTL_MS.
+  assert.equal(STALE_INTERRUPTED_TTL_MS, 24 * H);
+  assert.equal(at(STALE_INTERRUPTED_TTL_MS, DEAD), false, 'dead, exactly at the 24h floor');
+  assert.equal(at(STALE_INTERRUPTED_TTL_MS + 1, DEAD), true, 'dead, 1 ms past the 24h floor');
+  // Route (b): unknown with no live positive clears LEGACY_DEAD_MS.
+  assert.equal(LEGACY_DEAD_MS, 72 * H);
+  assert.equal(at(LEGACY_DEAD_MS, verdictOf('unknown')), false, 'unknown, exactly at the 72h floor');
+  assert.equal(at(LEGACY_DEAD_MS + 1, verdictOf('unknown')), true, 'unknown, 1 ms past the 72h floor');
+});
+
+test('the abandoned classification carries ttlMs LEGACY_DEAD_MS and the unknown verdict on route (b), STALE_INTERRUPTED_TTL_MS and dead on route (a)', () => {
+  const now = Date.now();
+  const classify = (ageMs, runVerdict) => {
+    const { dir, state } = interruptedRun({ ageMs, now });
+    return classifyRunDir({ dir, state, sessionId: OTHER, kinds: ['abandoned-interrupted'], runVerdict }, now);
+  };
+  const fallback = classify(LEGACY_DEAD_MS + 1, verdictOf('unknown'));
+  assert.equal(fallback.kind, 'abandoned-interrupted');
+  assert.equal(fallback.ttlMs, LEGACY_DEAD_MS);
+  assert.equal(fallback.evidence.verdict, 'unknown');
+  const dead = classify(STALE_INTERRUPTED_TTL_MS + 1, DEAD);
+  assert.equal(dead.kind, 'abandoned-interrupted');
+  assert.equal(dead.ttlMs, STALE_INTERRUPTED_TTL_MS);
+  assert.equal(dead.evidence.verdict, 'dead');
 });
 
 test('AC4.1: a non-ad-hoc main-checkout run whose owner pid is gone reads dead through the adjustment and is abandoned after the floor', () => {

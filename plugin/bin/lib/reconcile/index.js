@@ -407,10 +407,17 @@ async function reconcileInner(opts, state) {
     // #4032: an over-budget return skips `finalize`, so persist the terminal PR
     // answers this pass already paid for here — otherwise a cold pass that hits
     // the ceiling forgets them and the next pass starts cold and hits it again.
-    // (Only prStates: the freshness stamp and the residue index stay finalize's.)
+    // (Only prStates and, once archive has run, the ownerless count (#4421) — a skipped
+    // finalize would otherwise leave an older ownerlessNonCleanZeroSince standing past a
+    // nonzero reading; the freshness stamp and the residue index stay finalize's.)
     // #4180: a dry run writes nothing, so it forgets the answers as finalize does.
     if (!dryRun) {
       try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
+      if (typeof result.ownerlessNonClean === 'number') {
+        try {
+          writeCache(root, applyOwnerlessNonClean(readCache(root), result.ownerlessNonClean, Date.now()));
+        } catch { /* a lost count write is re-read by the next pass */ }
+      }
     }
     return true;
   }

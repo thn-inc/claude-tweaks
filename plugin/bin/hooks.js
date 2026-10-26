@@ -1799,7 +1799,8 @@ async function runReconcileBackground(argv) {
   // archiveMerged's destructuring default apply the same way an omitted key
   // would. Absent (no spawning session id was ever known) leaves this
   // exactly as unresolvable as before this fix — the other two gates
-  // (24h staleness, shipped-unclosed evidence) still govern alone.
+  // (the run-liveness verdict with its 24h dead / 72h unknown floors, and
+  // shipped-unclosed evidence) still govern alone.
   const sessionId = process.env.CLAUDE_TWEAKS_SESSION_ID || undefined;
   const statusPath = path.join(root, '.claude-tweaks', STATUS_FILENAME);
 

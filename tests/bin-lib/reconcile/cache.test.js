@@ -9,7 +9,7 @@ const {
   RESIDUE_ESCALATE_THRESHOLD, recordResidueFailure, recordResidueSuccess, listResidueFailures,
   trackResidue, pruneResidueFailures, clearResidue, beginCacheBatch, commitCacheBatch, recordResidueError, planClear,
   applyOwnerlessNonClean,
-} =require('../../../plugin/bin/lib/reconcile/cache');
+} = require('../../../plugin/bin/lib/reconcile/cache');
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-cache-'));

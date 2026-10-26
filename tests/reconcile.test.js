@@ -3364,3 +3364,52 @@ test('#4421 AC6.4: a skipped pass leaves both fields absent', async () => {
     assert.equal('ownerlessNonCleanZeroSince' in cache, false);
   }
 });
+
+// #4421: an over-budget early return skips `finalize`, so it persists the ownerless count itself —
+// otherwise a pass that read a count above 0 would leave an older ownerlessNonCleanZeroSince standing,
+// and the stamp would stop dating the current unbroken run of zero readings.
+// The stub budget reports "exceeded" from its Nth check on; each overBudget() call asks once.
+async function withBudgetExceededFrom(nth, fn) {
+  const budgetMod = require('../plugin/bin/lib/reconcile/budget');
+  const original = budgetMod.createBudget;
+  let asked = 0;
+  budgetMod.createBudget = () => ({ exceeded: () => { asked += 1; return asked >= nth; }, remainingMs: () => 0 });
+  try {
+    return await fn();
+  } finally {
+    budgetMod.createBudget = original;
+  }
+}
+
+function seedOwnerlessCache(root) {
+  fs.mkdirSync(path.dirname(cachePath(root)), { recursive: true });
+  fs.writeFileSync(cachePath(root), JSON.stringify({ ownerlessNonClean: 0, ownerlessNonCleanZeroSince: '2026-10-01T00:00:00.000Z' }));
+}
+
+test('#4421: an over-budget return after archive ran persists ownerlessNonClean and clears a standing ownerlessNonCleanZeroSince', async () => {
+  const { root, run, mk, cacheJson } = ownerlessFixture();
+  for (let i = 1; i <= 3; i++) mk(`2026-10-26T10000${i}-record-${i}`, { status: 'active' }); // owner-less, non-clean
+  seedOwnerlessCache(root);
+  // Calls 1-5 are the checks before archive's own; the 6th (after archive) trips.
+  const r = await withBudgetExceededFrom(6, () => run({ checks: ['archive', 'archive-branches'] }));
+  assert.equal(r.ownerlessNonClean, 3, 'archive ran before the budget tripped');
+  assert.ok(r.skipped.some((s) => s.check === 'archive-branches' && s.reason === 'budget-exceeded'), 'the pass returned early, before finalize');
+  assert.equal(cacheJson().ownerlessNonClean, 3);
+  assert.equal('ownerlessNonCleanZeroSince' in cacheJson(), false);
+  assert.equal(cacheJson().lastRunAt ?? null, null, 'finalize still owns the freshness stamp');
+});
+
+test('#4421: an over-budget return that never ran archive leaves a persisted ownerlessNonClean and its zero-since stamp untouched', async () => {
+  for (const [label, nth, checks] of [
+    ['budget exceeded before archive', 1, ['archive']],
+    ['a pass without archive', 2, ['console']],
+  ]) {
+    const { root, run, cacheJson } = ownerlessFixture();
+    seedOwnerlessCache(root);
+    const before = cacheJson();
+    const r = await withBudgetExceededFrom(nth, () => run({ checks }));
+    assert.equal('ownerlessNonClean' in r, false, label);
+    assert.ok(r.skipped.some((s) => s.reason === 'budget-exceeded'), `${label}: the pass returned early`);
+    assert.deepEqual(cacheJson(), before, label);
+  }
+});

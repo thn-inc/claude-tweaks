@@ -338,8 +338,9 @@ function lastOwnEventMs(runDir) {
 // refuse a close; here the same comparison answers "is this session's own
 // run?" — if it is, we are that session and the run is by definition alive, so
 // never auto-close it. A run owned by nobody, or by some other session, is a
-// candidate only if it ALSO shows no self-attributed activity inside the
-// staleness window. Both halves must hold; neither alone is evidence.
+// candidate only if it ALSO clears the run-liveness verdict (#4421): silence past
+// the 24 h floor with a `dead` verdict, or past 72 h with an `unknown` verdict and
+// no live probe positive. Both halves must hold; neither alone is evidence.
 //
 // Honest scope of this ownership half: it only ever engages when BOTH
 // `state.sessionId` and `sessionId` are non-null. `sessionId` is reliably
@@ -2238,6 +2239,7 @@ function countOwnerlessNonClean(root) {
     if (state === null) {
       if (!fs.existsSync(path.join(dir, 'run-state.json'))) count++;
     } else if (isPlainObject(state) && !isPlainObject(state.owner) && state.status !== 'clean') {
+      // (`status !== 'clean'` is defensive: the iterator already drops `clean` dirs, so nothing relies on it.)
       count++;
     }
   }
