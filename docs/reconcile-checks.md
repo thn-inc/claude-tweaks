@@ -343,7 +343,7 @@ A `runVerdict` that throws, returns no evidence array, or returns any other verd
 
 | Owner block | Owner-pid detail | Worktree | Own events | Own session | Old | New | Changed |
 |---|---|---|---|---|---|---|---|
-| absent | `no-owner-block` | none, linked-and-gone, or main checkout | stale 24–72 h | no | abandoned | not yet (`unknown`); abandoned past 72 h by route b | yes: the legacy witness needs 72 h |
+| absent | `no-owner-block` | none, linked-and-gone, or main checkout | stale 24–72 h | no | abandoned | not yet (`unknown`); past 72 h the legacy witness reads `dead`, so route a abandons it | yes: the legacy witness needs 72 h |
 | absent | `no-owner-block` | any | none own; run id under 24 h | no | abandoned on first pass | not abandoned | yes: measured from the run id (AC5) |
 | absent | `no-owner-block` | none or linked-and-gone | none own; run id 24–72 h | no | abandoned | not yet; abandoned once the run id is 72 h old | yes: measured from the run id |
 | absent | `no-owner-block` | linked-and-present, lock free, commit 10 min–72 h | stale over 24 h | no | abandoned at 24 h | abandoned past 72 h by route b (no legacy witness while the commit is newer than 72 h) | yes: 24 h becomes 72 h |
@@ -359,7 +359,7 @@ A `runVerdict` that throws, returns no evidence array, or returns any other verd
 
 `ownerlessNonCleanZeroSince` is an ISO date in the same cache, set by `applyOwnerlessNonClean`: the first pass that counts `0` stamps it, later passes that count `0` keep that stamp, and a count above `0` drops the key — so it always dates the current unbroken run of zero readings. `readCache` keeps either key only when valid (an integer of at least 0; a parseable date string), and the cache writes them only when present.
 
-**Removal condition for the 72-hour legacy route** (`run-liveness/index.js`'s `legacy` witness): remove it when `ownerlessNonCleanZeroSince` is at least 7 days old in this repository's `reconcile-cache.json`, on a plugin build newer than v6.153.0. After the route is removed, fallback (b) still drains owner-less runs, so other checkouts do not leak.
+**Removal condition for the 72-hour legacy route** (`run-liveness/index.js`'s `legacy` witness): remove it when `ownerlessNonCleanZeroSince` is at least 7 days old in this repository's `reconcile-cache.json`, on a plugin build newer than v6.153.0. After the route is removed, fallback (b) still classifies those owner-less `interrupted` runs as `abandoned-interrupted` at the same 72 hours, so removing it changes no archive decision. It does not drain them on its own: archival still needs the `shipped-unclosed` gate, and owner-less runs in any other status have no drain (tracked in the legacy-route removal record).
 
 ## No-run-state.json terminal path and consolidated escalation (#1811)
 
