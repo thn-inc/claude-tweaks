@@ -2432,6 +2432,25 @@ test('e2e #4303: past the cwd cap from the main checkout, a relative write aimed
     assert.strictEqual(decisionFor(command, main), 'deny', dir);
   }
 });
+// #4303 (X1): from a session cwd outside any repo (a directory beside the main checkout), after
+// `groups4303(16)` (every cd fails), bash 3.2 and 5 write M/leak.out for `echo x > ../main/leak.out`
+// and commit in M for `git -C ../main commit`. The overflow cwd is then the session cwd itself, which
+// is no repo, so the lost cwd's stand-in named no worktree-always repo: 3b26440ad and 4e7d54a9d
+// allowed both, base d9aa6b82d, 40b34714a and 81d9f472b deny. The gate now denies a lost target
+// whose stand-in proves no repo opted out. A worktree-always repo that opted out (policy off) has
+// nothing to enforce, so the same lost write from its worktree stays allowed, as at every version.
+// No path is spliced in, so this runs on every platform.
+test('e2e #4303: past the cwd cap from a cwd outside any repo, a relative write or git -C into the main checkout is DENIED', () => {
+  const { main, decisionFor } = linkedWorktree4303();
+  const outside = path.join(path.dirname(main), 'a0');
+  fs.mkdirSync(outside);
+  for (const command of [`${groups4303(16)}echo x > ../main/leak.out`, `${groups4303(16)}git -C ../main commit --allow-empty -qm leak`]) {
+    assert.strictEqual(decisionFor(command, outside), 'deny', command.slice(-50));
+  }
+  const off = linkedWorktree4303();
+  fs.writeFileSync(path.join(off.main, '.claude-tweaks', 'policy.yml'), 'worktree-always: false\n');
+  assert.notStrictEqual(off.decisionFor(`${groups4303(16)}echo x > ../main/leak.out`), 'deny');
+});
 // #4303: without an overflowCwd (the pipeline shadow guard) the collapse is a lost cwd at the
 // walk's start, so a relative target resolves under the start. An && chain of 16 cds
 // (`cd /tmp/ct-4303-aK && …`), then `cd WT/sub; mkdir -p ../.claude-tweaks/pipelines/2026-x`: with
@@ -2456,18 +2475,19 @@ test('e2e #4303: the pipeline shadow guard denies a shadow run dir made after an
     }
   }
 });
-// #4303: the teardown gate's walk is handed base's collapse, the main checkout and the start as
-// real paths, so `cd ..` after the collapse still reaches the worktree's parent. From a worktree
-// nested at M/.claude/worktrees/x, `G20 cd ..; git worktree remove [--force] x`: bash 3.2 and 5 run
-// it in M/.claude/worktrees, and the --force one removes the session's own worktree. 3b26440ad
-// handed the lost cwd's root, resolved M/x and M/.claude/worktrees/x/x, and allowed both; base
-// d9aa6b82d, 40b34714a and 81d9f472b deny both through the own-cwd guard (#693).
+// #4303: from a worktree nested at M/.claude/worktrees/x, `G20 cd ..; git worktree remove [--force]
+// x`: bash 3.2 and 5 run it in M/.claude/worktrees, and the --force one removes the session's own
+// worktree. 3b26440ad handed the lost cwd's root, resolved M/x and M/.claude/worktrees/x/x, and
+// allowed both; base d9aa6b82d, 40b34714a and 81d9f472b deny both through the own-cwd guard (#693).
+// The teardown walk now keeps the lost cwd, so the relative path from it is marked lost (its path
+// only the lost cwd's stand-in) and the gate denies it as unprovable. The groups after the 16th are
+// known again (each an absolute cd), so `/tmp/x` is resolved from them as before.
 test('e2e #4303: past the cwd cap, a relative `git worktree remove` of the session\'s own nested worktree is DENIED', () => {
   const { wt, decisionFor, teardownTargets } = linkedWorktree4303({ nested: true });
   for (const command of [`${groups4303(20)}cd ..; git worktree remove --force x`, `${groups4303(20)}cd ..; git worktree remove x`]) {
     assert.strictEqual(decisionFor(command), 'deny', command.slice(-50));
-    const removed = teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: wt }).map((t) => t.path);
-    assert.ok(removed.includes(wt), JSON.stringify(removed));
+    const removed = teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: wt });
+    assert.ok(removed.some((t) => t.lost === true), JSON.stringify(removed));
   }
 });
 

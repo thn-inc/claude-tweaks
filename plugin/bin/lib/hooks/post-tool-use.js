@@ -21,7 +21,7 @@ const { ISSUE_REF_SOURCE } = require('../issue-branch-tracking');
 // Reused rather than reimplemented a third time (CLAUDE.md's don't-duplicate
 // rule) — `resolveIntegrationBranch`'s fallback profile (no explicit arg,
 // policy.yml then origin/HEAD) fits this file's EnterWorktree handler as-is.
-const { resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
+const { resolveIntegrationBranch, bareIntegrationName, parseWorktreeList } = require('./worktree-reap');
 // Session-scoped marker path for the non-EnterWorktree ad-hoc-run-dir rate-limit (#1333) — see
 // stampAdHocRunDir below.
 const { sessionTmpPath } = require('../session-tmp');
@@ -599,6 +599,23 @@ function run(ctx) {
   // Computed once and shared below — the breadcrumb loop and the
   // closing-keyword check both need the same command/cwd's git targets.
   const targets = hasCommand ? gitTargets(command, ctx.cwd) : [];
+  // #4303: a git command the scanner resolved from a cwd it lost (`lost: true`, past
+  // git-command.js's CWD_SET_CAP) ran in a repo the walk does not know, and its `dir` is only the
+  // walk's start. Its commit is looked for in every candidate repo instead: that start, the main
+  // checkout pre-tool-use's walk collapses onto, and each worktree `git worktree list` gives for
+  // it (the lost cwd may have been any of them). None is invented: each is a real checkout of the
+  // session's own repo, and only a fresh commit in one counts (commitDirFor, checkClosingKeyword).
+  let lostCandidates = null;
+  const candidateDirs = (t) => {
+    if (!t.lost) return [t.dir];
+    if (lostCandidates === null) {
+      const main = wtDetect.mainCheckoutRoot(ctx.cwd || t.dir);
+      const listed = main ? runGit(['worktree', 'list', '--porcelain'], main).stdout : null;
+      const worktrees = parseWorktreeList(listed).filter((e) => !e.bare && !e.prunable).map((e) => path.resolve(e.path));
+      lostCandidates = [...new Set([main, ...worktrees].filter(Boolean).map((d) => path.resolve(d)))];
+    }
+    return [t.dir, ...lostCandidates.filter((d) => d !== path.resolve(t.dir))];
+  };
 
   // Fetch each dir's own N most recent commits ONCE per dir (a single git
   // spawn returns hash + timestamp + message together), shared by both the
@@ -611,16 +628,33 @@ function run(ctx) {
   const commitCountByDir = new Map();
   for (const t of targets) {
     if (t.action !== 'commit') continue;
-    commitCountByDir.set(t.dir, (commitCountByDir.get(t.dir) || 0) + 1);
+    for (const dir of candidateDirs(t)) commitCountByDir.set(dir, (commitCountByDir.get(dir) || 0) + 1);
   }
   const recentByDir = new Map();
   for (const [dir, count] of commitCountByDir) recentByDir.set(dir, recentCommits(dir, count).reverse());
   const dirCursor = new Map();
-  function nextCommitFor(dir) {
+  function peekCommitFor(dir) {
     const list = recentByDir.get(dir) || [];
     const idx = dirCursor.get(dir) || 0;
-    dirCursor.set(dir, idx + 1);
     return idx < list.length ? list[idx] : null;
+  }
+  function nextCommitFor(dir) {
+    const commit = peekCommitFor(dir);
+    dirCursor.set(dir, (dirCursor.get(dir) || 0) + 1);
+    return commit;
+  }
+  // The dir a commit target's commit landed in: its own, or for a lost one (#4303) the candidate
+  // whose next commit is the freshest inside COMMIT_FRESHNESS_WINDOW_SECONDS — the commit this
+  // call just made — and the walk's start when no candidate has a fresh one, as before #4303.
+  function commitDirFor(target) {
+    const dirs = candidateDirs(target);
+    let best = null;
+    for (const dir of dirs.length > 1 ? dirs : []) {
+      const commit = peekCommitFor(dir);
+      if (!commit || commit.ts === null || Math.abs(Date.now() / 1000 - commit.ts) > COMMIT_FRESHNESS_WINDOW_SECONDS) continue;
+      if (!best || commit.ts > best.ts) best = { dir, ts: commit.ts };
+    }
+    return best ? best.dir : target.dir;
   }
   // #2553: a 'push' target carries no per-call commit of its own (unlike
   // 'commit', which advances through nextCommitFor above) — it pushes
@@ -661,16 +695,17 @@ function run(ctx) {
       seen.add(`${ev.action}\u0000${ev.hash}\u0000${ev.dir}`);
     }
     for (const target of targets) {
-      const commit = target.action === 'commit' ? nextCommitFor(target.dir) : null;
-      const hash = commit ? commit.hash : (target.action === 'push' ? headHashFor(target.dir) : null);
+      const dir = target.action === 'commit' ? commitDirFor(target) : target.dir;
+      const commit = target.action === 'commit' ? nextCommitFor(dir) : null;
+      const hash = commit ? commit.hash : (target.action === 'push' ? headHashFor(dir) : null);
       if (hash) {
-        const key = `${target.action}\u0000${hash}\u0000${target.dir}`;
+        const key = `${target.action}\u0000${hash}\u0000${dir}`;
         if (seen.has(key)) continue;
         seen.add(key);
       }
       ctxLib.appendEvent(ownedRun.dir, 'commit', {
         action: target.action,
-        dir: target.dir,
+        dir,
         hash: hash || undefined,
       }, ownedRun.attribution);
     }

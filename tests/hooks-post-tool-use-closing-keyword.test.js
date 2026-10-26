@@ -137,6 +137,53 @@ test('two real commits to the SAME dir in one Bash invocation are each evaluated
   assert.match(out.json.systemMessage, /closing keyword/i);
 });
 
+// #4303 (P1): past the shell scanner's cwd cap the walk has lost the cwd bash is in, so the git
+// command's dir is only the walk's start (marked `lost`). From a worktree nested at M/.claude/worktrees/x,
+// with no worktree-always policy, `G20 cd ../../..; git commit -qm "work on #12"` (20 groups
+// `{ cd /tmp/ct-4303-nK; }`, every cd failing): bash 3.2 and 5 commit in M. Base d9aa6b82d, 40b34714a,
+// 81d9f472b and 3b26440ad read M's commit and warn; 4e7d54a9d read the worktree's HEAD and missed it.
+// A lost commit target is now looked for in every candidate checkout. The fixture makes the commit
+// bash makes (the hook runs after it); the init commit is old, so only that one is fresh.
+const groups4303 = (n) => Array.from({ length: n }, (_, i) => `{ cd /tmp/ct-4303-n${i}; }; `).join('');
+test('#4303: a commit past the cwd cap that lands in the main checkout is still checked for a closing keyword', () => {
+  const main = gitRepoWithMessage('init', '2020-01-01T00:00:00');
+  const wt = path.join(main, '.claude', 'worktrees', 'x');
+  execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt]);
+  execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-qm', 'work on #12'], {
+    env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
+  });
+  const out = post.run({
+    input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}cd ../../..; git commit --allow-empty -qm "work on #12"` }, cwd: wt },
+    runDir: null, runState: null, cwd: wt,
+  });
+  assert.ok(out.json && typeof out.json.systemMessage === 'string', 'expected the closing-keyword warning');
+  assert.match(out.json.systemMessage, /closing keyword/i);
+});
+
+// #4303: the candidates include every worktree of the main checkout, since the lost cwd may have
+// been any of them. From the main checkout, 16 `cd /tmp/ct-4303-aK &&` (every aK present, each cd
+// succeeding), then `cd wt/sub; git commit -qm "work on #12"`: bash 3.2 and 5 commit in the nested
+// worktree wt. The list's end joins past the cap and drops the absolute `cd`, so the walk's start
+// (the main checkout) is the only path it has. Base d9aa6b82d, 40b34714a and 81d9f472b warn;
+// 3b26440ad and 4e7d54a9d miss it. Skipped on win32: the command splices the native temp path.
+test('#4303: a commit past the cwd cap that lands in a linked worktree is still checked for a closing keyword', {
+  skip: process.platform === 'win32' && 'win32: the command splices a native temp path, whose backslashes the scanner reads as escapes',
+}, () => {
+  const main = gitRepoWithMessage('init', '2020-01-01T00:00:00');
+  const wt = path.join(main, '.claude', 'worktrees', 'x');
+  execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt]);
+  execFileSync('git', ['-C', wt, 'commit', '--allow-empty', '-qm', 'work on #12'], {
+    env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
+  });
+  const chain = Array.from({ length: 16 }, (_, i) => `cd /tmp/ct-4303-a${i + 1} && `).join('');
+  const out = post.run({
+    input: { tool_name: 'Bash', tool_input: { command: `${chain}cd ${wt}/sub; git commit --allow-empty -qm "work on #12"` }, cwd: main },
+    runDir: null, runState: null, cwd: main,
+  });
+  assert.ok(out.json && typeof out.json.systemMessage === 'string', 'expected the closing-keyword warning');
+  assert.match(out.json.systemMessage, /closing keyword/i);
+});
+
 test('does not evaluate a stale HEAD left over from a git commit that never landed (finding 2 regression)', () => {
   // Simulates a rejected/failed `git commit` attempt: PostToolUse still fires, but
   // HEAD is an old, unrelated commit rather than anything the just-attempted Bash

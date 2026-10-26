@@ -822,6 +822,45 @@ test('#693: ExitWorktree removing the session\'s own cwd is unaffected by the ow
   assert.strictEqual(r.stdout.trim(), '');
 });
 
+// #4303: past the shell scanner's cwd cap the walk has lost the cwd bash is in. A relative
+// `git worktree remove` path from there names a worktree the gate cannot place, so it cannot show the
+// path is not the session's own cwd: teardownTargets marks it `lost`, and the gate denies it. From a
+// worktree nested at M/.claude/worktrees/x, bash 3.2 and 5 remove the session's own worktree for each
+// (with every /tmp/ct-4303-aK present, every /tmp/ct-4303-nK absent):
+//   T3  16 `cd aK &&`, then `cd M/.claude/worktrees; git worktree remove --force x`
+//   T1  15 groups `{ cd aK; }`, then `{ cd M/.claude/worktrees; }; git worktree remove --force x`
+//   T2  15 groups `{ cd nK; }`, then `{ cd wt/sub; }; git -C ../.. worktree remove --force x`
+// 3b26440ad and 4e7d54a9d allow all three; 40b34714a and 81d9f472b deny all three; base d9aa6b82d
+// denies T3 and allows T1 and T2. An absolute path after the cap keeps the ordinary checks: removing
+// another, unassigned worktree is allowed. Skipped on win32: the commands splice native temp paths.
+test('#4303: past the cwd cap, a relative `git worktree remove` of the session\'s own worktree is denied', {
+  skip: process.platform === 'win32' && 'win32: the commands splice native temp paths, whose backslashes the scanner reads as escapes',
+}, () => {
+  const root = fixtureRoot();
+  const wt = path.join(root, '.claude', 'worktrees', 'x');
+  sh(root, 'worktree', 'add', '-q', wt, '-b', `wt-branch-${wtSeq++}`);
+  const other = addWorktree(root);
+  const parent = path.dirname(wt);
+  const chain = Array.from({ length: 16 }, (_, i) => `cd /tmp/ct-4303-a${i + 1} && `).join('');
+  const ok15 = Array.from({ length: 15 }, (_, i) => `{ cd /tmp/ct-4303-a${i}; }; `).join('');
+  const fail15 = Array.from({ length: 15 }, (_, i) => `{ cd /tmp/ct-4303-n${i}; }; `).join('');
+  const decide = (command) => preToolUse.run({ input: { tool_name: 'Bash', tool_input: { command }, cwd: wt }, runDir: null, runState: null, ownedRun: {}, cwd: wt });
+  for (const [shape, command] of [
+    ['T3', `${chain}cd ${parent}; git worktree remove --force x`],
+    ['T1', `${ok15}{ cd ${parent}; }; git worktree remove --force x`],
+    ['T2', `${fail15}{ cd ${wt}/sub; }; git -C ../.. worktree remove --force x`],
+  ]) {
+    const out = decide(command);
+    assert.strictEqual(out.json && out.json.hookSpecificOutput.permissionDecision, 'deny', shape);
+    assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /cannot tell which worktree the path names/, shape);
+    const targets = preToolUse.teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: wt });
+    assert.ok(targets.length && targets.every((t) => t.lost === true), `${shape}: ${JSON.stringify(targets)}`);
+  }
+  const absolute = `${fail15}{ cd /tmp/ct-4303-n15; }; git worktree remove --force ${other}`;
+  assert.deepStrictEqual(decide(absolute), {});
+  assert.ok(preToolUse.teardownTargets({ input: { tool_name: 'Bash', tool_input: { command: absolute } }, cwd: wt }).every((t) => !t.lost));
+});
+
 // #2282: the own-cwd deny above previously left no friction-event trace at
 // all. `session_id` is required for stampAdHocRunDirForDenial (context.js)
 // to mint a run dir to log into — the AC2/#693 tests above omit it

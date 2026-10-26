@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, powershellOpaqueCommand,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, powershellOpaqueCommand, keepLost,
 } = require('./git-command');
 const ctxLib = require('./context');
 const policy = require('../policy');
@@ -50,7 +50,9 @@ const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
 // cwd: a relative write, a git target or a `worktree remove` path then resolves in the main
 // checkout too, where checkWorktreeRequired denies it. checkPipelineShadowGuard passes none: the
 // walk's own cwd, which the collapse always keeps, is where it denies a shadow run dir. Resolved
-// only when a walk overflows (wtDetect.mainCheckoutRoot walks the fs).
+// only when a walk overflows (wtDetect.mainCheckoutRoot walks the fs). #4303: every target the
+// collapse resolves from a lost cwd also carries `lost: true`, and each of those three gates
+// denies on it rather than trust the stand-in path.
 function walkOptions(cwd) {
   return { overflowCwd: () => (cwd ? wtDetect.mainCheckoutRoot(cwd) || cwd : null) };
 }
@@ -525,7 +527,7 @@ function teardownTargets(ctx) {
     // `git -c foo=bar worktree remove <path>` past the gate.
     const resolved = resolveGitCommand(toks, effCwd);
     if (!resolved) return; // not git, or unprovable, or cwd unknown with no provable -C
-    const { index: i, dir } = resolved;
+    const { index: i, dir, lost } = resolved;
     // Derived from GATE_COVERAGE.teardownGitCommands rather than a hardcoded
     // comparison, so the constant stays load-bearing (see tools/gitActions
     // above) instead of a parallel hand-kept list nothing reads (#hooks-gate-coverage).
@@ -535,8 +537,12 @@ function teardownTargets(ctx) {
     // `--`, like `--force`/`-f`, is a flag/terminator, never the path itself.
     const rest = toks.slice(i + 2).filter((t) => t !== '--force' && t !== '-f' && t !== '--');
     if (rest.length !== 1 || rest[0].startsWith('-')) return; // unconfident -> allow
-    out.push({ path: path.resolve(dir, rest[0]), source: 'bash' });
-  }, walkOptions(cwd));
+    // #4303: a relative path from a cwd the walk lost (past git-command.js's CWD_SET_CAP) names
+    // no directory the gate can place; `path` is the lost cwd's stand-in and `lost` says so. An
+    // absolute path does not depend on the cwd and keeps the ordinary checks.
+    if (lost && !path.isAbsolute(rest[0])) out.push({ path: path.resolve(dir, rest[0]), source: 'bash', lost: true });
+    else out.push({ path: path.resolve(dir, rest[0]), source: 'bash' });
+  }, keepLost(walkOptions(cwd))); // keepLost: the walk's lost cwd reaches resolveGitCommand, which reports it
   return out;
 }
 
@@ -568,7 +574,24 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
   const mainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(ctx.cwd || process.cwd()), { fsImpl });
   // Own-cwd guard (#693): resolved once per call, reused across targets.
   const cwdReal = canonicalRealpath(ctx.cwd || process.cwd(), { fsImpl });
-  for (const { path: target, source } of targets) {
+  for (const { path: target, source, lost } of targets) {
+    // #4303: a relative remove from a cwd the shell scanner lost (teardownTargets' `lost`) cannot
+    // be shown not to be the session's own working directory, so the own-cwd guard below cannot
+    // clear it: deny, before any check that would read the stand-in path as a real one.
+    if (lost) {
+      const { dir: lostDenialRunDir, attribution: lostAttribution } = ctxLib.resolveDenialRunDir(ctx);
+      const lostTestTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+      ctxLib.appendEvent(
+        lostDenialRunDir, 'wd-guard-refusal', { path: target, reason: 'own-cwd-removal', lost: true, ...lostTestTag }, lostAttribution,
+      );
+      return denyResult(
+        `claude-tweaks teardown gate: this \`git worktree remove\` names a relative path after the command ` +
+        `has changed directory more ways than the hook's shell scanner follows, so it cannot tell which ` +
+        `worktree the path names, nor show it is not the current session's own working directory. Pass the ` +
+        `worktree's absolute path (or split the command), or use \`ExitWorktree\` to remove the worktree the ` +
+        `session is standing in (skills/wrap-up/cleanup-procedures.md Section C's Teardown ordering invariant).`,
+      );
+    }
     if (mainRoot && canonicalRealpath(target, { fsImpl }) === mainRoot) continue;
 
     // A raw Bash `git worktree remove` (never ExitWorktree — see teardownTargets'
@@ -714,17 +737,51 @@ function shadowPipelineRunDir(targetPath, { fsImpl } = {}) {
   return { worktreeRoot: repoRoot, runDirCandidate };
 }
 
+// #4303: whether relative target text names a `.claude-tweaks/pipelines` segment on its way: a
+// `.claude-tweaks` component with a `pipelines` component anywhere after it. Read on the text as
+// written, never normalized, so a `x/../` cannot hide one; any later `pipelines` counts (failing
+// closed, as bash resolves `..` through links the text does not show), and case is ignored, since
+// a case-insensitive volume reads `.Claude-Tweaks` as the same directory.
+const [STATE_DIR_PART, PIPELINES_PART] = PIPELINE_STATE_DIR.split(path.sep);
+function namesPipelinesSegment(rel) {
+  const parts = String(rel).toLowerCase().split(/[\\/]+/);
+  const at = parts.indexOf(STATE_DIR_PART);
+  return at !== -1 && parts.indexOf(PIPELINES_PART, at + 1) !== -1;
+}
+
 function checkPipelineShadowGuard(ctx, deps = {}) {
   const toolName = ctx.input && ctx.input.tool_name;
   const toolInput = ctx.input && ctx.input.tool_input;
   const candidates = [];
+  const lostRels = [];
   if (GATE_COVERAGE.tools.includes(toolName)) {
     const target = fileToolTargetPath(toolName, toolInput);
     if (target !== null) candidates.push(target);
   } else if (toolName === 'Bash' && toolInput && typeof toolInput.command === 'string') {
     const command = toolInput.command;
-    for (const t of fileWriteTargets(command, ctx.cwd)) candidates.push(t.file);
-    for (const t of mkdirTargets(command, ctx.cwd)) candidates.push(t.file);
+    for (const t of [...fileWriteTargets(command, ctx.cwd), ...mkdirTargets(command, ctx.cwd)]) {
+      candidates.push(t.file);
+      if (t.lost) lostRels.push(t.rel);
+    }
+  }
+  // #4303: a target resolved from a cwd the shell scanner lost has no known directory, so whether
+  // it creates a run dir inside a linked worktree is unknowable: one whose text names a
+  // `.claude-tweaks/pipelines` segment is denied outright. One that names none is not this
+  // guard's concern.
+  const lostShadow = lostRels.find(namesPipelinesSegment);
+  if (lostShadow !== undefined) {
+    const { dir: denialRunDir, attribution: denialAttribution } = ctxLib.resolveDenialRunDir(ctx);
+    const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+    ctxLib.appendEvent(
+      denialRunDir, 'wd-guard-refusal', { tool: toolName, path: lostShadow, reason: 'shadow-run-dir', lost: true, ...testTag }, denialAttribution,
+    );
+    return denyResult(
+      `claude-tweaks: refusing ${lostShadow} — the command has changed directory more ways than the hook's ` +
+      `shell scanner follows, so it cannot tell whether this relative path creates a NEW pipeline run directory ` +
+      `inside a linked worktree. Run directories are anchored to the main checkout (_shared/pipeline-run-dir.md's ` +
+      `Anchoring section); use the absolute path that resolves: ` +
+      `node "${pluginRoot()}/bin/hooks.js" resolve-run-dir --create (see pipeline-run-dir.md for the full flag set).`,
+    );
   }
   for (const candidate of candidates) {
     const shadow = shadowPipelineRunDir(candidate, { fsImpl: deps.fsImpl });
@@ -978,16 +1035,37 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
       const targets = precomputedGitTargets || gitTargets(command, ctx.cwd, walkOptions(ctx.cwd));
       const gitTargetPaths = targets
         .filter((t) => GATE_COVERAGE.gitActions.includes(t.action))
-        .map((t) => ({ path: t.dir, exemptible: false, action: t.action }));
+        .map((t) => ({ path: t.dir, exemptible: false, action: t.action, lost: t.lost }));
       // Non-git direct file writes (tee, cp, mv) — best-effort,
       // not exhaustive (see fileWriteTargets' own header comment).
-      const writeTargetPaths = fileWriteTargets(command, ctx.cwd, walkOptions(ctx.cwd)).map((t) => ({ path: t.file, exemptible: true }));
+      const writeTargetPaths = fileWriteTargets(command, ctx.cwd, walkOptions(ctx.cwd)).map((t) => ({ path: t.file, exemptible: true, lost: t.lost, rel: t.rel }));
       targetPaths = [...gitTargetPaths, ...writeTargetPaths];
     }
   }
   if (!targetPaths.length) return {};
 
-  for (const { path: targetPath, exemptible, fileTool, action } of targetPaths) {
+  for (const { path: targetPath, exemptible, fileTool, action, lost, rel } of targetPaths) {
+    // #4303: a relative write target, or a git command, resolved from a cwd the shell scanner lost
+    // (past git-command.js's CWD_SET_CAP) lands in a directory the walk does not know: `targetPath`
+    // is only a stand-in (the session's main checkout or its own cwd), so no exemption below can be
+    // read off it. Deny before any of them, failing closed, unless the stand-in's own repo has
+    // provably opted out of worktree-always (its main checkout's policy is off or absent): then
+    // the session's checkout has nothing for this gate to enforce. A stand-in outside any repo, or
+    // whose repo status is indeterminate, proves nothing and is denied.
+    if (lost) {
+      const lostInfo = wtDetect.repoInfo(targetPath);
+      const lostRoot = lostInfo.indeterminate || !lostInfo.repoRoot ? null : (wtDetect.mainCheckoutRoot(targetPath) || lostInfo.repoRoot);
+      if (lostRoot && !policy.isWorktreeAlwaysOn(lostRoot)) continue;
+      const { dir: denialRunDir, attribution: denialAttribution } = ctxLib.resolveDenialRunDir(ctx);
+      const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+      ctxLib.appendEvent(denialRunDir, 'gate-denial', { tool: toolName, path: rel || targetPath, gate: 'lost-cwd', ...testTag }, denialAttribution);
+      return denyResult(
+        `claude-tweaks: this command changes directory more ways than the hook's shell scanner follows, so it ` +
+        `cannot tell where ${action ? `its git ${action}` : `its relative write to ${rel}`} lands, nor show that it ` +
+        `stays out of a non-isolated checkout under a worktree-always policy (.claude-tweaks/policy.yml). Use ` +
+        `absolute paths (\`git -C <absolute path>\` for git), or split the command into smaller ones.`,
+      );
+    }
     // Cheap fs-only pre-check: if no policy.yml exists anywhere in the
     // ancestor chain, there is definitely nothing to enforce for THIS
     // target — skip forking git entirely for the overwhelming majority of
