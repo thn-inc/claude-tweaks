@@ -6,11 +6,11 @@
 // can go red [IL-105].
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const REPORTING_FULL = fs.readFileSync(path.join(ROOT, 'plugin/skills/test/qa-reporting.md'), 'utf8');
+const REPORTING_FULL = readText(path.join(ROOT, 'plugin/skills/test/qa-reporting.md'));
 // The Phase 5 pins read only the Phase 5 section, so a call relocated elsewhere in the file goes red.
 const PHASE5_AT = REPORTING_FULL.indexOf('## Phase 5: Report');
 const PHASE5_END = REPORTING_FULL.indexOf('## Phase 5.5');

@@ -36,4 +36,15 @@ function createFingerprint(skillName, fields) {
   return { fingerprint, normalizeDescription };
 }
 
-module.exports = { normalizeText, fingerprintFromBasis, createFingerprint };
+// Extracts every `<!-- {prefix}: <id> -->` marker from text, in order. The prefix is
+// regex-escaped so it matches literally. Uses matchAll rather than a manual exec loop —
+// matchAll clones the regex internally per call, so the 'g' flag's lastIndex state is
+// never shared across calls (same convention as issues/record-dependencies.js's
+// parseIssueNumbers).
+function parseMarkerFingerprints(text, prefix) {
+  const escaped = String(prefix).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`<!-- ${escaped}: (\\S+?) -->`, 'g');
+  return [...String(text || '').matchAll(re)].map((m) => m[1]);
+}
+
+module.exports = { normalizeText, fingerprintFromBasis, createFingerprint, parseMarkerFingerprints };

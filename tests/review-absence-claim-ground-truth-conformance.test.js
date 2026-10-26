@@ -5,11 +5,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const FILE = path.join(__dirname, '..', 'plugin', 'skills', 'review', 'step3-lens-dispatch.md');
-const read = () => fs.readFileSync(FILE, 'utf8');
+const read = () => readText(FILE);
 
 function between(text, startAnchor, endAnchor) {
   const start = text.indexOf(startAnchor);

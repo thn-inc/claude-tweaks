@@ -13,13 +13,13 @@
 // tests/specify-auto-continue-conformance.test.js rather than freezing a fixture.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 
 function overridesLine(...segments) {
-  const text = fs.readFileSync(path.join(ROOT, ...segments), 'utf8');
+  const text = readText(path.join(ROOT, ...segments));
   return text.split('\n').find((line) => line.includes('Superpowers overrides'));
 }
 
@@ -45,9 +45,9 @@ for (const segments of TARGETS) {
     assert.match(line, /`Surface:`\/`surface:` web\/mobile\/desktop/);
     assert.match(line, /frontend-detection\.md`'s Layer 2\/3, in the `\/claude-tweaks:design-wrapper` skill's directory, defines/, 'must cite the canonical detection machinery directly rather than pointing at another file\'s pointer');
   });
-}
 
-test('CLAUDE.md still carries its own specify-auto-continue clause alongside the new one (no accidental deletion)', () => {
-  const line = overridesLine('CLAUDE.md');
-  assert.match(line, /specify-auto-continue/, 'the pre-existing clause this repo carries beyond the shipped template must survive the edit');
-});
+  test(`${file}: Superpowers overrides line carries the specify-auto-continue clause (#3859)`, () => {
+    const line = overridesLine(...segments);
+    assert.match(line, /specify-auto-continue/, `${file}'s Superpowers overrides line must state the specify-auto-continue clause, so the shipped template and CLAUDE.md stay in sync`);
+  });
+}

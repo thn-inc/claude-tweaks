@@ -7,10 +7,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { findRunByWorktreePath, readRunState } = require('../plugin/bin/lib/hooks/context');
+const { findRunByWorktreePath, findRunsByWorktreePath, classifyOwnership, resolveRun, readRunState } = require('../plugin/bin/lib/hooks/context');
 const { fixtureGit } = require('./helpers/git-fixtures');
 const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { caseInsensitiveFs } = require('./helpers/case-insensitive-fs');
+const { readText } = require('./helpers/read-skill');
+const { shellQuote } = require('./helpers/shell-quote');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -172,7 +174,7 @@ function caseFixture3769() {
 function assertRemovalDenied3769({ root, wt, fsImpl }, removeTarget) {
   const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: wt, sessionId: 's1' }));
   const out = preToolUse.run({
-    input: { tool_name: 'Bash', tool_input: { command: `git worktree remove ${removeTarget}` }, session_id: 's1' },
+    input: { tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(removeTarget)}` }, session_id: 's1' },
     cwd: root, runDir: null, runState: null,
   }, { fsImpl });
   assert.ok(out.json && out.json.hookSpecificOutput, JSON.stringify(out));
@@ -202,6 +204,71 @@ test('findRunByWorktreePath (#3769): a mis-cased recorded worktree matches the c
   const { root, wt, misCased, fsImpl } = caseFixture3769();
   const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: misCased }));
   assert.strictEqual(findRunByWorktreePath(root, wt, { fsImpl }).runDir, runDir);
+});
+
+// --- #3836: classifyOwnership and findRunsByWorktreePath are case-canonical ---
+// Same fake volume as #3769 above, but a REAL linked worktree: classifyOwnership
+// asks git for the caller's toplevel. `other` exists only in the fake (never on
+// disk), so a 'foreign' verdict proves the injected fs reached the existence probe.
+function caseFixture3836() {
+  const root = fixtureRoot();
+  const wt = addWorktree(root);
+  const other = path.join(path.dirname(wt), 'other-wt');
+  const misCased = path.join(path.dirname(wt), path.basename(wt).toUpperCase());
+  const fsImpl = caseInsensitiveFs({ [root]: 'dir', [wt]: 'dir', [other]: 'dir' });
+  return { root, wt, other, misCased, fsImpl };
+}
+
+test('classifyOwnership (#3836): a same-session binding recorded in a different letter case than the caller\'s worktree classifies as mine', { skip: POSIX_ONLY }, () => {
+  const { wt, misCased, fsImpl } = caseFixture3836();
+  assert.strictEqual(classifyOwnership({ sessionId: 's1', cwd: wt }, { sessionId: 's1', worktree: misCased }, { fsImpl }), 'mine');
+  assert.strictEqual(classifyOwnership({ sessionId: 's1', cwd: wt }, { sessionId: 's1', worktree: wt }, { fsImpl }), 'mine');
+});
+
+test('classifyOwnership (#3836): a binding to a different live worktree is still foreign, resolved through the injected fs', { skip: POSIX_ONLY }, () => {
+  const { wt, other, fsImpl } = caseFixture3836();
+  assert.strictEqual(classifyOwnership({ sessionId: 's1', cwd: wt }, { sessionId: 's1', worktree: other }, { fsImpl }), 'foreign');
+});
+
+test('ExitWorktree(remove) (#3836): a same-session remove whose recorded binding differs only in letter case is denied like the exact-case binding', { skip: POSIX_ONLY }, () => {
+  for (const recorded of ['misCased', 'wt']) {
+    const fixture = caseFixture3836();
+    const { root, wt, fsImpl } = fixture;
+    const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: fixture[recorded], sessionId: 's1' }));
+    const out = preToolUse.run({
+      input: { tool_name: 'ExitWorktree', tool_input: { action: 'remove' }, session_id: 's1' },
+      cwd: wt, runDir: null, runState: null,
+    }, { fsImpl });
+    assert.ok(out.json && out.json.hookSpecificOutput, JSON.stringify(out));
+    assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny', `recorded=${recorded}`);
+    const reason = out.json.hookSpecificOutput.permissionDecisionReason;
+    assert.match(reason, /still assigned to non-terminal pipeline run/);
+    assert.ok(reason.includes(path.basename(runDir)), 'deny reason must name the run dir');
+    assert.ok(!JSON.stringify(out).includes('recorded by a different session'), `recorded=${recorded}`);
+  }
+});
+
+test('findRunsByWorktreePath (#3836): a mis-cased worktree path returns the ad-hoc run dirs the correctly-cased path does', { skip: POSIX_ONLY }, () => {
+  const { root, wt, misCased, fsImpl } = caseFixture3836();
+  const adHoc = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-01T100000-adhoc-standalone');
+  fs.mkdirSync(adHoc, { recursive: true });
+  fs.writeFileSync(path.join(adHoc, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wt }));
+  const exact = findRunsByWorktreePath(root, wt, undefined, { fsImpl }).map((r) => r.runDir);
+  assert.deepStrictEqual(findRunsByWorktreePath(root, misCased, undefined, { fsImpl }).map((r) => r.runDir), exact);
+  assert.strictEqual(exact.length, 1);
+  assert.strictEqual(path.basename(exact[0]), '2026-08-01T100000-adhoc-standalone');
+});
+
+// No case-sensitive-volume skip: the fake volume is injected through opts.fsImpl, so
+// the mis-cased binding resolves through it rather than the real fs, and the test
+// also runs (and discriminates) on Linux CI.
+test('resolveRun strictAttribution (#3836): a run bound to the caller\'s worktree in a different letter case is not dropped as other-worktree-bound', { skip: POSIX_ONLY }, () => {
+  for (const recorded of ['misCased', 'wt']) {
+    const fixture = caseFixture3836();
+    const { root, wt, fsImpl } = fixture;
+    const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: fixture[recorded] }));
+    assert.strictEqual(resolveRun(wt, {}, 's1', { strictAttribution: true, fsImpl }).dir, runDir, `recorded=${recorded}`);
+  }
 });
 
 // --- Task 3: the deny/allow matrix at the dispatcher level ------------------
@@ -259,7 +326,7 @@ test('AC3: Bash `git worktree remove <abs-path>` on an active run\'s worktree is
   const root = fixtureRoot();
   const wt = addWorktree(root);
   makeRun(root, JSON.stringify({ status: 'active', worktree: wt }));
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: root });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(wt)}` }, cwd: root });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   const out = JSON.parse(r.stdout);
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
@@ -278,7 +345,7 @@ test('#2351: Bash `git worktree remove <abs-path>` from the main checkout with n
   const wt = addWorktree(root);
   const targetRunDir = makeRun(root, JSON.stringify({ status: 'active', worktree: wt }));
   const payload = JSON.stringify({
-    tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: root, session_id: 'wrap-up-caller',
+    tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(wt)}` }, cwd: root, session_id: 'wrap-up-caller',
   });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   const out = JSON.parse(r.stdout);
@@ -308,7 +375,7 @@ test('AC3: Bash `git worktree remove <relative-path>` resolving to the same work
   const callCwd = path.join(root, 'sub');
   fs.mkdirSync(callCwd);
   const rel = path.relative(callCwd, wt);
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${rel}` }, cwd: callCwd });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(rel)}` }, cwd: callCwd });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: callCwd });
   const out = JSON.parse(r.stdout);
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny',
@@ -319,7 +386,7 @@ test('AC3: Bash `git worktree remove --force <abs-path>` on an active run\'s wor
   const root = fixtureRoot();
   const wt = addWorktree(root);
   makeRun(root, JSON.stringify({ status: 'active', worktree: wt }));
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove --force ${wt}` }, cwd: root });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove --force ${shellQuote(wt)}` }, cwd: root });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   const out = JSON.parse(r.stdout);
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
@@ -349,7 +416,7 @@ test('MINOR 5: Bash `git worktree remove -- <abs-path>` on an active run\'s work
   const root = fixtureRoot();
   const wt = addWorktree(root);
   makeRun(root, JSON.stringify({ status: 'active', worktree: wt }));
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove -- ${wt}` }, cwd: root });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove -- ${shellQuote(wt)}` }, cwd: root });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   const out = JSON.parse(r.stdout);
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
@@ -364,7 +431,7 @@ test('whole-branch review: Bash `git -c foo=bar worktree remove <abs-path>` on a
   const root = fixtureRoot();
   const wt = addWorktree(root);
   makeRun(root, JSON.stringify({ status: 'active', worktree: wt }));
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git -c foo=bar worktree remove ${wt}` }, cwd: root });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git -c foo=bar worktree remove ${shellQuote(wt)}` }, cwd: root });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   const out = JSON.parse(r.stdout);
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
@@ -374,7 +441,7 @@ test('whole-branch review: Bash `git --no-pager worktree remove <abs-path>` on a
   const root = fixtureRoot();
   const wt = addWorktree(root);
   makeRun(root, JSON.stringify({ status: 'active', worktree: wt }));
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git --no-pager worktree remove ${wt}` }, cwd: root });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git --no-pager worktree remove ${shellQuote(wt)}` }, cwd: root });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   const out = JSON.parse(r.stdout);
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
@@ -388,7 +455,7 @@ test('#1308: Bash `env git worktree remove <abs-path>` on an active run\'s workt
   const root = fixtureRoot();
   const wt = addWorktree(root);
   makeRun(root, JSON.stringify({ status: 'active', worktree: wt }));
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `env git worktree remove ${wt}` }, cwd: root });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `env git worktree remove ${shellQuote(wt)}` }, cwd: root });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   const out = JSON.parse(r.stdout);
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
@@ -401,11 +468,11 @@ test('#1308: teardownTargets() resolves `env git worktree remove <path>` to the 
   const root = fixtureRoot();
   const wt = addWorktree(root);
   const bareCtx = {
-    input: { tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` } },
+    input: { tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(wt)}` } },
     cwd: root,
   };
   const envCtx = {
-    input: { tool_name: 'Bash', tool_input: { command: `env git worktree remove ${wt}` } },
+    input: { tool_name: 'Bash', tool_input: { command: `env git worktree remove ${shellQuote(wt)}` } },
     cwd: root,
   };
   const bare = preToolUse.teardownTargets(bareCtx);
@@ -426,13 +493,25 @@ test('IMPORTANT 4: Bash `cd <dir> && git worktree remove <relative-path>` is den
   makeRun(root, JSON.stringify({ status: 'active', worktree: wt }));
   const parent = path.dirname(wt);
   const payload = JSON.stringify({
-    tool_name: 'Bash', tool_input: { command: `cd ${parent} && git worktree remove ${path.basename(wt)}` }, cwd: root,
+    tool_name: 'Bash', tool_input: { command: `cd ${shellQuote(parent)} && git worktree remove ${shellQuote(path.basename(wt))}` }, cwd: root,
   });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   const out = JSON.parse(r.stdout);
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny',
     'the cd-relative target must resolve to the assigned worktree and be denied');
 });
+
+// #4149: an & inside a quoted "$( )" body is no background, so the earlier `cd` still anchors
+// the relative teardown target; and a heredoc body line like `1) a` closes no outer `(`.
+for (const [label, command] of [
+  ['an & inside a quoted "$( )" body', "cd /main && gh pr create --body \"$(cat <<'EOF'\nUse \"R&D\" term\nEOF\n)\" && git worktree remove .claude/worktrees/x"],
+  ['a heredoc body line `1) a` inside a subshell', "(cd /main && git commit -F - <<'EOF'\n1) a\nEOF\ngit worktree remove .claude/worktrees/x)"],
+]) {
+  test(`#4149: teardownTargets resolves the target under the earlier cd after ${label}`, () => {
+    const targets = preToolUse.teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: '/wt' });
+    assert.deepStrictEqual(targets, [{ path: path.resolve('/main/.claude/worktrees/x'), source: 'bash' }]);
+  });
+}
 
 // AC4: fail-open cases.
 test('AC4: an unresolvable teardown target (no positional path) is allowed', () => {
@@ -452,7 +531,7 @@ test('AC4: a target matching no recorded assignment is allowed', () => {
   const wt = addWorktree(root);
   makeRun(root, JSON.stringify({ status: 'active', worktree: wt })); // assigned to a DIFFERENT path
   const other = addWorktree(root);
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${other}` }, cwd: root });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(other)}` }, cwd: root });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   assert.strictEqual(r.stdout.trim(), '');
 });
@@ -463,7 +542,7 @@ test('AC4: a recorded worktree path already deleted from disk is allowed', () =>
   makeRun(root, JSON.stringify({ status: 'active', worktree: wt }));
   sh(root, 'worktree', 'remove', '--force', wt); // actually tear it down; run-state.json is untouched
   assert.strictEqual(fs.existsSync(wt), false, 'sanity check: the worktree path must be gone from disk');
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: root });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(wt)}` }, cwd: root });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   assert.strictEqual(r.stdout.trim(), '');
 });
@@ -537,7 +616,7 @@ test('#1563/#1099: an unowned run targeted via Bash from a DIFFERENT live worktr
   // Exercise both with and without a caller session_id — classifyOwnership's
   // worktree-binding branch proves 'foreign' from the binding mismatch alone
   // in both cases, so neither should change the outcome.
-  const command = `git worktree remove ${targetWt}`;
+  const command = `git worktree remove ${shellQuote(targetWt)}`;
   const withoutSessionId = runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: callerWt }),
     cwd: callerWt,
@@ -565,7 +644,7 @@ test('#1099 AC1 dual case: caller cwd inside the recorded worktree still denies 
   const root = fixtureRoot();
   const targetWt = addWorktree(root);
   makeRun(root, JSON.stringify({ status: 'active', worktree: targetWt })); // no sessionId recorded
-  const command = `git worktree remove ${targetWt}`;
+  const command = `git worktree remove ${shellQuote(targetWt)}`;
   const r = runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: targetWt }),
     cwd: targetWt,
@@ -586,7 +665,7 @@ test('IMPORTANT 3: a compound worktree-remove + commit is still denied by worktr
   assert.strictEqual(recorded.code, 0);
   const payload = JSON.stringify({
     tool_name: 'Bash',
-    tool_input: { command: `git worktree remove ${foreignWt} && git commit -m x` },
+    tool_input: { command: `git worktree remove ${shellQuote(foreignWt)} && git commit -m x` },
     cwd: root,
     session_id: 'bystander-2',
   });
@@ -610,7 +689,7 @@ test('IMPORTANT 3: a lone foreign-owned `git worktree remove` (no compound comma
   const recorded = runHook(['record-worktree', '--run', emptyRun, foreignWt], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'owner-1' } });
   assert.strictEqual(recorded.code, 0);
   const payload = JSON.stringify({
-    tool_name: 'Bash', tool_input: { command: `git worktree remove ${foreignWt}` }, cwd: root, session_id: 'bystander-2',
+    tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(foreignWt)}` }, cwd: root, session_id: 'bystander-2',
   });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   assert.strictEqual(r.code, 0);
@@ -633,7 +712,7 @@ test('garbage: truncated ExitWorktree stdin exits 0 with no stdout noise', () =>
 // Task 5 adds the prose-block pin (policy-schema-coverage.md); this only pins the
 // code-level branch-read, same scope as this file's other Task 3 tests.
 test('GATE_COVERAGE.teardownGitCommands is branch-read by the Bash teardown parser', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'));
   assert.ok(src.includes('GATE_COVERAGE.teardownGitCommands'),
     'pre-tool-use.js must branch on GATE_COVERAGE.teardownGitCommands, not a hardcoded comparison');
 });
@@ -696,7 +775,7 @@ test('#693: Bash `git worktree remove <target>` denied when cwd is INSIDE target
   const wt = addWorktree(root);
   const sub = path.join(wt, 'sub');
   fs.mkdirSync(sub);
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: sub });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(wt)}` }, cwd: sub });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: sub });
   const out = JSON.parse(r.stdout);
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
@@ -707,7 +786,7 @@ test('#693: Bash `git worktree remove <target>` denied when cwd is INSIDE target
 test('#693: Bash `git worktree remove <target>` denied when cwd EQUALS target exactly, no active run needed', () => {
   const root = fixtureRoot();
   const wt = addWorktree(root);
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: wt });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(wt)}` }, cwd: wt });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: wt });
   const out = JSON.parse(r.stdout);
   assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
@@ -717,7 +796,7 @@ test('#693: `cd <elsewhere> && git worktree remove <own-cwd>` compound is still 
   const root = fixtureRoot();
   const wt = addWorktree(root);
   const payload = JSON.stringify({
-    tool_name: 'Bash', tool_input: { command: `cd ${root} && git worktree remove ${wt}` }, cwd: wt,
+    tool_name: 'Bash', tool_input: { command: `cd ${shellQuote(root)} && git worktree remove ${shellQuote(wt)}` }, cwd: wt,
   });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: wt });
   const out = JSON.parse(r.stdout);
@@ -727,7 +806,7 @@ test('#693: `cd <elsewhere> && git worktree remove <own-cwd>` compound is still 
 test('#693: Bash `git worktree remove <target>` from the main checkout targeting a DIFFERENT worktree is allowed', () => {
   const root = fixtureRoot();
   const wt = addWorktree(root);
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: root });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(wt)}` }, cwd: root });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   assert.strictEqual(r.stdout.trim(), '');
 });
@@ -748,7 +827,7 @@ test('#2282: own-cwd `git worktree remove` deny logs a wd-guard-refusal event (r
   const root = fixtureRoot();
   const wt = addWorktree(root);
   const payload = JSON.stringify({
-    tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: wt, session_id: 'sess-2282-owncwd',
+    tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(wt)}` }, cwd: wt, session_id: 'sess-2282-owncwd',
   });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: wt });
   const out = JSON.parse(r.stdout);
@@ -767,7 +846,7 @@ test('#2282: CT_HOOKS_TEST_MODE tags the own-cwd wd-guard-refusal event, exclude
   const root = fixtureRoot();
   const wt = addWorktree(root);
   const payload = JSON.stringify({
-    tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: wt, session_id: 'sess-2282-testmode',
+    tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(wt)}` }, cwd: wt, session_id: 'sess-2282-testmode',
   });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: wt, env: { CT_HOOKS_TEST_MODE: '1' } });
   const out = JSON.parse(r.stdout);
@@ -840,7 +919,7 @@ test('#2783: the Bash `git worktree remove <path>` branch of the same gate also 
   const root = fixtureRoot();
   const wt = addWorktree(root);
   makeNamedRun(root, '2026-10-02T000000-adhoc-standalone', { status: 'active', worktree: wt, sessionId: 'sess-2783-d' });
-  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: root, session_id: 'sess-2783-d' });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${shellQuote(wt)}` }, cwd: root, session_id: 'sess-2783-d' });
   const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout.trim(), '');

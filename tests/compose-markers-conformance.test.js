@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseMarkers, MarkerError, KEYS, VOCAB, CANDIDATE_RE } = require('../plugin/bin/lib/compose-context/compose');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const HEADING_RE = /^#{1,6} /;
@@ -64,7 +65,7 @@ test('every when: marker in plugin/skills/**/*.md is well-formed and no fenced b
   const problems = [];
   const markedFiles = [];
   for (const file of walk(SKILLS)) {
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     if (!/<!--\s*when:/.test(text)) continue;
     const rel = path.relative(SKILLS, file).split(path.sep).join('/');
     markedFiles.push(rel);

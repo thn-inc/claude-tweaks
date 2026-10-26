@@ -47,6 +47,30 @@ test('hasTrackedWork: true when work/*.md is git-tracked under the dir, false fo
   assert.equal(hasTrackedWork(root, untracked), false);
 });
 
+// #4178: hasTrackedWork reads `git -C <root> ls-files`, and an inherited GIT_DIR overrides that
+// discovery. The linked worktree's index here has dropped the work/ file that root's index still
+// tracks, so an unpinned read through the worktree's GIT_DIR would answer false.
+test('hasTrackedWork: an inherited GIT_DIR naming a linked worktree does not redirect the read away from root (#4178)', () => {
+  const root = fs.realpathSync(makeRepo());
+  const rel = '.claude-tweaks/pipelines/2026-08-01T090000-spec-1';
+  commitPath(root, `${rel}/work/1-spec.md`, '# 1\n');
+  const wtParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-wt-')));
+  const wt = path.join(wtParent, 'wt');
+  git(root, 'worktree', 'add', '-b', 'feat', wt);
+  git(wt, 'rm', '--cached', '-q', `${rel}/work/1-spec.md`);
+  const admin = git(wt, 'rev-parse', '--absolute-git-dir').trim();
+  const prior = process.env.GIT_DIR;
+  process.env.GIT_DIR = admin;
+  try {
+    assert.equal(hasTrackedWork(root, path.join(root, rel)), true);
+  } finally {
+    if (prior === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = prior;
+    fs.rmSync(wtParent, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // #3651 AC1.1: without `-z` git C-quotes a non-ASCII path (the whole line is
 // wrapped in `"` and the é prints as \303\251), so the per-path `work/` test
 // ran on the quoted form. This pin keeps the per-path test on the raw path;

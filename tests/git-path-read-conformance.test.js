@@ -13,6 +13,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const BIN_DIR = path.join(__dirname, '..', 'plugin', 'bin');
 const SHARED_DIR = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
@@ -106,11 +107,40 @@ function findUnzippedReads(files) {
 // one violation. Throws when the mutation does not turn the line red.
 function assertGoesRed(relFile, needle, replacement) {
   const file = path.join(BIN_DIR, relFile);
-  const live = fs.readFileSync(file, 'utf8');
+  const live = readText(file);
   assert.ok(live.includes(needle), `${relFile} contains ${needle}`);
   assert.equal(findUnzippedReads([{ path: file, text: live }]).length, 0, `${relFile} is clean as shipped`);
   const broken = live.replace(needle, replacement);
   assert.equal(findUnzippedReads([{ path: file, text: broken }]).length, 1, `${relFile} reports one violation without ${needle}`);
+}
+
+// raw: true pin: a runGit/runGitAsync call that passes '-z' is reading NUL-delimited
+// output, which runGit's default trim would corrupt (a first path beginning with a
+// space loses it), so the same line also carries `raw: true`. A line the marker waives
+// is not a path list.
+const RUN_GIT_CALL = /\brunGit(?:Async)?\(/;
+
+function findUnrawRunGitZ(files) {
+  const violations = [];
+  for (const { path: filePath, text } of files) {
+    text.split('\n').forEach((line, index) => {
+      if (EXEMPT_MARKER.test(line)) return;
+      if (RUN_GIT_CALL.test(line) && Z_FLAG.test(line) && !/\braw:\s*true\b/.test(line)) {
+        violations.push({ path: filePath, line: index + 1, text: line.trim() });
+      }
+    });
+  }
+  return violations;
+}
+
+// Same shape as assertGoesRed, for the raw: true finder.
+function assertRawGoesRed(relFile, needle, replacement) {
+  const file = path.join(BIN_DIR, relFile);
+  const live = readText(file);
+  assert.ok(live.includes(needle), `${relFile} contains ${needle}`);
+  assert.equal(findUnrawRunGitZ([{ path: file, text: live }]).length, 0, `${relFile} is clean as shipped`);
+  const broken = live.replace(needle, replacement);
+  assert.equal(findUnrawRunGitZ([{ path: file, text: broken }]).length, 1, `${relFile} reports one violation without ${needle}`);
 }
 
 function collectJsFiles(dir) {
@@ -147,7 +177,7 @@ test('AC2.1: no plugin/bin git argv carries --name-only/--name-status without -z
 
 test('AC2.1 go-red: removing -z from a real reader line is a violation', () => {
   const file = path.join(BIN_DIR, 'lib', 'hooks', 'pre-tool-use.js');
-  const live = fs.readFileSync(file, 'utf8');
+  const live = readText(file);
   const needle = "'--name-status', '-z'";
   assert.ok(live.includes(needle), 'the live reader line is present');
   const broken = live.replace(needle, "'--name-status'");
@@ -241,7 +271,7 @@ test('every plugin/bin path-list argv that takes a ref also passes --end-of-opti
 
 test('--end-of-options go-red: removing it from a real reader line is a violation', () => {
   const file = path.join(BIN_DIR, 'lib', 'wrap-up', 'facts.js');
-  const live = fs.readFileSync(file, 'utf8');
+  const live = readText(file);
   const needle = "'-z', '--end-of-options', `${base}...HEAD`], { trim: false }));";
   assert.ok(live.includes(needle), 'the live reader line is present');
   const broken = live.replace(needle, "'-z', `${base}...HEAD`], { trim: false }));");
@@ -249,8 +279,29 @@ test('--end-of-options go-red: removing it from a real reader line is a violatio
   assert.equal(findMissingEndOfOptions([{ path: file, text: broken }]).length, 1);
 });
 
+test('findUnrawRunGitZ: a runGit -z call without raw: true is flagged; raw: true, no -z, and the marker pass', () => {
+  const flagged = (text) => findUnrawRunGitZ([{ path: 'x.js', text }]).length;
+  assert.equal(flagged("const r = runGit(['ls-files', '-z'], root);"), 1);
+  assert.equal(flagged("const r = await runGitAsync(['ls-files', '-z'], root);"), 1);
+  assert.equal(flagged("const r = runGit(['ls-files', '-z'], root, { raw: true });"), 0);
+  assert.equal(flagged("const r = runGit(['ls-files', '-z', '--', rel], root, { env: repoPinnedEnv(), raw: true });"), 0);
+  assert.equal(flagged("const r = runGit(['status'], dir);"), 0);
+  assert.equal(flagged("const r = runGit(['ls-files', '-z'], root); // git-path-read: not a path list (emptiness only)"), 0);
+});
+
+test('every plugin/bin runGit/runGitAsync call that passes -z also passes raw: true on the same line', () => {
+  const files = collectJsFiles(BIN_DIR).map((p) => ({ path: p, text: fs.readFileSync(p, 'utf8') }));
+  assert.ok(files.length > 0, 'walked at least one plugin/bin file');
+  assert.deepEqual(findUnrawRunGitZ(files), []);
+});
+
+test('raw: true go-red: removing it from a real -z runGit caller is a violation', () => {
+  assertRawGoesRed(path.join('lib', 'hooks', 'worktree-reap.js'), 'branch], repoRoot, { raw: true }', 'branch], repoRoot');
+  assertRawGoesRed(path.join('lib', 'reconcile', 'archive-merged.js'), "'ls-files', '-z', '--', runDir], root, { raw: true }", "'ls-files', '-z', '--', runDir], root");
+});
+
 test('AC3.1: the _shared contract states the rule and names the reference implementations', () => {
-  const contract = fs.readFileSync(path.join(SHARED_DIR, 'git-path-read.md'), 'utf8');
+  const contract = readText(path.join(SHARED_DIR, 'git-path-read.md'));
   const tokens = [
     '-z', '--end-of-options', 'changed-files.js', 'compose-subject.js', 'git-z.js',
     'parseNumstatZ', 'parseStatusPorcelainZ', 'parseLsTreeZ', 'unquoteCPath', 'git-path-read: not a path list',
@@ -258,6 +309,6 @@ test('AC3.1: the _shared contract states the rule and names the reference implem
   for (const token of tokens) {
     assert.ok(contract.includes(token), `git-path-read.md mentions ${token}`);
   }
-  const discipline = fs.readFileSync(path.join(SHARED_DIR, 'git-discipline.md'), 'utf8');
+  const discipline = readText(path.join(SHARED_DIR, 'git-discipline.md'));
   assert.ok(discipline.includes('git-path-read.md'), 'git-discipline.md points at git-path-read.md');
 });

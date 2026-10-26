@@ -16,13 +16,13 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const collapse = (s) => s.replace(/\s+/g, ' ');
 
-const read = (rel) => collapse(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+const read = (rel) => collapse(readText(path.join(ROOT, rel)));
 const EXECUTION_FLAT = read('plugin/skills/_shared/console-execution.md');
 const ON_PR_FLAT = read('plugin/skills/_shared/console-on-pr.md');
 

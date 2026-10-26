@@ -73,6 +73,18 @@ test('#3496: sdd-final-review.md is allowlisted; traversal forms of it are not',
   assert.equal(fs.readFileSync(r.file, 'utf8'), content);
 });
 
-test('ARTIFACT_NAMES is exactly the allowlist (#3496)', () => {
-  assert.deepEqual([...ARTIFACT_NAMES], ['sdd-dispatch-sample.txt', 'sdd-final-review.md']);
+test('#3945: review-findings.json is allowlisted; traversal forms of it are not', (t) => {
+  const runDir = tmpRunDir(t);
+  const name = 'review-findings.json';
+  assert.equal(isArtifactName(name), true);
+  assert.equal(isArtifactName('../review-findings.json'), false);
+  assert.equal(isArtifactName('staged/review-findings.json'), false);
+  const content = '[{"id":"abc123def456","lens":"x","path":"p.js","line":1,"claim":"c","reporterSeverity":"high","kind":"unconfirmed"}]\n';
+  const r = writeArtifact({ runDir, name, content });
+  assert.equal(r.file, path.join(runDir, name));
+  assert.equal(fs.readFileSync(r.file, 'utf8'), content);
+});
+
+test('ARTIFACT_NAMES is exactly the allowlist (#3496, #3945)', () => {
+  assert.deepEqual([...ARTIFACT_NAMES], ['sdd-dispatch-sample.txt', 'sdd-final-review.md', 'review-findings.json']);
 });

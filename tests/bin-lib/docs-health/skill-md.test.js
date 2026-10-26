@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const {
   registerHouseSectionOrderTest,
   registerInteractionStyleTest,
@@ -11,7 +12,7 @@ const {
 } = require('../health-core/skill-md-house-checks');
 
 const SKILL = path.resolve(__dirname, '..', '..', '..', 'plugin', 'skills', 'docs-health', 'SKILL.md');
-const read = () => fs.readFileSync(SKILL, 'utf8');
+const read = () => readText(SKILL);
 
 test('exists', () => {
   assert.ok(fs.existsSync(SKILL), `SKILL.md not found at ${SKILL}`);
@@ -41,9 +42,7 @@ registerPipelineRunDirTest(test, assert, read);
 test('docs/skill-graph.md records the edges to /harness-health, /code-health, /tidy, /backlog, /routine', () => {
   // These edges used to be asserted against this skill's own Relationship table.
   // That table is gone; the edges live in the graph, which uses the short form.
-  const graph = fs.readFileSync(
-    path.join(__dirname, '..', '..', '..', 'docs', 'skill-graph.md'), 'utf8',
-  );
+  const graph = readText(path.join(__dirname, '..', '..', '..', 'docs', 'skill-graph.md'));
   for (const s of ['/harness-health', '/code-health', '/tidy', '/backlog', '/routine']) {
     assert.ok(graph.includes(s), `docs/skill-graph.md is missing the edge to ${s}`);
   }
@@ -66,7 +65,7 @@ registerRequiredTokenTests(test, assert, read, [
 // updated" failure keeping SKILL.md lean is meant to prevent.
 
 const JUDGE = path.join(path.dirname(SKILL), 'judge-procedure.md');
-const readJudge = () => fs.readFileSync(JUDGE, 'utf8');
+const readJudge = () => readText(JUDGE);
 // The inlinable body is everything below the first horizontal rule; the lead
 // above it is meta ("how this file is used") and is NOT sent to agents.
 const readJudgeBody = () => readJudge().split(/^---$/m).slice(1).join('---');
@@ -147,6 +146,6 @@ test('states the born-ready rule explicitly', () => {
 test('routine-template.yml exists and its kickoff targets docs-health', () => {
   const templatePath = path.join(path.dirname(SKILL), 'routine-template.yml');
   assert.ok(fs.existsSync(templatePath));
-  const content = fs.readFileSync(templatePath, 'utf8');
+  const content = readText(templatePath);
   assert.match(content, /^kickoff: docs-health\b/m);
 });

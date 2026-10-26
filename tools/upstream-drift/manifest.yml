@@ -258,6 +258,10 @@ dependencies:
         claims: "SDD's final whole-branch review is a named step — the dispatch /build instructs to review the diff and focused tests only, never the full suite (#1921)"
         upstream-path: "skills/subagent-driven-development/SKILL.md"
         must-match: "## Final Review"
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #3880): SDD runs exactly one final fix wave — the cap the deferral-ruling rule's targeted residual fix overrides for one case — line first appeared in superpowers 6.2.0 or earlier"
+        upstream-path: "skills/subagent-driven-development/SKILL.md"
+        must-match: "There is no second fix wave"
       - file: "plugin/skills/_shared/scratch-worktree.md"
         claims: "falls back to git worktree add only when no native tool is available — using-git-worktrees Step 1a before Step 1b — and creates it under .worktrees/, verified by that skill's own Safety Verification substep"
         upstream-path: "skills/using-git-worktrees/SKILL.md"
@@ -376,6 +380,10 @@ dependencies:
   # path.join(file, ".") reads that file, matched as bytes, never decoded.
   # `version-mode: floor`: Claude Code auto-updates near daily, so an exact pin
   # would breach constantly; the assertions, not the version, carry the signal.
+  # `report-upgrades: false`: for the same reason a newer release is not a
+  # finding here — upstream-drift would otherwise keep an `upgrade-available`
+  # issue open almost permanently and dedup reopens it after every lag (#3820).
+  # Drift findings are unaffected.
   # `fixtures: []`: a headless probe that provokes a real refusal costs API
   # tokens and depends on model behavior, while the template literal is
   # deterministic and offline.
@@ -389,6 +397,7 @@ dependencies:
       root: 'readlink -f "$(command -v claude)"'
     pinned: "2.1.302"
     version-mode: floor
+    report-upgrades: false
     upstream:
       repo: "anthropics/claude-code"
       tag-prefix: "v"

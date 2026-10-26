@@ -5,12 +5,12 @@
 // to the merge gate's prose list (code twin of _shared/pr-first-merge.md).
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
 const { FAILING_CONCLUSIONS, classifyRollup } = require('../plugin/bin/lib/pr-checks/classify');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
+const read = (p) => readText(path.join(ROOT, p));
 const GATE = read('plugin/skills/_shared/pr-check-gate.md');
 const TEST_SKILL = read('plugin/skills/test/SKILL.md');
 const REVIEW = read('plugin/skills/review/code-mode-steps.md');

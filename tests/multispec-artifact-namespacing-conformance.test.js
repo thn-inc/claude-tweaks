@@ -6,8 +6,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const JOURNEYS_FILE = path.join(__dirname, '..', 'plugin', 'skills', 'journeys', 'SKILL.md');
 const STORIES_FILE = path.join(__dirname, '..', 'plugin', 'skills', 'stories', 'SKILL.md');
@@ -22,7 +22,7 @@ const NAMESPACING_FILE = path.join(
 );
 
 const flatten = (s) => s.replace(/\s+/g, ' ');
-const read = (file) => flatten(fs.readFileSync(file, 'utf8'));
+const read = (file) => flatten(readText(file));
 
 test('journeys/SKILL.md namespaces docs/journeys/{journey-name}.md by spec id in a multi-spec shared worktree', () => {
   const text = read(JOURNEYS_FILE);

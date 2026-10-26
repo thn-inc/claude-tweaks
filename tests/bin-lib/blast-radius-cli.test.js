@@ -5,7 +5,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
-const { computeBlastRadius, BlastRadiusError } = require(
+const { computeBlastRadius, gatherDiffFiles, BlastRadiusError } = require(
   path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'blast-radius-cli.js')
 );
 
@@ -300,4 +300,17 @@ test('#1592: an already-qualified origin/{name} integration branch is used as-is
   computeBlastRadius({ integrationBranch: 'origin/main' }, { git, readFile: () => null });
   const mergeBaseCall = git.calls.find((c) => c[0] === 'merge-base');
   assert.deepStrictEqual(mergeBaseCall, ['merge-base', '--end-of-options', 'origin/main', 'HEAD']);
+});
+
+test('gatherDiffFiles: returns the merge base and parsed numstat files without reading policy config', () => {
+  const git = fakeGit({
+    'merge-base': () => `${SHA}\n`,
+    diff: () => '10\t2\tplugin/bin/foo.js\u00005\t0\ttests/foo.test.js\u0000',
+  });
+  const out = gatherDiffFiles({ integrationBranch: 'main' }, { git });
+  assert.strictEqual(out.mergeBase, SHA);
+  assert.deepStrictEqual(out.files, [
+    { path: 'plugin/bin/foo.js', additions: 10, deletions: 2 },
+    { path: 'tests/foo.test.js', additions: 5, deletions: 0 },
+  ]);
 });

@@ -8,7 +8,8 @@ and is gated separately.
 1. Read `docs/REGISTRY.md`
 2. Match changed files against Auto-detect patterns
 3. For each matched registry entry, check if the doc was updated in this work's commits (look for doc update commits in `git log`)
-4. Flag unupdated docs as informational findings:
+4. **Skip a doc `/claude-tweaks:build` already checked (#4137).** When `$PIPELINE_RUN_DIR` is set and its `decisions.md` carries, under `## /build`, a line with `Common Step 6.5: docs sync: {doc} assessed at {sha}, no stale text` for this entry's doc, where {sha} is 7-40 hex characters, `git merge-base --is-ancestor {sha} HEAD` exits 0, and neither `git diff --name-only {sha}` (the working tree) nor `git ls-files --others --exclude-standard` lists a file matching this entry's Auto-detect patterns, with both commands exiting 0, emit no finding for it — build read it against the same source. A doc whose matched sources changed since that {sha}, or whose check failed, is still flagged. Log one line per review, listing the dropped docs: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/review" --status SKIP --step "Lens 3i doc freshness (skipped)" --text "condition: build Common Step 6.5 assessed {docs and shas} with no stale text, matched sources unchanged since → fallback: no 3i finding for them" --reversibility n/a`.
+5. Flag the remaining unupdated docs as informational findings:
 
    ```
    | {N} | Doc `{file}` covers changed areas (`{pattern}`) but wasn't updated | Low | Docs | {file} | Review in wrap-up |

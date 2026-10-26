@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { TERMINAL_DECISION_VALUES } = require('../../../plugin/bin/lib/calibration/decisions-classifier.js');
+const { readText } = require('../../helpers/read-skill');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'calibration-report.js');
 
@@ -171,8 +172,8 @@ test('narrowing signal renders with a paste-ready command on its own line at >=1
 });
 
 test('both console files carry the terminal-decision log-line format, one per TERMINAL_DECISION_VALUES member', () => {
-  const interactiveText = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'wrap-up', 'review-console-interactive.md'), 'utf8');
-  const multispecText = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'flow', 'multispec-review-console.md'), 'utf8');
+  const interactiveText = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'wrap-up', 'review-console-interactive.md'));
+  const multispecText = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'flow', 'multispec-review-console.md'));
   assert.ok(interactiveText.includes('Review Console: terminal decision'), 'single-spec console must log the terminal decision');
   assert.ok(multispecText.includes('Review Console: terminal decision') || multispecText.includes('per the single-spec console'), 'multispec console must log or cite the terminal decision');
   for (const value of TERMINAL_DECISION_VALUES) {
@@ -184,11 +185,24 @@ test('both console files carry the terminal-decision log-line format, one per TE
 });
 
 test('skill-graph.md no longer states "no consumer today" for wrap-up telemetry', () => {
-  const text = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'docs', 'skill-graph.md'), 'utf8');
+  const text = readText(path.join(__dirname, '..', '..', '..', 'docs', 'skill-graph.md'));
   assert.ok(!text.includes('no consumer today'), 'stale "no consumer today" note must be replaced');
 });
 
 test('auto-decision-log.md lists bin/lib/calibration/ as a consumer', () => {
-  const text = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'auto-decision-log.md'), 'utf8');
+  const text = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'auto-decision-log.md'));
   assert.ok(text.includes('bin/lib/calibration'), 'auto-decision-log.md must list the calibration reader as a consumer');
+});
+
+test('AC1.1: calibration-report counts only the real gate-denial when a run also holds a test:true one (#4186)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-testdenial-'));
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'), '2026-08-01\trun-1\tskills\tclosed\t0\tna\n');
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', 'run-1');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'decisions.md'), '- AUTO 12:00:00 — Review Console: terminal decision approve-all. Reversibility: n/a.\n');
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"gate-denial","test":true}\n{"type":"gate-denial"}\n');
+  const jsonOut = JSON.parse(run(['--json'], root));
+  assert.strictEqual(jsonOut.frictionCounts['gate-denial'], 1);
+  assert.match(run([], root), /gate-denial: 1\b/);
 });

@@ -4,11 +4,11 @@
 // ordering that would go red if the corresponding edit were ever reverted.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 function read(relPath) {
-  return fs.readFileSync(path.join(__dirname, '..', relPath), 'utf8');
+  return readText(path.join(__dirname, '..', relPath));
 }
 
 const DOC = 'plugin/skills/_shared/dev-url-detection.md';

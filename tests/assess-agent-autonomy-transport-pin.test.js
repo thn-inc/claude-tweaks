@@ -16,8 +16,8 @@
 // even though the citing mode files are untouched.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILL_DIR = path.join(__dirname, '..', 'plugin/skills/assess-agent-autonomy');
 const FRAGMENT_FILE = '_gather-resilience.md';
@@ -27,7 +27,7 @@ const FRAGMENT_FILE = '_gather-resilience.md';
 const FETCHING_MODES = ['grant-check', 'failure-check'];
 
 function readSkillFile(name) {
-  return fs.readFileSync(path.join(SKILL_DIR, name), 'utf8');
+  return readText(path.join(SKILL_DIR, name));
 }
 
 test('SKILL.md Error Handling names both could-not-gather and gathered-but-inconclusive cases', () => {

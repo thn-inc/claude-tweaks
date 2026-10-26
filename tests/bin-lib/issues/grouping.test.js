@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, detectCrossPRFileOverlap, directOverlaps, findInFlightNeighbours, buildDispatchGroups } = require('../../../plugin/bin/lib/issues/grouping');
+const { readText } = require('../../helpers/read-skill');
 
 // ── groupByFileOverlap ──────────────────────────────────────────────────────
 
@@ -662,10 +663,7 @@ test('#146 and #150 real bodies land in ONE bundle of two, not two singletons', 
   // returned [] for both and /dispatch would have built them in two separate
   // worktrees, each editing those same two files.
   const readFixture = (n) =>
-    require('node:fs').readFileSync(
-      require('node:path').join(__dirname, 'fixtures', `record-${n}-body.md`),
-      'utf8',
-    );
+    readText(require('node:path').join(__dirname, 'fixtures', `record-${n}-body.md`));
   const issue146 = { id: 146, labels: SPECIFY_SUB_ISSUE_LABELS, body: readFixture(146) };
   const issue150 = { id: 150, labels: SPECIFY_SUB_ISSUE_LABELS, body: readFixture(150) };
 
@@ -833,6 +831,47 @@ test('requesting nothing returns no selected groups and no notFound', () => {
   const result = selectGroupsForExplicitList([], groups);
   assert.deepStrictEqual(result.selectedGroups, []);
   assert.deepStrictEqual(result.notFound, []);
+});
+
+// #4219: selection follows the order the records were named, not pool order.
+const g = (...nums) => nums.map((number) => ({ number }));
+const nums = (groupList) => groupList.map((group) => group.map((issue) => issue.number));
+
+test('AC1.1: selectedGroups follow the requested order, not pool order', () => {
+  const result = selectGroupsForExplicitList([4026, 4028, 4032, 4029], [g(4032), g(4029), g(4028), g(4026)]);
+  assert.deepStrictEqual(nums(result.selectedGroups), [[4026], [4028], [4032], [4029]]);
+  assert.deepStrictEqual(result.deferredByCap, []);
+});
+
+test('AC2.1: a bundle sorts at the earliest requested position any member holds', () => {
+  // request [A,B,C,D] = [1,2,3,4]; the bundle holds B and D; pool order is C, bundle, A
+  const result = selectGroupsForExplicitList([1, 2, 3, 4], [g(3), g(2, 4), g(1)]);
+  assert.deepStrictEqual(nums(result.selectedGroups), [[1], [2, 4], [3]]);
+});
+
+test('AC3.1: batchSize caps the ordered list and reports every requested record it leaves out', () => {
+  const result = selectGroupsForExplicitList([4026, 4028, 4032, 4029], [g(4032), g(4029), g(4028), g(4026)], 3);
+  assert.deepStrictEqual(nums(result.selectedGroups), [[4026], [4028], [4032]]);
+  assert.deepStrictEqual(result.deferredByCap, [4029]);
+  assert.deepStrictEqual(result.notFound, []);
+});
+
+test('deferredByCap names only requested members of a cap-deferred bundle, in requested order', () => {
+  const result = selectGroupsForExplicitList([5, 1, 9], [g(1), g(9, 7, 5)], 1);
+  assert.deepStrictEqual(nums(result.selectedGroups), [[9, 7, 5]]);
+  assert.deepStrictEqual(result.deferredByCap, [1]);
+});
+
+test('batchSize larger than the selection defers nothing', () => {
+  const result = selectGroupsForExplicitList([2, 1], [g(1), g(2)], 5);
+  assert.deepStrictEqual(nums(result.selectedGroups), [[2], [1]]);
+  assert.deepStrictEqual(result.deferredByCap, []);
+});
+
+test('a batchSize that is not a positive integer throws', () => {
+  for (const bad of [0, -1, 1.5, null, 'all', Number.NaN]) {
+    assert.throws(() => selectGroupsForExplicitList([1], [g(1)], bad), TypeError);
+  }
 });
 
 // #1557's incident shape, reproduced: ~70 otherwise-unrelated records, each
@@ -1192,4 +1231,24 @@ test('buildDispatchGroups keeps two fast-lane records that share a file out of o
   const { groups, bundles } = buildDispatchGroups(issues, { bundleCap: 3 });
   assert.deepStrictEqual(bundles, [{ records: [1, 3] }]);
   assert.deepStrictEqual(groups.map((g) => g.map((i) => i.number)), [[2], [1, 3]]);
+});
+
+// ── express-eligible singletons stay unbundled (#4025) ──────────────────────
+
+test('AC2.1 grouping: an ineligible fast-lane record is still bundled; an eligible one stays a singleton', () => {
+  const groups = [1, 2, 3].map(fastLaneSingleton);
+  const { groups: out, bundles } = bundleFastLaneSingletons(groups, { keepSingleton: (issue) => issue.number === 2 });
+  assert.deepStrictEqual(bundles, [{ records: [1, 3] }]);
+  assert.deepStrictEqual(out, [groups[1], [groups[0][0], groups[2][0]]]);
+  const plain = bundleFastLaneSingletons(groups);
+  assert.deepStrictEqual(plain.bundles, [{ records: [1, 2, 3] }]);
+  assert.deepStrictEqual(plain.groups, [[groups[0][0], groups[1][0], groups[2][0]]]);
+});
+
+test('buildDispatchGroups passes keepSingleton through to fast-lane bundling', () => {
+  const issues = [1, 2, 3].map((n) => rec(n, [`${n}.js`], { fastLane: true, createdAt: `2026-01-0${n}T00:00:00Z` }));
+  const { groups, bundles } = buildDispatchGroups(issues, { bundleCap: 3, keepSingleton: (issue) => issue.number === 1 });
+  assert.deepStrictEqual(bundles, [{ records: [2, 3] }]);
+  assert.deepStrictEqual(groups.map((g) => g.map((i) => i.number)), [[1], [2, 3]]);
+  assert.deepStrictEqual(buildDispatchGroups(issues).bundles, [{ records: [1, 2, 3] }]);
 });

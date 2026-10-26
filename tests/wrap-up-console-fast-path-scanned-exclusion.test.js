@@ -21,9 +21,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
-const read = (...p) => fs.readFileSync(path.join(SKILLS, ...p), 'utf8');
+const read = (...p) => readText(path.join(SKILLS, ...p));
 
 const REVIEW_CONSOLE = read('wrap-up', 'review-console.md');
 const WRAP_UP_SKILL = read('wrap-up', 'SKILL.md');
@@ -36,7 +37,7 @@ test('AC2: no file under plugin/skills/wrap-up/ states the old bare "zero entrie
   const WRAP_UP_DIR = path.join(SKILLS, 'wrap-up');
   const files = fs.readdirSync(WRAP_UP_DIR).filter((f) => f.endsWith('.md'));
   for (const f of files) {
-    const content = fs.readFileSync(path.join(WRAP_UP_DIR, f), 'utf8');
+    const content = readText(path.join(WRAP_UP_DIR, f));
     assert.doesNotMatch(content, /zero entries/, `${f} still states the old bare "zero entries" condition`);
   }
 });

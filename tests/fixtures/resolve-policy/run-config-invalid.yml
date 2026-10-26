@@ -1,0 +1,4 @@
+# Frozen fixture — a run config.yml overlay holding a present-but-malformed
+# integer value (the --values stderr warning, #4141). Schema default for
+# trust-revert-window-days is 14.
+trust-revert-window-days: banana

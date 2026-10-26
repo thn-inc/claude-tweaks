@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const NEW_CONTRACT = path.join(ROOT, 'plugin/skills/_shared/fork-worktree-isolation.md');
@@ -13,7 +13,7 @@ const SKILL_GRAPH = path.join(ROOT, 'docs/skill-graph.md');
 // Whitespace-collapsed read, per skill-prose-conformance-tests' control-scan convention --
 // a hard-wrapped literal must not silently defeat these assertions.
 function collapsed(filePath) {
-  return fs.readFileSync(filePath, 'utf8').replace(/\s+/g, ' ');
+  return readText(filePath).replace(/\s+/g, ' ');
 }
 
 test('fork-worktree-isolation.md exists and carries the isolation mandate', () => {
@@ -50,7 +50,7 @@ test('docs/incident-log.md IL-07 entry records the fifth recurrence and resoluti
 });
 
 test('docs/skill-graph.md registers the new file exactly once', () => {
-  const text = fs.readFileSync(SKILL_GRAPH, 'utf8');
+  const text = readText(SKILL_GRAPH);
   const matches = text.match(/_shared\/fork-worktree-isolation\.md/g) || [];
   assert.equal(matches.length, 1, `expected exactly one row, found ${matches.length}`);
 });

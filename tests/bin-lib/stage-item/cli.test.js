@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/stage-item');
+const { readText } = require('../../helpers/read-skill');
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sicli-'));
@@ -184,23 +185,53 @@ test('cli: --help prints usage and exits 0 without touching the filesystem', () 
   assert.match(out.join(''), /usage: stage-item\.js/);
 });
 
-test('cli: --id review-13-record (.md file) warns naming the unmapped prefix and nearest canonical prefixes; exit 0, file still written (#3370)', () => {
+test('AC1.1: --id review-13-record (.md) is refused: exit 2, named reason, nearest prefixes, nothing written', () => {
   const { main, runDir } = fixture();
   const md = path.join(path.dirname(main), 'proposal.md');
   fs.writeFileSync(md, 'a finding\n');
   const { deps, out, err } = fakeDeps(main);
   const code = run(['--run', runDir, '--id', 'review-13-record', '--file', md], deps);
-  assert.equal(code, 0);
-  assert.ok(fs.existsSync(path.join(fs.realpathSync(runDir), 'staged', 'review-13-record.md')));
-  assert.equal(out.length, 1);
+  assert.equal(code, 2);
+  assert.equal(fs.existsSync(path.join(runDir, 'staged', 'review-13-record.md')), false);
+  assert.equal(out.length, 0);
   const stderr = err.join('');
-  assert.match(stderr, /--id review-13-record matches no Review Console SECTION_MAP prefix/);
+  assert.match(stderr, /refused \(unmapped-prefix\): --id review-13-record/);
   assert.match(stderr, /Nearest canonical prefixes: .*review-/);
-  // F3: conditional on a wrap-up console — not every producer's run reaches one.
-  assert.match(stderr, / — if a wrap-up Review Console resolves this run, it routes this item to Pending review \(unmapped-prefix\), never auto-resolved\. /);
 });
 
-test('cli: a canonical id prints nothing to stderr (#3370)', () => {
+test('AC1.3: the --ledger call site refuses an unmapped id before any carry-forward', () => {
+  const { main, runDir } = fixture();
+  const ledgerRel = 'docs/plans/x-ledger.md';
+  fs.mkdirSync(path.join(main, 'docs', 'plans'), { recursive: true });
+  const ledgerPath = path.join(main, ledgerRel);
+  const ledgerBefore = '# Open Items — x\n\n| # | Phase | Item | Status | Resolution |\n|---|-------|------|--------|------------|\n| 1 | review | prior finding | open | — |\n';
+  fs.writeFileSync(ledgerPath, ledgerBefore);
+  const decisionsPath = path.join(runDir, 'decisions.md');
+  fs.writeFileSync(decisionsPath, '');
+  const md = path.join(main, 'ruling.md');
+  fs.writeFileSync(md, 'a ruling\n');
+  const { deps, out, err } = fakeDeps(main);
+  const code = run(['--run', runDir, '--id', 'zz-unmapped-1', '--file', md, '--allocate', '--ledger', ledgerRel, '--item', 'i', '--label', 'l'], deps);
+  assert.equal(code, 2);
+  assert.match(err.join(''), /refused \(unmapped-prefix\): --id zz-unmapped-1/);
+  assert.equal(out.length, 0);
+  assert.equal(fs.existsSync(path.join(runDir, 'staged')), false);
+  assert.equal(fs.readFileSync(ledgerPath, 'utf8'), ledgerBefore);
+  assert.equal(fs.readFileSync(decisionsPath, 'utf8'), '');
+});
+
+test('guard: classification is by id alone — a mapped prefix stages whatever the file holds', () => {
+  const { main, runDir } = fixture();
+  const obs = path.join(path.dirname(main), 'obs.md');
+  fs.writeFileSync(obs, '**Category:** observation\n');
+  const { deps, err } = fakeDeps(main);
+  const code = run(['--run', runDir, '--id', 'reflect-7', '--file', obs], deps);
+  assert.equal(code, 0);
+  assert.ok(fs.existsSync(path.join(fs.realpathSync(runDir), 'staged', 'reflect-7.md')));
+  assert.equal(err.join(''), '');
+});
+
+test('AC1.2: cli: a canonical id prints nothing to stderr (#3370)', () => {
   const { main, runDir, sourceFile } = fixture();
   const md = path.join(path.dirname(main), 'proposal.md');
   fs.writeFileSync(md, 'a suggestion\n');
@@ -210,4 +241,41 @@ test('cli: a canonical id prints nothing to stderr (#3370)', () => {
   const b = fakeDeps(main);
   assert.equal(run(['--run', runDir, '--id', 'review-2', '--file', sourceFile], b.deps), 0);
   assert.equal(b.err.join(''), '');
+});
+
+// #3488: producers whose runs never reach the wrap-up Review Console are exempt from the
+// unmapped-prefix refusal (AC1.2: a mapped or exempt id still exits 0); a mapped id (upstream-draft-) classifies cleanly on its own.
+for (const [id, why, titlePrefix] of [
+  ['release-held', 'exempt: release console', 'AC1.2: '],
+  ['dispatch-target-missing-x', 'exempt: dispatch standalone', 'AC1.2: '],
+  ['shipped-close-1', 'exempt: dispatch standalone firing', ''],
+  ['upstream-draft-1', 'mapped, hand-off-draft', ''],
+]) {
+  test(`${titlePrefix}--id ${id} prints no unmapped-prefix refusal (${why})`, () => {
+    const { main, runDir } = fixture();
+    const md = path.join(path.dirname(main), 'proposal.md');
+    fs.writeFileSync(md, 'a proposal\n');
+    const { deps, err } = fakeDeps(main);
+    const code = run(['--run', runDir, '--id', id, '--file', md], deps);
+    assert.equal(code, 0);
+    assert.ok(fs.existsSync(path.join(fs.realpathSync(runDir), 'staged', `${id}.md`)));
+    assert.equal(err.join(''), '');
+  });
+}
+
+// #3488: the shipped-close staging call in queue-pull-script.md must not redirect stderr —
+// `2>&1` silencing hid a real staging failure from the firing's log.
+function assertShippedCloseStderrVisible(text) {
+  const line = text.split('\n').find((l) => /--id "shipped-close-/.test(l));
+  assert.ok(line, 'no shipped-close- stage-item line found');
+  assert.doesNotMatch(line, /2>/);
+}
+
+test('queue-pull-script.md: the shipped-close- stage-item line does not silence stderr (#3488)', () => {
+  const text = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'));
+  assertShippedCloseStderrVisible(text);
+});
+
+test('queue-pull-script.md pin control: the original 2>&1 line is rejected (#3488)', () => {
+  assert.throws(() => assertShippedCloseStderrVisible('... --id "shipped-close-$NUM" --file "$FILE" >/dev/null 2>&1 || true'));
 });

@@ -40,6 +40,13 @@ If a spec number was provided, read the spec file and verify the implementation 
    real external validator/schema/tool — **a structural or syntax check alone (e.g. "the config
    parses," "the file exists") is necessary but not sufficient; the value itself must be confirmed
    against ground truth**, not merely well-formed. Mark each as `verified` or `unresolved`.
+5. **Current-State outcome reach** — when the spec's `## Current State` names the callers, gates,
+   or user-visible outcome the change exists to fix, confirm the diff reaches at least one of them
+   (a named caller now consumes the new behavior, or a test drives the named gate), or that the
+   spec's `## Gotchas` names the follow-up record that wires them. If neither holds, mark the
+   outcome `partial` even when every criterion is `met` — it counts toward the Gate below like a
+   partial deliverable. #3002 met every criterion while the three gates its Current State named
+   still read bare `--stamp-status`.
 
 ### Gate:
 
@@ -64,7 +71,7 @@ Verify that `/claude-tweaks:test` has passed before proceeding to analytical rev
 
 ### In `/claude-tweaks:flow` pipeline:
 
-Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, reportPath, legacy}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass — a baseline-adjudicated one included, `test/verification.md`'s Baseline adjudication — or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923) → run `_shared/pr-check-gate.md`'s read (catches a check that went red after `/test` ran), then proceed to Step 2 unless it is `red`. `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check.
+Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, preExistingAdjudicated, reportPath, legacy, suiteComposed, generatedExempt, liveGeneratedExempt, scopeError}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass — a baseline-adjudicated one included, `test/verification.md`'s Baseline adjudication — or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923 — or by complete per-suite records, `suiteComposed`, `test/stamp-composition.md`; a tree dirty only in declared `generated` paths, `liveGeneratedExempt`, still counts) → run `_shared/pr-check-gate.md`'s read (catches a check that went red after `/test` ran), then proceed to Step 2 unless it is `red`. `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check.
 
 ### Standalone (outside `/claude-tweaks:flow`):
 
@@ -74,12 +81,12 @@ Check the verification pass stamp (`test/verification.md`'s "Verification pass s
 node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status
 ```
 
-- **`verifiedHead: true`** (a clean HEAD covered by a full pass, or by a passing scoped run anchored on a still-valid `fullSha`) → a recent pass; proceed to Step 2. The stamp asserts verification only (types + lint + tests) — when QA stories exist, the QA Ledger Check below still runs as usual.
-- **`present: false`, `verifiedHead: false`, or `dirty: true`** → no recent pass (fail-open; a stale stamp is never trusted): auto-trigger `/claude-tweaks:test --source review` (the explicit parent signal — scoped when a declaration exists, per `test/verification.md`'s table). If QA stories exist (`stories/*.yaml`), trigger `/claude-tweaks:test all --source review` (full suite + QA). Otherwise trigger `/claude-tweaks:test --source review` (standard suite only).
+- **`verifiedHead: true`** (a clean HEAD covered by a full pass, a passing scoped run on a still-valid `fullSha`, complete per-suite records `suiteComposed` (`test/stamp-composition.md`), or a generated-only dirty tree `liveGeneratedExempt`) → a recent pass; proceed to Step 2. The stamp asserts verification only (types + lint + tests) — when QA stories exist, the QA Ledger Check below still runs as usual.
+- **`verifiedHead: false`** → no recent pass (fail-open; a stale stamp is never trusted): auto-trigger `/claude-tweaks:test --source review` (the explicit parent signal — scoped when a declaration exists, per `test/verification.md`'s table). If QA stories exist (`stories/*.yaml`), trigger `/claude-tweaks:test all --source review` (full suite + QA). Otherwise trigger `/claude-tweaks:test --source review` (standard suite only).
 
 ### QA Ledger Check
 
-After confirming `TEST_PASSED`, read this run's open items ledger (per `_shared/ledger-format.md`'s resolution rule) and filter for entries with phase `test/qa`:
+After confirming `TEST_PASSED`, read this run's open items ledger (per `_shared/ledger-format.md`'s resolution rule — `hooks.js resolve-ledger`) and filter for entries with phase `test/qa`:
 
 - If any QA ledger entries have status `open` (failures that were not resolved), include them in the test gate report alongside the `TEST_PASSED` status. These represent QA failures that `/claude-tweaks:test` surfaced and that still need resolution.
 - If all QA entries have status `observation` or `fixed`, note: "QA observations present — see findings table in Step 3 Routing."
@@ -183,11 +190,11 @@ When it's unclear which case applies, default to overlapping superset (the conse
 
 Resolve a `review-effort` tier — one of `low` / `medium` / `high` / `xhigh` / `max` — before dispatching Step 3's lenses. This tier gates which lenses run (Step 3), whether cross-lens debate and the per-candidate refutation pass run (Step 3.5), whether the gap-sweep pass runs (Step 3.6), and how findings surface (`step3-routing.md`). It is never persisted back to the work record — it's derived fresh on every review run, unlike `risk:*`/`size:*`/`ceremony:*`.
 
-Resolution order — read `review-effort-derivation.md` in this skill's directory for the procedure: the explicit-argument rule, the record `risk:*`/`size:*` label read (per-backend commands plus the risk × record-size combination table), the diff heuristic fallback, and the `review-effort-floor` project floor. Skip that read when `$ARGUMENTS` carried an effort token — an explicit token always wins, so the tier is already resolved.
+Resolution order — read `review-effort-derivation.md` in this skill's directory for the procedure: the explicit-argument rule, the record `risk:*`/`size:*` label read (per-backend commands plus the risk × record-size combination table), the diff heuristic (the fallback, and the cross-check the label tier is compared against), and the `review-effort-floor` project floor. Skip that read when `$ARGUMENTS` carried an effort token — an explicit token always wins, so the tier is already resolved.
 
-**Ambiguity never resolves toward less scrutiny.** If reading record labels fails, fall through to the diff heuristic rather than defaulting to `low`. If the diff heuristic itself can't render a clear signal, default to `high` — the tier that reproduces this skill's pre-existing default behavior — never `low`.
+**Ambiguity never resolves toward less scrutiny.** If reading record labels fails, fall through to the diff heuristic rather than defaulting to `low`. If the diff heuristic itself can't render a clear signal, default to `high` — the tier that reproduces this skill's pre-existing default behavior — never `low`. A label tier below the diff tier resolves the same way — upward.
 
-Record the resolved tier and which resolution step produced it, for Step 7's summary: `{explicit argument | record labels: risk:{x} × size:{y} | diff heuristic: {reasoning}}`, plus `floor applied: {value}` when step 4's `review-effort-floor` raised the tier.
+Record the resolved tier and which resolution step produced it, for Step 7's summary: `{explicit argument | record labels: risk:{x} × size:{y} | diff heuristic: {reasoning}}`, or `label {a}, diff heuristic {b} (risk:{x} × size:{y}; {reasoning})` when the label tier and the diff tier differ, plus `floor applied: {value}` when step 5's `review-effort-floor` raised the tier.
 
 ## Step 3: Code Review
 
@@ -258,15 +265,19 @@ Read `step3-skill-load-delta.md` in this skill's directory and run it on every c
 
 Three effort-gated findings-quality mechanisms run after Step 3's per-lens reproduction completes: Cross-Lens Debate (resolves contradictions between different lenses reviewing the same region), the Per-Candidate Refutation Pass (re-examines `confirmed` findings at or above a `medium` severity floor, capped at 10 per review, for correlated error reproduction-pair agreement alone can't catch), and Gap-Sweep / Completeness Critic (a single fresh-eyes agent asking what every angle-scoped lens, collectively, missed).
 
-**Skip all three entirely when the resolved `review-effort` tier (Step 2.5) is `low` or `medium`** — proceed directly to Step 3 Routing below (at `medium`, after Cross-Lens Corroboration), matching Step 3's own narrower lens scope at those tiers.
+**Skip all three entirely when the resolved `review-effort` tier (Step 2.5) is `low` or `medium`** — proceed directly to Step 3.7 below (at `medium`, after Cross-Lens Corroboration), matching Step 3's own narrower lens scope at those tiers.
 
-**At `high` and above**, Cross-Lens Debate runs. **At `xhigh` and `max` only**, the Per-Candidate Refutation Pass and Gap-Sweep additionally run (one tier stricter, so `high`-tier reviews aren't paying for all three mechanisms at once). Read `step3-debate-and-refutation.md` in this skill's directory for the full procedure — dispatch templates, the `review-coordination.js` `detect-overlap`/`resolve-debate`/`resolve-refutation` invocations, and decision-log formats — lazy-loaded only when the resolved tier is `high` or above, following the same lazy-load pattern as `step3-routing.md`.
+**At `high` and above**, Cross-Lens Debate runs. **At `xhigh` and `max` only**, the Per-Candidate Refutation Pass and Gap-Sweep additionally run (one tier stricter, so `high`-tier reviews aren't paying for all three mechanisms at once). Read `step3-debate-and-refutation.md` in this skill's directory for the full procedure — dispatch templates, the `review-coordination.js` `detect-overlap`/`resolve-debate`/`resolve-tiebreak` invocations, and decision-log formats — lazy-loaded only when the resolved tier is `high` or above, following the same lazy-load pattern as `step3-routing.md`.
 
-After Step 3.5, every finding has a final bucket — `confirmed`, `unconfirmed`, or `contested`. Only `confirmed` findings flow into Step 3 Routing. `unconfirmed` and `contested` are already staged to the Wrap-Up Console.
+After Step 3.5, every finding has a final bucket — `confirmed`, `unconfirmed`, or `contested`. Only `confirmed` findings flow into Step 3 Routing. `unconfirmed` and `contested` findings go to Step 3.7.
+
+### Step 3.7: Tiebreak (every tier)
+
+Read `step3-tiebreak.md` in this skill's directory and run it after Step 3's reproduction, Cross-Lens Corroboration, and Steps 3.5-3.6, before Step 3 Routing: every `unconfirmed` or `contested` finding gets one independent agent verdict. Only its `confirmed` results join routing.
 
 ### Step 3 Routing — Code Review Findings
 
-Routing logic lives entirely in `step3-routing.md` in this skill's directory: severity-based auto routing (with the contract floors), the interactive batch table, recommendation rules, the deferral gate, the parallel-fix dispatch contract (3+ independent fixes via `/superpowers:dispatching-parallel-agents`, with its mandatory post-dispatch diff audit), and the auto-advance-on-zero-findings rule. `unconfirmed` and `contested` findings bypass Step 3 Routing — they route directly to the Wrap-Up Console (Low-confidence and Contested subsections, respectively). The fix-now re-verify runs scoped per `test/verification.md`'s "Re-verify scoping" table (review-fix row).
+Routing logic lives entirely in `step3-routing.md` in this skill's directory: severity-based auto routing (with the contract floors), the interactive batch table, recommendation rules, the deferral gate, the parallel-fix dispatch contract (3+ independent fixes via `/superpowers:dispatching-parallel-agents`, with its mandatory post-dispatch diff audit), and the auto-advance-on-zero-findings rule. `unconfirmed` and `contested` findings reach routing only through Step 3.7's `confirmed` outcome. The fix-now re-verify runs scoped per `test/verification.md`'s "Re-verify scoping" table (review-fix row).
 
 **QA after a Step 3 fix wave (#3598).** A Step 3 Routing fix that touches a story's `source_files` leaves QA as stale as a Step 6.7 fix does, so it gets Step 6.7 item 4's affected-story re-run too — once per review, not once per wave. Before Step 3 Routing applies its first fix (AUTO or Fix now, and before any parallel fix dispatch), capture `WAVE_BASE` exactly as Step 6.7's opening describes; Step 6.7 then keeps that SHA, and its item 4 covers both waves' files. When Step 6.7 does not run, run its item 4 on its own, right before Step 7, against the same `WAVE_BASE`. A Step 5 simplification edit made after that capture falls inside the same diff and counts the same way.
 
@@ -290,6 +301,8 @@ If the reflect skill produces "Change now" fixes, re-run `/claude-tweaks:test --
 ---
 
 ## Step 5: Simplify Changed Code
+
+**Skip when `/claude-tweaks:build` already simplified this tree (#4137).** When `$PIPELINE_RUN_DIR` is set, read the last line under `$PIPELINE_RUN_DIR/decisions.md`'s `## /build` heading carrying `Common Step 3: simplify: scope simplified at {sha}`, where {sha} is 7-40 hex characters. Skip this step when that line exists, `git merge-base --is-ancestor {sha} HEAD` exits 0, and every file `git diff --name-only {sha}` (the working tree, so uncommitted fixes count) or `git ls-files --others --exclude-standard` lists from the scope below is one `/claude-tweaks:simplify` Step 1 filters out, and both listing commands exit 0 — no build fix and no review fix has touched an in-scope source file since. Log instead of invoking: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/review" --status SKIP --step "Step 5 simplify (skipped)" --text "condition: build Common Step 3 simplified this scope at {sha}, no in-scope source file changed since → fallback: /claude-tweaks:simplify not re-run" --reversibility n/a`. No line, a {sha} that is not 7-40 hex characters or outside `HEAD`'s history, a listing command that exits non-zero, or a changed in-scope source file runs this step as below.
 
 Run `/claude-tweaks:simplify` on the same own-work file scope Steps 2-4 use — the Merge-Provenance Check's own-work file list (Step 2) when merge commits were detected, otherwise the full `git diff --name-only` file set. Do not hand `/claude-tweaks:simplify` the raw diff unfiltered when merge commits were found: `/claude-tweaks:simplify` has no merge-provenance handling of its own, so it fully trusts whatever scope this step passes it — passing the raw diff would let it edit code this branch never actually introduced, the exact outcome the Merge-Provenance Check exists to prevent.
 
@@ -375,7 +388,7 @@ multi-spec `/claude-tweaks:flow` run sharing one PR across specs — `flow/multi
 `<!-- run-comment: verdict:{spec} -->` where `{spec}` is this spec's record id (the numeric
 suffix of `basename($PIPELINE_RUN_DIR)`, which is this spec's own `spec-{N}/` subdirectory —
 `_shared/pr-run-comments.md`'s "Multi-spec verdict comments" section). Then the verdict, then
-the QA status exactly as the summary's QA Validation line renders it (stale-QA qualifier included — no separate wording), then the
+the QA status exactly as the summary's QA Validation line renders it (stale-QA qualifier included — no separate wording), then the summary's **Coverage caveat:** line verbatim when it rendered, then the
 top findings by severity (max 5), reusing `review-summary-template.md`'s own
 `Category | Finding | Severity | Action` findings-table shape — and post-or-update it on the PR
 per that file's canonical procedure, using the same marker as `{kind}` (`verdict` or
@@ -394,12 +407,12 @@ At the end of the summary, include a `### Key Learnings` section with 1-3 insigh
 
 If no notable learnings emerged, state: "No key learnings — straightforward review."
 
-**Phase exit (`worktree` mode, `integration-model: pr-first` — `_shared/integration-model.md`):** push the branch and flip this phase's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A no-op under `local-merge` or `current-branch` mode.
+**Phase exit (any run with a run dir, `_shared/integration-model.md`):** `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-exit.js" --run "$PIPELINE_RUN_DIR" --phase review --worktree "{worktree-path}" --fixes {n}[,{m}...]` (it pushes only under `pr-first` in `worktree` mode), per `_shared/git-discipline.md` and `_shared/pr-checklist-refresh.md`.
 
 ## Important Notes
 
 - Spec compliance is the first gate — incomplete specs go back to `/claude-tweaks:build`, not through code review
-- Test passing is a hard gate — broken code blocks the entire review. Run `/claude-tweaks:test` to verify.
+- Test passing is a hard gate — broken code blocks the entire review. Run `/claude-tweaks:test --source review` to verify.
 - Implementation Hindsight is an action gate — "change now" items must be fixed before passing
 - Code simplification runs on changed files only — never expand scope to unrelated code
 - Skip review lenses that don't apply to the type of change

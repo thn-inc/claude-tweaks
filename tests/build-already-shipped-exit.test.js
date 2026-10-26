@@ -1,11 +1,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 // #2502: reproduces the #2028/PR#2234 shape -- a record whose materialized
 // spec's every deliverable and acceptance criterion is already satisfied on
@@ -41,7 +41,7 @@ test('#2502: build/SKILL.md Spec Step 2 gains an Already-shipped assessment, dis
 
 test('#2502: dispatch/task-prompt.md adds already-shipped to the first-call OUTCOME vocabulary and documents the second-call gate distinctly from failure', () => {
   const t = read('plugin/skills/dispatch/task-prompt.md');
-  assert.match(t, /OUTCOME: \{build-test-ok \| build-test-failed \| build-test-blocked \| already-shipped\}/);
+  assert.match(t, /OUTCOME: \{build-test-ok \| build-test-failed \| build-test-blocked \| already-shipped \| handoff\}/);
   assert.match(t, /An `OUTCOME` of `already-shipped` \(#2502\) is a \*\*third, distinct\*\* case, neither success nor failure/);
   assert.match(t, /Take `two-call-gate\.md` §7's terminal path for it, never section 5's/);
   assert.match(t, /never invokes Settle's failure classification, retry counting, or failure comment/);

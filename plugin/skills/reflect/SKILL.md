@@ -119,9 +119,9 @@ When a pipeline run directory exists, route findings by category without prompti
 | Finding type | Default routing | Log entry |
 |---|---|---|
 | Safety regression (security, data loss, broken invariants — e.g., token expiry bug, auth bypass, dropped writes, resource leak, race condition on shared state) | KEPT-PROMPT — surfaces inline; cannot defer safety findings autonomously | `KEPT-PROMPT {time} — Step 3: safety finding "{summary}". Surfaced inline.` |
-| Convention drift, code smell, simplification opportunity | STAGED — write to `staged/reflect-{n}.md`. Surface at Wrap-Up Review Console. | `STAGED {time} — Step 3: convention finding "{summary}". Stage path: staged/reflect-{n}.md.` |
+| Convention drift, code smell, simplification opportunity | STAGED — write to `staged/reflect-{n}.md` with a `**Destination:**` line (below). Resolves in the Review Console's Skill updates section. | `STAGED {time} — Step 3: convention finding "{summary}". Stage path: staged/reflect-{n}.md.` |
 | Tangential idea (new feature, alternative design) | STAGED → backlog work-record candidate. Surfaces at the Wrap-Up Review Console's Queue writes section, following `_shared/auto-mode-contract.md`'s tiered stance — folded into the batch "Approve all" at `supervised`/`trusted`, auto-resolved with zero `AskUserQuestion` calls under `consoleAutoResolve` at `unattended`. | `STAGED {time} — Step 3: tangential idea "{summary}" — backlog candidate — landing: {born-ready|needs:definition} (defer-reason: tangential). Surface at the Queue writes gate.` |
-| Pattern observation, design tradeoff acknowledgment | STAGED — write to `staged/reflect-{n}.md`. Most go to skill updates handled by `/claude-tweaks:wrap-up`'s Skills curation row. | `STAGED {time} — Step 3: pattern observation "{summary}". Stage path: staged/reflect-{n}.md.` |
+| Pattern observation, design tradeoff acknowledgment | STAGED — write to `staged/reflect-{n}.md` with a `**Destination:**` line (below). Resolves in the Review Console's Skill updates section. | `STAGED {time} — Step 3: pattern observation "{summary}". Stage path: staged/reflect-{n}.md.` |
 
 Default behavior: **defer everything** to the Review Console. The exception is safety regressions, which always surface inline.
 
@@ -131,6 +131,7 @@ Default behavior: **defer everything** to the Review Console. The exception is s
 # Reflect — staged finding {n}
 
 **Category:** {convention | tangential | observation}
+**Destination:** {edit {repo-relative path} | record | decline {reason}}
 **Severity:** {low | med | high}
 **Reversibility:** {high | med | low}
 **Source:** {full | hindsight | light} mode, lens "{lens name}"
@@ -149,6 +150,8 @@ Default behavior: **defer everything** to the Review Console. The exception is s
 
 {Copy the matching `STAGED …` line from `decisions.md` so the Console can cross-link.}
 ```
+
+**Destination (observation/convention only).** Write exactly one `**Destination:**` line, chosen by reflect, on every `observation` or `convention` file; omit it on a `tangential` file. `edit {path}` when the fix is a small, clear change to a named skill file (a path with a `skills/` segment), a `rules/` file, or a `CLAUDE.md` — the console session makes the edit. `record` when it is real work beyond an edit — append a final `## Record proposal` section holding `Title:`/`Type:`/`Labels:`/`Defer-reason:` lines, a blank line, then the body composed via `specShapedBody` exactly as the tangential variant below composes it (`filedBy: 'reflect'`, `provenance.deferReason` from `_shared/deferral-gate.md`'s vocabulary, `openQuestion` → `needs:definition`). `decline {reason}` when no action is warranted. The Record proposal section sits in the body, not as a top header, so the file is never read as a Queue write. The Finding and the record body must never start a line with `**Destination:**` — the parser counts every line-start occurrence and two of them make the file malformed. The console classifies these files into Skill updates and `bin/reflect-apply.js` applies them; a file with no Destination line (staged before this line existed) is digested with Defer-reason `reflect-no-destination`; a malformed line stays in Pending review; a `record` whose `Defer-reason:` is invalid is refused (`wrap-up/refused-proposals.md`).
 
 For a **tangential** finding specifically — the one category that becomes a Queue-writes record
 proposal (see `review-console.md`'s "On approval" step 5 and `flow/multispec-review-console.md`,
@@ -181,6 +184,8 @@ The non-tangential format's `Severity:`/`Reversibility:`/`Source:`/`Files:`/`Dec
 Without this header the Console's record-creation step has nothing to read a title, type, or
 labels from — it is required whenever `**Category:** tangential`, and omitted for `convention`/
 `observation` findings (those are never Queue writes). The `Defer-reason: tangential` line is category-first by rule (`_shared/deferral-gate.md`): a tangential finding is by definition not a fix to the current work, so its reason is its category; the other five vocabulary values apply only to non-tangential findings.
+
+**Integration-branch probe before an absence claim (#3987).** Before staging a tangential record whose Current State claims a skill, contract, or other repo file lacks something, probe the integration branch for that absence — the session may be running an installed plugin build older than the integration branch, and #3817 was filed nine hours after #3078 had already closed the same gap on main. Resolve `{integration-branch}` per `_shared/integration-branch.md`, run `git fetch origin '{integration-branch}'`, then probe for the named content, one command per Bash call: `git grep -n -F -e '{phrase}' 'origin/{integration-branch}' -- '{path}'` for content the finding says is missing, and `git log -S '{phrase}' --oneline 'origin/{integration-branch}' -- '{path}'` for a commit that added or deliberately removed it. Single-quote `{phrase}`, writing each `'` inside it as `'\''`; `-e` keeps a phrase that starts with `-` from being read as an option. Cite the probe command and its result in the record's Current State. When the probe finds the claimed content already on the integration branch, the finding is not filed: write one `decisions.md` line instead, `AUTO {time} — Step 3: tangential idea "{summary}" not filed — already on origin/{integration-branch} ({probe command} matched). Reversibility: n/a.` A `git log -S` hit on a commit this session's build predates means the content changed since — read that commit and re-judge the finding against it before staging. A probe that cannot run does not block staging; the record's Current State says the probe could not run — never that the content is absent. It could not run when there is no `origin`, the named file is outside this repository, `git fetch` exits non-zero (`origin/{integration-branch}` may then be stale, so do not probe it), or `git grep` or `git log` exits other than 0 or 1 (128 is a bad ref or pattern). A no-match is `git grep` exiting 1, or `git log -S` exiting 0 with no output.
 
 Number `{n}` is a per-run sequence counter — increment as each staged file is written so multiple stages in one run never collide.
 

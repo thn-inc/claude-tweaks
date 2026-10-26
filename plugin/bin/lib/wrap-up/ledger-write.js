@@ -5,7 +5,10 @@
 // cells in place, text-level, preserving every other row and the surrounding
 // markdown verbatim. Rows are split and written through ./ledger-cells.js, so
 // a `|` inside a cell is escaped as `\|`. Used by wrap-up-engine.js's
-// `finish-console` (#2546) and bin/hooks.js's `delete-ledger` subcommand.
+// `finish-console` (#2546) and bin/hooks.js's `delete-ledger` subcommand;
+// describeRunLedgers/formatLedgerReport (#3897) are the read side, for bin/hooks.js's
+// `resolve-ledger` subcommand; describeRunLedgers also backs `delete-ledger`'s
+// inherited-only not-found report (#3686).
 'use strict';
 
 const fs = require('fs');
@@ -86,20 +89,58 @@ function resolveLedgerPath({ runDir, worktree, explicit, deps = {} } = {}) {
   return { ok: true, path: candidates[0] };
 }
 
-// Splits a ledger file's text into { preamble, header, separator, rows } —
-// `rows` keyed by item number (string, as it appears in the `#` column).
-// Throws if the file doesn't look like a ledger table at all (no header row
-// found) — a caller mutating a row needs the table to actually be there.
+// The read side of resolveLedgerPath (#3897): the same resolution, reported as
+// a view of which ledgers are this run's and which docs/plans ledgers belong to
+// another run — for a caller that must show the split rather than act on one
+// target. `report` mirrors the resolve outcome: found | none | ambiguous |
+// unattributable. An unattributable run names no this-run/other-run entries
+// (ownership is unknown), only `unattributed`.
+function describeRunLedgers({ runDir, worktree, deps = {} } = {}) {
+  const readdirSync = deps.readdirSync || fs.readdirSync;
+  const plansDir = path.join(worktree, 'docs', 'plans');
+  let entries = [];
+  try { entries = readdirSync(plansDir); } catch { entries = []; }
+  const plans = entries.filter((f) => f.endsWith('-ledger.md')).map((f) => path.join(plansDir, f));
+  const without = (taken) => plans.filter((p) => !taken.includes(p));
+
+  const r = resolveLedgerPath({ runDir, worktree, deps });
+  if (r.ok) return { report: 'found', ledgers: [r.path], others: without([r.path]), unattributed: [], detail: null };
+  if (r.reason === 'ambiguous') return { report: 'ambiguous', ledgers: r.candidates, others: without(r.candidates), unattributed: [], detail: null };
+  if (r.reason === 'unattributable') return { report: 'unattributable', ledgers: [], others: [], unattributed: r.candidates, detail: r.detail };
+  return { report: 'none', ledgers: [], others: plans, unattributed: [], detail: null };
+}
+
+function formatLedgerReport(view) {
+  const head = view.report === 'unattributable'
+    ? `claude-tweaks: resolve-ledger: unattributable (${String(view.detail).replace(/\s+/g, ' ').trim()})`
+    : `claude-tweaks: resolve-ledger: ${view.report}`;
+  return [
+    head,
+    ...view.ledgers.map((p) => `this-run: ${p}`),
+    ...view.others.map((p) => `other-run: ${p}`),
+    ...view.unattributed.map((p) => `unattributed: ${p}`),
+  ].join('\n') + '\n';
+}
+
+// Splits a ledger file's text into { preamble, header, separator, rows, trailer,
+// duplicates } — `rows` keyed by item number (string, as it appears in the `#`
+// column). `duplicates` lists each item number that more than one row carries
+// (once each, in first-repeat order; `[]` when none): `rows` keeps only the last
+// such row, so serializeLedgerTable refuses to write a table with duplicates
+// back (#3834). Throws if the file doesn't look like a ledger table at all (no
+// header row found) — a caller mutating a row needs the table to actually be there.
 function parseLedgerTable(text) {
   const lines = text.split('\n');
   const headerIdx = lines.findIndex((l) => /^\|\s*#\s*\|/.test(l));
   if (headerIdx === -1) throw new Error('no ledger table header row found (expected "| # | Phase | Item | Status | Resolution |")');
   const separatorIdx = headerIdx + 1;
   const rows = new Map();
+  const duplicates = [];
   let rowsEnd = separatorIdx + 1;
   for (let i = separatorIdx + 1; i < lines.length; i += 1) {
     const m = lines[i].match(/^\|\s*(\d+)\s*\|/);
     if (!m) { rowsEnd = i; break; }
+    if (rows.has(m[1]) && !duplicates.includes(m[1])) duplicates.push(m[1]);
     rows.set(m[1], lines[i]);
     rowsEnd = i + 1;
   }
@@ -109,10 +150,17 @@ function parseLedgerTable(text) {
     separator: lines[separatorIdx],
     rows,
     trailer: lines.slice(rowsEnd),
+    duplicates,
   };
 }
 
+// Throws when the table holds duplicate row numbers: the Map in `rows` already
+// collapsed them, so writing it back would silently drop a row (#3834).
 function serializeLedgerTable(table) {
+  const duplicates = table.duplicates || [];
+  if (duplicates.length > 0) {
+    throw new Error(`ledger table has duplicate row number(s) ${duplicates.map((n) => `#${n}`).join(', ')} — writing it back would drop a row; renumber by hand (_shared/ledger-format.md's Item Numbering)`);
+  }
   return [...table.preamble, table.header, table.separator, ...table.rows.values(), ...table.trailer].join('\n');
 }
 
@@ -151,4 +199,4 @@ function flipLedgerRow(text, { item, status, resolution }) {
   return serializeLedgerTable(table);
 }
 
-module.exports = { TERMINAL_STATUSES, resolveLedgerPath, parseLedgerTable, serializeLedgerTable, flipLedgerRow };
+module.exports = { TERMINAL_STATUSES, resolveLedgerPath, describeRunLedgers, formatLedgerReport, parseLedgerTable, serializeLedgerTable, flipLedgerRow };

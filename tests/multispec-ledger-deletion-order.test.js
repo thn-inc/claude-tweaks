@@ -5,11 +5,11 @@
 // console, instead of running on the final spec's wrap-up.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
-const readRaw = (rel) => fs.readFileSync(path.join(SKILLS, rel), 'utf8');
+const readRaw = (rel) => readText(path.join(SKILLS, rel));
 const read = (rel) => readRaw(rel).replace(/\s+/g, ' ');
 
 // The pre-#3420 caveat tail: the final spec's wrap-up deleted the ledger.

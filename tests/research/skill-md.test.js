@@ -2,12 +2,13 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('../helpers/read-skill');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SKILL_PATH = path.join(REPO_ROOT, 'plugin', 'skills', 'research', 'SKILL.md');
 
 function readSkill() {
-  return fs.readFileSync(SKILL_PATH, 'utf8');
+  return readText(SKILL_PATH);
 }
 
 function parseFrontmatter(content) {
@@ -24,13 +25,13 @@ function parseFrontmatter(content) {
 const VERIFY_MODE_PATH = path.join(REPO_ROOT, 'plugin', 'skills', 'research', 'verify-mode.md');
 
 function readVerifyMode() {
-  return fs.readFileSync(VERIFY_MODE_PATH, 'utf8');
+  return readText(VERIFY_MODE_PATH);
 }
 
 const SOURCE_REGISTRY_PATH = path.join(REPO_ROOT, 'plugin', 'skills', 'research', 'source-registry.md');
 
 function readSourceRegistry() {
-  return fs.readFileSync(SOURCE_REGISTRY_PATH, 'utf8');
+  return readText(SOURCE_REGISTRY_PATH);
 }
 
 const REGISTRY_SOURCES = [
@@ -250,7 +251,10 @@ test('source-registry.md keys every entry by what it falsifies, not by tool', ()
 
 test('source-registry.md runtime entry cites the bounded-output form', () => {
   const body = readSourceRegistry();
-  assert.match(body, /exit=/, 'must show the bounded-output exit-status capture');
+  assert.match(body, /```bash\s*\nmktemp\s*\n```/, 'the temp path must come from its own plain call');
+  assert.match(body, /Exit code \{n\}/, 'must name the exit-status source the Bash tool reports');
+  assert.match(body, /scratch-worktree\.md` §7/, 'must cite the shell constraint');
+  assert.doesNotMatch(body, /;\s*echo\s+["']?exit=\$\?/, 'must not chain an exit-status echo onto a command');
   assert.match(body, /judge-procedure\.md/, 'must cite docs-health as the technique it reuses');
 });
 

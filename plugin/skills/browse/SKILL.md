@@ -1,7 +1,7 @@
 ---
 name: browse
 description: Use when you need browser automation via playwright-cli. Keywords - browse, browser, playwright-cli, screenshot, scrape, automation.
-argument-hint: '[<url>|<task description>] [--session <name> ...] [set viewport <wxh>|set device "<name>"] [backend=chrome ...] [--quick]'
+argument-hint: '[<url>|<task description>] [--session <name> ...] [resize <w> <h>|--device "<name>"] [backend=chrome ...] [--quick]'
 ---
 
 # Browse — Browser Conventions
@@ -40,8 +40,8 @@ Conventions skill for browser automation. Defines session naming, screenshot/tra
 | `<task description>` | `walk the checkout flow on https://example.com` | Plan and execute multi-step ops to satisfy the task |
 | `--session <name> open <URL>` | `--session checkout-flow open https://example.com` | Open a named session |
 | `--session <name> click <ref>` | `--session checkout-flow click @e12` | Operate within a named session (ref resolved via a prior `find`, e.g. `find role button --name Pay`) |
-| `set viewport <wxh>` | `set viewport 1280x800` | Adjust viewport for the active session |
-| `set device "<name>"` | `set device "iPhone 14"` | Emulate a device profile |
+| `resize <w> <h>` | `resize 1280 800` | Resize the active session's viewport (`playwright-cli -s=<name> resize <w> <h>`) |
+| `--device "<name>"` | `https://example.com --device "iPhone 15"` | Emulate a device profile. Applied when the session opens (`playwright-cli -s=<name> open <url> --device="<name>"`) — there is no mid-session device switch, so close and re-open the session to change it |
 | `backend=chrome <URL or task>` | `backend=chrome https://app.example.com/settings` | Routes through the native `mcp__claude-in-chrome__*` tools (user's live authenticated Chrome session) instead of `playwright-cli`. Human-invoked only. |
 | `--quick` | `https://example.com --quick` | Human-invoked ad-hoc mode: relaxes the minimum-two-screenshot and mandatory-trace-on-failure conventions for this invocation only (see Conventions Defined Here). Never used by `/stories`, `/visual-review`, `/review`, `qa-agent`, `/flow`, or a Routine. |
 
@@ -142,4 +142,4 @@ Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention):
 | Skipping the trace on failure | Failure reports without a trace path aren't actionable — capture before closing |
 | A consumer skill routes through `backend=chrome` | Breaks portability to hosted Routines — `playwright-cli` is the only headless-capable backend; human-invoked only |
 | A consumer skill (`/stories`, `/visual-review`, `/review`, `qa-agent`, `/flow`, a Routine) sets `--quick` | Weakens the evidentiary discipline those flows depend on — `--quick` is for human-invoked ad-hoc checks only |
-| Skipping `set viewport`/`set device` and relying on env vars | Env-var workarounds are unsupported — use the first-class `set viewport`/`set device` commands |
+| Skipping `resize`/`--device` and relying on env vars | Env-var workarounds are unsupported — use the CLI's own `resize <w> <h>` command and `open --device` flag |

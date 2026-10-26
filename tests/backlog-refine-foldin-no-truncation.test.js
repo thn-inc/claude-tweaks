@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execSync, spawnSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 const DOC = path.join(__dirname, '..', 'plugin', 'skills', 'backlog', 'refine-mode.md');
 // Forward slashes: the snippet interpolates ${CLAUDE_PLUGIN_ROOT} into a JS string literal
@@ -26,19 +27,19 @@ const DOC = path.join(__dirname, '..', 'plugin', 'skills', 'backlog', 'refine-mo
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin').split(path.sep).join('/');
 
 // The extracted fence is bash, so run it under bash explicitly — execSync's default shell is
-// cmd.exe on win32, which has no `eval`. Skip, with a stated reason, when no bash is on PATH.
+// cmd.exe on win32, which cannot run its `VAR="$(…)"` assignments. Skip, with a stated reason, when no bash is on PATH.
 const SKIP_NO_BASH = spawnSync('bash', ['--version'], { stdio: 'ignore' }).status === 0 ? false : 'bash not available';
 
-// Anchored on the fence's own eval line — unique to the merge fence via the
-// `_DATED=` token, which the first (unsynced-only) fence never carries.
-// Captures through to (not including) the closing fence.
+// Anchored on the fence's own first two `--value` resolution lines — unique to
+// the merge fence via the `_DATED` line, which the first (unsynced-only) fence
+// never carries. Captures through to (not including) the closing fence.
 const FENCE_ANCHOR =
-  /```bash\n(eval "\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" ST_BACKLOG_REFINE_UNSYNCED=backlog-refine-unsynced\.json ST_BACKLOG_REFINE_UNSYNCED_DATED=backlog-refine-unsynced-dated\.json[\s\S]*?)\n```/m;
+  /```bash\n(ST_BACKLOG_REFINE_UNSYNCED="\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" --value backlog-refine-unsynced\.json\)"\nST_BACKLOG_REFINE_UNSYNCED_DATED="\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" --value backlog-refine-unsynced-dated\.json\)"[\s\S]*?)\n```/m;
 
 function extractFoldInSnippet() {
   // LF-normalized: a core.autocrlf checkout reads fences as ```bash\r\n, and the \r
   // would also ride into the snippet bash executes.
-  const doc = fs.readFileSync(DOC, 'utf8').replace(/\r\n/g, '\n');
+  const doc = readText(DOC);
   const match = FENCE_ANCHOR.exec(doc);
   assert.ok(match, 'extraction pattern is out of sync with refine-mode.md — update this test');
   return match[1];

@@ -12,7 +12,7 @@ Every record body opens with a short metadata block — plain body-metadata line
 
 `Ui-stack:` names the UI component library / styling approach a frontend build should use — e.g. `shadcn/ui + Tailwind`, or an explicit `none — no preference, defer to reference codebase` when the record's author genuinely has no opinion. `/claude-tweaks:specify`'s Step 2.5c2 (`design-pre-steps.md`, immediately after the Design-intent question) writes it, following the same auto-mode/`ui-stack` policy-key precedence Step 2.5c already uses for `Design-intent:`. Omitted for backend/infra/terminal records — the same frontend-only gate that already governs `Design-intent:`.
 
-```markdown
+````markdown
 Surface: {web | mobile | desktop | backend | infra | terminal}
 Design-intent: {one or more of bold | quiet | minimal | delightful | onboarding, comma-separated — or none alone}
 Ui-stack: {free-form component-library/styling-approach string (e.g. "shadcn/ui + Tailwind"), or an explicit no-preference answer — omitted for backend/infra/terminal, same as Design-intent:}
@@ -66,6 +66,8 @@ When a Deliverable adds a new Manifesto policy lever — a new `auto`-mode behav
 A criterion that counts something (rows, items, entries) states the count relative to this record's own change ("adds no rows", "adds exactly three items"), never as a file's absolute total, and the count must match what the record's body names. An absolute total breaks as soon as a Related record grows the same file: #2709's "the checklist still has 20 rows" was unsatisfiable once #2706 and #2707 landed beside it, and #2693's "all 20 items" named only 17.
 
 A criterion asserting that a search returns nothing (a grep that "returns nothing", "prints no lines" or "exits 1") names a command its author has run once against a tree that still contains the target and seen match; prefer `grep -F` for literal code text. A search that cannot match its target passes before and after the change, so the criterion can never fail: #3536's AC1.1 was a basic-regex grep whose escapes never matched the literal it named.
+
+When `## Current State` names the callers, gates, or user-visible outcome the change exists to fix, at least one criterion is phrased at one of those named consumers ("review Step 1.5 skips re-verification after a fully chunked pass"), not only at the new mechanism's own interface — or `## Gotchas` names the follow-up record that wires the consumers. Criteria that exercise only the mechanism can all pass while the motivating outcome never ships: #3002's Current State named three gates that should stop re-running a chunked suite, every criterion tested `verify.js --stamp-status --scope`, and all three gates still read bare `--stamp-status`.
 
 ## Release Note
 
@@ -151,7 +153,7 @@ Examples that **do belong here**:
 - "Get security review signoff on the new third-party data flow (reason-not-auto: requires-signoff)"
 
 {If none: delete this section.}
-```
+````
 
 ## No Placeholders
 

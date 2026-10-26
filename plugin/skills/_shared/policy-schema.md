@@ -12,7 +12,7 @@ Every project-config lever claude-tweaks skills read, in one place — the way `
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" [--values | --all] [--run "$PIPELINE_RUN_DIR"] <key> [<key>…]
 ```
 
-For shell-variable capture, `--values` prints one plain value per line in request order instead of the JSON envelope — coerced values render natively (`true`, `14`); an unset no-default key and an unknown key each print an empty line (the same empty string the retired grep pipeline produced); `model-profiles` has no scalar form and is an invocation error under `--values`. List-typed keys (e.g. `merge-sensitive-paths`) resolve to the raw comma-separated string in both modes when configured — callers split on `,`; only the unset default is a JSON `[]`, which `--values` renders as an empty line (same empty-means-none reading as the retired grep).
+For shell-variable capture, `--values` prints one plain value per line in request order instead of the JSON envelope — coerced values render natively (`true`, `14`); an unset no-default key and an unknown key each print an empty line (the same empty string the retired grep pipeline produced); `model-profiles` has no scalar form and is an invocation error under `--values`. A present-but-invalid value prints its schema default on stdout with exit 0, and gets one stderr line naming the key, the rejected value and the default (#4141). JSON mode carries `invalid: true` instead. List-typed keys (e.g. `merge-sensitive-paths`) resolve to the raw comma-separated string in both modes when configured — callers split on `,`; only the unset default is a JSON `[]`, which `--values` renders as an empty line (same empty-means-none reading as the retired grep).
 
 The `${CLAUDE_PLUGIN_ROOT}` spelling is a model-resolved placeholder, not a live env var — the substitution contract is `docs/skill-authoring.md`'s "Plugin-root references (`CLAUDE_PLUGIN_ROOT`)" section; follow it, it is not restated here.
 
@@ -73,6 +73,7 @@ Every `POLICY_KEYS` row carries three human-facing fields alongside its shape: `
 | Code-health focus verticals | `health-sweeps` |
 | Auto-mode levers | `pipeline-behavior` |
 | Model profiles | `models` |
+| Efficiency budgets | `housekeeping` |
 | Additional levers | `housekeeping` |
 
 ## Key naming
@@ -129,6 +130,8 @@ Canonical defaults for the keys in this section also live in `_shared/work-recor
 | `dispatch-pick-max-concurrent` | `policy.yml` | `/claude-tweaks:dispatch` | `3` | Deprecated alias for `dispatch-batch-size` — still resolves, emits one warn-tier notice per invocation. Removal condition: `skills/dispatch/deprecated-aliases.md` |
 | `dispatch-group-size-guard` | `policy.yml` | `/claude-tweaks:dispatch` | `10` | Caps how many members a dispatch group may have before the drain's ranking (bare, or its deprecated `next` alias) excludes it. Groups are per-record since #3278, so only a `ceremony:fast-lane` bundle larger than the guard can trip it — an oversized group still resolves normally via explicit `/dispatch #N`/`#N,#M` naming (a human present, explicitly naming it, is itself the required surfacing) |
 | `dispatch-fastlane-bundle-cap` | `policy.yml` | `/claude-tweaks:dispatch` | `3` | Caps how many non-overlapping `ceremony:fast-lane` singleton groups `queue-pull-script.md` folds into one multi-spec group, sharing one preflight/wrap-up tail across the bundle instead of paying it per record — `0` turns bundling off, leaving every record its own group |
+| `express-lane` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:flow` (`_shared/express-lane.md`) | `false` | Opts a project into the express lane: a small, low-risk singleton record builds, tests and merges-on-green in one agent instead of the full `/flow` frame |
+| `express-review-sample-every` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:flow` (`_shared/express-lane.md`) | `5` | Every Nth express-lane merge is sent through the normal review lenses after it lands, and what they find is filed as records. `0` and negative values are schema-invalid (`min: 1`) |
 | `auto-merge-max-lines` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:assess-agent-autonomy` | `40` | Auto-merge blast-radius guideline (lines) — a weighted input to the `merge-check` verdict, not a hard cutoff |
 | `auto-merge-max-files` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:assess-agent-autonomy` | `2` | Auto-merge blast-radius guideline (files) — same weighted treatment |
 | `merge-sensitive-paths` | `policy.yml` | `/claude-tweaks:assess-agent-autonomy`, `/claude-tweaks:review` | `[]` (empty) | Comma-separated path globs forcing a hard needs-human floor in the `merge-check` verdict, and feeding `/review`'s diff-heuristic risk proxy |
@@ -210,6 +213,19 @@ Registered by #219; the resolver that actually reads these five is `bin/lib/mode
 | `model-profiles` |
 | `research-mode` |
 
+## Efficiency budgets
+
+Registered by #4029; read by `readEfficiencyCeilings` in `bin/lib/policy.js` for `bin/phase-timing.js --check-budgets`. `0` disables a budget. Full table and the defaults' derivation: `policy-schema-efficiency-budgets.md`.
+
+| Key |
+|---|
+| `fast-lane-run-round-trip-ceiling` |
+| `fast-lane-run-procedure-kb-ceiling` |
+| `fast-lane-run-verify-minutes-ceiling` |
+| `standard-run-round-trip-ceiling` |
+| `standard-run-procedure-kb-ceiling` |
+| `standard-run-verify-minutes-ceiling` |
+
 ## Additional levers
 
 These levers resolve from `.claude-tweaks/policy.yml`, like every other lever in this file. `/claude-tweaks:init`'s CLAUDE.md template generates none of them — omitting a lever means its default. `backlog-fetch-limit` also appears in `_shared/work-record-config.md`'s table — if the two disagree, that file wins for that key, per the same rule the "Dispatch & merge" section states.
@@ -227,5 +243,6 @@ These levers resolve from `.claude-tweaks/policy.yml`, like every other lever in
 | `port-services` | `policy.yml` | `bin/lib/hooks/session-start.js` (`bin/lib/ports/ensure.js`) | `[]` (empty — port isolation off) | Comma-separated service names naming this checkout's own dev-server processes — the first maps to `PORT`, each later one to `{NAME}_PORT` (sanitized upper-snake-case), all offsets from one 10-port block SessionStart leases via `bin/lib/ports/registry.js` (#1791) and writes into `.env.local`/`.env`. Not an auto-mode lever — read directly by the hook, never a Manifesto question. An entry failing `^[a-z][a-z0-9-]*$` is dropped and reported, not fatal; more than 10 (the registry's `BLOCK_SIZE`) valid entries cannot fit one block and disables port isolation for the session entirely. The managed region's first line is `CLAUDE_TWEAKS_LEASE={base}` (#1927) — a stable per-checkout token a project may key non-port resources on, e.g. a test database name. |
 | `release-hook` | `policy.yml` (seeded commented-out by `/claude-tweaks:init` Step 21) | `bin/release-local.js` (unit 4 of #2250) | unset | Shell command the local engine runs after `v{version}` is tagged — the project's publish/mirror/deploy hook. Not read under `pr-first`, where the `release: published` workflow is the hook (needs a PAT — `GITHUB_TOKEN`-created releases do not trigger it). Not a Manifesto lever — write it unquoted or in one matched pair of quotes; a `#` ends the value |
 | `release-train` | `policy.yml` (seeded commented-out by `/claude-tweaks:init` Step 21) | `/claude-tweaks:release --train` (unit 6 of #2250) | `false` | `true` allows the unattended train to cut minor/patch releases without a click; honored only when `autonomy` resolves `unattended`, otherwise the run logs a refusal and behaves on-demand. Not a Manifesto lever |
+| `release-tip-moves` | `policy.yml` | `/claude-tweaks:release` Step 5 (`execute.md`'s reviewed-tip comparison, #4041) | `2` | Each move of `origin/{branch}` past Step 3's reviewed tip runs one delta review; the move after the last allowed one holds the release `integration branch kept moving`. Floor `0`: it holds on the first move. Not a Manifesto lever |
 | `specify-budget` | `policy.yml` | `/claude-tweaks:specify` | `5` | Default attempt-count budget for a bare `/specify` drain invocation with no `--budget` flag — sibling of `dispatch-batch-size` above; `n`/`all` semantics are canonical in `_shared/record-batch-input.md`'s `--budget` section (#1491) |
 | `specify-decomposition-log` | `policy.yml` | `/claude-tweaks:specify` (decomposition mode, `record-creation-subissues.md`'s Ceremony tally) | `false` | When `true`, a decomposition batch carrying two or more `ceremony:standard` sub-issues appends one entry (batch size, those records' refs, session id/host/cwd) to `docs/specify-decomposition-log.md`, which Step 9's commit picks up — a watch-item record can then confirm the event happened without the session's transcript. At `false` the step is skipped outright: no tally, no file, no output (#3128) |

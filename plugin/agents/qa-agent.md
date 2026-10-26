@@ -67,7 +67,7 @@ playwright-cli -s=<story-id> tracing-start
 ```
 Recording must start here, before any step runs — `tracing-stop` (Section 6 Step 1) can only save what was recorded, and a failure with no recording started yields no trace.
 
-d. **Set viewport.** Use the story's `**Viewport:**` value when specified; otherwise default to `1440x1600` — a below-the-fold control (e.g. a form's conditional fields expanding the page) is otherwise unreachable, since `click`/`find` never auto-scrolls a target into view (`skills/browse/playwright-cli-reference.md`'s Operation vocabulary note). The flag is cross-platform — no shell-specific env-var workarounds needed.
+d. **Set viewport.** Use the story's `**Viewport:**` value when specified; otherwise default to `1440x1600` — a below-the-fold control (e.g. a form's conditional fields expanding the page) is otherwise unreachable, since `click`/`find` never auto-scrolls a target into view (`skills/browse/playwright-cli-reference.md`'s Operation vocabulary note).
 ```
 playwright-cli -s=<story-id> resize <width> <height>
 ```
@@ -139,7 +139,7 @@ For each step in the steps array:
    ```
    playwright-cli -s=<story-id> screenshot --filename={SCREENSHOT_PATH}/<NN>_<step-name>.png
    ```
-   `{SCREENSHOT_PATH}` must be an absolute path. Playwright CLI's `screenshot --filename=<path>` has no annotation overlay (no bounding box or highlight on the acted-on element); this is a plain screenshot of the page as it stands after the action. The report's screenshot column (see "Report" below) no longer visually marks which element a step acted on.
+   `{SCREENSHOT_PATH}` must be an absolute path. Playwright CLI's `screenshot --filename=<path>` has no annotation overlay (no bounding box or highlight on the acted-on element); this is a plain screenshot of the page as it stands after the action. The report's screenshot column (see "Report" below) shows these plain captures, with no marking of the element a step acted on.
 
 6. Mark PASS or FAIL.
 
@@ -233,7 +233,7 @@ Return the structured report as detailed in the "Report" section below. If `reco
 ## Workflow — Legacy Format
 
 1. **Parse** the user story into discrete, sequential steps (support all legacy formats in the Examples section). Also parse `**Auth (vault):**` and `**Auth (legacy):**` if present.
-2. **Setup:** create the screenshot directory and the trace directory (`{TRACES_BASE}/<story-id>`, both absolute); open the session at the story URL and start trace recording (`tracing-start`) immediately after `open`; apply viewport via `set viewport` (the story's value if set, else the `1440x1600` default); apply auth (vault preferred, legacy fallback) — see Structured Format Step 2.
+2. **Setup:** create the screenshot directory and the trace directory (`{TRACES_BASE}/<story-id>`, both absolute); open the session at the story URL and start trace recording (`tracing-start`) immediately after `open`; apply viewport via `resize <w> <h>` (the story's value if set, else the `1440x1600` default); apply auth (vault preferred, legacy fallback) — see Structured Format Step 2.
 3. **Execute each step sequentially** (maintain a `caveats` array, initially empty):
    a. Take a `snapshot` and resolve the target's `eN` ref using a semantic locator inferred from the free-text step — `find` under Playwright CLI is read-only and text-only, so it cannot resolve-and-act; see Structured Format Section 4 Steps 1-3 for the full snapshot+ref pattern (including locator-failure recovery).
    b. Execute the action via the appropriate `playwright-cli` command against that ref (`click <eN>`, `fill <eN> "<text>"`, `check <eN>`, `hover <eN>`). Free-text-derived values (the story's narrative/checklist/BDD text) are spliced into double-quoted Bash arguments the same way structured-format `<value>`/`<text>` fields are — apply the escaping rule from "Escaping story-supplied strings" (Structured Format, Section 4 Step 1) before splicing any such string into a command.

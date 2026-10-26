@@ -17,9 +17,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
 
@@ -60,7 +60,7 @@ test('no tracked file reintroduces a retired Impeccable script name or resolveIm
       const fullPath = path.join(REPO_ROOT, relPath);
       let text;
       try {
-        text = fs.readFileSync(fullPath, 'utf8');
+        text = readText(fullPath);
       } catch {
         continue; // binary or unreadable — nothing this sweep can match on
       }

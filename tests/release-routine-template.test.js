@@ -6,19 +6,19 @@
 // schedules the invocation, so the pins here are about shape and registration, not behaviour.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { parseRoutineTemplate } = require('../plugin/bin/lib/routine-template-parser.js');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 const TEMPLATE = parseRoutineTemplate(read('plugin/skills/release/routine-template.yml'));
 
 test('the template kicks off release --train — the skill directory first, the flag verbatim', () => {
   assert.equal(TEMPLATE.kickoff, 'release --train');
   assert.equal(TEMPLATE.routine_name, 'release-train-daily');
-  assert.equal(TEMPLATE.template_version, 1);
+  assert.equal(TEMPLATE.template_version, 2);
 });
 
 test('the template carries Bash (every write is a CLI or git/gh call) and Task (Step 3 dispatches lenses), never Edit/Write', () => {

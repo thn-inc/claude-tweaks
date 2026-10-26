@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 // Live-corpus scan, deliberately not a frozen fixture (#670): the whole point of this suite
 // is to catch a *future* dispatch site that invokes `bin/resolve-profile.js` with a
@@ -90,7 +91,7 @@ test('no resolve-profile.js invocation under plugin/skills/**/*.md uses a repo-l
   const files = findAllMdFiles(SKILLS_DIR);
   const failures = [];
   for (const file of files) {
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     for (const site of findRepoLocalInvocations(text)) {
       failures.push(`${path.relative(ROOT, file)}:${site.lineNumber}`);
     }

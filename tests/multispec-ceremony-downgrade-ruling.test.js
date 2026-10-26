@@ -5,11 +5,11 @@
 // must read every spec's value: standard when any spec downgraded.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
-const read = (rel) => fs.readFileSync(path.join(SKILLS, rel), 'utf8').replace(/\s+/g, ' ');
+const read = (rel) => readText(path.join(SKILLS, rel)).replace(/\s+/g, ' ');
 
 test('AC4.1: both files name the spec-level config.yml and one downgraded spec runs the batch pass at standard', () => {
   const wrapUp = read('wrap-up/SKILL.md');

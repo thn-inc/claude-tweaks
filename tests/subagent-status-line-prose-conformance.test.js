@@ -18,13 +18,13 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 
 function read(rel) {
-  return fs.readFileSync(path.join(SKILLS_DIR, rel), 'utf8');
+  return readText(path.join(SKILLS_DIR, rel));
 }
 
 // Frozen, hardcoded pre-migration excerpt of subagent-output-contract.md's canonical

@@ -19,19 +19,22 @@
 // to an executing session's own unmechanized, untested prose re-derivation
 // (#1966). `mergeGrantGap` on a `ready` result names the withholding member
 // the same way `mergeCheckVerdict` names a withheld needs-human verdict.
+// #3880: the third, narrowest exception — a ruling row (`isRulingRow: true`)
+// whose staged file does not show it safe to ratify (`console/sdd-ruling.js`'s
+// `sddRulingDeferralReason`) is named in `rulingGateGaps` and withheld the
+// same way; `readRulingTexts` reads those staged files for detect.
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { execFile, execFileSync } = require('child_process');
-const { promisify } = require('util');
+const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { iterRunDirsWithState } = require('../hooks/context');
 const { runWithConcurrency } = require('./gh-pool');
 const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
-
-const execFileAsync = promisify(execFile);
+const { sddRulingDeferralReason, SDD_RULING_REASONS } = require('../console/sdd-ruling');
+const { canonicalRealpath, resolveLeaf, isAncestorOrSelf } = require('../path-guard');
 
 const FETCH_TIMEOUT_MS = 5000;
 // _shared/console-execution.md's Pre-execution claim section — a claim older
@@ -56,6 +59,14 @@ const REVERSED_LABEL = 'reversed';
 // A flagged ruling whose reverse was refused or never created -- named in
 // `--reverse-failed`, never defaulted to `reversed`, and NOT cleared.
 const REVERSE_FAILED_NOTE = 'reverse not filed — see decisions.md';
+// A finding row (a can't-tell Low-confidence/Contested item, `findingItem` on its
+// console.json object, #3949) is tick = file, untick = drop: an unticked or declined
+// one is dropped, never declined. One whose filing failed is named in
+// `--filing-failed`, never defaulted to `dropped` or `executed`, and NOT cleared.
+const DROPPED_NOTE = 'dropped — nothing filed';
+const FILING_FAILED_NOTE = 'filing failed — see decisions.md';
+
+const isFindingRow = (item) => typeof item.findingItem === 'string' && item.findingItem.length > 0;
 
 // null = no console.json at all; undefined = present but unparseable (fails
 // closed, distinct from absent, mirroring archive-merged.js's readConsoleState).
@@ -130,7 +141,7 @@ function parseItemTicks(body) {
 async function ghJson(repoRoot, args) {
   let stdout;
   try {
-    ({ stdout } = await execFileAsync(
+    ({ stdout } = await execFileAsyncTimed(
       'gh',
       args,
       { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
@@ -197,7 +208,7 @@ async function fetchIssueGrant(repoRoot, issueNumber) {
 // same posture as every other best-effort read in this file.
 function resolveVetoWindowHours(runDir, repoRoot) {
   try {
-    const git = (args) => execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true });
+    const git = (args) => execFileSyncTimed('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true });
     const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
     const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['grant-veto-window-hours'] });
     const entry = result['grant-veto-window-hours'];
@@ -206,6 +217,46 @@ function resolveVetoWindowHours(runDir, repoRoot) {
     return Number.isFinite(veto) ? veto : undefined;
   } catch {
     return undefined;
+  }
+}
+
+// #3880: each `isRulingRow` item's staged file, read synchronously from
+// `{runDir}/{item.stagedPath}`. Each ruling id lands in exactly one map:
+// `texts` (the file's text) or `errors` (why the read failed). The four causes
+// are no-staged-path, path-rejected, not-found and read-failed; decideConsoleExecute
+// withholds every one as sdd-ruling-unreadable (#4049), so no read failure
+// reaches sddRulingDeferralReason as a silently-unclassified null.
+// `opts` ({ fsImpl, realpath }) is path-guard's injectable seam, threaded through so a test can
+// model a run dir or leaf that will not resolve; production callers pass nothing.
+function readRulingTexts(runDir, items, opts = {}) {
+  const texts = {};
+  const errors = {};
+  const base = path.resolve(runDir);
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item || item.isRulingRow !== true) continue;
+    const read = readInsideRunDir(base, item.stagedPath, opts);
+    if (read.error) errors[item.id] = read.error;
+    else texts[item.id] = read.text;
+  }
+  return { texts, errors };
+}
+
+// -> { text } | { error: 'no-staged-path' | 'path-rejected' | 'not-found' | 'read-failed' }
+function readInsideRunDir(base, rel, opts = {}) {
+  if (typeof rel !== 'string' || rel === '') return { error: 'no-staged-path' };
+  if (path.isAbsolute(rel) || rel.split(/[\\/]/).includes('..')) return { error: 'path-rejected' };
+  const rootReal = canonicalRealpath(base, opts);
+  if (rootReal === null) return { error: 'read-failed' };
+  const leaf = resolveLeaf(path.resolve(base, rel), opts);
+  if (leaf.state === 'missing' || leaf.state === 'dangling') return { error: 'not-found' };
+  if (leaf.state !== 'resolved') return { error: 'read-failed' };
+  // IL-161: the leaf's realpath follows a symlink in every segment, so a link planted
+  // inside the run dir that points outside it fails containment (docs/donts.md, IL-161).
+  if (!isAncestorOrSelf(rootReal, leaf.path)) return { error: 'path-rejected' };
+  try {
+    return { text: fs.readFileSync(leaf.path, 'utf8') };
+  } catch {
+    return { error: 'read-failed' };
   }
 }
 
@@ -231,9 +282,13 @@ function preFetchSkipReason(consoleJson, now) {
 // merge-grant check below) -> a detection verdict. No I/O, so the
 // race/claim/idempotence logic is unit-testable without gh.
 //   { action: 'ready', prNumber, commentIds, items } | { action: 'skip', reason }
-// ctx: { prBody?, memberGrants?: {[issueNumber]: {labels, pendingSince, skippedUntrusted?}}, vetoWindowHours?, now? }
-// — all optional; omitted entirely (the pre-#1802 call shape) always yields
-// mergeGrantGap: null, unchanged from before.
+// ctx: { prBody?, memberGrants?: {[issueNumber]: {labels, pendingSince, skippedUntrusted?}}, vetoWindowHours?, now?, rulingTexts?: {[itemId]: string|null}, rulingReadErrors?: {[itemId]: 'no-staged-path'|'path-rejected'|'not-found'|'read-failed'} }
+// — each gate fails closed when its row kind is present and its context is absent (#4048):
+// an isMergeRow item without a string prBody and an object memberGrants withholds as
+// mergeGrantGap { member: null, reason: 'grant-context-missing' }; an isRulingRow item
+// without a rulingTexts object withholds as sdd-ruling-unclassified. A console with neither
+// row kind needs no ctx (mergeGrantGap: null, rulingGateGaps: []). rulingGateGaps elements
+// are { id, reason } or, for an unreadable ruling row (#4049), { id, reason: 'sdd-ruling-unreadable', detail: cause }.
 function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
   const skipReason = preFetchSkipReason(consoleJson, now);
   if (skipReason) return { action: 'skip', reason: skipReason };
@@ -262,7 +317,7 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
     const commentId = item.commentId && commentIds.includes(item.commentId) ? item.commentId : commentIds[0];
     const ticks = ticksByComment.get(commentId) || {};
     return {
-      id: item.id, kind: item.kind, summary: item.summary, stagedHash: item.stagedHash, approved: ticks[item.id] === true, ...(item.isMergeRow === true ? { isMergeRow: true } : {}), ...(item.isRulingRow === true ? { isRulingRow: true } : {}),
+      id: item.id, kind: item.kind, summary: item.summary, stagedHash: item.stagedHash, approved: ticks[item.id] === true, ...(item.isMergeRow === true ? { isMergeRow: true } : {}), ...(item.isRulingRow === true ? { isRulingRow: true } : {}), ...(isFindingRow(item) ? { findingItem: item.findingItem } : {}),
     };
   });
 
@@ -275,50 +330,73 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
 
   // #1802: the second, narrower exception — withheld independent of
   // mergeCheckVerdict, since it reads directly observable current label
-  // state rather than a persisted, once-computed LLM judgment. Only
-  // evaluated when an isMergeRow item is actually present AND the caller
-  // supplied both a PR body and pre-fetched member grants (consoleExecuteDetect
-  // does; a direct unit-test call omitting ctx gets mergeGrantGap: null,
-  // preserving every pre-#1802 test's expectations unchanged).
+  // state rather than a persisted, once-computed LLM judgment. Evaluated
+  // whenever an isMergeRow item is present; the caller must supply both a PR
+  // body and pre-fetched member grants (consoleExecuteDetect does). When
+  // either is absent it withholds as grant-context-missing (#4048) rather
+  // than reading as "nothing to check".
   let mergeGrantGap = null;
   const hasMergeRow = items.some((item) => item.isMergeRow === true);
-  if (hasMergeRow && typeof ctx.prBody === 'string' && ctx.memberGrants && typeof ctx.memberGrants === 'object') {
-    const members = parseFixesMembers(ctx.prBody);
-    if (!members.length) {
-      // A merge row exists but no `Fixes #{n}` line could be parsed — the
-      // same fail-closed posture as resolve.js's own 'members-unresolved':
-      // a withheld grant is a human decision, never silently assumed clear
-      // for want of a membership list this session could not determine.
-      mergeGrantGap = { member: null, reason: 'members-unresolved' };
+  if (hasMergeRow) {
+    if (typeof ctx.prBody !== 'string' || !ctx.memberGrants || typeof ctx.memberGrants !== 'object') {
+      mergeGrantGap = { member: null, reason: 'grant-context-missing' };
     } else {
-      for (const n of members) {
-        const grant = ctx.memberGrants[n];
-        if (!grant) { mergeGrantGap = { member: n, reason: 'grant-unreadable' }; break; }
-        const mat = evaluateMaturation({
-          hasMergeLabel: (grant.labels || []).includes('auto:merge'),
-          hasPendingLabel: (grant.labels || []).includes('auto:merge-pending'),
-          pendingSince: grant.pendingSince || null,
-          vetoWindowHours: ctx.vetoWindowHours,
-          now: ctx.now !== undefined ? ctx.now : now,
-        });
-        if (!mat.mature) {
-          // #3358: a grant left unmatured while untrusted marker comments were
-          // passed over names them, so the withhold is not mistaken for "nobody
-          // ever granted" -- the planted comment is what the operator should see.
-          const passedOver = Array.isArray(grant.skippedUntrusted) ? grant.skippedUntrusted : [];
-          mergeGrantGap = { member: n, reason: passedOver.length ? `${mat.reason} — ${passedOver.join('; ')}` : mat.reason };
-          break;
+      const members = parseFixesMembers(ctx.prBody);
+      if (!members.length) {
+        // A merge row exists but no `Fixes #{n}` line could be parsed — the
+        // same fail-closed posture as resolve.js's own 'members-unresolved':
+        // a withheld grant is a human decision, never silently assumed clear
+        // for want of a membership list this session could not determine.
+        mergeGrantGap = { member: null, reason: 'members-unresolved' };
+      } else {
+        for (const n of members) {
+          const grant = ctx.memberGrants[n];
+          if (!grant) { mergeGrantGap = { member: n, reason: 'grant-unreadable' }; break; }
+          const mat = evaluateMaturation({
+            hasMergeLabel: (grant.labels || []).includes('auto:merge'),
+            hasPendingLabel: (grant.labels || []).includes('auto:merge-pending'),
+            pendingSince: grant.pendingSince || null,
+            vetoWindowHours: ctx.vetoWindowHours,
+            now: ctx.now !== undefined ? ctx.now : now,
+          });
+          if (!mat.mature) {
+            // #3358: a grant left unmatured while untrusted marker comments were
+            // passed over names them, so the withhold is not mistaken for "nobody
+            // ever granted" -- the planted comment is what the operator should see.
+            const passedOver = Array.isArray(grant.skippedUntrusted) ? grant.skippedUntrusted : [];
+            mergeGrantGap = { member: n, reason: passedOver.length ? `${mat.reason} — ${passedOver.join('; ')}` : mat.reason };
+            break;
+          }
         }
       }
     }
   }
 
+  // #3880: the third exception — a ruling row whose staged text does not show it
+  // safe to ratify. Pure: the texts arrive in ctx (consoleExecuteDetect reads them);
+  // a ruling id missing from ctx.rulingTexts reads as unclassified, and so does
+  // every ruling row when the map is absent altogether (#4048).
+  const rulingGateGaps = [];
+  const rulingTexts = ctx.rulingTexts && typeof ctx.rulingTexts === 'object' ? ctx.rulingTexts : null;
+  const readErrors = ctx.rulingReadErrors && typeof ctx.rulingReadErrors === 'object' ? ctx.rulingReadErrors : {};
+  for (const item of items) {
+    if (item.isRulingRow !== true) continue;
+    // #4049: a read that failed names its cause and outranks any text -- the
+    // unreadable row is a gap whether or not a null text also came back.
+    if (Object.prototype.hasOwnProperty.call(readErrors, item.id) && typeof readErrors[item.id] === 'string') {
+      rulingGateGaps.push({ id: item.id, reason: SDD_RULING_REASONS.UNREADABLE, detail: readErrors[item.id] });
+      continue;
+    }
+    const reason = sddRulingDeferralReason(rulingTexts ? rulingTexts[item.id] : null);
+    if (reason) rulingGateGaps.push({ id: item.id, reason });
+  }
+
   return {
-    action: 'ready', prNumber: consoleJson.prNumber, commentIds, items: resolvedItems, mergeCheckVerdict, mergeGrantGap,
+    action: 'ready', prNumber: consoleJson.prNumber, commentIds, items: resolvedItems, mergeCheckVerdict, mergeGrantGap, rulingGateGaps,
   };
 }
 
-// opts: { cwd? } -> { ready: [{ runDir, prNumber, commentIds, items, mergeCheckVerdict, mergeGrantGap }], skipped: [{ runDir, reason }] }
+// opts: { cwd? } -> { ready: [{ runDir, prNumber, commentIds, items, mergeCheckVerdict, mergeGrantGap, rulingGateGaps }], skipped: [{ runDir, reason }] }
 // Runs in two phases (#820, D5): a synchronous scan collecting every run dir
 // that needs a `gh pr view` fetch (fast fs reads + pure pre-checks), then
 // one gh-pool `runWithConcurrency` batch resolving all of those fetches at
@@ -353,9 +431,9 @@ async function consoleExecuteDetect(opts = {}) {
   // Every such candidate's memberGrants entry is seeded to {} BEFORE any
   // fetch resolves (not only on a successful one) — decideConsoleExecute
   // treats a member missing from memberGrants as 'grant-unreadable' and
-  // withholds, so a candidate whose fetches all fail still fails closed
-  // instead of silently falling back to ctx: {} (which would read as "no
-  // merge row to check" and let the row through unchecked).
+  // withholds, so a candidate whose fetches all fail still fails closed with
+  // the specific per-member reason instead of falling back to ctx: {} (which
+  // would only yield the generic 'grant-context-missing', #4048).
   const grantJobs = [];
   const mergeRowCandidateIndices = new Set();
   candidates.forEach((c, i) => {
@@ -381,10 +459,15 @@ async function consoleExecuteDetect(opts = {}) {
     const ctx = memberGrantsByCandidate.has(i)
       ? { prBody: fetch.body, memberGrants: memberGrantsByCandidate.get(i), vetoWindowHours: resolveVetoWindowHours(c.dir, root), now }
       : {};
+    // #3880: every candidate gets its ruling rows' staged texts (a no-op {} when it has none);
+    // #4049: and each unreadable row's cause, so the gap names why the read failed.
+    const { texts, errors } = readRulingTexts(c.dir, c.consoleJson.items);
+    ctx.rulingTexts = texts;
+    ctx.rulingReadErrors = errors;
     const decision = decideConsoleExecute(c.consoleJson, fetch.comments, now, ctx);
     if (decision.action === 'skip') { skipped.push({ runDir: c.dir, reason: decision.reason }); return; }
     ready.push({
-      runDir: c.dir, prNumber: decision.prNumber, commentIds: decision.commentIds, items: decision.items, mergeCheckVerdict: decision.mergeCheckVerdict, mergeGrantGap: decision.mergeGrantGap,
+      runDir: c.dir, prNumber: decision.prNumber, commentIds: decision.commentIds, items: decision.items, mergeCheckVerdict: decision.mergeCheckVerdict, mergeGrantGap: decision.mergeGrantGap, rulingGateGaps: decision.rulingGateGaps,
     });
   });
 
@@ -412,9 +495,11 @@ async function consoleExecuteDetect(opts = {}) {
 //   { status: 'noop', reason: 'already-resolved' | 'claimed', executingSession? }
 //   { status: 'error', reason: 'no-console' | 'unparseable-console-json' |
 //       'no-comment-ids' | 'no-pr-number' | 'network-failure' |
-//       'comment-not-found' | 'unknown-item-ids' | 'not-ruling-items' |
+//       'comment-not-found' | 'unknown-item-ids' | 'not-ruling-items' | 'not-finding-items' |
 //       'reply-comment-failed' | 'marker-edit-failed' | 'console-write-failed', ids?, error? }
-async function resolveConsoleExecution(runDir, { approve = [], decline = [], reverseFailed = [] } = {}, deps = {}) {
+async function resolveConsoleExecution(runDir, {
+  approve = [], decline = [], reverseFailed = [], filingFailed = [],
+} = {}, deps = {}) {
   const now = typeof deps.now === 'function' ? deps.now() : Date.now();
   const consoleJson = readConsoleJson(runDir);
   if (consoleJson === null) return { status: 'error', reason: 'no-console' };
@@ -453,12 +538,14 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [], rev
   const primary = byId.get(commentIds[0]);
   if (!primary) return { status: 'error', reason: 'comment-not-found' };
 
-  // Validate every named id against the comment's own parsed rows BEFORE
+  // Validate every named id against the comments' own parsed rows BEFORE
   // any write — a partial write followed by an error would leave the
-  // console in an inconsistent state.
-  const ticks = parseItemTicks(primary.body);
-  const knownIds = new Set(Object.keys(ticks));
-  const namedIds = [...new Set([...approve, ...decline, ...reverseFailed])];
+  // console in an inconsistent state. Overflow comments carry their own
+  // item ticks (decideConsoleExecute reads them the same way).
+  const ticksByComment = new Map(commentIds.map((id) => [id, byId.has(id) ? parseItemTicks(byId.get(id).body) : {}]));
+  const ticksOf = (item) => ticksByComment.get(commentIds.includes(item.commentId) ? item.commentId : commentIds[0]);
+  const knownIds = new Set([...ticksByComment.values()].flatMap((t) => Object.keys(t)));
+  const namedIds = [...new Set([...approve, ...decline, ...reverseFailed, ...filingFailed])];
   const unknownIds = namedIds.filter((id) => !knownIds.has(id));
   if (unknownIds.length) return { status: 'error', reason: 'unknown-item-ids', ids: unknownIds };
 
@@ -468,9 +555,14 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [], rev
   const rulingIds = new Set(items.filter((item) => item.isRulingRow === true).map((item) => item.id));
   const notRulingIds = [...new Set(reverseFailed)].filter((id) => !rulingIds.has(id));
   if (notRulingIds.length) return { status: 'error', reason: 'not-ruling-items', ids: notRulingIds };
+  // --filing-failed, likewise, only for a finding row.
+  const findingIds = new Set(items.filter(isFindingRow).map((item) => item.id));
+  const notFindingIds = [...new Set(filingFailed)].filter((id) => !findingIds.has(id));
+  if (notFindingIds.length) return { status: 'error', reason: 'not-finding-items', ids: notFindingIds };
   const approveSet = new Set(approve);
   const declineSet = new Set(decline);
   const reverseFailedSet = new Set(reverseFailed);
+  const filingFailedSet = new Set(filingFailed);
   // Every item this console names gets an outcome — one explicitly declined
   // via `--decline`, one explicitly (or already-tick) approved, and
   // anything named in neither list defaults to declined ("declined, no
@@ -481,11 +573,21 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [], rev
   // item) that is not ratified routes to reversed instead, whether unticked
   // or named in --decline (`_shared/console-execution.md`). A flagged ruling
   // named in --reverse-failed outranks all of it: its reverse was refused or
-  // never created, so it reads reverse-failed and is not cleared.
+  // never created, so it reads reverse-failed and is not cleared. A finding
+  // row follows the same shape: unticked or declined it is dropped (cleared),
+  // named in --filing-failed it reads filing-failed (not cleared), and a row
+  // whose tick no comment carries is declined (not cleared) — a drop needs
+  // the untick, never an absent row.
   const outcomes = items.map((item) => {
+    const ticks = ticksOf(item);
     if (item.isRulingRow === true && reverseFailedSet.has(item.id)) {
       return {
         id: item.id, kind: item.kind, outcome: 'reverse-failed', note: REVERSE_FAILED_NOTE, isMergeRow: item.isMergeRow === true, isRulingRow: true,
+      };
+    }
+    if (isFindingRow(item) && filingFailedSet.has(item.id)) {
+      return {
+        id: item.id, kind: item.kind, outcome: 'filing-failed', note: FILING_FAILED_NOTE, isMergeRow: item.isMergeRow === true, findingItem: item.findingItem,
       };
     }
     if (!declineSet.has(item.id) && (approveSet.has(item.id) || ticks[item.id] === true)) {
@@ -494,6 +596,11 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [], rev
     if (item.isRulingRow === true) {
       return {
         id: item.id, kind: item.kind, outcome: 'reversed', note: REVERSED_LABEL, isMergeRow: item.isMergeRow === true, isRulingRow: true,
+      };
+    }
+    if (isFindingRow(item) && (declineSet.has(item.id) || ticks[item.id] === false)) {
+      return {
+        id: item.id, kind: item.kind, outcome: 'dropped', note: DROPPED_NOTE, isMergeRow: item.isMergeRow === true, findingItem: item.findingItem,
       };
     }
     return {
@@ -506,8 +613,9 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [], rev
   // (an isMergeRow item declined while others remain unticked leaves both
   // that item and Resolve unticked). A reversed ruling counts as cleared: a
   // reversal is a decided outcome, not an unanswered item. A reverse-failed
-  // ruling does not: no reversal record exists.
-  const allCleared = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'executed' || o.outcome === 'reversed');
+  // ruling does not: no reversal record exists. A dropped finding counts as
+  // cleared and a filing-failed one does not, the same way.
+  const allCleared = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'executed' || o.outcome === 'reversed' || o.outcome === 'dropped');
 
   // 1. Reply comment first — the source of truth a foreign detection pass
   // keys "already executed" off, per the Write order section. Idempotent
@@ -551,6 +659,9 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [], rev
   }
 
   // 3. console.json.executedAt + resolved (true only when every item cleared), together, in one write.
+  // The same write also records each item's outcome (and its note, when the
+  // outcome carries one) on the item itself, which console/residue.js reads
+  // to tell failed outcomes apart from settled ones.
   // Guarded (unlike the two gh calls above, this is the only I/O in the
   // function with no injected-failure return shape of its own): by this
   // point both gh writes have already landed for real, so an uncaught throw
@@ -558,7 +669,18 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [], rev
   // `.catch(() => process.exit(0))` and exit silently successful — this
   // module's own header names that exact hazard as one a sibling code path
   // was already patched to avoid.
-  const nextConsoleJson = { ...consoleJson, executedAt: new Date(now).toISOString(), resolved: allCleared };
+  const nextConsoleJson = {
+    ...consoleJson,
+    ...(Array.isArray(consoleJson.items) ? {
+      items: consoleJson.items.map((item, i) => ({
+        ...item,
+        outcome: outcomes[i].outcome,
+        ...(outcomes[i].note ? { note: outcomes[i].note } : {}),
+      })),
+    } : {}),
+    executedAt: new Date(now).toISOString(),
+    resolved: allCleared,
+  };
   try {
     deps.writeFile(path.join(runDir, 'console.json'), JSON.stringify(nextConsoleJson, null, 2));
   } catch (err) {
@@ -604,8 +726,8 @@ function buildExecutedReplyBody(outcomes) {
 }
 
 // Ticks the Resolve checkbox row (isResolveTicked's own row shape, in
-// reverse) only when every item cleared (executed or reversed) — a partial
-// resolution, with a declined or reverse-failed item, must never silently tick
+// reverse) only when every item cleared (executed, reversed or dropped) — a partial
+// resolution, with a declined, reverse-failed or filing-failed item, must never silently tick
 // Resolve, since that would tell a later detection pass "a human confirmed
 // everything," which isn't true.
 function tickResolveBoxIfAllCleared(body, allCleared) {
@@ -631,6 +753,7 @@ module.exports = {
   isClaimReclaimable,
   readConsoleJson,
   parseFixesMembers,
+  readRulingTexts,
   fetchIssueGrant,
   resolveConsoleExecution,
   renderExecutedLines,
@@ -638,4 +761,6 @@ module.exports = {
   DECLINED_NOTE,
   REVERSED_LABEL,
   REVERSE_FAILED_NOTE,
+  DROPPED_NOTE,
+  FILING_FAILED_NOTE,
 };

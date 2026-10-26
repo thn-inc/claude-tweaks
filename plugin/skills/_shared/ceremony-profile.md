@@ -39,6 +39,10 @@
 | `/claude-tweaks:test` Step 1.5 Design CLI gate | `test/design-gate.md` | The polish skip's safety argument leans on it |
 | `/claude-tweaks:review` Step 6.5 Design Quality Pass | `review/code-mode-steps.md` | The polish skip's safety argument leans on it |
 
+## Express lane
+
+The express lane (`_shared/express-lane.md`, #4025) is not a third `ceremony-profile` value and not a row of `## Skips by profile`: a record on the lane never enters `/flow`'s frame, so no profile is in play. The `## Never skipped` floor above binds every run that does enter it — an escalated express record included, which continues on the normal path under its own profile like any other run. In place of review the lane keeps its own controls: the `express-lane.js gate` eligibility verdict, the impacted tests plus the runner pass stamp, the diff-bounds check, CI green before merge, `merge-check`, and the post-merge sampled review (which runs only at the end of a bare `/claude-tweaks:dispatch` drain — `_shared/express-lane.md`'s Post-merge sampling).
+
 ## Mentions that are not skips
 
 Lines that pair `fast-lane` with `skip` without skipping a step. The conformance test exempts a line only when its file matches and the line contains the `Line contains` text.
@@ -51,7 +55,6 @@ Lines that pair `fast-lane` with `skip` without skipping a step. The conformance
 | `review/review-effort-derivation.md` | `Step 1 is skipped under \`ceremony-profile: fast-lane\`` | An aside explaining why the label read is independent of Step 1 |
 | `wrap-up/SKILL.md` | `Skip entirely when \`config.yml\`'s \`ceremony-profile\` is not \`fast-lane\`` | The escape hatch's own gate |
 | `wrap-up/SKILL.md` | `the downgrade covers only this run's remaining wrap-up steps` | The escape hatch's re-run-is-fast-lane-again truth statement (#1926 I1) |
-| `wrap-up/review-console.md` | `tag: fast-lane` | A merge-tag literal, not a ceremony skip |
 | `wrap-up/ceremony-derivation.md` | `Skip this file.` | Derivation has nothing to do when the profile is already set |
 | `_shared/ceremony-check-invocation.md` | `Skip the call entirely when \`facets.ceremony\`` | The ceremony-check CLI is skipped when a label already exists, at any profile |
 | `_shared/fast-lane-digest.md` | `skips or narrows` | A restatement file that defers to this roster |

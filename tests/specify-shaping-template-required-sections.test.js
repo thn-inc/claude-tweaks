@@ -4,11 +4,11 @@
 // 110 of 126 ready records came to fail the gate (2026-09-29).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { REQUIRED_SECTIONS } = require('../plugin/bin/lib/issues/materialize-format');
+const { readText } = require('./helpers/read-skill');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => readText(path.join(__dirname, '..', rel));
 
 // The first ``` fenced block after an anchor phrase, as an array of lines.
 function fenceAfter(src, anchor) {

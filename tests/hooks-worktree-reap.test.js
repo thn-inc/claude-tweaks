@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   parseWorktreeList, isPidAlive, lockVerdict, isStale, isContentIdentical, reapWorktrees,
-  resolveIntegrationBranch, ORPHAN_GRACE_MS, MAX_EXAMINED_PER_RUN, REASON, QUIET_SKIP_REASONS,
+  resolveIntegrationBranch, findWorktreeEntry, ORPHAN_GRACE_MS, MAX_EXAMINED_PER_RUN, REASON, QUIET_SKIP_REASONS,
 } = require('../plugin/bin/lib/hooks/worktree-reap');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -589,4 +589,10 @@ test('#1793: a removed path with no lease is a no-op release with no note', () =
   const res = reapWorktrees({ cwd: main, integration: base, releasePorts: (p) => release(p, { home }) });
   assert.deepStrictEqual(res.reaped, [wt]);
   assert.deepStrictEqual(res.portsRelease, []);
+});
+
+test('#3811: findWorktreeEntry lives beside parseWorktreeList and teardown-run re-exports the same function', () => {
+  const entries = parseWorktreeList('worktree D:/a/x\nbranch refs/heads/trunk\n\nworktree D:/a/x/feat\nbranch refs/heads/feat\n\n');
+  assert.strictEqual(findWorktreeEntry(entries, 'D:\\a\\x\\feat', path.win32).branch, 'feat');
+  assert.strictEqual(require('../plugin/bin/lib/hooks/teardown-run').findWorktreeEntry, findWorktreeEntry);
 });

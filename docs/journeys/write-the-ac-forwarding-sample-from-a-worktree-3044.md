@@ -32,7 +32,7 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/write-run-artifact.js" --run "$PIPELINE_RUN_DIR" --name sdd-dispatch-sample.txt --file "{sample-path}"`
 - **Action:** Substitute the literal scratch path for `{sample-path}`, then run it. Exit 0 prints the anchored run-dir path that was written.
 - **Should feel:** Like the sibling writers (`log-decision.js`, `stage-item.js`, `set-config.js`, `set-verify-expectations.js`): one command and a printed path, with no harness prompt.
-- **Should understand:** Exit 2 means a malformed invocation or a `--name` outside the allowlist; only `sdd-dispatch-sample.txt` and `sdd-final-review.md` are allowlisted today. Exit 3 means the run directory is missing, sits in a worktree-local shadow, or the file could not be written. A non-zero exit never blocks the dispatch. Send the review anyway, and the "No sample file at all" branch logs the gap later.
+- **Should understand:** Exit 2 means a malformed invocation or a `--name` outside the allowlist; only `sdd-dispatch-sample.txt`, `sdd-final-review.md` and `review-findings.json` are allowlisted today. Exit 3 means the run directory is missing, sits in a worktree-local shadow, or the file could not be written. A non-zero exit never blocks the dispatch. Send the review anyway, and the "No sample file at all" branch logs the gap later.
 - **Red flags:** A sample file appearing under the worktree's own `.claude-tweaks/pipelines/` (a shadow, `[IL-127]`). A retry loop on exit 3 instead of moving on.
 
 ### 4. Read it back and log the verdict

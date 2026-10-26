@@ -1,7 +1,7 @@
 ---
 name: visual-review
 description: Use when you want to visually review a running application in the browser — inspect UI quality, walk user journeys, discover undocumented journeys, or generate creative improvement ideas.
-argument-hint: "[<url>|journey:<name>|discover [--budget <n>]|--mode=recommendation] [--source <parent-skill>]"
+argument-hint: "[<url>|journey:<name>|discover [--budget <n>]|--mode=recommendation]"
 ---
 
 # Visual Review — Browser-Based UI Inspection
@@ -28,7 +28,9 @@ This SKILL.md is the **orientation + mode resolution** layer. The mechanical bro
 
 ## Input
 
-`$ARGUMENTS` is parsed as `[<url>|journey:<name>|discover [--budget <n>]|--mode=recommendation] [--source <parent-skill>]` — see Modes and Mode Resolution below for what each token resolves to.
+`$ARGUMENTS` is parsed as `[<url>|journey:<name>|discover [--budget <n>]|--mode=recommendation]` — see Modes and Mode Resolution below for what each token resolves to.
+
+- `--source <parent-skill>` (producer-only) — a parent skill with no `$PIPELINE_RUN_DIR` of its own names itself; see Fallback signal (`--source`) below.
 
 ## Modes
 

@@ -2,12 +2,9 @@
 // reconcile() degrades once, fast, instead of every network-dependent check
 // separately discovering the same outage via its own 5-10s timeout (#820).
 'use strict';
-const { execFileSync, execFile } = require('child_process');
-const { promisify } = require('util');
+const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { classifyGhApiError } = require('../issues/claim-store');
 const { runClassified, runClassifiedAsync } = require('../shared-primitives');
-
-const execFileAsync = promisify(execFile);
 
 // #2567: this bound is deliberately its own, smaller value — not GH_TIMEOUT_MS
 // — so a single retry-on-timeout (opted into below) still costs at most 4s
@@ -15,11 +12,11 @@ const execFileAsync = promisify(execFile);
 const PREFLIGHT_TIMEOUT_MS = 2000;
 
 function defaultRunner(args, timeoutMs) {
-  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: timeoutMs, windowsHide: true });
+  return execFileSyncTimed('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: timeoutMs, windowsHide: true });
 }
 
 async function defaultRunnerAsync(args, timeoutMs) {
-  const { stdout } = await execFileAsync('gh', args, { encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
+  const { stdout } = await execFileAsyncTimed('gh', args, { encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
   return stdout;
 }
 

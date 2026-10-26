@@ -10,11 +10,11 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(REPO_ROOT, rel));
 
 test('test/SKILL.md redefines `affected` onto verify.js --changed-files and drops the git-diff wording (#1923 AC3)', () => {
   const skill = read('plugin/skills/test/SKILL.md');
@@ -46,7 +46,8 @@ test('verification.md holds the re-verify scoping table with every site row (#19
   const v = read('plugin/skills/test/verification.md');
   const table = v.slice(v.indexOf('### Re-verify scoping'));
   for (const row of [
-    ['Build Common Step 5', 'always full'],
+    ['Build Common Step 5', '| full (impact-selected via'],
+    ['Build Common Step 5', '(impact-selection.md)'],
     ["auto-inserted `test`", 'scoped against `fullSha`'],
     ['Polish re-verify', 'scoped'],
     ['Review-fix re-verify', 'scoped'],

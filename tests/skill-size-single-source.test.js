@@ -24,6 +24,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SINGLE_SOURCE = 'plugin/bin/lib/skill-audit/budgets.js';
@@ -94,7 +95,7 @@ function scanText(text) {
       if (decl[2] && !/[}\]]\s*[;,)]?\s*$/.test(line)) openLiteral = decl[1];
     }
     const forOf = line.match(/\bfor\s*\(\s*(?:const|let|var)\s+(\[[^\]]*\]|[A-Za-z_$][\w$]*)\s+of\b/);
-    if (forOf && refsSkill) for (const name of forOf[1].match(/[A-Za-z_$][\w$]*/g)) tainted.add(name);
+    if (forOf && refsSkill) for (const name of (forOf[1].match(/[A-Za-z_$][\w$]*/g) || [])) tainted.add(name);
     if (!refsSkill) return;
     if (!SIZE_MEASURE.test(code)) return;
     let flagged = false;
@@ -133,7 +134,7 @@ test('AC3.1: no file under tests/ or plugin/bin/ other than budgets.js defines o
   for (const abs of [...walkJs(path.join(ROOT, 'tests')), ...walkJs(path.join(ROOT, 'plugin', 'bin'))]) {
     const rel = path.relative(ROOT, abs).split(path.sep).join('/');
     if (rel === SINGLE_SOURCE || ALLOWLIST.has(rel)) continue;
-    const r = scanText(fs.readFileSync(abs, 'utf8'));
+    const r = scanText(readText(abs));
     for (const v of r.violations) violations.push(`${rel}:${v.line} (rule ${v.rule}): ${v.text}`);
     for (const u of r.unclassified) unclassified.push(`${rel}:${u.line} [${u.operand}]: ${u.text}`);
   }
@@ -238,6 +239,15 @@ test('self-test: what the scanner must not flag', () => {
   assert.deepStrictEqual(scanText("const s = read('plugin/skills/x.md');\nassert.ok(s.includes('a'), 'expected < 8000 bytes');"), { violations: [], unclassified: [] });
   assert.deepStrictEqual(scanText("const bytes = Buffer.byteLength(read('plugin/skills/x.md'));\nassert.ok(bytes <= RAIL_BYTES);"), { violations: [], unclassified: [] });
   assert.deepStrictEqual(scanText("const n = measureSkills('plugin/skills');\nassert.ok(n.bytes > 0);"), { violations: [], unclassified: [] });
+});
+
+test('self-test: a for...of destructure that binds no names neither throws nor taints', () => {
+  // `for (const [] of x)` is valid JS with no bindings; the scanner must skip it, with or without a skill reference.
+  const after = ['const bytes = rows.length;', 'assert.ok(bytes < 8192);'];
+  const bare = ['for (const [] of x) {', '}', ...after].join('\n');
+  const withSkill = ["for (const [] of readAll('plugin/skills/x.md')) {", '}', ...after].join('\n');
+  assert.deepStrictEqual(scanText(bare), { violations: [], unclassified: [] });
+  assert.deepStrictEqual(scanText(withSkill), { violations: [], unclassified: [] });
 });
 
 module.exports = { scanText };

@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 // Live-corpus scan, deliberately not a frozen fixture (#461): the whole point of this
 // suite is to catch a *future* skill that names a step "HARD GATE" without landing the
@@ -99,7 +100,7 @@ test('every "HARD GATE" heading under plugin/skills/**/*.md carries an adjacent 
   const files = findAllMdFiles(SKILLS_DIR);
   const failures = [];
   for (const file of files) {
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     for (const site of findHardGateHeadingSites(text)) {
       if (!site.hasMarker) {
         failures.push(`${path.relative(ROOT, file)}:${site.lineNumber}`);

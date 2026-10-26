@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const {
   MANIFESTO_LEVERS, RUN_PINS, leverValues, validateLever, setConfigLever,
 } = require('../../../plugin/bin/lib/set-config/write');
@@ -76,8 +77,7 @@ test('leverValues: schema-backed levers surface POLICY_KEYS enums; config-only l
 });
 
 test('MANIFESTO_LEVERS matches manifesto.md\'s config.yml example block (the canonical lever set)', () => {
-  const manifesto = fs.readFileSync(
-    path.join(REPO_ROOT, 'plugin', 'skills', 'flow', 'manifesto.md'), 'utf8');
+  const manifesto = readText(path.join(REPO_ROOT, 'plugin', 'skills', 'flow', 'manifesto.md'));
   const approvalIdx = manifesto.indexOf('On approval (option 1)');
   assert.ok(approvalIdx !== -1, 'manifesto.md: "On approval (option 1)" section not found — anchor may have moved');
   const fenceStart = manifesto.indexOf('```yaml', approvalIdx);

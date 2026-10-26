@@ -4,6 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 const FRAGMENT = '_shared/integration-branch.md';
@@ -41,8 +43,9 @@ function walk(dir, acc = []) {
 test('every file resolving the GitHub default branch cites the shared fragment or is allowlisted', () => {
   const offenders = [];
   for (const file of walk(SKILLS_DIR)) {
-    const rel = path.relative(SKILLS_DIR, file);
-    const text = fs.readFileSync(file, 'utf8');
+    // Compared against a /-keyed allowlist, so it is a display ID (#4288).
+    const rel = toPosix(path.relative(SKILLS_DIR, file));
+    const text = readText(file);
     if (!RESOLVER.test(text)) continue;
     if (ALLOWLIST.has(rel)) continue;
     if (text.includes(FRAGMENT)) continue;
@@ -63,7 +66,7 @@ test('the allowlist has no stale entries', () => {
       stale.push(`${rel} (file no longer exists)`);
       continue;
     }
-    const text = fs.readFileSync(full, 'utf8');
+    const text = readText(full);
     if (!RESOLVER.test(text)) {
       stale.push(`${rel} (no longer resolves a default branch — drop the entry)`);
       continue;
@@ -112,7 +115,7 @@ const MARKED_CONSUMERS = [
 ];
 
 function readSkill(rel) {
-  return fs.readFileSync(path.join(SKILLS_DIR, rel), 'utf8');
+  return readText(path.join(SKILLS_DIR, rel));
 }
 
 for (const { rel, expectedExcludes } of MARKED_CONSUMERS) {

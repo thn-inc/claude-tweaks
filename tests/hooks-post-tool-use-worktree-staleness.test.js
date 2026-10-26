@@ -344,3 +344,12 @@ test('#2476: a real (non-forced) unset key still logs result: unset, distinct fr
   assert.strictEqual(events[0].result, 'unset');
   assert.notStrictEqual(events[0].result, 'check-failed');
 });
+
+test('#3811: resolveWorktreePathViaPorcelain matches win32 forward-slash porcelain against a backslash cwd', () => {
+  const porcelain = 'worktree D:/a/x\nbranch refs/heads/trunk\n\nworktree D:/a/x/feat\nbranch refs/heads/feat\n\n';
+  const deps = { runGit: () => ({ stdout: porcelain, failure: null }), pathImpl: path.win32 };
+  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ cwd: 'D:\\a\\x\\feat' }, deps), { path: 'D:/a/x/feat', isMain: false });
+  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ cwd: 'd:\\a\\x\\feat\\' }, deps), { path: 'D:/a/x/feat', isMain: false });
+  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ cwd: 'D:\\a\\x' }, deps), { path: 'D:/a/x', isMain: true });
+  assert.strictEqual(post.resolveWorktreePathViaPorcelain({ cwd: 'D:\\elsewhere' }, deps), null);
+});

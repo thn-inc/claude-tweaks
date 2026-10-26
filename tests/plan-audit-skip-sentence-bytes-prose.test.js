@@ -9,13 +9,13 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILL_MD = path.join(__dirname, '..', 'plugin', 'skills', 'build', 'SKILL.md');
 
 function read() {
-  return fs.readFileSync(SKILL_MD, 'utf8');
+  return readText(SKILL_MD);
 }
 
 test('build/SKILL.md Common Step 1.5 skip sentence names --bytes as the one check the skip gate does not cover (#2000)', () => {

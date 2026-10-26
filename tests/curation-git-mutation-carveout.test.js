@@ -7,12 +7,12 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
-const ENGINE = fs.readFileSync(path.join(SKILLS, 'wrap-up', 'curation-engine.md'), 'utf8');
-const CURATION = fs.readFileSync(path.join(SKILLS, 'wrap-up', 'skill-curation.md'), 'utf8');
+const ENGINE = readText(path.join(SKILLS, 'wrap-up', 'curation-engine.md'));
+const CURATION = readText(path.join(SKILLS, 'wrap-up', 'skill-curation.md'));
 
 // Frozen pre-change excerpt of the "No judge-side git mutations" paragraph's opening two
 // sentences, as they read before #1676's carve-out was inserted — a string literal, not a

@@ -16,12 +16,12 @@
 // restated-grammar text.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { extractArgumentHint } = require('../plugin/bin/lib/skill-audit/argument-hint');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 // Whitespace-flattened for substring pins below: a later re-wrap of the skill
 // prose must not fail a pin whose meaning is intact, only its line breaks moved.
 // Never used for argument-hint extraction (extractArgumentHint needs real

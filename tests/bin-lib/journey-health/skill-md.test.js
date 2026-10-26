@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const {
   registerHouseSectionOrderTest,
   registerInteractionStyleTest,
@@ -11,7 +12,7 @@ const {
 } = require('../health-core/skill-md-house-checks');
 
 const SKILL = path.resolve(__dirname, '..', '..', '..', 'plugin', 'skills', 'journey-health', 'SKILL.md');
-const read = () => fs.readFileSync(SKILL, 'utf8');
+const read = () => readText(SKILL);
 
 test('exists', () => {
   assert.ok(fs.existsSync(SKILL), `SKILL.md not found at ${SKILL}`);
@@ -41,9 +42,7 @@ registerPipelineRunDirTest(test, assert, read);
 test('docs/skill-graph.md records the edges to /journeys, /stories, /test, /tidy, /backlog, /routine', () => {
   // These edges used to be asserted against this skill's own Relationship table.
   // That table is gone; the edges live in the graph, which uses the short form.
-  const graph = fs.readFileSync(
-    path.join(__dirname, '..', '..', '..', 'docs', 'skill-graph.md'), 'utf8',
-  );
+  const graph = readText(path.join(__dirname, '..', '..', '..', 'docs', 'skill-graph.md'));
   for (const s of ['/journeys', '/stories', '/test', '/tidy', '/backlog', '/routine']) {
     assert.ok(graph.includes(s), `docs/skill-graph.md is missing the edge to ${s}`);
   }

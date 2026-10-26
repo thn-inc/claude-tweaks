@@ -38,6 +38,7 @@ const SKILLS_DIR = path.join(ROOT, 'plugin', 'skills');
 // per SKILL.md. Imported here (not re-typed) so this file can never drift from
 // the one real copy.
 const { INTERACTION_STYLE_DIRECTIVE: INTERACTION_STYLE } = require('../../../plugin/bin/lib/hooks/interaction-style');
+const { readText } = require('../../helpers/read-skill');
 
 // Explicit, justified exceptions. A skill belongs here only when the rule
 // genuinely cannot apply to it — never to quiet a real failure.
@@ -59,7 +60,7 @@ const skills = fs
   .filter((name) => fs.existsSync(path.join(SKILLS_DIR, name, 'SKILL.md')))
   .sort();
 
-const readSkill = (name) => fs.readFileSync(path.join(SKILLS_DIR, name, 'SKILL.md'), 'utf8');
+const readSkill = (name) => readText(path.join(SKILLS_DIR, name, 'SKILL.md'));
 
 test('the corpus resolves to every skill directory that has a SKILL.md', () => {
   // A path or glob mistake that silently matched nothing would make every

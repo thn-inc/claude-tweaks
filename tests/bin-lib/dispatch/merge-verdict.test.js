@@ -107,6 +107,30 @@ test('a pass line with a lever suffix still confirms', () => {
   assert.strictEqual(confirmPassingVerdicts(content, [5])[5].confirmed, true);
 });
 
+test('AC3.1: a pass line whose Reversibility carries a note confirms, with and without a lever suffix', () => {
+  for (const reversibility of ['n/a (a policy read, not a code mutation)', 'n/a (see docs/x.md)']) {
+    const plain = `${line(VERDICT_STEPS.shortCircuit, verdictText(2941), { reversibility })}\n`;
+    assert.deepStrictEqual(confirmPassingVerdicts(plain, [2941]), { 2941: { confirmed: true, latest: 'auto-merge' } }, reversibility);
+    const levered = `${line(VERDICT_STEPS.gate, verdictText(5), { reversibility, lever: 'auto-merge-max-lines=40 (default)' })}\n`;
+    assert.strictEqual(confirmPassingVerdicts(levered, [5])[5].confirmed, true, reversibility);
+  }
+});
+
+test('AC3.2: a noted pass line cut off inside the note does not confirm', () => {
+  const full = line(VERDICT_STEPS.shortCircuit, verdictText(2941), { reversibility: 'n/a (a policy read, not a code mutation)' });
+  const cut = full.slice(0, full.indexOf('policy re') + 'policy re'.length);
+  assert.deepStrictEqual(confirmPassingVerdicts(`${cut}\n`, [2941]), { 2941: { confirmed: false, latest: 'unparsed' } });
+});
+
+test('AC3.2: a noted pass line with a tail after the note does not confirm; nested parens and periods inside the note still do', () => {
+  const tailed = `${line(VERDICT_STEPS.shortCircuit, verdictText(2941), { reversibility: 'n/a (x). trailing narrative (y)' })}\n`;
+  assert.deepStrictEqual(confirmPassingVerdicts(tailed, [2941]), { 2941: { confirmed: false, latest: 'unparsed' } });
+  for (const reversibility of ['n/a (see (a))', 'high (commit abc.def)']) {
+    const ok = `${line(VERDICT_STEPS.gate, verdictText(5), { reversibility })}\n`;
+    assert.strictEqual(confirmPassingVerdicts(ok, [5])[5].confirmed, true, reversibility);
+  }
+});
+
 test('a --spec location prefix is still recognized', () => {
   const content = `${line(VERDICT_STEPS.shortCircuit, verdictText(2941), { spec: 2941 })}\n`;
   assert.strictEqual(confirmPassingVerdicts(content, [2941])[2941].confirmed, true);

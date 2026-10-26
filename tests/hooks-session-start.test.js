@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const sessionStart = require('../plugin/bin/lib/hooks/session-start');
+const ctxLib = require('../plugin/bin/lib/hooks/context');
 const deps = require('../plugin/bin/lib/deps');
 const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
 
@@ -653,6 +654,71 @@ test('SessionStart surfaces a prior background reconcile pass exactly once (#820
   if (second.json) {
     assert.doesNotMatch(second.json.hookSpecificOutput.additionalContext, /background reconcile/);
   }
+});
+
+// Characterization of the per-check lines the prior-pass summary renders,
+// prunedRemote included (the pattern the ledger-residue lines follow).
+test('SessionStart renders a prior background pass\'s reaped/branch/remote-prune lines', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(), surfaced: false, summary: { reaped: 1, archivedBranches: 2, prunedRemote: 3 },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    out.json.hookSpecificOutput.additionalContext,
+    /background reconcile \(from a prior session\) — 1 finished worktree\(s\) removed \(already merged\); 2 local branch\(es\) archived\/deleted; 3 merged remote branch\(es\) deleted on origin\./,
+  );
+});
+
+test('SessionStart surfaces a prior background pass that failed, with its reason (#4032)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(), surfaced: false, summary: { failed: true, error: 'gh exploded' },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    out.json.hookSpecificOutput.additionalContext,
+    /background reconcile \(from a prior session\) — the pass failed \(gh exploded\)\./,
+  );
+});
+
+test('SessionStart surfaces a prior background pass\'s residue errors with the latest one (#4180)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(),
+    surfaced: false,
+    summary: { residueErrors: 2, lastResidueError: { op: 'resolve', error: 'gh down' } },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    out.json.hookSpecificOutput.additionalContext,
+    /background reconcile \(from a prior session\) — 2 residue error\(s\) \(last: resolve — gh down\)\./,
+  );
+});
+
+test('SessionStart renders a prior background pass\'s ledger-residue PR count and notable residue (#3812)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(),
+    surfaced: false,
+    summary: {
+      prunedRemote: 1,
+      ledgerResiduePrOpened: 1,
+      notableLedgerResidue: [
+        { path: 'docs/plans/2026-10-20-x-ledger.md', reason: 'ledger-has-open-rows' },
+        { path: 'docs/plans/2026-10-20-y-ledger.md', reason: 'removal-pr-open', prNumber: 88 },
+      ],
+    },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    out.json.hookSpecificOutput.additionalContext,
+    /1 merged remote branch\(es\) deleted on origin; 1 residue-ledger removal PR\(s\) opened on origin; residue ledger\(s\) left on the integration branch: 2026-10-20-x-ledger\.md \(ledger-has-open-rows\), 2026-10-20-y-ledger\.md \(removal-pr-open #88\)\./,
+  );
 });
 
 // Task 10 review Critical finding: the spawn gate must key off the
@@ -1324,4 +1390,86 @@ test('AC6.1 SessionStart banner carries the review-console suffix for an eligibl
   assert.ok(ctx.includes('one line per run naming its close-run command, or its re-entry command where the line carries one'), ctx);
   assert.ok(ctx.includes('never run either command yourself'), ctx);
   assert.ok(ctx.includes('PIPELINE_RUN_DIR="'), ctx);
+});
+
+// #3845: `claude --resume` brings the owning session id back under a new process, so a
+// resume SessionStart re-stamps the run's ownerPid; every other start leaves it alone.
+async function resumeStamp({ source = 'resume', env = '222', state = {}, attribution = 'session', sessionId = 'sess-r' }) {
+  const project = tmpProject();
+  const run = mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted', sessionId: 'sess-r', ownerPid: 111, ...state });
+  const prior = process.env.CLAUDE_PID;
+  if (env === null) delete process.env.CLAUDE_PID;
+  else process.env.CLAUDE_PID = env;
+  try {
+    await runSessionStart({ input: { source, session_id: sessionId }, runDir: run, runState: null, cwd: project, ownedRun: { dir: run, attribution } });
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_PID;
+    else process.env.CLAUDE_PID = prior;
+  }
+  return ctxLib.readRunState(run);
+}
+
+test('#3845: a resume SessionStart re-stamps the owned run with the resumed process pid', async () => {
+  assert.strictEqual((await resumeStamp({})).ownerPid, 222);
+});
+
+test('AC3.2/AC3.3: SessionStart re-stamps the owner block before it spawns the reconcile pass', async () => {
+  const project = gitProject(); // the spawn gate needs a resolvable main checkout root
+  const run = mkRun(project, '2026-07-01T090000-spec-1', {
+    status: 'interrupted',
+    sessionId: 'sess-o',
+    owner: { sessionId: 'sess-o', host: require('os').hostname(), pid: 999999999, pidSource: 'env', pidStartedAt: null, heartbeatAt: new Date(0).toISOString() },
+  });
+  const childProcess = require('child_process');
+  const realSpawn = childProcess.spawn;
+  const priorPid = process.env.CLAUDE_PID;
+  process.env.CLAUDE_PID = String(process.pid);
+  const seen = [];
+  childProcess.spawn = () => {
+    seen.push(ctxLib.readRunState(run).owner.pid);
+    return { on() {}, unref() {} };
+  };
+  try {
+    await runSessionStart({ input: { source: 'resume', session_id: 'sess-o' }, runDir: run, runState: null, cwd: project, ownedRun: { dir: run, attribution: 'session' } });
+  } finally {
+    childProcess.spawn = realSpawn;
+    if (priorPid === undefined) delete process.env.CLAUDE_PID;
+    else process.env.CLAUDE_PID = priorPid;
+  }
+  assert.ok(seen.length >= 1, 'the reconcile spawn stub ran');
+  assert.deepStrictEqual(seen, seen.map(() => process.pid), 'the owner block was already re-stamped when the spawn fired');
+  assert.strictEqual(ctxLib.readRunState(run).owner.pid, process.pid);
+});
+
+test('#4150: a resume SessionStart re-stamps an owner block still inside the heartbeat window', async () => {
+  const project = gitProject();
+  const run = mkRun(project, '2026-07-01T090000-spec-1', {
+    status: 'interrupted',
+    sessionId: 'sess-w',
+    owner: { sessionId: 'sess-w', host: require('os').hostname(), pid: 999999999, pidSource: 'env', pidStartedAt: null, heartbeatAt: new Date(Date.now() - 5_000).toISOString() },
+  });
+  const childProcess = require('child_process');
+  const realSpawn = childProcess.spawn;
+  const priorPid = process.env.CLAUDE_PID;
+  process.env.CLAUDE_PID = String(process.pid);
+  childProcess.spawn = () => ({ on() {}, unref() {} });
+  try {
+    await runSessionStart({ input: { source: 'resume', session_id: 'sess-w' }, runDir: run, runState: null, cwd: project, ownedRun: { dir: run, attribution: 'session' } });
+  } finally {
+    childProcess.spawn = realSpawn;
+    if (priorPid === undefined) delete process.env.CLAUDE_PID;
+    else process.env.CLAUDE_PID = priorPid;
+  }
+  assert.strictEqual(ctxLib.readRunState(run).owner.pid, process.pid, 'the in-window owner block was re-stamped at SessionStart');
+});
+
+test('#3845: only a resume re-stamps — a startup SessionStart (a nested claude -p looks like one) leaves ownerPid alone', async () => {
+  assert.strictEqual((await resumeStamp({ source: 'startup' })).ownerPid, 111);
+});
+
+test('#3845: the resume re-stamp fails open — unknown pid, fallback attribution, another session\'s run, an unstamped run', async () => {
+  assert.strictEqual((await resumeStamp({ env: null })).ownerPid, 111, 'unknown CLAUDE_PID');
+  assert.strictEqual((await resumeStamp({ attribution: 'fallback' })).ownerPid, 111, 'a guessed run is never re-stamped');
+  assert.strictEqual((await resumeStamp({ sessionId: 'other-session' })).ownerPid, 111, 'a run recorded for another session');
+  assert.ok(!('ownerPid' in (await resumeStamp({ state: { ownerPid: undefined } }))), 'an unstamped run stays unstamped');
 });

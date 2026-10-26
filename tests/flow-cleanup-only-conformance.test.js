@@ -13,18 +13,12 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
-const TWO_CALL_GATE = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'two-call-gate.md'), 'utf8',
-);
-const STEPS_AND_GATES = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'steps-and-gates.md'), 'utf8',
-);
-const TASK_PROMPT = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'task-prompt.md'), 'utf8',
-);
+const TWO_CALL_GATE = readText(path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'two-call-gate.md'));
+const STEPS_AND_GATES = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'steps-and-gates.md'));
+const TASK_PROMPT = readText(path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'task-prompt.md'));
 
 test('two-call-gate.md §5\'s teardown command literal invokes wrap-up directly, not via /flow', () => {
   assert.match(
@@ -75,9 +69,7 @@ test("steps-and-gates.md documents why dispatch's teardown call moved off /flow 
 });
 
 test("flow/SKILL.md's cleanup-only row documents the Step 1.5 materialize-gate exemption gap", () => {
-  const FLOW_SKILL = fs.readFileSync(
-    path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'SKILL.md'), 'utf8',
-  );
+  const FLOW_SKILL = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'SKILL.md'));
   assert.match(FLOW_SKILL, /Does not exempt Step 1\.5/);
   assert.match(FLOW_SKILL, /#1766/);
 });

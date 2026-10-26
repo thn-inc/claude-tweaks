@@ -9,15 +9,15 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const FILE = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'task-prompt.md');
 const FIRST_HEADING = '## First call — build,test';
 const SECOND_HEADING = '## Second call — review,polish,wrap-up';
 
 function read() {
-  return fs.readFileSync(FILE, 'utf8').replace(/\r\n/g, '\n');
+  return readText(FILE);
 }
 
 function sections(text) {

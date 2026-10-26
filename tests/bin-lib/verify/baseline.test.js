@@ -1175,3 +1175,101 @@ test('a quotable spaced failing path reaches the run stage as the quoted command
   assert.ok(calls.runs.length > 0, 'the adjudication reached the run stage');
   assert.ok(calls.runs.every((c) => c.file === "'tests/a b.test.js'"), 'every run got the single-quoted path');
 });
+
+// #3723: attributedTests names the new tests per attributable file — report-only.
+const adjudicateRaw = (headLog, fakeOpts) => {
+  const { p, dir } = logFile(headLog);
+  const { git, runOne } = fakes(fakeOpts);
+  return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+};
+
+test('#3723 AC1.1: attributedTests names the isolated HEAD failures base does not fail, by suite path', async () => {
+  const both = NAMED({ fails: [['x'], ['new']] });
+  const r = await isolationCase(both, { head: both, retryLog: both, retryCode: 1 });
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.attributedTests[R], { tests: [['new']], headFailing: 2, baseFailing: 1, absentAtBase: [['new']] });
+});
+
+test('#3723 AC2.1: a renamed already-failing test — same failing count, attributed path absent at base', async () => {
+  const renamed = NAMED({ fails: [['renamed']] });
+  const r = await isolationCase(renamed, { head: renamed, baseLog: NAMED({ fails: [['original']] }), retryLog: renamed, retryCode: 1 });
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.attributedTests[R], { tests: [['renamed']], headFailing: 1, baseFailing: 1, absentAtBase: [['renamed']] });
+});
+
+test('#3723: a path present at base but not failing there is attributed and not absent', async () => {
+  const both = NAMED({ fails: [['x'], ['new']] });
+  const r = await isolationCase(both, { head: both, baseLog: NAMED({ fails: [['x']], passes: ['new'] }), retryLog: both, retryCode: 1 });
+  assert.deepStrictEqual(r.attributedTests[R].tests, [['new']]);
+  assert.deepStrictEqual(r.attributedTests[R].absentAtBase, []);
+});
+
+test('#3723: suite paths, not leaf names — base failing B > works never covers A > works', async () => {
+  const suites = (...failing) => ['A', 'B'].flatMap((s) => [`▶ ${s}`, `  ${failing.includes(s) ? '✖' : '✔'} works (1ms)`, `${failing.includes(s) ? '✖' : '✔'} ${s} (2ms)`]);
+  const both = TREE(suites('A', 'B'), [['works', '3:5'], ['works', '6:5']]);
+  const r = await isolationCase(both, { head: both, baseLog: TREE(suites('B'), [['works', '6:5']]), retryLog: both, retryCode: 1 });
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.attributedTests[R].tests, [['A', 'works']]);
+});
+
+test('#3723: a file absent at base attributes every full-run failure by leaf name', async () => {
+  const f = 'tests/new.test.js';
+  const r = await adjudicateRaw(SPEC_NAMED([[f, 't1'], [f, 't2']]), { outcomes: {}, existsAtBase: () => false });
+  assert.deepStrictEqual(r.attributedTests[f], { tests: [['t1'], ['t2']], headFailing: 2, baseFailing: 0, absentAtBase: [['t1'], ['t2']] });
+});
+
+test('#3723: a file absent at base never attributes a TAP suite failing only through its child', async () => {
+  // A real Node TAP log's shape: suite A fails only because `works` does (failureType 'subtestsFailed').
+  const f = 'tests/new.test.js';
+  const tap = ['TAP version 13', '# Subtest: A', '    # Subtest: works', '    not ok 1 - works', '      ---', '      duration_ms: 0.664958',
+    "      type: 'test'", `      location: '/repo/${f}:5:23'`, "      failureType: 'testCodeFailure'", "      error: 'nested-new-detail'",
+    "      code: 'ERR_ASSERTION'", "      name: 'AssertionError'", "      operator: 'fail'", '      stack: |-',
+    `        TestContext.<anonymous> (/repo/${f}:5:50)`, '        Test.runInAsyncScope (node:async_hooks:214:14)', '      ...', '    1..1',
+    'not ok 1 - A', '  ---', '  duration_ms: 1.123333', "  type: 'suite'", `  location: '/repo/${f}:5:1'`, "  failureType: 'subtestsFailed'",
+    "  error: '1 subtest failed'", "  code: 'ERR_TEST_FAILURE'", '  ...', '1..1', '# tests 1', '# suites 1', '# pass 0', '# fail 1',
+    '# cancelled 0', '# skipped 0', '# todo 0', '# duration_ms 50.387292'].join('\n');
+  const r = await adjudicateRaw(tap, { outcomes: {}, existsAtBase: () => false });
+  assert.deepStrictEqual(r.attributable, [f]);
+  assert.deepStrictEqual(r.attributedTests[f], { tests: [['works']], headFailing: 1, baseFailing: 0, absentAtBase: [['works']] });
+});
+
+test('#3723: a file passing at base attributes every isolated failure, existence unknown', async () => {
+  const iso = NAMED({ fails: [['a'], ['b']] });
+  const r = await adjudicateRaw(iso, {
+    outcomes: { [`baseline:${R}`]: 0, [`isolated:${R}`]: 1, [`isolated-retry:${R}`]: 1 },
+    logs: { [`isolated:${R}`]: iso, [`isolated-retry:${R}`]: iso },
+  });
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.attributedTests[R], { tests: [['a'], ['b']], headFailing: 2, baseFailing: 0, absentAtBase: null });
+});
+
+test('#3723: no entry when per-test identity is unknown', async () => {
+  const two = NAMED({ fails: [['a'], ['b']] });
+  // (a) a base run killed by a signal (exitCode null) says nothing about the base tree.
+  const a = await adjudicateRaw(two, {
+    outcomes: { [`baseline:${R}`]: null, [`isolated:${R}`]: 1, [`isolated-retry:${R}`]: 1 },
+    logs: { [`isolated:${R}`]: two, [`isolated-retry:${R}`]: two },
+  });
+  // (b) a malformed isolated tree (a suite name spanning lines) beside a well-formed base tree.
+  const bad = ['▶ multi', 'line', '  ✖ a (1ms)', '✖ multi', 'line (2ms)'];
+  const badLog = TREE(bad, [['a', '2:3']]);
+  const b = await isolationCase(badLog, { head: badLog, baseLog: NAMED({ fails: [['x']] }), retryLog: badLog, retryCode: 1 });
+  // (c) a base tree with an unclosed suite opener is not well formed.
+  const c = await isolationCase(two, { head: two, baseLog: TREE(['▶ S', '  ✖ a (1ms)'], [['a', '2:3']]), retryLog: two, retryCode: 1 });
+  // (d) a file absent at base whose full-run name line does not parse.
+  const f = 'tests/new.test.js';
+  const unparsed = ['ℹ tests 9', 'ℹ pass 8', 'ℹ fail 1', 'ℹ cancelled 0', '', '✖ failing tests:', '', `test at ${f}:1:1`, '✖ no duration here', ''].join('\n');
+  const d = await adjudicateRaw(unparsed, { outcomes: {}, existsAtBase: () => false });
+  for (const [r, file] of [[a, R], [b, R], [c, R], [d, f]]) {
+    assert.ok(r.attributable.includes(file), `${file} stays attributable`);
+    assert.ok(!(file in r.attributedTests), `${file} has no attributedTests entry`);
+  }
+});
+
+test('#3723: attributedTests never touches the verdict', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js', 'tests/b.test.js']));
+  const { git, runOne } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'baseline:tests/b.test.js': 1 } });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.attributedTests, {});
+  assert.strictEqual(r.verdict, 'pass');
+});

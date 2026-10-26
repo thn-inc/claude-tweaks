@@ -13,6 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const { writeFileAtomic } = require('../atomic-write');
+const { neutralizeClosingPhrases } = require('./closing-links');
 
 const VALID_STATUSES = ['pending', 'running', 'complete', 'failed', 'not-run'];
 
@@ -264,7 +265,9 @@ function composeFixesBlock(specs, deferredClosures) {
   const deferred = deferredClosures instanceof Map ? deferredClosures : new Map();
   return (specs || []).map((spec) => {
     const deferredReason = deferred.get(String(spec.id));
-    if (deferredReason) return `Refs #${spec.id} — deferred: ${deferredReason}`;
+    // #4199: GitHub links any closing-keyword phrase in the PR body, so a
+    // keyword inside the reason text would close the record this line defers.
+    if (deferredReason) return `Refs #${spec.id} — deferred: ${neutralizeClosingPhrases(deferredReason).text}`;
     if (spec.status === 'complete') return `Fixes #${spec.id}`;
 
     let reason;

@@ -228,7 +228,7 @@ test('reproduction: same location, substantively different findings → NOT conf
 
   const entry =
     `- STAGED 11:02:44 — Reproduction: lens "3c" findings ${fromA.path}:${fromA.line} / ` +
-    `${fromB.path}:${fromB.line} share a location but not substance; both staged. Reversibility: high.`;
+    `${fromB.path}:${fromB.line} share a location but not substance; both staged unconfirmed. Reversibility: high.`;
   assert.match(
     entry,
     decisionLogPattern(REVIEW_SKILL, ['share a location but not substance', 'both staged']),
@@ -631,8 +631,8 @@ test('reproduction: one-side-only finding → unconfirmed with STAGED entry matc
   assert.strictEqual(unconfirmed[0].source, 'A');
 
   const entry =
-    `- STAGED 14:32:08 — /review reproduction: finding ${unconfirmed[0].path}:${unconfirmed[0].line} ` +
-    `surfaced by one agent only. Stage path: staged/review-unconfirmed-1.patch.`;
+    `- STAGED 14:32:08 — /review reproduction: lens "security" finding ${unconfirmed[0].path}:${unconfirmed[0].line} ` +
+    `surfaced by one agent only. Stage path: staged/review-unconfirmed-1.md.`;
   assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['surfaced by one agent only']));
 });
 
@@ -1087,7 +1087,7 @@ test('debate: mixed/partial verdicts → contested with STAGED entry matching th
   assert.strictEqual(c.resolveDebate('agree', 'partial'), 'contested');
   assert.strictEqual(c.resolveDebate('disagree', 'partial'), 'contested');
   assert.strictEqual(c.resolveDebate('partial', 'partial'), 'contested');
-  const entry = `- STAGED 14:41:08 — /review debate: src/auth.ts:42 contested (mixed verdicts). Stage path: staged/review-debate-1.md.`;
+  const entry = `- STAGED 14:41:08 — /review debate: lens "security" src/auth.ts:42 contested (mixed verdicts). Stage path: staged/review-debate-1.md.`;
   assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['contested (mixed verdicts)']));
 });
 
@@ -1095,17 +1095,18 @@ test('debate: mixed/partial verdicts → contested with STAGED entry matching th
 // Refutation (Per-Candidate Refutation Pass, /review Step 3.5)
 // ============================================================
 
-test('refutation: refuted verdict downgrades to unconfirmed', () => {
+// The Per-Candidate Refutation Pass now settles its reply through resolve-tiebreak (#3947, pinned in
+// tests/review-tiebreak-step-conformance.test.js); resolveRefutation and its CLI verb stay in code and
+// stay pinned here at the library level. The prose keeps one downgrade log line, for can't-tell.
+test("refutation: the can't-tell downgrade line matches the documented schema (resolveRefutation still downgrades refuted)", () => {
   assert.strictEqual(c.resolveRefutation('refuted'), 'unconfirmed');
   const entry =
-    `- AUTO 14:52:10 — Refutation: src/auth.ts:42 refuted — cited evidence no longer matches current file. Downgraded to unconfirmed. Reversibility: high.`;
-  assert.match(entry, decisionLogPattern(REVIEW_SKILL, ['refuted —', 'Downgraded to unconfirmed']));
+    `- STAGED 14:52:10 — Refutation: lens "security" finding src/auth.ts:42 — no usable verdict (can't-tell), not genuinely re-examined. Downgraded to unconfirmed out of caution. Reversibility: high.`;
+  assert.match(entry, decisionLogPattern(REVIEW_SKILL, ['Refutation:', 'Downgraded to unconfirmed']));
 });
 
 test('refutation: not-refuted verdict leaves the finding confirmed', () => {
   assert.strictEqual(c.resolveRefutation('not-refuted'), 'confirmed');
-  const entry = `- AUTO 14:52:15 — Refutation: src/auth.ts:42 not refuted — stands as confirmed. Reversibility: high.`;
-  assert.match(entry, decisionLogPattern(REVIEW_SKILL, ['not refuted — stands as confirmed']));
 });
 
 test('refutation: is a sibling of resolveDebate, not an overload — single verdict in, two buckets out, no "contested" outcome', () => {
@@ -1265,9 +1266,9 @@ test('/review debate integration: cross-lens overlap with contradicting verdicts
 
   const confirmedEntry = `- AUTO 14:41:02 — Debate: cross-lens disagreement on src/auth.ts:42 converged positive after 1 round. Reversibility: high.`;
   assert.match(confirmedEntry, decisionLogPattern(REVIEW_SKILL, ['Both `agree`']));
-  const unconfirmedEntry = `- AUTO 14:41:05 — Debate: cross-lens disagreement on src/auth.ts:42 converged negative after 1 round. Reversibility: high.`;
+  const unconfirmedEntry = `- STAGED 14:41:05 — Debate: lens "security" finding src/auth.ts:42 — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.`;
   assert.match(unconfirmedEntry, decisionLogPattern(REVIEW_SKILL, ['Both `disagree`']));
-  const contestedEntry = `- STAGED 14:41:08 — Debate: cross-lens disagreement on src/auth.ts:42 inconclusive (agree, partial). Both verdicts staged. Reversibility: high.`;
+  const contestedEntry = `- STAGED 14:41:08 — Debate: lens "security" cross-lens disagreement on src/auth.ts:42 inconclusive (agree, partial). Both verdicts staged. Stage path: staged/review-contested-1.md. Reversibility: high.`;
   assert.match(contestedEntry, decisionLogPattern(REVIEW_SKILL, ['Mixed / partial']));
 });
 
@@ -1313,11 +1314,11 @@ test('/review summary assembly: confirmed flow to summary; unconfirmed + contest
   // the console" section points readers there rather than inlining it (so review-console.md stays lean).
   const REVIEW_CONSOLE = readSkillFile('wrap-up', 'console-template.md');
   assert.ok(
-    REVIEW_CONSOLE.includes('Low-confidence findings (not reproduced)'),
+    REVIEW_CONSOLE.includes('#### Low-confidence findings (not reproduced'),
     'console-template.md must document the Low-confidence subsection',
   );
   assert.ok(
-    REVIEW_CONSOLE.includes('Contested findings (debate inconclusive)'),
+    REVIEW_CONSOLE.includes('#### Contested findings (debate inconclusive'),
     'console-template.md must document the Contested subsection',
   );
 });

@@ -18,8 +18,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const FLOW_SKILL = path.join(SKILLS, 'flow', 'SKILL.md');
@@ -60,7 +60,7 @@ function untaggedInvocations(text, label, exemptWholeFile) {
 }
 
 function scanFile(filePath) {
-  const text = fs.readFileSync(filePath, 'utf8');
+  const text = readText(filePath);
   return untaggedInvocations(text, path.relative(SKILLS, filePath), WHOLE_FILE_EXEMPT.has(filePath));
 }
 
@@ -106,7 +106,7 @@ test('auto-mode /flow prose path has at most two AskUserQuestion decision points
 });
 
 test('proof: a third untagged AskUserQuestion block inserted into flow/SKILL.md is caught (goes red)', () => {
-  const original = fs.readFileSync(FLOW_SKILL, 'utf8');
+  const original = readText(FLOW_SKILL);
   const injected = `${original}\n\n## Step 9: Improvised mid-flow check\n\nBefore continuing, call `
     + '`AskUserQuestion` to confirm the plan looks right.\n';
   const hits = untaggedInvocations(injected, 'flow/SKILL.md (injected)', WHOLE_FILE_EXEMPT.has(FLOW_SKILL));
@@ -116,7 +116,7 @@ test('proof: a third untagged AskUserQuestion block inserted into flow/SKILL.md 
 });
 
 test('proof: the same injected block, tagged HARD-GATE, is exempt (does not regress the budget)', () => {
-  const original = fs.readFileSync(FLOW_SKILL, 'utf8');
+  const original = readText(FLOW_SKILL);
   const injected = `${original}\n\n## Step 9: A real HARD-GATE\n\nThis is a HARD-GATE. Before continuing, call `
     + '`AskUserQuestion` to present the failure options.\n';
   const hits = untaggedInvocations(injected, 'flow/SKILL.md (injected, tagged)', WHOLE_FILE_EXEMPT.has(FLOW_SKILL));

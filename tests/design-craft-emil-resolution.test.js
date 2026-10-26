@@ -10,6 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const PLUGIN_SKILLS_ROOT = path.join(__dirname, '..', 'plugin', 'skills');
 const DESIGN_CRAFT_MD = path.join(PLUGIN_SKILLS_ROOT, '_shared', 'design-craft.md');
@@ -17,7 +18,7 @@ const REVIEW_MD = path.join(PLUGIN_SKILLS_ROOT, 'design-wrapper', 'modes', 'revi
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
 
 function read(p) {
-  return fs.readFileSync(p, 'utf8');
+  return readText(p);
 }
 
 function stepSlice(text, startMarker, endMarker) {

@@ -16,13 +16,14 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SKILL_DIR = path.join(ROOT, 'plugin', 'skills', 'backlog');
 const SHARED_DIR = path.join(ROOT, 'plugin', 'skills', '_shared');
 
 function read(...segments) {
-  return fs.readFileSync(path.join(...segments), 'utf8');
+  return readText(path.join(...segments));
 }
 
 // --- (1) grant-mode.md absent, refine-headless.md present ---
@@ -109,9 +110,10 @@ test('backlog SKILL.md: argument-hint drops grant as a mode, gains --source; the
     'argument-hint must not list grant as a mode token any more (was present at base 558291189)',
   );
   assert.ok(
-    hintLine.includes('--source <human|routine|sweep>'),
+    hintLine.includes('--source <human|routine>'),
     'argument-hint must carry the new --source presence switch',
   );
+  assert.ok(!hintLine.includes('sweep'), 'argument-hint must not advertise the sweep-reserved --source value (#3504)');
 
   const grantRow = source.split('\n').find((l) => l.trim().startsWith('- `grant`'));
   assert.ok(grantRow, 'expected the `grant` deprecated-alias row in the Input table');

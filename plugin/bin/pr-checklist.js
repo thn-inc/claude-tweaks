@@ -23,10 +23,15 @@
 // 3 run dir missing or not anchored under the main checkout (a worktree-local
 //   shadow -- _shared/pipeline-run-dir.md, [IL-127]).
 // 4 run-marker mismatch: the PR body's first line names a different run (or
-//   none) -- refused, nothing written. The caller logs the mismatch and never
-//   retries by hand.
-// 5 `gh pr view` or `gh pr edit` failed. The caller warns best-effort; the
-//   pre-merge refresh re-runs the CLI for that phase and catches the row up.
+//   none) -- refused, nothing written to the PR. The CLI logs the refusal
+//   (`refused on PR #{n} — run marker mismatch (body names run {found|none},
+//   expected {runId})`); the caller never retries by hand.
+// 5 `gh pr view` or `gh pr edit` failed. The CLI logs the warning (`gh pr
+//   {view|edit} failed on PR #{n} at {phase} exit — row left for the pre-merge
+//   refresh`); the pre-merge refresh re-runs the CLI for that phase and catches
+//   the row up.
+// Both lines are AUTO, step `PR checklist refresh`, reversibility n/a. A failed
+// append adds one stderr line and never changes the exit code.
 // 4 and 5 are distinct because the refresh procedure branches on them: a
 // mismatch is a wrong-PR signal a retry cannot fix, a gh failure is transient.
 'use strict';
@@ -50,7 +55,8 @@ const USAGE = 'usage: pr-checklist.js --run <run-dir> --phase <build|test|review
   + '       2 malformed invocation or unreadable --summary-file\n'
   + '       3 run dir missing or not anchored under the main checkout\n'
   + '       4 run marker mismatch -- refused, nothing written\n'
-  + '       5 gh pr view / gh pr edit failed\n';
+  + '       5 gh pr view / gh pr edit failed\n'
+  + '  4 and 5 append their own AUTO line to decisions.md\n';
 
 const VALUE_FLAGS = { '--run': 'run', '--phase': 'phase', '--summary-file': 'summaryFile' };
 
@@ -127,6 +133,23 @@ function run(argv, overrides = {}) {
   const runDir = resolved.parentRunDir || o.run;
   const runId = path.basename(runDir);
 
+  // An exit-4 / exit-5 outcome logs its own decisions.md line. A failed append
+  // adds one stderr line only -- the exit code already carries the outcome.
+  const logLine = (text) => {
+    try {
+      deps.appendDecision({
+        runDir: o.run,
+        entry: formatEntry({ status: 'AUTO', now: deps.now(), step: 'PR checklist refresh', text, reversibility: 'n/a' }),
+      });
+    } catch (e) {
+      deps.stderr(`pr-checklist.js: could not append the decisions.md entry: ${(e && e.message) || e}\n`);
+    }
+  };
+  const ghFailed = (verb) => {
+    logLine(`gh pr ${verb} failed on PR #${n} at ${o.phase} exit — row left for the pre-merge refresh`);
+    return 5;
+  };
+
   // 4. No gh: status as data, never a failure.
   if (!deps.ghAvailable()) return print({ action: 'gh-absent', pr: n });
 
@@ -147,11 +170,11 @@ function run(argv, overrides = {}) {
     original = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', 'body'])).body;
   } catch (e) {
     deps.stderr(`pr-checklist.js: gh pr view failed on PR #${n}: ${errText(e)}\n`);
-    return 5;
+    return ghFailed('view');
   }
   if (typeof original !== 'string') {
     deps.stderr(`pr-checklist.js: gh pr view on PR #${n} returned no string body field\n`);
-    return 5;
+    return ghFailed('view');
   }
 
   // 7. Repair, flip the row, then revise the Spec summary -- one body, one write.
@@ -163,7 +186,9 @@ function run(argv, overrides = {}) {
   // 8. A body naming another run is another run's PR: refuse, write nothing.
   const found = firstLineRunId(final);
   if (found !== runId) {
-    deps.stderr(`pr-checklist.js: run marker mismatch on PR #${n}: body names run ${found || 'none'}, expected ${runId} — nothing written\n`);
+    const detail = `body names run ${found || 'none'}, expected ${runId}`;
+    deps.stderr(`pr-checklist.js: run marker mismatch on PR #${n}: ${detail} — nothing written\n`);
+    logLine(`refused on PR #${n} — run marker mismatch (${detail})`);
     return 4;
   }
 
@@ -183,7 +208,7 @@ function run(argv, overrides = {}) {
     deps.gh(['pr', 'edit', String(n), '--body-file', '-'], final);
   } catch (e) {
     deps.stderr(`pr-checklist.js: gh pr edit failed on PR #${n}: ${errText(e)}\n`);
-    return 5;
+    return ghFailed('edit');
   }
 
   // 11. A repair is worth a decisions.md line; a logging failure never changes the exit.

@@ -18,15 +18,15 @@
 // distinction).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const POLISH_MD = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'modes', 'polish.md');
 const POLISH_EXECUTION_MD = path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'polish-execution.md');
 const COMMAND_MAP_MD = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'command-map.md');
 
 function read(p) {
-  return fs.readFileSync(p, 'utf8');
+  return readText(p);
 }
 
 function section(text, startMarker, endMarker) {

@@ -2,11 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const REFINE_MODE_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'backlog', 'refine-mode.md');
-const refineModeProse = fs.readFileSync(REFINE_MODE_PATH, 'utf8');
+const refineModeProse = readText(REFINE_MODE_PATH);
 
 // The pre-change Step 5 opening (#764) — narration-allowance line followed directly by the
 // Priority/Related write block, no reverify subsection between them. Used below to prove each

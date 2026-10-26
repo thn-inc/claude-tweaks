@@ -33,7 +33,7 @@
 // Pure decision function with I/O at the edges, matching the family.
 'use strict';
 
-const { execFileSync } = require('child_process');
+const { execFileSyncTimed } = require('./timing');
 const { runGit, DEFAULT_TIMEOUT_MS } = require('../hooks/git-exec');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { inScope, isCherryEquivalent } = require('./archive-branches');
@@ -50,7 +50,7 @@ const { isSquashMerged } = require('./squash-provenance');
 // success, or a real failure gets misreported as a completed delete).
 function defaultRefExists(root, branch, timeoutMs) {
   try {
-    execFileSync('git', ['-C', root, 'ls-remote', '--exit-code', 'origin', `refs/heads/${branch}`], {
+    execFileSyncTimed('git', ['-C', root, 'ls-remote', '--exit-code', 'origin', `refs/heads/${branch}`], {
       stdio: 'ignore', timeout: timeoutMs, windowsHide: true,
     });
     return true;

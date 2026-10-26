@@ -49,3 +49,5 @@ Do not parse — the caller (`/specify`) will append the full output text to the
 ```
 
 Shape mode is read-only with respect to source code (it produces planning text, not code changes).
+
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.

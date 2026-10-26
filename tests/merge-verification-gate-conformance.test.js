@@ -7,10 +7,12 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const GATE_FILE = path.join(SKILLS, '_shared', 'pr-first-merge.md');
-const read = (...p) => fs.readFileSync(path.join(SKILLS, ...p), 'utf8');
+const read = (...p) => readText(path.join(SKILLS, ...p));
 
 function walk(dir, acc = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -29,7 +31,7 @@ function* otherSkillFiles() {
 }
 
 test('the gate is stated once — Step 2.5 heading exists exactly once, only in pr-first-merge.md', () => {
-  const gate = fs.readFileSync(GATE_FILE, 'utf8');
+  const gate = readText(GATE_FILE);
   assert.equal((gate.match(/^## Step 2\.5: Merge-verification gate$/gm) || []).length, 1);
   for (const file of otherSkillFiles()) {
     assert.ok(!/^## Step 2\.5: Merge-verification gate$/m.test(fs.readFileSync(file, 'utf8')), `${path.relative(SKILLS, file)} restates the gate heading`);
@@ -51,7 +53,8 @@ test('merge-when-green appears outside the gate only as a lever value (#559 file
   const LEVER_FILES = new Set(['_shared/policy-schema.md', '_shared/policy-schema-coverage.md', 'flow/manifesto.md']);
   const offenders = [];
   for (const file of otherSkillFiles()) {
-    const rel = path.relative(SKILLS, file);
+    // Compared against a /-keyed allowlist, so it is a display ID (#4288).
+    const rel = toPosix(path.relative(SKILLS, file));
     const text = fs.readFileSync(file, 'utf8');
     if (!/merge-when-green/i.test(text)) continue;
     if (LEVER_FILES.has(rel)) continue;
@@ -61,7 +64,7 @@ test('merge-when-green appears outside the gate only as a lever value (#559 file
 });
 
 test('the gate reads state before any merge attempt and names the red-path pieces', () => {
-  const gate = fs.readFileSync(GATE_FILE, 'utf8');
+  const gate = readText(GATE_FILE);
   const step25 = gate.indexOf('## Step 2.5: Merge-verification gate');
   const step3 = gate.indexOf('## Step 3:');
   assert.ok(step25 !== -1 && step3 !== -1 && step25 < step3, 'Step 2.5 must precede Step 3');
@@ -75,7 +78,7 @@ test('the gate reads state before any merge attempt and names the red-path piece
 });
 
 test('the gate cross-checks head-sha workflow runs before reading green (#3405)', () => {
-  const gate = fs.readFileSync(GATE_FILE, 'utf8');
+  const gate = readText(GATE_FILE);
   const step25 = gate.indexOf('## Step 2.5: Merge-verification gate');
   const step3 = gate.indexOf('## Step 3:');
   const section = gate.slice(step25, step3);
@@ -87,8 +90,12 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
   const watch = section.slice(section.indexOf('DEADLINE='), section.indexOf('\n```', section.indexOf('DEADLINE=')));
   const zeroBranch = watch.slice(watch.indexOf('0)'), watch.indexOf('1)'));
   assert.ok(zeroBranch.includes('gh run list'), 'bounded-watch 0) branch must count head runs');
-  // Signature (e): PR #3390 is the captured partial-rollup incident.
-  assert.ok(section.includes('#3390') && section.includes('39042323352'), 'Signatures list missing the #3390 capture (run 39042323352)');
+  // Signature (e): PR #3390 is the captured partial-rollup incident. The Signatures list moved to
+  // the appendix (#4199, composed-bundle byte rail); the gate section must still point at it.
+  assert.ok(section.includes("`pr-first-merge-appendix.md`'s Signatures section"), 'gate section must point at the appendix Signatures');
+  const appendix = read('_shared', 'pr-first-merge-appendix.md');
+  const signatures = appendix.slice(appendix.indexOf('## Signatures'), appendix.indexOf('\n## ', appendix.indexOf('## Signatures') + 1));
+  assert.ok(signatures.includes('#3390') && signatures.includes('39042323352'), 'Signatures list missing the #3390 capture (run 39042323352)');
   // The resume confirmation's one read-then-decide classifies from both reads, not the rollup alone.
   const resume = section.slice(section.indexOf('**Resume-to-merge is one-shot.**'));
   assert.ok(resume.includes('gh run list') && resume.includes('not-yet-completed head run reads pending'), 'resume paragraph must classify from the head-run read too');

@@ -2,7 +2,6 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 
 const {
@@ -12,6 +11,7 @@ const {
   compareTables,
 } = require('../../../plugin/bin/lib/skill-audit/anti-patterns.js');
 const { listSkillDirs, KNOWN_SKILLS } = require('../../../plugin/bin/lib/skill-audit/skill-catalog.js');
+const { readText } = require('../../helpers/read-skill');
 
 const SAMPLE = [
   '# Some skill',
@@ -129,7 +129,7 @@ test('every shipped skill has a parseable Anti-Patterns table', () => {
 
   let total = 0;
   for (const name of names) {
-    const md = fs.readFileSync(path.join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const md = readText(path.join(skillsDir, name, 'SKILL.md'));
     const rows = extractAntiPatternRows(md);
     assert.ok(rows.length > 0, `${name}/SKILL.md has no Anti-Pattern rows`);
     for (const row of rows) {
@@ -659,5 +659,15 @@ test('every shipped skill has a parseable Anti-Patterns table', () => {
   //   Step 4's materialize-and-commit prose without a literal `Skill`-tool call for
   //   `/claude-tweaks:build`". Measured by RUNNING the parser on the working tree
   //   (actual 422), not by adding 1 to 421 (`[IL-99]`).
-  assert.strictEqual(total, 422);
+  //
+  //   422 -> 423, #3898 (release: Step 8 disposes of staged findings, then archives
+  //   its created run directory). One row ADDED to plugin/skills/release/SKILL.md's
+  //   existing Anti-Patterns table: "Leaving a finished release's directory in
+  //   place". The new plugin/skills/release/disposition.md carries its own two-row
+  //   Anti-Patterns table, out of this parser's scope (it reads only
+  //   `skills/*/SKILL.md`). Evidence: `git diff HEAD -- 'plugin/skills/*/SKILL.md'`
+  //   (pre-commit, against the base the row was added to) shows exactly one `+|`
+  //   Anti-Patterns line, in release/SKILL.md. Measured by RUNNING the parser on the
+  //   working tree (actual 423), not by adding 1 to 422 (`[IL-99]`).
+  assert.strictEqual(total, 423);
 });

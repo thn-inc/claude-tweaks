@@ -13,10 +13,9 @@
 // locked worktree doesn't block branch/ref cleanup that doesn't depend on it.
 'use strict';
 const fs = require('fs');
-const path = require('path');
 const { closeRunState } = require('./close-run-state');
 const { runGit } = require('./git-exec');
-const { parseWorktreeList, isWorktreeLocked, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
+const { parseWorktreeList, findWorktreeEntry, isWorktreeLocked, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
 const { mainCheckoutRoot } = require('./worktree-detect');
 const { fallbackBranch, worktreePathForBranch } = require('./run-integrity');
 const { parseRepo } = require('../repo-resolve');
@@ -70,21 +69,6 @@ function repoSpecOf(root) {
   const remote = runGit(['remote', 'get-url', 'origin'], root);
   if (remote.failure || !remote.stdout) return null;
   return parseRepo(remote.stdout);
-}
-
-// #3695: on win32, `git worktree list --porcelain` prints forward-slash paths (`D:/a/x/feat`) while
-// the run's stamped worktree path is native (`D:\a\x\feat`), so a strict `===` never matched there.
-// Both sides go through pathImpl.resolve, not realpath: the prunable retry runs after a half-removed
-// worktree, which may no longer exist on disk to resolve. Case folds only on win32 (sep `\`), where
-// the filesystem is case-insensitive; posix stays exact.
-function findWorktreeEntry(entries, target, pathImpl = path) {
-  if (!target) return null;
-  const key = (p) => {
-    const resolved = pathImpl.resolve(p);
-    return pathImpl.sep === '\\' ? resolved.toLowerCase() : resolved;
-  };
-  const wanted = key(target);
-  return entries.find((entry) => key(entry.path) === wanted) || null;
 }
 
 // Branch registered for `worktreePath` in `git worktree list --porcelain`, or null when the

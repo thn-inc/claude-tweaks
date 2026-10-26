@@ -21,7 +21,11 @@
 //     hatch entirely (see resolveTimeout in git-exec.js).
 //
 //   mirror only -> `git fetch origin {integration}` under classify.js's own
-//     FETCH_TIMEOUT_MS. This is session-start's inline hot path, where a slow
+//     FETCH_TIMEOUT_MS. This is session-start's inline hot path and, since
+//     #4032, the unscoped `hooks.js reconcile` CLI's too (its inline set
+//     defers remote-prune to the background pass, so other
+//     refs/remotes/origin/* refs refresh only when that pass's --prune fetch
+//     runs) — where a slow
 //     remote must not stall the caller for the full general budget — exactly
 //     the rationale classify.js's constant documents, and applicable again
 //     now that this fetch is no longer also serving remote-prune in the same

@@ -3,10 +3,9 @@
 Canonical contract for every code-fix proposal that a pipeline phase stages under
 `.claude-tweaks/pipelines/{run-id}/staged/` as a `.patch` for the Review Console to apply
 later. Stated once here; the staging sites (`review/step3-routing.md`'s Auto-mode routing table,
-`test/SKILL.md`'s Step 3 stage flow, `_shared/multi-agent-coordination.md`'s reproduction
-staging, `deepen/SKILL.md`'s auto-mode collapse staging) and the console apply steps
-(`wrap-up/review-console.md` "On approval", `flow/multispec-review-console.md` "On approval")
-cite this file rather than restating it.
+`test/SKILL.md`'s Step 3 stage flow, `deepen/SKILL.md`'s auto-mode collapse staging) and the
+console apply steps (`wrap-up/review-console.md` "On approval",
+`flow/multispec-review-console.md` "On approval") cite this file rather than restating it.
 
 ## Why
 
@@ -31,10 +30,10 @@ re-derived by hand.
 
 ## Artifact format
 
-One file per proposal, `staged/{slug}-{n}.patch` (`review-{n}.patch`, `test-fix-{n}.patch`,
-`review-unconfirmed-{n}.patch` — each site keeps its existing filename). The file is a unified
-diff **preceded by a description preamble** — free text before the first `diff --git` header,
-which `git apply` skips (the same tolerance that lets it apply `git format-patch` output):
+One file per proposal, `staged/{slug}-{n}.patch` (`review-{n}.patch`, `test-fix-{n}.patch` — each
+site keeps its existing filename). The file is a unified diff **preceded by a description
+preamble** — free text before the first `diff --git` header, which `git apply` skips (the same
+tolerance that lets it apply `git format-patch` output):
 
 ```
 Target: {repo-relative path of the file the fix edits — one line per file when the diff touches several}

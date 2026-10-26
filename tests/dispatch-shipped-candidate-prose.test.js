@@ -13,11 +13,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 const QUEUE_PULL = read('plugin/skills/dispatch/queue-pull-script.md');
 const DISPATCH_SKILL = read('plugin/skills/dispatch/SKILL.md');
@@ -66,4 +66,12 @@ test('the cited modules actually export classifyShipped and the extended fetchLi
   assert.strictEqual(typeof shipped.classifyShipped, 'function');
   const linkedPrs = require('../plugin/bin/lib/issues/linked-prs');
   assert.strictEqual(typeof linkedPrs.fetchLinkedPRs, 'function');
+});
+
+test('#4314: both dispatch files state that a mention from a PR already open when the record was filed is skipped', () => {
+  const section = QUEUE_PULL.slice(QUEUE_PULL.indexOf('#1984: shipped-candidate classification'));
+  assert.match(section.slice(0, 2000), /#4314/);
+  assert.match(section.slice(0, 2000), /opened before the record was created/);
+  assert.match(DISPATCH_SKILL, /opened before the record was created/);
+  assert.match(DISPATCH_SKILL, /#4314/);
 });

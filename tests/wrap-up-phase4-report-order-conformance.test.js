@@ -80,13 +80,6 @@ function assertExecBlocked(text) {
     'verify exit 3: BLOCKED surfaces in the report that renders next, not instead of it');
 }
 
-function assertRenderArchivePath(text) {
-  const start = text.indexOf(REPORT_H);
-  const section = flatten(text.slice(start, text.indexOf(AFTER_PHASE4, start)));
-  assert.ok(section.includes('once cleanup item 8 archived the run, pass `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` as `--run-dir`'),
-    'render: a report rendered after archival reads engine-state.json from the archive path, which render does not resolve itself');
-}
-
 function assertPointer(name, text) {
   assert.doesNotMatch(flatten(text), /(?<!not )proceed (directly )?to the (phase-trace )?report/i,
     `${name}: a console hand-off proceeds to Phase 4's execution step, never straight to the report`);
@@ -102,10 +95,6 @@ test('AC1: the #2550 and #3483 Verdict rules read facts execution has already pr
 
 test("AC1: a verify exit 3 surfaces BLOCKED in the report that renders after it", () => {
   assertExecBlocked(EXEC);
-});
-
-test('AC1: the report render names the archive path once execution archived the run', () => {
-  assertRenderArchivePath(SKILL);
 });
 
 test("AC1: no console hand-off skips Phase 4's execution step", () => {
@@ -126,11 +115,6 @@ test('go-red control: dropping either Verdict anchor fails its own pin', () => {
   assert.throws(() => assertVerdictRules(noLeave), /#3483/);
   const noCarve = assertMutated(TEMPLATE, TEMPLATE.replace('These rows come from the Verify execution table', 'These rows may come from a later table'));
   assert.throws(() => assertVerdictRules(noCarve), /#2550/);
-});
-
-test('go-red control: dropping the archive-path sentence fails the render pin', () => {
-  const dropped = assertMutated(SKILL, SKILL.replace('once cleanup item 8 archived the run, pass', 'once the run is done, pass'));
-  assert.throws(() => assertRenderArchivePath(dropped), /archive path/);
 });
 
 test('go-red control: the old step-14 hand-off fails the pointer pin', () => {

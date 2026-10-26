@@ -14,11 +14,11 @@
 // this skill specifically can't silently reintroduce the forced question.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILL_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'feedback', 'SKILL.md');
-const skillText = fs.readFileSync(SKILL_PATH, 'utf8');
+const skillText = readText(SKILL_PATH);
 
 // Extracts the body of a `## {heading}` section: everything after the heading
 // line up to (not including) the next `## ` heading, or end of file. Anchored

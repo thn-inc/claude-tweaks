@@ -96,7 +96,7 @@ function buildPremiseCheck(finding, targetPath, root) {
 // verifiedAsOf (#117): the sha the sweep read this repo at, resolved ONCE per
 // run by the caller (bin/harness-health.js, via health-core/read-commit.js)
 // and threaded through here — never resolved inside this function. See
-// specShapedBody's own verifiedAsOf doc in record.js for why.
+// specShapedBody's own verifiedAsOf doc in record-payload.js for why.
 // pluginVersion (#1840, optional): the running plugin's own version
 // (`.claude-plugin/plugin.json` under CLAUDE_PLUGIN_ROOT), resolved ONCE per
 // run by the same caller — same non-resolved-here convention as

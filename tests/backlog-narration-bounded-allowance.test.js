@@ -2,13 +2,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const OVERVIEW_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'backlog', 'overview-mode.md');
 const REFINE_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'backlog', 'refine-mode.md');
-const overviewProse = fs.readFileSync(OVERVIEW_PATH, 'utf8');
-const refineProse = fs.readFileSync(REFINE_PATH, 'utf8');
+const overviewProse = readText(OVERVIEW_PATH);
+const refineProse = readText(REFINE_PATH);
 
 // The pre-change overview-mode.md banner (#742) — the absolute clean-step-silence rule this
 // change retires. Used below to prove each regex actually goes red on the text it replaces.

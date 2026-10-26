@@ -144,6 +144,8 @@ VERDICT: auto-merge | needs-human
 RATIONALE: {one paragraph, naming the specific factors weighed}
 ```
 
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.
+
 ## Anti-Patterns
 
 | Pattern | Why It Fails |

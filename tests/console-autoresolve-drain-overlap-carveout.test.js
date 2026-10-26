@@ -14,13 +14,13 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const collapse = (s) => s.replace(/\s+/g, ' ');
 
-const read = (rel) => collapse(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+const read = (rel) => collapse(readText(path.join(ROOT, rel)));
 const WRAPUP_FLAT = read('plugin/skills/wrap-up/review-console.md');
 const MULTISPEC_FLAT = read('plugin/skills/flow/multispec-review-console.md');
 
@@ -66,7 +66,6 @@ test('multi-spec console: drain-overlap-hold carve-out sentence ends with the mi
 // AC7 (#3520): the near-duplicate Step 6 hold template that drain-pr-overlap.md gives
 // must still be read by the console auto-resolver's DRAIN_OVERLAP_HOLD_RE second reader.
 const { drainOverlapHoldPrs } = require('../plugin/bin/lib/console/resolve');
-const { readText } = require('./helpers/read-skill');
 
 const DRAIN_PR_OVERLAP = readText(path.join(ROOT, 'plugin/skills/dispatch/drain-pr-overlap.md'));
 

@@ -1,14 +1,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const createAndUpdate = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'routine', 'create-and-update.md'),
-  'utf8'
-);
+const createAndUpdate = readText(path.join(ROOT, 'plugin', 'skills', 'routine', 'create-and-update.md'));
 
 test('create-and-update.md #68: Step 6 body template sets notifications unconditionally', () => {
   // Sibling of cron_expression, top-level, not nested under job_config.

@@ -120,3 +120,56 @@ test('none mixed with another intent exits 1 (#3018)', () => {
   assert.ok(stderr.includes('"none" cannot be combined'), `expected none-mixed detail: ${stderr}`);
   assert.strictEqual(fs.existsSync(path.join(runDir, 'work')), false, 'no work/ file should be written');
 });
+
+// #4027: --check is the gate-only mode /flow Step 1 item 5 runs — Resolution
+// plus the Materialization hard gate, with no --run-dir, no write and no
+// drift/premise/sibling work. Its deps throw on any filesystem write.
+function checkWithBody(body, extraArgs = [], labels = [{ name: 'ceremony:standard' }]) {
+  const repo = gitRepo();
+  return withCwd(repo, () => {
+    const recordFile = path.join(repo, 'record.json');
+    fs.writeFileSync(recordFile, JSON.stringify({
+      number: N, title: 'Check-mode record', body, labels, url: 'https://example.invalid/3018',
+    }));
+    const deps = fakeDepsNoGh();
+    deps.mkdirp = () => { throw new Error('--check must not create a directory'); };
+    deps.writeFile = () => { throw new Error('--check must not write a file'); };
+    const exitCode = run([String(N), '--check', '--record-json', recordFile, ...extraArgs], deps);
+    return { exitCode, deps };
+  });
+}
+
+test('--check on a shaped record exits 0 with a gate-passed envelope, no --run-dir, nothing written (#4027)', () => {
+  const { exitCode, deps } = checkWithBody(shapedBody('Design-intent: quiet'));
+  assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+  assert.deepStrictEqual(JSON.parse(deps.calls.stdout.join('')), {
+    record: N, check: 'passed', title: 'Check-mode record', ceremony: 'standard', surface: 'web',
+  });
+});
+
+test('--check reports ceremony null for an unlabeled record instead of the missing-ceremony exit 2 (#4027)', () => {
+  const { exitCode, deps } = checkWithBody(shapedBody('Design-intent: quiet'), [], []);
+  assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+  assert.strictEqual(JSON.parse(deps.calls.stdout.join('')).ceremony, null);
+});
+
+test('--check on an unshaped record exits 1 pointing at /specify, prints no envelope (#4027)', () => {
+  const { exitCode, deps } = checkWithBody('## Current State\nonly this\n');
+  assert.strictEqual(exitCode, 1);
+  assert.ok(deps.calls.stderr.join('').includes(`/claude-tweaks:specify #${N}`));
+  assert.strictEqual(deps.calls.stdout.join(''), '');
+});
+
+test('--check on an invalid Design-intent line exits 1 (#4027)', () => {
+  const { exitCode, deps } = checkWithBody(shapedBody('Design-intent: sparkly'));
+  assert.strictEqual(exitCode, 1);
+  assert.ok(deps.calls.stderr.join('').includes('invalid Design-intent'));
+});
+
+test('--check combined with a write flag is a malformed invocation, exit 2 (#4027)', () => {
+  for (const extra of [['--run-dir', 'x'], ['--ceremony', 'standard'], ['--multi-record-slug', '7']]) {
+    const { exitCode, deps } = checkWithBody(shapedBody('Design-intent: quiet'), extra);
+    assert.strictEqual(exitCode, 2, `${extra[0]}: ${deps.calls.stderr.join('')}`);
+    assert.match(deps.calls.stderr.join(''), new RegExp(`--check cannot be combined with ${extra[0]}`));
+  }
+});

@@ -40,14 +40,14 @@ read `createdAt` for the expiry timestamp fallback. Add this select to the comme
 (`.comments[] | …`):
 
 ```
-select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
+select((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR")
 ```
 
 and run this note filter alongside it — already prefixed with the marker select, so only a skipped
 comment carrying a marker is named — to name each one in one line in the sweep report:
 
 ```
-select(.body | contains("<!-- materiality-fingerprint:")) | select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \(.url) by \(.author.login // "unknown") (\(.authorAssociation // "no association")) — not an owner, member, or collaborator"
+select(.body | contains("<!-- materiality-fingerprint:")) | select(((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR") | not) | "skipped marker comment \(.url // .html_url // .id // "unknown") by \(.author.login // .user.login // "unknown") (\(.authorAssociation // .author_association // "no association")) — not an owner, member, or collaborator"
 ```
 
 (Code callers get the same two filters from `trustedMaterialityTexts(comments)` in
@@ -63,7 +63,8 @@ repeated firings of one recurring finding.
 When **3 or more** un-promoted entry lines share the same `{area}`, propose one spec-shaped issue
 absorbing them — each entry becomes one Deliverables bullet, the cluster's shared `{area}` becomes
 the proposal's title subject. Present the proposal per this project's standard staged-item flow
-(`{run-dir}/staged/digest-promotion-{n}.md`) — the `Propose digest cluster` action, Stage at every
+(`{run-dir}/staged/digest-promotion-{n}.md`, staged through `step-6-auto.md`'s `stage-item.js` call with
+`--id "digest-promotion-{n}"`) — the `Propose digest cluster` action, Stage at every
 tier (`step-6-auto.md`).
 
 On approval: file the proposed record, then append `→ {id}` to each promoted entry **line** in the

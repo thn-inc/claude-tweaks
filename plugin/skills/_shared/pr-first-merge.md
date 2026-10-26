@@ -38,8 +38,7 @@ before labeling silently drops acceptance sign-off the same way the pre-#410 fas
 did for a different reason (`wrap-up/review-console.md`'s own "console content is not all of
 Phase 4" note) — this procedure states the ordering explicitly so it is never re-dropped.
 Labeling has not landed when `{run-dir}/verify.json` (each `spec-{N}/` copy, multi-spec) is missing
-or its `acceptance-labeling` row's `result` is anything but `pass`/`skip` — `dispatch/close-out.md`
-step 3 also accepts live labels or brief comments — whichever caller reached this merge.
+or its `acceptance-labeling` row's `result` is anything but `pass`/`skip` — the full predicate, live-state tier included, is `_shared/acceptance-labeling-landed.md` — whichever caller reached this merge.
 
 ## Step 1.5: Curation-apply completeness guard (#1465)
 
@@ -138,7 +137,15 @@ empty `--values` line — `invalid: true`, never silently re-derived; or a resol
 as `wait` for this merge and log `AUTO … Step 2.5: lever unresolved ("{raw}") — proceeding as wait`.
 Never as `off`: an unreadable lever must not become the one value that skips the wait.
 
-**Read state first — never parse stderr first.** Before any merge attempt, regardless of value:
+**Read state first — never parse stderr first.** Before any merge attempt, regardless of value, resolve this step's scratch paths (`_shared/session-tmp-root.md`)
+and substitute the printed `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`
+below (`_shared/scratch-worktree.md` §7):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PR_RUNS=pr-runs-{n}.json PARK_COMMENT=park-comment-{n}.md
+```
+
+Then read state:
 
 ```bash
 gh pr view {pr-number} --repo {owner}/{repo} --json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup
@@ -210,9 +217,10 @@ immediately:
 ```bash
 DEADLINE=$(( $(date +%s) + 900 ))
 while :; do
-  gh pr checks {pr-number} --repo {owner}/{repo} > /tmp/pr-checks-{n}.txt 2>&1; RC=$?
+  gh pr checks {pr-number} --repo {owner}/{repo} > "{pr-checks-path}" 2>&1; RC=$?
   case "$RC" in
-    0) PENDING_RUNS=$(gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status --jq '[.[] | select(.status != "completed")] | length') || { RC=2; break; }
+    0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status > "{pr-runs-path}" || { RC=2; break; }
+       PENDING_RUNS=$(node -e "console.log(require(process.argv[1]).filter((r) => r.status !== 'completed').length)" -- "{pr-runs-path}") || { RC=2; break; }
        [ "${PENDING_RUNS:-x}" = 0 ] && break                 # all green — no head run still in progress
        [ "$(date +%s)" -ge "$DEADLINE" ] && RC=124 && break  # rollup green, a head run still pending at the bound
        sleep 30 ;;
@@ -224,6 +232,9 @@ while :; do
 done
 ```
 
+The head runs are counted from the saved file, never through a `gh … --jq` program: the worktree
+guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` §7).
+
 - `RC=0` → **green** — every reported check passed **and** every head run completed (the `0)` branch
   breaks only at zero pending head runs). Re-read state (`gh pr view … --json state,mergeStateStatus,headRefOid`)
   and the head runs (the same `gh run list` read as above): if
@@ -233,7 +244,7 @@ done
   its `workflowName`s); a head run not yet `completed` resumes the bounded watch at the same `DEADLINE`; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) (outcome `merged`,
   then Step 4).
 - `RC=1` (a check failed during the watch) → **Red path**, reason `check-failed:{names}` (names from
-  the `fail` rows of `/tmp/pr-checks-{n}.txt`).
+  the `fail` rows of `{pr-checks-path}`).
 - `RC=124` (still pending at the bound) → **Red path** with reason `checks-pending-timeout` —
   reserved strictly for checks or head runs still running at the bound, never for a check that failed.
 - `RC=2` (unknown `gh` exit) → report `pending-review`, reason `checks-read-failed`; never merge on
@@ -251,10 +262,10 @@ done
    shell string. Check names come from the PR's own workflow YAML (third-party-controlled on a fork
    PR), and every other comment site in this file already builds its body the same way:
    ```bash
-   printf 'Parked by merge-verification (%s): %s on PR #%s. Resume once green.\n' "$VALUE" "$REASON" "$PR" > /tmp/park-comment-{n}.md
-   gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file /tmp/park-comment-{n}.md
+   printf 'Parked by merge-verification (%s): %s on PR #%s. Resume once green.\n' "$VALUE" "$REASON" "$PR" > "{park-comment-path}"
+   gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file "{park-comment-path}"
    ```
-   (`$REASON` holds the check names — from `/tmp/pr-checks-{n}.txt`'s `fail` rows, or the failing
+   (`$REASON` holds the check names — from `{pr-checks-path}`'s `fail` rows, or the failing
    head runs' `workflowName`s — or the pending-timeout phrase — passed as a `printf` argument, never expanded inside the format string.)
    **Verify the label landed** — re-read each record's labels (`gh issue view {n} --json labels`)
    after the add; a missing `bot:parked` is retried once. If it is still missing, the park has no
@@ -281,14 +292,7 @@ classification rests on the state read, never on a stderr string). Report it as 
 (Step 3's own call — the merge lands when the forge is satisfied), and stop: never retry-loop,
 never suggest bypassing protection.
 
-**Signatures (Task 0, captured on this repo — literal, 2026-08-16, probe PR #591 against a throwaway base):**
-
-- (a) `gh pr merge {n} --auto --merge -t … -b …` on this repo (`allow_auto_merge: false`, no branch protection, no rulesets): stdout empty, stderr empty, `exit=0` — and the PR **merged immediately** (`gh pr view … --json state,mergedAt,autoMergeRequest` → `{"autoMergeRequest":null,"mergedAt":"2026-08-16T11:40:57Z","state":"MERGED"}`) while its `test` check was still `pending`. No signature distinguishes "armed" from "merged" — only the follow-up `gh pr view` does (Step 3.6).
-- (b) merge rejected by required checks: not captured — this repo has no branch protection or rulesets (`gh api repos/{owner}/{repo}/branches/main/protection` → HTTP 404 "Branch not protected"; `…/rules/branches/main` → `[]`); classification for this path rests on the state read (`mergeStateStatus: BLOCKED` with a green rollup), never on a stderr string.
-- (c) `gh pr checks {n} --watch --fail-fast` on a failing check: rows like `test	fail	35s	https://github.com/…/actions/runs/…` (each check name / `pass`|`fail`|`pending`|`skipping` / duration / URL), `exit=1`. (c2) `gh pr checks {n}` while a check is still running: `test	pending	0	https://…`, `exit=8`.
-- (d) `gh pr view {n} --json state,mergeStateStatus,statusCheckRollup` — green (open draft PR #588, read-only): `{"mergeStateStatus":"CLEAN","rollup":[{"conclusion":"SUCCESS","name":"label-fix-branch","status":"COMPLETED"},{"conclusion":"SUCCESS","name":"test","status":"COMPLETED"},{"conclusion":"SKIPPED","name":"cleanup-fix-labels","status":"COMPLETED"}],"state":"OPEN"}`; failing rollup entry: `{"conclusion":"FAILURE","name":"test","status":"COMPLETED"}` (observed on #591 after merge, `mergeStateStatus: UNKNOWN` — the value GitHub reports once a PR is `MERGED`); the `mergeStateStatus` value of an *open* PR with failing checks was not captured (the probe merged via (a) before its checks failed) — which is why red is classified from `statusCheckRollup[].conclusion`, not from `mergeStateStatus`.
-- (e) PR #3390 (#3316 wrap-up, 2026-10-17): right after a push the rollup and `gh pr checks` held only `label-fix-branch` (`SUCCESS`) and `cleanup-fix-labels` (`SKIPPED`), and `gh pr checks` exited `0`; the `pull_request` `test` run 39042323352 for the same head existed with status `pending` but was not yet in the rollup. Re-captured on PR #3425 (2026-10-17): the rollup listed `test` `IN_PROGRESS` beside those two, and `gh run list --commit {full sha}` listed the `test` run `in_progress` (its `conclusion` empty) next to the completed `push` run; the same command with the abbreviated sha `26d1037664` returned `[]`.
-- Also captured: `gh pr merge` against an already-merged PR: stderr `! Pull request {owner}/{repo}#{n} was already merged`, `exit=0` — a no-op, not an error; the state read (`state: MERGED`) catches it first.
+**Signatures (Task 0 captures (a)-(e)):** the literal captured outputs behind the classification above live in `pr-first-merge-appendix.md`'s Signatures section — read them when a merge outcome needs its evidence.
 
 **Resume-to-merge is one-shot.** `dispatch/SKILL.md`'s "Confirm before resuming" confirmation applies
 this same lever as a single read-then-decide over both of Step 2.5's reads (the state read and the head-run `gh run list` read; a not-yet-completed head run reads pending, a failing one red) (green → proceed; red → surface in the confirmation;
@@ -302,7 +306,7 @@ merge (capture (a)), so the confirmation itself carries the choice: wait for gre
 **Creation-time caller:** `tidy/SKILL.md`'s Step 7.5 `pr-first` branch invokes only this step's initial compose + `gh pr merge --auto` fences at PR-creation time, with the degrade chain below replaced by leave-unarmed + report — see that step's own text for the full routing.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir "{subject-dir}"
+node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --keep-open {keep-open} --pr {pr-number} --out-dir "{subject-dir}"
 ```
 
 ```bash
@@ -319,13 +323,17 @@ three. `{issue-list}` is the record numbers — the manifest's `complete` specs 
 (#2015; rest release via their own `never-started:`/`abandoned:` reason). `human-approved`:
 `dispatch/close-out.md`'s human-confirmed merge (that metric excludes it). `{scope}`
 resolves inside the composer from the `commit-scope`/`commit-scope-paths` policy keys (`_shared/policy-schema.md`) over the PR's own changed files (`gh pr diff --name-only` behind the `--pr` above — no local branch or checkout needed, so `dispatch/close-out.md`'s and `tidy`'s later-session callers compose the same subject); an explicit `--scope {scope}` overrides both. The composer writes
-the Conventional-Commits subject and one `Fixes #{n}` line per record. Same set the
-PR body's own `Fixes` lines already carry (`_shared/pr-checklist-refresh.md`'s pre-merge
-refresh), restated here because the merge commit's own message is what GitHub scans for
+the Conventional-Commits subject and one `Fixes #{n}` line per record, `Refs #{n}` for a
+`{keep-open}` one: the comma-joined `{issue-list}` numbers on a `Refs` line of the post-refresh
+PR body (`closing-links.js --mode pre-merge`'s `keepOpen`, or `parseFixesSpan(body).refs`);
+omit `--keep-open {keep-open}` when none. So the message's `Fixes` lines are the PR body's
+(`_shared/pr-checklist-refresh.md`'s pre-merge refresh), restated here because the merge commit's own message is what GitHub scans for
 closing keywords on a non-default integration branch, where the PR body's keywords don't
 fire (GitHub only auto-closes from a merge commit's message, or a PR body merged into the
 *default* branch — an explicit merge commit message is what makes closing work on any
 integration branch). `--squash` keeps one conventional commit per PR.
+
+When the caller supplies an expected head sha (today only `dispatch/close-out.md` after an update), append `--match-head-commit {expected-head}` to every `gh pr merge` command in this step, so a merge, or the arming of one, is accepted only against the head the caller verified; callers that supply none are unchanged.
 
 Run each fence as its own Bash call, never chained; if the composer exits non-zero, stop before any
 merge (its stderr names the reason). `{subject-dir}` is a literal path — resolve it once with
@@ -362,7 +370,7 @@ the result:
      behavior):
 
      ```bash
-     node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir "{subject-dir}"
+     node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --keep-open {keep-open} --pr {pr-number} --out-dir "{subject-dir}"
      ```
 
      ```bash
@@ -410,7 +418,7 @@ the result:
      (#2705) — never infer "merged once CI passed" from `state` alone.** A `StatusContext` entry is read by its `state` first, as in Step 2.5 (`SUCCESS`, `FAILURE`, `ERROR` concluded; `PENDING`, `EXPECTED` not). All entries
      `COMPLETED`+`SUCCESS`/`NEUTRAL`/`SKIPPED` → report "merged, {names} concluded {conclusions}";
      any entry still non-`COMPLETED` → report "merged — {name} had not concluded at merge time;
-     this repo has no required checks (see Signatures below), so `--auto` did not wait on it";
+     this repo has no required checks (see `pr-first-merge-appendix.md`'s Signatures), so `--auto` did not wait on it";
      empty rollup → "merged — no status checks on this PR." Go to Step 4.
    - `state: OPEN` with `autoMergeRequest` present (checks still pending, auto-merge armed):
      outcome `armed`. **Do not poll or wait** — this call is done. The reconciler

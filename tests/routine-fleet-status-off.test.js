@@ -1,12 +1,12 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const fleet = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'routine', 'fleet.md'), 'utf8');
-const skill = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'routine', 'SKILL.md'), 'utf8');
+const fleet = readText(path.join(ROOT, 'plugin', 'skills', 'routine', 'fleet.md'));
+const skill = readText(path.join(ROOT, 'plugin', 'skills', 'routine', 'SKILL.md'));
 
 test('fleet.md carries the status and off sections', () => {
   assert.ok(fleet.includes('## Fleet status (aggregation)'));
@@ -34,8 +34,8 @@ test('SKILL.md wires fleet status and fleet off modes', () => {
 });
 
 test('README.md and context-flow.md surface fleet status (AC5)', () => {
-  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
-  const contextFlow = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'help', 'context-flow.md'), 'utf8');
+  const readme = readText(path.join(ROOT, 'README.md'));
+  const contextFlow = readText(path.join(ROOT, 'plugin', 'skills', 'help', 'context-flow.md'));
   assert.ok(readme.includes('fleet status'));
   assert.ok(contextFlow.includes('fleet status'));
 });

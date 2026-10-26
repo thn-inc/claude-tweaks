@@ -4,22 +4,14 @@
 // hand-copied verbatim in each of those files; a fix to the shared contract
 // now only needs to land once instead of being hunted down in every copy.
 'use strict';
-// Property access at call time (`cp.execFileSync(...)`), not a destructured
-// const — a destructured binding snapshots child_process's execFileSync at
-// require time and is invisible to a test's `t.mock.method(cp, 'execFileSync', ...)`,
-// which mutates the property later. This module has no injectable-runner seam
-// (unlike the `gh api` modules under `bin/lib/`, per `gh-api-module-pattern`);
-// this is the minimum needed for a spawn-count test to observe these calls at all (#381).
-const cp = require('child_process');
-const { promisify } = require('util');
-// promisify(cp.execFile) is called fresh inside runGitAsync below, not
-// snapshotted here — the same call-time-resolution reason as the comment
-// above: promisify captures its argument by reference at the point it's
-// called, so hoisting this to module scope would silently defeat a test's
-// `cp.execFile = stub` monkeypatch (#872 follow-up — exactly this hoisted
-// form shipped once and broke `runGitAsync`'s own timeout test's ability to
-// mock a slow child deterministically).
 const { runClassified, runClassifiedAsync } = require('../shared-primitives');
+// #4032: both spawns below go through the timed twins, which record into
+// reconcile()'s timing store when one is active (a no-op otherwise: hook paths
+// that never reconcile pay two clock reads). They resolve `cp.execFileSync` /
+// `promisify(cp.execFile)` by property access at call time — never a snapshotted
+// binding — so a test's `t.mock.method(cp, 'execFileSync', ...)` or
+// `cp.execFile = stub` still reaches them (#381, #872 follow-up); see timing.js.
+const { execFileSyncTimed, execFileAsyncTimed } = require('../reconcile/timing');
 
 // Budget for one git query, sized from measurement rather than intuition (#134).
 //
@@ -89,8 +81,8 @@ function classify(err) {
 // Shared by both runGit and runGitAsync below — defined once so a future
 // fix to the success/failure shape (e.g. the #1341 stderr addition) cannot
 // land on one twin without the other picking it up automatically (#1652).
-function buildSuccess(stdout) {
-  return { stdout: stdout.trim(), failure: null, stderr: null };
+function buildSuccess(stdout, raw) {
+  return { stdout: raw ? stdout : stdout.trim(), failure: null, stderr: null };
 }
 
 function buildFailure(err) {
@@ -137,11 +129,22 @@ function buildFailure(err) {
 //
 // opts.timeoutMs overrides the budget; tests use it to force the timeout branch
 // deterministically. Production callers omit it.
+//
+// opts.env, when set, is the spawn's environment; when absent the child inherits
+// process.env as before. An object is used as given, so `{}` is an empty
+// environment (no PATH), not "unset". Pass repoPinnedEnv() to keep `-C <cwd>` in
+// charge of which repo git operates on.
+//
+// opts.raw === true returns success `stdout` verbatim instead of trimmed (#3900).
+// A `-z` reader passes it: trimming strips the leading space of a NUL stream's
+// first path (" lead.txt" -> "lead.txt"), which then names a file that does not
+// exist. Any other value keeps the trim; the failure shape is unchanged.
 function runGit(args, cwd, opts = {}) {
   const timeout = resolveTimeout(opts);
   return runClassified(
-    () => buildSuccess(cp.execFileSync('git', ['-C', cwd, ...args], {
+    () => buildSuccess(execFileSyncTimed('git', ['-C', cwd, ...args], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout,
+      ...(opts.env ? { env: opts.env } : {}),
       // Node defaults windowsHide to FALSE, which hands a child console
       // process a console of its OWN whenever the parent has none to
       // inherit. session-start.js's `reconcile-background` child is exactly
@@ -151,7 +154,7 @@ function runGit(args, cwd, opts = {}) {
       // user as a runaway loop rather than routine janitorial work. Inert on
       // POSIX, where the option is ignored.
       windowsHide: true,
-    })),
+    }), opts.raw === true),
     buildFailure,
   );
 }
@@ -174,13 +177,28 @@ async function runGitAsync(args, cwd, opts = {}) {
   const timeout = resolveTimeout(opts);
   return runClassifiedAsync(
     async () => {
-      const { stdout } = await promisify(cp.execFile)('git', ['-C', cwd, ...args], {
+      const { stdout } = await execFileAsyncTimed('git', ['-C', cwd, ...args], {
         encoding: 'utf8', timeout, windowsHide: true,
+        ...(opts.env ? { env: opts.env } : {}),
       });
-      return buildSuccess(stdout);
+      return buildSuccess(stdout, opts.raw === true);
     },
     buildFailure,
   );
+}
+
+// A copy of `env` without the four repo-locating variables. An inherited GIT_DIR
+// (or GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR) overrides `git -C <dir>`'s
+// repo discovery, so a child spawned from a linked worktree's session would
+// commit onto that worktree's branch instead of the repo `-C` names (#4178).
+// The list deliberately matches staged-patch/stack-check.js's gitEnv (the four
+// variables); git's own `git rev-parse --local-env-vars` list is wider
+// (GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_SHALLOW_FILE, ...),
+// and widening it is a separate decision.
+function repoPinnedEnv(env = process.env) {
+  const out = { ...env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete out[k];
+  return out;
 }
 
 // origin remote URL -> 'owner/repo' slug, or null when unparseable/absent.
@@ -193,4 +211,4 @@ function repoSlugOf(repoRoot) {
   return m ? m[1] : null;
 }
 
-module.exports = { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoSlugOf };
+module.exports = { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoSlugOf, repoPinnedEnv };

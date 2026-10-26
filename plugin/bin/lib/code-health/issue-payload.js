@@ -50,7 +50,7 @@ function toIssuePayload(finding) {
 // verifiedAsOf (#117): the sha the sweep read this repo at, resolved ONCE per
 // run by the caller (bin/code-health.js, via health-core/read-commit.js) and
 // threaded through here — never resolved inside this function. See
-// specShapedBody's own verifiedAsOf doc in record.js for why.
+// specShapedBody's own verifiedAsOf doc in record-payload.js for why.
 function toIssuePayloadV2(finding, verifiedAsOf) {
   // validateFindingV2 only requires anchor to be a non-empty string, so a
   // malformed LLM anchor must degrade to "no Key Files section", never make

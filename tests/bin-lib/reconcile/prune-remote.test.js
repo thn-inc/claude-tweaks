@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { decideRemotePrune, pruneRemote } = require('../../../plugin/bin/lib/reconcile/prune-remote');
+const { readText } = require('../../helpers/read-skill');
 
 // The delete bar is deliberately stricter than archive-branches' local -D:
 // a pushed deletion is unrecoverable from this checkout once origin GCs the
@@ -490,7 +491,7 @@ const { reconcile, ALL_CHECKS } = require('../../../plugin/bin/lib/reconcile');
 
 test("index: ALL_CHECKS includes 'remote-prune'; dispatch sits between 'archive-branches' and 'reap'; result gains remoteBranches slot", () => {
   assert.ok(ALL_CHECKS.includes('remote-prune'));
-  const src = fs.readFileSync(path.join(__dirname, '../../../plugin/bin/lib/reconcile/index.js'), 'utf8');
+  const src = readText(path.join(__dirname, '../../../plugin/bin/lib/reconcile/index.js'));
   const iBranches = src.indexOf("checks.includes('archive-branches')");
   // Search from iBranches: the shared-fetch gate above the mirror dispatch
   // (#820 D2) also tests `checks.includes('remote-prune')` — as part of

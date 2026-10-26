@@ -1,4 +1,4 @@
-template_version: 9
+template_version: 10
 routine_name: code-health-daily
 kickoff: code-health
 # Optional: `branch: <name>` pins the assembled kernel's target-branch placeholder.
@@ -11,7 +11,7 @@ kickoff: code-health
 # skills/_shared/routine-template-schema.md's field table and
 # skills/code-health/focus-mode.md). Unset here: this shipped copy stays the
 # generalist routine; focus values are supplied at fleet-provisioning time.
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 allowed_tools: [Bash, Read, Grep, Glob]
 mcp_connections: []
 default_schedule:

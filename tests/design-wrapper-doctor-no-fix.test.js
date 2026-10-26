@@ -10,8 +10,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const DOC = path.join(
   __dirname,
@@ -28,13 +28,13 @@ function fencedCodeBlocks(doc) {
 }
 
 test('modes/doctor.md has at least one fenced invocation block (sanity check)', () => {
-  const doc = fs.readFileSync(DOC, 'utf8');
+  const doc = readText(DOC);
   const blocks = fencedCodeBlocks(doc);
   assert.ok(blocks.length > 0, 'expected at least one fenced code block in modes/doctor.md');
 });
 
 test('no fenced code block in modes/doctor.md invokes --fix', () => {
-  const doc = fs.readFileSync(DOC, 'utf8');
+  const doc = readText(DOC);
   const blocks = fencedCodeBlocks(doc);
   for (const block of blocks) {
     assert.ok(
@@ -45,7 +45,7 @@ test('no fenced code block in modes/doctor.md invokes --fix', () => {
 });
 
 test('the only prose mentions of --fix are the "Never --fix" discussion and the Finding-schema rows', () => {
-  const doc = fs.readFileSync(DOC, 'utf8');
+  const doc = readText(DOC);
   // Every --fix mention must appear on a line that also mentions "fix" in a
   // discursive way (the heading, "never", "proposal", "scope?", or the
   // Finding-schema `fix` column) — a loose guard against a stray bare

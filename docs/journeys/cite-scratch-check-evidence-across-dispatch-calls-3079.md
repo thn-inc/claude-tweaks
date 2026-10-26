@@ -17,7 +17,7 @@ files:
 ### 1. The plan names the evidence destination
 - **URL:** `plugin/skills/build/plan-authoring-checks.md`, the **AC-evidence persistence check** paragraph.
 - **Action:** The plan task that runs the scratch check names its run-dir destination:
-  - one `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/build" --status AUTO --step "AC evidence"` call, with a single-quoted `--text`;
+  - one `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/build" --status AUTO --step "AC evidence"` call, with `--text-file "{text-file}"` holding the one-line entry text;
   - the full output, written with a plain Bash redirect to `$PIPELINE_RUN_DIR/evidence/{name}.txt` after `mkdir -p`.
 - **Should feel:** Routine bookkeeping, the same writer every other decision line uses.
 - **Should understand:**

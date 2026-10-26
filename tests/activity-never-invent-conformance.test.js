@@ -8,11 +8,11 @@
 // absence checks are plain substring/regex assertions.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILL_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'activity', 'SKILL.md');
-const skill = fs.readFileSync(SKILL_PATH, 'utf8').replace(/\r\n/g, '\n');
+const skill = readText(SKILL_PATH);
 const collapse = (s) => s.replace(/\s+/g, ' ');
 
 const NEVER_INVENT = 'never invent PRs, issues, numbers, dates, or people';

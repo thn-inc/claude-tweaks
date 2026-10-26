@@ -15,6 +15,15 @@
 // error; the report's capped failingRegion is the fallback). `--base <sha>` —
 // the commit verify compared against, named in the issue's lead line.
 //
+// Excerpts follow `baselineAdjudicated.attributedTests` (#3723): one per test
+// the adjudication attributed as new, so a file's pre-existing failure is not
+// quoted as the regression, at most EXCERPTS_PER_FILE per file (the rest
+// counted). A file with no usable entry, or none of whose attributed tests has
+// a log block, falls back to the block around the first log line naming it,
+// and the issue says which of the two applies. When base and HEAD fail the same
+// number of tests here and none of the attributed ones exists at base, the
+// bullet carries a possible-rename note.
+//
 // Exit codes (a CLI-local vocabulary; the only caller is the workflow):
 //   0  the verify outcome is a pass (raw pass, or a baseline-adjudicated pass)
 //      — nothing filed
@@ -41,6 +50,7 @@ const LABEL = 'type:bug';
 const BODY_CAP = 60000;
 const TRUNCATION_NOTE = '\n\n…(truncated — see the run\'s verify-report artifact)';
 const EXCERPT_MAX_LINES = 12;
+const EXCERPTS_PER_FILE = 5;
 const FALLBACK_LINES = 200;
 const NOT_RUN = 'baseline adjudication did not run';
 const REQUIRED_FLAGS = ['--report', '--ref', '--sha', '--repo', '--run-url'];
@@ -151,17 +161,7 @@ function excerptFor(file, { lines, normalized, tap }) {
   const needle = slashes(file);
   const hit = normalized.findIndex((l) => namesFile(l, needle));
   if (hit === -1) return null;
-  const closes = new Map();
-  const closeOf = (o) => {
-    if (!closes.has(o)) closes.set(o, tap.findIndex((t, i) => i > o && t.owner === o && t.kind === 'yamlClose'));
-    return closes.get(o);
-  };
-  const ownerAt = (i) => {
-    const o = tap[i].owner;
-    if (o === -1) return -1;
-    const c = closeOf(o);
-    return c !== -1 && i > c ? -1 : o;
-  };
+  const ownerAt = ownerAtOf(tap);
   let start = ownerAt(hit);
   if (start === -1) {
     start = hit;
@@ -170,12 +170,85 @@ function excerptFor(file, { lines, normalized, tap }) {
       if (ownerAt(i) !== -1 || BOUNDARY_KINDS.has(t.kind)) { start = i + 1; break; }
     }
   }
+  return excerptFrom(start, lines, tap);
+}
+
+// The effective-owner rule `excerptFor` and `excerptsForTests` share: `tap[i]`'s
+// owner, or -1 once `i` is past its block's own YAML-close line.
+function ownerAtOf(tap) {
+  const closes = new Map();
+  const closeOf = (o) => {
+    if (!closes.has(o)) closes.set(o, tap.findIndex((t, i) => i > o && t.owner === o && t.kind === 'yamlClose'));
+    return closes.get(o);
+  };
+  return (i) => {
+    const o = tap[i].owner;
+    if (o === -1) return -1;
+    const c = closeOf(o);
+    return c !== -1 && i > c ? -1 : o;
+  };
+}
+
+// The excerpt opening at line `start`, ending at the next pass/fail line at or
+// above the opening line's indent, or EXCERPT_MAX_LINES.
+function excerptFrom(start, lines, tap) {
   const openIndent = tap[start].kind === 'notOk' ? tap[start].indent : 0;
   let end = Math.min(start + EXCERPT_MAX_LINES, lines.length);
   for (let i = start + 1; i < end; i++) {
     if (TEST_POINT_KINDS.has(tap[i].kind) && tap[i].indent <= openIndent) { end = i; break; }
   }
   return lines.slice(start, end).join('\n');
+}
+
+// Same name rules as plugin/bin/lib/verify/extract.js's testTree, whose
+// TAP_POINT_RE / TAP_OPEN_RE produce the path elements the adjudicator
+// records: byte-for-byte, never trimmed. Group 1 is the rest of the line.
+const TAP_NOT_OK_RE = /^\s*not ok\b(?:\s+\d+)?(?:\s+-\s)?(.*)$/;
+const TAP_DIRECTIVE_RE = / # (?:SKIP|TODO)\b/i;
+const TAP_SUBTEST_RE = /^\s*# Subtest: ?(.*)$/;
+
+// One excerpt per path in `tests` (suite names outermost first, the test last),
+// in order; null for a path with no block in this source. A `not ok` line is a
+// path's block when its name is the path's last element, its open `# Subtest:`
+// ancestors are exactly the rest of the path, the block (its own line, or a
+// line it owns up to its own YAML close) names `file`, and no earlier path in
+// `tests` already took it. A one-element path is a top-level test for a file
+// present at base (the adjudicator records full suite paths there), but only a
+// leaf name for a file absent at base: it takes a top-level block first and
+// falls back to the same name at any depth only when no top-level block is
+// left. Each path takes the earliest such block, so a repeated path quotes
+// each occurrence once.
+function excerptsForTests(file, tests, { lines, normalized, tap }) {
+  const needle = slashes(file);
+  const ownerAt = ownerAtOf(tap);
+  const blockNamesFile = (i) => {
+    for (let j = i; j < tap.length && (j === i || tap[j].owner === i); j++) {
+      if ((j === i || ownerAt(j) === i) && namesFile(normalized[j], needle)) return true;
+    }
+    return false;
+  };
+  const stack = [];
+  const candidates = [];
+  tap.forEach((t, i) => {
+    if (t.kind !== 'subtest' && t.kind !== 'ok' && t.kind !== 'notOk') return;
+    while (stack.length && stack[stack.length - 1].indent >= t.indent) stack.pop();
+    const raw = lines[i].replace(/\r$/, '');
+    if (t.kind === 'subtest') { stack.push({ indent: t.indent, name: raw.match(TAP_SUBTEST_RE)[1] }); return; }
+    if (t.kind !== 'notOk') return;
+    const rest = raw.match(TAP_NOT_OK_RE)[1];
+    if (TAP_DIRECTIVE_RE.test(rest)) return;
+    if (blockNamesFile(i)) candidates.push({ index: i, name: rest, suites: stack.map((s) => s.name) });
+  });
+  const taken = new Set();
+  return tests.map((path) => {
+    const want = path.slice(0, -1);
+    const free = candidates.filter((c) => !taken.has(c.index) && c.name === path[path.length - 1]);
+    const hit = free.find((c) => c.suites.length === want.length && c.suites.every((s, k) => s === want[k]))
+      || (path.length === 1 ? free[0] : undefined);
+    if (!hit) return null;
+    taken.add(hit.index);
+    return excerptFrom(hit.index, lines, tap);
+  });
 }
 
 // The tests check's failing region, else the first other failed check's — verify.js
@@ -223,6 +296,26 @@ function timedOutOf(report) {
   return isPlainObject(ba) && Array.isArray(ba.timedOut) ? ba.timedOut : [];
 }
 
+// The adjudication's attributed-test entry for `file`, or null when it is
+// missing or malformed (anything but a non-empty array of non-empty string
+// arrays under `tests`): the caller falls back to the first-match excerpt.
+function attributedEntryOf(report, file) {
+  const ba = report.baselineAdjudicated;
+  const all = isPlainObject(ba) ? ba.attributedTests : undefined;
+  const entry = isPlainObject(all) ? all[file] : undefined;
+  if (!isPlainObject(entry) || !Array.isArray(entry.tests) || entry.tests.length === 0) return null;
+  const pathOk = (p) => Array.isArray(p) && p.length > 0 && p.every((n) => typeof n === 'string');
+  return entry.tests.every(pathOk) ? entry : null;
+}
+
+// Base and HEAD fail the same number of tests in this file, and none of the
+// attributed ones exists at base: the "new" failure is likely an already-failing
+// test under a new name.
+function possibleRename(entry) {
+  const { headFailing: h, baseFailing: b, absentAtBase: absent, tests } = entry;
+  return Number.isInteger(h) && h === b && h > 0 && Array.isArray(absent) && absent.length === tests.length;
+}
+
 function composeIssue({ report, verdict, sha, base, pr, runUrl, logText }) {
   const short = sha.slice(0, 9);
   const title = verdict.adjudicated
@@ -242,13 +335,34 @@ function composeIssue({ report, verdict, sha, base, pr, runUrl, logText }) {
     // the report's failing region before going without an excerpt.
     const sources = (typeof logText === 'string' ? [logText.split(/\r?\n/), regionLines] : [regionLines])
       .map((lines) => ({ lines, normalized: lines.map(slashes), tap: tapLines(lines) }));
-    const bullets = verdict.attributable.map((f) => `- \`${f}\`${timedOut.has(f) ? ' (timed out — no evidence)' : ''}`);
+    const entries = new Map(verdict.attributable.map((f) => [f, attributedEntryOf(report, f)]));
+    const bullets = verdict.attributable.map((f) => {
+      const entry = entries.get(f);
+      const rename = entry && possibleRename(entry)
+        ? ` — possible rename of an already-failing test (base and HEAD both fail ${entry.headFailing} test(s) here; no attributed test exists at base)`
+        : '';
+      return `- \`${f}\`${timedOut.has(f) ? ' (timed out — no evidence)' : ''}${rename}`;
+    });
     parts.push(['### Newly failing test files', ...bullets].join('\n'));
     const excerpts = [];
     for (const file of verdict.attributable) {
+      const entry = entries.get(file);
+      const found = entry ? entry.tests.map(() => null) : [];
+      if (entry) for (const s of sources) excerptsForTests(file, entry.tests, s).forEach((e, k) => { if (found[k] === null) found[k] = e; });
+      if (found.some((e) => e !== null)) {
+        const all = found.filter((e) => e !== null);
+        const quoted = all.slice(0, EXCERPTS_PER_FILE).map(fence);
+        const more = all.length > EXCERPTS_PER_FILE ? [`_…and ${all.length - EXCERPTS_PER_FILE} more attributed test(s) not quoted._`] : [];
+        const missing = entry.tests.filter((_, k) => found[k] === null).map((p) => `- \`${p.join(' > ')}\`: no log block found`);
+        excerpts.push([`#### \`${file}\``, `_Excerpts for the ${entry.tests.length} test(s) the baseline adjudication attributed as new._`, ...quoted, ...more, ...missing].join('\n\n'));
+        continue;
+      }
       let excerpt = null;
       for (const s of sources) if (excerpt === null) excerpt = excerptFor(file, s);
-      if (excerpt !== null) excerpts.push(`#### \`${file}\`\n\n${fence(excerpt)}`);
+      const why = entry
+        ? `No log block found for the ${entry.tests.length} attributed test(s)`
+        : 'Per-test attribution unavailable';
+      if (excerpt !== null) excerpts.push(`#### \`${file}\`\n\n_${why} — excerpt around the first log line naming this file._\n\n${fence(excerpt)}`);
     }
     if (excerpts.length) parts.push(['### Failure excerpts', ...excerpts].join('\n\n'));
   } else {

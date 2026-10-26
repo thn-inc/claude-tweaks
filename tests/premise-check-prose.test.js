@@ -10,13 +10,13 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS_ROOT = path.join(__dirname, '..', 'plugin', 'skills');
 
 function read(relPath) {
-  return fs.readFileSync(path.join(SKILLS_ROOT, relPath), 'utf8');
+  return readText(path.join(SKILLS_ROOT, relPath));
 }
 
 test('#1829: wrap-up/claude-md-curation.md names verifiedAsOf and Premise-check: for the over-budget filing', () => {

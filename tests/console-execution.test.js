@@ -126,7 +126,7 @@ test('tidy/scan-procedures.md Step 4.5 routes a non-empty console.ready through 
 
 test('autonomy-ceiling.md names console-execution.md as a second consoleAutoResolve caller', () => {
   assert.match(AUTONOMY_CEILING, /_shared\/console-execution\.md/);
-  assert.match(AUTONOMY_CEILING, /Two sanctioned callers/);
+  assert.match(AUTONOMY_CEILING, /Three sanctioned callers/);
 });
 
 // --- context.js exemption ---
@@ -160,5 +160,5 @@ test('reconcile/index.js registers console in ALL_CHECKS and the pr-first dispat
 });
 
 test('reconcile/index.js\'s local-merge skip line includes console alongside mirror/release/archive', () => {
-  assert.match(INDEX_JS, /check: 'mirror,release,archive,archive-branches,remote-prune,console'/);
+  assert.match(INDEX_JS, /check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console'/);
 });

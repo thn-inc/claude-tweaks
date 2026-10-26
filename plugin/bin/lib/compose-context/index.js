@@ -10,9 +10,10 @@ const fs = require('fs');
 const path = require('path');
 const { writeFileAtomic } = require('../atomic-write');
 const {
-  compose, stripMarkers, MarkerError, KEYS, VOCAB, UNRESOLVED,
+  compose, stripMarkers, parseMarkers, MarkerError, KEYS, VOCAB, UNRESOLVED,
 } = require('./compose');
 const { resolveConditions } = require('./resolve-conditions');
+const { PHASES, phaseBundles } = require('./phases');
 
 class SourceReadError extends Error {
   constructor(file, cause) {
@@ -31,15 +32,17 @@ const realDeps = {
   writeFileAtomic,
 };
 
-// { runDir, step, sources: [{label, file}], repoRoot } -> { path, bytes, sources, unresolved }
-function composeContext({ runDir, step, sources, repoRoot }, deps = {}) {
+// { runDir, step, sources: [{label, file}], repoRoot, resolved? } -> { path, bytes, sources, unresolved }
+// `resolved` is an already-computed resolveConditions result (composePhase
+// resolves once for the whole phase); absent, the call resolves its own.
+function composeContext({ runDir, step, sources, repoRoot, resolved }, deps = {}) {
   const d = { ...realDeps, ...deps };
   const read = sources.map(({ label, file }) => {
     let content;
     try { content = d.readFile(file, 'utf8'); } catch (err) { throw new SourceReadError(label, err); }
     return { path: label, content };
   });
-  const { conditions, unresolved } = resolveConditions({ runDir, repoRoot }, d);
+  const { conditions, unresolved } = resolved || resolveConditions({ runDir, repoRoot }, d);
   const text = compose(read, conditions); // validates every marker of every source first
   const outDir = path.join(runDir, 'context');
   const outPath = path.join(outDir, `${step}.md`);
@@ -53,6 +56,39 @@ function composeContext({ runDir, step, sources, repoRoot }, deps = {}) {
   };
 }
 
+// { runDir, phase, pluginRoot, repoRoot } -> { phase, bundles: [{ step, load, path, bytes, sources, unresolved }] }
+// Composes every bundle the phase registry (./phases.js) names, through
+// composeContext. Every source of every bundle is read, and every marker in
+// them validated, before the first bundle is written — so a failing source
+// anywhere in the phase writes no bundle at all, not just none of its own.
+function composePhase({ runDir, phase, pluginRoot, repoRoot }, deps = {}) {
+  const bundles = phaseBundles(phase, pluginRoot);
+  if (!bundles) throw new TypeError(`unknown phase ${phase} (known: ${Object.keys(PHASES).join(', ')})`);
+  const d = { ...realDeps, ...deps };
+  const contents = new Map();
+  for (const { sources } of bundles) {
+    for (const { label, file } of sources) {
+      if (contents.has(file)) continue;
+      let content;
+      try { content = d.readFile(file, 'utf8'); } catch (err) { throw new SourceReadError(label, err); }
+      parseMarkers(content, label);
+      contents.set(file, content);
+    }
+  }
+  // composeContext re-reads each source through readFile; serve the contents
+  // already read, so a file changing mid-call cannot split the phase.
+  const readFile = (p, enc) => (contents.has(p) ? contents.get(p) : d.readFile(p, enc));
+  // One condition set for the whole phase: the conditions are a property of the
+  // run, not the bundle, and resolving them probes `gh --version`.
+  const resolved = resolveConditions({ runDir, repoRoot }, d);
+  return {
+    phase,
+    bundles: bundles.map(({ step, load, sources }) => ({
+      step, load, ...composeContext({ runDir, step, sources, repoRoot, resolved }, { ...d, readFile }),
+    })),
+  };
+}
+
 module.exports = {
-  composeContext, SourceReadError, compose, stripMarkers, resolveConditions, MarkerError, KEYS, VOCAB, UNRESOLVED,
+  composeContext, composePhase, SourceReadError, compose, stripMarkers, resolveConditions, MarkerError, KEYS, VOCAB, UNRESOLVED,
 };

@@ -362,6 +362,46 @@ test('lens dispatch Scratch path cites the one-plain-command rule and scratch-wo
   assertScratchPathCitesRule(scratchPathParagraph(lens));
 });
 
+// #3876: the lens Scratch path also forbids a `;` sequence and a shell variable carried
+// between calls — #3809's lens agents were refused on `S=… && mkdir -p "$S" && cat > "$S/probe.js"`.
+test('lens dispatch Scratch path forbids a ; sequence and a carried shell variable (#3876)', () => {
+  const paragraph = scratchPathParagraph(
+    readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-lens-dispatch.md')),
+  );
+  assert.ok(paragraph.includes('nor a `;` sequence'), 'the lens Scratch path must forbid a ; sequence (#3876)');
+  assert.ok(
+    paragraph.includes('no shell variable carried between calls'),
+    'the lens Scratch path must forbid carrying a shell variable between calls (#3876)',
+  );
+  assert.ok(
+    paragraph.includes('literal absolute path'),
+    'the lens Scratch path must require a literal absolute path in every call (#3876)',
+  );
+});
+
+// #3876: the refutation and gap-sweep SCRATCH lines are the other two agent prompts that
+// state the recipe, so they carry the same ban rather than drifting from the lens paragraph.
+test('refutation and gap-sweep SCRATCH lines forbid a ; sequence and a carried shell variable (#3876)', () => {
+  const debate = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-debate-and-refutation.md'));
+  const clause = 'nor a `;` sequence, and no shell variable carried between calls: spell the scratch path out as a literal absolute path in every call';
+  // One slice per template, each by its own start and end anchors, so a copy that lands in
+  // the wrong template cannot satisfy the other's assertion.
+  const regions = [
+    ['refutation', 'You are trying to FALSIFY this finding', '[Use: Capable — refutation agent'],
+    ['gap-sweep', 'You are a fresh-eyes reviewer', '[Use: Frontier — gap-sweep agent'],
+  ];
+  for (const [label, startAnchor, endAnchor] of regions) {
+    const start = debate.indexOf(startAnchor);
+    const end = debate.indexOf(endAnchor, start);
+    assert.ok(start !== -1 && end !== -1, `the ${label} template anchors must resolve in step3-debate-and-refutation.md (#3876)`);
+    assert.strictEqual(
+      debate.slice(start, end).split(clause).length - 1,
+      1,
+      `the ${label} SCRATCH line must carry the ; / carried-variable ban exactly once (#3876)`,
+    );
+  }
+});
+
 test('go-red control: the pre-#3675 Scratch path fails the citation assertion (#3675)', () => {
   // Frozen tail of the pre-#3675 paragraph: shell-safe recipe present, no contract citation.
   const OLD =

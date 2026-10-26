@@ -184,6 +184,9 @@ abandoned ad-hoc dir (its recorded worktree no longer resolves in `git worktree 
 swept separately once `ADHOC_SUPERSEDED_TTL_MS` (30 days) has elapsed since it was last touched
 (`isAdHocStandaloneSuperseded`, #1604) — a still-live one (worktree still registered) is never
 swept by this path, no matter its age, preserving this section's own invariant.**
+A dir stamped with the main checkout never reaches that path (the main checkout is always
+registered); `adhoc-session-ended` sweeps it instead, once its session reads `dead` and the dir has
+sat untouched for 7 days (#4179). A wrap-up later than either window reads no friction from it.
 
 **This block is the single machine-checked statement of the vocabulary above** (`tests/reflect-friction-lens-vocab.test.js` pins it against the real `appendEvent(...)` call sites in `bin/lib/hooks/*.js` — a drift here is a test failure, not a silent doc rot, per `#452`'s post-mortem):
 
@@ -321,8 +324,8 @@ already does, but write the composed table — each insight's resolved recommend
 applied — to `{run-dir}/staged/wrap-up-reflect-insights.md` (overwrite if a prior reflect pass in
 this same run already wrote one) instead of asking. Do not apply any "Implement now" insight, do
 not file any Defer/Capture record, and do not record a Don't-capture decline yet — leave every
-non-D4/D5 outcome unapplied. `wrap-up/review-console.md`'s own Pending-review rendering (Hard
-requirement: every file in `staged/` renders) picks up this file, and its own terminal Approve all
+non-D4/D5 outcome unapplied. `wrap-up/review-console.md` (Hard
+requirement: every file in `staged/` renders) picks up this file (`console-resolve.js` classifies it under Reflection insights), and its own terminal Approve all
 / Override decision is what actually applies each row, exactly as the `AskUserQuestion` answer
 would have applied it here. D4 (Memory) and D5 (Upstream) rows are listed in the staged file for
 visibility only — nothing about this branch changes how those two destinations are gated; they

@@ -217,6 +217,7 @@ function evaluate(entry, options = {}) {
     version,
     assertions,
     fixtures,
+    reportUpgrades: entry['report-upgrades'] !== false,
   };
   evaluation.due = isDue(evaluation);
   return evaluation;
@@ -229,8 +230,12 @@ function evaluate(entry, options = {}) {
 // disagrees with the findings it precedes is worse than either being wrong on
 // its own. `resolvedInstalled` is required — "you could upgrade from nothing"
 // is noise, and checkVersion already reported the absence.
+//
+// An entry's `report-upgrades: false` opt-out lives here, not at a call site,
+// so isDue, buildFindings and cmdDue stay in agreement.
 function hasUpgrade(evaluation) {
   if (evaluation.contentPins) return false; // no version line exists to upgrade along
+  if (evaluation.reportUpgrades === false) return false;
   return Boolean(
     evaluation.latest
     && evaluation.resolvedInstalled
@@ -565,7 +570,7 @@ function cmdFindings(args, io = {}) {
   if (findings.length === 0) {
     // AC2: an all-green run says so, on stderr, and files nothing. It must
     // never turn "nothing found" into an issue of its own.
-    process.stderr.write(`[${TOOL_NAME}] no version moved and every assertion and fixture holds — nothing to file\n`);
+    process.stderr.write(`[${TOOL_NAME}] no findings — every assertion and fixture holds and no reported upgrade is pending — nothing to file\n`);
   }
   return findings;
 }

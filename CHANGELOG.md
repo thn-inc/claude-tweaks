@@ -53,6 +53,300 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.156.0](https://github.com/thn-inc/claude-tweaks/compare/v6.155.1...v6.156.0) (2026-10-26)
+
+
+### Features
+
+* Apply reflect observation and convention findings at the… ([#4168](https://github.com/thn-inc/claude-tweaks/issues/4168)) ([0430206](https://github.com/thn-inc/claude-tweaks/commit/04302060ef03ee5bcc486900ff9390707cdc1fcb))
+* Express lane: build eligible trivial records in one… ([#4025](https://github.com/thn-inc/claude-tweaks/issues/4025)) ([1f652d8](https://github.com/thn-inc/claude-tweaks/commit/1f652d83d8908088d9fa3c4b2b211608c08264aa))
+
+
+### Bug Fixes
+
+* _shared/pr-first-merge.md park comment writes its body to… ([#4173](https://github.com/thn-inc/claude-tweaks/issues/4173)) ([c778d04](https://github.com/thn-inc/claude-tweaks/commit/c778d0490e1b8cfd272cd08828017355bc30a504))
+* Bound the shell-scanner differential recipe so a real… ([#4391](https://github.com/thn-inc/claude-tweaks/issues/4391)) ([87fc4da](https://github.com/thn-inc/claude-tweaks/commit/87fc4da07a1a088dece7c88ce9645a66e9d720a7))
+* Inline component skills that end on an "Output ONLY these… ([#4117](https://github.com/thn-inc/claude-tweaks/issues/4117)) ([a149e80](https://github.com/thn-inc/claude-tweaks/commit/a149e80dfa15ec15351f20b390d06c6b85849fe3))
+* Re-surface a Queue-writes item whose execution failed… ([#4170](https://github.com/thn-inc/claude-tweaks/issues/4170)) ([aea50e8](https://github.com/thn-inc/claude-tweaks/commit/aea50e8e50b451ced26b33f75a593f41ce2d1150))
+* refreshOwnerBlock resolves the owner pid (up to 8 ps… ([#4150](https://github.com/thn-inc/claude-tweaks/issues/4150)) ([4f437c5](https://github.com/thn-inc/claude-tweaks/commit/4f437c57bc2e20d69ff5a9326fde720761a9c16a))
+* release --as anchor still requires exact HEAD == origin… ([#4139](https://github.com/thn-inc/claude-tweaks/issues/4139)) ([2aecb2a](https://github.com/thn-inc/claude-tweaks/commit/2aecb2a0bdb8a042bca820447ea2b240b10c3511))
+* release Step 0 run-dir adoption guard is an inline node… ([#4151](https://github.com/thn-inc/claude-tweaks/issues/4151)) ([e9ef982](https://github.com/thn-inc/claude-tweaks/commit/e9ef982b90843914dd6e791f1b730874f90096fb))
+* specify: refuse digest containers passed by explicit… ([#4142](https://github.com/thn-inc/claude-tweaks/issues/4142)) ([3c6fdaa](https://github.com/thn-inc/claude-tweaks/commit/3c6fdaab66473f7abc2515610cc0ef130119ad8e))
+* Windows: release bootstrap and release-local write guards… ([#4282](https://github.com/thn-inc/claude-tweaks/issues/4282)) ([99b4c2e](https://github.com/thn-inc/claude-tweaks/commit/99b4c2e3db5a7f70564df587732d575096a67a07))
+* Windows: tests and two display-ID producers compare… ([#4288](https://github.com/thn-inc/claude-tweaks/issues/4288)) ([915237d](https://github.com/thn-inc/claude-tweaks/commit/915237d809756faa476246e83c1a4eacdafd0c5a))
+* wrap-up review-console: skip test:true gate-denial events… ([#4186](https://github.com/thn-inc/claude-tweaks/issues/4186)) ([19f3f49](https://github.com/thn-inc/claude-tweaks/commit/19f3f49277b045161cd39ce399a1b1528dccad29))
+
+### Highlights
+* Test-impact maps can be traced on Windows as well as on POSIX, and a large subset no longer overflows the Windows command line.
+* Windows: residue evidence lines and the local release CLI's plan-claim paths now print with `/`, as on other platforms. Everything else in this record is test-only.
+* Maintainer-only: the shell-scanner differential recipe now bounds every real-bash run, so a write shape can no longer leave a process filling the disk after the run ends.
+* The test-impact tracer follows more of what a test reads, so subsets miss less.
+
+## [6.155.1](https://github.com/thn-inc/claude-tweaks/compare/v6.155.0...v6.155.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* Shipped-candidate detector reads a PR's own filed… ([#4314](https://github.com/thn-inc/claude-tweaks/issues/4314)) ([da3a174](https://github.com/thn-inc/claude-tweaks/commit/da3a174e7cfbdc9934e211ffaa3b9884203aaa06))
+* Skip fenced code blocks when the shared section parsers… ([#4169](https://github.com/thn-inc/claude-tweaks/issues/4169)) ([8fe0d7b](https://github.com/thn-inc/claude-tweaks/commit/8fe0d7b4e1dacf64fedc367e9e2116e044694ba5))
+* Windows: worktree and write guards fail open when a Bash… ([#4281](https://github.com/thn-inc/claude-tweaks/issues/4281)) ([1961010](https://github.com/thn-inc/claude-tweaks/commit/1961010a1851e11afabfe52422651a19361586e2))
+
+### Highlights
+* Records that quote a markdown document no longer have the quoted headings mistaken for their own sections.
+* No user-visible change.
+* Pipelines spend far fewer turns on bookkeeping: tools log the decisions they make, and each phase exit is a single step.
+* Close-out's in-place PR update survives a re-run from another checkout without merging an unverified head.
+* Windows: the worktree-isolation, shadow run-dir, policy.yml and worktree-teardown guards now deny a Bash command that names a quoted native path (`"D:\…"`). Before this fix, such a command passed unchecked.
+* Dispatch no longer mistakes a follow-up record filed during a PR's build for work that PR already shipped, so those records get built instead of excluded with a false close proposal.
+* No user-visible change: run-owner liveness is judged one way across hooks and run cleanup.
+
+## [6.155.0](https://github.com/thn-inc/claude-tweaks/compare/v6.154.1...v6.155.0) (2026-10-25)
+
+
+### Features
+
+* dispatch close-out: offer an update-from-main path for a… ([#4273](https://github.com/thn-inc/claude-tweaks/issues/4273)) ([7b22a02](https://github.com/thn-inc/claude-tweaks/commit/7b22a02e3a73642d478def85506f52303779b10f))
+
+
+### Bug Fixes
+
+* Carry the staged finding title and body when the Review… ([#4136](https://github.com/thn-inc/claude-tweaks/issues/4136)) ([629a546](https://github.com/thn-inc/claude-tweaks/commit/629a546749088e4b7f2a049a05bcde3d998e68fc))
+* Keep a PR-rendered console with a failed finding filing… ([#4172](https://github.com/thn-inc/claude-tweaks/issues/4172)) ([2a6235d](https://github.com/thn-inc/claude-tweaks/commit/2a6235d7a826c0171e3a60744e866cb3d3c5febf))
+* release Step 3 records the reviewed tip with a second… ([#4157](https://github.com/thn-inc/claude-tweaks/issues/4157)) ([45e4b7c](https://github.com/thn-inc/claude-tweaks/commit/45e4b7c5e85ad236b28b596daeb5e743cec413e4))
+* resolve-policy --values: warn on stderr when a requested… ([#4141](https://github.com/thn-inc/claude-tweaks/issues/4141)) ([3d473da](https://github.com/thn-inc/claude-tweaks/commit/3d473da61d88c3beff3f988292a71bcf80475685))
+* Surface can't-tell tiebreak findings on the fast-lane… ([#4171](https://github.com/thn-inc/claude-tweaks/issues/4171)) ([f105fae](https://github.com/thn-inc/claude-tweaks/commit/f105fae1c74dd8e93723e5e8745d3be340dc83cd))
+
+### Highlights
+* Backlog records filed from can't-tell review findings now carry the finding's claim and title instead of only its location.
+* An invalid value in `.claude-tweaks/policy.yml` or a run config now produces a warning when a skill reads it, instead of silently falling back to the default.
+* Closing out a parked PR that has fallen behind or conflicts with main can now update it in place, re-verified, instead of stopping.
+* No user-visible change.
+* Can't-tell review findings are no longer lost when a run merges through the fast-lane auto-merge path.
+* A review finding whose filing failed on a PR-rendered console now blocks archival until someone handles it.
+* No user-visible change: the release skill's pre-merge tip check now runs as tested code instead of step-by-step instructions.
+* A release can no longer record a reviewed tip that differs from the tree its test gate ran on.
+
+## [6.154.1](https://github.com/thn-inc/claude-tweaks/compare/v6.154.0...v6.154.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* ceremony-derive isDocsPath: treat docs/plans/*.html… ([#4187](https://github.com/thn-inc/claude-tweaks/issues/4187)) ([8099b55](https://github.com/thn-inc/claude-tweaks/commit/8099b55fd9ea8ff36e50da769879496fa371fc4b))
+* Explicit-list dispatch drops the first-named record when… ([#4219](https://github.com/thn-inc/claude-tweaks/issues/4219)) ([cd9ad93](https://github.com/thn-inc/claude-tweaks/commit/cd9ad9353184869604ba3c70aafca6b653a56929))
+* pr-first: rewriting Fixes #N to Refs #N before merge does… ([#4199](https://github.com/thn-inc/claude-tweaks/issues/4199)) ([71d8059](https://github.com/thn-inc/claude-tweaks/commit/71d8059a59f68d7d87f470e658ed86fd49de8e5a))
+* reconcile: background archive-run commit lands on a… ([#4178](https://github.com/thn-inc/claude-tweaks/issues/4178)) ([8e864ba](https://github.com/thn-inc/claude-tweaks/commit/8e864ba5f201aaa6a5f0c8b56ffd809f6efa004b))
+* reconcile: make --dry-run write nothing, and record why… ([#4180](https://github.com/thn-inc/claude-tweaks/issues/4180)) ([ff0fc67](https://github.com/thn-inc/claude-tweaks/commit/ff0fc67ab73cc75878ec88df0074bb0464c1c06d))
+* reconcile: sweep main-checkout ad-hoc session dirs by… ([#4179](https://github.com/thn-inc/claude-tweaks/issues/4179)) ([272aa63](https://github.com/thn-inc/claude-tweaks/commit/272aa63aa935a8a3213bfafeddee5ef2e51b32ce))
+* release disposition has no route for design-decision-*… ([#4156](https://github.com/thn-inc/claude-tweaks/issues/4156)) ([b89606b](https://github.com/thn-inc/claude-tweaks/commit/b89606b40d47c93040c69e33ea75302312adb9b7))
+* release disposition reads an unreadable staged/ as empty… ([#4155](https://github.com/thn-inc/claude-tweaks/issues/4155)) ([2b0af99](https://github.com/thn-inc/claude-tweaks/commit/2b0af99850c4f5c252b18a7f676da78733d3f8e5))
+* research source-registry: split the `; echo exit=$?`… ([#4190](https://github.com/thn-inc/claude-tweaks/issues/4190)) ([5871d69](https://github.com/thn-inc/claude-tweaks/commit/5871d691bb6dd6a1ae363d1e3a1a7c4e1953264d))
+* Resolve a redirect glued to a word that holds a quoted… ([#4210](https://github.com/thn-inc/claude-tweaks/issues/4210)) ([b4a2f59](https://github.com/thn-inc/claude-tweaks/commit/b4a2f59db6e620215a354cf8f9cdf5b678eb2fd5))
+* run-tests --files-from subset lane skips the ownership… ([#4159](https://github.com/thn-inc/claude-tweaks/issues/4159)) ([420e142](https://github.com/thn-inc/claude-tweaks/commit/420e1427ac46dfd4fd11c47cf9695ded5e510692))
+* stories/refine.md 5a: resolve story URL against the run… ([#4184](https://github.com/thn-inc/claude-tweaks/issues/4184)) ([9938abd](https://github.com/thn-inc/claude-tweaks/commit/9938abda5c4be4000e91b22821f6d1b945b47ec9))
+* test-impact tracer drops a read whose trace write fails… ([#4158](https://github.com/thn-inc/claude-tweaks/issues/4158)) ([4535906](https://github.com/thn-inc/claude-tweaks/commit/4535906dfd01298ff60cf892bd9d6383accb1e28))
+* Windows regression: 1 test file(s) newly failing after… ([#4296](https://github.com/thn-inc/claude-tweaks/issues/4296)) ([ebf7148](https://github.com/thn-inc/claude-tweaks/commit/ebf7148263bfb33dd656366219836f55f67170ab))
+* Windows regression: 2 test file(s) newly failing after… ([#4228](https://github.com/thn-inc/claude-tweaks/issues/4228)) ([ea9bd53](https://github.com/thn-inc/claude-tweaks/commit/ea9bd53dc9055780ba3824dabfb37e3c3fb68a58))
+* Windows: [#3064](https://github.com/thn-inc/claude-tweaks/issues/3064) stale-worktree test expects a native path… ([#4222](https://github.com/thn-inc/claude-tweaks/issues/4222)) ([cd9f6b8](https://github.com/thn-inc/claude-tweaks/commit/cd9f6b87815d059d37c10b23970a2bfc020eb454))
+* worktree-always write gate misses writes inside heredocs… ([#4149](https://github.com/thn-inc/claude-tweaks/issues/4149)) ([2a21fbe](https://github.com/thn-inc/claude-tweaks/commit/2a21fbee9d45aae8b4f8c9356cd0ab27f50934bd))
+
+### Highlights
+* No user-visible change.
+* A release run no longer archives review findings it could not read.
+* `/claude-tweaks:research` source checks no longer get refused in worktree sessions.
+* Maintainer-facing: the scheduled perf workflow has been proven on a real runner.
+* Releases whose review staged a design decision now archive normally instead of leaving the run open.
+* Reconcile's run-dir archival commit now always lands on the main checkout, even when the reconcile process inherits a `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` or `GIT_COMMON_DIR` that names a linked worktree.
+* The worktree-always guard again blocks writes into the main checkout that a heredoc runs through a non-shell executor or a later pipe.
+* Running `hooks.js` with an unknown or missing subcommand now prints the full list of valid subcommands, and names like `constructor` or `__proto__` are rejected with exit 1 instead of silently exiting 0.
+* `/claude-tweaks:stories` refine now validates stories against the current run's app URL instead of an origin left over from an earlier run.
+* Reconcile now cleans up the ad-hoc session directories a denial leaves in the main checkout, instead of escalating them as stuck runs.
+* No user-visible change: fixes a Windows-only failure in the verification runner's own tests.
+* Fix Windows-only failures in two reconcile tests added by #4032, which depended on a `#!/bin/sh` `gh` stub that Windows cannot spawn.
+* No user-visible change.
+* No user-visible change.
+* `reconcile --dry-run` no longer writes the cache or GitHub, and failed escalations now say why.
+* No user-visible change.
+* A multi-record pipeline run no longer closes a record it deliberately left open when its PR merges.
+* Records that only add docs and a diagram now get the lighter wrap-up ceremony.
+* Naming records in `/claude-tweaks:dispatch #A,#B,...` now builds them in the order you named them, and any left for a later firing by the batch cap are listed in the report.
+* The worktree-always gate now sees a redirect glued to a word that holds a quoted span (`echo "hi">x`), which it previously let through.
+* Pipeline agents stop tripping the worktree guard, removing thousands of wasted retry turns.
+* No user-visible change.
+* Impact-selected test runs no longer skip a test whose file reads could not be recorded while the map was built.
+* No user-visible change: the test runner's subset lane hardens its shared temp directory the same way the full lane does.
+* No user-visible change.
+* Reconcile finishes in seconds instead of about a minute.
+
+## [6.154.0](https://github.com/thn-inc/claude-tweaks/compare/v6.153.0...v6.154.0) (2026-10-25)
+
+
+### Features
+
+* give every Review Console item a final outcome and backfill the console backlog ([#3992](https://github.com/thn-inc/claude-tweaks/issues/3992)) ([6510874](https://github.com/thn-inc/claude-tweaks/commit/6510874174729159ee6f724f746a5c5dd208843a)), closes [#3816](https://github.com/thn-inc/claude-tweaks/issues/3816) [#3946](https://github.com/thn-inc/claude-tweaks/issues/3946) [#3949](https://github.com/thn-inc/claude-tweaks/issues/3949) [#3950](https://github.com/thn-inc/claude-tweaks/issues/3950)
+
+
+### Bug Fixes
+
+* compose-pr-body.js: parseArgs accepts inherited object… ([#4021](https://github.com/thn-inc/claude-tweaks/issues/4021)) ([8c725c7](https://github.com/thn-inc/claude-tweaks/commit/8c725c7b56f18fa5f5a1025d415e8a3ae11f126b))
+* compose-subject renders the record's "Filed by" footer as… ([#4014](https://github.com/thn-inc/claude-tweaks/issues/4014)) ([9908c65](https://github.com/thn-inc/claude-tweaks/commit/9908c65a477f539f289092d7bf802efcf1c70746))
+* reconcile: archiving an escalated stuck dir drops its… ([#4202](https://github.com/thn-inc/claude-tweaks/issues/4202)) ([04078e6](https://github.com/thn-inc/claude-tweaks/commit/04078e6240839551d0459bbdd32bff6e5a1f68ac))
+* reflect's integration-branch probe reads a failed fetch… ([#4069](https://github.com/thn-inc/claude-tweaks/issues/4069)) ([bddfa50](https://github.com/thn-inc/claude-tweaks/commit/bddfa50bbacec82a8887edb0684b6a5095c13b74))
+* staged-patch gitEnv leaks env-injected git config… ([#3997](https://github.com/thn-inc/claude-tweaks/issues/3997)) ([d36f5f6](https://github.com/thn-inc/claude-tweaks/commit/d36f5f6a54367f74e589527555a81ab403ba3058))
+* Windows regression: 1 test file(s) newly failing after… ([#4177](https://github.com/thn-inc/claude-tweaks/issues/4177)) ([42aacbb](https://github.com/thn-inc/claude-tweaks/commit/42aacbbbd5a6c76731d011189fc0d31b1677d9ed))
+* worktree-always redirect scan misses a redirect glued to… ([#4015](https://github.com/thn-inc/claude-tweaks/issues/4015)) ([5d66bf3](https://github.com/thn-inc/claude-tweaks/commit/5d66bf378f00ed495a4b18013350d53be8f0b3bb))
+
+### Highlights
+* Maintainer-facing: timing budgets run on a schedule again, and the session-failures lock wait is covered by the regular suite.
+* The worktree-always gate now sees a redirect glued to a word (`echo foo>x`), which it previously let through.
+* Maintainer-only: a project skill for splitting a shared lib module without leaving stale location claims behind.
+* Each run reports where its turns went, and the Review Console flags runs that blow their efficiency budget.
+* No user-visible change.
+* Reconcile's consolidated stuck-runs record now closes by itself once every listed run directory has been archived.
+* No user-visible change: fixed the Windows-only failures in the verification runner's own tests, so post-merge Windows checks report real regressions again.
+* Merge commits composed from agent-filed records no longer include the record's "Filed by" footer.
+* No user-visible change.
+* No user-visible change.
+* No user-visible change.
+* The reflect skill no longer files a duplicate record when it could not reach the integration branch to check.
+* SessionStart reconcile no longer loads the wrap-up pack module it does not use.
+
+## [6.153.0](https://github.com/thn-inc/claude-tweaks/compare/v6.152.0...v6.153.0) (2026-10-24)
+
+
+### Features
+
+* Add a run-liveness verdict module and an owner block in… ([#3973](https://github.com/thn-inc/claude-tweaks/issues/3973)) ([673bd63](https://github.com/thn-inc/claude-tweaks/commit/673bd6371834c4081af53e2386b3b33af26bb240))
+* Select local tests by traced file reads instead of… ([#4024](https://github.com/thn-inc/claude-tweaks/issues/4024)) ([3f5124d](https://github.com/thn-inc/claude-tweaks/commit/3f5124d8219b2b793a1170d3dbed3cf10faef422))
+
+
+### Bug Fixes
+
+* archive-run guard does not cover the dispatch bundle… ([#3740](https://github.com/thn-inc/claude-tweaks/issues/3740)) ([18a9fa1](https://github.com/thn-inc/claude-tweaks/commit/18a9fa1c8c1e42272de1c52ea6fcc6e7a1e01941))
+* delete-ledger and finish-console: test the unattributable… ([#3686](https://github.com/thn-inc/claude-tweaks/issues/3686)) ([8d62aea](https://github.com/thn-inc/claude-tweaks/commit/8d62aea9f0cc7eee1a1147961e0a69d6b5788c7f)), closes [#3742](https://github.com/thn-inc/claude-tweaks/issues/3742) [#3776](https://github.com/thn-inc/claude-tweaks/issues/3776)
+* release: a finished release's run dir stays clean and… ([#3898](https://github.com/thn-inc/claude-tweaks/issues/3898)) ([5dfd550](https://github.com/thn-inc/claude-tweaks/commit/5dfd55005a947796e5d6c6095f33ecaf705bd08a)), closes [#4012](https://github.com/thn-inc/claude-tweaks/issues/4012) [#4041](https://github.com/thn-inc/claude-tweaks/issues/4041)
+* verification-brief: under pr-first with the merge left… ([#4039](https://github.com/thn-inc/claude-tweaks/issues/4039)) ([71a3e0d](https://github.com/thn-inc/claude-tweaks/commit/71a3e0d871734f10ffa9e0ff3347ad725c514f24))
+* Windows regression filer quotes a pre-existing failure… ([#3723](https://github.com/thn-inc/claude-tweaks/issues/3723)) ([bf79456](https://github.com/thn-inc/claude-tweaks/commit/bf79456c6a07c3389d656791dc787c39c75898ed))
+* worktree-always PreToolUse hook false-positives on… ([#3989](https://github.com/thn-inc/claude-tweaks/issues/3989)) ([7fc7655](https://github.com/thn-inc/claude-tweaks/commit/7fc7655ff6369facdf321b20bbdcd9ca6513ade0))
+
+### Highlights
+* Show why an SDD ruling row was held when its staged file could not be read: the Review Console now names it `sdd-ruling-unreadable` (no path, rejected path, missing file, or failed read) instead of folding it into `sdd-ruling-unclassified`.
+* Fix demo evidence screenshots getting stranded on an already-merged branch when wrap-up's
+* Builds run only the tests a change can affect, so most verify steps take seconds instead of about eight minutes; CI still runs the full suite before merge.
+* No user-visible change — the unattended Review Console's withhold checks now fail closed if their inputs are ever missing.
+* Keep `/tidy` and `/dispatch close-out` agreeing on when a PR's acceptance labeling has landed: one shared definition instead of two hand-kept copies.
+* Release runs no longer leave their run directory behind for the next release to reuse, and every staged review finding is filed or declined before the run closes.
+* Cleaning up a finished bundle run no longer hides staged proposals nobody approved when the run never showed its review console.
+* Added a per-run liveness record so claude-tweaks can tell a running session's run from an abandoned one, with no change to how runs behave yet.
+* Windows regression issues now quote the tests that newly fail and flag likely renames of tests that were already failing.
+* No user-visible change.
+* Internal hardening: the `worktree-always` write gate no longer mistakes a numeric comparison (`x.length > 0`) inside a heredoc-embedded script for a real shell redirect.
+* No user-visible change.
+* `delete-ledger` now says when a worktree holds only inherited ledgers, instead of reporting a bare "not found".
+
+## [6.152.0](https://github.com/thn-inc/claude-tweaks/compare/v6.151.1...v6.152.0) (2026-10-24)
+
+
+### Features
+
+* bin/verify.js pass stamp: reads dirty when a check… ([#2987](https://github.com/thn-inc/claude-tweaks/issues/2987)) ([18b8f49](https://github.com/thn-inc/claude-tweaks/commit/18b8f4912f074b9b118df0b570a494de55c845b3)), closes [#3002](https://github.com/thn-inc/claude-tweaks/issues/3002)
+* Plan and review should enumerate failure branches of a… ([#3965](https://github.com/thn-inc/claude-tweaks/issues/3965)) ([af27439](https://github.com/thn-inc/claude-tweaks/commit/af27439f1980e61d1afb6a9f5cf29cf83ef36653))
+* Review lens dispatch has no documented path for a… ([#3817](https://github.com/thn-inc/claude-tweaks/issues/3817)) ([f007f1c](https://github.com/thn-inc/claude-tweaks/commit/f007f1c32b1b74e1f4958dfe28eed687430bfbfa)), closes [#3926](https://github.com/thn-inc/claude-tweaks/issues/3926) [#3945](https://github.com/thn-inc/claude-tweaks/issues/3945) [#3947](https://github.com/thn-inc/claude-tweaks/issues/3947)
+
+
+### Bug Fixes
+
+* _shared/pr-run-comments.md: the Find step's gh --jq shape… ([#3936](https://github.com/thn-inc/claude-tweaks/issues/3936)) ([9d81321](https://github.com/thn-inc/claude-tweaks/commit/9d8132196681b60abc888fbb10cfa0aa142b1824))
+* Guard tidy's Arm ready PR on acceptance labeling… ([#3877](https://github.com/thn-inc/claude-tweaks/issues/3877)) ([c008a8d](https://github.com/thn-inc/claude-tweaks/commit/c008a8d9a7d02361aadc104aae6519a85fbed7b0))
+* Keep a run's ledger off main when its PR is merged… ([#3812](https://github.com/thn-inc/claude-tweaks/issues/3812)) ([a6117a5](https://github.com/thn-inc/claude-tweaks/commit/a6117a575dd163afaece3c5af6daf20b4a70f1dd))
+* qa-agent: replace the old backend's `set viewport` call… ([#3843](https://github.com/thn-inc/claude-tweaks/issues/3843)) ([d47cd98](https://github.com/thn-inc/claude-tweaks/commit/d47cd98d535a558a9249de26a15f0952f481cd1c))
+* review: Step 2.5 record-label read writes… ([#3744](https://github.com/thn-inc/claude-tweaks/issues/3744)) ([4f3376b](https://github.com/thn-inc/claude-tweaks/commit/4f3376b06b839be84724076551ca28cc6a3d0ea9))
+* SDD deferral rulings skip the fix-now test and are… ([#3880](https://github.com/thn-inc/claude-tweaks/issues/3880)) ([35e253b](https://github.com/thn-inc/claude-tweaks/commit/35e253bade574391a2495cbd91dc860d84d0a2bc))
+* verify.js --stamp-suite: a failing chunk with preExisting… ([#4040](https://github.com/thn-inc/claude-tweaks/issues/4040)) ([0028844](https://github.com/thn-inc/claude-tweaks/commit/002884405ae04d59b10c9d96e9623e0abaafec91))
+* wrap-up-engine.js plan reads its git facts from the main… ([#3925](https://github.com/thn-inc/claude-tweaks/issues/3925)) ([104e97d](https://github.com/thn-inc/claude-tweaks/commit/104e97d31c24e9e8367e9763a797e2bc1dd70499))
+
+### Highlights
+* A failing chunk in a chunked `verify.js --stamp-suite` run no longer crashes or leaves the suite marked as verified.
+* No user-visible change.
+* No user-visible change.
+* A fix that adds an early guard now has to show that the checks after it are still tested.
+* No user-visible change.
+* Wrap-up's curation plan now judges the worktree's own diff, so the references and journeys rows no longer open or close on another branch's changes.
+* Review's effort derivation no longer fails in worktree-isolated sessions.
+* The browse skill documents the viewport command the Playwright CLI actually supports.
+* No user-visible change.
+* No user-visible change.
+* Reflect no longer files a record for a gap that is already fixed on the main branch.
+* Verification can now earn a passing stamp when a check regenerates a declared generated file, instead of forcing a second run.
+* No user-visible change.
+* No user-visible change.
+* No user-visible change beyond the generated CLAUDE.md citing a path that resolves for the consumer.
+* Shaping and review now check that a fail-closed rule written in skill prose says what happens on empty, unreadable and malformed input.
+* `issues/record.js` split into cohesive sub-modules for maintainability; no behavior change.
+* Subagent-driven builds now fix a deferred review finding that qualifies for an immediate fix instead of handing it to the console as a follow-up.
+* Wrap-up ledgers no longer reach main when a run's PR is merged before the run finishes.
+* None - internal conformance test only.
+* No user-facing change.
+* QA stories in the legacy format now set the browser viewport with the command the Playwright CLI actually supports.
+* No user-visible change — agent harness reliability fix.
+* `/tidy` no longer arms auto-merge on a record-linked PR whose acceptance labeling never landed.
+* No user-visible change.
+* Review lens agents no longer trip the worktree guard when they write a throwaway probe file.
+* Closed a gap in the worktree-isolated Bash guidance where a documented skill's own canonical one-liner collided with the harness's compound-command refusal.
+* No user-facing change.
+* Marker-comment trust checks written as jq in skill prose now work on the GitHub REST and MCP transports, not just the `gh` CLI.
+* Scheduled routines now default to Claude Sonnet 5.5 (claude-sonnet-5-5). Existing routines report Drifted in /claude-tweaks:routine status until you run /claude-tweaks:routine update on each.
+* A review run by a dispatched agent now names its single-reader fallback at every effort tier, and the review summary and PR verdict comment show a coverage caveat whenever a lens fell back to one reader.
+
+## [6.151.1](https://github.com/thn-inc/claude-tweaks/compare/v6.151.0...v6.151.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* A nested `claude -p` inside a pipeline session marks the… ([#3845](https://github.com/thn-inc/claude-tweaks/issues/3845)) ([cdb9ebd](https://github.com/thn-inc/claude-tweaks/commit/cdb9ebd39eb27361c88cb94312efeb69e3f6f20e))
+* classifyOwnership and findRunsByWorktreePath still… ([#3836](https://github.com/thn-inc/claude-tweaks/issues/3836)) ([5c7722f](https://github.com/thn-inc/claude-tweaks/commit/5c7722f246d20628a8f8f7d8453e473e06748a8d))
+* Dispatch retry collides with the remote branch its own… ([#3887](https://github.com/thn-inc/claude-tweaks/issues/3887)) ([354119f](https://github.com/thn-inc/claude-tweaks/commit/354119ff36509ffa23a8b8ef670753ae507a5ca2))
+* Hooks: match git worktree porcelain paths against native… ([#3811](https://github.com/thn-inc/claude-tweaks/issues/3811)) ([02e419a](https://github.com/thn-inc/claude-tweaks/commit/02e419a6b83b9ab8891f82982cbb41f9768cca42))
+* log-decision.js rejects the "enum (note)" reversibility… ([#3870](https://github.com/thn-inc/claude-tweaks/issues/3870)) ([c5f3a4a](https://github.com/thn-inc/claude-tweaks/commit/c5f3a4a679e572172b46750d5889cffb83b64120))
+* pr-first-merge Step 4.2 logs to the run dir after… ([#3866](https://github.com/thn-inc/claude-tweaks/issues/3866)) ([25e4f55](https://github.com/thn-inc/claude-tweaks/commit/25e4f55244e9a3e4268749fa5e2d2a183b17031a))
+* reconcile does not expand an explicit checks subset with… ([#3630](https://github.com/thn-inc/claude-tweaks/issues/3630)) ([c31b0e0](https://github.com/thn-inc/claude-tweaks/commit/c31b0e07c5cfe9944b44b3197850e621d41ddc12))
+* resolve-run-dir --spec-slug matches by substring, so… ([#3865](https://github.com/thn-inc/claude-tweaks/issues/3865)) ([92ac6e1](https://github.com/thn-inc/claude-tweaks/commit/92ac6e1e8ce5ad8a68a4ff39c68f7db474eaabda))
+* Stop flipLedgerRow dropping a duplicate-numbered ledger… ([#3834](https://github.com/thn-inc/claude-tweaks/issues/3834)) ([d7f5e52](https://github.com/thn-inc/claude-tweaks/commit/d7f5e525ad5a7f57116283d67c77821cf228c9a3))
+* Test suite overloads the dev machine — unbounded… ([#3969](https://github.com/thn-inc/claude-tweaks/issues/3969)) ([4d25f56](https://github.com/thn-inc/claude-tweaks/commit/4d25f5610ee462f39eec3cf43cf636e5557944b9))
+* verify.js baseline adjudication blames a branch for… ([#3810](https://github.com/thn-inc/claude-tweaks/issues/3810)) ([63180ed](https://github.com/thn-inc/claude-tweaks/commit/63180ed6f835b66edb8f5d68c824287e9d6d39a3))
+* Windows regression: 1 test file(s) newly failing after… ([#3797](https://github.com/thn-inc/claude-tweaks/issues/3797)) ([1d3934f](https://github.com/thn-inc/claude-tweaks/commit/1d3934f5c29e265359881048310b5f8a0254d47e)), closes [#3802](https://github.com/thn-inc/claude-tweaks/issues/3802)
+* Windows regression: 1 test file(s) newly failing after… ([#3857](https://github.com/thn-inc/claude-tweaks/issues/3857)) ([100e11c](https://github.com/thn-inc/claude-tweaks/commit/100e11c1141b1d0a86c94eb0481db12405653354)), closes [#3871](https://github.com/thn-inc/claude-tweaks/issues/3871) [#3886](https://github.com/thn-inc/claude-tweaks/issues/3886)
+* Windows regression: 1 test file(s) newly failing after… ([#3890](https://github.com/thn-inc/claude-tweaks/issues/3890)) ([b49538b](https://github.com/thn-inc/claude-tweaks/commit/b49538bff138d701742645c6eede0b5c79557455)), closes [#3894](https://github.com/thn-inc/claude-tweaks/issues/3894)
+* wrap-up Section D reads the detached flag as the "fourth… ([#3657](https://github.com/thn-inc/claude-tweaks/issues/3657)) ([4338865](https://github.com/thn-inc/claude-tweaks/commit/4338865198e64832d1285484f1e9e112fc35c41c))
+
+### Highlights
+* Session start no longer launches npx to check for playwright-cli, and no longer probes brew/apt/winget unless node or git is missing, so starting a Claude session is faster, especially on a busy machine.
+* Ledger readers outside wrap-up resolve this run's ledger through one command instead of per-skill instructions.
+* Fix worktree detection in claude-tweaks hooks on Windows, so a session that enters a worktree, or is denied by a gate, is recorded against the right worktree.
+* Running a nested Claude Code command from inside a pipeline session no longer marks the running pipeline as interrupted.
+* Re-entering a record's run no longer picks up a different record whose number starts with the same digits.
+* Worktree ownership checks and the friction report now also recognise a worktree path typed with different letter case on macOS.
+* A merged run's directory no longer reappears under .claude-tweaks/pipelines after it has been archived.
+* Internal hardening: the shadow-sweep run-dir check uses the shared path-containment helper.
+* The staging-time warning for an unmapped Review Console prefix now prints only where it is true: every producer's id either maps to a console section or is exempt with a stated reason.
+* Fixed reconcile so naming `archive` in an explicit check list also refreshes the integration branch it needs, instead of silently skipping asynchronously merged pull requests.
+* Pipeline verification no longer blames a branch for a test that was already failing where the branch started.
+* Fix: resolving a ledger item at the Review Console can no longer silently drop a second row that shares its number.
+* The ledger-reader conformance test now catches reintroduced ledger globs however they are spelled.
+* No user-visible change.
+* Decision-log entries can carry a short reversibility note, such as "low (divergence persists)", as the skill templates already show.
+* Test suite: a conformance check fails any wall-clock timing budget placed under `tests/` and points at `perf/`, so timing budgets can no longer flake the default `npm test` run.
+* Skill argument hints list only the flags a person types; producer-only flags live in each skill's Input table.
+* Internal: skill fences that name session-tmp files stay correct when the temp directory path contains a space.
+* Fix dispatched records failing on every retry because their first failed attempt left a branch behind on origin.
+* Fix a Windows-only failure in the review-console header conformance test caused by CRLF line endings.
+* No user-visible change.
+* Fix a Windows-only failure in the routine fleet security-hardening test caused by CRLF line endings.
+* Fix a Windows-only failure in the display CI-reader test that spliced an unescaped Windows path into a script.
+* No user-visible change.
+* The multi-spec review-console re-entry checks eligibility through a `hooks.js` verb instead of an inline script.
+* Pipeline cleanup fully stops its test server even when your project path contains spaces.
+* Ledger readers outside wrap-up no longer pick up another run's ledger inherited from the integration branch.
+
 ## [6.151.0](https://github.com/thn-inc/claude-tweaks/compare/v6.150.1...v6.151.0) (2026-10-21)
 
 

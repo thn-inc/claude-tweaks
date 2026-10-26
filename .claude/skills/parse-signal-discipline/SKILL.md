@@ -144,6 +144,14 @@ When mechanizing a prose heuristic into a deterministic check:
    `merge-verdict.js`'s bare-tier pass pattern stay anchored to the bare tier. Both fail safe
    today because their writers still pass bare tiers. When you widen a writer, grep every
    recogniser of its lines and either widen it with the writer or record why it stays narrow.
+   #3870 then widened `merge-verdict.js`'s pass pattern and `claim-log.js`'s `COMPLETE_RE`, and
+   two things went wrong on the way. Widening the pass pattern to a free-text group (`\(.+\)`)
+   let a tail ride behind the note (`... (x). trailing narrative`), reopening the hole its end
+   anchor had closed. Exclude the group's own boundary sequence (`). `) from its content, and
+   pin a tail-after-group copy. Separately, the plan's recogniser inventory cleared `claim-log.js`
+   on `ACTION_RE`'s property (its writer passes a bare tier) while the same file's `COMPLETE_RE`
+   reads lines the model writes with any tier. Whole-branch review caught it. Inventory
+   recognisers per regex, not per file, and name each one's writer.
    A fuzzy text match is the same leak with no anchor at all. `plugin/bin/lib/plan-audit/checks.js`'s
    Check E (#3099) reads an acceptance-criterion clause as `covered` when the plan quotes its text.
    Its first version was a bare substring `includes()`, so the one-word clause "Last." read as
@@ -192,6 +200,15 @@ When mechanizing a prose heuristic into a deterministic check:
    review round each: its probe first read `$DISPATCH_EXCLUSIONS` from an earlier call
    (`aab721418` made it resolve the session-tmp path itself), and then it had no branch for a
    failed probe (`39129d212` added one that reports "exclusion reason unknown").
+   `plugin/skills/reflect/SKILL.md`'s integration-branch probe (#3987) slipped on the same split
+   a third way (#4069, PR #4160). Its could-not-run list named only a missing `origin` and a file
+   outside the repository, so a failed `git fetch` left a stale `origin/{integration-branch}` that
+   the next `git grep` or `git log -S` read as "absent", and a `git grep` exit 128 was never split
+   from exit 1. A refresh step whose failure leaves old data is a could-not-run for every probe
+   after it. Name each tool's own no-match signal as well: `git grep` exits 1, but `git log -S`
+   exits 0 with no output, so an exit-code branch alone cannot call that one.
+   `tests/reflect-integration-branch-probe.test.js` pins the clause, and removing either the fetch
+   clause or the `-e` form turns it red.
 10. **A helper's can't-tell answer is safe only for the caller it was written for.** A new caller
    that reads the same answer in the opposite direction has to guard the input itself.
    `plugin/bin/lib/issues/claims.js`'s `isStale` answers `false` whenever it cannot tell. An
@@ -231,8 +248,8 @@ When mechanizing a prose heuristic into a deterministic check:
    path closes the run first, so in the real flow the disk check never fired. Every test passed
    because each fixture hand-wrote a run state with `worktree` still set, a state `closeRunState`
    never writes. Whole-branch review caught it by running the real `closeRunState` and then
-   `runVerify`. `a7790fbed` made the close keep the prior path as `worktreeAtClose` and added a
-   test that builds the state through the real `closeRunState`. When a terminal transition clears
+   `runVerify`. `5c8e2a2e0` (#3023) made the close keep the prior path as `worktreeAtClose` and
+   added a test that builds the state through the real `closeRunState`. When a terminal transition clears
    a field your check reads, keep a copy at that transition, and produce the check's input in at
    least one test by calling the real writer, never by hand-writing its JSON.
 13. **A not-found answer means "absent" only when every input to the request resolved.** A
@@ -279,8 +296,13 @@ When mechanizing a prose heuristic into a deterministic check:
 15. **A transform in front of a scanner owes its own could-not-parse verdict.** A scan over
     transformed text reads whatever the transform wrongly removed as "nothing here", so a
     transform that mis-parses produces a clean scan. `tests/helpers/strip-comments.js`'s
-    `stripComments` blanks comments to spaces before the path-guard, windows-hide, git-status and
-    exit-code conformance scans count tokens. It models regex literals (#3585); its residual
+    `stripComments` blanks comments to spaces before its callers' scans count tokens. Its
+    callers, by test-file stem: `backfill-cli`, `exit-code`, `git-status-optional-locks`,
+    `hooks-harness-refusal`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`,
+    `raw-markdown-read`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
+    `windows-hide-spawn`.
+    `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
+    tree. It models regex literals (#3585); its residual
     ambiguity is a regex right after `)` or `}`, which it reads as division. In
     `if (b) /"/.test(b); const c = "//"; fs.existsSync(c);` the quote inside the regex pairs with a
     later string, the `//` after it opens a line comment, and the guarded call counted as zero.
@@ -288,7 +310,9 @@ When mechanizing a prose heuristic into a deterministic check:
     compiles both the raw file and the stripped text under a CommonJS wrapper with `vm.Script`. A
     blanked comment never breaks syntax, but blanked code cuts a literal short. So "raw compiles,
     stripped does not" is `misparsed`, and a raw file that does not compile at all (an ESM file) is
-    `unparseable`, its own outcome and never `ok`. Each scan reports either one as an offender.
+    `unparseable`, its own outcome and never `ok`. Every scan except exit-code reports either one
+    as an offender. The exit-code scan never calls `stripperVerdict`; it reports a `require.main`
+    guard the stripper blanked, through its own `guardBlankedByStripper(raw, stripped)` detector.
     State what the oracle cannot see, as the helper's header does: a mis-parse whose stripped text
     still compiles passes unseen. Pin the planted mis-parse through every scan that calls the
     verdict, not only through the helper's own tests.
@@ -299,6 +323,20 @@ When mechanizing a prose heuristic into a deterministic check:
     That turned "accurate enough" from a judgment into a count. Pair the comparison with a mutation
     check on every branch the corpus does not reach. A `${}` brace-depth mutant survived both
     every unit test and the whole corpus, so the corpus count says nothing about those branches.
+    A transform that bounds its own work owes a stated answer for the pass that hits the bound.
+    `plugin/bin/lib/hooks/git-command.js`'s heredoc scanner (#4149) caps nesting at
+    `NEST_LEVEL_CAP` and a pass's nested scans at `NEST_STEPS_PER_CHAR` steps per input character
+    plus `NEST_STEPS_FLOOR`, and its two capped outcomes lean opposite ways.
+    `lineLeavesStructureOpen` reads a capped span as a line left open, so every later body stays
+    visible (fail closed). `scanPass` reads a capped pass again whole in the flat, pre-#4149 quote
+    reading and reports no could-not-parse verdict. The #4149 build accepted that divergence from
+    this item as a tradeoff; it is not a shape to copy. The scanner's first capped version fell
+    back to the flat reading partway through a pass, and a reading that switches partway pairs
+    quotes unlike either reading, which can hide a separator both see (`246d40909`). Prefer the fail-closed
+    verdict. Where a capped pass must fall back instead, re-read the whole pass in one reading,
+    state the fallback's direction in the code comment, and pin a nest past the cap with its own
+    case (`tests/hooks-gate-coverage.test.js`'s "a nest past the cap whose fallback would restart
+    the nested reading").
 16. **A precondition probe does not cover the main probe's own failure to run.** Some tools exit
     with one code for both "not found" and "could not run", so item 8's exit-code branch has
     nothing to split on: `git cat-file -e HEAD:<path>` exits 128 for a path missing from HEAD and
@@ -376,6 +414,106 @@ When mechanizing a prose heuristic into a deterministic check:
     the enumerated list where no stable ending exists: vitest writes its summary to stdout and its
     failure blocks to stderr, so either can end a piped log. The recogniser is a backstop behind
     the list, not a replacement for it.
+20. **An all-of guard passes vacuously on an empty set, and skill prose owes the at-least-one
+    clause as much as code does.** `[].every(p)` is `true`, and an agent told "every record carries
+    the label" reads zero records the same way. tidy's `## Arm ready PR` acceptance-labeling guard
+    (#3877, `plugin/skills/tidy/actions-github-issues.md`) first counted labeling as landed when
+    "every record in the PR's `Fixes` lines carries `demo:pending`": an empty `Fixes` set satisfied
+    it, a failed label or `verify.json` read had no stated outcome, and its log command left
+    `{command}` and the `--run` target undefined. Review caught all of it, and the fix requires at
+    least one record and every read to succeed ("an empty `Fixes` set or a failed read shows
+    nothing"), holds on any failed read with an `unreadable: {…}` reason from a closed `{reason}`
+    set, and defines each placeholder. When writing an all-of guard, in code or in prose, state
+    the empty-set answer and make it the fail-closed one, give each read its could-not-tell arm
+    (item 9), and define every placeholder the reported text interpolates. Then pin each of those
+    edge clauses, not just the rule text, inside the region the suite's strip-the-guard negative
+    control removes, so the control proves each pin can go red: the first version's pins named the
+    rule and none of its edges (`GUARD_PINS` in
+    `tests/tidy-arm-ready-pr-acceptance-guard.test.js`).
+21. **A shared reader that already folded "could not ask" into its answer shape hands that fold to
+    every wrapper, so a verdict built on tagged probes must distrust the readers under them.**
+    `plugin/bin/lib/run-liveness/` (#3973) tags every probe positive, negative or error so that an
+    unanswered question can only push the verdict toward `unknown`, and the whole-branch review
+    still found three readers beneath it that answered in the wrong shape: `readRunState` returns
+    `null` for an absent file and for a corrupt one alike, so a damaged `run-state.json` read as a
+    legacy run and the legacy route could say `dead`; `isPidAlive` returns `false` for `ESRCH` and
+    also for the `ERR_INVALID_ARG_TYPE` that `process.kill` throws on a pid above int32, so an
+    unprovable pid became the death witness `gone`; and a worktree-lock lookup returned "free"
+    when `git worktree list` had no entry for a directory the caller had already established
+    exists. The SDD reviews had caught four siblings of the same class earlier in that build
+    (`existsSync` reading `EACCES` as absent, a failed `git log` read as no commits, a `NaN` age
+    read as old, a null start-time probe read as pid reuse). Before wrapping a shared reader or
+    liveness primitive in a verdict whose negative branch is destructive, ask of each one whether
+    its falsy answer can also mean "could not ask". Read the file directly where only `ENOENT`
+    means absent (item 11), bound the domain a primitive can answer before treating its `false` as
+    evidence, and throw on a lookup miss the caller's own precondition says cannot happen. Pin
+    each with a fixture the pre-fix code fails (`tests/bin-lib/run-liveness/index.test.js`,
+    `probes.test.js`).
+    The reverse holds for a new consumer of such a verdict: a probe whose subject is a resource
+    many runs share answers for all of them, so its positive evidence can hold every real input at
+    `unknown`, and a sweep that acts only on `dead` then never fires and reports nothing. #4179's
+    premise probe ran `runLiveness` over the 30 main-checkout ad-hoc dirs on disk and got 30/30
+    `unknown`, because the `worktree-lock` and `last-commit` probes read the main checkout every
+    session shares. `plugin/bin/lib/reconcile/archive-merged.js`'s `adHocSessionLiveness`
+    therefore forces the `pathType` probe to `missing`, after which 19 of the 30 read `dead`.
+    Before wiring a verdict to a destructive consumer, measure its distribution over real inputs,
+    neutralise each probe whose subject is not the consumer's subject, and pin the production
+    default with a real fixture as well as an injected stub (`tests/reconcile.test.js`'s
+    production-default liveness case).
+22. **A check that reads its input from an optional context argument owes a fail-closed answer
+    when the row it gates is present and the context is not.** A pure decision function that
+    takes `ctx = {}` and wraps a check in `if (ctx.x present)` reads "the caller passed nothing" as
+    "nothing to check", so the row the check guards goes through. `plugin/bin/lib/reconcile/console-execute.js`'s
+    `decideConsoleExecute` had two such guards. #1802's merge-grant gate left `mergeGrantGap: null`,
+    which `_shared/console-execution.md` documents as "every member is granted", whenever
+    `prBody` or `memberGrants` was missing. #3880's ruling gate copied that shape, so an absent
+    `rulingTexts` map auto-ratified every ruling row while a map missing one id withheld it. Both
+    stayed open on purpose so pre-feature tests that omit `ctx` kept passing, and two tests pinned
+    the open path as "legacy call shape unchanged". The only production caller always supplied
+    both, so neither was live. A review lens flagged only the ruling guard, and #4048 closed both:
+    an absent context now withholds (`{ member: null, reason: 'grant-context-missing' }`, and
+    `sdd-ruling-unclassified` for each ruling row), while a console with neither row kind still
+    needs no `ctx`. Key the check on whether the gated row is present, never on whether its
+    context arrived. Invert any test that pins the open path rather than keeping it for
+    compatibility, and pin a partial context (one of two required keys) with its own assertion
+    (`tests/console-execute.test.js`). When you find one guard of this shape, read every sibling
+    guard in the same function, because a new guard is usually copied from the one beside it.
+23. **Failing closed does not excuse folding "could not read" into "read, but unclassifiable".
+    The reason a withheld item carries is what the human acts on.**
+    `plugin/bin/lib/reconcile/console-execute.js`'s `readInsideRunDir` (#3880) returned one `null`
+    for a missing `stagedPath`, a rejected path, a missing file and a failed read, and
+    `plugin/bin/lib/console/resolve.js`'s `readSnapshot` did the same through `readText`. Both fed
+    that `null` to `sddRulingDeferralReason`, which maps it to `sdd-ruling-unclassified`, the reason
+    for a header with no valid `Defers:` line. Every row was still withheld, so nothing unsafe
+    shipped, but a reviewer told to fix the header could be facing a missing file or a planted
+    symlink escaping the run dir. A review's can't-tell finding became #4049, which added
+    `sdd-ruling-unreadable`. `readInsideRunDir` now returns `{ text } | { error }` with one of four
+    causes, `readRulingTexts` puts each id in exactly one of `texts` or `errors`, and `readSnapshot`
+    sets `readError` only on an attempted read that threw. Each caller checks the error before it
+    calls the classifier, which still sees text only (`sddRulingDeferralReason(null)` still returns
+    `sdd-ruling-unclassified`). Decide a read failure in the caller that attempted the read, never
+    inside the pure classifier, let a recorded read error outrank any text for the same id, and pin
+    each cause on each path with its own assertion.
+24. **A composer's validator owes its reader's sentinels and delimiters too, not only its skip set
+    (item 18).** A value the reader reads back as a *different valid value* is worse than one it
+    drops, because every misread answer is one the reader legitimately emits.
+    `plugin/bin/lib/dispatch/close-out-marker.js`'s `parseConflictedFiles` (#4331) reads the
+    `conflicted-files:` field as the sentinel `none` (no conflicts), the sentinel `unknown`, or a
+    `, `-joined path list with each entry trimmed. The field carries untrusted text, since a
+    conflicted path is attacker-nameable, and each of those reader rules is a channel a real path
+    can fall through: a path named `none` reads back as "no conflicts", and a path holding a comma
+    reads back as two paths. The build's tests covered awkward paths but no reserved literal, and
+    review found the `none` case (lenses 3b, 3c and 3f, `918f6db19`). `plugin/bin/close-out-marker.js`'s
+    `readPathsFile` now refuses a comma, a carriage return, a path equal to either sentinel, and a
+    path with leading or trailing whitespace (exit 1), and each refusal names the representable
+    fallback (`--conflicted-files unknown`), so the caller can still record the update. Derive the
+    reject list from every branch of the reader: each sentinel comparison, each split delimiter,
+    each `trim`. Then pin a write-then-read round trip per entry. The `trim` was the branch #4331
+    first missed: its ledger (row 16) accepted space-edged paths as a format limit on the premise
+    that `git diff --name-only` quotes such a path. But git quotes only control characters, `"`,
+    `\` and (under `core.quotePath`) non-ASCII bytes. A scratch merge conflicting on `trail ` and
+    ` lead` printed both bare, so the marker would have read them back as `trail` and `lead`. Probe
+    a format-limit premise before accepting it, as you would any other benign-failure claim.
 
 ## When to use
 
@@ -389,6 +527,9 @@ When mechanizing a prose heuristic into a deterministic check:
 - Writing a check that reads the filesystem directly (`fs.readdirSync`/`readFileSync`/`existsSync`
   and the like) where catching every error the same way conflates "genuinely absent" (`ENOENT`)
   with "couldn't tell" (`EACCES`, `ENOTDIR`, and other non-ENOENT codes) (fix-shape item 11).
+- Building a verdict (live/dead, present/absent) over several probes or shared readers whose
+  negative branch gates something destructive, where a reader's falsy return may also mean "could
+  not ask" (fix-shape item 21).
 - Adding a validated field to a shared body composer such as `specShapedBody` that another module
   parses back, or that a batch producer fills from LLM output (fix-shape item 18).
 

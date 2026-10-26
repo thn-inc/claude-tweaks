@@ -12,9 +12,10 @@ const fs = require('fs');
 const path = require('path');
 const { REENTRY_REASONS } = require('../plugin/bin/lib/flow/consolidated-pass');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.resolve(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 const collapse = (s) => s.replace(/\s+/g, ' ');
 
 function sectionBetween(text, startRe, endRe) {
@@ -132,7 +133,7 @@ test('AC2.1 retired limit sentences are gone from every skill file', () => {
     const files = fs.readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith('.md'));
     const hits = [];
     for (const f of files) {
-      const c = collapse(fs.readFileSync(path.join(dir, String(f)), 'utf8'));
+      const c = collapse(readText(path.join(dir, String(f))));
       for (const phrase of retired) if (c.includes(phrase)) hits.push(hitId(f, phrase));
     }
     return { files, hits };

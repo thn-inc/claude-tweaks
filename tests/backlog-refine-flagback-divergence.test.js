@@ -8,13 +8,13 @@
 // in-memory mutation that removes only the pinned clause.
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { computeClosingTally } = require('../plugin/bin/lib/closing-tally/closing-tally');
+const { readText } = require('./helpers/read-skill');
 
 const DIR = path.join(__dirname, '..', 'plugin', 'skills', 'backlog');
-const refineMode = fs.readFileSync(path.join(DIR, 'refine-mode.md'), 'utf8');
-const closing = fs.readFileSync(path.join(DIR, 'refine-closing-summary.md'), 'utf8');
+const refineMode = readText(path.join(DIR, 'refine-mode.md'));
+const closing = readText(path.join(DIR, 'refine-closing-summary.md'));
 
 // Pre-change sentences this record rewrites — go-red controls for the two assertions that pin
 // the rewritten region itself.

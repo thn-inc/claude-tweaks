@@ -2,11 +2,12 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
 
 function read(relativePath) {
-  return fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf8');
+  return readText(path.join(REPO_ROOT, relativePath));
 }
 
 function mdFilesUnder(dir) {
@@ -144,7 +145,7 @@ test('claim-targets.md claim read cites issue-claims.md steps 1-2 — no raw bas
 test('every base64 -d claim read under skills/ handles the absent-file case, not just cites issue-claims.md (#720, #780)', () => {
   const offenders = [];
   for (const file of mdFilesUnder(path.join(REPO_ROOT, 'plugin', 'skills'))) {
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     if (!/ref=claims-registry/.test(text) || !/base64 -d/.test(text)) continue;
     // A citation to issue-claims.md is no longer sufficient on its own (#780) — the read
     // itself must show it handles the absent/404 case, via the __ABSENT__ sentinel or an

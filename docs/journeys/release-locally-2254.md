@@ -37,15 +37,15 @@ files:
 - **URL:** `node plugin/bin/release-local.js`
 - **Action:** The manifest token(s) and the CHANGELOG are spliced, one `chore(release): v1.3.0` commit lands, `v1.3.0` is created as an annotated tag, the branch and the tag are pushed after a fetch-and-ancestry re-check, and the `release-hook` policy command runs. The last line reads `released v1.3.0`.
 - **Should feel:** Like release-please did it — the same tag scheme, the same CHANGELOG grammar, the same manifest handling — so the history has no format seam if the project later moves to `pr-first`.
-- **Should understand:** The tag is the version of record; the manifest follows it. A `manifest-drift` line in the plan means the manifest had wandered away from the last tag and the tag won. `--release-as X.Y.Z` replaces the derived bump with an explicit version (#2326) — the plan line then reads `(<part> — --release-as override)`, and a value that is not ahead of the current base is a usage error, exit `2`, naming both versions and writing nothing.
-- **Red flags:** A reformatted `Cargo.toml` (keys reordered, indentation changed) — only the version token may differ; a CHANGELOG bullet carrying a PR link under local-merge; a lightweight tag.
+- **Should understand:** The tag is the version of record; the manifest follows it. A `manifest-drift` line in the plan means the manifest had wandered away from the last tag and the tag won. `--release-as X.Y.Z` replaces the derived bump with an explicit version (#2326) — the plan line then reads `(<part> — --release-as override)`, and a value that is not ahead of the current base is a usage error, exit `2`, naming both versions and writing nothing. Every file the run writes comes from committed repo content, so a manifest or CHANGELOG that is a symlink is refused (`refusing to write CHANGELOG.md: it is a symlink`) on Windows exactly as on Linux and macOS; on Windows, which has no `O_NOFOLLOW`, a leaf that appears or vanishes between the pre-open check and the open is refused as `… it changed between the check and the open`, and a leaf whose type cannot be read fails closed as `refusing to write CHANGELOG.md: cannot inspect it (EACCES)`, never written as if it were absent (#4282).
+- **Red flags:** A reformatted `Cargo.toml` (keys reordered, indentation changed) — only the version token may differ; a CHANGELOG bullet carrying a PR link under local-merge; a lightweight tag; on Windows, a release that "succeeds" through a symlinked manifest and edits a file outside the repository.
 
 ### 4. Something failed part-way — a named partial state
 - **URL:** any non-zero exit after Step 3 began writing
 - **Action:** The engine names exactly what landed and what to run next, on stderr: edits on disk but not committed (`git restore --staged --worktree -- <the edited files>`, plus `rm <file>` for any file the run created), commit landed but no tag (`git tag -a …`), tagged but not pushed (`git fetch origin main && git rebase origin/main && git tag -f -a v1.3.0 -m v1.3.0 && git push origin main && git push --force origin v1.3.0` — or a plain `git push origin main v1.3.0` when this was the branch's first push), or — exit `5` — everything landed and only the hook failed (`re-run the hook alone: <command>`). Exit `4` is a collision (a sibling worktree or a plan already claims the number) and names the claimant with a suggested renumber.
 - **Should feel:** Recoverable — every message says "do NOT re-run release-local" and hands over the one command that finishes the job.
-- **Should understand:** Re-running blind after a partial state would bump a second time; the exit code alone tells a wrapper script whether git is done (`5`) or not (`1`).
-- **Red flags:** A bare stack trace; a recovery command listing files that were never edited; "NOT pushed" on a repo with no `origin`.
+- **Should understand:** Re-running blind after a partial state would bump a second time; the exit code alone tells a wrapper script whether git is done (`5`) or not (`1`). A plan claimant is named by its repo path with `/` on every OS (`docs/superpowers/plans/….md`), so the same collision reads the same on Windows as on Linux and macOS (#4288).
+- **Red flags:** A bare stack trace; a recovery command listing files that were never edited; "NOT pushed" on a repo with no `origin`; on Windows, a collision line naming the plan as `docs\superpowers\plans\….md`.
 
 ## Origin
 - Created during build of #2254 (record: The local engine `bin/release-local.js`)
@@ -53,3 +53,5 @@ files:
 - Related specs: #2253 (Step 21 bootstrap writes the config this engine reads), #2255 (the `/claude-tweaks:release` skill that fronts this CLI), #2250 (design)
 - Step 2's bump precedence updated during build of #2327 (0.x pre-major bump softening)
 - Steps 1 and 3 updated during build of #2581 (`### Highlights` block, sourced from each commit's `Release-Note:` trailer via the new shared `plugin/bin/lib/release-notes.js`)
+- Step 3 updated during build of #4282 (the symlink refusal holds on Windows, where `O_NOFOLLOW` does not exist)
+- Step 4 updated during build of #4288 (a plan claimant's path prints with `/` on Windows too)

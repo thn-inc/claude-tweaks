@@ -17,13 +17,13 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const collapse = (s) => s.replace(/\s+/g, ' ');
 
-const read = (rel) => collapse(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+const read = (rel) => collapse(readText(path.join(ROOT, rel)));
 const WRAPUP_FLAT = read('plugin/skills/wrap-up/review-console.md');
 const MULTISPEC_FLAT = read('plugin/skills/flow/multispec-review-console.md');
 const EXECUTION_FLAT = read('plugin/skills/_shared/console-execution.md');

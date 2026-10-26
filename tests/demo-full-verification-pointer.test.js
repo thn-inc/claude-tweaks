@@ -1,8 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const OBSERVATION_PLAN_PATH = 'plugin/skills/_shared/observation-plan.md';
@@ -11,9 +11,9 @@ const DEMO_SKILL_PATH = 'plugin/skills/demo/SKILL.md';
 const VERIFICATION_BRIEF_PATH = 'plugin/skills/wrap-up/verification-brief.md';
 const PARENT_GATE_PATH = 'plugin/skills/wrap-up/verification-brief-parent-gate.md';
 
-const observationPlan = fs.readFileSync(path.join(ROOT, OBSERVATION_PLAN_PATH), 'utf8');
-const entryPaths = fs.readFileSync(path.join(ROOT, ENTRY_PATHS_PATH), 'utf8');
-const demoSkill = fs.readFileSync(path.join(ROOT, DEMO_SKILL_PATH), 'utf8');
+const observationPlan = readText(path.join(ROOT, OBSERVATION_PLAN_PATH));
+const entryPaths = readText(path.join(ROOT, ENTRY_PATHS_PATH));
+const demoSkill = readText(path.join(ROOT, DEMO_SKILL_PATH));
 
 // Merge-base with origin/main this record's changes were built on top of — already part of
 // main's own history, so it stays reachable after this branch merges (squash or not). None
@@ -134,8 +134,8 @@ test('demo/SKILL.md renders Full verification between Show and Verdict, and has 
 });
 
 test('wrap-up verification-brief files never compose the Full verification block (AC 8)', () => {
-  const brief = fs.readFileSync(path.join(ROOT, VERIFICATION_BRIEF_PATH), 'utf8');
-  const parentGate = fs.readFileSync(path.join(ROOT, PARENT_GATE_PATH), 'utf8');
+  const brief = readText(path.join(ROOT, VERIFICATION_BRIEF_PATH));
+  const parentGate = readText(path.join(ROOT, PARENT_GATE_PATH));
   assert.doesNotMatch(brief, /Full verification/);
   assert.doesNotMatch(parentGate, /Full verification/);
 });

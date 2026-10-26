@@ -1,10 +1,10 @@
-template_version: 10
+template_version: 11
 routine_name: tidy-weekly
 kickoff: tidy
 # Optional: `branch: <name>` pins the assembled kernel's target-branch placeholder.
 # Normally unset here — a branch is project-specific, so /claude-tweaks:routine resolves
 # it at instantiation.
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 allowed_tools: [Bash, Read, Grep, Glob, Edit, Write, Task]
 mcp_connections: []
 default_schedule:

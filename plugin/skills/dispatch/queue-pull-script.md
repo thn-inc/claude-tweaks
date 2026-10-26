@@ -8,47 +8,36 @@ Referenced by `skills/dispatch/SKILL.md` Step 2. Run this verbatim — it produc
 - `reason: 'not-spec-shaped'` (`detail: {missing: [...]}`, #2829) — every candidate, right after grouping/bundling completes, whose cached body fails `/flow`'s Materialization hard gate (`shapeGate`, `bin/lib/issues/materialize-format.js`). This one DOES remove excluded candidates from `dispatch-groups.json`, running ahead of the `open-pr`/`target-missing`/`shipped` passes below so an excluded candidate costs none of their `gh` probes and gets no stray Close proposal from them — no bypass: unlike `oversized`, where a human naming a record directly is itself an accepted size-risk signal, a spec-shape failure is not a risk anyone can accept, since `/flow`'s own Materialization gate would stop the named record anyway, after a claim and a spent retry attempt.
 - `reason: 'open-pr'` (`detail: {pr}`, #1224) — every remaining candidate already covered by an open, unmerged PR that will close it (GitHub's own `closedByPullRequestsReferences` connection, a closing keyword in the PR body), via `record.js`'s `partitionByOpenLinkedPR`. Unlike the blocked-by pass above, this one runs unconditionally, independent of `work-links`, and unlike the cross-PR overlap report below it DOES remove excluded candidates from `dispatch-groups.json` before any selection form reads it — a record with an in-flight PR is not a warning, it is not re-dispatch-eligible at all.
 - `reason: 'target-missing'` (`detail: {path}`, #1983) — every remaining candidate whose `namedTarget` (`bin/lib/issues/named-target.js` — today, `by:docs-health` records only) names a file no longer present at the integration tip — a docs-health-filed ledger correction whose target a since-merged tidy sweep already deleted. This one DOES remove excluded candidates from `dispatch-groups.json` too, the same as the open-PR pass: such a record's own Acceptance Criteria is unsatisfiable, so re-dispatching it only burns a build attempt against the retry ceiling for nothing. Also stages one Close proposal in this firing's own run directory (`tidy`'s Close (GitHub) shape) so the next `tidy --approve` closes the record — nothing is written to GitHub by dispatch itself. SKILL.md Step 3's Blocked-exclusion report reads this reason too, under the same non-silent convention.
-- `reason: 'shipped'` (`detail: {pr, signals}`, #1984) — every remaining candidate a merged PR's `strong`-tier mention already ships (see the False-positive posture note in `SKILL.md`). Also stages one Close proposal, exactly like the `target-missing` pass above.
+- `reason: 'shipped'` (`detail: {pr, signals}`, #1984) — every remaining candidate a merged PR's `strong`-tier mention already ships (see the False-positive posture note in `SKILL.md`). Also stages one Close proposal, exactly like the `target-missing` pass above. A mention from a PR opened before the record was created never counts (#4314).
 
 One further reason, `firing`, is never written by this script — it is appended incrementally by `SKILL.md`'s Loop between successive re-runs of this script within one firing (`firing-exclusion.md`), which is exactly why this script's own truncation step preserves it rather than dropping it.
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" <<NODE_EVAL_EOF
-  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
-  const os = require('os'); const path = require('path');
-  const files = {
-    DISPATCH_QUEUE_RAW: 'dispatch-queue-raw.json',
-    DISPATCH_OPEN_NUMBERS: 'dispatch-open-numbers.json',
-    DISPATCH_ELIGIBLE_PRE_DEP: 'dispatch-eligible-pre-dep.json',
-    DISPATCH_UNRESOLVED_DEPS: 'dispatch-unresolved-deps.json',
-    DISPATCH_VERIFIED_OPEN_DEPS: 'dispatch-verified-open-deps.txt',
-    DISPATCH_ELIGIBLE: 'dispatch-eligible.json',
-    DISPATCH_BLOCKED_EXCLUDED_BODY: 'dispatch-blocked-excluded-body.json',
-    DISPATCH_NATIVE_DEPS: 'dispatch-native-deps.json',
-    DISPATCH_NATIVE_DEPS_TMP: 'dispatch-native-deps.tmp.json',
-    DISPATCH_NATIVE_DEPS_ERR: 'dispatch-native-deps.err',
-    DISPATCH_GROUPS: 'dispatch-groups.json',
-    DISPATCH_EXCLUSIONS: 'dispatch-exclusions.json',
-    DISPATCH_FASTLANE_BUNDLES: 'dispatch-fastlane-bundles.json',
-    DISPATCH_IN_FLIGHT_RAW: 'dispatch-in-flight-raw.json',
-    DISPATCH_IN_FLIGHT_CLAIMS: 'dispatch-in-flight-claims.json',
-    DISPATCH_DEP_FRESHNESS: 'dispatch-dep-freshness.json',
-    DISPATCH_OPEN_PRS: 'dispatch-open-prs.json',
-    DISPATCH_CROSSPR_OVERLAP: 'dispatch-crosspr-overlap.json',
-    DISPATCH_NEAR_DUP_PAIRS: 'dispatch-near-dup-pairs.json',
-    DISPATCH_LINKED_PRS: 'dispatch-linked-prs.json',
-    DISPATCH_LINKED_PRS_ERR: 'dispatch-linked-prs.err',
-    DISPATCH_NAMED_TARGETS: 'dispatch-named-targets.json',
-    DISPATCH_SHIPPED_PROBE_PRS: 'dispatch-shipped-probe-prs.json',
-    DISPATCH_SHIPPED_PR_FILES: 'dispatch-shipped-pr-files.jsonl',
-    DISPATCH_SHAPE_GATE_ERR: 'dispatch-shape-gate.err',
-  };
-  for (const [varName, filename] of Object.entries(files)) {
-    const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-    console.log(varName + '=' + JSON.stringify(p));
-  }
-NODE_EVAL_EOF
-)"
+DISPATCH_QUEUE_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-queue-raw.json)"
+DISPATCH_OPEN_NUMBERS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-open-numbers.json)"
+DISPATCH_ELIGIBLE_PRE_DEP="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-eligible-pre-dep.json)"
+DISPATCH_UNRESOLVED_DEPS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-unresolved-deps.json)"
+DISPATCH_VERIFIED_OPEN_DEPS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-verified-open-deps.txt)"
+DISPATCH_ELIGIBLE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-eligible.json)"
+DISPATCH_BLOCKED_EXCLUDED_BODY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-blocked-excluded-body.json)"
+DISPATCH_NATIVE_DEPS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-native-deps.json)"
+DISPATCH_NATIVE_DEPS_TMP="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-native-deps.tmp.json)"
+DISPATCH_NATIVE_DEPS_ERR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-native-deps.err)"
+DISPATCH_GROUPS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-groups.json)"
+DISPATCH_EXCLUSIONS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-exclusions.json)"
+DISPATCH_FASTLANE_BUNDLES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-fastlane-bundles.json)"
+DISPATCH_IN_FLIGHT_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-in-flight-raw.json)"
+DISPATCH_IN_FLIGHT_CLAIMS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-in-flight-claims.json)"
+DISPATCH_DEP_FRESHNESS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-dep-freshness.json)"
+DISPATCH_OPEN_PRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-open-prs.json)"
+DISPATCH_CROSSPR_OVERLAP="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-crosspr-overlap.json)"
+DISPATCH_NEAR_DUP_PAIRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-near-dup-pairs.json)"
+DISPATCH_LINKED_PRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-linked-prs.json)"
+DISPATCH_LINKED_PRS_ERR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-linked-prs.err)"
+DISPATCH_NAMED_TARGETS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-named-targets.json)"
+DISPATCH_SHIPPED_PROBE_PRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shipped-probe-prs.json)"
+DISPATCH_SHIPPED_PR_FILES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shipped-pr-files.jsonl)"
+DISPATCH_SHAPE_GATE_ERR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shape-gate.err)"
 
 # #1752: truncate this run's session-scoped dispatch-exclusions.json, keeping
 # only 'firing'-reason entries -- those are appended incrementally by
@@ -78,7 +67,7 @@ NODE_EVAL_EOF
 
 gh issue list --label auto:build --state open --json number,title,body,labels,createdAt,updatedAt,state --limit 500 > "$DISPATCH_QUEUE_RAW"
 alias_mcp_timestamps "$DISPATCH_QUEUE_RAW"
-QUEUE_RAW_COUNT=$(node -e "console.log(require(process.argv[1]).length)" "$DISPATCH_QUEUE_RAW")
+QUEUE_RAW_COUNT=$(node -e "console.log(require(process.argv[1]).length)" -- "$DISPATCH_QUEUE_RAW")
 if [ "$QUEUE_RAW_COUNT" -ge 500 ]; then
   echo "Warning: the auto:build queue pull returned exactly the --limit cap (500) — this repo may have more open auto:build records than fetched. gh issue list returns newest-first, so any records beyond the cap are the OLDEST same-priority ones, exactly what next's own oldest-first tie-break (Step 3) exists to surface first. Consider raising the cap, or filing this as a signal to re-triage the queue down." >&2
 fi
@@ -123,7 +112,7 @@ CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_
   const autoBuild = require(process.argv[1]);
   const depFreshness = require(process.argv[2]);
   const current = buildFreshnessSignal([...autoBuild, ...depFreshness]);
-  if (!cacheUsable(persisted, current)) { console.log('0'); process.exit(0); }
+  if (!cacheUsable(persisted, current, require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().grouping)) { console.log('0'); process.exit(0); }
   fs.writeFileSync(process.argv[3], JSON.stringify(persisted.groups));
   // persisted.excluded is the disk cache's own (unchanged) blocked-only
   // shape ({number, blockedBy}[]) -- convert to this run's unified
@@ -180,7 +169,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
   require('fs').writeFileSync(process.argv[4], JSON.stringify(unresolved));
 NODE_EVAL_EOF
 : > "$DISPATCH_VERIFIED_OPEN_DEPS"
-for DEP in $(node -e "console.log(require(process.argv[1]).join(' '))" "$DISPATCH_UNRESOLVED_DEPS"); do
+for DEP in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_UNRESOLVED_DEPS"); do
   STATE=$(gh issue view "$DEP" --json state -q .state 2>/dev/null)
   if [ "$STATE" = "OPEN" ]; then echo "$DEP" >> "$DISPATCH_VERIFIED_OPEN_DEPS"; fi
 done
@@ -199,7 +188,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" 
 NODE_EVAL_EOF
 echo '{}' > "$DISPATCH_NATIVE_DEPS"
 if [ "$WORK_LINKS" = "native" ]; then
-  NATIVE_NUMS=$(node -e "console.log(require(process.argv[1]).map((i) => i.number).join(','))" "$DISPATCH_ELIGIBLE")
+  NATIVE_NUMS=$(node -e "console.log(require(process.argv[1]).map((i) => i.number).join(','))" -- "$DISPATCH_ELIGIBLE")
   if [ -n "$NATIVE_NUMS" ]; then
     if node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-blockers.js" "$NATIVE_NUMS" \
       > "$DISPATCH_NATIVE_DEPS_TMP" 2>"$DISPATCH_NATIVE_DEPS_ERR"; then
@@ -235,7 +224,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPAT
   // bundleCap (default 3), always well under the size guard's own default of
   // 10, so ordering here never interacts with that gate.
   const bundleCap = parseInt(process.argv[6], 10);
-  const { groups, bundles } = buildDispatchGroups(finalEligible, { bundleCap });
+  const { groups, bundles } = buildDispatchGroups(finalEligible, { bundleCap, keepSingleton: require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().keepSingleton });
   console.log(JSON.stringify(groups));
   fs.writeFileSync(process.argv[7], JSON.stringify(bundles));
   const excludedBody = require(process.argv[3]);
@@ -301,7 +290,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
   const blob = composeOrderBlob({
     computedAt: new Date().toISOString(),
     runId: process.env.PIPELINE_RUN_DIR ? path.basename(process.env.PIPELINE_RUN_DIR) : null,
-    freshnessSignal, groups, excluded, bundles,
+    freshnessSignal, groups, excluded, bundles, grouping: require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().grouping,
   });
   const result = writeOrder(root, blob);
   if (!result.ok) console.error('Queue-order cache write-back failed (non-blocking): ' + result.error);
@@ -487,8 +476,8 @@ for ROW in $(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLU
   for (const m of missing) console.log(Buffer.from(JSON.stringify(m)).toString('base64'));
 NODE_EVAL_EOF
 ); do
-  NUM=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).number)" "$ROW")
-  TPATH=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).path)" "$ROW")
+  NUM=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).number)" -- "$ROW")
+  TPATH=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).path)" -- "$ROW")
   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$DISPATCH_STANDALONE_DIR" --status AUTO \
     --text "dispatch: #${NUM} excluded, named target ${TPATH} absent at ${INTEGRATION_REF}" --reversibility n/a
   TMP_PROPOSAL=$(mktemp)
@@ -509,12 +498,13 @@ NODE_EVAL_EOF
 done
 
 # #1984: shipped-candidate classification. Runs unconditionally, right after
-# the #1224 open-PR exclusion above (a candidate excluded there is never
-# re-classified here — order matters, see this record's own Gotchas) and
-# before the #1579 cross-PR overlap report below. When #1983's own "named
-# target no longer exists" step lands, it inserts between the two, per that
-# record's own ordering rule; this record does not implement #1983. Reuses
-# $DISPATCH_LINKED_PRS's `mentions` field — #1984 extended record.js's
+# the #1224 open-PR and #1983 target-missing exclusions above (a candidate
+# excluded there is never re-classified here — order matters, see this
+# record's own Gotchas) and before the #1579 cross-PR overlap report below.
+# #4314: when a mention's PR was opened before the record was created,
+# classifyShipped skips it -- a follow-up filed during that PR's build,
+# never its target.
+# Reuses $DISPATCH_LINKED_PRS's `mentions` field — #1984 extended record.js's
 # batched query and linked-prs.js's fetchLinkedPRs to carry every same-repo
 # PR that has ever cross-referenced the candidate, closing keyword or not —
 # so no second network round trip is added for the base signal.
@@ -541,9 +531,9 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
 NODE_EVAL_EOF
 
 : > "$DISPATCH_SHIPPED_PR_FILES"
-for PR in $(node -e "console.log(require(process.argv[1]).join(' '))" "$DISPATCH_SHIPPED_PROBE_PRS"); do
+for PR in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_SHIPPED_PROBE_PRS"); do
   FILES_JSON=$(gh pr view "$PR" --json files -q '[.files[].path]' 2>/dev/null || echo '[]')
-  node -e "console.log(JSON.stringify({pr: Number(process.argv[1]), files: JSON.parse(process.argv[2])}))" "$PR" "$FILES_JSON" >> "$DISPATCH_SHIPPED_PR_FILES"
+  node -e "console.log(JSON.stringify({pr: Number(process.argv[1]), files: JSON.parse(process.argv[2])}))" -- "$PR" "$FILES_JSON" >> "$DISPATCH_SHIPPED_PR_FILES"
 done
 
 # Second pass: final tier, now with the probed files available for the
@@ -620,7 +610,7 @@ if [ -n "$DISPATCH_FIRING_RUN_DIR" ]; then
       console.log(entry.number + '=' + file);
     }
 NODE_EVAL_EOF
-    node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_FIRING_RUN_DIR" --id "shipped-close-$NUM" --file "$FILE" >/dev/null 2>&1 || true
+    node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_FIRING_RUN_DIR" --id "shipped-close-$NUM" --file "$FILE" >/dev/null || true
   done
 fi
 
@@ -633,7 +623,7 @@ if ! gh issue list --label bot:in-progress --state open --json number,title,body
   echo '[]' > "$DISPATCH_IN_FLIGHT_RAW"
   echo "AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull" >&2
 fi
-IN_FLIGHT_COUNT=$(node -e "console.log(require(process.argv[1]).length)" "$DISPATCH_IN_FLIGHT_RAW")
+IN_FLIGHT_COUNT=$(node -e "console.log(require(process.argv[1]).length)" -- "$DISPATCH_IN_FLIGHT_RAW")
 if [ "$IN_FLIGHT_COUNT" -ge 200 ]; then
   echo "Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch." >&2
 fi
@@ -669,7 +659,7 @@ fi
 # backlog, accepted for the same reason: this is one informational signal
 # among several, not a correctness-critical filter.
 gh pr list --state open --json number,files,closingIssuesReferences --limit 100 > "$DISPATCH_OPEN_PRS" 2>/dev/null || echo '[]' > "$DISPATCH_OPEN_PRS"
-OPEN_PR_COUNT=$(node -e "console.log(require(process.argv[1]).length)" "$DISPATCH_OPEN_PRS")
+OPEN_PR_COUNT=$(node -e "console.log(require(process.argv[1]).length)" -- "$DISPATCH_OPEN_PRS")
 if [ "$OPEN_PR_COUNT" -ge 100 ]; then
   echo "Warning: the open-PR pull for the cross-PR overlap report (#1579) returned exactly the --limit cap (100) — overlap detection may be missing older open PRs. Informational only; never blocks dispatch." >&2
 fi

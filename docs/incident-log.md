@@ -926,7 +926,7 @@ The generalizable rule: a documented anchoring/resolution algorithm being *corre
 
 On 2026-08-09, a dispatched bundle (`#264,#223,#221,#220,#179`) built cleanly, landed `pending-review`, and then vanished: `git ls-remote` found no branch on origin, because the old model pushed a dispatch-originated branch only at finish, and a headless firing that parks at a blocking `AskUserQuestion` never reaches finish. The only recovery path was resuming the exact session that built it — not possible once its container was recycled. `_shared/pending-review-durability.md` (and its multi-spec sibling, `flow/pending-review-durability-console.md`) patched around this: before either Review Console rendered, push the branch and open one draft PR, so a parked run at least left something durable on GitHub. It was narrow by construction — gated on `CLAIM_RUN_ID` (dispatch-originated only), a worktree strategy, and a `review` step that had already passed — and it never touched `local-merge`, which has no forge to publish to.
 
-The pr-first integration model (#405-#415, this record's own family) made the patch obsolete rather than wrong. `_shared/pr-early-run-lifecycle.md` (#409) opens every `pr-first` run's draft PR at run start — before the first line of implementation, not only once a run happened to reach `pending-review` — and `_shared/git-discipline.md`'s Phase-exit push section pushes at every phase boundary after that. By the time any run parks, its PR already exists, is already current, and already carries its Verification Brief as a PR comment (`_shared/pr-run-comments.md`). There was nothing left for the narrower procedure to do, so #415 deleted both files outright (skills/_shared/pending-review-durability.md, skills/flow/pending-review-durability-console.md) rather than leaving them as unreachable dead code, converted their three callers (`wrap-up/review-console.md`, `flow/multispec-review-console.md`, `dispatch/settle-and-merge.md`'s conflict-fallback mention) to state the new fact in one paragraph each, and removed the `### Branch` section `wrap-up/verification-brief.md` used to compose from the deleted file's own output — redundant once the brief is already posted on the very PR it would have described.
+The pr-first integration model (#405-#415, this record's own family) made the patch obsolete rather than wrong. `_shared/pr-early-run-lifecycle.md` (#409) opens every `pr-first` run's draft PR at run start — before the first line of implementation, not only once a run happened to reach `pending-review` — and `_shared/git-discipline.md`'s Phase exit section pushes at every phase boundary after that. By the time any run parks, its PR already exists, is already current, and already carries its Verification Brief as a PR comment (`_shared/pr-run-comments.md`). There was nothing left for the narrower procedure to do, so #415 deleted both files outright (skills/_shared/pending-review-durability.md, skills/flow/pending-review-durability-console.md) rather than leaving them as unreachable dead code, converted their three callers (`wrap-up/review-console.md`, `flow/multispec-review-console.md`, `dispatch/settle-and-merge.md`'s conflict-fallback mention) to state the new fact in one paragraph each, and removed the `### Branch` section `wrap-up/verification-brief.md` used to compose from the deleted file's own output — redundant once the brief is already posted on the very PR it would have described.
 
 Cost of the whole family (#405-#415, eleven sub-issues): one shared branch, sequential builds with full review/test/simplify per spec, ending in this retirement sweep. What it deleted, beyond the two durability files: the dispatch two-thread merge split's local-only half survives only as the permanent `local-merge` fallback (`skills/dispatch/settle-and-merge.md`'s `Dispatching-session merge execution (local-merge fallback)` section, now carrying a literal `<!-- local-merge-fallback -->` marker so future sweeps can scope around it mechanically); the `pr-first` path merges in one step, in the same Task call, via `gh pr merge` (`_shared/pr-first-merge.md`), with no second thread and no `close-run`-before-merge dance. The generalizable pattern: a workaround built narrowly around a specific gap (headless-parked-forever) is worth deleting outright, not leaving in place as an unreachable fallback, once the gap itself closes — an unreachable procedure is a maintenance liability disguised as safety margin, and CLAUDE.md's rule against implicit deferrals cuts the same way in reverse: finish the deletion, don't leave the patch in place "just in case."
 
@@ -1938,3 +1938,28 @@ pins the header against both console files, so a reworded header cannot silently
 Cost: a ~7.4h stall (19:58:28Z to 03:22:55Z) on a run the plugin already documented as zero-click,
 plus a misdirected fix, #2734's build, shipped against the wrong cause while the real defect stayed
 open.
+
+## IL-168 — Deterministic release logic written as prose took a fix wave per step and still shipped a counting bug its pins could not see
+
+The #3898/#4012/#4041 batch (2026-10-24, run `2026-10-24T103516-spec-3898-4012-4041`) added three
+pieces of `/claude-tweaks:release` logic, each fully deterministic, as prose in
+`plugin/skills/release/SKILL.md` and `execute.md` for the agent to execute: #3898's Step 0 guard
+`node -e` one-liner and disposition inventory, #4012's Step 3 review-tree classifier, and #4041's
+Step 5 reviewed-tip state machine (read the last `at reviewed tip` line, classify a fetch by exit
+code and stderr, count delta-marker lines below a marker, compare against the
+`release-tip-moves` bound, route a verdict). Prose cannot be unit-tested, so each was pinned by
+regex FACT assertions in a `tests/release-*-conformance.test.js` suite, which check the wording.
+
+Each needed several review fix rounds. #4041's move count was keyed on the current
+`{reviewed-short}`, which no earlier delta line names, so the count stayed at 1 and the bound
+never tripped past the first move. The FACT pin matched the buggy wording exactly; only a review
+lens reading the prose caught it, as a high-severity finding (ledger row 57, staged as
+`spec-4041/staged/review-1.patch`). A stale default on an invalid policy value, a TOCTOU between
+two reads of a moving ref, and a marker recording the tip before its review ran were found the same
+way. All three per-spec hindsight passes named the same root cause independently.
+
+Cost: three fix waves across three specs, one staged high-severity patch, and both files left near
+the Read rail (`execute.md` 50,278 B, `SKILL.md` 49,015 B, against 52,500 B). The remedy deferred
+from this run is one release-state CLI owning all three, printing a JSON verdict, unit-tested per
+cell. The Step 5 reviewed-tip state machine is now `plugin/bin/release-tip-check.js` (#4152); the
+Step 0 guard and the Step 3 classifier remain prose.

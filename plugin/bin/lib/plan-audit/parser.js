@@ -70,7 +70,7 @@ function extractScopeKeywords(text) {
 }
 
 // "Premise-refs: path/to/migration.sql, https://example.com/spec" —
-// plan-authoring-checks.md's Upstream-schema premise check: paths or URLs a
+// plan-authoring-boundary-checks.md's Upstream-schema premise check: paths or URLs a
 // plan claims to have read to prove a claimed semantic about a schema this
 // project does not own. Same comma-separated/trim/de-dup shape as
 // extractScopeKeywords above, line-anchored and case-insensitive — kept as

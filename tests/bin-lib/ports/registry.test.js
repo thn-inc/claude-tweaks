@@ -11,6 +11,7 @@ const {
   POOL_BASE, BLOCK_SIZE, registryPath, allocate, release, status,
 } = require('../../../plugin/bin/lib/ports/registry');
 const { BEGIN_MARKER } = require('../../../plugin/bin/lib/ports/env-file');
+const { isFree } = require('../../../plugin/bin/lib/ports/probe');
 
 function tmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ports-registry-'));
@@ -33,8 +34,8 @@ function listenOn(port) {
 // A fake probe reporting every block free, for tests whose assertion is
 // about registry bookkeeping rather than bind detection — avoids real
 // socket use in the shared 20000+ pool range, which otherwise contends with
-// this file's own bind-detection tests (and ensure.test.js's) when multiple
-// test FILES run concurrently under one `node --test` invocation.
+// ensure.test.js's bind-detection tests when multiple test FILES run
+// concurrently under one `node --test` invocation.
 const alwaysFree = async () => true;
 
 // AC1: fresh registry -> allocate returns base 20000 and writes the shape.
@@ -52,13 +53,17 @@ test('allocate: fresh registry returns POOL_BASE and writes {path, project, serv
   assert.match(lease.leased, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
 });
 
-// AC2: a bound test listener on the first candidate block skips it.
+// AC2: a bound port in the first candidate block skips it. The listener is on
+// an OS-assigned port outside the shared pool, so this test does not depend on
+// whether POOL_BASE + 3 happens to be free on the machine.
 test('allocate: skips a block with a bound port, moves to the next candidate', async () => {
   const home = tmpHome();
   const checkout = tmpCheckout(home, 'proj-b');
-  const server = await listenOn(POOL_BASE + 3);
+  const server = await listenOn(0);
   try {
-    const result = await allocate(checkout, { services: ['web'], home });
+    const takenPort = server.address().port;
+    const probe = async (base) => (base === POOL_BASE ? isFree(takenPort) : true);
+    const result = await allocate(checkout, { services: ['web'], home, probe });
     assert.equal(result.base, POOL_BASE + BLOCK_SIZE);
   } finally {
     server.close();

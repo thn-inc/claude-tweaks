@@ -415,6 +415,29 @@ test('conformance: the real impeccable-cli entry is version-mode: floor', () => 
   assert.strictEqual(cli['version-mode'], 'floor');
 });
 
+// ─── #3820: report-upgrades (optional boolean, probe-class only) ─────────
+
+test('report-upgrades: false validates clean on a probe-class entry', () => {
+  const dep = validDependency();
+  dep['report-upgrades'] = false;
+  assert.deepStrictEqual(validateManifest({ dependencies: [dep] }), []);
+});
+
+test('a non-boolean report-upgrades is a validation error naming the value', () => {
+  for (const bad of ['false', 'no', 0, null]) {
+    const dep = validDependency();
+    dep['report-upgrades'] = bad;
+    const errors = validateManifest({ dependencies: [dep] });
+    assert.ok(errors.some((e) => e.includes("'report-upgrades'") && e.includes(String(bad))), `expected an error for ${JSON.stringify(bad)}`);
+  }
+});
+
+test('conformance: the real claude-code entry sets report-upgrades: false', () => {
+  const manifest = loadManifest(path.join(__dirname, '..', 'manifest.yml'));
+  const cc = manifest.dependencies.find((d) => d.name === 'claude-code');
+  assert.strictEqual(cc['report-upgrades'], false);
+});
+
 // ─── P1: bare null/Null/NULL/~ and an empty value parse as JS null ─────
 
 test('P1: bare null, Null, NULL, and ~ all parse as JavaScript null, not the string "null"', () => {
@@ -522,6 +545,7 @@ test('probe-machinery keys on a content-pinned entry each produce a validation e
     'installed-probe': { type: 'command', run: 'x' },
     pinned: '1.0.0',
     'version-mode': 'floor',
+    'report-upgrades': false,
     'contract-paths': [],
     assertions: [],
     fixtures: [],

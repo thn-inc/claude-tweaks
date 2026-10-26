@@ -14,10 +14,11 @@ const path = require('path');
 const { isPidAlive } = require('../hooks/worktree-reap');
 
 const LOCK_FILENAME = 'reconcile-background.lock';
-// Generous relative to budget.js's ~18s per-pass ceiling — long enough that
-// a live, merely-slow pass is never mistaken for abandoned, short enough
-// that a genuinely crashed holder (SIGKILL, OOM) doesn't wedge every future
-// pass for this repo indefinitely.
+// Generous relative to budget.js's BACKGROUND_BUDGET_MS (120 s, #4032) — the
+// budget is only checked BETWEEN checks, so a pass can overrun it by the length
+// of one check; 5 minutes leaves 2.5x headroom for that, so a live, merely-slow
+// pass is never mistaken for abandoned, yet a genuinely crashed holder
+// (SIGKILL, OOM) doesn't wedge every future pass for this repo indefinitely.
 const STALE_LOCK_MS = 5 * 60 * 1000;
 
 function lockPath(root) {

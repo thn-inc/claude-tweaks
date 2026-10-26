@@ -2,14 +2,15 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('../helpers/read-skill');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 function readShared(name) {
-  return fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', '_shared', name), 'utf8');
+  return readText(path.join(REPO_ROOT, 'plugin', 'skills', '_shared', name));
 }
 function readSkill(skill, file = 'SKILL.md') {
-  return fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', skill, file), 'utf8');
+  return readText(path.join(REPO_ROOT, 'plugin', 'skills', skill, file));
 }
 
 const FRAGMENTS = [

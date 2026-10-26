@@ -465,6 +465,32 @@ test('GIT_TIMEOUT_MS: an out-of-range env override with no policy set falls thro
   });
 });
 
+// GIT_PUSH_TIMEOUT_MS (#4026): phase-exit.js's `git push`, which runs the consumer's
+// pre-push hook — env var CLAUDE_TWEAKS_GIT_PUSH_TIMEOUT_MS > a 600000 (10 min) default,
+// parsed by the same bounded env reader as the two keys above (bounds 1000-3600000).
+function freshGitPushTimeoutMs() {
+  delete require.cache[MODULE_PATH];
+  // eslint-disable-next-line global-require
+  return require('../../plugin/bin/lib/shared-primitives').GIT_PUSH_TIMEOUT_MS;
+}
+
+test('GIT_PUSH_TIMEOUT_MS: an in-range env override wins; unset, non-numeric or out-of-range falls to the 600000 default', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'git-timeout-ms: 45000\n');
+    const prior = process.env.CLAUDE_TWEAKS_GIT_PUSH_TIMEOUT_MS;
+    try {
+      for (const [raw, expected] of [[undefined, 600000], ['', 600000], ['1200000', 1200000], ['1000', 1000], ['not-a-number', 600000], ['999', 600000], ['3600001', 600000]]) {
+        if (raw === undefined) delete process.env.CLAUDE_TWEAKS_GIT_PUSH_TIMEOUT_MS;
+        else process.env.CLAUDE_TWEAKS_GIT_PUSH_TIMEOUT_MS = raw;
+        assert.strictEqual(freshGitPushTimeoutMs(), expected, String(raw));
+      }
+    } finally {
+      if (prior === undefined) delete process.env.CLAUDE_TWEAKS_GIT_PUSH_TIMEOUT_MS;
+      else process.env.CLAUDE_TWEAKS_GIT_PUSH_TIMEOUT_MS = prior;
+    }
+  });
+});
+
 // isTimeoutError (#3051): now exported (previously an internal-only helper)
 // so claims-git-cas.js can classify a timeout kill without re-implementing
 // the ETIMEDOUT/killed/SIGTERM check.

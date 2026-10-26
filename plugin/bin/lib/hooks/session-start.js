@@ -7,9 +7,11 @@ const path = require('path');
 const deps = require('../deps');
 const policy = require('../policy');
 const wtDetect = require('./worktree-detect');
+const ctxLib = require('./context');
 const sessionResidue = require('./session-residue');
 const { reconcile } = require('../reconcile');
 const { DEFAULT_TTL_MS } = require('../reconcile/cache');
+const { STATUS_FILENAME } = require('../reconcile/background-spawn');
 const portsEnsure = require('../ports/ensure');
 const { BLOCK_SIZE: PORTS_BLOCK_SIZE } = require('../ports/registry');
 const { INTERACTION_STYLE_DIRECTIVE } = require('./interaction-style');
@@ -28,7 +30,7 @@ function advisoryBanner(header, lines, trailer) {
 // The fast/background split (#820, D8, corrected): SessionStart's own
 // process runs only the cheap read/detect checks inline — everything
 // write-only and janitorial (release/archive/archive-branches/remote-prune/
-// reap) is deferred to a detached `reconcile-background` child process (see
+// ledger-residue/reap) is deferred to a detached `reconcile-background` child process (see
 // bin/hooks.js's `reconcile-background` subcommand), whose result is
 // surfaced on a LATER SessionStart firing via the status-file read below.
 // This corrects the original issue's premise (hooks.json's `async: true`
@@ -62,6 +64,29 @@ function resolveBuildLine(env = process.env) {
   const version = resolvePluginVersion(env);
   if (version === undefined) return null;
   return `claude-tweaks v${version} @ ${pluginRoot}`;
+}
+
+// #3845: `record-worktree` stamps the run's `ownerPid` once, but `claude --resume`
+// brings the same session id back under a NEW process, so the stamped pid goes
+// stale: a recycled pid would read as a live owner and mute the resumed session's
+// real SessionEnd, and a nested `claude -p` of the resumed process would read the
+// dead owner and stamp a live run. A resume is the one SessionStart that is the
+// owning session returning rather than a new session starting, so it re-stamps.
+// Only an already-stamped run is touched (an unstamped run keeps failing open),
+// and only a run this session owns by id — never a `fallback` guess. #4153:
+// `refreshOwnerBlock` re-stamps `owner.pid` for the same resume, and this function is
+// deleted when `ownerPid` is retired (docs/hooks.md's owner-block paragraph).
+function restampOwnerPidOnResume(ctx) {
+  const input = ctx.input;
+  if (!input || typeof input !== 'object' || input.source !== 'resume') return;
+  const owned = ctx.ownedRun || {};
+  if (!owned.dir || owned.attribution === 'fallback') return;
+  const patch = ctxLib.ownerPidPatch(process.env);
+  if (!('ownerPid' in patch)) return;
+  const state = ctxLib.readRunState(owned.dir);
+  if (!state || typeof state.sessionId !== 'string' || state.sessionId !== input.session_id) return;
+  if (!Number.isInteger(state.ownerPid) || state.ownerPid === patch.ownerPid) return;
+  ctxLib.writeRunState(owned.dir, patch);
 }
 
 async function run(ctx) {
@@ -98,6 +123,10 @@ async function run(ctx) {
   // (further down) — one place for a future normalization/validation fix to
   // land, instead of two reads that can drift.
   const pluginRootEnv = process.env.CLAUDE_PLUGIN_ROOT;
+  try { restampOwnerPidOnResume(ctx); } catch { /* best-effort */ }
+  // #3973: re-stamp the owner block (a resume runs under a new process) before anything below spawns.
+  // #4150: restampWhileFresh keeps the full pid probe here — a resume must re-stamp at once, not at the next window edge.
+  try { ctxLib.refreshOwnerBlock(ctx, { restampWhileFresh: true }); } catch { /* best-effort */ }
   try { parts.push(...deps.collect()); } catch { /* best-effort */ }
   try {
     const buildLine = resolveBuildLine({ CLAUDE_PLUGIN_ROOT: pluginRootEnv });
@@ -200,7 +229,7 @@ async function run(ctx) {
     // for the shared trunk). FAST_CHECKS restricts this inline call to the
     // cheap read/detect checks only (mirror, red-tip, console) — the
     // write-only janitorial checks (release/archive/archive-branches/
-    // remote-prune/reap) run in a detached background process instead (see
+    // remote-prune/ledger-residue/reap) run in a detached background process instead (see
     // the spawn block below), and their results are surfaced on a LATER
     // SessionStart firing via the status-file read below, not here (#820,
     // D8, corrected).
@@ -280,7 +309,7 @@ async function run(ctx) {
   const bgStatusPath = (() => {
     try {
       const root = wtDetect.mainCheckoutRoot(ctx.cwd);
-      return root ? path.join(root, '.claude-tweaks', 'reconcile-background-status.json') : null;
+      return root ? path.join(root, '.claude-tweaks', STATUS_FILENAME) : null;
     } catch { return null; }
   })();
   function readBgStatus() {
@@ -296,11 +325,23 @@ async function run(ctx) {
       if (status && status.surfaced === false) {
         const s = status.summary || {};
         const lines = [];
+        // A pass that threw (hooks.js `reconcile-background`'s catch) has no counts,
+        // only `failed`; without this line a check that throws every pass would
+        // look like a clean, silent background pass forever.
+        if (s.failed) lines.push(`the pass failed${typeof s.error === 'string' && s.error ? ` (${s.error})` : ''}`);
         if (s.reaped) lines.push(`${s.reaped} finished worktree(s) removed (already merged)`);
         if (s.released) lines.push(`${s.released} issue claim(s) released`);
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);
         if (s.archivedBranches) lines.push(`${s.archivedBranches} local branch(es) archived/deleted`);
         if (s.prunedRemote) lines.push(`${s.prunedRemote} merged remote branch(es) deleted on origin`);
+        if (s.ledgerResiduePrOpened) lines.push(`${s.ledgerResiduePrOpened} residue-ledger removal PR(s) opened on origin`);
+        // Residue ledgers left on the integration branch and why — pre-filtered
+        // by the background CLI through ledger-residue.js's QUIET_SKIP_REASONS.
+        if (Array.isArray(s.notableLedgerResidue) && s.notableLedgerResidue.length) {
+          lines.push(
+            `residue ledger(s) left on the integration branch: ${s.notableLedgerResidue.map((e) => `${path.basename(e.path)} (${e.reason}${e.prNumber ? ` #${e.prNumber}` : ''})`).join(', ')}`,
+          );
+        }
         // Individually-named worktrees left in place and why — the same
         // granular signal the pre-#820-D8 inline block used to render,
         // pre-filtered by the background CLI through QUIET_SKIP_REASONS so
@@ -309,6 +350,13 @@ async function run(ctx) {
           lines.push(
             `worktree(s) left in place: ${s.notableWorktrees.map((w) => `${path.basename(w.path)} (${w.reason})`).join(', ')}`,
           );
+        }
+        // Escalate/resolve failures the pass swallowed (#4180) — a count plus the latest one; absent
+        // (an older status file) or zero renders nothing.
+        if (typeof s.residueErrors === 'number' && s.residueErrors > 0) {
+          const last = s.lastResidueError;
+          const lastPart = last && typeof last.op === 'string' ? ` (last: ${last.op} — ${last.error})` : '';
+          lines.push(`${s.residueErrors} residue error(s)${lastPart}`);
         }
         if (lines.length) {
           parts.push(`claude-tweaks: background reconcile (from a prior session) — ${lines.join('; ')}.`);
@@ -321,69 +369,17 @@ async function run(ctx) {
   } catch { /* best-effort */ }
   try {
     if (bgStatusPath) {
-      // Re-read rather than reuse the surfacing block's copy: the two blocks
-      // are deliberately independent (see the comment above them), so this
-      // gate must not depend on that block having reached its own read.
-      const status = readBgStatus();
-
-      // Spawn the detached background pass — TTL-gated by THIS status
-      // file's own `completedAt`, deliberately never reconcile()'s shared
-      // reconcile-cache.json `lastRunAt` stamp: that stamp fires on ANY
-      // fully-completed pr-first pass, including the FAST_CHECKS call just
-      // above in this same function, which would make this gate see a
-      // false "fresh" from a pass that never ran the background checks at
-      // all and never spawn (#820 Task 10 fix-up, caught by task review).
-      // `detached: true` + `stdio: 'ignore'` + `child.unref()` together let
-      // this process exit without waiting on the child, and without the
-      // child dying alongside it.
-      const { isFresh } = require('../reconcile/cache');
-      const fresh = isFresh(
-        { lastRunAt: status && typeof status.completedAt === 'number' ? status.completedAt : null },
-        Date.now(),
-      );
-      if (!fresh) {
-        try {
-          const { spawn } = require('child_process');
-          // #1687: thread this session's id into the detached child's
-          // environment so `bin/hooks.js`'s `reconcile-background` subcommand
-          // can pass it to `reconcile({ ..., sessionId })`, which is what
-          // makes archive-merged.js's `isAbandonedInterrupted` ownership gate
-          // actually engage on this path — before this fix the child had no
-          // session id at all, reachable via neither an argv nor an env value,
-          // so the gate was permanently inert here (the path that runs the
-          // 'archive' check in production). A dedicated `CLAUDE_TWEAKS_`-
-          // prefixed var, not `CLAUDE_CODE_SESSION_ID`: the child inherits
-          // this process's env either way, and if that harness-set var were
-          // reliably present here this record wouldn't exist (see this file's
-          // header comment and #1687's own body). Only set when a real
-          // session id is known — an absent key means "unresolvable", matching
-          // reconcile-background's read-side fallback (`|| undefined`).
-          const spawnEnv = sessionId ? { ...process.env, CLAUDE_TWEAKS_SESSION_ID: sessionId } : process.env;
-          const child = spawn(
-            process.execPath,
-            [path.join(__dirname, '..', '..', 'hooks.js'), 'reconcile-background'],
-            // `windowsHide: true` is load-bearing alongside `detached: true`:
-            // detaching is what leaves the child with no inheritable console,
-            // and without the flag Windows gives it a VISIBLE one — as it
-            // then does for every git process this background pass spawns
-            // beneath it. See tests/hooks-git-exec.test.js for the funnel.
-            { cwd: ctx.cwd, detached: true, stdio: 'ignore', windowsHide: true, env: spawnEnv },
-          );
-          // spawn() returns an EventEmitter, and an ASYNCHRONOUS spawn
-          // failure (EAGAIN under fork pressure — routine in a repo running
-          // many concurrent agent sessions) emits 'error' after this
-          // synchronous block has already returned. With no listener Node
-          // promotes that to an uncaught exception, which neither the
-          // surrounding try/catch (already exited) nor bin/hooks.js's
-          // top-level promise `.catch()` can absorb — it would take down the
-          // whole SessionStart hook process, breaking the never-break-a-
-          // session invariant. A no-op listener degrades it to exactly what
-          // a synchronous spawn failure already does here: this session's
-          // background pass simply didn't fire, and the next one retries.
-          child.on('error', () => { /* see above — silent degrade, never a throw */ });
-          child.unref();
-        } catch { /* best-effort — a failed spawn just means this session's background pass didn't fire; the next one tries again */ }
-      }
+      // Spawn the detached background pass — the TTL gate (this status file's
+      // own `completedAt`, never reconcile-cache.json's shared `lastRunAt`
+      // stamp, #820 Task 10 fix-up), the `CLAUDE_TWEAKS_SESSION_ID` env
+      // threading (#1687) and the detached/windowsHide/'error'-listener spawn
+      // hardening all live in the shared helper, which the unscoped
+      // `hooks.js reconcile` CLI also calls (#4032). It never throws.
+      require('../reconcile/background-spawn').spawnBackgroundIfStale({
+        root: path.dirname(path.dirname(bgStatusPath)), // bgStatusPath = {root}/.claude-tweaks/<status file>
+        cwd: ctx.cwd,
+        sessionId,
+      });
     }
   } catch { /* best-effort */ }
   try {

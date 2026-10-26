@@ -480,9 +480,14 @@ function runRender(args) {
 
   if (!args.runDir) { usageExit(); return; }
 
+  // #3856: after cleanup archives the run, the given path is gone; resolve the
+  // archived copy the same way verify does. Null (neither location) keeps the
+  // given path, so the error below still names it.
+  const resolvedDir = resolveArchivedRunDir(args.runDir, resolveRepoRoot(process.cwd())) || args.runDir;
+
   let state;
   try {
-    state = JSON.parse(fs.readFileSync(path.join(args.runDir, 'engine-state.json'), 'utf8'));
+    state = JSON.parse(fs.readFileSync(path.join(resolvedDir, 'engine-state.json'), 'utf8'));
   } catch (e) {
     process.stderr.write(`wrap-up-engine.js render: could not read engine-state.json from ${args.runDir}: ${e.message}\n`);
     process.exitCode = 2;

@@ -8,14 +8,14 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { compose, KEYS, VOCAB, UNRESOLVED } = require('../plugin/bin/lib/compose-context/compose');
+const { readText } = require('./helpers/read-skill');
 
 const PR_SCAN_FILE = 'plugin/skills/_shared/github-pr-scan.md';
 const CLAIMS_FILE = 'plugin/skills/_shared/issue-claims.md';
-const prScanContent = fs.readFileSync(path.join(__dirname, '..', PR_SCAN_FILE), 'utf8');
-const claimsContent = fs.readFileSync(path.join(__dirname, '..', CLAIMS_FILE), 'utf8');
+const prScanContent = readText(path.join(__dirname, '..', PR_SCAN_FILE));
+const claimsContent = readText(path.join(__dirname, '..', CLAIMS_FILE));
 
 // The file composed at `transport`, every other condition pinned to its first vocabulary
 // value. `sourceContent` defaults to the real file; the discrimination tests pass a
@@ -49,11 +49,13 @@ test('github-pr-scan.md: ITEM9_BODY_ONLY occurs only inside item 9\'s and item 1
   // grep -c PR_SCAN_UNARMED plugin/skills/_shared/github-pr-scan.md -> 15 matching lines (12
   // from item 9's fenced body + 3 from item 11's, #2367), all between transport=gh fence
   // markers; #3469 added 2 more (item 9's pr-checks.js CI filter: the require and the write-back),
-  // 17 in all; this pins the fixture choice, not just asserts it once. (The mcp composition test
+  // 17 in all; #4028's per-variable `--value` lines split three two-variable `eval` lines in item 9
+  // and item 11 into one line per variable, each still carrying the name, 20 in all; this pins
+  // the fixture choice, not just asserts it once. (The mcp composition test
   // below is what proves "inside a fence": any occurrence outside a transport=gh fence would
   // survive into the mcp bundle and fail it.)
   const matchingLines = prScanContent.split('\n').filter((line) => line.includes(ITEM9_BODY_ONLY)).length;
-  assert.equal(matchingLines, 17, 'fixture assumption: PR_SCAN_UNARMED matching-line count changed — pick a new item-9/item-11-only string');
+  assert.equal(matchingLines, 20, 'fixture assumption: PR_SCAN_UNARMED matching-line count changed — pick a new item-9/item-11-only string');
   assert.ok(prScanContent.includes(ITEM9_LABEL_PARAGRAPH_END), 'fixture assumption: the discrimination test\'s fence-close anchor is no longer in the file verbatim');
 });
 

@@ -99,7 +99,9 @@ below) — a plain overwrite, the same "wholly rewritten, not appended to"
 posture `$CANDIDATES` already has on every iteration:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ATTEMPTED=specify-next-attempted.json RACE=specify-next-race.json RUN_DIR_FILE=specify-next-rundir.txt)"
+ATTEMPTED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-attempted.json)"
+RACE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-race.json)"
+RUN_DIR_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rundir.txt)"
 echo '[]' > "$ATTEMPTED"
 echo '{}' > "$RACE"
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --standalone specify --mode auto --create > "$RUN_DIR_FILE"
@@ -180,7 +182,8 @@ hit 500 exactly even when the raw fetch was truncated:
 Resolve this fence's session-scoped temp paths first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RAW=specify-next-raw.json CANDIDATES=specify-next-candidates.json)"
+RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-raw.json)"
+CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-candidates.json)"
 gh issue list --state open --json number,title,labels,createdAt --limit 500 > "$RAW"
 RAW_COUNT=$(node -e "console.log(require('$RAW').length)")
 if [ "$RAW_COUNT" -ge 500 ]; then
@@ -257,7 +260,9 @@ identical `$ATTEMPTED` path and inherit the first firing's exclusions.
 Re-resolve this fence's session-scoped temp paths (a fresh bash invocation does not inherit the Eligibility fence's shell variables, `_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" CANDIDATES=specify-next-candidates.json PICK=specify-next-pick.json ATTEMPTED=specify-next-attempted.json)"
+CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-candidates.json)"
+PICK="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-pick.json)"
+ATTEMPTED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-attempted.json)"
 node -e "
   const RANK = { high: 0, medium: 1, low: 2 };
   const bandOf = (r) => {
@@ -272,7 +277,7 @@ node -e "
   const ranked = candidates.slice().sort((a, b) =>
     bandOf(a) - bandOf(b) || new Date(a.createdAt) - new Date(b.createdAt));
   console.log(JSON.stringify(ranked.length ? ranked[0] : null));
-" "$PRIORITY_FILTER" > "$PICK"
+" -- "$PRIORITY_FILTER" > "$PICK"
 ```
 
 ## Zero eligible or budget exhausted (loop termination + close-out)
@@ -316,7 +321,8 @@ there could otherwise loop indefinitely on one record whose state never
 actually changes:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ATTEMPTED=specify-next-attempted.json RACE=specify-next-race.json)"
+ATTEMPTED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-attempted.json)"
+RACE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-race.json)"
 node -e "
   const fs = require('fs');
   const race = fs.existsSync('$RACE') ? require('$RACE') : {};
@@ -363,7 +369,7 @@ alongside a successful claim write (bootstrap-then-add, per
 best-effort, never blocking the claim itself on a failed add.
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" ATTEMPTED=specify-next-attempted.json)"
+ATTEMPTED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-attempted.json)"
 node -e "
   const fs = require('fs');
   const ids = fs.existsSync('$ATTEMPTED') ? require('$ATTEMPTED') : [];
@@ -395,7 +401,7 @@ so one `decisions.md` accumulates this whole firing's audit trail across
 every record it attempts:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RUN_DIR_FILE=specify-next-rundir.txt)"
+RUN_DIR_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rundir.txt)"
 RUN_DIR=$(cat "$RUN_DIR_FILE")
 ```
 

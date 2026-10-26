@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { POLICY_KEYS, RENAMED_KEYS, auditPolicy, resolveValue, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
+const { readText } = require('./helpers/read-skill');
 
 function tmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-schema-'));
@@ -138,8 +139,19 @@ test('POLICY_KEYS entries are unique', () => {
   // both are set.
   // 73 -> 74, #3298 (merge-subject scope source): commit-scope — string, no default — the constant Conventional-Commits scope token
   // 74 -> 75, #3298: commit-scope-paths — list, default [] — comma-separated prefix=token pairs resolved against a merge's changed files
-  assert.strictEqual(POLICY_KEYS.length, 75);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 75);
+  // 75 -> 76, #4041: release-tip-moves — integer, default 2 — caps how far origin/{branch} may move past /release Step 3's reviewed tip before Step 5 holds the release
+  // 76 -> 82, #4029: the six {fast-lane,standard}-run-{round-trip,procedure-kb,verify-minutes}-ceiling efficiency budgets — integer, min 0 (0 disables), p90-derived defaults
+  // 82 -> 84, #4025 (express lane): express-lane — boolean opt-in, default false; express-review-sample-every — integer >= 1, default 5
+  assert.strictEqual(POLICY_KEYS.length, 84);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 84);
+});
+
+test('express-lane keys resolve their defaults (#4025)', () => {
+  const resolved = resolvePolicyKeys(['express-lane', 'express-review-sample-every'], { policyRaw: '', runConfigRaw: null });
+  assert.deepStrictEqual(resolved['express-lane'], { value: false, source: 'default' });
+  assert.deepStrictEqual(resolved['express-review-sample-every'], { value: 5, source: 'default' });
+  const zero = resolvePolicyKeys(['express-review-sample-every'], { policyRaw: 'express-review-sample-every: 0\n', runConfigRaw: null });
+  assert.strictEqual(zero['express-review-sample-every'].invalid, true, 'min: 1 — a sample cadence of 0 is schema-invalid');
 });
 
 test('dispatch-batch-size is registered alongside its deprecated alias', () => {
@@ -787,7 +799,7 @@ test('the policy.yml value is still discarded at resolve time (unchanged behavio
 });
 
 test('the source-excluded special case is keyed on the generic policySourceExcluded flag, not a hardcoded key name (#839)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'policy-schema.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
   assert.ok(
     !/canonical === 'merge-authorization'/.test(src),
     'the resolver must not special-case merge-authorization by name — a second excluded lever needs zero code changes here, only registering policySourceExcluded on its POLICY_KEYS row',
@@ -910,4 +922,14 @@ test('design-critique is registered as an enum off|auto|full defaulting to auto 
   assert.strictEqual(lever.category, 'pipeline-behavior');
   assert.strictEqual(lever.tier, 'advanced');
   assert.ok(!POLICY_KEYS.some((k) => k.key === 'design.critique'), 'the dotted spelling must not be registered — keys are flat kebab-case');
+});
+
+test('#4029 M4: the procedure-kb ceiling summaries say a run may read its procedure KB, not load it', () => {
+  // procedure KB counts the bytes skill-file Reads returned, not what the harness loaded
+  for (const key of ['fast-lane-run-procedure-kb-ceiling', 'standard-run-procedure-kb-ceiling']) {
+    const { summary } = POLICY_KEYS.find((k) => k.key === key);
+    assert.match(summary, / may read before /, key);
+    assert.doesNotMatch(summary, /may load/, key);
+    assert.ok(summary.length <= 140, `${key}: ${summary.length} chars`);
+  }
 });

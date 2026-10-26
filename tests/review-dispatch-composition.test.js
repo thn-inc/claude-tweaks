@@ -10,9 +10,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { compose } = require('../plugin/bin/lib/compose-context/compose');
+const { readText } = require('./helpers/read-skill');
 const {
   findComposeCallSites, composedBytesReport,
 } = require('../plugin/bin/lib/skill-audit/context-cost.js');
@@ -21,8 +21,8 @@ const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
 const CORE = path.join(PLUGIN_ROOT, 'skills', '_shared', 'subagent-dispatch-core.md');
 const RUN_DIR_RESOLUTION = path.join(PLUGIN_ROOT, 'skills', '_shared', 'run-dir-resolution.md');
 
-const coreContent = fs.readFileSync(CORE, 'utf8');
-const runDirContent = fs.readFileSync(RUN_DIR_RESOLUTION, 'utf8');
+const coreContent = readText(CORE);
+const runDirContent = readText(RUN_DIR_RESOLUTION);
 
 const UNRESOLVED_CONDITIONS = {
   'integration-model': 'pr-first',

@@ -11,11 +11,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const FILE = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'github-pr-scan.md');
-const content = fs.readFileSync(FILE, 'utf8');
+const content = readText(FILE);
 
 // A "bulk over-budget fetch" is any `gh pr list` invocation combining `--state all`
 // with a `--json` field list that names both `comments` and `commits` — the exact

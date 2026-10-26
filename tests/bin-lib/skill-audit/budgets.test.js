@@ -8,6 +8,7 @@ const path = require('node:path');
 
 const budgets = require('../../../plugin/bin/lib/skill-audit/budgets.js');
 const { composedBytesReport } = require('../../../plugin/bin/lib/skill-audit/context-cost.js');
+const { readText } = require('../../helpers/read-skill');
 const {
   lineCount,
   skillFileRailViolations,
@@ -76,14 +77,14 @@ test('budgets: listingBudgetChars at 200k and 1M context', () => {
 });
 
 test('budgets: the header records the calibration — CLI version, date, and all three token counts', () => {
-  const src = fs.readFileSync(BUDGETS_SRC, 'utf8');
+  const src = readText(BUDGETS_SRC);
   for (const needle of ['2.1.302', '2026-10-17', '45,241', '51,251', '65,782']) {
     assert.ok(src.includes(needle), `budgets.js header is missing ${needle}`);
   }
 });
 
 test('budgets: requires nothing, so any unit can import it without a cycle', () => {
-  const src = fs.readFileSync(BUDGETS_SRC, 'utf8');
+  const src = readText(BUDGETS_SRC);
   assert.doesNotMatch(src, /\brequire\s*\(/);
 });
 

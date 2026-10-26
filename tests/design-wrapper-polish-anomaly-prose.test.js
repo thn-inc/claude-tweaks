@@ -7,13 +7,13 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const POLISH_MD = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'modes', 'polish.md');
 
 function read() {
-  return fs.readFileSync(POLISH_MD, 'utf8');
+  return readText(POLISH_MD);
 }
 
 test('polish.md header return shape includes the anomaly result value', () => {

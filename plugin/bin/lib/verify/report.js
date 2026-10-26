@@ -10,6 +10,33 @@
 const { execFileSync } = require('child_process');
 const path = require('path');
 const { writeFileAtomic } = require('../atomic-write');
+const { parseStatusPorcelainZ } = require('../git-z');
+
+// #2987: the individual dirty paths behind gitInfo's boolean `dirty` —
+// `--untracked-files=all` so an untracked directory expands to its files
+// rather than collapsing to the directory name (`generated` globs name
+// files, not directories). Used only by the pass-stamp's generated-path
+// exemption in bin/verify.js; `gitInfo` below stays the general-purpose
+// sha+boolean-dirty read every other caller already relies on. Fails toward
+// null on a git error, same posture as gitInfo — never a fabricated empty
+// list standing in for "could not check". A rename contributes BOTH paths:
+// its source is deleted from the tree relative to HEAD, so a non-generated
+// file renamed into a generated path must still disqualify the stamp. A
+// copy's source is unchanged, so only its new path counts.
+function dirtyFilePaths(execImpl = execFileSync) {
+  let out;
+  try {
+    out = String(execImpl('git', ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all'], { encoding: 'utf8', windowsHide: true }));
+  } catch {
+    return null;
+  }
+  const files = [];
+  for (const record of parseStatusPorcelainZ(out)) {
+    files.push(record.path);
+    if (record.origPath !== undefined && record.xy.includes('R')) files.push(record.origPath);
+  }
+  return files;
+}
 
 function gitInfo(execImpl = execFileSync) {
   let sha = null;
@@ -113,4 +140,4 @@ function writeReportAtomic(report, jsonPath, deps = {}) {
   writeFileAtomic(jsonPath, `${JSON.stringify(report, null, 2)}\n`, deps);
 }
 
-module.exports = { gitInfo, gitDir, composeReport, writeReportAtomic };
+module.exports = { gitInfo, gitDir, composeReport, writeReportAtomic, dirtyFilePaths };

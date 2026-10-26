@@ -1,12 +1,12 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 const LIB = path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision');
 const { formatEntry, parseEntry } = require(path.join(LIB, 'append'));
+const { readText } = require('../../helpers/read-skill');
 const {
   CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText, isClaimLogEntry, hasClaimLogFor, hasCanonicalClaimLogFor, classifyDecisions, paraphrasedClaimNumbers, isClaimStepBookkeepingEntry,
 } = require(path.join(LIB, 'claim-log'));
@@ -33,7 +33,7 @@ test('parseEntry inverts formatEntry: status, time, location and action survive,
 });
 
 test("claim-targets.md's documented argv produces a line isClaimLogEntry accepts, for every transport it names (#2861 writer/parser pin)", () => {
-  const prose = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'flow', 'claim-targets.md'), 'utf8');
+  const prose = readText(path.join(ROOT, 'plugin', 'skills', 'flow', 'claim-targets.md'));
   const start = prose.indexOf('**Log the claim (mandatory, #2492).**');
   assert.notStrictEqual(start, -1, 'claim-targets.md no longer has its "Log the claim" paragraph — this pin has lost its anchor');
   const block = prose.slice(start, prose.indexOf('```', prose.indexOf('```bash', start) + 7));
@@ -79,6 +79,13 @@ test('isClaimLogEntry accepts a claim line whose Reversibility carries a qualifi
   const line = formatEntry({ status: 'AUTO', now: NOW, step: CLAIM_LOG_STEP, text: claimLogText(2869, 'git'), reversibility: 'high (claim can be released)' });
   assert.match(line, /Reversibility: high \(claim can be released\)\.$/);
   assert.strictEqual(isClaimLogEntry(line), true, line);
+});
+
+test('AC3.2: a Step 2.8 bookkeeping line or anchored paraphrased claim whose Reversibility note contains a period still classifies claim-log-only (#3870)', () => {
+  const skip = formatEntry({ status: 'SKIP', now: NOW, step: 'Step 2.8 file-overlap warning (skipped)', text: 'condition: preflight-records.js exited non-zero or gh unavailable → fallback: overlap warning not computed; claim proceeds on the named targets only', reversibility: 'n/a (see claim-targets.md)' });
+  assert.strictEqual(classifyDecisions(`${REAL_SINGLE}${skip}\n`), 'claim-log-only', 'case a: bookkeeping line');
+  const paraphrase = formatEntry({ status: 'AUTO', now: NOW, step: CLAIM_LOG_STEP, text: 'claimed issue #7 for this run', reversibility: 'high (commit abc.def)' });
+  assert.strictEqual(classifyDecisions(`## /flow\n${paraphrase}\n`), 'claim-log-only', 'case b: anchored paraphrase');
 });
 
 test('classifyDecisions: absent, empty, claim-log-only, content — and nothing unparseable ever reads as claim-log-only (#2861)', () => {
@@ -204,7 +211,7 @@ const OVERLAP_NOTE = '- AUTO 21:08:24 — Step 2.8 file-overlap warning: #3401 o
 const PARAPHRASED = '- AUTO 07:42:07 — spec #827 — flow/claim-targets: Claimed issue #827 for this run (claims-registry blob write, state: absent -> live). Reversibility: high.';
 
 test("claim-targets.md's two documented Step 2.8 SKIP commands produce lines isClaimStepBookkeepingEntry accepts (#3665 writer/parser pin)", () => {
-  const prose = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'flow', 'claim-targets.md'), 'utf8');
+  const prose = readText(path.join(ROOT, 'plugin', 'skills', 'flow', 'claim-targets.md'));
   const cmds = prose.split('\n').filter((l) => l.includes('--status SKIP --step "Step 2.8'));
   assert.strictEqual(cmds.length, 2, 'claim-targets.md documents exactly two Step 2.8 SKIP commands — this pin has lost its anchor');
   for (const cmd of cmds) {

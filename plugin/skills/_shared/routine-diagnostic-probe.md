@@ -36,7 +36,7 @@ Only if `has_more` is `false` (or absent) has the slot genuinely been ruled out 
     "ccr": {
       "environment_id": "<resolved environment_id>",
       "session_context": {
-        "model": "claude-sonnet-5",
+        "model": "claude-sonnet-5-5",
         "sources": [{"git_repository": {"url": "<target project's resolved repo URL>"}}],
         "allowed_tools": ["Bash", "Read", "Grep", "Glob"]
       },

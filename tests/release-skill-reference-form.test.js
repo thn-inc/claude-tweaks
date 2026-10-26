@@ -39,6 +39,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { listSkillDirs } = require('../plugin/bin/lib/skill-audit/skill-catalog');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const PLUGIN_ROOT = path.join(ROOT, 'plugin');
@@ -127,7 +128,7 @@ function scanReleaseSkillFiles(dir, skillNames) {
     .sort();
   const violations = [];
   for (const file of files) {
-    const text = fs.readFileSync(path.join(dir, file), 'utf8');
+    const text = readText(path.join(dir, file));
     violations.push(...scanForBareReferences(file, text, skillNames, file === 'SKILL.md'));
   }
   return violations;

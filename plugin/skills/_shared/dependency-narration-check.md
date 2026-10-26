@@ -40,7 +40,7 @@ Branch on the project's `work-links` config key (`_shared/work-record-config.md`
   uses for sub-issue dependencies. `gh` absent, or the CLI's own exit-2 no-`gh` signal → degrade
   to the `body-text` branch below via a follow-up `gh issue edit`.
 - **`work-links: body-text`, `work-backend: github-issues`** — add one `Blocked by #{n}` line to
-  the record's body (line-anchored, matching `record.js`'s `DEP_RE`) before filing/writing — for
+  the record's body (line-anchored, matching `record-dependencies.js`'s `DEP_RE`) before filing/writing — for
   a fresh `/capture`, fold it into the composed `header` alongside any lifted `Origin:`/
   `Defer-reason:` lines; for `/specify` shaping a record in place, add it to the metadata block
   at the top of the composed body, the same placement `Parent: #N` already uses.

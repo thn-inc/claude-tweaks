@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const {
   listTranscriptFiles,
   extractErrorFindings,
@@ -276,18 +277,17 @@ test('composeProposalMarkdown: a proposal built from real findings quotes no raw
   assert.ok(md.includes('Bearer <secret>'), md);
 });
 
-test('redact: a huge keyword-bearing tool output stays fast (input is capped before the secret regexes run)', () => {
-  // Uncapped, SECRET_NAME's unbounded runs backtrack quadratically here (~2 s at 120k chars).
+test('redact: a huge keyword-bearing tool output is capped to PRE_REDACT_CHARS before the secret regexes run', () => {
+  // Uncapped, SECRET_NAME's unbounded runs backtrack quadratically here (~2 s at 120k chars);
+  // perf/dream-redact-latency.test.js holds the time bound, this holds the cap itself.
   const huge = 'TOKEN'.repeat(24000);
-  const started = Date.now();
   const out = redact(huge);
-  assert.ok(Date.now() - started < 500, `redact took ${Date.now() - started} ms`);
-  assert.ok(out.startsWith('TOKEN'), out.slice(0, 20));
+  assert.equal(out.length, 2048);
 });
 
 test('dream-pass.md names exactly the credential words SECRET_NAME matches, and each one redacts', () => {
   // Prose/code twin: the doc's word list and the regex alternation were born out of sync once (PASSWD, #2968).
-  const doc = fs.readFileSync(path.join(__dirname, '../../../plugin/skills/harness-health/dream-pass.md'), 'utf8').replace(/\s+/g, ' ');
+  const doc = readText(path.join(__dirname, '../../../plugin/skills/harness-health/dream-pass.md')).replace(/\s+/g, ' ');
   const docMatch = doc.match(/where NAME contains ([A-Z_/]+),/);
   assert.ok(docMatch, 'dream-pass.md credential-word list not found');
   const docWords = docMatch[1].split('/').sort();

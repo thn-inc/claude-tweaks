@@ -106,7 +106,7 @@ test('verification-brief.md composes Try it before any parent or floor branching
   assert.ok(compose < doc.indexOf('## Parent-Gate Procedure'), 'before the parent branch');
   assert.ok(compose < doc.indexOf('## Oversight-floor gate'), 'before the floor gate');
   assert.ok(doc.includes('_shared/try-it.md'));
-  assert.match(doc, /TRY_IT=try-it-\{N\}\.md/);
+  assert.match(doc, /TRY_IT="\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" --value try-it-\{N\}\.md\)"/);
   assert.match(doc, /<!-- run-comment: try-it -->/);
   assert.match(doc, /try-it:\{N\}/);
   assert.doesNotMatch(doc, FIELD_LINE);
@@ -125,7 +125,7 @@ test('the producer and both summaries name the same session-scoped try-it file',
   for (const rel of ['wrap-up/verification-brief.md', 'flow/summary-template.md', 'flow/multispec-summary.md']) {
     const doc = read(rel);
     // {number} is summary-template.md's name for the record number the others call {N}.
-    const names = [...doc.matchAll(/TRY_IT=([^\s)"'`]+)/g), ...doc.matchAll(/session-scoped `([^`]+\.md)`/g)]
+    const names = [...doc.matchAll(/TRY_IT="\$\(node "[^"]+" --value ([^\s)"'`]+)\)"/g),...doc.matchAll(/session-scoped `([^`]+\.md)`/g)]
       .map((m) => m[1].replace('{number}', '{N}'));
     assert.ok(names.length > 0, `${rel} names no session-scoped try-it file`);
     assert.deepEqual([...new Set(names)], ['try-it-{N}.md'], `${rel}: ${JSON.stringify(names)}`);

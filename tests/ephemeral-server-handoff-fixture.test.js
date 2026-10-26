@@ -17,6 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
+const { readText } = require('./helpers/read-skill');
 
 const TASK_PROMPT = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'task-prompt.md');
 
@@ -26,7 +27,7 @@ const TASK_PROMPT = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', '
 // (a distinguishable failure, never a silent pass) instead of the fixture quietly asserting
 // against a copy of today's wording that no longer matches what the plugin actually documents.
 function buildRestartTextFromDocumentedTemplate({ old, replacement, port }) {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   const openIdx = text.indexOf('`AUTO {time} -- ephemeral server restarted:');
   if (openIdx === -1) {
     throw new Error(

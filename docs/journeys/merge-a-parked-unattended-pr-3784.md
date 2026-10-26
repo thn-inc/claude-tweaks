@@ -5,6 +5,7 @@ files:
   - plugin/skills/wrap-up/flags.md
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/flow/summary-template.md
+  - plugin/bin/lib/hooks/run-dir-resolve.js
   - tests/wrap-up-merge-mode-conformance.test.js
 ---
 
@@ -43,10 +44,12 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - **Should understand:**
   - **When it routes.** The router fires only when the arguments are nothing but `merge`, at most one record reference, and wrap-up's own tokens. Free text like "fix the merge bug" stays conversation-based work.
   - **Run adoption.** Merge mode adopts the run the way the explicit `#{n}` re-entry does. That is not `resume`: a parked run stays `status: active`.
+  - **Whose run it adopts.** `resolve-run-dir --spec-slug "spec-{n}"` matches the slug as a whole `-`-delimited name segment, so `spec-378` adopts `…-spec-378` (or a multi-spec `…-spec-378-379`) and never a `…-spec-3784` neighbour's run (#3865).
   - **When nothing resolves,** it stops and names the record. It never mints a run dir.
 - **Red flags:**
   - A bare `merge`, or `merge` with `cleanup-only`, `--dry-run` or `resume`, doing anything but report the tokens and stop.
   - `--dry-run` performing a real merge.
+  - Merge mode for `#378` adopting a run dir whose name ends `-spec-3784` or `-spec-3784-3790` — another record's PR and claim.
 
 ### 3. Pass the preconditions
 - **URL:** `merge-mode.md`'s Preconditions
@@ -98,3 +101,4 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 
 ## Origin
 - Created during build of #3784. The record adds `wrap-up/merge-mode.md` and the `merge` routing token, an attended Conflict-path branch, and the `consoleAutoResolve` summary row. It was observed on #3712's run (PR #3749): the summary recommended a resume that would have re-parked the PR, and the human's "go ahead" had to be honored by running the merge procedure by hand.
+- Updated during build of #3865: Step 2's run adoption now matches the record's spec slug as a whole name segment, not a substring, so a record never adopts a run belonging to another record whose number starts with the same digits.

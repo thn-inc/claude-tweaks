@@ -62,7 +62,7 @@ a one-line justification written into the plan's own text.
 
 ## Why not `Blocked-by:`
 
-`Blocked by #N` is already parsed dependency-edge vocabulary (`record.js`'s `DEP_RE`,
+`Blocked by #N` is already parsed dependency-edge vocabulary (`record-dependencies.js`'s `DEP_RE`,
 `_shared/work-record.md`'s Decomposition rules) — the same words inside an Observation plan
 would read as a dependency edge rather than a verification pointer. The block is named
 `Full verification` instead.

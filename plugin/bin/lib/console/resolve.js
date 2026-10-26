@@ -7,9 +7,14 @@
 // executes it. The CLI (bin/console-resolve.js) owns every write.
 'use strict';
 
+const crypto = require('crypto');
 const path = require('path');
 const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
+const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
+const { planFilings } = require('./finding-filing');
+const { FINDINGS_ARTIFACT } = require('../tiebreak');
+const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
 
 // Section names exactly as the console renders them (console-template.md;
 // engine-render.js's SECTION_SPECS for the five curation sections).
@@ -27,6 +32,8 @@ const SECTIONS = {
   QUEUE: 'Queue writes',
   MEMORY: 'Memory updates',
   UPSTREAM: 'Upstream feedback',
+  INSIGHTS: 'Reflection insights',
+  DISMISSED: 'Dismissed duplicates',
   REFUSED: 'Refused — no defer reason',
 };
 
@@ -49,10 +56,19 @@ const SECTION_MAP = [
   [/^review-(contested|debate)-/, SECTIONS.CONTESTED],
   [/\.patch$/, SECTIONS.PENDING],
   [/^(polish-suggestion|visual-review|design-decision|build-deviation|simplify|deepen|sdd-ruling)-/, SECTIONS.PENDING],
-  [/^wrap-up-skill(-|\b)/, SECTIONS.SKILL],
+  // sibling-premise-disproof- (#3488): bin/materialize.js stages it as a note for a
+  // human to read, not a change to apply — so it resolves pending.
+  [/^sibling-premise-disproof-/, SECTIONS.PENDING, 'sibling-premise-disproof-note'],
+  // plan-citation- (#3488): wrap-up/cleanup-procedures.md stages a kept-plan citation
+  // proposal for a human to decide; the reason pins it pending so nothing auto-applies.
+  [/^plan-citation-/, SECTIONS.PENDING, 'cited-plan-kept'],
+  // translation- (#3488): flow/multi-spec.md stages a translated brief that the
+  // consolidated console shows under "Translated briefs"; a human reads it, so it resolves pending.
+  [/^translation-/, SECTIONS.PENDING, 'translated-brief'],
+  [/^(wrap-up-skill|skills)(-|\b)/, SECTIONS.SKILL],
   // release-backfill- retired #2257 (git describe --contains replaced the
   // staged-backfill mechanism entirely — nothing stages that prefix anymore).
-  [/^(wrap-up-doc|tidy-doc)-/, SECTIONS.DOC],
+  [/^(wrap-up-doc|tidy-doc|docs)-/, SECTIONS.DOC],
   // wrap-up-claude-md-/wrap-up-adr- (#2773): the curation engine's `claude-md`
   // and `decision-records` registry rows (bin/lib/wrap-up/registry.js) stage
   // their proposals under these prefixes — claude-md-curation.md and
@@ -61,14 +77,25 @@ const SECTION_MAP = [
   // uses for an `applied` finding from either registry row.
   [/^(wrap-up-claude-md|wrap-up-adr)-/, SECTIONS.CONFIG],
   [/^(wrap-up-journey|journeys)(-|\b)/, SECTIONS.JOURNEY],
-  [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|tidy|plan-retention|feedback-drafts)(-|\b)/, SECTIONS.QUEUE],
+  // premise-satisfied- (#3488): bin/materialize.js stages a proposal to close a record
+  // whose premise check already passes; closing is a human call, so it resolves pending.
+  [/^premise-satisfied-/, SECTIONS.QUEUE, 'premise-satisfied-close-proposal'],
+  [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|efficiency-budget|tidy|plan-retention|feedback-drafts|review-followup|build-followup|reconcile-live-run-archived|wrap-up-cleanup-ordering)(-|\b)/, SECTIONS.QUEUE],
   [/^wrap-up-memory-/, SECTIONS.MEMORY],
   [/^wrap-up-upstream-/, SECTIONS.UPSTREAM],
+  // upstream-draft- (#3488): feedback/upstream-draft.md's hand-off draft. The console
+  // must never file it, so it resolves pending (a filed stance would auto-file it).
+  [/^upstream-draft-/, SECTIONS.UPSTREAM, 'hand-off-draft'],
+  // wrap-up-reflect- (#3926): reflect/full-mode.md's staged insights table
+  // (wrap-up-reflect-insights.md). Its executor is review-console.md "On approval"
+  // step 10, which applies each row's recommended destination (D4/D5 rows stay
+  // informational), so it resolves without a human like every other section.
+  [/^wrap-up-reflect-/, SECTIONS.INSIGHTS],
 ];
 
 // One literal string per alternative of every non-`.patch` SECTION_MAP row,
 // each with the trailing `-` its regex requires (a `(-|\b)` row still lists
-// the `-` form). stage-item.js's unmapped-prefix warning (#3370) suggests the
+// the `-` form). stage-item.js's unmapped-prefix refusal (#3370) suggests the
 // nearest of these. MUST list every alternative of every non-`.patch` row.
 // resolve.test.js expands each row's regex source into its alternatives and
 // fails when one is missing here; a new row shape its parser does not
@@ -77,15 +104,39 @@ const CANONICAL_PREFIXES = [
   'review-unconfirmed-',
   'review-contested-', 'review-debate-',
   'polish-suggestion-', 'visual-review-', 'design-decision-', 'build-deviation-', 'simplify-', 'deepen-', 'sdd-ruling-',
-  'wrap-up-skill-',
-  'wrap-up-doc-', 'tidy-doc-',
+  'sibling-premise-disproof-', 'plan-citation-', 'translation-',
+  'wrap-up-skill-', 'skills-',
+  'wrap-up-doc-', 'tidy-doc-', 'docs-',
   'wrap-up-claude-md-', 'wrap-up-adr-',
   'wrap-up-journey-', 'journeys-',
   'reflect-', 'digest-promotion-', 'leftover-', 'ledger-record-', 'upstream-unfiled-', 'red-team-',
-  'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
+  'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'efficiency-budget-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
+  'review-followup-', 'build-followup-', 'reconcile-live-run-archived-', 'wrap-up-cleanup-ordering-',
+  'premise-satisfied-',
   'wrap-up-memory-',
   'wrap-up-upstream-',
+  'upstream-draft-',
+  'wrap-up-reflect-',
 ];
+
+// Staged-id prefixes whose run never reaches this console, so no SECTION_MAP row
+// maps them and stage-item.js's unmapped-prefix refusal skips them (#3488). Each
+// entry is [pattern over the id without its extension, why the console never sees it].
+// An id on this list must NOT also classify mapped (resolve.test.js pins the disjointness).
+const STAGING_EXEMPTIONS = Object.freeze([
+  [/^release-held(\.|$)/, "/claude-tweaks:release's standalone run dir; surfaced by release's own Step 4 console (release/console.md), never by wrap-up's console-resolve.js"],
+  [/^dispatch-target-missing-/, "/claude-tweaks:dispatch's `*-dispatch-standalone` run dir (queue-pull-script.md); dispatch renders no Review Console"],
+  [/^shipped-close-/, "the same dispatch-standalone firing run dir (queue-pull-script.md's #1984 shipped-candidate pass); no Review Console"],
+  [/^dream-proposal-/, "harness-health's `*-dream-standalone` run dir (dream-pass.md); report-only, `report.md` is its surface"],
+].map((entry) => Object.freeze(entry)));
+
+// The exemption reason for a staged id (with or without its one trailing
+// extension), or null when the id is not exempt.
+function stagingExemption(id) {
+  const stem = id.slice(0, id.length - path.extname(id).length);
+  const hit = STAGING_EXEMPTIONS.find(([re]) => re.test(stem));
+  return hit ? hit[1] : null;
+}
 
 function levenshtein(a, b) {
   let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
@@ -115,33 +166,46 @@ function nearestCanonicalPrefixes(id, n = 3) {
 // `{preferred}.shadow-dup` / `{preferred}.shadow-dup-{n}` — bin/lib/hooks/
 // sweep-shadow.js's name for a collision copy when the preferred destination
 // was already taken. Checked before SECTION_MAP so it always wins over
-// whatever prefix the copied name still carries; never auto-applied. A
-// `.shadow-dup` file is not always a duplicate of its anchor (#2773) — a
-// clobbering write can leave two real, different proposals behind — so
-// classifyStagedItem compares the shadow copy's own text against its
-// anchor's (when both are readable) instead of guessing: byte-identical
-// reports `shadow-dup-duplicate`, anything else reports
-// `shadow-dup-divergent`. Either side unreadable — `siblingText` absent (no
-// anchor found, or its content couldn't be read) or the shadow copy's own
-// `text` itself couldn't be read — falls back to the conservative
+// whatever prefix the copied name still carries. A `.shadow-dup` file is not
+// always a duplicate of its anchor (#2773) — a clobbering write can leave two
+// real, different proposals behind — so classifyStagedItem compares the
+// shadow copy's own text against its anchor's (when both are readable)
+// instead of guessing: byte-identical reports `shadow-dup-duplicate`,
+// anything else reports `shadow-dup-divergent`. Either side unreadable —
+// `siblingText` absent (no anchor found, or its content couldn't be read) or
+// the shadow copy's own `text` itself couldn't be read — reports
 // `shadow-dup-collision` — "can't tell" is a distinct outcome from
 // "confirmed a duplicate," never guessed as one.
+//
+// Each outcome has a final section (#3946), so none stays pending:
+// SHADOW_DUP_OUTCOMES below maps `shadow-dup-duplicate` to Dismissed
+// duplicates (nothing to apply — the anchor carries the same content) and the
+// other two to Queue writes (the copy may hold a real proposal, so it is filed
+// as a record rather than dropped).
 const SHADOW_DUP_RE = /^(.*)\.shadow-dup(?:-\d+)?$/;
+
+const SHADOW_DUP_OUTCOMES = Object.freeze({
+  'shadow-dup-duplicate': Object.freeze({ section: SECTIONS.DISMISSED, note: 'byte-identical to its anchor — dismissed, nothing to apply' }),
+  'shadow-dup-divergent': Object.freeze({ section: SECTIONS.QUEUE, note: 'differs from its anchor, so the copy is filed as a needs:definition backlog record quoting it verbatim (Queue writes, On approval step 7)' }),
+  'shadow-dup-collision': Object.freeze({ section: SECTIONS.QUEUE, note: 'no readable anchor to compare, so the copy is filed as a needs:definition backlog record quoting it verbatim (Queue writes, On approval step 7)' }),
+});
 
 // The short-circuit's stances, verbatim from review-console.md:
 // - every batch section resolves as "Approve all" — Pending review patches
 //   apply (after git apply --check), curation rows approve;
 // - Low-confidence / Contested rows have no pre-checked default ("the user
 //   decides whether to apply, ignore, or escalate") — Approve-all applies
-//   nothing, so they stay staged (never auto-applied);
+//   nothing, so they stay staged (never auto-applied) — unless the finding
+//   carries a tiebreak verdict (#3949), which settles it (tiebreakModel,
+//   approveAllDefault below);
 // - Q#/M# resolve to Apply, their pre-checked default;
 // - U# resolves to FILED — the one point where unattended diverges from an
 //   interactive Approve all (#347's Decision Rationale).
 const SECTION_STANCES = {
   [SECTIONS.AUTO]: { resolution: 'applied', reason: 'already in commits — override = revert' },
   [SECTIONS.PENDING]: { resolution: 'apply', reason: 'Approve-all default (patch validated with git apply --check first)' },
-  [SECTIONS.LOW]: { resolution: 'keep-staged', reason: 'unconfirmed finding — no Approve-all default; never auto-applied' },
-  [SECTIONS.CONTESTED]: { resolution: 'keep-staged', reason: 'debate inconclusive — no Approve-all default; never auto-applied' },
+  [SECTIONS.LOW]: { resolution: 'keep-staged', reason: 'unconfirmed finding with no tiebreak recommendation (legacy shape) — no Approve-all default; never auto-applied' },
+  [SECTIONS.CONTESTED]: { resolution: 'keep-staged', reason: 'debate inconclusive with no tiebreak recommendation (legacy shape) — no Approve-all default; never auto-applied' },
   [SECTIONS.SKILL]: { resolution: 'approve', reason: 'Approve-all default' },
   [SECTIONS.DOC]: { resolution: 'approve', reason: 'Approve-all default' },
   [SECTIONS.JOURNEY]: { resolution: 'approve', reason: 'Approve-all default' },
@@ -151,43 +215,51 @@ const SECTION_STANCES = {
   [SECTIONS.QUEUE]: { resolution: 'apply', reason: 'pre-checked Apply default (batched-item-drill.md)' },
   [SECTIONS.MEMORY]: { resolution: 'apply', reason: 'pre-checked Apply default (batched-item-drill.md)' },
   [SECTIONS.UPSTREAM]: { resolution: 'filed', reason: 'unattended files upstream feedback like M#/Q# (#347)' },
+  [SECTIONS.INSIGHTS]: { resolution: 'approve', reason: 'Approve-all default — review-console.md step 10 applies each row\'s recommended destination; D4/D5 rows stay informational' },
+  [SECTIONS.DISMISSED]: { resolution: 'dismissed', reason: 'byte-identical to its anchor, which carries the same content — nothing to apply or file' },
   [SECTIONS.REFUSED]: { resolution: 'refused', reason: 'no default; excluded from Approve all and from consoleAutoResolve (refused-proposals.md)' },
 };
 
 const ENGINE_ROW_SECTIONS = { skills: SECTIONS.SKILL, docs: SECTIONS.DOC, journeys: SECTIONS.JOURNEY, 'claude-md': SECTIONS.CONFIG, 'decision-records': SECTIONS.CONFIG, references: SECTIONS.REF };
 
-// `**Category:** {value}` — the header line `reflect/SKILL.md` (and any other producer sharing
-// this convention) writes on a staged finding. `null` when the text carries no such line —
-// including every caller that passes no text at all (unknown by design; never routed off it).
-function parseCategory(text) {
-  if (!text) return null;
-  const m = /^\*\*Category:\*\*\s*(\S+)/m.exec(text);
-  return m ? m[1] : null;
-}
-
 // `text` is the staged file's own content, when the caller has it (readSnapshot loads it for
-// every `.md`/`.patch` staged item). Only the QUEUE bucket's un-reasoned row reads it: that
+// every `.md`/`.patch` staged item, every shadow-dup copy, and each copy's anchor).
+// Only the QUEUE bucket's un-reasoned row reads it: that
 // bucket's contract (`reflect/SKILL.md`'s Auto mode routing table) reserves an actual Queue
 // write (a `gh issue create` candidate, resolution `apply`) for `Category: tangential` findings
 // — `convention`/`observation` findings share the same filename prefix but carry no
 // `Title:`/`Type:`/`Labels:` header for record creation to read, so routing them into Queue
 // writes/`apply` the same as a tangential finding would attempt to file a malformed issue
-// (#2473). A `Category:` value other than `tangential` reroutes to Pending review via the
-// existing reason-forces-pending mechanism below; a file with no `Category:` line at all (every
-// other QUEUE-bucket producer — `digest-promotion-*`, `leftover-*`, etc. — none of which carry
-// this field) is unaffected and keeps today's Queue writes/`apply` classification.
+// (#2473). A reflect `observation`/`convention` finding routes to Skill updates instead (#4168):
+// its destination line decides what `bin/reflect-apply.js` applies (an edit, a decline, or a
+// record proposal), a record whose Defer-reason fails the gate is Refused, and an unparseable
+// destination stays Pending review under a named reason. Every other `Category:` value other than
+// `tangential` keeps #2473's reroute to Pending review via the existing reason-forces-pending
+// mechanism below; a file with no `Category:` line at all (every other QUEUE-bucket producer —
+// `digest-promotion-*`, `leftover-*`, etc. — none of which carry this field) is unaffected and
+// keeps today's Queue writes/`apply` classification.
 function classifyStagedItem(filename, text, siblingText) {
   if (SHADOW_DUP_RE.test(filename)) {
-    if (siblingText === undefined || siblingText === null || text === undefined || text === null) {
-      return { section: SECTIONS.PENDING, reason: 'shadow-dup-collision' };
+    let outcome = 'shadow-dup-collision';
+    if (siblingText !== undefined && siblingText !== null && text !== undefined && text !== null) {
+      // Both sides are utf8-decoded, so equal strings prove equal bytes only when no
+      // invalid sequence was replaced by U+FFFD on the way in. With one present,
+      // identity is unproven and the copy is kept as divergent — never dismissed.
+      outcome = text === siblingText && !text.includes('�') ? 'shadow-dup-duplicate' : 'shadow-dup-divergent';
     }
-    return { section: SECTIONS.PENDING, reason: text === siblingText ? 'shadow-dup-duplicate' : 'shadow-dup-divergent' };
+    return { section: SHADOW_DUP_OUTCOMES[outcome].section, outcome };
   }
   for (const [re, section, reason] of SECTION_MAP) {
     if (!re.test(filename)) continue;
     if (section === SECTIONS.QUEUE && !reason) {
       const category = parseCategory(text);
       if (category && category.toLowerCase() !== 'tangential') {
+        if (isApplicableReflect(filename, text)) {
+          const destination = parseReflectDestination(text);
+          if (destination.kind === 'invalid') return { section: SECTIONS.PENDING, reason: `reflect-destination-invalid:${destination.why}` };
+          if (destination.kind === 'record' && deferReasonProblem(destination.proposal) !== null) return { section: SECTIONS.REFUSED };
+          return { section: SECTIONS.SKILL };
+        }
         return { section: SECTIONS.PENDING, reason: `non-tangential-category:${category}` };
       }
     }
@@ -224,16 +296,40 @@ function parseInvariant(patchText) {
   return m ? m[1].trim() : null;
 }
 
-// Everything resolveAll reads, read once. No resolution is computed here.
-function readSnapshot({ runDir, deps }) {
+// Only `.patch` / `.md` / shadow-dup entries and shadow-dup anchors (`isAnchor`) are read. `readError`
+// is true only when such an attempted read threw (#4049), so a caller can tell an unreadable file
+// from one that was never read at all.
+function readStagedEntry(deps, stagedDir, name, isAnchor = false) {
+  const file = path.join(stagedDir, name);
+  const entry = { name, path: file, text: null, readError: false };
+  if (!(name.endsWith('.patch') || name.endsWith('.md') || SHADOW_DUP_RE.test(name) || isAnchor)) return entry;
+  try {
+    entry.text = deps.readFile(file);
+  } catch {
+    entry.readError = true;
+  }
+  return entry;
+}
+
+// The run-dir files the finding items derive from. findingItems reads only
+// these: settling a finding needs no members, grants or patch checks.
+function readRunFiles({ runDir, deps }) {
   const decisions = readText(deps, path.join(runDir, 'decisions.md')) || '';
   const stagedDir = path.join(runDir, 'staged');
-  const staged = deps.readdir(stagedDir).filter((n) => !n.startsWith('.')).sort().map((name) => ({
-    name,
-    path: path.join(stagedDir, name),
-    text: (name.endsWith('.patch') || name.endsWith('.md') || SHADOW_DUP_RE.test(name)) ? readText(deps, path.join(stagedDir, name)) : null,
-  }));
+  const names = deps.readdir(stagedDir).filter((n) => !n.startsWith('.')).sort();
+  // A shadow-dup copy's anchor is read whatever its extension, so the duplicate check compares
+  // the same bytes bin/shadow-dup-proposal.js reads from disk (#3946 M1).
+  const anchors = new Set(names.map((n) => SHADOW_DUP_RE.exec(n)).filter(Boolean).map((m) => m[1]));
+  const staged = names.map((name) => readStagedEntry(deps, stagedDir, name, anchors.has(name)));
   const engineState = readJson(deps, path.join(runDir, 'engine-state.json'));
+  // The tiebreak findings artifact: absent, unparseable or not an array reads as [].
+  const reviewFindings = readJson(deps, path.join(runDir, FINDINGS_ARTIFACT));
+  return { decisions, staged, engineState, findings: Array.isArray(reviewFindings) ? reviewFindings : [] };
+}
+
+// Everything resolveAll reads, read once. No resolution is computed here.
+function readSnapshot({ runDir, deps }) {
+  const files = readRunFiles({ runDir, deps });
   const members = readMembers(deps, runDir);
   let grants = null;
   let grantsError = null;
@@ -243,11 +339,11 @@ function readSnapshot({ runDir, deps }) {
   // A re-derived patch (#3290) applies only on top of its earlier patch, so when the caller supplies
   // a stacked check the verdicts come from ONE walk over the .patch entries in apply order; without
   // it, each patch is checked alone against the unmodified worktree.
-  const patchItems = staged.filter((item) => item.name.endsWith('.patch'));
+  const patchItems = files.staged.filter((item) => item.name.endsWith('.patch'));
   const patchChecks = deps.checkPatchStack
     ? deps.checkPatchStack(patchItems.map((item) => item.path))
     : Object.fromEntries(patchItems.map((item) => [item.name, deps.gitApplyCheck(item.path)]));
-  return { decisions, staged, engineState, members, grants, grantsError, patchChecks };
+  return { ...files, members, grants, grantsError, patchChecks };
 }
 
 function decisionLines(decisions) {
@@ -342,7 +438,133 @@ function mergeResolution(snapshot, deps) {
   return { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' };
 }
 
+// ---- tiebreak verdicts are a finding's final outcome (#3949) ----
+//
+// tiebreak.js's resolveTiebreak writes exactly four decisions.md shapes, read
+// here by shape (never by the keywords the legacy classifier uses — a finding
+// path containing "debate" must not reclassify its own verdict line):
+//   STAGED … Tiebreak tiebreak:{id}: lens "L" finding P:N console: {reason}. Severity: {s}. Recommendation: {r}.
+//   AUTO   … Tiebreak tiebreak:{id}: lens "L" finding P:N digested: {reason}. Severity: {s}.
+//   AUTO   … Tiebreak tiebreak:{id}: lens "L" finding P:N dropped: refuted by tiebreak. Evidence: {e}. Severity: {s}.
+//   AUTO   … Reproduction: lens "L" finding P:N confirmed by tiebreak:{id}. Confirmed.
+// Anchored on the verdict line's own shape, mirroring tiebreak.js's verdictLineRe, so a marker quoted
+// inside another line's text never parses as a verdict. The finding path is producer-supplied and may
+// hold spaces, so everything after it is matched against the resolver-written rest of the line, anchored
+// on the line's end: a path can never forge the kind, severity or recommendation (#3949 review).
+const VERDICT_LINE_HEAD = '^- (?:AUTO|STAGED) \\d{2}:\\d{2}:\\d{2} — ';
+const VERDICT_SEV = '(critical|high|medium|low|info)';
+const VERDICT_LINE_END = '(?: Mode: inline\\.)?(?: Reversibility: \\S+\\.)?\\s*$';
+const TIEBREAK_STEP_HEAD = `${VERDICT_LINE_HEAD}Tiebreak tiebreak:([0-9a-f]{12}): lens "([^"]*)" finding (.+):([^\\s:]+) `;
+// The reason is one of resolveTiebreak's own tokens (`verdict:cant-tell`, `status:BLOCKED`, …), never free text.
+const TIEBREAK_CANT_TELL_RE = new RegExp(`${TIEBREAK_STEP_HEAD}(console|digested): ([A-Za-z0-9:_-]+)\\. Severity: ${VERDICT_SEV}\\.(?: Recommendation: (file|drop|none)\\.)?${VERDICT_LINE_END}`);
+// The evidence path always equals the finding path (tiebreak.js's evidenceProblem), so it is a backreference.
+const TIEBREAK_DROPPED_RE = new RegExp(`${TIEBREAK_STEP_HEAD}dropped: refuted by tiebreak\\. Evidence: (\\3:\\d+ .*)\\. Severity: ${VERDICT_SEV}\\.${VERDICT_LINE_END}`);
+const TIEBREAK_CONFIRMED_RE = new RegExp(`${VERDICT_LINE_HEAD}Reproduction: lens "([^"]*)" finding (\\S+):([^\\s:]+) confirmed by tiebreak:([0-9a-f]{12})\\. Confirmed\\.`);
+const STAGED_FILE_RE = /staged\/([A-Za-z0-9_-]+\.(?:md|patch))/;
+
+function parseTiebreakLine(line) {
+  if (!/^- (STAGED|AUTO) /.test(line)) return null;
+  const verdict = (kind, [id, lens, file, lineNo], rest) => ({
+    kind, id, key: findingKey(line), lens, path: file, line: /^\d+$/.test(lineNo) ? Number(lineNo) : lineNo,
+    severity: null, recommendation: null, reason: null, evidence: null, ...rest,
+  });
+  const c = TIEBREAK_CONFIRMED_RE.exec(line);
+  if (c) return verdict('confirmed', [c[4], c[1], c[2], c[3]], {});
+  const ct = TIEBREAK_CANT_TELL_RE.exec(line);
+  if (ct) {
+    const recommendation = ct[8] !== undefined && ct[8] !== 'none' ? ct[8] : null;
+    return verdict(ct[5], ct.slice(1, 5), { severity: ct[7], recommendation, reason: ct[6] });
+  }
+  const d = TIEBREAK_DROPPED_RE.exec(line);
+  if (d) return verdict('dropped', d.slice(1, 5), { severity: d[6], evidence: d[5] });
+  return null;
+}
+
+// An agent that could not tell is not licensed to drop: only an explicit `drop` recommendation drops.
+function approveAllDefault(recommendation) {
+  return recommendation === 'drop' ? 'dropped' : 'filed';
+}
+
+// A STAGED line's finding keys: its first location's, plus the second location of a
+// two-finding coincidence line (step3-lens-dispatch.md: `lens "L" findings P:A / P:B share a location …`).
+function lineKeys(line) {
+  const keys = [findingKey(line)];
+  const co = /\blens\s+"?([A-Za-z0-9_-]+)"?\s+findings\s+\S+?:\d+\s+\/\s+(\S+?):(\d+)\s+share a location/.exec(line);
+  if (co) keys.push(`${co[1]}|${co[2]}:${co[3]}`);
+  return keys.filter(Boolean);
+}
+
+const FINDING_SECTIONS = [SECTIONS.LOW, SECTIONS.CONTESTED];
+// Which verdict decides a staged file settled by several: the one needing a human first.
+const VERDICT_PRECEDENCE = ['console', 'confirmed', 'digested', 'dropped'];
+
+// Every tiebreak verdict in decisions.md, indexed by the finding key it settles (latest wins) and by
+// its id, plus which staged review-* files those verdicts settle. A key is settled for a STAGED line
+// only by a verdict logged AFTER it; a keyless line is never settled.
+function tiebreakModel(snapshot) {
+  const lines = decisionLines(snapshot.decisions);
+  const settledByKey = new Map();
+  const latestById = new Map();
+  lines.forEach((line, index) => {
+    const t = parseTiebreakLine(line);
+    if (t) {
+      const v = { index, ...t };
+      latestById.set(v.id, v);
+      if (v.key) settledByKey.set(v.key, v);
+    } else if (/^- AUTO /.test(line) && /\bConfirmed\b/.test(line)) { // #3772: the producer's own elevation sentence
+      const key = findingKey(line);
+      if (key) settledByKey.set(key, { index, kind: 'confirmed', id: null, key });
+    }
+  });
+  const settledAfter = (index, keys) => keys.length > 0 && keys.every((k) => settledByKey.has(k) && settledByKey.get(k).index > index);
+
+  const stagedNames = new Set(snapshot.staged.map((s) => s.name));
+  const refused = refusedStagedNames(snapshot.decisions);
+  const naming = new Map();
+  lines.forEach((line, index) => {
+    if (!/^- STAGED /.test(line) || parseTiebreakLine(line)) return;
+    const m = STAGED_FILE_RE.exec(line);
+    if (!m || !stagedNames.has(m[1])) return;
+    naming.set(m[1], [...(naming.get(m[1]) || []), { index, keys: lineKeys(line) }]);
+  });
+  const settledFiles = new Map();
+  const absorbed = new Set();
+  for (const [name, refs] of naming) {
+    const cls = classifyStagedItem(name);
+    if (refused.has(name) || cls.outcome || cls.reason || !FINDING_SECTIONS.includes(cls.section)) continue;
+    // A console verdict a linked file carries is never its own item, settled file or not: an
+    // unsettled file stays keep-staged until all its keys settle, so the finding is not lost.
+    for (const r of refs) {
+      for (const k of r.keys) {
+        const v = settledByKey.get(k);
+        if (v && v.kind === 'console' && v.index > r.index) absorbed.add(v.id);
+      }
+    }
+    if (!refs.every((r) => settledAfter(r.index, r.keys))) continue;
+    const verdicts = refs.flatMap((r) => r.keys.map((k) => settledByKey.get(k)));
+    const chosen = VERDICT_PRECEDENCE.map((kind) => verdicts.find((v) => v.kind === kind)).find(Boolean);
+    settledFiles.set(name, chosen);
+  }
+  return { lines, latestById, settledAfter, settledFiles, absorbed };
+}
+
+const tiebreakField = (v) => ({ id: v.id, key: v.key, lens: v.lens, path: v.path, line: v.line, severity: v.severity, recommendation: v.recommendation, reason: v.reason });
+
+function consoleVerdictResolution(v) {
+  const resolution = approveAllDefault(v.recommendation);
+  return { resolution, reason: `tiebreak could not settle it (${v.reason}, severity ${v.severity}); recommendation ${v.recommendation || 'none'} — Approve-all default ${resolution}`, tiebreak: tiebreakField(v) };
+}
+
+// The final outcome a settled staged file takes instead of keep-staged.
+function settledFileResolution(v) {
+  if (v.kind === 'confirmed') return { resolution: 'dismissed', reason: 'superseded — tiebreak confirmed it; routed through Step 3 Routing' };
+  if (v.kind === 'dropped') return { resolution: 'dropped', reason: 'refuted by tiebreak' };
+  if (v.kind === 'digested') return { resolution: 'dismissed', reason: 'can\'t-tell below medium — logged to the materiality digest' };
+  return consoleVerdictResolution(v);
+}
+
 function stagedItems(snapshot) {
+  const model = tiebreakModel(snapshot);
   // Refusal is a decisions.md fact about the item, not a fact about its name —
   // so it is decided before SECTION_MAP ever runs and outranks every stance.
   const refused = refusedStagedNames(snapshot.decisions);
@@ -354,8 +576,15 @@ function stagedItems(snapshot) {
     if (refused.has(s.name)) return { id: s.name, section: SECTIONS.REFUSED, ...SECTION_STANCES[SECTIONS.REFUSED] };
     const anchorMatch = SHADOW_DUP_RE.exec(s.name);
     const siblingText = anchorMatch && textByName.has(anchorMatch[1]) ? textByName.get(anchorMatch[1]) : undefined;
-    const { section, reason } = classifyStagedItem(s.name, s.text, siblingText);
+    const { section, reason, outcome } = classifyStagedItem(s.name, s.text, siblingText);
+    if (outcome) return { id: s.name, section, resolution: SECTION_STANCES[section].resolution, reason: `${outcome} — ${SHADOW_DUP_OUTCOMES[outcome].note}` };
     if (reason) return { id: s.name, section, resolution: 'pending', reason };
+    if (/^sdd-ruling-/.test(s.name)) {
+      const r = s.readError ? SDD_RULING_REASONS.UNREADABLE : sddRulingDeferralReason(s.text);
+      if (r) return { id: s.name, section, resolution: 'pending', reason: r };
+    }
+    const settled = model.settledFiles.get(s.name);
+    if (settled) return { id: s.name, section, ...settledFileResolution(settled) };
     const stance = SECTION_STANCES[section];
     if (s.name.endsWith('.patch')) {
       const check = snapshot.patchChecks[s.name] || { ok: false, error: 'not checked' };
@@ -397,37 +626,75 @@ function engineItems(snapshot, stagedIds) {
 // file of their own (single-read unconfirmed findings). A line naming a
 // staged/ path that exists is the same item as that file.
 //
-// A STAGED line is superseded (no item) when a LATER `- AUTO` line in the same
-// decisions.md carries the same finding key (lens + first path:line) and the
-// producer's `Confirmed` sentence — review step 3 stages a finding as
-// low-confidence, then logs the elevation as AUTO once reproduced (#3772).
-// Case-sensitive so `not confirmed` never matches; a keyless line is never
-// superseded.
+// A STAGED line is superseded (no item) when every one of its finding keys
+// (lens + path:line; tiebreakModel's lineKeys) is settled by a LATER tiebreak
+// verdict line, or by the producer's own `Confirmed` AUTO sentence — review
+// step 3 stages a finding as low-confidence, then logs the elevation as AUTO
+// once reproduced (#3772). Case-sensitive so `not confirmed` never matches; a
+// keyless line is never superseded. A can't-tell `console` verdict supersedes
+// its STAGED line too, and re-enters as one `tiebreak:{id}` item (#3949).
 function findingKey(line) {
   const lens = /\blens\s+"?([A-Za-z0-9_-]+)"?/i.exec(line);
   const loc = /([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+)/.exec(line);
   return lens && loc ? `${lens[1]}|${loc[1]}:${loc[2]}` : null;
 }
 
+// A coordination item's id is `decision:` + line.slice(2, 60) + `#` + the first 8 hex chars of
+// sha256(full line), plus `-{n}` for the n-th (n >= 2) byte-identical repeat among item-producing
+// lines. The hash keeps same-second lines that share a lead-in distinct (#3816).
+// The id is content-derived, so it is stable across re-renders only because decisions.md is
+// append-only: a later line can supersede a line but never rewrites it.
+// Stored ids are opaque to every reader, so a console.json written with the old 58-character id
+// still reads and re-renders unchanged. Old-shape ids are not unique (several stored items can
+// share one), so never join a stored old-shape id to a recomputed one.
 function coordinationItems(snapshot, stagedIds) {
   const out = [];
-  const lines = decisionLines(snapshot.decisions);
-  const confirmedAfter = (i, key) => lines.slice(i + 1).some((l) => /^- AUTO /.test(l) && /\bConfirmed\b/.test(l) && findingKey(l) === key);
-  for (const [i, line] of lines.entries()) {
-    if (!/^- STAGED /.test(line)) continue;
-    const key = findingKey(line);
-    if (key && confirmedAfter(i, key)) continue;
+  const model = tiebreakModel(snapshot);
+  const lineSection = (line) => {
+    const named = STAGED_FILE_RE.exec(line);
+    if (named && stagedIds.has(named[1])) return classifyStagedItem(named[1]).section;
+    if (/low-confidence|not directly verified|unconfirmed/i.test(line)) return SECTIONS.LOW;
+    if (/contested|debate/i.test(line)) return SECTIONS.CONTESTED;
+    return null;
+  };
+  const occurrences = new Map();
+  for (const [i, line] of model.lines.entries()) {
+    if (!/^- STAGED /.test(line) || parseTiebreakLine(line)) continue;
+    if (model.settledAfter(i, lineKeys(line))) continue;
     // Extension-anchored so trailing sentence punctuation (a period ending
     // the decisions.md line right after ".md") is never captured into the
     // filename — `.` is deliberately excluded from the body class.
-    const named = /staged\/([A-Za-z0-9_-]+\.(?:md|patch))/.exec(line);
+    const named = STAGED_FILE_RE.exec(line);
     if (named && stagedIds.has(named[1])) continue;
-    let section = null;
-    if (/low-confidence|not directly verified|unconfirmed/i.test(line)) section = SECTIONS.LOW;
-    else if (/contested|debate/i.test(line)) section = SECTIONS.CONTESTED;
-    if (section) out.push({ id: `decision:${line.slice(2, 60)}`, section, resolution: 'keep-staged', reason: SECTION_STANCES[section].reason });
+    const section = lineSection(line);
+    if (!section) continue;
+    const seen = (occurrences.get(line) || 0) + 1;
+    occurrences.set(line, seen);
+    const hash = crypto.createHash('sha256').update(line).digest('hex').slice(0, 8);
+    const repeatSuffix = seen > 1 ? `-${seen}` : '';
+    out.push({ id: `decision:${line.slice(2, 60)}#${hash}${repeatSuffix}`, section, resolution: 'keep-staged', reason: SECTION_STANCES[section].reason });
+  }
+  // A can't-tell verdict no settled staged file carries is its own item; it takes Contested when
+  // an earlier line for the same finding was a debate, else Low-confidence.
+  for (const v of model.latestById.values()) {
+    if (v.kind !== 'console' || model.absorbed.has(v.id)) continue;
+    const contested = model.lines.some((line, i) => i < v.index && /^- STAGED /.test(line) && !parseTiebreakLine(line)
+      && lineKeys(line).includes(v.key) && lineSection(line) === SECTIONS.CONTESTED);
+    out.push({ id: `tiebreak:${v.id}`, section: contested ? SECTIONS.CONTESTED : SECTIONS.LOW, ...consoleVerdictResolution(v) });
   }
   return out;
+}
+
+// The Low-confidence / Contested items alone, from readRunFiles' run-dir files (no members,
+// grants or patch checks; engine-state.json is read but no engine item is built): staged
+// review-* files, STAGED coordination lines, and can't-tell verdicts, each at its Approve-all
+// default, plus the review-findings.json findings they were read with. resolveAll builds the same
+// items but overrides every can't-tell item to `filed` (the unattended rule).
+function findingItems({ runDir, deps }) {
+  const snapshot = { ...readRunFiles({ runDir, deps }), patchChecks: {} };
+  const stagedIds = new Set(snapshot.staged.map((s) => s.name));
+  const items = [...stagedItems(snapshot), ...coordinationItems(snapshot, stagedIds)].filter((i) => FINDING_SECTIONS.includes(i.section));
+  return { items, findings: snapshot.findings, decisions: snapshot.decisions, dropped: droppedByTiebreak(snapshot.decisions) };
 }
 
 // Every cell is escaped, ids included: a staged filename is producer-supplied
@@ -436,17 +703,36 @@ function cell(value) {
   return String(value).replace(/\|/g, '\\|');
 }
 
-function renderRows({ items, cleanup, merge, intro }) {
+// The refuted drops a human should still see (#3949 AC4): severity high or critical, in log order.
+// Read-only — each is a final outcome with no console item. Lower severities stay auditable in
+// decisions.md; a drop line with no (or an unrecognised) severity parses to a null severity and is omitted.
+function droppedByTiebreak(decisions) {
+  return decisionLines(decisions)
+    .map(parseTiebreakLine)
+    .filter((t) => t && t.kind === 'dropped' && (t.severity === 'high' || t.severity === 'critical'))
+    .map((t) => ({ id: t.id, lens: t.lens, path: t.path, line: t.line, severity: t.severity, evidence: t.evidence }));
+}
+
+// The read-only "Dropped by tiebreak" block as lines, led by a blank line; [] when nothing dropped.
+function renderDroppedBlock(dropped) {
+  if (!dropped.length) return [];
+  const lines = ['', '#### Dropped by tiebreak (read-only — no decision)', '', '| Path:Line | Lens | Severity | Evidence |', '|---|---|---|---|'];
+  dropped.forEach((d) => lines.push(`| ${cell(`${d.path}:${d.line}`)} | ${cell(d.lens)} | ${cell(d.severity)} | ${cell(d.evidence ?? '—')} |`));
+  return lines;
+}
+
+function renderRows({ items, cleanup, merge, intro, dropped = [] }) {
   const lines = ['### Wrap-Up Review Console (auto-resolved at unattended)', '', intro, '', '| # | Section | Item | Resolution | Reason |', '|---|---|---|---|---|'];
   items.forEach((it, i) => lines.push(`| ${i + 1} | ${cell(it.section)} | ${cell(it.id)} | AUTO-RESOLVED: ${cell(it.resolution)} | ${cell(it.reason)} |`));
   lines.push(`| ${items.length + 1} | Cleanup actions | cleanup-procedures.md items | AUTO-RESOLVED: ${cell(cleanup.resolution)} | ${cell(cleanup.reason)} |`);
   lines.push('', `Merge: **${merge.resolution}** — ${merge.reason}`);
+  lines.push(...renderDroppedBlock(dropped));
   return lines.join('\n');
 }
 
 function renderTable(result) {
   const autoCount = decisionLines(result.snapshot.decisions).filter((l) => /^- AUTO /.test(l)).length;
-  return renderRows({ items: result.items, cleanup: result.sections.cleanup, merge: result.merge, intro: `Auto-applied entries in decisions.md: ${autoCount} (already in commits — override = revert).` });
+  return renderRows({ items: result.items, cleanup: result.sections.cleanup, merge: result.merge, dropped: result.droppedByTiebreak, intro: `Auto-applied entries in decisions.md: ${autoCount} (already in commits — override = revert).` });
 }
 
 // The idempotent re-render: a console.json already carrying `resolved: true`
@@ -468,20 +754,34 @@ function renderStoredTable(consoleJson) {
     items,
     cleanup: SECTION_STANCES[SECTIONS.CLEANUP],
     merge: cj.merge || { resolution: 'unknown', reason: 'not recorded in console.json' },
+    dropped: Array.isArray(cj.droppedByTiebreak) ? cj.droppedByTiebreak : [],
     intro: `Already resolved at ${cj.at || 'an unrecorded time'} — re-rendered from console.json; nothing re-resolved.`,
   });
+}
+
+// resolveAll is always unattended (console-auto): an agent that could not tell is not licensed to
+// drop, so every can't-tell item files — whatever the tiebreak recommended (#3949). Approve-all
+// (findingItems) keeps the recommendation-driven default for a present human.
+const UNATTENDED_FILED_REASON = 'unattended: can\'t-tell finding filed as a backlog record — an agent that could not tell is not licensed to drop';
+
+// A multi-spec per-spec run dir is {pipelines}/{parent-run-id}/spec-{N}: name the parent run too.
+function runIdOf(runDir) {
+  const base = path.basename(runDir);
+  return /^spec-\d+$/.test(base) ? `${path.basename(path.dirname(runDir))}/${base}` : base;
 }
 
 function resolveAll({ runDir, policy, deps }) {
   if (policy !== 'console-auto') throw new RangeError(`unsupported policy: ${policy} (expected console-auto)`);
   const snapshot = readSnapshot({ runDir, deps });
   const stagedIds = new Set(snapshot.staged.map((s) => s.name));
-  const items = [...stagedItems(snapshot), ...engineItems(snapshot, stagedIds), ...coordinationItems(snapshot, stagedIds)];
+  const items = [...stagedItems(snapshot), ...engineItems(snapshot, stagedIds), ...coordinationItems(snapshot, stagedIds)]
+    .map((it) => (it.tiebreak ? { ...it, resolution: 'filed', reason: UNATTENDED_FILED_REASON } : it));
   const sections = { cleanup: { ...SECTION_STANCES[SECTIONS.CLEANUP] } };
   const merge = mergeResolution(snapshot, deps);
-  const result = { ceiling: 'unattended', items, sections, merge, snapshot };
+  const filings = planFilings({ items, findings: snapshot.findings, runId: runIdOf(runDir) });
+  const result = { ceiling: 'unattended', items, sections, merge, droppedByTiebreak: droppedByTiebreak(snapshot.decisions), filings, snapshot };
   result.table = renderTable(result);
   return result;
 }
 
-module.exports = { SECTIONS, SECTION_MAP, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, classifyStagedItem, readSnapshot, resolveAll, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };

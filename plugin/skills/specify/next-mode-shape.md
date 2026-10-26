@@ -91,8 +91,8 @@ unparseable output to either verdict.
      and the interactive route as a paste-ready command on its own line
      (transport per `_shared/github-write-transport.md`):
 
-     ```
-     gh issue comment {n} --body-file {tmp}
+     ```bash
+     gh issue comment {n} --body-file "{tmp}"
      ```
 
      where `{tmp}` holds:
@@ -287,7 +287,7 @@ firing's session-scoped run-directory file first, the same file `## Claim`
 above resolved it from:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RUN_DIR_FILE=specify-next-rundir.txt)"
+RUN_DIR_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rundir.txt)"
 RUN_DIR=$(cat "$RUN_DIR_FILE")
 # Success path:
 node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" {n} --run "$RUN_DIR" \
@@ -339,6 +339,10 @@ will not resolve on retry either), not something specific to the one
 record an iteration happened to be holding: continuing the loop against
 the next candidate would only repeat the identical failure at the cost of
 another self-report, never make progress.
+
+After the self-report, `next-mode-closeout.md`'s close-out still runs on a
+firing-ending failure that follows `## Drain start`'s mint, so the firing's run
+directory does not stay `active`.
 
 **Per-record failures — the loop continues.** A post-claim
 shaping-stage failure — reported here only after Release above has

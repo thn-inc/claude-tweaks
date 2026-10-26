@@ -30,3 +30,5 @@ Otherwise, resolve `docs/plans/YYYY-MM-DD-{feature}-declined.json` from the spec
 ```
 
 The recommendations cache (`-recommendations.json`) is left in place — only the declined counter is cleared.
+
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.

@@ -2,15 +2,16 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('../helpers/read-skill');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 function readSkill(name, file = 'SKILL.md') {
-  return fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', name, file), 'utf8');
+  return readText(path.join(REPO_ROOT, 'plugin', 'skills', name, file));
 }
 
 function readSubfile(skill, filename) {
-  return fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', skill, filename), 'utf8');
+  return readText(path.join(REPO_ROOT, 'plugin', 'skills', skill, filename));
 }
 
 // These edges used to be asserted twice — once in /research's own Relationship
@@ -18,7 +19,7 @@ function readSubfile(skill, filename) {
 // every edge now lives once in docs/skill-graph.md. The invariant is unchanged:
 // these relationships stay recorded. Only their home moved.
 function readGraph() {
-  return fs.readFileSync(path.join(REPO_ROOT, 'docs', 'skill-graph.md'), 'utf8');
+  return readText(path.join(REPO_ROOT, 'docs', 'skill-graph.md'));
 }
 
 for (const skill of ['capture', 'challenge', 'specify', 'browse']) {
@@ -60,6 +61,6 @@ test('docs/skill-graph.md records the /research verify <-> /superpowers:brainsto
 test('skills/specify/ actually mentions /research (the specify<->research edge is wired, not aspirational)', () => {
   const specifyDir = path.join(REPO_ROOT, 'plugin', 'skills', 'specify');
   const files = fs.readdirSync(specifyDir).filter((f) => f.endsWith('.md'));
-  const hit = files.some((f) => /research/i.test(fs.readFileSync(path.join(specifyDir, f), 'utf8')));
+  const hit = files.some((f) => /research/i.test(readText(path.join(specifyDir, f))));
   assert.ok(hit, 'at least one file under skills/specify/ must mention /research — docs/skill-graph.md\'s specify<->research edge must be real, not aspirational');
 });

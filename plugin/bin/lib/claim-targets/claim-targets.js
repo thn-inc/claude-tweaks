@@ -36,9 +36,11 @@ const BOT_IN_PROGRESS_DESC = 'Bot state: an agent currently holds the claim on t
 const BOT_IN_PROGRESS_COLOR = '6A737D';
 const ABORT_REASON = 'never-started: file-overlap group partial claim';
 
-const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--help]\n'
+const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--help]\n'
+  + '  --steps <step,step,...>: the resolved /flow step list; one with neither build nor test claims\n'
+  + '           nothing and exits 0 with {claimed:[],alreadyOwned:[],skipped:[],skipGuard:"no-build-or-test"}\n'
   + '  --run <run-dir>: writes the Step 2.8 claim-log line to that run dir\'s decisions.md for every claimed target\n'
-  + '  exit 0 = all claimed (or, with --keep-going, partial)\n'
+  + '  exit 0 = all claimed (or, with --keep-going, partial; or the --steps skip-guard)\n'
   + '  exit 2 = malformed invocation or missing dependency\n'
   + '  exit 3 = contested, or a pr-opened tombstone whose linked PR is still open\n'
   + '           (contested: {contested:[{issue,holder}], ...}; in-flight: {inFlight:[{issue,link}], ...})\n'
@@ -59,7 +61,7 @@ function parseJsonOrNull(text) {
 
 function parseArgs(argv) {
   const opts = {
-    runId: null, targetsRaw: null, keepGoing: false, help: false, runDir: null,
+    runId: null, targetsRaw: null, keepGoing: false, help: false, runDir: null, stepsRaw: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -69,6 +71,7 @@ function parseArgs(argv) {
     else if (a === '--targets') opts.targetsRaw = next();
     else if (a === '--keep-going') opts.keepGoing = true;
     else if (a === '--run') opts.runDir = next();
+    else if (a === '--steps') opts.stepsRaw = next();
     else return { error: `unknown argument: ${a}` };
   }
   return opts;
@@ -86,6 +89,33 @@ function parseTargets(raw) {
     targets.push(Number(p));
   }
   return targets.length ? targets : null;
+}
+
+// /flow's step vocabulary — `skills/flow/steps-and-gates.md`'s Allowed Steps
+// table plus the bundled `re-verify` it names as a no-op list entry and the
+// resume-only `review-console` (`/flow {specs} review-console` must skip, not
+// hard-stop). Held here as data, never grepped from that prose at runtime.
+const FLOW_STEPS = Object.freeze(['build', 'stories', 'test', 'review', 'polish', 're-verify', 'wrap-up', 'review-console']);
+
+// `--steps` is the resolved /flow step list (`flow/SKILL.md` Step 1, item 4).
+// Same strictness as parseTargets: a blank value, a bare trailing flag
+// (`undefined`), an empty part (`review,,wrap-up`, `build,`), a part that is
+// another flag (`--steps --keep-going` consumed `--keep-going` as the value),
+// or any name outside FLOW_STEPS (`Build`, `biuld`) is malformed, never
+// silently read as "no build/test" — a mangled list must not turn into a
+// skipped claim. Returns `{steps}` or `{error}` (the caller prints `error`,
+// when non-empty, ahead of USAGE).
+function parseSteps(raw) {
+  if (typeof raw !== 'string' || raw.trim() === '') return { error: '' };
+  const parts = raw.split(',').map((s) => s.trim());
+  const bad = parts.find((p) => !FLOW_STEPS.includes(p));
+  if (bad !== undefined) {
+    return { error: `claim-targets: unknown --steps entry ${JSON.stringify(bad)} — accepted: ${FLOW_STEPS.join(', ')}\n` };
+  }
+  if (parts.length > 1 && parts.includes('review-console')) {
+    return { error: 'claim-targets: --steps entry "review-console" is resume-only and not valid beside other steps (flow/steps-and-gates.md)\n' };
+  }
+  return { steps: parts };
 }
 
 // Default `deps.appendClaimLog` implementation — writes the exact Step 2.8
@@ -250,6 +280,23 @@ function run(argv, deps) {
   if (runDirBasename !== null && runDirBasename !== opts.runId) {
     deps.stderr(`claim-targets: --run basename (${runDirBasename}) must equal --run-id (${opts.runId})\n`);
     return 2;
+  }
+
+  // #4027: `flow/claim-targets.md`'s skip-guard — a step list with neither
+  // `build` nor `test` (a dispatched group's second call, any wrap-up-only
+  // resume) has nothing left to build, so nothing to lock. Checked after all
+  // argv validation and before the first `gh` call: no slug resolution, no
+  // claim read or write, no label, no claim-log line, with or without
+  // `--keep-going`/`--run`. Without `--steps`, behaviour is unchanged.
+  if (opts.stepsRaw !== null) {
+    const { steps, error } = parseSteps(opts.stepsRaw);
+    if (!steps) { deps.stderr(error + USAGE); return 2; }
+    if (!steps.includes('build') && !steps.includes('test')) {
+      deps.stdout(JSON.stringify({
+        claimed: [], alreadyOwned: [], skipped: [], skipGuard: 'no-build-or-test',
+      }));
+      return 0;
+    }
   }
 
   // #3065: a `gh` timeout resolving the repo slug is retried once (same
@@ -581,5 +628,5 @@ function run(argv, deps) {
 }
 
 module.exports = {
-  run, parseArgs, parseTargets, USAGE, BOT_IN_PROGRESS, ABORT_REASON, defaultAppendClaimLog,
+  run, parseArgs, parseTargets, USAGE, FLOW_STEPS, BOT_IN_PROGRESS, ABORT_REASON, defaultAppendClaimLog,
 };

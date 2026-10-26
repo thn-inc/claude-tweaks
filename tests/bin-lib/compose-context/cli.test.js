@@ -153,10 +153,91 @@ test('exit 1 when cwd throws: message on stderr, nothing on stdout', () => {
   assert.equal(streamOf(out, 'out'), '');
 });
 
+test('--phase composes every registered bundle of the phase: exit 0, one JSON line {phase, bundles} (#4027)', () => {
+  const f = fixture();
+  const out = [];
+  const code = run(['--run', f.runDir, '--phase', 'second-call'], deps(f.main, out));
+  assert.equal(code, 0, streamOf(out, 'err'));
+  const lines = streamOf(out, 'out').split('\n');
+  assert.equal(lines.length, 2, 'exactly one line plus trailing newline');
+  const parsed = JSON.parse(lines[0]);
+  assert.equal(parsed.phase, 'second-call');
+  assert.deepEqual(parsed.bundles.map((b) => b.step), ['claims', 'merge']);
+  assert.deepEqual(parsed.bundles.map((b) => b.load), ['on-demand', 'always']);
+  const merge = parsed.bundles[1];
+  assert.equal(merge.path, path.join(f.runDir, 'context', 'merge.md'));
+  assert.ok(fs.existsSync(path.join(f.runDir, 'context', 'merge.md')));
+  assert.ok(fs.existsSync(path.join(f.runDir, 'context', 'claims.md')));
+  assert.deepEqual(merge.sources, ['skills/_shared/pr-first-merge.md', 'skills/_shared/pr-checklist-refresh.md']);
+  assert.equal(merge.bytes, Buffer.byteLength(fs.readFileSync(merge.path, 'utf8'), 'utf8'));
+  assert.deepEqual(merge.unresolved, []);
+  assert.equal(streamOf(out, 'err'), '');
+});
+
+test('--phase resolves the run\'s conditions once for the whole phase, and reads each source once (#4027)', () => {
+  const f = fixture();
+  const out = [];
+  let probes = 0;
+  const reads = new Map();
+  const code = run(['--run', f.runDir, '--phase', 'second-call'], deps(f.main, out, {
+    execFileSync: () => { probes += 1; return 'gh version 2\n'; },
+    readFile: (p, enc) => {
+      if (p.includes(`${path.sep}skills${path.sep}_shared${path.sep}`)) reads.set(p, (reads.get(p) || 0) + 1);
+      return fs.readFileSync(p, enc);
+    },
+  }));
+  assert.equal(code, 0, streamOf(out, 'err'));
+  assert.equal(probes, 1, 'two bundles, one gh --version probe');
+  assert.equal(reads.size, 3, 'the phase\'s three distinct sources');
+  for (const [file, n] of reads) assert.equal(n, 1, `${path.basename(file)} read ${n} times`);
+});
+
+test('--phase: an unknown phase, or --phase combined with --step or a positional source, exits 2 with nothing written', () => {
+  const f = fixture();
+  for (const argv of [
+    ['--run', f.runDir, '--phase', 'nope'],
+    ['--run', f.runDir, '--phase', 'constructor'],
+    ['--run', f.runDir, '--phase'],
+    ['--run', f.runDir, '--phase', 'second-call', '--step', 'x'],
+    ['--run', f.runDir, '--phase', 'second-call', 'some.md'],
+    ['--run', f.runDir, '--step', 'x', f.a, '--phase', 'second-call'],
+  ]) {
+    const out = [];
+    assert.equal(run(argv, deps(f.main, out)), 2, JSON.stringify(argv));
+    assert.match(streamOf(out, 'err'), /usage: compose-context\.js/);
+    assert.match(streamOf(out, 'err'), /--phase <first-call\|second-call\|review-lens>/, 'usage names the known phases');
+    assert.equal(streamOf(out, 'out'), '');
+  }
+  assert.ok(!fs.existsSync(path.join(f.runDir, 'context')));
+});
+
+test('--phase reads every source of every bundle before writing any: a failing later source leaves no bundle written', () => {
+  const f = fixture();
+  const failLast = (content) => ({
+    readFile: (p, enc) => {
+      if (p.endsWith(`${path.sep}pr-checklist-refresh.md`)) {
+        if (content === null) { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }
+        return content;
+      }
+      return fs.readFileSync(p, enc);
+    },
+  });
+  const unreadable = [];
+  assert.equal(run(['--run', f.runDir, '--phase', 'second-call'], deps(f.main, unreadable, failLast(null))), 1);
+  assert.match(streamOf(unreadable, 'err'), /cannot read source skills\/_shared\/pr-checklist-refresh\.md/);
+  assert.equal(streamOf(unreadable, 'out'), '');
+  const malformed = [];
+  assert.equal(run(['--run', f.runDir, '--phase', 'second-call'], deps(f.main, malformed, failLast('# x\n<!-- when: mode=auto -->\nnever closed\n'))), 2);
+  assert.match(streamOf(malformed, 'err'), /skills\/_shared\/pr-checklist-refresh\.md:2: .*unclosed/);
+  assert.equal(streamOf(malformed, 'out'), '');
+  assert.ok(!fs.existsSync(path.join(f.runDir, 'context')), 'claims.md (the earlier bundle) was not written either');
+});
+
 test('--help exits 0 with usage and probes nothing (real binary)', () => {
   const result = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
   assert.equal(result.status, 0);
   assert.match(result.stdout, /usage: compose-context\.js --run <run-dir> --step <name> <source-file>\.\.\./);
+  assert.match(result.stdout, /compose-context\.js --run <run-dir> --phase <first-call\|second-call\|review-lens>/);
 });
 
 test('real binary: a --run dir outside any checkout is accepted (anchored-or-outside), exit 0 and a JSON line', () => {

@@ -27,15 +27,16 @@ that needs no resolution, only inclusion:
    | CLI | Canonical shape |
    |---|---|
    | `log-decision.js` | `node "{plugin-root}/bin/log-decision.js" --run "{minted-run-dir}" --status AUTO\|STAGED\|KEPT-PROMPT\|SCANNED\|REFUSED\|SKIP --text "..." [--reversibility high\|med\|low\|n/a[" (qualifier)"]]` |
-   | `claim-targets.js` | `node "{plugin-root}/bin/claim-targets.js" --run-id "{run-id}" --targets {n}[,{m}...] [--keep-going] [--run "{minted-run-dir}"]` |
+   | `claim-targets.js` | `node "{plugin-root}/bin/claim-targets.js" --run-id "{run-id}" --targets {n}[,{m}...] [--steps {step list}] [--keep-going] [--run "{minted-run-dir}"]` |
    | `materialize.js` | `node "{plugin-root}/bin/materialize.js" <n> --run-dir "{minted-run-dir}" [--multi-record-slug <n>]` |
    | claims-registry read | `{minted-run-dir}/context/claims.md`'s "Reading claim state" git-trees path (`claims/issue-{n}.json` on the `claims-registry` branch) — never `gh api ...?ref=` query-string quoting, never `-f ref=` on a GET (if that bundle is absent, read `_shared/issue-claims.md` directly) |
 
-5. **Composed bundles** — `{minted-run-dir}/context/claims.md` and
-   `{minted-run-dir}/context/merge.md`, composed by the dispatching session before either call;
+5. **Composed bundles** — composed by the dispatching session before the call that reads them;
    every citation of them in the templates below carries its own fallback to the source file.
+   `{minted-run-dir}/context/claims.md` is on-demand in both calls: read it only where a citation
+   sends you. `{minted-run-dir}/context/merge.md` is read once, whole, up front by the second call only.
 
-6. **Worktree shell constraint** — the Claude Code harness enforces limits on Bash commands in a single call, independent of filesystem effect (see `_shared/scratch-worktree.md` §7 ("Shell constraint") for the full boundary description, if that bundle is absent, read `_shared/scratch-worktree.md` directly). Avoid these shapes: quoted JSON containing `git`; a `for`/`while` loop variable; a glob argument; a `gh api` call inside an `if RAW=$(...)`; `sed -i` on a variable path; `cat "$P/…"` or `sed -n 'a,bp' "$P/…"` where `$P` is a runtime-computed path variable. Use `Write`/`Edit`/`Read` tools instead of equivalent shell commands, separate commands instead of loops or compound constructs, and literal file paths instead of variables. One plain command per Bash call is the general pattern.
+6. **Worktree shell constraint** — the Claude Code harness enforces limits on Bash commands in a single call, independent of filesystem effect (see `_shared/scratch-worktree.md` §7 ("Shell constraint") for the full boundary description, if that bundle is absent, read `_shared/scratch-worktree.md` directly). Avoid these shapes: quoted JSON containing `git`; a `git` call inside a `$(...)` substitution (e.g. `"$(git merge-base HEAD origin/main)"` as another command's argument — run it as its own call and paste the result in); a runtime variable such as `${CLAUDE_PLUGIN_ROOT}` inside the `node -e` script text of a command that also runs `git` (piping `git`/`gh` output into `node -e` passes once the paths are literal); a `for`/`while` loop variable; a glob argument; a `gh api` call inside an `if RAW=$(...)`; `sed -i` on a variable path; `cat "$P/…"` or `sed -n 'a,bp' "$P/…"` where `$P` is a runtime-computed path variable; a path spelled with a backslash-escaped space (e.g. `Code\ Workspaces` — double-quote the whole path instead, `"/Users/…/Code Workspaces/…"`; §7's row). Use `Write`/`Edit`/`Read` tools instead of equivalent shell commands, separate commands instead of loops or compound constructs, and literal file paths instead of variables. One plain command per Bash call is the general pattern.
 
 7. **Async-wait discipline** — you are a subagent, not a top-level session. Once your turn ends you
    cannot count on being re-woken: a reply that ends without a tool call ends your turn, whatever is
@@ -52,7 +53,9 @@ that needs no resolution, only inclusion:
    (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
    expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
    child is abandoned and no longer counts as outstanding, so your final reply still ends with
-   `STATUS: {WORD}`. Ignore a late result; if a late notification re-wakes you after your final
+   `STATUS: {WORD}`. For a `/claude-tweaks:review` lens unit, log that downgrade as the single-read
+   coverage line, and carry its caveat, from `review/step3-lens-dispatch.md`'s partner-died
+   paragraph. Ignore a late result; if a late notification re-wakes you after your final
    reply, repeat your whole final reply unchanged — the dispatcher keeps only your latest reply, so
    a bare `STATUS:` line would replace the report. A child that reports a failure (a `failed`
    notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not
@@ -90,18 +93,20 @@ environment facts and tool signatures only — never a prior call's conclusions 
 verdicts) — so it does not weaken the two-call gate's fresh-context independence property (see
 each template's own "CRITICAL"/re-derive-from-artifacts language, unchanged by this section).
 
-**Before substituting `{context-pack}` into either call, compose item 5's two bundles** — once,
-into the minted run directory, one physical line each:
-`node "{plugin-root}/bin/compose-context.js" --run "{minted-run-dir}" --step claims "{plugin-root}/skills/_shared/issue-claims.md"`
-and
-`node "{plugin-root}/bin/compose-context.js" --run "{minted-run-dir}" --step merge "{plugin-root}/skills/_shared/pr-first-merge.md" "{plugin-root}/skills/_shared/pr-checklist-refresh.md"`.
-The directory needs nothing else to compose into: Step 4 minted it mkdir-only, and `mode` is
-unresolved at this point (no `config.yml` yet) — neither bundle's sources branch on that key
-today. `integration-model` resolves only from `.claude-tweaks/policy.yml`'s pin — on a repo that
-does not pin it the `merge` bundle keeps both integration-model branches, and item 3's resolved
-value is what the agent acts on. These `{plugin-root}` lines are placeholders to the
-composed-bytes scanner, not call sites of their own — the bundles are measured at their skill
-call sites. Compose both before either dispatch anyway: if the compose command is unavailable or exits non-zero, read the named source files directly — which, for the dispatched agent, each template citation's own fallback already says.
+**Before substituting `{context-pack}` into a call, compose that call's phase** into the minted
+run directory with one physical line — before the first call:
+`node "{plugin-root}/bin/compose-context.js" --run "{minted-run-dir}" --phase first-call`
+and before the second call:
+`node "{plugin-root}/bin/compose-context.js" --run "{minted-run-dir}" --phase second-call`.
+The phase registry (`bin/lib/compose-context/phases.js`) names each phase's bundles and whether
+the call reads each one up front or on demand — item 5 above is that list for these two calls.
+The directory needs nothing else to compose into: Step 4 minted it mkdir-only, and before the
+first call `mode` is unresolved (no `config.yml` yet) — neither bundle's sources branch on that
+key today. `integration-model` resolves from the run's `config.yml` pin (the first call's
+Manifesto writes it) or `.claude-tweaks/policy.yml`'s — with neither, the `merge` bundle keeps
+both integration-model branches, and item 3's resolved value is what the agent acts on. The
+composed-bytes scanner expands each `--phase` line into the phase's registered bundles, so these
+two lines are measured call sites; if the compose command is unavailable or exits non-zero, read the named source files directly — which, for the dispatched agent, each template citation's own fallback already says.
 
 **Log each group's resolved first-call model (#3212).** This is a dispatching-session step, not
 part of `{context-pack}`. When resolving the first call's profile
@@ -122,7 +127,7 @@ template applied.
 
 ## First call — build,test
 
-**No handoff to capture from this call's report.** Dispatch Step 4 already minted this group's run directory before either call — `{minted-run-dir}` below is that same directory, substituted literally, on both calls. There is nothing to parse out of this call's prose report to construct the second call's input; the gate between calls (`two-call-gate.md`) reduces to reading the status line and `OUTCOME`.
+**No handoff to capture from this call's report.** Dispatch Step 4 already minted this group's run directory before either call — `{minted-run-dir}` below is that same directory, substituted literally, on both calls. There is nothing to parse out of this call's prose report to construct the second call's input; the gate between calls (`two-call-gate.md`) reduces to reading the status line and `OUTCOME` (plus `NEXT_STEPS` on a handoff).
 
 **Before substituting this template**, the dispatching session decides whether to add `DISPATCH_HEADLESS=1 ` immediately before `/claude-tweaks:flow` on the invocation line below — a decision made once, here, never left in the copy-pasted text for the dispatched agent to reason about. Add it when this firing came from a scheduled Routine — a bare drain, or its deprecated `next` alias — with nobody present; omit it entirely (no `{headless-marker}` placeholder, no trailing space) when a human typed the command directly, in any form (bare, `next`, `#N`, or explicit-list) — the same human-present/Routine discriminator `SKILL.md`'s Next Actions render rule already uses. When set, it tells this call's Settle procedure (`settle-and-merge.md`) that nobody is present to read a Step 2.8 claim-contest stop, so a contest there should self-report via `_shared/headless-self-report.md` instead of just failing silently to whoever isn't watching. This is exactly why the marker must not live inside the fenced block below: the block is copied verbatim into every dispatch regardless of firing form, and the dispatched agent itself has no way to know which form the dispatching session used — only the dispatching session can make this call, before substitution.
 
@@ -217,14 +222,17 @@ CRITICAL: before reporting `DONE`/`build-test-ok`, confirm your own claim agains
 you just produced -- this call is the producer, not a second call distrusting someone else's
 prior claim, so there is no earlier report to check here, only your own freshly written result.
 The actual artifact is the runner-written pass stamp verifying HEAD (`verify.js --stamp-status`
-reports `verifiedHead: true`) and its `report.json`, which exist only when the test phase runs
-through `/claude-tweaks:test`. A raw `npm test` log is not that artifact: it leaves no stamp, and
-the second call then re-runs the full suite (#3661). Never report a result from narrative or
-memory of an earlier pass in this same call -- if the stamp is absent or does not verify HEAD,
-re-run the test phase through `/claude-tweaks:test` once before reporting. If the stamp still does
-not verify HEAD (a dirty tree never verifies), report `STATUS: DONE_WITH_CONCERNS` (the OUTCOME is
-unchanged by this alone), naming the stamp state -- the gate notes it, and the second call's
-review re-verifies through the runner.
+reports `verifiedHead: true`) and its `report.json` -- or a complete composed verdict
+(`suiteComposed.complete: true`), whose per-suite records carry their own report paths and are
+the same artifact. Both exist only when the test phase runs through `/claude-tweaks:test`. A raw
+`npm test` log is not that artifact: it leaves no stamp, and the second call then re-runs the
+full suite (#3661). Never report a result from narrative or memory of an earlier pass in this same
+call -- if `--stamp-status` does not report `verifiedHead: true` (no stamp, no complete
+composition, or neither verifies HEAD), re-run the test phase through `/claude-tweaks:test` once
+before reporting. If the artifact still does not verify HEAD (a tree dirty outside the declared
+`generated` paths never does), report `STATUS: DONE_WITH_CONCERNS` (the OUTCOME is unchanged by
+this alone), naming the stamp state -- the gate notes it, and the second call's review
+re-verifies through the runner.
 
 Bookends (every transport, #2912): before reporting `DONE`/`build-test-ok`, also run
 `node "{plugin-root}/bin/verify-run-bookends.js" --run "{minted-run-dir}" --targets {comma-joined issue numbers}`.
@@ -234,14 +242,20 @@ Exit 0 is required. On exit 1, run each `missing` entry's `remedy` (substituting
 `OUTCOME: build-test-blocked` / `STATUS: BLOCKED`, never `DONE`. Exit 2 is a malformed invocation,
 not a missing bookend: correct the `--run`/`--targets` arguments and re-run, never report `DONE`
 on it.
-A `verify-run-bookends: degraded —` stderr line (exit 0; the run's `config.yml` carries no valid
-`integration-model` pin) is logged as a `SKIP` decision via `log-decision.js --status SKIP`,
-never treated as a failure or a missing bookend.
+A `verify-run-bookends: degraded —` stderr line (exit 0 or 1; the run's `config.yml` carries no valid
+`integration-model` pin) is logged as a `SKIP` decision by the check itself; only when its JSON
+says `logged: false`, log it via `log-decision.js --status SKIP --text-file "{text-file}"`,
+where `{text-file}` holds
+`condition: {stderr line} → fallback: PR-bookend check not run` as one line written with the
+Write tool to a session temp file, per the decision log's Text from git or a user rule (the stderr
+line interpolates the config path, so it never goes through shell quoting), never treated as a
+failure or a missing bookend.
 
 OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 
 GROUP: {comma-joined issue numbers}
-OUTCOME: {build-test-ok | build-test-failed | build-test-blocked | already-shipped}
+OUTCOME: {build-test-ok | build-test-failed | build-test-blocked | already-shipped | handoff}
+NEXT_STEPS: {only with OUTCOME: handoff -- the comma-joined steps still to run; omit otherwise}
 MANIFEST: {absolute path to this group's run-dir manifest.yml/decisions.md -- a
   human-readable trace only; the dispatching session already holds this run's identity as
   {minted-run-dir} and derives nothing from this line}
@@ -286,7 +300,7 @@ this agent, so it is not the basis for the clause.
 
 ## Second call — review,polish,wrap-up (gated on the first call)
 
-**Only dispatch this call if the first call's status line was DONE or DONE_WITH_CONCERNS AND its OUTCOME was `build-test-ok`.** A `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all means this second call is never dispatched — the first call's own agent settles its own failure (its template above instructs it to), and the dispatching session takes the terminal path in `two-call-gate.md` section 5 (fail-loud reporting plus the `/claude-tweaks:wrap-up {target} cleanup-only` teardown call). An `OUTCOME` of `already-shipped` (#2502) is a **third, distinct** case, neither success nor failure: this second call is never dispatched here either, but the reason is that the first call already finished the record (staged a Close proposal, closed any draft PR, released the claim) — there is nothing left to review, polish, or wrap up. Take `two-call-gate.md` §7's terminal path for it, never section 5's — §7 tears the worktree down the same way section 5 does, but never invokes Settle's failure classification, retry counting, or failure comment, and the dispatching session's own report surfaces the group as a no-op, not `pending-review`.
+**Only dispatch this call if the first call's status line was DONE or DONE_WITH_CONCERNS AND its OUTCOME was `build-test-ok`.** A `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all means this second call is never dispatched — the first call's own agent settles its own failure (its template above instructs it to), and the dispatching session takes the terminal path in `two-call-gate.md` section 5 (fail-loud reporting plus the `/claude-tweaks:wrap-up {target} cleanup-only` teardown call). An `OUTCOME` of `already-shipped` (#2502) is a **third, distinct** case, neither success nor failure: this second call is never dispatched here either, but the reason is that the first call already finished the record (staged a Close proposal, closed any draft PR, released the claim) — there is nothing left to review, polish, or wrap up. Take `two-call-gate.md` §7's terminal path for it, never section 5's — §7 tears the worktree down the same way section 5 does, but never invokes Settle's failure classification, retry counting, or failure comment, and the dispatching session's own report surfaces the group as a no-op, not `pending-review`. An `OUTCOME` of `handoff` (#4027) is none of these: the first call stopped at a phase boundary past `/flow`'s context cap and is continued (Continuation call, below), and this gate reads the last continuation's report.
 
 **Substitute `{minted-run-dir}` into this call's command line**, exactly as `{issue list}` is substituted — not exported as a shell variable in the dispatching session, which would never reach the agent: a dispatched Task agent is a clean room that inherits no environment (`_shared/subagent-output-contract.md`'s Input Discipline). It is the same value substituted into the first call — dispatch Step 4 minted it once, before either call, so there is nothing to derive from the first call's report this time. `/flow` creates a fresh run directory of its own whenever it is not handed an existing one (`flow/SKILL.md` Step 3's adopt-if-set branch), so passing it remains non-negotiable — this call must still resume the exact directory the first call's `/flow` adopted, not start a new one.
 
@@ -334,6 +348,10 @@ backgrounded sleep): treat every child still outstanding as silent at the bound.
 without a tool call ends the turn.
 
 {context-pack}
+
+Read {minted-run-dir}/context/merge.md once, whole, with one Read call, before your first step
+(if that bundle is absent, read `_shared/pr-first-merge.md` directly). That one read serves every
+later citation of it, including wrap-up's own instruction to read it: never re-read it unless your context was compacted since, and never open its source files piecewise (sed, grep, cat).
 
 Ephemeral dev server liveness (only if `{minted-run-dir}/ephemeral-server.txt` exists): before
 the first browser-driving step, and again before any `trace stop`, verify the recorded pid
@@ -437,7 +455,8 @@ bypassed.
 OUTPUT FORMAT (required), before the trailing status line -- return ONLY these lines, no preamble:
 
 GROUP: {comma-joined issue numbers}
-OUTCOME: {merged | armed | pending-review | ready-to-merge | failed | blocked}
+OUTCOME: {merged | armed | pending-review | ready-to-merge | failed | blocked | handoff}
+NEXT_STEPS: {only with OUTCOME: handoff -- the comma-joined steps still to run; omit otherwise}
 MANIFEST: {path to this group's run-dir manifest.yml/decisions.md -- a human-readable trace
   only; the dispatching session already holds this run's identity as {minted-run-dir} and
   derives nothing from this line}
@@ -494,3 +513,7 @@ dispatched **singleton**'s merge decision runs this same re-check through
 `bin/lib/dispatch/merge-verdict.js`. Keep both current if either clause's wording changes.
 
 None of Templates A/B/C (A in `_shared/subagent-dispatch-core.md`; B/C in `_shared/subagent-output-contract.md`) fit an agent that executes pipeline stages rather than returning findings/locations/a yes-no, so these are their own minimal templates, inlined verbatim at every dispatch site. The universal parts of the contract still apply: the four-value status line, minimal input, and literal (not referenced) output format.
+
+## Continuation call — after `OUTCOME: handoff` (#4027)
+
+A call that reports `OUTCOME: handoff` crossed `/flow`'s context cap at a phase boundary (`flow/context-handoff.md`'s Dispatched call) and is continued in a fresh `Task()` call, never treated as a failure. The continuation is that call's own template above, inlined verbatim with the same substitutions: the same `{minted-run-dir}`, `{context-pack}` and `DISPATCH_HEADLESS=1 ` decision, and the same model profile (`capable` for the first call, `standard` for the second). One thing changes: the step list on both invocation lines (`build,test`, or `review,polish,wrap-up`) is replaced by the report's `NEXT_STEPS` value. Every other sentence stays verbatim. In the first call's template that includes "Stop after the test gate", which holds a `test` continuation to `test`, because a single step argument otherwise resumes from that step onward (`flow/steps-and-gates.md`'s Step Arguments). `two-call-gate.md` section 8 owns the bound and what the gate reads afterward.

@@ -3,11 +3,10 @@
 // content — and an executable snippet inside prose keeps them in scope (#2684).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const DISPATCH = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin/skills/review/step3-lens-dispatch.md'), 'utf8');
+const DISPATCH = readText(path.join(__dirname, '..', 'plugin/skills/review/step3-lens-dispatch.md'));
 
 function rule() {
   const m = DISPATCH.match(/^\*\*No executable content \(`low` only\)\.\*\*.*$/m);

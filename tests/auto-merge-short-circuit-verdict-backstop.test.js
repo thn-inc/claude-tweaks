@@ -18,12 +18,13 @@ const { execFileSync } = require('node:child_process');
 const { VERDICT_STEPS, verdictText } = require('../plugin/bin/lib/dispatch/merge-verdict');
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
 const { resolveAll } = require('../plugin/bin/lib/console/resolve');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const collapse = (s) => s.replace(/\s+/g, ' ');
 const SHORT_CIRCUIT_PATH = path.join(ROOT, 'plugin/skills/wrap-up/auto-merge-short-circuit.md');
 const SETTLE_AND_MERGE_PATH = path.join(ROOT, 'plugin/skills/dispatch/settle-and-merge.md');
-const RAW_SHORT_CIRCUIT = fs.readFileSync(SHORT_CIRCUIT_PATH, 'utf8');
+const RAW_SHORT_CIRCUIT = readText(SHORT_CIRCUIT_PATH);
 const FLAT = collapse(RAW_SHORT_CIRCUIT);
 const PLUGIN_DIR = path.join(ROOT, 'plugin').split(path.sep).join('/');
 
@@ -66,7 +67,11 @@ test('the Verdict backstop re-reads decisions.md through the shared module', () 
 });
 
 test('the refusal line resolves the console to leave-open (run through resolveAll, not a copy of its matcher)', (t) => {
-  const m = FLAT.match(/--step "([^"]+)" --reversibility n\/a --text "(#\{n\} merge-check verdict not confirmed[^"]*)"/);
+  // One match for the fence and the clause that holds its text-file line, so the `--step` captured
+  // is the one whose fence is followed by the refusal line, never an earlier `--text-file` site's.
+  const m = FLAT.match(
+    /--step "([^"]+)" --reversibility n\/a --text-file "\{text-file\}" ``` `\{text-file\}` holds one line, `(#\{n\} merge-check verdict not confirmed[^`]*)`/,
+  );
   assert.ok(m, 'refusal log line missing');
   assert.doesNotMatch(PRE_CHANGE, /merge-check verdict not confirmed/);
   const text = m[2].replace('{n}', '7').replace('{latest}', 'none').replace('{detail}', '');

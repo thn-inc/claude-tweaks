@@ -66,6 +66,18 @@ test('pr-early-run-lifecycle.md no longer claims the pushed branch is always fre
   assert.match(text, /build\/adopted-branch-collision-check\.md/);
 });
 
+test('AC1.1: prior-attempt adopts by merge and never stops (#3887)', () => {
+  const text = norm(CHECK);
+  assert.match(text, /`prior-attempt`/);
+  assert.match(text, /git merge --no-edit \{remoteSha\}/);
+  assert.match(text, /never stop on it/i);
+  assert.match(text, /findPriorAttemptPr/);
+  assert.match(text, /dispatch\/settle-and-merge\.md/);
+  const start = WORKTREE_SETUP.indexOf('Skip creation when already inside an externally-created worktree');
+  const end = WORKTREE_SETUP.indexOf('## Base ref', start);
+  assert.match(norm(WORKTREE_SETUP.slice(start, end)), /prior attempt/i);
+});
+
 test('the adopted-branch collision stop is registered in auto-mode-contract.md\'s HARD-GATE row, and the build sub-file cites the registration (#3094)', () => {
   const contract = read('plugin', 'skills', '_shared', 'auto-mode-contract.md');
   const row = contract.split('\n').find((l) => l.includes('HARD-GATE / BLOCKED / STOP conditions'));

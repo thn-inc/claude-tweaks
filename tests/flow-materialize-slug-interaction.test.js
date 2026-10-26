@@ -1,8 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 // #2294: a --run-dir that already resolves to a per-spec {parent}/spec-{N}/
 // directory (flow's own internal multi-spec sequential mode) must never
@@ -17,9 +17,7 @@ const path = require('path');
 // These pins ensure the interaction stays stated explicitly.
 
 const ROOT = path.join(__dirname, '..');
-const MATERIALIZE = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'flow', 'materialize.md'), 'utf8',
-);
+const MATERIALIZE = readText(path.join(ROOT, 'plugin', 'skills', 'flow', 'materialize.md'));
 
 test('materialize.md states the --run-dir/--multi-record-slug interaction by issue number', () => {
   assert.match(MATERIALIZE, /#2294/);

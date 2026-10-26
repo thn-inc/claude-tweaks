@@ -3,7 +3,9 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
-const { gitInfo, gitDir, composeReport, writeReportAtomic } = require(path.join(
+const {
+  gitInfo, gitDir, composeReport, writeReportAtomic, dirtyFilePaths,
+} = require(path.join(
   __dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'report.js'));
 
 const PASSING = {
@@ -118,6 +120,39 @@ test('gitInfo and gitDir pass windowsHide on every git spawn, gitDir keeps cwd (
   assert.strictEqual(calls.length, 3);
   for (const [, , opts] of calls) assert.strictEqual(opts.windowsHide, true);
   assert.strictEqual(calls[2][2].cwd, '/repo');
+});
+
+test('dirtyFilePaths returns null when git fails (#2987)', () => {
+  const throwing = () => { throw new Error('not a repo'); };
+  assert.strictEqual(dirtyFilePaths(throwing), null);
+});
+
+test('dirtyFilePaths parses -z porcelain output, one record per changed/untracked file (#2987)', () => {
+  const fake = () => ' M a.js\0?? dir/b.js\0';
+  assert.deepStrictEqual(dirtyFilePaths(fake), ['a.js', 'dir/b.js']);
+});
+
+test('dirtyFilePaths reports both paths of a rename — the deleted source still counts as dirty (#2987)', () => {
+  const fake = () => 'R  dist/a.js\0src/a.js\0';
+  assert.deepStrictEqual(dirtyFilePaths(fake), ['dist/a.js', 'src/a.js']);
+});
+
+test('dirtyFilePaths reports only the new path of a copy — its source is unchanged (#2987)', () => {
+  const fake = () => 'C  dist/a.js\0src/a.js\0';
+  assert.deepStrictEqual(dirtyFilePaths(fake), ['dist/a.js']);
+});
+
+test('dirtyFilePaths asks git to expand untracked directories into files (#2987)', () => {
+  let argv = null;
+  const fake = (cmd, args) => { argv = args; return ''; };
+  dirtyFilePaths(fake);
+  assert.ok(argv.includes('--untracked-files=all'), `argv was ${JSON.stringify(argv)}`);
+  assert.ok(argv.includes('-z'), `argv was ${JSON.stringify(argv)}`);
+});
+
+test('dirtyFilePaths returns [] on a clean tree (#2987)', () => {
+  const fake = () => '';
+  assert.deepStrictEqual(dirtyFilePaths(fake), []);
 });
 
 test('testCountRegression is omitted when null (#881, mirrors counts-never-guessed convention)', () => {

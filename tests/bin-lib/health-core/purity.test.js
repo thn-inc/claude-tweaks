@@ -7,6 +7,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('../../helpers/read-skill');
 
 const PURE_MODULES = [
   'dedup.js', 'finding-validation.js', 'fingerprint.js', 'budget.js',
@@ -17,7 +18,7 @@ const FORBIDDEN = ['fs', 'node:fs', 'child_process', 'node:child_process', './du
 
 for (const mod of PURE_MODULES) {
   test(`${mod} imports nothing stateful`, () => {
-    const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'health-core', mod), 'utf8');
+    const src = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'health-core', mod));
     const imports = [...src.matchAll(/require\(['"]([^'"]+)['"]\)/g)].map((m) => m[1]);
     const violations = imports.filter((i) => FORBIDDEN.includes(i));
     assert.deepStrictEqual(

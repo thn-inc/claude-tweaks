@@ -12,6 +12,7 @@ const {
   listMarkdownFiles,
 } = require('../../../plugin/bin/lib/skill-audit/option-description.js');
 const { listSkillDirs } = require('../../../plugin/bin/lib/skill-audit/skill-catalog.js');
+const { readText } = require('../../helpers/read-skill');
 
 const SAMPLE = [
   '- Option 1 — `label`: `"Quick"`, `description`: `"~2-5 min, 5+ sources"`',
@@ -91,7 +92,7 @@ test('no shipped skills/**/*.md file has an AskUserQuestion option description c
 
   const violations = [];
   for (const file of files) {
-    const md = fs.readFileSync(file, 'utf8');
+    const md = readText(file);
     const fields = extractDescriptionFields(md);
     for (const flagged of flagQuestionMarks(fields)) {
       violations.push(`${path.relative(skillsDir, file)}:${flagged.line} — "${flagged.text}"`);

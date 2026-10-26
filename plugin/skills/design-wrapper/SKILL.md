@@ -1,7 +1,7 @@
 ---
 name: design-wrapper
 description: Use when a lifecycle skill (/test, /review, /build, /flow, /visual-review, /specify, /tidy) needs to invoke Impeccable design-quality commands.
-argument-hint: "<shape|pre-build|test|review|polish|survey|doctor|reset-recommendations|live|explore> [target] [<surface-topic>] [--screenshots <paths>] [--source <parent-skill>] [--description <text>] [--dry-run] [--limit <n>] [--scope <identity|layout>]"
+argument-hint: "<shape|pre-build|test|review|polish|survey|doctor|reset-recommendations|live|explore> [target] [<surface-topic>] [--screenshots <paths>] [--description <text>] [--dry-run] [--limit <n>] [--scope <identity|layout>]"
 ---
 
 # Design — Impeccable Integration Wrapper
@@ -40,7 +40,7 @@ Full per-mode behavior and argument shape: see the Input table below.
 
 ## Input
 
-`$ARGUMENTS` is parsed as `<shape|pre-build|test|review|polish|survey|doctor|reset-recommendations|live|explore> [target] [<surface-topic>] [--screenshots <paths>] [--source <parent-skill>] [--description <text>] [--dry-run] [--limit <n>] [--scope <identity|layout>]`:
+`$ARGUMENTS` is parsed as `<shape|pre-build|test|review|polish|survey|doctor|reset-recommendations|live|explore> [target] [<surface-topic>] [--screenshots <paths>] [--description <text>] [--dry-run] [--limit <n>] [--scope <identity|layout>]`:
 
 | Mode | Target | Behavior |
 |------|--------|----------|
@@ -60,7 +60,7 @@ Full per-mode behavior and argument shape: see the Input table below.
 | Flag | Modes | Meaning |
 |------|-------|---------|
 | `--screenshots <paths>` | `survey` | Passed by `/visual-review` — screenshot paths for per-screenshot LLM-graded observations instead of heuristic diff analysis |
-| `--source <parent-skill>` | any | Explicit caller-invoked signal when the caller has no `$PIPELINE_RUN_DIR` of its own to forward (e.g. standalone `/visual-review`) — see Component-Skill Contract below |
+| `--source <parent-skill>` (producer-only) | any | Explicit caller-invoked signal when the caller has no `$PIPELINE_RUN_DIR` of its own to forward (e.g. standalone `/visual-review`) — see Component-Skill Contract below |
 | `--description <text>` | `shape` | The design doc's own overview or problem statement, forwarded verbatim to upstream so `new-work.md` can classify the work. Optional — omitting it degrades the call, never fails it. |
 | `--dry-run` | `polish` | Compute the dispatch list without invoking any Impeccable command or modifying files |
 | `--limit <n>` | `survey` | Override the default 5-recommendation cap (see `modes/survey.md` Step 5) |

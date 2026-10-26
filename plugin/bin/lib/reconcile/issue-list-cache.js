@@ -35,8 +35,31 @@
 // changes list-visible state and needs no handling); that coupling is the
 // point, not a smell to design around, since this module has no other
 // caller today.
+//
+// #4032 — marker index. The one thing that DOES cross passes is `index`, a
+// `{ "{repo}\n{marker}": issueNumber }` map reconcile/index.js loads from and
+// writes back to the reconcile cache. `runner.findIssueByMarker(repo, marker)`
+// answers a residue dedup lookup with ONE `gh issue view <n>` instead of the
+// full-repo list: it returns the issue when its body still carries the marker,
+// and `undefined` ("cannot answer, do the list") when this pass already holds
+// the memoized list for the repo, when `index` has no entry, or when the view
+// fails or no longer carries the marker (that entry is dropped). Every memoized
+// list read indexes the canonical issue per reconcile-residue marker; an
+// `issue create` indexes its own body's marker. Known divergence: with
+// duplicates, the indexed issue (canonical at index time) answers even if
+// another process later filed a newer duplicate — the list path would have
+// picked the newer one.
 'use strict';
+const { performance } = require('perf_hooks');
 const { defaultRunner } = require('../feedback/file-feedback');
+const { findByMarker } = require('../issues/dedup-lookup');
+const { recordSubprocess } = require('./timing');
+
+const RESIDUE_MARKER_RE = /<!-- fingerprint: reconcile-residue-[0-9a-f]+ -->/g;
+
+function indexKey(repo, marker) {
+  return `${repo}\n${marker}`;
+}
 
 // Only this exact shape is memoized — every other runner call is a write
 // (or an unrecognized read) and always executes, never skipped.
@@ -101,8 +124,38 @@ function applyWrite(entries, argv, rawOutput) {
 // JSON is handed back verbatim, also uncached, rather than throwing here —
 // the caller's own JSON.parse (inside findResidueDuplicate) is what
 // surfaces that failure.
-function createIssueListCache({ base = defaultRunner } = {}) {
+function createIssueListCache({ base: rawBase = defaultRunner, index = {} } = {}) {
   const memo = new Map(); // repo -> parsed array of issue entries
+
+  // #4032: every real `gh issue …` round trip is timed as a `gh` spawn (the
+  // default runner's own execFileSync is deliberately left raw — it lives in
+  // feedback/, outside reconcile). A memo hit never reaches here, so it records
+  // nothing. recordSubprocess never throws, so the call's own return/throw is
+  // exactly rawBase's.
+  function base(argv) {
+    const start = performance.now();
+    try {
+      return rawBase(argv);
+    } finally {
+      recordSubprocess('gh', argv, performance.now() - start);
+    }
+  }
+
+  // Index the canonical issue per reconcile-residue marker found in `issues`.
+  function indexIssues(repo, issues) {
+    const byMarker = new Map();
+    for (const issue of issues) {
+      if (!issue || typeof issue.body !== 'string') continue;
+      for (const marker of new Set(issue.body.match(RESIDUE_MARKER_RE) || [])) {
+        if (!byMarker.has(marker)) byMarker.set(marker, []);
+        byMarker.get(marker).push(issue);
+      }
+    }
+    for (const [marker, group] of byMarker) {
+      const found = findByMarker(group, marker);
+      if (found && Number.isInteger(found.canonical.number)) index[indexKey(repo, marker)] = found.canonical.number;
+    }
+  }
 
   function runner(argv) {
     if (isIssueListCall(argv)) {
@@ -117,6 +170,7 @@ function createIssueListCache({ base = defaultRunner } = {}) {
           return out; // unparseable response — never cache a bad read
         }
         memo.set(repo, Array.isArray(parsed) ? parsed : []);
+        indexIssues(repo, memo.get(repo));
       }
       return JSON.stringify(memo.get(repo));
     }
@@ -124,10 +178,31 @@ function createIssueListCache({ base = defaultRunner } = {}) {
     const out = base(argv);
     const repo = repoFromArgv(argv);
     if (repo !== null && memo.has(repo)) applyWrite(memo.get(repo), argv, out);
+    if (repo !== null && argv[0] === 'issue' && argv[1] === 'create') {
+      const created = /\/issues\/(\d+)/.exec(String(out));
+      const markers = created ? (flagValue(argv, '--body') || '').match(RESIDUE_MARKER_RE) : null;
+      if (markers) for (const marker of new Set(markers)) index[indexKey(repo, marker)] = Number(created[1]);
+    }
     return out;
   }
 
-  return { runner };
+  // undefined = "cannot answer, do the list" (see the header's #4032 note).
+  runner.findIssueByMarker = function findIssueByMarker(repo, marker) {
+    if (memo.has(repo)) return undefined; // the memo is cheaper and write-aware
+    const key = indexKey(repo, marker);
+    if (!Object.hasOwn(index, key)) return undefined;
+    let issue;
+    try {
+      issue = JSON.parse(base(['issue', 'view', String(index[key]), '--repo', repo, '--json', 'number,title,body,createdAt,state']));
+    } catch {
+      return undefined;
+    }
+    if (findByMarker([issue], marker)) return issue;
+    delete index[key];
+    return undefined;
+  };
+
+  return { runner, index };
 }
 
 module.exports = {

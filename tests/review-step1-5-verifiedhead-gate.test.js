@@ -13,11 +13,11 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const CODE_MODE_STEPS = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'review', 'code-mode-steps.md'), 'utf8');
+const CODE_MODE_STEPS = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'code-mode-steps.md'));
 
 // Hand-built pre-#1923 control (not read from git history): Step 1.5's `/flow` pipeline branch
 // gated on the strict, scope-blind `match` field alone -- no `verifiedHead` field existed yet.
@@ -29,7 +29,7 @@ function assertPinned(pattern, message) {
 }
 
 test("Step 1.5's /flow pipeline branch prints the full --stamp-status envelope, baselineAdjudicated included (#3043)", () => {
-  assertPinned(/\{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, reportPath, legacy\}/, 'the envelope names baselineAdjudicated');
+  assertPinned(/\{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, preExistingAdjudicated, reportPath, legacy, suiteComposed, generatedExempt, liveGeneratedExempt, scopeError\}/, 'the envelope names baselineAdjudicated and every field --stamp-status prints');
 });
 
 test("Step 1.5's /flow pipeline branch gates the proceed decision on verifiedHead: true, not bare match", () => {
@@ -41,7 +41,7 @@ test("Step 1.5's /flow pipeline branch gates the re-trigger decision on verified
 });
 
 test("Step 1.5's runner-stamp read prints a verifiedHead field distinct from bare match", () => {
-  assertPinned(/\{present, sha, head, dirty, scope, fullSha, match, verifiedHead, (?:baselineAdjudicated, )?reportPath, legacy\}/, 'the printed stamp-status envelope carries both match and verifiedHead as distinct fields');
+  assertPinned(/\{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, preExistingAdjudicated, reportPath, legacy, suiteComposed, generatedExempt, liveGeneratedExempt, scopeError\}/, 'the printed stamp-status envelope is the full field list --stamp-status prints, match and verifiedHead as distinct fields');
 });
 
 test("Step 1.5 states why match alone is insufficient (would re-trigger a scoped run forever), citing #1923", () => {

@@ -10,15 +10,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const PLUGIN_ROOT = path.join(REPO_ROOT, 'plugin');
 // Normalized to LF: a core.autocrlf Windows checkout reads the skill with \r\n, which would make the
 // bare-\n fence extraction below find nothing (and \r in a fence body would break bash).
-const RECORD_CREATION = fs.readFileSync(
-  path.join(PLUGIN_ROOT, 'skills/specify/record-creation-subissues.md'),
-  'utf8'
-).replace(/\r\n/g, '\n');
+const RECORD_CREATION = readText(path.join(PLUGIN_ROOT, 'skills/specify/record-creation-subissues.md'));
 const SESSION_ID = 'crossref-manifest-test-session';
 
 // Same extraction shape as tests/specify-ceremony-tally-prose.test.js (copied, not imported).

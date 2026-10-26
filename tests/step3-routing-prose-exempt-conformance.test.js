@@ -6,11 +6,11 @@
 // requirement, and the distinguishing decision-log format.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const MD_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'review', 'step3-routing.md');
-const md = fs.readFileSync(MD_PATH, 'utf8');
+const md = readText(MD_PATH);
 
 test('resolves review-auto-apply-prose-exempt alongside review-auto-apply-ceiling', () => {
   assert.ok(md.includes('review-auto-apply-prose-exempt'), 'step3-routing.md must resolve review-auto-apply-prose-exempt');

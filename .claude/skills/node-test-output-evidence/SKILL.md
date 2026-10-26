@@ -28,7 +28,7 @@ A spec test name containing a newline prints across several lines, so the tree n
 A suite, or a test with subtests, shows `✖` whenever a child fails. Count that parent as failing only when the failure is its own, such as a hook failure:
 
 - **Spec.** The parent has its own entry in the `✖ failing tests:` section. Failing leaves take their own listings first. A name still listed after that vouches for the parents carrying that name. With none left, every such parent's failure is inherited. With exactly one per parent, each parent's failure is its own. Any other number is ambiguous, and the tree is no evidence.
-- **TAP.** Read only the point's own top-level `failureType` key inside its YAML block. `failureType: 'subtestsFailed'` means the failure is inherited.
+- **TAP.** Read only the point's own top-level `failureType` key inside its YAML block. `failureType: 'subtestsFailed'` means the failure is inherited. `failingTestsByFile` still lists such a parent beside its failing children; a caller that counts or names tests passes `ownOnly: true` (#3723, `baselineAdjudicated.attributedTests`), or an inherited parent inflates the count and gets quoted as a test of its own.
 
 ### A TAP point's YAML block is data
 
@@ -99,6 +99,7 @@ The baseline base run adds one whole-suite run per failing check. Before adding 
 - The comparison is by test identity, not by failure reason. A test that already fails at base covers any failure of the same test at HEAD. `plugin/skills/test/verification.md`'s "What it cannot see" states this limit, and the hosted CI check stays the authoritative gate.
 - A wholly file-level load failure counts as baseline only when its normalized isolated HEAD log equals the base log (`normalizeLog` strips roots and durations), not merely when it fails at the same `1:1` site.
 - `verify.js --stamp-status` exposes three related but distinct booleans: `match` (an unconditional full clean pass — deliberately `false` whenever `baselineAdjudicated` is `true`, even when `sha === head`), `verifiedHead` (HEAD is actually verified, by either path — this is the field Skip-if-recent and `/review` Step 1.5 read), and `baselineAdjudicated` (this pass relied on baseline adjudication). A reader checking only `match` can misread a legitimate baseline-adjudicated pass as "doesn't match HEAD, re-run" — check `verifiedHead` for pass/fail and `baselineAdjudicated` for which path produced it.
+- `verifiedHead` has one more path, and only `--stamp-status --scope <declaration>` computes it (#3002): `suiteComposed.complete`, true when every check the declaration names has its own passing per-suite record (written by chunked `--stamp-suite` runs) at this clean HEAD. Bare `--stamp-status` reports `suiteComposed: null` and never takes that path, so a chunked project reads `verifiedHead: false` there even after every chunk passed. Name the declaration before concluding a chunked project is unverified. `plugin/skills/test/stamp-composition.md` documents the composed fields.
 - Pass both `unattributedCount` and `family` from any new `planRetry` caller. Its default `unattributedCount = 0` reads an omitted count as accounted, so a caller that forgets it retries with no accounting guard. `plugin/bin/verify.js` is the only caller today and passes both.
 
 ## Common Operations
@@ -127,8 +128,8 @@ node --test --test-reporter=tap tests/bin-lib/verify/extract.test.js   # capture
 
 ## Reference
 
-- Code: `plugin/bin/lib/verify/extract.js` (`testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount`, `countUnmatchedFailures`, `fileLevelFailures`, `unattributedFailureCount`, `tapBlockCount`, `tapLines`), `tools/windows-regression/file-issue.js` (`excerptFor`, `ownerAt`), `plugin/bin/lib/verify/baseline.js` (`adjudicate`, `accountedFamily`, `RUNNER_ERROR_RE`, `normalizeLog`), `plugin/bin/lib/verify/flaky.js` (`planRetry`)
+- Code: `plugin/bin/lib/verify/extract.js` (`testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount`, `countUnmatchedFailures`, `fileLevelFailures`, `unattributedFailureCount`, `tapBlockCount`, `tapLines`), `tools/windows-regression/file-issue.js` (`excerptFor`, `excerptsForTests`, `ownerAt`), `plugin/bin/lib/verify/baseline.js` (`adjudicate`, `accountedFamily`, `RUNNER_ERROR_RE`, `normalizeLog`), `plugin/bin/lib/verify/flaky.js` (`planRetry`)
 - Tests: `tests/bin-lib/verify/extract.test.js`, `tests/bin-lib/verify/baseline.test.js`, `tests/bin-lib/verify/cli.test.js`, `tests/bin-lib/verify/flaky.test.js`
-- Contract: `plugin/skills/test/verification.md`'s Baseline adjudication and Flake handling
+- Contract: `plugin/skills/test/verification.md`'s Baseline adjudication; `plugin/skills/test/flake-handling.md`
 - Related skills: `parse-signal-discipline` (couldn't parse versus doesn't apply; reconciling a list against an independent count), `windows-checkout-test-parity` (the Windows failure baseline this adjudicator exists for)
 - Origin: #3043; the flaky-retry consumer: #3066; the `preExisting` consumer: #3481; the shared `tapLines` classifier and the Windows filer's reuse of it: #3404

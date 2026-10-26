@@ -8,6 +8,7 @@ const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 const { run, realDeps } = require('../../../plugin/bin/release-claim');
 const claimsGitCas = require('../../../plugin/bin/lib/issues/claims-git-cas');
 const release = require('../../../plugin/bin/lib/release-claim/release');
+const { readText } = require('../../helpers/read-skill');
 
 const NOW = Date.parse('2026-08-16T12:00:00Z');
 const RUN_DIR_NAME = '2026-08-16T100000-spec-999';
@@ -463,9 +464,9 @@ test('#2090: without --sweep, no issue-state query is ever made', () => {
 // --sweep flag literally, so the executor can never drift back to prose
 // describing the write instead of invoking it (#2090).
 test('#2090 conformance: scan-procedures.md names the --sweep invocation as the Release executor', () => {
-  const scanProcedures = fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', 'tidy', 'scan-procedures.md'), 'utf8');
+  const scanProcedures = readText(path.join(REPO_ROOT, 'plugin', 'skills', 'tidy', 'scan-procedures.md'));
   assert.match(scanProcedures, /release-claim\.js"\s+<n>\s+--run\s+<tidy-run-dir>\s+--sweep\s+--reason/, 'Step 4.7 must invoke release-claim.js --sweep literally, not describe the write in prose');
-  const actionsGithubIssues = fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', 'tidy', 'actions-github-issues.md'), 'utf8');
+  const actionsGithubIssues = readText(path.join(REPO_ROOT, 'plugin', 'skills', 'tidy', 'actions-github-issues.md'));
   assert.match(actionsGithubIssues, /## Release claim/, 'actions-github-issues.md must name a Release claim action for the [claim] Release rows');
   assert.match(actionsGithubIssues, /--sweep/);
 });

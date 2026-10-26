@@ -32,6 +32,7 @@ test('parses repeatable --cmd plus --json, --log-dir, and --count-stamp', () => 
     integrationBranch: null,
     changedFiles: false,
     ignoreStamp: false,
+    stampSuite: false,
     run: null,
     cwd: null,
     baseline: null,
@@ -201,12 +202,22 @@ test('--base/--integration-branch without --scope is a usage error (#1922 review
   assert.doesNotThrow(() => parseArgs(['--cmd', 'tests=x', '--scope', 's.json', '--base', 'abc']));
 });
 
-test('--stamp-status rejects --scope/--base/--integration-branch (#1922 review L12)', () => {
-  assert.throws(() => parseArgs(['--stamp-status', '--scope', 's.json']), UsageError);
+test('--stamp-status rejects --base/--integration-branch (#1922 review L12)', () => {
   assert.throws(() => parseArgs(['--stamp-status', '--base', 'abc']), UsageError);
   assert.throws(() => parseArgs(['--stamp-status', '--integration-branch', 'main']), UsageError);
   // --git-dir stays fine alongside --stamp-status (existing behavior, unaffected).
   assert.doesNotThrow(() => parseArgs(['--stamp-status', '--git-dir', '/g']));
+});
+
+// #3002: --scope is now accepted alongside --stamp-status — it names the
+// declaration --stamp-status composes the per-suite verdict against.
+// --base/--integration-branch stay rejected even with --scope present,
+// since --stamp-status never measures a diff.
+test('--stamp-status accepts --scope (#3002) but still rejects --base/--integration-branch alongside it', () => {
+  const p = parseArgs(['--stamp-status', '--scope', 's.json']);
+  assert.strictEqual(p.scope, 's.json');
+  assert.throws(() => parseArgs(['--stamp-status', '--scope', 's.json', '--base', 'abc']), UsageError);
+  assert.throws(() => parseArgs(['--stamp-status', '--scope', 's.json', '--integration-branch', 'main']), UsageError);
 });
 
 test('--changed-files is a read-only mode: no --cmd, no --scope, not with --stamp-status; --base/--integration-branch allowed (#1923)', () => {
@@ -437,4 +448,40 @@ test('#2806: a duplicate --cmd-env/--cmd-timeout value wins over a read-only mod
 test('#2806: in a check run, a duplicate --cmd-timeout wins over an undeclared --cmd-timeout', () => {
   throwsExactly(['--cmd', 'foo=x', '--cmd-timeout', 'foo=100', '--cmd-timeout', 'foo=200', '--cmd-timeout', 'baz=300'],
     'duplicate --cmd-timeout for foo');
+});
+
+// #3002
+test('--stamp-suite requires --scope in a check run', () => {
+  assert.throws(() => parseArgs(['--cmd', 'tests=x', '--stamp-suite']), /--stamp-suite requires --scope/);
+  const p = parseArgs(['--cmd', 'tests=x', '--scope', 's.json', '--no-stamp', '--stamp-suite']);
+  assert.strictEqual(p.stampSuite, true);
+  assert.strictEqual(parseArgs(['--cmd', 'tests=x', '--scope', 's.json']).stampSuite, false);
+});
+
+test('--stamp-suite keeps the --cmd floor that --scope alone relaxes (#3022)', () => {
+  assert.doesNotThrow(() => parseArgs(['--scope', 's.json']));
+  assert.throws(() => parseArgs(['--scope', 's.json', '--stamp-suite']), /--stamp-suite requires at least one --cmd/);
+});
+
+test('--stamp-suite without --no-stamp is a usage error — a chunk must never write the full pass stamp', () => {
+  assert.throws(
+    () => parseArgs(['--cmd', 'tests=x', '--scope', 's.json', '--stamp-suite']),
+    /--stamp-suite requires --no-stamp/,
+  );
+});
+
+test('--stamp-suite with --git-dir is a usage error rather than a silent no-op', () => {
+  assert.throws(
+    () => parseArgs(['--cmd', 'tests=x', '--scope', 's.json', '--stamp-suite', '--git-dir', '/elsewhere/.git']),
+    /--stamp-suite cannot be combined with --git-dir/,
+  );
+});
+
+test('--stamp-suite is rejected in the two read-only modes', () => {
+  assert.throws(() => parseArgs(['--stamp-status', '--scope', 's.json', '--stamp-suite']), /--stamp-suite applies only to a check run/);
+  assert.throws(() => parseArgs(['--changed-files', '--stamp-suite']), /--stamp-suite applies only to a check run/);
+});
+
+test('USAGE names --stamp-suite (#3002)', () => {
+  assert.ok(USAGE.includes('--stamp-suite'));
 });

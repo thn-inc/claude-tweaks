@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const {
   extractTemplateBody,
   splitSections,
@@ -111,7 +111,7 @@ const TEMPLATE = path.resolve(
 );
 
 test('every section in the live template is classified', () => {
-  const src = fs.readFileSync(TEMPLATE, 'utf8');
+  const src = readText(TEMPLATE);
   const { unclassified } = classifySections(splitSections(extractTemplateBody(src)));
   assert.deepStrictEqual(
     unclassified, [],
@@ -122,7 +122,7 @@ test('every section in the live template is classified', () => {
 });
 
 test('the live template yields exactly the expected plugin-authored set', () => {
-  const src = fs.readFileSync(TEMPLATE, 'utf8');
+  const src = readText(TEMPLATE);
   const { pluginAuthored } = classifySections(splitSections(extractTemplateBody(src)));
   assert.deepStrictEqual(
     pluginAuthored.sort(),
@@ -133,7 +133,7 @@ test('the live template yields exactly the expected plugin-authored set', () => 
 test('the live template still ends with Don\'ts — the fence is unambiguous', () => {
   // Guards the Plan A dependency: while the Project Defaults block existed, its
   // same-length inner fence truncated extraction here and Don'ts never appeared.
-  const src = fs.readFileSync(TEMPLATE, 'utf8');
+  const src = readText(TEMPLATE);
   const names = [...splitSections(extractTemplateBody(src)).keys()];
   assert.strictEqual(names[names.length - 1], "Don'ts");
 });
@@ -146,7 +146,7 @@ test('claude-tweaks Pipeline section does not forbid /superpowers:writing-plans 
   // forbids *multi-phase* plan files (*-P1.md, *-P2.md, ...); a single plan
   // per spec is normal. This pins the corrected wording so the contradiction
   // cannot silently regress.
-  const src = fs.readFileSync(TEMPLATE, 'utf8');
+  const src = readText(TEMPLATE);
   const sections = splitSections(extractTemplateBody(src));
   const pipeline = sections.get('claude-tweaks Pipeline');
   assert.ok(pipeline, 'claude-tweaks Pipeline section must exist in the live template');
@@ -159,6 +159,15 @@ test('claude-tweaks Pipeline section does not forbid /superpowers:writing-plans 
     pipeline,
     /multi-phase plan files/i,
     'must state the narrower multi-phase-file restriction instead',
+  );
+});
+
+test("this repo's own CLAUDE.md claude-tweaks Pipeline section conforms to the live template (#3859)", () => {
+  const claudeMd = readText(path.resolve(__dirname, '..', '..', '..', 'CLAUDE.md'));
+  const r = checkConformance({ templateSource: readText(TEMPLATE), projectClaudeMd: claudeMd });
+  assert.ok(
+    r.conformant.includes('claude-tweaks Pipeline'),
+    `CLAUDE.md claude-tweaks Pipeline section is not conformant to the live template (missing: ${JSON.stringify(r.missing.map((m) => m.section))}, drifted: ${JSON.stringify(r.drifted.map((d) => d.section))}) — the Integration model paragraph or specify-auto-continue clause likely differs`,
   );
 });
 

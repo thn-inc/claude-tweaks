@@ -92,13 +92,13 @@ function readState(runDir) {
 // Records a 'clean' payload for every open row in runDir's worklist — the
 // "finish recording so --strict is satisfied" step shared by several render
 // tests below. Returns the open rows recorded.
-function recordAllOpenRowsClean(runDir) {
+function recordAllOpenRowsClean(runDir, cwd) {
   const openRows = readState(runDir).worklist.rows.filter((row) => row.gate === 'open');
   for (const row of openRows) {
     const payload = JSON.stringify({
       version: 1, rowId: row.id, result: 'clean', read: [], findings: [], gapDetection: 'not-run', detail: 'nothing to change',
     });
-    const rr = run(['record', '--run-dir', runDir, '--dry-run'], { input: payload });
+    const rr = run(['record', '--run-dir', runDir, '--dry-run'], { cwd, input: payload });
     assert.strictEqual(rr.status, 0, rr.stderr);
   }
   return openRows;
@@ -182,6 +182,7 @@ function withLinkedWorktree(fn) {
       path.join(mainDir, 'docs', 'journeys', 'j1.md'),
       ['---', 'title: Journey 1', 'files:', '  - src-a.js', '---', '', '# Journey 1', ''].join('\n'),
     );
+    fs.writeFileSync(path.join(mainDir, 'docs', 'guide.md'), '# Guide\n');
     git(['add', '.'], mainDir);
     git(['commit', '-q', '-m', 'base'], mainDir);
     const baseSha = git(['rev-parse', 'HEAD'], mainDir);
@@ -238,6 +239,33 @@ test('AC2: plan run from a linked worktree still appends telemetry to the main c
     assert.strictEqual(r.status, 0, r.stderr);
     assert.ok(fs.existsSync(path.join(mainDir, '.claude-tweaks', 'wrap-up-outcomes.tsv')));
     assert.strictEqual(fs.existsSync(path.join(wtDir, '.claude-tweaks', 'wrap-up-outcomes.tsv')), false);
+  });
+});
+
+// #3925: the references row's renamed/deleted candidates come from the same
+// facts root — a rename committed on main after the branch point must not
+// leak into a plan run from the worktree.
+test('AC1.1: plan run from a linked worktree reports only the worktree branch renames after main moves on (#3925)', () => {
+  withLinkedWorktree(({ mainDir, wtDir, baseSha }) => {
+    git(['mv', 'docs/guide.md', 'docs/guide-wt.md'], wtDir);
+    git(['commit', '-q', '-m', 'wt rename'], wtDir);
+    git(['mv', 'docs/journeys/j1.md', 'docs/journeys/j1-main.md'], mainDir);
+    git(['commit', '-q', '-m', 'main moves on'], mainDir);
+
+    const runDir = fs.mkdtempSync(path.join(mainDir, 'rundir-'));
+    const r = run(['plan', '--run-dir', runDir, '--base', baseSha, '--dry-run'], { cwd: wtDir });
+    assert.strictEqual(r.status, 0, r.stderr);
+    const rows = JSON.parse(r.stdout).rows;
+
+    const referencesRow = rows.find((row) => row.id === 'references');
+    assert.strictEqual(referencesRow.gate, 'open');
+    assert.deepStrictEqual(
+      referencesRow.scope.candidates,
+      [{ status: 'R', oldPath: 'docs/guide.md', newPath: 'docs/guide-wt.md' }],
+    );
+
+    const journeysRow = rows.find((row) => row.id === 'journeys');
+    assert.deepStrictEqual(journeysRow.scope.candidates, ['docs/journeys/j1.md', 'docs/journeys/j2.md']);
   });
 });
 
@@ -603,6 +631,41 @@ test('render against a run dir with no engine-state.json exits 2', () => {
   const r = run(['render', '--run-dir', runDir]);
   assert.strictEqual(r.status, 2);
   assert.match(r.stderr, /engine-state\.json/);
+});
+
+// #3856: once cleanup item 8 archives the run, the original --run-dir path is
+// gone; render must resolve the archived copy itself (same fallback verify
+// uses) so the report renders identically from either path.
+test('render --section trace --strict with the original run dir path renders identically after the run is archived', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-render-archive-'));
+  try {
+    git(['init', '-q'], repo);
+    git(['config', 'user.email', 'test@example.com'], repo);
+    git(['config', 'user.name', 'Test'], repo);
+    fs.writeFileSync(path.join(repo, 'README.md'), '# Archive fixture\n');
+    git(['add', '.'], repo);
+    git(['commit', '-q', '-m', 'base'], repo);
+    const base = git(['rev-parse', 'HEAD'], repo);
+
+    const runId = '2026-10-22T094052-record-3856';
+    const original = path.join(repo, '.claude-tweaks', 'pipelines', runId);
+    const plan = run(['plan', '--run-dir', original, '--base', base, '--dry-run'], { cwd: repo });
+    assert.strictEqual(plan.status, 0, plan.stderr);
+    recordAllOpenRowsClean(original, repo);
+
+    const before = run(['render', '--run-dir', original, '--section', 'trace', '--strict'], { cwd: repo });
+    assert.strictEqual(before.status, 0, before.stderr);
+
+    const archived = path.join(repo, '.claude-tweaks', 'pipelines', 'archive', runId);
+    fs.mkdirSync(path.dirname(archived), { recursive: true });
+    fs.renameSync(original, archived);
+
+    const after = run(['render', '--run-dir', original, '--section', 'trace', '--strict'], { cwd: repo });
+    assert.strictEqual(after.status, 0, after.stderr);
+    assert.strictEqual(after.stdout, before.stdout);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 test('unknown verb exits 2 with usage', () => {

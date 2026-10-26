@@ -16,11 +16,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(REPO_ROOT, rel));
 
 const CAPTURE = 'plugin/skills/capture/SKILL.md';
 const ROUTING = 'plugin/skills/capture/routing.md';

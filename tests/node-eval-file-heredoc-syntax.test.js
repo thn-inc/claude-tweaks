@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SKILLS_DIR = path.join(ROOT, 'plugin', 'skills');
@@ -152,7 +153,7 @@ test('every node-eval-file.js heredoc body embedded in a plugin/skills/**/*.md b
   let bodyCount = 0;
   const failures = [];
   for (const file of files) {
-    const markdown = fs.readFileSync(file, 'utf8');
+    const markdown = readText(file);
     const bodies = extractNodeEvalFileHeredocs(markdown);
     bodyCount += bodies.length;
     for (const [index, body] of bodies.entries()) {
@@ -173,7 +174,7 @@ test('every node-eval-file.js heredoc body embedded in a plugin/skills/**/*.md b
 // gone from the two files this record's AC1/AC4 target.
 test('queue-pull-script.md and next-ranking.md contain no multi-line `node -e "` blocks (the #2564 failure shape)', () => {
   for (const rel of ['plugin/skills/dispatch/queue-pull-script.md', 'plugin/skills/dispatch/next-ranking.md']) {
-    const markdown = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const markdown = readText(path.join(ROOT, rel));
     // A multi-line block's opening line is exactly `node -e "` (optionally indented) with
     // nothing but the opening quote before the newline -- a single-line invocation like
     // `node -e "console.log(1)" "$X"` never matches this, by design (single-line args are
@@ -185,7 +186,7 @@ test('queue-pull-script.md and next-ranking.md contain no multi-line `node -e "`
 
 test('node-eval-file.js header and the adopted-branch snippet state the unquoted NODE_EVAL_EOF convention (#3102)', () => {
   function readLf(file) {
-    return fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    return readText(file);
   }
   const header = readLf(path.join(ROOT, 'plugin', 'bin', 'node-eval-file.js')).split("'use strict';")[0];
   assert.match(header, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/node-eval-file\.js" <args\.\.\.> <<NODE_EVAL_EOF/,

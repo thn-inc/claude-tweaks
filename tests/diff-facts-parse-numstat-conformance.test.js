@@ -1,22 +1,24 @@
 'use strict';
-// tests/diff-facts-parse-numstat-conformance.test.js — pins #2869: the two skill docs that tell
-// the agent to derive diff facts name `parseNumstatZ` (git-z.js) before
-// `computeDiffFacts`, because `computeDiffFacts` takes the parsed `{path, additions, deletions}[]`
-// array, never raw `git diff --numstat -z` output. Reads live skill prose deliberately — the prose IS
-// the contract an agent follows — and runs the documented one-line composition for real.
+// tests/diff-facts-parse-numstat-conformance.test.js — pins two contracts on the skill prose.
+// #2869: the two skill docs that tell the agent to derive diff facts name `parseNumstatZ`
+// (git-z.js) before `computeDiffFacts`, because `computeDiffFacts` takes the parsed
+// `{path, additions, deletions}[]` array, never raw `git diff --numstat -z` output. #3955:
+// ceremony-derivation.md step 1 names exactly one `diff-facts.js` command, carries no hand-composed
+// `git merge-base`, and that command runs for real. Reads live skill prose deliberately — the prose
+// IS the contract an agent follows.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const ROOT = path.join(__dirname, '..');
-// pluginRootFor(root, pathImpl): the plugin root as it is spliced into script text. Native `join`
-// on a Windows host yields backslashes that a JS single-quoted literal in the composition eats,
-// so the spliced form is forward-slashed; `ROOT` itself stays native for the readText calls.
-const pluginRootFor = (root, pathImpl = path) => toPosix(pathImpl.join(root, 'plugin'), pathImpl.sep);
-const PLUGIN = pluginRootFor(ROOT);
+// PLUGIN: the plugin root as it is spliced into the command text, forward-slashed so no backslash
+// reaches the shell. `ROOT` itself stays native for readText.
+const PLUGIN = toPosix(path.join(ROOT, 'plugin'), path.sep);
 const read = (...p) => readText(path.join(ROOT, ...p));
 
 const DISPATCH = read('plugin', 'skills', 'build', 'dispatch.md');
@@ -56,27 +58,75 @@ test('negative control: the assertion throws on each way a paragraph can fail to
   assert.throws(() => assertNamesParser('… `parseNumstatZ` first, then `computeDiffFacts` …', 'control'));
 });
 
-// compositionFor(pluginRoot): the documented `node -e` command from ceremony-derivation.md with
-// `${CLAUDE_PLUGIN_ROOT}` replaced by `pluginRoot`.
-function compositionFor(pluginRoot) {
-  const line = CEREMONY.split('\n').find((l) => l.includes('parseNumstatZ') && l.includes('node -e'));
-  assert.ok(line, 'ceremony-derivation.md has no line with both parseNumstatZ and node -e');
-  const nodeStart = line.indexOf('| node -e');
-  assert.ok(nodeStart >= 0, 'the composition line must pipe the numstat output into `node -e`');
-  return line.slice(nodeStart + 2).split('${CLAUDE_PLUGIN_ROOT}').join(pluginRoot);
+// commandFactsMissing(text): the #3955 facts ceremony-derivation.md must state, returning the ones
+// it does not. The one command is a single process, so the merge-base is never a separate or
+// substituted call in the skill prose.
+const ONE_COMMAND = 'exactly one diff-facts.js line, the documented command';
+const NO_MERGE_BASE = 'no git merge-base anywhere in the file';
+const COMMAND = 'node "${CLAUDE_PLUGIN_ROOT}/bin/diff-facts.js" --integration-branch {integration-branch}';
+function commandFactsMissing(text) {
+  const missing = [];
+  const named = text.split('\n').filter((l) => l.includes('diff-facts.js'));
+  if (named.length !== 1 || named[0].trim() !== COMMAND) missing.push(ONE_COMMAND);
+  if (text.includes('git merge-base')) missing.push(NO_MERGE_BASE);
+  return missing;
 }
 
-test('the documented node -e composition runs and yields a diff-facts object', () => {
-  const cmd = compositionFor(PLUGIN);
-  const res = spawnSync('sh', ['-c', cmd], { input: '3\t1\tsrc/a.js\u0000', encoding: 'utf8' });
-  assert.equal(res.status, 0, `snippet exited ${res.status}: ${res.stderr}`);
-  const facts = JSON.parse(res.stdout);
-  assert.equal(facts.fileCount, 1);
-  assert.equal(facts.implFiles, 1);
+test('AC2.1: ceremony-derivation.md names the diff-facts command once and carries no git merge-base', () => {
+  assert.deepStrictEqual(commandFactsMissing(CEREMONY), []);
 });
 
-test('a win32-shaped plugin root splices into the composition with no backslash', () => {
-  const cmd = compositionFor(pluginRootFor('D:\\a\\repo', path.win32));
-  assert.ok(!cmd.includes('\\'), `spliced command contains a backslash: ${cmd}`);
-  assert.ok(cmd.includes("require('D:/a/repo/plugin/bin/lib/git-z.js')"), cmd);
+test('AC2.1 go-red: each fact fails alone on a doctored copy of the live text', () => {
+  const replaced = (from, to) => {
+    const doctored = CEREMONY.replace(from, to);
+    assert.notEqual(doctored, CEREMONY, `doctoring matched nothing: ${from}`);
+    return doctored;
+  };
+  assert.deepStrictEqual(
+    commandFactsMissing(`${CEREMONY}\ngit merge-base HEAD origin/main\n`),
+    [NO_MERGE_BASE],
+  );
+  assert.deepStrictEqual(
+    commandFactsMissing(replaced(COMMAND, COMMAND.replace('{integration-branch}', '"$(git branch --show-current)"'))),
+    [ONE_COMMAND],
+  );
+  assert.deepStrictEqual(
+    commandFactsMissing(`${CEREMONY}\n\`bin/diff-facts.js\`\n`),
+    [ONE_COMMAND],
+  );
+});
+
+test('AC3.1: the documented command runs and yields a diff-facts object', () => {
+  const line = CEREMONY.split('\n').find((l) => l.includes('diff-facts.js'));
+  assert.ok(line, 'ceremony-derivation.md has no diff-facts.js line');
+  const cmd = line.trim()
+    .split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN)
+    .split('{integration-branch}').join('main');
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-facts-ac31-'));
+  try {
+    const git = (...args) => {
+      const res = spawnSync('git', [
+        '-c', 'init.defaultBranch=main', '-c', 'user.name=t', '-c', 'user.email=t@example.com',
+        '-c', 'commit.gpgsign=false', ...args,
+      ], { cwd: repo, encoding: 'utf8' });
+      assert.equal(res.status, 0, `git ${args.join(' ')} failed: ${res.stderr}`);
+    };
+    git('init', '-q');
+    fs.writeFileSync(path.join(repo, 'README.md'), 'base\n');
+    git('add', 'README.md');
+    git('commit', '-q', '-m', 'base');
+    git('checkout', '-q', '-b', 'feature');
+    fs.mkdirSync(path.join(repo, 'src'));
+    fs.writeFileSync(path.join(repo, 'src', 'a.js'), 'const a = 1;\nconst b = 2;\nconst c = 3;\n');
+    git('add', 'src/a.js');
+    git('commit', '-q', '-m', 'feature');
+    const res = spawnSync('sh', ['-c', cmd], { cwd: repo, encoding: 'utf8' });
+    assert.equal(res.status, 0, `command exited ${res.status}: ${res.stderr}`);
+    const facts = JSON.parse(res.stdout);
+    assert.equal(facts.fileCount, 1);
+    assert.equal(facts.implFiles, 1);
+    assert.equal(facts.lowSurface, false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });

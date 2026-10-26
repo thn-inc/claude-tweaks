@@ -10,6 +10,25 @@ parked/red/conflict/permission branch in Step 3 never reaches here at all).
 
 ## Step 4: Post-merge reconcile
 
+### Step 4.0: Reopen what the merge closed by mistake (#4199)
+
+Before Step 4.1, while `$PIPELINE_RUN_DIR` still exists (Step 4.2's reconcile may archive it):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/closing-links.js" --run "$PIPELINE_RUN_DIR" --mode post-merge
+```
+
+It reopens every record the PR's fixes block names on a `Refs` line, and every stray linked
+record, that the merge closed after `mergedAt`. That covers a closing link that survived the
+pre-merge check, and a squash message composed without `--keep-open` (Step 3). It polls a
+will-close record up to 15 s, since GitHub closes it about 2 s after the merge, and logs `reopened
+#{n}` per record to `decisions.md`. Whatever the `action`, report each `failed[]` record (reopen it
+by hand) and each `pendingClose[]` record (the merge may still close it — re-run the step once,
+then reopen it by hand if it closed) in the closing summary, never as anything but `merged`. Exit
+5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.1. An `armed` outcome never reaches
+this step, and the reconciler does not run the CLI; with `--keep-open` on the composer, only a
+Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
+
 ### Step 4.1: Which release carried this? (before reconcile)
 
 A merge can land minutes before a sibling session's version bump and be swept into it with no
@@ -67,10 +86,11 @@ was observed taking ~2 minutes, at or past that default, twice tripping it in on
 firing and once stranding a firing whose one-shot turn ended waiting on the backgrounded call).
 
 `--checks mirror,release,archive` scopes the sweep to exactly what this step needs — the full
-`ALL_CHECKS` default also runs `red-tip`/`reap`/`archive-branches`/`remote-prune`/`console`, none
-of which this step's own next paragraph describes needing, and `remote-prune`'s inclusion is what
-forces the full `--prune all-refs` fetch (`shared-fetch.js`) instead of the single-ref fetch a
-`mirror`-only request uses. Fast-forwards the mirror (the local integration branch — "mirror" and
+unscoped default also runs `red-tip`/`reap`/`console` inline (and hands `archive-branches`/
+`remote-prune`/`ledger-residue` to the background pass), none of which this step's own next
+paragraph describes needing, and `remote-prune`'s inclusion is what forces the full
+`--prune all-refs` fetch (`shared-fetch.js`) instead of the single-ref fetch a `mirror`-only
+request uses. Fast-forwards the mirror (the local integration branch — "mirror" and
 "local main" name the same object; this file uses "mirror" throughout since that is
 `bin/lib/reconcile`'s own term), releases the claim, and archives the run dir. This is convergent
 cleanup, not owed — a failure
@@ -80,6 +100,17 @@ back past a torn-down worktree or deleted branch — `fallbackBranch`, then the 
 number — so a run whose worktree is already gone can converge in this same pass. One exception is
 by design: a run that never rendered a console (the fast-lane auto-merge short-circuit writes no
 `console.json`) archives only when its `staged/` holds nothing pending.)
+
+Resolve where this run lives after the reconcile call. When `$PIPELINE_RUN_DIR` is gone and
+`$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` is present (`{run-id}` =
+`basename($PIPELINE_RUN_DIR)`), reconcile archived this run: every `decisions.md` line this step
+writes after the reconcile call passes that archive path as `--run`
+(`$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/`, `_shared/timing-render.md`'s archive-path
+rule) — never `$PIPELINE_RUN_DIR`. `log-decision.js` exits 3 on the moved path, and a hand append
+would recreate an un-archived run dir holding one `decisions.md`. An archived run is by
+construction not the stuck run (reconcile archives a never-rendered-console run only when its
+`staged/` holds nothing pending), so its own check is clean; the "other run dir(s)" line below
+targets that resolved path.
 
 Decide whether **this run** is that stuck run by checking it directly — never from the reconcile
 summary, which sweeps every run dir in the main checkout and carries counts, not paths. This run
@@ -91,9 +122,10 @@ counts as pending, matching reconcile's fail-closed read. Log, on one line — t
 reconcile call itself returned, since a later pass skips this run the same way:
 `AUTO {time} — pr-first-merge Step 4.2: this run is console-never-rendered-staged-pending — needs human action (pending staged/ items, no rendered console); not left for the next trigger point. Reversibility: n/a.`
 and carry "needs human action" into the closing report. When the summary names the reason but this
-run's own check is clean, the stuck dirs are other runs: log and report "{N} other run dir(s) need
-human action (console-never-rendered-staged-pending)" without attributing it to this run. Either way
-the outcome is reported as `merged`, with a needs-human-action note. Reconcile escalates such a dir
+run's own check is clean, the stuck dirs are other runs: log to the path resolved above (else
+`$PIPELINE_RUN_DIR`) and report "{N} other run dir(s) need human action
+(console-never-rendered-staged-pending)" without attributing it to this run. Either way the outcome
+is reported as `merged`, with a needs-human-action note. Reconcile escalates such a dir
 through the consolidated `structurally-stuck` record only after it sits untouched past the 7-day
 TTL and repeated consecutive stuck passes, whether or not the run is closed: a closed auto-merge
 short-circuit run escalates the same way, via reconcile's clean-status sweep (#3668).
@@ -115,7 +147,8 @@ gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/{branch}"
 ```
 
 Never `git push origin --delete {branch}` — the no-`git push`-in-the-main-checkout rule stated at
-the top of `pr-first-merge.md` stands, and the worktree-always gate denies the push there anyway.
+the top of `pr-first-merge.md` stands, and `gh api` keeps this step off git entirely (the
+worktree-always gate has exempted a branch-delete push since #658, `git -C` form included since #3900).
 Never `gh pr merge --delete-branch` either: by the time this step runs the worktree is already
 gone, but the dedicated ref-delete call keeps this step decoupled from whichever merge command
 Step 3 actually ran — simpler to reason about than retrofitting `--delete-branch` onto Step 3's

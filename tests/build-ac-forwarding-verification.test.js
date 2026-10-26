@@ -6,9 +6,10 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { sessionTmpRoot } = require('../plugin/bin/lib/session-tmp');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 const WRITE_CMD = 'node "${CLAUDE_PLUGIN_ROOT}/bin/write-run-artifact.js" --run "$PIPELINE_RUN_DIR" --name sdd-dispatch-sample.txt --file "{sample-path}"';
 const RESOLVE_CMD = 'node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" SDD_SAMPLE=sdd-dispatch-sample-{run-id}.txt';

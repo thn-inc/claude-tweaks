@@ -9,8 +9,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const TASK_PROMPT = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'task-prompt.md');
 
@@ -32,7 +32,7 @@ const CRITICAL_LINE = /CRITICAL:[\s\S]*?(?:re-derive|artifact\s+you\s+just\s+pro
 const ARTIFACT_REF = /report\.json|test-output (?:log|artifact)/i;
 
 test('task-prompt.md: both fenced Task-prompt templates carry a CRITICAL re-derive-from-artifacts instruction before OUTPUT FORMAT', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   const blocks = fencedBlocks(text);
   assert.equal(blocks.length, 2, `expected exactly two fenced Task-prompt blocks, found ${blocks.length}`);
 
@@ -49,7 +49,7 @@ test('task-prompt.md: both fenced Task-prompt templates carry a CRITICAL re-deri
 });
 
 test("first call's CRITICAL instruction is framed as self-verification, not a verbatim copy of the second call's prior-claim-distrust wording (#2366 AC)", () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   const [firstCall, secondCall] = fencedBlocks(text);
 
   // The second call's instruction is phrased around distrusting a PRIOR call's claim ("never
@@ -64,7 +64,7 @@ test("first call's CRITICAL instruction is framed as self-verification, not a ve
 });
 
 test('the CRITICAL instruction predicate can actually go red (discrimination proof)', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   const paragraphs = text.split(/\r?\n\r?\n/);
   const kept = paragraphs.filter((p) => !CRITICAL_LINE.test(p));
   assert.equal(paragraphs.length - kept.length, 2, 'expected to doctor out exactly the two CRITICAL paragraphs — anchor text not found');
@@ -98,18 +98,18 @@ function assertFirstCallStampArtifact(firstCallBlock) {
   assert.match(p, /still\s+does\s+not\s+verify\s+HEAD[\s\S]{0,120}`STATUS: DONE_WITH_CONCERNS`/);
 }
 test("Deliverable 2: first call's CRITICAL artifact is the runner stamp plus report.json, never a raw npm test log", () => {
-  const [firstCall] = fencedBlocks(fs.readFileSync(TASK_PROMPT, 'utf8'));
+  const [firstCall] = fencedBlocks(readText(TASK_PROMPT));
   assertFirstCallStampArtifact(firstCall);
 });
 test('go-red control: assertFirstCallStampArtifact fails when the raw npm test log sentence is re-inserted', () => {
-  const [firstCall] = fencedBlocks(fs.readFileSync(TASK_PROMPT, 'utf8'));
+  const [firstCall] = fencedBlocks(readText(TASK_PROMPT));
   const p = criticalParagraph(firstCall);
   const doctored = firstCall.replace(p, `${p}\n${OLD_RAW_LOG_SENTENCE}`);
   assert.notEqual(doctored, firstCall, 'doctoring did not change the block');
   assert.throws(() => assertFirstCallStampArtifact(doctored));
 });
 test('go-red control: assertFirstCallStampArtifact fails when the once-then-DONE_WITH_CONCERNS stopping rule is dropped', () => {
-  const [firstCall] = fencedBlocks(fs.readFileSync(TASK_PROMPT, 'utf8'));
+  const [firstCall] = fencedBlocks(readText(TASK_PROMPT));
   const p = criticalParagraph(firstCall);
   const noOnce = firstCall.replace(p, p.replace(/\s+once\s+before\s+reporting/, ' before reporting'));
   const noConcerns = firstCall.replace(p, p.replace('`STATUS: DONE_WITH_CONCERNS`', '`STATUS: BLOCKED`'));

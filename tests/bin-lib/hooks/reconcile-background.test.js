@@ -197,6 +197,88 @@ test('reconcile-background: the same abandoned interrupted run IS archived when 
   assert.equal(state.status, 'clean');
 });
 
+// The status file's `summary` is built from reconcile()'s result. Drives the
+// real `reconcile-background` branch of main() in-process with reconcile()
+// stubbed (the same module-object stub tests/reconcile.test.js's AC3.1 uses),
+// so no git remote or `gh` is involved. process.cwd() is what that branch
+// reads, so the test switches into the fixture repo and back.
+async function backgroundSummaryFor(result) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-summary-'));
+  git(['init', '-q', '--initial-branch=main'], dir);
+  const { main } = require('../../../plugin/bin/hooks');
+  const reconcileMod = require('../../../plugin/bin/lib/reconcile');
+  const originalReconcile = reconcileMod.reconcile;
+  const originalWrite = process.stdout.write;
+  const originalCwd = process.cwd();
+  reconcileMod.reconcile = async () => result;
+  process.stdout.write = () => true;
+  try {
+    process.chdir(dir);
+    assert.equal(await main(['node', 'hooks.js', 'reconcile-background']), 0);
+  } finally {
+    process.chdir(originalCwd);
+    reconcileMod.reconcile = originalReconcile;
+    process.stdout.write = originalWrite;
+  }
+  return JSON.parse(fs.readFileSync(path.join(dir, '.claude-tweaks', 'reconcile-background-status.json'), 'utf8')).summary;
+}
+
+test('reconcile-background summary: counts each check\'s taken entries (characterization, incl. prunedRemote)', async () => {
+  const summary = await backgroundSummaryFor({
+    claims: [{ action: 'released' }, { action: 'skipped' }],
+    runs: [{ action: 'archived' }],
+    branches: [{ kind: 'branch', action: 'delete' }, { kind: 'branch', action: 'tag-and-delete' }, { kind: 'tag', action: 'delete' }],
+    remoteBranches: [{ action: 'delete' }, { action: 'delete' }, { action: 'skip' }],
+    worktrees: [{ action: 'reaped' }, { action: 'skipped', path: '/w/a', reason: 'pr-open' }, { action: 'skipped', path: '/w/b', reason: 'in use by a live session' }],
+    skipped: [{ check: 'release', reason: 'x' }],
+  });
+  assert.equal(summary.released, 1);
+  assert.equal(summary.archived, 1);
+  assert.equal(summary.archivedBranches, 2);
+  assert.equal(summary.prunedRemote, 2);
+  assert.equal(summary.reaped, 1);
+  assert.deepEqual(summary.notableWorktrees, [{ path: '/w/a', reason: 'pr-open' }]);
+  assert.deepEqual(summary.skipped, [{ check: 'release', reason: 'x' }]);
+});
+
+test('reconcile-background summary: ledger-residue PRs opened and notable per-path skips (#3812)', async () => {
+  const summary = await backgroundSummaryFor({
+    ledgerResidue: [
+      { path: 'docs/plans/a-ledger.md', action: 'pr-opened', reason: 'removal-pr-opened', prNumber: 90 },
+      { path: 'docs/plans/b-ledger.md', action: 'pr-opened', reason: 'removal-pr-opened', prNumber: 90 },
+      { path: 'docs/plans/c-ledger.md', action: 'skip', reason: 'ledger-has-open-rows' },
+      { path: 'docs/plans/d-ledger.md', action: 'skip', reason: 'removal-pr-open', prNumber: 88 },
+      { path: 'docs/plans/e-ledger.md', action: 'skip', reason: 'run-live' },
+      { path: 'docs/plans/f-ledger.md', action: 'skip', reason: 'removal-pr-declined', prNumber: 70 },
+    ],
+  });
+  assert.equal(summary.ledgerResiduePrOpened, 1, 'two paths in one PR count as one PR opened');
+  assert.deepEqual(summary.notableLedgerResidue, [
+    { path: 'docs/plans/c-ledger.md', reason: 'ledger-has-open-rows' },
+    { path: 'docs/plans/d-ledger.md', reason: 'removal-pr-open', prNumber: 88 },
+  ]);
+  const empty = await backgroundSummaryFor({});
+  assert.equal(empty.ledgerResiduePrOpened, 0);
+  assert.deepEqual(empty.notableLedgerResidue, []);
+});
+
+test('reconcile-background summary: carries the residue error count and the latest error (#4180)', async () => {
+  const summary = await backgroundSummaryFor({
+    residueErrors: [
+      { reason: 'move-failed', path: '/x/a', op: 'escalate', error: 'HTTP 502', at: 100 },
+      { reason: 'move-failed', path: '/x/gone', op: 'resolve', error: 'gh down', at: null },
+    ],
+  });
+  assert.equal(summary.residueErrors, 2);
+  assert.deepEqual(summary.lastResidueError, { op: 'resolve', error: 'gh down' });
+  const none = await backgroundSummaryFor({ residueErrors: [] });
+  assert.equal(none.residueErrors, 0);
+  assert.equal(none.lastResidueError, null);
+  const absent = await backgroundSummaryFor({});
+  assert.equal(absent.residueErrors, 0);
+  assert.equal(absent.lastResidueError, null);
+});
+
 // Task 10 review Important #3: pin the FAST_CHECKS/BACKGROUND_CHECKS
 // partition invariant — a future check added to reconcile/index.js's
 // ALL_CHECKS that isn't also added to exactly one of these two lists must
@@ -217,4 +299,75 @@ test('FAST_CHECKS (session-start.js) + BACKGROUND_CHECKS (bin/hooks.js) partitio
     [...ALL_CHECKS].sort(),
     'FAST_CHECKS + BACKGROUND_CHECKS must partition ALL_CHECKS exactly — nothing dropped, nothing duplicated',
   );
+});
+
+// #4032: the unscoped `reconcile` CLI hands CLI_DEFERRED_CHECKS to the
+// background pass. A name there that BACKGROUND_CHECKS lacks would be excluded
+// from the inline set AND never run in the background — dropped entirely.
+test('CLI_DEFERRED_CHECKS (bin/hooks.js) is a non-empty, duplicate-free subset of BACKGROUND_CHECKS', () => {
+  const { CLI_DEFERRED_CHECKS, BACKGROUND_CHECKS } = require('../../../plugin/bin/hooks');
+  assert.ok(Array.isArray(CLI_DEFERRED_CHECKS) && CLI_DEFERRED_CHECKS.length, 'CLI_DEFERRED_CHECKS must be a non-empty array');
+  assert.equal(CLI_DEFERRED_CHECKS.length, new Set(CLI_DEFERRED_CHECKS).size, 'no duplicates');
+  for (const c of CLI_DEFERRED_CHECKS) {
+    assert.ok(BACKGROUND_CHECKS.includes(c), `${c} is deferred to the background pass but BACKGROUND_CHECKS never runs it`);
+  }
+});
+
+// #4032: the background pass runs under its own ceiling — the 18 s hot-path
+// default starved remote-prune/ledger-residue/reap on every pass.
+test('reconcile-background passes the background budget', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-budget-'));
+  git(['init', '-q', '--initial-branch=main'], dir);
+  const { main } = require('../../../plugin/bin/hooks');
+  const reconcileMod = require('../../../plugin/bin/lib/reconcile');
+  const originalReconcile = reconcileMod.reconcile;
+  const originalWrite = process.stdout.write;
+  const originalCwd = process.cwd();
+  const calls = [];
+  reconcileMod.reconcile = async (opts) => { calls.push(opts); return {}; };
+  process.stdout.write = () => true;
+  try {
+    process.chdir(dir);
+    assert.equal(await main(['node', 'hooks.js', 'reconcile-background']), 0);
+  } finally {
+    process.chdir(originalCwd);
+    reconcileMod.reconcile = originalReconcile;
+    process.stdout.write = originalWrite;
+  }
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].budgetMs, require('../../../plugin/bin/lib/reconcile/budget').BACKGROUND_BUDGET_MS);
+});
+
+// #4032: three janitorial checks now converge ONLY here, so a pass that throws
+// must leave its reason in the status file — the detached process has no other
+// channel, and SessionStart surfaces it from there.
+test('reconcile-background: a pass that throws records failed + its message in the status file', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-throws-'));
+  git(['init', '-q', '--initial-branch=main'], dir);
+  const { main } = require('../../../plugin/bin/hooks');
+  const reconcileMod = require('../../../plugin/bin/lib/reconcile');
+  const originalReconcile = reconcileMod.reconcile;
+  const originalWrite = process.stdout.write;
+  const originalCwd = process.cwd();
+  reconcileMod.reconcile = async () => { throw new Error('archive-branches exploded'); };
+  process.stdout.write = () => true;
+  try {
+    process.chdir(dir);
+    assert.equal(await main(['node', 'hooks.js', 'reconcile-background']), 0);
+  } finally {
+    process.chdir(originalCwd);
+    reconcileMod.reconcile = originalReconcile;
+    process.stdout.write = originalWrite;
+  }
+  const status = JSON.parse(fs.readFileSync(path.join(dir, '.claude-tweaks', 'reconcile-background-status.json'), 'utf8'));
+  assert.deepEqual(status.summary, { failed: true, error: 'archive-branches exploded' });
+  assert.equal(status.surfaced, false);
+});
+
+test('background budget stays under the stale-lock window', () => {
+  const { BACKGROUND_BUDGET_MS, DEFAULT_BUDGET_MS } = require('../../../plugin/bin/lib/reconcile/budget');
+  const { STALE_LOCK_MS } = require('../../../plugin/bin/lib/reconcile/background-lock');
+  assert.ok(BACKGROUND_BUDGET_MS < STALE_LOCK_MS, 'a running background pass must never be reclaimed as a stale lock');
+  assert.ok(BACKGROUND_BUDGET_MS > DEFAULT_BUDGET_MS);
+  assert.ok(Number.isFinite(BACKGROUND_BUDGET_MS), 'the background pass stays bounded (#820 D4)');
 });

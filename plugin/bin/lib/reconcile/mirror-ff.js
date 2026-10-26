@@ -7,7 +7,7 @@
 const { runGit } = require('../hooks/git-exec');
 const { classifyMirror } = require('./classify');
 
-// repoRoot, integration branch name, opts?: { skipFetch? } ->
+// repoRoot, integration branch name, opts?: { skipFetch?, dryRun? } ->
 //   { state, action, reason?, warning? }
 //   action: 'none' | 'fast-forwarded' | 'failed' | 'skipped'
 // 'ahead'/'diverged' are anomalies under pr-first (nothing should ever
@@ -29,6 +29,10 @@ function mirrorFastForward(repoRoot, integration, opts = {}) {
   if (classified.state === 'diverged') {
     return { state: 'diverged', action: 'none', warning: 'integration branch has diverged from origin — anomaly under pr-first' };
   }
+  // dry-run (#3630): expandChecks can now add this check to a `--dry-run
+  // --checks archive` call that never named it, so the write must honor the
+  // flag like archive/reap/remote-prune do.
+  if (opts.dryRun) return { state: 'behind', action: 'skipped', reason: 'dry-run' };
   // 'behind' — the only state this check ever acts on. classifyMirror's
   // rev-list comparison above is ref-to-ref (safe regardless of what's
   // checked out), but a bare `git merge` targets whatever branch is

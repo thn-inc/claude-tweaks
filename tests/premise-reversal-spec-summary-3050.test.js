@@ -18,12 +18,12 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { PREMISE_REVERSED_MARKER, REVISION_PREFIX } = require('../plugin/bin/lib/flow/pr-body');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 const norm = (s) => s.replace(/\s+/g, ' ');
 const BUILD = norm(read('plugin', 'skills', 'build', 'SKILL.md'));
 const REFRESH = norm(read('plugin', 'skills', '_shared', 'pr-checklist-refresh.md'));

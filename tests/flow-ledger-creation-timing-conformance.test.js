@@ -5,11 +5,11 @@
 // worktree exists; the No-worktree run exception is keyed on strategy/shape.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
-const read = (rel) => fs.readFileSync(path.join(SKILLS, rel), 'utf8').replace(/\s+/g, ' ');
+const read = (rel) => readText(path.join(SKILLS, rel)).replace(/\s+/g, ' ');
 const OLD_CONDITION = /A run with no worktree at all — `run-state\.json` carries no `worktree` field/;
 const SEQUENCING_3289 = /\*\*Sequencing \(#3289\):\*\* run this step right after Step 6 records the draft PR \(or logs its `SKIP`\)/;
 

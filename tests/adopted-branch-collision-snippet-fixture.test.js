@@ -22,7 +22,9 @@ const ROOT = path.join(__dirname, '..');
 const CHECK = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'adopted-branch-collision-check.md'));
 const PLUGIN_ROOT = path.join(ROOT, 'plugin').split(path.sep).join('/');
 
-const START_ANCHOR = '```bash\nnode "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$(git branch --show-current)"';
+// #4028: {branch} and {repo} are plain-call results the agent pastes in (the worktree guard refuses
+// git inside $(...)), so the test substitutes them the same way before it runs the fence.
+const START_ANCHOR = '```bash\nnode "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "{branch}" "{repo}" "{records}"';
 
 function extractSnippet() {
   const start = CHECK.indexOf(START_ANCHOR);
@@ -33,8 +35,19 @@ function extractSnippet() {
   return CHECK.slice(bodyStart, end);
 }
 
+// Pastes the plain-call values in. `repo` defaults to '' — what the fixture's `gh repo view`
+// (no GitHub remote) yields, the fail-open path that skips the PR lookup.
+function fill(snippet, { branch, repo = '' }) {
+  for (const placeholder of ['"{branch}"', '"{repo}"']) {
+    assert.strictEqual(snippet.split(placeholder).length - 1, 1, `the snippet must carry ${placeholder} exactly once`);
+  }
+  return snippet.replace('"{branch}"', JSON.stringify(branch)).replace('"{repo}"', JSON.stringify(repo));
+}
+
+const currentBranch = (r) => r.run(r.work, ['branch', '--show-current']).trim();
+
 function runSnippet(r) {
-  const stdout = execFileSync('bash', ['-c', extractSnippet()], {
+  const stdout = execFileSync('bash', ['-c', fill(extractSnippet(), { branch: currentBranch(r) })], {
     cwd: r.work,
     timeout: 60000,
     encoding: 'utf8',
@@ -74,7 +87,8 @@ test('the collision-check snippet, run verbatim with CLAUDE_PLUGIN_ROOT left to 
 // A stub plugin root: the real node-eval-file.js and the real formatStopCard, with
 // classifyRemoteBranch pinned to an `unreachable` result — the one state a fixture repo
 // cannot produce on demand (a fetch that fails after ls-remote succeeds).
-function stubPluginRoot(t, result) {
+// #3887: `prs` pins findPrsForBranch's pull requests; classifyRemoteBranch stays real when `result` is null.
+function stubPluginRoot(t, result, prs = []) {
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'adopted-branch-stub-root-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(dir, 'bin', 'lib', 'worktree'), { recursive: true });
@@ -85,7 +99,7 @@ function stubPluginRoot(t, result) {
   const real = path.join(ROOT, 'plugin', 'bin', 'lib', 'worktree', 'remote-branch-collision.js').split(path.sep).join('/');
   fs.writeFileSync(path.join(dir, 'bin', 'lib', 'worktree', 'remote-branch-collision.js'), [
     `const real = require(${JSON.stringify(real)});`,
-    `module.exports = { ...real, classifyRemoteBranch: () => (${JSON.stringify(result)}), findPrsForBranch: () => ({ ok: true, prs: [] }) };`,
+    `module.exports = { ...real, ${result === null ? '' : `classifyRemoteBranch: () => (${JSON.stringify(result)}), `}findPrsForBranch: () => ({ ok: true, prs: ${JSON.stringify(prs)} }) };`,
   ].join('\n'));
   return dir.split(path.sep).join('/');
 }
@@ -95,7 +109,7 @@ test('the snippet prints the unknown-relation card for unreachable with remoteSh
   t.after(() => fs.rmSync(r.root, { recursive: true, force: true }));
   r.run(r.work, ['checkout', '-q', '-b', 'worktree-record-2']);
   const run = (result) => {
-    const stdout = execFileSync('bash', ['-c', extractSnippet()], {
+    const stdout = execFileSync('bash', ['-c', fill(extractSnippet(), { branch: currentBranch(r) })], {
       cwd: r.work, timeout: 60000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...r.env, CLAUDE_PLUGIN_ROOT: stubPluginRoot(t, result) },
     });
@@ -109,4 +123,59 @@ test('the snippet prints the unknown-relation card for unreachable with remoteSh
   assert.doesNotMatch(known.card, /is not in this worktree's history/);
   const unknown = run({ state: 'unreachable', reason: 'ls-remote-failed', remoteSha: null });
   assert.strictEqual(unknown.card, undefined, 'unreachable without a remoteSha fails open — no stop card');
+});
+
+// #3887: a dispatched retry's fresh same-name branch is `foreign` by ancestry; the snippet tells this record's
+// own closed prior attempt apart from a genuinely unrelated branch by the PR lookup plus the run's record numbers.
+test('AC1.1: the snippet adopts this record\'s own prior attempt instead of carding it (#3887)', (t) => {
+  const r = originWithTwoClones('adopted-branch-prior-attempt-');
+  t.after(() => fs.rmSync(r.root, { recursive: true, force: true }));
+  const branch = 'worktree-record-1';
+
+  // First attempt: pushed, its PR closed, then a later commit landed on the branch.
+  r.run(r.other, ['checkout', '-q', '-b', branch]);
+  r.commit(r.other, 'plan');
+  r.run(r.other, ['push', '-q', 'origin', branch]);
+  const closedHead = r.run(r.other, ['rev-parse', 'HEAD']).trim();
+  r.commit(r.other, 'post-close-plan');
+  r.run(r.other, ['push', '-q', 'origin', branch]);
+  // The retry: a fresh same-name branch from main.
+  r.run(r.work, ['checkout', '-q', '-b', branch]);
+
+  const pr = {
+    number: 9,
+    url: 'https://example.test/pr/9',
+    state: 'CLOSED',
+    isDraft: false,
+    isCrossRepository: false,
+    headRefOid: closedHead,
+    closingIssuesReferences: [{ number: 1, repository: { name: 'r', owner: { login: 'o' } } }],
+    body: '<!-- claude-tweaks-run: 2026-10-21T000000-record-1 -->\nclaude-tweaks-run: 2026-10-21T000000-record-1\n\nFixes #1\n',
+  };
+  const snippet = extractSnippet();
+  assert.strictEqual(snippet.split('"{records}"').length - 1, 1, 'the snippet must carry the "{records}" placeholder exactly once');
+  const run = (script) => {
+    const stdout = execFileSync('bash', ['-c', script], {
+      cwd: r.work, timeout: 60000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...r.env, CLAUDE_PLUGIN_ROOT: stubPluginRoot(t, null, [pr]) },
+    });
+    return JSON.parse(stdout.trim());
+  };
+  const withRecords = (records) => fill(snippet, { branch, repo: 'o/r' }).replace('"{records}"', `"${records}"`);
+
+  const own = run(withRecords('1'));
+  assert.strictEqual(own.state, 'prior-attempt');
+  assert.strictEqual(own.pr.number, 9);
+  assert.strictEqual(own.card, undefined, 'an own prior attempt must not carry a stop card');
+
+  const other = run(withRecords('2'));
+  assert.strictEqual(other.state, 'foreign', 'a different record\'s PR is not this run\'s prior attempt (AC2.1)');
+  assert.match(other.card, /worktree-record-1/);
+
+  const bundle = run(withRecords('7,1'));
+  assert.strictEqual(bundle.state, 'prior-attempt', 'a bundle run matches any of its records');
+
+  const verbatim = run(fill(snippet, { branch }));
+  assert.strictEqual(verbatim.state, 'foreign', 'the unsubstituted placeholder matches no record');
+  assert.match(verbatim.card, /worktree-record-1/);
 });

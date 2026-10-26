@@ -74,7 +74,7 @@ function computeOverlapSet(candidates) {
 
 // candidates[] -> [{id, mention}] for every candidate whose body mentions a
 // dependency anywhere (/blocked by\b[^\n#]*#\d+/i — deliberately broader than
-// record.js's line-anchored DEP_RE, mid-line prose included, and broader than
+// record-dependencies.js's line-anchored DEP_RE, mid-line prose included, and broader than
 // a bare "blocked by #N": same-line words between "blocked by" and the first
 // "#N" are allowed, e.g. "Blocked by links: #418", since that's real observed
 // incident prose, not a hypothetical) while blockersOf(c) resolves empty:

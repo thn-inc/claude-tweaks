@@ -13,6 +13,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const TESTS_DIR = __dirname;
@@ -49,7 +50,7 @@ test('every chmodSync( call under tests/** either uses skipUnderRoot or is marke
     // The helper file itself and this conformance test are not subject to the rule.
     if (file === path.join(TESTS_DIR, 'helpers', 'root.js')) continue;
     if (file === __filename) continue;
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     const v = checkFile(file, text);
     if (v) violations.push(v);
   }

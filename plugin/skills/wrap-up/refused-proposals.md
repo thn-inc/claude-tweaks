@@ -1,9 +1,10 @@
 # Refused Proposals — the hard deferral gate at record creation
 
-Read by `wrap-up/review-console.md` ("On approval" step 7), `flow/multispec-review-console.md`
-(step 2 / Queue writes), and `wrap-up/ledger-narrowing-auto-file.md` — before creating ANY `Q#`
-queue-write proposal. Enforces `_shared/deferral-gate.md`'s hard gate: no record proposal without
-a valid `Defer-reason:`.
+Read by `wrap-up/review-console.md` ("On approval" step 7, and step 10 for a Reflection insights
+Defer/Capture row), `flow/multispec-review-console.md` (step 2 / Queue writes), and
+`wrap-up/ledger-narrowing-auto-file.md` — before creating ANY `Q#` queue-write proposal.
+Enforces `_shared/deferral-gate.md`'s hard gate: no record proposal without a valid
+`Defer-reason:`.
 
 ## The check
 
@@ -15,7 +16,10 @@ reason lives"). Validate the value at runtime against the closed vocabulary:
 node -e "process.exit(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js').DEFER_REASONS.includes(process.argv[1])?0:1)" -- "$VALUE"
 ```
 
-Missing line, or exit 1 → **refuse**: do not create the record.
+A Reflection insights row has no header block of its own: `$VALUE` is the reason its Recommended
+cell names (`Defer — {reason}`, `Capture — {reason}`).
+
+Missing line (or no reason in the cell), or exit 1 → **refuse**: do not create the record.
 
 ## The refused row
 
@@ -42,5 +46,27 @@ rescues it — by design: the summary's refused-count line is the signal, and th
 deferral should have been a fix.
 
 Under `--dry-run`, the check still runs (it is a read); the ledger status flip is previewed, not
-applied. A *failed* create (transport error on a valid proposal) is not a refusal — it renders in
-Queue writes as today.
+applied.
+
+## A failed execution is not a refusal
+
+A *failed* create (transport error on a valid proposal) is not a refusal — it renders in Queue
+writes as today — and neither is a `.shadow-dup` copy whose composer exits non-zero
+(`review-console.md` step 7). When `console-resolve.js` auto-resolved this console, its
+`console.json` still records the item `apply`, so the run would archive with it unfiled. Record it
+for a human instead:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --run "{item-run-dir}" --set-item '{name}' --resolution keep-staged --reason '{why}'
+```
+
+`{name}` is the item's staged filename; `{why}` is `record create failed (exit {code})` or
+`shadow-dup-proposal.js exited {code}`. The item then reads as residue — `console-residue.js` and
+the session-start notice list it with its `cat` line, and archival refuses the run until a human
+acknowledges it. An exit 5 whose message names `no console.json` means there is no auto-resolved
+console to rewrite (a human-present console, where the failure is already in front of a human):
+nothing more to do. Any other exit-5 refusal (an unknown or duplicate `{name}`, an item no longer
+`apply`) means the item was not recorded: check `{name}` against `console.json` and re-run, or
+carry the failure into the Needs-a-human block. A can't-tell
+finding's filing is never rewritten this way; it stays residue until its filed line is logged
+(`review-console.md`'s Can't-tell filings).

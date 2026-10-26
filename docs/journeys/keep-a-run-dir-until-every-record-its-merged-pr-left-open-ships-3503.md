@@ -42,10 +42,10 @@ files:
 
 ### 3. Read the skip in the reconcile report: the next session start's "background reconcile" summary, or the tidy report's converge section
 - **URL:** —
-- **Action:** The maintainer sees the run under skipped with `reason: merged-partial` and `unclosed: [3311]`. The reconcile dispatcher (`reconcile/index.js`) carries the `unclosed` list through to its `runs` entries. If the run is still waiting after the 7-day structurally-stuck TTL, it enters the residue counter and escalates, like any other stuck run. The consolidated `reconcile: structurally-stuck run directories` issue then lists the run dir, names `merged-partial` among its feeding reasons, and gives the remedy: the records the run's merged PR was meant to close are still open, so ship them in a later PR, or close/release them if they were abandoned (#3705).
+- **Action:** The maintainer sees the run under skipped with `reason: merged-partial` and `unclosed: [3311]`. The reconcile dispatcher (`reconcile/index.js`) carries the `unclosed` list through to its `runs` entries. If the run is still waiting after the 7-day structurally-stuck TTL, it enters the residue counter and escalates, like any other stuck run. The consolidated `reconcile: structurally-stuck run directories` issue then lists the run dir, names `merged-partial` among its feeding reasons, and gives the remedy: the records the run's merged PR was meant to close are still open, so ship them in a later PR, or close/release them if they were abandoned (#3705). That reason list and remedy are written when the issue is filed or reopened; an issue that is already open is edited only inside its stuck-paths block, so a body a maintainer has shaped keeps their text (#2724).
 - **Should feel:** Informative. The skip names the exact record that has not shipped yet, and the escalated issue says what clears it.
 - **Should understand:** A run legitimately split across two PRs waits visibly; it never freezes silently. The same applies to a repo whose GitHub remote isn't named `origin`: it skips with the tracked reason `no-repo-slug`. That reason counts toward the stuck total but never reaches the escalated issue, because with no repo slug there is no repo to file it in.
-- **Red flags:** A skip that names no record, or a waiting run that never shows up in either the archived list or the skipped list. Also, an escalated stuck-runs issue whose reason list omits `merged-partial`.
+- **Red flags:** A skip that names no record, or a waiting run that never shows up in either the archived list or the skipped list. Also, a newly filed or reopened stuck-runs issue whose reason list omits `merged-partial`.
 
 ### 4. Ship the last record by any route, and let the run archive itself
 - **URL:** `https://github.com/{owner}/{repo}/issues/{unfinished}`
@@ -53,7 +53,7 @@ files:
   - The unfinished record closes. This can happen through a fresh run's PR (the documented mid-series recovery: #3311 closed via PR #3433), at `/claude-tweaks:release`, or by hand.
   - On the next pass, `settleMergedPartial`'s `resolveIssueStateByNumber` probe reads CLOSED, the record counts as satisfied, and the run archives through the ordinary path (`localHasMerge`, then `archiveRunDir`).
 - **Should feel:** Hands-off. Cleanup converges without the maintainer touching the old run directory.
-- **Should understand:** An issue-state probe that fails keeps the record unclosed for this pass, so the check fails closed and never archives on evidence it could not read.
+- **Should understand:** An issue-state probe that fails keeps the record unclosed for this pass, so the check fails closed and never archives on evidence it could not read. Since #3945 a settled run still passes the tiebreak coverage check before it archives: when its `review-findings.json` lists a finding with no tiebreak verdict line, or is present but malformed, the pass skips it with `tiebreak-coverage-missing` or `tiebreak-artifact-invalid` instead. A run dir kept in `pipelines/` under one of those reasons is not this step's red flag (`clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`).
 - **Red flags:** The old run directory still sitting in `pipelines/` after every one of its records is closed.
 
 ### 5. Projects where closing keywords never link: a `dev → main` integration branch, or `work-backend: local-files`

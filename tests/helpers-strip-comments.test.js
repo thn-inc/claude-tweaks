@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict } = require('./helpers/strip-comments');
+const { readText } = require('./helpers/read-skill');
 
 function newlineIndices(s) {
   const out = [];
@@ -162,6 +163,108 @@ test('the hashbang line is kept and unterminated constructs at EOF do not throw'
   }
 });
 
+const LITERAL_INPUT = [
+  "const a = 'x < 1';",
+  'const t = `took ${Date.now() - s} < 5`;',
+  'const r = /a<b/g;',
+  'live(x < 2);',
+  "const e = 'it\\'s < 3';",
+].join('\n');
+
+test("literals: 'blank' empties string, template-text and regex bodies but keeps their code and offsets", () => {
+  const out = stripComments(LITERAL_INPUT, { literals: 'blank' });
+  assert.equal(out.length, LITERAL_INPUT.length);
+  assert.deepEqual(newlineIndices(out), newlineIndices(LITERAL_INPUT));
+  assert.ok(out.includes('live(x < 2);'));
+  assert.ok(out.includes('Date.now() - s'));
+  assert.ok(out.includes('/g;'));
+  assert.ok(!out.includes('x < 1'));
+  assert.ok(!out.includes('took'));
+  assert.ok(!out.includes('a<b'));
+  assert.ok(!out.includes('s < 3'));
+  // Delimiters stay in place; the escaped \' inside the body is body text, so it blanks too.
+  assert.equal(
+    out,
+    [
+      `const a = '${' '.repeat(5)}';`,
+      `const t = \`${' '.repeat(5)}\${Date.now() - s}${' '.repeat(4)}\`;`,
+      `const r = /${' '.repeat(3)}/g;`,
+      'live(x < 2);',
+      `const e = '${' '.repeat(9)}';`,
+    ].join('\n'),
+  );
+});
+
+test("literals: 'blank' still blanks comments, and an unterminated string blanks to the end of its line", () => {
+  const out = stripComments("live(); // c < 1\nconst u = 'open < 2\nnext();", { literals: 'blank' });
+  assert.ok(out.includes('live();'));
+  assert.ok(out.includes('next();'));
+  assert.ok(!out.includes('c < 1'));
+  assert.ok(!out.includes('open < 2'));
+});
+
+test("literals: 'blank' keeps a line continuation's backslash, so the string still compiles", () => {
+  const lf = 'const s = "abc \\\nde"; live();';
+  const lfOut = stripComments(lf, { literals: 'blank' });
+  assert.equal(lfOut.length, lf.length);
+  assert.deepEqual(newlineIndices(lfOut), newlineIndices(lf));
+  assert.ok(!lfOut.includes('abc'));
+  assert.ok(lfOut.includes('live();'));
+  assert.equal(stripperVerdict(lf, lfOut), 'ok');
+
+  // The default output is untouched.
+  assert.equal(stripComments(lf), lf);
+});
+
+test("literals: 'blank' keeps a CRLF line continuation's backslash and CR, so the string still compiles", () => {
+  const crlf = 'const s = "abc \\\r\nde"; live();';
+  const out = stripComments(crlf, { literals: 'blank' });
+  assert.equal(out.length, crlf.length);
+  assert.deepEqual(newlineIndices(out), newlineIndices(crlf));
+  assert.ok(!out.includes('abc'));
+  assert.ok(out.includes('live();'));
+  assert.equal(stripperVerdict(crlf, out), 'ok');
+});
+
+test("literals: 'blank' blanks a template's escaped backtick, a regex's [/] class and a string nested in ${…}, and keeps the code around them", () => {
+  const tpl = stripComments('const t = `a\\`b < 1`; live(x < 2);', { literals: 'blank' });
+  assert.ok(!tpl.includes('b < 1'));
+  assert.ok(tpl.includes('live(x < 2);'));
+  assert.equal(stripperVerdict('const t = `a\\`b < 1`; live(x < 2);', tpl), 'ok');
+
+  const re = stripComments('const r = /[/] < 1/g; live(x < 2);', { literals: 'blank' });
+  assert.ok(!re.includes('< 1'));
+  assert.ok(re.includes('/g; live(x < 2);'));
+
+  const nested = stripComments("const t = `a ${f('x < 1')} b < 2`; live();", { literals: 'blank' });
+  assert.ok(nested.includes("${f('"));
+  assert.ok(!nested.includes('x < 1'));
+  assert.ok(!nested.includes('b < 2'));
+  assert.ok(nested.includes('live();'));
+});
+
+test("literals: 'blank' blanks an unterminated string to the end of its line and nothing after it", () => {
+  assert.equal(
+    stripComments("const u = 'open < 2\nnext();", { literals: 'blank' }),
+    `const u = '${' '.repeat(8)}\nnext();`,
+  );
+});
+
+test("an unrecognised literals value throws a TypeError instead of acting as 'keep'", () => {
+  for (const bad of ['blnk', 'Blank', '', null, true]) {
+    assert.throws(() => stripComments('live();', { literals: bad }), TypeError);
+  }
+  assert.doesNotThrow(() => stripComments('live();', { literals: undefined }));
+  assert.doesNotThrow(() => stripComments('live();', {}));
+  assert.doesNotThrow(() => stripComments('live();'));
+});
+
+test('the default and literals: keep leave literals verbatim (unchanged behaviour)', () => {
+  assert.equal(stripComments(LITERAL_INPUT), stripComments(LITERAL_INPUT, { literals: 'keep' }));
+  assert.ok(stripComments(LITERAL_INPUT).includes('x < 1'));
+  assert.ok(stripComments(LITERAL_INPUT).includes('a<b'));
+});
+
 const REPO_ROOT = path.join(__dirname, '..');
 const BIN_DIR = path.join(REPO_ROOT, 'plugin', 'bin');
 
@@ -177,7 +280,7 @@ function binFiles(dir = BIN_DIR) {
 
 // `{file}:{line}` for every whole-line // comment that survives stripping.
 function survivingWholeLineComments(file) {
-  const raw = fs.readFileSync(file, 'utf8').split('\n');
+  const raw = readText(file).split('\n');
   const stripped = stripComments(raw.join('\n')).split('\n');
   const rel = path.relative(REPO_ROOT, file);
   const offenders = [];
@@ -220,7 +323,7 @@ test('AC3.1: stripperVerdict is ok for every plugin/bin file', () => {
 });
 
 test('AC4.1: the helper requires only node: built-ins', () => {
-  const text = fs.readFileSync(path.join(__dirname, 'helpers', 'strip-comments.js'), 'utf8');
+  const text = readText(path.join(__dirname, 'helpers', 'strip-comments.js'));
   const required = [...text.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
   assert.ok(required.length > 0);
   assert.deepEqual(

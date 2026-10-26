@@ -1,6 +1,6 @@
 # Review — Step 3.5/3.6: Cross-Lens Debate, Per-Candidate Refutation, and Gap-Sweep
 
-Loaded by `/claude-tweaks:review` after Step 3's per-lens reproduction completes. Contains the full procedure for the three effort-gated findings-quality mechanisms: Cross-Lens Debate and the Per-Candidate Refutation Pass (Step 3.5), and Gap-Sweep / Completeness Critic (Step 3.6). Lazy-loaded only when the resolved `review-effort` tier (Step 2.5) is `high` or above — at `low`/`medium`, code-mode-steps.md's own gate skips straight to Step 3 Routing without reading this file at all.
+Loaded by `/claude-tweaks:review` after Step 3's per-lens reproduction completes. Contains the full procedure for the three effort-gated findings-quality mechanisms: Cross-Lens Debate and the Per-Candidate Refutation Pass (Step 3.5), and Gap-Sweep / Completeness Critic (Step 3.6). Lazy-loaded only when the resolved `review-effort` tier (Step 2.5) is `high` or above — at `low`/`medium`, code-mode-steps.md's own gate goes to Step 3.7 (`step3-tiebreak.md`) without reading this file at all.
 
 ## Step 3.5: Cross-Lens Debate & Per-Candidate Refutation
 
@@ -14,7 +14,7 @@ After per-lens reproduction completes, scan for contradictions across lenses bef
 
 1. **Detect overlap.** Collect each lens's `confirmed` and `unconfirmed` findings into one `{lensName: [findings...]}` object, resolve its path with one plain call — `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" F=review-{ctx-id}-findings-by-lens.json` (`_shared/session-tmp-root.md`; `{ctx-id}` as defined in `step3-lens-dispatch.md` — never a fixed shared `/tmp` name, which collides across concurrent review sessions) — `Write` the object to the printed `F` path (`{path-F}` below) with the `Write` tool, and call:
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" detect-overlap {path-F}
+   node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" detect-overlap "{path-F}"
    ```
    It returns pairs `{lensA, lensB, findingA, findingB}` for findings on the same `path` within ±5 lines from *different* lenses.
 
@@ -42,8 +42,8 @@ After per-lens reproduction completes, scan for contradictions across lenses bef
    node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" resolve-debate {verdictA} {verdictB}
    ```
    - Both `agree` → finding upgraded to `confirmed`. Write `AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged positive after 1 round. Reversibility: high.`
-   - Both `disagree` → finding downgraded to `unconfirmed` (lands in Low-confidence subsection). Write `AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged negative after 1 round. Reversibility: high.`
-   - Mixed / partial → finding becomes `contested`. Write `STAGED {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} inconclusive ({verdicts}). Both verdicts staged. Reversibility: high.` Stage the side-by-side verdicts to `staged/review-contested-{N}.md`.
+   - Both `disagree` → finding downgraded to `unconfirmed`, for Step 3.7 (`step3-tiebreak.md`). Write `STAGED {HH:MM:SS} — Debate: lens "{lensA}" finding {path}:{line} — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.`
+   - Mixed / partial → finding becomes `contested`. Write `STAGED {HH:MM:SS} — Debate: lens "{lensA}" cross-lens disagreement on {path}:{line} inconclusive ({verdicts}). Both verdicts staged. Stage path: staged/review-contested-{N}.md. Reversibility: high.` Stage the side-by-side verdicts to that file. `{lensA}` is Finding A's lens, and Finding A is the contested entry's first position — the lens Step 3.7's verdict carries (`step3-tiebreak.md`'s Findings artifact), so the verdict supersedes this line and its file.
 
 5. **Skip debate** when no overlap is detected, or when only one lens covered a region. Avoid running debate on every `Path:Line` where any two lenses touched — that explodes the token budget for no value.
 
@@ -53,7 +53,7 @@ After per-lens reproduction completes, scan for contradictions across lenses bef
 
 This is explicitly NOT a second reproduction pair — reproduction pairs (Step 3) check agreement between two initial readers; refutation is a distinct, later agent whose only job is to try to break a finding that already survived that agreement. Correlated error (both reproduction agents sharing the same blind spot, or the same miscalibration) is exactly what agreement alone can't catch. This was caught concretely during the #45 native-review prototype: a dedicated verifier subagent, dispatched per surviving candidate finding with the explicit job of trying to falsify it using fresh evidence-gathering, caught false positives that reproduction-pair agreement alone had let through.
 
-> **Parallel execution:** Dispatch one refutation agent per **in-scope** `confirmed` candidate (after the floor and cap in steps 2-3 below) as parallel Task agents — each runs independently, sees only its own candidate finding (not the other candidates or the lens's original reasoning chain), and returns a `refuted`/`not-refuted` verdict. Assemble results after all agents complete.
+> **Parallel execution:** Dispatch one refutation agent per **in-scope** `confirmed` candidate (after the floor and cap in steps 2-3 below) as parallel Task agents — each runs independently, sees only its own candidate finding (not the other candidates or the lens's original reasoning chain), and returns a `confirmed`/`refuted`/`cant-tell` verdict, settled in step 5 by `resolve-tiebreak`. Assemble results after all agents complete.
 
 This pass is the only place in the skill where an unbounded fan-out would meet the Capable profile, so it carries an explicit severity floor and fan-out cap — fixed values stated here, not left to model judgment. This is the same cost discipline Cross-Lens Debate's step 5 applies ("Avoid running debate on every `Path:Line`…"), made concrete.
 
@@ -77,41 +77,43 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 
    Typical runs cost well under that worst case, because the `medium` floor is applied *before* the cap is consulted: the cap only binds on a review that surfaces 10 or more `medium`-or-higher `confirmed` findings, which is the tail rather than the norm. The floor is doing most of the work here and the cap is the backstop — so tightening the cap further buys little, while lowering the floor would quietly undo both.
 
-4. **Dispatch one refutation agent per in-scope candidate, given fresh file access.** Each agent gets the finding's path/line/severity/evidence and fresh read access to the actual current file content (not the finding's cached evidence text) — instructed to actively try to falsify it: re-trace whether the claimed failure is actually reachable, verify the cited evidence still matches the current code, and challenge the reasoning rather than restate it. Inline this template literally in each `Task()` prompt:
+4. **Dispatch one refutation agent per in-scope candidate, given fresh file access.** Each agent gets only Step 3.7's allowlist — the claim, severity, `path:line`, and diff scope (`step3-tiebreak.md`'s Dispatch section), never the reporter's evidence or reasoning — and fresh read access to the actual current file content, instructed to actively try to falsify it: re-trace whether the claimed failure is actually reachable, check the claim against the current code, and challenge it rather than restate it. Inline this template literally in each `Task()` prompt:
 >
 >    ```
 >    You are trying to FALSIFY this finding, not confirm it. Re-read the actual current file
->    content at {path}:{line} (do not trust the cached evidence text below) and determine
->    whether the claimed issue is real and reachable.
+>    content at {path}:{line} and determine whether the claimed issue is real and reachable.
 >
->    1. Verdict: refuted / not-refuted
->    2. One paragraph of reasoning, citing what you actually found in the current file.
+>    Reply with exactly these lines, then your status line:
+>    Verdict: confirmed | refuted | cant-tell
+>    Evidence: {path}:{line} `{the whole cited source line, verbatim}`
+>    Severity: critical | high | medium | low | info
+>    Recommendation: file | drop — {one-line reason}
+>
+>    confirmed means the finding still stands after your attempt to break it; refuted means you broke it; cant-tell means you could not decide.
+>    Evidence is required for confirmed and refuted: cite {path} exactly as given (the full repo-relative path, never a bare filename or another file) and a line within 5 of {line} in the current file, and quote the whole cited source line verbatim — a token or fragment of the line is not a quote. cant-tell needs no Evidence line.
+>    Recommendation file means the finding is worth a fix or a work record; drop means it is not worth acting on.
 >    Produce your response first; the last non-empty line of your reply must then read exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled `STATUS: {WORD}`.
 >
 >    Candidate finding: {path}:{line}
->    Severity: {severity}  Category: {category}
+>    Severity: {severity}
 >    Finding: {finding text}
->    Cached evidence: {evidence text}
+>    Diff scope: {base}...{branch}, or the own-work file list path when the Merge-Provenance Check found merge commits
 >
 >    [... READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section ...]
 >
->    SCRATCH: {ctx-dir}/agent-scratch/{agent-id} — any probe script or fixture you create to verify this finding goes there (never in the repository tree) and must be deleted before your status word (`_shared/subagent-output-contract.md`'s Scratch rule). If this path lies outside your own worktree (`worktree-always`, or any `EnterWorktree`-isolated dispatch), create and delete it via Bash, one plain command per call — `mkdir -p` as its own call, the file written by one plain `printf` redirect or `node -e` call, `rm` as its own call; never a heredoc or an `&&` chain, which the harness Bash guard refuses by shape — never `Write`/`Edit`, which the worktree-pinning guard refuses for a path outside your worktree.
+>    SCRATCH: {ctx-dir}/agent-scratch/{agent-id} — any probe script or fixture you create to verify this finding goes there (never in the repository tree) and must be deleted before your status word (`_shared/subagent-output-contract.md`'s Scratch rule). If this path lies outside your own worktree (`worktree-always`, or any `EnterWorktree`-isolated dispatch), create and delete it via Bash, one plain command per call — `mkdir -p` as its own call, the file written by one plain `printf` redirect or `node -e` call, `rm` as its own call; never a heredoc or an `&&` chain, which the harness Bash guard refuses by shape, nor a `;` sequence, and no shell variable carried between calls: spell the scratch path out as a literal absolute path in every call — never `Write`/`Edit`, which the worktree-pinning guard refuses for a path outside your worktree.
 >
 >    [Use: Capable — refutation agent. Independent run; fresh file read, not the
 >    lens's original context. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable` (contract § Model Selection).]
 >    ```
 
-5. **Resolve.** First check the dispatched agent's own status line, per the Subagent Contract (`_shared/subagent-output-contract.md`): a `BLOCKED`/`NEEDS_CONTEXT` status, or a response with no parseable `Verdict:` line, means the refutation attempt itself failed — do not fabricate a verdict for `resolveRefutation`. Treat this case directly: downgrade to `unconfirmed` and write `AUTO {HH:MM:SS} — Refutation: {path}:{line} — dispatch failed ({status}/unparseable verdict), not genuinely re-examined. Downgraded to unconfirmed out of caution. Reversibility: high.` A failed dispatch must never be logged as if a real falsification attempt happened.
+5. **Resolve.** Feed each agent's reply to `resolve-tiebreak`, exactly as `step3-tiebreak.md`'s Resolve and act section does for a tiebreak reply — its session-tmp files, its `--root` (never its `--run`, which would log every outcome), its `--text-file` log call, and its empty-reply rule for an empty, failed, timed-out, or non-`DONE` dispatch are cited here, not restated. The finding file holds the candidate as `{lens, path, line, claim, reporterSeverity, kind: "unconfirmed"}`: `resolve-tiebreak` validates the finding through `buildFindingsArtifact`, which accepts `kind` only as `unconfirmed` or `contested`, and the resolver reads `kind` only for a contested finding's positions. The resolver fails toward scrutiny — a reply that is not a literal `confirmed`/`refuted` verdict with status `DONE` and evidence verified against the live file is can't-tell — so a failed dispatch is never fabricated into a verdict. Act on the returned `outcome`. Only `confirmed` and `drop` write the resolver's line:
+   - `confirmed` → the candidate stands and proceeds unchanged toward Step 3 Routing, at its own severity, not the resolver's returned `severity` (the lower of the two, which Step 3.7 routes its own `confirmed` at): reproduction already confirmed and graded this candidate, and the refuter only failed to knock it down. Log the resolver's line.
+   - `drop` → the candidate is dropped. Log the resolver's line. A `drop` counts as a tiebreak `refuted` verdict, so Step 3.7 does not tiebreak the finding again.
+   - `digest` / `console` (can't-tell, including a failed or evidence-free reply) → the candidate is downgraded to `unconfirmed` and joins the Step 3.7 entry set, which tiebreaks it and logs its one verdict line. Do not log the resolver's line (a second one would double that finding's verdict line). Write `STAGED {HH:MM:SS} — Refutation: lens "{lens}" finding {path}:{line} — no usable verdict ({cause}), not genuinely re-examined. Downgraded to unconfirmed out of caution. Reversibility: high.`, with `{cause}` `dispatch failed ({status})` when the dispatch itself failed (the empty-reply rule above), else the `reason` field the resolver printed, verbatim — `could-not-parse`, `status:{WORD}`, `verdict:cant-tell`, `no-evidence`, `evidence-unverified`, or another of `resolveTiebreak`'s reasons (`plugin/bin/lib/tiebreak.js`), so distinct causes stay distinct. A failed dispatch must never be logged as if a real falsification attempt happened.
+   - a non-zero `resolve-tiebreak` exit (no `outcome`) → the candidate is downgraded to `unconfirmed` and joins the Step 3.7 entry set, logged with the STAGED line above, `{cause}` `resolve-tiebreak exited {exit}` (not Step 3.7's own resolver-failure line): the refutation pass never treats a crashed resolver as a surviving finding.
 
-   Otherwise, apply `resolveRefutation` to the parsed `Verdict:` value:
-   ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" resolve-refutation {verdict}
-   ```
-   `resolveRefutation` itself also fails toward scrutiny on any unrecognized value — only the exact literal `not-refuted` keeps a finding `confirmed`; `refuted` and anything else downgrade to `unconfirmed`. This is defense in depth against a malformed verdict slipping past the explicit status check above, not a substitute for it.
-   - `refuted` → finding downgraded to `unconfirmed` (lands in Low-confidence subsection). Write `AUTO {HH:MM:SS} — Refutation: {path}:{line} refuted — {one-line reasoning}. Downgraded to unconfirmed. Reversibility: high.`
-   - `not-refuted` → finding proceeds unchanged toward Step 3 Routing. Write `AUTO {HH:MM:SS} — Refutation: {path}:{line} not refuted — stands as confirmed. Reversibility: high.`
-
-After Step 3.5, every finding has a final bucket — `confirmed`, `unconfirmed`, or `contested`. A `confirmed` finding downgraded by the Per-Candidate Refutation Pass above joins `unconfirmed` with the same visibility rules as any other unconfirmed finding. Only `confirmed` findings flow into Step 3 Routing. `unconfirmed` and `contested` are already staged to the Wrap-Up Console.
+After Step 3.5, every finding has a final bucket — `confirmed`, `unconfirmed`, or `contested`. A `confirmed` finding the Per-Candidate Refutation Pass above could not stand behind (the `digest` / `console` outcome) joins `unconfirmed` with the same visibility rules as any other unconfirmed finding. Only `confirmed` findings flow into Step 3 Routing. `unconfirmed` and `contested` findings go to Step 3.7 (`step3-tiebreak.md`), and only its `confirmed` results join routing.
 
 ## Step 3.6: Gap-Sweep / Completeness Critic
 
@@ -132,16 +134,16 @@ in step3-lens-dispatch.md ...]
 
 [... READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section ...]
 
-SCRATCH: {ctx-dir}/agent-scratch/gap-sweep — any probe script or fixture you create to verify a finding goes there (never in the repository tree) and must be deleted before your status word (`_shared/subagent-output-contract.md`'s Scratch rule). If this path lies outside your own worktree (`worktree-always`, or any `EnterWorktree`-isolated dispatch), create and delete it via Bash, one plain command per call — `mkdir -p` as its own call, the file written by one plain `printf` redirect or `node -e` call, `rm` as its own call; never a heredoc or an `&&` chain, which the harness Bash guard refuses by shape — never `Write`/`Edit`, which the worktree-pinning guard refuses for a path outside your worktree.
+SCRATCH: {ctx-dir}/agent-scratch/gap-sweep — any probe script or fixture you create to verify a finding goes there (never in the repository tree) and must be deleted before your status word (`_shared/subagent-output-contract.md`'s Scratch rule). If this path lies outside your own worktree (`worktree-always`, or any `EnterWorktree`-isolated dispatch), create and delete it via Bash, one plain command per call — `mkdir -p` as its own call, the file written by one plain `printf` redirect or `node -e` call, `rm` as its own call; never a heredoc or an `&&` chain, which the harness Bash guard refuses by shape, nor a `;` sequence, and no shell variable carried between calls: spell the scratch path out as a literal absolute path in every call — never `Write`/`Edit`, which the worktree-pinning guard refuses for a path outside your worktree.
 
 [Use: Frontier — gap-sweep agent. Independent run; single dispatch, not a
 reproduction pair. Degrades per the resolver's preconditions (contract § Model Selection).]
 ```
 
-Findings returned are tagged with an internal `source: gap-sweep` marker (parallel to how lenses tag findings with their own lens name for Step 3 Routing's Category column) and inserted directly into the `unconfirmed` bucket — the same confidence tier a single-source, non-reproduction-paired lens finding gets. They are **not** auto-promoted to `confirmed` — there's no second agent to reproduce them against, by design. This reuses `step3-routing.md`'s existing `xhigh`/`max` inline-visibility rules (unconfirmed findings surface inline at `xhigh`+) — no new routing table needed. Write `STAGED {HH:MM:SS} — Gap-sweep: {path}:{line} — {one-line finding}. Staged to Review Console as low-confidence (gap-sweep, single-source by design). Reversibility: high.`
+Findings returned are tagged with an internal `source: gap-sweep` marker (parallel to how lenses tag findings with their own lens name for Step 3 Routing's Category column) and inserted directly into the `unconfirmed` bucket — the same confidence tier a single-source, non-reproduction-paired lens finding gets. They are **not** auto-promoted to `confirmed` — there's no second agent to reproduce them against, by design. Being single-source `unconfirmed` findings, they go to Step 3.7 (`step3-tiebreak.md`) like any other, and only its `confirmed` results join routing. This reuses `step3-routing.md`'s existing `xhigh`/`max` inline-visibility rules (unconfirmed findings surface inline at `xhigh`+) — no new routing table needed. Write `STAGED {HH:MM:SS} — Gap-sweep: lens "gap-sweep" finding {path}:{line} — {one-line finding}. Staged to Review Console as low-confidence (gap-sweep, single-source by design). Reversibility: high.`
 
 Check the agent's status line first, per the Subagent Contract: a `BLOCKED`/`NEEDS_CONTEXT` status, or a response that parses as neither a findings table nor the literal `No findings.`, means the sweep did not actually complete — write `STAGED {HH:MM:SS} — Gap-sweep: dispatch failed ({status}), sweep not genuinely performed. Reversibility: high.` so a persistently broken dispatch stays visible rather than silently reading as "we checked and found nothing." Only a genuine `DONE`/`DONE_WITH_CONCERNS` response with literal `No findings.` text logs nothing further, per the existing per-lens convention — no decision-log entry is needed for an actually-completed zero-findings pass.
 
 ## Post-fan-out sweep (this file's own closing step)
 
-`step3-lens-dispatch.md` defines the post-fan-out untracked-file sweep procedure, and its `build` call writes the pre-dispatch baselines (`{ctx-dir}/pre-dispatch-status.txt`, plus `{ctx-dir}/pre-dispatch-listeners.txt` for its leftover-listener check) before Step 3's first dispatch; that file's own sweep only runs itself at `low`/`medium` tier, since this file never loads there. At every tier that loads this file (`high` and above), run that sweep exactly once — here, after Cross-Lens Debate at `high` (this file's Step 3.5/3.6 refutation and gap-sweep never run at that tier), or after Gap-Sweep (Step 3.6) at `xhigh`/`max` — before proceeding to Step 3 Routing.
+`step3-lens-dispatch.md` defines the post-fan-out untracked-file sweep procedure, and its `build` call writes the pre-dispatch baselines (`{ctx-dir}/pre-dispatch-status.txt`, plus `{ctx-dir}/pre-dispatch-listeners.txt` for its leftover-listener check) before Step 3's first dispatch; that file's own sweep only runs itself at `low`/`medium` tier, since this file never loads there. At every tier that loads this file (`high` and above), run that sweep exactly once (Step 3.7 re-runs it for its own waves) — here, after Cross-Lens Debate at `high` (this file's Step 3.5/3.6 refutation and gap-sweep never run at that tier), or after Gap-Sweep (Step 3.6) at `xhigh`/`max` — before proceeding to Step 3 Routing.

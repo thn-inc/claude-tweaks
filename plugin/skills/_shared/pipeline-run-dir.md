@@ -23,7 +23,13 @@ worktree instead of the main checkout — a shadow, the exact `[IL-127]` shape, 
 rather than silently substituted. Never creates a directory unless `--create` is passed.
 
 - No flags: steps 1-2 only (env var, then newest matching directory for `--spec-slug`). This is
-  the read-only "where is the run I already have" call most steps need.
+  the read-only "where is the run I already have" call most steps need. Step 2 never adopts a
+  directory whose status is terminal, that carries `createdBy: "release-standalone"`, that is dead
+  (`interrupted`, or `active` with its stamped worktree gone), or whose `run-state.json` exists but
+  cannot be read as a JSON object; it skips such a directory for the next-newest match
+  (`adoptionRefusal`, #1962/#4151). An absent `run-state.json` (a bare mint) is still adopted, and
+  step 1's `PIPELINE_RUN_DIR` directory is never refused. A caller therefore must not use step 2 to
+  re-find a run it has already closed (`close-run` makes it `clean`) — carry the path instead.
 - `--create` with `--spec-slug <s>` and no `--standalone`: the plain mkdir-only mint shape
   `/flow` (`flow/steps-and-gates.md` case 4), `/claude-tweaks:dispatch` (`dispatch/SKILL.md` Step
   4), and `flow/claim-targets.md`'s direct-invocation mint use — `config.yml`/`decisions.md` are
@@ -34,7 +40,8 @@ rather than silently substituted. Never creates a directory unless `--create` is
   standalone-auto allowlist (the command then
   refuses to create outside auto mode); omit `--mode` entirely for a caller that creates in every
   mode regardless — the two documented exceptions, `/claude-tweaks:wrap-up` and
-  `/claude-tweaks:release`, each with its own clause above.
+  `/claude-tweaks:release`, each with its own clause above. Combined with `--spec-slug` (wrap-up's
+  mint), step 2 still runs first, so the same adoption refusal applies before anything is created.
 - `--root-only`: skips run resolution entirely and prints the anchored `$RUN_ROOT` itself — for a
   call site that only ever needed the main-checkout root (a `find` backstop scoped to the whole
   `pipelines/` tree, the transitional copy-out guard's destination computation), never a specific
@@ -46,15 +53,17 @@ Run directories live under the **main checkout's** `.claude-tweaks/pipelines/`, 
 linked worktree's. Resolve the root once, before any path is built:
 
 ```bash
-RUN_ROOT=$(git rev-parse --git-common-dir)
-RUN_ROOT=$(cd "$(dirname "$RUN_ROOT")" && pwd)
+RUN_ROOT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --root-only) || exit 1
 ```
 
-Resolved from the main checkout, `$RUN_ROOT` lands on the repo root and nothing changes —
-the raw `--git-common-dir` output varies with cwd (`.git` at the root, `../../.git` from a
-subdirectory), but the `cd`+`pwd` above normalizes either form to the same absolute path.
-Resolved from inside a linked worktree, it lands on the main checkout instead. Every path
-below is built from `$RUN_ROOT`, not from the current directory.
+Resolved from the main checkout, or any subdirectory of it, `$RUN_ROOT` is the repo root's
+realpath. Resolved from inside a linked worktree, it is the main checkout instead: the command
+follows the worktree's `.git` file back to the shared repository
+(`bin/lib/hooks/worktree-detect.js`'s `mainCheckoutRoot`), and exits non-zero rather than guess
+when it cannot. Then the call stops (`|| exit 1`): report the command's stderr and do not
+continue — an empty `$RUN_ROOT` would build every path from the current directory. Never compose `git rev-parse --git-common-dir` inline here: the worktree guard
+refuses `git` inside `$(...)` (`_shared/scratch-worktree.md` §7). Every path below is built from
+`$RUN_ROOT`, not from the current directory.
 
 Two consequences, both load-bearing:
 

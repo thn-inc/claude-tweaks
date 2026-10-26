@@ -50,14 +50,23 @@ The degrade fallback resolves the OS temp dir programmatically (`os.tmpdir()`) r
 
 **Several paths in one fence** — `bin/session-tmp-resolve.js`, a thin CLI wrapper, is the
 byte-cheaper form once a script needs three or more (each inline `node -e` block above costs
-roughly 350 bytes; this form costs roughly 90 bytes total, which matters for a skill file near the
-Read rail):
+roughly 350 bytes; each line below costs roughly 80, which matters for a skill file near the
+Read rail). One `--value` line per variable — a plain command substitution, no `eval`:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" VAR1=file1.json VAR2=file2.md)"
+VAR1="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value file1.json)"
+VAR2="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value file2.md)"
 ```
 
-Both forms resolve through the same `sessionTmpPath` and degrade identically; pick whichever
+`--value <filename>` prints exactly the resolved path and a newline: the form for a path a
+fence substitutes in the same call. The `VAR=filename` form, run as a plain call
+(`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" A=a.json B=b.md`), prints one
+`NAME="path"` line per pair for the agent to read and paste literally into later commands; that
+use is valid. Only `eval` of its output is retired — do not use the older
+`eval "$(node …/session-tmp-resolve.js VAR1=file1.json VAR2=file2.md)"` form in new prose: a
+worktree-isolated session's guard refuses `eval` (`_shared/scratch-worktree.md` §7).
+
+All three forms resolve through the same `sessionTmpPath` and degrade identically; pick whichever
 reads better at the call site, and prefer the shorter CLI form once a file nears `RAIL_BYTES`,
 the Read rail in `plugin/bin/lib/skill-audit/budgets.js` (`wc -c` before committing).
 
@@ -132,3 +141,11 @@ one session file, `try-it-{N}.md`: wrap-up writes it and flow's Pipeline Summary
 
 **Extended (#3671):** `skills/_shared/auto-decision-log.md`'s Text from git or a user paragraph
 (the `--text-file` entry text: `decision-text-{run-id}-{step-slug}.md`, a per-purpose suffix).
+
+**Extended (#4065):** `skills/_shared/pr-run-comments.md`'s Post-or-update procedure, which resolves both its
+comments payload (`{kind}-comments-{n}.json`) and its comment body (`{kind}-comment-{n}.md`) in one CLI call
+in step 1.
+
+**Extended (#4173):** `skills/_shared/pr-first-merge.md`'s Step 2.5, which resolves its checks capture
+(`pr-checks-{n}.txt`), head-runs capture (`pr-runs-{n}.json`) and park-comment body (`park-comment-{n}.md`)
+in one CLI call at the state read.

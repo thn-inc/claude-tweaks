@@ -9,12 +9,13 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILL_ROOT = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper');
 const REVIEW_MD = path.join(SKILL_ROOT, 'modes', 'review.md');
 
 function read(p) {
-  return fs.readFileSync(p, 'utf8');
+  return readText(p);
 }
 
 function stepSlice(text, startMarker, endMarker) {

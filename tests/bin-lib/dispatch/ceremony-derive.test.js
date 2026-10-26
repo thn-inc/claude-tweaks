@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { computeDiffFacts, deriveCeremonyProfile, isDocsPath, isPromptProsePath, PROMPT_PROSE_DIRS, shouldDerive } = require('../../../plugin/bin/lib/dispatch/ceremony-derive');
+const { readText } = require('../../helpers/read-skill');
 
 // #1545 evidence shape: a +75/-2 test file plus its own materialized
 // work/{n}-spec.md doc — a mix of test + docs files, zero production files.
@@ -138,6 +138,29 @@ test('AC2.1: a docs/**/*.md-only diff still derives fast-lane', () => {
   assert.equal(deriveCeremonyProfile(files, 'standard'), 'fast-lane');
 });
 
+test('AC2.2: a docs/plans/*.html diagram counts as docs, so it still derives fast-lane', () => {
+  const files = [
+    { path: 'docs/plugin-structure.md', additions: 5, deletions: 0 },
+    { path: 'docs/reference/x.md', additions: 3, deletions: 0 },
+    { path: 'docs/plans/x.html', additions: 40, deletions: 0 },
+  ];
+  const facts = computeDiffFacts(files);
+  assert.equal(facts.lowSurface, true);
+  assert.equal(facts.docsOnly, true);
+  assert.equal(facts.implFiles, 0);
+  assert.equal(deriveCeremonyProfile(files, 'standard'), 'fast-lane');
+});
+
+test('isDocsPath: top-level docs/plans/*.html (any extension case) is docs; other .html stays implementation', () => {
+  for (const p of ['docs/plans/x.html', 'docs/plans/2026-10-25-spec-1-flow.HTML']) {
+    assert.equal(isDocsPath(p), true, p);
+  }
+  for (const p of ['index.html', 'docs/x.html', 'docs/diagrams/x.html', 'docs/plans/sub/x.html',
+    'plugin/skills/visualize/template.html', 'src/docs/plans/x.html']) {
+    assert.equal(isDocsPath(p), false, p);
+  }
+});
+
 test('isPromptProsePath: markdown under skills/, agents/, commands/ at any prefix is prompt prose', () => {
   for (const p of ['plugin/skills/test/qa-prompts.md', 'plugin/skills/_shared/work-record.md', 'plugin/agents/qa-agent.md',
     '.claude/skills/upstream-drift/SKILL.md', 'skills/foo/SKILL.md', '.claude/commands/ship.md', 'plugin/skills/foo/SKILL.MD']) {
@@ -163,7 +186,7 @@ test('the prose twins name exactly the directories PROMPT_PROSE_DIRS lists', () 
   const list = `${ticked.slice(0, -1).join(', ')}, or ${ticked[ticked.length - 1]}`;
   const root = path.join(__dirname, '..', '..', '..', 'plugin', 'skills');
   for (const rel of ['build/micro-plan.md', 'wrap-up/ceremony-derivation.md']) {
-    const prose = fs.readFileSync(path.join(root, rel), 'utf8');
+    const prose = readText(path.join(root, rel));
     assert.ok(prose.includes(list), `${rel} must contain the phrase: ${list}`);
   }
   for (const d of PROMPT_PROSE_DIRS) {

@@ -169,12 +169,18 @@ test('one probe throwing degrades only its field, and the probes run concurrentl
     checkResumeFreshness: () => { throw new Error('probe exploded'); },
     execFile: (cmd, args) => { if (cmd === 'gh') return JSON.stringify({ state: 'OPEN', isDraft: true, body: PR_BODY }); return args.includes('--stamp-status') ? STAMP : CHANGED; },
   });
-  const t0 = Date.now();
-  const pack = await gatherPreflight({ runDir: fx.runDir, steps: ['review'], cwd: fx.root, mainRoot: fx.root, deps: { ...d, execFileAsync: async (cmd, args) => slow(d.execFile(cmd, args)) } });
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const execFileAsync = async (cmd, args) => {
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    try { return await slow(d.execFile(cmd, args)); } finally { inFlight--; }
+  };
+  const pack = await gatherPreflight({ runDir: fx.runDir, steps: ['review'], cwd: fx.root, mainRoot: fx.root, deps: { ...d, execFileAsync } });
   assert.strictEqual(pack.freshness.ok, false);
   assert.match(pack.freshness.error, /probe exploded/);
   assert.strictEqual(pack.pr.ok, true);
-  assert.ok(Date.now() - t0 < 600, 'three 150 ms subprocess probes overlap');
+  assert.strictEqual(maxInFlight, 3, 'the three subprocess probes overlap');
 });
 
 test('a probe that never resolves is bounded by probeTimeoutMs, without blocking or leaking a timer for the others (#1931 parity with wrap-up/pack.js)', async () => {

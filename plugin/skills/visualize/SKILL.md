@@ -1,7 +1,7 @@
 ---
 name: visualize
 description: Use for a themed diagram (architecture, flowchart, sequence, state, ER — see argument-hint) or a live diagram of this project's open queue.
-argument-hint: "<architecture|flowchart|sequence|state|er|timeline|swimlane|quadrant|nested|tree|org-chart|layers|venn|pyramid|record-graph> [topic] [--source <caller>] [--ephemeral]"
+argument-hint: "<architecture|flowchart|sequence|state|er|timeline|swimlane|quadrant|nested|tree|org-chart|layers|venn|pyramid|record-graph> [topic] [--ephemeral]"
 ---
 
 # Visualize — Themed Diagram Generation
@@ -23,7 +23,7 @@ Generates a self-contained HTML+SVG diagram, themed from the project's own desig
 
 ## Input
 
-`$ARGUMENTS` is parsed as `<architecture|flowchart|sequence|state|er|timeline|swimlane|quadrant|nested|tree|org-chart|layers|venn|pyramid|record-graph> [topic] [--source <caller>] [--ephemeral]`:
+`$ARGUMENTS` is parsed as `<architecture|flowchart|sequence|state|er|timeline|swimlane|quadrant|nested|tree|org-chart|layers|venn|pyramid|record-graph> [topic] [--ephemeral]`:
 
 | Type | Diagram |
 |------|---------|
@@ -46,7 +46,7 @@ Generates a self-contained HTML+SVG diagram, themed from the project's own desig
 `[topic]` is free text describing what to diagram. If `$ARGUMENTS` is empty, ask the user for both — except `record-graph`, which takes no topic at all: `/claude-tweaks:visualize record-graph` alone is a complete invocation, and `$ARGUMENTS` being exactly `record-graph` should never trigger the "ask for both" fallback.
 
 Flags:
-- `--source <caller>` — set by soft-hook callers (`journeys`, `specify`, `review`) to select default placement (Step 3) without prompting.
+- `--source <caller>` (producer-only) — set by soft-hook callers (`journeys`, `specify`, `review`) to select default placement (Step 3) without prompting.
 - `--ephemeral` — for direct/ad-hoc invocation only (no `--source`): skip Step 3's persist-vs-ephemeral `AskUserQuestion` and go straight to the scratch-path-only "Just show me now" behavior. For a quick mid-conversation sketch where the user already knows they don't want it saved as a project doc.
 
 ## Workflow

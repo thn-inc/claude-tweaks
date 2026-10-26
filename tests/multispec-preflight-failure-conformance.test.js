@@ -2,12 +2,12 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const FLOW_DIR = path.join(ROOT, 'plugin', 'skills', 'flow');
-const read = (p) => fs.readFileSync(p, 'utf8');
+const read = (p) => readText(p);
 
 const RULING = path.join(FLOW_DIR, 'multispec-preflight-failure.md');
 const MULTI_SPEC = path.join(FLOW_DIR, 'multi-spec.md');

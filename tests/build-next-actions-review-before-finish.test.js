@@ -9,11 +9,11 @@
 // pattern, [IL-105]).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const buildSkill = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'build', 'SKILL.md'), 'utf8');
+const buildSkill = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'SKILL.md'));
 
 // The pre-change Next Actions rendering paragraph (#808) — the clause that swapped the
 // recommended slot onto the finish-branch line whenever git strategy was worktree.

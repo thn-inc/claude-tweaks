@@ -1,14 +1,19 @@
 // bin/lib/hooks/context.js
 'use strict';
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const wtDetect = require('./worktree-detect');
 const { writeFileAtomic } = require('../atomic-write');
 const { runGit } = require('./git-exec');
-const { parseWorktreeList } = require('./worktree-reap');
+const { parseWorktreeList, findWorktreeEntry, isPidAlive } = require('./worktree-reap');
 const runDirResolve = require('./run-dir-resolve');
 const { classifyDecisions } = require('../log-decision/claim-log');
 const { canonicalRealpath } = require('../path-guard');
+const processProbe = require('../run-liveness/process-probe');
+const { HEARTBEAT_THROTTLE_MS } = require('../run-liveness/constants');
+const { probeOwnerPid } = require('../run-liveness/owner-pid-probe');
+const { claudePid } = processProbe;
 
 function readStdin() {
   try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
@@ -105,12 +110,14 @@ function isClaimLogOnlyMint(dir, state) {
 // is resolveRun's lazy per-call memo of wtDetect.repoInfo(cwd) — the caller's
 // cwd is the same for every candidate, so it is computed at most once, and
 // only once a bound candidate is actually met.
-function isOtherWorktreeBound(callerRepoInfo, state) {
+function isOtherWorktreeBound(callerRepoInfo, state, fsImpl) {
   const binding = state && typeof state.worktree === 'string' && state.worktree ? state.worktree : null;
   if (!binding) return false;
   const info = callerRepoInfo();
   if (info.indeterminate || !info.repoRoot) return false;
-  return (wtDetect.safeReal(binding) || path.resolve(binding)) !== info.repoRoot;
+  // Both sides canonicalized through path-guard's .native canonicalRealpath: the
+  // JS-form realpath keeps the input's letter case on a case-insensitive volume (#3836).
+  return (canonicalRealpath(binding, { fsImpl }) || path.resolve(binding)) !== (canonicalRealpath(info.repoRoot, { fsImpl }) || info.repoRoot);
 }
 
 // #1177: best-effort removal of a mint's own layout (staged/, decisions.md,
@@ -373,13 +380,13 @@ function isForeignWorktreeCandidate(cwd, sessionId, state) {
 // `dropped` list. `includeWorktreeForeign` disables the worktree-binding
 // guards, (b) included. `callerRepoInfo` is the lazy memo isOtherWorktreeBound
 // reads (see there).
-function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict, callerRepoInfo) {
+function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict, callerRepoInfo, fsImpl) {
   if (isClaimLogOnlyMint(dir, state)) return { reason: 'claim-log-only mint', dropped: true };
   if (isUnadoptedMint(dir, state)) return { reason: 'unadopted-mint', dropped: false };
   if (isAdHocRunDir(dir)) return { reason: 'ad-hoc', dropped: false };
   if (includeWorktreeForeign) return null;
   if (isForeignWorktreeCandidate(cwd, sessionId, state)) return { reason: 'worktree-foreign', dropped: false };
-  if (strict && isOtherWorktreeBound(callerRepoInfo, state)) return { reason: `bound to ${state.worktree}`, dropped: true };
+  if (strict && isOtherWorktreeBound(callerRepoInfo, state, fsImpl)) return { reason: `bound to ${state.worktree}`, dropped: true };
   return null;
 }
 function resolveRun(cwd, env, sessionId, opts = {}) {
@@ -417,7 +424,7 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
     return callerInfo;
   };
   const skipReason = (dir, state) => {
-    const skip = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict, callerRepoInfo);
+    const skip = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict, callerRepoInfo, opts.fsImpl);
     if (skip && skip.dropped) dropped.push(`${path.basename(dir)} (${skip.reason})`);
     return skip;
   };
@@ -495,6 +502,10 @@ function resolveRunDir(cwd, env, sessionId, opts) {
 // pre-resolved target). This predicate only classifies — it enforces
 // nothing; consumers (#1012, #1099) own what each verdict does.
 //
+// `opts.fsImpl` (#3836) is the fs-like object the binding is canonicalized
+// through (path-guard's canonicalRealpath) and the foreign proof stats through;
+// production callers omit it and get the real fs.
+//
 // runState fields read — exactly two, nothing else: `sessionId` and
 // `worktree`.
 //
@@ -508,7 +519,7 @@ function resolveRunDir(cwd, env, sessionId, opts) {
 // spec-1098 run-dir this predicate originated from was archived to
 // .claude-tweaks/pipelines/archive/2026-08-20T185022-spec-1098/work/1098-spec.md
 // on wrap-up — that path dies on archival, so docs/hooks.md is the live pointer).
-function classifyOwnership(caller, runState) {
+function classifyOwnership(caller, runState, opts = {}) {
   const callerId = caller && typeof caller.sessionId === 'string' && caller.sessionId ? caller.sessionId : null;
   const ownerId = runState && typeof runState.sessionId === 'string' && runState.sessionId ? runState.sessionId : null;
   if (callerId && ownerId && callerId !== ownerId) return 'foreign';
@@ -519,15 +530,19 @@ function classifyOwnership(caller, runState) {
   const info = wtDetect.repoInfo(cwd);
   if (info.indeterminate) return 'indeterminate';
   if (binding) {
-    // repoInfo already realpaths its answer; worktreeMatches realpaths the
-    // recorded side — a caller anywhere inside the recorded worktree
-    // resolves to that worktree's root and matches here.
-    // second and third args intentionally identical — repoInfo's answer is already canonical
-    if (info.repoRoot && worktreeMatches({ worktree: binding }, info.repoRoot, info.repoRoot)) return 'mine';
+    // Both sides resolve through path-guard's .native canonicalRealpath, bound
+    // to the caller's fsImpl (#3836). repoInfo's repoRoot is a JS realpath of
+    // git's toplevel, which keeps the input's letter case, so it is canonicalized
+    // here too; a caller anywhere inside the recorded worktree resolves to that
+    // worktree's root and matches, and a case-only mismatch on a case-insensitive
+    // volume reads 'mine'.
+    function canonical(p) { return canonicalRealpath(p, { fsImpl: opts.fsImpl }); }
+    const top = info.repoRoot ? (canonical(info.repoRoot) || info.repoRoot) : null;
+    if (info.repoRoot && worktreeMatches({ worktree: binding }, top, info.repoRoot, canonical)) return 'mine';
     if (!info.repoRoot || !info.isLinkedWorktree) return 'indeterminate'; // outside any repo, or main checkout — cannot prove foreign
-    const real = wtDetect.safeReal(binding);
+    const real = canonical(binding);
     if (!real) return 'indeterminate'; // binding gone from disk — fail open
-    try { if (!fs.statSync(real).isDirectory()) return 'indeterminate'; } catch { return 'indeterminate'; }
+    try { if (!(opts.fsImpl || fs).statSync(real).isDirectory()) return 'indeterminate'; } catch { return 'indeterminate'; }
     return 'foreign'; // caller is in a different live worktree than a binding that provably exists
   }
   if (!callerId || !ownerId) return 'indeterminate'; // no binding and incomplete identity
@@ -537,21 +552,16 @@ function classifyOwnership(caller, runState) {
   return 'indeterminate'; // outside any repo
 }
 
-// Shared by findRunByWorktreePath/findRunsByWorktreePath below: does this
-// run-state's recorded `worktree` match targetPath? Realpath-canonicalizes
-// both sides where they exist on disk (recorded assignments are already
-// absolute; a torn-down worktree's path may no longer resolve, so the raw
-// string is kept as a fallback comparison rather than failing the match).
-// The optional 4th `canonical` (#3769) resolves the recorded side through the
-// caller's canonicalizer; omitted, the JS fs.realpathSync form is used.
+// Shared by findRunByWorktreePath, findRunsByWorktreePath and classifyOwnership:
+// does this run-state's recorded `worktree` match targetPath? Both sides resolve
+// through the caller's canonicalizer — path-guard's .native canonicalRealpath,
+// bound to the caller's fsImpl (#3769, #3836) — so a mis-cased spelling on a
+// case-insensitive volume matches its on-disk form. A torn-down worktree's path
+// may no longer resolve, so the raw string is kept as a fallback comparison
+// rather than failing the match.
 function worktreeMatches(state, target, targetPath, canonical) {
   if (!state || typeof state.worktree !== 'string' || !state.worktree) return false;
-  let recorded = state.worktree;
-  if (canonical) {
-    recorded = canonical(state.worktree) || state.worktree;
-  } else {
-    try { recorded = fs.realpathSync(recorded); } catch { /* keep recorded form */ }
-  }
+  const recorded = canonical(state.worktree) || state.worktree;
   return recorded === target || state.worktree === targetPath;
 }
 
@@ -589,10 +599,12 @@ function findRunByWorktreePath(cwd, targetPath, opts = {}) {
 // newest. `excludeDir`, when given, omits that one directory from the
 // result (the caller's own primary/current run dir, already read via its
 // normal path — never double-counted as a second source here).
-function findRunsByWorktreePath(cwd, targetPath, excludeDir) {
+// `opts.fsImpl` (#3836) is forwarded to path-guard's canonicalRealpath for the
+// worktree comparison, exactly as findRunByWorktreePath's is (#3769).
+function findRunsByWorktreePath(cwd, targetPath, excludeDir, opts = {}) {
   if (typeof targetPath !== 'string' || !targetPath) return [];
-  let target = targetPath;
-  try { target = fs.realpathSync(targetPath); } catch { /* keep as-resolved */ }
+  function canonical(p) { return canonicalRealpath(p, { fsImpl: opts.fsImpl }); }
+  const target = canonical(targetPath) || targetPath;
   // #1175: excludeDir must be realpath-canonicalized before comparing — a
   // plain path.resolve() never matches when the caller's --run was spelled
   // through a symlink (e.g. macOS /tmp, whose real path is /private/tmp), so
@@ -611,7 +623,7 @@ function findRunsByWorktreePath(cwd, targetPath, excludeDir) {
       try { dirReal = fs.realpathSync(dirReal); } catch { /* keep as-resolved */ }
       if (dirReal === excl) continue;
     }
-    if (worktreeMatches(state, target, targetPath)) out.push({ runDir: dir, state });
+    if (worktreeMatches(state, target, targetPath, canonical)) out.push({ runDir: dir, state });
   }
   return out;
 }
@@ -726,11 +738,19 @@ function releaseRunStateLock(lockPath) {
 // previously could each read the same pre-write state and one writer's
 // patch would silently overwrite the other's, e.g. resurrecting a worktree
 // assignment a close-run call had just cleared.
-function writeRunState(runDir, patch) {
+//
+// `patchOrFn` is a patch object, or (#3973) a function called INSIDE the lock with
+// the existing state (`{}` when none) so a conditional stamp decides against the
+// state it is about to merge into. A null/undefined return writes nothing, does not
+// bump `updatedAt`, and returns the existing state.
+function writeRunState(runDir, patchOrFn) {
   const lock = acquireRunStateLock(runDir);
   const finalPath = path.join(runDir, 'run-state.json');
   try {
-    const next = { ...(readRunState(runDir) || {}), ...patch, updatedAt: new Date().toISOString() };
+    const existing = readRunState(runDir) || {};
+    const patch = typeof patchOrFn === 'function' ? patchOrFn(existing) : patchOrFn;
+    if (typeof patchOrFn === 'function' && (patch === null || patch === undefined)) return existing;
+    const next = { ...existing, ...patch, updatedAt: new Date().toISOString() };
     // bin/lib/atomic-write.js's writeFileAtomic (#1653): writes a per-process
     // tmp file then fs.renameSync's atomically over the real path, so a
     // reader or a racing unlocked writer can never observe a torn/partial
@@ -753,12 +773,188 @@ function isTrustedOwnedRun(ownedRun) {
   return !!(ownedRun && ownedRun.dir && ownedRun.attribution !== 'fallback');
 }
 
+// #3845: owner-process identity. Measured premise (probe, Claude Code 2.1.302):
+// Claude Code sets CLAUDE_PID to its own pid in every process it spawns — its
+// Bash tool and its hooks alike — so one session's Bash tool and its hooks see
+// the same value; a nested `claude -p` run from that Bash tool sets its own,
+// different value. record-worktree stamps run-state `ownerPid` from the former;
+// session-end compares the latter against it to tell a nested session from the
+// run's owner. Fail open: an unknown pid on either side is never "nested", so
+// a missing/garbled CLAUDE_PID or an unstamped (pre-#3845) run-state keeps the
+// existing session-end behavior.
+//
+// Liveness rule: a differing pair is "nested" only while the owner process is
+// still alive. A nested child's SessionEnd always fires while its parent is
+// alive (the parent's Bash tool is blocked on the child), so the incident case
+// keeps its protection. A dead owner is the crash + `claude --resume` shape: the
+// original process died without a SessionEnd, and a `resume` SessionStart
+// re-stamps ownerPid with the new process's pid (session-start.js's
+// restampOwnerPidOnResume); before that re-stamp — or for a run never resumed —
+// the dead owner is what isNestedSession sees, and the ending of the resumed
+// process (new pid, same session id) is the run's real interruption —
+// suppressing it would regress to a never-flagged run. Probe
+// errors other than "alive" fail open (never nested, never throw from a hook).
+// (claudePid itself lives in run-liveness/process-probe.js, imported above, so
+// the run-liveness modules can share it without requiring this file.)
+
+// The run-state patch that stamps this process as the run's owner — empty when
+// the pid is unknown, so a stamp site never writes a garbled `ownerPid`. Shared
+// by every site that mints or re-stamps ownership (record-worktree, the ad-hoc
+// mints, the resume re-stamp in session-start.js). #4153: `owner.pid` (#3973,
+// `ownerBlock` below) stamps the same process; `ownerPid`'s removal condition is in
+// docs/hooks.md's owner-block paragraph.
+function ownerPidPatch(env) {
+  const pid = claudePid(env);
+  return pid === null ? {} : { ownerPid: pid };
+}
+
+// #3973: the run-state `owner` block — who owns this run and when it last proved it
+// was alive. `pidStartedAt` guards against pid reuse and is null whenever the pid is
+// unknown (the start time is then never probed). Pure but for the injected deps.
+// Its `pid` supersedes the top-level `ownerPid` (#3845, `ownerPidPatch` above), kept
+// only for `isNestedSession` (#4153).
+function ownerBlock({ sessionId, env = process.env, now = Date.now(), deps = {} } = {}) {
+  const { pid, pidSource } = (deps.resolveOwnerPid || processProbe.resolveOwnerPid)(env);
+  return {
+    sessionId,
+    host: (deps.hostname || os.hostname)(),
+    pid,
+    pidSource,
+    pidStartedAt: pid === null ? null : (deps.pidStartTime || processProbe.pidStartTime)(pid),
+    heartbeatAt: new Date(now).toISOString(),
+  };
+}
+
+// The run-state patch that stamps `block` as the owner — `{}` when the caller has no
+// session id, or when another session's block is already there and this caller is not
+// the adoption path (`replacesSessionId`), so a stamp never takes over a foreign run.
+function ownerStampPatch(existing, sessionId, block, { replacesSessionId = false } = {}) {
+  if (typeof sessionId !== 'string' || sessionId === '') return {};
+  const current = existing && existing.owner;
+  if (current && current.sessionId !== sessionId && !replacesSessionId) return {};
+  return { owner: block };
+}
+
+// `patch` as the `patchOrFn` argument of writeRunState, extended with an owner stamp
+// for `sessionId`. The owner block spawns `ps`, so it is built here, before the lock;
+// a failure (or no session id) degrades to the bare `patch` and never costs the stamp.
+function patchWithOwnerBlock(patch, sessionId, { replacesSessionId = false } = {}) {
+  if (typeof sessionId !== 'string' || sessionId === '') return patch;
+  let block;
+  try { block = ownerBlock({ sessionId }); } catch { return patch; }
+  return (current) => ({ ...patch, ...ownerStampPatch(current, sessionId, block, { replacesSessionId }) });
+}
+
+// Whether the process an owner block stamped may still be running here — the takeover
+// gate. The verdict is run-liveness's owner-pid probe, the one judge runLiveness reports
+// too (#4153). Only a negative that rules the stamped process out (`other-host`, `no-pid`,
+// `gone`, `pid-reused`) allows takeover; `positive`, `alive-no-start-time`, and every
+// `error` (`start-time-unavailable`, `invalid-start-time`, a probe that threw) keep the
+// block — the `error` cases are what runLiveness reads as `unknown`, and a question that
+// could not be answered never takes a block over.
+function stampedOwnerProvablyAlive(owner, { hostname, aliveFn, startFn }) {
+  const { result, detail } = probeOwnerPid(owner, { hostname, pidAlive: aliveFn, pidStartTime: startFn });
+  return result !== 'negative' || detail === 'alive-no-start-time';
+}
+
+// #3973: the owner's own hooks keep the owner block fresh. Same pid as stamped: a
+// heartbeat, at most one write per HEARTBEAT_THROTTLE_MS. A different pid with the
+// stamped process provably gone (a `claude --resume` under a new process, or a pid
+// that was reused): re-stamp pid, pidSource, pidStartedAt, host and heartbeatAt in
+// ONE write, so the pid and its start time never describe two different processes.
+// A different pid with the stamped process still provably alive is a nested
+// `claude -p` sharing the session id — it must neither heartbeat nor take the block
+// over. Never gives a legacy run (no owner block) one, never acts on a `fallback`
+// guess or another session's run, and never throws (it runs on every hook event).
+// #4150: the throttle is checked BEFORE the owner-pid probe (resolveOwnerPid can spawn
+// up to 8 `ps` calls). Inside the window the only thing a probe can change is a
+// re-stamp, so the per-event path (hooks.js, every non-session-start event) returns
+// null with no probe at all and defers such a re-stamp to the first event outside the
+// window. session-start.js passes `restampWhileFresh: true` to keep the full probe
+// there, so a resume under a new process re-stamps at once.
+// Returns 'heartbeat' | 'restamp' | null (null: nothing written).
+function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}, restampWhileFresh = false } = {}) {
+  try {
+    const owned = ctx && ctx.ownedRun;
+    if (!isTrustedOwnedRun(owned)) return null;
+    const sessionId = ctx.input && ctx.input.session_id;
+    if (typeof sessionId !== 'string' || sessionId === '') return null;
+    const state = readRunState(owned.dir);
+    const owner = state && state.owner;
+    if (!owner || typeof owner !== 'object' || owner.sessionId !== sessionId) return null;
+
+    const last = Date.parse(owner.heartbeatAt);
+    const age = now - last;
+    const fresh = Number.isFinite(last) && age >= 0 && age < HEARTBEAT_THROTTLE_MS; // a future-stamped heartbeat (clock skew) is not fresh
+    if (fresh && !restampWhileFresh) return null;
+
+    const hostname = deps.hostname || os.hostname;
+    const cur = (deps.resolveOwnerPid || processProbe.resolveOwnerPid)(env);
+    let fields;
+    let result;
+    if (cur.pid !== owner.pid) {
+      if (!Number.isInteger(cur.pid)) return null;
+      const startFn = deps.pidStartTime || processProbe.pidStartTime;
+      const provablyAlive = stampedOwnerProvablyAlive(owner, {
+        hostname,
+        aliveFn: deps.isPidAlive || isPidAlive,
+        startFn,
+      });
+      if (provablyAlive) return null;
+      fields = {
+        pid: cur.pid,
+        pidSource: cur.pidSource,
+        pidStartedAt: startFn(cur.pid),
+        host: hostname(),
+        heartbeatAt: new Date(now).toISOString(),
+      };
+      result = 'restamp';
+    } else {
+      if (fresh) return null;
+      fields = { heartbeatAt: new Date(now).toISOString() };
+      result = 'heartbeat';
+    }
+
+    let applied = false;
+    const written = writeRunState(owned.dir, (existing) => {
+      const o = existing && existing.owner;
+      if (!o || o.sessionId !== owner.sessionId || o.pid !== owner.pid) return null;
+      applied = true;
+      return { owner: { ...o, ...fields } };
+    });
+    return applied && written !== null ? result : null;
+  } catch {
+    return null;
+  }
+}
+
+function isNestedSession(runState, env, { isAlive = isPidAlive } = {}) {
+  const owner = runState && runState.ownerPid;
+  if (!Number.isInteger(owner) || owner <= 0) return false;
+  const mine = claudePid(env);
+  return mine !== null && mine !== owner && isAlive(owner);
+}
+
 // `{ts}-adhoc-standalone` — the suffix run-dir-resolve.js mints for
 // `standalone: 'adhoc'` (post-tool-use.js's stampAdHocRunDir and
 // stampAdHocRunDirForDenial). Same test as reconcile/archive-merged.js's
 // isAdHocStandaloneMint's first clause.
 function isAdHocRunDir(dir) {
   return typeof dir === 'string' && path.basename(dir).endsWith('-adhoc-standalone');
+}
+
+// The porcelain-lookup half of stampAdHocRunDirForDenial, split out so the compare is testable
+// without minting a run dir. Returns `{ path, isMain }` for the worktree `git worktree list` lists
+// for `cwd`, or null (falsy or non-string cwd, failed listing, no match). The lookup goes through
+// findWorktreeEntry so win32's forward-slash porcelain matches a backslash cwd (#3811).
+function listedWorktreeForCwd(cwd, deps = {}) {
+  if (typeof cwd !== 'string' || !cwd) return null;
+  const { stdout, failure } = (deps.runGit || runGit)(['worktree', 'list', '--porcelain'], cwd);
+  if (failure || stdout === null) return null;
+  const entries = parseWorktreeList(stdout);
+  const entry = findWorktreeEntry(entries, cwd, deps.pathImpl || path);
+  if (!entry) return null;
+  return { path: entry.path, isMain: entry === entries[0] };
 }
 
 // Ad-hoc run-dir stamping for a PreToolUse gate denial with no owned run dir
@@ -789,12 +985,9 @@ function stampAdHocRunDirForDenial(ctx) {
   const cwd = ctx.cwd;
   if (typeof cwd !== 'string' || !cwd) return null;
   try {
-    const { stdout, failure } = runGit(['worktree', 'list', '--porcelain'], cwd);
-    if (failure || stdout === null) return null;
-    const entries = parseWorktreeList(stdout);
-    const idx = entries.findIndex((e) => e.path === cwd);
-    if (idx === -1) return null; // cwd isn't a listed worktree at all — nothing to key the stamp on
-    const worktreePath = entries[idx].path;
+    const wt = listedWorktreeForCwd(cwd);
+    if (!wt) return null; // cwd isn't a listed worktree at all — nothing to key the stamp on
+    const worktreePath = wt.path;
     // Deliberately NOT process.env — a stray PIPELINE_RUN_DIR left over from
     // an unrelated earlier command in this shell must never redirect this
     // stamp onto someone else's run dir (same rationale as stampAdHocRunDir).
@@ -805,7 +998,8 @@ function stampAdHocRunDirForDenial(ctx) {
     // stampAdHocRunDir's identical guard).
     const existing = readRunState(result.path);
     if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return null;
-    const written = writeRunState(result.path, { worktree: path.resolve(worktreePath), status: 'active', sessionId });
+    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ownerPidPatch(process.env) };
+    const written = writeRunState(result.path, patchWithOwnerBlock(todaysPatch, sessionId));
     if (!written) { rollbackMint(result.path); return null; }
     return result.path;
   } catch { return null; }
@@ -830,7 +1024,7 @@ function resolveDenialRunDir(ctx) {
 // but empty, or readable with every line unparseable) stay distinguishable —
 // callers that need to tell "we don't know" from "we know there's nothing"
 // (run-integrity.js's checkRunIntegrity via scanWrapupEvents below,
-// archive-merged.js's ownEventRecency) rely on that split.
+// run-liveness/probes.js's ownEventRecency) rely on that split.
 function readEventLines(runDir) {
   let raw;
   try { raw = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'); } catch { return null; }
@@ -885,5 +1079,6 @@ function appendEvent(runDir, type, data, attribution) {
 module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
-  rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
+  rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
+  claudePid, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, patchWithOwnerBlock, refreshOwnerBlock,
 };

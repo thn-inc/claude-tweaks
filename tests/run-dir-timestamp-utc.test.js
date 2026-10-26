@@ -27,7 +27,7 @@ function mdFilesUnder(dir) {
 test('every run-dir timestamp snippet under skills/ uses date -u (#721)', () => {
   const offenders = [];
   for (const full of mdFilesUnder(path.join(REPO_ROOT, 'plugin', 'skills'))) {
-    const text = fs.readFileSync(full, 'utf8');
+    const text = readText(full);
     for (const line of text.split('\n')) {
       if (line.includes('%Y-%m-%dT%H%M%S') && line.includes('date ') && !line.includes('date -u ')) {
         offenders.push(`${path.relative(REPO_ROOT, full)}: ${line.trim()}`);

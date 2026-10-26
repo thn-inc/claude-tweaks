@@ -1,17 +1,14 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const skill = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'routine', 'SKILL.md'), 'utf8');
-const createAndUpdate = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'routine', 'create-and-update.md'),
-  'utf8'
-);
-const status = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'routine', 'status.md'), 'utf8');
-const fleet = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'routine', 'fleet.md'), 'utf8');
+const skill = readText(path.join(ROOT, 'plugin', 'skills', 'routine', 'SKILL.md'));
+const createAndUpdate = readText(path.join(ROOT, 'plugin', 'skills', 'routine', 'create-and-update.md'));
+const status = readText(path.join(ROOT, 'plugin', 'skills', 'routine', 'status.md'));
+const fleet = readText(path.join(ROOT, 'plugin', 'skills', 'routine', 'fleet.md'));
 
 test('SKILL.md wires pause and resume as modes', () => {
   assert.ok(/\|\s*`pause <skill>`\s*\|/.test(skill));

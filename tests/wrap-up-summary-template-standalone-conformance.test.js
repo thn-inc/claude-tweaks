@@ -8,13 +8,10 @@
 // session can never mechanically clear.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const TEMPLATE = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'summary-template.md'),
-  'utf8',
-);
+const TEMPLATE = readText(path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'summary-template.md'));
 
 function section(heading, nextHeadingPrefix = '### ') {
   const start = TEMPLATE.indexOf(heading);

@@ -1,8 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
@@ -524,7 +524,7 @@ test('unattributedFailureCount: a spec log whose summary counts never parsed fai
 // Real jest 29.7.0 / vitest 1.6.0 / pytest 8.3.3 output (#3480), copied
 // byte-for-byte; the dialect fixtures below are the ground truth the summary
 // family's per-dialect accounting is pinned against.
-const readDialect = (name) => fs.readFileSync(path.join(__dirname, '..', '..', 'fixtures', 'verify-dialects', name), 'utf8');
+const readDialect = (name) => readText(path.join(__dirname, '..', '..', 'fixtures', 'verify-dialects', name));
 
 const DIALECT_ROWS = [
   ['jest-attributed.txt', 0, ['tests/flaky.test.js']],

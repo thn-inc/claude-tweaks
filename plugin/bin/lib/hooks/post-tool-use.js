@@ -21,9 +21,7 @@ const { ISSUE_REF_SOURCE } = require('../issue-branch-tracking');
 // Reused rather than reimplemented a third time (CLAUDE.md's don't-duplicate
 // rule) — `resolveIntegrationBranch`'s fallback profile (no explicit arg,
 // policy.yml then origin/HEAD) fits this file's EnterWorktree handler as-is.
-// `parseWorktreeList` is reused for the same reason, for the tool-result
-// fallback path below.
-const { resolveIntegrationBranch, parseWorktreeList, bareIntegrationName } = require('./worktree-reap');
+const { resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
 // Session-scoped marker path for the non-EnterWorktree ad-hoc-run-dir rate-limit (#1333) — see
 // stampAdHocRunDir below.
 const { sessionTmpPath } = require('../session-tmp');
@@ -233,16 +231,11 @@ function extractToolResponseText(toolResponse) {
 // Returns `{ path, isMain }` — `isMain` is true for the entry `git worktree list` always lists
 // first (the primary/main checkout, per git's own porcelain output convention) — or null when
 // `ctx.cwd` doesn't resolve to a listed worktree at all (not a git repo, or the `git worktree
-// list` call itself failed).
-function resolveWorktreePathViaPorcelain(ctx) {
-  const cwd = ctx.cwd;
-  if (typeof cwd !== 'string' || !cwd) return null;
-  const { stdout, failure } = runGit(['worktree', 'list', '--porcelain'], cwd);
-  if (failure || stdout === null) return null;
-  const entries = parseWorktreeList(stdout);
-  const idx = entries.findIndex((e) => e.path === cwd);
-  if (idx === -1) return null;
-  return { path: entries[idx].path, isMain: idx === 0 };
+// list` call itself failed). Delegates to context.js's `listedWorktreeForCwd`, which matches through
+// worktree-reap.js's `findWorktreeEntry`, so a win32 forward-slash porcelain path matches a
+// backslash cwd (#3811).
+function resolveWorktreePathViaPorcelain(ctx, deps = {}) {
+  return ctxLib.listedWorktreeForCwd(ctx.cwd, deps);
 }
 
 function resolveCreatedWorktreePath(ctx) {
@@ -334,7 +327,8 @@ function stampAdHocRunDir(ctx) {
     // silently reassign the dir mid-session.
     const existing = ctxLib.readRunState(result.path);
     if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return;
-    const written = ctxLib.writeRunState(result.path, { worktree: path.resolve(worktreePath), status: 'active', sessionId });
+    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ctxLib.ownerPidPatch(process.env) };
+    const written = ctxLib.writeRunState(result.path, ctxLib.patchWithOwnerBlock(todaysPatch, sessionId));
     if (!written) {
       // writeRunState failed (I/O error). The mint above already touched
       // decisions.md, which isUnadoptedMint (context.js) treats as evidence
@@ -719,4 +713,4 @@ function run(ctx) {
   return {};
 }
 
-module.exports = { run };
+module.exports = { run, resolveWorktreePathViaPorcelain };

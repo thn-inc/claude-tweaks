@@ -6,6 +6,8 @@ files:
   - plugin/bin/lib/policy.js
   - plugin/bin/lib/release/subject.js
   - plugin/bin/lib/issues/record.js
+  - plugin/bin/lib/issues/record-vocabulary.js
+  - plugin/bin/lib/issues/record-payload.js
   - plugin/bin/lib/compose-record/compose.js
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/_shared/local-merge-auto-finish.md
@@ -28,10 +30,10 @@ files:
 
 ### 1. The merge site asks the composer for the subject — `bin/compose-subject.js`
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {n} --tag {tag} --range {base}...{head} --out-dir "{subject-dir}"` (the composer line every merge fence carries, no `eval`; the local-merge fences append `|| exit 1` because they run as one multi-line script, while a pr-first fence runs the composer as its own Bash call; `{tag}` is `auto-merge`, `auto-finish`, `fast-lane`, `manifesto-authorized`, or `human-approved` per site; pr-first sites pass `--pr {pr-number}` in place of `--range`)
-- **Action:** The agent runs the fence as written. The CLI reads the record(s) with `gh issue view` (Type from the native issue type, else the `type:*` label; `breaking` from the label; the summary from `## Overview`'s first sentence, falling back to `## Current State`; the release note from the subject record's own `## Release Note` section — never aggregated across a bundle), composes the subject and body, and writes `title.txt`, `body.md` and `message.txt` into `{subject-dir}`.
+- **Action:** The agent runs the fence as written. The CLI reads the record(s) with `gh issue view` (Type from the native issue type, else the `type:*` label; `breaking` from the label; the summary from `## Overview`'s first sentence, falling back to `## Current State`; the release note from the subject record's own `## Release Note` section — never aggregated across a bundle, and cut at a trailing `_Filed by …_` provenance footer, which `specShapedBody` leaves directly under that section when the record has no `### Key Files`), composes the subject and body, and writes `title.txt`, `body.md` and `message.txt` into `{subject-dir}`.
 - **Should feel:** Mechanical and boring — no title is typed by hand, no summary is paraphrased, no release note is written from scratch at merge time (it was already authored at spec time).
-- **Should understand:** The exit status is load-bearing: a record with no resolvable Type, a `breaking` label with no `## Breaking Change` section, or **any** record in the batch with no non-empty `## Release Note` section (unconditional — not gated behind `breaking`), makes the CLI exit 1. A local-merge fence's `|| exit 1` stops it before the merge runs; a pr-first fence runs the composer as its own Bash call, and the agent stops on the non-zero exit instead of running the `gh pr merge` call. A project whose convention needs `type(scope):` sets the `commit-scope` and/or `commit-scope-paths` policy keys; every fence passes `--range {base}...{head}` (local-merge) or `--pr {pr-number}` (pr-first) so the composer can read the changed paths, an explicit `--scope {token}` overrides both, and `commit-scope-paths` set with neither also exits 1; a scope that is not one `[A-Za-z0-9._/-]+` token, or too long to leave room for the title, also exits 1. On a host that rejects `--json issueType`, the composer's silent retry prints nothing — gh's stderr is captured, so the only stdout is the single-quoted title.
-- **Red flags:** A merge attempted after the composer printed an error; gh error text printed ahead of a composed subject on a successful run; a merge commit with an empty subject or a body missing its `Fixes #N` line or its `Release-Note:` paragraph.
+- **Should understand:** The exit status is load-bearing: a record with no resolvable Type, a `breaking` label with no `## Breaking Change` section, or **any** record in the batch with no non-empty `## Release Note` section (unconditional — not gated behind `breaking`; a section holding only the `_Filed by …_` footer counts as empty), makes the CLI exit 1. A local-merge fence's `|| exit 1` stops it before the merge runs; a pr-first fence runs the composer as its own Bash call, and the agent stops on the non-zero exit instead of running the `gh pr merge` call. A project whose convention needs `type(scope):` sets the `commit-scope` and/or `commit-scope-paths` policy keys; every fence passes `--range {base}...{head}` (local-merge) or `--pr {pr-number}` (pr-first) so the composer can read the changed paths, an explicit `--scope {token}` overrides both, and `commit-scope-paths` set with neither also exits 1; a scope that is not one `[A-Za-z0-9._/-]+` token, or too long to leave room for the title, also exits 1. On a host that rejects `--json issueType`, the composer's silent retry prints nothing — gh's stderr is captured, so the only stdout is the single-quoted title.
+- **Red flags:** A merge attempted after the composer printed an error; gh error text printed ahead of a composed subject on a successful run; a merge commit with an empty subject or a body missing its `Fixes #N` line or its `Release-Note:` paragraph; a `_Filed by …_` paragraph riding after the `Release-Note:` line.
 
 ### 2. The merge lands with the composed message — `gh pr merge --squash` or `git merge --no-ff`
 - **URL:** `gh pr merge {pr} --squash -t {title-arg} --body-file "{subject-dir}/body.md"` (pr-first) or `git merge --no-ff {branch} -F "{subject-dir}/message.txt"` (local-merge)
@@ -54,6 +56,13 @@ files:
 - **Should understand:** The footer's text is the record's own section, verbatim; a `breaking` record with no section is a shaping defect that fails composition (step 1's exit 1), never a merge with an empty footer.
 - **Red flags:** A `breaking`-labelled record whose merge subject has no `!`; a `BREAKING CHANGE:` line that is not the last paragraph of the body.
 
+### 5. A deferred bundle member stays open — `compose-subject.js --keep-open {k}` (pr-first)
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --keep-open {keep-open} --pr {pr-number} --out-dir "{subject-dir}"` (`_shared/pr-first-merge.md` Step 3; `--keep-open` is omitted when the PR body's fixes block has no `Refs` line)
+- **Action:** A pr-first bundle whose PR body defers one record's closure (`Refs #{k} — deferred: {reason}`) passes that record as `--keep-open`. The composer still counts `#{k}` for the subject, the Type aggregation and the release note, but writes `Refs #{k}` for it in the body and `Fixes #{n}` only for the finished records.
+- **Should feel:** The merge message says what the PR body says. Nothing to edit by hand.
+- **Should understand:** The squash message is a closing channel of its own, separate from the PR body's links, so a `Fixes #{k}` there would close the deferred record even with a clean body. A `--keep-open` number that is not in `{issue-list}` exits 1, like the composition errors in step 1. The whole keep-open flow, with the pre-merge unlink and the post-merge reopen, is the `keep-a-deferred-record-open-when-its-bundle-pr-merges-4199.md` journey.
+- **Red flags:** `Fixes #{k}` in the merged commit's body for a record the PR body lists on a `Refs` line.
+
 ## Origin
 - Created during build of #2251 (Merge-time conventional subject and the `breaking` label) — unit 1 of the `/claude-tweaks:release` design (#2250)
 - Steps 1-4 built in this session
@@ -63,3 +72,5 @@ files:
 - Updated during build of #3298 (merge-subject scope source): the `commit-scope`/`commit-scope-paths` policy keys, the composer-side resolution, and `--range` (local-merge) / `--pr` (pr-first) on every fence — the "pr-first only" qualifier is gone
 - Updated during build of #3522 (guard-safe --out-dir merge fences): the composer writes `title.txt`/`body.md`/`message.txt` into `{subject-dir}` and every fence reads them (`-F`, `--body-file`) — no `eval`, no `--shell`
 - Updated during build of #3537 (retire --shell): the composer's eval-able --shell output is gone; JSON and --out-dir are the only output forms, and a plugin/skills/** sweep pins that no fence evals composer output
+- Updated during build of #4014 (compose-subject "Filed by" footer): the release note stops at a record's trailing `_Filed by …_` footer, and a footer-only `## Release Note` section counts as empty at the step 1 gate
+- Updated during build of #4199 (pr-first closing-link guard): step 5, where `--keep-open` writes `Refs #{k}` for a deferred bundle member in the pr-first squash body

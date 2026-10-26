@@ -33,8 +33,8 @@ other `failedKey` at any phase stays a silent Skip row (`refine-headless.md` Ste
 Query whether this record already carries an *unresolved* decision comment from this unit:
 
 ```bash
-gh issue view "$ISSUE" --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: {unit} -->")) | select(.body | contains("**Resolved:**") | not) | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | .id'
-gh issue view "$ISSUE" --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: {unit} -->")) | select(.body | contains("**Resolved:**") | not) | select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \(.url) by \(.author.login // "unknown") (\(.authorAssociation // "no association")) — not an owner, member, or collaborator"'
+gh issue view "$ISSUE" --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: {unit} -->")) | select(.body | contains("**Resolved:**") | not) | select((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR") | .id'
+gh issue view "$ISSUE" --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: {unit} -->")) | select(.body | contains("**Resolved:**") | not) | select(((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR") | not) | "skipped marker comment \(.url // .html_url // .id // "unknown") by \(.author.login // .user.login // "unknown") (\(.authorAssociation // .author_association // "no association")) — not an owner, member, or collaborator"'
 ```
 
 Only a trusted author's comment counts (`_shared/pr-run-comments.md`'s Trusted authors); the second
@@ -109,7 +109,7 @@ not through `refine-mode.md`'s own whole-queue Needs-decision lane — the two a
 resolution paths (this file's own header names both callers).
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" "BACKLOG_NEEDS_DECISION=backlog-needs-decision-${ISSUE}.md")"
+BACKLOG_NEEDS_DECISION="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "backlog-needs-decision-${ISSUE}.md")"
 if gh issue edit "$ISSUE" --add-label needs:decision; then
   gh issue comment "$ISSUE" --body-file "$BACKLOG_NEEDS_DECISION" || echo "label applied but comment post failed for #$ISSUE — retry the comment write"
 else

@@ -99,7 +99,7 @@ That file is the single source of truth for this procedure — the parallel disp
 
 `confidence` drives Step 6's interactive-gate Recommended-column pre-fill (`high`/`med` → File issue; `low` → Capture).
 
-Write the array to this run's session-scoped `docs-health-findings.json` (`_shared/session-tmp-root.md`; resolve via `eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DOCS_HEALTH_FINDINGS=docs-health-findings.json)"` in whichever fence writes it).
+Write the array to this run's session-scoped `docs-health-findings.json` (`_shared/session-tmp-root.md`; resolve via `DOCS_HEALTH_FINDINGS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value docs-health-findings.json)"` in whichever fence writes it).
 
 **Step 3.5 — VERIFY GATE: sanity-check surviving findings before dedup.**
 
@@ -108,7 +108,8 @@ Before fingerprinting and dedup, re-examine each finding and ask: is it real (do
 **Step 4 — GATHER OPEN ISSUES for dedup.** Resolve this run's session-scoped temp paths first, per `_shared/session-tmp-root.md` (cited throughout this file rather than restated):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DOCS_HEALTH_ISSUES_RAW=docs-health-issues-raw.json DOCS_HEALTH_ISSUES=docs-health-issues.json)"
+DOCS_HEALTH_ISSUES_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value docs-health-issues-raw.json)"
+DOCS_HEALTH_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value docs-health-issues.json)"
 gh issue list --label by:docs-health --state all --json number,state,labels,body --limit 500 > "$DOCS_HEALTH_ISSUES_RAW"
 ```
 
@@ -123,7 +124,8 @@ A matched issue carrying the `wontfix` label is a standing suppression decision:
 **Step 5 — VALIDATE, FINGERPRINT, DEDUP.** Re-resolve this run's session-scoped paths first (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit the prior fence's shell variables):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DOCS_HEALTH_FINDINGS=docs-health-findings.json DOCS_HEALTH_PAYLOADS=docs-health-payloads.json)"
+DOCS_HEALTH_FINDINGS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value docs-health-findings.json)"
+DOCS_HEALTH_PAYLOADS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value docs-health-payloads.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/docs-health.js" validate-findings "$DOCS_HEALTH_FINDINGS" \
   --root "${ROOT:-$PWD}" \
   ${ISSUES_FILE:+--issues "$ISSUES_FILE"} \
@@ -153,14 +155,15 @@ Every filed finding is **born-`ready`** — docs-health findings are agent-sized
 Before filing this firing's own new findings, drain the durable retry queue from prior firings' filing failures and check for regressed reopens (see `_shared/health-state.md`) — both mechanics below follow the canonical shape in `_shared/health-filing-mechanics.md` (`{BINARY}` = `docs-health.js`, `{PREFIX}` = `docs-health`); check that file when either changes to keep this skill's copy in sync with its three siblings. Each drained retry payload is also subject to the same cap check above before its `gh issue create` attempt. Resolve this run's session-scoped temp path first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DOCS_HEALTH_RETRY_PAYLOADS=docs-health-retry-payloads.json)"
+DOCS_HEALTH_RETRY_PAYLOADS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value docs-health-retry-payloads.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/docs-health.js" retry-queue drain --root . > "$DOCS_HEALTH_RETRY_PAYLOADS"
 ```
 
 For each payload in `$DOCS_HEALTH_RETRY_PAYLOADS`, attempt `gh issue create` exactly as below. Track every attempt's outcome (retry-queue payloads AND any brand-new payload from this step's own filing loop that fails) as `[{ fingerprint, payload, ok: true }]` or `[{ fingerprint, payload, ok: false, error: "<gh's error output>" }]`, write to this run's session-scoped `docs-health-retry-results.json`, then re-resolve both session-scoped paths this fence needs (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit the prior fence's shell variable):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DOCS_HEALTH_RETRY_RESULTS=docs-health-retry-results.json DOCS_HEALTH_ESCALATED=docs-health-escalated.json)"
+DOCS_HEALTH_RETRY_RESULTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value docs-health-retry-results.json)"
+DOCS_HEALTH_ESCALATED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value docs-health-escalated.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/docs-health.js" retry-queue update "$DOCS_HEALTH_RETRY_RESULTS" --root . > "$DOCS_HEALTH_ESCALATED"
 ```
 

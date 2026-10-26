@@ -4,19 +4,25 @@ files:
   - plugin/skills/_shared/auto-decision-log.md
   - plugin/skills/flow/steps-and-gates.md
   - plugin/skills/wrap-up/execution-and-verification.md
+  - plugin/skills/flow/multispec-parallel-waves.md
+  - plugin/skills/_shared/pr-check-gate.md
+  - plugin/skills/_shared/git-discipline.md
+  - plugin/skills/_shared/local-merge-auto-finish.md
+  - plugin/skills/dispatch/two-call-gate.md
+  - tests/log-decision-text-file-sites-conformance.test.js
 ---
 
 # Log a Decision That Names a Git-Supplied File
 
 **Persona:** A pipeline agent partway through `/claude-tweaks:flow`. It just aborted a catch-up merge, or re-read a parked PR's merge state, and must record the outcome in the run's `decisions.md`. The outcome names conflicting file paths or a git error message, and git allows `"`, `$`, backticks and `\` in those.
 **Goal:** Write one `decisions.md` entry that quotes the git-supplied text exactly, without any of it running as shell syntax.
-**Entry point:** A skill step that says to log git-supplied text via `log-decision.js`: `flow/steps-and-gates.md`'s #3014 CONFLICTING-PR abort, `wrap-up/execution-and-verification.md`'s leave-open mergeability re-check, or any step citing `_shared/auto-decision-log.md`'s Text from git or a user paragraph.
+**Entry point:** A skill step that says to log git- or user-supplied text via `log-decision.js`. Examples: `flow/steps-and-gates.md`'s #3014 CONFLICTING-PR note and abort, `wrap-up/execution-and-verification.md`'s leave-open mergeability re-check, `flow/multispec-parallel-waves.md`'s merge-back conflict, `_shared/pr-check-gate.md`'s check-name caveats, `_shared/local-merge-auto-finish.md`'s merged/park outcomes. Any step citing `_shared/auto-decision-log.md`'s Text from git or a user paragraph qualifies (since #3792, every such site in `plugin/skills/**`).
 **Success state:** `decisions.md` holds the entry with the file names exactly as git printed them. Nothing in the text was expanded or executed, and the agent never had to work out which characters to escape.
 
 ## Steps
 
 ### 1. Recognise the text as git-supplied — the skill step
-- **URL:** the citing step in `flow/steps-and-gates.md` or `wrap-up/execution-and-verification.md`
+- **URL:** the citing step in whichever skill file the agent is following
 - **Action:** The agent reads a logging instruction whose text interpolates `{paths}`, `{files}` or `{reason}`. The step names `--text-file "{text-file}"` and cites `_shared/auto-decision-log.md`'s Text from git or a user paragraph, not a double-quoted `--text`.
 - **Should feel:** Unambiguous. There is one form for this case, and the step says which.
 - **Should understand:** Text that came from git or a user never goes inside a double-quoted shell argument. The file form exists so no escaping is needed at all.
@@ -52,4 +58,5 @@ files:
 ## Origin
 - Created during build of #3671 (`log-decision.js --text-file`)
 - Steps 1-4 built in this session; step 1's two call sites were migrated off hand-escaping in the same build
-- Related: #3014 (CONFLICTING-PR adoption abort), #3483 (leave-open mergeability re-check); the remaining unescaped `--text` call sites are a ledgered follow-up
+- Related: #3014 (CONFLICTING-PR adoption abort), #3483 (leave-open mergeability re-check)
+- Updated during build of #3792: the remaining git- and user-text `--text` call sites across `plugin/skills/**` were migrated to `--text-file`. `tests/log-decision-text-file-sites-conformance.test.js` pins each site with a go-red and sweeps the corpus, so step 1's red flag ("the step still shows `--text "... {paths} ..."`") now fails CI rather than relying on a reader to notice it.

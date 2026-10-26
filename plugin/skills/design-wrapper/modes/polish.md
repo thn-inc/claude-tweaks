@@ -262,6 +262,8 @@ Note `decision_summary` is absent from the empty-`commands_invoked` case above �
 
 `polish` is the **first wrapper mode that modifies code** — unless invoked with `--dry-run` (Step 8), in which case `dry_run: true` is present and `files_modified` is always `[]`. Callers (`/flow` polish phase) must follow up with re-verification (types/lint/tests) when `files_modified` is non-empty. When `decision_summary` is present *and* `dry_run` is absent, callers must also append it to the auto-decision log (see `_shared/auto-mode-card.md`). When `staged_suggestions` is non-empty *and* `dry_run` is absent, callers must also write one file per entry to `{run-dir}/staged/` and log a `STAGED` entry per entry to `decisions.md` (see `_shared/auto-decision-log.md`) — otherwise the suggestion is silently dropped instead of surfacing at the Wrap-Up Review Console. A `dry_run: true` response is a preview only — callers must not log or stage anything from it. **When `result: "anomaly"` (Step 6.5), the caller must render it distinctly from a clean `"ok"` result** — surface the `anomaly` text in the pipeline's failure/warning surface (`/flow`'s ledger, per `_shared/auto-decision-log.md`'s entry schema — an `AUTO` entry is wrong here since nothing was verified as landed; log a `KEPT-PROMPT`-shaped note instead) rather than treating the response as a successful polish pass; `decision_summary`, if present, must not be silently appended to the auto-decision log as if the dispatch were confirmed to have worked.
 
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.
+
 ## Anti-Patterns
 
 | Pattern | Why It Fails |

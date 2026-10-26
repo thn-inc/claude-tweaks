@@ -1,9 +1,9 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
 const M = require('../../../plugin/bin/lib/release-local/manifest.js');
+const { readText } = require('../../helpers/read-skill');
 
 const files = (map) => ({ readFile: (p) => (Object.prototype.hasOwnProperty.call(map, p) ? map[p] : null), map });
 const config = (releaseType, extraFiles) => JSON.stringify({ packages: { '.': { 'release-type': releaseType, ...(extraFiles ? { 'extra-files': extraFiles } : {}) } } });
@@ -14,7 +14,7 @@ const config = (releaseType, extraFiles) => JSON.stringify({ packages: { '.': { 
 // (finds the right token among several plausible false matches) rather than a
 // first-occurrence accident that a one-line fixture couldn't expose.
 const FIXTURES = path.join(__dirname, 'fixtures');
-const readFixture = (name) => fs.readFileSync(path.join(FIXTURES, name), 'utf8');
+const readFixture = (name) => readText(path.join(FIXTURES, name));
 
 test('readConfig: null without a config, release-type + extra-files with one', () => {
   assert.strictEqual(M.readConfig(files({}).readFile), null);

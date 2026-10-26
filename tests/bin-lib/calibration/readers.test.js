@@ -61,6 +61,19 @@ test('classifyDecisionLine recognizes every entry kind and the terminal-decision
   }
 });
 
+test('AC3.2: classifyDecisionLine reads the leading enum token of a noted Reversibility, never the note', () => {
+  const cases = [
+    ['high', 'high (commit abc1234)'],
+    ['med', 'med (staged patch)'],
+    ['low', 'low (divergence persists)'],
+    ['n/a', 'n/a (a policy read, not a code mutation)'],
+  ];
+  for (const [token, value] of cases) {
+    const line = `- AUTO 10:00:00 — Step 2.5: pre-flight branch-divergence-check. Reversibility: ${value}.`;
+    assert.strictEqual(classifyDecisionLine(line).reversibility, token, value);
+  }
+});
+
 test('classifyDecisionLine tolerates unrecognized shapes without throwing', () => {
   assert.doesNotThrow(() => classifyDecisionLine(''));
   assert.doesNotThrow(() => classifyDecisionLine('- FUTURE-STATUS 00:00:00 — a shape from a later plugin version'));
@@ -79,4 +92,16 @@ test('readEventsKinds returns null (never throws) when the path exists but is un
   const dirAsFile = tmpFile('not-a-file.jsonl');
   fs.mkdirSync(dirAsFile);
   assert.strictEqual(readEventsKinds(dirAsFile), null);
+});
+
+test('AC1.1: readEventsKinds drops test:true gate-denial/wd-guard-refusal, keeps the real one (#4186)', () => {
+  const p = tmpFile('events.jsonl');
+  fs.writeFileSync(p, [
+    '{"type":"gate-denial","test":true}',
+    '{"type":"gate-denial"}',
+    '{"type":"gate-denial","test":false}',
+    '{"type":"wd-guard-refusal","test":true}',
+    '{"type":"commit","test":true}',
+  ].join('\n') + '\n');
+  assert.deepStrictEqual(readEventsKinds(p).counts, { 'gate-denial': 2, commit: 1 });
 });

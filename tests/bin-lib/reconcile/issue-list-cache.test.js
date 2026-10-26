@@ -185,3 +185,97 @@ test('createIssueListCache: two separate instances never share state (no cross-p
 
   assert.equal(calls.length, 2, 'a fresh instance must never inherit a prior instance\'s memo');
 });
+
+test('createIssueListCache: each real base call is timed as a gh spawn; a memo hit and a throw are not altered (#4032)', () => {
+  const { createTimings, withTimings, summarizeTimings } = require('../../../plugin/bin/lib/reconcile/timing');
+  const base = (argv) => {
+    if (argv[1] === 'close') throw new Error('gh failed');
+    return argv[1] === 'list' ? '[]' : 'https://github.com/o/r/issues/1\n';
+  };
+  const { runner } = createIssueListCache({ base });
+  const list = ['issue', 'list', '--repo', 'o/r', '--state', 'all', '--json', 'x', '--limit', '10000'];
+  const t = createTimings();
+  withTimings(t, () => {
+    runner(list);
+    runner(list); // memo hit — no spawn, nothing recorded
+    runner(['issue', 'create', '--repo', 'o/r', '--title', 't', '--body', 'b']);
+    assert.throws(() => runner(['issue', 'close', '5', '--repo', 'o/r']), /gh failed/);
+  });
+  const { subprocesses } = summarizeTimings(t).phases.setup;
+  assert.equal(subprocesses['gh issue list'].count, 1);
+  assert.equal(subprocesses['gh issue create'].count, 1);
+  assert.equal(subprocesses['gh issue close'].count, 1, 'a failing call is still timed, and still throws');
+  // Outside a timing store the wrapper is inert.
+  assert.equal(createIssueListCache({ base }).runner(list), '[]');
+});
+
+// #4032 — the marker index.
+const M1 = '<!-- fingerprint: reconcile-residue-aaaa -->';
+const M2 = '<!-- fingerprint: reconcile-residue-bbbb -->';
+const LIST_ARGV = ['issue', 'list', '--repo', 'o/r', '--state', 'all', '--json', 'number,title,body,createdAt,state', '--limit', '10000'];
+
+test('findIssueByMarker: an indexed issue whose body carries the marker answers with one view', () => {
+  const { base, calls } = countingBase(() => JSON.stringify({ number: 42, title: 't', body: `x\n${M1}`, createdAt: '2026-01-01T00:00:00Z', state: 'OPEN' }));
+  const { runner } = createIssueListCache({ base, index: { [`o/r\n${M1}`]: 42 } });
+  const issue = runner.findIssueByMarker('o/r', M1);
+  assert.equal(issue.number, 42);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(0, 3), ['issue', 'view', '42']);
+});
+
+test('findIssueByMarker: a body without the marker drops the entry and falls back', () => {
+  const { base } = countingBase(() => JSON.stringify({ number: 42, body: 'edited, marker gone', state: 'OPEN' }));
+  const index = { [`o/r\n${M1}`]: 42 };
+  const { runner } = createIssueListCache({ base, index });
+  assert.equal(runner.findIssueByMarker('o/r', M1), undefined);
+  assert.deepEqual(index, {});
+});
+
+test('findIssueByMarker: no index entry, a throwing view, or unparseable output all answer undefined', () => {
+  const none = countingBase(() => { throw new Error('unused'); });
+  assert.equal(createIssueListCache({ base: none.base }).runner.findIssueByMarker('o/r', M1), undefined);
+  assert.equal(none.calls.length, 0, 'no entry means no view call');
+  const index = { [`o/r\n${M1}`]: 42 };
+  const thrower = createIssueListCache({ base: () => { throw new Error('gone'); }, index });
+  assert.equal(thrower.runner.findIssueByMarker('o/r', M1), undefined);
+  const junk = createIssueListCache({ base: () => 'not json', index });
+  assert.equal(junk.runner.findIssueByMarker('o/r', M1), undefined);
+  assert.equal(index[`o/r\n${M1}`], 42, 'a failed view does not drop the entry');
+});
+
+test('findIssueByMarker: defers to an already-memoized list', () => {
+  const { base, calls } = countingBase(() => '[]');
+  const { runner } = createIssueListCache({ base, index: { [`o/r\n${M1}`]: 42 } });
+  runner(LIST_ARGV);
+  assert.equal(runner.findIssueByMarker('o/r', M1), undefined);
+  assert.equal(calls.length, 1, 'only the list call reached base');
+});
+
+test('list reads index every reconcile-residue marker', () => {
+  const list = [
+    { number: 5, body: `old\n${M1}`, createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED' },
+    { number: 9, body: `new\n${M1}`, createdAt: '2026-02-01T00:00:00Z', state: 'OPEN' },
+    { number: 11, body: `other\n${M2}`, createdAt: '2026-01-15T00:00:00Z', state: 'OPEN' },
+    { number: 12, body: 'no marker here', createdAt: '2026-01-15T00:00:00Z', state: 'OPEN' },
+  ];
+  const { base } = countingBase(() => JSON.stringify(list));
+  const { runner, index } = createIssueListCache({ base });
+  runner(LIST_ARGV);
+  assert.deepEqual(index, { [`o/r\n${M1}`]: 9, [`o/r\n${M2}`]: 11 });
+});
+
+test('create indexes its own marker', () => {
+  const { base } = countingBase(() => 'https://github.com/o/r/issues/77\n');
+  const { runner, index } = createIssueListCache({ base });
+  runner(['issue', 'create', '--repo', 'o/r', '--title', 't', '--body', `x\n${M2}`]);
+  assert.deepEqual(index, { [`o/r\n${M2}`]: 77 });
+});
+
+test('create without a reported number or a residue marker indexes nothing', () => {
+  const noNumber = createIssueListCache({ base: () => 'ok' });
+  noNumber.runner(['issue', 'create', '--repo', 'o/r', '--title', 't', '--body', M1]);
+  assert.deepEqual(noNumber.index, {});
+  const noMarker = createIssueListCache({ base: () => 'https://github.com/o/r/issues/5' });
+  noMarker.runner(['issue', 'create', '--repo', 'o/r', '--title', 't', '--body', 'plain']);
+  assert.deepEqual(noMarker.index, {});
+});

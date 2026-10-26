@@ -6,7 +6,7 @@ Runs only when the user specified `worktree` (or it's the default). Skipped enti
 
 **Still run Step 4.5 (record the assignment) even on this skip path.** It is the one step in this procedure a worktree created outside it never receives on its own: `/flow`'s multi-spec up-front creation (`skills/flow/multi-spec.md`'s "Shared worktree" Step 1) has two branches — its **Created** branch (not isolated, dirty, or on a merged branch) runs this file's full procedure, Step 4.5 included, when it creates the shared worktree; its **Adopted** branch (already isolated, clean tree, branch not merged — the common case under this project's `worktree-always` policy, since an interactive `/flow` is always already isolated by the time it runs) is a pure detection-plus-skip that records the current branch name and stamps nothing (`_shared/worktree-setup.md`'s Adopt-or-create section). `dispatch/sequential-execution.md`'s `EnterWorktree` call stamps nothing either — a dispatched run arrives at this point with no `run-state.json` `worktree` field at all. For both the Adopted branch and the dispatch case, this unconditional re-run is the only stamp such a run ever gets. Step 4.5 is documented there as "an idempotent restamp," so running it unconditionally here is always safe, never destructive to a prior stamp. Without this, the working-directory hook (E1) denies this run's very first commit — the gap #778 traced to this guard, and the retry-with-restamp workaround `dispatch/task-prompt.md` documents for a denied first commit exists only because this step was skipped instead of re-run. Step 6 (open the draft PR) is unaffected either way — it is invoked separately from `build/SKILL.md` Spec Step 1, never from within this numbered procedure (see Step 6 below). **The one exception: under `MULTISPEC_PARALLEL_WAVE=1`** (a `/flow` `parallel` wave member, `skills/flow/multispec-parallel-waves.md`), skip this restamp — the parent run's stamp must stay the shared worktree, and `CLAUDE_CODE_SESSION_ID` is shared across subagents, so a member restamp would rebind the parent run's owner session.
 
-**Also run the adopted-branch remote collision check on this skip path (#2844).** Steps 1.5/1.6 guard a branch name that is about to be created; an adopted branch skipped both, so nothing has probed `origin` for its name. Under `integration-model: pr-first`, before Spec Step 1's materialize commit and Step 6's push, read `build/adopted-branch-collision-check.md` in this skill's directory and follow it — it classifies a same-name branch on `origin` as absent, this run's own earlier push (resume — proceed), or unrelated (stop card), so a stale remote branch is caught here rather than as a rejected push.
+**Also run the adopted-branch remote collision check on this skip path (#2844).** Steps 1.5/1.6 guard a branch name that is about to be created; an adopted branch skipped both, so nothing has probed `origin` for its name. Under `integration-model: pr-first`, before Spec Step 1's materialize commit and Step 6's push, read `build/adopted-branch-collision-check.md` in this skill's directory and follow it — it classifies a same-name branch on `origin` as absent, this run's own earlier push (resume — proceed), this record's own failed prior attempt (adopt — proceed), or unrelated (stop card), so a stale remote branch is caught here rather than as a rejected push.
 
 ## Base ref — branch from local HEAD, not stale origin
 
@@ -47,14 +47,14 @@ re-derived regexes.
 
 ## Procedure
 
-0. **Capture the expected base** — before creating anything, record the commit the worktree should start from:
+0. **Capture the expected base** — before creating anything, record the commit the worktree should start from, as its own call; the sha it prints is `{EXPECTED_BASE}`, pasted literally where it is used:
    ```bash
-   EXPECTED_BASE=$(git rev-parse HEAD)
+   git rev-parse HEAD
    ```
    This is a cheap value capture only — no verification, no STOP. It exists solely to feed Step 4's `{EXPECTED_BASE}` merge; nothing here compares it against the worktree's actual base.
 1. **Pre-flight branch-divergence check** — resolve the `branch-divergence-check` setting: `BRANCH_DIVERGENCE_CHECK=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values branch-divergence-check)`.
 
-   **Skip when already stamped by `/flow` (re-read cut).** When this invocation received `MERGE_CHECK_PASSED=true UPSTREAM_SHA={sha}` from `/flow`'s Step 2.5 (per `flow/validation.md`'s "Memo stamp" note), resolve `$UPSTREAM` the same way `_shared/worktree-setup.md`'s `## Pre-flight divergence check` does and compare `git rev-parse "$UPSTREAM"` against the stamped `{sha}`. A match means `/flow` already ran this exact check moments ago in this same run — skip the fetch and the divergence prompt entirely, and proceed straight to Step 2. A mismatch (the ref moved since the stamp — rare, but possible under a slow Manifesto or materialize step) or a missing stamp (standalone `/claude-tweaks:build`, no `/flow` parent) runs the full check below — **fail-open, never fail-skip**: an absent or stale stamp is not a reason to skip the safety check, only a matching one is.
+   **Skip when already stamped by `/flow` (re-read cut).** When this invocation received `MERGE_CHECK_PASSED=true UPSTREAM_SHA={sha}` from `/flow`'s Step 2.5 (per `flow/validation.md`'s "Memo stamp" note), resolve `{UPSTREAM}` the same way `_shared/worktree-setup.md`'s `## Pre-flight divergence check` does and compare what `git rev-parse {UPSTREAM}` prints against the stamped `{sha}`. A match means `/flow` already ran this exact check moments ago in this same run — skip the fetch and the divergence prompt entirely, and proceed straight to Step 2. A mismatch (the ref moved since the stamp — rare, but possible under a slow Manifesto or materialize step) or a missing stamp (standalone `/claude-tweaks:build`, no `/flow` parent) runs the full check below — **fail-open, never fail-skip**: an absent or stale stamp is not a reason to skip the safety check, only a matching one is.
 
    Otherwise, run `_shared/worktree-setup.md`'s `## Pre-flight divergence check` in full — the same procedure `/flow`'s own Step 2.5 runs (`flow/validation.md`), consolidated into one canonical copy rather than two independently maintained ones.
 1.5. **Stale same-name branch check** (#767) — the branch/worktree name derived in "## Worktree
@@ -155,12 +155,23 @@ re-derived regexes.
    Spec Step 1, immediately after that step's materialize commit lands (not from within this
    numbered procedure, which ends at Step 5 — the materialize commit that must exist first is a
    Spec Step 1 concern, not a worktree-creation one). Route on `_shared/integration-model.md`;
-   `local-merge` runs skip this step entirely, unchanged from today. A `MULTISPEC_PARALLEL_WAVE=1`
+   a `local-merge` run skips this step and logs (the same command as `_shared/pr-early-run-lifecycle.md`'s
+   local-merge row; a standalone `/build` with no run dir lists it in the Step 7 handoff instead):
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP \
+     --section "/build" --step "Spec Step 1 draft-PR bootstrap (skipped)" \
+     --text "condition: integration-model=local-merge → fallback: no draft PR opened" --reversibility n/a
+   ```
+
+   A `MULTISPEC_PARALLEL_WAVE=1`
    member skips it too, writing one `SKIP` entry naming the marker — the run's one PR is the shared
-   branch's. Full procedure —
-   push-then-create, the draft PR body template, idempotent resume, and degrade behavior for a
-   failed push or a `gh`-absent environment — lives in `_shared/pr-early-run-lifecycle.md`; this
-   step cites it rather than restating it. Once the PR is recorded (or this step's `SKIP` is logged), then run Step 4.6 if it is still pending (#3289).
+   branch's. Otherwise, write a one-paragraph summary of the materialized spec's Overview with the Write tool,
+   never through the shell (spec text carries backticks and `$`), to the path
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-early-summary-{run-id}.md` prints. Then, as its own Bash call:
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/pr-early-open.js" --run "$PIPELINE_RUN_DIR" --target "#{n}[,#{m}…]" --fixes {n}[,{m}…] --title "{record title} (#{n})" --summary-file "{summary path}"`
+   (`{n}` and the title are the lowest-numbered record's). It pushes, then reuses, reopens or opens the draft PR, records it, and logs every line the bookkeeping-stamps gate reads.
+   Exit 0 → the PR is recorded. Exit 3 → a logged degrade (push or create failed): the run proceeds local-only, and a reused or reopened PR may still be recorded. Exit 2 → `gh` absent: follow `_shared/pr-early-run-lifecycle.md`'s MCP path; a refused `--run` or an `integration-branch` value holding whitespace: follow the remedy the CLI's stderr names; otherwise a malformed call: fix it and re-run. Exit 1 → finish by hand from that file. A `reopenRejected` field on stdout (exit 0 too) → repoint the earlier attempt's issue pointer comment. Read `_shared/pr-early-run-lifecycle.md` only on exit 2 (`gh` absent → its MCP path), exit 1, or a `reopenRejected` result (its "Reopen fails" paragraph): it is the CLI's spec. Once the PR is recorded (or this step's `SKIP` is logged), then run Step 4.6 if it is still pending (#3289).
 
 ## Cherry-pick source-branch PR check (#1957)
 

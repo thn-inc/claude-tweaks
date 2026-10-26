@@ -5,11 +5,11 @@
 // agreement with its code twin.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
 const { RELEASE_STACK_TABLE } = require('../plugin/bin/lib/init/release-bootstrap');
+const { readText } = require('./helpers/read-skill');
 
-function read(relPath) { return fs.readFileSync(path.join(__dirname, '..', relPath), 'utf8'); }
+function read(relPath) { return readText(path.join(__dirname, '..', relPath)); }
 
 const SKILL = read('plugin/skills/init/SKILL.md');
 const STEP = read('plugin/skills/init/bootstrap/step-21-release.md');

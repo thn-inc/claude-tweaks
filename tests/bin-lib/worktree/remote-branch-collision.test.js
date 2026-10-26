@@ -9,6 +9,7 @@ const {
   readRemoteTip,
   classifyRemoteBranch,
   findPrsForBranch,
+  findPriorAttemptPr,
   formatStopCard,
 } = require('../../../plugin/bin/lib/worktree/remote-branch-collision');
 
@@ -189,4 +190,159 @@ test('real git: an unreachable origin is unreachable, never absent', (t) => {
   const result = classifyRemoteBranch({ branch: 'main', git: r.gitIn(r.work) });
   assert.equal(result.state, 'unreachable');
   assert.equal(result.reason, 'ls-remote-failed');
+});
+
+// --- #3887: a dispatched retry's own prior attempt vs a foreign branch ---
+
+const SHA_B = 'b'.repeat(40);
+const ref = (number, slug = 'o/r') => ({ number, repository: { name: slug.split('/')[1], owner: { login: slug.split('/')[0] } } });
+const closedPr = (over) => ({
+  number: 9,
+  url: 'https://example.test/pr/9',
+  state: 'CLOSED',
+  isCrossRepository: false,
+  headRefOid: SHA_B,
+  closingIssuesReferences: [ref(42)],
+  body: '<!-- claude-tweaks-run: 2026-10-21T000000-record-42 -->\nclaude-tweaks-run: 2026-10-21T000000-record-42\n\nFixes #42\n',
+  ...over,
+});
+const ancestorGit = (calls = []) => (args) => {
+  calls.push(args);
+  assert.deepEqual(args, ['merge-base', '--is-ancestor', SHA_B, SHA_A]);
+  return '';
+};
+const priorAttempt = (over) => findPriorAttemptPr({
+  remoteSha: SHA_A,
+  prLookup: { ok: true, prs: [closedPr()] },
+  records: [42],
+  repo: 'o/r',
+  git: ancestorGit(),
+  ...over,
+});
+
+test('AC4.1: findPriorAttemptPr matches this record\'s closed claude-tweaks PR whose head is an ancestor of origin\'s tip', () => {
+  assert.deepEqual(priorAttempt(), { number: 9, url: 'https://example.test/pr/9' });
+});
+
+test('AC2.1: a closed PR for a different record stays foreign', () => {
+  const calls = [];
+  assert.equal(priorAttempt({ records: [43], git: ancestorGit(calls) }), null);
+  assert.equal(calls.length, 0);
+});
+
+test('AC2.1: a closed PR with no claude-tweaks-run marker (a human\'s PR) stays foreign', () => {
+  const prLookup = { ok: true, prs: [closedPr({ body: 'Fixes #42\n' })] };
+  assert.equal(priorAttempt({ prLookup }), null);
+});
+
+test('AC2.1: an open or merged PR never matches', () => {
+  for (const state of ['OPEN', 'MERGED']) {
+    const prLookup = { ok: true, prs: [closedPr({ state })] };
+    assert.equal(priorAttempt({ prLookup }), null, state);
+  }
+});
+
+test('AC2.1: a fork PR on the same branch name never matches, nor does one with no isCrossRepository', () => {
+  for (const isCrossRepository of [true, undefined]) {
+    const calls = [];
+    const prLookup = { ok: true, prs: [closedPr({ isCrossRepository })] };
+    assert.equal(priorAttempt({ prLookup, git: ancestorGit(calls) }), null, String(isCrossRepository));
+    assert.equal(calls.length, 0);
+  }
+});
+
+test('AC2.1: a PR head that is not an ancestor of origin\'s tip, or an ancestry error, never matches', () => {
+  for (const status of [1, 128]) {
+    const git = () => { throw exitWith(status); };
+    assert.equal(priorAttempt({ git }), null, `exit ${status}`);
+  }
+});
+
+test('findPriorAttemptPr: a failed or absent lookup, or no records, is null', () => {
+  const calls = [];
+  const git = ancestorGit(calls);
+  assert.equal(priorAttempt({ prLookup: { ok: false, prs: [] }, git }), null);
+  assert.equal(priorAttempt({ prLookup: null, git }), null);
+  assert.equal(priorAttempt({ records: [], git }), null);
+  assert.equal(priorAttempt({ records: ['{records}'], git }), null);
+  assert.equal(priorAttempt({ remoteSha: 'not-a-sha', git }), null);
+  assert.equal(calls.length, 0);
+});
+
+test('findPriorAttemptPr: links by a closing-keyword line when GitHub linked no issue (empty references)', () => {
+  const prLookup = { ok: true, prs: [closedPr({ closingIssuesReferences: [] })] };
+  assert.deepEqual(priorAttempt({ prLookup }), { number: 9, url: 'https://example.test/pr/9' });
+});
+
+test('findPriorAttemptPr: a PR read without closingIssuesReferences is unknown, so it stays foreign', () => {
+  const prLookup = { ok: true, prs: [closedPr({ closingIssuesReferences: undefined })] };
+  assert.equal(priorAttempt({ prLookup }), null);
+});
+
+test('findPriorAttemptPr: a closing reference into another repository never counts, and no repo is no match', () => {
+  const prLookup = { ok: true, prs: [closedPr({ closingIssuesReferences: [ref(42, 'other/x')], body: closedPr().body.replace('Fixes #42', 'Refs #42') })] };
+  assert.equal(priorAttempt({ prLookup }), null);
+  assert.equal(priorAttempt({ repo: undefined }), null);
+});
+
+test('findPriorAttemptPr: links by closingIssuesReferences alone when the body has no Fixes line', () => {
+  const prLookup = { ok: true, prs: [closedPr({ body: '<!-- claude-tweaks-run: 2026-10-21T000000-record-42 -->\n' })] };
+  assert.deepEqual(priorAttempt({ prLookup }), { number: 9, url: 'https://example.test/pr/9' });
+});
+
+test('findPriorAttemptPr: skips non-matching closed PRs ahead of the record\'s own and returns the own one', () => {
+  const OTHER_HEAD = 'c'.repeat(40);
+  const prLookup = {
+    ok: true,
+    prs: [
+      closedPr({ number: 1, closingIssuesReferences: [ref(43)], body: closedPr().body.replace('#42', '#43') }),
+      closedPr({ number: 2, isCrossRepository: true }),
+      closedPr({ number: 3, headRefOid: OTHER_HEAD }),
+      closedPr({ number: 9, url: 'https://example.test/pr/9' }),
+    ],
+  };
+  const git = (args) => {
+    if (args[2] === OTHER_HEAD) throw exitWith(1);
+    return '';
+  };
+  assert.deepEqual(priorAttempt({ prLookup, git }), { number: 9, url: 'https://example.test/pr/9' });
+});
+
+test('findPrsForBranch: requests the fields findPriorAttemptPr reads', () => {
+  let seen;
+  findPrsForBranch({ branch: 'b', repo: 'o/r', gh: (args) => { seen = args; return '[]'; } });
+  assert.equal(seen[seen.indexOf('--json') + 1], 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body,isCrossRepository');
+});
+
+test('AC1.1: a retry\'s fresh branch is foreign by ancestry but prior-attempt by PR, and adopting it lets the push fast-forward', (t) => {
+  const r = makeRepos();
+  t.after(() => fs.rmSync(r.root, { recursive: true, force: true }));
+  const branch = 'worktree-dispatch-record-42';
+
+  // First attempt: pushed, its PR closed, then more commits landed on the branch.
+  r.run(r.other, ['checkout', '-q', '-b', branch]);
+  r.commit(r.other, 'plan');
+  r.run(r.other, ['push', '-q', 'origin', branch]);
+  const closedHead = r.run(r.other, ['rev-parse', 'HEAD']).trim();
+  r.commit(r.other, 'post-close-plan');
+  r.run(r.other, ['push', '-q', 'origin', branch]);
+
+  // The retry: a fresh branch of the same name from main.
+  r.run(r.work, ['checkout', '-q', '-b', branch]);
+  const git = r.gitIn(r.work);
+  const verdict = classifyRemoteBranch({ branch, git });
+  assert.equal(verdict.state, 'foreign');
+
+  const prior = findPriorAttemptPr({
+    remoteSha: verdict.remoteSha,
+    prLookup: { ok: true, prs: [closedPr({ headRefOid: closedHead })] },
+    records: [42],
+    repo: 'o/r',
+    git,
+  });
+  assert.deepEqual(prior, { number: 9, url: 'https://example.test/pr/9' });
+
+  r.run(r.work, ['merge', '--no-edit', verdict.remoteSha]);
+  assert.equal(classifyRemoteBranch({ branch, git }).state, 'mine');
+  assert.doesNotThrow(() => r.run(r.work, ['push', '-q', 'origin', branch]));
 });

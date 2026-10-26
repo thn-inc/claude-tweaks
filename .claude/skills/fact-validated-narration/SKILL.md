@@ -1,6 +1,6 @@
 ---
 name: fact-validated-narration
-description: Use when a skill emits LLM-written prose that cites external facts — a report, a digest, a dashboard — and a fabricated citation would be indistinguishable from a real one. Splits the work into gather / narrate / render, validates every citation against the gathered fact set, and names the free-text channels that must be neutralized before anything renders. Keywords - fact pack, narration, citation validation, refs, injection, neutralize, truncated, partial gather, never invent.
+description: Use when a skill emits LLM-written prose that cites external facts — a report, a digest, a dashboard — and a fabricated citation would be indistinguishable from a real one. Splits the work into gather / narrate / render, validates every citation against the gathered fact set, and names the free-text channels that must be neutralized before anything renders. Keywords - fact pack, narration, citation validation, refs, injection, neutralize, truncated, partial gather, never invent, agent verdict, evidence quote, tiebreak.
 ---
 
 # Fact-Validated Narration — Gather, Narrate, Validated Render
@@ -72,6 +72,30 @@ wrong in a way the reader cannot detect.
 - `tests/bin-lib/activity/render.test.js` — the injection and failed-gather cases.
 - `tests/activity-never-invent-conformance.test.js` — the prose pin.
 
+## Second instance: an agent verdict's evidence quote (#3945)
+
+`plugin/bin/lib/tiebreak.js` applies the same split to an agent's verdict instead of a report. The
+`/review` tiebreak agent (`plugin/skills/review/step3-tiebreak.md`) narrates a reply whose only
+citation channel is its `Evidence: {path}:{line} {quote}` line, and `resolveTiebreak` is the
+deterministic half. Its `evidenceProblem` re-reads the cited file through the injected `readFile`
+and accepts the quote only when the whitespace-squashed text appears in the window of
+`LINE_TOLERANCE_REPRODUCTION_WIDE` lines around the finding's line and carries three or more
+consecutive word characters. Every other case — a `could-not-parse` reply, a non-`DONE` status,
+missing evidence, a path mismatch, a quote the window does not contain — resolves to can't-tell,
+never to confirmed or dropped. That is "a partial gather is never an empty period" in verdict form:
+an unverifiable reply fails toward scrutiny.
+
+Its free-text channels were again found one review round at a time, across #3945 and #3947: a
+whitespace-only quote that every window contains, a one-character quote, a cited line far from the
+finding, and a line break in an echoed finding field that could forge a second `decisions.md`
+verdict line. The channels it now closes are the quote (squashed, content-checked, matched inside
+the window), the echoed `lens`/`path`/`line` fields (`badEchoedField` refuses a line break or the
+`tiebreak:` marker), and the word `Confirmed`, which `neutralize` lowercases because
+`plugin/bin/lib/console/resolve.js` lets a later AUTO line carrying it supersede a STAGED line. The
+quote parser can also fail the other way: a backtick-led source line quoted as a Markdown code span
+was mangled by the wrapper strip, so a correct refutation became can't-tell (#3947). Pin both
+directions in `tests/bin-lib/tiebreak.test.js`.
+
 ## When to use
 
 - Adding or reviewing a skill whose output is model-written prose over facts gathered from outside
@@ -100,10 +124,7 @@ Staged by the batch curation pass of run `2026-09-21T213441-spec-2697-2757-2758-
 `spec-2757/staged/reflect-3.md`, run ledger #13) and created at that run's consolidated Review
 Console under the Skill updates section's Approve-all default.
 
-**Reusability caveat, recorded deliberately.** There is exactly **one** shipped instance today. Two
-next consumers are named and plausible but not committed: `/claude-tweaks:help`'s dashboard and
-`/claude-tweaks:feedback`'s judge. If a later reader concludes `activity` is the only skill that
-will ever narrate over gathered facts, the right move is to fold this content into
-`run-directory-fact-packs` as a section and delete this file — the complexity criterion is strongly
-met (the channel list was discovered one channel at a time across two fix rounds plus a whole-branch
-review finding), the reusability one is not yet.
+**Reusability.** Two shipped instances: `activity` (#2757) and `/review`'s tiebreak resolver
+(#3945, above), so the fold-into-`run-directory-fact-packs` fallback this file was created with no
+longer applies. The complexity criterion was met from the start: each instance's channel list was
+discovered one channel at a time across fix rounds and a whole-branch review.

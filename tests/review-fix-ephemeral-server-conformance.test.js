@@ -5,11 +5,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
-const read = (...p) => fs.readFileSync(path.join(SKILLS, ...p), 'utf8');
+const read = (...p) => readText(path.join(SKILLS, ...p));
 
 const HEADING = '## Fix-wave server coordination (pipeline runs)';
 const FIX_LINE = /FIX AGENT: do not run the project's test suites, builds, dev servers, or e2e runners — make the edits and report them; the dispatcher re-verifies\./;
@@ -167,7 +167,7 @@ test('AC1.2: dev-url-detection.md Cleanup names the rebuild exception and points
 });
 
 test('docs/skill-graph.md ## review records the coordination edges', () => {
-  const graph = fs.readFileSync(path.join(__dirname, '..', 'docs', 'skill-graph.md'), 'utf8');
+  const graph = readText(path.join(__dirname, '..', 'docs', 'skill-graph.md'));
   const rev = section(graph, '\n## review\n');
   const wrapRow = rev.split('\n').find((l) => l.startsWith('| `/wrap-up` | Runs after `/review` passes'));
   assert.ok(wrapRow && wrapRow.includes('Fix-wave server coordination') && wrapRow.includes('Section D steps 2-4'));

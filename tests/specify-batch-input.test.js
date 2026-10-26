@@ -12,13 +12,13 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { extractArgumentHint } = require('../plugin/bin/lib/skill-audit/argument-hint');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const SKILL = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'specify', 'SKILL.md'), 'utf8');
-const SHAPING = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'specify', 'shaping-mode.md'), 'utf8');
+const SKILL = readText(path.join(ROOT, 'plugin', 'skills', 'specify', 'SKILL.md'));
+const SHAPING = readText(path.join(ROOT, 'plugin', 'skills', 'specify', 'shaping-mode.md'));
 
 function inputSection(content) {
   const headings = [...content.matchAll(/^## .*$/gm)];
@@ -50,7 +50,7 @@ test('specify ## Input documents the comma-list batch form', () => {
 test('specify Next Actions has a multiple-records-shaped row recommending a comma-list /flow', () => {
   // Next Actions moved to its own lazy-loaded sub-file (context-cost trim, #1806)
   // — SKILL.md's pointer cites it rather than restating the table.
-  const NEXT_ACTIONS = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'specify', 'next-actions.md'), 'utf8');
+  const NEXT_ACTIONS = readText(path.join(ROOT, 'plugin', 'skills', 'specify', 'next-actions.md'));
   assert.ok(
     /\| Shaping mode — multiple records shaped in place[^|]*\|[^\n]*\/claude-tweaks:flow #\{N1\},#\{N2\}/.test(NEXT_ACTIONS),
     'Next Actions Situation table has no "multiple records shaped in place" row recommending /claude-tweaks:flow #{N1},#{N2},...',

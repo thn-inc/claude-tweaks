@@ -8,31 +8,65 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 `plugin/bin/lib/hooks/`.
 
 - **Dispatch order is significant, not incidental.** `index.js` runs `mirror → red-tip → console →
-  release → archive → archive-branches → remote-prune → reap`, reap deliberately last because it
-  physically removes worktrees — running it earlier would make every later check's live
-  `git worktree list`-derived branch lookup fail for exactly the runs `reap` just finished with.
+  release → archive → archive-branches → remote-prune → ledger-residue → reap`, reap deliberately
+  last because it physically removes worktrees — running it earlier would make every later check's
+  live `git worktree list`-derived branch lookup fail for exactly the runs `reap` just finished
+  with.
   `red-tip` runs immediately after `mirror` so it reads the ref the shared fetch just refreshed
   instead of fetching a second time. See the ordering comment directly above the dispatch block in
   `index.js` before reordering anything.
 - **`ALL_CHECKS` is the requested-subset default, not the iteration order.** `index.js`'s own
   `DISPATCH_ORDER` constant is what's actually walked; `ALL_CHECKS` only lists membership.
 - **An explicit `--checks` subset runs without the wall-clock budget (#3026).** `budget.js`'s 18 s
-  ceiling bounds the SessionStart, background, and unscoped passes. The `hooks.js reconcile` CLI
+  ceiling bounds the SessionStart and unscoped passes; the detached `reconcile-background` pass runs under
+  its own `BACKGROUND_BUDGET_MS` (120 s, still bounded and under the 5-minute stale-lock window) because
+  the hot-path ceiling would skip its last three checks every pass (#4032). The `hooks.js reconcile` CLI
   passes `budgetMs: Infinity` into `reconcile()` whenever `--checks` names a subset, so a named
   check such as `reap`, dispatched last, is never skipped as `budget-exceeded`; it also passes
   `skipCacheStamp`, so a subset never marks the SessionStart freshness cache as fresh (the #644
   `reconcile-summary` opt-out). Runtime is then
   bounded only by each check's own timeouts, so every scripted `--checks` caller (dispatch's
   drain-termination call, `_shared/pr-first-merge-post-merge.md` Step 4.2) keeps an explicit
-  150000ms+ Bash timeout. A subset that names `archive` should name `mirror` too: without
-  `mirror`'s fetch no `origin/{integration}` refresh runs, and `archive` skips a PR GitHub merged
-  asynchronously as `local-behind-merge`.
+  150000ms+ Bash timeout.
+- **An explicit subset is expanded with its prerequisites (#3630).** For each check that reads
+  state another check produces, `index.js`'s `PREREQUISITES` table names the producing check and
+  the checks that already provide that state. `expandChecks()` adds a missing one before dispatch;
+  `DISPATCH_ORDER` still decides execution order.
+
+  | Check | Prerequisite | Satisfied by | Why |
+  |---|---|---|---|
+  | `archive` | `mirror` | `remote-prune` | `localHasMerge` reads `refs/heads/{integration}`, then `origin/{integration}`, and only the shared fetch refreshes the latter. Without it, a PR GitHub merged asynchronously skips as `local-behind-merge`. |
+  | `red-tip` | `mirror` | `remote-prune` | It reads `origin/{integration}` right after the shared fetch, and otherwise skips as `no-fetch-this-pass`. |
+
+  `release,archive,reap` runs as `mirror,release,archive,reap`; `reap` alone stays `reap`; a
+  subset naming `remote-prune` is not widened, because its `--prune` shared fetch already refreshes
+  `origin/{integration}`; `FAST_CHECKS` and `BACKGROUND_CHECKS` expand to themselves. The added
+  prerequisite runs in the same pass, so under the CLI's `--checks` path it shares the unbounded
+  budget from the bullet above. `archive-branches` has no entry: when `git cherry` cannot prove
+  equivalence it falls back to PR-state squash-merge evidence (#2252), so a stale local ref only
+  delays it and never wrongly skips it. An added prerequisite follows the pass's own gates
+  rather than overriding them: under `--dry-run` it does not fast-forward (`mirror` reports
+  `skipped` / `dry-run` — a `mirror` the caller named behaves the same), and when the gh preflight fails it is dropped along with the check it
+  served, since only a `mirror` the caller named survives the preflight narrowing.
+- **`--dry-run` writes nothing, with one deliberate exception (#4180).** A dry run skips the end-of-pass
+  cache writes, every GitHub write, the declined-learning store prune, the `origin/HEAD` repair, and a
+  run's `worktree-reap-skipped` event append; what residue tracking would have done comes back as
+  `residuePlan`. The shared `git fetch` still runs and still refreshes remote-tracking refs (and prunes
+  them under an explicit `--checks remote-prune`) — a preview over stale refs would be inaccurate, so
+  this is the one write a dry run keeps. A new check's dry-run branch must write nothing else. Reads
+  stay live: the `gh` preflight probe and the PR-state lookups still run, since a preview that did not
+  consult GitHub would report nothing true — so "writes nothing" means no writes, never "makes zero `gh`
+  calls" (#4180's AC1 states the zero-call bar over a fixture where the preflight is stubbed and only
+  the archive check runs).
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
   `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `archive`, `archive-branches`, `remote-prune`,
-  `reap` — write-only/janitorial, run in a detached `reconcile-background` child process) must
-  **partition `ALL_CHECKS` exactly** — no overlap, nothing silently dropped. A new check has to
-  join one list or the other.
+  `ledger-residue`, `reap` — write-only/janitorial, run in a detached `reconcile-background` child
+  process) must **partition `ALL_CHECKS` exactly** — no overlap, nothing silently dropped. A new
+  check has to join one list or the other.
+  The unscoped `hooks.js reconcile` CLI defers three of the six to that same background pass
+  (`CLI_DEFERRED_CHECKS`, #4032 — see the Timing contract below); an explicit `--checks` call is
+  never deferred.
 
 ## Adding a new check
 
@@ -44,27 +78,36 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `archive-branches.js`'s pattern: pure decision functions, I/O at the edges.
 2. **`bin/lib/reconcile/index.js`** — add the name to `ALL_CHECKS`, insert the dispatch call at
    the correct position in `DISPATCH_ORDER` (see the ordering bullet above), and decide which side
-   of the fast/background split it belongs on.
+   of the fast/background split it belongs on — and, when the check reads state only another check
+   produces, add a `PREREQUISITES` entry for it (see the expansion bullet above).
 3. **`bin/lib/hooks/session-start.js`'s `FAST_CHECKS`** (cheap read/detect) **or
    `bin/hooks.js`'s `BACKGROUND_CHECKS`** (write-only/janitorial) — add the name to whichever list
    matches the decision from step 2. These two lists are asserted to partition `ALL_CHECKS`
    exactly (`tests/hooks-session-start.test.js`, `tests/bin-lib/hooks/reconcile-background.test.js`)
-   — missing this step fails that assertion, not silently.
+   — missing this step fails that assertion, not silently. A `BACKGROUND_CHECKS` member whose cost
+   would dominate the unscoped CLI's wall time may also join `CLI_DEFERRED_CHECKS` (a subset of
+   `BACKGROUND_CHECKS`, pinned by `tests/bin-lib/hooks/reconcile-background.test.js`); a deferred
+   check is then absent from the unscoped CLI's inline set. `plugin/skills/tidy/scan-procedures.md`'s
+   Reconcile-first call lists every check explicitly for that reason, and
+   `tests/reconcile.test.js` pins that list to `ALL_CHECKS`.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, runs, branches,
-   remoteBranches, console, skipped }`), substituted only when `reconcile()` itself throws. If the
-   new check populates a new top-level result key, this literal needs that key added too — an
-   omission here doesn't throw or fail a lint; it just silently under-reports on the one code path
-   (a genuine throw inside `reconcile()`) that almost never runs in normal testing, which is
-   exactly what makes it easy to miss. This hazard has a precedent, not just a hypothetical: the
-   fallback silently drifted out of sync by omitting `redTip`, and stayed that way until #1009
-   (`407f6207e`) added it back. The literal is in sync with `reconcile()`'s result shape today —
-   re-check it against `index.js` rather than trusting this line.
+   remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }`), substituted only when `reconcile()` itself
+   throws. If the new check populates a new top-level result key, this literal needs that key
+   added too — an omission here doesn't throw or fail a lint; it just silently under-reports on the
+   one code path (a genuine throw inside `reconcile()`) that almost never runs in normal testing,
+   which is exactly what makes it easy to miss. This hazard has a precedent, not just a
+   hypothetical: the fallback silently drifted out of sync by omitting `redTip`, and stayed that
+   way until #1009 (`407f6207e`) added it back. The literal is in sync with `reconcile()`'s result
+   shape today — re-check it against `index.js` rather than trusting this line.
 5. **`bin/lib/reconcile/format-summary.js`'s `CATEGORIES` table** — only if the check's result is
-   array-shaped (like `worktrees`/`claims`/`runs`/`branches`/`remoteBranches`). Add a row so
-   `bin/hooks.js reconcile`'s compact human-readable default output covers the new check's taken
-   and skipped entries; the `--json` output needs no change, since it echoes the raw result object.
-6. **Three shape-asserting test files:**
+   array-shaped (like `worktrees`/`claims`/`runs`/`branches`/`remoteBranches`/`ledgerResidue`).
+   Add a row so `bin/hooks.js reconcile`'s compact human-readable default output covers the new
+   check's taken and skipped entries; the `--json` output needs no change, since it echoes the raw
+   result object.
+6. **`docs/hooks.md`'s Background convergence bullet** — it names every check twice in prose (the
+   full set, then the background half). Add the new check to both lists.
+7. **Three shape-asserting test files:**
    - `tests/reconcile.test.js` — dispatch order, `ALL_CHECKS` membership, the `local-merge-model`
      skip list (a check with no local-merge fallback belongs in that skip line's check list).
    - `tests/console-execute.test.js` / `tests/console-execution.test.js` — only if the new check
@@ -174,13 +217,68 @@ Three skip reasons come out of this check:
 Run-state is never written on any of these skips. The `status: clean` sweep is exempt from this
 check: wrap-up already closed that run.
 
+**A review finding with no tiebreak verdict blocks archival too (#3945).** When the run dir, or
+any of its `spec-*/` subdirs, holds `review-findings.json` (the findings list `/review` Step 3.7
+writes through `review-coordination.js write-findings`), `tiebreak.js`'s `checkRunTiebreakCoverage`
+requires a tiebreak verdict line in that same dir's `decisions.md` for every listed finding id.
+`decideArchiveCore` evaluates it only at the points that would otherwise return `archive`
+(`settleMergedPartial` included), so it runs after every other guard, the record check above
+among them. A run with no artifact archives exactly as before. Two skip reasons come out of it,
+each carrying a recovery `hint`:
+
+- **`tiebreak-artifact-invalid`**: the artifact is present but unreadable or malformed. It is
+  checked before any per-id gap.
+- **`tiebreak-coverage-missing`**: carries `missing`, the uncovered ids, with a spec dir's ids
+  prefixed `spec-N/`.
+
+Both are in `STRUCTURALLY_STUCK_REASONS`, because only a re-run of the findings writer and the
+tiebreak, or deleting a pre-tiebreak artifact, converges them. Unlike the record check, the
+`status: clean` sweep applies this gate as well, and its `onSkip` tracks both reasons, so a closed
+run skipped here escalates through the same structurally-stuck path as the main loop.
+`hooks.js archive-run` refuses on the same two conditions, after its own guards, and
+`review-coordination.js check-coverage` prints the same coverage result without refusing anything.
+
+**An unfiled can't-tell finding blocks archival of an auto-merge run (#4171).** An auto-merge
+path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) renders no Review Console
+and writes no `console.json`, so a can't-tell tiebreak
+finding the run held would otherwise be lost at archive. `unfiledCantTellFindings` (in
+`archive-merged.js`) returns `[]` unless `readTopLevelConsoleState` is `none` and
+`consoleReplacedByAutoMerge` is true; otherwise it names, via `console/finding-outcomes.js`'s
+`unfiledCantTell`, each finding of the run dir and of every `spec-*/` dir (prefixed `spec-N/`)
+with no `AUTO … filed as #{n} (work-fingerprint {fp})` line in that dir's `decisions.md`. A read
+failure fails closed. `runTiebreakCoverage` carries the list as `unfiledCantTell`, and
+`archiveUnlessTiebreakGap`, the single choke point every archive decision that carries a run dir passes (`decideArchive`'s thin wrapper holds none, so it never evaluates the guard), evaluates it
+last, after the artifact checks above: the skip reason is **`cant-tell-unfiled`**, carrying
+`unfiled` and `CANT_TELL_UNFILED_HINT`. It is in `STRUCTURALLY_STUCK_REASONS`, the `status: clean`
+sweep's `onSkip` tracks it, and a rendered console (a `console.json` or a `Review Console:
+terminal decision` line) turns the guard off. `hooks.js archive-run` refuses the same condition, inside its
+`console-never-rendered-staged-pending` block and after that refusal, printing the hint with the
+real run dir in place of `{run-dir}`. The remedy is to file each finding through
+`wrap-up/review-console.md`'s Can't-tell filings: a `spec-N/`-prefixed id is filed and logged with
+`--run {run-dir}/spec-N` (its own `decisions.md`). Every other run archives exactly as before.
+
+**Console residue (#3949).** `readConsoleState` returns `residue` when a run's console resolved
+(or wrote no top-level `console.json`) but `console/residue.js`'s `readRunResidue` still reports an
+unacknowledged console holding `pending`/`keep-staged` items (or a PR console item whose outcome is
+`filing-failed`/`reverse-failed`), or an unreadable one (fail closed).
+Every site that skips `console-unresolved` — `decideArchiveCore`, the `status: clean` by-number
+sweep, `hooks.js archive-run` — skips or refuses `console-residue` too, which a human clears with
+`console-residue.js --ack` (an unreadable `console.json` must be repaired or removed instead). The
+skip carries a `hint` naming the open items and any unreadable
+`console.json`, which `reconcile/index.js` passes through to `result.runs` (#4172). Since #4170, when a planned can't-tell filing has no record (`filing-pending`), the hint also names the paste-ready `console-filings.js --only` re-run (`filingRerunRemedy`); the `hooks.js archive-run` refusal prints the same remedy. `console-residue` is
+deliberately not in `STRUCTURALLY_STUCK_REASONS`: an acknowledgement (or, for a `filing-pending` item, logging its filed line), not a reconcile re-run, converges it.
+
 **Residue pruning.** After every `archive` pass, `cache.js`'s `pruneResidueFailures` drops any
 `residueFailures` entry (reason-agnostic — `move-failed`, `structurally-stuck`, any future reason)
 whose tracked path no longer exists on disk: a path can never fail or succeed there again, so it
 must stop counting toward a fresh escalation streak. An entry that was already `escalated` also
 gets its filed backlog record resolved — `escalate-residue.js`'s `resolveResidue` comments ("no
 longer exists on disk — resolved by other means") and closes it, best-effort (a resolution failure
-still drops the cache entry; the record is left for a human to close manually). Escalation itself
+still drops the cache entry; a per-path record is left for a human to close manually, while a path
+left on the consolidated `structurally-stuck` record comes off at the next escalate or resolve edit
+a pass in this checkout makes — see the consolidated-escalation bullet below). A successful
+archive also resolves an escalated `structurally-stuck` entry, through `clearResidue` (#4202): it
+is kept on a failed resolve, retried once by the same pass's prune, then dropped. Escalation itself
 (`escalateResidue`) now dedups against **closed** records too, not just open ones: a marker match
 that is already closed gets a comment + reopened rather than a duplicate filing — one record per
 path across its whole open/closed/reopened lifetime.
@@ -202,24 +300,28 @@ effect to its own memoized array directly rather than serving a stale read. Scop
 
 `archiveMerged()`'s main loop no longer carries five independent, interleaved detection
 mechanisms as separate early-return branches. `classifyRunDir(ctx, now)` is the single function
-that owns every mtime-TTL comparison (via `isStaleDir`) and the events-log recency comparison
-(via `ownEventRecency`), returning `{ kind, ttlMs, evidence }` with
-`kind ∈ { 'orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'merged',
-'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
+that owns every mtime-TTL comparison (via `isStaleDir`), the events-log recency comparison
+(via `ownEventRecency`), and the liveness verdict `adhoc-session-ended` consults (through the injectable
+`liveness` argument, default `adHocSessionLiveness`), returning `{ kind, ttlMs, evidence }` with
+`kind ∈ { 'orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended',
+'merged', 'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
 The five pre-consolidation predicates (`isOrphanedMint`, `isAbandonedInterrupted`,
 `isAdHocStandaloneSuperseded`, `decideArchive`, `isStructurallyStuck`) are now thin wrappers that
 call `classifyRunDir` with `ctx.kinds` scoped to their own one kind — this is what keeps a
 standalone call (a unit test constructing a bare fixture dir, or `trackStuckSkip`'s own narrower
 question) answering exactly what it always asked, unaffected by whether the same dir would ALSO
-match some other, higher-precedence kind under the full order. Only `archiveMerged()`'s own main
+match some other, higher-precedence kind under the full order. `adhoc-session-ended` was added
+later (#4179) and has no wrapper predicate. Only `archiveMerged()`'s own main
 loop passes the full, ordered kind set.
 
 The `checkRunIntegrity` shipped-unclosed evidence gate for `abandoned-interrupted` stays
 call-site-only, never folded into the classifier itself (folding it in would misattribute the
-`explicit: true` archival path's justification) — the main loop re-classifies scoped to just
-`adhoc-superseded` when that companion check fails, so a dir that superficially reads
+`explicit: true` archival path's justification) — the main loop re-classifies scoped to
+`adhoc-superseded` and `adhoc-session-ended` when that companion check fails, so a dir that superficially reads
 `abandoned-interrupted` but fails the gate still falls through to the next-lower-precedence kind,
 matching the pre-consolidation `&&`-chained early-return exactly.
+
+The `structurally-stuck` branch exempts every genuine ad-hoc dir at `no-branch`/`no-worktree`/`no-pr` (`isAdHocIntrinsicSkip`, #2724, widened by #4179) — that is an ad-hoc dir's normal state. A linked-worktree dir is archived by `adhoc-superseded`, once its worktree is no longer registered and `ADHOC_SUPERSEDED_TTL_MS` (30 days) has passed. A main-checkout dir is archived by `adhoc-session-ended` (never for the caller's own session: a dir whose run-state `sessionId` equals the caller's is skipped, mirroring `abandoned-interrupted`'s `ownLive`), once its session reads `dead` from `adHocSessionLiveness` (`runLiveness` with the worktree probes neutralised, since the main checkout's lock and last commit belong to every session) and `ADHOC_SESSION_ENDED_GRACE_MS` (7 days) has passed by dir mtime. A main-checkout dir whose verdict stays `unknown` is left in place, neither swept nor escalated. `trackStuckSkip` clears an exempted dir's cache entry (`clearResidue`) and, if it was already escalated, resolves its path off the consolidated record. Unlike Residue pruning above, an escalated entry is dropped only after that resolve lands (`closed`, `path-removed`, `not-found` or `already-closed`): the dir still exists, so a throw or any other status keeps the entry and the next pass retries. The resolve comment says the path is an ad-hoc session directory rather than "no longer exists on disk" (`resolveResidue`'s optional `why`), and under `reconcile --dry-run` the whole clear is skipped, the same guard `pruneResidueFailures` sits behind.
 
 ## No-run-state.json terminal path and consolidated escalation (#1811)
 
@@ -244,23 +346,33 @@ main loop, landed via #1962/#2226/#2228/#2231):
   path-specific basis, unchanged), so every stuck dir's `trackResidue` call converges on the same
   marker. The record's body carries a `<!-- stuck-paths -->…<!-- /stuck-paths -->` block
   (`parseStuckPaths`/`renderStuckPathsBlock`) edited in place via `gh issue edit --body` on each new
-  path (plus a comment, so both the record body and its thread reflect the addition) — never a
+  path — the edit (`withStuckPaths`) replaces only the line-anchored block (both markers on their own
+  lines, CRLF tolerated), keeps every other byte of the body, and appends the block to a non-empty body
+  that lost it (#2724), except that a CLOSED record being reopened is re-rendered in full
+  (`structurallyStuckBody`: a reopen is a fresh incident, so its fixed remedy text refreshes) — plus a comment, so both the record body and its thread reflect the addition — never a
   second `issue create`. The body's fixed text names every skip reason that feeds the record
   (`no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending` (#3297), #3543's
   `pr-not-found` — a stamped `run-state.json` `pr.number` GitHub's structured GraphQL error confirms
-  names no PR, whose remedy is correcting or clearing that stamp), and #3503's `merged-partial` (a run
-  whose merged PR left records unclosed, carried as `unclosed` on the skip). `no-repo-slug` is also in
+  names no PR, whose remedy is correcting or clearing that stamp), #3503's `merged-partial` (a run
+  whose merged PR left records unclosed, carried as `unclosed` on the skip), and #3945's
+  `tiebreak-coverage-missing` and `tiebreak-artifact-invalid` (a run whose `review-findings.json`
+  lists a finding with no tiebreak verdict line in `decisions.md`, or is malformed; the skip carries
+  `missing` ids and a `hint`, which `reconcile/index.js` passes through to `result.runs`, and the body
+  carries their remedy line after the `merged-partial` one), and #4171's `cant-tell-unfiled` (an
+  auto-merge run holding a can't-tell finding with no filed record, carried as `unfiled` on the
+  skip, with its own remedy line after the tiebreak one). `no-repo-slug` is also in
   `STRUCTURALLY_STUCK_REASONS` but is not listed here: it can never be filed into this record, because
   with no repo slug `findOrCreateIssue` returns `escalation-failed`, so it shows only in the residue
   summary's stuck count. Each path's own reason is its
   residue entry's `lastError` (`stuck at {reason}`), not rendered per path. The body also carries
   a fixed remedy line for `console-never-rendered-staged-pending` — a merged run that never
-  rendered a Review Console (the fast-lane auto-merge short-circuit writes no `console.json`) while
+  rendered a Review Console (an auto-merge path — the fast-lane short-circuit or the dispatch bundle Auto-merge gate — writes no `console.json`) while
   its `staged/` or any `spec-*/staged/` still holds pending or unreadable items: apply or delete
   those staged files, or write a resolved `console.json`, and the next reconcile archives the dir
   and drops it from the record. The clean-status sweep (`iterCleanRunDirs`) feeds this reason too
-  since #3668, but only for a closed run whose `decisions.md` carries the auto-merge
-  short-circuit's own log line (`consoleReplacedByAutoMergeShortCircuit`) — the same subset
+  since #3668, but only for a closed run whose `decisions.md` carries an auto-merge path's own log
+  line — the wrap-up short-circuit's, or the dispatch bundle Auto-merge gate's per-member verdict or
+  local-merge group line (`consoleReplacedByAutoMerge`, #3740) — the same subset
   `hooks.js archive-run` refuses; every other clean-loop skip stays untracked. The body's
   `merged-partial` remedy line reads: For a `merged-partial` directory, the records the run's merged PR
   was meant to close (the closing-keyword links on that PR) are still open: ship them in a later PR, or
@@ -268,18 +380,24 @@ main loop, landed via #1962/#2226/#2228/#2231):
   this record. `cache.js`'s per-path consecutive-failure counter (`trackResidue`,
   `RESIDUE_ESCALATE_THRESHOLD`) is unchanged and reason-agnostic already; only the filing/resolving
   side consolidates. Resolving one path (`resolveResidue` under `reason: 'structurally-stuck'`)
-  removes just that path from the shared record's body — the record only actually closes once every
-  path it named has resolved, so fixing directory A never silently closes the record while
-  directory B is still genuinely stuck.
+  removes just that path from the shared record's body — the record only actually closes once its
+  stuck-paths list empties, so fixing directory A never silently closes the record while
+  directory B is still genuinely stuck. Escalate and resolve edits also drop listed paths inside
+  this checkout's own `.claude-tweaks/pipelines/` that are gone from disk (#4202) — paths from
+  other checkouts are never judged, since every checkout of a repo appends to the same record —
+  and the record closes when that converged list empties. Only an absolute, normalized listed path
+  is judged; the list is editable issue text. A resolve whose edit emptied the list but whose
+  comment or close failed leaves an open record with nothing listed, and the retry closes it.
 
 ## gh-absent preflight: accepted MCP gap (#2523)
 
 `reconcile()` (`plugin/bin/lib/reconcile/index.js`) is a plain Node subprocess, not an agent-session
 skill — it cannot reach an agent session's MCP tools, only `gh`. When `gh` is absent (a cloud
 Routine sandbox with GitHub MCP tools instead of the CLI), every GitHub-dependent check —
-`red-tip`, `reap`, `release`, `archive`, `archive-branches`, `remote-prune`, `console` — is skipped
+`red-tip`, `reap`, `release`, `archive`, `archive-branches`, `remote-prune`, `ledger-residue`,
+`console` — is skipped
 via the preflight gate (`ghHealthCheck`/`ghHealthCheckAsync`, `preflight.js`), reported as
-`{"skipped":[{"check":"red-tip,reap,release,archive,archive-branches,remote-prune,console","reason":"preflight-gh-absent"}]}`.
+`{"skipped":[{"check":"red-tip,reap,release,archive,archive-branches,remote-prune,ledger-residue,console","reason":"preflight-gh-absent"}]}`.
 `mirror` is the one exception — pure git, no `gh` call — and keeps running.
 
 This is an **accepted gap, not a bug to fix here**: unlike `/claude-tweaks:dispatch`'s own queue-pull
@@ -315,13 +433,207 @@ would retry on every pass (SessionStart's inline pass AND its detached backgroun
 no-remote path returns before reconcile ever stamps `lastRunAt`, so `skipIfFresh` never short-
 circuits it. The outcome is recorded on the result as `originHeadRepair` —
 `{outcome: 'repaired', branch}`, `{outcome: 'failed', reason}`, or `{outcome: 'skipped',
-reason: 'recent-failure'}` (any of the three degrades to the `no-remote` skip when re-resolving
-still finds nothing, never throws), or `{outcome: 'unresolved'}` when a 'repaired' attempt's
+reason: 'recent-failure' | 'dry-run'}` (`dry-run`: under `--dry-run` neither `set-head` nor the
+failure stamp is attempted, #4180; any of the three degrades to the `no-remote` skip when
+re-resolving still finds nothing, never throws), or `{outcome: 'unresolved'}` when a 'repaired' attempt's
 re-resolve still came up empty — and the key is absent when no repair was attempted (no `origin`
 remote, or the branch already resolved). A failed or skipped outcome also carries `branch` when
 the re-resolve it triggers finds one anyway (the concurrent-winner case). The repair lives in
 reconcile, never in the shared resolver: that resolver runs on the pre/post-tool-use hook paths and
 stays offline.
+
+## Ledger residue (#3812)
+
+`ledger-residue.js` converges the one leftover a run's own teardown cannot cover: an open-items
+ledger (`docs/plans/{name}-ledger.md`) that reached the integration branch because the run's PR was
+merged before the teardown that deletes it ran (by a human, the fleet, or a later session).
+Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records why this lives in
+`reconcile()` rather than as a merge-time guard.
+
+- **Residue definition.** A direct `docs/plans/*-ledger.md` entry in the tree of
+  `origin/{integration}`'s tip (`git ls-tree`, so no checkout is read and no sub-directory matches).
+  Nothing but the integration tip is ever examined: an in-flight run's branch legitimately carries
+  its ledger until teardown, so an in-flight draft PR branch is never flagged (AC2.1).
+- **Removable residue is tidy's orphaned ledger.** Each candidate's blob is read at the tip
+  (`git cat-file -p {tip}:{path}`) and kept, as a per-path skip, unless it passes tidy's own
+  keep rule (`plugin/skills/tidy/scan-procedures.md`). Data loss is the reason: deleting a ledger
+  with unresolved items would silently drop them. The checks run in this order:
+
+  | Kept when | Reason |
+  |---|---|
+  | the blob cannot be read | `ledger-read-failed` |
+  | no `# Open Items` first line or no `\| # \| Phase \| Item \| Status \| Resolution \|` header | `not-a-ledger` |
+  | any row's status is `open` (`wrap-up/pack.js`'s `parseLedger`) | `ledger-has-open-rows` |
+  | any row's status is neither `open` nor terminal | `ledger-status-unrecognized` |
+  | the `.claude-tweaks/pipelines/` listing failed | `run-dir-scan-failed` |
+  | a non-`archive` run directory is attributed to it | `run-live` |
+  | the open-record list could not be read | `record-scan-failed` (or the classified `gh-absent` / `network-failure`) |
+  | an open work record references it | `referenced-by-open-record` (the entry carries `records`) |
+
+  Attribution follows tidy, narrowed from tidy's substring match. Every `#{N}` token on the
+  ledger's first line is matched as a whole dash-separated token of a run-dir name after its
+  leading timestamp, so `#21` never matches `2026-10-21T…`. When the first line has no `#{N}`, the filename's `{feature}` slug
+  (`YYYY-MM-DD-{feature}-ledger.md`) is matched as a substring of the name. A kept ledger is
+  still reported, so AC1 holds; it waits for a human or `/claude-tweaks:tidy` to resolve it.
+
+  Referencing records follow tidy's referencing-record pass. An open work record keeps the ledger
+  when its `namedTarget` path equals the ledger's path, or its body contains the ledger's filename
+  (which covers the full path) or `{feature}` slug; the kept entry carries the matching record
+  numbers, ascending. The open-record list is read once per pass, and only when a ledger clears
+  every check above, so a pass with no such ledger reads nothing. It comes from
+  `gh issue list --state open`, or from `specs/` under `work-backend: local-files` (closed records
+  excluded). A failed read fails closed: every ledger that reached this check is kept, as
+  `record-scan-failed`, or as the classified `gh-absent` / `network-failure`. One deliberate
+  difference from tidy: tidy deletes the ledger and closes the referencing records in one approved
+  action, while this background check never closes a record. It keeps the ledger and leaves it to
+  `/claude-tweaks:tidy`.
+- **Write posture.** A new ref plus a PR, never a push to the integration branch and never a force
+  or lease. The removal commit is built with plumbing (`read-tree` → `update-index --force-remove`
+  → `write-tree` → `commit-tree`) on a scratch `GIT_INDEX_FILE`, so the checkout's index, HEAD, and
+  working tree are untouched, then pushed to `refs/heads/build/ledger-residue-{hash}`. The hash
+  covers only the removable set that remains after every skip below. A `commit-tree` failure whose
+  error reads `Author identity unknown` or `Committer identity unknown` is
+  `committer-identity-unset`; any other plumbing failure is `commit-failed`, and a rejected push
+  is `push-failed`. `gh pr create` runs under `GH_TIMEOUT_MS` (`shared-primitives.js`) and is
+  never retried, since a timed-out create may still have opened the PR (`pr-create-failed`).
+- **Removal-PR states.** Heads are enumerated by ref prefix, not by recency:
+  `gh api --paginate repos/{owner}/{repo}/git/matching-refs/heads/build/ledger-residue- --jq '.[].ref'`
+  lists every such branch (one ref per line), then `gh pr list --head {branch}
+  --state all --json number,state,headRefName,body,isCrossRepository` runs once per branch. That
+  sees every earlier removal PR however old, including ones for a residue set that has since
+  changed. A fork PR that reuses the branch name is dropped (`isCrossRepository`), since its body
+  is not the check's own. A path is "named" by a PR when the body lists it in backticks, as the
+  check's own body does.
+
+  | Evidence | Applies to | Reason |
+  |---|---|---|
+  | any removal PR is `OPEN` | every path the keep rule did not keep | `removal-pr-open` (carries that PR's number) |
+  | a `MERGED` removal PR names the path, yet it is still present | that path | `removal-merged-but-present` |
+  | a `CLOSED` (unmerged) removal PR names the path | that path, never re-proposed | `removal-pr-declined` |
+  | none of the above | the removable set | open the PR (push first when the ref is absent): `pr-opened` / `removal-pr-opened` |
+
+  The list call is classified like `pr-state.js`: `gh-absent` or `network-failure` skips every
+  path closed, as does an indeterminate ref check (`ref-check-failed`); any one failing call
+  fails the whole list. With no matching refs there are no per-head calls and the list is empty.
+  `--dry-run` reports `dry-run` and writes nothing. A declined branch stays on origin:
+  `remote-prune` deletes only branches whose PR is `MERGED`. The remaining limit is the branch
+  itself: a merged removal PR's branch is deleted after merge (by `remote-prune` or GitHub's
+  auto-delete), so `removal-merged-but-present` fires only while that branch survives, and a
+  declined branch someone deletes by hand drops its decline.
+- **Surfacing.** `bin/hooks.js`'s `reconcile-background` summary records `ledgerResiduePrOpened`
+  (removal PRs opened that pass) and `notableLedgerResidue` (per-path skips, minus
+  `ledger-residue.js`'s `QUIET_SKIP_REASONS`: `dry-run`, `run-live`, `not-a-ledger`,
+  `removal-pr-declined`, `gh-absent`, `network-failure`, `ref-check-failed`).
+  `referenced-by-open-record` and `record-scan-failed` are not quiet, so they surface at
+  SessionStart. The next SessionStart renders both summary fields in its prior-pass line.
+  `/claude-tweaks:tidy`'s Step 6 reports them under its Residue-ledger removal PR row.
+- **Fetch.** Reads the ref the pass's shared fetch refreshed (`skipFetch` when that fetch ran and
+  succeeded), else fetches `origin {integration}` itself; a failed fetch skips the whole check as
+  `fetch-failed` rather than flagging a ledger a merged removal PR already deleted. Hence its slot:
+  after `remote-prune` (same fetched ref), before `reap` (which stays last).
+- **Side.** `BACKGROUND_CHECKS` — it pushes a ref and opens a PR, so it never runs inline at
+  SessionStart.
+
+## Timing contract (#4032)
+
+An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is what brings it under
+10 s, and what lets the next regression be found by reading the JSON instead of guessing.
+
+- **`timings` rides on every `reconcile()` result** — every return path, early ones included — as
+  `{ totalMs, phases: { [phase]: { ms, subprocessMs, subprocessCount, subprocesses: { [family]:
+  { count, ms, maxMs } } } } }` (`timing.js`'s `summarizeTimings`, milliseconds to one decimal), or
+  `null` when the summarizer itself faulted: measurement never changes what a pass does.
+  `hooks.js`'s `reconcile-threw` fallback carries `timings: null` for the same shape reason.
+- **Phase names** are `setup`, `mirror`, `red-tip`, `console`, `release`, `archive`,
+  `archive-branches`, `remote-prune`, `ledger-residue`, `reap` and `finalize`; only phases that ran
+  appear. `setup` is the residual — wall time outside every timed phase — so an early return still
+  reports where its time went. `subprocessMs` can exceed `ms` for a phase that runs subprocesses
+  concurrently (the `gh-pool.js` mappers), so read it as cost, not as a share of the phase.
+- **Every subprocess under `plugin/bin/lib/reconcile/` is timed.** Call `timing.js`'s
+  `execFileSyncTimed` / `execFileAsyncTimed`, or git through `runGit` / `runGitAsync`, which route
+  through them; `subprocess-timing-conformance.test.js` fails on a direct `child_process` call in
+  that directory (exempt: `timing.js` itself and `background-spawn.js`, whose detached child has no
+  duration to attribute). An unmeasured spawn would make the report quietly under-count.
+- **PR-state cache (`pr-state-cache.js`).** `archive`, `reap` and `release` share one per-pass
+  resolver in front of `pr-state.js`: in-pass memo, then a persisted entry still inside its TTL,
+  then a live call. Only terminal answers persist (`persistableTtl`, in `reconcile-cache.json`'s
+  `prStates` key as `{ v, at }`, keyed `n:{number}` / `b:{branch}`); anything else has TTL 0:
+
+  | Answer | By | TTL |
+  |---|---|---|
+  | `MERGED` PR | number or branch | `PR_STATE_RETENTION_MS` (30 days) |
+  | `pr-not-found` | number | `PR_STATE_RETENTION_MS` |
+  | no PR (`null`) | branch | `NO_PR_TTL_MS` (5 min) — a PR can be opened at any time |
+  | `OPEN` / `CLOSED` PR, any failure string (`gh-absent`, `network-failure`, `invalid-arguments`) | either | never persisted; failures are not memoized either, so a transient failure is never replayed as an answer |
+
+  `release` alone never consumes a persisted by-branch `null`: it passes `{ freshNull: true }`
+  to `byBranchAsync` and `prefetch`, which re-query such a key live (a PR opened inside the
+  5-minute TTL would otherwise flip a `pr-open` skip into a release); a `null` learned live in the
+  same pass still serves from the memo. `archive` and `reap` keep the persisted answer.
+
+  A persisted `MERGED`-by-branch answer keeps the PR it first saw: if a second PR on the same
+  branch also merges, a fresh call would name the newer one. Every consumer acts the same on
+  either, because all they check is `MERGED`.
+
+  Entries past retention or malformed are dropped when the pass persists, which re-reads the file
+  first so another writer's keys survive. `peekNumber` answers from the memo or a valid persisted
+  entry and never makes a live call.
+- **`prefetch` warms the memo with one aliased GraphQL read** (`pr-state-batch.js`:
+  `BATCH_CHUNK` = 50 aliases per `gh api graphql` query, chunks run under a small concurrency cap;
+  branch lookups use `orderBy: CREATED_AT DESC` and the same governing-PR tie-break as
+  `pr-state.js`). The batch is an accelerator, never an authority: a `NOT_FOUND` alias, a truncated
+  page, a malformed node or any other error leaves that key out, and the per-item `gh` twins
+  resolve it, so they stay the sole owner of `pr-not-found` and every failure string. It runs only
+  when `origin` is provably on `github.com`, and the query is pinned there with `--hostname
+  github.com` so a `GH_HOST` cannot redirect it; any other host takes the per-item path.
+- **Claim blobs are reused by blob sha** (`release-merged.js`, `claimBlobs` key). An active claim's
+  contents are cached by git blob sha and rewritten each pass to that pass's active claims, so it
+  stays bounded. The reuse skips only the contents read — classification and the PR/issue join
+  re-run every pass — and a stale sha can only make the conditional tombstone write fail
+  (`release-write-failed`), never release the wrong claim. `release` also `prefetch`es its
+  by-number and then its branch-join lookups before the per-item calls.
+- **Residue marker index** (`issue-list-cache.js`, `residueIssueIndex` key,
+  `{ "{repo}\n{marker}": issueNumber }`). The residue-escalation dedup lookup
+  (`escalate-residue.js`'s `findResidueDuplicate`, reached from `archive` and `reap`) becomes one
+  `gh issue view` instead of a full-repo `gh issue list`; it falls back to the list whenever this
+  pass already holds the list, the index has no entry, or the viewed issue no longer carries the
+  marker (that entry is dropped). **Documented divergence:** with duplicates, the indexed issue
+  (canonical at index time) answers even if another process later filed a newer duplicate, where
+  the list path would have picked the newer one.
+- **One run-integrity cache per pass.** `index.js` hands `archive` a single
+  `{ worktreeList, integrationBranch }` cache (the caller's own when it passed one), so the archive
+  loop and every per-dir `checkRunIntegrity` spawn `git worktree list` once between them. `reap`
+  lists afresh itself, since it removes worktrees.
+- **CLI deferral.** The unscoped `hooks.js reconcile` runs `ALL_CHECKS` minus `CLI_DEFERRED_CHECKS`
+  (`archive-branches`, `remote-prune`, `ledger-residue` — `archive-branches`' and `remote-prune`'s
+  per-branch GraphQL lookups measured 14.8 s and 20.4 s, and `remote-prune` needs the all-refs fetch) and hands those to the detached `reconcile-background`
+  pass through `background-spawn.js`'s `spawnBackgroundIfStale`, gated by that pass's own status
+  file, as SessionStart does. The JSON gains `background: { checks, spawned, reason }`
+  (`reason`: `spawned`, `fresh`, `spawn-failed`, `no-root`, `dry-run`, `not-converged`) and a
+  `skipped` entry `deferred-to-background` for the three; an explicit `--checks` call is never
+  deferred and carries neither. Nothing is spawned when the pass did not converge —
+  `NOT_CONVERGED_REASONS` (`no-repo`, `no-remote`, `fresh-cache`, `local-merge-model`,
+  `preflight-gh-absent`, `preflight-github-unreachable`, `reconcile-threw`); report-only skips such
+  as `non-canonical-run-dir` or `budget-exceeded` do not count — nor under `--dry-run`, which
+  therefore previews none of the three (`skipped` still names them; `background.reason` reads
+  `dry-run`, saying nothing was handed over; an explicit `--checks … --dry-run` previews them). The
+  background pass runs under `BACKGROUND_BUDGET_MS` (`budget.js`, 120 s) because the 18 s hot-path
+  ceiling skipped its last three checks every pass. Without `remote-prune` the inline set is
+  mirror-only-shaped, so the unscoped CLI now takes `mirror`'s single-ref `git fetch origin
+  {integration}` (5 s `FETCH_TIMEOUT_MS`, concurrent with preflight) where it used to run
+  `fetch --prune origin` (10 s); other `refs/remotes/origin/*` refs refresh when the background
+  pass's `--prune` fetch runs. `/tidy`'s Reconcile-first call names all nine
+  checks explicitly, because the unscoped call defers three.
+- **Measured (AC1.1, #4032).** `node plugin/bin/hooks.js reconcile --json`, 20 sequential unscoped
+  calls against this repo's main checkout (live network, HEAD baf2964, 2026-10-25): wall time min
+  6786 / p50 7266 / p90 7931 / max 8845 ms, against about 52.5 s before (63 s in the record).
+  Per-phase p50 ms: setup 495.7, mirror 239.8, red-tip 567.8, console 27.9, release 1594.9, archive
+  1737.1, reap 2463.5, finalize 1.2. Wall time exceeded `timings.totalMs` by 58-90 ms on every call
+  (process start-up), so the two clocks agree. The deferred checks do not vanish: one background-shaped pass
+  (`release,archive,archive-branches,remote-prune,ledger-residue,reap`) took about 45 s, which the
+  120 s ceiling lets finish. A live-network wall-time property of this repo's state, so verified by
+  this measurement rather than a committed `npm test` assertion; re-measure after changing any
+  contract above.
 
 ## Referenced by
 
