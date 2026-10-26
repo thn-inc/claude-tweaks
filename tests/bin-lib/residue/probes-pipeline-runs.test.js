@@ -38,6 +38,26 @@ test('an un-archived clean run dir is reported with remedy auto', () => {
   assert.match(findings[0].subject, /2026-01-01T000000-spec-1/);
 });
 
+// #4430: the subject is a display ID, `/`-joined on every OS. A counting
+// win32 `relative` proves the subject is produced through the injected
+// pathImpl (a native path.relative would leave `calls` empty and, on Windows,
+// emit backslashes).
+function countingWin32() {
+  const calls = [];
+  const pathImpl = { ...path.win32, relative: (a, b) => (calls.push([a, b]), path.win32.relative(a, b)) };
+  return { calls, pathImpl };
+}
+
+test('#4430: the finding subject is /-joined through the injected pathImpl', () => {
+  const root = makeFixture();
+  writeRun(root, '2026-01-01T000000-spec-1', { status: 'clean' });
+  const { calls, pathImpl } = countingWin32();
+  const { findings } = probePipelineRuns({ cwd: root, pathImpl });
+  assert.strictEqual(findings.length, 1);
+  assert.strictEqual(findings[0].subject, '.claude-tweaks/pipelines/2026-01-01T000000-spec-1');
+  assert.ok(calls.length > 0, 'the subject must be produced through pathImpl.relative');
+});
+
 // #1118 supersedes the #1011 audit that used to pin the opposite here:
 // observed live during record #706's wrap-up, a `--scope blast-radius`
 // sweep returned 6 un-archived clean run dirs belonging to OTHER records —

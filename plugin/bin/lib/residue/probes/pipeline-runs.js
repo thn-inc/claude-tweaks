@@ -17,6 +17,7 @@ const path = require('node:path');
 const { makeFinding } = require('../finding');
 const { mainCheckoutRoot, safeReal } = require('../../hooks/worktree-detect');
 const { RUN_ID_RE } = require('../../hooks/context');
+const { relativeDisplayId } = require('../../shared-primitives');
 const { defaultIsPidAlive, lockedEvidence } = require('./worktrees');
 
 // Realpath both sides of every path comparison: fixture/tmp paths and real
@@ -68,7 +69,7 @@ function hasStagedEntries(dir) {
   }
 }
 
-function probePipelineRuns({ cwd, runId, worktreeRoot, scope } = {}) {
+function probePipelineRuns({ cwd, runId, worktreeRoot, scope, pathImpl = path } = {}) {
   const start = cwd || process.cwd();
   const root = mainCheckoutRoot(start) || start;
   const worktreeRootReal = worktreeRoot ? safeReal(worktreeRoot) : null;
@@ -132,7 +133,7 @@ function probePipelineRuns({ cwd, runId, worktreeRoot, scope } = {}) {
       // (plugin/skills/tidy/step-6-auto.md) — never by reconcile, which
       // structurally never sees a clean dir (see the header comment above).
       scope: isOwnRun(entry.name, state, runId, worktreeRootReal) ? 'blast-radius' : 'observed',
-      subject: path.relative(root, dir),
+      subject: relativeDisplayId(root, dir, pathImpl),
       remedy: lockedWorktree ? 'record' : 'auto',
       evidence: lockedWorktree
         ? `run-state.json status: clean, but recorded worktree is still locked — ${lockedEvidence(lockedWorktree, defaultIsPidAlive)}`
