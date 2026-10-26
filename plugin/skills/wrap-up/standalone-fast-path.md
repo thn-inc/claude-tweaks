@@ -47,7 +47,8 @@ still triggered a frontend visual review that auto-started a dev server
 separate fragment. If `ephemeral-server.txt` does not exist, this item never applied; skip it.
 
 **Item 8 (pipeline run directory)** — always applies (a run directory exists from Phase 1
-onward). Execute directly, the same procedure as `cleanup-procedures-execution.md`'s
+onward; `$RUN_DIR` is Phase 1's carried path, never re-resolved — a `clean` run is refused by
+`resolve-run-dir --spec-slug` step 2, #4151). Execute directly, the same procedure as `cleanup-procedures-execution.md`'s
 "## B. Pipeline run directory" section (both this file and that one cite the same two verbs —
 never restate their internals a third way):
 

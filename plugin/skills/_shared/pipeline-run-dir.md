@@ -23,7 +23,13 @@ worktree instead of the main checkout — a shadow, the exact `[IL-127]` shape, 
 rather than silently substituted. Never creates a directory unless `--create` is passed.
 
 - No flags: steps 1-2 only (env var, then newest matching directory for `--spec-slug`). This is
-  the read-only "where is the run I already have" call most steps need.
+  the read-only "where is the run I already have" call most steps need. Step 2 never adopts a
+  directory whose status is terminal, that carries `createdBy: "release-standalone"`, that is dead
+  (`interrupted`, or `active` with its stamped worktree gone), or whose `run-state.json` exists but
+  cannot be read as a JSON object; it skips such a directory for the next-newest match
+  (`adoptionRefusal`, #1962/#4151). An absent `run-state.json` (a bare mint) is still adopted, and
+  step 1's `PIPELINE_RUN_DIR` directory is never refused. A caller therefore must not use step 2 to
+  re-find a run it has already closed (`close-run` makes it `clean`) — carry the path instead.
 - `--create` with `--spec-slug <s>` and no `--standalone`: the plain mkdir-only mint shape
   `/flow` (`flow/steps-and-gates.md` case 4), `/claude-tweaks:dispatch` (`dispatch/SKILL.md` Step
   4), and `flow/claim-targets.md`'s direct-invocation mint use — `config.yml`/`decisions.md` are
@@ -34,7 +40,8 @@ rather than silently substituted. Never creates a directory unless `--create` is
   standalone-auto allowlist (the command then
   refuses to create outside auto mode); omit `--mode` entirely for a caller that creates in every
   mode regardless — the two documented exceptions, `/claude-tweaks:wrap-up` and
-  `/claude-tweaks:release`, each with its own clause above.
+  `/claude-tweaks:release`, each with its own clause above. Combined with `--spec-slug` (wrap-up's
+  mint), step 2 still runs first, so the same adoption refusal applies before anything is created.
 - `--root-only`: skips run resolution entirely and prints the anchored `$RUN_ROOT` itself — for a
   call site that only ever needed the main-checkout root (a `find` backstop scoped to the whole
   `pipelines/` tree, the transitional copy-out guard's destination computation), never a specific

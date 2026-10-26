@@ -2,7 +2,7 @@
 
 **Goal:** `/claude-tweaks:release` Step 8's disposition (`plugin/skills/release/disposition.md`) hand-enumerates the staged-file prefixes a release-gate review produces and fails closed on anything else, so a `staged/design-decision-*.md` (staged by `/claude-tweaks:review` Step 6.5 through `design-wrapper/modes/review.md`) leaves the release run unarchived. Route it, and derive the inventory and routing from one roster of the review's staging producers that a test keeps honest.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-25T112219-record-4156/work/4156-spec.md` (materialized from GitHub issue #4156)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-25T112219-record-4156/work/4156-spec.md` (materialized from GitHub issue #4156)
 
 **Premise re-verified at HEAD `4535906d`:** the gap is real, and it is wider than `design-decision-*`. Release Step 3 invokes `/claude-tweaks:review base:{base}` with `$PIPELINE_RUN_DIR` set, so review resolves to **full** mode (`review/SKILL.md` "Flow-context default"). In one release run review's own pass can therefore also stage `staged/visual-review-skipped.md` / `staged/visual-review-dev-url.md` (Step 6, `visual-review/SKILL.md`), and its Step 1.5 test gate can stage `staged/test-fix-{n}.patch` (`test/fix-mode.md`) and `staged/flaky-allowlist-{slug}.md` (`test/flake-handling.md`). None of them has a route today. A roster of "the review's staging producers" that left them out would be knowingly incomplete, so they are in scope as roster rows.
 
