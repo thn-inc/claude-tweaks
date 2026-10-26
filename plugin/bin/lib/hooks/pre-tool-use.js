@@ -350,7 +350,7 @@ const POLICY_COMMIT_STATUSES = new Set(['A', 'M', 'D']);
 function isPolicyOnlyCommit(command, cwd) {
   if (typeof command !== 'string' || !POLICY_COMMIT_ALLOWLIST.test(command)) return false;
   try {
-    const { stdout, failure } = runGit(['diff', '--cached', '--name-status', '-z'], cwd);
+    const { stdout, failure } = runGit(['diff', '--cached', '--name-status', '-z'], cwd, { raw: true });
     if (failure !== null || typeof stdout !== 'string') return false;
     const records = parseNameStatusZ(stdout);
     if (records.length !== 1) return false;
@@ -367,7 +367,12 @@ function isPolicyOnlyCommit(command, cwd) {
 // 1's decision: EXEMPT): admits EXACTLY `git push <remote> --delete <branch>`
 // or `git push <remote> :<branch>` — one remote, one branch, nothing else —
 // no other flag, no shell operator (&&, ;, |, $(), backticks), no env-var
-// prefix, no path to git other than the bare word. Mirrors
+// prefix, no path to git other than the bare word. One optional leading
+// `-C <path>` (quoted or bare, the same CQ_ARG rules as every other token
+// here — so no `$`, backtick, or backslash in a double-quoted path, and no
+// second `-C`) is admitted between `git` and `push` (#3900): `-C` only picks
+// the directory the same delete-only push runs in, so it adds no command
+// shape the grammar did not already admit. Mirrors
 // POLICY_COMMIT_ALLOWLIST's whole-command, default-deny-by-construction
 // discipline directly: a compound command or an extra flag/positional simply
 // fails to match, the same way a compound commit does above. Unlike the
@@ -375,7 +380,7 @@ function isPolicyOnlyCommit(command, cwd) {
 // ref target is fully determined by the command text alone (a commit's
 // staged content is not), so the regex match is the whole check.
 const DELETE_ONLY_PUSH_ALLOWLIST = Object.freeze(new RegExp(
-  `^\\s*git\\s+push\\s+${CQ_ARG}\\s+(?:--delete\\s+${CQ_ARG}|:${CQ_BARE})\\s*$`,
+  `^\\s*git\\s+(?:-C\\s+${CQ_ARG}\\s+)?push\\s+${CQ_ARG}\\s+(?:--delete\\s+${CQ_ARG}|:${CQ_BARE})\\s*$`,
 ));
 
 function isDeleteOnlyPush(command) {

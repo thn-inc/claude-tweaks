@@ -9,7 +9,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { PER_FILE_CAP_BYTES } = require('../../../plugin/bin/lib/review-context/build');
+const { PER_FILE_CAP_BYTES, TOTAL_CAP_BYTES } = require('../../../plugin/bin/lib/review-context/build');
 const { readText } = require('../../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
@@ -117,5 +117,16 @@ test('3744 AC: review-effort-derivation.md pipes the record labels on stdin and 
     EFFORT_DERIVATION,
     /gh issue view \{n\} --json labels \| node -e "[^\n]*readFileSync\(0\)[^\n]*parseRecordFacets/,
     'the github-issues label read must pipe into a node -e that reads stdin and calls parseRecordFacets',
+  );
+});
+
+test('4220: step3-lens-dispatch.md names the total budget in KB and the per-path git diff read', () => {
+  assert.ok(
+    LENS_DISPATCH.includes(`${TOTAL_CAP_BYTES / 1024} KB total budget`),
+    `step3-lens-dispatch.md must name the budget as ${TOTAL_CAP_BYTES / 1024} KB`,
+  );
+  assert.ok(
+    LENS_DISPATCH.includes("read that change with `git diff {base}...{branch} -- '{path}'`, one path per call"),
+    'step3-lens-dispatch.md must tell lens agents to read an elided hunk per path',
   );
 });

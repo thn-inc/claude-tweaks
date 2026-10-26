@@ -18,4 +18,5 @@ After journey capture, check if the build's code changes affect documented areas
       `git commit -m "Update {doc} — {what changed}"`
    e. **Defer to wrap-up** (per that threshold). Append to ledger with phase `build/docs` and status `open`:
       "{doc} may need updates — {what changed in code}. Review in wrap-up."
+   f. **No stale text** — when the read finds nothing the change makes stale and `$PIPELINE_RUN_DIR` is set, log one line per such doc: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/build" --status SCANNED --step "Common Step 6.5" --text "docs sync: {doc} assessed at {sha}, no stale text" --reversibility n/a`, `{doc}` being the doc path as `docs/REGISTRY.md` writes it and `{sha}` `git rev-parse HEAD` at the assessment. A {doc} containing a double quote, `$`, a backtick or a backslash is passed with `--text-file` instead (`_shared/auto-decision-log.md`'s Text from git or a user rule).
 5. **No matches** — skip silently. No output.

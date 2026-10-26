@@ -11,8 +11,9 @@
 // splitting run state across two locations ([IL-127]).
 //
 // `run-dir-resolution.md`'s Bash snippet stays as the reference implementation
-// this module mirrors — every call site should cite this command instead of
-// restating that snippet.
+// this module mirrors — except that step 2 here also refuses an unadoptable
+// match (`adoptionRefusal`, #1962/#4151), which the snippet does not. Every
+// call site should cite this command instead of restating that snippet.
 //
 // Deliberately loud where the shared resolution algorithm (as consumed by a
 // skill adopting $PIPELINE_RUN_DIR) is deliberately quiet: that algorithm
@@ -79,6 +80,15 @@ function readRunStateSafe(dir) {
   }
 }
 
+function deadState(state) {
+  if (!state) return false;
+  if (state.status === 'interrupted') return true;
+  if (state.status === 'active' && typeof state.worktree === 'string' && state.worktree) {
+    return !fs.existsSync(state.worktree);
+  }
+  return false;
+}
+
 // #1962: a matching run dir whose own bookkeeping shows it's already dead —
 // `interrupted`, or `active` with a stamped worktree that no longer exists on
 // disk — must never be silently adopted by step 2's slug match below.
@@ -87,14 +97,32 @@ function readRunStateSafe(dir) {
 // this record's own Current State). Returns false (not dead) when
 // run-state.json is absent/unreadable — a bare mkdir-only mint (no
 // run-state.json written yet) is never itself "dead," just not yet adopted.
+// Step 2 refuses the unreadable case through `adoptionRefusal` below instead.
 function isDeadRunDir(dir) {
-  const state = readRunStateSafe(dir);
-  if (!state) return false;
-  if (state.status === 'interrupted') return true;
-  if (state.status === 'active' && typeof state.worktree === 'string' && state.worktree) {
-    return !fs.existsSync(state.worktree);
+  return deadState(readRunStateSafe(dir));
+}
+
+// #4151 (moved out of `/claude-tweaks:release`'s inline adoption guard, #3898): why step 2
+// must not adopt `dir`, or null when it may. Order: an unreadable run-state.json (a read
+// error other than ENOENT, a JSON.parse failure, or a value that is not a plain object — a
+// crash or truncated write must never read as "adopt"), a `createdBy: release-standalone`
+// directory, a terminal status (any string outside run-integrity's NON_TERMINAL), then the
+// #1962 dead check. An ABSENT run-state.json stays adoptable (a bare mkdir-only mint), and a
+// missing or non-string status is not terminal. Step 1's PIPELINE_RUN_DIR never reaches this.
+function adoptionRefusal(dir) {
+  // Lazy: run-integrity -> context.js -> this module is a load-time cycle if required at the top.
+  const { NON_TERMINAL } = require('./run-integrity');
+  let state;
+  try {
+    state = JSON.parse(fs.readFileSync(path.join(dir, 'run-state.json'), 'utf8'));
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? null : 'unreadable-run-state';
   }
-  return false;
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return 'unreadable-run-state';
+  if (state.createdBy === 'release-standalone') return 'release-standalone';
+  if (typeof state.status === 'string' && !NON_TERMINAL.has(state.status)) return 'terminal';
+  if (deadState(state)) return 'dead';
+  return null;
 }
 
 // True when `slug` occurs in `name` as a whole `-`-delimited segment: bounded on
@@ -108,8 +136,9 @@ function hasSegment(name, slug) {
 // Step 2 (`_shared/run-dir-resolution.md`'s resolution order): the most recent
 // directory under `{pipelinesRoot}` whose name contains `specSlug` as a whole
 // segment (`hasSegment` above, #3865), matching the reference snippet's
-// segment-glob `find ... | grep canonical | sort | tail -n 1` — except that a
-// dead candidate (#1962, `isDeadRunDir` above) is skipped in favor of the
+// segment-glob `find ... | grep canonical | sort | tail -n 1` — except that an
+// unadoptable candidate (`adoptionRefusal` above: dead per #1962, terminal,
+// release-standalone or unreadable per #4151) is skipped in favor of the
 // next-newest match, rather than being adopted as-is. A non-canonical name
 // (`RUN_ID_RE` above) is never a candidate at all, as in the snippet: a plain
 // `sort` lets `20260911T…` outrank every `2026-MM-DDT…` name forever (#2870).
@@ -122,7 +151,7 @@ function newestMatch(pipelinesRoot, specSlug) {
     .sort();
   for (let i = names.length - 1; i >= 0; i -= 1) {
     const dir = path.join(pipelinesRoot, names[i]);
-    if (!isDeadRunDir(dir)) return dir;
+    if (adoptionRefusal(dir) === null) return dir;
   }
   return null;
 }
@@ -284,4 +313,4 @@ function resolve(opts = {}) {
   );
 }
 
-module.exports = { resolve, formatTimestamp, isDeadRunDir, RUN_ID_RE };
+module.exports = { resolve, formatTimestamp, isDeadRunDir, adoptionRefusal, RUN_ID_RE };

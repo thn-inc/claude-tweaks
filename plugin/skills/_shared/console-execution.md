@@ -71,8 +71,8 @@ nothing filed, logged as Override's `drop {#}` is (`wrap-up/review-console-inter
 console comment carries its row (an overflow comment included); a row no comment carries is
 recorded `declined`, not cleared — a drop needs the untick. A ticked row whose filing failed
 (a non-zero `console-filings.js` exit, or a failed create) goes in `resolve-console --filing-failed`:
-its reply reads `filing failed — see decisions.md`, Resolve stays unticked, and it is carried as
-step 7 carries a failed filing — never recorded `executed`.
+its reply reads `filing failed — see decisions.md`, Resolve stays unticked, and it stays
+a `filing-failed` outcome that `console-residue.js --run` lists, for the run's final stop to carry — never recorded `executed`.
 
 **Staged-file drift check, before executing any item that reads one:** verify the item's staged
 file (`staged/...`) still exists, and re-hash its current content against `console.json`'s recorded

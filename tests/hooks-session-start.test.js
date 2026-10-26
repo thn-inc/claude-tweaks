@@ -1441,6 +1441,28 @@ test('AC3.2/AC3.3: SessionStart re-stamps the owner block before it spawns the r
   assert.strictEqual(ctxLib.readRunState(run).owner.pid, process.pid);
 });
 
+test('#4150: a resume SessionStart re-stamps an owner block still inside the heartbeat window', async () => {
+  const project = gitProject();
+  const run = mkRun(project, '2026-07-01T090000-spec-1', {
+    status: 'interrupted',
+    sessionId: 'sess-w',
+    owner: { sessionId: 'sess-w', host: require('os').hostname(), pid: 999999999, pidSource: 'env', pidStartedAt: null, heartbeatAt: new Date(Date.now() - 5_000).toISOString() },
+  });
+  const childProcess = require('child_process');
+  const realSpawn = childProcess.spawn;
+  const priorPid = process.env.CLAUDE_PID;
+  process.env.CLAUDE_PID = String(process.pid);
+  childProcess.spawn = () => ({ on() {}, unref() {} });
+  try {
+    await runSessionStart({ input: { source: 'resume', session_id: 'sess-w' }, runDir: run, runState: null, cwd: project, ownedRun: { dir: run, attribution: 'session' } });
+  } finally {
+    childProcess.spawn = realSpawn;
+    if (priorPid === undefined) delete process.env.CLAUDE_PID;
+    else process.env.CLAUDE_PID = priorPid;
+  }
+  assert.strictEqual(ctxLib.readRunState(run).owner.pid, process.pid, 'the in-window owner block was re-stamped at SessionStart');
+});
+
 test('#3845: only a resume re-stamps — a startup SessionStart (a nested claude -p looks like one) leaves ownerPid alone', async () => {
   assert.strictEqual((await resumeStamp({ source: 'startup' })).ownerPid, 111);
 });

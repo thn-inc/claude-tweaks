@@ -4,6 +4,7 @@ files:
   - plugin/skills/flow/materialize.md
   - plugin/skills/flow/failure-cards.md
   - plugin/skills/_shared/ceremony-check-invocation.md
+  - plugin/skills/assess-agent-autonomy/ceremony-check.md
 ---
 
 # Run `/flow` on a Record That Has No `ceremony:*` Label
@@ -27,6 +28,7 @@ files:
 - **Red flags:**
   - `ceremony-profile: standard` on a trivially small unlabeled record with no matching `Manifesto ceremony-check` line in `decisions.md`, which means the judgment never ran.
   - Two different `CEREMONY:` lines for the same record in one run directory.
+  - The run's turn ends right after the `CEREMONY:`/`RATIONALE:` block prints, with no `config.yml` written. `ceremony-check.md`'s **Return to caller** line says the Manifesto continues in the same turn, so a stop here is the #4117 stall coming back.
 
 ### 2. Find the one verdict line
 - **URL:** `{run-dir}/decisions.md` (a multi-spec run uses the parent run directory's), under `## /flow`
@@ -56,5 +58,6 @@ files:
 
 ## Origin
 - Created during build of #3160 (the flow Manifesto's ceremony-profile fold defaulted to `standard` for health-sweep-filed records with no `ceremony:*` label).
+- Updated during build of #4117 (inline component renders now carry a return-to-caller line; before it, a `/flow` Manifesto turn ended after `ceremony-check #4041` printed its verdict). Live example: run `2026-10-25T220014-record-4117` judged its own unlabeled record `standard` and continued to write `config.yml` in the same turn.
 - Live example: run `2026-10-17T212804-record-3160` judged its own unlabeled record before the Manifesto (`standard`, `risk:medium`, a two-fix-site design choice).
 - Related: `docs/journeys/adopt-a-run-directory-from-one-preflight-pack-1931.md` (case-1 adoption, which skips the judgment); `docs/decisions/0006-ceremony-tiering-owned-by-specify.md`.

@@ -558,3 +558,5 @@ second, staler source of the same text.
 `score_trend` is built from Step 4.5. A score type's key (`critique` or `audit`) is omitted entirely from `score_trend` if that command's Total row didn't parse this run (Step 4). If **neither** score parsed, omit `score_trend` entirely from the output — same pattern as other inapplicable fields elsewhere in this contract.
 
 `result: advisory` signals the findings inform the review verdict but do not auto-modify code. The `polish` mode (invoked separately by `/flow`) is the code-modifying counterpart that consumes the cached audit findings to drive suggestion-driven dispatch. Each cached finding's `suggestion` field is what selects the command there, so preserve it verbatim when writing the cache — dropping it turns a dispatchable finding into an unclassified observation.
+
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.

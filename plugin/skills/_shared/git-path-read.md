@@ -12,7 +12,7 @@ The rule for any `plugin/bin` code that reads a git path list: `--name-only`, `-
 
 ## Parsers
 
-`plugin/bin/lib/git-z.js` exports `splitNul` (verbatim NUL tokens), `parseNameStatusZ` (`STATUS\0path\0`, two paths for `R`/`C`), `splitLogZ` (a `log -z --format=<header>` stream), `parseNumstatZ`, `parseStatusPorcelainZ` (a rename lists the new path first), and `parseLsTreeZ`. `git log -z` puts one leading `\n` on the first path (or status) token of each commit that lists any files; an empty commit's header is followed directly by the next header. `splitLogZ` strips the `\n` before testing for a header.
+`plugin/bin/lib/git-z.js` exports `splitNul` (verbatim NUL tokens), `parseNameStatusZ` (`STATUS\0path\0`, two paths for `R`/`C`), `splitLogZ` (a `log -z --format=<header>` stream), `parseNumstatZ`, `parseStatusPorcelainZ` (a rename lists the new path first), and `parseLsTreeZ`. `git log -z` puts one leading `\n` on the first path (or status) token of each commit that lists any files; an empty commit's header is followed directly by the next header. `splitLogZ` strips the `\n` before testing for a header. `runGit`/`runGitAsync` (`plugin/bin/lib/hooks/git-exec.js`) trim stdout by default; a `-z` reader passes `{ raw: true }` so a leading-space first path survives.
 
 A patch's `diff --git` headers have no `-z`, so they stay C-quoted: `unquoteCPath` decodes one, and `plugin/bin/lib/design-detect/surface-lines.js` applies it.
 
@@ -22,7 +22,7 @@ A read that never turns git's output into a path — emptiness, an exit code, di
 
 ## Pinned by
 
-`tests/git-path-read-conformance.test.js`: every `'--name-only'` / `'--name-status'` argv line in `plugin/bin` also carries `'-z'` on the same line, and so does a `git ... --name-only` template string passed straight to an exec-named call (`backlog.js`). So does every `'ls-files'` / `'ls-tree'` / `'--numstat'` argv line and every `'status'` line carrying `'--porcelain'` (or `'--porcelain=v1'` / `'--porcelain=v2'`) or the short form `'-s'` / `'--short'` (and their exec template strings), unless it carries the exemption marker. The marker also waives the `--end-of-options` check below. Every `--name-only`/`--name-status` line, every `'ls-tree'` line, and every `--numstat` line under `diff`/`log`/`show` also carries `'--end-of-options'`, except the two readers that take no ref: `pre-tool-use.js` (the staged index) and `freshness.js` (a pathspec-only log).
+`tests/git-path-read-conformance.test.js`: every `'--name-only'` / `'--name-status'` argv line in `plugin/bin` also carries `'-z'` on the same line, and so does a `git ... --name-only` template string passed straight to an exec-named call (`backlog.js`). So does every `'ls-files'` / `'ls-tree'` / `'--numstat'` argv line and every `'status'` line carrying `'--porcelain'` (or `'--porcelain=v1'` / `'--porcelain=v2'`) or the short form `'-s'` / `'--short'` (and their exec template strings), unless it carries the exemption marker. The marker also waives the `--end-of-options` check below. Every `--name-only`/`--name-status` line, every `'ls-tree'` line, and every `--numstat` line under `diff`/`log`/`show` also carries `'--end-of-options'`, except the two readers that take no ref: `pre-tool-use.js` (the staged index) and `freshness.js` (a pathspec-only log). Every `runGit(` / `runGitAsync(` line that passes `'-z'` also carries `raw: true`, because runGit's default trim would strip a leading space from the first NUL-delimited path.
 
 ## Not covered yet
 

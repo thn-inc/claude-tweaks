@@ -17,6 +17,8 @@ Several conventions for `plugin/bin` code are enforced by a test that walks the 
 - `tests/porcelain-cwd-compare-conformance.test.js`: no strict `.path` vs `cwd` compare (either operand order, `===`/`!==`/`==`/`!=`); a porcelain lookup goes through `findWorktreeEntry` (#3811).
 - `tests/bin-lib/reconcile/subprocess-timing-conformance.test.js`: no file under `plugin/bin/lib/reconcile/` calls an exec/spawn function directly or requires `child_process`; every spawn goes through `timing.js`'s `execFileSyncTimed`/`execFileAsyncTimed` (#4032). `timing.js` and `background-spawn.js` are exempt by name. It reports a `stripperVerdict` mis-parse as an offender, floors both the files walked and the timed call sites seen, and keeps a planted fake-comment-opener case.
 
+One more suite scans `plugin/bin` text but in a different shape: `tests/git-path-read-conformance.test.js` pins git path-list argv line by line with raw-text regexes — `-z`, `--end-of-options`, and (#3900) `raw: true` on any `runGit`/`runGitAsync` line that passes `'-z'`. It does not import the shared stripper, has no `stripperVerdict` check and no matched-site floor, and a call split across lines is invisible to it; its `assertGoesRed`/`assertRawGoesRed` cases against real callers are what show the matchers still match. Extend it in that line-based shape, or move it onto the stripper first when a new pin needs a comment-aware match.
+
 Each one is a hand-written parser over JavaScript. The comment stripper, the call-shape regex and the file walk can each fail in the direction that hides code. When that happens, the scan reports zero offenders over less code than it claims to cover.
 
 For a suite that pins the prose under `plugin/skills/`, use `skill-prose-conformance-tests` instead.

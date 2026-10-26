@@ -142,6 +142,8 @@ directory so resume/reconcile paths can classify it as terminal instead of `stat
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run <absolute-run-dir>
 ```
 
+Run it only for a directory this run created — one that did not exist before this run's own resolution ran. A directory the resolver returned from `$PIPELINE_RUN_DIR` (the parent pipeline, `--source sweep`) or a most-recent-matching (step 2) match is inherited: An **inherited** directory is never closed here, so skip this call.
+
 **Narrate completion only after the call actually ran and exited 0 (#2729) — never
 preemptively.** A sentence claiming a specific action completed ("closing the run," "writing the
 watermark," or any equally specific past-tense claim) must describe an action this step already

@@ -6,6 +6,8 @@ const os = require('os');
 const path = require('path');
 
 const { run } = require('../../../plugin/bin/console-residue');
+const { writeFileAtomic } = require('../../../plugin/bin/lib/atomic-write');
+const { CONSOLE_LOCK, rewriteItemResolution } = require('../../../plugin/bin/lib/console/item-resolution');
 
 const NOW = Date.parse('2026-10-17T12:00:00.000Z');
 
@@ -243,6 +245,21 @@ test('--ack exits 3 naming the file when the write throws, and leaves console.js
   assert.strictEqual(fs.readFileSync(f.consolePath, 'utf8'), before);
 });
 
+test('--ack of a console whose directory moved after the scan fails without recreating the directory (#4170)', () => {
+  const f = fixture();
+  const spec2 = path.join(f.runDir, 'spec-2');
+  fs.mkdirSync(path.join(spec2, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(spec2, 'staged', 'wrap-up-docs-2.md'), 'x');
+  fs.writeFileSync(path.join(spec2, 'console.json'), JSON.stringify({ items: [{ id: 'wrap-up-docs-2.md', section: 'Pending review', resolution: 'pending', reason: 'r' }] }));
+  const h = harness(f.main);
+  // The first console's write runs after the scan; archival then moves the second console's directory.
+  h.deps.writeFile = (p, data) => { fs.writeFileSync(p, data); fs.rmSync(spec2, { recursive: true }); };
+  assert.strictEqual(run(['--ack', '--run', f.runDir], h.deps), 3);
+  assert.ok(h.err().includes('console-residue.js: could not write') && h.err().includes('console directory no longer exists'), h.err());
+  assert.ok(!fs.existsSync(spec2), 'acking a vanished console recreated its directory');
+  assert.match(h.out(), /marked 1 console\(s\) reviewed for .*\(1 could not be written\)/);
+});
+
 test('--ack-all keeps going past a failed write, exits 3, and counts the failure', () => {
   const f = fixture();
   const second = path.join(f.archive, '2026-10-15T100000-spec-1');
@@ -330,6 +347,35 @@ test('--require-verify checks each spec-*/ dir of a multi-spec parent, never the
   assert.strictEqual(missing.length, 1, h.out());
   assert.ok(missing[0].includes('spec-2'), missing[0]);
   assert.ok(h.out().includes(`--run-dir "${path.join(fs.realpathSync(parent), 'spec-2')}"`), h.out());
+});
+
+// #4170: the ack and console-resolve.js --set-item both read-modify-write console.json, so the ack runs under
+// the console's own lock and an ack never hides an item a later rewrite re-opened.
+test('--ack reads and writes console.json while holding the console lock (#4170)', () => {
+  const f = fixture();
+  const lock = path.join(f.runDir, CONSOLE_LOCK);
+  const h = harness(f.main);
+  const held = [];
+  h.deps.readFile = (p) => { held.push(['read', fs.existsSync(lock)]); return fs.readFileSync(p, 'utf8'); };
+  h.deps.writeFile = (p, text) => { held.push(['write', fs.existsSync(lock)]); writeFileAtomic(p, text); };
+  assert.strictEqual(run(['--ack', '--run', f.runDir], h.deps), 0);
+  assert.deepStrictEqual(held, [['read', true], ['write', true]]);
+  assert.ok(!fs.existsSync(lock), 'the lock is released');
+});
+
+test('an ack does not hide a later --set-item rewrite: the rewritten item lists as residue again (#4170)', () => {
+  const f = fixture();
+  const id = 'ledger-record-brief-marker-multispec.md';
+  fs.writeFileSync(path.join(f.runDir, 'staged', id), 'x');
+  assert.strictEqual(run(['--ack', '--run', f.runDir], harness(f.main).deps), 0);
+  const quiet = harness(f.main);
+  assert.strictEqual(run(['--run', f.runDir], quiet.deps), 0);
+  assert.strictEqual(quiet.out(), '', 'the acknowledged console lists nothing');
+  const r = rewriteItemResolution({ consolePath: f.consolePath, id, resolution: 'keep-staged', reason: 'record create failed (exit 1)', at: '2026-10-17T13:00:00.000Z' });
+  assert.strictEqual(r.status, 'rewrote');
+  const after = harness(f.main);
+  assert.strictEqual(run(['--run', f.runDir], after.deps), 0);
+  assert.ok(after.out().includes(`${id} — Queue writes: keep-staged (record create failed (exit 1))`), after.out());
 });
 
 test('--run without --require-verify never mentions verify.json', () => {

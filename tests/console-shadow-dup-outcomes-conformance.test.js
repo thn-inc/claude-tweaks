@@ -281,7 +281,8 @@ const STEP7_FACTS = [
   ['a non-zero exit logs a Degrade-trace SKIP', /A non-zero exit is not a refusal: log one `SKIP` per `_shared\/auto-decision-log\.md`'s Degrade-trace rule/],
   ['the full SKIP command', /`node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/log-decision\.js" --run "\{item-run-dir\}" --status SKIP --section "\/wrap-up" --step "Shadow-dup proposal \(skipped\)" --text 'condition: shadow-dup-proposal\.js exited \{code\} for \{name\} → fallback: copy stays in staged\/, not filed this run' --reversibility n\/a`/],
   ['the true fallback', /the copy stays in `staged\/`, the item is not filed this run, and that `SKIP` line is its trace/],
-  ['a failed gh issue create cites refused-proposals.md', /A failed `gh issue create` on the proposal follows `refused-proposals\.md`'s failed-create line/],
+  ['a failed composer is recorded for a human', /then record it per `refused-proposals\.md`'s failed-execution rewrite, `\{why\}` = `shadow-dup-proposal\.js exited \{code\}`/],
+  ['a failed gh issue create cites refused-proposals.md', /A failed `gh issue create` on the proposal follows `refused-proposals\.md`'s failed-execution rewrite/],
 ];
 
 function missingStep7Facts(line) {
@@ -378,12 +379,12 @@ test('control: naming FAILED in step 7 fails assertStep7Composer (log-decision.j
   const mutated = doctor(REVIEW_CONSOLE, 'log one `SKIP` per', 'log one `FAILED` per');
   // Rewording the SKIP sentence loses its fact first, so this case pins the fact check; onlyFailed below pins FAILED alone.
   assert.throws(() => assertStep7Composer(mutated), { message: /^step 7 lost a shadow-dup fact/ });
-  const onlyFailed = doctor(REVIEW_CONSOLE, ' and that `SKIP` line is its trace.', ' and that `SKIP` line is its trace (FAILED).');
+  const onlyFailed = doctor(REVIEW_CONSOLE, ' and that `SKIP` line is its trace;', ' and that `SKIP` line is its trace (FAILED).');
   assert.throws(() => assertStep7Composer(onlyFailed), { message: /names FAILED/ });
 });
 
 test('control: the old "stays staged for the next console" wording fails assertStep7Composer (#3946 M2)', () => {
-  const mutated = doctor(REVIEW_CONSOLE, ' and that `SKIP` line is its trace.', ' and that `SKIP` line is its trace; the item stays staged for the next console.');
+  const mutated = doctor(REVIEW_CONSOLE, ' and that `SKIP` line is its trace;', ' and that `SKIP` line is its trace; the item stays staged for the next console.');
   assert.throws(() => assertStep7Composer(mutated), { message: /still says a skipped copy stays staged for the next console/ });
 });
 

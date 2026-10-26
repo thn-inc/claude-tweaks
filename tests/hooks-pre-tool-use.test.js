@@ -1660,3 +1660,24 @@ test('run() merges updatedInput on an allow path and never on a deny', () => {
   assert.deepStrictEqual(pre.run({ input: bashInput('P=/x/y; node $P/z.js', main), runDir: null, runState: null, cwd: main }), {});
   assert.deepStrictEqual(pre.run({ input: { tool_name: 'Write', tool_input: { file_path: path.join(wt, 'f'), command: 'P=/x; node $P' }, cwd: wt }, runDir: null, runState: null, cwd: wt }), {});
 });
+
+// #3900 item 2 (won't-fix in plugin code — the refusal that prompted it came from
+// the Claude Code harness's own guard, not this gate). These pin that the plugin's
+// worktree-always gate judges the invoked program, not git-like words inside a
+// quoted prose argument. The control is the discrimination evidence: the same
+// prose plus a genuine chained `git commit` must still deny.
+test('#3900 AC2.1: a log-decision call whose quoted --text names git show is not denied', () => {
+  const repo = gitRepoWithCommit();
+  withPolicy(repo, 'worktree-always: true\n');
+  const cmd = 'node bin/log-decision.js --run x --status AUTO --text "evidence via git show HEAD:foo, then git commit -m x"';
+  const out = pre.run({ input: bashInput(cmd, repo), runDir: null, runState: null, cwd: repo });
+  assert.deepStrictEqual(out, {});
+});
+
+test('#3900 AC2.1 control: a genuine git commit chained after the same prose is still denied', () => {
+  const repo = gitRepoWithCommit();
+  withPolicy(repo, 'worktree-always: true\n');
+  const cmd = 'node bin/log-decision.js --run x --text "evidence via git show HEAD:foo"; git commit -m x';
+  const out = pre.run({ input: bashInput(cmd, repo), runDir: null, runState: null, cwd: repo });
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+});

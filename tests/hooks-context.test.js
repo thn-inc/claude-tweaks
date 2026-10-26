@@ -460,8 +460,8 @@ function refreshDeps({ cur = 100, alive = true, startOf = { 100: 'T100', 200: 'T
     hostname: () => 'h',
   };
 }
-const refresh = (fx, { sessionId = 's', now = RT0, deps = refreshDeps() } = {}) =>
-  ctx.refreshOwnerBlock({ input: { session_id: sessionId }, ownedRun: fx.ownedRun }, { now, env: {}, deps });
+const refresh = (fx, { sessionId = 's', now = RT0, deps = refreshDeps(), restampWhileFresh } = {}) =>
+  ctx.refreshOwnerBlock({ input: { session_id: sessionId }, ownedRun: fx.ownedRun }, { now, env: {}, deps, restampWhileFresh });
 const ownerOf = (fx) => ctx.readRunState(fx.dir).owner;
 
 test('AC2.1: a second owner event 30 s later leaves heartbeatAt unchanged', () => {
@@ -469,6 +469,49 @@ test('AC2.1: a second owner event 30 s later leaves heartbeatAt unchanged', () =
   refresh(fx, { now: RT0 });
   assert.strictEqual(refresh(fx, { now: RT0 + 30_000 }), null);
   assert.strictEqual(ownerOf(fx).heartbeatAt, RT0_ISO);
+});
+
+test('#4150: inside the heartbeat window the owner block is never probed', () => {
+  for (const cur of [100, 200]) {
+    const fx = refreshFixture();
+    const base = refreshDeps({ cur, alive: false });
+    const counts = { resolveOwnerPid: 0, pidStartTime: 0, isPidAlive: 0 };
+    const deps = {
+      ...base,
+      resolveOwnerPid: (env) => { counts.resolveOwnerPid++; return base.resolveOwnerPid(env); },
+      pidStartTime: (pid) => { counts.pidStartTime++; return base.pidStartTime(pid); },
+      isPidAlive: (pid) => { counts.isPidAlive++; return base.isPidAlive(pid); },
+    };
+    assert.strictEqual(refresh(fx, { now: RT0 + 30_000, deps }), null, `cur=${cur}`);
+    assert.deepStrictEqual(counts, { resolveOwnerPid: 0, pidStartTime: 0, isPidAlive: 0 }, `cur=${cur}`);
+    assert.deepStrictEqual(ownerOf(fx), { sessionId: 's', host: 'h', pid: 100, pidSource: 'env', pidStartedAt: 'T100', heartbeatAt: RT0_ISO }, `cur=${cur}`);
+  }
+});
+
+test('#4150: outside the heartbeat window a dead different-pid owner is still re-stamped by default', () => {
+  const fx = refreshFixture();
+  assert.strictEqual(refresh(fx, { now: RT0 + 61_000, deps: refreshDeps({ cur: 200, alive: false }) }), 'restamp');
+  assert.strictEqual(ownerOf(fx).pid, 200);
+  assert.strictEqual(ownerOf(fx).pidStartedAt, 'T200');
+});
+
+test('#4150: restampWhileFresh keeps the in-window re-stamp of a resumed session', () => {
+  const fx = refreshFixture();
+  assert.strictEqual(refresh(fx, { now: RT0 + 5_000, restampWhileFresh: true, deps: refreshDeps({ cur: 200, alive: false }) }), 'restamp');
+  assert.strictEqual(ownerOf(fx).pid, 200);
+});
+
+test('#4150: a heartbeat stamped in the future (clock skew) is not fresh — the default path re-stamps a dead owner', () => {
+  const fx = refreshFixture();
+  assert.strictEqual(refresh(fx, { now: RT0 - 30_000, deps: refreshDeps({ cur: 200, alive: false }) }), 'restamp');
+  assert.strictEqual(ownerOf(fx).pid, 200);
+  assert.strictEqual(ownerOf(fx).heartbeatAt, new Date(RT0 - 30_000).toISOString());
+});
+
+test('#4150: a heartbeat stamped in the future (clock skew) is rewritten by the same owner rather than left stuck', () => {
+  const fx = refreshFixture();
+  assert.strictEqual(refresh(fx, { now: RT0 - 30_000 }), 'heartbeat');
+  assert.strictEqual(ownerOf(fx).heartbeatAt, new Date(RT0 - 30_000).toISOString());
 });
 
 test('AC2.2: an owner event 61 s after the first advances heartbeatAt', () => {
@@ -514,7 +557,7 @@ test('AC3.1: a resumed session re-stamps pid and pidStartedAt together', () => {
   };
   let result;
   try {
-    result = refresh(fx, { now: RT0 + 5_000, deps: refreshDeps({ cur: 200, alive: false }) });
+    result = refresh(fx, { now: RT0 + 5_000, restampWhileFresh: true, deps: refreshDeps({ cur: 200, alive: false }) });
   } finally {
     fs.renameSync = realRename;
   }
@@ -531,7 +574,7 @@ test('AC3.1: a resumed session re-stamps pid and pidStartedAt together', () => {
 test('a pid-reused owner (alive, different start time) is re-stamped', () => {
   const fx = refreshFixture();
   const deps = refreshDeps({ cur: 200, alive: true, startOf: { 100: 'other', 200: 'T200' } });
-  assert.strictEqual(refresh(fx, { deps }), 'restamp');
+  assert.strictEqual(refresh(fx, { deps, restampWhileFresh: true }), 'restamp');
   assert.strictEqual(ownerOf(fx).pid, 200);
   assert.strictEqual(ownerOf(fx).pidStartedAt, 'T200');
 });
@@ -545,14 +588,14 @@ test('a failed start-time probe on a live owner is unknown, never dead — a nes
 
 test('an owner stamped on another host is re-stamped (its pid proves nothing here)', () => {
   const fx = refreshFixture({ host: 'elsewhere' });
-  assert.strictEqual(refresh(fx, { deps: refreshDeps({ cur: 200, alive: true }) }), 'restamp');
+  assert.strictEqual(refresh(fx, { deps: refreshDeps({ cur: 200, alive: true }), restampWhileFresh: true }), 'restamp');
   assert.strictEqual(ownerOf(fx).host, 'h');
 });
 
 test('a throwing liveness probe counts as alive — no re-stamp', () => {
   const fx = refreshFixture();
   const deps = { ...refreshDeps({ cur: 200 }), isPidAlive: () => { throw new Error('probe'); } };
-  assert.strictEqual(refresh(fx, { deps }), null);
+  assert.strictEqual(refresh(fx, { deps, restampWhileFresh: true }), null);
   assert.strictEqual(ownerOf(fx).pid, 100);
 });
 
@@ -603,7 +646,8 @@ test('AC1.1: refreshOwnerBlock and runLiveness give the same answer on the stamp
     };
     const e = gatherEvidence(fx.dir, { now: RT0, probes }).evidence.find((x) => x.probe === 'owner-pid');
     assert.deepStrictEqual([e.result, e.detail], row.entry, row.name);
-    assert.strictEqual(refresh(fx, { deps }) === 'restamp', row.restamp, row.name);
+    // restampWhileFresh: the fixture's heartbeat is fresh at RT0, and #4150 returns before the probe inside the window
+    assert.strictEqual(refresh(fx, { deps, restampWhileFresh: true }) === 'restamp', row.restamp, row.name);
   }
 });
 
