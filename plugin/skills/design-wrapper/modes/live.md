@@ -68,3 +68,5 @@ When the session ends (user says "stop"/"exit live", closes the tab, or the poll
   "session": "completed"
 }
 ```
+
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.

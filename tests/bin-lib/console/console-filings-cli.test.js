@@ -257,7 +257,7 @@ test('a run with no can\'t-tell items writes nothing and prints empty lists', ()
   noRecords(f);
   const { deps, out } = fakeDeps(f.main);
   assert.equal(run(argvOf(f), deps), 0);
-  assert.deepEqual(JSON.parse(out.join('')), { file: [], deduped: [] });
+  assert.deepEqual(JSON.parse(out.join('')), { file: [], deduped: [], logFailures: [] });
 });
 
 test('exit 2 on unparseable or non-array --existing, nothing written', () => {
@@ -336,4 +336,120 @@ test('a multi-spec per-spec run dir names the run as {parent-run-id}/spec-{N} in
   assert.equal(run(['--run', specDir, '--existing', f.existing, '--out-dir', f.outDir], deps), 0);
   const [made] = JSON.parse(out.join('')).file;
   assert.match(fs.readFileSync(made.proposal, 'utf8'), /run 2026-10-24T213805-spec-7-8\/spec-7:/);
+});
+
+// ---- #4026: the CLI logs each deduped entry's Queue-write line itself ----
+
+// Two can't-tell items: the first deduped against a record a first run created, the second still to file.
+function oneFiledOneDeduped(f) {
+  const { ids } = seed(f, { n: 2 });
+  noRecords(f);
+  const first = fakeDeps(f.main);
+  assert.equal(run(argvOf(f, ['--only', `tiebreak:${ids[0]}`]), first.deps), 0);
+  const [made] = JSON.parse(first.out.join('')).file;
+  fs.writeFileSync(f.existing, JSON.stringify([{ number: 41, body: fs.readFileSync(made.proposal, 'utf8') }]));
+  fs.rmSync(f.outDir, { recursive: true, force: true });
+  return { ids, made };
+}
+
+test('characterization: a mixed run prints file and deduped with exactly these fields', () => {
+  const f = fixture();
+  const { ids, made } = oneFiledOneDeduped(f);
+  const { deps, out, err } = fakeDeps(f.main);
+  assert.equal(run(argvOf(f), deps), 0);
+  const { logFailures, ...rest } = JSON.parse(out.join(''));
+  assert.deepEqual(Object.keys(rest), ['file', 'deduped']);
+  assert.deepEqual(rest.deduped, [{ item: `tiebreak:${ids[0]}`, fingerprint: made.fingerprint, number: 41 }]);
+  assert.equal(rest.file.length, 1);
+  assert.deepEqual(Object.keys(rest.file[0]), ['item', 'fingerprint', 'title', 'proposal']);
+  assert.equal(rest.file[0].item, `tiebreak:${ids[1]}`);
+  assert.equal(err.join(''), '');
+});
+
+test('characterization: --list, an exit 2 and an out-dir exit 3 leave decisions.md byte-identical', () => {
+  const f = fixture();
+  oneFiledOneDeduped(f);
+  const decisions = path.join(f.runDir, 'decisions.md');
+  const before = fs.readFileSync(decisions, 'utf8');
+  assert.equal(run(['--run', f.runDir, '--list'], fakeDeps(f.main).deps), 0);
+  assert.equal(run(argvOf(f, ['--only', 'tiebreak:ffffffffffff']), fakeDeps(f.main).deps), 2);
+  const blocker = path.join(f.root, 'blocker');
+  fs.writeFileSync(blocker, 'a file where a directory is needed');
+  assert.equal(run(['--run', f.runDir, '--existing', f.existing, '--out-dir', path.join(blocker, 'sub')], fakeDeps(f.main).deps), 3);
+  assert.equal(fs.readFileSync(decisions, 'utf8'), before);
+});
+
+const logDecision = require(path.join(ROOT, 'plugin', 'bin', 'log-decision'));
+const { appendEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'append'));
+const NOW = new Date(2026, 9, 25, 9, 8, 7).getTime();
+
+// The command review-console.md's Can't-tell filings paragraph ran per deduped entry before #4026.
+const proseQueueWriteArgv = (runDir, d) => ['--run', runDir, '--status', 'AUTO', '--section', '/wrap-up', '--step', 'Queue write',
+  '--text', `${d.item} already filed as #${d.number} (work-fingerprint ${d.fingerprint})`, '--reversibility', 'n/a'];
+
+// Three can't-tell items, each filed by a first run as #100-#102; returns the fixture ready for the deduping re-run.
+function allDeduped() {
+  const f = fixture();
+  const { ids } = seed(f, { n: 3 });
+  noRecords(f);
+  const first = fakeDeps(f.main);
+  assert.equal(run(argvOf(f), first.deps), 0);
+  const created = JSON.parse(first.out.join('')).file;
+  fs.writeFileSync(f.existing, JSON.stringify(created.map((x, i) => ({ number: 100 + i, body: fs.readFileSync(x.proposal, 'utf8') }))));
+  return { f: { ...f, outDir: path.join(f.root, 'out2') }, ids };
+}
+
+test('AC3.1: console-filings logs one Queue write line per deduped entry', () => {
+  const { f } = allDeduped();
+  const decisions = path.join(f.runDir, 'decisions.md');
+  const before = fs.readFileSync(decisions, 'utf8');
+  const { deps, out, err } = fakeDeps(f.main, { now: () => NOW });
+  assert.equal(run(argvOf(f), deps), 0);
+  const result = JSON.parse(out.join(''));
+  assert.equal(result.deduped.length, 3);
+  assert.deepEqual(result.logFailures, []);
+  assert.equal(err.join(''), '');
+  const added = fs.readFileSync(decisions, 'utf8').slice(before.length).split('\n').filter(Boolean);
+  assert.equal(added[0], '## /wrap-up');
+  assert.deepEqual(added.slice(1), result.deduped.map((d) => `- AUTO 09:08:07 — Queue write: ${d.item} already filed as #${d.number} (work-fingerprint ${d.fingerprint}). Reversibility: n/a.`));
+  // Parity: replaying the prose's command per deduped entry on the same starting decisions.md writes the same bytes.
+  const twin = fixture();
+  fs.writeFileSync(path.join(twin.runDir, 'decisions.md'), before);
+  for (const d of result.deduped) {
+    const sink = [];
+    const code = logDecision.run(proseQueueWriteArgv(twin.runDir, d), { now: () => NOW, cwd: () => twin.main, mainRoot: undefined, stdout: (s) => sink.push(s), stderr: (s) => sink.push(s) });
+    assert.equal(code, 0, sink.join(''));
+  }
+  assert.equal(fs.readFileSync(decisions, 'utf8'), fs.readFileSync(path.join(twin.runDir, 'decisions.md'), 'utf8'));
+});
+
+test('a run with nothing deduped logs nothing and prints an empty logFailures', () => {
+  const f = fixture();
+  seed(f, { n: 2 });
+  noRecords(f);
+  const decisions = path.join(f.runDir, 'decisions.md');
+  const before = fs.readFileSync(decisions, 'utf8');
+  const { deps, out } = fakeDeps(f.main, { now: () => NOW });
+  assert.equal(run(argvOf(f), deps), 0);
+  const result = JSON.parse(out.join(''));
+  assert.equal(result.file.length, 2);
+  assert.deepEqual(result.logFailures, []);
+  assert.equal(fs.readFileSync(decisions, 'utf8'), before);
+});
+
+test('a failed Queue-write append is listed in logFailures with one stderr line; the exit and the other lines stand', () => {
+  const { f, ids } = allDeduped();
+  const failing = `tiebreak:${ids[1]}`;
+  const appendDecision = (a) => { if (a.entry.includes(`${failing} already filed`)) throw new Error('disk full'); return appendEntry(a); };
+  const { deps, out, err } = fakeDeps(f.main, { now: () => NOW, appendDecision });
+  assert.equal(run(argvOf(f), deps), 0);
+  const result = JSON.parse(out.join(''));
+  assert.equal(result.deduped.length, 3);
+  assert.deepEqual(result.logFailures, [{ item: failing, error: 'disk full' }]);
+  const lines = err.join('').split('\n').filter(Boolean);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], new RegExp(`^console-filings\\.js: could not append the decisions\\.md entry for ${failing}: disk full$`));
+  const text = fs.readFileSync(path.join(f.runDir, 'decisions.md'), 'utf8');
+  assert.equal((text.match(/— Queue write: /g) || []).length, 2);
+  assert.ok(!text.includes(`${failing} already filed`));
 });

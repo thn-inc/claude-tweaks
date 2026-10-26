@@ -1329,12 +1329,12 @@ for (const [label, cmd] of [
         assert.deepStrictEqual(files, ['/r', '/a0', '/a1', '/a2', '/a3'].map((d) => path.resolve(d, 'f.js')));
       });
       // Timing-free: the handler runs once per cwd per piece, so the visit count is the cost. Each
-      // repetition holds at most three visited pieces, each visited under at most the cap's 16 cwds
-      // plus one (head: 2,700 to 8,100 visits; uncapped: 45,000 to 136,000).
+      // repetition holds at most four visited pieces (a cd piece is visited too, #4281), each visited
+      // under at most the cap's 16 cwds plus one (head: 5,400 to 10,800 visits; uncapped: 91,000 to 181,000).
       test(`#4149 cwd cap: ${route} stay linear (visits per group bounded by the cap)`, () => {
         let visits = 0;
         forEachShellSegment(build(300, 'true'), '/r', () => { visits += 1; }, opts);
-        assert.ok(visits < 300 * 3 * 17, `${visits} visits`);
+        assert.ok(visits < 300 * 4 * 17, `${visits} visits`);
       });
     }
     test('#4149 cwd cap: a push and a mkdir past the cap resolve in the overflow cwd', () => {

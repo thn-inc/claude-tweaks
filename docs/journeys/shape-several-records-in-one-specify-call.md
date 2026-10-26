@@ -69,6 +69,13 @@ files:
 - **Should understand:** The case-1 parent-record guard runs per element before anything is written. A labeled (tier-1) parent still gets its mis-shape residue (`ready`, scoring, ceremony, `solution:unjustified`) silently stripped — repair of wrong state, not shaping — and the failure message names any strip that ran. A sniff-only (tier-2) hit resolves like the guard's headless branch inside a batch — no prompt, since a prompt could not change the fail-all outcome — and the message points at `/claude-tweaks:specify #416` to repair interactively.
 - **Red flags:** The parent shaped and marked `ready`; the non-parent elements shaped despite the fail-all posture; an `AskUserQuestion` firing mid-batch for a tier-2 offender; a residue strip that ran but went unmentioned.
 
+### 8. Include the digest container — refused alone, the rest shape
+- **URL:** `/claude-tweaks:specify #3997,#1426,#2724` (where `#1426` carries the `digest` label — the materiality-floor container)
+- **Action:** Include the digest container as one batch element.
+- **Should feel:** Step 7's opposite — only the container is turned away; `#3997` and `#2724` shape normally, and the table shows `#1426` as its own `refused — digest container` row.
+- **Should understand:** The case-1 digest-container guard is the one per-element stop in the batch branch: the container resolves fine, so it never joins the fail-all set that an unresolvable, `needs:definition`, or parent element triggers. Its mis-shape residue is still stripped and named. It renders as a refused row, not a skipped one — the table still has no `skipped` outcome — and a batch of only digest containers shapes nothing. Full single-record behavior: `refuse-to-shape-the-digest-container-4142.md`.
+- **Red flags:** The whole batch aborted over the container; the container shaped or stamped `ready`; its row missing or reading `skipped`.
+
 ## Origin
 - Step 3 updated for #2841 (the `already shaped, no-op` outcome is decided by `compose-record.js --check` exiting 0 on the live body; read-back verification and Actions Performed moved to `shaping-mode-readback.md`)
 - Step 3 updated for #2827 (shaping mode emits `## Release Note` and runs `compose-record.js --check` before each write, a third `failed` cause)
@@ -78,6 +85,7 @@ files:
 - Step 3 updated for #3393 (claims read through `createClaimReader`; an unreadable claim, including an unresolved repo slug, is listed as `unreadable` beside the candidate table, never read as absent)
 - Step 3 updated for #1321 (generated-file grep: a shaped record's Key Files lists a generated entry's generator as primary edit target, with the entry annotated)
 - Step 7 added for #1071 (parent-record guard: batch fail-all, tier-2 refuse-without-prompt, reported residue strip)
+- Step 8 added for #4142 (digest-container guard: per-element refusal, `refused — digest container` row, reported residue strip)
 - Steps 1 and 3 updated for #705 (range-form input, mandatory read-back verification after each write)
 - Steps 1-3 updated for #357 (UI-stack decision point — batch table gains a `Ui-stack: —` column alongside `Design-intent:`, resolved by the same single batch decision)
 - Persona/Entry point updated for #822 (folded the `/tidy` Yours-group-head paste path in from the retired sibling journey `shape-several-records-in-one-paste.md`, whose Steps 1-4 covered the same batch mechanic under a different entry-point framing and no unique behavior — `shaping-mode.md` explicitly documents "no `skipped` outcome" for the batch table, which is what that sibling had gone stale on)

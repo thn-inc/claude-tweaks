@@ -89,6 +89,35 @@ function fencedBlock(text) {
   return `${fence}\n${text}\n${fence}`;
 }
 
+// lines -> [start, end] inclusive line-index ranges, one per fenced block: from
+// the opening fence line through its closing fence line, or lines.length - 1
+// when unclosed (a truncated fence is quoted content, the safer direction).
+// The one fence rule shared by stripCodeSpans (materialize-format.js), sectionText
+// and extractSection (#4169): an opener is a column-0 run of 3+ backticks or
+// tildes; the closer is the same character, at least the opener's length, and
+// nothing else on its line but trailing whitespace. Matches what fenceFor and
+// fencedBlock write.
+function fencedLineRanges(lines) {
+  const ranges = [];
+  let i = 0;
+  while (i < lines.length) {
+    const fenceMatch = lines[i].match(/^(`{3,}|~{3,})/);
+    if (!fenceMatch) {
+      i++;
+      continue;
+    }
+    const fenceChar = fenceMatch[1][0];
+    const fenceLen = fenceMatch[1].length;
+    const closeRe = new RegExp(`^${fenceChar}{${fenceLen},}\\s*$`);
+    let j = i + 1;
+    while (j < lines.length && !closeRe.test(lines[j])) j++;
+    const end = j < lines.length ? j : lines.length - 1;
+    ranges.push([i, end]);
+    i = end + 1;
+  }
+  return ranges;
+}
+
 // { title, body, type, origin?, risk?, size?, ceremony?, solutionUnjustified?, ready?, parked?, priority?, fingerprint?, deferReason? }
 // -> { title, body, labels: string[], type }
 // Validates supplied enum values; absence of an optional field never throws.
@@ -246,18 +275,23 @@ const ANY_HEADING_RE = /^#{1,6}[ \t]/;
 // CRLF-normalized before matching — none of the three original
 // implementations did this, so a CRLF file (this repo has at least one,
 // `[IL-160]`) could silently fail every heading match; this fixes that as a
-// side effect rather than as its own goal.
+// side effect rather than as its own goal. Headings inside fenced blocks are
+// quoted content and never match (#4169); a fenced line never stops the section.
 function extractSection(body, heading, { levelPattern = '2,4', stopPattern = '1,6', trim = false } = {}) {
   if (typeof body !== 'string') return '';
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const headingRe = new RegExp(`^#{${levelPattern}}[ \\t]+${escaped}[ \\t]*$`);
   const stopRe = new RegExp(`^#{${stopPattern}}[ \\t]`);
   const lines = body.replace(/\r\n/g, '\n').split('\n');
-  const start = lines.findIndex((line) => headingRe.test(line));
+  const fenced = new Array(lines.length).fill(false);
+  for (const [s, e] of fencedLineRanges(lines)) {
+    for (let k = s; k <= e; k += 1) fenced[k] = true;
+  }
+  const start = lines.findIndex((line, idx) => !fenced[idx] && headingRe.test(line));
   if (start === -1) return '';
   const out = [];
   for (let i = start + 1; i < lines.length; i += 1) {
-    if (stopRe.test(lines[i])) break;
+    if (!fenced[i] && stopRe.test(lines[i])) break;
     out.push(lines[i]);
   }
   const joined = out.join('\n');
@@ -407,5 +441,5 @@ function specShapedBody({
 module.exports = {
   DEFER_REASONS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
   extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp,
-  fenceFor, fencedBlock, extractSection,
+  fenceFor, fencedBlock, fencedLineRanges, extractSection,
 };

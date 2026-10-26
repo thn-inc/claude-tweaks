@@ -28,17 +28,17 @@ Cleanup is silent — no user prompt. The caches are pipeline state, not user-au
 
 ## B. Pipeline run directory (v4.6.0)
 
-If a pipeline run directory exists for this work (see `_shared/run-dir-resolution.md` for the resolution order and bash snippet):
+If a pipeline run directory exists for this work — `$RUN_DIR` is the path carried from Phase 1 (`SKILL.md`'s "Establish the run directory"), never re-resolved here: Section C's step 3.6 `close-run` may already have marked it `clean`, and `resolve-run-dir --spec-slug` step 2 then refuses it (#4151):
 
 1. **Multi-spec defer check:** if `MULTISPEC_REVIEW_DEFER=1` is set, **skip this section entirely**. The parent `/flow` orchestration owns archival of the multi-spec parent dir after its consolidated Review Console completes. The per-spec subdirectory stays in place under the parent.
 2. Verify the Review Console ran and applied/dismissed all staged items. Since #1130 this precondition is also code-enforced at both archival call sites — the reconcile sweep skips a run whose console was never rendered or is unresolved (decideArchive), and the archive-run verb below refuses a rendered-but-unresolved console, and an auto-merge short-circuit run (`auto:merge`-label or Manifesto-authorized) whose `staged/` still holds pending items (#3668).
 3. **Mark the run terminal, if not already closed by Section C's step 3.6** — before archiving, run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"` so close-run lifts E1 enforcement (clears the worktree assignment and marks the run clean). Idempotent: re-running it on an already-clean run (the worktree-strategy case, where Section C's step 3.6 closed it first) is a harmless no-op. E2/E3 logging for that run stops at close-run too — a terminal (clean) run is no longer resolved by the hook dispatcher, so no further events get appended. Archival (step 4) is bookkeeping that moves the directory for the audit trail — it is not the logging cutoff.
-4. **Archive the run directory** — `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "$RUN_DIR"`. This archives the tracked `work/` directory and moves every other entry (`config.yml`, `decisions.md`, `events.jsonl`, `staged/`, and anything else the run directory holds — the verb enumerates rather than assuming a fixed list) in one call. The verb refuses a non-terminal run (`active`/`interrupted`) — step 3's `close-run` call above is what makes this refusal unreachable in practice here, not a redundant check. An `archival refused — console-never-rendered-staged-pending` result is carried into the closing report as needs-human-action (pending `staged/` items the auto-merge short-circuit never surfaced), not retried or worked around. An `archival refused — console-residue` result gets the same treatment (a resolved console still holds unacknowledged `pending`/`keep-staged` items, or a PR console item whose outcome is `filing-failed`/`reverse-failed`): carry its printed remedy — `console-residue.js --ack --run …`, or repairing the `console.json` it names as unreadable — into the closing report.
+4. **Archive the run directory** — `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "$RUN_DIR"`. This archives the tracked `work/` directory and moves every other entry (`config.yml`, `decisions.md`, `events.jsonl`, `staged/`, and anything else the run directory holds — the verb enumerates rather than assuming a fixed list) in one call. The verb refuses a non-terminal run (`active`/`interrupted`) — step 3's `close-run` call above is what makes this refusal unreachable in practice here, not a redundant check. An `archival refused — console-never-rendered-staged-pending` result is carried into the closing report as needs-human-action (pending `staged/` items the auto-merge short-circuit never surfaced), not retried or worked around. An `archival refused — console-residue` result gets the same treatment (a resolved console still holds unacknowledged `pending`/`keep-staged` items — including a Queue-write item a failed execution rewrote `keep-staged` — or a planned can't-tell filing with no filed line (`filing-pending`), or a PR console item whose outcome is `filing-failed`/`reverse-failed`): carry its printed remedy — `console-residue.js --ack --run …` (a `filing-pending` item's `console-filings.js --only` re-run included), or repairing the `console.json` it names as unreadable — into the closing report.
 5. Skipped staged items remain in the archive; they are NOT silently dropped.
 
 Do NOT delete the run directory outright — the auto-decision log is project history (for the user's calibration of project policy), not pipeline state.
 
-A run directory always exists from Phase 1 onward, so this section always applies. The one residual exception is a pre-v4.6 pipeline whose run directory was never created — if none resolves, skip this section silently rather than failing the wrap-up.
+A run directory always exists from Phase 1 onward, so this section always applies. The one residual exception is a pre-v4.6 pipeline whose run directory was never created — if none was established, skip this section silently rather than failing the wrap-up.
 
 ---
 
@@ -166,13 +166,13 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    for deletion 2026-11-07 regardless of remaining pre-anchoring runs (see that section's Removal
    condition); until then, check it on every run.
 3.6. **Close the pipeline run — the sanctioned exit the teardown gate checks for.** If a pipeline
-   run directory resolves for this work (see `_shared/run-dir-resolution.md`'s resolution order),
-   run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"` now, from inside the
+   run directory was established for this work (Phase 1's carried path — this step is what marks
+   it `clean`, so nothing after it re-resolves it, #4151), run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"` now, from inside the
    worktree, **before step 4 removes it.** This clears the run's recorded worktree assignment,
    which is exactly what `bin/lib/hooks/pre-tool-use.js`'s teardown gate (`checkTeardownGate`)
    checks before allowing an `ExitWorktree`/`git worktree remove` call — skipping this step is the
    pattern the gate exists to deny (`[IL-116]`), and its own deny message points back here as the
-   fix. Skip silently if no run directory resolves (a pre-v4.6 pipeline that never created one).
+   fix. Skip silently if no run directory was established (a pre-v4.6 pipeline that never created one).
 4. **Before removing it**, best-effort release the worktree's port lease with the path captured
    explicitly (the CLI's own cwd-based `--path` default stops resolving once `ExitWorktree` has
    moved the session out, or the directory is gone) — release before `ExitWorktree`, not after,
@@ -290,7 +290,8 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    remote ref. Run `teardown-run` again, now that nothing live
    remains for the rest of it to conflict with — but archival stays Section B's job alone (item 8
    always runs last, per `cleanup-procedures.md`'s Ordering rule, since Sections D/E and Section
-   B's own archival all still need `$RUN_DIR` to resolve after this point):
+   B's own archival all still need `$RUN_DIR` after this point — the carried path, never re-resolved,
+   since step 3.6 has marked the run `clean`):
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" teardown-run --run "$RUN_DIR" --merged --remote-ref-only

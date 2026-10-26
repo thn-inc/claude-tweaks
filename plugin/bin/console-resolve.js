@@ -12,6 +12,14 @@
 // `--dry-run`, which writes nothing and so has nothing to clobber. A console.json
 // already carrying `resolved: true` is not an error, in either shape: it
 // re-renders and exits 0.
+//
+// Second shape (#4170): `--run <dir> --set-item <id> --resolution keep-staged
+// --reason <text>` rewrites one stored item `apply` → `keep-staged` after its
+// execution failed, so it re-surfaces as residue (lib/console/item-resolution.js).
+// It needs no ceiling (it only records what already happened). Exit 0 rewrote or
+// already there, 2 malformed, 3 --run not anchored or the write failed, 5 refused
+// (no console.json, not this CLI's shape, unknown/duplicate id, resolution not
+// rewritable).
 'use strict';
 
 const fs = require('fs');
@@ -25,9 +33,11 @@ const { resolvePolicyConfig } = require('./lib/policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
 const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issues/grant-maturation');
 const { writeFileAtomic } = require('./lib/atomic-write');
-const { unresolvedItems, splitMissing, formatResidueLines } = require('./lib/console/residue');
+const { unresolvedItems, splitMissing, formatResidueLines, consoleResidueItems } = require('./lib/console/residue');
+const { REWRITE_FROM, rewriteItemResolution } = require('./lib/console/item-resolution');
 
-const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]';
+const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]\n'
+  + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged --reason <text>';
 
 class UsageError extends Error {}
 
@@ -45,19 +55,28 @@ function needsAHumanBlock(unresolved, runDir, consolePath) {
 }
 
 function parseArgs(argv) {
-  const out = { run: null, policy: null, dryRun: false, json: false };
+  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null };
+  const valued = { '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason' };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
-    if (flag === '--run' || flag === '--policy') {
+    if (Object.prototype.hasOwnProperty.call(valued, flag)) {
       const value = argv[i + 1];
       if (value === undefined || value.startsWith('--')) throw new UsageError(`${flag} requires a value`);
-      out[flag === '--run' ? 'run' : 'policy'] = value;
+      out[valued[flag]] = value;
       i += 1;
     } else if (flag === '--dry-run') out.dryRun = true;
     else if (flag === '--json') out.json = true;
     else throw new UsageError(`unknown flag: ${flag}`);
   }
   if (!out.run) throw new UsageError('--run <dir> is required');
+  if (out.setItem !== null) {
+    if (out.policy !== null || out.dryRun || out.json) throw new UsageError('--set-item takes none of --policy, --dry-run, --json');
+    if (out.setItem === '') throw new UsageError('--set-item requires a non-empty id');
+    if (!out.resolution || !out.reason) throw new UsageError('--set-item requires --resolution and --reason (both non-empty)');
+    if (!Object.prototype.hasOwnProperty.call(REWRITE_FROM, out.resolution)) throw new UsageError(`--resolution must be one of ${Object.keys(REWRITE_FROM).join(', ')} (got ${out.resolution})`);
+    return out;
+  }
+  if (out.resolution !== null || out.reason !== null) throw new UsageError('--resolution and --reason require --set-item');
   if (out.policy !== 'console-auto') throw new UsageError(`--policy must be console-auto (got ${out.policy || 'nothing'})`);
   return out;
 }
@@ -135,6 +154,31 @@ function ghCheckPrState(execFile, cwd) {
   };
 }
 
+// #4170: the `--set-item` shape — one stored item rewritten after its execution failed. Exit 0 rewrote or
+// already there, 3 the write threw, 5 refused. Runs before the ceiling check: it only records what happened.
+function setItem(o, runDir, { stdout, stderr, now }) {
+  const consolePath = path.join(runDir, 'console.json');
+  const at = new Date(now()).toISOString();
+  let r;
+  try {
+    r = rewriteItemResolution({ consolePath, id: o.setItem, resolution: o.resolution, reason: o.reason, at });
+  } catch (err) {
+    stderr(`console-resolve.js: could not write ${consolePath}: ${err && err.message ? err.message : err}\n`);
+    return 3;
+  }
+  if (r.status === 'refused') { stderr(`console-resolve.js: ${r.why} — nothing written\n`); return 5; }
+  if (r.status === 'unchanged') { stdout(`console-resolve.js: ${o.setItem} already ${o.resolution} — nothing rewritten\n`); return 0; }
+  const text = `Console item ${o.setItem} (${r.item.section}): rewritten ${r.from} → ${o.resolution} after execution — ${o.reason}`;
+  try {
+    appendEntry({ runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text, reversibility: 'n/a' }) });
+  } catch (err) {
+    stderr(`console-resolve.js: ${o.setItem} rewritten ${r.from} → ${o.resolution} in ${consolePath}, but the decisions.md entry could not be written (${err && err.message ? err.message : err})\n`);
+    return 3;
+  }
+  stdout(`console-resolve.js: ${o.setItem} rewritten ${r.from} → ${o.resolution} in ${consolePath}\n`);
+  return 0;
+}
+
 async function run(argv, deps = {}) {
   const cwd = deps.cwd || (() => process.cwd());
   const stdout = deps.stdout || ((s) => process.stdout.write(s));
@@ -156,6 +200,7 @@ async function run(argv, deps = {}) {
     return 3;
   }
   const runDir = target.dir;
+  if (o.setItem !== null) return setItem(o, runDir, { stdout, stderr, now });
   const { ceiling, vetoWindowHours } = readPolicy({ execFile, cwd: cwd(), runDir });
   if (!bookkeepingPermissions(ceiling).consoleAutoResolve) {
     stderr(`console-resolve.js: consoleAutoResolve is not granted at ceiling ${ceiling} (unattended only) — nothing written\n`);
@@ -187,7 +232,10 @@ async function run(argv, deps = {}) {
       stdout(`console-resolve.js: ${notice}\n`);
       stdout(`${renderStoredTable(existing)}\n`);
       // A resumed wrap-up re-renders here: the block must still reach its final stop.
-      const block = needsAHumanBlock(unresolvedItems(existing), runDir, consolePath);
+      // A planned can't-tell filing with no filed line is residue here too (#4170); the fresh path's filings are about to run.
+      let decisions = '';
+      try { decisions = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch { decisions = ''; }
+      const block = needsAHumanBlock(consoleResidueItems(existing, decisions), runDir, consolePath);
       if (block) stdout(block);
       return 0;
     }
@@ -257,4 +305,4 @@ if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { process.stderr.write(`console-resolve.js: ${err && err.stack ? err.stack : err}\n`); process.exitCode = 1; });
 }
 
-module.exports = { run, parseArgs, ghReadGrants, readPolicy, checkPatchStack };
+module.exports = { run, parseArgs, ghReadGrants, readPolicy, checkPatchStack, USAGE };

@@ -4,13 +4,14 @@ files:
   - plugin/bin/lib/flow/pr-checklist.js
   - plugin/bin/lib/flow/pr-body.js
   - plugin/skills/_shared/pr-checklist-refresh.md
+  - plugin/bin/lib/phase-exit/phase-exit.js
 ---
 
 # Flip a PR Checklist Row at a Phase Exit
 
 **Persona:** the orchestrating agent of a `pr-first` `/claude-tweaks:flow` run, standing at the exit of its build phase with the branch already pushed. It has done the same six-step read/repair/flip/verify/write dance at every earlier exit and, in #3059's run, hand-wrote a scratch script to stop recomposing it. Later in the journey a **maintainer** opens the draft PR to see which phases have actually run.
 **Goal:** mark this phase done on the run's PR, or drop a skipped phase's row, with one command that cannot write the wrong body to the wrong PR.
-**Entry point:** `_shared/pr-checklist-refresh.md`'s Phase-checklist update, reached from any phase's own exit (`build`, `test`, `review`, `polish`, `wrap-up`) after its phase-exit push, with `run-state.json` carrying `pr`.
+**Entry point:** `_shared/pr-checklist-refresh.md`'s Phase-checklist update, reached from any phase's own exit (`build`, `test`, `review`, `polish`, `wrap-up`) with `run-state.json` carrying `pr`. Since #4026, `bin/phase-exit.js` runs this CLI in-process after its push and carries the result as `checklist` in its envelope, forwarding `--fixes`, `--remove` and `--summary-file` (`docs/journeys/exit-a-phase-in-one-call-4026.md`). The direct call in step 1 is still how the pre-merge refresh re-flips a row.
 **Success state:** the PR body shows `- [x] {phase}` for this phase (or no row at all for a skipped one), every other byte unchanged, and the agent moved on after one call whose JSON line said `written` or `no-op`.
 
 ## Steps
@@ -24,7 +25,7 @@ files:
 
 ### 2. A wrong body is refused, never overwritten
 - **URL:** `plugin/bin/pr-checklist.js` exit 4; `_shared/pr-checklist-refresh.md` exit-code list
-- **Action:** When the body's first line names a different run id (a PR reused or edited by another run), the CLI exits 4, prints `run marker mismatch on PR #{n}: body names run {found}, expected {runId} — nothing written`, and the agent logs the refusal as the refresh doc says — it does not fix the body by hand.
+- **Action:** When the body's first line names a different run id (a PR reused or edited by another run), the CLI exits 4, prints `run marker mismatch on PR #{n}: body names run {found}, expected {runId} — nothing written`, and logs the refusal to `decisions.md` itself (`refused on PR #{n} — run marker mismatch (…)`). The agent hand-logs it only on a `could not append` stderr line, and never fixes the body by hand.
 - **Should feel:** Safe — the check runs before the "already checked" shortcut, so a foreign PR that happens to show `- [x] build` is still refused rather than read as done.
 - **Should understand:** Exit 4 is distinct from exit 5 (`gh` failed) because the two need different handling: 4 is an integrity stop, 5 is a best-effort warning the pre-merge refresh catches up on.
 - **Red flags:** Any `gh pr edit` after a mismatch. Exit 4 treated as a transient retry.
@@ -45,4 +46,5 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #3263 (2026-10-19): `plugin/bin/pr-checklist.js` replaces the hand-composed six-step Phase-checklist update on the `gh`-present path; the MCP path stays documented in `_shared/pr-checklist-refresh.md`.
+- Updated during `/claude-tweaks:build` of record #4026 (2026-10-25): `bin/phase-exit.js` now runs this flip as one sub-step of the single phase-exit call.
 - Related: `docs/journeys/read-an-accurate-spec-summary-after-a-premise-reversal-3050.md` (the Spec-summary refresh this CLI now runs in the same call)

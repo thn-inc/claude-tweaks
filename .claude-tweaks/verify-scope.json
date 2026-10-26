@@ -7,7 +7,7 @@
   },
   "retry": { "tests": "node --test {file}", "journeys": "node --test {file}" },
   "flaky": {
-    "files": ["tests/bin-lib/log-decision/append.test.js", "tests/bin-lib/verify/cli.test.js", "tests/bin-lib/gif/palette.test.js", "tests/statusline.test.js"],
+    "files": ["tests/bin-lib/log-decision/append.test.js", "tests/bin-lib/verify/cli.test.js", "tests/bin-lib/gif/palette.test.js", "tests/statusline.test.js", "tests/bin-lib/staged-patch/cli.test.js", "tests/bin-lib/staged-patch/stack-check.test.js"],
     "maxRetries": 1
   },
   "impact": {

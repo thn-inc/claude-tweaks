@@ -866,8 +866,14 @@ function stampedOwnerProvablyAlive(owner, { hostname, aliveFn, startFn }) {
 // `claude -p` sharing the session id — it must neither heartbeat nor take the block
 // over. Never gives a legacy run (no owner block) one, never acts on a `fallback`
 // guess or another session's run, and never throws (it runs on every hook event).
+// #4150: the throttle is checked BEFORE the owner-pid probe (resolveOwnerPid can spawn
+// up to 8 `ps` calls). Inside the window the only thing a probe can change is a
+// re-stamp, so the per-event path (hooks.js, every non-session-start event) returns
+// null with no probe at all and defers such a re-stamp to the first event outside the
+// window. session-start.js passes `restampWhileFresh: true` to keep the full probe
+// there, so a resume under a new process re-stamps at once.
 // Returns 'heartbeat' | 'restamp' | null (null: nothing written).
-function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {} } = {}) {
+function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}, restampWhileFresh = false } = {}) {
   try {
     const owned = ctx && ctx.ownedRun;
     if (!isTrustedOwnedRun(owned)) return null;
@@ -876,6 +882,11 @@ function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}
     const state = readRunState(owned.dir);
     const owner = state && state.owner;
     if (!owner || typeof owner !== 'object' || owner.sessionId !== sessionId) return null;
+
+    const last = Date.parse(owner.heartbeatAt);
+    const age = now - last;
+    const fresh = Number.isFinite(last) && age >= 0 && age < HEARTBEAT_THROTTLE_MS; // a future-stamped heartbeat (clock skew) is not fresh
+    if (fresh && !restampWhileFresh) return null;
 
     const hostname = deps.hostname || os.hostname;
     const cur = (deps.resolveOwnerPid || processProbe.resolveOwnerPid)(env);
@@ -899,8 +910,7 @@ function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}
       };
       result = 'restamp';
     } else {
-      const last = Date.parse(owner.heartbeatAt);
-      if (Number.isFinite(last) && now - last < HEARTBEAT_THROTTLE_MS) return null;
+      if (fresh) return null;
       fields = { heartbeatAt: new Date(now).toISOString() };
       result = 'heartbeat';
     }

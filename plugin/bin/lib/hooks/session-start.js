@@ -125,7 +125,8 @@ async function run(ctx) {
   const pluginRootEnv = process.env.CLAUDE_PLUGIN_ROOT;
   try { restampOwnerPidOnResume(ctx); } catch { /* best-effort */ }
   // #3973: re-stamp the owner block (a resume runs under a new process) before anything below spawns.
-  try { ctxLib.refreshOwnerBlock(ctx); } catch { /* best-effort */ }
+  // #4150: restampWhileFresh keeps the full pid probe here — a resume must re-stamp at once, not at the next window edge.
+  try { ctxLib.refreshOwnerBlock(ctx, { restampWhileFresh: true }); } catch { /* best-effort */ }
   try { parts.push(...deps.collect()); } catch { /* best-effort */ }
   try {
     const buildLine = resolveBuildLine({ CLAUDE_PLUGIN_ROOT: pluginRootEnv });

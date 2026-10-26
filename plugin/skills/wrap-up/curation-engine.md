@@ -27,7 +27,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" plan \
   --signals '{"dontCandidate":false,"contradictedConvention":false,"incidentRecorded":false,"adrCandidateCount":0,"d4Count":0,"d5Count":0}'
 ```
 
-(Substitute the re-resolved run-dir path — env assignments do not survive between calls.)
+(Substitute the carried run-dir path — env assignments do not survive between calls.)
 
 `--run-dir` and `--base` are required; `--ceremony` defaults to `standard` (`fast-lane` narrows the domain-overlap caps). `--skill-budget n` and `--doc-budget n` override those caps outright. `--dry-run` suppresses the telemetry append. `plan` prints the worklist JSON on stdout and writes `engine-state.json` into the run dir.
 

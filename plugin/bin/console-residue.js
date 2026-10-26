@@ -31,6 +31,9 @@ const { collectUnresolvedConsoles } = require('./lib/hooks/session-residue');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { writeFileAtomic } = require('./lib/atomic-write');
+const { withLock } = require('./lib/file-lock');
+const { lstatType } = require('./lib/path-guard');
+const { CONSOLE_LOCK } = require('./lib/console/item-resolution');
 const { readVerifyResults } = require('./lib/wrap-up/verify-results');
 
 const USAGE = 'usage: console-residue.js (--run <dir> [--require-verify <base>] | --ack --run <dir> | --ack-all)';
@@ -67,17 +70,24 @@ function parseArgs(argv) {
 // scan is never rewritten. Returns the outcome: 'wrote', 'already',
 // 'unparseable', or 'failed' (the write threw — unwritable, or the run dir
 // moved under a concurrent archival).
+// The read-modify-write runs under console-resolve.js --set-item's lock (#4170), so an ack and a
+// rewrite of the same console.json never interleave and drop one another's field.
 function acknowledge(consolePath, at, { readFile, writeFile }) {
-  let parsed;
-  try { parsed = JSON.parse(readFile(consolePath)); } catch { return { status: 'unparseable' }; }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { status: 'unparseable' };
-  if (typeof parsed.residueAcknowledgedAt === 'string') return { status: 'already' };
-  try {
-    writeFile(consolePath, `${JSON.stringify({ ...parsed, residueAcknowledgedAt: at }, null, 2)}\n`);
-  } catch (err) {
-    return { status: 'failed', message: err && err.message ? err.message : String(err) };
-  }
-  return { status: 'wrote' };
+  // withLock creates a missing lock parent, so a console whose directory moved under a concurrent
+  // archival must be refused before the lock, or the ack would recreate an empty directory.
+  if (lstatType(path.dirname(consolePath)).type === 'missing') return { status: 'failed', message: 'console directory no longer exists' };
+  return withLock(path.join(path.dirname(consolePath), CONSOLE_LOCK), () => {
+    let parsed;
+    try { parsed = JSON.parse(readFile(consolePath)); } catch { return { status: 'unparseable' }; }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { status: 'unparseable' };
+    if (typeof parsed.residueAcknowledgedAt === 'string') return { status: 'already' };
+    try {
+      writeFile(consolePath, `${JSON.stringify({ ...parsed, residueAcknowledgedAt: at }, null, 2)}\n`);
+    } catch (err) {
+      return { status: 'failed', message: err && err.message ? err.message : String(err) };
+    }
+    return { status: 'wrote' };
+  });
 }
 
 function ackConsoles(consoles, at, io, stderr) {

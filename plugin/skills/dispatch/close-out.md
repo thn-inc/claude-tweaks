@@ -49,13 +49,14 @@ touching shared state runs one member at a time.
    call) / `'pr-not-found'` (GitHub confirmed the queried number names no PR), or `null` for a
    missing number. Any string result (or `null`) stops this candidate — report
    it, and never read it as "not DIRTY".
-   An existing `.worktrees/close-out-{number}` for this candidate is a prior run's failed update: it
-   routes to `close-out-update.md`'s resume (its step 2) regardless of `mergeStateStatus`.
+   An existing `.worktrees/close-out-{number}` or a pending update marker (`close-out-update.md`'s **Update marker**: read that section and run its **Read** here for every candidate, whatever its `mergeStateStatus` — a failed read stops this candidate, `stopped: update failed — marker unreadable`)
+   for this candidate is a prior run's update: it
+   routes to `close-out-update.md`'s resume (its step 2) regardless of `mergeStateStatus`, from whichever checkout this run is in.
    `mergeStateStatus: DIRTY` or `mergeable: CONFLICTING`: this is item 11's own finding surfacing
    again at close-out time — read `close-out-update.md` in this skill's directory and follow it (an
    offer, then a re-verified merge of the base branch into the PR). `mergeStateStatus: BEHIND`:
    read `close-out-update.md` too (it offers `gh pr update-branch`); declining continues, since
-   BEHIND was never a stop. `mergeStateStatus: BLOCKED` with nothing else wrong is the forge
+   BEHIND was never a stop — except on a resume (the existing `.worktrees/close-out-{number}` or pending marker above), where `close-out-update.md` step 1 offers no skip: declining stops, since that head is unverified. `mergeStateStatus: BLOCKED` with nothing else wrong is the forge
    waiting on required checks/reviews, not a conflict — proceed.
 3. **Convert draft to ready, if needed (AC2).** **Acceptance labeling first** — this check, and
    any Step 1 run it leads to, precedes the Mark-ready call below, keeping
@@ -106,12 +107,14 @@ touching shared state runs one member at a time.
    `.worktrees/close-out-{number}` that `close-out-update.md` creates for an update; its step 7
    removes it. On `armed`, none of Sections B/C/E run yet — same as every other
    `armed` outcome in this skill, they wait for `merged` evidence.
+   When `close-out-update.md` handed off a `{verified-sha}`, clear its marker on `merged` (`cleared (merged)`, that file's **Update marker**);
+   on `armed` it stays pending, so a re-run before the merge lands re-verifies first.
 
 ## Reporting
 
 One line per candidate: `#{number} — {outcome}` where `{outcome}` is one of `merged`, `armed`,
-`stopped: CI {status}`, `stopped: mergeStateStatus DIRTY — update declined`,
-`stopped: update failed — {conflict not resolved | verification | push rejected | update-branch rejected | head moved | command failed}`,
+`stopped: CI {status}`, `stopped: mergeStateStatus {DIRTY | BEHIND} — update declined`,
+`stopped: update failed — {conflict not resolved | verification | push rejected | update-branch rejected | head moved | base not fetched | marker unreadable | marker not written | gh absent | command failed}`,
 `stopped: CI {status} after update`, `stopped: mergeStateStatus {status} after update`,
 `stopped: acceptance labeling unverifiable — no run dir`, or `declined at confirmation gate`.
 The bare form's summary line names how many candidates were found, merged/armed, stopped, and declined. This mode is never headless-self-reporting like bare

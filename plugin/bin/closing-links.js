@@ -42,10 +42,17 @@
 // 3 run dir missing or not anchored under the main checkout (a worktree-local
 //   shadow -- _shared/pipeline-run-dir.md, [IL-127]).
 // 4 run-marker mismatch (pre-merge only): the PR body's first line names a
-//   different run (or none) -- refused, nothing written.
+//   different run (or none) -- refused, nothing written to the PR.
 // 5 `gh pr view` / `gh pr edit` failed, or a required read came back
 //   malformed (non-string body, non-array links, links with no repository,
 //   missing/unparseable url or mergedAt).
+// gh-absent, 4 and 5 leave this merge's closing links unchecked, and the CLI
+// logs that itself (#4026): one SKIP under `## /wrap-up`, step `Closing links
+// ({mode}) (degraded)`, text `condition: closing-links.js {gh-absent | exit 4
+// run marker mismatch | exit 5 gh failure: {first stderr line, unprefixed}} →
+// fallback: closing links not checked this merge`, reversibility n/a. A failed
+// append adds one stderr line (and logFailed on the gh-absent envelope), never
+// an exit change. Exit 3 cannot log: the run dir is not trusted.
 'use strict';
 
 const path = require('path');
@@ -69,7 +76,8 @@ const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-me
   + '       2 malformed invocation\n'
   + '       3 run dir missing or not anchored under the main checkout\n'
   + '       4 run marker mismatch (pre-merge) -- refused, nothing written\n'
-  + '       5 gh pr view / gh pr edit failed, or a required read came back malformed\n';
+  + '       5 gh pr view / gh pr edit failed, or a required read came back malformed\n'
+  + '  gh-absent, 4 and 5 append their own SKIP line to decisions.md (## /wrap-up)\n';
 
 const MODES = ['pre-merge', 'post-merge'];
 const VALUE_FLAGS = { '--run': 'run', '--mode': 'mode', '--settle-ms': 'settleMs' };
@@ -106,7 +114,7 @@ const realDeps = {
     encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
   }),
   readRunState: (runDir) => readRunStateWithParent(runDir, { requireRunIdParent: true }),
-  appendDecision: ({ runDir, entry }) => appendEntry({ runDir, entry }),
+  appendDecision: ({ runDir, section, entry }) => appendEntry({ runDir, section, entry }),
   now: () => new Date(),
   sleep: (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); },
   stdout: (s) => process.stdout.write(s),
@@ -161,10 +169,41 @@ function run(argv, overrides = {}) {
   if (!Number.isInteger(n) || n <= 0) return print({ action: 'no-pr' });
   const runId = path.basename(resolved.parentRunDir || o.run);
 
-  // 4. No gh: status as data, never a failure.
-  if (!deps.ghAvailable()) return print({ action: 'gh-absent', pr: n });
-
   let logFailed = false;
+  // gh-absent, exit 4 and exit 5 leave this merge's closing links unchecked:
+  // one SKIP under /wrap-up (#4026). A failed append adds one stderr line; the
+  // exit code (or the gh-absent envelope's logFailed) is unchanged.
+  const unchecked = (condition) => {
+    try {
+      deps.appendDecision({
+        runDir: o.run,
+        section: '/wrap-up',
+        entry: formatEntry({
+          status: 'SKIP',
+          now: deps.now(),
+          step: `Closing links (${o.mode}) (degraded)`,
+          text: `condition: closing-links.js ${condition} → fallback: closing links not checked this merge`.replace(/\s+/g, ' '),
+          reversibility: 'n/a',
+        }),
+      });
+    } catch (e) {
+      logFailed = true;
+      deps.stderr(`closing-links.js: could not append the decisions.md entry: ${(e && e.message) || e}\n`);
+    }
+  };
+  // Exit 5: the stderr line, then a SKIP carrying its first line.
+  const ghFailed = (message) => {
+    deps.stderr(`closing-links.js: ${message}\n`);
+    unchecked(`exit 5 gh failure: ${message.split('\n')[0]}`);
+    return 5;
+  };
+
+  // 4. No gh: status as data, never a failure.
+  if (!deps.ghAvailable()) {
+    unchecked('gh-absent');
+    return print({ action: 'gh-absent', pr: n, ...(logFailed ? { logFailed: true } : {}) });
+  }
+
   const log = (text, reversibility, status = 'AUTO', step = 'Closing links') => {
     try {
       deps.appendDecision({
@@ -192,18 +231,15 @@ function run(argv, overrides = {}) {
   try {
     pr = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', fields]));
   } catch (e) {
-    deps.stderr(`closing-links.js: gh pr view failed on PR #${n}: ${errText(e)}\n`);
-    return 5;
+    return ghFailed(`gh pr view failed on PR #${n}: ${errText(e)}`);
   }
   const repo = pr && prRepoFromUrl(pr.url);
   if (!pr || typeof pr.body !== 'string' || !refsWellFormed(pr.closingIssuesReferences) || !repo) {
-    deps.stderr(`closing-links.js: gh pr view on PR #${n} returned no string body, usable closingIssuesReferences (an array whose entries carry a repository), or PR url\n`);
-    return 5;
+    return ghFailed(`gh pr view on PR #${n} returned no string body, usable closingIssuesReferences (an array whose entries carry a repository), or PR url`);
   }
   // A MERGED PR with no readable mergedAt cannot tell a post-merge close from an earlier one.
   if (o.mode === 'post-merge' && pr.state === 'MERGED' && Number.isNaN(Date.parse(pr.mergedAt))) {
-    deps.stderr(`closing-links.js: gh pr view on PR #${n} returned a MERGED PR with no parseable mergedAt\n`);
-    return 5;
+    return ghFailed(`gh pr view on PR #${n} returned a MERGED PR with no parseable mergedAt`);
   }
   const scope = { owner: repo.owner, repo: repo.repo };
   const span = parseFixesSpan(pr.body);
@@ -218,21 +254,22 @@ function run(argv, overrides = {}) {
     const base = { pr: n, expected, keepOpen, linked, unwanted };
     if (unwanted.length === 0) return print({ action: 'clean', ...base, unlinked: [], stillLinked: [], neutralized: 0 });
 
-    // 7a. Prove the PR is this run's before anything is written or logged (a
-    // no-write path still logs into this run), then rewrite the unwanted
-    // phrases and write only what changed.
+    // 7a. Prove the PR is this run's before anything is written to it or any
+    // outcome is logged (a no-write path still logs into this run) -- only the
+    // refusal's own SKIP is -- then rewrite the unwanted phrases and write only
+    // what changed.
     const { text: newBody, neutralized } = neutralizeClosingPhrases(pr.body, { targets: unwanted, ...scope });
     const found = firstLineRunId(newBody);
     if (found !== runId) {
       deps.stderr(`closing-links.js: run marker mismatch on PR #${n}: body names run ${found || 'none'}, expected ${runId} — nothing written\n`);
+      unchecked('exit 4 run marker mismatch');
       return 4;
     }
     if (newBody !== pr.body) {
       try {
         deps.gh(['pr', 'edit', String(n), '--body-file', '-'], newBody);
       } catch (e) {
-        deps.stderr(`closing-links.js: gh pr edit failed on PR #${n}: ${errText(e)}\n`);
-        return 5;
+        return ghFailed(`gh pr edit failed on PR #${n}: ${errText(e)}`);
       }
     }
 
@@ -243,10 +280,9 @@ function run(argv, overrides = {}) {
       if (!reread || !refsWellFormed(reread.closingIssuesReferences)) throw new Error('no usable closingIssuesReferences');
       relinked = sameRepoNumbers(reread.closingIssuesReferences, scope);
     } catch (e) {
-      deps.stderr(`closing-links.js: gh pr view failed on PR #${n}: ${errText(e)}\n`);
       // A body write already landed: leave a trace so the unlink is not unaudited.
       if (newBody !== pr.body) degraded(`PR #${n} body rewritten (${neutralized.length} closing phrase(s) neutralized) but the re-read of its links failed`, 're-run --mode pre-merge to confirm #' + unwanted.join(', #') + ' unlinked');
-      return 5;
+      return ghFailed(`gh pr view failed on PR #${n}: ${errText(e)}`);
     }
     const unlinked = unwanted.filter((x) => !relinked.includes(x));
     const stillLinked = unwanted.filter((x) => relinked.includes(x));

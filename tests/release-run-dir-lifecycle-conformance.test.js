@@ -1,12 +1,14 @@
-// tests/release-run-dir-lifecycle-conformance.test.js — pins #3898: /release Step 0 adopted the most
-// recent matching run directory at step 2 of run-dir-resolution whatever its run-state.json said, so a
-// later release inherited a finished release run's directory (status clean/closed) — and the new run's
-// decisions, config and staged proposals landed in a directory already archived or closed out. Step 0
-// now refuses a step-2 directory whose status is terminal (anything outside run-integrity.js's
-// NON_TERMINAL) or that a prior release run stamped createdBy: "release-standalone" (an early stop leaves
-// it active), mints a fresh one, and classifies the run as created. The guard is extracted from the
-// live SKILL.md fence and executed against fixture directories (extract-and-run form), and the prose
-// facts around it are pinned with go-red proofs.
+// tests/release-run-dir-lifecycle-conformance.test.js — pins #3898 and #4151: /release Step 0 adopted the
+// most recent matching run directory at step 2 of run-dir-resolution whatever its run-state.json said, so
+// a later release inherited a finished release run's directory (status clean/closed) — and the new run's
+// decisions, config and staged proposals landed in a directory already archived or closed out. #3898 put
+// the refusal in an inline `node -e` probe in the SKILL.md fence; #4151 moved it into
+// `resolve-run-dir`'s step 2 (run-dir-resolve.js's adoptionRefusal), so Step 0 is the resolver call alone:
+// it refuses a step-2 directory whose status is terminal, that a prior release run stamped createdBy:
+// "release-standalone" (an early stop leaves it active), or whose run-state.json exists but cannot be
+// read, mints a fresh one, and classifies the run as created. The fence is extracted from the live
+// SKILL.md and executed against fixture repos through the real CLI, and the prose facts around it are
+// pinned with go-red proofs.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -19,7 +21,7 @@ const { gitRepo, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
 
 const ROOT = path.join(__dirname, '..');
 const SKILL = path.join(ROOT, 'plugin', 'skills', 'release', 'SKILL.md');
-// Forward slashes: the guard hands CLAUDE_PLUGIN_ROOT to node through the environment, but a Windows
+// Forward slashes: the fence hands CLAUDE_PLUGIN_ROOT to node through the environment, but a Windows
 // backslash root would still break any shell expansion of it.
 const PLUGIN_ROOT = path.join(ROOT, 'plugin').split(path.sep).join('/');
 
@@ -39,17 +41,6 @@ function resolveFence(stepZero) {
   return fence;
 }
 
-// The guard command: from `PLUGIN_ROOT=` on the guard line to just before that line's LAST `; then`.
-const GUARD_LINE_PREFIX = 'if [ -n "$RUN_DIR" ] && PLUGIN_ROOT=';
-function extractGuard(stepZero) {
-  const line = resolveFence(stepZero).split('\n').find((l) => l.startsWith(GUARD_LINE_PREFIX));
-  assert.ok(line, `extraction pattern is out of sync: no Step 0 fence line starts with ${GUARD_LINE_PREFIX}`);
-  const from = line.indexOf('PLUGIN_ROOT=');
-  const to = line.lastIndexOf('; then');
-  assert.ok(from !== -1 && to > from, 'extraction pattern is out of sync: the guard line has no "PLUGIN_ROOT=" ... "; then" span');
-  return line.slice(from, to);
-}
-
 const STEP_ZERO = stepZeroOf(readText(SKILL));
 
 // PIPELINE_RUN_DIR and RUN_DIR are deleted so the caller's env never decides; `overrides` sets what the run needs.
@@ -60,68 +51,73 @@ function scriptEnv(overrides) {
   return { ...env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, ...overrides };
 }
 
-// Runs the guard against a fixture dir.
-function runGuard(guard, dir) {
-  return spawnSync('bash', ['-c', guard], { env: scriptEnv({ RUN_DIR: dir }), encoding: 'utf8' });
-}
-
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'release-run-dir-lifecycle-'));
 process.on('exit', () => { try { fs.rmSync(scratch, { recursive: true, force: true }); } catch { /* best effort */ } });
 
-function fixture(name, runState) {
-  const dir = path.join(scratch, name);
-  fs.mkdirSync(dir, { recursive: true });
-  if (runState !== null) fs.writeFileSync(path.join(dir, 'run-state.json'), runState);
-  return dir;
+// Every fixture repo lands under `scratch`, which the exit hook above removes.
+function initRepo() {
+  return gitRepo({ parent: scratch });
 }
 
+function runInRepo(repo, script, envOverrides) {
+  return spawnSync('bash', ['-c', script], { cwd: repo, env: scriptEnv(envOverrides), encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS });
+}
+
+function pipelineEntries(pipelines) {
+  return fs.readdirSync(pipelines).sort();
+}
+
+// [label, run-dir name suffix, run-state.json contents (null = no file), adopted?]. The directory is named
+// `2026-10-01T100000-release{suffix}`, so step 2's `-release` slug match finds it.
 const ROWS = [
-  ['clean', 'clean', '{"status":"clean"}', 0],
-  ['closed', 'closed', '{"status":"closed"}', 0],
-  ['active', 'active', '{"status":"active"}', 1],
-  ['interrupted', 'interrupted', '{"status":"interrupted"}', 1],
-  ['absent file', 'absent', null, 1],
-  ['not json', 'notjson', 'not json', 1],
-  ["clean in a dir named o'brien run", "o'brien run", '{"status":"clean"}', 0],
-  ['no status key', 'nostatus', '{}', 1],
-  ['non-string status', 'numstatus', '{"status":5}', 1],
+  ['clean', '', '{"status":"clean"}', false],
+  ['closed', '', '{"status":"closed"}', false],
+  ['active', '', '{"status":"active"}', true],
+  ['interrupted', '', '{"status":"interrupted"}', false],
+  ['absent file', '', null, true],
+  ['not json', '', 'not json', false],
+  ['JSON null', '', 'null', false],
+  ["clean in a dir named o'brien run", "-o'brien-run", '{"status":"clean"}', false],
+  ['no status key', '', '{}', true],
+  ['non-string status', '', '{"status":5}', true],
   // A prior release run's own directory is refused whatever its status (#3898 final review C1).
-  ['active, release-standalone', 'active-release', '{"status":"active","createdBy":"release-standalone"}', 0],
-  ['interrupted, release-standalone', 'interrupted-release', '{"status":"interrupted","createdBy":"release-standalone"}', 0],
-  ['active, created by flow', 'active-flow', '{"status":"active","createdBy":"flow"}', 1],
-  ['no status, release-standalone', 'nostatus-release', '{"createdBy":"release-standalone"}', 0],
+  ['active, release-standalone', '', '{"status":"active","createdBy":"release-standalone"}', false],
+  ['interrupted, release-standalone', '', '{"status":"interrupted","createdBy":"release-standalone"}', false],
+  ['active, created by flow', '', '{"status":"active","createdBy":"flow"}', true],
+  ['no status, release-standalone', '', '{"createdBy":"release-standalone"}', false],
 ];
 
-// One assertion for the whole table; the go-red controls below run this same function.
-function assertGuardRows(guard, tag) {
-  for (const [label, name, runState, expected] of ROWS) {
-    const result = runGuard(guard, fixture(`${tag}-${name}`, runState));
-    assert.equal(result.status, expected, `${label}: expected exit ${expected}, got ${result.status} (stderr: ${result.stderr})`);
+// Runs the live fence once per row, each against its own fresh repo holding that one run directory. Every
+// row runs, and the failures are reported together, so one regressed row never hides another.
+function assertFenceRows(fence) {
+  const failures = [];
+  for (const row of ROWS) {
+    try { assertFenceRow(fence, row); } catch (err) { failures.push(err.message); }
+  }
+  assert.deepEqual(failures, [], 'rows whose fence verdict is wrong');
+}
+
+function assertFenceRow(fence, [label, suffix, runState, adopted]) {
+  const repo = initRepo();
+  const pipelines = path.join(repo, '.claude-tweaks', 'pipelines');
+  const dir = path.join(pipelines, `2026-10-01T100000-release${suffix}`);
+  fs.mkdirSync(dir, { recursive: true });
+  if (runState !== null) fs.writeFileSync(path.join(dir, 'run-state.json'), runState);
+  const result = runInRepo(repo, fence);
+  assert.equal(result.status, 0, `${label}: the fence must exit 0 (stderr: ${result.stderr})`);
+  const lines = result.stdout.trim().split('\n');
+  assert.equal(lines.length, 1, `${label}: the fence must print exactly the run dir, got: ${result.stdout}`);
+  const printed = fs.realpathSync(lines[0]);
+  if (adopted) {
+    assert.equal(printed, fs.realpathSync(dir), `${label}: expected the fence to adopt the fixture dir, got ${printed}`);
+  } else {
+    assert.notEqual(printed, fs.realpathSync(dir), `${label}: expected the fence to refuse the fixture dir and mint a fresh one`);
+    assert.equal(path.dirname(printed), fs.realpathSync(pipelines), `${label}: the minted dir must sit under the fixture's pipelines root`);
   }
 }
 
-test('AC1.1: Step 0 guard classifies run-state status', () => {
-  assertGuardRows(extractGuard(STEP_ZERO), 'live');
-});
-
-// The release-standalone half of the predicate, removed: the gap #3898's final review reproduced.
-const CREATED_BY_DISJUNCT = ' || r.createdBy === "release-standalone"';
-function dropCreatedByDisjunct(text) {
-  const mutated = text.replace(CREATED_BY_DISJUNCT, '');
-  assert.notEqual(mutated, text, `anchor text "${CREATED_BY_DISJUNCT.trim()}" not found — proof cannot discriminate`);
-  return mutated;
-}
-
-test('AC1.1: Step 0 guard go-red: without the release-standalone disjunct an active release dir is adopted', () => {
-  assert.throws(() => assertGuardRows(dropCreatedByDisjunct(extractGuard(STEP_ZERO)), 'nodisjunct'), /active, release-standalone: expected exit 0, got 1/);
-});
-
-test('AC2.1: Step 0 guard go-red: a flipped predicate adopts a clean dir', () => {
-  const guard = extractGuard(STEP_ZERO);
-  const flipped = guard.replace('!NON_TERMINAL.has(s)', 'NON_TERMINAL.has(s)');
-  assert.notEqual(flipped, guard, 'anchor text "!NON_TERMINAL.has(s)" not found in the guard — proof cannot discriminate');
-  assert.equal(runGuard(flipped, fixture('clean-flipped', '{"status":"clean"}')).status, 1, 'the flipped predicate must adopt (exit 1) a clean dir');
-  assert.equal(runGuard(flipped, fixture('active-flipped', '{"status":"active"}')).status, 0, 'the flipped predicate must refuse (exit 0) an active dir');
+test('#4151 AC1.1: the Step 0 fence adopts or refuses each step-2 run-state', () => {
+  assertFenceRows(resolveFence(STEP_ZERO));
 });
 
 // The mint line of the same fence: `resolve-run-dir --standalone release --create`.
@@ -129,11 +125,6 @@ function extractMintLine(stepZero) {
   const line = resolveFence(stepZero).split('\n').find((l) => l.includes('--standalone release --create'));
   assert.ok(line, 'extraction pattern is out of sync: no Step 0 fence line carries "--standalone release --create"');
   return line.trim();
-}
-
-// Every fixture repo lands under `scratch`, which the exit hook above removes.
-function initRepo() {
-  return gitRepo({ parent: scratch });
 }
 
 // A real repo whose only run directory is a finished release run — the shape #3898 reproduced.
@@ -146,30 +137,30 @@ function finishedRunRepo() {
   return { repo, finished, pipelines: path.dirname(finished) };
 }
 
-function runInRepo(repo, script, envOverrides) {
-  return spawnSync('bash', ['-c', script], { cwd: repo, env: scriptEnv(envOverrides), encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS });
-}
-
-// After the guard refuses the finished dir, the mint line must produce a different, newly created dir.
+// The mint line must produce a different, newly created dir even when an adoptable directory exists:
+// an adoptable one (no run-state.json) is what step 2 would hand back if the mint carried --spec-slug.
 function assertMintIsFresh(mintLine, label) {
-  const { repo, finished, pipelines } = finishedRunRepo();
+  const repo = initRepo();
+  const pipelines = path.join(repo, '.claude-tweaks', 'pipelines');
+  const existing = path.join(pipelines, '2026-10-01T100000-release');
+  fs.mkdirSync(existing, { recursive: true });
   const result = runInRepo(repo, `${mintLine}\necho "$RUN_DIR"`);
   assert.equal(result.status, 0, `${label}: mint exited ${result.status} (stderr: ${result.stderr})`);
   const minted = fs.realpathSync(result.stdout.trim());
-  assert.notEqual(minted, fs.realpathSync(finished), `${label}: the mint re-adopted the finished run dir it was supposed to replace (#3898)`);
+  assert.notEqual(minted, fs.realpathSync(existing), `${label}: the mint re-adopted the existing run dir it was supposed to replace (#3898)`);
   assert.equal(path.dirname(minted), fs.realpathSync(pipelines), `${label}: the minted dir must sit under the fixture's pipelines root`);
   assert.ok(fs.statSync(minted).isDirectory(), `${label}: the minted dir must exist`);
 }
 
-test('AC1.1: Step 0 mint after a refusal creates a new dir instead of re-adopting the finished one', () => {
+test('AC1.1: Step 0 mint creates a new dir instead of re-adopting an existing one', () => {
   assertMintIsFresh(extractMintLine(STEP_ZERO), 'mint-fresh');
 });
 
-test('AC1.1: Step 0 mint go-red: re-inserting --spec-slug re-adopts the finished dir', () => {
+test('AC1.1: Step 0 mint go-red: re-inserting --spec-slug re-adopts the existing dir', () => {
   const mintLine = extractMintLine(STEP_ZERO);
   const reinserted = mintLine.replace('--standalone release', '--spec-slug release --standalone release');
   assert.notEqual(reinserted, mintLine, 'anchor text "--standalone release" not found in the mint line — proof cannot discriminate');
-  assert.throws(() => assertMintIsFresh(reinserted, 'mint-reinserted'), /re-adopted the finished run dir/);
+  assert.throws(() => assertMintIsFresh(reinserted, 'mint-reinserted'), /re-adopted the existing run dir/);
 });
 
 test('AC1.1: Step 0 fence end to end: a finished release run is refused, a fresh dir minted, status printed', () => {
@@ -177,23 +168,17 @@ test('AC1.1: Step 0 fence end to end: a finished release run is refused, a fresh
   const result = runInRepo(repo, resolveFence(STEP_ZERO));
   assert.equal(result.status, 0, `the fence must exit 0 (stderr: ${result.stderr})`);
   const lines = result.stdout.trim().split('\n');
-  assert.equal(lines.length, 2, `the fence must print the run dir and one refused line, got: ${result.stdout}`);
+  assert.equal(lines.length, 1, `the fence must print exactly the run dir, got: ${result.stdout}`);
   const minted = fs.realpathSync(lines[0]);
   assert.notEqual(minted, fs.realpathSync(finished), 'the run dir must not be the finished one');
   assert.equal(path.dirname(minted), fs.realpathSync(pipelines), 'the minted dir must sit under the fixture pipelines root');
-  const refused = /^refused: (.*) \(status clean\)$/.exec(lines[1]);
-  assert.ok(refused, `the second line must be "refused: {dir} (status clean)", got: ${lines[1]}`);
-  assert.equal(fs.realpathSync(refused[1]), fs.realpathSync(finished), 'the second line must name the refused dir');
+  assert.equal(pipelineEntries(pipelines).length, 2, 'exactly one new directory is minted');
   assert.equal(JSON.parse(fs.readFileSync(path.join(minted, 'run-state.json'), 'utf8')).createdBy, 'release-standalone', 'the fresh dir carries the release-standalone stamp');
 });
 
 // --- PIPELINE_RUN_DIR: only the directory the resolver actually returned from it is exempt (#3898) ---
-// The exemption is keyed on the resolved dir BEING the step-1 PIPELINE_RUN_DIR directory, so a stale value
-// (a missing dir, an archived run-id) that falls through to step 2 is checked like any step-2 directory.
-function pipelineEntries(pipelines) {
-  return fs.readdirSync(pipelines).sort();
-}
-
+// Step 1 returns before step 2's adoption refusal, so a supplied dir is inherited whatever its state; a stale
+// value (a missing dir, an archived run-id) falls through to step 2 and is checked like any step-2 directory.
 function assertPipelineRunDirExemption(fence) {
   const { repo, pipelines } = finishedRunRepo();
   // Case (a): an existing, anchored, terminal release-standalone dir that PIPELINE_RUN_DIR names is inherited.
@@ -204,23 +189,21 @@ function assertPipelineRunDirExemption(fence) {
   const result = runInRepo(repo, fence, { PIPELINE_RUN_DIR: supplied });
   assert.equal(result.status, 0, `exempt: the fence must exit 0 (stderr: ${result.stderr})`);
   const lines = result.stdout.trim().split('\n');
-  assert.equal(lines.length, 1, `exempt: a PIPELINE_RUN_DIR directory must print only itself, with no refused: line, got: ${result.stdout}`);
+  assert.equal(lines.length, 1, `exempt: a PIPELINE_RUN_DIR directory must print only itself, got: ${result.stdout}`);
   assert.equal(fs.realpathSync(lines[0]), fs.realpathSync(supplied), 'exempt: the fence must keep the PIPELINE_RUN_DIR directory');
   assert.deepEqual(pipelineEntries(pipelines), before, 'exempt: no directory may be minted');
 }
 
 function assertStalePipelineRunDirIsChecked(fence) {
   const { repo, finished, pipelines } = finishedRunRepo();
-  // Case (b): PIPELINE_RUN_DIR names a missing path, so step 2 returns the prior clean release dir.
+  // Case (b): PIPELINE_RUN_DIR names a missing path, so step 2 meets the prior clean release dir and refuses it.
   const stale = path.join(pipelines, '2026-10-03T100000-never-created');
   const result = runInRepo(repo, fence, { PIPELINE_RUN_DIR: stale });
   assert.equal(result.status, 0, `stale: the fence must exit 0 (stderr: ${result.stderr})`);
   const lines = result.stdout.trim().split('\n');
-  const refused = /^refused: (.*) \(status clean\)$/.exec(lines[1] || '');
-  assert.ok(refused, `stale: a stale PIPELINE_RUN_DIR must still refuse the prior release dir the resolver falls through to, got: ${result.stdout}`);
-  assert.equal(fs.realpathSync(refused[1]), fs.realpathSync(finished), 'stale: the refused line must name the prior dir');
+  assert.equal(lines.length, 1, `stale: the fence must print exactly the run dir, got: ${result.stdout}`);
   const minted = fs.realpathSync(lines[0]);
-  assert.notEqual(minted, fs.realpathSync(finished), 'stale: a fresh dir must be minted');
+  assert.notEqual(minted, fs.realpathSync(finished), 'stale: a stale PIPELINE_RUN_DIR must still refuse the prior release dir the resolver falls through to');
   assert.equal(pipelineEntries(pipelines).length, 2, 'stale: exactly one new directory is minted');
 }
 
@@ -230,30 +213,6 @@ test('AC4.1: Step 0 fence: a PIPELINE_RUN_DIR directory the resolver returns is 
 
 test('AC4.1: Step 0 fence: a stale PIPELINE_RUN_DIR falls through to step 2 and the prior release dir is refused', () => {
   assertStalePipelineRunDirIsChecked(resolveFence(STEP_ZERO));
-});
-
-// The pre-fix form: skip the guard whenever PIPELINE_RUN_DIR is non-empty.
-function revertToEmptinessExemption(fence) {
-  const from = '[ -n "$RUN_DIR" ] && PLUGIN_ROOT=';
-  const mutated = fence.replace(from, '[ -n "$RUN_DIR" ] && [ -z "$PIPELINE_RUN_DIR" ] && PLUGIN_ROOT=');
-  assert.notEqual(mutated, fence, `anchor text "${from}" not found — proof cannot discriminate`);
-  return mutated;
-}
-
-// The exemption removed: the guard applies to every resolved directory.
-function dropExemption(fence) {
-  const from = ' if (e !== null && e === real(process.argv[1])) process.exit(1);';
-  const mutated = fence.replace(from, '');
-  assert.notEqual(mutated, fence, `anchor text "${from.trim()}" not found — proof cannot discriminate`);
-  return mutated;
-}
-
-test('AC4.1: PIPELINE_RUN_DIR go-red: the emptiness-keyed exemption adopts a prior release dir behind a stale value', () => {
-  assert.throws(() => assertStalePipelineRunDirIsChecked(revertToEmptinessExemption(resolveFence(STEP_ZERO))), /stale: a stale PIPELINE_RUN_DIR must still refuse/);
-});
-
-test('AC4.1: PIPELINE_RUN_DIR go-red: without the exemption a supplied terminal dir is refused', () => {
-  assert.throws(() => assertPipelineRunDirExemption(dropExemption(resolveFence(STEP_ZERO))), /exempt: a PIPELINE_RUN_DIR directory must print only itself/);
 });
 
 // Waits until the wall clock enters a new second: the standalone mint names its dir by the second,
@@ -268,6 +227,7 @@ function waitForNextSecond() {
 // refuse the first run's still-active directory and mint a different one.
 function assertSecondRunRefusesFirst(fence, label) {
   const repo = initRepo();
+  const pipelines = path.join(repo, '.claude-tweaks', 'pipelines');
   const first = runInRepo(repo, fence);
   assert.equal(first.status, 0, `${label}: first run exited ${first.status} (stderr: ${first.stderr})`);
   const firstLines = first.stdout.trim().split('\n');
@@ -277,34 +237,60 @@ function assertSecondRunRefusesFirst(fence, label) {
   const second = runInRepo(repo, fence);
   assert.equal(second.status, 0, `${label}: second run exited ${second.status} (stderr: ${second.stderr})`);
   const lines = second.stdout.trim().split('\n');
-  const refused = /^refused: (.*) \(status active\)$/.exec(lines[1] || '');
-  assert.ok(refused, `${label}: the second run did not refuse the first run's directory, got: ${second.stdout}`);
-  assert.equal(fs.realpathSync(refused[1]), firstDir, `${label}: the refused line must name the first run's directory`);
-  assert.notEqual(fs.realpathSync(lines[0]), firstDir, `${label}: the second run must mint a different directory`);
+  assert.equal(lines.length, 1, `${label}: the second run must print exactly its run dir, got: ${second.stdout}`);
+  assert.notEqual(fs.realpathSync(lines[0]), firstDir, `${label}: the second run must mint a different directory, not re-adopt the first run's`);
+  assert.equal(pipelineEntries(pipelines).length, 2, `${label}: exactly one new directory is minted by the second run`);
 }
 
 test('AC1.1: Step 0 fence run twice without a close: the second run refuses the first run\'s active dir', () => {
   assertSecondRunRefusesFirst(resolveFence(STEP_ZERO), 'twice-live');
 });
 
-test('AC1.1: Step 0 fence run twice go-red: without the release-standalone disjunct the second run re-adopts', () => {
-  assert.throws(() => assertSecondRunRefusesFirst(dropCreatedByDisjunct(resolveFence(STEP_ZERO)), 'twice-nodisjunct'), /did not refuse the first run's directory/);
+// #4151 AC2.1: the refusal is the resolver's, so release/SKILL.md carries no inline `node -e` adoption probe.
+function assertNoInlineProbe(text) {
+  assert.doesNotMatch(text, /node -e/, 'release/SKILL.md must not carry an inline node -e adoption probe — the refusal lives in resolve-run-dir step 2 (#4151)');
+}
+
+// The pre-#4151 guard line, frozen verbatim (SKILL.md line 60 at the parent commit).
+const PRE_CHANGE_GUARD = 'if [ -n "$RUN_DIR" ] && PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" ENV_RUN_DIR="$PIPELINE_RUN_DIR" node -e \'const { NON_TERMINAL } = require(process.env.PLUGIN_ROOT + "/bin/lib/hooks/run-integrity.js"); const real = (d) => { try { return require("fs").realpathSync(d); } catch { return null; } }; const e = real(process.env.ENV_RUN_DIR || ""); if (e !== null && e === real(process.argv[1])) process.exit(1); const r = JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")); const s = r.status; process.exit((typeof s === "string" && !NON_TERMINAL.has(s)) || r.createdBy === "release-standalone" ? 0 : 1)\' -- "$RUN_DIR" 2>/dev/null; then REFUSED_DIR=$RUN_DIR; RUN_DIR=; fi';
+
+test('#4151 AC2.1: release/SKILL.md carries no inline node -e adoption probe', () => {
+  assertNoInlineProbe(readText(SKILL));
+});
+
+test('#4151 AC2.1: the no-inline-probe check goes red on the pre-#4151 guard line', () => {
+  assert.throws(() => assertNoInlineProbe(PRE_CHANGE_GUARD), /inline node -e adoption probe/);
+});
+
+// Step 2 now refuses a `clean` run's own directory, and wrap-up's close-run marks the run `clean`
+// mid-flight, so wrap-up must carry its Phase-1 run-dir path instead of re-resolving it (#4151).
+const WRAP_UP_CARRIED_PATH = [
+  ['SKILL.md', /never re-runs the resolver/],
+  ['cleanup-procedures-execution.md', /never re-resolved here/],
+  ['standalone-fast-path.md', /never re-resolved/],
+];
+
+test('#4151: wrap-up carries its run-dir path past close-run instead of re-resolving it', () => {
+  for (const [file, pattern] of WRAP_UP_CARRIED_PATH) {
+    const text = readText(path.join(ROOT, 'plugin', 'skills', 'wrap-up', file));
+    assert.match(text, pattern, `wrap-up/${file} must state that the run-dir path is carried, never re-resolved, after close-run (#4151)`);
+    assert.doesNotMatch(text.replace(pattern, ''), pattern, `wrap-up/${file}: the carried-path statement should appear exactly once`);
+  }
 });
 
 // The load-bearing prose facts of the refusal. The patterns match exactly once in Step 0, so
 // removing the one match turns exactly that fact red.
 const REQUIRED = [
-  [/ENV_RUN_DIR="\$PIPELINE_RUN_DIR"/, 'the guard compares the resolved dir with the directory PIPELINE_RUN_DIR names, handed to node through the environment'],
-  [/the only directory never subject to the status check above/, 'only the directory the resolver returned from PIPELINE_RUN_DIR is exempt from the status check'],
+  [/the only directory never subject to step 2's adoption refusal/, 'only the directory the resolver returned from PIPELINE_RUN_DIR is exempt from step 2\'s adoption refusal'],
   [/an archived run-id, falls through to step 2 and is checked like any step-2 directory\)/, 'a stale or archived PIPELINE_RUN_DIR falls through to step 2 and is checked like any step-2 directory'],
   [/except the `FAILED` lines `bookkeeping\.md` and `disposition\.md` hand-compose/, 'the never-hand-appended rule carves out the FAILED lines bookkeeping.md and disposition.md hand-compose'],
-  [/prior release run's directory \(status \{status\}\) — not adopted; minted \{run-dir\}/, 'the refusal log line names the refused dir, its status and the minted dir'],
-  // Split in two so neither span contains the other: the refusal triggers, then the created verdict.
   [/status is terminal, or that carries `createdBy: "release-standalone"` whatever its status/, 'a terminal or release-standalone step-2 directory is refused whatever its status'],
-  [/is refused — the fence prints `refused:[\s\S]{0,200}the run is \*\*created\*\*/, 'a refused directory is replaced by a fresh mint and the run is created'],
+  [/whose `run-state\.json` exists but cannot be read/, 'a step-2 directory whose run-state.json exists but cannot be read is refused'],
+  [/the fallback then mints a fresh directory, and the run is \*\*created\*\*/, 'a refused directory is replaced by a fresh mint and the run is created'],
   [/neither terminal nor stamped by a release run/, 'a step-2 directory is inherited only while non-terminal and not release-standalone-created'],
-  [/step 2 already skips an `interrupted` one/, 'step 2 never hands over an interrupted directory to inherit'],
+  [/it already skips an `interrupted` one/, 'step 2 never hands over an interrupted directory to inherit'],
   [/carried `\{run-dir\}` path[\s\S]{0,200}mint a stray one/, 'later steps use the carried run dir and never re-run the fence'],
+  [/could hand back an existing directory, which the `printf` stamp would then overwrite/, 'the mint call omits --spec-slug so step 2 cannot hand back a directory the printf stamp would overwrite'],
 ];
 const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
 const missingFacts = missingFactsOf(REQUIRED);
@@ -325,7 +311,7 @@ function assertFactsAndGoRed(text, patterns, message) {
 }
 
 test('AC1.1/AC2.1: Step 0 prose: terminal step-2 dir is refused, run is created', () => {
-  assert.deepEqual(missingFacts(STEP_ZERO), [], 'Step 0 must state every fact of the finished-run refusal (#3898)');
+  assert.deepEqual(missingFacts(STEP_ZERO), [], 'Step 0 must state every fact of the finished-run refusal (#3898, #4151)');
 });
 
 test('AC1.1/AC2.1: each Step 0 refusal fact can actually go red on its own (discrimination proof)', () => {

@@ -98,7 +98,7 @@ fi
 echo "$RUN_DIR"
 ```
 
-`$SPEC_SLUG` follows `_shared/run-dir-resolution.md`'s SPEC_SLUG conventions — `record-{n}` in record mode, a short topic slug in conversation mode. The run is created `status: active` and closes through the normal archival path (Phase 4's cleanup item 8), so E1 enforcement and the interrupted-run reaper see nothing unusual. An `export` inside this snippet does **not** survive into the next Bash call — each later phase that needs the path re-resolves it with the same `_shared/run-dir-resolution.md` snippet, which is why the run dir must be recorded as a fact of this run rather than relied on as environment state.
+`$SPEC_SLUG` follows `_shared/run-dir-resolution.md`'s SPEC_SLUG conventions — `record-{n}` in record mode, a short topic slug in conversation mode. The run is created `status: active` and closes through the normal archival path (Phase 4's cleanup item 8), so E1 enforcement and the interrupted-run reaper see nothing unusual. An `export` inside this snippet does **not** survive into the next Bash call — each later phase that needs the path uses the run-dir path carried from this phase as a fact of this run, never environment state, and **never re-runs the resolver**: once Section C's step 3.6 `close-run` marks the run `clean`, `resolve-run-dir --spec-slug` step 2 refuses the run's own directory (#4151) and would hand back an older match or mint a stray standalone directory.
 
 **Determine inherited-vs-created here, once.** At this point — and only here — record which of the two branches above ran:
 
@@ -106,6 +106,8 @@ echo "$RUN_DIR"
 - This run created the directory (the `createdBy: wrap-up-standalone` stamp is written above) → **created**.
 
 Carry that verdict as a run-scoped fact for the rest of the run, alongside the run dir path itself, and state it in the Phase 1 report table. **Never re-read it from disk later.** Phase 4's cleanup item 8 archives the run directory, so by the time the Component-Skill Contract is consulted the `run-state.json` this determination came from has usually moved to `.claude-tweaks/pipelines/archive/{run-id}/` — a re-read at that point fails on exactly the standalone runs that must render Next Actions.
+
+**Every exit runs the close-out.** Every path after the mint reaches cleanup item 8's `close-run` and `archive-run` — a verify exit 3 too, since Execute approved actions runs item 8 before its Verify execution — except two. A `--dry-run` run skips execution entirely and stops after the phase-trace report (`execution-and-verification.md`), so on a **created** directory it runs `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "{run-dir}"` itself and archives nothing — `{run-dir}` is the absolute path Phase 1 printed, carried as a run-scoped fact, never re-resolved here, where Phase 1's `--create` snippet could mint a fresh directory. The Review Console's "Stop and re-engage" is the deliberate pause `/claude-tweaks:wrap-up resume` re-enters (`resume-halted-run.md`), which leaves the directory open. A wrap-up directory records no owning session, so session end never marks it `interrupted`: left alone, it stays `active`. A later `/claude-tweaks:wrap-up #{n}` can re-adopt a closed directory through step 2 only until the next `/claude-tweaks:tidy` pass auto-archives it. An **inherited** directory is the pipeline's, but item 8 still closes and archives it by design — wrap-up is that pipeline's own closer.
 
 ### Diff-derived ceremony default (auto-mode firings, #1545)
 
@@ -274,7 +276,7 @@ Render the report as the engine's own trace of this run, never as prose composed
 node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" render --run-dir "$PIPELINE_RUN_DIR" --section trace --strict
 ```
 
-(Substitute the re-resolved run-dir path — env assignments do not survive between calls. `render` falls back to the archive itself, so the same path works after cleanup item 8 archives the run.)
+(Substitute the carried run-dir path — env assignments do not survive between calls. `render` falls back to the archive itself, so the same path works after cleanup item 8 archives the run.)
 
 Insert that output verbatim as the Phase 2 table. `--strict` prints the table first and then exits 2 if any worklist row has no recorded result, so a hole is visible *and* fatal. **Re-read cut:** when every row scanned clean or gate-closed (nothing to update anywhere), the render collapses to one line — `{N} rows scanned, 0 findings — nothing to update.` — instead of an N-row table that would otherwise be all `n/a`/`Clean` (`engine-render.js`'s `renderTrace`). A single row carrying findings, or a row with no recorded result at all, always forces the full table — the collapse never hides a real outcome. Under the prose fallback, compose the table by hand per `curation-engine.md` section 6 and caption it `(engine unavailable — prose fallback ran)`.
 

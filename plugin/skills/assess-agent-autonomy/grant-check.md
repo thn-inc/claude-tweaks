@@ -142,6 +142,8 @@ RECOMMEND_MERGE: true | false
 RATIONALE: {one paragraph, naming the specific content signal the recommendation is based on}
 ```
 
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.
+
 If nothing in the record's content or scoring supports any recommendation, output
 `RECOMMEND_BUILD: false` / `RECOMMEND_MERGE: false` — backlog refine's grant sub-stage already treats this the same
 as today's "flag back (needs scoring)" case; no separate error path is needed here.

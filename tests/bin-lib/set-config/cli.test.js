@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { run } = require('../../../plugin/bin/set-config');
+const { run, renderManifestoFyi } = require('../../../plugin/bin/set-config');
+const { readText } = require('../../helpers/read-skill');
 
 // Same anchoring fixture shape as tests/bin-lib/stage-item/cli.test.js: a
 // fake main checkout (.git directory) holding the real run dir, plus a
@@ -275,4 +276,127 @@ test('cli: the single-key form never prints the Manifesto FYI table, even for mo
   const code = run(['--run', runDir, '--key', 'mode', '--value', 'auto'], deps);
   assert.equal(code, 0);
   assert.ok(!out.join('').includes('Pipeline Config'));
+});
+
+// #4026 characterization: stdout and the no-log paths, pinned byte-for-byte
+// before set-config.js started appending its own decisions.md line.
+test('characterization: --set prints exactly one per-lever line, byte-for-byte', () => {
+  const { main, runDir } = fixture();
+  const { deps, out, err } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', 'mode=hybrid,ceremony-profile=standard'], deps), 0);
+  const file = path.join(fs.realpathSync(runDir), 'config.yml');
+  assert.equal(out.join(''), `${file} (mode: auto -> hybrid)\n${file} (ceremony-profile: fast-lane -> standard)\n`);
+  assert.equal(err.join(''), '');
+});
+
+test('characterization: the full 13-lever auto batch prints the per-lever lines then the FYI table, byte-for-byte', () => {
+  const { main, runDir } = fixture();
+  const { deps, out, err } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO], deps), 0);
+  const file = path.join(fs.realpathSync(runDir), 'config.yml');
+  const previous = { mode: 'auto', 'ceremony-profile': 'fast-lane' };
+  const pairs = FULL_MANIFESTO_BATCH_AUTO.split(',').map((p) => p.split('='));
+  const lines = pairs.map(([k, v]) => `${file} (${k}: ${previous[k] || 'unset'} -> ${v})\n`).join('');
+  const fyi = renderManifestoFyi(pairs.map(([key, value]) => ({ key, value })));
+  assert.equal(out.join(''), lines + fyi);
+  assert.equal(err.join(''), '');
+});
+
+test('characterization: --key/--value prints exactly one line, byte-for-byte, and writes no decisions.md', () => {
+  const { main, runDir } = fixture();
+  const { deps, out, err } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--key', 'ceremony-profile', '--value', 'standard'], deps), 0);
+  const file = path.join(fs.realpathSync(runDir), 'config.yml');
+  assert.equal(out.join(''), `${file} (ceremony-profile: fast-lane -> standard)\n`);
+  assert.equal(err.join(''), '');
+  assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')));
+});
+
+test('characterization: a refused --set (exit 2) and a shadow run dir (exit 3) write no decisions.md', () => {
+  const { main, runDir, shadow } = fixture();
+  assert.equal(run(['--run', runDir, '--set', 'mode=hybrid,ceremony-profile=turbo'], fakeDeps(main).deps), 2);
+  assert.equal(run(['--run', shadow, '--set', 'mode=hybrid'], fakeDeps(main).deps), 3);
+  assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')));
+  assert.ok(!fs.existsSync(path.join(shadow, 'decisions.md')));
+});
+
+test('characterization: a config.yml write failure (exit 3) prints nothing to stdout and writes no decisions.md', () => {
+  const { main, runDir } = fixture();
+  fs.rmSync(path.join(runDir, 'config.yml'));
+  fs.mkdirSync(path.join(runDir, 'config.yml'));
+  const { deps, out, err } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', 'mode=hybrid,ceremony-profile=standard'], deps), 3);
+  assert.equal(out.join(''), '');
+  assert.match(err.join(''), /^set-config\.js: could not write config\.yml \(/);
+  assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')));
+});
+
+// #4026 AC3.1: a successful --set batch appends the Manifesto write line the
+// skill used to hand-log (flow/manifesto.md's Write mechanism,
+// _shared/auto-decision-log.md's #1826/#1810 worked example).
+const NOW = new Date(2026, 4, 15, 14, 31, 2).getTime();
+const loggedDeps = (cwd, extra = {}) => {
+  const f = fakeDeps(cwd);
+  Object.assign(f.deps, { now: () => NOW }, extra);
+  return f;
+};
+
+test('AC3.1: --set batch logs "levers written to {path}" under /flow', () => {
+  const { main, runDir } = fixture();
+  const { deps, out } = loggedDeps(main);
+  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO + ',integration-model=pr-first'], deps), 0);
+  const file = path.join(fs.realpathSync(runDir), 'config.yml');
+  assert.ok(out.join('').startsWith(`${file} (`), 'the logged path is the path printed on stdout');
+  assert.equal(
+    fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'),
+    `## /flow\n- AUTO 14:31:02 — Manifesto: levers written to ${file}. Reversibility: n/a.\n`,
+  );
+});
+
+test('AC3.1: the logged line matches auto-decision-log.md\'s worked example up to its commentary', () => {
+  const doc = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'auto-decision-log.md'));
+  const m = /^- AUTO (\d{2}:\d{2}:\d{2}) — Manifesto: levers written to (\S+\/config\.yml)\./m.exec(doc);
+  assert.ok(m, 'auto-decision-log.md no longer carries the Manifesto worked example');
+  const { main, runDir } = fixture();
+  const { deps } = loggedDeps(main);
+  assert.equal(run(['--run', runDir, '--set', 'mode=hybrid'], deps), 0);
+  const file = path.join(fs.realpathSync(runDir), 'config.yml');
+  const entry = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8').split('\n')[1];
+  const example = m[0].replace(m[1], '14:31:02').replace(m[2], file);
+  assert.ok(entry.startsWith(example), `entry ${JSON.stringify(entry)} does not start with ${JSON.stringify(example)}`);
+});
+
+test('AC3.1: the line lands as the last /flow entry of an existing decisions.md, prior bytes untouched', () => {
+  const { main, runDir } = fixture();
+  const prior = '# Auto-Decision Log — pipeline 2026-08-20T090000-spec-12\n\nPipeline config snapshot:\n- mode: auto\n\n' +
+    '## /flow\n- AUTO 14:30:06 — Step 2.8: claimed #12. Reversibility: high.\n## /build\n- AUTO 14:40:00 — later. Reversibility: n/a.\n';
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), prior);
+  const { deps } = loggedDeps(main);
+  assert.equal(run(['--run', runDir, '--set', 'mode=hybrid,ceremony-profile=standard'], deps), 0);
+  const file = path.join(fs.realpathSync(runDir), 'config.yml');
+  assert.equal(
+    fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'),
+    prior.replace('## /build\n', `- AUTO 14:31:02 — Manifesto: levers written to ${file}. Reversibility: n/a.\n## /build\n`),
+  );
+});
+
+test('AC3.1: --key/--value logs nothing — an existing decisions.md stays byte-identical', () => {
+  const { main, runDir } = fixture();
+  const prior = '## /flow\n- AUTO 14:30:06 — Step 2.8: claimed #12. Reversibility: high.\n';
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), prior);
+  const { deps } = loggedDeps(main);
+  assert.equal(run(['--run', runDir, '--key', 'merge-authorization', '--value', 'pre-authorized'], deps), 0);
+  assert.equal(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), prior);
+});
+
+test('AC3.1: a failed append keeps exit 0 and stdout unchanged, adding one stderr line', () => {
+  const { main, runDir } = fixture();
+  const { deps, out, err } = loggedDeps(main, { appendDecision: () => { throw new Error('disk full'); } });
+  assert.equal(run(['--run', runDir, '--set', 'mode=hybrid,ceremony-profile=standard'], deps), 0);
+  const file = path.join(fs.realpathSync(runDir), 'config.yml');
+  assert.equal(out.join(''), `${file} (mode: auto -> hybrid)\n${file} (ceremony-profile: fast-lane -> standard)\n`);
+  assert.equal(err.length, 1);
+  assert.match(err[0], /^set-config\.js: could not append the decisions\.md entry .*disk full\n$/);
+  assert.ok(err[0].includes(`levers written to ${file}`), 'the stderr line names the entry to hand-log');
+  assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')));
 });

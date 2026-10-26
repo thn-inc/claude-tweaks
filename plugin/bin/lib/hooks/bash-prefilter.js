@@ -32,7 +32,8 @@
 // by a raw substring test on `claude-tweaks:` with no JSON parse.
 'use strict';
 const fs = require('fs');
-const { GUARDED_PROGRAM_WORDS, forEachShellSegment, redirectWriteTargets } = require('./git-command');
+const path = require('path');
+const { GUARDED_PROGRAM_WORDS, forEachShellSegment, redirectRawTargets, resolveWriteTarget } = require('./git-command');
 const { REFUSAL_SIGNATURE } = require('./harness-refusal');
 
 // Both word sets come from git-command.js, where the parsers that key on these
@@ -59,24 +60,36 @@ const SEPARATORS = /[\s;&|()<>`{}=]+/;
 const ASSIGNMENT = /(^|[\s;&|(`])[A-Za-z_][A-Za-z0-9_]*=/;
 const PARAM_REFERENCE = /\$\{?[A-Za-z_]/;
 
+// The cwd a redirect value is resolved against: a drive-named value gets that drive's root, any other '.'.
+function anchorFor(raw) {
+  return /^[A-Za-z]:/.test(raw) ? `${raw.slice(0, 2)}\\` : '.';
+}
+
 // #3080: bare shell redirection (`>`, `>>`, ...) has no command word for
 // commandWords() to key on, so it needs its own check. It reuses the parser's
-// own redirectWriteTargets (git-command.js is already loaded) rather than a
-// second scanner, so the prefilter matches exactly what the parser resolves.
-// The '.' cwd is a placeholder: it only anchors relative targets, which this
+// own scan (git-command.js is already loaded) rather than a second scanner:
+// redirectRawTargets finds each segment's redirect values, and resolveWriteTarget
+// applies the parser's exclusions to each one. It must stay a superset of what
+// fileWriteTargets can report under ANY real cwd, so it never resolves against a
+// real one: the '.' cwd is a placeholder that only anchors relative targets, which this
 // boolean never inspects, and the DEVNULL_LIKE/fd-dup/unresolvable exclusions
 // are cwd-independent — so `2>&1` and `> /dev/null` still take the skip path.
+// The one cwd-dependent rule is the win32 drive-relative one (#4281): `D:x`
+// resolves against a cwd on drive D: and is unprovable against any other, so a
+// value that names a drive is anchored at that drive's root instead of '.', and
+// counts whenever some cwd would resolve it. `pathImpl` (default `path`) is
+// injectable so a path.win32 pin runs on any host.
 // It walks the same forEachShellSegment as fileWriteTargets (#3989/#4149): the
 // outer text and every kept heredoc body chunk, so a `>` inside a body the parser
 // drops does not send a call down the full path, while one in a kept body does.
 // The glued shapes `echo foo>x` (#4015), `echo "hi">x` and `(ls)>out` (#4210) are
 // reached because the handler's `quoting` object, `spanKinds` included, is forwarded
-// to redirectWriteTargets.
-function hasFileRedirection(command) {
+// to redirectRawTargets.
+function hasFileRedirection(command, { pathImpl = path } = {}) {
   let found = false;
   forEachShellSegment(command, '.', (t, _cwd, quoting) => {
-    if (!found && redirectWriteTargets(t, '.', quoting).length) found = true;
-  });
+    if (!found && redirectRawTargets(t, quoting).some((raw) => resolveWriteTarget(anchorFor(raw), raw, pathImpl))) found = true;
+  }, { pathImpl });
   return found;
 }
 
@@ -107,15 +120,29 @@ function shouldRunFull(event, input) {
   const covered = wordsFor(event);
   if (!covered) return true;
   if (!input || typeof input !== 'object' || input.tool_name !== 'Bash') return true;
-  const command = input.tool_input && input.tool_input.command;
-  if (typeof command !== 'string') return true;
-  if (ASSIGNMENT.test(command) && PARAM_REFERENCE.test(command)) return true;
+  const typed = input.tool_input && input.tool_input.command;
+  if (typeof typed !== 'string') return true;
+  // #4281: bash drops a NUL from its input, and so does forEachShellSegment, so `gi<NUL>t commit`
+  // is `git commit` to the parsers; the words are read the same way to stay their superset.
+  const command = typed.replace(/\0/g, '');
+  // #4281: bash joins a backslash-newline, and so do the parsers, so `g\`+newline+`it commit` is `git
+  // commit`. The checks read the command both as typed and joined. The joined reading drops a
+  // backslash-newline only where the backslash is unescaped (an odd run of them), as bash does, so
+  // `a\\`+newline+`G=gi` still separates; joining one bash keeps inside single quotes only adds words.
+  // An assignment and a reference may each show in only one reading, so either reading counts for
+  // each. hasFileRedirection walks the parser itself, which joins them as bash does.
+  const readings = command.includes('\\\n')
+    ? [command, command.replace(/(\\+)\n/g, (run, slashes) => (slashes.length % 2 ? slashes.slice(0, -1) : run))]
+    : [command];
+  if (readings.some((c) => ASSIGNMENT.test(c)) && readings.some((c) => PARAM_REFERENCE.test(c))) return true;
   // pre-tool-use only: fileWriteTargets, the sole consumer of redirection
   // targets, never runs in post-tool-use's handler, so checking there would be
   // pure cost.
   if (event === 'pre-tool-use' && hasFileRedirection(command)) return true;
-  const present = commandWords(command);
-  return covered.some((word) => present.has(word));
+  return readings.some((c) => {
+    const present = commandWords(c);
+    return covered.some((word) => present.has(word));
+  });
 }
 
 // #2783: post-tool-use-failure fires on EVERY failed Bash call, yet its handler

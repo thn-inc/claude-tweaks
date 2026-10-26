@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, powershellOpaqueCommand,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand,
 } = require('./git-command');
 const ctxLib = require('./context');
 const policy = require('../policy');
@@ -504,7 +504,9 @@ function fileToolTargetPath(toolName, toolInput) {
 // toplevel (see the block comment above this function) and IS the sanctioned
 // own-cwd removal path, so the same "target is my own cwd" shape must never
 // deny it the way it denies a raw `git worktree remove`.
-function teardownTargets(ctx) {
+// `pathImpl` (#4281, default `path`) is the path module every cd and the target resolve through,
+// injected so a path.win32 pin proves the Windows shape on any host.
+function teardownTargets(ctx, { pathImpl } = {}) {
   const toolName = ctx.input && ctx.input.tool_name;
   const toolInput = ctx.input && ctx.input.tool_input;
   if (GATE_COVERAGE.teardownTools.includes(toolName)) {
@@ -515,7 +517,7 @@ function teardownTargets(ctx) {
   if (toolName !== 'Bash' || !toolInput || typeof toolInput.command !== 'string') return [];
   const out = [];
   const cwd = ctx.cwd || process.cwd();
-  forEachCommandSegment(toolInput.command, cwd, (toks, effCwd) => {
+  forEachCommandSegment(toolInput.command, cwd, (toks, effCwd, quoting) => {
     // Shares gitTargets' own findGitLead -> skipGlobalFlags preamble via
     // resolveGitCommand: findGitLead walks past a leading NAME=value
     // assignment and/or the env builtin (with env's own flags, including
@@ -526,7 +528,7 @@ function teardownTargets(ctx) {
     // or an unrecognized `-...` flag), which used to defeat this parser
     // entirely when it only checked for a literal `-C`, silently allowing
     // `git -c foo=bar worktree remove <path>` past the gate.
-    const resolved = resolveGitCommand(toks, effCwd);
+    const resolved = resolveGitCommand(toks, effCwd, quoting.pathImpl);
     if (!resolved) return; // not git, or unprovable, or cwd unknown with no provable -C
     const { index: i, dir } = resolved;
     // Derived from GATE_COVERAGE.teardownGitCommands rather than a hardcoded
@@ -538,8 +540,11 @@ function teardownTargets(ctx) {
     // `--`, like `--force`/`-f`, is a flag/terminator, never the path itself.
     const rest = toks.slice(i + 2).filter((t) => t !== '--force' && t !== '-f' && t !== '--');
     if (rest.length !== 1 || rest[0].startsWith('-')) return; // unconfident -> allow
-    out.push({ path: path.resolve(dir, rest[0]), source: 'bash' });
-  }, walkOptions(cwd));
+    // The same resolver as every write target (#4281): an unprovable value ($VAR, ~, a
+    // cross-drive D:wt under win32) is no target, never a literal child of `dir`.
+    const target = resolveWriteTarget(dir, rest[0], quoting.pathImpl);
+    if (target) out.push({ path: target, source: 'bash' });
+  }, { ...walkOptions(cwd), pathImpl });
   return out;
 }
 
@@ -1946,6 +1951,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   }
 
   if (!runState.pr) {
+    // lib/phase-exit/phase-exit.js prPushReleased applies this branch's release rules to the
+    // push phase-exit.js makes itself (#4026) -- a change to them here belongs there too.
     // Model resolution moved ahead of the #989 exemption below (#1800) — the
     // exemption's own precondition now depends on `model` (a resolved
     // `local-merge` run never runs pr-early-run-lifecycle.md's Step 1 at all,
@@ -2360,6 +2367,10 @@ module.exports = {
   checkDispatchConfigGate,
   hasLoggedPrDegrade,
   hasPrEarlyStep1LineFor,
+  // Exported for bin/lib/phase-exit/phase-exit.js (#4026), whose push applies the
+  // same pr-first no-PR release conditions as checkBookkeepingStampsGate's PR-stamp branch.
+  hasLoggedPrEarlyStep1,
+  hasNoUpstreamYet,
   // Exported for check-pr-bookkeeping.js's phase-boundary precondition check
   // (#2472) to reuse rather than reimplement — the same integration-model
   // resolution checkBookkeepingStampsGate's own PR-stamp branch already uses.

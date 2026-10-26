@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
+const { shellQuote } = require('./helpers/shell-quote');
 
 function gitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-'));
@@ -185,7 +186,7 @@ test('#1099 AC1 dual case: session cwd inside the assigned worktree still denies
   const elsewhereWt = linkedWorktreeOf(main); // a second, genuinely different live worktree of the same repo
   const { run, state } = mkRun(assignedWt); // no sessionId recorded
   const out = pre.run({
-    input: bashInput(`git -C ${elsewhereWt} commit -m "x"`, assignedWt),
+    input: bashInput(`git -C ${shellQuote(elsewhereWt)} commit -m "x"`, assignedWt),
     runDir: run, runState: state, cwd: assignedWt,
   });
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
@@ -195,7 +196,7 @@ test('git -C into the assigned worktree from elsewhere is allowed', () => {
   const wt = gitRepo();
   const other = gitRepo();
   const { run, state } = mkRun(wt);
-  const out = pre.run({ input: bashInput(`git -C ${wt} commit -m "x"`, other), runDir: run, runState: state, cwd: other });
+  const out = pre.run({ input: bashInput(`git -C ${shellQuote(wt)} commit -m "x"`, other), runDir: run, runState: state, cwd: other });
   assert.deepStrictEqual(out, {});
 });
 
@@ -227,7 +228,7 @@ test('two live runs: commit in the OLDER run\'s own worktree is allowed even whe
   const newer = mkRunAt(project, '2026-07-02T090000-spec-2', newerWt); // resolved run
 
   const out = pre.run({
-    input: bashInput(`git -C ${olderWt} commit -m "x"`, project),
+    input: bashInput(`git -C ${shellQuote(olderWt)} commit -m "x"`, project),
     runDir: newer.run,
     runState: newer.state,
     cwd: project,
@@ -255,7 +256,7 @@ test('three concurrent live runs: a commit in THIS run\'s own assigned worktree 
   const own = mkRunAt(project, '2026-07-03T090000-spec-3', ownWt);
 
   const out = pre.run({
-    input: bashInput(`git -C ${ownWt} commit -m "x"`, project),
+    input: bashInput(`git -C ${shellQuote(ownWt)} commit -m "x"`, project),
     runDir: own.run,
     runState: own.state,
     cwd: project,
@@ -278,7 +279,7 @@ test('two live runs: commit in a THIRD repo matching neither worktree is still d
   const newer = mkRunAt(project, '2026-07-02T090000-spec-2', newerWt);
 
   const out = pre.run({
-    input: bashInput(`git -C ${thirdRepo} commit -m "x"`, project),
+    input: bashInput(`git -C ${shellQuote(thirdRepo)} commit -m "x"`, project),
     runDir: newer.run,
     runState: newer.state,
     cwd: project,
@@ -297,7 +298,7 @@ test('two live runs: a push mismatch matching another live worktree is not logge
   const newer = mkRunAt(project, '2026-07-02T090000-spec-2', newerWt);
 
   const out = pre.run({
-    input: bashInput(`git -C ${olderWt} push origin main`, project),
+    input: bashInput(`git -C ${shellQuote(olderWt)} push origin main`, project),
     runDir: newer.run,
     runState: newer.state,
     cwd: project,
@@ -610,13 +611,13 @@ test('worktree-required: policy on denies a non-git Bash file write in the main 
   withPolicy(repo, 'worktree-always: true\n');
   const target = path.join(repo, 'a.txt');
 
-  const tee = pre.run({ input: bashInput(`echo hi | tee ${target}`, repo), runDir: null, runState: null, cwd: repo });
+  const tee = pre.run({ input: bashInput(`echo hi | tee ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(tee.json.hookSpecificOutput.permissionDecision, 'deny');
 
-  const cp = pre.run({ input: bashInput(`cp source.txt ${target}`, repo), runDir: null, runState: null, cwd: repo });
+  const cp = pre.run({ input: bashInput(`cp source.txt ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(cp.json.hookSpecificOutput.permissionDecision, 'deny');
 
-  const mv = pre.run({ input: bashInput(`mv source.txt ${target}`, repo), runDir: null, runState: null, cwd: repo });
+  const mv = pre.run({ input: bashInput(`mv source.txt ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(mv.json.hookSpecificOutput.permissionDecision, 'deny');
 });
 
@@ -627,7 +628,7 @@ test('worktree-required: a non-git Bash file write inside a linked worktree is a
   execFileSync('git', ['-C', repo, 'commit', '-m', 'policy', '-q']);
   const wt = linkedWorktreeOf(repo);
   const target = path.join(wt, 'a.txt');
-  const out = pre.run({ input: bashInput(`cp source.txt ${target}`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ input: bashInput(`cp source.txt ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assert.deepStrictEqual(out, {});
 });
 
@@ -654,7 +655,7 @@ test('worktree-required: a compound Bash command checks EVERY git commit/push ta
   const violating = gitRepoWithCommit();
   withPolicy(violating, 'worktree-always: true\n');
   const out = pre.run({
-    input: bashInput(`git -C ${compliant} commit -q --allow-empty -m "a" && git -C ${violating} commit -q --allow-empty -m "b"`, compliant),
+    input: bashInput(`git -C ${shellQuote(compliant)} commit -q --allow-empty -m "a" && git -C ${shellQuote(violating)} commit -q --allow-empty -m "b"`, compliant),
     runDir: null, runState: null, cwd: compliant,
   });
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny',
@@ -668,7 +669,7 @@ test('worktree-required: a compound Bash command checks EVERY cp/mv/tee write ta
   withPolicy(violating, 'worktree-always: true\n');
   const out = pre.run({
     input: bashInput(
-      `cp source.txt ${path.join(compliant, 'a.txt')} && cp source.txt ${path.join(violating, 'b.txt')}`,
+      `cp source.txt ${shellQuote(path.join(compliant, 'a.txt'))} && cp source.txt ${shellQuote(path.join(violating, 'b.txt'))}`,
       compliant,
     ),
     runDir: null, runState: null, cwd: compliant,
@@ -704,7 +705,7 @@ test('worktree-required: a cp into the main checkout\'s .claude-tweaks/pipelines
   const repo = repoWithCommittedPolicy();
   const wt = linkedWorktreeOf(repo);
   const out = pre.run({
-    input: bashInput(`cp ${path.join(wt, 'decisions.md')} ${archivePathIn(repo, 'decisions.md')}`, wt),
+    input: bashInput(`cp ${shellQuote(path.join(wt, 'decisions.md'))} ${shellQuote(archivePathIn(repo, 'decisions.md'))}`, wt),
     runDir: null, runState: null, cwd: wt,
   });
   assert.deepStrictEqual(out, {}, 'pipeline bookkeeping is not the project work this gate isolates');
@@ -714,7 +715,7 @@ test('worktree-required: a cp into any OTHER main-checkout path is still denied 
   const repo = repoWithCommittedPolicy();
   const wt = linkedWorktreeOf(repo);
   const out = pre.run({
-    input: bashInput(`cp ${path.join(wt, 'x.js')} ${path.join(repo, 'src', 'x.js')}`, wt),
+    input: bashInput(`cp ${shellQuote(path.join(wt, 'x.js'))} ${shellQuote(path.join(repo, 'src', 'x.js'))}`, wt),
     runDir: null, runState: null, cwd: wt,
   });
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny',
@@ -797,10 +798,10 @@ const decisionOf = (out) => (out.json ? out.json.hookSpecificOutput.permissionDe
 test('worktree-required: sed -i against the main checkout is denied (#70)', () => {
   const repo = policedRepo();
   for (const cmd of [
-    `sed -i 's/x/y/' ${path.join(repo, 'a.js')}`,
-    `sed -i.bak -e 's/x/y/' ${path.join(repo, 'a.js')}`,
-    `sed -i '' -e 's/x/y/' ${path.join(repo, 'a.js')}`, // BSD: suffix is a separate arg
-    `sed -ni 's/x/y/p' ${path.join(repo, 'a.js')}`, // bundled short flags
+    `sed -i 's/x/y/' ${shellQuote(path.join(repo, 'a.js'))}`,
+    `sed -i.bak -e 's/x/y/' ${shellQuote(path.join(repo, 'a.js'))}`,
+    `sed -i '' -e 's/x/y/' ${shellQuote(path.join(repo, 'a.js'))}`, // BSD: suffix is a separate arg
+    `sed -ni 's/x/y/p' ${shellQuote(path.join(repo, 'a.js'))}`, // bundled short flags
   ]) {
     const out = pre.run({ input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
     assert.strictEqual(decisionOf(out), 'deny', `must deny: ${cmd}`);
@@ -810,9 +811,9 @@ test('worktree-required: sed -i against the main checkout is denied (#70)', () =
 test('worktree-required: a READ-only sed against the main checkout stays allowed (#70)', () => {
   const repo = policedRepo();
   for (const cmd of [
-    `sed -n '1,5p' ${path.join(repo, 'a.js')}`,
-    `sed 's/x/y/' ${path.join(repo, 'a.js')}`,
-    `sed -e 's/x/y/' ${path.join(repo, 'a.js')}`,
+    `sed -n '1,5p' ${shellQuote(path.join(repo, 'a.js'))}`,
+    `sed 's/x/y/' ${shellQuote(path.join(repo, 'a.js'))}`,
+    `sed -e 's/x/y/' ${shellQuote(path.join(repo, 'a.js'))}`,
   ]) {
     const out = pre.run({ input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
     assert.deepStrictEqual(out, {}, `must allow (no in-place flag): ${cmd}`);
@@ -822,14 +823,14 @@ test('worktree-required: a READ-only sed against the main checkout stays allowed
 test('worktree-required: perl -i against the main checkout is denied, -I is not in-place (#70)', () => {
   const repo = policedRepo();
   const denied = pre.run({
-    input: bashInput(`perl -pi -e 's/x/y/' ${path.join(repo, 'a.js')}`, '/tmp'),
+    input: bashInput(`perl -pi -e 's/x/y/' ${shellQuote(path.join(repo, 'a.js'))}`, '/tmp'),
     runDir: null, runState: null, cwd: '/tmp',
   });
   assert.strictEqual(decisionOf(denied), 'deny', 'perl -pi is an in-place edit');
   // -Idir contains an 'i' but is an include path, not --in-place. Treating it
   // as in-place would deny an ordinary read-only perl invocation.
   const allowed = pre.run({
-    input: bashInput(`perl -Ilib -e 'print 1' ${path.join(repo, 'a.js')}`, '/tmp'),
+    input: bashInput(`perl -Ilib -e 'print 1' ${shellQuote(path.join(repo, 'a.js'))}`, '/tmp'),
     runDir: null, runState: null, cwd: '/tmp',
   });
   assert.deepStrictEqual(allowed, {}, 'perl -Ilib must not be read as in-place');
@@ -838,11 +839,11 @@ test('worktree-required: perl -i against the main checkout is denied, -I is not 
 test('worktree-required: install/ln/truncate/dd against the main checkout are denied (#70)', () => {
   const repo = policedRepo();
   for (const cmd of [
-    `install -m 644 /tmp/src ${path.join(repo, 'a.js')}`,
-    `install -d ${path.join(repo, 'newdir')}`,
-    `ln -sf /tmp/src ${path.join(repo, 'link.js')}`,
-    `truncate -s 0 ${path.join(repo, 'a.js')}`,
-    `dd if=/dev/zero of=${path.join(repo, 'a.js')}`,
+    `install -m 644 /tmp/src ${shellQuote(path.join(repo, 'a.js'))}`,
+    `install -d ${shellQuote(path.join(repo, 'newdir'))}`,
+    `ln -sf /tmp/src ${shellQuote(path.join(repo, 'link.js'))}`,
+    `truncate -s 0 ${shellQuote(path.join(repo, 'a.js'))}`,
+    `dd if=/dev/zero of=${shellQuote(path.join(repo, 'a.js'))}`,
   ]) {
     const out = pre.run({ input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
     assert.strictEqual(decisionOf(out), 'deny', `must deny: ${cmd}`);
@@ -855,13 +856,13 @@ test('worktree-required: the new shapes are allowed inside a worktree and under 
   execFileSync('git', ['-C', repo, 'commit', '-m', 'policy', '-q']);
   const wt = linkedWorktreeOf(repo);
   const inWorktree = pre.run({
-    input: bashInput(`sed -i 's/x/y/' ${path.join(wt, 'a.js')}`, wt),
+    input: bashInput(`sed -i 's/x/y/' ${shellQuote(path.join(wt, 'a.js'))}`, wt),
     runDir: null, runState: null, cwd: wt,
   });
   assert.deepStrictEqual(inWorktree, {}, 'editing inside the worktree is the whole point of the policy');
   // #138's exemption must apply to the new shapes too, not just cp/mv/tee.
   const inPipelines = pre.run({
-    input: bashInput(`sed -i 's/x/y/' ${path.join(repo, '.claude-tweaks', 'pipelines', 'archive', 'r', 'decisions.md')}`, wt),
+    input: bashInput(`sed -i 's/x/y/' ${shellQuote(path.join(repo, '.claude-tweaks', 'pipelines', 'archive', 'r', 'decisions.md'))}`, wt),
     runDir: null, runState: null, cwd: wt,
   });
   assert.deepStrictEqual(inPipelines, {}, 'pipeline bookkeeping stays exempt for every write shape');
@@ -886,7 +887,7 @@ test('worktree-required: an unprovable target on a new shape fabricates nothing 
 
 test('worktree-required: a same-command shell variable resolving inside the repo is now denied (#630)', () => {
   const repo = policedRepo();
-  const cmd = `WT=${repo}; sed -i 's/x/y/' "$WT/a.js"`;
+  const cmd = `WT=${shellQuote(repo)}; sed -i 's/x/y/' "$WT/a.js"`;
   const out = pre.run({ input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
   assert.strictEqual(decisionOf(out), 'deny', 'a same-command variable resolving inside the policed repo must now be provable and denied');
 });
@@ -900,7 +901,7 @@ test('worktree-required: a same-command shell variable resolving outside the rep
 
 test('worktree-required: a single-quoted $NAME reference is never substituted, even when the variable resolves inside the repo — real bash does not expand it, so the gate correctly stays unresolvable/allow rather than fabricating a false-outside target (#630)', () => {
   const repo = policedRepo();
-  const cmd = `WT=${repo}; sed -i '' -e 's/x/y/' '$WT/a.js'`;
+  const cmd = `WT=${shellQuote(repo)}; sed -i '' -e 's/x/y/' '$WT/a.js'`;
   const out = pre.run({ input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
   assert.deepStrictEqual(out, {}, 'single-quoted $WT must never be treated as a variable reference — no target is fabricated either way');
 });
@@ -950,15 +951,15 @@ test('worktree-required: a gitignored write target is exempt (Edit/Write and cp/
     {}, 'Edit of a gitignored path must be exempt',
   );
   assert.deepStrictEqual(
-    pre.run({ input: bashInput(`cp source.txt ${target}`, repo), runDir: null, runState: null, cwd: repo }),
+    pre.run({ input: bashInput(`cp source.txt ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo }),
     {}, 'cp writing a gitignored destination must be exempt',
   );
   assert.deepStrictEqual(
-    pre.run({ input: bashInput(`sed -i 's/x/y/' ${target}`, repo), runDir: null, runState: null, cwd: repo }),
+    pre.run({ input: bashInput(`sed -i 's/x/y/' ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo }),
     {}, 'sed -i against a gitignored path must be exempt',
   );
   assert.deepStrictEqual(
-    pre.run({ input: bashInput(`echo hi | tee ${target}`, repo), runDir: null, runState: null, cwd: repo }),
+    pre.run({ input: bashInput(`echo hi | tee ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo }),
     {}, 'tee writing a gitignored path must be exempt',
   );
 });
@@ -972,7 +973,7 @@ test('worktree-required: an EXISTING untracked-but-NOT-gitignored write target i
   const repo = policedRepo();
   const target = path.join(repo, 'scratch.txt');
   fs.writeFileSync(target, 'pre-existing, never git-added, not ignored');
-  const out = pre.run({ input: bashInput(`cp source.txt ${target}`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ input: bashInput(`cp source.txt ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(decisionOf(out), 'deny', 'untracked status alone must never exempt a write — only a gitignore match does');
 });
 
@@ -992,7 +993,7 @@ test('worktree-required: a tracked, non-ignored path is STILL denied exactly as 
 
   const editOut = pre.run({ input: { tool_name: 'Edit', tool_input: { file_path: target } }, runDir: null, runState: null, cwd: repo });
   assert.strictEqual(decisionOf(editOut), 'deny');
-  const sedOut = pre.run({ input: bashInput(`sed -i 's/x/y/' ${target}`, repo), runDir: null, runState: null, cwd: repo });
+  const sedOut = pre.run({ input: bashInput(`sed -i 's/x/y/' ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(decisionOf(sedOut), 'deny');
 });
 
@@ -1004,7 +1005,7 @@ test('worktree-required: cp realfile.js .env — a tracked source alongside a gi
   execFileSync('git', ['-C', repo, 'add', 'realfile.js']);
   execFileSync('git', ['-C', repo, 'commit', '-m', 't', '-q']);
   const dest = path.join(repo, '.env');
-  const out = pre.run({ input: bashInput(`cp ${source} ${dest}`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ input: bashInput(`cp ${shellQuote(source)} ${shellQuote(dest)}`, repo), runDir: null, runState: null, cwd: repo });
   assert.deepStrictEqual(out, {}, 'cp only ever tracks the destination — a tracked source must not defeat the gitignored destination\'s exemption');
 });
 
@@ -1013,7 +1014,7 @@ test('worktree-required: gitignored-target exemption is allowed inside a worktre
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
   execFileSync('git', ['-C', repo, 'commit', '-m', 'policy', '-q']);
   const wt = linkedWorktreeOf(repo);
-  const out = pre.run({ input: bashInput(`cp source.txt ${path.join(wt, 'a.js')}`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ input: bashInput(`cp source.txt ${shellQuote(path.join(wt, 'a.js'))}`, wt), runDir: null, runState: null, cwd: wt });
   assert.deepStrictEqual(out, {}, 'inside a worktree, everything is already allowed regardless of this exemption');
 });
 
@@ -1323,7 +1324,7 @@ const isDeny = (out) => Boolean(out && out.json && out.json.hookSpecificOutput
 test('#3225 dispatch config gate: dispatched run, no config.yml, git write in the bound worktree -> deny naming cause and remedy', () => {
   const { wt } = mainAndWorktree();
   const run = dispatchedRun(wt);
-  for (const command of ['git commit -m "Materialize #3225 spec"', 'git commit --amend --no-edit', `git -C "${wt}" push origin HEAD`]) {
+  for (const command of ['git commit -m "Materialize #3225 spec"', 'git commit --amend --no-edit', `git -C ${shellQuote(wt)} push origin HEAD`]) {
     const out = pre.run(dispatchCtx(run, wt, dispatchInput(wt, command)));
     assert.ok(isDeny(out), `expected a deny for: ${command}`);
     const reason = out.json.hookSpecificOutput.permissionDecisionReason;
@@ -1390,7 +1391,7 @@ test('#3225 dispatch config gate: git write targeting an unrelated repo from ins
   const { wt } = mainAndWorktree();
   const other = gitRepoWithCommit();
   const run = dispatchedRun(wt);
-  const out = pre.run(dispatchCtx(run, wt, dispatchInput(wt, `git -C "${other}" commit --allow-empty -m x`)));
+  const out = pre.run(dispatchCtx(run, wt, dispatchInput(wt, `git -C ${shellQuote(other)} commit --allow-empty -m x`)));
   assert.ok(!isDeny(out), 'a foreign-repo target is not this run\'s work');
 });
 
@@ -1650,7 +1651,7 @@ test('run() merges updatedInput on an allow path and never on a deny', () => {
 
   // E1 deny: this run is assigned to wt, the commit targets main.
   const { run, state } = mkRun(wt);
-  const denyCommand = `P=/x/y; node $P/z.js; git -C "${main}" commit -m x`;
+  const denyCommand = `P=/x/y; node $P/z.js; git -C ${shellQuote(main)} commit -m x`;
   const denied = pre.run({ input: bashInput(denyCommand, wt), runDir: run, runState: state, cwd: wt });
   assert.strictEqual(denied.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.ok(!('updatedInput' in denied.json.hookSpecificOutput), 'a deny never carries a rewrite');
