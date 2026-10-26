@@ -187,8 +187,11 @@ test('init/SKILL.md lists Step 6.6 and its sub-file exists (#1924)', () => {
 
 // #4135: the installed plugin build reads this committed file with the latest RELEASED declaration.js, which
 // the suite above never runs (it requires the working-tree reader). These helpers read git objects only —
-// GIT_NO_LAZY_FETCH keeps a partial clone from reaching the network for a missing blob.
-const GIT_ENV = { ...process.env, GIT_NO_LAZY_FETCH: '1' };
+// GIT_NO_LAZY_FETCH keeps a partial clone from reaching the network for a missing blob. GIT_DIR / GIT_INDEX_FILE /
+// GIT_WORK_TREE are scrubbed so a spawn in a temp dir never acts on an inherited repo (#4178); LC_ALL=C pins the
+// English stderr NO_TAG_STDERR matches.
+const GIT_ENV = { ...process.env, GIT_NO_LAZY_FETCH: '1', LC_ALL: 'C' };
+for (const k of ['GIT_DIR', 'GIT_INDEX_FILE', 'GIT_WORK_TREE']) delete GIT_ENV[k];
 const READER_PATH = 'plugin/bin/lib/verify/declaration.js';
 // A `git describe` with nothing to name says one of these; any other failure is a broken git call, not a skip.
 const NO_TAG_STDERR = /No names found|No tags can describe|cannot describe/i;
@@ -229,6 +232,14 @@ function loadReleaseReader(tag, dir, cwd = REPO_ROOT) {
   return require(path.join(dir, ...READER_PATH.split('/'))).readDeclaration;
 }
 
+// Drop the materialized modules from require.cache (they live under `dir`; cache keys are real paths, and a
+// tmpdir may be a symlink), then remove the dir.
+function removeReaderDir(dir) {
+  const prefixes = new Set([dir, fs.realpathSync(dir)].map((d) => path.join(d, path.sep)));
+  for (const key of Object.keys(require.cache)) if ([...prefixes].some((p) => key.startsWith(p))) delete require.cache[key];
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 function assertReleaseReaderAccepts(readDeclaration, tag, declPath) {
   const r = readDeclaration(declPath);
   assert.strictEqual(r.ok, true, `release ${tag}'s reader rejects ${path.basename(declPath)}: ${(r.errors || []).join('; ')}`);
@@ -242,7 +253,7 @@ test('AC2.1: the committed verify-scope.json parses with the latest release tag\
     const reader = loadReleaseReader(found.tag, dir);
     assertReleaseReaderAccepts(reader, found.tag, DECL);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeReaderDir(dir);
   }
 });
 
@@ -262,15 +273,15 @@ test('AC1.1: a rule shape the release reader rejects fails the same assertion, n
       (err) => err.message.includes(`rules[${n}].suites:`) && err.message.includes(found.tag),
     );
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeReaderDir(dir);
   }
 });
 
 test('AC3.1: a clone with no reachable release tag skips with its reason (#4135)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-scope-notag-'));
   try {
-    execFileSync('git', ['init', '-q'], { cwd: dir, windowsHide: true });
-    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: dir, windowsHide: true });
+    execFileSync('git', ['init', '-q'], { cwd: dir, env: GIT_ENV, windowsHide: true });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: dir, env: GIT_ENV, windowsHide: true });
     const found = latestReleaseTag(dir);
     assert.deepStrictEqual(Object.keys(found), ['skip']);
     assert.match(found.skip, /no release tag reachable/);
