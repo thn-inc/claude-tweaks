@@ -40,7 +40,8 @@ files:
 - **Should feel:** A straight answer with reasons. No judgment call to second-guess.
 - **Should understand:**
   - The verdict is `eligible: true|false`, and `reasons` names every failed rule verbatim (`risk is not low`, `more than 3 Key Files`, `protected path: …`, `frontend surface`, …).
-  - Protected paths are the same in every project: hook code, `skills/_shared/`, `.github/`, the policy file.
+  - Protected paths are the same in every project: hook code, `skills/_shared/`, CI and forge config (`.github/`, `.gitlab-ci.yml`, `.circleci/`, git hooks), `CODEOWNERS`, `package.json`, the agent's permission files (`.claude/settings*.json`, `.mcp.json`), and the policy and verify-scope files. A Key File is judged as the path it resolves to, so `a/../skills/_shared/x.md` is protected too.
+  - A `Surface:` of `terminal` counts as a frontend, like `web`, `mobile` and `desktop`.
   - Exit 2 means `gh` is absent, so the lane is never taken.
 - **Red flags:** An eligible verdict for a record that touches `hooks/` or a merge-sensitive path; a verdict that lists only the first failure.
 
@@ -75,11 +76,11 @@ files:
 - **Action:** After several express merges, let a drain finish, then read the `express-review` comment on a sampled PR.
 - **Should feel:** The robustness check still exists. It just runs after merge, off the critical path.
 - **Should understand:**
-  - Every Nth express merge (by ordinal, so the selection is stable) gets the normal review lenses, at most 3 per firing. A capped backlog is named in the drain report.
+  - Every Nth express merge (by ordinal, so the selection is stable) gets the normal review lenses at a tier of at least `medium`, at most 3 per firing. A capped backlog is named in the drain report.
   - Each confirmed finding is filed as a record at every autonomy level, then a marker comment means the PR is never sampled again.
   - A sampled PR left unreviewed 30 days after its merge ages out.
-  - Sampling runs only at the end of a drain, so an express merge made from `/flow` is reviewed only when a later drain runs.
-- **Red flags:** A sampled PR with a marker comment but a finding that was never filed; the same finding filed twice after a partial capture failure (tracked as #4364).
+  - Sampling runs only at the end of a bare drain, so an express merge made from `/flow` or an explicit `/dispatch #N` is reviewed only when a later bare drain runs within the 30-day lookback (whether the merging session should sample it is #4365).
+- **Red flags:** A sampled PR with a marker comment but a finding that was never filed; the same finding filed twice after a retried sweep (each filed body names `express-review of PR #{n}`, which the retry searches for before filing).
 
 ## Origin
 - Created during build of #4025: the express lane, a single-agent path for eligible trivial records, with an escalation hand-off to `/flow` and post-merge sampling.
