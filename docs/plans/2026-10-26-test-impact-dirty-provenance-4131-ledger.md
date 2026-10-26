@@ -10,3 +10,4 @@
 | 6 | build | SDD ruling — install trace's signal handlers before mkdtempSync with a child-null guard: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
 | 7 | build | SDD ruling — leave the journey doc update to Common Step 6, not the final fix wave: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
 | 8 | build | SDD ruling — leave four cosmetic final-review minors (ledger rows 1-4) as-is per the final reviewer's triage: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
+| 9 | build/skill | `.claude/skills/test-impact-tracer-read-shape` Common Operations lists `node tools/test-impact.js trace --allow-dirty` as the traced-suite command; on a tree with tracked changes that map now records `dirty: true` and verify refuses it as `map-dirty` — the skill should say an `--allow-dirty` map is for inspection only (enrichment) | open | — |
