@@ -13,10 +13,10 @@
 // the test files a traced map says read it, plus the tests that drifted
 // between the map's commit and HEAD (driftTests, #4132). Any reason the map
 // cannot answer (impact.problem, an untraced path) runs that suite full with
-// the reason in `fallback`; a non-impact rule (or an unmatched path) that selects the suite
-// supersedes the subset. Without a stamp, the caller's --integration-branch
-// merge-base (`fallbackBase`) anchors an impact declaration; an explicit
-// --base never does.
+// the reason in `fallback`; a non-impact rule (or an unmatched path) that
+// selects the suite supersedes the subset. Without a stamp, the caller's
+// --integration-branch merge-base (`fallbackBase`) anchors an impact
+// declaration; an explicit --base never does.
 'use strict';
 
 const { globToRegExp } = require('../issues/blast-radius');

@@ -108,7 +108,8 @@ function reads(entry, p, status) {
 }
 
 // `driftTests`: the test files that differ between the map commit and HEAD. One the map knows and HEAD still
-// has is selected like an untraced one — its traced reads describe the old file; unknown ones are untraced already.
+// has is selected like an untraced one — its traced reads describe the old file; unknown ones are untraced already,
+// and a changed test is selected as changed, so neither counts as drift-selected.
 function selectImpactTests({ map, changed, headTests, isTestFile, driftTests = [] }) {
   const atHead = new Set(headTests);
   // A map reader no longer present at HEAD cannot run, so it never selects.
@@ -128,7 +129,7 @@ function selectImpactTests({ map, changed, headTests, isTestFile, driftTests = [
   }
   if (untraced.length) return { ok: false, reason: `untraced-path: ${untraced.sort()[0]}` };
   const untracedTests = sortedUnique(headTests.filter((t) => !Object.hasOwn(map.tests, t)));
-  const drift = sortedUnique(driftTests.filter((t) => atHead.has(t) && Object.hasOwn(map.tests, t)));
+  const drift = sortedUnique(driftTests.filter((t) => atHead.has(t) && Object.hasOwn(map.tests, t) && !changedTests.has(t)));
   return {
     ok: true,
     tests: sortedUnique([...matched, ...changedTests, ...untracedTests, ...drift]),

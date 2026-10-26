@@ -233,6 +233,18 @@ test('drifted tests the map knows and HEAD still has are selected as untraced (#
   );
 });
 
+test('a changed test that is also in the drift input is not counted as drift-selected (#4132)', () => {
+  const head = ['tests/a.test.js', 'tests/b.test.js'];
+  const r = selectImpactTests({
+    map: mapOf(XMAP), changed: [{ path: 'tests/a.test.js', status: 'M' }], headTests: head, isTestFile,
+    driftTests: ['tests/a.test.js'],
+  });
+  // a is the branch's own edit: the changed set already selects it, so drift selected nothing.
+  assert.deepStrictEqual(r, {
+    ok: true, tests: ['tests/a.test.js'], matched: [], changedTests: ['tests/a.test.js'], untracedTests: [], driftTests: [],
+  });
+});
+
 test('untraced path fails closed', () => {
   const r = select(XMAP, [{ path: 'src/nobody.js', status: 'M' }]);
   assert.deepStrictEqual(r, { ok: false, reason: 'untraced-path: src/nobody.js' });
