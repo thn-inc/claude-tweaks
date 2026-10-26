@@ -8,10 +8,10 @@ const { execFileSync } = require('child_process');
 const {
   resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber, resolvePrStateByNumberAsync, BULK_CHUNK,
 } = require('../../../plugin/bin/lib/reconcile/pr-state');
+const { STUB_SKIP } = require('../../helpers/path-stub');
 
 // A real directory on every platform: the POSIX tmp path does not exist on Windows, so a repoRoot cwd must come from the OS.
 const REPO_ROOT = os.tmpdir();
-const PATH_STUB_SKIP = process.platform === 'win32' && 'win32: execFileSync("gh") never spawns a #!/bin/sh stub named gh on PATH';
 
 // resolvePrState/resolvePrStateAsync both shell to `gh pr list` — neither is
 // injectable (mirrors the module's pre-existing design), so tests intercept
@@ -36,7 +36,7 @@ test('resolvePrState/resolvePrStateAsync: no branch -> null, no gh call', async 
   assert.equal(await resolvePrStateAsync(REPO_ROOT, null), null);
 });
 
-test('resolvePrState/resolvePrStateAsync: merged PR wins over other PRs for the same branch', { skip: PATH_STUB_SKIP }, async () => {
+test('resolvePrState/resolvePrStateAsync: merged PR wins over other PRs for the same branch', { skip: STUB_SKIP }, async () => {
   const prs = [
     { number: 1, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z' },
     { number: 2, state: 'MERGED', mergedAt: '2026-01-02T00:00:00Z', updatedAt: '2026-01-02T00:00:00Z' },
@@ -50,7 +50,7 @@ test('resolvePrState/resolvePrStateAsync: merged PR wins over other PRs for the 
   }
 });
 
-test('resolvePrState/resolvePrStateAsync: no merged PR -> most recently updated governs', { skip: PATH_STUB_SKIP }, async () => {
+test('resolvePrState/resolvePrStateAsync: no merged PR -> most recently updated governs', { skip: STUB_SKIP }, async () => {
   const prs = [
     { number: 1, state: 'OPEN', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z' },
     { number: 2, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-03T00:00:00Z' },
@@ -64,7 +64,7 @@ test('resolvePrState/resolvePrStateAsync: no merged PR -> most recently updated 
   }
 });
 
-test('resolvePrState/resolvePrStateAsync: no PRs for the branch -> null', { skip: PATH_STUB_SKIP }, async () => {
+test('resolvePrState/resolvePrStateAsync: no PRs for the branch -> null', { skip: STUB_SKIP }, async () => {
   const wrapper = installGhWrapper([]);
   try {
     assert.equal(resolvePrState(REPO_ROOT, 'some-branch'), null);
@@ -85,7 +85,7 @@ test('resolvePrState/resolvePrStateAsync: gh absent -> gh-absent, no throw', asy
   }
 });
 
-test('resolvePrState/resolvePrStateAsync: malformed gh output -> network-failure, no throw', { skip: PATH_STUB_SKIP }, async () => {
+test('resolvePrState/resolvePrStateAsync: malformed gh output -> network-failure, no throw', { skip: STUB_SKIP }, async () => {
   const wrapper = installGhWrapper('#!/bin/sh\necho "not json"\n');
   try {
     assert.equal(resolvePrState(REPO_ROOT, 'some-branch'), 'network-failure');
@@ -95,7 +95,7 @@ test('resolvePrState/resolvePrStateAsync: malformed gh output -> network-failure
   }
 });
 
-test('resolvePrStateAsync: does not block the event loop (real concurrency, not execFileSync in disguise)', { skip: PATH_STUB_SKIP }, async () => {
+test('resolvePrStateAsync: does not block the event loop (real concurrency, not execFileSync in disguise)', { skip: STUB_SKIP }, async () => {
   // If resolvePrStateAsync were secretly synchronous (execFileSync under an
   // `async` wrapper), the three calls below could never run concurrently:
   // JS is single-threaded, so the second/third call's spawn literally cannot
@@ -159,7 +159,7 @@ test('resolvePrStateAsync: does not block the event loop (real concurrency, not 
 const PR_MERGED_10 = { number: 10, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' };
 const PR_OPEN_11 = { number: 11, state: 'OPEN', mergedAt: null, updatedAt: '2026-02-01T00:00:00Z' };
 
-test('preferOpen: an OPEN PR outranks a MERGED PR for destructive callers, whichever is newer', { skip: PATH_STUB_SKIP }, async () => {
+test('preferOpen: an OPEN PR outranks a MERGED PR for destructive callers, whichever is newer', { skip: STUB_SKIP }, async () => {
   // #664 / #570 review scenario: branch reused after its first PR merged.
   const openNewer = [PR_MERGED_10, PR_OPEN_11];
   const openOlder = [
@@ -176,7 +176,7 @@ test('preferOpen: an OPEN PR outranks a MERGED PR for destructive callers, which
   }
 });
 
-test('read-mostly consumers (no opts): MERGED still wins over a newer OPEN PR — explicit regression proof for reap/archive/release', { skip: PATH_STUB_SKIP }, async () => {
+test('read-mostly consumers (no opts): MERGED still wins over a newer OPEN PR — explicit regression proof for reap/archive/release', { skip: STUB_SKIP }, async () => {
   const prs = [PR_MERGED_10, PR_OPEN_11];
   const wrapper = installGhWrapper(prs);
   try {
@@ -187,7 +187,7 @@ test('read-mostly consumers (no opts): MERGED still wins over a newer OPEN PR �
   }
 });
 
-test('preferOpen with no OPEN PR in the set: behavior unchanged (MERGED wins)', { skip: PATH_STUB_SKIP }, () => {
+test('preferOpen with no OPEN PR in the set: behavior unchanged (MERGED wins)', { skip: STUB_SKIP }, () => {
   const prs = [
     { number: 1, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-03T00:00:00Z' },
     { number: 2, state: 'MERGED', mergedAt: '2026-01-02T00:00:00Z', updatedAt: '2026-01-02T00:00:00Z' },
@@ -289,7 +289,7 @@ test('resolvePrStateByNumber: no number -> null, no gh call', () => {
   assert.equal(resolvePrStateByNumber(REPO_ROOT, undefined), null);
 });
 
-test('resolvePrStateByNumber: resolves the single PR by number (no tie-break needed)', { skip: PATH_STUB_SKIP }, () => {
+test('resolvePrStateByNumber: resolves the single PR by number (no tie-break needed)', { skip: STUB_SKIP }, () => {
   const pr = { number: 42, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z', mergeCommit: null };
   const wrapper = installGhWrapper(pr);
   try {
@@ -311,7 +311,7 @@ test('resolvePrStateByNumber: gh absent -> gh-absent, no throw', () => {
   }
 });
 
-test('resolvePrStateByNumber: malformed gh output -> network-failure, no throw', { skip: PATH_STUB_SKIP }, () => {
+test('resolvePrStateByNumber: malformed gh output -> network-failure, no throw', { skip: STUB_SKIP }, () => {
   const wrapper = installGhWrapper('#!/bin/sh\necho "not json"\n');
   try {
     assert.equal(resolvePrStateByNumber(REPO_ROOT, 42), 'network-failure');
@@ -323,7 +323,7 @@ test('resolvePrStateByNumber: malformed gh output -> network-failure, no throw',
 // #2367: the pending-review staleness check reuses resolvePrStateByNumber
 // rather than adding a third PR-state-reading code path — it needs
 // mergeable/mergeStateStatus on the returned shape.
-test('resolvePrStateByNumber: requests and returns mergeable/mergeStateStatus (#2367)', { skip: PATH_STUB_SKIP }, () => {
+test('resolvePrStateByNumber: requests and returns mergeable/mergeStateStatus (#2367)', { skip: STUB_SKIP }, () => {
   const pr = {
     number: 42, state: 'OPEN', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z', mergeCommit: null, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY',
   };
@@ -355,7 +355,7 @@ test('resolveIssueStateByNumber: no number -> null, no gh call', () => {
   assert.equal(resolveIssueStateByNumber(REPO_ROOT, undefined), null);
 });
 
-test('resolveIssueStateByNumber: resolves the issue state by number', { skip: PATH_STUB_SKIP }, () => {
+test('resolveIssueStateByNumber: resolves the issue state by number', { skip: STUB_SKIP }, () => {
   const wrapper = installGhWrapper({ state: 'CLOSED' });
   try {
     const result = resolveIssueStateByNumber(REPO_ROOT, 1811);
@@ -365,7 +365,7 @@ test('resolveIssueStateByNumber: resolves the issue state by number', { skip: PA
   }
 });
 
-test('resolveIssueStateByNumber: requests `issue view`, not `pr view`', { skip: PATH_STUB_SKIP }, () => {
+test('resolveIssueStateByNumber: requests `issue view`, not `pr view`', { skip: STUB_SKIP }, () => {
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-issueview-'));
   const wrapperPath = path.join(wrapperDir, 'gh');
   const argvLog = path.join(wrapperDir, 'argv.log');
@@ -392,7 +392,7 @@ test('resolveIssueStateByNumber: gh absent -> gh-absent, no throw', () => {
   }
 });
 
-test('resolveIssueStateByNumber: malformed gh output -> network-failure, no throw', { skip: PATH_STUB_SKIP }, () => {
+test('resolveIssueStateByNumber: malformed gh output -> network-failure, no throw', { skip: STUB_SKIP }, () => {
   const wrapper = installGhWrapper('#!/bin/sh\necho "not json"\n');
   try {
     assert.equal(resolveIssueStateByNumber(REPO_ROOT, 1811), 'network-failure');
@@ -411,7 +411,7 @@ function installArgvSpy(json) {
   return { called: () => fs.existsSync(argvLog), restore: wrapper.restore };
 }
 
-test('by-number resolvers: misordered/object-shaped calls -> invalid-arguments, no gh call, no throw (#3029)', { skip: PATH_STUB_SKIP }, () => {
+test('by-number resolvers: misordered/object-shaped calls -> invalid-arguments, no gh call, no throw (#3029)', { skip: STUB_SKIP }, () => {
   const spy = installArgvSpy({ number: 42, state: 'OPEN' });
   try {
     assert.equal(resolvePrStateByNumber(4242, { cwd: REPO_ROOT, repo: 'o/r' }), 'invalid-arguments');
@@ -422,7 +422,7 @@ test('by-number resolvers: misordered/object-shaped calls -> invalid-arguments, 
   }
 });
 
-test('by-number resolvers: non-numeric, negative, and fractional numbers -> invalid-arguments, no gh call (#3029)', { skip: PATH_STUB_SKIP }, () => {
+test('by-number resolvers: non-numeric, negative, and fractional numbers -> invalid-arguments, no gh call (#3029)', { skip: STUB_SKIP }, () => {
   const spy = installArgvSpy({ number: 42, state: 'OPEN' });
   try {
     for (const bad of ['abc', -5, 3.5, '042', '4 2', {}, Object.create(null)]) {
@@ -443,7 +443,7 @@ test('by-number resolvers: falsy number still short-circuits to null before the 
   }
 });
 
-test('by-number resolvers: a positive-integer string passes the guard and reaches gh (#3029)', { skip: PATH_STUB_SKIP }, () => {
+test('by-number resolvers: a positive-integer string passes the guard and reaches gh (#3029)', { skip: STUB_SKIP }, () => {
   const spy = installArgvSpy({ number: 42, state: 'MERGED' });
   try {
     assert.equal(resolvePrStateByNumber(REPO_ROOT, '42').state, 'MERGED');
@@ -456,7 +456,7 @@ test('by-number resolvers: a positive-integer string passes the guard and reache
 
 // A missing cwd and a missing gh binary both surface as ENOENT; a stale or
 // mistyped checkout path must not be reported as "gh is not installed".
-test('by-number resolvers: a non-existent repoRoot -> invalid-arguments, not gh-absent (#3029)', { skip: PATH_STUB_SKIP }, () => {
+test('by-number resolvers: a non-existent repoRoot -> invalid-arguments, not gh-absent (#3029)', { skip: STUB_SKIP }, () => {
   const wrapper = installGhWrapper({ number: 42, state: 'MERGED' });
   try {
     assert.equal(resolvePrStateByNumber('/definitely/not/here', 42), 'invalid-arguments');
@@ -478,7 +478,7 @@ test('resolvePrStateByNumberAsync: no number -> null, no gh call', async () => {
   assert.equal(await resolvePrStateByNumberAsync(REPO_ROOT, undefined), null);
 });
 
-test('resolvePrStateByNumberAsync: resolves the single PR by number (no tie-break needed)', { skip: PATH_STUB_SKIP }, async () => {
+test('resolvePrStateByNumberAsync: resolves the single PR by number (no tie-break needed)', { skip: STUB_SKIP }, async () => {
   const pr = { number: 42, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', mergeCommit: { oid: 'a'.repeat(40) } };
   const wrapper = installGhWrapper(pr);
   try {
@@ -500,7 +500,7 @@ test('resolvePrStateByNumberAsync: gh absent -> gh-absent, no throw', async () =
   }
 });
 
-test('resolvePrStateByNumberAsync: malformed gh output -> network-failure, no throw', { skip: PATH_STUB_SKIP }, async () => {
+test('resolvePrStateByNumberAsync: malformed gh output -> network-failure, no throw', { skip: STUB_SKIP }, async () => {
   const wrapper = installGhWrapper('#!/bin/sh\necho "not json"\n');
   try {
     assert.equal(await resolvePrStateByNumberAsync(REPO_ROOT, 42), 'network-failure');
@@ -530,7 +530,7 @@ function installArgvLoggingGhWrapper(json) {
   return { argvLog, restore };
 }
 
-test('resolvePrState/resolvePrStateAsync: request closingIssuesReferences in the --json field list (#3412)', { skip: PATH_STUB_SKIP }, async () => {
+test('resolvePrState/resolvePrStateAsync: request closingIssuesReferences in the --json field list (#3412)', { skip: STUB_SKIP }, async () => {
   const wrapper = installArgvLoggingGhWrapper([MERGED_PR_WITH_CLOSING_REFS]);
   try {
     assert.equal(resolvePrState(REPO_ROOT, 'b').closingIssuesReferences[0].number, 3412);
@@ -543,7 +543,7 @@ test('resolvePrState/resolvePrStateAsync: request closingIssuesReferences in the
   }
 });
 
-test('resolvePrStateByNumber/resolvePrStateByNumberAsync: request closingIssuesReferences (#3412)', { skip: PATH_STUB_SKIP }, async () => {
+test('resolvePrStateByNumber/resolvePrStateByNumberAsync: request closingIssuesReferences (#3412)', { skip: STUB_SKIP }, async () => {
   const wrapper = installArgvLoggingGhWrapper(MERGED_PR_WITH_CLOSING_REFS);
   try {
     assert.equal(resolvePrStateByNumber(REPO_ROOT, 9).closingIssuesReferences[0].number, 3412);
@@ -596,7 +596,7 @@ exit 2
   return { argvLog, restore };
 }
 
-test('AC1.1 AC1.2: a nonexistent stamped PR (pr view exit 1 + GraphQL NOT_FOUND) -> pr-not-found, sync and async (#3543)', { skip: PATH_STUB_SKIP }, async () => {
+test('AC1.1 AC1.2: a nonexistent stamped PR (pr view exit 1 + GraphQL NOT_FOUND) -> pr-not-found, sync and async (#3543)', { skip: STUB_SKIP }, async () => {
   const repo = makeOriginRepo();
   const wrapper = installProbeGhWrapper({ graphqlBody: NOT_FOUND_BODY });
   try {
@@ -614,7 +614,7 @@ test('AC1.1 AC1.2: a nonexistent stamped PR (pr view exit 1 + GraphQL NOT_FOUND)
   }
 });
 
-test('AC2.1: pr view failure + GraphQL transport failure (exit 1, empty stdout) -> network-failure, sync and async (#3543)', { skip: PATH_STUB_SKIP }, async () => {
+test('AC2.1: pr view failure + GraphQL transport failure (exit 1, empty stdout) -> network-failure, sync and async (#3543)', { skip: STUB_SKIP }, async () => {
   const repo = makeOriginRepo();
   const wrapper = installProbeGhWrapper({ graphqlBody: '', graphqlExit: 1 });
   try {
@@ -630,7 +630,7 @@ for (const [label, body] of [
   ['NOT_FOUND with a null data.repository', '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository","pullRequest"]}]}'],
   ['NOT_FOUND on a different path', '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","path":["repository"],"message":"x"}]}'],
 ]) {
-  test(`#3543: ${label} -> network-failure`, { skip: PATH_STUB_SKIP }, async () => {
+  test(`#3543: ${label} -> network-failure`, { skip: STUB_SKIP }, async () => {
     const repo = makeOriginRepo();
     const wrapper = installProbeGhWrapper({ graphqlBody: body });
     try {
@@ -642,7 +642,7 @@ for (const [label, body] of [
   });
 }
 
-test('#3543: a successful gh pr view makes no GraphQL call, sync and async', { skip: PATH_STUB_SKIP }, async () => {
+test('#3543: a successful gh pr view makes no GraphQL call, sync and async', { skip: STUB_SKIP }, async () => {
   const repo = makeOriginRepo();
   const wrapper = installProbeGhWrapper({ prViewStdout: JSON.stringify(MERGED_PR_WITH_CLOSING_REFS), prViewExit: 0, graphqlBody: NOT_FOUND_BODY });
   try {

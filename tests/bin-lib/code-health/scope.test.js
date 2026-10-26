@@ -7,7 +7,7 @@ const { execFileSync } = require('child_process');
 const { listSlices, contentHash, selectSlice, listWorkspaceSlices, gitChurn, sliceRecursive, sourceFiles, splitOversized } = require('../../../plugin/bin/lib/code-health/scope');
 const { MAX_STALE_DAYS } = require('../../../plugin/bin/lib/code-health/score');
 const { toPosix } = require('../../../plugin/bin/lib/shared-primitives');
-const { skipUnderRoot } = require('../../helpers/root');
+const { chmodDenialSkip } = require('../../helpers/root');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-scope-')); }
 
@@ -129,7 +129,7 @@ test('listSlices still includes a dot-directory that holds real SOURCE_EXTS sour
 // error surfaced. isEmptySourceDir now fails SAFE — a scan failure keeps the directory in
 // rotation rather than excluding it — and reports the failure to stderr. Simulated here via a
 // real permission-denied `find` failure (chmod 000 makes it un-listable), not a mock.
-test('listSlices keeps (does not exclude) a dot-directory whose scan genuinely fails, and reports it to stderr', skipUnderRoot('root ignores directory permissions'), () => {
+test('listSlices keeps (does not exclude) a dot-directory whose scan genuinely fails, and reports it to stderr', chmodDenialSkip('root ignores directory permissions'), () => {
   const root = tmp();
   fs.mkdirSync(path.join(root, 'src'));
   fs.writeFileSync(path.join(root, 'src', 'a.js'), 'const x = 1;\n');

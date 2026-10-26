@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
-const { skipUnderRoot } = require('../../helpers/root');
+const { chmodDenialSkip } = require('../../helpers/root');
 const {
   LEDGER_RESIDUE_MARKER, QUIET_SKIP_REASONS, residueLedgerPaths, removalBranchName, ledgerFeatureSlug, runDirNamesNumber,
   attributedRunDir, classifyLedgerCandidate, partitionByRemovalPrs, decideLedgerResidue, defaultListRunDirs,
@@ -288,7 +288,7 @@ test('defaultListOpenRecords: work-backend local-files reads specs/ and never ca
 });
 
 test('defaultListOpenRecords: work-backend local-files fails closed (null) when a record file or the specs/ dir cannot be read',
-  { skip: skipUnderRoot('root ignores mode bits').skip || (process.platform === 'win32' && 'chmod does not deny reads on win32') }, () => {
+  chmodDenialSkip('root ignores mode bits'), () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-unreadable-'));
     fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'work-backend: local-files\n');
     const specs = path.join(root, 'specs');

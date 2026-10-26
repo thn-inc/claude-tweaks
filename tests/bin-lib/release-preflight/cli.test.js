@@ -8,20 +8,16 @@ const { execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'release-preflight.js');
 const { run, parseArgs } = require(CLI);
+const { pathWithOnly } = require('../../helpers/path-stub');
 
 // `gh` has to be genuinely unfindable for the real-binary test below, and a
-// PATH assembled from git's and node's own directories does not achieve that:
-// on Homebrew macOS `git` and `gh` share /opt/homebrew/bin, so gh was found
-// and spawned for real (F1). One empty scratch directory holding symlinks to
-// the real git and the running node, used as the WHOLE PATH, is what makes
-// git and node resolve while gh stays ENOENT.
-function ghAbsentBinDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-preflight-bin-'));
-  fs.symlinkSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim(), path.join(dir, 'git'));
-  fs.symlinkSync(process.execPath, path.join(dir, 'node'));
-  return dir;
-}
-const BIN_DIR = ghAbsentBinDir();
+// PATH assembled naively from git's and node's own directories does not
+// achieve that: on Homebrew macOS `git` and `gh` share /opt/homebrew/bin, so
+// gh was found and spawned for real (F1). pathWithOnly builds the WHOLE PATH
+// from git's and node's directories, swapping any directory that also holds
+// gh for a scratch dir of symlinks to just the named binaries — git and node
+// resolve while gh stays ENOENT.
+const BIN_PATH = pathWithOnly(['git', 'node'], { exclude: ['gh'] });
 
 function mainCheckoutWithRun() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'release-preflight-cli-')));
@@ -114,10 +110,10 @@ test('--only writes a partial pack; --json redirects it (parent must resolve und
 test('the real binary: exit 0 on the fixture with no origin — ciTip and releasePr are data, not exit codes (AC 3)', () => {
   const fx = mainCheckoutWithRun();
   fs.writeFileSync(path.join(fx.root, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
-  // BIN_DIR is the whole PATH: git and node resolve through their symlinks
-  // there, `gh` does not exist at all (ENOENT), so the GitHub-backed fields
-  // degrade for the reason this test claims they do.
-  const out = execFileSync('node', [CLI, '--run', fx.runDir], { cwd: fx.root, encoding: 'utf8', env: { ...process.env, PATH: BIN_DIR } });
+  // BIN_PATH is the whole PATH: git and node resolve through it, `gh` does
+  // not exist at all (ENOENT), so the GitHub-backed fields degrade for the
+  // reason this test claims they do.
+  const out = execFileSync('node', [CLI, '--run', fx.runDir], { cwd: fx.root, encoding: 'utf8', env: { ...process.env, PATH: BIN_PATH } });
   const pack = JSON.parse(out);
   assert.strictEqual(pack.ciTip.ok, false);
   assert.strictEqual(pack.releasePr.ok, false);

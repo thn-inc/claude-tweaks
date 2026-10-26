@@ -5,26 +5,21 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures.js');
+const { pathWithOnly } = require('../../helpers/path-stub');
 
 const CLI = path.join(__dirname, '../../../plugin/bin/release-preflight.js');
-// `gh` has to be genuinely unfindable, and a PATH assembled from git's and
-// node's own directories does not achieve that: on Homebrew macOS `git` and
-// `gh` share /opt/homebrew/bin, so gh was found and spawned for real and the
-// assertions passed only because the fixture has no origin (F1). Instead,
-// symlink the real git and the running node into one empty scratch directory
-// and make that the WHOLE PATH — git and node resolve, gh is ENOENT.
-function ghAbsentBinDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-preflight-bin-'));
-  fs.symlinkSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim(), path.join(dir, 'git'));
-  fs.symlinkSync(process.execPath, path.join(dir, 'node'));
-  return dir;
-}
-const BIN_DIR = ghAbsentBinDir();
-const ENV = { ...process.env, PATH: BIN_DIR, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' };
+// `gh` has to be genuinely unfindable, and a PATH assembled naively from
+// git's and node's own directories does not achieve that: on Homebrew macOS
+// `git` and `gh` share /opt/homebrew/bin, so gh was found and spawned for real
+// and the assertions passed only because the fixture has no origin (F1).
+// pathWithOnly builds the WHOLE PATH from git's and node's directories, but
+// swaps any directory that also holds gh for a scratch dir of symlinks to just
+// the named binaries — git and node resolve, gh is ENOENT.
+const BIN_PATH = pathWithOnly(['git', 'node'], { exclude: ['gh'] });
+const ENV = { ...process.env, PATH: BIN_PATH, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' };
 
 function fixture(engine, { feat = true } = {}) {
   const root = gitRepo();

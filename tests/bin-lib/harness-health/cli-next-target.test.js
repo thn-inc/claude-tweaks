@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const { seedDurableState } = require('../health-core/seed-durable-state');
+const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
 
@@ -182,29 +183,27 @@ test('next-target (bare, no --kind) never surfaces a memory target even when MEM
 // actual subprocess calls can be counted — this is the only way to observe
 // readDurableState's call count from outside the process boundary (the CLI
 // spawns via execFileSync, so there is no in-process mock seam). Returns the
-// path to a log file that accumulates one line per invocation of the shim.
+// path to a log file that accumulates one line per invocation of the shim,
+// and the restore() that takes the shim back off PATH.
 function makeGitSpy() {
-  const spyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-nt-gitspy-'));
-  const logFile = path.join(spyDir, 'git-calls.log');
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-nt-gitspy-'));
+  const logFile = path.join(logDir, 'git-calls.log');
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  fs.writeFileSync(
-    path.join(spyDir, 'git'),
-    `#!/bin/sh\necho "$@" >> "${logFile}"\nexec "${realGit}" "$@"\n`,
-  );
-  fs.chmodSync(path.join(spyDir, 'git'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  return logFile;
+  const restore = installStub('git', `#!/bin/sh\necho "$@" >> "${logFile}"\nexec "${realGit}" "$@"\n`);
+  return { logFile, restore };
 }
 
-test('next-target (default no --target path) fetches durable state exactly once, not twice', () => {
+test('next-target (default no --target path) fetches durable state exactly once, not twice', { skip: STUB_SKIP }, () => {
   const root = tmp();
   fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth');
   seedDurableCursors(root, {});
-  const logFile = makeGitSpy();
-  execFileSync('node', [CLI, 'next-target', '--root', root], {
-    encoding: 'utf8',
-    env: { ...process.env, PATH: `${path.dirname(logFile)}:${process.env.PATH}` },
-  });
+  const { logFile, restore } = makeGitSpy();
+  try {
+    execFileSync('node', [CLI, 'next-target', '--root', root], { encoding: 'utf8' });
+  } finally {
+    restore();
+  }
   const log = fs.readFileSync(logFile, 'utf8');
   const fetchCalls = log.split('\n').filter((line) => /(^|\s)fetch(\s|$)/.test(line)).length;
   assert.strictEqual(
@@ -214,16 +213,17 @@ test('next-target (default no --target path) fetches durable state exactly once,
   );
 });
 
-test('next-target --kind memory fetches durable state exactly once, not twice', () => {
+test('next-target --kind memory fetches durable state exactly once, not twice', { skip: STUB_SKIP }, () => {
   const root = tmp();
   const memoryDir = tmp();
   fs.writeFileSync(path.join(memoryDir, 'MEMORY.md'), '- [Only entry](only-entry.md) — hook\n');
   seedDurableCursors(root, {});
-  const logFile = makeGitSpy();
-  execFileSync('node', [CLI, 'next-target', '--root', root, '--kind', 'memory', '--memory-dir', memoryDir], {
-    encoding: 'utf8',
-    env: { ...process.env, PATH: `${path.dirname(logFile)}:${process.env.PATH}` },
-  });
+  const { logFile, restore } = makeGitSpy();
+  try {
+    execFileSync('node', [CLI, 'next-target', '--root', root, '--kind', 'memory', '--memory-dir', memoryDir], { encoding: 'utf8' });
+  } finally {
+    restore();
+  }
   const log = fs.readFileSync(logFile, 'utf8');
   const fetchCalls = log.split('\n').filter((line) => /(^|\s)fetch(\s|$)/.test(line)).length;
   assert.strictEqual(

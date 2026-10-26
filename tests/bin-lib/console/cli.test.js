@@ -10,7 +10,7 @@ const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'console-res
 const PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..', 'plugin');
 const { run, ghReadGrants, checkPatchStack } = require(CLI);
 const { gitEnv } = require('../../../plugin/bin/lib/staged-patch/stack-check');
-const { skipUnderRoot } = require('../../helpers/root');
+const { chmodDenialSkip } = require('../../helpers/root');
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', writePolicy = true, runConfig = null, consoleJson = null } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cli-')));
@@ -701,7 +701,7 @@ test('--set-item whose decisions.md entry cannot be written exits 3 naming the l
   assert.strictEqual(readConsole(fx.runDir).items[0].resolution, 'keep-staged');
 });
 
-const NO_POSIX_PERMISSIONS = { skip: (process.platform === 'win32' && 'POSIX directory permissions do not apply on win32') || skipUnderRoot('a root runner ignores directory mode bits').skip };
+const NO_POSIX_PERMISSIONS = chmodDenialSkip('a root runner ignores directory mode bits');
 test('--set-item whose console.json write throws exits 3 naming the file and leaves it untouched (#4170)', NO_POSIX_PERMISSIONS, async (t) => {
   const fx = mainCheckoutWithRun({ consoleJson: `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'leftover-1.md', section: 'Queue writes', resolution: 'apply', reason: 'r' }] })}\n` });
   const consolePath = path.join(fx.runDir, 'console.json');

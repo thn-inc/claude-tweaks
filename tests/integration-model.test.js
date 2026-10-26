@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { detectIntegrationModel, resolvePolicyKeys, POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
+const { pathWithOnly } = require('./helpers/path-stub');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const RESOLVE_POLICY = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
@@ -20,19 +21,16 @@ function gitRepo({ remote } = {}) {
   return dir;
 }
 
-// Fakes "gh absent, git present" without an empty PATH — on some machines
-// (this repo's dev environment included) git and gh live in the SAME
-// directory (e.g. both under /opt/homebrew/bin via Homebrew), so blanking
-// PATH entirely would also break the git remote-get-url probe that must
-// keep succeeding. Instead, resolve git's real absolute path once (via the
-// *current* PATH, before any override), symlink only that into a fresh
-// empty directory, and use that directory as the override PATH — git
-// resolves, gh does not.
+// Fakes "gh absent, git present" without an empty PATH — blanking PATH
+// entirely would also break the git remote-get-url probe that must keep
+// succeeding. pathWithOnly resolves git via the *current* PATH and returns
+// git's own directory as the override PATH; on some machines (this repo's dev
+// environment included) git and gh live in the SAME directory (e.g. both
+// under /opt/homebrew/bin via Homebrew), so when that directory also holds gh
+// it substitutes a scratch dir holding only a git symlink — git resolves, gh
+// does not.
 function ghAbsentPath() {
-  const gitPath = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-nogh-bin-'));
-  fs.symlinkSync(gitPath, path.join(binDir, 'git'));
-  return binDir;
+  return pathWithOnly(['git'], { exclude: ['gh'] });
 }
 
 function runResolvePolicy(args, { cwd, env } = {}) {

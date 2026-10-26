@@ -10,7 +10,7 @@ const { pidStartTime } = require('../../../plugin/bin/lib/run-liveness/process-p
 const ctxLib = require('../../../plugin/bin/lib/hooks/context');
 const { adoptionRefusal } = require('../../../plugin/bin/lib/hooks/run-dir-resolve');
 const { checkResumeFreshness } = require('../../../plugin/bin/lib/hooks/resume-freshness');
-const { skipUnderRoot } = require('../../helpers/root');
+const { chmodDenialSkip } = require('../../helpers/root');
 
 const MIN = 60_000;
 const HOUR = 3_600_000;
@@ -374,7 +374,7 @@ test('a worktree path the type lookup reports missing is the no-worktree negativ
   assert.strictEqual(link.verdict, 'live');
 });
 
-test('a real chmod 000 parent makes the default type lookup unreadable, not absent', { skip: process.platform === 'win32' || skipUnderRoot('chmod 000 is not a denial under root').skip }, () => {
+test('a real chmod 000 parent makes the default type lookup unreadable, not absent', chmodDenialSkip('chmod 000 is not a denial under root'), () => {
   const parent = tmp('ct-liveness-locked-');
   const wt = path.join(parent, 'wt');
   fs.mkdirSync(wt);

@@ -9,7 +9,7 @@ const path = require('path');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
 const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { linkedWorktreeOf } = require('./helpers/git-fixtures');
-const { skipUnderRoot } = require('./helpers/root');
+const { chmodDenialSkip } = require('./helpers/root');
 const { shellQuote } = require('./helpers/shell-quote');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
@@ -322,7 +322,7 @@ test('record-worktree --run with no following value fails loudly instead of fall
     '--run with a missing value must not silently fall back to a different run dir');
 });
 
-test('record-worktree reports a distinct failure when the run-state write itself fails', skipUnderRoot('root ignores directory permissions'), () => {
+test('record-worktree reports a distinct failure when the run-state write itself fails', chmodDenialSkip('root ignores directory permissions'), () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.chmodSync(run, 0o500); // read+execute only — fs.writeFileSync inside it must throw
@@ -1304,7 +1304,7 @@ test('#2351: an ordinary allowed call in the main checkout does not stamp an ad-
     'an allowed call must never mint an ad-hoc run dir — only an actual denial does');
 });
 
-test('a gate denial with an unwritable run dir still denies and exits 0', skipUnderRoot('root ignores directory permissions'), () => {
+test('a gate denial with an unwritable run dir still denies and exits 0', chmodDenialSkip('root ignores directory permissions'), () => {
   const { project, run } = policyRepoWithRun();
   fs.chmodSync(run, 0o500); // read+execute only — fs.appendFileSync inside it must throw
   try {

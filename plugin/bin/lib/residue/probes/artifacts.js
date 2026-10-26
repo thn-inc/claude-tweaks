@@ -46,10 +46,12 @@ const { mainCheckoutRoot } = require('../../hooks/worktree-detect');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const THIRTY_DAYS_MS = 30 * DAY_MS;
+// Display IDs: `/`-joined on every OS and used as-is in `subject` and every
+// `failed` entry; split into native path segments only for fs reads.
 const ARTIFACT_ROOTS = [
-  path.join('.claude-tweaks', 'artifacts', 'screenshots', 'qa'),
-  path.join('.claude-tweaks', 'artifacts', 'screenshots', 'browse'),
-  path.join('.claude-tweaks', 'artifacts', 'traces'),
+  '.claude-tweaks/artifacts/screenshots/qa',
+  '.claude-tweaks/artifacts/screenshots/browse',
+  '.claude-tweaks/artifacts/traces',
 ];
 const LEGACY_ROOTS = ['screenshots', 'traces'];
 const LEGACY_SHAPE_SUBDIRS = ['qa', 'browse'];
@@ -169,7 +171,7 @@ function probeArtifacts({ cwd, now = Date.now(), run } = {}) {
   const failed = [];
 
   for (const rel of ARTIFACT_ROOTS) {
-    const base = path.join(root, rel);
+    const base = path.join(root, ...rel.split('/'));
     let entries;
     try {
       entries = fs.readdirSync(base, { withFileTypes: true });
@@ -185,7 +187,7 @@ function probeArtifacts({ cwd, now = Date.now(), run } = {}) {
       try {
         basis = ageBasisMs(dir);
       } catch (err) {
-        failed.push(`${path.join(rel, entry.name)} (${errLabel(err)})`);
+        failed.push(`${rel}/${entry.name} (${errLabel(err)})`);
         continue;
       }
       const ageMs = now - basis.basisMs;
@@ -193,7 +195,7 @@ function probeArtifacts({ cwd, now = Date.now(), run } = {}) {
       findings.push(makeFinding({
         kind: 'artifact',
         scope: 'observed',
-        subject: path.join(rel, entry.name),
+        subject: `${rel}/${entry.name}`,
         remedy: 'auto',
         evidence: `newest content ${Math.floor(ageMs / DAY_MS)}d old (newest: ${basis.file ?? 'no files — dir mtime'}) — aged past the 30-day retention window`,
       }));
@@ -243,4 +245,4 @@ function probeArtifacts({ cwd, now = Date.now(), run } = {}) {
   return { ran: true, reason: null, findings };
 }
 
-module.exports = { probeArtifacts, THIRTY_DAYS_MS };
+module.exports = { probeArtifacts, ARTIFACT_ROOTS, THIRTY_DAYS_MS };

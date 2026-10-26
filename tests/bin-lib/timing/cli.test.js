@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { skipUnderRoot } = require('../../helpers/root');
+const { chmodDenialSkip } = require('../../helpers/root');
 const { readText } = require('../../helpers/read-skill');
 const { fixtureHomeEnv } = require('../../helpers/fixture-home');
 
@@ -169,7 +169,7 @@ test('#2550 review fix: the collapsed one-line summary still carries a Guard-den
   assert.equal(r.stdout, `no phase events; 0 tool round-trips, 3/4 tokens\nGuard denials: 1 gate · 0 wd-ambiguous · 1 wd-deny\n\ndispatches: subagent transcripts not found (no subagents/ directory at ${subDir})\n`);
 });
 
-test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', { skip: skipUnderRoot('root ignores file permissions').skip || (process.platform === 'win32' && 'win32: chmod 0o000 only sets the read-only attribute') }, () => {
+test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', chmodDenialSkip('root ignores file permissions'), () => {
   const dir = tmpRun(true);
   const unreadable = path.join(os.tmpdir(), 'ct-timing-unreadable-transcript.jsonl');
   fs.writeFileSync(unreadable, '{}\n');

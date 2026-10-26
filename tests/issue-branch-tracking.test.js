@@ -237,7 +237,7 @@ function runExtractStep(t, commits) {
       encoding: 'utf8',
       env: {
         ...process.env,
-        PATH: `${binDir}:${process.env.PATH}`,
+        PATH: `${binDir}${path.delimiter}${process.env.PATH}`,
         RUNNER_TEMP: tmp,
         GITHUB_OUTPUT: githubOutput,
         COMMITS_JSON: JSON.stringify(commits),

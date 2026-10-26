@@ -16,7 +16,7 @@ const path = require('node:path');
 const { run } = require('../plugin/bin/skill-load-report');
 const { slugForCwd } = require('../plugin/bin/lib/timing/transcript');
 const { measuredTextBytes } = require('../plugin/bin/lib/skill-audit/context-cost');
-const { skipUnderRoot } = require('./helpers/root');
+const { chmodDenialSkip } = require('./helpers/root');
 const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const TS = '2026-10-17T12:00:00.000Z';
@@ -110,7 +110,7 @@ test('a transcript directory holding no main transcript is no-data too', async (
 });
 
 // chmod cannot deny reads on Windows, and mode bits are ignored under root.
-const CHMOD_DENIAL_SKIP = { skip: (process.platform === 'win32' && 'win32: chmod does not deny reads') || skipUnderRoot('mode bits are ignored under root').skip };
+const CHMOD_DENIAL_SKIP = chmodDenialSkip('mode bits are ignored under root');
 
 test('an unreadable main transcript is counted, and with none read the result is no-data', CHMOD_DENIAL_SKIP, async () => {
   const { transcriptDir, deps, json } = setup();

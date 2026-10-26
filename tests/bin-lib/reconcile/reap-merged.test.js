@@ -14,9 +14,8 @@ const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issu
 const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
 const { reconcile } = require('../../../plugin/bin/lib/reconcile');
 const { residueBody } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
-const { skipUnderRoot } = require('../../helpers/root');
-
-const PATH_STUB_SKIP = process.platform === 'win32' && 'win32: execFileSync("gh") never spawns a #!/bin/sh stub named gh on PATH';
+const { chmodDenialSkip } = require('../../helpers/root');
+const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -29,13 +28,7 @@ function git(cwd, ...args) {
 // pr-state.test.js already document) — intercept at the process-spawn
 // boundary via a `gh` wrapper placed first on PATH.
 function installGhWrapper(prsJson) {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-ghwrap-'));
-  const wrapperPath = path.join(wrapperDir, 'gh');
-  fs.writeFileSync(wrapperPath, `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(prsJson)}\nEOF\n`);
-  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
-  return { restore: () => { process.env.PATH = originalPath; } };
+  return { restore: installStub('gh', `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(prsJson)}\nEOF\n`) };
 }
 
 // #1796 — readPorcelainStatus (worktrees.js) is not injectable, same
@@ -46,19 +39,15 @@ function installGhWrapper(prsJson) {
 // how many of those invocations were a `status --porcelain` read.
 function installGitPorcelainSpy() {
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-gitspy-'));
-  const wrapperPath = path.join(wrapperDir, 'git');
-  const logPath = path.join(wrapperDir, 'calls.log');
-  fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" >> "${logPath}"\nexec "${realGit}" "$@"\n`);
-  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-gitspy-'));
+  const logPath = path.join(logDir, 'calls.log');
+  const restore = installStub('git', `#!/bin/sh\necho "$@" >> "${logPath}"\nexec "${realGit}" "$@"\n`);
   return {
     countPorcelainCalls: () => {
       if (!fs.existsSync(logPath)) return 0;
       return fs.readFileSync(logPath, 'utf8').split('\n').filter((l) => l.includes('status --porcelain')).length;
     },
-    restore: () => { process.env.PATH = originalPath; },
+    restore,
   };
 }
 
@@ -118,7 +107,7 @@ function buildReapableFixture({ worktreeDirName = 'issue-1' } = {}) {
   return { root, wtPath, runDir };
 }
 
-test('reapMerged: a merged-PR worktree is removed and logs a worktree-reaped event to its owning run', () => {
+test('reapMerged: a merged-PR worktree is removed and logs a worktree-reaped event to its owning run', { skip: STUB_SKIP }, () => {
   const { root, wtPath, runDir } = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 42, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   let result;
@@ -140,7 +129,7 @@ test('reapMerged: a merged-PR worktree is removed and logs a worktree-reaped eve
 // #2783: EnterWorktree mints an `-adhoc-standalone` twin AFTER /flow's formal
 // run, so it sorts newer — the reap trail (timing/derive.js reads it) must
 // still land in the formal run, never the friction-only ad-hoc dir.
-test('#2783 reapMerged: the worktree-reaped event lands in the formal run, not its newer ad-hoc twin', () => {
+test('#2783 reapMerged: the worktree-reaped event lands in the formal run, not its newer ad-hoc twin', { skip: STUB_SKIP }, () => {
   const { root, wtPath, runDir } = buildReapableFixture();
   const adhoc = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000100-adhoc-standalone');
   fs.mkdirSync(adhoc, { recursive: true });
@@ -158,7 +147,7 @@ test('#2783 reapMerged: the worktree-reaped event lands in the formal run, not i
   assert.equal(read(adhoc).some((e) => e.type === 'worktree-reaped'), false);
 });
 
-test('reapMerged: a closed-unmerged PR is skipped (never reaped) and logs worktree-reap-skipped, not worktree-reaped', () => {
+test('reapMerged: a closed-unmerged PR is skipped (never reaped) and logs worktree-reap-skipped, not worktree-reaped', { skip: STUB_SKIP }, () => {
   const { root, wtPath, runDir } = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 7, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z' }]);
   let result;
@@ -179,7 +168,7 @@ test('reapMerged: a closed-unmerged PR is skipped (never reaped) and logs worktr
 });
 
 // #4180: a dry run writes nothing, so the skip is reported but never appended to events.jsonl.
-test('#4180 reapMerged: a dry run reports a closed-unmerged skip without appending a worktree-reap-skipped event', () => {
+test('#4180 reapMerged: a dry run reports a closed-unmerged skip without appending a worktree-reap-skipped event', { skip: STUB_SKIP }, () => {
   const { root, wtPath, runDir } = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 7, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z' }]);
   let result;
@@ -222,7 +211,7 @@ test('reapMerged: an in-use (locked) worktree is skipped silently — no events.
 // Same rationale as worktree-reap.test.js's #1793 block for not forcing a
 // removal failure: no existing test in this file does either.
 
-test('#1793: reapMerged calls releasePorts with the removed realpath after a successful reap', () => {
+test('#1793: reapMerged calls releasePorts with the removed realpath after a successful reap', { skip: STUB_SKIP }, () => {
   const { root, wtPath } = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 42, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   const calls = [];
@@ -237,7 +226,7 @@ test('#1793: reapMerged calls releasePorts with the removed realpath after a suc
   assert.deepEqual(result.portsRelease, [], 'no note on a successful release');
 });
 
-test('#1793: a releasePorts throw is recorded as a portsRelease note and never changes the reap outcome', () => {
+test('#1793: a releasePorts throw is recorded as a portsRelease note and never changes the reap outcome', { skip: STUB_SKIP }, () => {
   const { root, wtPath } = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 42, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   let result;
@@ -251,7 +240,7 @@ test('#1793: a releasePorts throw is recorded as a portsRelease note and never c
   assert.deepEqual(result.portsRelease, [{ path: wtPath, note: 'failed: registry unwritable' }]);
 });
 
-test('#1793: a removed path with no lease is a no-op release with no note', () => {
+test('#1793: a removed path with no lease is a no-op release with no note', { skip: STUB_SKIP }, () => {
   const { root, wtPath } = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 42, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   // registry.release() itself no-ops for an unknown path (#1791 AC6) — the
@@ -314,7 +303,7 @@ test('reapMerged: never reaps the worktree the caller is standing in — merged 
 // remove` accumulates a persisted per-path failure count, escalating once
 // it crosses cache.js's threshold and never re-escalating on later still-
 // failing passes.
-test('reapMerged: removal-failed tracks a consecutive-failure streak and escalates once at the threshold', () => {
+test('reapMerged: removal-failed tracks a consecutive-failure streak and escalates once at the threshold', { skip: STUB_SKIP }, () => {
   const { root, wtPath } = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   // A file inside the worktree with no write permission on its parent isn't
@@ -351,7 +340,7 @@ test('reapMerged: removal-failed tracks a consecutive-failure streak and escalat
 // FAILURE.* category string ('git-error') through as lastError, discarding
 // git's actual stderr. This pins that the residue cache now carries git's
 // real message instead.
-test('reapMerged: removal-failed threads git\'s real stderr through as lastError, not the bare "git-error" category', () => {
+test('reapMerged: removal-failed threads git\'s real stderr through as lastError, not the bare "git-error" category', { skip: STUB_SKIP }, () => {
   const { root, wtPath } = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   execFileSync('git', ['worktree', 'lock', wtPath, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
@@ -375,7 +364,7 @@ test('reapMerged: removal-failed threads git\'s real stderr through as lastError
 // batched path twice; fs.{read,write}FileSync are spied at the cache file's
 // own path so unrelated reads/writes elsewhere in the same pass (git output,
 // events.jsonl, run-state.json) never pollute the count.
-test('reapMerged: a pass processing 2 removal-failed worktrees reads and writes reconcile-cache.json exactly once each, not once per worktree', () => {
+test('reapMerged: a pass processing 2 removal-failed worktrees reads and writes reconcile-cache.json exactly once each, not once per worktree', { skip: STUB_SKIP }, () => {
   const { root, wtPath } = buildReapableFixture();
   const wtPath2 = path.join(root, '.claude', 'worktrees', 'issue-2');
   git(root, 'worktree', 'add', '-q', '-b', 'worktree-issue-2', wtPath2);
@@ -417,7 +406,7 @@ test('reapMerged: a pass processing 2 removal-failed worktrees reads and writes 
 // threshold, the escalation call — pinned separately at the cache.js/
 // escalate-residue.js unit level; here we confirm the read actually happens
 // and its content flows through this integration point).
-test('reapMerged: removal-failed reads git status --porcelain exactly once, and the lines reach the residue cache', () => {
+test('reapMerged: removal-failed reads git status --porcelain exactly once, and the lines reach the residue cache', { skip: STUB_SKIP }, () => {
   const { root, wtPath } = buildReapableFixture();
   const ghWrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   execFileSync('git', ['worktree', 'lock', wtPath, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
@@ -437,7 +426,7 @@ test('reapMerged: removal-failed reads git status --porcelain exactly once, and 
   }
 });
 
-test('reapMerged: a successful removal performs no git status --porcelain read', () => {
+test('reapMerged: a successful removal performs no git status --porcelain read', { skip: STUB_SKIP }, () => {
   const { root } = buildReapableFixture();
   const ghWrapper = installGhWrapper([{ number: 42, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   const gitSpy = installGitPorcelainSpy();
@@ -643,9 +632,7 @@ test('reconcile(): the real dispatcher never reaps the worktree the caller is st
 // partway — exactly where Windows's MAX_PATH bites on a deep node_modules
 // tree. Root bypasses mode bits (tests/helpers/root.js) and win32 ignores
 // chmod, so those hosts skip the tests that depend on it.
-const MID_DELETE_SKIP = process.platform === 'win32'
-  ? { skip: 'win32 ignores directory mode bits' }
-  : skipUnderRoot('root bypasses mode bits');
+const MID_DELETE_SKIP = chmodDenialSkip('root bypasses mode bits');
 
 function induceMidDeleteFailure(wtPath) {
   const ro = path.join(wtPath, 'ro');
@@ -808,7 +795,7 @@ test('#2566: reapMerged on win32 finishes a removal git abandoned mid-deletion u
   assert.ok(!list.includes(wtPath), 'the worktree registration must be cleared — no longer listed or prunable');
 });
 
-test('#2566: a DIRTY worktree at a long path on win32 is never force-removed — its uncommitted file survives and the refusal escalates', () => {
+test('#2566: a DIRTY worktree at a long path on win32 is never force-removed — its uncommitted file survives and the refusal escalates', { skip: STUB_SKIP }, () => {
   const { root, wtPath } = buildReapableFixture({ worktreeDirName: LONG_DIR_NAME });
   assert.ok(wtPath.length >= 240, `fixture path is ${wtPath.length} chars — the pre-follow-up length gate (>= 240) must have engaged`);
   const wrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
@@ -827,7 +814,7 @@ test('#2566: a DIRTY worktree at a long path on win32 is never force-removed —
   assert.equal(fs.readFileSync(path.join(wtPath, 'stray.txt'), 'utf8'), 'uncommitted work\n');
 });
 
-test('#2566: a locked worktree on win32 is never force-removed — the real failure still escalates', () => {
+test('#2566: a locked worktree on win32 is never force-removed — the real failure still escalates', { skip: STUB_SKIP }, () => {
   const { root, wtPath } = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   execFileSync('git', ['worktree', 'lock', wtPath, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
@@ -866,7 +853,7 @@ test('#2566: when the fallback itself also fails on win32, the existing removal-
   assert.match(stuck[0].lastError, /EPERM/, `expected the fallback's own error as lastError, got: ${JSON.stringify(stuck[0])}`);
 });
 
-test('#2566: the fallback is never attempted on a non-win32 platform — no behavior change from before this fix', () => {
+test('#2566: the fallback is never attempted on a non-win32 platform — no behavior change from before this fix', { skip: STUB_SKIP }, () => {
   const { root, wtPath } = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   execFileSync('git', ['worktree', 'lock', wtPath, '--reason', 'stuck'], { cwd: root, stdio: 'ignore' });
@@ -891,16 +878,13 @@ test('#2566: the fallback is never attempted on a non-win32 platform — no beha
 // leave the marker), while the resolver's deps answer a MERGED PR whose number
 // only they could produce — it lands in the worktree-reaped event.
 function installFailingGhWithMarker() {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-failgh-'));
-  const marker = path.join(wrapperDir, 'gh-was-called');
-  fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ntouch "${marker}"\nexit 1\n`);
-  fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
-  return { marker, restore: () => { process.env.PATH = originalPath; } };
+  const markerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-failgh-'));
+  const marker = path.join(markerDir, 'gh-was-called');
+  const restore = installStub('gh', `#!/bin/sh\ntouch "${marker}"\nexit 1\n`);
+  return { marker, restore };
 }
 
-test('reapMerged: prStates answers replace live lookups (#4032)', { skip: PATH_STUB_SKIP }, () => {
+test('reapMerged: prStates answers replace live lookups (#4032)', { skip: STUB_SKIP }, () => {
   const control = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 42, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   let controlResult;

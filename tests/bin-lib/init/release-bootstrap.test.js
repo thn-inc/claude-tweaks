@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const rb = require('../../../plugin/bin/lib/init/release-bootstrap');
-const { skipUnderRoot } = require('../../helpers/root');
+const { chmodDenialSkip } = require('../../helpers/root');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'release-bootstrap-')); }
 function write(root, rel, content) {
@@ -500,7 +500,7 @@ test('bootstrapRelease: the real (non-injected) listTags path on a plain directo
   assert.equal(r.version, '0.1.0');
 });
 
-test('detectReleaseProcess: an unreadable config (EACCES) is a conflict naming the real cause, not "foreign config" (ledger row 39)', skipUnderRoot('root bypasses chmod restrictions'), () => {
+test('detectReleaseProcess: an unreadable config (EACCES) is a conflict naming the real cause, not "foreign config" (ledger row 39)', chmodDenialSkip('root bypasses chmod restrictions'), () => {
   const root = tmp(); write(root, 'release-please-config.json', SHAPED);
   fs.chmodSync(path.join(root, 'release-please-config.json'), 0o000);
   try {

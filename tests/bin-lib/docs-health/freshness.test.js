@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { parseFilesField, checkTrackedFreshness, gitLastChangedMap } = require('../../../plugin/bin/lib/docs-health/freshness');
+const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 
 function makeTmpGitRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-freshness-'));
@@ -158,30 +159,26 @@ test('checkTrackedFreshness correctly classifies multiple tracked files with ind
   assert.strictEqual(result.stale[0].path, 'src/new.ts');
 });
 
-test('checkTrackedFreshness spawns exactly one git subprocess for multiple tracked files (regression: previously one spawn per file)', () => {
+test('checkTrackedFreshness spawns exactly one git subprocess for multiple tracked files (regression: previously one spawn per file)', { skip: STUB_SKIP }, () => {
   const root = makeTmpGitRoot();
   commitFile(root, 'src/a.ts', 'export const a = 1;\n');
   commitFile(root, 'src/b.ts', 'export const b = 1;\n');
   commitFile(root, 'src/c.ts', 'export const c = 1;\n');
 
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  const fakeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-git-bin-'));
-  const countFile = path.join(fakeDir, 'count.txt');
+  const countDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-git-count-'));
+  const countFile = path.join(countDir, 'count.txt');
   fs.writeFileSync(countFile, '');
-  const fakeGitPath = path.join(fakeDir, 'git');
-  fs.writeFileSync(fakeGitPath, `#!/bin/sh\necho x >> "${countFile}"\nexec "${realGit}" "$@"\n`);
-  fs.chmodSync(fakeGitPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
 
   const content = '---\nfiles:\n  - src/a.ts\n  - src/b.ts\n  - src/c.ts\n---\n\n# Doc\n';
-  const originalPath = process.env.PATH;
   let invocations;
+  const restore = installStub('git', `#!/bin/sh\necho x >> "${countFile}"\nexec "${realGit}" "$@"\n`);
   try {
-    process.env.PATH = `${fakeDir}${path.delimiter}${originalPath}`;
     checkTrackedFreshness(content, root, Date.now());
     invocations = fs.readFileSync(countFile, 'utf8').split('\n').filter(Boolean).length;
   } finally {
-    process.env.PATH = originalPath;
-    fs.rmSync(fakeDir, { recursive: true, force: true });
+    restore();
+    fs.rmSync(countDir, { recursive: true, force: true });
   }
 
   assert.strictEqual(invocations, 1, `expected exactly one git subprocess spawn for 3 tracked files, got ${invocations}`);

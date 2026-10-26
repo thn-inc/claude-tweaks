@@ -6,6 +6,7 @@ const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 
 const { installWrapper, buildWrapperSource } = require('../plugin/bin/install-statusline-wrapper.js');
+const { MODE_BITS_HONORED } = require('./helpers/root');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
 
 // Every spawn below runs a real `node` process. The budget used to be 5s, which
@@ -58,7 +59,7 @@ test('installWrapper writes the wrapper script under the injected homedir, not t
   assert.match(contents, /claude-tweaks statusline wrapper/);
 
   const stat = fs.statSync(expectedPath);
-  assert.strictEqual(stat.mode & 0o777, 0o755);
+  if (MODE_BITS_HONORED) assert.strictEqual(stat.mode & 0o777, 0o755);
 
   fs.rmSync(tmpHome, { recursive: true, force: true });
 });
@@ -109,12 +110,12 @@ test('installWrapper restores 0o755 when re-run over an existing, non-executable
 
   const targetPath = installWrapper(tmpHome);
   fs.chmodSync(targetPath, 0o644); // root-safe: asserts mode bits directly via stat, not access-denial behavior
-  assert.strictEqual(fs.statSync(targetPath).mode & 0o777, 0o644, 'precondition: file is non-executable before re-install');
+  if (MODE_BITS_HONORED) assert.strictEqual(fs.statSync(targetPath).mode & 0o777, 0o644, 'precondition: file is non-executable before re-install');
 
   installWrapper(tmpHome);
 
   const stat = fs.statSync(targetPath);
-  assert.strictEqual(stat.mode & 0o777, 0o755, 'expected mode restored to 0o755 after re-running installWrapper over an existing file');
+  if (MODE_BITS_HONORED) assert.strictEqual(stat.mode & 0o777, 0o755, 'expected mode restored to 0o755 after re-running installWrapper over an existing file');
 
   fs.rmSync(tmpHome, { recursive: true, force: true });
 });
