@@ -74,7 +74,7 @@ function newestFileMtimeMs(dir) {
     if (entry.isDirectory()) {
       const child = newestFileMtimeMs(p);
       if (child.mtimeMs !== null && (newest.mtimeMs === null || child.mtimeMs > newest.mtimeMs)) {
-        newest = { mtimeMs: child.mtimeMs, file: path.join(entry.name, child.file) };
+        newest = { mtimeMs: child.mtimeMs, file: `${entry.name}/${child.file}` };
       }
     } else if (entry.isFile()) {
       const m = fs.statSync(p).mtimeMs;
@@ -107,7 +107,7 @@ function zipAndNewest(dir) {
       const child = zipAndNewest(p);
       if (child.hasZip) hasZip = true;
       if (child.newest.mtimeMs !== null && (newest.mtimeMs === null || child.newest.mtimeMs > newest.mtimeMs)) {
-        newest = { mtimeMs: child.newest.mtimeMs, file: path.join(entry.name, child.newest.file) };
+        newest = { mtimeMs: child.newest.mtimeMs, file: `${entry.name}/${child.newest.file}` };
       }
     } else if (entry.isFile()) {
       if (entry.name.toLowerCase().endsWith('.zip')) hasZip = true;
@@ -137,7 +137,7 @@ function legacyShapeAndAge(rel, base) {
       const child = zipAndNewest(p);
       if (rel !== 'screenshots' && child.hasZip) shaped = true;
       if (child.newest.mtimeMs !== null && (newest.mtimeMs === null || child.newest.mtimeMs > newest.mtimeMs)) {
-        newest = { mtimeMs: child.newest.mtimeMs, file: path.join(entry.name, child.newest.file) };
+        newest = { mtimeMs: child.newest.mtimeMs, file: `${entry.name}/${child.newest.file}` };
       }
     } else if (entry.isFile()) {
       const m = fs.statSync(p).mtimeMs;

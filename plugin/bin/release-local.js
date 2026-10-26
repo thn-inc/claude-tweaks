@@ -364,7 +364,8 @@ function defaultDeps(root) {
     // project without docs/superpowers/plans simply has no plan claims. Read
     // and catch rather than exists-then-read — a sibling session can prune the
     // directory between the two calls ([IL-146]); a vanished directory is "no
-    // plan claims", anything else propagates.
+    // plan claims", anything else propagates. The IDs are `/`-joined display IDs
+    // on every OS, rejoined to `root` by `deps.readFile`.
     listPlanFiles: () => {
       let entries;
       try {
@@ -373,7 +374,7 @@ function defaultDeps(root) {
         if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return [];
         throw e;
       }
-      return entries.filter((f) => f.endsWith('.md')).map((f) => path.join('docs/superpowers/plans', f));
+      return entries.filter((f) => f.endsWith('.md')).map((f) => `docs/superpowers/plans/${f}`);
     },
     // The hook is the project's own shell command (policy release-hook) — a
     // shell string by design; its exit code becomes this CLI's exit 5.
