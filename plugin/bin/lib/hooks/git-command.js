@@ -492,8 +492,10 @@ function isAbsolutePlain(raw) {
 function resolveCd(effCwd, raw) {
   if (isUnresolvable(raw)) return null;
   if (effCwd === null || effCwd instanceof LostCwd) {
-    // Unknown or lost cwd: only a plain absolute path makes it known; a relative one leaves it as it was.
-    return isAbsolutePlain(raw) ? path.resolve(raw) : effCwd;
+    // Unknown or lost cwd: only a plain absolute path makes it known; a relative one leaves it as
+    // it was (a lost one keeps its trail, LostCwd.after).
+    if (isAbsolutePlain(raw)) return path.resolve(raw);
+    return effCwd === null ? null : effCwd.after(stripQuotes(raw));
   }
   return path.resolve(effCwd, stripQuotes(raw));
 }
@@ -502,10 +504,30 @@ function resolveCd(effCwd, raw) {
 // `root` or anywhere a relative `cd` from there led. Only this module's own consumers see one.
 // `overflow` marks the one rooted at the caller's overflow cwd (the main checkout): a relative
 // target from it resolves to the root itself, which no exemption covers.
+//
+// `trail` keeps the one part of the relative `cd`s since the cwd was lost that a consumer reads
+// off a lost target: how far they spelled the `.claude-tweaks/pipelines` segment (LOST_TRAIL), so
+// that `cd .claude-tweaks/pipelines; mkdir 2026-x` still names it (writeTarget prefixes it to
+// `rel`). It is a step count, 0 to LOST_TRAIL.length, so a lost cwd has at most three variants
+// (`family`) and never grows however many cds follow.
+const LOST_TRAIL = ['.claude-tweaks', 'pipelines'];
 class LostCwd {
-  constructor(root, overflow) {
+  constructor(root, overflow, trail = 0, family = []) {
     this.root = root;
     this.overflow = overflow;
+    this.trail = trail;
+    this.family = family;
+    family[trail] = this;
+  }
+
+  // This lost cwd after a relative `cd rel`: the same cwd, its trail advanced by each component of
+  // `rel` that spells the next part of LOST_TRAIL (any components between are skipped, failing
+  // closed: bash resolves a `..` through links the text does not show; case is ignored).
+  after(rel) {
+    let trail = this.trail;
+    for (const part of rel.toLowerCase().split(/[\\/]+/)) if (part === LOST_TRAIL[trail]) trail += 1;
+    if (trail === this.trail) return this;
+    return this.family[trail] || new LostCwd(this.root, this.overflow, trail, this.family);
   }
 }
 
@@ -802,7 +824,8 @@ function findGitLead(t, dir) {
 // segment's real git lead and the subcommand position/dir past any global
 // flags, in the one index/unprovable/dir-null check sequence both gitTargets
 // and teardownTargets (pre-tool-use.js) need. Returns `{ index, dir }` (index
-// is the resolved SUBCOMMAND token position) or null when the segment isn't
+// is the resolved SUBCOMMAND token position; plus `lost: true` when `dir` is a
+// lost cwd's stand-in, #4303) or null when the segment isn't
 // git, or the target is unprovable / cwd-unknown-with-no-provable--C. A
 // single shared point so a future fix to this preamble lands once for both
 // callers instead of drifting between two hand-kept copies — the exact gap
@@ -813,8 +836,10 @@ function resolveGitCommand(t, effCwd) {
   if (lead.index === -1) return null;
   const { index, dir, unprovable } = skipGlobalFlags(t, lead.index + 1, lead.dir);
   if (lead.unprovable || unprovable || dir === null) return null;
-  // A git command run from a lost cwd (#4303) runs somewhere under its root: the root is its dir.
-  return { index, dir: dir instanceof LostCwd ? dir.root : dir };
+  // A git command run from a lost cwd (#4303) runs somewhere the walk does not know: `dir` is the
+  // lost cwd's root, a stand-in, and `lost: true` says so (see CWD_SET_CAP).
+  if (dir instanceof LostCwd) return { index, dir: dir.root, lost: true };
+  return { index, dir };
 }
 
 // #976 (IL-141): git-plumbing subcommands that mutate tracked state or refs
@@ -859,8 +884,10 @@ function resolvedGitSegments(command, cwd, opts) {
     const resolved = resolveGitCommand(t, effCwd);
     if (!resolved) return;
     // A repeat visit under another cwd (after a brace group) that resolves to the same dir adds nothing.
-    if (again && segments.slice(pieceStart).some((s) => s.dir === resolved.dir && s.index === resolved.index)) return;
-    segments.push({ tokens: t, index: resolved.index, dir: resolved.dir });
+    if (again && segments.slice(pieceStart).some((s) => s.dir === resolved.dir && s.index === resolved.index && s.lost === resolved.lost)) return;
+    segments.push(resolved.lost
+      ? { tokens: t, index: resolved.index, dir: resolved.dir, lost: true }
+      : { tokens: t, index: resolved.index, dir: resolved.dir });
   }, keepLost(opts));
   return segments;
 }
@@ -871,10 +898,10 @@ function resolvedGitSegments(command, cwd, opts) {
 // classify" in one call.
 function gitTargetsFrom(segments) {
   const targets = [];
-  for (const { tokens: t, index, dir } of segments) {
+  for (const { tokens: t, index, dir, lost } of segments) {
     const sub = t[index];
     if (sub === 'commit' || sub === 'push' || PLUMBING_WRITE_SUBCOMMANDS.has(sub)) {
-      targets.push({ action: sub, dir });
+      targets.push(lost ? { action: sub, dir, lost } : { action: sub, dir });
     }
   }
   return targets;
@@ -959,6 +986,19 @@ function resolveWriteTarget(effCwd, raw) {
   // From a lost cwd (#4303): the overflow root itself, or the clamped path under the start.
   if (effCwd instanceof LostCwd) return effCwd.overflow ? effCwd.root : path.resolve(effCwd.root, clampRel(stripped));
   return path.resolve(effCwd, stripped);
+}
+
+// The `{ action, file }` entry for write target word `raw` under `effCwd`, or null. A relative
+// target from a lost cwd (#4303) also carries `lost: true` and `rel`, the target as written (after
+// the lost cwd's trail, LostCwd): the walk does not know the directory it lands in, so `file` is
+// only the lost cwd's stand-in (resolveWriteTarget), and a consumer that reads the marker denies on
+// it (see CWD_SET_CAP).
+function writeTarget(action, effCwd, raw) {
+  const file = resolveWriteTarget(effCwd, raw);
+  if (!file) return null;
+  const rel = stripQuotes(raw);
+  if (!(effCwd instanceof LostCwd) || path.isAbsolute(rel)) return { action, file };
+  return { action, file, lost: true, rel: [...LOST_TRAIL.slice(0, effCwd.trail), rel].join('/') };
 }
 
 // The word after a redirection's `&` that duplicates a file descriptor
@@ -2004,9 +2044,22 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // guard still sees `start/.claude-tweaks/pipelines/…`. A lost cwd never grows, so the walk stays
 // linear.
 //
-// Any other handler (pre-tool-use's teardownTargets, the prefilter) is never handed a lost cwd:
-// the set collapses to real paths, the overflow cwd and the start, exactly as before #4303, so the
-// handler contract (a cwd string, or null for unknown) and its decisions are unchanged.
+// Those paths are stand-ins, never where bash is known to be, so every target resolved from a lost
+// cwd also carries an additive marker, `lost: true`, beside the fields it always had: a relative
+// write, mkdir or redirect target (writeTarget, which adds `rel`, the target as written), and a git
+// command run from a lost cwd or behind a relative `git -C` there (resolveGitCommand, then
+// resolvedGitSegments and gitTargets). An absolute target, or a git command after an absolute
+// `cd` or `-C`, is known and carries none. Each consumer that reads the marker denies on it for its
+// own concern (pre-tool-use's worktree gate, pipeline shadow guard and teardown gate) or checks
+// every candidate repo (post-tool-use); any other consumer sees the stand-in as before.
+//
+// Any other handler (the prefilter, powershellOpaqueCommand) is never handed a lost cwd: the set
+// collapses to real paths, the overflow cwd and the start, exactly as before #4303, so the handler
+// contract (a cwd string, or null for unknown) and its decisions are unchanged. Neither needs the
+// marker: the prefilter only decides whether the full handler runs, and any redirect target from
+// any cwd already sends it there; powershellOpaqueCommand reads no cwd. A handler that does need it
+// opts in with `keepLost(opts)`, as teardownTargets does, and hands its cwd only to
+// resolveGitCommand, whose `lost` field is the channel: the handler never reads a lost cwd itself.
 const CWD_SET_CAP = 16; // four groups each with a relative cd already make 2^4 cwds
 const KEEP_LOST = Symbol('keepLostCwd');
 const keepLost = (opts) => ({ ...(opts || {}), [KEEP_LOST]: true });
@@ -2249,6 +2302,12 @@ function compoundBodyEnd(t) {
 // (compoundBodyEnd), so the scan starts after its closing word. The walk keeps an
 // arithmetic `((…))` command in one piece (groupEvents), so its `((` reaches here.
 function redirectWriteTargets(t, effCwd, quoting) {
+  return redirectWriteWords(t, quoting).map((word) => resolveWriteTarget(effCwd, word)).filter(Boolean);
+}
+
+// The target words redirectWriteTargets resolves, as written: fileWriteTargets builds its entries
+// from them (writeTarget), so a word from a lost cwd keeps its text (#4303).
+function redirectWriteWords(t, quoting) {
   const out = [];
   const kindsOf = quoting && quoting.spanKinds;
   for (let i = compoundBodyEnd(t); i < t.length; i += 1) {
@@ -2302,8 +2361,7 @@ function redirectWriteTargets(t, effCwd, quoting) {
       rawTarget = word;
     }
     if (rawTarget.startsWith('(')) continue;
-    const file = resolveWriteTarget(effCwd, rawTarget);
-    if (file) out.push(file);
+    out.push(rawTarget);
   }
   return out;
 }
@@ -2482,9 +2540,13 @@ function dropRedirections(tokens, leadQuoted) {
 function fileWriteTargets(command, cwd, opts) {
   const targets = [];
   forEachShellSegment(command, cwd, (tokens, effCwd, quoting) => {
+    const add = (action, raw) => {
+      const entry = writeTarget(action, effCwd, raw);
+      if (entry) targets.push(entry);
+    };
     // Redirection has no command word, so it runs for every segment
     // regardless of t[0] — never gated by the WRITE_SHAPES check below (#3080).
-    for (const file of redirectWriteTargets(tokens, effCwd, quoting)) targets.push({ action: 'write', file });
+    for (const word of redirectWriteWords(tokens, quoting)) add('write', word);
     // A heredoc/here-string operator is input and a redirection is reported above, so
     // neither is a file the shape writes.
     const t = dropRedirections(tokens, quoting.leadQuoted);
@@ -2494,8 +2556,7 @@ function fileWriteTargets(command, cwd, opts) {
       // first — `tee a.txt b.txt` writes both files. .find() silently
       // dropped every destination after the first.
       for (const arg of t.slice(1).filter((a) => !a.startsWith('-'))) {
-        const file = resolveWriteTarget(effCwd, arg);
-        if (file) targets.push({ action: 'write', file });
+        add('write', arg);
       }
       return;
     }
@@ -2520,11 +2581,9 @@ function fileWriteTargets(command, cwd, opts) {
       }
       const action = t[0] === 'cp' ? 'copy' : 'move';
       if (targetDirRaw !== null) {
-        const file = resolveWriteTarget(effCwd, targetDirRaw);
-        if (file) targets.push({ action, file });
+        add(action, targetDirRaw);
       } else if (nonFlags.length >= 2) {
-        const file = resolveWriteTarget(effCwd, nonFlags[nonFlags.length - 1]);
-        if (file) targets.push({ action, file });
+        add(action, nonFlags[nonFlags.length - 1]);
       }
       return;
     }
@@ -2540,8 +2599,7 @@ function fileWriteTargets(command, cwd, opts) {
         t[0],
       );
       for (const arg of raw) {
-        const file = resolveWriteTarget(effCwd, arg);
-        if (file) targets.push({ action: 'edit', file });
+        add('edit', arg);
       }
       return;
     }
@@ -2553,8 +2611,7 @@ function fileWriteTargets(command, cwd, opts) {
       const { positionals, flags } = partitionArgs(rest, INSTALL_VALUE_FLAGS);
       const targetDirRaw = explicitTargetDir(rest, 'mogSt');
       if (targetDirRaw !== null) {
-        const file = resolveWriteTarget(effCwd, targetDirRaw);
-        if (file) targets.push({ action: 'install', file });
+        add('install', targetDirRaw);
         return;
       }
       const creatingDirs = flags.some((f) => (
@@ -2566,8 +2623,7 @@ function fileWriteTargets(command, cwd, opts) {
       if (creatingDirs) written = positionals;
       else if (positionals.length >= 2) written = positionals.slice(-1);
       for (const arg of written) {
-        const file = resolveWriteTarget(effCwd, arg);
-        if (file) targets.push({ action: 'install', file });
+        add('install', arg);
       }
       return;
     }
@@ -2579,16 +2635,13 @@ function fileWriteTargets(command, cwd, opts) {
       const targetDirRaw = explicitTargetDir(rest, 'St');
       const { positionals } = partitionArgs(rest, LN_VALUE_FLAGS);
       if (targetDirRaw !== null) {
-        const file = resolveWriteTarget(effCwd, targetDirRaw);
-        if (file) targets.push({ action: 'link', file });
+        add('link', targetDirRaw);
         return;
       }
       if (positionals.length >= 2) {
-        const file = resolveWriteTarget(effCwd, positionals[positionals.length - 1]);
-        if (file) targets.push({ action: 'link', file });
+        add('link', positionals[positionals.length - 1]);
       } else if (positionals.length === 1) {
-        const file = resolveWriteTarget(effCwd, path.basename(stripQuotes(positionals[0])));
-        if (file) targets.push({ action: 'link', file });
+        add('link', path.basename(stripQuotes(positionals[0])));
       }
       return;
     }
@@ -2598,8 +2651,7 @@ function fileWriteTargets(command, cwd, opts) {
       // does not exist, so this writes regardless of `-c`.
       const { positionals } = partitionArgs(t.slice(1), TRUNCATE_VALUE_FLAGS);
       for (const arg of positionals) {
-        const file = resolveWriteTarget(effCwd, arg);
-        if (file) targets.push({ action: 'truncate', file });
+        add('truncate', arg);
       }
       return;
     }
@@ -2609,17 +2661,17 @@ function fileWriteTargets(command, cwd, opts) {
       for (const arg of t.slice(1)) {
         const bare = stripQuotes(arg);
         if (!bare.startsWith('of=')) continue;
-        const file = resolveWriteTarget(effCwd, bare.slice('of='.length));
-        if (file) targets.push({ action: 'write', file });
+        add('write', bare.slice('of='.length));
       }
       return;
     }
   }, keepLost(opts));
   // forEachShellSegment may visit a segment under two cwds, or a kept body twice (planned and
-  // whole), so the same target can come back more than once: report each one once.
+  // whole), so the same target can come back more than once: report each one once. A lost entry
+  // (#4303) is never folded into a known one, nor into a lost one written another way.
   const seen = new Set();
-  return targets.filter(({ action, file }) => {
-    const key = `${action}\0${file}`;
+  return targets.filter(({ action, file, rel }) => {
+    const key = `${action}\0${file}\0${rel === undefined ? '' : `\0${rel}`}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -2643,16 +2695,16 @@ function mkdirTargets(command, cwd, opts) {
     if (t[0] !== 'mkdir') return;
     const { positionals } = partitionArgs(t.slice(1), MKDIR_VALUE_FLAGS);
     for (const arg of positionals) {
-      const file = resolveWriteTarget(effCwd, arg);
+      const entry = writeTarget('mkdir', effCwd, arg);
       // A repeat visit under another cwd (after a brace group) adds an absolute path only once.
-      if (file && !(again && targets.slice(pieceStart).some((x) => x.file === file))) targets.push({ action: 'mkdir', file });
+      if (entry && !(again && targets.slice(pieceStart).some((x) => x.file === entry.file && x.rel === entry.rel))) targets.push(entry);
     }
   }, keepLost(opts));
   return targets;
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment, keepLost,
   // The heredoc reader vocabularies, pinned against policy-schema-coverage.md's prose (#4149).
   DATA_READER_WORDS, READER_WRAPPER_WORDS, GIT_DATA_SUBCOMMANDS, INERT_NEIGHBOUR_WORDS,
 };

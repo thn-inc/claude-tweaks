@@ -1974,6 +1974,41 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       assert.deepStrictEqual(gitTargets(`${past}git -C ../x commit -m m`, '/r', opts).map((t) => t.dir), [MAIN_ROOT, path.resolve('/r')]);
       assert.deepStrictEqual(mkdirTargets(`${past}cd ../..; mkdir -p ../d`, '/r', opts).map((t) => t.file), [MAIN_ROOT, path.resolve('/r/d')]);
     });
+    // #4303: those paths are stand-ins, so every target resolved from a lost cwd also carries an
+    // additive marker, `lost: true` (a write or mkdir target also `rel`, its text as written), beside
+    // the fields it always had, with an overflowCwd and without one. An absolute target, and a git
+    // command after an absolute cd or `-C`, is known and carries none. 4e7d54a9d gave no marker.
+    test('#4303 cwd cap: a target resolved from a lost cwd carries lost: true beside its stand-in path', () => {
+      const past = distinct((i) => `{ cd /a${i}; }; `, 16);
+      const lostAt = (file, rel, action = 'write') => ({ action, file, lost: true, rel });
+      assert.deepStrictEqual(fileWriteTargets(`${past}cd q; echo x > ../w/f.js; cp a /x/f.js`, '/r', opts),
+        [lostAt(MAIN_ROOT, '../w/f.js'), lostAt(path.resolve('/r/w/f.js'), '../w/f.js'), { action: 'copy', file: path.resolve('/x/f.js') }]);
+      assert.deepStrictEqual(fileWriteTargets(`${past}tee ../w/f.js`, '/r'), [lostAt(path.resolve('/r/w/f.js'), '../w/f.js')]);
+      assert.deepStrictEqual(mkdirTargets(`${past}mkdir -p ../wt2/.claude-tweaks/pipelines/2026-x /x/d`, '/r/wt'), [
+        lostAt(path.resolve('/r/wt/wt2/.claude-tweaks/pipelines/2026-x'), '../wt2/.claude-tweaks/pipelines/2026-x', 'mkdir'),
+        { action: 'mkdir', file: path.resolve('/x/d') },
+      ]);
+      assert.deepStrictEqual(gitTargets(`${past}git commit -m m; git -C ../x push; git -C /t commit -m m`, '/r', opts), [
+        { action: 'commit', dir: MAIN_ROOT, lost: true }, { action: 'commit', dir: path.resolve('/r'), lost: true },
+        { action: 'push', dir: MAIN_ROOT, lost: true }, { action: 'push', dir: path.resolve('/r'), lost: true },
+        { action: 'commit', dir: path.resolve('/t') },
+      ]);
+      assert.deepStrictEqual(gitTargets(`${past}cd /t; git commit -m m`, '/r', opts), [{ action: 'commit', dir: path.resolve('/t') }]);
+      assert.deepStrictEqual(gitTargets(`${past}git commit -m m`, '/r'), [{ action: 'commit', dir: path.resolve('/r'), lost: true }]);
+      // A relative cd from the lost cwd that spells `.claude-tweaks` and then `pipelines` (here split
+      // across two cds, with other components between) is kept in `rel`, so `mkdir 2026-x` names it.
+      assert.deepStrictEqual(mkdirTargets(`${past}cd ../w/.Claude-Tweaks; cd x/../Pipelines; mkdir 2026-x`, '/r').map((t) => t.rel),
+        ['.claude-tweaks/pipelines/2026-x']);
+      assert.deepStrictEqual(mkdirTargets(`${past}cd ../w/pipelines/.claude-tweaks; mkdir pipelines/2026-x`, '/r').map((t) => t.rel),
+        ['.claude-tweaks/pipelines/2026-x']);
+    });
+    // #4303: a lost entry is never folded into a known entry for the same path, so the marker
+    // survives the dedupe: here the known /r/w/f.js comes first and the lost one after it.
+    test('#4303 cwd cap: a lost target is kept beside a known one for the same path', () => {
+      const past = distinct((i) => `{ cd /a${i}; }; `, 16);
+      assert.deepStrictEqual(fileWriteTargets(`cp a w/f.js; ${past}cp a w/f.js`, '/r').map((t) => !!t.lost), [false, true]);
+      assert.deepStrictEqual(mkdirTargets(`mkdir w/d; ${past}mkdir w/d`, '/r').map((t) => !!t.lost), [false, true]);
+    });
     // #4303: any other handler is never handed a lost cwd. The set collapses to real paths, the
     // overflow cwd and the start, and a relative cd moves them, exactly as base d9aa6b82d did, so the
     // handler contract (a cwd string, or null) and the teardown gate's decisions hold.
