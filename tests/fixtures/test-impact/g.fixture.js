@@ -22,6 +22,10 @@ test('a bare specifier resolves through node_modules main and exports', () => {
   assert.strictEqual(require.resolve('exp', { paths: [__dirname] }), path.join(__dirname, 'node_modules', 'exp', 'src', 'index.js'));
 });
 
+test('a scoped package resolves through an exports subpath', () => {
+  assert.strictEqual(require.resolve('@sc/pkg/sub', { paths: [__dirname] }), path.join(__dirname, 'node_modules', '@sc', 'pkg', 's.js'));
+});
+
 // Node 22 counts the exact request '.' as relative (the given paths are the lookup dirs); Node 20 does not
 // (it derives them from a parentless module), so only the tracer's records are pinned, not the result.
 test('require.resolve of . with paths', () => {

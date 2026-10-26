@@ -36,3 +36,23 @@ test('env -u NAME cmd', skip, () => {
 test('env -C dir cmd', skip, () => {
   spawnSync('env', ['-C', 'docs/listed', 'ls'], quiet(__dirname));
 });
+
+// `env --chdir=<dir>` is the long form of -C (same macOS caveat, same ignored status).
+test('env --chdir=dir cmd', skip, () => {
+  spawnSync('env', ['--chdir=lib', 'ls'], quiet(__dirname));
+});
+
+// `--` ends env's options, so the command after it is still read.
+test('env -- cmd', skip, () => {
+  execFileSync('env', ['--', 'git', 'ls-files'], quiet(path.join(__dirname, 'docs')));
+});
+
+// `-uNAME` is -u with its value attached; FOO is not a trace variable, so the command is read the same way.
+test('env -uNAME cmd', skip, () => {
+  execFileSync('env', ['-uFOO', 'git', 'ls-files'], quiet(path.join(__dirname, 'lib', 'pkg')));
+});
+
+// Unsetting a variable that does not carry the trace leaves a node child self-tracing: no fail-closed `c ''`.
+test('env -u FOO node', skip, () => {
+  execFileSync('env', ['-u', 'FOO', process.execPath, '-e', '0'], quiet(__dirname));
+});

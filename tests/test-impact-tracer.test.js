@@ -16,7 +16,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const TRACER = path.join(ROOT, 'tools', 'test-impact', 'tracer.js');
 const FIXTURE = path.join(__dirname, 'fixtures', 'test-impact');
-const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js', 'e.test.js', 'f.test.js', 'g.test.js', 'h.test.js', 'i.test.js'];
+const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js', 'e.test.js', 'f.test.js', 'g.test.js', 'h.test.js', 'i.test.js', 'j.test.js', 'k.test.js', 'l.test.js', 'm.test.js'];
 
 function copyFixture(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
@@ -69,6 +69,8 @@ before(() => {
     'node_modules/dep/lib/main.js': 'module.exports = 1;\n',
     'node_modules/exp/package.json': '{"name":"exp","exports":"./src/index.js"}',
     'node_modules/exp/src/index.js': 'module.exports = 2;\n',
+    'node_modules/@sc/pkg/package.json': '{"name":"@sc/pkg","exports":{"./sub":"./s.js"}}',
+    'node_modules/@sc/pkg/s.js': 'module.exports = 3;\n',
   })) {
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     fs.writeFileSync(path.join(root, rel), text);
@@ -206,6 +208,8 @@ test('AC1.1: a require resolves the way Node does — paths option, package.json
   assert.ok(g.has(rec('f', 'node_modules/dep/package.json')), 'a bare dependency\'s package.json is read');
   assert.ok(g.has(rec('s', 'node_modules/dep')), 'a bare dependency\'s base candidate is probed');
   assert.ok(g.has(rec('f', 'node_modules/exp/package.json')) && g.has(rec('s', 'node_modules/exp')), 'an exports package is covered by its directory');
+  assert.ok(!g.has(rec('s', 'node_modules/exp.js')), 'an exports package resolves through its cover: the base-plus-extension probes of a sibling file are never recorded');
+  assert.ok(g.has(rec('f', 'node_modules/@sc/pkg/package.json')) && g.has(rec('s', 'node_modules/@sc/pkg')), 'a scoped package with an exports subpath is covered by its directory');
   for (const r of g) assert.doesNotMatch(JSON.parse(r)[1], /(^|\/)node_modules\/(node:|fs$|path$|assert$)/, 'builtins record nothing');
 });
 
@@ -253,17 +257,23 @@ test('shell env prefixes and sh -c scripts are read as the command they run', ()
 
 test('AC1.1: bash -o / -euo, sh +e and env wrappers are read as the command they run', { skip: process.platform === 'win32' && 'win32: no bash/sh/env' }, () => {
   const h = recordsOf('h.test.js');
-  for (const p of ['docs/async-list', 'docs/promise-list', 'docs/copied', 'tools', 'bin']) {
+  for (const p of ['docs/async-list', 'docs/promise-list', 'docs/copied', 'tools', 'bin', 'docs', 'lib/pkg']) {
     assert.ok(h.has(rec('c', p)), `the wrapped git ls-files records c ${p}`);
   }
-  assert.ok(!h.has(rec('c', '')), 'every wrapped call records its own cwd, never the root');
+  assert.ok(!h.has(rec('c', '')), 'every wrapped call records its own cwd, never the root; env -u FOO node, which keeps the trace, adds none');
   assert.ok(h.has(rec('c', 'docs/listed')), 'env -C <dir> records its in-repo directory, as a non-node child\'s directory argument is');
+  assert.ok(h.has(rec('c', 'lib')), 'env --chdir=<dir> records its in-repo directory too');
 });
 
+// One way of dropping the trace per fixture file: every file records the same `c ''`, so two ways in one
+// file could not show that either alone is recognised.
 test('AC1.1: a node child whose env drops the trace fails closed: its reads are unknown', { skip: process.platform === 'win32' && 'win32: no env/sh' }, () => {
   const i = recordsOf('i.test.js');
-  assert.ok(i.has(rec('c', '')), 'env -i node and NODE_OPTIONS=... node each record the whole-repo prefix');
+  assert.ok(i.has(rec('c', '')), 'env -i node records the whole-repo prefix');
   assert.ok(i.has(rec('f', 'docs/note.md')), 'the path arguments of env -i node are still recorded');
+  for (const [file, how] of [['j', 'env -u NODE_OPTIONS'], ['k', 'env --unset=NODE_OPTIONS'], ['l', 'env -uNODE_OPTIONS'], ['m', 'a NODE_OPTIONS= assignment']]) {
+    assert.ok(recordsOf(`${file}.test.js`).has(rec('c', '')), `${how} node records the whole-repo prefix`);
+  }
 });
 
 test('absolute path never consults process.cwd', { skip: process.platform === 'win32' && 'win32: a process cwd cannot be removed' }, () => {
