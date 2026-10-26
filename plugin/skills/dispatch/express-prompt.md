@@ -4,7 +4,9 @@ Referenced by `skills/dispatch/SKILL.md` Step 5 (the express call) and Step 3's 
 
 ## Express call
 
-Dispatched for a singleton group whose `express-lane.js gate` verdict is `eligible: true` (`SKILL.md` Step 5, which also routes its return); a gate exit of 2 (`gh` absent) or any other verdict keeps `task-prompt.md`'s two calls. It is the group's first call: dispatch Step 4's minted directory is `{minted-run-dir}`, the session has already entered the group's worktree, `drain-pr-overlap.md`'s Step 5 list write runs once it returns, and `task-prompt.md`'s per-group model log line (#3212) is written after it returns, as for a first call. Substitute `{issue}`, `{minted-run-dir}`, `{plugin-root}` and `{context-pack}`.
+Dispatched for a singleton group whose `express-lane.js gate` verdict is `eligible: true` (`SKILL.md` Step 5, which also routes its return); any other verdict, or a gate exit of 1 or 2, keeps `task-prompt.md`'s two calls. It is the group's first call: dispatch Step 4's minted directory is `{minted-run-dir}`, the session has already entered the group's worktree and bound it without `--dispatch`, `drain-pr-overlap.md`'s Step 5 list write runs once it returns, and `task-prompt.md`'s per-group model log line (#3212) is written after it returns, as for a first call. Substitute `{issue}`, `{minted-run-dir}`, `{plugin-root}` and `{context-pack}`.
+
+**Before substituting this template**, the dispatching session decides whether to add the line `DISPATCH_HEADLESS=1` as its first line, above `Task scope:` — a decision made once, here, never left in the copied text for the dispatched agent to reason about. Add it when this firing came from a scheduled Routine (a bare drain, or its deprecated `next` alias) with nobody present; omit it entirely (no `{headless-marker}` placeholder, no blank line) when a human typed the command directly, in any form — the same discriminator `task-prompt.md` uses for its first-call marker. Settle's claim-contest special case reads it, so a contested claim in a headless firing self-reports instead of failing unseen.
 
 ```
 Task scope: Run the claude-tweaks express lane for GitHub record #{issue}. Read
@@ -18,6 +20,13 @@ this one record; a hold stops with outcome `pending-review`. Never invoke /claud
 on `express-escalated`, stop -- the dispatching session hands the record to the normal path. If
 you reference this issue number in a commit message, write "refs #N" -- never "closes #N" or
 "fixes #N".
+
+On outcome `blocked`, before reporting, run Step 6's Settle in
+`{plugin-root}/skills/dispatch/settle-and-merge.md` for this record, with `$ISSUE` = {issue} and
+`$PIPELINE_RUN_DIR` = `{minted-run-dir}`: after a step-1 claim failure, only its Claim-contest
+special case (a `DISPATCH_HEADLESS=1` first line on this prompt is the marker it reads);
+otherwise its numbered steps 1-7, with `--reason "failed: express-{step}"`, where `{step}` is the
+bold name of the Procedure step that stopped, lowercased and hyphenated (e.g. `check`, `pr`).
 
 Foreground execution (required): run `npm test` and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
@@ -87,7 +96,7 @@ firings vs 0 of 3 at Standard): this call builds, tests and merges. Resolve via
 
 ## Post-merge sample review call
 
-Dispatched from this session at Step 3's loop termination, one sampled PR at a time and never in parallel, running `_shared/express-lane.md`'s Post-merge sampling. This session runs that section's step 1 (`express-lane.js samples`, whose exit 1 or 2 means no sweep this firing) and, per sampled PR, step 2's `mergeSha: null` case (name the PR in this firing's report; mint and dispatch nothing) and its mint. The minted sampling run dir is `{minted-run-dir}` here and in the Context pack, resolved for it; `task-prompt.md`'s #3212 model log line is a first-call record and is not written for this call. Substitute `{pr}`, `{merge-sha}`, `{records}` (the entry's `records`, comma-joined), `{minted-run-dir}`, `{run-root}` (the main checkout, `$RUN_ROOT` per `_shared/pipeline-run-dir.md`), `{plugin-root}` and `{context-pack}`. On its return, the `sequential-execution.md` status-line check applies; any reply but `DONE`/`DONE_WITH_CONCERNS` with `OUTCOME: reviewed` names the PR in this firing's report as left for the next sweep, never retried this firing.
+Dispatched from this session at Step 3's loop termination, one sampled PR at a time and never in parallel, running `_shared/express-lane.md`'s Post-merge sampling. This session runs that section's step 1 (`express-lane.js samples`, whose exit 1 or 2 means no sweep this firing) and, per sampled PR, step 2's `mergeSha: null` case (name the PR in this firing's report; mint and dispatch nothing) and its mint. The minted sampling run dir is `{minted-run-dir}` here and in the Context pack, resolved for it; `task-prompt.md`'s #3212 model log line is a first-call record and is not written for this call. Substitute `{pr}`, `{merge-sha}`, `{records}` (the entry's `records`, comma-joined), `{minted-run-dir}`, `{run-root}` (the main checkout, `$RUN_ROOT` per `_shared/pipeline-run-dir.md`), `{plugin-root}` and `{context-pack}`. On its return, the `sequential-execution.md` status-line check applies; any reply but `DONE`/`DONE_WITH_CONCERNS` with `OUTCOME: reviewed` names the PR in this firing's report as left for the next sweep, never retried this firing. Whatever it reports, this session then runs that section's close-run for `{minted-run-dir}`; a refusal because the call died before logging anything leaves the dir to the reconciler's orphaned-mint sweep.
 
 ```
 Task scope: Review merged express-lane PR #{pr} (merge commit {merge-sha}; records {records})
@@ -98,6 +107,8 @@ session already ran step 1 and minted this PR's sampling run dir, `{minted-run-d
 section's `{run-dir}`). Read `$RUN_ROOT` there as `{run-root}`, `{mergeSha}` as {merge-sha}, and
 every `${CLAUDE_PLUGIN_ROOT}` as `{plugin-root}`. File findings with /claude-tweaks:capture only
 as that section allows, and write every `SKIP` to `{minted-run-dir}`, as its last paragraph says.
+Of its last bullet, log the posted review's `AUTO` line but do not run `close-run`: the
+dispatching session closes the run dir after you report.
 
 Foreground execution (required): run `npm test` and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.

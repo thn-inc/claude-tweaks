@@ -56,13 +56,19 @@ function assertEachFactGoesRed(text, facts) {
 }
 
 const STEP5_FACTS = [
+  [/When `express-lane` resolves `true` \(`resolve-policy\.js --values express-lane`, read once per firing\)/, 'no gate call when the lane is off'],
   [/express-lane\.js" gate --issue \{n\} --run "\{minted-run-dir\}"/, 'gate before the first call'],
+  [/after Step 4's mint and before `sibling-session-check\.md`'s bind/, 'gate between the mint and the bind'],
+  [/or exit 1 or 2, is not eligible: take the normal path/, 'gate exit 1 or 2 → the normal path'],
+  [/An eligible singleton is bound without `--dispatch` — the #3225 config gate guards a `\/flow`-framed run, and the express agent writes `config\.yml` only once its PR exists/, 'eligible singleton bound without --dispatch, and why'],
   [/`express-prompt\.md`'s express call/, 'eligible → the express call from express-prompt.md'],
   [/`sequential-execution\.md`'s status-line check applies/, 'the status-line check applies'],
   [/express-lane\.js verify --run "\{minted-run-dir\}" --issue \{n\}` exits 0/, 'verify exit 0 ends the group'],
   [/\(non-zero: `blocked`\)/, 'verify non-zero is blocked'],
-  [/`express-escalated` → the ordinary first call \(same run dir, same worktree\)/, 'express-escalated → the ordinary first call'],
+  [/`express-escalated` → re-bind with `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" record-worktree --run "\{minted-run-dir\}" "\{worktree\}" --dispatch`/, 'express-escalated → re-bind with --dispatch'],
+  [/then the ordinary first call \(same run dir, same worktree\)/, 'express-escalated → the ordinary first call'],
   [/`blocked`, `NEEDS_CONTEXT`\/`BLOCKED` or a malformed status → `two-call-gate\.md` §5/, 'blocked or a failed status → §5'],
+  [/\(the express call already ran Settle\)/, '§5 after the express call ran Settle'],
   [/`settle-and-merge\.md`'s Drain-overlap hold/, 'counts for the drain-overlap hold'],
 ];
 const LOOP_FACTS = [
@@ -94,6 +100,9 @@ const EXPRESS_FACTS = [
   [/`STATUS: \{WORD\}`/, 'status line'],
   [/^\[Use: Capable\] -- [^\n]*#3212/m, 'Use: Capable with the #3212 evidence'],
   [/resolve-profile\.js" capable`/, 'capable resolve-profile call'],
+  [/On outcome `blocked`, before reporting, run Step 6's Settle/, 'Settle runs on blocked'],
+  [/only its Claim-contest\s+special case/, 'claim failure → the claim-contest special case'],
+  [/--reason "failed: express-\{step\}"/, 'Settle reason names the express step'],
 ];
 const REVIEW_FACTS = [
   [/\{context-pack\}/, 'context pack'],
@@ -184,6 +193,46 @@ test('go-red control: a reworded copied paragraph fails, a rewrapped one does no
     assert.notEqual(reworded, express);
     assert.notEqual(paragraph(reworded, prefix), paragraph(firstCall(), prefix), prefix);
   }
+});
+
+// The dispatcher-facing text of each template's section: from its heading to its fence.
+const preambleOf = (heading) => between(readText(EXPRESS_PROMPT), heading, '\n```\n');
+const HEADLESS_FACTS = [
+  [/decides whether to add the line `DISPATCH_HEADLESS=1` as its first line, above `Task scope:`/, 'headless marker decided by the dispatching session'],
+  [/omit it entirely \(no `\{headless-marker\}` placeholder/, 'no placeholder in the copied block'],
+];
+const REVIEW_PREAMBLE_FACTS = [
+  [/this session then runs that section's close-run for `\{minted-run-dir\}`/, 'the dispatching session closes the sampling run dir'],
+];
+// The marker never lives inside the fenced block: no placeholder, no literal first line.
+const markerInBlock = (block) => block.includes('{headless-marker}') || /^DISPATCH_HEADLESS=1/m.test(block);
+
+test('express-prompt.md: the headless marker is decided outside the fenced express call', () => {
+  assert.deepEqual(missingFactsOf(HEADLESS_FACTS)(preambleOf('## Express call')), []);
+  assert.equal(markerInBlock(expressBlocks().express), false);
+});
+
+test('go-red control: each headless fact stripped reports itself, and a marker inside the block is caught', () => {
+  assertEachFactGoesRed(preambleOf('## Express call'), HEADLESS_FACTS);
+  const { express } = expressBlocks();
+  assert.equal(markerInBlock(`DISPATCH_HEADLESS=1\n${express}`), true);
+  assert.equal(markerInBlock(`{headless-marker}${express}`), true);
+});
+
+test('express-prompt.md: the review call\'s run dir is closed by the dispatching session', () => {
+  assert.deepEqual(missingFactsOf(REVIEW_PREAMBLE_FACTS)(preambleOf('## Post-merge sample review call')), []);
+  assertEachFactGoesRed(preambleOf('## Post-merge sample review call'), REVIEW_PREAMBLE_FACTS);
+});
+
+const SIBLING = path.join(DISPATCH, 'sibling-session-check.md');
+const SIBLING_FACTS = [
+  [/An express-eligible singleton is bound with the same call minus `--dispatch`/, 'the bind names the express exception'],
+];
+
+test('sibling-session-check.md: the #3225 bind names the express-lane exception', () => {
+  const bind = between(readText(SIBLING), '**Bind the run before call 1 (#3225).**', '`{worktree}` is the group');
+  assert.deepEqual(missingFactsOf(SIBLING_FACTS)(bind), []);
+  assertEachFactGoesRed(bind, SIBLING_FACTS);
 });
 
 const REPORTING_FACTS = [

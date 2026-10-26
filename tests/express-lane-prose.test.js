@@ -45,6 +45,7 @@ const FACTS = [
   { section: PROC, re: /--step "Express lane check" --text '#\{n\} proceed — /, name: 'logged:false proceed hand-log shape' },
   { section: PROC, re: /`escalated #\{n\} to \/flow \(reason: \{reason\}\) — \{detail\}`[^\n]*--step "Express lane" --reversibility "high \(worktree and branch kept\)" --text-file/, name: 'logged:false escalation hand-log shape' },
   { section: PROC, re: /A failed call in this step → outcome `blocked`: the branch is pushed, so it cannot escalate/, name: 'step-7 failure is blocked' },
+  { section: PROC, re: /except a working-directory denial that repeats after the one `record-worktree` re-stamp, which is outcome `blocked`/, name: 'a repeated working-directory denial is blocked, not gate-denial' },
   { section: ESC, re: /express-lane\.js" escalate --run "\{run-dir\}" --issue \{n\} --reason \{reason\} --detail-file "\{detail-file\}"/, name: 'escalate verb' },
   { section: ESC, re: /`failing-test`, `out-of-bounds`, `gate-denial`, `express-error`/, name: 'the four escalation reasons' },
   { section: ESC, re: /only before the push/, name: 'escalation only before the push' },
@@ -52,6 +53,11 @@ const FACTS = [
   { section: ESC, re: /log it as the caller's rule-\(a\) entry/, name: 'rule-(a) entry for a failed CLI call' },
   { section: OUT, re: /`merged` \| `armed` \| `pending-review` \| `express-escalated` \| `blocked`/, name: 'outcome vocabulary' },
   { section: OUT, re: /`blocked` — the claim failed \(step 1\), a `check` or `escalate` call exited non-zero, or a step-7 call failed after the push/, name: 'blocked definition' },
+  { section: OUT, re: /the express agent tears nothing down/, name: 'blocked: the express agent tears nothing down' },
+  { section: OUT, re: /From `\/claude-tweaks:dispatch`, Settle releases and labels/, name: 'blocked from /dispatch: Settle releases and labels' },
+  { section: OUT, re: /the dispatcher's `two-call-gate\.md` §5 removes the local worktree only/, name: 'blocked from /dispatch: §5 removes the local worktree only' },
+  { section: OUT, re: /a pushed branch and draft PR stay open/, name: 'blocked from /dispatch: branch and draft PR stay open' },
+  { section: OUT, re: /From `\/claude-tweaks:flow`, whatever already exists — worktree, branch, claim, run dir — stays for a human/, name: 'blocked from /flow: everything stays' },
   { section: OUT, re: /express-lane\.js" verify --run "\{run-dir\}" --issue \{n\}/, name: 'verify verb' },
   { section: SAMP, re: /Every git call runs in the main checkout, `git -C "\$RUN_ROOT" …`/, name: 'sampling git runs in the main checkout' },
   { section: SAMP, re: /express-lane\.js" samples`/, name: 'samples verb' },
@@ -63,6 +69,8 @@ const FACTS = [
   { section: SAMP, re: /`<!-- run-comment: express-review -->`/, name: 'express-review marker' },
   { section: SAMP, re: /`gh pr comment \{pr\} --body-file "\{body-file\}"`/, name: 'the posting command' },
   { section: SAMP, re: /Every `SKIP` goes to that PR's sampling run dir/, name: 'where SKIP lines go' },
+  { section: SAMP, re: /every sampling run dir carries the `decisions\.md` that `close-run` needs/, name: 'a posted review logs before close-run' },
+  { section: SAMP, re: /hooks\.js" close-run --run "\{run-dir\}"/, name: 'close-run closes each sampling run dir' },
 ];
 
 const scopeOf = (text, f) => (f.section === 'whole' ? text : sectionOf(text, f.section));
