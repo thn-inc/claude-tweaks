@@ -66,7 +66,9 @@ function parseResidueIssueIndex(raw) {
 //      lastHealthCheckOkAt: number|null, lastOriginHeadRepairFailedAt: number|null,
 //      prStates: {['n:N'|'b:branch']: {v, at}},  (#4032, pr-state-cache.js owns the shape)
 //      claimBlobs: {[blobSha]: content},  (#4032, release-merged.js: active claims' content by blob sha)
-//      residueIssueIndex: {['repo\nmarker']: issueNumber} }  (#4032, issue-list-cache.js: residue marker -> issue)
+//      residueIssueIndex: {['repo\nmarker']: issueNumber},  (#4032, issue-list-cache.js: residue marker -> issue)
+//      ownerlessNonClean?: number, ownerlessNonCleanZeroSince?: string }  (#4421, applyOwnerlessNonClean:
+//        each present only when valid — an integer >= 0, an ISO date string — never written as null)
 // Absent file or corrupt JSON both fail closed to empty defaults — a cache
 // is pure optimization; never let a bad read block or skew reconcile().
 // Only the keys parsed below survive a read, and writers persist
@@ -94,10 +96,24 @@ function readCache(root) {
       prStates: (parsed.prStates && typeof parsed.prStates === 'object' && !Array.isArray(parsed.prStates)) ? parsed.prStates : {},
       claimBlobs: (parsed.claimBlobs && typeof parsed.claimBlobs === 'object' && !Array.isArray(parsed.claimBlobs)) ? parsed.claimBlobs : {},
       residueIssueIndex: parseResidueIssueIndex(parsed.residueIssueIndex),
+      ...(Number.isInteger(parsed.ownerlessNonClean) && parsed.ownerlessNonClean >= 0 ? { ownerlessNonClean: parsed.ownerlessNonClean } : {}),
+      ...(typeof parsed.ownerlessNonCleanZeroSince === 'string' && Number.isFinite(Date.parse(parsed.ownerlessNonCleanZeroSince))
+        ? { ownerlessNonCleanZeroSince: parsed.ownerlessNonCleanZeroSince } : {}),
     };
   } catch {
     return empty;
   }
+}
+
+// #4421: record archiveMerged's ownerless-non-clean count on a cache object. Pure — a new object,
+// `nowMs` passed in. A 0 stamps `ownerlessNonCleanZeroSince` the first time it is seen and keeps that
+// stamp while the count stays 0; a count above 0 drops it, so the stamp always dates the CURRENT
+// unbroken run of zero readings (the legacy route's removal condition is stated against it).
+function applyOwnerlessNonClean(cache, count, nowMs) {
+  const { ownerlessNonCleanZeroSince, ...rest } = cache;
+  const next = { ...rest, ownerlessNonClean: count };
+  if (count === 0) next.ownerlessNonCleanZeroSince = ownerlessNonCleanZeroSince || new Date(nowMs).toISOString();
+  return next;
 }
 
 // Best-effort — a write failure (unwritable dir, disk full) never throws;
@@ -416,7 +432,7 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
 }
 
 module.exports = {
-  readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
+  readCache, writeCache, applyOwnerlessNonClean, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
   RESIDUE_ESCALATE_THRESHOLD, residueKey, recordResidueFailure, recordResidueSuccess, clearResidue, listResidueFailures,
   recordResidueError, planClear, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 };

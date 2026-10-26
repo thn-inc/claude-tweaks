@@ -10,7 +10,8 @@
 //     (e.g. "archived: 1 run dir", "released: 3 claims", "reaped: 1
 //     worktree") — drawn from the taken-action entries in each of
 //     reconcile()'s array-shaped fields, plus mirror/redTip/console's own
-//     single-object shapes;
+//     single-object shapes, and the archive pass's own count lines
+//     ("residue (dry run): ...", "ownerless non-clean: N run dirs");
 //   - one aggregated "skipped: N {unit} (reason count, reason count, ...)"
 //     line, folding together every PER-ITEM skip across every category
 //     (archive's per-run-dir skip reasons, reap's per-worktree reasons,
@@ -101,6 +102,14 @@ function formatResiduePlanLine(plan) {
     [count('would-clear', 'would-resolve'), 'would clear'],
   ].filter(([n]) => n > 0).map(([n, label]) => `${label} ${n}`);
   return parts.length ? `residue (dry run): ${parts.join(', ')}` : null;
+}
+
+// #4421: the archive pass's count of run dirs with no owner block for run-liveness to ask. Rendered
+// for 0 too — "none left" is the signal the legacy route's removal condition waits on. A pass that
+// never ran the count leaves the field absent (not an integer), which renders nothing.
+function formatOwnerlessLine(n) {
+  if (!Number.isInteger(n)) return null;
+  return `ownerless non-clean: ${n} ${pluralize('run dir', n)}`;
 }
 
 function formatConsoleReadyLine(console_) {
@@ -207,6 +216,9 @@ function formatSummary(result) {
 
   const residuePlanLine = formatResiduePlanLine(result.residuePlan);
   if (residuePlanLine) lines.push(residuePlanLine);
+
+  const ownerlessLine = formatOwnerlessLine(result.ownerlessNonClean);
+  if (ownerlessLine) lines.push(ownerlessLine);
 
   const consoleReadyLine = formatConsoleReadyLine(result.console);
   if (consoleReadyLine) lines.push(consoleReadyLine);

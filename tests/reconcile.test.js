@@ -3291,3 +3291,66 @@ test('#4180 reconcile: a dry run skips the declined-learning prune; a real run s
     store.pruneDeclines = original;
   }
 });
+
+// #4421: archiveMerged's `ownerlessNonClean` count rides reconcile()'s result, the summary line and
+// the cache — with `ownerlessNonCleanZeroSince` stamping when the count first reads 0.
+function ownerlessFixture() {
+  const fx = dryRunFixture();
+  const pipelines = path.join(fx.root, '.claude-tweaks', 'pipelines');
+  const mk = (name, state) => {
+    const dir = path.join(pipelines, name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'config.yml'), 'x: 1\n');
+    fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify(state));
+  };
+  const owned = (n) => {
+    for (let i = 1; i <= n; i++) mk(`2026-10-26T10000${i}-record-${i}`, { status: 'active', owner: { sessionId: `s${i}`, host: 'h', pid: i } });
+  };
+  const cacheJson = () => JSON.parse(fs.readFileSync(cachePath(fx.root), 'utf8'));
+  return { ...fx, mk, owned, cacheJson };
+}
+
+test('#4421 AC6.2 AC7.1: a pass over only owner-block runs reports 0 on the result, the summary line and the cache, and stamps ownerlessNonCleanZeroSince', async () => {
+  const { run, owned, cacheJson } = ownerlessFixture();
+  owned(2);
+  const r = await run({});
+  assert.equal(r.ownerlessNonClean, 0);
+  assert.match(formatSummary(r), /^ownerless non-clean: 0 run dirs$/m);
+  assert.equal(cacheJson().ownerlessNonClean, 0);
+  const stamp = cacheJson().ownerlessNonCleanZeroSince;
+  assert.equal(typeof stamp, 'string');
+  assert.ok(Number.isFinite(Date.parse(stamp)));
+
+  await new Promise((resolve) => setTimeout(resolve, 15)); // a later pass must not move the stamp
+  const again = await run({});
+  assert.equal(again.ownerlessNonClean, 0);
+  assert.equal(cacheJson().ownerlessNonCleanZeroSince, stamp, 'the zero-since stamp is kept byte-equal');
+});
+
+test('#4421 AC6.3: a later pass with a count above 0 clears ownerlessNonCleanZeroSince', async () => {
+  const { run, owned, mk, cacheJson } = ownerlessFixture();
+  owned(2);
+  await run({});
+  assert.equal(typeof cacheJson().ownerlessNonCleanZeroSince, 'string');
+  mk('2026-10-26T100009-record-9', { status: 'active' }); // owner-less, non-clean
+  const r = await run({});
+  assert.equal(r.ownerlessNonClean, 1);
+  assert.match(formatSummary(r), /^ownerless non-clean: 1 run dir$/m);
+  assert.equal(cacheJson().ownerlessNonClean, 1);
+  assert.equal('ownerlessNonCleanZeroSince' in cacheJson(), false);
+});
+
+test('#4421 AC6.4: a skipped pass leaves both fields absent', async () => {
+  const { root, run, owned, mk } = ownerlessFixture();
+  owned(1);
+  mk('2026-10-26T100009-record-9', { status: 'active' });
+  const scoped = await run({ checks: ['console'] });
+  assert.equal('ownerlessNonClean' in scoped, false);
+  const dry = await run({ dryRun: true });
+  assert.equal('ownerlessNonClean' in dry, false);
+  if (fs.existsSync(cachePath(root))) {
+    const cache = JSON.parse(fs.readFileSync(cachePath(root), 'utf8'));
+    assert.equal('ownerlessNonClean' in cache, false);
+    assert.equal('ownerlessNonCleanZeroSince' in cache, false);
+  }
+});

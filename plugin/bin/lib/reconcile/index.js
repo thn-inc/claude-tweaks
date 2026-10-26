@@ -25,7 +25,7 @@ const { sharedFetch, sharedFetchAsync } = require('./shared-fetch');
 const { repairOriginHead } = require('./origin-head');
 const { createIssueListCache } = require('./issue-list-cache');
 const {
-  readCache, writeCache, isFresh, SHARED_HEALTH_TTL_MS, listResidueFailures,
+  readCache, writeCache, applyOwnerlessNonClean, isFresh, SHARED_HEALTH_TTL_MS, listResidueFailures,
 } = require('./cache');
 const { formatReconcileSummary, archivedCountFromRunsResult } = require('./residue-summary');
 // summarizeTimings is called through the module object (not destructured) so a
@@ -537,6 +537,8 @@ async function reconcileInner(opts, state) {
       })));
     result.residuePlan = r.residuePlan === undefined ? null : r.residuePlan;
     state.archiveResidueErrors = Array.isArray(r.residueErrors) ? r.residueErrors : [];
+    // #4421: present only on a real pass that could read pipelines/ — never defaulted to 0 here.
+    if (typeof r.ownerlessNonClean === 'number') result.ownerlessNonClean = r.ownerlessNonClean;
   }
 
   // Same live-ref dependency as release/archive: derives branch state from
@@ -651,9 +653,12 @@ async function reconcileInner(opts, state) {
       // persists them: like prStates.persist() above, the index records reads
       // (never freshness), so an explicit --checks pass must not drop them.
       const residueIndexChanged = JSON.stringify(issueListCache.index) !== loadedResidueIndexJson;
-      if (!opts.skipCacheStamp || healthJustSucceeded || residueIndexChanged) {
+      // #4421: an archive pass's ownerless count is likewise a read, so a scoped pass that ran it persists it.
+      const ownerlessCounted = typeof result.ownerlessNonClean === 'number';
+      if (!opts.skipCacheStamp || healthJustSucceeded || residueIndexChanged || ownerlessCounted) {
         const cache = readCache(root);
-        const update = { ...cache };
+        let update = { ...cache };
+        if (ownerlessCounted) update = applyOwnerlessNonClean(update, result.ownerlessNonClean, Date.now());
         if (!opts.skipCacheStamp) update.lastRunAt = Date.now();
         if (healthJustSucceeded) update.lastHealthCheckOkAt = now;
         update.residueIssueIndex = issueListCache.index;
