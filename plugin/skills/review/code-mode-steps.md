@@ -190,11 +190,11 @@ When it's unclear which case applies, default to overlapping superset (the conse
 
 Resolve a `review-effort` tier — one of `low` / `medium` / `high` / `xhigh` / `max` — before dispatching Step 3's lenses. This tier gates which lenses run (Step 3), whether cross-lens debate and the per-candidate refutation pass run (Step 3.5), whether the gap-sweep pass runs (Step 3.6), and how findings surface (`step3-routing.md`). It is never persisted back to the work record — it's derived fresh on every review run, unlike `risk:*`/`size:*`/`ceremony:*`.
 
-Resolution order — read `review-effort-derivation.md` in this skill's directory for the procedure: the explicit-argument rule, the record `risk:*`/`size:*` label read (per-backend commands plus the risk × record-size combination table), the diff heuristic fallback, and the `review-effort-floor` project floor. Skip that read when `$ARGUMENTS` carried an effort token — an explicit token always wins, so the tier is already resolved.
+Resolution order — read `review-effort-derivation.md` in this skill's directory for the procedure: the explicit-argument rule, the record `risk:*`/`size:*` label read (per-backend commands plus the risk × record-size combination table), the diff heuristic (the fallback, and the cross-check the label tier is compared against), and the `review-effort-floor` project floor. Skip that read when `$ARGUMENTS` carried an effort token — an explicit token always wins, so the tier is already resolved.
 
-**Ambiguity never resolves toward less scrutiny.** If reading record labels fails, fall through to the diff heuristic rather than defaulting to `low`. If the diff heuristic itself can't render a clear signal, default to `high` — the tier that reproduces this skill's pre-existing default behavior — never `low`.
+**Ambiguity never resolves toward less scrutiny.** If reading record labels fails, fall through to the diff heuristic rather than defaulting to `low`. If the diff heuristic itself can't render a clear signal, default to `high` — the tier that reproduces this skill's pre-existing default behavior — never `low`. A label tier below the diff tier resolves the same way — upward.
 
-Record the resolved tier and which resolution step produced it, for Step 7's summary: `{explicit argument | record labels: risk:{x} × size:{y} | diff heuristic: {reasoning}}`, plus `floor applied: {value}` when step 4's `review-effort-floor` raised the tier.
+Record the resolved tier and which resolution step produced it, for Step 7's summary: `{explicit argument | record labels: risk:{x} × size:{y} | diff heuristic: {reasoning}}`, or `label {a}, diff heuristic {b} (risk:{x} × size:{y}; {reasoning})` when the label tier and the diff tier differ, plus `floor applied: {value}` when step 5's `review-effort-floor` raised the tier.
 
 ## Step 3: Code Review
 

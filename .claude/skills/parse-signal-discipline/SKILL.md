@@ -494,6 +494,26 @@ When mechanizing a prose heuristic into a deterministic check:
     `sdd-ruling-unclassified`). Decide a read failure in the caller that attempted the read, never
     inside the pure classifier, let a recorded read error outrank any text for the same id, and pin
     each cause on each path with its own assertion.
+24. **A composer's validator owes its reader's sentinels and delimiters too, not only its skip set
+    (item 18).** A value the reader reads back as a *different valid value* is worse than one it
+    drops, because every misread answer is one the reader legitimately emits.
+    `plugin/bin/lib/dispatch/close-out-marker.js`'s `parseConflictedFiles` (#4331) reads the
+    `conflicted-files:` field as the sentinel `none` (no conflicts), the sentinel `unknown`, or a
+    `, `-joined path list with each entry trimmed. The field carries untrusted text, since a
+    conflicted path is attacker-nameable, and each of those reader rules is a channel a real path
+    can fall through: a path named `none` reads back as "no conflicts", and a path holding a comma
+    reads back as two paths. The build's tests covered awkward paths but no reserved literal, and
+    review found the `none` case (lenses 3b, 3c and 3f, `918f6db19`). `plugin/bin/close-out-marker.js`'s
+    `readPathsFile` now refuses a comma, a carriage return, a path equal to either sentinel, and a
+    path with leading or trailing whitespace (exit 1), and each refusal names the representable
+    fallback (`--conflicted-files unknown`), so the caller can still record the update. Derive the
+    reject list from every branch of the reader: each sentinel comparison, each split delimiter,
+    each `trim`. Then pin a write-then-read round trip per entry. The `trim` was the branch #4331
+    first missed: its ledger (row 16) accepted space-edged paths as a format limit on the premise
+    that `git diff --name-only` quotes such a path. But git quotes only control characters, `"`,
+    `\` and (under `core.quotePath`) non-ASCII bytes. A scratch merge conflicting on `trail ` and
+    ` lead` printed both bare, so the marker would have read them back as `trail` and `lead`. Probe
+    a format-limit premise before accepting it, as you would any other benign-failure claim.
 
 ## When to use
 

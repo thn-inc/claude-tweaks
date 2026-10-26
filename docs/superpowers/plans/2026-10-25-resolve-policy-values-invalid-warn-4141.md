@@ -2,7 +2,7 @@
 
 **Goal:** `plugin/bin/resolve-policy.js --values` writes one stderr warning per requested key whose resolved entry carries `invalid: true`, naming the key, the rejected value, and the default it fell back to. Stdout and the exit code stay unchanged.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-25T132741-record-4141/work/4141-spec.md` (materialized from GitHub issue #4141)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-25T132741-record-4141/work/4141-spec.md` (materialized from GitHub issue #4141)
 
 **Scope-creep note (policy `add-to-plan`):** the resolved entry `{ value: default, source: 'default', invalid: true }` does not carry the rejected raw value, and several suites pin that JSON entry shape with `deepStrictEqual` (`tests/resolve-policy-cli.test.js` AC 7, `tests/resolve-policy-lib.test.js`). So the rejected value is not added to the entry. Instead, `resolvePolicyKeys` / `resolvePolicyConfig` in `plugin/bin/lib/policy-schema.js` take an optional `onInvalid(key, raw)` callback, called at the one place an invalid value is rejected. The CLI collects from it. This adds to the API: callers that pass no callback see no change.
 

@@ -36,7 +36,7 @@ files:
 - **Action:** On `fresh`, the CLI resolves `release-type` from the stack table (exactly one matching row → `node`; zero or several → `simple` with an `extra-files` pointer at a version-bearing JSON manifest), seeds the manifest from the semver-newest `v*` tag (`v1.10.0` beats `v1.9.0`; pre-release tags are ignored; no tags → the stack manifest's version → `0.1.0`), and writes the workflow pinned to `googleapis/release-please-action@v4` with `target-branch` and `branches` both set to the integration branch.
 - **Should feel:** Correct on the first try — the manifest matches what the maintainer would have typed.
 - **Should understand:** The workflow's commented `token:` line is not decoration: releases created with the default `GITHUB_TOKEN` never trigger a `release: published` publish/deploy workflow, so a PAT secret is the price of having a hook under `pr-first`. Under `simple`, release-please will also create a root `version.txt`.
-- **Red flags:** `release-type: node` auto-detected from a stale root `package.json` on a repo whose real manifest lives elsewhere, **without** passing the override below to correct it; a workflow with `branches: [develop]` but no `target-branch`.
+- **Red flags:** `release-type: node` auto-detected from a stale root `package.json` on a repo whose real manifest lives elsewhere, **without** passing the override below to correct it; a workflow with `branches: [develop]` but no `target-branch`; on any platform, Windows included, a `workflows` directory created inside a symlinked `.github`'s target outside the repo — the run must stop with `refusing to write through a symlink: .github/workflows/release-please.yml` instead; and a `.github` (or any segment, or the file itself) whose type cannot be read treated as not-yet-created rather than stopping with `refusing to write .github/workflows/release-please.yml: cannot inspect .github (EACCES)` (#4282).
 
 ### 3.5. The escape hatch — `--release-type`/`--extra-file` override, for a repo whose real manifest isn't its root stack manifest
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/release-bootstrap.js" --integration-model pr-first --branch main --release-type simple --extra-file plugin/.claude-plugin/plugin.json`
@@ -62,4 +62,5 @@ files:
 ## Origin
 - Created during build of #2253 (Init bootstrap, detection, and the two policy keys)
 - Steps 1-5 built in this session; Step 3.5 (the `--release-type`/`--extra-file` override) added during build of #2324
+- Step 3's symlinked-`.github` red flag added during build of #4282 (the write guard now lstats every intermediate directory on Windows)
 - Related specs: #2250 (parent design), #2251 (merge-time conventional subject), #2252 (reconcile under squash), #2324 (the override); units 4, 6 of #2250 consume what this journey leaves behind, and unit 9 (#2259, this repo's own migration) is the override's first consumer
