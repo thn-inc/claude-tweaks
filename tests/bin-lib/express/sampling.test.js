@@ -33,6 +33,26 @@ test('expressMarker renders the line EXPRESS_MARKER_RE matches; isExpressPr read
   assert.strictEqual(isExpressPr(undefined), false);
 });
 
+test('a CRLF body (edited in the GitHub web UI) still counts as an express PR and still names its records', () => {
+  const body = `Summary.\r\n\r\n${expressMarker('r1')}\r\n\r\nFixes #12\r\nFixes #13\r\n`;
+  assert.strictEqual(isExpressPr(body), true);
+  assert.strictEqual(body.match(EXPRESS_MARKER_RE)[1], 'r1');
+  assert.deepStrictEqual(fixesRecords(body), [12, 13]);
+  const crlf = expressMerges().map((m, i) => (i === 3 ? { ...m, body: m.body.replace(/\n/g, '\r\n') } : m));
+  assert.deepStrictEqual(selectReviewSamples(crlf, 5).map((s) => s.number), [105, 110], 'a CRLF body must not shift later ordinals');
+});
+
+test('ordinals follow merge time, not PR number', () => {
+  // PR numbers run opposite to merge order: sorting by number would sample #91 and #90 instead.
+  const merges = [
+    { number: 93, mergedAt: '2026-10-01T00:00:00Z', body: expressMarker('a') },
+    { number: 92, mergedAt: '2026-10-02T00:00:00Z', body: expressMarker('b') },
+    { number: 91, mergedAt: '2026-10-03T00:00:00Z', body: expressMarker('c') },
+    { number: 90, mergedAt: '2026-10-04T00:00:00Z', body: expressMarker('d') },
+  ];
+  assert.deepStrictEqual(selectReviewSamples(merges, 2).map((s) => [s.ordinal, s.number]), [[2, 92], [4, 90]]);
+});
+
 test('AC5.1: across 10 express merges, every=5 samples exactly 2', () => {
   const merges = shuffled(expressMerges());
   const five = selectReviewSamples(merges, 5);

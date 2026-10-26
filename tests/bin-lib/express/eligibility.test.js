@@ -29,7 +29,7 @@ function record(labels = ELIGIBLE_LABELS, keyFiles = ELIGIBLE_KEYS, extraBody = 
   return { number: 3968, body, labels };
 }
 
-test('AC1.1 eligibility: a #3968-shaped record (two markdown Key Files, risk:low size:low ceremony:fast-lane type:task) is eligible', () => {
+test('AC1.1 (gate half; the timing half waits on #4362) eligibility: a #3968-shaped record (two markdown Key Files, risk:low size:low ceremony:fast-lane type:task) is eligible', () => {
   const out = evaluateRecordEligibility(record(), OPTS);
   assert.deepStrictEqual(out, { number: 3968, eligible: true, reasons: [], keyFiles: ELIGIBLE_KEYS });
 });
@@ -61,7 +61,11 @@ test('each check alone can go red', async (t) => {
   await t.test('four Key Files', () => onlyReason(record(ELIGIBLE_LABELS, ['docs/a.md', 'docs/b.md', 'docs/c.md', 'docs/d.md']), OPTS, REASONS.tooManyKeyFiles));
   await t.test('a .tsx Key File with no Surface line', () => onlyReason(record(ELIGIBLE_LABELS, ['src/app.tsx']), OPTS, REASONS.frontend));
   await t.test('Surface: web with backend-looking Key Files', () => onlyReason(record(ELIGIBLE_LABELS, ['lib/server.js', 'docs/api.md'], 'Surface: web'), OPTS, REASONS.frontend));
-  for (const p of ['plugin/bin/lib/hooks/pre-tool-use.js', '.github/workflows/ci.yml', 'plugin/skills/_shared/x.md']) {
+  for (const p of [
+    'plugin/bin/lib/hooks/pre-tool-use.js', '.github/workflows/ci.yml', 'plugin/skills/_shared/x.md',
+    'package.json', '.claude/settings.json', '.claude/settings.local.json', '.mcp.json', 'CODEOWNERS',
+    '.gitlab-ci.yml', '.circleci/config.yml', '.husky/pre-commit', '.githooks/pre-push', '.claude-tweaks/verify-scope.json',
+  ]) {
     await t.test(`protected Key File ${p}`, () => onlyReason(record(ELIGIBLE_LABELS, [...ELIGIBLE_KEYS, p]), OPTS, REASONS.protectedPath(p)));
   }
   await t.test('a Key File matching sensitivePaths', () => onlyReason(record(ELIGIBLE_LABELS, [...ELIGIBLE_KEYS, 'docs/guide.md']), { ...OPTS, sensitivePaths: ['docs/**'] }, REASONS.sensitivePath('docs/guide.md')));
@@ -74,6 +78,18 @@ test('each check alone can go red', async (t) => {
   await t.test('escalated', () => onlyReason(record(), { ...OPTS, escalated: true }, REASONS.escalated));
 });
 
+test('Key Files are judged as the file they name: dot segments, ./ and backslashes cannot dodge a path rule', () => {
+  for (const p of ['plugin/skills/x/../_shared/a.md', './plugin/skills/_shared/a.md', 'plugin\\skills\\_shared\\a.md', 'docs/../.github/workflows/ci.yml']) {
+    const out = evaluateRecordEligibility(record(ELIGIBLE_LABELS, [...ELIGIBLE_KEYS, p]), OPTS);
+    assert.ok(out.reasons.includes(REASONS.protectedPath(p)), p);
+  }
+  for (const p of ['./docs/guide.md', 'docs/x/../guide.md', 'docs\\guide.md']) {
+    const out = evaluateRecordEligibility(record(ELIGIBLE_LABELS, [...ELIGIBLE_KEYS, p]), { ...OPTS, sensitivePaths: ['docs/**'] });
+    assert.ok(out.reasons.includes(REASONS.sensitivePath(p)), p);
+  }
+  assert.strictEqual(isProtectedPath('docs/x/../hookshot.md'), false);
+});
+
 test('every failing reason is collected, never short-circuited', () => {
   const out = evaluateRecordEligibility(record(['size:medium']), { ...OPTS, enabled: false });
   for (const r of [REASONS.disabled, REASONS.risk, REASONS.size, REASONS.ceremony, REASONS.type]) assert.ok(out.reasons.includes(r), r);
@@ -83,6 +99,13 @@ test('Surface: backend with a .tsx Key File is eligible (a declared non-frontend
   const out = evaluateRecordEligibility(record(ELIGIBLE_LABELS, ['src/app.tsx'], 'Surface: backend'), OPTS);
   assert.deepStrictEqual(out.reasons, []);
   assert.strictEqual(out.eligible, true);
+});
+
+test('Surface: terminal is a frontend surface, as in design-detect (only backend and infra are not)', () => {
+  onlyReason(record(ELIGIBLE_LABELS, ['docs/cli.md'], 'Surface: terminal'), OPTS, REASONS.frontend);
+  for (const surface of ['backend', 'infra']) {
+    assert.deepStrictEqual(evaluateRecordEligibility(record(ELIGIBLE_LABELS, ['docs/cli.md'], `Surface: ${surface}`), OPTS).reasons, [], surface);
+  }
 });
 
 test('REASONS is frozen and EXPRESS_MAX_KEY_FILES is 3', () => {
@@ -113,6 +136,9 @@ test('consumer-portability: protected paths are project-agnostic', () => {
   assert.strictEqual(isProtectedPath('skills/_shared/a.md'), true);
   assert.strictEqual(isProtectedPath('.claude-tweaks/policy.yml'), true);
   assert.strictEqual(isProtectedPath('.github/CODEOWNERS'), true);
+  assert.strictEqual(isProtectedPath('apps/web/package.json'), true);
+  assert.strictEqual(isProtectedPath('docs/my-package.json'), false);
+  assert.strictEqual(isProtectedPath('docs/settings.json'), false);
   assert.strictEqual(isProtectedPath('docs/hookshot.md'), false);
   assert.strictEqual(isProtectedPath('src/webhooks/a.js'), false);
   assert.strictEqual(isProtectedPath('src/webhooks.js'), false);

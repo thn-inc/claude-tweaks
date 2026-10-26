@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
@@ -38,11 +39,13 @@ function stderrSink() {
 }
 
 test('express-lane false: keepSingleton is false for an eligible record and grouping is per-record', () => {
-  const { resolvePolicy } = policy({ 'express-lane': false, 'integration-model': 'pr-first', 'merge-sensitive-paths': [] });
+  const { resolvePolicy, calls } = policy({ 'express-lane': false, 'integration-model': 'pr-first', 'merge-sensitive-paths': [] });
   const p = expressQueuePolicy({ resolvePolicy });
   assert.equal(p.enabled, false);
   assert.equal(p.grouping, 'per-record');
   assert.equal(p.keepSingleton(ELIGIBLE), false);
+  // A disabled lane must not resolve integration-model (an unpinned one probes `gh repo view`).
+  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane']]);
 });
 
 test('express-lane true + pr-first: eligible stays a singleton, risk:medium does not, grouping is per-record+express', () => {
@@ -52,8 +55,7 @@ test('express-lane true + pr-first: eligible stays a singleton, risk:medium does
   assert.equal(p.grouping, 'per-record+express');
   assert.equal(p.keepSingleton(ELIGIBLE), true);
   assert.equal(p.keepSingleton(MEDIUM_RISK), false);
-  assert.equal(calls.length, 1);
-  assert.deepStrictEqual(calls[0].keys, ['express-lane', 'integration-model', 'merge-sensitive-paths']);
+  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane'], ['integration-model', 'merge-sensitive-paths']]);
 });
 
 test('express-lane true + local-merge: the integration model is passed through, so nothing stays a singleton', () => {
@@ -88,6 +90,13 @@ test('a throwing eligibility check keeps the record bundleable, with exactly one
   assert.match(sink.lines[0], /labels unreadable/);
   assert.ok(sink.lines[0].endsWith('\n') && sink.lines[0].indexOf('\n') === sink.lines[0].length - 1);
   assert.equal(p.keepSingleton(ELIGIBLE), true);
+});
+
+test('loading queue.js does not load the express CLI module (the queue-pull path stays light)', () => {
+  const queue = path.join(ROOT, 'plugin', 'bin', 'lib', 'express', 'queue.js');
+  const probe = 'require(process.argv[1]); console.log(Object.keys(require.cache).some((k) => /express[\\\\/]cli\\.js$/.test(k)));';
+  const out = execFileSync(process.execPath, ['-e', probe, queue], { encoding: 'utf8' });
+  assert.equal(out.trim(), 'false');
 });
 
 test('queue-pull-script.md passes expressQueuePolicy() into the cache check, the write-back and the grouping pass', () => {

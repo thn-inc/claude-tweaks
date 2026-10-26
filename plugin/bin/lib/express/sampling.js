@@ -9,12 +9,15 @@
 const { isSampleOrdinal } = require('../issues/grant-sampling');
 const { isTrustedComment } = require('../issues/comment-trust');
 
-// The express PR body carries this line; the run id is the capture.
-const EXPRESS_MARKER_RE = /^claude-tweaks-express: (\S+)$/m;
+// The express PR body carries this line; the run id is the capture. `cli.js`'s merged-PR
+// search matches the same key. (A multiline `$` already stops before a CR, so a body
+// edited in GitHub's web UI, which comes back CRLF, still matches.)
+const EXPRESS_MARKER_KEY = 'claude-tweaks-express';
+const EXPRESS_MARKER_RE = new RegExp(`^${EXPRESS_MARKER_KEY}: (\\S+)$`, 'm');
 const REVIEW_COMMENT_MARKER = '<!-- run-comment: express-review -->';
 
 function expressMarker(runId) {
-  return `claude-tweaks-express: ${runId}`;
+  return `${EXPRESS_MARKER_KEY}: ${runId}`;
 }
 
 function isExpressPr(body) {
@@ -58,6 +61,7 @@ function fixesRecords(body) {
 }
 
 module.exports = {
+  EXPRESS_MARKER_KEY,
   EXPRESS_MARKER_RE,
   REVIEW_COMMENT_MARKER,
   expressMarker,

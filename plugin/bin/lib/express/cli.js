@@ -13,7 +13,10 @@
 //   escalate  writes the escalation line; the detail comes from a file, never argv.
 //   verify    the express path's bookend artifacts (claim log, an unsuperseded check
 //             line, PR), read from the archived run dir once a merged run's reconcile
-//             has moved it there.
+//             has moved it there. A tripwire for a reported outcome that skipped a
+//             bookend (/dispatch ends the group on it), not proof the artifacts are
+//             genuine: it reads agent-writable run-dir text, as the procedure's
+//             hand-logged fallbacks require.
 //   samples   merged express PRs owing a post-merge review, reviewed ones dropped:
 //             global ordinals over every express merge, comments fetched only inside
 //             a lookback, at most a fixed number of reviews per firing.
@@ -32,18 +35,16 @@
 // Every side effect goes through `deps` (gh-api-module-pattern's CLI wrapper contract).
 'use strict';
 
-const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification } = require('./eligibility');
-const { selectReviewSamples, isReviewed, fixesRecords, isExpressPr } = require('./sampling');
+const { selectReviewSamples, isReviewed, fixesRecords, isExpressPr, EXPRESS_MARKER_KEY } = require('./sampling');
 const { extractKeyFiles } = require('../issues/grouping');
 const { gatherDiffFiles, resolveBlastRadiusConfig } = require('../blast-radius-cli');
 const { checkFirstCallStamp } = require('../dispatch/first-call-artifact-check');
 const { formatEntry, appendEntry, parseEntry, resolveTarget } = require('../log-decision/append');
 const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
-const { resolvePolicyConfig } = require('../policy-schema');
-const { computeDerivedDefaults } = require('../policy-derived-defaults');
+const { sensitivePathsOf, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
 const { ghAvailable } = require('../repo-resolve');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
@@ -74,7 +75,7 @@ const NO_WORKTREE = 'no worktree recorded in run-state.json';
 // each half searched again, until every window returns fewer.
 const SAMPLES_SEARCH_LIMIT = 1000;
 // Quoted: unquoted, the hyphenated marker matches its words anywhere in a body.
-const SAMPLES_SEARCH_PHRASE = '"claude-tweaks-express" in:body';
+const SAMPLES_SEARCH_PHRASE = `"${EXPRESS_MARKER_KEY}" in:body`;
 // The first window opens before any GitHub pull request could have merged.
 const SAMPLES_SEARCH_EPOCH_MS = Date.parse('2008-01-01T00:00:00Z');
 // Bounds the window splitting; roughly 50,000 express merges fit under it.
@@ -188,11 +189,6 @@ function fetchIssue(deps, flags, n) {
   const rec = JSON.parse(deps.gh(['issue', 'view', ...repoArgs(flags), '--json', ISSUE_FIELDS, '--', String(n)]));
   if (!validRecord(rec) || rec.number !== n) throw new Error(`gh issue view returned no record #${n}`);
   return rec;
-}
-
-function sensitivePathsOf(entry) {
-  const raw = entry && entry.value;
-  return Array.isArray(raw) ? raw : String(raw || '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
 function ghPresent(deps) {
@@ -316,7 +312,9 @@ function runCheck(deps, flags) {
     return escalate(deps, runDir, n, 'express-error', `runner stamp read failed: ${err && err.message}`, state);
   }
   if (!stamp || stamp.verified !== true) {
-    return escalate(deps, runDir, n, 'failing-test', `no runner pass stamp verifies HEAD (${stamp && stamp.reason})`, state);
+    // An unreadable stamp is an infrastructure fault, not evidence the tests failed.
+    const reason = stamp && stamp.reason === 'stamp-read-failed' ? 'express-error' : 'failing-test';
+    return escalate(deps, runDir, n, reason, `no runner pass stamp verifies HEAD (${stamp && stamp.reason})`, state);
   }
   // The sha the stamp verified (verify.js --stamp-status's `head`): the procedure pushes
   // only while the worktree's HEAD still equals it.
@@ -330,6 +328,8 @@ function runCheck(deps, flags) {
     const git = (args) => deps.git(args, { cwd: worktree });
     const { files } = gatherDiffFiles({ base: flags['--base'], integrationBranch: flags['--integration-branch'] }, { git });
     const config = deps.blastRadiusConfig({ git, readFile: deps.readFile, runDir });
+    // The same two policy keys the normal auto-merge path weighs (`merge-sensitive-paths`,
+    // `auto-merge-max-lines`): the lane's bounds are those limits, made hard.
     bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, maxLines: config.autoMergeMaxLines });
     if (bounds.withinBounds) mergeVerification = expressMergeVerification(deps.resolvePolicy(['merge-verification'], { runDir })['merge-verification'].value);
   } catch (err) {
@@ -339,7 +339,10 @@ function runCheck(deps, flags) {
 
   const k = bounds.changedFiles.length;
   const logged = append(deps, runDir, CHECK_STEP, `#${n} proceed — ${k} changed file(s), ${bounds.implLines} implementation line(s) within bounds; runner stamp verifies HEAD ${head}.`);
-  const configSet = `mode=auto,ceremony-profile=fast-lane,merge-verification=${mergeVerification}`;
+  // integration-model=pr-first is the run pin (_shared/integration-model.md's Run-scoped
+  // stability): eligibility required pr-first, and the merge steps that follow must not
+  // re-detect it, where a transient `gh` failure would flip the run to local-merge.
+  const configSet = `mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=${mergeVerification}`;
   return emit(deps, { action: 'proceed', head, mergeVerification, configSet, bounds }, logged);
 }
 
@@ -469,22 +472,6 @@ function run(argv, deps = realDeps) {
   }
 }
 
-function defaultGit(args, opts = {}) {
-  return execFileSync('git', args, { cwd: opts.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GIT_TIMEOUT_MS, windowsHide: true });
-}
-
-function defaultReadFile(p) {
-  try { return fs.readFileSync(p, 'utf8'); } catch (err) {
-    if (err.code === 'ENOENT') return null;
-    throw err;
-  }
-}
-
-function defaultResolvePolicy(keys, { runDir = null } = {}) {
-  const { root, result } = resolvePolicyConfig({ git: defaultGit, readFile: defaultReadFile, runDir, keys });
-  return computeDerivedDefaults(result, keys, root);
-}
-
 const realDeps = {
   gh: (args, opts = {}) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: opts.timeout || sharedPrimitives.GH_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true }),
   ghAvailable: () => ghAvailable(),
@@ -501,5 +488,5 @@ const realDeps = {
 };
 
 module.exports = {
-  run, realDeps, USAGE, ESCALATION_REASONS, escalationText, hasEscalation, defaultResolvePolicy, parseArgs, sensitivePathsOf,
+  run, realDeps, USAGE, ESCALATION_REASONS, escalationText, hasEscalation, parseArgs,
 };

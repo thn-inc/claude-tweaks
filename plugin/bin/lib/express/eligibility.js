@@ -6,6 +6,7 @@
 // merge-sensitive-paths) and pass the values in.
 'use strict';
 
+const nodePath = require('path');
 const { extractKeyFiles } = require('../issues/grouping');
 const { normalizeLabelNames, parseRecordFacets, typeOf } = require('../issues/record');
 const { shapeGate, liftMetadata } = require('../issues/materialize-format');
@@ -32,23 +33,52 @@ const REASONS = Object.freeze({
   sensitivePath: (p) => `merge-sensitive path: ${p}`,
 });
 
-// Project-agnostic (never this repo's plugin/ prefix): hook code, shared skill
-// contracts, CI/forge config, and the policy file itself.
+// Project-agnostic (never this repo's plugin/ prefix). Each family is here because
+// a change to it can weaken a gate the lane merges on, which a green CI cannot
+// vouch for when the change edits what CI (or the agent) runs:
+//  - hook code and shared skill contracts (`skills/_shared/` is a conservative
+//    superset of the spec's "multi-consumer `_shared` contract"): consumed by
+//    every skill, so no single-record review covers their blast radius;
+//  - CI/forge config (GitHub, GitLab, CircleCI, git hooks) and CODEOWNERS: they
+//    define the CI-green gate itself;
+//  - `package.json`: its scripts are what the verification runner and CI execute;
+//  - the agent's own permissions and tool config (`.claude/settings*.json`,
+//    `.mcp.json`) and the plugin's policy and verify-scope files.
 const PROTECTED_PATH_RES = [
   /(^|\/)hooks\//,
   /(^|\/)hooks\.js$/,
   /(^|\/)skills\/_shared\//,
   /(^|\/)\.github\//,
+  /(^|\/)\.gitlab-ci\.yml$/,
+  /(^|\/)\.circleci\//,
+  /(^|\/)\.githooks\//,
+  /(^|\/)\.husky\//,
+  /(^|\/)CODEOWNERS$/,
+  /(^|\/)package\.json$/,
+  /(^|\/)\.claude\/settings[^/]*\.json$/,
+  /(^|\/)\.mcp\.json$/,
   /(^|\/)\.claude-tweaks\/policy\.yml$/,
+  /(^|\/)\.claude-tweaks\/verify-scope\.json$/,
 ];
 
+// A path in comparison form: `\` as `/`, `.` and `..` segments resolved, no leading `./`.
+// A Key File comes from record text, so `plugin/skills/x/../_shared/a.md` must be judged
+// as the file it names; git's own paths are already in this form.
+function canonicalPath(p) {
+  const posix = nodePath.posix.normalize(String(p).replace(/\\/g, '/'));
+  return posix.startsWith('./') ? posix.slice(2) : posix;
+}
+
 function isProtectedPath(path) {
-  const normalized = String(path).replace(/\\/g, '/');
+  const normalized = canonicalPath(path);
   return PROTECTED_PATH_RES.some((re) => re.test(normalized));
 }
 
-const FRONTEND_SURFACES = new Set(['web', 'mobile', 'desktop']);
-const NON_FRONTEND_SURFACES = new Set(['backend', 'infra', 'terminal']);
+// Mirrors design-detect's layer2 (FRONTEND_SURFACES there, `terminal` included;
+// only `backend` and `infra` skip): a surface the design tracks treat as a
+// frontend never takes the lane, which runs no design or visual check.
+const FRONTEND_SURFACES = new Set(['web', 'mobile', 'desktop', 'terminal']);
+const NON_FRONTEND_SURFACES = new Set(['backend', 'infra']);
 
 // A declared Surface: wins over the file sniff (matching design-detect's layer2
 // skip); absent or unrecognized falls back to the sniff over the Key Files.
@@ -61,6 +91,10 @@ function isFrontend(body, keyFiles) {
 }
 
 // Collects every failing reason (never short-circuits) so a report names them all.
+// Why the less obvious rules exist: the lane opens a PR and merges it, which only
+// `pr-first` supports; a `type:*` label is what `compose-subject.js` needs to
+// compose the merge subject; `auto:merge-pending` is a grant that matures only on
+// the normal path's wrap-up.
 function evaluateRecordEligibility(issue, opts) {
   const { enabled, integrationModel, sensitivePaths = [], escalated = false } = opts || {};
   const body = (issue && issue.body) || '';
@@ -81,7 +115,7 @@ function evaluateRecordEligibility(issue, opts) {
   if (isFrontend(body, keyFiles)) reasons.push(REASONS.frontend);
   for (const p of keyFiles) {
     if (isProtectedPath(p)) reasons.push(REASONS.protectedPath(p));
-    if (isSensitivePath(p, sensitivePaths)) reasons.push(REASONS.sensitivePath(p));
+    if (isSensitivePath(canonicalPath(p), sensitivePaths)) reasons.push(REASONS.sensitivePath(p));
   }
   if (!shapeGate(body).ok) reasons.push(REASONS.notShaped);
   if (escalated === true) reasons.push(REASONS.escalated);
@@ -89,10 +123,8 @@ function evaluateRecordEligibility(issue, opts) {
   return { number: issue && issue.number, eligible: reasons.length === 0, reasons, keyFiles };
 }
 
-// Key File comparison form: `\` as `/`, no leading `./`, on both sides.
-function keyFileForm(p) {
-  return String(p).replace(/\\/g, '/').replace(/^\.\//, '');
-}
+// Key File comparison form, on both sides.
+const keyFileForm = canonicalPath;
 
 // Every changed non-test, non-pipeline-artifact path must be a Key File and
 // count toward implLines. A test file's deleted lines count toward maxLines too
@@ -119,7 +151,8 @@ function evaluateDiffBounds(files, opts) {
     }
     if (isProtectedPath(f.path)) violations.push(REASONS.protectedPath(f.path));
     if (f.isSensitive) violations.push(REASONS.sensitivePath(f.path));
-    // classifyDiffFiles drops oldPath, so it is read from the input entry.
+    // classifyDiffFiles drops oldPath, so it is read from the input entry at the same
+    // index (classifyDiffFiles is a 1:1, order-preserving map of its input).
     const { oldPath } = inputs[i];
     if (oldPath && oldPath !== f.path) {
       if (isProtectedPath(oldPath)) violations.push(REASONS.protectedPath(oldPath));

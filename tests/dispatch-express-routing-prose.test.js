@@ -69,6 +69,7 @@ const STEP5_FACTS = [
   [/then the ordinary first call \(same run dir, same worktree\)/, 'express-escalated → the ordinary first call'],
   [/, `NEEDS_CONTEXT`\/`BLOCKED` or a malformed status → `two-call-gate\.md` §5/, 'blocked or a failed status → §5'],
   [/`blocked` \(the express call already ran Settle\)/, 'Settle already ran, scoped to blocked only'],
+  [/a verify-derived `blocked` ran no Settle: its claim lapses via TTL/, 'a verify-derived blocked is unsettled, stated'],
   [/`settle-and-merge\.md`'s Drain-overlap hold/, 'counts for the drain-overlap hold'],
 ];
 const LOOP_FACTS = [

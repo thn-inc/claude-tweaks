@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
@@ -37,8 +38,12 @@ function record(number, labels = ELIGIBLE_LABELS) {
 
 // A main checkout (`.git` directory) holding one run dir, plus a linked worktree
 // (`.git` file) holding a shadow of it — resolveTarget's structural anchoring check.
+const FIXTURE_ROOTS = [];
+test.after(() => { for (const root of FIXTURE_ROOTS) fs.rmSync(root, { recursive: true, force: true }); });
+
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'express-cli-'));
+  FIXTURE_ROOTS.push(root);
   const main = path.join(root, 'main');
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-10-25T090000-record-7');
   const wt = path.join(main, '.claude', 'worktrees', 'express-7');
@@ -267,6 +272,13 @@ test('AC3.1: a failing impacted test escalates to /flow and decisions.md records
   assert.strictEqual(hasEscalation(text, 70), false);
 });
 
+test('check: an unreadable runner stamp escalates as express-error, not as a failing test', () => {
+  const fx = fixture();
+  const h = harness(fx, { stampCheck: () => ({ verified: false, reason: 'stamp-read-failed', status: null }) });
+  assert.strictEqual(run(checkArgv(fx), h.deps), 0);
+  assert.deepStrictEqual(h.json(), { action: 'escalate', reason: 'express-error', detail: 'no runner pass stamp verifies HEAD (stamp-read-failed)' });
+});
+
 test('check out-of-bounds: a non-Key-File implementation path escalates', () => {
   const fx = fixture();
   const h = harness(fx, { git: fakeGit(fx, numstat([[2, 0, KEY_FILES[0]], [5, 1, 'src/elsewhere.js']])) });
@@ -285,7 +297,7 @@ test('check proceed: a Key-File-only diff logs the proceed line and no escalatio
   const res = h.json();
   assert.strictEqual(res.action, 'proceed');
   assert.strictEqual(res.mergeVerification, 'merge-when-green');
-  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,merge-verification=merge-when-green');
+  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green');
   assert.strictEqual(res.bounds.implLines, 4);
   assert.strictEqual(res.head, HEAD_SHA);
   const text = decisions(fx);
@@ -327,11 +339,11 @@ test('AC4.1 configSet: check under merge-verification off yields merge-when-gree
   assert.strictEqual(run(checkArgv(fx), h.deps), 0);
   const res = h.json();
   assert.strictEqual(res.mergeVerification, 'merge-when-green');
-  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,merge-verification=merge-when-green');
+  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green');
 
   const wait = harness(fx, {}, { 'merge-verification': 'wait' });
   assert.strictEqual(run(checkArgv(fx), wait.deps), 0);
-  assert.strictEqual(wait.json().configSet, 'mode=auto,ceremony-profile=fast-lane,merge-verification=wait');
+  assert.strictEqual(wait.json().configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=wait');
 });
 
 test('check: a BlastRadiusError from the diff gather escalates as express-error, never a proceed', () => {
@@ -726,4 +738,16 @@ test('samples: a failed gh pr list or pr view exits 1 with no stdout; gh absent 
 
   const absent = harness(fx, { ghAvailable: () => false });
   assert.strictEqual(run(['samples', '--every', '5'], absent.deps), 2);
+});
+
+// The entry and its real dependencies (realDeps) load and answer in a real process: every
+// other test here injects deps, so a broken require or realDeps wiring would otherwise ship.
+test('bin/express-lane.js runs as a process: --help prints USAGE (exit 0), a malformed call exits 2', () => {
+  const cli = path.join(LIB, '..', 'express-lane.js');
+  const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
+  assert.strictEqual(help.status, 0);
+  assert.strictEqual(help.stdout, USAGE);
+  const bad = spawnSync(process.execPath, [cli, 'verify', '--issue', '7'], { encoding: 'utf8' });
+  assert.strictEqual(bad.status, 2);
+  assert.match(bad.stderr, /verify requires --run/);
 });

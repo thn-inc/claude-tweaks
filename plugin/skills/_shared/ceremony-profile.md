@@ -41,7 +41,7 @@
 
 ## Express lane
 
-The express lane (`_shared/express-lane.md`, #4025) is not a third `ceremony-profile` value and not a row of `## Skips by profile`: a record on the lane never enters `/flow`'s frame, so no profile is in play. The `## Never skipped` floor above binds every run that does enter it — an escalated express record included, which continues on the normal path under its own profile like any other run. In place of review the lane keeps its own controls: the `express-lane.js gate` eligibility verdict, the impacted tests plus the runner pass stamp, the diff-bounds check, CI green before merge, `merge-check`, and the post-merge sampled review.
+The express lane (`_shared/express-lane.md`, #4025) is not a third `ceremony-profile` value and not a row of `## Skips by profile`: a record on the lane never enters `/flow`'s frame, so no profile is in play. The `## Never skipped` floor above binds every run that does enter it — an escalated express record included, which continues on the normal path under its own profile like any other run. In place of review the lane keeps its own controls: the `express-lane.js gate` eligibility verdict, the impacted tests plus the runner pass stamp, the diff-bounds check, CI green before merge, `merge-check`, and the post-merge sampled review (which runs only at the end of a bare `/claude-tweaks:dispatch` drain — `_shared/express-lane.md`'s Post-merge sampling).
 
 ## Mentions that are not skips
 

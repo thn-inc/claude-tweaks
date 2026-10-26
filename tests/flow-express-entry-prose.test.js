@@ -97,6 +97,7 @@ const ENTRY_FACTS = [
   [/then its Post-creation catch-up, unconditionally/, 'post-creation catch-up'],
   [/hooks\.js" record-worktree --run "\$PIPELINE_RUN_DIR" "\{worktree\}"`/, 'record-worktree --run'],
   [/Never `--dispatch`: this run is not dispatch-bound/, 'bound without --dispatch'],
+  [/A failure in step 1 or 2[^\n]*is outcome `blocked`[^\n]*never continues at Step 3 on an unbound worktree/, 'a worktree or bind failure is blocked, never Step 3'],
   [/Run `_shared\/express-lane\.md`'s Procedure from step 2/, 'the procedure from step 2'],
   [/when Step 1 detected `pre-authorize-merge`, step 7 appends `,merge-authorization=pre-authorized` to step 5's `configSet`/, 'M11: a typed pre-authorize-merge reaches config.yml'],
   [/\*\*`express-escalated`\*\* — continue at Step 3, unchanged/, 'escalation → Step 3'],
