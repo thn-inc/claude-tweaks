@@ -33,8 +33,12 @@ const { readText } = require('./helpers/read-skill');
 //     (`entry ['locked']`);
 //   - `rev-list`/`for-each-ref` recency reads, `git show -s --format=%ct`, and
 //     committer-date formats other than %ct/%cI (`%ci`, `%cd`) with no count flag;
-//   - a git argv held in a nested or spread array, or a command split across the lines
-//     of a multi-line template literal;
+//   - a git argv held in a nested or spread array, an argv whose string element itself
+//     holds a bracket (`'--format=%ct [x]'`), or a command split across the lines of a
+//     multi-line template literal;
+//   - a retired name grown into a longer identifier (`isPidAliveSync`, `_lockVerdict`):
+//     the name ban covers the retired names only, and the primitive bans cover a renamed
+//     probe's body;
 //   - an aliased destructure of a scoped token (`const { ownEventRecency: oer } = ...`).
 
 const REPO = path.join(__dirname, '..');
@@ -49,7 +53,7 @@ const NAMES = /\b(isDeadRunDir|lockVerdict|isPidAlive|lockInUse|lastCommitMs)\b/
 const PROCESS_KILL = /\bprocess\s*\??\.\s*kill\s*\(/g;
 const ARGV = /\[[^\[\]]*\]/g;
 const LITERAL = /(['"`])((?:\\.|(?!\1).)*)\1/g;
-const RECENCY = /^(?:-1|-n\d*|--max-count(?:=.*)?|.*(?:%ct|%cI|committerdate).*)$/;
+const RECENCY = /^(?:-1|-n(?:\d*|\$\{[^}]*\})|--max-count(?:=.*)?|.*(?:%ct|%cI|committerdate).*)$/;
 const LOG_WORD = /\blog\b/;
 const STRING_RECENCY = /(?:^|\s)(?:-1|-n\d*|--max-count)\b|%ct|%cI|committerdate/;
 const FIELD = /\.\s*(locked|lockReason)\b/g;
@@ -286,6 +290,7 @@ test('matcher self-test: banned names and primitives are flagged at their lines'
     "sh(['log', '-1', 'git log -1']);", // 26: argv and string on one line, one offender
     "return ['locked'];", // 27
     "const c = entry?.['locked'];", // 28
+    'runGit([`log`, `-n${n}`]);', // 29
   ].join('\n');
   assert.deepEqual(
     formatHits(bannedHits(planted)),
@@ -310,6 +315,7 @@ test('matcher self-test: banned names and primitives are flagged at their lines'
       `25:${COMMIT_FORM}`,
       `26:${COMMIT_FORM}`,
       '28:.locked',
+      `29:${COMMIT_FORM}`,
     ],
   );
 });
