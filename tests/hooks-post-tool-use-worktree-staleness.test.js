@@ -223,12 +223,6 @@ test('an unusable cwd (no tool result, no resolvable worktree) never throws — 
   assert.deepStrictEqual(out, {});
 });
 
-// #1782: proactive core.longpaths nudge — win32 only, before the staleness
-// fetch. Platform is injected via ctx.platform (this module's existing
-// per-call ctx seam, extended with one field — there was no other
-// deps-injection seam in this file to reuse) rather than stubbing
-// process.platform, which is process-global and would leak across tests.
-
 // post.run shells to git via execFileSync, which inherits process.env — so the
 // git-config env vars are set there around the call and restored in `finally`
 // (other tests in this worker share process.env).
@@ -266,7 +260,7 @@ function runnerLikeGlobalConfig(fn) {
 }
 
 // The Windows runner has a global core.longpaths=true; the runner-like config
-// below reproduces that cause on any host, so these two tests pass only
+// above reproduces that cause on any host, so these two tests pass only
 // because `isolate` (isolatedGitConfig) hides it.
 function assertWarnsWhenUnset(isolate) {
   const { main } = setupProject();
@@ -293,6 +287,11 @@ function assertLogsUnset(isolate) {
   assert.notStrictEqual(events[0].result, 'check-failed');
 }
 
+// #1782: proactive core.longpaths nudge — win32 only, before the staleness
+// fetch. Platform is injected via ctx.platform (this module's existing
+// per-call ctx seam, extended with one field — there was no other
+// deps-injection seam in this file to reuse) rather than stubbing
+// process.platform, which is process-global and would leak across tests.
 test('warns on win32 when core.longpaths is unset', () => assertWarnsWhenUnset(isolatedGitConfig));
 
 test('does not warn on win32 when core.longpaths is already true', () => {
