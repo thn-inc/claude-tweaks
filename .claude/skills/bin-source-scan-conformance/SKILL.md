@@ -48,6 +48,8 @@ The stripper has one known ambiguity: a `/` right after `)` or `}` is read as di
 
 Pin the planted mis-parse through each scan that calls the verdict, not only through the helper's own tests. The windows-hide, git-status and path-guard scans each have one. The path-containment scan only asserts `ok` over the real tree, so a new scan should add the planted case rather than copy that gap.
 
+A scan whose matchers read both stripper modes runs the verdict on each text, and plants a mis-parse that only one mode shows. `if (b) /'/.test(b); const c = 'x'; ownEventRecency(c);` is `ok` in literal-keeping mode, which keeps the line intact. In blank mode it is `misparsed`: the `'` inside the regex pairs with a later quote, and the live call ends up inside a blanked string. A verdict on the keep-mode text alone passes the blank-mode text that a region finder or matcher then reads. `tests/run-liveness-callers-conformance.test.js` (#4422) matches banned names over keep-mode text and locates its allowed regions over blank-mode text. Review found its blank-mode verdict had no planted case, and it now plants this one.
+
 ### Match every call shape the convention binds
 
 A spawn can be an argv array (`execFileSync('git', [...])`, `runGit([...])`, `deps.git([...])`) or a command string (`execSync('git --no-optional-locks status --porcelain -b')`). The git-status scan matches both:
@@ -56,6 +58,8 @@ A spawn can be an argv array (`execFileSync('git', [...])`, `runGit([...])`, `de
 - `QUOTED` with `GIT_STATUS_CMD` matches a quoted `git … status` that ends the string or is followed by a flag. A message such as `` `git status failed: ${…}` `` does not count.
 
 A scan that matches only one shape stays green when the other shape breaks the rule.
+
+When one banned form has both an argv branch and a string branch, plant one self-test row per spelling the spec names in each branch, a templated `${…}` element included. Treat a row set that covers a spelling in one branch only as a review finding. The two branches are separate regexes, so they drift apart without failing anything. In `tests/run-liveness-callers-conformance.test.js` (#4422), the argv regex `RECENCY` rejected a templated `` `-n${n}` `` element that the string regex `STRING_RECENCY` accepted. The planted rows covered `-n1` in both branches, but the templated form only as an argv `` `--max-count=${n}` ``. Four reviews passed it before a single low-tier review lens found it, and the fix (`e939572a3`) widened `RECENCY` and added self-test row 29.
 
 When an option can reach the call through a variable, state which forms the scan accepts and which it rejects. The windows-hide scan accepts a literal `windowsHide` in the call's own argument text, or a bare identifier as the last argument whose `const X = { … }` literal names the key. It rejects a spread (`{ ...QUIET, timeout }`). `gh-api-module-pattern` gives that rule to module authors.
 
