@@ -17,7 +17,7 @@ const { BACKFILL_OUTCOMES, BACKFILL_SOURCES } = require('../../../plugin/bin/lib
 const { findingFingerprint } = require('../../../plugin/bin/lib/console/finding-filing');
 const { extractFingerprint } = require('../../../plugin/bin/lib/issues/record');
 const { fingerprintFromBasis } = require('../../../plugin/bin/lib/health-core/fingerprint');
-const { parseMaterialityFingerprints } = require('../../../plugin/bin/lib/health-core/materiality-digest');
+const { materialityFingerprint, parseMaterialityFingerprints } = require('../../../plugin/bin/lib/health-core/materiality-digest');
 const { readText } = require('../../helpers/read-skill');
 
 const MAIN_SHA = '0123456789abcdef0123456789abcdef01234567';
@@ -339,6 +339,35 @@ test('R14b: a table-shaped reflect file digests as its first insight, not the ta
   assert.ok(e.finding.length <= 200, 'cut at 200 characters');
   assert.strictEqual(e.fileRefs, 'general');
   assert.strictEqual(e.area, 'reflect');
+});
+
+test('AC3.2: a legacy reflect observation/convention with no destination digests under reflect-no-destination (#4168)', () => {
+  assert.strictEqual(DIGEST_REASONS.REFLECT_NO_DESTINATION, 'reflect-no-destination');
+  for (const fixtureName of ['reflect-ledger-3876.md', 'reflect-table-3877.md']) {
+    const e = stagedDigest('reflect-1.md', { section: 'Skill updates' }, fixtureName);
+    assert.strictEqual(e.deferReason, 'reflect-no-destination', fixtureName);
+    assert.ok(e.finding.startsWith('reflect-1.md (Skill updates): '), `${fixtureName}: label and finding text are unchanged (${e.finding})`);
+    // The materiality fingerprint omits deferReason: a line already digested under the old reason still dedups.
+    assert.strictEqual(
+      materialityFingerprint(e),
+      materialityFingerprint({ ...e, deferReason: DIGEST_REASONS.UNMAPPED_KIND }),
+      fixtureName,
+    );
+  }
+});
+
+test('AC3.2 orthogonal: a reflect file that is not a no-destination observation/convention keeps the unmapped-kind reason (#4168)', () => {
+  const reflect = (category, destination) => `# Reflect — staged finding 1\n\n**Category:** ${category}\n${destination}\n## Finding\n\nThe ledger grew.\n`;
+  const digestOf = (name, section, text) => dispose(stagedItem({ name, section }), undefined, files({ [name]: text })).digest.entry;
+  assert.strictEqual(
+    digestOf('reflect-1.md', 'Skill updates', reflect('observation', '**Destination:** decline not worth a record\n')).deferReason,
+    DIGEST_REASONS.UNMAPPED_KIND,
+    'a destination line that reached the backfill is not the legacy shape',
+  );
+  assert.strictEqual(digestOf('reflect-1.md', 'Queue writes', reflect('tangential', '')).deferReason, DIGEST_REASONS.UNMAPPED_KIND);
+  assert.strictEqual(digestOf('polish-1.md', 'Pending review', reflect('observation', '')).deferReason, DIGEST_REASONS.UNMAPPED_KIND, 'only a reflect- file');
+  const unreadable = dispose(stagedItem({ name: 'reflect-1.md', section: 'Skill updates' }), undefined, files({})).digest.entry;
+  assert.strictEqual(unreadable.deferReason, DIGEST_REASONS.UNMAPPED_KIND, 'an absent file has no text to judge');
 });
 
 test('R14b: an insights table digests as its first data row', () => {

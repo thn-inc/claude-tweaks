@@ -17,6 +17,7 @@ const { SHADOW_DUP_RE, SECTIONS, runIdOf } = require('./resolve');
 const { composeFindingProposal, findingFingerprint, fingerprintMap } = require('./finding-filing');
 const { composeShadowDupProposal } = require('./shadow-dup-proposal');
 const { digestTextOf, targetOf } = require('./staged-digest-text');
+const { REFLECT_NO_DESTINATION, isApplicableReflect, parseReflectDestination } = require('./reflect-destination');
 const { BACKFILL_OUTCOMES, BACKFILL_SOURCES } = require('./backfill-apply');
 const { materialityEntryLine, materialityFingerprint, parseMaterialityFingerprints } = require('../health-core/materiality-digest');
 const { fingerprintFromBasis } = require('../health-core/fingerprint');
@@ -28,6 +29,7 @@ const { isTrustedComment } = require('../issues/comment-trust');
 const DIGEST_REASONS = Object.freeze({
   NO_CLAIM: 'console-backfill-no-claim',
   UNMAPPED_KIND: 'console-backfill-unmapped-kind',
+  REFLECT_NO_DESTINATION,
   CONFIRMED_LOW: 'console-backfill-confirmed-low',
   CANT_TELL: 'tiebreak-cant-tell',
 });
@@ -256,12 +258,15 @@ function disposeStaged({ item, runId, readStaged }) {
   // The files the line names: a reflect file's **Files:** value, else a patch proposal's Target:, else `general`.
   const target = typeof text === 'string' ? targetOf(text) : null;
   const fileRefs = (files && squash(files[1])) || (target && squash(target)) || 'general';
+  // A reflect observation/convention staged before destination lines existed (#4168) digests under its
+  // own reason — the one reflect-apply.js gives a live file with no destination line.
+  const legacyReflect = typeof text === 'string' && isApplicableReflect(s.name, text) && parseReflectDestination(text).kind === 'none';
   return result(item, 'digest', 'digest', {
     digest: digestEntryOf({
       item,
       finding: first ? `${label}: ${first}` : label,
       fileRefs,
-      deferReason: DIGEST_REASONS.UNMAPPED_KIND,
+      deferReason: legacyReflect ? DIGEST_REASONS.REFLECT_NO_DESTINATION : DIGEST_REASONS.UNMAPPED_KIND,
       runId,
     }),
   });

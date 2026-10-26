@@ -36,7 +36,7 @@ The compact form never suppresses information, only empty scaffolding: if any se
 ```markdown
 ## Review: {spec number or description}
 
-**Review effort:** {tier} (derived from {explicit argument | record labels: risk:{x} × size:{y} | diff heuristic: {reasoning}})
+**Review effort:** {tier} (derived from {explicit argument | record labels: risk:{x} × size:{y} | diff heuristic: {reasoning} | label {a}, diff heuristic {b} (risk:{x} × size:{y}; {reasoning})})
 {only when a lens fell back to single-read coverage — `step3-lens-dispatch.md`'s partner-died paragraph:} **Coverage caveat:** {every affected lens with its reason, e.g. 3b (timed out), 3c (unavailable)} — single-read coverage, findings unconfirmed
 
 ### Spec Compliance (spec-based only)

@@ -257,14 +257,14 @@ test('a staged item named on a REFUSED line in decisions.md resolves to refused,
   assert.strictEqual(by['leftover-y.md'].resolution, 'apply', 'an unrefused sibling keeps its Queue writes stance');
 });
 
-test('a Category: observation/convention reflect finding never resolves to Queue writes/apply, but Category: tangential still does (#2473)', () => {
-  const observation = '# Reflect — staged finding 1\n\n**Category:** observation\n**Severity:** low\n**Reversibility:** high\n**Source:** full mode, lens "Near-misses"\n**Files:** general (test suite infrastructure)\n\n## Finding\n\nSome observation with no Title:/Type:/Labels: header.\n';
-  const convention = '# Reflect — staged finding 2\n\n**Category:** convention\n**Severity:** low\n**Reversibility:** high\n**Source:** full mode, lens "Approach"\n**Files:** general\n\n## Finding\n\nA convention-drift finding.\n';
+test('AC1.1/AC1.2: reflect observation and convention classify to Skill updates and resolve approve (#4168)', () => {
+  const observation = '# Reflect — staged finding 1\n\n**Category:** observation\n**Severity:** low\n**Reversibility:** high\n**Destination:** decline not actionable\n**Source:** full mode, lens "Near-misses"\n**Files:** general (test suite infrastructure)\n\n## Finding\n\nSome observation with no Title:/Type:/Labels: header.\n';
+  const convention = '# Reflect — staged finding 2\n\n**Category:** convention\n**Severity:** low\n**Reversibility:** high\n**Destination:** edit plugin/skills/review/SKILL.md\n**Source:** full mode, lens "Approach"\n**Files:** general\n\n## Finding\n\nA convention-drift finding.\n';
   const tangential = 'Title: Some backlog idea\nType: task\nLabels: none\nDefer-reason: tangential\n\n# Reflect — staged finding 3\n\n**Category:** tangential\n\n## Current State\n\nx\n\n## Deliverables\n\n- [ ] y\n\n## Acceptance Criteria\n\n1. z\n';
 
-  assert.strictEqual(classifyStagedItem('reflect-1.md', observation).section, 'Pending review');
-  assert.strictEqual(classifyStagedItem('reflect-1.md', observation).reason, 'non-tangential-category:observation');
-  assert.strictEqual(classifyStagedItem('reflect-2.md', convention).reason, 'non-tangential-category:convention');
+  assert.deepStrictEqual(classifyStagedItem('reflect-1.md', observation), { section: 'Skill updates' });
+  assert.deepStrictEqual(classifyStagedItem('reflect-2.md', convention), { section: 'Skill updates' });
+  // AC1.3: tangential still Queue writes
   assert.deepStrictEqual(classifyStagedItem('reflect-3.md', tangential), { section: 'Queue writes' });
 
   const r = resolveAll({
@@ -273,12 +273,61 @@ test('a Category: observation/convention reflect finding never resolves to Queue
     deps: deps(),
   });
   const by = Object.fromEntries(r.items.map((i) => [i.id, i]));
-  assert.strictEqual(by['reflect-1.md'].section, 'Pending review');
-  assert.strictEqual(by['reflect-1.md'].resolution, 'pending');
-  assert.strictEqual(by['reflect-2.md'].section, 'Pending review');
-  assert.strictEqual(by['reflect-2.md'].resolution, 'pending');
+  for (const id of ['reflect-1.md', 'reflect-2.md']) {
+    assert.strictEqual(by[id].section, 'Skill updates', id);
+    assert.strictEqual(by[id].resolution, 'approve', id);
+  }
   assert.strictEqual(by['reflect-3.md'].section, 'Queue writes', 'a genuine tangential finding still classifies into Queue writes');
   assert.strictEqual(by['reflect-3.md'].resolution, 'apply', 'a genuine tangential finding still auto-resolves to apply, unchanged from today');
+  assert.strictEqual(r.items.filter((i) => i.resolution === 'pending').length, 0, 'no staged reflect item is left pending');
+});
+
+test('AC1.4: a reflect file with no Category line classifies exactly as before — a Destination line without a Category changes nothing (#4168)', () => {
+  assert.deepStrictEqual(classifyStagedItem('reflect-5.md', '# Reflect\n\n**Destination:** decline x\n'), { section: 'Queue writes' });
+  assert.deepStrictEqual(classifyStagedItem('reflect-5.md', '# Reflect\n\nplain\n'), { section: 'Queue writes' });
+});
+
+test('AC3 (classification): a legacy reflect file with no destination line classifies to Skill updates (#4168)', () => {
+  const text = readText(path.join(ROOT, 'tests', 'bin-lib', 'console', 'fixtures', 'staged', 'reflect-ledger-3876.md'));
+  assert.ok(!/\*\*Destination:\*\*/.test(text), 'the real legacy fixture carries no destination line');
+  assert.deepStrictEqual(classifyStagedItem('reflect-1.md', text), { section: 'Skill updates' });
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': text }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  assert.strictEqual(r.items[0].section, 'Skill updates');
+  assert.strictEqual(r.items[0].resolution, 'approve');
+});
+
+test('a reflect record with a valid Defer-reason classifies to Skill updates (#4168)', () => {
+  const text = '# Reflect\n\n**Category:** observation\n**Destination:** record\n\n## Finding\n\nx\n\n## Record proposal\n\nTitle: Fix the thing\nType: task\nLabels: none\nDefer-reason: genuinely-larger\n\n## Current State\n\nx\n';
+  assert.deepStrictEqual(classifyStagedItem('reflect-1.md', text), { section: 'Skill updates' });
+});
+
+test('reflect record with an invalid Defer-reason classifies Refused and resolves refused (#4168)', () => {
+  const text = (reason) => '# Reflect\n\n**Category:** observation\n**Destination:** record\n\n## Finding\n\nx\n\n## Record proposal\n\nTitle: Fix the thing\nType: task\nLabels: none\n' + (reason ? 'Defer-reason: ' + reason + '\n' : '') + '\n## Current State\n\nx\n';
+  assert.deepStrictEqual(classifyStagedItem('reflect-1.md', text('not-a-reason')), { section: 'Refused — no defer reason' });
+  assert.deepStrictEqual(classifyStagedItem('reflect-1.md', text(null)), { section: 'Refused — no defer reason' });
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': text('not-a-reason') }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  assert.strictEqual(r.items[0].section, 'Refused — no defer reason');
+  assert.strictEqual(r.items[0].resolution, 'refused');
+});
+
+test('an invalid reflect destination stays pending with a named reason (#4168)', () => {
+  const text = '# Reflect\n\n**Category:** convention\n**Destination:** decline a\n**Destination:** decline b\n\n## Finding\n\nx\n';
+  assert.deepStrictEqual(classifyStagedItem('reflect-1.md', text), { section: 'Pending review', reason: 'reflect-destination-invalid:multiple-destination-lines' });
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': text }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  assert.strictEqual(r.items[0].section, 'Pending review');
+  assert.strictEqual(r.items[0].resolution, 'pending');
+  assert.strictEqual(r.items[0].reason, 'reflect-destination-invalid:multiple-destination-lines');
+});
+
+test('characterization (#4168): every non-tangential Category outside reflect observation/convention keeps its #2473 Pending review reroute', () => {
+  // Outside reflect observation/convention, #2473's non-tangential reroute holds: these stay exactly as they are.
+  assert.deepStrictEqual(classifyStagedItem('reflect-1.md', '**Category:** other\n'), { section: 'Pending review', reason: 'non-tangential-category:other' });
+  assert.deepStrictEqual(classifyStagedItem('reflect-1.md', '**Category:** Design-Drift\n'), { section: 'Pending review', reason: 'non-tangential-category:Design-Drift' });
+  assert.deepStrictEqual(classifyStagedItem('leftover-1.md', '**Category:** observation\n'), { section: 'Pending review', reason: 'non-tangential-category:observation' });
+  assert.deepStrictEqual(classifyStagedItem('digest-promotion-1.md', '**Category:** convention\n'), { section: 'Pending review', reason: 'non-tangential-category:convention' });
+  assert.deepStrictEqual(classifyStagedItem('reflect-1.md', '**Category:** Tangential\n'), { section: 'Queue writes' });
+  assert.deepStrictEqual(classifyStagedItem('reflect-1.md'), { section: 'Queue writes' });
+  assert.deepStrictEqual(classifyStagedItem('reflect-1.md', '# Reflect\n\nno category line\n'), { section: 'Queue writes' });
 });
 
 test('every ENGINE_ROW_SECTIONS row classifies a staged finding into its own console section (#1932 M9)', () => {
