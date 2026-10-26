@@ -30,9 +30,9 @@
 'use strict';
 const fs = require('fs');
 const ctxLib = require('./context');
-const { parseWorktreeList, lockVerdict } = require('./worktree-reap');
-const { mainCheckoutRoot, safeReal } = require('./worktree-detect');
-const { runGit } = require('./git-exec');
+const { runLiveness, blocksResume } = require('../run-liveness');
+const { DEFAULT_PROBES } = require('../run-liveness/probes');
+const { LIVE_WINDOW_MS } = require('../run-liveness/constants');
 
 // "On the order of minutes" (the spec's own phrasing): long enough that a
 // burst of commits from a single working session's normal cadence doesn't
@@ -41,15 +41,15 @@ const { runGit } = require('./git-exec');
 // safety decision, not a stylistic preference, and the threshold plus its
 // rationale living here (rather than scattered across call sites) is the
 // point of having one shared probe.
-const RESUME_FRESHNESS_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+const RESUME_FRESHNESS_THRESHOLD_MS = LIVE_WINDOW_MS; // 10 minutes
 
 // runDir: the pipeline run directory whose run-state.json to read.
-// opts: { sessionId, now, thresholdMs } — all optional; sessionId should be
-// the caller's own CLAUDE_CODE_SESSION_ID, now/thresholdMs default below.
+// opts: { sessionId, now, probes } — all optional; sessionId should be the
+// caller's own CLAUDE_CODE_SESSION_ID, now defaults below, and probes is merged
+// over run-liveness's DEFAULT_PROBES by runLiveness (a test seam).
 function checkResumeFreshness(runDir, opts = {}) {
   const sessionId = opts.sessionId || null;
   const now = typeof opts.now === 'number' ? opts.now : Date.now();
-  const thresholdMs = typeof opts.thresholdMs === 'number' ? opts.thresholdMs : RESUME_FRESHNESS_THRESHOLD_MS;
 
   const state = ctxLib.readRunState(runDir);
   if (!state) return { safe: true, verdict: 'no-state' };
@@ -72,48 +72,36 @@ function checkResumeFreshness(runDir, opts = {}) {
   if (!worktree) return { safe: true, verdict: 'no-worktree' };
   if (!fs.existsSync(worktree)) return { safe: true, verdict: 'worktree-gone' };
 
-  // (b) worktree lock-file pid liveness. Resolve the lock verdict directly
-  // (rather than through isWorktreeLocked's collapsed boolean) so an
-  // unresolvable root or a failed `git worktree list` reads as
-  // `indeterminate` rather than being reported to a human as a confirmed
-  // live lock — see #676's final review, Important finding #1.
-  const wtRoot = mainCheckoutRoot(worktree);
-  if (!wtRoot) {
-    return { safe: false, verdict: 'indeterminate', reason: 'could not resolve the recorded worktree\'s main checkout to check its lock state' };
-  }
-  const { stdout: wtListOut, failure: wtListFailure } = runGit(['worktree', 'list', '--porcelain'], wtRoot);
-  if (wtListFailure) {
-    return { safe: false, verdict: 'indeterminate', reason: 'could not list worktrees to check lock state' };
-  }
-  const target = safeReal(worktree) || worktree;
-  const entry = parseWorktreeList(wtListOut).find(
-    (e) => (safeReal(e.path) || e.path) === target || e.path === worktree
-  );
-  if (entry && lockVerdict(entry) === 'in-use') {
-    return { safe: false, verdict: 'locked', reason: 'worktree lock held by a live process' };
-  }
-
-  // (a) last-commit age in the run's recorded worktree.
-  const { stdout, failure } = runGit(['log', '-1', '--format=%ct'], worktree);
-  if (failure || !stdout) {
-    // Fail CLOSED: a run genuinely stamped `interrupted` whose activity we
-    // cannot verify is not safe-by-default — see the Global Constraints
-    // note in the plan this module was built from.
-    return { safe: false, verdict: 'indeterminate', reason: 'could not determine worktree activity' };
-  }
-  const commitMs = Number(stdout) * 1000;
-  if (!Number.isFinite(commitMs)) {
-    return { safe: false, verdict: 'indeterminate', reason: 'could not parse last-commit timestamp' };
-  }
-  const ageMs = now - commitMs;
-  if (ageMs < thresholdMs) {
+  // The worktree lock and last-commit answers come from run-liveness's
+  // `worktree-lock` and `last-commit` evidence, read through `blocksResume`
+  // (only those two probes can block a resume; the owner probes never do). An
+  // unknown answer — an unknown lock, an unlisted worktree, a failed listing or
+  // `git log`, an unparseable time — is an `error` entry, so it fails CLOSED
+  // to `indeterminate` rather than reading as "not locked" / "quiet". The raw
+  // commit time is captured through the probe wrapper because the evidence
+  // entry carries only a verdict, and `recent-commit` reports `ageMs`.
+  let commitAt = null;
+  const lastCommitAt = (opts.probes && opts.probes.lastCommitAt) || DEFAULT_PROBES.lastCommitAt;
+  const probes = { ...(opts.probes || {}), lastCommitAt: (wt) => (commitAt = lastCommitAt(wt)) };
+  const result = runLiveness(runDir, { now, probes });
+  const entry = (name) => result.evidence.find((e) => e.probe === name);
+  const lock = entry('worktree-lock');
+  const commit = entry('last-commit');
+  if (lock.result === 'positive') return { safe: false, verdict: 'locked', reason: 'worktree lock held by a live process' };
+  if (commit.result === 'positive') {
     return {
       safe: false,
       verdict: 'recent-commit',
-      reason: `worktree committed to within the last ${Math.round(thresholdMs / 60000)} minutes`,
-      ageMs,
+      reason: `worktree committed to within the last ${Math.round(RESUME_FRESHNESS_THRESHOLD_MS / 60000)} minutes`,
+      ageMs: now - commitAt,
     };
   }
+  // Fail CLOSED: a run genuinely stamped `interrupted` whose activity we
+  // cannot verify is not safe-by-default — see the Global Constraints
+  // note in the plan this module was built from.
+  if (blocksResume(result)) return { safe: false, verdict: 'indeterminate', reason: (lock.result === 'error' ? lock : commit).detail };
+  // An empty log / unborn HEAD is "no evidence of quiet", not "quiet".
+  if (commit.detail === 'no-commits') return { safe: false, verdict: 'indeterminate', reason: 'could not determine worktree activity' };
 
   return { safe: true, verdict: 'stale' };
 }
