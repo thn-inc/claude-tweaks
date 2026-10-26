@@ -60,6 +60,8 @@ not fire — bind this group's minted run to it from this dispatching session be
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$GROUP_RUN_DIR" "{worktree}" --dispatch
 ```
 
+An express-eligible singleton is bound with the same call minus `--dispatch` (`SKILL.md` Step 5's Express lane, which re-binds it with `--dispatch` on escalation). When `express-lane` resolves `true`, that section's `express-lane.js gate` runs first, before this bind: its verdict decides which form applies.
+
 `{worktree}` is the group's worktree path — the `EnterWorktree(path:)` target, or the
 `git worktree add` path for a cwd-pinned session (`sequential-execution.md`, #447). For a cwd-pinned
 session the bind still runs, but the gate stays inert: its Task calls reach the worktree only through

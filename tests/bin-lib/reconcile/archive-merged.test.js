@@ -16,7 +16,7 @@ const {
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin, resolveIdenticalWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, unclosedRecords, runRecordSet, inFlightRecords,
-  listStagedItems, hasStagedItems, consoleReplacedByAutoMerge, consoleResidue, consoleResidueHint,
+  listStagedItems, hasStagedItems, consoleReplacedByAutoMerge, consoleResidue, consoleResidueHint, filingRerunRemedy,
   unfiledCantTellFindings, CANT_TELL_UNFILED_HINT,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { unfiledCantTell } = require('../../../plugin/bin/lib/console/finding-outcomes');
@@ -3737,6 +3737,63 @@ test('consoleResidueHint: names only the unreadable console.json when no item is
   fs.mkdirSync(path.dirname(badPath), { recursive: true });
   fs.writeFileSync(badPath, '{not json');
   assert.strictEqual(consoleResidueHint(runDir), `repair or remove ${badPath}`);
+});
+
+// #4170: a planned can't-tell filing (`console.json#filings`) with no filed line in decisions.md is
+// `filing-pending` residue; the refusal names the `console-filings.js --only` re-run beside the ack.
+const PLANNED_FILED_LINE = '- AUTO 10:00:00 — Queue write: tiebreak:aaaaaaaaaaaa filed as #501 (work-fingerprint consolefinding-0123abcd). Reversibility: n/a.\n';
+function plannedFilingRunDir() {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-filing-'));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:aaaaaaaaaaaa', section: 'Low-confidence findings', resolution: 'filed', reason: 'r' }],
+    filings: [{ item: 'tiebreak:aaaaaaaaaaaa', fingerprint: 'consolefinding-0123abcd', title: 't' }],
+  }));
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '## /wrap-up\n');
+  return runDir;
+}
+test('AC3.1: a console holding a planned filing with no record reads residue and the hint names the console-filings.js --only re-run (#4170)', () => {
+  const runDir = plannedFilingRunDir();
+  assert.strictEqual(readConsoleState(runDir), 'residue');
+  assert.deepStrictEqual(consoleResidue(runDir), { items: 1, unreadable: [], names: ['tiebreak:aaaaaaaaaaaa (filing-pending)'] });
+  assert.ok(consoleResidueHint(runDir).includes(
+    `re-run the planned filing(s): console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --only 'tiebreak:aaaaaaaaaaaa', then file each printed \`file\` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any \`logFailures\` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each \`deduped\` entry itself), via log-decision.js \`--run\` that console's dir, per wrap-up/review-console.md's Can't-tell filings; or review them, then run console-residue.js --ack --run "${runDir}"`,
+  ), consoleResidueHint(runDir));
+});
+test('filingRerunRemedy is empty for a residue console with no planned filing (#4170)', () => {
+  const runDir = prConsoleRunDir([['f1', 'filing-failed']]);
+  assert.strictEqual(filingRerunRemedy(runDir), '');
+  assert.match(consoleResidueHint(runDir), /unresolved: f1 \(filing-failed\) — review them, then run console-residue\.js --ack --run /);
+});
+test('AC4.1: once the filed line is logged the run reads resolved (#4170)', () => {
+  const runDir = plannedFilingRunDir();
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), PLANNED_FILED_LINE);
+  assert.strictEqual(readConsoleState(runDir), 'resolved');
+});
+test('filingRerunRemedy names one re-run per unacknowledged console, each with only its unfiled planned filings (#4170)', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-filings-'));
+  const [a, b, c, d] = ['aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc', 'dddddddddddd'].map((h) => `tiebreak:${h}`);
+  const fp = { [a]: 'consolefinding-0123abcd', [b]: 'consolefinding-4567ef01', [c]: 'consolefinding-89abcdef', [d]: 'consolefinding-02468ace' };
+  const item = (id) => ({ id, section: 'Low-confidence findings', resolution: 'filed', reason: 'r' });
+  const filing = (id) => ({ item: id, fingerprint: fp[id], title: 't' });
+  const filedLine = (id, n) => `- AUTO 10:00:00 — Queue write: ${id} filed as #${n} (work-fingerprint ${fp[id]}). Reversibility: n/a.`;
+  const specConsole = (spec, { items, filings, filed = [], acknowledged = false }) => {
+    const dir = path.join(parent, `spec-${spec}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ resolved: true, mode: 'auto-resolve', items, filings, ...(acknowledged ? { residueAcknowledgedAt: '2026-10-25T10:00:00.000Z' } : {}) }));
+    fs.writeFileSync(path.join(dir, 'decisions.md'), `## /wrap-up\n${filed.join('\n')}\n`);
+    return dir;
+  };
+  // spec-1 mixes a filed filing, an unfiled one, and an unrelated keep-staged item the re-run must not name.
+  const one = specConsole(1, { items: [item(a), item(b), { id: 'reflect-1.md', section: 'Pending review', resolution: 'keep-staged', reason: 'r' }], filings: [filing(a), filing(b)], filed: [filedLine(a, 501)] });
+  const two = specConsole(2, { items: [item(c)], filings: [filing(c)] });
+  const three = specConsole(3, { items: [item(d)], filings: [filing(d)], acknowledged: true });
+  const remedy = filingRerunRemedy(parent);
+  assert.ok(remedy.includes(`console-filings.js --run "${one}" --existing <issues.json> --out-dir <dir> --only '${b}'`), remedy);
+  assert.ok(remedy.includes(`console-filings.js --run "${two}" --existing <issues.json> --out-dir <dir> --only '${c}'`), remedy);
+  assert.ok(!remedy.includes(three) && !remedy.includes(d), `an acknowledged console is not named: ${remedy}`);
+  assert.ok(!remedy.includes(a) && !remedy.includes('reflect-1.md'), `a filed filing and a non-filing item are not named: ${remedy}`);
 });
 
 test('decideArchiveCore: invalid-arguments skips with reason invalid-arguments (#3416)', () => {

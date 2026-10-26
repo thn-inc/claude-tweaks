@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  formatEntry, resolveTarget, appendEntry, STATUSES, normalizeSection,
+  formatEntry, resolveTarget, appendEntry, appendEntries, STATUSES, normalizeSection,
 } = require('../../../plugin/bin/lib/log-decision/append');
 
 // The schema line _shared/auto-decision-log.md documents — a test-side parser, so
@@ -182,6 +182,42 @@ test('appendEntry: creates the file, then inserts under the named section before
     '## /review\n' +
     '- AUTO 10:00:01 — c: d. Reversibility: high.\n' +
     '- AUTO 10:00:03 — g: h. Reversibility: high.\n');
+});
+
+test('appendEntries places a batch under mixed sections in order and matches sequential appendEntry output', () => {
+  const seed = '# Auto-Decision Log — pipeline x\n\n## /build\n- AUTO 08:00:00 — a: b. Reversibility: high.\n## /test\n- AUTO 08:00:01 — c: d. Reversibility: high.';
+  const items = [
+    { section: '/build', entry: '- AUTO 10:00:00 — e: f. Reversibility: high.' },
+    { entry: '- STAGED 10:00:01 — g: h. Reversibility: n/a.' },
+    { section: 'review', entry: '- AUTO 10:00:02 — i: j. Reversibility: low.' },
+  ];
+  const batchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-batch-'));
+  const seqDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-seq-'));
+  fs.writeFileSync(path.join(batchDir, 'decisions.md'), seed);
+  fs.writeFileSync(path.join(seqDir, 'decisions.md'), seed);
+  const r = appendEntries({ runDir: batchDir, items });
+  assert.deepEqual(r, { file: path.join(batchDir, 'decisions.md'), created: false });
+  for (const { section, entry } of items) appendEntry({ runDir: seqDir, section, entry });
+  const batchText = fs.readFileSync(path.join(batchDir, 'decisions.md'), 'utf8');
+  assert.equal(batchText, fs.readFileSync(path.join(seqDir, 'decisions.md'), 'utf8'));
+  assert.equal(batchText,
+    '# Auto-Decision Log — pipeline x\n\n## /build\n' +
+    '- AUTO 08:00:00 — a: b. Reversibility: high.\n' +
+    '- AUTO 10:00:00 — e: f. Reversibility: high.\n' +
+    '## /test\n' +
+    '- AUTO 08:00:01 — c: d. Reversibility: high.\n' +
+    '- STAGED 10:00:01 — g: h. Reversibility: n/a.\n' +
+    '## /review\n' +
+    '- AUTO 10:00:02 — i: j. Reversibility: low.\n');
+});
+
+test('appendEntries: creates the file on a fresh run dir; an empty batch writes nothing', () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-batch-'));
+  assert.deepEqual(appendEntries({ runDir, items: [] }), { file: path.join(runDir, 'decisions.md'), created: false });
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false);
+  const r = appendEntries({ runDir, items: [{ section: '/build', entry: '- AUTO 10:00:00 — a: b. Reversibility: high.' }, { section: '/build', entry: '- AUTO 10:00:01 — c: d. Reversibility: high.' }] });
+  assert.equal(r.created, true);
+  assert.equal(fs.readFileSync(r.file, 'utf8'), '## /build\n- AUTO 10:00:00 — a: b. Reversibility: high.\n- AUTO 10:00:01 — c: d. Reversibility: high.\n');
 });
 
 // #816: appendEntry's read-modify-write raced under concurrent invocations and could

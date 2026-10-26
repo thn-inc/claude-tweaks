@@ -81,8 +81,8 @@ function classify(err) {
 // Shared by both runGit and runGitAsync below — defined once so a future
 // fix to the success/failure shape (e.g. the #1341 stderr addition) cannot
 // land on one twin without the other picking it up automatically (#1652).
-function buildSuccess(stdout) {
-  return { stdout: stdout.trim(), failure: null, stderr: null };
+function buildSuccess(stdout, raw) {
+  return { stdout: raw ? stdout : stdout.trim(), failure: null, stderr: null };
 }
 
 function buildFailure(err) {
@@ -134,6 +134,11 @@ function buildFailure(err) {
 // process.env as before. An object is used as given, so `{}` is an empty
 // environment (no PATH), not "unset". Pass repoPinnedEnv() to keep `-C <cwd>` in
 // charge of which repo git operates on.
+//
+// opts.raw === true returns success `stdout` verbatim instead of trimmed (#3900).
+// A `-z` reader passes it: trimming strips the leading space of a NUL stream's
+// first path (" lead.txt" -> "lead.txt"), which then names a file that does not
+// exist. Any other value keeps the trim; the failure shape is unchanged.
 function runGit(args, cwd, opts = {}) {
   const timeout = resolveTimeout(opts);
   return runClassified(
@@ -149,7 +154,7 @@ function runGit(args, cwd, opts = {}) {
       // user as a runaway loop rather than routine janitorial work. Inert on
       // POSIX, where the option is ignored.
       windowsHide: true,
-    })),
+    }), opts.raw === true),
     buildFailure,
   );
 }
@@ -174,8 +179,9 @@ async function runGitAsync(args, cwd, opts = {}) {
     async () => {
       const { stdout } = await execFileAsyncTimed('git', ['-C', cwd, ...args], {
         encoding: 'utf8', timeout, windowsHide: true,
+        ...(opts.env ? { env: opts.env } : {}),
       });
-      return buildSuccess(stdout);
+      return buildSuccess(stdout, opts.raw === true);
     },
     buildFailure,
   );

@@ -32,7 +32,7 @@ files:
 - **URL:** `… --transcript <call-1 transcript> --transcript <call-2 transcript>`
 - **Action:** The dispatch orchestrator, which holds both Task-call transcript paths, passes them itself; `--auto-transcript` never discovers them.
 - **Should feel:** One timing line per group ends with `· {k} tokens in / {m} out`; the two transcripts are summed.
-- **Should understand:** Each Task call has its own agent transcript; nested subagents inside it are already folded into that file by the harness.
+- **Should understand:** Each Task call has its own agent transcript; nested subagents inside it are already folded into that file by the harness. A call continued after a context-cap handoff (#4027, `dispatch/reporting.md`) adds each continuation's transcript as one more `--transcript`; the flag repeats.
 - **Red flags:** A token clause on a group whose transcripts were not passed — the CLI printed a not-found note and the line should have omitted the clause.
 
 ### 3. Read the columns

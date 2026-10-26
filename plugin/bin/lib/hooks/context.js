@@ -12,6 +12,7 @@ const { classifyDecisions } = require('../log-decision/claim-log');
 const { canonicalRealpath } = require('../path-guard');
 const processProbe = require('../run-liveness/process-probe');
 const { HEARTBEAT_THROTTLE_MS } = require('../run-liveness/constants');
+const { probeOwnerPid } = require('../run-liveness/owner-pid-probe');
 const { claudePid } = processProbe;
 
 function readStdin() {
@@ -786,9 +787,12 @@ function isTrustedOwnedRun(ownedRun) {
 // still alive. A nested child's SessionEnd always fires while its parent is
 // alive (the parent's Bash tool is blocked on the child), so the incident case
 // keeps its protection. A dead owner is the crash + `claude --resume` shape: the
-// original process died without a SessionEnd, the resumed process (new pid, same
-// session id) never re-stamps ownerPid, and its ending is the run's real
-// interruption — suppressing it would regress to a never-flagged run. Probe
+// original process died without a SessionEnd, and a `resume` SessionStart
+// re-stamps ownerPid with the new process's pid (session-start.js's
+// restampOwnerPidOnResume); before that re-stamp — or for a run never resumed —
+// the dead owner is what isNestedSession sees, and the ending of the resumed
+// process (new pid, same session id) is the run's real interruption —
+// suppressing it would regress to a never-flagged run. Probe
 // errors other than "alive" fail open (never nested, never throw from a hook).
 // (claudePid itself lives in run-liveness/process-probe.js, imported above, so
 // the run-liveness modules can share it without requiring this file.)
@@ -796,7 +800,9 @@ function isTrustedOwnedRun(ownedRun) {
 // The run-state patch that stamps this process as the run's owner — empty when
 // the pid is unknown, so a stamp site never writes a garbled `ownerPid`. Shared
 // by every site that mints or re-stamps ownership (record-worktree, the ad-hoc
-// mints, the resume re-stamp in session-start.js).
+// mints, the resume re-stamp in session-start.js). #4153: `owner.pid` (#3973,
+// `ownerBlock` below) stamps the same process; `ownerPid`'s removal condition is in
+// docs/hooks.md's owner-block paragraph.
 function ownerPidPatch(env) {
   const pid = claudePid(env);
   return pid === null ? {} : { ownerPid: pid };
@@ -805,6 +811,8 @@ function ownerPidPatch(env) {
 // #3973: the run-state `owner` block — who owns this run and when it last proved it
 // was alive. `pidStartedAt` guards against pid reuse and is null whenever the pid is
 // unknown (the start time is then never probed). Pure but for the injected deps.
+// Its `pid` supersedes the top-level `ownerPid` (#3845, `ownerPidPatch` above), kept
+// only for `isNestedSession` (#4153).
 function ownerBlock({ sessionId, env = process.env, now = Date.now(), deps = {} } = {}) {
   const { pid, pidSource } = (deps.resolveOwnerPid || processProbe.resolveOwnerPid)(env);
   return {
@@ -837,20 +845,16 @@ function patchWithOwnerBlock(patch, sessionId, { replacesSessionId = false } = {
   return (current) => ({ ...patch, ...ownerStampPatch(current, sessionId, block, { replacesSessionId }) });
 }
 
-// Whether the process an owner block stamped is provably still running here. A failed
-// start-time probe (null) is unknown, never dead: only a probed start time that differs
-// from the stamped one is pid reuse. A probe that throws reads as alive (fail safe: never
-// take the block over on a question that could not be asked).
+// Whether the process an owner block stamped may still be running here — the takeover
+// gate. The verdict is run-liveness's owner-pid probe, the one judge runLiveness reports
+// too (#4153). Only a negative that rules the stamped process out (`other-host`, `no-pid`,
+// `gone`, `pid-reused`) allows takeover; `positive`, `alive-no-start-time`, and every
+// `error` (`start-time-unavailable`, `invalid-start-time`, a probe that threw) keep the
+// block — the `error` cases are what runLiveness reads as `unknown`, and a question that
+// could not be answered never takes a block over.
 function stampedOwnerProvablyAlive(owner, { hostname, aliveFn, startFn }) {
-  try {
-    const sameHostAlive = owner.host === hostname() && Number.isInteger(owner.pid) && aliveFn(owner.pid);
-    if (!sameHostAlive) return false;
-    if (owner.pidStartedAt == null) return true;
-    const startedAt = startFn(owner.pid);
-    return startedAt === null || startedAt === undefined || startedAt === owner.pidStartedAt;
-  } catch {
-    return true;
-  }
+  const { result, detail } = probeOwnerPid(owner, { hostname, pidAlive: aliveFn, pidStartTime: startFn });
+  return result !== 'negative' || detail === 'alive-no-start-time';
 }
 
 // #3973: the owner's own hooks keep the owner block fresh. Same pid as stamped: a
@@ -862,8 +866,14 @@ function stampedOwnerProvablyAlive(owner, { hostname, aliveFn, startFn }) {
 // `claude -p` sharing the session id — it must neither heartbeat nor take the block
 // over. Never gives a legacy run (no owner block) one, never acts on a `fallback`
 // guess or another session's run, and never throws (it runs on every hook event).
+// #4150: the throttle is checked BEFORE the owner-pid probe (resolveOwnerPid can spawn
+// up to 8 `ps` calls). Inside the window the only thing a probe can change is a
+// re-stamp, so the per-event path (hooks.js, every non-session-start event) returns
+// null with no probe at all and defers such a re-stamp to the first event outside the
+// window. session-start.js passes `restampWhileFresh: true` to keep the full probe
+// there, so a resume under a new process re-stamps at once.
 // Returns 'heartbeat' | 'restamp' | null (null: nothing written).
-function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {} } = {}) {
+function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}, restampWhileFresh = false } = {}) {
   try {
     const owned = ctx && ctx.ownedRun;
     if (!isTrustedOwnedRun(owned)) return null;
@@ -872,6 +882,11 @@ function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}
     const state = readRunState(owned.dir);
     const owner = state && state.owner;
     if (!owner || typeof owner !== 'object' || owner.sessionId !== sessionId) return null;
+
+    const last = Date.parse(owner.heartbeatAt);
+    const age = now - last;
+    const fresh = Number.isFinite(last) && age >= 0 && age < HEARTBEAT_THROTTLE_MS; // a future-stamped heartbeat (clock skew) is not fresh
+    if (fresh && !restampWhileFresh) return null;
 
     const hostname = deps.hostname || os.hostname;
     const cur = (deps.resolveOwnerPid || processProbe.resolveOwnerPid)(env);
@@ -895,8 +910,7 @@ function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}
       };
       result = 'restamp';
     } else {
-      const last = Date.parse(owner.heartbeatAt);
-      if (Number.isFinite(last) && now - last < HEARTBEAT_THROTTLE_MS) return null;
+      if (fresh) return null;
       fields = { heartbeatAt: new Date(now).toISOString() };
       result = 'heartbeat';
     }

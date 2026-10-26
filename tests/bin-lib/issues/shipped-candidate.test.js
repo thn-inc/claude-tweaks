@@ -182,3 +182,104 @@ test('no mentions at all classifies none', () => {
   assert.deepStrictEqual(classifyShipped(record, []), { tier: 'none', pr: null, signals: [] });
   assert.deepStrictEqual(classifyShipped(record, null), { tier: 'none', pr: null, signals: [] });
 });
+
+// ── #4314: a mention from a PR already open when the record was filed ──────
+// A follow-up record filed during a PR's own build is that PR's by-product
+// (#4135 filed while PR #4035 was open) — the PR "covering" its Key Files is
+// by construction, not evidence the record shipped.
+
+const FOLLOWUP_KEY_FILES = ['plugin/bin/lib/verify-scope/declaration.js', 'tests/verify-scope-declaration.test.js'];
+
+function followupRecord(overrides = {}) {
+  return {
+    number: 4135,
+    title: 'verify-scope declaration.js previous-release reader check',
+    createdAt: '2026-10-24T12:33:49Z',
+    body: withKeyFiles(FOLLOWUP_KEY_FILES),
+    ...overrides,
+  };
+}
+
+function followupMention(overrides = {}) {
+  return {
+    number: 4035,
+    title: 'Unrelated build PR title for #4024',
+    state: 'MERGED',
+    merged: true,
+    mergedAt: '2026-10-24T15:39:27Z',
+    createdAt: '2026-10-24T08:24:28Z',
+    ...overrides,
+  };
+}
+
+const followupPrFiles = new Map([[4035, [...FOLLOWUP_KEY_FILES, 'docs/plugin-structure.md']]]);
+
+test('AC1.1: #4135 shape — a record filed while the mentioning PR was already open classifies none for that mention', () => {
+  assert.deepStrictEqual(
+    classifyShipped(followupRecord(), [followupMention()], { prFiles: followupPrFiles }),
+    { tier: 'none', pr: null, signals: [] },
+  );
+});
+
+test('AC2.1: the same signals with the record created before the PR opened still classify strong', () => {
+  const result = classifyShipped(
+    followupRecord({ createdAt: '2026-10-24T07:00:00Z' }),
+    [followupMention()],
+    { prFiles: followupPrFiles },
+  );
+  assert.strictEqual(result.tier, 'strong');
+  assert.strictEqual(result.pr, 4035);
+  assert.ok(result.signals.includes('key-files-covered'));
+});
+
+test('AC2.2: a mention missing createdAt classifies exactly as today', () => {
+  const mention = followupMention();
+  delete mention.createdAt;
+  const result = classifyShipped(followupRecord(), [mention], { prFiles: followupPrFiles });
+  assert.strictEqual(result.tier, 'strong');
+  assert.strictEqual(result.pr, 4035);
+  assert.deepStrictEqual(result.signals, ['merged-pr-mention-after-created', 'key-files-covered']);
+});
+
+test('#4314: a record created at the exact instant the PR opened is not "before" — the mention still counts', () => {
+  const result = classifyShipped(
+    followupRecord({ createdAt: '2026-10-24T08:24:28Z' }),
+    [followupMention()],
+    { prFiles: followupPrFiles },
+  );
+  assert.strictEqual(result.tier, 'strong');
+});
+
+test("#4314: an unparseable mention createdAt keeps today's behavior", () => {
+  const result = classifyShipped(
+    followupRecord(),
+    [followupMention({ createdAt: 'not-a-date' })],
+    { prFiles: followupPrFiles },
+  );
+  assert.strictEqual(result.tier, 'strong');
+});
+
+test("#4314: a record with no createdAt keeps today's behavior", () => {
+  const record = followupRecord();
+  delete record.createdAt;
+  const result = classifyShipped(record, [followupMention()], { prFiles: followupPrFiles });
+  assert.strictEqual(result.tier, 'strong');
+});
+
+test('#4314: the exclusion is per mention — an opened-before follow-up mention is skipped while a later independent PR still classifies strong', () => {
+  const record = followupRecord();
+  const mentions = [
+    followupMention(),
+    {
+      number: 4400,
+      title: record.title,
+      state: 'MERGED',
+      merged: true,
+      mergedAt: '2026-10-25T10:00:00Z',
+      createdAt: '2026-10-25T09:00:00Z',
+    },
+  ];
+  const result = classifyShipped(record, mentions, { prFiles: followupPrFiles });
+  assert.strictEqual(result.tier, 'strong');
+  assert.strictEqual(result.pr, 4400);
+});

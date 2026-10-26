@@ -114,6 +114,35 @@ function assertGoesRed(relFile, needle, replacement) {
   assert.equal(findUnzippedReads([{ path: file, text: broken }]).length, 1, `${relFile} reports one violation without ${needle}`);
 }
 
+// raw: true pin: a runGit/runGitAsync call that passes '-z' is reading NUL-delimited
+// output, which runGit's default trim would corrupt (a first path beginning with a
+// space loses it), so the same line also carries `raw: true`. A line the marker waives
+// is not a path list.
+const RUN_GIT_CALL = /\brunGit(?:Async)?\(/;
+
+function findUnrawRunGitZ(files) {
+  const violations = [];
+  for (const { path: filePath, text } of files) {
+    text.split('\n').forEach((line, index) => {
+      if (EXEMPT_MARKER.test(line)) return;
+      if (RUN_GIT_CALL.test(line) && Z_FLAG.test(line) && !/\braw:\s*true\b/.test(line)) {
+        violations.push({ path: filePath, line: index + 1, text: line.trim() });
+      }
+    });
+  }
+  return violations;
+}
+
+// Same shape as assertGoesRed, for the raw: true finder.
+function assertRawGoesRed(relFile, needle, replacement) {
+  const file = path.join(BIN_DIR, relFile);
+  const live = readText(file);
+  assert.ok(live.includes(needle), `${relFile} contains ${needle}`);
+  assert.equal(findUnrawRunGitZ([{ path: file, text: live }]).length, 0, `${relFile} is clean as shipped`);
+  const broken = live.replace(needle, replacement);
+  assert.equal(findUnrawRunGitZ([{ path: file, text: broken }]).length, 1, `${relFile} reports one violation without ${needle}`);
+}
+
 function collectJsFiles(dir) {
   const out = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -248,6 +277,27 @@ test('--end-of-options go-red: removing it from a real reader line is a violatio
   const broken = live.replace(needle, "'-z', `${base}...HEAD`], { trim: false }));");
   assert.equal(findMissingEndOfOptions([{ path: file, text: live }]).length, 0);
   assert.equal(findMissingEndOfOptions([{ path: file, text: broken }]).length, 1);
+});
+
+test('findUnrawRunGitZ: a runGit -z call without raw: true is flagged; raw: true, no -z, and the marker pass', () => {
+  const flagged = (text) => findUnrawRunGitZ([{ path: 'x.js', text }]).length;
+  assert.equal(flagged("const r = runGit(['ls-files', '-z'], root);"), 1);
+  assert.equal(flagged("const r = await runGitAsync(['ls-files', '-z'], root);"), 1);
+  assert.equal(flagged("const r = runGit(['ls-files', '-z'], root, { raw: true });"), 0);
+  assert.equal(flagged("const r = runGit(['ls-files', '-z', '--', rel], root, { env: repoPinnedEnv(), raw: true });"), 0);
+  assert.equal(flagged("const r = runGit(['status'], dir);"), 0);
+  assert.equal(flagged("const r = runGit(['ls-files', '-z'], root); // git-path-read: not a path list (emptiness only)"), 0);
+});
+
+test('every plugin/bin runGit/runGitAsync call that passes -z also passes raw: true on the same line', () => {
+  const files = collectJsFiles(BIN_DIR).map((p) => ({ path: p, text: fs.readFileSync(p, 'utf8') }));
+  assert.ok(files.length > 0, 'walked at least one plugin/bin file');
+  assert.deepEqual(findUnrawRunGitZ(files), []);
+});
+
+test('raw: true go-red: removing it from a real -z runGit caller is a violation', () => {
+  assertRawGoesRed(path.join('lib', 'hooks', 'worktree-reap.js'), 'branch], repoRoot, { raw: true }', 'branch], repoRoot');
+  assertRawGoesRed(path.join('lib', 'reconcile', 'archive-merged.js'), "'ls-files', '-z', '--', runDir], root, { raw: true }", "'ls-files', '-z', '--', runDir], root");
 });
 
 test('AC3.1: the _shared contract states the rule and names the reference implementations', () => {

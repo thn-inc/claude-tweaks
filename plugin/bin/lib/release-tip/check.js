@@ -14,7 +14,6 @@
 const { escapeRegExp } = require('../shared-primitives.js');
 const { bumpPart } = require('../release-local/bump.js');
 const { readCommits } = require('../release-local/commits.js');
-const { readBumpFlags } = require('../release-local/manifest.js');
 
 const REVIEWED_TIP_RE = /at reviewed tip ([0-9a-f]{40})(?![0-9a-f])/;
 const DELTA_VERDICT_RE = /delta review base ([0-9a-f]{40})\.\.[^:\s]+: .*at reviewed tip ([0-9a-f]{40})(?![0-9a-f])/;
@@ -76,23 +75,20 @@ class GitError extends Error {
 }
 
 // The bump part of the commits that arrived between two tips — the same
-// derivation the release engine applies (bumpPart over readCommits, flags
-// from release-please-config.json at the tip), never a re-implementation.
-// All parents are followed (`firstParent: false`), release-please's own range
-// semantics under pr-first. `git(args)` returns { status, stdout, stderr };
+// derivation the release engine applies (bumpPart over readCommits), never a
+// re-implementation. The pre-major flags are the caller's (the run's pack's
+// proposedVersion), passed to bumpPart, whose own defaults apply to any that
+// are undefined. All parents are followed (`firstParent: false`), release-please's
+// own range semantics under pr-first. `git(args)` returns { status, stdout, stderr };
 // a failed `git log` throws GitError carrying git's stderr verbatim.
-function arrivedPart({ git, base, tip, preMajor }) {
+function arrivedPart({ git, base, tip, preMajor, bumpMinorPreMajor, bumpPatchForMinorPreMajor }) {
   const stdoutGit = (args) => {
     const r = git(args);
     if (r.status !== 0) throw new GitError(args, r.status, r.stderr);
     return r.stdout;
   };
   const commits = readCommits(stdoutGit, base, tip, { firstParent: false });
-  const flags = readBumpFlags((p) => {
-    const r = git(['show', `${tip}:${p}`]);
-    return r.status === 0 ? r.stdout : null;
-  });
-  return { base, tip, part: bumpPart(commits, { preMajor, ...flags }), shas: commits.map((c) => c.sha) };
+  return { base, tip, part: bumpPart(commits, { preMajor, bumpMinorPreMajor, bumpPatchForMinorPreMajor }), shas: commits.map((c) => c.sha) };
 }
 
 const MAX_ADVANCES = 20;
@@ -128,7 +124,7 @@ function readBound(r) {
 // resume reads the advanced tip. `resolveBound()` is the raw spawn result of
 // `resolve-policy.js --run <run> release-tip-moves`; no default is ever
 // substituted for a bound that could not be read.
-function checkReviewedTip({ decisionsText, branch, asGiven, preMajor }, { git, resolveBound, appendLog }) {
+function checkReviewedTip({ decisionsText, branch, asGiven, preMajor, bumpMinorPreMajor, bumpPatchForMinorPreMajor }, { git, resolveBound, appendLog }) {
   const parsed = parseReleaseLog(decisionsText, branch);
   const state = {
     branch, reviewedTip: parsed.reviewedTip, step3Tip: parsed.step3Tip, tipSha: null, commits: null,
@@ -143,7 +139,7 @@ function checkReviewedTip({ decisionsText, branch, asGiven, preMajor }, { git, r
 
   if (!asGiven && parsed.lastDelta) {
     try {
-      state.arrived = arrivedPart({ git, base: parsed.lastDelta.base, tip: parsed.lastDelta.tip, preMajor });
+      state.arrived = arrivedPart({ git, base: parsed.lastDelta.base, tip: parsed.lastDelta.tip, preMajor, bumpMinorPreMajor, bumpPatchForMinorPreMajor });
     } catch (err) {
       if (err instanceof GitError) return out('failed', 'git error', err.stderr);
       throw err;

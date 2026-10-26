@@ -17,7 +17,7 @@ After the cleanup, also apply:
 - **Docs-health restructural filings** — for restructural docs-health findings (`docs-health-integration.md`'s D1) approved at the Console, re-run `validate-findings` without `--dry-run` and file each surviving payload via `gh issue create`, per that file's filing procedure
 - **Decision records (ADRs)** — write the approved ADR files at the path the Decision records curation row resolved (`adr-curation.md` Step 3 — never a path recomputed here), using the ADR skeleton in `_shared/diataxis-genre-templates.md`, and add them to `docs/REGISTRY.md` if a registry exists. **A resolved path that already exists stops that row** — report it and leave the file untouched; never overwrite and never silently take the next free number
 - **Genre convention resolution** — when a `[{genre}-convention]` row was answered (`[adr-convention]` from the Decision records curation row, a Diátaxis-genre row from the Docs curation row's D2 check, or `[journey-convention]` staged by `/claude-tweaks:journeys` Step 2 — `wrap-up/console-template.md`'s render template is genre-generic), first write the answer to `.claude-tweaks/policy.yml` as `doc-convention-{genre}: plugin` or `doc-convention-{genre}: project` (option 2 records `plugin`, since migration is how the repo conforms). For option 2 only, then execute the migration as one itemized batch: `git mv` each existing file to the plugin's grammar preserving its number/name, rewrite the matching `docs/REGISTRY.md` rows, and sweep the repo for inbound references to the old basenames (`grep -rl "{old-basename}" --include="*.md" .`) fixing each — for `[journey-convention]`, this batch also includes this run's own newly-created journey files, per `journeys/SKILL.md` Step 2's staging note. Report the file count moved and the reference count rewritten. Never migrate without that row's explicit approval. Resolving a D2 `[{genre}-convention]` row is what unblocks the matching `[doc]` row skipped above — apply it in the same pass once both are resolved
-- **Skill updates** — apply patches and create new skills (items the Skills curation row staged, once approved)
+- **Skill updates** — apply patches and create new skills (items the Skills curation row staged, once approved) — a `staged/reflect-{n}.md` row is applied by `review-console.md` step 2's reflect clause, not as a patch
 - **Memory updates** — already written when resolved. The console executes, in every mode: for each `M#` item resolved to Apply — its Approve all default, an Override chunk answer, or `consoleAutoResolve`'s own auto-resolution (`review-console.md`'s Auto-resolution short-circuit) — `review-console.md`'s "On approval" step 8 wrote the memory file and appended its `MEMORY.md` index line per `_shared/learning-routing.md`'s "Memory write procedure (D4)" at batch approval or auto-resolution. This step does not write it again; it confirms it landed. That same resolution step also writes `verify-expectations.json`'s `memory` key in `$PIPELINE_RUN_DIR` — an empty array when nothing resolved to Apply for this run — see Verify execution below
 - **Upstream feedback** — already filed when resolved to filed. The console executes, in every mode: for each `U#` item resolved to filed — an Override chunk answer, or `consoleAutoResolve`'s own auto-resolution (the one path where Approve all's own default is overridden to filed; see `review-console.md`'s Auto-resolution short-circuit) — `review-console.md`'s "On approval" step 9 invoked `/claude-tweaks:feedback --pre-confirmed` with the staged, already-scrubbed body at that moment — the console's own resolution satisfies `/feedback`'s confirm gate for that item unless its drift check finds the staged file changed since the console rendered it, in which case `/feedback` falls back to its own per-item confirm (`feedback/SKILL.md`'s Step 7) and files only after that. This step does not invoke `/feedback` again; it confirms the filing landed. That same resolution step also writes `verify-expectations.json`'s `upstream` key in `$PIPELINE_RUN_DIR` — an empty array when nothing resolved to filed for this run — see Verify execution below
 - **Acceptance labeling** (record mode only — Phase 1's record identity; a materialized header is not required) — run `verification-brief.md`'s procedure, starting from its **Routing** section. This run closes exactly one record, so pass that record's own number as `$CLOSING_SUB_ISSUES` — the one-element closing sub-issue set that file's **Self-inclusion rule** reads (`/claude-tweaks:dispatch`'s group gate is the one caller whose set holds more than one). That file owns the routing decision, not this bullet: it sends a record with a resolvable parent to its Parent-Gate Procedure (the parent carries one gate for all its sub-issues, and this sub-issue gets none) and everything else through its Steps 1-4 — for `app-route`/`rendered-page` plans, gating on a clean visual-review pass via Step 2.5's safety net when `/review` only produced a recommendation, then applying `demo:pending` and posting the Verification Brief. Do not re-derive the parent condition here; the two call sites that bypass this step entirely (`review-console.md`'s auto-merge short-circuit and `dispatch/settle-and-merge.md`'s group gate) inherit it from that same record-mode determination, which is the point of it living there. **Gate the read:** when this run is record mode, read `verification-brief.md` in this skill's directory — that file's Routing section (cited earlier in this bullet) internally sends a resolvable-parent record to its Parent-Gate Procedure and every other record through its Steps 1-4, applying Step 2.5's `app-route`/`rendered-page` safety net once plan kind is known there. Conversation-based work has no work record to label — skip this bullet and do not read the file (that file's own header states the same restriction)
@@ -38,12 +38,15 @@ work — carries no closing keyword; there was never an issue to close.
 at PR-open time — adding a second, differently-scoped set here would duplicate (and risk
 disagreeing with) that authoritative list. This step's commit is an ordinary commit.
 
-**Phase exit (`worktree` mode, `integration-model: pr-first`):** push this commit and flip
-wrap-up's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and
-`_shared/pr-checklist-refresh.md`'s Phase-checklist update section. This is the last phase-exit
+**Phase exit (any run with a run dir, `_shared/integration-model.md`):** one call pushes this
+commit and flips wrap-up's PR checklist row —
+`node "${CLAUDE_PLUGIN_ROOT}/bin/phase-exit.js" --run "{run-dir}" --phase wrap-up --worktree "{worktree-path}" --fixes {n}[,{m}...]`,
+in any model or mode; it pushes only under `pr-first` in `worktree` mode. `{run-dir}` is the
+archive path once cleanup item 8 archived the run directory (`_shared/git-discipline.md`'s
+Post-push merge-state check) — routed per `_shared/git-discipline.md`'s Phase exit section
+and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. This is the last phase-exit
 push of the run; it does not mark the PR ready for merge or touch its draft state — that
-transition belongs to the merge-path sub-issue, not this one (Non-Goals). A no-op under
-`local-merge` or `current-branch` mode.
+transition belongs to the merge-path sub-issue, not this one (Non-Goals).
 
 **Leave-open mergeability re-check (`worktree` mode, `integration-model: pr-first`, #3483).** When
 the Review Console's merge half resolved leave-open — `console.json`'s `merge.resolution` reads
@@ -53,12 +56,14 @@ before a human opens it. A sibling merge that landed during the run can have lef
 and GitHub then runs no `pull_request` workflow on it: the parked PR shows no test run, which reads
 as "checks still pending" (#3298). Here the run takes the conflict that `_shared/git-discipline.md`'s
 Post-push merge-state check otherwise leaves to the merge path at wrap-up's exit. Reuse the state
-that check's `pr-merge-state.js --phase wrap-up` call just printed — never a second read — unless
+that check's `pr-merge-state.js --phase wrap-up` read just printed (`phase-exit.js`'s
+`mergeState`) — never a second read — unless
 it printed `unknown` (GitHub's mergeability computation, which that request started, not finished
-straight after the push) or exited 3 because cleanup item 8 (`cleanup-procedures.md`) had already
-archived `$PIPELINE_RUN_DIR` — item 8 runs before this step's commit and push. Then take one read
-of its own, as the last call of this execution step — after the phase-exit push, its Post-push
-merge-state check and the PR checklist flip, before the Verify execution section:
+straight after the push), exited 3 because cleanup item 8 (`cleanup-procedures.md`) had already
+archived `$PIPELINE_RUN_DIR` — item 8 runs before this step's commit and push — or never printed
+one: `mergeState.exit` is `null` (the sub-CLI threw). Then take one read
+of its own, as the last call of this execution step — after the `phase-exit.js` call, before the
+Verify execution section:
 `node "${CLAUDE_PLUGIN_ROOT}/bin/pr-merge-state.js" --run "{run-dir}" --phase wrap-up`, where
 `{run-dir}` is `$PIPELINE_RUN_DIR` while it still resolves, or
 `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` once item 8 archived it

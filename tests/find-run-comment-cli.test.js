@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { run, parseArgs, findRunComments } = require('../plugin/bin/find-run-comment.js');
+const { run, parseArgs, findRunComments, firstTrustedMarkerComment } = require('../plugin/bin/find-run-comment.js');
 const { untrustedSkipNote, trustedJqSelect, untrustedJqNote } = require('../plugin/bin/lib/issues/comment-trust.js');
 
 const BIN = path.join(__dirname, '..', 'plugin', 'bin', 'find-run-comment.js');
@@ -43,6 +43,24 @@ function fakeDeps(readFile) {
 
 test('AC2.1: selects only a trusted author\'s marker comment and names each skipped one', () => {
   assert.deepEqual(findRunComments({ comments: C }, 'verdict'), MEMBER_VERDICT);
+});
+
+test('firstTrustedMarkerComment returns the comment findRunComments reports as id (#4331)', () => {
+  const hit = firstTrustedMarkerComment({ comments: C }, 'verdict');
+  assert.equal(hit, C[0]);
+  assert.equal(String(hit.id), findRunComments({ comments: C }, 'verdict').id);
+  // a bare array, the REST/MCP shape, selects the same way
+  assert.equal(firstTrustedMarkerComment(C, 'verdict'), C[0]);
+});
+
+test('firstTrustedMarkerComment is null with no trusted marker, with a trusted one that has no id, and for a non-list payload (#4331)', () => {
+  assert.equal(firstTrustedMarkerComment({ comments: [C[1], C[4]] }, 'verdict'), null);
+  const noId = { authorAssociation: 'MEMBER', body: '<!-- run-comment: verdict -->' };
+  assert.equal(firstTrustedMarkerComment({ comments: [noId] }, 'verdict'), null);
+  assert.equal(findRunComments({ comments: [noId] }, 'verdict').id, null);
+  // a trusted marker without an id is skipped for the next trusted one that carries an id
+  assert.equal(firstTrustedMarkerComment({ comments: [noId, C[0]] }, 'verdict'), C[0]);
+  assert.equal(firstTrustedMarkerComment('nope', 'verdict'), null);
 });
 
 test('AC2.1: a spec-qualified kind matches only its own marker', () => {

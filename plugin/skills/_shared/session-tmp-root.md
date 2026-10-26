@@ -145,3 +145,7 @@ one session file, `try-it-{N}.md`: wrap-up writes it and flow's Pipeline Summary
 **Extended (#4065):** `skills/_shared/pr-run-comments.md`'s Post-or-update procedure, which resolves both its
 comments payload (`{kind}-comments-{n}.json`) and its comment body (`{kind}-comment-{n}.md`) in one CLI call
 in step 1.
+
+**Extended (#4173):** `skills/_shared/pr-first-merge.md`'s Step 2.5, which resolves its checks capture
+(`pr-checks-{n}.txt`), head-runs capture (`pr-runs-{n}.json`) and park-comment body (`park-comment-{n}.md`)
+in one CLI call at the state read.

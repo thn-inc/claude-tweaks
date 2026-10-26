@@ -1382,3 +1382,37 @@ test('every failure path in the tiebreak, the refutation pass and the shared doc
 test('each failure-path fact can go red', () => {
   assertEachSectionFactGoesRed(failurePathTexts(), FAILURE_PATHS, failurePathsMissing);
 });
+
+// #4026: an agent copies step 2's command block verbatim, so each mode gets its own command. The
+// standalone one never carries `--run`: an unset $PIPELINE_RUN_DIR is `--run ""`, which exits 2.
+function tiebreakCommandProblems(section) {
+  const fences = [...section.matchAll(/([^\n]*)\n\n[ \t]*```bash\n([\s\S]*?)\n[ \t]*```/g)]
+    .filter((m) => m[2].includes('resolve-tiebreak'))
+    .map((m) => ({ label: m[1], cmd: m[2].trim() }));
+  const problems = [];
+  if (fences.length !== 2) problems.push(`expected two resolve-tiebreak commands, found ${fences.length}`);
+  const pipeline = fences.filter((f) => f.cmd.endsWith('--run "$PIPELINE_RUN_DIR"'));
+  const standalone = fences.filter((f) => !f.cmd.includes('--run'));
+  if (pipeline.length !== 1 || !/A pipeline run/.test(pipeline[0].label)) problems.push('no labeled pipeline-run command ending in --run "$PIPELINE_RUN_DIR"');
+  if (standalone.length !== 1 || !/Standalone/.test(standalone[0].label)) problems.push('no labeled standalone command without --run');
+  return problems;
+}
+
+const resolveAndAct = () => sectionOf(tiebreakText(), 'Resolve and act');
+
+test('step 2 gives a pipeline-run resolve-tiebreak command with --run and a standalone one without it', () => {
+  assert.deepEqual(tiebreakCommandProblems(resolveAndAct()), []);
+});
+
+test('the resolve-tiebreak command check can go red: one shared block, or --run on the standalone form', () => {
+  const live = resolveAndAct();
+  const standaloneLabel = live.indexOf('   Standalone (no run dir)');
+  assert.notEqual(standaloneLabel, -1, 'the standalone label anchors the control');
+  const afterFence = live.indexOf('```\n', live.indexOf('```bash', standaloneLabel) + 7) + 4;
+  const oneBlock = live.slice(0, standaloneLabel) + live.slice(afterFence);
+  assert.notEqual(oneBlock, live);
+  assert.ok(tiebreakCommandProblems(oneBlock).includes('expected two resolve-tiebreak commands, found 1'), JSON.stringify(tiebreakCommandProblems(oneBlock)));
+  const runEverywhere = live.replace(/(resolve-tiebreak "\{path-F\}" "\{path-R\}" --root "\{checkout under review\}")\n/, '$1 --run "$PIPELINE_RUN_DIR"\n');
+  assert.notEqual(runEverywhere, live);
+  assert.ok(tiebreakCommandProblems(runEverywhere).includes('no labeled standalone command without --run'));
+});

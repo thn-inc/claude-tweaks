@@ -21,6 +21,7 @@ const { listSkillDirs } = require('./skill-catalog');
 const {
   stripMarkers, MarkerError, parseMarkers, compose, KEYS, VOCAB, UNRESOLVED,
 } = require('../compose-context/compose');
+const { phaseBundles } = require('../compose-context/phases');
 const { toPosix, isPathContained } = require('../shared-primitives');
 
 function skillsDir(repoRoot) {
@@ -216,24 +217,43 @@ function unquoteToken(tok) {
   return tok;
 }
 
+// The tokens after a `--phase` flag -> `{ phase, bundles: [{ step, sources }] }`
+// from the phase registry (#4027), an unparsed row, or `null` for a
+// placeholder phase name (`--phase {phase}` is documentation, like a
+// placeholder source). The line names no sources: the registry does, so a
+// placeholder elsewhere on the line (`--run "{run-dir}"`) cannot null it out.
+function parsePhaseTokens(rest, repoRoot) {
+  const name = rest[0];
+  if (name === undefined || name.startsWith('--')) return { unparsed: true, reason: 'no phase value' };
+  if (/[{}<>]/.test(name)) return null;
+  if (rest.length > 1) return { unparsed: true, reason: `unexpected token after --phase ${name}: ${rest[1]}` };
+  const bundles = phaseBundles(name, path.resolve(repoRoot));
+  if (!bundles) return { unparsed: true, reason: `unknown phase ${name}` };
+  return { phase: name, bundles: bundles.map(({ step, sources }) => ({ step, sources: sources.map((s) => s.file) })) };
+}
+
 // One line of skill prose -> `{ step, sources }` (a real call site),
-// `{ unparsed: true, reason }` (has the invocation form and a `--step`
-// token but doesn't parse), or `null` (documentation: a placeholder
-// `{...}`/`<...>` source, or no `compose-context.js` invocation form at
-// all). Grammar: an optional `--run <value>` may precede `--step`; sources
-// are ONLY the tokens after `--step`'s own value; any other `--flag`
-// anywhere makes the line unparsed rather than silently miscounted.
+// `{ phase, bundles: [{ step, sources }] }` (a `--phase` call site, expanded
+// through the phase registry), `{ unparsed: true, reason }` (has the
+// invocation form and a `--step`/`--phase` token but doesn't parse), or
+// `null` (documentation: a placeholder `{...}`/`<...>` source or phase name,
+// or no `compose-context.js` invocation form at all). Grammar: an optional
+// `--run <value>` may precede `--step` or `--phase`; sources are ONLY the
+// tokens after `--step`'s own value, and a `--phase` value takes no further
+// tokens; any other `--flag` anywhere makes the line unparsed rather than
+// silently miscounted.
 function parseComposeCallLine(line, repoRoot) {
   const m = line.match(/compose-context\.js"?\s+([^`\n]*)/);
   if (!m) return null;
   const tokens = (m[1].match(/"[^"]*"|\S+/g) || []).map(unquoteToken);
 
   let i = 0;
-  while (i < tokens.length && tokens[i] !== '--step') {
+  while (i < tokens.length && tokens[i] !== '--step' && tokens[i] !== '--phase') {
     if (tokens[i] === '--run') { i += 2; continue; }
     if (tokens[i].startsWith('--')) return { unparsed: true, reason: `unknown flag ${tokens[i]}` };
     return { unparsed: true, reason: `unexpected token before --step: ${tokens[i]}` };
   }
+  if (tokens[i] === '--phase') return parsePhaseTokens(tokens.slice(i + 1), repoRoot);
   if (i >= tokens.length) return { unparsed: true, reason: 'no step value' };
   const step = tokens[i + 1];
   if (step === undefined || step.startsWith('--')) return { unparsed: true, reason: 'no step value' };
@@ -296,7 +316,12 @@ function findComposeCallSites(repoRoot) {
         });
         continue;
       }
-      out.push({ step: parsed.step, file, line: i + 1, sources: parsed.sources });
+      // A `--phase` line is one row per registered bundle, so each bundle meets the rail on its own;
+      // each such row also names its `phase`.
+      const phase = parsed.phase ? { phase: parsed.phase } : {};
+      for (const site of parsed.bundles || [parsed]) {
+        out.push({ step: site.step, ...phase, file, line: i + 1, sources: site.sources });
+      }
     }
   }
   return out;

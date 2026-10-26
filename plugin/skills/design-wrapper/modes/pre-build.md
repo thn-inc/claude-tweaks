@@ -75,3 +75,5 @@ The `context_size` is a rough estimate (`bytes / 4`) — used by `/build` to dec
 `description` is the record's own text, passed through unaltered from Step 2's spec read; omit the field entirely when the spec yielded no usable description. It pairs with `new-work.md` in `loaded`: the reference supplies the classification procedure, this field supplies the input it classifies. `/build` forwards both into the implementer's context rather than acting on either — a wrapper-side or caller-side summary of the description would substitute this layer's reading of the work for upstream's, which is what this mode stopped doing.
 
 `pre-build` does not modify code. The loaded references are read-only context for the implementer subagent.
+
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.

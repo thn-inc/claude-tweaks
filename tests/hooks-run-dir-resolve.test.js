@@ -13,7 +13,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf, harnessWorktreeOf } = require('./helpers/git-fixtures');
-const { resolve, formatTimestamp, isDeadRunDir } = require('../plugin/bin/lib/hooks/run-dir-resolve');
+const { resolve, formatTimestamp, isDeadRunDir, adoptionRefusal } = require('../plugin/bin/lib/hooks/run-dir-resolve');
 
 function mkRunDir(main, name) {
   const dir = path.join(main, '.claude-tweaks', 'pipelines', name);
@@ -300,6 +300,95 @@ test('isDeadRunDir: malformed run-state.json fails open (not dead) rather than t
   const dir = mkRunDir(main, '2026-01-01T000000-record-2');
   fs.writeFileSync(path.join(dir, 'run-state.json'), '{not json');
   assert.strictEqual(isDeadRunDir(dir), false);
+});
+
+// #4151: step 2 refuses what `/claude-tweaks:release`'s inline adoption guard used to refuse
+// (terminal status, `createdBy: release-standalone`), plus an unreadable run-state.json — via
+// `adoptionRefusal`, which `newestMatch` consults instead of `isDeadRunDir` alone (#1962).
+test('#4151 AC1.1: adoptionRefusal names each refusal reason', () => {
+  const main = gitRepo();
+  let count = 0;
+  const fresh = () => {
+    count += 1;
+    return mkRunDir(main, `2026-01-01T0000${String(count).padStart(2, '0')}-record-refusal`);
+  };
+  const withState = (state) => { const d = fresh(); writeRunState(d, state); return d; };
+  const withRaw = (raw) => { const d = fresh(); fs.writeFileSync(path.join(d, 'run-state.json'), raw); return d; };
+  const withDirAsFile = () => { const d = fresh(); fs.mkdirSync(path.join(d, 'run-state.json')); return d; };
+
+  assert.strictEqual(adoptionRefusal(withState({ status: 'clean' })), 'terminal');
+  assert.strictEqual(adoptionRefusal(withState({ status: 'closed' })), 'terminal');
+  assert.strictEqual(adoptionRefusal(withState({ status: 'active', createdBy: 'release-standalone' })), 'release-standalone');
+  assert.strictEqual(adoptionRefusal(withState({ createdBy: 'release-standalone' })), 'release-standalone');
+  assert.strictEqual(adoptionRefusal(withRaw('{not json')), 'unreadable-run-state');
+  assert.strictEqual(adoptionRefusal(withRaw('null')), 'unreadable-run-state');
+  assert.strictEqual(adoptionRefusal(withRaw('[]')), 'unreadable-run-state');
+  assert.strictEqual(adoptionRefusal(withDirAsFile()), 'unreadable-run-state');
+  assert.strictEqual(adoptionRefusal(withState({ status: 'interrupted' })), 'dead');
+  assert.strictEqual(adoptionRefusal(withState({ status: 'active' })), null);
+  assert.strictEqual(adoptionRefusal(withState({})), null);
+  assert.strictEqual(adoptionRefusal(withState({ status: 5 })), null);
+  assert.strictEqual(adoptionRefusal(withState({ status: 'active', createdBy: 'flow' })), null);
+  assert.strictEqual(adoptionRefusal(fresh()), null);
+});
+
+function assertReleaseSlugUnresolved(main) {
+  const out = resolve({ cwd: main, env: {}, specSlug: 'release' });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
+}
+
+test('#4151 AC1.1: --spec-slug release never returns a terminal release dir', () => {
+  const main = gitRepo();
+  const dir = mkRunDir(main, '2026-10-01T100000-release-standalone');
+  writeRunState(dir, { status: 'clean', createdBy: 'release-standalone' });
+  assertReleaseSlugUnresolved(main);
+});
+
+test('#4151 AC1.1: --spec-slug release never returns an active release-standalone dir', () => {
+  const main = gitRepo();
+  const dir = mkRunDir(main, '2026-10-01T100000-release-standalone');
+  writeRunState(dir, { status: 'active', createdBy: 'release-standalone' });
+  assertReleaseSlugUnresolved(main);
+});
+
+test('#4151 AC1.1: --spec-slug release never returns a dir whose run-state.json cannot be parsed', () => {
+  const main = gitRepo();
+  const dir = mkRunDir(main, '2026-10-01T100000-release');
+  fs.writeFileSync(path.join(dir, 'run-state.json'), '{not json');
+  assertReleaseSlugUnresolved(main);
+});
+
+test('#4151: a refused newest match falls through to an older adoptable one', () => {
+  const main = gitRepo();
+  const older = mkRunDir(main, '2026-01-01T000000-record-77');
+  const newer = mkRunDir(main, '2026-06-01T000000-record-77');
+  writeRunState(newer, { status: 'clean' });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'record-77' });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.path, older);
+});
+
+test('#4151: step 1 PIPELINE_RUN_DIR is never refused, even when terminal and release-standalone', () => {
+  const main = gitRepo();
+  const dir = mkRunDir(main, '2026-10-02T100000-supplied');
+  writeRunState(dir, { status: 'clean', createdBy: 'release-standalone' });
+  const out = resolve({ cwd: main, env: { PIPELINE_RUN_DIR: dir }, specSlug: 'release' });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(fs.realpathSync(out.path), fs.realpathSync(dir));
+});
+
+test('#4151: --create --standalone with --spec-slug mints fresh past a refused match', () => {
+  const main = gitRepo();
+  const dir = mkRunDir(main, '2026-01-01T000000-record-88');
+  writeRunState(dir, { status: 'clean' });
+  const out = resolve({
+    cwd: main, env: {}, specSlug: 'record-88', standalone: 'record-88', create: true,
+    now: new Date('2026-06-01T12:00:00Z'),
+  });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.strictEqual(path.basename(out.path), '2026-06-01T120000-record-88-standalone');
 });
 
 test('standalone fallback with --create mints a directory with decisions.md and staged/, matching the reference snippet', () => {

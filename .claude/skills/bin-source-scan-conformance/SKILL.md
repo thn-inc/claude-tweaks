@@ -17,6 +17,8 @@ Several conventions for `plugin/bin` code are enforced by a test that walks the 
 - `tests/porcelain-cwd-compare-conformance.test.js`: no strict `.path` vs `cwd` compare (either operand order, `===`/`!==`/`==`/`!=`); a porcelain lookup goes through `findWorktreeEntry` (#3811).
 - `tests/bin-lib/reconcile/subprocess-timing-conformance.test.js`: no file under `plugin/bin/lib/reconcile/` calls an exec/spawn function directly or requires `child_process`; every spawn goes through `timing.js`'s `execFileSyncTimed`/`execFileAsyncTimed` (#4032). `timing.js` and `background-spawn.js` are exempt by name. It reports a `stripperVerdict` mis-parse as an offender, floors both the files walked and the timed call sites seen, and keeps a planted fake-comment-opener case.
 
+One more suite scans `plugin/bin` text but in a different shape: `tests/git-path-read-conformance.test.js` pins git path-list argv line by line with raw-text regexes — `-z`, `--end-of-options`, and (#3900) `raw: true` on any `runGit`/`runGitAsync` line that passes `'-z'`. It does not import the shared stripper, has no `stripperVerdict` check and no matched-site floor, and a call split across lines is invisible to it; its `assertGoesRed`/`assertRawGoesRed` cases against real callers are what show the matchers still match. Extend it in that line-based shape, or move it onto the stripper first when a new pin needs a comment-aware match.
+
 Each one is a hand-written parser over JavaScript. The comment stripper, the call-shape regex and the file walk can each fail in the direction that hides code. When that happens, the scan reports zero offenders over less code than it claims to cover.
 
 For a suite that pins the prose under `plugin/skills/`, use `skill-prose-conformance-tests` instead.
@@ -32,6 +34,8 @@ Import it: `const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } 
 - An unterminated construct ends at the end of its line or the input and never throws.
 
 Fixing a stripper defect means editing the helper and adding the planted case to `tests/helpers-strip-comments.test.js`. Every scan picks the fix up. The helper's test owns the stripper's own planted cases. Some scans also keep a fixture that proves their matcher still sees code after a literal holding a comment opener (see "Self-test the matcher").
+
+A new suite that imports the stripper is itself a caller, and two hand-written lists must name it by test-file stem: the header comment of `tests/helpers/strip-comments.js` and `parse-signal-discipline` item 15. `tests/strip-comments-callers-twin.test.js` pins both to the tree, so a suite added without them goes red on its first full run (#4153's `owner-pid-probe` suite cost a fix commit and a second full run this way). Add the stem to both lists in the commit that adds the suite. If the suite reads a source file as text, read it through `readText` from `tests/helpers/read-skill.js`, not a raw `fs.readFileSync`: `raw-markdown-read` flags the raw read.
 
 ### A mis-parse must be an offender, not a clean scan
 

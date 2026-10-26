@@ -11,7 +11,7 @@ files:
 
 **Persona:** a maintainer of a `pr-first` project running a long `/claude-tweaks:flow #N` or a `/claude-tweaks:dispatch` firing, while sibling records keep merging into the integration branch. One of them touches the same files, and the run's draft PR quietly starts to conflict.
 **Goal:** find out at the first phase exit after the base moved that the PR conflicts, before test, review and the merge decision run on a tree that cannot merge. In `auto`, get the branch caught up without being asked.
-**Entry point:** any phase exit's push (`build`, `test`, `review`, `polish`, `wrap-up`) of a run whose draft PR `_shared/pr-early-run-lifecycle.md` opened at run start, under `_shared/git-discipline.md`'s Phase-exit push section, which then runs `node "${CLAUDE_PLUGIN_ROOT}/bin/pr-merge-state.js" --run "$PIPELINE_RUN_DIR" --phase {phase}`.
+**Entry point:** any phase exit's push (`build`, `test`, `review`, `polish`, `wrap-up`) of a run whose draft PR `_shared/pr-early-run-lifecycle.md` opened at run start, under `_shared/git-discipline.md`'s Phase exit section, which then runs `node "${CLAUDE_PLUGIN_ROOT}/bin/pr-merge-state.js" --run "$PIPELINE_RUN_DIR" --phase {phase}`.
 **Success state:**
 - A conflicting PR gets one phase-output line and one `AUTO` line in `decisions.md` naming the PR and the phase.
 - In `auto`, the next phase starts on a branch merged up to the integration branch and re-pushed, so the PR's `pull_request` CI runs again.

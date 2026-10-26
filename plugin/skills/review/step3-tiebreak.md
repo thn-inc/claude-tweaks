@@ -71,14 +71,20 @@ SCRATCH: {ctx-dir}/agent-scratch/{agent-id} — any probe script or fixture you 
 For each entry, once its agent has returned:
 
 1. Resolve three paths with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" F=review-{ctx-id}-tiebreak-{n}.json R=review-{ctx-id}-tiebreak-{n}-reply.txt T=review-{ctx-id}-tiebreak-{n}-text.txt` (`{n}` the entry's position in the set). `Write` the entry (as written to the artifact, `positions` included for a contested one) to `F` and the agent's reply to `R`; `T` is written in step 3. An empty, failed, timed-out, or non-`DONE` dispatch (`BLOCKED`, `NEEDS_CONTEXT`, a session limit) is re-dispatched once as a fresh agent — except a dispatched reviewer's timed-out agent, which has already spent its keep-alive bound and goes straight to the inline rung; only if that one fails too is it passed as an empty reply file (a dispatched reviewer takes the inline rung instead, see `## Dispatched reviewer`) — the resolver turns it into the can't-tell result, so every entry still gets exactly one verdict line. On a lens 3f vacuity finding, write a `confirmed` reply to `R` with its `Verdict: confirmed` line replaced by `Verdict: cant-tell`: a vacuity claim needs an executed run (`step3-lens-dispatch.md`'s lens 3f vacuity bullet), so it resolves can't-tell with its one verdict line, reason `verdict:cant-tell`; a `refuted` reply resolves as written.
-2. Run, with `{checkout under review}` the worktree or checkout the review reads (not the run dir):
+2. Run, with `{checkout under review}` the worktree or checkout the review reads (not the run dir). A pipeline run, for an agent's reply:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" resolve-tiebreak "{path-F}" "{path-R}" --root "{checkout under review}" --run "$PIPELINE_RUN_DIR"
+   ```
+
+   Standalone (no run dir), and for an inline verdict in either — no `--run`:
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" resolve-tiebreak "{path-F}" "{path-R}" --root "{checkout under review}"
    ```
 
-   It prints JSON with `outcome`, `severity`, `recommendation`, `logLine`, `logStatus`, `logStep`, `logText`, `listInConsole`, and `reason`. When `resolve-tiebreak` exits non-zero for an entry, never invent a verdict: log, through `--text-file` as step 3 does (the text written to `T`), `STAGED {HH:MM:SS} — Tiebreak: lens "{lens}" finding {path}:{line} unconfirmed; resolve-tiebreak exited {exit}, no verdict. Reversibility: high.` That finding has no verdict line, so the archive gate refuses the run and surfaces it.
-3. Log one line (a pipeline run only). `logText` can carry a verbatim source line — quotes, `$()`, backticks, backslashes — so it never goes on the command line: `Write` it, unchanged, to `T`, then pass `T`. `logStatus` and `logStep` are safe inline.
+   It prints JSON with `outcome`, `severity`, `recommendation`, `logLine`, `logStatus`, `logStep`, `logText`, `listInConsole`, and `reason`, plus `logged` under `--run` — which logs step 3's line itself (a blank `--run` exits 2). When `resolve-tiebreak` exits non-zero for an entry, never invent a verdict: log, through `--text-file` as step 3 does (the text written to `T`), `STAGED {HH:MM:SS} — Tiebreak: lens "{lens}" finding {path}:{line} unconfirmed; resolve-tiebreak exited {exit}, no verdict. Reversibility: high.` That finding has no verdict line, so the archive gate refuses the run and surfaces it.
+3. Log one line (a pipeline run only). `--run` wrote it already; log it here only on `logged: false` or for an inline verdict. `logText` can carry a verbatim source line — quotes, `$()`, backticks, backslashes — so it never goes on the command line: `Write` it, unchanged, to `T`, then pass `T`. `logStatus` and `logStep` are safe inline.
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status "{logStatus}" --step "{logStep}" --text-file "{path-T}" --reversibility high --section "/review"

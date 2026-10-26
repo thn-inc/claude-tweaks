@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const {
-  readOrder, writeOrder, buildFreshnessSignal, signalsMatch, composeOrderBlob, cacheUsable, GROUPING_MODE,
+  readOrder, writeOrder, buildFreshnessSignal, signalsMatch, composeOrderBlob, cacheUsable, GROUPING_MODE, groupingMode,
 } = require('../../../plugin/bin/lib/dispatch/queue-order.js');
 
 // Same minimal fake git runner shape as merge-lane-breaker.test.js's own
@@ -158,6 +158,25 @@ test('cacheUsable rejects mismatched signals', () => {
 test('cacheUsable rejects a blob stamped with any other grouping value', () => {
   const blob = { freshnessSignal: SIGNAL, grouping: 'transitive' };
   assert.equal(cacheUsable(blob, SIGNAL), false);
+});
+
+test('groupingMode names the express variant only when express is enabled; GROUPING_MODE is unchanged', () => {
+  assert.equal(groupingMode(true), 'per-record+express');
+  assert.equal(groupingMode(false), 'per-record');
+  assert.equal(GROUPING_MODE, 'per-record');
+});
+
+test('composeOrderBlob stamps a passed grouping, and the stamp gates cacheUsable (#4025)', () => {
+  const express = composeOrderBlob({
+    computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded: [], grouping: 'per-record+express',
+  });
+  assert.equal(express.grouping, 'per-record+express');
+  assert.equal(cacheUsable(express, SIGNAL, 'per-record+express'), true);
+  assert.equal(cacheUsable(express, SIGNAL), false);
+  const plain = composeOrderBlob({ computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded: [] });
+  assert.equal(cacheUsable(plain, SIGNAL, 'per-record+express'), false);
+  assert.equal(cacheUsable(plain, SIGNAL, 'per-record'), true);
+  assert.equal(cacheUsable(express, { issues: [{ number: 1, updatedAt: 'b', state: 'OPEN' }] }, 'per-record+express'), false);
 });
 
 test('cacheUsable(null, x) is false and never throws on malformed input', () => {

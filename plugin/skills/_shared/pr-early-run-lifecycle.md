@@ -5,7 +5,7 @@ Canonical procedure for making a `pr-first` (`_shared/integration-model.md`) pip
 commit lands, before any implementation work — not only when a run happens to reach
 `pending-review` (`docs/incident-log.md`'s `[IL-128]` records the narrower, dispatch-only
 procedure this generalizes and replaces). Every later phase exit pushes
-(`_shared/git-discipline.md`'s Phase-exit push section, including its Post-push merge-state
+(`_shared/git-discipline.md`'s Phase exit section, including its Post-push merge-state
 check) and updates the PR's phase checklist, so
 the PR always reflects live progress rather than only the state as of run start or only the state
 as of `pending-review`.
@@ -62,7 +62,12 @@ companion line, mirroring this file's own dual-marker scheme) rather than restat
 
 | Caller | Invokes from |
 |---|---|
-| `build/worktree-setup.md` Step 6 | Once per run, immediately after `build/SKILL.md` Spec Step 1's materialize commit, before Spec Step 2 |
+| `build/worktree-setup.md` Step 6 | Once per run, immediately after `build/SKILL.md` Spec Step 1's materialize commit, before Spec Step 2 — through `bin/pr-early-open.js` |
+
+With `gh` present, `bin/pr-early-open.js` runs Steps 1-4 and the Resume section below in one call,
+writing every mandatory log line. This file is that CLI's spec. Follow it by hand only when the CLI
+exits 2 with `gh` absent (the MCP path in the Skip / degrade table), or exits 1; a `reopenRejected`
+field in its result sends the caller to Step 1's "Reopen fails" paragraph.
 
 Phase-checklist updates and the pre-merge title/description refresh moved to
 `_shared/pr-checklist-refresh.md` (#2002) — its own Callers table lists that file's callers

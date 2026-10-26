@@ -141,8 +141,17 @@ test('POLICY_KEYS entries are unique', () => {
   // 74 -> 75, #3298: commit-scope-paths — list, default [] — comma-separated prefix=token pairs resolved against a merge's changed files
   // 75 -> 76, #4041: release-tip-moves — integer, default 2 — caps how far origin/{branch} may move past /release Step 3's reviewed tip before Step 5 holds the release
   // 76 -> 82, #4029: the six {fast-lane,standard}-run-{round-trip,procedure-kb,verify-minutes}-ceiling efficiency budgets — integer, min 0 (0 disables), p90-derived defaults
-  assert.strictEqual(POLICY_KEYS.length, 82);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 82);
+  // 82 -> 84, #4025 (express lane): express-lane — boolean opt-in, default false; express-review-sample-every — integer >= 1, default 5
+  assert.strictEqual(POLICY_KEYS.length, 84);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 84);
+});
+
+test('express-lane keys resolve their defaults (#4025)', () => {
+  const resolved = resolvePolicyKeys(['express-lane', 'express-review-sample-every'], { policyRaw: '', runConfigRaw: null });
+  assert.deepStrictEqual(resolved['express-lane'], { value: false, source: 'default' });
+  assert.deepStrictEqual(resolved['express-review-sample-every'], { value: 5, source: 'default' });
+  const zero = resolvePolicyKeys(['express-review-sample-every'], { policyRaw: 'express-review-sample-every: 0\n', runConfigRaw: null });
+  assert.strictEqual(zero['express-review-sample-every'].invalid, true, 'min: 1 — a sample cadence of 0 is schema-invalid');
 });
 
 test('dispatch-batch-size is registered alongside its deprecated alias', () => {

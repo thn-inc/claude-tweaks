@@ -39,6 +39,16 @@ Composition can break a pointer that was fine in the raw file: "steps 1-4 below"
 
 **Composition can also make a pre-existing wrong instruction the only one a reader sees.** `_shared/issue-claims.md`'s "The lock" step 2 tells the reader to `jq -r '.content'` a `{content, sha}` wrapper — correct beside the `gh` bullet, wrong under `transport=mcp`, where the surviving bullet already wrote the content. Fencing did not create that; it removed the neighbouring text that made it read as one of two paths. Read each composed bundle as the only instruction its reader gets, and file what you find rather than assuming the raw file's correctness carries over.
 
+## A phase call site: register the bundles, write one `--phase` line
+
+Since #4027 a call site can be a *phase* rather than a step: `compose-context.js --run "$PIPELINE_RUN_DIR" --phase <name>` composes every bundle `plugin/bin/lib/compose-context/phases.js`'s `PHASES` registers for that phase (`first-call`, `second-call`, `review-lens` today). Each bundle is `{ step, sources, load }`: `load: 'always'` is read once, whole, before the child's first step; `'on-demand'` only when a step needs it. The registry, not the prose, names the sources.
+
+- **The prose line carries no sources.** `--phase` excludes `--step` and source arguments (the CLI exits 2), and in prose any token after the phase name makes the rail scanner's row unparsed. A placeholder name (`--phase {phase}`) is documentation and is not measured.
+- **The rail measures each bundle, not the phase.** `plugin/bin/lib/skill-audit/context-cost.js` expands a `--phase` line into one row per registered bundle, so every bundle meets `RAIL_BYTES` on its own, and an unknown phase in prose fails `composedRailViolations`. A registered phase with no shipped `--phase` line is a bundle nothing measures: `tests/dispatch-prompt-bundle-citations.test.js` fails on it, with a drop-each-phase discrimination proof.
+- **Adding a phase or bundle is a registry edit plus one prose line.** `tests/bin-lib/compose-context/phases.test.js` pins the exact phase-key set, that each step passes `STEP_RE`, and that every source exists under `plugin/`. Update the key-set assertion in the same change.
+- **A step name shared with a hand-written `--step` line shares its output file.** Both write `{run}/context/{step}.md`, so whichever composer ran last overwrites the other's bundle unless the source lists match. `phases.test.js` pins every hand-written `--step merge|claims` line's sources to the registry's; a new registered step that a hand-written line also composes needs the same pin.
+- **A phase writes all its bundles or none.** `composePhase` reads every source of every bundle and validates every marker before the first write, so one bad marker anywhere in the phase leaves no bundle at all and the caller takes the documented fallback.
+
 ## Anti-patterns
 
 | Pattern | Why it fails here |
@@ -50,6 +60,7 @@ Composition can break a pointer that was fine in the raw file: "steps 1-4 below"
 | Adding a compose sentence to a source file without a `wc -c` first | Two files in this run finished with 150 B and 829 B of raw headroom; the compose sentence itself cost 672 B in one of them |
 | Proving the bundles by reading one of them end to end | Two of #1992's four broken pointers were in the transport bundle nobody was asked to read; a linear read does not trip over a reference to an absent numbered item |
 | Copying a repo-relative source path out of the record body into the prose | It resolves only inside a claude-tweaks checkout, so every installed consumer silently takes the fallback path instead |
+| Registering a phase in `phases.js` without shipping its `--phase` line, or listing sources on the line | The rail scanner only measures bundles a shipped `--phase` line reaches, and a line with sources after the phase name parses as unparsed; the registry is the one home of a phase's sources (#4027) |
 
 ## Evidence
 
@@ -58,3 +69,4 @@ Composition can break a pointer that was fine in the raw file: "steps 1-4 below"
 - Composer: `plugin/bin/compose-context.js`, `plugin/bin/lib/compose-context/{compose,resolve-conditions,index}.js`.
 - Gates: the `rail:` suite in `tests/bin-lib/skill-audit/context-cost.test.js` (raw files and composed bundles, via `plugin/bin/lib/skill-audit/rail.js`), `plugin/bin/lib/plan-audit/checks.js`'s `headroomCheck` against `RAIL_BYTES`, and `plugin/bin/lib/skill-audit/bloat.js`'s size-outlier signal (coherence, never a block).
 - Suites: `tests/compose-markers-conformance.test.js`, `tests/issue-claims-pr-scan-composition.test.js`, `tests/flow-manifesto-composition.test.js`, `tests/dispatch-prompt-bundle-citations.test.js`.
+- Phase registry (#4027): `plugin/bin/lib/compose-context/phases.js`, `composePhase` in `plugin/bin/lib/compose-context/index.js`, `tests/bin-lib/compose-context/phases.test.js`, and the `--phase` cases in `tests/bin-lib/skill-audit/context-cost.test.js`.

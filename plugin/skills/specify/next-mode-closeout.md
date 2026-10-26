@@ -24,7 +24,9 @@ writes no label. Two distinct cases, by whether this firing has claimed
 anything yet (the `shaped`/`routed`/`failed` counts below):
 
 - **Nothing claimed yet** (the very first iteration returns `null`): report
-  "nothing eligible this firing" and exit cleanly — no self-report, no
+  "nothing eligible this firing", close the run directory silently
+  (`close-run`, per **Every exit runs the close-out** below), and exit
+  cleanly — no self-report, no
   notification, no close-out rendered. The firing's own session transcript
   line is the only trace, deliberately (mirrors dispatch's "Zero eligible
   groups" posture) — `/claude-tweaks:tidy` and `/claude-tweaks:help`
@@ -83,6 +85,28 @@ loop-termination path above (bare drain interactive or headless alike)
 except the nothing-claimed-yet no-op, independent of the pre-existing, unchanged "no `## Next Actions` block for
 a headless firing" rule (`next-mode-shape.md`'s Shape section) — that rule
 governs the separate interactive suggestion-menu render, not this summary.
+
+**Every exit runs the close-out.** The run directory `## Drain start` minted
+(`$RUN_DIR_FILE`) is closed on every exit after that mint — nothing eligible,
+drained, budget exhausted, and a firing-ending failure
+(`next-mode-shape.md`'s Failure self-report) — not only on the paths that
+render the summary above; the nothing-eligible exit still renders nothing.
+**Created** means the directory did not exist before `## Drain start`'s own
+resolution ran — its mint created it; a directory that resolver returned from
+`$PIPELINE_RUN_DIR` (a `/claude-tweaks:sweep` parent, `--source sweep`) or a
+most-recent-matching (step 2) match is **inherited**.
+An **inherited** directory is never closed here — the parent pipeline owns that
+close, so skip the call below. For a created directory:
+
+```bash
+RUN_DIR_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rundir.txt)"
+node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$(cat "$RUN_DIR_FILE")"
+```
+
+This is the run directory's own close, separate from `next-mode-shape.md`'s
+`## Release`, which releases one record's claim. A specify drain directory
+records no owning session, so session end never marks it `interrupted`: left
+alone, it stays `active`. A specify drain archives nothing.
 
 **Under `--source sweep`,** this firing is a component step of `/claude-tweaks:sweep`
 — the close-out counts above render as the step's report to the parent, never a

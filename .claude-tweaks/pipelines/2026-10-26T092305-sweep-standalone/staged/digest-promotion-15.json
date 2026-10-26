@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "digest",
+  "record": null,
+  "title": "Digest: tiebreak (4)",
+  "action": "Propose cluster: file record absorbing 4 tiebreak entries",
+  "command": "gh issue create --title \"Digest: tiebreak (4)\" --body-file staged/digest-promotion-15.md"
+ }
+]

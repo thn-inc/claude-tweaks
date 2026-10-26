@@ -32,10 +32,10 @@ The map is JSON: `{version: 1, commit, tracedAt, exitCode, node, paths, tests}`.
 
 | Kind | Records |
 |------|---------|
-| `f` | content reads: file reads and opens, copy sources, `stat`/`lstat`, module loads |
-| `s` | existence probes: `exists`, `access`, `realpath`, `readlink`, a `require`'s resolution candidates |
+| `f` | content reads: file reads and opens, copy sources, `stat`/`lstat`, module loads, and a `package.json` a `require` reads for `main` or `exports` |
+| `s` | existence probes: `exists`, `access`, `realpath`, `readlink`, the candidates a `require` probes up to the one it resolves to (all of them when it fails), minus those under an earlier probe |
 | `d` | directory listings: `readdir`, `opendir` |
-| `c` | content prefixes: the source directory of a recursive copy, a non-node child's in-repo directory argument, or a content-reading `git` subcommand's cwd or pathspec prefix |
+| `c` | content prefixes: the source directory of a recursive copy, a non-node child's in-repo directory argument, a content-reading `git` subcommand's cwd or pathspec prefix, or `''` (the whole repo) for a node child whose env lost the trace |
 
 A prefix covers a path when `prefix === ''` (the repo root), `p === prefix`, or `p` starts with `prefix + '/'`.
 
@@ -82,8 +82,8 @@ The map is built outside the runner by a traced full-suite run: a read tracer pr
 
 **Known limits — what a map can miss:**
 
-- **Module loads.** CommonJS loads and a relative or absolute `require`'s resolution candidates are traced. ESM `import` loads are seen only through the file-system calls the loader makes.
-- **Non-node children.** Reads by a non-node child process are approximated. Its in-repo path arguments are recorded, and a content-reading `git` subcommand records a content prefix.
+- **Module loads.** CommonJS loads and `require` resolution are traced the way Node resolves: relative, absolute, `node_modules` lookups, `require.resolve`'s `paths`, and `package.json` `main`/`exports`. `#` imports and a package's self-reference are not followed, and a native addon (`.node`) is probed but its content is not recorded as read. ESM `import` loads are seen only through the file-system calls the loader makes.
+- **Non-node children.** Reads by a non-node child process are approximated. Its in-repo path arguments are recorded, and a content-reading `git` subcommand records a content prefix. `sh`/`bash -c` scripts (with their option clusters) and `env` wrappers are read as the command they run. A node child whose env lost the trace (`env -i`, `-u NODE_OPTIONS`, a `NODE_OPTIONS=` assignment) cannot trace itself, so its reads are unknown: it records the whole-repo prefix `c ''`, which selects the test for every change. Other wrappers (`xargs`, `timeout`, `nice`) and a mid-script `export`/`unset` of `NODE_OPTIONS` are not read; `env` options it does not know (`-S`, a combined cluster such as `-iu`) fall back to recording its path arguments.
 - **Map-to-base drift.** A test that started reading a file after the map's commit is not selected for that file until the map refreshes.
 - **Trace environment.** The map records reads in the environment it was traced in (CI's, for a post-merge job). A test whose reads depend on the local environment (a skip gated on an installed plugin, say) can be under-selected locally.
 - **Tooling not shipped.** The tracer and map builder are the plugin repo's own tooling, not part of the plugin. Another project must produce a map in the format above itself.

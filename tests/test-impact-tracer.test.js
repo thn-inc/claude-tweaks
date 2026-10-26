@@ -17,7 +17,7 @@ const ROOT = path.join(__dirname, '..');
 const TRACER = path.join(ROOT, 'tools', 'test-impact', 'tracer.js');
 const { requireOption } = require(path.join(ROOT, 'tools', 'test-impact', 'node-options.js'));
 const FIXTURE = path.join(__dirname, 'fixtures', 'test-impact');
-const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js', 'e.test.js', 'f.test.js'];
+const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js', 'e.test.js', 'f.test.js', 'g.test.js', 'h.test.js', 'i.test.js', 'j.test.js', 'k.test.js', 'l.test.js', 'm.test.js'];
 
 function copyFixture(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
@@ -64,6 +64,18 @@ before(() => {
   tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct trace-')));
   root = path.join(tmp, 'fixture root');
   copyFixture(FIXTURE, root);
+  // In-root node_modules for g.test.js: not committable, `.gitignore` ignores node_modules/.
+  for (const [rel, text] of Object.entries({
+    'node_modules/dep/package.json': '{"main":"lib/main.js"}',
+    'node_modules/dep/lib/main.js': 'module.exports = 1;\n',
+    'node_modules/exp/package.json': '{"name":"exp","exports":"./src/index.js"}',
+    'node_modules/exp/src/index.js': 'module.exports = 2;\n',
+    'node_modules/@sc/pkg/package.json': '{"name":"@sc/pkg","exports":{"./sub":"./s.js"}}',
+    'node_modules/@sc/pkg/s.js': 'module.exports = 3;\n',
+  })) {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), text);
+  }
   // A newline or tab cannot be in a Windows file name, so the two odd-name files exist only elsewhere.
   if (process.platform !== 'win32') {
     fs.writeFileSync(path.join(root, 'docs', 'we\nird.md'), 'newline\n');
@@ -168,11 +180,38 @@ test('wrapped execFile keeps promisify.custom', () => {
   assert.ok(c.has(rec('c', 'docs')), 'a promisified git content call records c');
 });
 
-test('a relative require records its resolution candidates as s', () => {
+test('AC1.1: a require records its candidates up to the one it resolves to, minus those under an earlier probe', () => {
   const a = recordsOf('a.test.js');
-  for (const p of ['lib/x', 'lib/x.js', 'lib/x.json', 'lib/x/index.js', 'lib/x/package.json']) {
-    assert.ok(a.has(rec('s', p)), `a must record s ${p}`);
+  for (const p of ['lib/x', 'lib/x.js']) assert.ok(a.has(rec('s', p)), `a must record s ${p}`);
+  for (const p of ['lib/x.json', 'lib/x.node', 'lib/x.cjs', 'lib/x/index.js', 'lib/x/package.json']) {
+    assert.ok(!a.has(rec('s', p)), `a must not record s ${p} (after the winner, or under s lib/x)`);
   }
+  const g = recordsOf('g.test.js');
+  for (const p of ['lib/pkg', 'lib/pkg.js', 'lib/pkg.json', 'lib/pkg.node']) assert.ok(g.has(rec('s', p)), `g must record s ${p}`);
+  assert.ok(g.has(rec('f', 'lib/pkg/package.json')), 'the package.json a directory require reads is kept');
+  // lib/pkg/entry.js (the winner, under s lib/pkg) is still recorded as s — by Node's own realpathSync of the
+  // resolved file, not by the candidate list. lib/pkg/index.js comes after the winner, so truncation drops it;
+  // the nested drop is pinned by the lib/missing assertions below.
+  assert.ok(!g.has(rec('s', 'lib/pkg/index.js')), 'lib/pkg/index.js comes after the winner lib/pkg/entry.js, so truncation drops it');
+  for (const p of ['lib/missing', 'lib/missing.js', 'lib/missing.json', 'lib/missing.node']) {
+    assert.ok(g.has(rec('s', p)), `an unresolved require keeps every candidate: ${p}`);
+  }
+  assert.ok(!g.has(rec('s', 'lib/missing/index.js')), 'still minus those under s lib/missing');
+  assert.ok(g.has(rec('s', 'node_modules/nodep/package.json')), 'an absent package.json an exports lookup probes is kept');
+});
+
+test('AC1.1: a require resolves the way Node does — paths option, package.json main, bare node_modules lookups', () => {
+  const g = recordsOf('g.test.js');
+  assert.ok(g.has(rec('s', 'lib/x.js')), 'require.resolve paths: the candidate under the given path');
+  assert.ok(!g.has(rec('s', 'x')) && !g.has(rec('s', 'x.js')), 'paths replaces the requiring file\'s own directory');
+  assert.ok(g.has(rec('f', 'lib/pkg/package.json')), 'a directory require reads package.json (content, not existence)');
+  assert.ok(g.has(rec('f', 'lib/dotpkg/package.json')), 'require.resolve(\'.\', { paths }) reads the package.json of the given path (Node 22 counts the exact request . as relative)');
+  assert.ok(g.has(rec('f', 'node_modules/dep/package.json')), 'a bare dependency\'s package.json is read');
+  assert.ok(g.has(rec('s', 'node_modules/dep')), 'a bare dependency\'s base candidate is probed');
+  assert.ok(g.has(rec('f', 'node_modules/exp/package.json')) && g.has(rec('s', 'node_modules/exp')), 'an exports package is covered by its directory');
+  assert.ok(!g.has(rec('s', 'node_modules/exp.js')), 'an exports package resolves through its cover: the base-plus-extension probes of a sibling file are never recorded');
+  assert.ok(g.has(rec('f', 'node_modules/@sc/pkg/package.json')) && g.has(rec('s', 'node_modules/@sc/pkg')), 'a scoped package with an exports subpath is covered by its directory');
+  for (const r of g) assert.doesNotMatch(JSON.parse(r)[1], /(^|\/)node_modules\/(node:|fs$|path$|assert$)/, 'builtins record nothing');
 });
 
 test('git glob and magic pathspecs record their literal directory prefix', () => {
@@ -215,6 +254,27 @@ test('shell env prefixes and sh -c scripts are read as the command they run', ()
   const d = recordsOf('d.test.js');
   assert.ok(d.has(rec('c', 'bin')), 'FOO=1 git ls-files is a git content command');
   if (process.platform !== 'win32') assert.ok(d.has(rec('c', 'lib')), 'sh -c "git ls-files" is a git content command');
+});
+
+test('AC1.1: bash -o / -euo, sh +e and env wrappers are read as the command they run', { skip: process.platform === 'win32' && 'win32: no bash/sh/env' }, () => {
+  const h = recordsOf('h.test.js');
+  for (const p of ['docs/async-list', 'docs/promise-list', 'docs/copied', 'tools', 'bin', 'docs', 'lib/pkg']) {
+    assert.ok(h.has(rec('c', p)), `the wrapped git ls-files records c ${p}`);
+  }
+  assert.ok(!h.has(rec('c', '')), 'every wrapped call records its own cwd, never the root; env -u FOO node, which keeps the trace, adds none');
+  assert.ok(h.has(rec('c', 'docs/listed')), 'env -C <dir> records its in-repo directory, as a non-node child\'s directory argument is');
+  assert.ok(h.has(rec('c', 'lib')), 'env --chdir=<dir> records its in-repo directory too');
+});
+
+// One way of dropping the trace per fixture file: every file records the same `c ''`, so two ways in one
+// file could not show that either alone is recognised.
+test('AC1.1: a node child whose env drops the trace fails closed: its reads are unknown', { skip: process.platform === 'win32' && 'win32: no env/sh' }, () => {
+  const i = recordsOf('i.test.js');
+  assert.ok(i.has(rec('c', '')), 'env -i node records the whole-repo prefix');
+  assert.ok(i.has(rec('f', 'docs/note.md')), 'the path arguments of env -i node are still recorded');
+  for (const [file, how] of [['j', 'env -u NODE_OPTIONS'], ['k', 'env --unset=NODE_OPTIONS'], ['l', 'env -uNODE_OPTIONS'], ['m', 'a NODE_OPTIONS= assignment']]) {
+    assert.ok(recordsOf(`${file}.test.js`).has(rec('c', '')), `${how} node records the whole-repo prefix`);
+  }
 });
 
 test('absolute path never consults process.cwd', { skip: process.platform === 'win32' && 'win32: a process cwd cannot be removed' }, () => {

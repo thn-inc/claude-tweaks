@@ -45,18 +45,30 @@ function commentList(payload) {
   return null;
 }
 
+function markerCandidates(comments, kind) {
+  const marker = `<!-- run-comment: ${kind} -->`;
+  return comments.filter((c) => c !== null && typeof c === 'object' && typeof c.body === 'string' && c.body.startsWith(marker));
+}
+
+function hasId(c) {
+  return c.id !== null && c.id !== undefined && c.id !== '';
+}
+
 function findRunComments(payload, kind) {
   const comments = commentList(payload);
   if (comments === null) return null;
-  const marker = `<!-- run-comment: ${kind} -->`;
-  const candidates = comments.filter((c) => c !== null && typeof c === 'object' && typeof c.body === 'string' && c.body.startsWith(marker));
-  const ids = candidates
-    .filter(isTrustedComment)
-    .map((c) => c.id)
-    .filter((id) => id !== null && id !== undefined && id !== '')
-    .map(String);
+  const candidates = markerCandidates(comments, kind);
+  const ids = candidates.filter(isTrustedComment).filter(hasId).map((c) => String(c.id));
   const skipped = candidates.filter((c) => !isTrustedComment(c)).map(untrustedSkipNote);
   return { kind, id: ids[0] ?? null, ids, skipped };
+}
+
+// The comment whose id findRunComments reports as `id` (the first trusted marker comment carrying
+// one), or null — for a caller that needs its body, so it never re-implements the selection.
+function firstTrustedMarkerComment(payload, kind) {
+  const comments = commentList(payload);
+  if (comments === null) return null;
+  return markerCandidates(comments, kind).filter(isTrustedComment).find(hasId) ?? null;
 }
 
 const realDeps = {
@@ -88,6 +100,6 @@ function run(argv, deps = realDeps) {
   return 0;
 }
 
-module.exports = { run, parseArgs, findRunComments };
+module.exports = { run, parseArgs, findRunComments, firstTrustedMarkerComment };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

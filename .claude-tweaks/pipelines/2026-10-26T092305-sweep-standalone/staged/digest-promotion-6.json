@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "digest",
+  "record": null,
+  "title": "Digest: reconcile (15)",
+  "action": "Propose cluster: file record absorbing 15 reconcile entries",
+  "command": "gh issue create --title \"Digest: reconcile (15)\" --body-file staged/digest-promotion-6.md"
+ }
+]

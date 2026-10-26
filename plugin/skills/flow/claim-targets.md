@@ -5,6 +5,12 @@ Config Manifesto (Step 3). Relocated from `skills/dispatch/claim-outcomes.md` �
 logic below is unchanged from that file; only the call site moved, per #463's identity
 unification (claim identity is `basename($PIPELINE_RUN_DIR)`, never a separate variable).
 
+**The one call.** `SKILL.md` Step 2.8 claims every target in one call, and carries its exit branches:
+`node "${CLAUDE_PLUGIN_ROOT}/bin/claim-targets.js" --run-id "$(basename "$PIPELINE_RUN_DIR")" --targets {n}[,{m}…] --steps {steps} [--keep-going] --run "$PIPELINE_RUN_DIR"`
+With `--steps`, the CLI applies the step-list skip-guard below itself. This file is that call's spec. Read it
+on a non-zero exit, for a non-empty `skipped` array's cards, for the `gh`-absent MCP procedure, or for a direct
+invocation's identity mint and file-overlap warning.
+
 ## Skip-guard
 
 Skip this step entirely (log nothing beyond a one-line note, proceed straight to Step 3) when
@@ -31,7 +37,8 @@ any of:
   already own.
 - **The resolved step list (`SKILL.md` Step 1, item 4) contains neither `build` nor `test`** — a
   teardown-only or resume-from-review-onward invocation has nothing left to build, so there is
-  nothing left to lock. This covers the invocation shapes that would otherwise reach the claim
+  nothing left to lock. `claim-targets.js --steps` applies this guard itself: it claims nothing and
+  exits 0 with `skipGuard: "no-build-or-test"`. This covers the invocation shapes that would otherwise reach the claim
   attempt below with no self-owned `runId` to match against the condition above: a dispatched
   group's *second* Task call (`review,polish,wrap-up` — already claimed by the first call's
   Step 2.8 run), and any `wrap-up`-only invocation, whether a human resuming a parked run
@@ -127,11 +134,12 @@ to Step 3 for any of them. One invocation claims the whole list:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/claim-targets.js" --run-id "$(basename "$PIPELINE_RUN_DIR")" \
-  --targets {n}[,{m}…] [--keep-going] --run "$PIPELINE_RUN_DIR"
+  --targets {n}[,{m}…] --steps {steps} [--keep-going] --run "$PIPELINE_RUN_DIR"
 ```
 
-Pass `--keep-going` only when this run is in `keep-going` mode (below); a default-mode run
-(single- or multi-target) omits the flag. The CLI implements `_shared/issue-claims.md`'s "The
+`{steps}` is the resolved step list (`SKILL.md` Step 1, item 4), comma-joined. Pass `--keep-going`
+only when this run is in `keep-going` mode (below); a default-mode run (single- or multi-target)
+omits the flag. The CLI implements `_shared/issue-claims.md`'s "The
 lock" steps 1-6 — read, classify, and the create-only/conditional/contested branch — via
 `bin/lib/issues/claim-store.js`, the one contents-API implementation this CLI and
 `reconcile/release-merged.js`'s release path both delegate to: the absent branch that
@@ -218,7 +226,7 @@ back once more. Still absent: trace it and move on — the claim is never aborte
 stays best-effort and the claim read stays the authoritative hold check:
 `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 2.8 bot:in-progress projection (degraded)" --text "condition: label still absent on #{n} after one mergeLabelNames retry → fallback: claim kept; dispatch's label pre-filter will not see this hold" --reversibility n/a`.
 
-**Confirming the manual MCP path actually landed (#1728).** The hand-run procedure above has no CLI enforcing that every step actually ran, so before this call (or a `build,test`-scoped headless dispatch call) reports `DONE`/`build-test-ok`, run `node "${CLAUDE_PLUGIN_ROOT}/bin/verify-run-bookends.js" --run "$PIPELINE_RUN_DIR" --targets {n}[,{m}…]` — a mechanical, `gh`-independent check (it reads the claim via git, never `gh`) confirming this run's `worktree` stamp, its `pr` stamp under `pr-first`, a committed `work/{n}-spec.md`, a canonical `Step 2.8: claimed #{n}` line and a live claim per target, by direct inspection rather than trusting the manual procedure was followed correctly. Dispatch's first-call template requires the same check on every transport (#2912). Exit 0 → proceed. Exit 1 → the named bookend(s) in its `missing` array were never confirmed: run each `missing` entry's `remedy`, re-run the check, and report `BLOCKED`/`build-test-blocked` instead of a false `DONE`/`build-test-ok` only if it still exits 1, per this issue's own Acceptance Criteria. Exit 2 → a malformed invocation, not a missing bookend: correct the `--run`/`--targets` arguments and re-run — never `DONE` on it. A `verify-run-bookends: degraded —` stderr line (exit 0; the run's `config.yml` carries no valid `integration-model` pin, per `_shared/integration-model.md`) is logged as a `SKIP` decision via `log-decision.js --status SKIP --text-file "{text-file}"`, where `{text-file}` holds `condition: {stderr line} → fallback: PR-bookend check not run` per `_shared/auto-decision-log.md`'s Text from git or a user paragraph (the stderr line interpolates the config path), never treated as a failure or a missing bookend.
+**Confirming the manual MCP path actually landed (#1728).** The hand-run procedure above has no CLI enforcing that every step actually ran, so before this call (or a `build,test`-scoped headless dispatch call) reports `DONE`/`build-test-ok`, run `node "${CLAUDE_PLUGIN_ROOT}/bin/verify-run-bookends.js" --run "$PIPELINE_RUN_DIR" --targets {n}[,{m}…]` — a mechanical, `gh`-independent check (it reads the claim via git, never `gh`) confirming this run's `worktree` stamp, its `pr` stamp under `pr-first`, a committed `work/{n}-spec.md`, a canonical `Step 2.8: claimed #{n}` line and a live claim per target, by direct inspection rather than trusting the manual procedure was followed correctly. Dispatch's first-call template requires the same check on every transport (#2912). Exit 0 → proceed. Exit 1 → the named bookend(s) in its `missing` array were never confirmed: run each `missing` entry's `remedy`, re-run the check, and report `BLOCKED`/`build-test-blocked` instead of a false `DONE`/`build-test-ok` only if it still exits 1, per this issue's own Acceptance Criteria. Exit 2 → a malformed invocation, not a missing bookend: correct the `--run`/`--targets` arguments and re-run — never `DONE` on it. A `verify-run-bookends: degraded —` stderr line (exit 0 or 1; the run's `config.yml` carries no valid `integration-model` pin, per `_shared/integration-model.md`) is logged as a `SKIP` decision by the check itself; only when its JSON says `logged: false`, log it via `log-decision.js --status SKIP --text-file "{text-file}"`, where `{text-file}` holds `condition: {stderr line} → fallback: PR-bookend check not run` per `_shared/auto-decision-log.md`'s Text from git or a user paragraph (the stderr line interpolates the config path), never treated as a failure or a missing bookend.
 
 **Branch on exit code:**
 

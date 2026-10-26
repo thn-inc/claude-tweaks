@@ -482,7 +482,8 @@ No `AskUserQuestion` for any individual decision — this posture's entire point
 chain, not a human, decides. At the end, render a short summary (record count granted /
 re-authorized / needs-decision / not re-asked / skipped, with skip reasons grouped by `failedKey`) and the Next Actions block
 from `SKILL.md` (rendered only when a human is present — see that file's Next Actions section
-and Component-Skill Contract).
+and Component-Skill Contract). After the report, run `close-run --run <absolute-run-dir>` on a
+directory this run created, per `SKILL.md`'s Component-Skill Contract close-out paragraph.
 
 **Resolve-lane skip line (#1887).** This posture never applies a Resolve row (above) — when
 `refine-mode.md` Step 1's Resolve fetch found a non-zero count this run, name it in the summary
