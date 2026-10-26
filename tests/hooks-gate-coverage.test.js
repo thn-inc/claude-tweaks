@@ -1978,23 +1978,26 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // additive marker, `lost: true` (a write or mkdir target also `rel`, its text as written), beside
     // the fields it always had, with an overflowCwd and without one. An absolute target, and a git
     // command after an absolute cd or `-C`, is known and carries none. 4e7d54a9d gave no marker.
+    // The lost cwd at the start also carries `bases`, base d9aa6b82d's reading of the target: the
+    // start, moved by the relative cds since the loss, unclamped (/r, then q, reads ../w/f.js as
+    // /r/w/f.js; from /r alone it is /w/f.js); the one at a distinct overflow root has none.
     test('#4303 cwd cap: a target resolved from a lost cwd carries lost: true beside its stand-in path', () => {
       const past = distinct((i) => `{ cd /a${i}; }; `, 16);
-      const lostAt = (file, rel, action = 'write') => ({ action, file, lost: true, rel });
+      const lostAt = (file, rel, action = 'write', bases) => ({ action, file, lost: true, rel, ...(bases && { bases: bases.map((b) => path.resolve(b)) }) });
       assert.deepStrictEqual(fileWriteTargets(`${past}cd q; echo x > ../w/f.js; cp a /x/f.js`, '/r', opts),
-        [lostAt(MAIN_ROOT, '../w/f.js'), lostAt(path.resolve('/r/w/f.js'), '../w/f.js'), { action: 'copy', file: path.resolve('/x/f.js') }]);
-      assert.deepStrictEqual(fileWriteTargets(`${past}tee ../w/f.js`, '/r'), [lostAt(path.resolve('/r/w/f.js'), '../w/f.js')]);
+        [lostAt(MAIN_ROOT, '../w/f.js'), lostAt(path.resolve('/r/w/f.js'), '../w/f.js', 'write', ['/r/w/f.js']), { action: 'copy', file: path.resolve('/x/f.js') }]);
+      assert.deepStrictEqual(fileWriteTargets(`${past}tee ../w/f.js`, '/r'), [lostAt(path.resolve('/r/w/f.js'), '../w/f.js', 'write', ['/w/f.js'])]);
       assert.deepStrictEqual(mkdirTargets(`${past}mkdir -p ../wt2/.claude-tweaks/pipelines/2026-x /x/d`, '/r/wt'), [
-        lostAt(path.resolve('/r/wt/wt2/.claude-tweaks/pipelines/2026-x'), '../wt2/.claude-tweaks/pipelines/2026-x', 'mkdir'),
+        lostAt(path.resolve('/r/wt/wt2/.claude-tweaks/pipelines/2026-x'), '../wt2/.claude-tweaks/pipelines/2026-x', 'mkdir', ['/r/wt2/.claude-tweaks/pipelines/2026-x']),
         { action: 'mkdir', file: path.resolve('/x/d') },
       ]);
       assert.deepStrictEqual(gitTargets(`${past}git commit -m m; git -C ../x push; git -C /t commit -m m`, '/r', opts), [
-        { action: 'commit', dir: MAIN_ROOT, lost: true }, { action: 'commit', dir: path.resolve('/r'), lost: true },
-        { action: 'push', dir: MAIN_ROOT, lost: true }, { action: 'push', dir: path.resolve('/r'), lost: true },
+        { action: 'commit', dir: MAIN_ROOT, lost: true }, { action: 'commit', dir: path.resolve('/r'), lost: true, bases: [path.resolve('/r')] },
+        { action: 'push', dir: MAIN_ROOT, lost: true }, { action: 'push', dir: path.resolve('/r'), lost: true, bases: [path.resolve('/x')] },
         { action: 'commit', dir: path.resolve('/t') },
       ]);
       assert.deepStrictEqual(gitTargets(`${past}cd /t; git commit -m m`, '/r', opts), [{ action: 'commit', dir: path.resolve('/t') }]);
-      assert.deepStrictEqual(gitTargets(`${past}git commit -m m`, '/r'), [{ action: 'commit', dir: path.resolve('/r'), lost: true }]);
+      assert.deepStrictEqual(gitTargets(`${past}git commit -m m`, '/r'), [{ action: 'commit', dir: path.resolve('/r'), lost: true, bases: [path.resolve('/r')] }]);
       // A relative cd from the lost cwd that spells `.claude-tweaks` and then `pipelines` (here split
       // across two cds, with other components between) is kept in `rel`, so `mkdir 2026-x` names it.
       assert.deepStrictEqual(mkdirTargets(`${past}cd ../w/.Claude-Tweaks; cd x/../Pipelines; mkdir 2026-x`, '/r').map((t) => t.rel),
@@ -2008,6 +2011,33 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       const past = distinct((i) => `{ cd /a${i}; }; `, 16);
       assert.deepStrictEqual(fileWriteTargets(`cp a w/f.js; ${past}cp a w/f.js`, '/r').map((t) => !!t.lost), [false, true]);
       assert.deepStrictEqual(mkdirTargets(`mkdir w/d; ${past}mkdir w/d`, '/r').map((t) => !!t.lost), [false, true]);
+    });
+    // #4303: base's readings follow every cwd the lost cwd may be in. From /r with every /aN absent
+    // (each cd fails) and /r/a, /r/b present, `G16 { cd a; }; { cd b; }; echo x > ../f.js`: bash 3.2
+    // and 5 write /r/f.js; with /r/a/b present instead, /r/a/f.js. The bases hold both and /f.js (no
+    // cd taken), unclamped; e8473c015 carried none. The lost visits of one target join one entry. A
+    // relative `git -C` or `env -C` moves the reading as it moves bash: `{ cd a; }; git -C ../M
+    // commit` runs in /r/M with /r/a present and in /M without.
+    test('#4303 cwd cap: a lost target carries base\'s reading under every cwd the lost cwd may be in', () => {
+      const past = distinct((i) => `{ cd /a${i}; }; `, 16);
+      const abs = (...ps) => ps.map((p) => path.resolve(p));
+      const [w] = fileWriteTargets(`${past}{ cd a; }; { cd b; }; echo x > ../f.js`, '/r', opts).filter((t) => t.file !== MAIN_ROOT);
+      assert.deepStrictEqual([w.lost, w.bases], [true, abs('/f.js', '/r/f.js', '/r/a/f.js')]);
+      for (const cmd of [`${past}{ cd a; }; git -C ../M commit -m m`, `${past}{ cd a; }; env -C ../M git commit -m m`]) {
+        assert.deepStrictEqual(gitTargets(cmd, '/r', opts), [
+          { action: 'commit', dir: MAIN_ROOT, lost: true }, { action: 'commit', dir: path.resolve('/r'), lost: true, bases: abs('/M', '/r/M') },
+        ], cmd.slice(-40));
+      }
+    });
+    // #4303: a later collapse keeps the furthest trail the collapsing set had spelled. From /r with
+    // /r/.claude-tweaks/pipelines present, `G16 cd .claude-tweaks/pipelines; G16 mkdir 2026-x`, and
+    // the split `cd .claude-tweaks; G16 mkdir pipelines/2026-x`: bash 3.2 and 5 create
+    // /r/.claude-tweaks/pipelines/2026-x. e8473c015 restarted the trail at the second collapse and
+    // reported `2026-x` and `pipelines/2026-x`, naming no segment.
+    test('#4303 cwd cap: a second collapse keeps the .claude-tweaks/pipelines trail spelled before it', () => {
+      const past = distinct((i) => `{ cd /a${i}; }; `, 16);
+      assert.deepStrictEqual(mkdirTargets(`${past}cd .claude-tweaks/pipelines; ${past}mkdir 2026-x`, '/r').map((t) => t.rel), ['.claude-tweaks/pipelines/2026-x']);
+      assert.deepStrictEqual(mkdirTargets(`${past}cd .claude-tweaks; ${past}mkdir pipelines/2026-x`, '/r').map((t) => t.rel), ['.claude-tweaks/pipelines/2026-x']);
     });
     // #4303: any other handler is never handed a lost cwd. The set collapses to real paths, the
     // overflow cwd and the start, and a relative cd moves them, exactly as base d9aa6b82d did, so the

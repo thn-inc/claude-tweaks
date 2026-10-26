@@ -500,6 +500,11 @@ function resolveCd(effCwd, raw) {
   return path.resolve(effCwd, stripQuotes(raw));
 }
 
+// The plugin-owned pipeline state directory, relative to a checkout's root. pre-tool-use.js reads
+// it from here (its exemption and the shadow guard), so the lost cwd's trail below spells the same
+// two components.
+const PIPELINE_STATE_DIR = path.join('.claude-tweaks', 'pipelines');
+
 // A cwd the walk has lost past its cwd cap (#4303, see CWD_SET_CAP): the shell is somewhere under
 // `root` or anywhere a relative `cd` from there led. Only this module's own consumers see one.
 // `overflow` marks the one rooted at the caller's overflow cwd (the main checkout): a relative
@@ -508,27 +513,53 @@ function resolveCd(effCwd, raw) {
 // `trail` keeps the one part of the relative `cd`s since the cwd was lost that a consumer reads
 // off a lost target: how far they spelled the `.claude-tweaks/pipelines` segment (LOST_TRAIL), so
 // that `cd .claude-tweaks/pipelines; mkdir 2026-x` still names it (writeTarget prefixes it to
-// `rel`). It is a step count, 0 to LOST_TRAIL.length, so a lost cwd has at most three variants
-// (`family`) and never grows however many cds follow.
-const LOST_TRAIL = ['.claude-tweaks', 'pipelines'];
+// `rel`). It is a step count, 0 to LOST_TRAIL.length.
+//
+// `base` is base d9aa6b82d's reading of the same cwd: the walk's start (where bash is when every
+// `cd` the collapse dropped failed), moved by each relative `cd` since, unclamped. A target from a
+// lost cwd carries the path it resolves to from there (`bases` on a write, mkdir or git target, one
+// per variant of the lost cwd it was visited under), which a gate checks as an ordinary target
+// beside the lost one, as base did. The one
+// rooted at a distinct overflow cwd has none (null). Every lost cwd of one collapse shares
+// `family` (the one it began as), and two are the same cwd when their family, trail and base
+// match (sameCwd).
+const LOST_TRAIL = PIPELINE_STATE_DIR.split(path.sep);
 class LostCwd {
-  constructor(root, overflow, trail = 0, family = []) {
+  constructor(root, overflow, base, trail = 0, family = null) {
     this.root = root;
     this.overflow = overflow;
+    this.base = base;
     this.trail = trail;
-    this.family = family;
-    family[trail] = this;
+    this.family = family || this;
   }
 
   // This lost cwd after a relative `cd rel`: the same cwd, its trail advanced by each component of
   // `rel` that spells the next part of LOST_TRAIL (any components between are skipped, failing
-  // closed: bash resolves a `..` through links the text does not show; case is ignored).
+  // closed: bash resolves a `..` through links the text does not show; case is ignored), and its
+  // base moved by `rel`.
   after(rel) {
     let trail = this.trail;
     for (const part of rel.toLowerCase().split(/[\\/]+/)) if (part === LOST_TRAIL[trail]) trail += 1;
-    if (trail === this.trail) return this;
-    return this.family[trail] || new LostCwd(this.root, this.overflow, trail, this.family);
+    const base = this.base === null ? null : path.resolve(this.base, rel);
+    if (trail === this.trail && base === this.base) return this;
+    return new LostCwd(this.root, this.overflow, base, trail, this.family);
   }
+
+  withTrail(trail) {
+    return trail === this.trail ? this : new LostCwd(this.root, this.overflow, this.base, trail, this.family);
+  }
+
+  // Whether the walk had dropped a cwd its caller guards before this target was resolved (see
+  // CWD_SET_CAP); `walk` is set on the collapse's own lost cwds.
+  get droppedGuarded() {
+    return !!(this.family.walk && this.family.walk.guarded);
+  }
+}
+
+// Whether two cwds in the walk's set are one: the same path, or lost cwds alike in family, trail
+// and base.
+function sameCwd(a, b) {
+  return a === b || (a instanceof LostCwd && b instanceof LostCwd && a.family === b.family && a.trail === b.trail && a.base === b.base);
 }
 
 // `rel` with every `..` that would climb above its start dropped (`a/../../b` reads `b`), so a
@@ -746,7 +777,9 @@ function skipGlobalFlags(t, i, dir, pathImpl = path) {
         // Relative -C while cwd is UNKNOWN — cannot prove the target.
         unprovable = true;
       } else if (dir instanceof LostCwd) {
-        // A relative -C from a lost cwd (#4303) keeps it lost: resolveGitCommand gives it the root.
+        // A relative -C from a lost cwd (#4303) keeps it lost (resolveGitCommand gives it the root)
+        // and moves its base.
+        dir = dir.after(raw);
       } else {
         dir = pathImpl.resolve(dir, raw);
       }
@@ -825,7 +858,7 @@ function findGitLead(t, dir) {
 // flags, in the one index/unprovable/dir-null check sequence both gitTargets
 // and teardownTargets (pre-tool-use.js) need. Returns `{ index, dir }` (index
 // is the resolved SUBCOMMAND token position; plus `lost: true` when `dir` is a
-// lost cwd's stand-in, #4303) or null when the segment isn't
+// lost cwd's stand-in, with `base`, base's reading, when it has one, #4303) or null when the segment isn't
 // git, or the target is unprovable / cwd-unknown-with-no-provable--C. A
 // single shared point so a future fix to this preamble lands once for both
 // callers instead of drifting between two hand-kept copies — the exact gap
@@ -837,8 +870,14 @@ function resolveGitCommand(t, effCwd) {
   const { index, dir, unprovable } = skipGlobalFlags(t, lead.index + 1, lead.dir);
   if (lead.unprovable || unprovable || dir === null) return null;
   // A git command run from a lost cwd (#4303) runs somewhere the walk does not know: `dir` is the
-  // lost cwd's root, a stand-in, and `lost: true` says so (see CWD_SET_CAP).
-  if (dir instanceof LostCwd) return { index, dir: dir.root, lost: true };
+  // lost cwd's root, a stand-in, and `lost: true` says so (see CWD_SET_CAP); `base` is where base
+  // ran it (LostCwd), and `droppedGuarded` whether the walk had dropped a guarded cwd (CWD_SET_CAP).
+  if (dir instanceof LostCwd) {
+    const out = { index, dir: dir.root, lost: true };
+    if (dir.base !== null) out.base = dir.base;
+    if (dir.droppedGuarded) out.droppedGuarded = true;
+    return out;
+  }
   return { index, dir };
 }
 
@@ -884,9 +923,14 @@ function resolvedGitSegments(command, cwd, opts) {
     const resolved = resolveGitCommand(t, effCwd);
     if (!resolved) return;
     // A repeat visit under another cwd (after a brace group) that resolves to the same dir adds nothing.
-    if (again && segments.slice(pieceStart).some((s) => s.dir === resolved.dir && s.index === resolved.index && s.lost === resolved.lost)) return;
+    const same = again && segments.slice(pieceStart).find((s) => s.dir === resolved.dir && s.index === resolved.index && s.lost === resolved.lost);
+    // ... though a lost one's base reading (#4303) from another variant of the lost cwd joins its `bases`.
+    if (same) {
+      if (resolved.base !== undefined && !(same.bases || []).includes(resolved.base)) same.bases = [...(same.bases || []), resolved.base];
+      return;
+    }
     segments.push(resolved.lost
-      ? { tokens: t, index: resolved.index, dir: resolved.dir, lost: true }
+      ? { tokens: t, index: resolved.index, dir: resolved.dir, lost: true, ...(resolved.base !== undefined && { bases: [resolved.base] }), ...(resolved.droppedGuarded && { droppedGuarded: true }) }
       : { tokens: t, index: resolved.index, dir: resolved.dir });
   }, keepLost(opts));
   return segments;
@@ -898,10 +942,16 @@ function resolvedGitSegments(command, cwd, opts) {
 // classify" in one call.
 function gitTargetsFrom(segments) {
   const targets = [];
-  for (const { tokens: t, index, dir, lost } of segments) {
+  for (const { tokens: t, index, dir, lost, bases, droppedGuarded } of segments) {
     const sub = t[index];
     if (sub === 'commit' || sub === 'push' || PLUMBING_WRITE_SUBCOMMANDS.has(sub)) {
-      targets.push(lost ? { action: sub, dir, lost } : { action: sub, dir });
+      const target = { action: sub, dir };
+      if (lost) {
+        target.lost = true;
+        if (bases !== undefined) target.bases = bases;
+        if (droppedGuarded) target.droppedGuarded = true;
+      }
+      targets.push(target);
     }
   }
   return targets;
@@ -992,13 +1042,24 @@ function resolveWriteTarget(effCwd, raw) {
 // target from a lost cwd (#4303) also carries `lost: true` and `rel`, the target as written (after
 // the lost cwd's trail, LostCwd): the walk does not know the directory it lands in, so `file` is
 // only the lost cwd's stand-in (resolveWriteTarget), and a consumer that reads the marker denies on
-// it (see CWD_SET_CAP).
+// it (see CWD_SET_CAP). It also carries `bases`, the path base resolved it to, when the lost cwd
+// has one (the dedupes in fileWriteTargets and mkdirTargets join the readings of one target).
 function writeTarget(action, effCwd, raw) {
   const file = resolveWriteTarget(effCwd, raw);
   if (!file) return null;
   const rel = stripQuotes(raw);
   if (!(effCwd instanceof LostCwd) || path.isAbsolute(rel)) return { action, file };
-  return { action, file, lost: true, rel: [...LOST_TRAIL.slice(0, effCwd.trail), rel].join('/') };
+  const entry = { action, file, lost: true, rel: [...LOST_TRAIL.slice(0, effCwd.trail), rel].join('/') };
+  if (effCwd.base !== null) entry.bases = [path.resolve(effCwd.base, rel)];
+  if (effCwd.droppedGuarded) entry.droppedGuarded = true;
+  return entry;
+}
+
+// Folds lost write entry `entry` into `into`, the earlier one for the same target: its base
+// readings join `into.bases`, and its droppedGuarded mark carries over (#4303).
+function joinBases(into, entry) {
+  for (const b of entry.bases || []) if (!(into.bases || []).includes(b)) into.bases = [...(into.bases || []), b];
+  if (entry.droppedGuarded) into.droppedGuarded = true;
 }
 
 // The word after a redirection's `&` that duplicates a file descriptor
@@ -1997,7 +2058,7 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
   const next = [];
   cwds.forEach((c, k) => {
     const n = visitSegment(tok, nestAt, c, vars, k === 0 ? handler : (t, effCwd, quoting) => handler(t, effCwd, quoting, true));
-    if (!next.includes(n)) next.push(n);
+    if (!next.some((x) => sameCwd(x, n))) next.push(n);
   });
   return next;
 }
@@ -2041,17 +2102,29 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // linked worktree or the exempt `.claude-tweaks/pipelines/` while bash wrote elsewhere in M. The
 // other is rooted at the walk's own starting cwd (the only one without an overflowCwd), and a
 // relative target from it resolves under the start, never above it (clampRel), so the shadow
-// guard still sees `start/.claude-tweaks/pipelines/…`. A lost cwd never grows, so the walk stays
-// linear.
+// guard still sees `start/.claude-tweaks/pipelines/…`. The one at the start also keeps base's
+// reading of the cwd (LostCwd's `base`), which a relative `cd` moves as it moved base's real path,
+// so its variants branch like any cwd and are bounded by the cap the same way; the one at the
+// overflow root never changes, and a later collapse starts each over at the start.
 //
 // Those paths are stand-ins, never where bash is known to be, so every target resolved from a lost
 // cwd also carries an additive marker, `lost: true`, beside the fields it always had: a relative
 // write, mkdir or redirect target (writeTarget, which adds `rel`, the target as written), and a git
 // command run from a lost cwd or behind a relative `git -C` there (resolveGitCommand, then
-// resolvedGitSegments and gitTargets). An absolute target, or a git command after an absolute
-// `cd` or `-C`, is known and carries none. Each consumer that reads the marker denies on it for its
-// own concern (pre-tool-use's worktree gate, pipeline shadow guard and teardown gate) or checks
-// every candidate repo (post-tool-use); any other consumer sees the stand-in as before.
+// resolvedGitSegments and gitTargets). Either also carries `bases`, base's readings of the target,
+// when its lost cwd has one. An absolute target, or a git command after an absolute `cd` or `-C`,
+// is known and carries none. Each consumer that reads the marker denies on it for its own concern
+// (pre-tool-use's worktree gate, pipeline shadow guard and teardown gate) or checks every candidate
+// repo (post-tool-use); the worktree gate and the shadow guard also check each of `bases` as an
+// ordinary target; any other consumer sees the stand-in as before.
+//
+// A stand-in also says nothing about the cwds the collapse dropped, and an absolute `cd` among them
+// may have put bash in a checkout the stand-in's repo knows nothing of. With the caller's
+// `opts.onDroppedCwd`, each collapse hands it every distinct cwd it drops (a lost one by its base),
+// up to DROPPED_CHECK_CAP per walk. A truthy answer (pre-tool-use: this cwd is in a checkout whose
+// worktree-always policy is on) marks the walk guarded, as passing the cap does, failing closed,
+// and every lost target resolved after that also carries `droppedGuarded: true`. post-tool-use
+// answers false and keeps the cwds, to look for a lost commit in their checkouts too.
 //
 // Any other handler (the prefilter, powershellOpaqueCommand) is never handed a lost cwd: the set
 // collapses to real paths, the overflow cwd and the start, exactly as before #4303, so the handler
@@ -2063,25 +2136,45 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 const CWD_SET_CAP = 16; // four groups each with a relative cd already make 2^4 cwds
 const KEEP_LOST = Symbol('keepLostCwd');
 const keepLost = (opts) => ({ ...(opts || {}), [KEEP_LOST]: true });
+const DROPPED_CHECK_CAP = 128;
 function forEachShellSegment(command, cwd, handler, opts = {}) {
   const start = cwd || '.';
   let collapsed = null;
-  const overflow = () => {
+  const walk = { guarded: false, checked: new Set() };
+  const noteDropped = (set) => {
+    if (walk.guarded || typeof opts.onDroppedCwd !== 'function') return;
+    for (const x of set) {
+      const p = x instanceof LostCwd ? x.base : x;
+      if (p === null || walk.checked.has(p)) continue;
+      if (walk.checked.size >= DROPPED_CHECK_CAP || opts.onDroppedCwd(p)) {
+        walk.guarded = true;
+        return;
+      }
+      walk.checked.add(p);
+    }
+  };
+  const overflow = (set) => {
     if (collapsed === null) {
       const o = typeof opts.overflowCwd === 'function' ? opts.overflowCwd() : opts.overflowCwd;
       if (!opts[KEEP_LOST]) collapsed = o && o !== start ? [o, start] : [start];
-      else if (!o) collapsed = [new LostCwd(start, false)];
-      else collapsed = o === start ? [new LostCwd(start, true)] : [new LostCwd(o, true), new LostCwd(start, false)];
+      else if (!o) collapsed = [new LostCwd(start, false, start)];
+      else collapsed = o === start ? [new LostCwd(start, true, start)] : [new LostCwd(o, true, null), new LostCwd(start, false, start)];
+      for (const c of collapsed) if (c instanceof LostCwd) c.walk = walk;
     }
-    return collapsed;
+    if (!opts[KEEP_LOST]) return collapsed;
+    noteDropped(set);
+    // A later collapse starts each lost cwd over at its base (the start, as base's collapse did) but
+    // keeps the furthest trail the collapsing set had spelled, so a `.claude-tweaks/pipelines`
+    // segment named before it still names one after.
+    return collapsed.map((c) => c.withTrail(set.reduce((most, x) => (x instanceof LostCwd && x.family === c.family && x.trail > most ? x.trail : most), 0)));
   };
   walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow);
 }
 
-// The union of two cwd lists, collapsing to `overflow()` past CWD_SET_CAP.
+// The union of two cwd lists, collapsing to `overflow(union)` past CWD_SET_CAP.
 function joinCwds(a, b, overflow) {
-  const out = [...a, ...b.filter((c) => !a.includes(c))];
-  return out.length <= CWD_SET_CAP ? out : overflow();
+  const out = [...a, ...b.filter((c) => !a.some((x) => sameCwd(x, c)))];
+  return out.length <= CWD_SET_CAP ? out : overflow(out);
 }
 
 function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
@@ -2668,12 +2761,17 @@ function fileWriteTargets(command, cwd, opts) {
   }, keepLost(opts));
   // forEachShellSegment may visit a segment under two cwds, or a kept body twice (planned and
   // whole), so the same target can come back more than once: report each one once. A lost entry
-  // (#4303) is never folded into a known one, nor into a lost one written another way.
-  const seen = new Set();
-  return targets.filter(({ action, file, rel }) => {
+  // (#4303) is never folded into a known one, nor into a lost one written another way; a lost one
+  // written the same way keeps the other's base readings too.
+  const seen = new Map();
+  return targets.filter((entry) => {
+    const { action, file, rel } = entry;
     const key = `${action}\0${file}\0${rel === undefined ? '' : `\0${rel}`}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
+    if (seen.has(key)) {
+      joinBases(seen.get(key), entry);
+      return false;
+    }
+    seen.set(key, entry);
     return true;
   });
 }
@@ -2697,14 +2795,16 @@ function mkdirTargets(command, cwd, opts) {
     for (const arg of positionals) {
       const entry = writeTarget('mkdir', effCwd, arg);
       // A repeat visit under another cwd (after a brace group) adds an absolute path only once.
-      if (entry && !(again && targets.slice(pieceStart).some((x) => x.file === entry.file && x.rel === entry.rel))) targets.push(entry);
+      const same = entry && again && targets.slice(pieceStart).find((x) => x.file === entry.file && x.rel === entry.rel);
+      if (same) joinBases(same, entry);
+      else if (entry) targets.push(entry);
     }
   }, keepLost(opts));
   return targets;
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment, keepLost,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR,
   // The heredoc reader vocabularies, pinned against policy-schema-coverage.md's prose (#4149).
   DATA_READER_WORDS, READER_WRAPPER_WORDS, GIT_DATA_SUBCOMMANDS, INERT_NEIGHBOUR_WORDS,
 };

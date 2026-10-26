@@ -26,6 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const {
   gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, powershellOpaqueCommand, keepLost,
+  PIPELINE_STATE_DIR,
 } = require('./git-command');
 const ctxLib = require('./context');
 const policy = require('../policy');
@@ -87,8 +88,8 @@ function pluginRoot() {
 // removing it, and that copy-out needed to write into the main checkout. That
 // step was deleted once anchoring made it unnecessary. The reason changed;
 // the exemption did not — do not read the dead justification as evidence this
-// can be removed.
-const PIPELINE_STATE_DIR = path.join('.claude-tweaks', 'pipelines');
+// can be removed. PIPELINE_STATE_DIR itself is defined in git-command.js
+// (imported above), whose lost-cwd trail spells the same directory (#4303).
 
 const POLICY_FILE = path.join('.claude-tweaks', 'policy.yml');
 
