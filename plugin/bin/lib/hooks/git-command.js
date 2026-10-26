@@ -93,7 +93,7 @@ function segmentSpansWith(str, spans) {
     // quoted or not) is cut as before #4303 too: bash runs that substitution, and the cuts at its
     // separators are what expose its writes to the walk. An inner `$((` counts as such an opener
     // unless it passes the same arithmetic test (`$(( $((true); cp a f) ))` runs its cp).
-    const lead =ch === '$' && str[i + 1] === '(' && str[i + 2] === '(' ? i + 2
+    const lead = ch === '$' && str[i + 1] === '(' && str[i + 2] === '(' ? i + 2
       : ch === '(' && str[i + 1] === '(' && (i === 0 || /[\s;&|(]/.test(str[i - 1])) ? i + 1 : -1;
     if (lead !== -1) {
       if (parens === null) {
@@ -103,14 +103,13 @@ function segmentSpansWith(str, spans) {
         for (let k = i; k < str.length; k += 1) {
           const c = str[k];
           const dollarParen = c === '$' && str[k + 1] === '(';
-          const arith = dollarParen && str[k + 2] === '(' && str[i + parens.get(k + 2 - i) + 1] === ')';
+          const arith = dollarParen && str[k + 2] === '(' && closesDoubled(parens, str, k + 2, i);
           const opener = c === '`' || (dollarParen && !arith) || ((c === '<' || c === '>') && str[k + 1] === '(');
           opens[k - i + 1] = opens[k - i] + (opener ? 1 : 0);
         }
       }
-      const inner = parens.get(lead - parensFrom);
-      const end = inner === undefined ? -1 : parensFrom + inner + 2;
-      if (end !== -1 && str[end - 1] === ')' && opens[end - parensFrom] === opens[i - parensFrom]) {
+      const end = closesDoubled(parens, str, lead, parensFrom) ? parensFrom + parens.get(lead - parensFrom) + 2 : -1;
+      if (end !== -1 && opens[end - parensFrom] === opens[i - parensFrom]) {
         current += str.slice(i, end);
         i = end - 1;
         continue;
@@ -1765,8 +1764,7 @@ function groupEventsWith(seg, g, spans, undo) {
       // commands. Any other `((` is two subshells (`((cd x && ls) | cat)`).
       if (atCmd && seg[i + 1] === '(') {
         if (parens === null) parens = parenMatches(seg);
-        const inner = parens.get(i + 1);
-        if (inner !== undefined && seg[inner + 1] === ')') { nest(2, false); i += 2; continue; }
+        if (closesDoubled(parens, seg, i + 1)) { nest(2, false); i += 2; continue; }
       }
       if (atCmd) {
         const frame = { kind: '(', caseDepth: 0, cmd: true, sub: g.nesting > 0, nesting: g.nesting };
@@ -1845,8 +1843,7 @@ function groupEventsWith(seg, g, spans, undo) {
         subst = 1;
         if (seg[i + 2] === '(') {
           if (parens === null) parens = parenMatches(seg);
-          const inner = parens.get(i + 2);
-          if (inner !== undefined && seg[inner + 1] === ')') subst = 2;
+          if (closesDoubled(parens, seg, i + 2)) subst = 2;
         }
         break;
       }
@@ -1908,6 +1905,13 @@ function parenMatches(seg) {
     else if (c === ')' && stack.length) match.set(stack.pop(), i);
   }
   return match;
+}
+
+// Whether the `(` at `open` in `str` closes at a `)` directly followed by another `)`: the test that
+// makes a `((` or `$((` arithmetic. `match` is parenMatches of `str` from index `from` on.
+function closesDoubled(match, str, open, from = 0) {
+  const close = match.get(open - from);
+  return close !== undefined && str[from + close + 1] === ')';
 }
 
 // visitSegment for each cwd the walk may be in (a list, as after a brace group), deduplicated.
