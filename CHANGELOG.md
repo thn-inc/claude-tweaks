@@ -53,6 +53,29 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.156.0](https://github.com/thn-inc/claude-tweaks/compare/v6.155.1...v6.156.0) (2026-10-26)
+
+
+### Features
+
+* Apply reflect observation and convention findings at the… ([#4168](https://github.com/thn-inc/claude-tweaks/issues/4168)) ([0430206](https://github.com/thn-inc/claude-tweaks/commit/04302060ef03ee5bcc486900ff9390707cdc1fcb))
+* Express lane: build eligible trivial records in one… ([#4025](https://github.com/thn-inc/claude-tweaks/issues/4025)) ([1f652d8](https://github.com/thn-inc/claude-tweaks/commit/1f652d83d8908088d9fa3c4b2b211608c08264aa))
+
+
+### Bug Fixes
+
+* _shared/pr-first-merge.md park comment writes its body to… ([#4173](https://github.com/thn-inc/claude-tweaks/issues/4173)) ([c778d04](https://github.com/thn-inc/claude-tweaks/commit/c778d0490e1b8cfd272cd08828017355bc30a504))
+* Bound the shell-scanner differential recipe so a real… ([#4391](https://github.com/thn-inc/claude-tweaks/issues/4391)) ([87fc4da](https://github.com/thn-inc/claude-tweaks/commit/87fc4da07a1a088dece7c88ce9645a66e9d720a7))
+* Inline component skills that end on an "Output ONLY these… ([#4117](https://github.com/thn-inc/claude-tweaks/issues/4117)) ([a149e80](https://github.com/thn-inc/claude-tweaks/commit/a149e80dfa15ec15351f20b390d06c6b85849fe3))
+* Re-surface a Queue-writes item whose execution failed… ([#4170](https://github.com/thn-inc/claude-tweaks/issues/4170)) ([aea50e8](https://github.com/thn-inc/claude-tweaks/commit/aea50e8e50b451ced26b33f75a593f41ce2d1150))
+* refreshOwnerBlock resolves the owner pid (up to 8 ps… ([#4150](https://github.com/thn-inc/claude-tweaks/issues/4150)) ([4f437c5](https://github.com/thn-inc/claude-tweaks/commit/4f437c57bc2e20d69ff5a9326fde720761a9c16a))
+* release --as anchor still requires exact HEAD == origin… ([#4139](https://github.com/thn-inc/claude-tweaks/issues/4139)) ([2aecb2a](https://github.com/thn-inc/claude-tweaks/commit/2aecb2a0bdb8a042bca820447ea2b240b10c3511))
+* release Step 0 run-dir adoption guard is an inline node… ([#4151](https://github.com/thn-inc/claude-tweaks/issues/4151)) ([e9ef982](https://github.com/thn-inc/claude-tweaks/commit/e9ef982b90843914dd6e791f1b730874f90096fb))
+* specify: refuse digest containers passed by explicit… ([#4142](https://github.com/thn-inc/claude-tweaks/issues/4142)) ([3c6fdaa](https://github.com/thn-inc/claude-tweaks/commit/3c6fdaab66473f7abc2515610cc0ef130119ad8e))
+* Windows: release bootstrap and release-local write guards… ([#4282](https://github.com/thn-inc/claude-tweaks/issues/4282)) ([99b4c2e](https://github.com/thn-inc/claude-tweaks/commit/99b4c2e3db5a7f70564df587732d575096a67a07))
+* Windows: tests and two display-ID producers compare… ([#4288](https://github.com/thn-inc/claude-tweaks/issues/4288)) ([915237d](https://github.com/thn-inc/claude-tweaks/commit/915237d809756faa476246e83c1a4eacdafd0c5a))
+* wrap-up review-console: skip test:true gate-denial events… ([#4186](https://github.com/thn-inc/claude-tweaks/issues/4186)) ([19f3f49](https://github.com/thn-inc/claude-tweaks/commit/19f3f49277b045161cd39ce399a1b1528dccad29))
+
 ## [6.155.1](https://github.com/thn-inc/claude-tweaks/compare/v6.155.0...v6.155.1) (2026-10-25)
 
 
