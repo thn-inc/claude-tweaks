@@ -3337,11 +3337,14 @@ test('#4421 AC6.4: a skipped pass leaves both fields absent', async () => {
   assert.equal('ownerlessNonClean' in scoped, false);
   const dry = await run({ dryRun: true });
   assert.equal('ownerlessNonClean' in dry, false);
-  if (fs.existsSync(cachePath(root))) {
-    const cache = JSON.parse(fs.readFileSync(cachePath(root), 'utf8'));
-    assert.equal('ownerlessNonClean' in cache, false);
-    assert.equal('ownerlessNonCleanZeroSince' in cache, false);
-  }
+  // The summary line is dropped with the count (format-summary's absent-count branch).
+  assert.doesNotMatch(formatSummary(scoped), /ownerless non-clean/);
+  assert.doesNotMatch(formatSummary(dry), /ownerless non-clean/);
+  // The scoped pass is not skipCacheStamp, so finalize writes the cache (lastRunAt) — but never the ownerless keys.
+  assert.ok(fs.existsSync(cachePath(root)), 'the scoped pass writes the cache');
+  const cache = JSON.parse(fs.readFileSync(cachePath(root), 'utf8'));
+  assert.equal('ownerlessNonClean' in cache, false);
+  assert.equal('ownerlessNonCleanZeroSince' in cache, false);
 });
 
 // #4421: an over-budget early return skips `finalize`, so it persists the ownerless count itself —

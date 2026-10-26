@@ -134,9 +134,11 @@ const ADHOC_SESSION_ENDED_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 // checkout that holds `dir` — for any run dir, ad-hoc or not (#4421). Compares
 // real paths, so a dir reached through a symlink (/var vs /private/var) never
 // reads a main-checkout stamp as linked; any unprovable path — missing,
-// unresolvable, absent or non-string — is false. It does no ad-hoc check.
+// unresolvable, absent, relative or non-string — is false (a relative path would
+// resolve against the process cwd, so reconcile run from the main checkout would
+// read `.` as the main checkout). It does no ad-hoc check.
 function recordedWorktreeIsMainCheckout(dir, state) {
-  if (!state || typeof state.worktree !== 'string' || !state.worktree) return false;
+  if (!state || typeof state.worktree !== 'string' || !state.worktree || !path.isAbsolute(state.worktree)) return false;
   const mainRoot = canonicalRealpath(path.resolve(dir, '..', '..', '..'));
   if (!mainRoot) return false;
   const leaf = resolveLeaf(state.worktree);
@@ -2352,7 +2354,7 @@ function archiveMerged({
     // early-return did, via one small follow-up classify call scoped to just
     // the two remaining kinds (adhoc-superseded, adhoc-session-ended).
     if (kind === 'abandoned-interrupted' && checkRunIntegrity(dir, { cache }).state !== 'shipped-unclosed') {
-      kind = classifyRunDir({ dir, state, worktrees, sessionId, liveness, runVerdict, kinds: ['adhoc-superseded', 'adhoc-session-ended'] }).kind;
+      kind = classifyRunDir({ dir, state, worktrees, sessionId, liveness, kinds: ['adhoc-superseded', 'adhoc-session-ended'] }).kind;
     }
 
     if (kind === 'orphaned-mint') {

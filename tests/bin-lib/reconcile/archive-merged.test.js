@@ -2207,6 +2207,15 @@ test('recordedWorktreeIsMainCheckout is false for a linked, missing or absent wo
   assert.equal(recordedWorktreeIsMainCheckout(dir, {}), false, 'no worktree key');
   assert.equal(recordedWorktreeIsMainCheckout(dir, null), false, 'null state');
   assert.equal(recordedWorktreeIsMainCheckout(dir, { worktree: 7 }), false, 'non-string worktree');
+  assert.equal(recordedWorktreeIsMainCheckout(dir, { worktree: '' }), false, 'empty worktree');
+  // A relative path resolves against the process cwd: from the main checkout, `.` would read as the main checkout.
+  const cwd = process.cwd();
+  try {
+    process.chdir(root);
+    assert.equal(recordedWorktreeIsMainCheckout(dir, { worktree: '.' }), false, 'relative worktree');
+  } finally {
+    process.chdir(cwd);
+  }
 });
 
 test('recordedWorktreeIsMainCheckout matches through a symlinked dir path', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, () => {
@@ -2924,13 +2933,14 @@ test('AC2.1: a live verdict, or unknown with any positive live probe, is never a
   }
 });
 
-test('AC2.2: a probe-error fixture with a recent own event is not abandoned, and an error never takes route (a)', () => {
+test('AC2.2: a probe error, a throwing runVerdict or a missing evidence array never abandons a run, and an error never takes route (a)', () => {
   const now = Date.now();
   const rows = [
     [1 * H, verdictOf('unknown', { 'owner-pid': { result: 'error' } }), 'unknown + error, 1h'],
     [30 * H, verdictOf('dead', { 'worktree-lock': { result: 'error' } }), 'dead with an error entry, 30h'],
     [100 * H, () => { throw new Error('probe blew up'); }, 'a throwing runVerdict'],
     [100 * H, () => ({ verdict: 'dead' }), 'no evidence array'],
+    [100 * H, () => ({ verdict: 'unknown' }), 'unknown with no evidence array'],
   ];
   for (const [ageMs, runVerdict, label] of rows) {
     const { dir, state } = interruptedRun({ ageMs, now });
@@ -3033,6 +3043,19 @@ test('AC4.1: a non-ad-hoc main-checkout run whose owner pid is gone reads dead t
       assert.equal(c.evidence.verdict, 'dead');
     }
   }
+});
+
+test('AC4.1: a run stamped with a real linked worktree keeps its last-commit evidence — defaultRunVerdict reads live and the run is never abandoned', () => {
+  const now = Date.now();
+  const root = fs.realpathSync(makeRepo());
+  const wt = path.join(root, '.claude', 'worktrees', 'linked');
+  git(root, 'worktree', 'add', '-b', 'linked-branch', wt); // a real linked checkout, its tip commit made just now
+  const { dir, state } = interruptedRun({ root, ageMs: 100 * H, now, state: { worktree: wt } });
+  assert.equal(recordedWorktreeIsMainCheckout(dir, state), false, 'a linked worktree is not the main checkout');
+  const result = defaultRunVerdict(dir, now);
+  assert.equal(result.evidence.find((e) => e.probe === 'last-commit').result, 'positive', 'the linked worktree\'s fresh commit is read, not forced missing');
+  assert.equal(result.verdict, 'live');
+  assert.equal(isAbandonedInterrupted(dir, state, OTHER, now), false, 'silent past 72h but live by its worktree commit');
 });
 
 test('AC5.1: a readable log with no own event and a run id under 24 hours old is not abandoned', () => {
@@ -5877,6 +5900,14 @@ test('archiveMerged: ownerlessNonClean counts absent or owner-less non-clean run
   fs.mkdirSync(path.join(pipelines, 'archive', '2026-08-01T090009-twin'), { recursive: true });
   fs.writeFileSync(path.join(pipelines, 'archive', '2026-08-01T090009-twin', 'run-state.json'), JSON.stringify({ status: 'clean' }));
   assert.equal(archiveMerged({ cwd: root, runVerdict: DEAD }).ownerlessNonClean, 3);
+});
+
+test('archiveMerged: an owner-less run-state with no status key counts as non-clean (#4421 AC6.1)', () => {
+  const root = fs.realpathSync(makeRepo());
+  const { mk } = ownerlessFixture(root);
+  mk('2026-08-01T090001-record-1', { createdBy: 'x' }); // no `status`, no owner
+  assert.equal(countOwnerlessNonClean(root), 1);
+  assert.equal(archiveMerged({ cwd: root, runVerdict: DEAD }).ownerlessNonClean, 1);
 });
 
 test('archiveMerged: only owner-block runs, or no pipelines dir, count 0 (#4421 AC6.2)', () => {
