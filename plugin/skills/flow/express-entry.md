@@ -4,12 +4,13 @@ Loaded by `/claude-tweaks:flow` Step 2.9, after Step 2.8's claim and before Step
 
 ## Entry conditions
 
-All four must hold:
+All five must hold:
 
 1. **One record, freshly claimed.** `$ARGUMENTS` names exactly one record reference — not a list, not a topic name — and `$PIPELINE_RUN_DIR` was unset on entry, so Step 2.8 minted the run dir and claimed under it. An inherited run dir (a resume) never enters, nor does a `work-backend: local-files` run, which Step 2.8 skips.
 2. **No step list.** Step 1.4 resolved the default full pipeline. An explicit step list never enters the lane — every `/claude-tweaks:dispatch` call passes one, and dispatch routes its own express groups before either call.
-3. **The worktree strategy.** Step 1.3 resolved `worktree`; a `current-branch` run has no worktree for the procedure to run in.
-4. **An eligible gate verdict.** `node "${CLAUDE_PLUGIN_ROOT}/bin/express-lane.js" gate --issue {n} --run "$PIPELINE_RUN_DIR"` exits 0 and its one verdict carries `eligible: true` — the CLI owns the rules (`_shared/express-lane.md`'s Eligibility); never override its verdict. `eligible: false`, or any non-zero exit (1 a failed fetch or policy read, 2 `gh` absent — the lane requires `gh` — 3 an unanchored run dir), is not eligible: continue at Step 3.
+3. **Auto mode.** Step 1.1 resolved mode `auto` — typed, or the intrinsic default. `confirm`, `hybrid` and `interactive` (typed, or `interactive` from `auto-mode: default-off`) promise a Manifesto approval stop or per-step stops the lane would skip before it merges on green, so they take the normal path.
+4. **The worktree strategy.** Step 1.3 resolved `worktree`; a `current-branch` run has no worktree for the procedure to run in.
+5. **An eligible gate verdict.** `node "${CLAUDE_PLUGIN_ROOT}/bin/express-lane.js" gate --issue {n} --run "$PIPELINE_RUN_DIR"` exits 0 and its one verdict carries `eligible: true` — the CLI owns the rules (`_shared/express-lane.md`'s Eligibility); never override its verdict. `eligible: false`, or any non-zero exit (1 a failed fetch or policy read, 2 `gh` absent — the lane requires `gh` — 3 an unanchored run dir), is not eligible: continue at Step 3.
 
 ## Express path
 

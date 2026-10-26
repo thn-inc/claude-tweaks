@@ -2,7 +2,7 @@
 // tests/flow-express-entry-prose.test.js — #4025: pins /flow's express entry. SKILL.md Step 2
 // lists a 2.9 route after Step 2.8's claim and before Step 3's Manifesto, citing
 // express-entry.md; that file states the entry conditions (one record in a run dir Step 2.8
-// minted, no step list, the worktree strategy, an eligible gate verdict), the worktree adopt-or-create plus an
+// minted, no step list, auto mode, the worktree strategy, an eligible gate verdict), the worktree adopt-or-create plus an
 // un-dispatched record-worktree bind, the procedure from step 2, Step 3 on escalation, and the
 // short `## Flow: Express lane` note on every other outcome. All of it is new prose in this
 // change, so every go-red control mutates the live text in memory (skill-prose-conformance-tests).
@@ -42,6 +42,7 @@ const STEP2_FACTS = [
   [/^- 2\.9 — Express route\./m, '2.9 bullet'],
   [/read `express-entry\.md` in this skill's directory and follow it before Step 3/, 'cites express-entry.md before Step 3'],
   [/every `\/claude-tweaks:dispatch` call passes one, so a dispatched call never enters it/, 'a dispatched call never enters it'],
+  [/, mode `auto` and the `worktree` strategy/, 'auto mode only'],
 ];
 
 test('SKILL.md Step 2 lists the 2.9 express route citing express-entry.md', () => {
@@ -87,6 +88,7 @@ const ENTRY_FACTS = [
   [/`\$PIPELINE_RUN_DIR` was unset on entry, so Step 2\.8 minted the run dir and claimed under it/, 'a run dir Step 2.8 minted'],
   [/An explicit step list never enters the lane — every `\/claude-tweaks:dispatch` call passes one/, 'no explicit step list'],
   [/Step 1\.3 resolved `worktree`/, 'the worktree strategy'],
+  [/Step 1\.1 resolved mode `auto`[^\n]*`confirm`, `hybrid` and `interactive`[^\n]*take the normal path/, 'auto mode only; confirm, hybrid and interactive take the normal path'],
   [/express-lane\.js" gate --issue \{n\} --run "\$PIPELINE_RUN_DIR"` exits 0 and its one verdict carries `eligible: true`/, 'an eligible gate verdict'],
   [/or any non-zero exit \([^)]*\), is not eligible: continue at Step 3/, 'a non-zero gate exit → Step 3'],
   [/per `_shared\/worktree-setup\.md`'s Adopt-or-create/, 'worktree adopt-or-create'],
