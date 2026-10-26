@@ -389,7 +389,9 @@ test('isPidAlive is true for this process and false for an exited child', () => 
 // private slot dir, and a private TMPDIR so the runner's startup sweep never scans the real
 // tmpdir) that is removed in `finally`. `CT_TEST_SUITE_SLOT_HELD` and `NODE_TEST_CONTEXT` are
 // cleared from the child env: the suite this runs inside sets both, and the latter would make the
-// child's own `node --test` act as a nested worker and run nothing.
+// child's own `node --test` act as a nested worker and run nothing. `CT_TEST_SUITE_SLOTS` and
+// `CT_TEST_SUBSET_SLOTS` (the slot-count knobs) are cleared too: the slot tests assume exactly one
+// slot, so an inherited slot count would change what they measure.
 async function withSandbox(fixture, testName, fn) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'run-tests-sandbox-'));
   try {
@@ -410,6 +412,8 @@ async function withSandbox(fixture, testName, fn) {
       TEMP: sb.childTmp,
     };
     delete sb.env.CT_TEST_SUITE_SLOT_HELD;
+    delete sb.env.CT_TEST_SUITE_SLOTS;
+    delete sb.env.CT_TEST_SUBSET_SLOTS;
     delete sb.env.NODE_TEST_CONTEXT;
     return await fn(sb);
   } finally {
