@@ -46,6 +46,9 @@ macOS's BSD `env` has no `-C`, `--chdir` or `--unset=`, so `h.fixture.js` and `k
 - `impact-selection.md`'s kinds table and Known limits change in the same commit as the tracer, and `docs/journeys/verify-only-the-tests-a-change-can-affect-4024.md` when a user-visible limit moves.
 - Fixture `node_modules` packages are written by the test's `before()` into the temp root, never committed (`.gitignore` ignores `node_modules/`).
 - Node-version-dependent behavior (Node 22 counts the exact request `.` as relative, Node 20 does not) is pinned through the tracer's records only, never through the resolution result; CI runs Node 20.
+- A map traced with `trace --allow-dirty` on a tree with tracked changes records `dirty: true`, and `verify.js` refuses it as `map-dirty` (#4131); use that command to inspect the traced volume, never to build a map you expect to select tests. Untracked files never make a tree dirty.
+- A new optional map key stays under `version: 1`: `parseImpactMap` ignores keys it does not know, and `tests/fixtures/test-impact/parse-impact-map-v1.js` is the frozen pre-`dirty` reader that proves an older reader still parses the new map.
+- A rule that makes `impact.js` refuse a cached map needs a matching "not current, replace it" rule in `tools/test-impact.js`'s `fetch`, or `fetch` skips the download as "already current" and the refusal can never heal (#4131: `fetch` replaces a cached dirty map and refuses a dirty artifact).
 
 ## Common Operations
 

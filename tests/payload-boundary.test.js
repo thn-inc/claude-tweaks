@@ -56,6 +56,7 @@ const path = require('node:path');
 const os = require('node:os');
 const Module = require('node:module');
 const { readText } = require('./helpers/read-skill');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const ROOT = path.join(__dirname, '..');
 const PLUGIN_DIR = path.join(ROOT, 'plugin');
@@ -525,7 +526,8 @@ test('(a) every executable ${CLAUDE_PLUGIN_ROOT}-relative reference in plugin/**
   for (const file of files) {
     const isJson = file.endsWith('hooks.json');
     const text = readText(file);
-    const relFile = path.relative(ROOT, file);
+    // Compared against a /-keyed allowlist, so it is a display ID (#4288).
+    const relFile = toPosix(path.relative(ROOT, file));
     for (const ref of scanMarkdownReferences(text, isJson)) {
       if (hasPlaceholderSegment(ref.suffix)) continue;
       if (isAllowed(relFile, ref.token)) continue;
@@ -543,7 +545,8 @@ test('(b) every require() in plugin/bin/**/*.js resolves inside plugin/ — no d
   const failures = [];
   for (const file of files) {
     const text = readText(file);
-    const relFile = path.relative(ROOT, file);
+    // Compared against a /-keyed allowlist, so it is a display ID (#4288).
+    const relFile = toPosix(path.relative(ROOT, file));
     const baseDir = path.dirname(file);
     for (const call of findRequireCalls(text)) {
       const rawText = `require(${call.value})`;

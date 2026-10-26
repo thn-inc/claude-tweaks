@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 const FRAGMENT = '_shared/integration-branch.md';
@@ -42,7 +43,8 @@ function walk(dir, acc = []) {
 test('every file resolving the GitHub default branch cites the shared fragment or is allowlisted', () => {
   const offenders = [];
   for (const file of walk(SKILLS_DIR)) {
-    const rel = path.relative(SKILLS_DIR, file);
+    // Compared against a /-keyed allowlist, so it is a display ID (#4288).
+    const rel = toPosix(path.relative(SKILLS_DIR, file));
     const text = readText(file);
     if (!RESOLVER.test(text)) continue;
     if (ALLOWLIST.has(rel)) continue;

@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const GATE_FILE = path.join(SKILLS, '_shared', 'pr-first-merge.md');
@@ -52,7 +53,8 @@ test('merge-when-green appears outside the gate only as a lever value (#559 file
   const LEVER_FILES = new Set(['_shared/policy-schema.md', '_shared/policy-schema-coverage.md', 'flow/manifesto.md']);
   const offenders = [];
   for (const file of otherSkillFiles()) {
-    const rel = path.relative(SKILLS, file);
+    // Compared against a /-keyed allowlist, so it is a display ID (#4288).
+    const rel = toPosix(path.relative(SKILLS, file));
     const text = fs.readFileSync(file, 'utf8');
     if (!/merge-when-green/i.test(text)) continue;
     if (LEVER_FILES.has(rel)) continue;

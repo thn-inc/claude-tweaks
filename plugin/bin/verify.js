@@ -126,7 +126,9 @@ function impactLine(imp, ctx) {
   if (!ctx.loaded) return `Impact: ${imp.selected} of the ${imp.suite} test file(s) selected — no impact-rule path changed, map not read`;
   const commit = ctx.mapCommit ? ctx.mapCommit.slice(0, 9) : 'none';
   const age = Number.isInteger(ctx.distance) ? ctx.distance : '?';
-  return `Impact: ${imp.selected} of ${ctx.headTests.length} test file(s) selected (map ${commit}, ${age} commit(s) old)`;
+  // #4132: drift-selected tests are named only when there are some, so a run with the map at the base prints as before.
+  const drift = imp.driftSelected > 0 ? `, ${imp.driftSelected} drift` : '';
+  return `Impact: ${imp.selected} of ${ctx.headTests.length} test file(s) selected (map ${commit}, ${age} commit(s) old${drift})`;
 }
 
 function statusOf(check) {
@@ -622,7 +624,7 @@ async function main() {
       if (decl.impact) {
         const where = gitLocations({ cwd: parsed.cwd || process.cwd() });
         impactCtx = lazyImpactContext(() => (where === null
-          ? { map: null, problem: 'map-unlocatable', headTests: [], mapPath: null, mapCommit: null, distance: null, fetch: null }
+          ? { map: null, problem: 'map-unlocatable', headTests: [], driftTests: [], mapPath: null, mapCommit: null, mapDirty: null, distance: null, fetch: null }
           : loadImpactContext({ decl, ...where, runFetch: (command) => runImpactFetch(command, where.repoRoot) })));
       }
       const fallbackBase = !anchorSha && parsed.integrationBranch && !parsed.base ? resolvedBase : null;
@@ -1017,6 +1019,7 @@ async function main() {
     mapPath: mapRead ? impactCtx.mapPath : null,
     mapCommit: mapRead ? impactCtx.mapCommit : null,
     mapAgeCommits: mapRead ? impactCtx.distance : null,
+    mapDirty: mapRead ? impactCtx.mapDirty : null,
     fetch: mapRead ? impactCtx.fetch : null,
     listPath: impactSubset ? impactSubset.listPath : null,
     selectedFiles: impactSubset ? impactSubset.files : null,
