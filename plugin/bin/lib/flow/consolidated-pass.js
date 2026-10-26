@@ -75,7 +75,8 @@ function parentLiveDetail(runDir, runState, opts, deps) {
 //                   as unmerged. SessionStart never sets it.
 // opts.sessionId  — the caller's own CLAUDE_CODE_SESSION_ID; a run that session
 //                   owns skips the parent-liveness check. SessionStart passes
-//                   none, so a live lock always blocks there.
+//                   none, so a live lock, a recent commit or an indeterminate
+//                   answer always blocks there.
 // opts.deps       — { checkBranchLanded, resolvePrStateByNumber,
 //                   checkResumeFreshness, probes } injection; probes is merged
 //                   over run-liveness's DEFAULT_PROBES.

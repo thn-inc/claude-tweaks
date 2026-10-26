@@ -86,7 +86,8 @@ function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
     // stay network-free; a squash-merged multi-commit branch can therefore still
     // read as unmerged here, and the review-console skill's online check is what
     // refuses it at invocation. No `sessionId` either — SessionStart has no run
-    // of its own to exempt, so a live parent lock always suppresses the suffix.
+    // of its own to exempt, so a live parent lock, a recent parent commit or an
+    // indeterminate liveness answer always suppresses the suffix.
     // The record-reference grammar drops the sigil under `local-files`
     // (_shared/record-batch-input.md), and an unreadable or unknown backend keeps `#`.
     try {

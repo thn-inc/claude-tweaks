@@ -38,9 +38,9 @@ const { LIVE_WINDOW_MS } = require('../run-liveness/constants');
 // burst of commits from a single working session's normal cadence doesn't
 // read as a stranger, short enough that a genuinely dead run isn't gated for
 // an unreasonable stretch. Not configurable via policy — this guards a
-// safety decision, not a stylistic preference, and the threshold plus its
-// rationale living here (rather than scattered across call sites) is the
-// point of having one shared probe.
+// safety decision, not a stylistic preference. The value is run-liveness's
+// LIVE_WINDOW_MS by design (one window for "recent"), re-exported here under
+// the name the call sites already use.
 const RESUME_FRESHNESS_THRESHOLD_MS = LIVE_WINDOW_MS; // 10 minutes
 
 // runDir: the pipeline run directory whose run-state.json to read.
