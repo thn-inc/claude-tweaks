@@ -302,7 +302,8 @@ effect to its own memoized array directly rather than serving a stale read. Scop
 mechanisms as separate early-return branches. `classifyRunDir(ctx, now)` is the single function
 that owns every mtime-TTL comparison (via `isStaleDir`), the events-log recency comparison
 (via `ownEventRecency`), and the liveness verdict `adhoc-session-ended` consults (through the injectable
-`liveness` argument, default `adHocSessionLiveness`), returning `{ kind, ttlMs, evidence }` with
+`liveness` argument, default `adHocSessionLiveness`), and the run-liveness verdict `abandoned-interrupted`
+consults (through `ctx.runVerdict`, default `defaultRunVerdict`, #4421), returning `{ kind, ttlMs, evidence }` with
 `kind ∈ { 'orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended',
 'merged', 'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
 The five pre-consolidation predicates (`isOrphanedMint`, `isAbandonedInterrupted`,
@@ -322,6 +323,43 @@ call-site-only, never folded into the classifier itself (folding it in would mis
 matching the pre-consolidation `&&`-chained early-return exactly.
 
 The `structurally-stuck` branch exempts every genuine ad-hoc dir at `no-branch`/`no-worktree`/`no-pr` (`isAdHocIntrinsicSkip`, #2724, widened by #4179) — that is an ad-hoc dir's normal state. A linked-worktree dir is archived by `adhoc-superseded`, once its worktree is no longer registered and `ADHOC_SUPERSEDED_TTL_MS` (30 days) has passed. A main-checkout dir is archived by `adhoc-session-ended` (never for the caller's own session: a dir whose run-state `sessionId` equals the caller's is skipped, mirroring `abandoned-interrupted`'s `ownLive`), once its session reads `dead` from `adHocSessionLiveness` (`runLiveness` with the worktree probes neutralised, since the main checkout's lock and last commit belong to every session) and `ADHOC_SESSION_ENDED_GRACE_MS` (7 days) has passed by dir mtime. A main-checkout dir whose verdict stays `unknown` is left in place, neither swept nor escalated. `trackStuckSkip` clears an exempted dir's cache entry (`clearResidue`) and, if it was already escalated, resolves its path off the consolidated record. Unlike Residue pruning above, an escalated entry is dropped only after that resolve lands (`closed`, `path-removed`, `not-found` or `already-closed`): the dir still exists, so a throw or any other status keeps the entry and the next pass retries. The resolve comment says the path is an ad-hoc session directory rather than "no longer exists on disk" (`resolveResidue`'s optional `why`), and under `reconcile --dry-run` the whole clear is skipped, the same guard `pruneResidueFailures` sits behind.
+
+## `abandoned-interrupted` through run-liveness, and `ownerlessNonClean` (#4421)
+
+**The rule.** The `abandoned-interrupted` branch of `classifyRunDir` asks the run-liveness verdict (`runLiveness`, #3973) instead of reading the events log's age alone. It does so through `ctx.runVerdict` (default `defaultRunVerdict`), a hook kept separate from `ctx.liveness`: neither calls the other. `defaultRunVerdict(dir, now)` is `runLiveness(dir, { now, probes })`, with the worktree-path probe forced to `missing` when `recordedWorktreeIsMainCheckout(dir, state)` holds — the same adjustment `adHocSessionLiveness` makes, but for any run dir whose recorded worktree is the main checkout, ad-hoc or not. `recordedWorktreeIsMainCheckout` compares real paths and is false for any path it cannot prove.
+
+`classifyRunDir` asks the hook only after the cheap guards, in this order: status `interrupted`; not the caller's own session; `events.jsonl` readable; silence past the 24-hour floor. Silence runs from the last own event (`lastOwnMs`), else from `runIdMs(dir)` (the run id's own timestamp); with neither there is no reference time and the run is never abandoned. Both floors use a strict `>`. `runIdMs` and `LIVE_PROBES` are imported from `run-liveness`, never copied. Then:
+
+- **Route (a):** the verdict is `dead`, the evidence array is present, no entry is an `error`, and silence exceeds `STALE_INTERRUPTED_TTL_MS` (24 h).
+- **Route (b):** the verdict is `unknown`, the evidence array is present, no `LIVE_PROBES` entry is `positive`, and silence exceeds `LEGACY_DEAD_MS` (72 h). `owner-events` is not a live probe.
+
+A `runVerdict` that throws, returns no evidence array, or returns any other verdict reads as not abandoned. The `shipped-unclosed` gate at `archiveMerged`'s call site is unchanged.
+
+**The 24-hour floor.** `STALE_INTERRUPTED_TTL_MS` is unchanged (maintainer ruling 2026-10-22): a dead verdict still needs the same 24 hours of silence the kind needed before. Revisit trigger: revisit once the owner block has shipped for a release.
+
+**The bounded fallback (b).** Maintainer ruling 2026-10-26. Without it, owner-block runs that read `unknown` forever would never be archived, where they were archived at 24 hours before. The 72-hour floor is `LEGACY_DEAD_MS`, the same bound the legacy witness uses.
+
+**What changed, row by row.** Every row has status `interrupted`. "Stale" is measured from the last own event, or from the run id when there is none. "Main checkout" means the recorded worktree resolves to the main checkout; such a run reads its lock and commit probes as `no-worktree`, through `defaultRunVerdict`'s adjustment. Rows whose decision is unchanged are omitted.
+
+| Owner block | Owner-pid detail | Worktree | Own events | Own session | Old | New | Changed |
+|---|---|---|---|---|---|---|---|
+| absent | `no-owner-block` | none, linked-and-gone, or main checkout | stale 24–72 h | no | abandoned | not yet (`unknown`); abandoned past 72 h by route b | yes: the legacy witness needs 72 h |
+| absent | `no-owner-block` | any | none own; run id under 24 h | no | abandoned on first pass | not abandoned | yes: measured from the run id (AC5) |
+| absent | `no-owner-block` | none or linked-and-gone | none own; run id 24–72 h | no | abandoned | not yet; abandoned once the run id is 72 h old | yes: measured from the run id |
+| absent | `no-owner-block` | linked-and-present, lock free, commit 10 min–72 h | stale over 24 h | no | abandoned at 24 h | abandoned past 72 h by route b (no legacy witness while the commit is newer than 72 h) | yes: 24 h becomes 72 h |
+| present | `no-pid` or `alive-no-start-time`, no SessionEnd | none, linked-and-gone, or main checkout | stale 24–72 h | no | abandoned | not yet; route b past 72 h | yes: no death witness |
+| present | `other-host` | none, linked-and-gone, or main checkout | stale 24–72 h | no | abandoned | not yet; route b past 72 h | yes: no death witness (AC3) |
+| present | mismatch (`owner-session-mismatch`) | any without a live positive | stale 24–72 h | no | abandoned | not yet; route b past 72 h | yes: the owner probes error (AC3) |
+| present | error (hostname/`pidAlive`/start-time probe throws, `start-time-unavailable`, `invalid-start-time`) | any without a live positive | stale 24–72 h | no | abandoned | not yet; route b past 72 h | yes: `unknown` |
+| present | `alive` (start time matches) | any | stale over 24 h | no | abandoned | never while alive (`live`) | yes: a live owner blocks (AC2) |
+| any | any | linked-and-present, lock in use or commit under 10 min | stale over 24 h | no | abandoned | never (`live`) | yes: a live probe blocks (AC2) |
+| any | `gone`/`pid-reused` or `no-owner-block` | linked-and-present, lock or commit probe errors | stale 24–72 h | no | abandoned | not yet (`unknown`); route b past 72 h | yes: an error never takes route a |
+
+**`ownerlessNonClean`.** `archiveMerged`'s result carries `ownerlessNonClean`: the number of run dirs under the main checkout's `.claude-tweaks/pipelines/` that have no owner block for run-liveness to ask — an owner-less non-clean run state (a missing `status` counts), or no `run-state.json` at all. An absent `run-state.json` counts because run-liveness's legacy route serves an absent file too, so such a run is one the 72-hour legacy route still decides. An unparseable or non-object file counts as neither: it is a file the module cannot read, not a run that never had an owner. The count rides `iterRunDirsWithState`, so it keeps that iterator's run-id, archive-twin and `archiving`-claim filters and never counts `archive/`. It is measured after the pass's archival, so a dir this pass archived is not in it. It is `0` when the pipelines dir does not exist, and absent — never `0` — on a dry run, when there is no main checkout, or when the pipelines dir cannot be read; a skipped or errored archive pass never reaches the copy either. `reconcile()` copies it onto its result, `format-summary.js` renders it as `ownerless non-clean: N run dirs` (also for `0`), and `reconcile-cache.json` persists it.
+
+`ownerlessNonCleanZeroSince` is an ISO date in the same cache, set by `applyOwnerlessNonClean`: the first pass that counts `0` stamps it, later passes that count `0` keep that stamp, and a count above `0` drops the key — so it always dates the current unbroken run of zero readings. `readCache` keeps either key only when valid (an integer of at least 0; a parseable date string), and the cache writes them only when present.
+
+**Removal condition for the 72-hour legacy route** (`run-liveness/index.js`'s `legacy` witness): remove it when `ownerlessNonCleanZeroSince` is at least 7 days old in this repository's `reconcile-cache.json`, on a plugin build newer than v6.153.0. After the route is removed, fallback (b) still drains owner-less runs, so other checkouts do not leak.
 
 ## No-run-state.json terminal path and consolidated escalation (#1811)
 

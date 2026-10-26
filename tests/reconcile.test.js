@@ -1409,6 +1409,16 @@ test('docs/reconcile-checks.md prerequisite table matches PREREQUISITES row for 
   assert.deepEqual(fromDoc, PREREQUISITES);
 });
 
+test('AC7.2: docs/reconcile-checks.md and docs/hooks.md state the legacy-route removal condition verbatim (#4421)', () => {
+  const sentence = 'remove it when `ownerlessNonCleanZeroSince` is at least 7 days old in this repository\'s `reconcile-cache.json`, on a plugin build newer than v6.153.0.';
+  for (const doc of ['reconcile-checks.md', 'hooks.md']) {
+    const text = readText(path.join(__dirname, '..', 'docs', doc)).replace(/\s+/g, ' ');
+    assert.ok(text.includes(sentence), `${doc} must carry the removal condition verbatim`);
+  }
+  const hooks = readText(path.join(__dirname, '..', 'docs', 'hooks.md'));
+  assert.ok(!hooks.includes('The remaining consumers are #3977 and #4421.'), 'docs/hooks.md still lists #4421 as a future consumer');
+});
+
 // #3630 behavioral scaffolding: origin's main is one commit (NEW) ahead of the
 // clone's local main, as when GitHub merges a PR asynchronously. archive/
 // release/reap are stubbed; the archive stub records what local main and
