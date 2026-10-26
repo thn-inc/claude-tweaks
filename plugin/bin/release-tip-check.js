@@ -4,8 +4,9 @@
 // `failed`) on stdout that execute.md routes on, replacing the prose state
 // machine whose move counting shipped a bug its pins could not see (IL-168).
 // A thin wrapper over lib/release-tip/check.js: reads the run's decisions.md
-// (a missing file is ''), reads preMajor from release-preflight.json (absent
-// or unparseable → false), runs git in --root, resolves release-tip-moves
+// (a missing file is ''), reads the pre-major flags from release-preflight.json's
+// proposedVersion (absent or unparseable → preMajor false, flags undefined),
+// runs git in --root, resolves release-tip-moves
 // through resolve-policy.js, and appends a run-dir-only advance line under
 // decisions.md's `## /release` through lib/log-decision/append.js.
 // Exit 0 whenever a verdict was printed (or --help printed the usage line) —
@@ -49,15 +50,29 @@ function parseArgs(argv) {
   return out;
 }
 
-function readPreMajor(runDir) {
+function booleanOrUndefined(value) {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+// The pre-major flags the pack's proposedVersion reported — the fold reads them
+// here, never from release-please-config.json. Absent, unparseable or not ok →
+// preMajor false and both flags undefined; a flag that is not a boolean is
+// undefined too. undefined reaches bumpPart, whose own defaults apply.
+function readPreflightFlags(runDir) {
+  const flags = { preMajor: false, bumpMinorPreMajor: undefined, bumpPatchForMinorPreMajor: undefined };
   let pack;
   try {
     pack = JSON.parse(fs.readFileSync(path.join(runDir, 'release-preflight.json'), 'utf8'));
   } catch {
-    return false;
+    return flags;
   }
   const pv = pack && typeof pack === 'object' ? pack.proposedVersion : null;
-  return Boolean(pv && pv.ok === true && pv.value && pv.value.preMajor === true);
+  if (!pv || pv.ok !== true || !pv.value) return flags;
+  return {
+    preMajor: pv.value.preMajor === true,
+    bumpMinorPreMajor: booleanOrUndefined(pv.value.bumpMinorPreMajor),
+    bumpPatchForMinorPreMajor: booleanOrUndefined(pv.value.bumpPatchForMinorPreMajor),
+  };
 }
 
 // A spawn that never ran (no git on PATH, a bad cwd) comes back with status null,
@@ -101,7 +116,7 @@ function run(argv, deps = {}) {
     if (err.code !== 'ENOENT') throw err;
   }
   const verdict = checkReviewedTip(
-    { decisionsText, branch: o.branch, asGiven: o.as, preMajor: readPreMajor(runDir) },
+    { decisionsText, branch: o.branch, asGiven: o.as, ...readPreflightFlags(runDir) },
     {
       git: (args) => normalizeSpawn(spawn('git', args, { cwd: root, encoding: 'utf8', windowsHide: true })),
       resolveBound: () => normalizeSpawn(spawn(process.execPath, [path.join(__dirname, 'resolve-policy.js'), '--run', runDir, 'release-tip-moves'], { cwd: root, encoding: 'utf8', windowsHide: true })),

@@ -67,7 +67,13 @@ test('pre-major softens a breaking marker to minor by default', () => {
 
 test('pre-major with bump-minor-pre-major false stays major', () => {
   withRange(['feat!: y'], ({ git, base, tip }) => {
-    assert.strictEqual(arrivedPart({ git, base, tip, preMajor: true }).part, 'major');
+    assert.strictEqual(arrivedPart({ git, base, tip, preMajor: true, bumpMinorPreMajor: false }).part, 'major');
+  });
+});
+
+test('a release-please-config.json at the tip is no longer read: with no flag passed, a breaking commit takes bumpPart\'s default (minor)', () => {
+  withRange(['feat!: y'], ({ git, base, tip }) => {
+    assert.strictEqual(arrivedPart({ git, base, tip, preMajor: true }).part, 'minor');
   }, { files: { 'release-please-config.json': '{"bump-minor-pre-major": false}' } });
 });
 

@@ -10,6 +10,7 @@ const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'console-res
 const PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..', 'plugin');
 const { run, ghReadGrants, checkPatchStack } = require(CLI);
 const { gitEnv } = require('../../../plugin/bin/lib/staged-patch/stack-check');
+const { skipUnderRoot } = require('../../helpers/root');
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', writePolicy = true, runConfig = null, consoleJson = null } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cli-')));
@@ -618,4 +619,148 @@ test('AC1.1: checkPatchStack fails closed when the walk cannot run', () => {
     assert.match(v[k].error, /^stacked check could not run: /);
   }
   assert.deepStrictEqual(checkPatchStack('anything')([]), {});
+});
+
+// #4170: a Queue-writes item resolved `apply` whose write then failed is rewritten keep-staged, so it
+// re-surfaces as residue; a planned can't-tell filing that never ran re-surfaces as filing-pending.
+const { readRunResidue, formatResidueLines } = require('../../../plugin/bin/lib/console/residue');
+const QUEUE_WRITE = { 'leftover-1.md': 'Title: x\n\nbody\n' };
+const SET_ITEM = (runDir, over = []) => ['--run', runDir, '--set-item', 'leftover-1.md', '--resolution', 'keep-staged', '--reason', 'record create failed (exit 1)', ...over];
+const readConsole = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8'));
+
+test('AC1.1: a Queue-writes item whose execution failed ends keep-staged in console.json and readRunResidue reports it (#4170)', async () => {
+  const fx = mainCheckoutWithRun({ staged: QUEUE_WRITE });
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], baseDeps(fx, []).d), 0);
+  assert.strictEqual(readConsole(fx.runDir).items[0].resolution, 'apply');
+  const set = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_ITEM(fx.runDir), set.d), 0);
+  assert.match(set.out(), /^console-resolve\.js: leftover-1\.md rewritten apply → keep-staged in .*console\.json$/m);
+  const item = readConsole(fx.runDir).items[0];
+  assert.strictEqual(item.resolution, 'keep-staged');
+  assert.strictEqual(item.rewrittenFrom, 'apply');
+  const decisions = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.match(decisions, /Console item leftover-1\.md \(Queue writes\): rewritten apply → keep-staged after execution — record create failed \(exit 1\)\. Reversibility: n\/a\.$/m);
+  const found = readRunResidue(fx.runDir);
+  assert.deepStrictEqual(found.consoles[0].items.map((i) => i.id), ['leftover-1.md']);
+  const lines = formatResidueLines({ dir: fx.runDir, consoles: found.consoles, missingOnly: found.missingOnly }, { pluginRoot: PLUGIN_ROOT });
+  assert.ok(lines.includes(`    cat "${path.join(fx.runDir, 'staged', 'leftover-1.md')}"`), lines.join('\n'));
+});
+
+test('AC4.1: a successful Queue write keeps apply and leaves no residue (#4170)', async () => {
+  const fx = mainCheckoutWithRun({ staged: QUEUE_WRITE });
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], baseDeps(fx, []).d), 0);
+  assert.strictEqual(readConsole(fx.runDir).items[0].resolution, 'apply');
+  assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
+});
+
+test('AC3.1: a console whose can\'t-tell filings never ran reports the planned filing, and the re-render names the --only re-run (#4170)', async () => {
+  const { resolveTiebreak } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'tiebreak'));
+  const { formatEntry, appendEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
+  const tbNow = new Date(2026, 9, 24, 10, 0, 0);
+  const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
+  const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
+  const first = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], first.d), 0);
+  assert.ok(!/Needs a human/.test(first.out()), first.out());
+  const cj = readConsole(fx.runDir);
+  const pending = readRunResidue(fx.runDir).consoles[0].items;
+  assert.strictEqual(pending.length, 1);
+  assert.strictEqual(pending[0].id, `tiebreak:${r.id}`);
+  assert.strictEqual(pending[0].resolution, 'filing-pending');
+  const second = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], second.d), 0);
+  assert.match(second.out(), /Needs a human — 1 item\(s\)/);
+  assert.ok(second.out().includes(`--only 'tiebreak:${r.id}'`), second.out());
+  appendEntry({ runDir: fx.runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: tbNow, step: 'Review Console', text: `tiebreak:${r.id} filed as #501 (work-fingerprint ${cj.filings[0].fingerprint})`, reversibility: 'high' }) });
+  assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
+});
+
+test('--set-item needs no unattended ceiling (#4170)', async () => {
+  const fx = mainCheckoutWithRun({ autonomy: 'trusted', consoleJson: `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'leftover-1.md', section: 'Queue writes', resolution: 'apply', reason: 'r' }] })}\n` });
+  assert.strictEqual(await run(SET_ITEM(fx.runDir), baseDeps(fx, []).d), 0);
+  assert.strictEqual(readConsole(fx.runDir).items[0].resolution, 'keep-staged');
+});
+
+test('--set-item on an item already keep-staged says so, logs nothing, exits 0 (#4170)', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'leftover-1.md', section: 'Queue writes', resolution: 'keep-staged', reason: 'r' }] })}\n` });
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_ITEM(fx.runDir), d), 0);
+  assert.match(out(), /already keep-staged — nothing rewritten/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), '');
+});
+
+test('--set-item whose decisions.md entry cannot be written exits 3 naming the landed rewrite (#4170)', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'leftover-1.md', section: 'Queue writes', resolution: 'apply', reason: 'r' }] })}\n` });
+  fs.rmSync(path.join(fx.runDir, 'decisions.md'));
+  fs.mkdirSync(path.join(fx.runDir, 'decisions.md'));
+  const { d, err } = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_ITEM(fx.runDir), d), 3);
+  assert.match(err(), /^console-resolve\.js: leftover-1\.md rewritten apply → keep-staged in .*console\.json, but the decisions\.md entry could not be written \(.+\)$/m);
+  assert.strictEqual(readConsole(fx.runDir).items[0].resolution, 'keep-staged');
+});
+
+const NO_POSIX_PERMISSIONS = { skip: (process.platform === 'win32' && 'POSIX directory permissions do not apply on win32') || skipUnderRoot('a root runner ignores directory mode bits').skip };
+test('--set-item whose console.json write throws exits 3 naming the file and leaves it untouched (#4170)', NO_POSIX_PERMISSIONS, async (t) => {
+  const fx = mainCheckoutWithRun({ consoleJson: `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'leftover-1.md', section: 'Queue writes', resolution: 'apply', reason: 'r' }] })}\n` });
+  const consolePath = path.join(fx.runDir, 'console.json');
+  const before = fs.readFileSync(consolePath, 'utf8');
+  fs.chmodSync(fx.runDir, 0o555);
+  t.after(() => fs.chmodSync(fx.runDir, 0o755));
+  const { d, err } = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_ITEM(fx.runDir), d), 3);
+  assert.match(err(), /^console-resolve\.js: could not write .*console\.json: .+$/m);
+  assert.strictEqual(fs.readFileSync(consolePath, 'utf8'), before);
+});
+
+test('--set-item refusals exit 5 and write nothing (#4170)', async () => {
+  const none = mainCheckoutWithRun();
+  const a = baseDeps(none, []);
+  assert.strictEqual(await run(SET_ITEM(none.runDir), a.d), 5);
+  assert.match(a.err(), /no console\.json — nothing written/);
+  assert.ok(!fs.existsSync(path.join(none.runDir, 'console.json')));
+  const fx = mainCheckoutWithRun({ staged: QUEUE_WRITE });
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], baseDeps(fx, []).d), 0);
+  const bytes = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const decisions = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--set-item', 'nope.md', '--resolution', 'keep-staged', '--reason', 'x'], b.d), 5);
+  assert.match(b.err(), /no item nope\.md — nothing written/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), bytes);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), decisions);
+});
+
+test('--set-item malformed invocations exit 2 (#4170)', async () => {
+  const fx = mainCheckoutWithRun({ staged: QUEUE_WRITE });
+  const shapes = [
+    ['--run', fx.runDir, '--set-item', 'leftover-1.md', '--resolution', 'keep-staged'],
+    ['--run', fx.runDir, '--set-item', 'leftover-1.md', '--reason', 'x'],
+    ['--run', fx.runDir, '--set-item', 'leftover-1.md', '--resolution', 'keep-staged', '--reason', ''],
+    ['--run', fx.runDir, '--set-item', '', '--resolution', 'keep-staged', '--reason', 'x'],
+    ['--run', fx.runDir, '--set-item', 'leftover-1.md', '--resolution', 'apply', '--reason', 'x'],
+    SET_ITEM(fx.runDir, ['--policy', 'console-auto']),
+    SET_ITEM(fx.runDir, ['--dry-run']),
+    SET_ITEM(fx.runDir, ['--json']),
+    ['--run', fx.runDir, '--policy', 'console-auto', '--resolution', 'keep-staged'],
+    ['--run', fx.runDir, '--policy', 'console-auto', '--reason', 'x'],
+  ];
+  for (const argv of shapes) {
+    const { d, err } = baseDeps(fx, []);
+    assert.strictEqual(await run(argv, d), 2, argv.join(' '));
+    assert.match(err(), /usage: console-resolve\.js --run <dir> --policy console-auto/, argv.join(' '));
+  }
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'console.json')));
+});
+
+test('--set-item with a --run outside the main checkout exits 3 (#4170)', async () => {
+  const fx = mainCheckoutWithRun();
+  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-shadow-'));
+  fs.mkdirSync(path.join(shadow, 'staged'));
+  fs.writeFileSync(path.join(shadow, 'decisions.md'), '');
+  fs.writeFileSync(path.join(shadow, 'console.json'), `${JSON.stringify({ mode: 'auto-resolve', items: [{ id: 'leftover-1.md', resolution: 'apply' }] })}\n`);
+  const { d, err } = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_ITEM(shadow), d), 3);
+  assert.match(err(), /not anchored|missing/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(shadow, 'console.json'), 'utf8')).items[0].resolution, 'apply');
 });

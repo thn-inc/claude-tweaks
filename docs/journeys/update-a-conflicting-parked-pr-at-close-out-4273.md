@@ -6,6 +6,8 @@ files:
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/_shared/github-pr-scan.md
   - plugin/skills/_shared/pr-run-comments.md
+  - plugin/bin/close-out-marker.js
+  - plugin/bin/lib/dispatch/close-out-marker.js
   - tests/close-out-pr-state-contract-conformance.test.js
 ---
 
@@ -47,7 +49,8 @@ files:
   - A failed verification pushes nothing. It keeps the worktree and prints `/claude-tweaks:dispatch close-out #{record}`. Re-running that resumes the verification instead of starting over. On `BEHIND` the update is already on GitHub, and the pending marker keeps any later run from merging it on CI alone.
   - On `BEHIND` close-out has nothing of its own to push. The push runs only for a `DIRTY` resolution or a fix made on a resume.
   - On `DIRTY`, close-out checks that the fetch of `origin/{base}` matches the live base tip before merging (`stopped: update failed — base not fetched`). A conflict close-out cannot resolve is aborted with nothing pushed: `stopped: update failed — conflict not resolved`. A rejected `gh pr update-branch` stops with `stopped: update failed — update-branch rejected`. When the PR head is unchanged on every one of up to three spaced reads, nothing landed: the marker is cleared (or, when an earlier update's marker was already pending, restored to what it said before this run's write) and the worktree removed.
-  - A `close-out-update` marker whose status line close-out cannot recognise (for example one edited in the GitHub web UI) is never read as "no marker": the candidate stops with `stopped: update failed — marker unreadable`.
+  - A `close-out-update` marker whose status line close-out cannot recognise (for example one edited in the GitHub web UI) is never read as "no marker": the candidate stops with `stopped: update failed — marker unreadable`. A web-UI edit that only turns line endings into CRLF still reads as the marker it was.
+  - A pending marker is read, written and extended by `bin/close-out-marker.js`, never composed by hand; a clear still rewrites the saved body's status line to `close-out-update: cleared ({reason})`, the rest kept. Conflicted file names reach it through a file, so a name like `app/routes/posts.$slug.tsx` is recorded exactly. A `pre-update-head` or resolution commit in the comment that is not a full 40-hex sha reads as `unknown` and is never pasted into a command. A conflicted path holding a comma or leading or trailing whitespace, or named exactly `none` or `unknown`, cannot be recorded by name, so that update's conflicted files are recorded as `unknown`.
   - A failed `git worktree add`, checkout or fetch stops the candidate (`stopped: update failed — command failed`). Close-out never carries on in another directory.
   - Without `gh`, close-out stops before offering anything (`stopped: update failed — gh absent`), because the update path has no MCP form.
   - A resume does not pick up a worktree left mid-merge or holding uncommitted tracked changes. It stops with `stopped: update failed — conflict not resolved` and keeps the worktree, for the maintainer to finish the merge in it or remove it. A worktree whose history has diverged from the PR head stops with `stopped: update failed — head moved`.
@@ -87,5 +90,6 @@ files:
 - **Red flags:** reaching the merge question on a head with no full-suite `verify.js` stamp after an update; an update clause naming `none` when the earlier run resolved conflicts; the same verify-then-stop loop on every re-run.
 
 ## Origin
+- Updated during build of #4331 (marker parsing, validation and accumulation moved into `bin/close-out-marker.js` and `bin/lib/dispatch/close-out-marker.js`; conflicted paths passed by file; the prior pending body saved before each write for the nothing-landed restore).
 - Updated during build of #4317 (durable `close-out-update` resume marker on the PR, resume values from the marker, failed-command and base-fetch stops, gh-absent stop).
 - Created during build of #4273. Observed on 2026-10-25 closing out #4028 (PR #4205): close-out stopped on `DIRTY`, the maintainer had to ask for the update by hand, and a cleanly-resolved three-file merge still broke one test that only the full suite caught.
