@@ -500,19 +500,22 @@ function resolveCd(effCwd, raw) {
 
 // A cwd the walk has lost past its cwd cap (#4303, see CWD_SET_CAP): the shell is somewhere under
 // `root` or anywhere a relative `cd` from there led. Only this module's own consumers see one.
+// `overflow` marks the one rooted at the caller's overflow cwd (the main checkout): a relative
+// target from it resolves to the root itself, which no exemption covers.
 class LostCwd {
-  constructor(root) {
+  constructor(root, overflow) {
     this.root = root;
+    this.overflow = overflow;
   }
 }
 
 // `rel` with every `..` that would climb above its start dropped (`a/../../b` reads `b`), so a
 // target resolved from a lost cwd stays under its root.
-function clampRel(rel, pathImpl = path) {
-  const parts = pathImpl.normalize(rel).split(/[\\/]/);
+function clampRel(rel) {
+  const parts = path.normalize(rel).split(/[\\/]/);
   let k = 0;
   while (k < parts.length && parts[k] === '..') k += 1;
-  return parts.slice(k).join(pathImpl.sep) || '.';
+  return parts.slice(k).join(path.sep) || '.';
 }
 
 // Matches a segment that is exactly one token shaped like a simple literal
@@ -721,7 +724,7 @@ function skipGlobalFlags(t, i, dir, pathImpl = path) {
         // Relative -C while cwd is UNKNOWN — cannot prove the target.
         unprovable = true;
       } else if (dir instanceof LostCwd) {
-        dir = pathImpl.resolve(dir.root, clampRel(raw, pathImpl)); // under the lost cwd's root (#4303)
+        // A relative -C from a lost cwd (#4303) keeps it lost: resolveGitCommand gives it the root.
       } else {
         dir = pathImpl.resolve(dir, raw);
       }
@@ -953,7 +956,8 @@ function resolveWriteTarget(effCwd, raw) {
   if (DEVNULL_LIKE.has(stripped)) return null;
   if (path.isAbsolute(stripped)) return path.resolve(stripped);
   if (effCwd === null) return null; // cwd UNKNOWN and a relative path — not provable
-  if (effCwd instanceof LostCwd) return path.resolve(effCwd.root, clampRel(stripped));
+  // From a lost cwd (#4303): the overflow root itself, or the clamped path under the start.
+  if (effCwd instanceof LostCwd) return effCwd.overflow ? effCwd.root : path.resolve(effCwd.root, clampRel(stripped));
   return path.resolve(effCwd, stripped);
 }
 
@@ -1985,22 +1989,24 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 //
 // The walk carries at most CWD_SET_CAP cwds at once. Each brace group's `}` and each tail can add
 // a cwd, and every later piece is visited once per cwd, so a command with many distinct `cd`
-// paths would be quadratic. Past the cap the set collapses, failing closed. With the caller's
-// `opts.overflowCwd` (a path, or a function returning one, called at most once; pre-tool-use passes
-// the main checkout) it collapses to two lost cwds (LostCwd, #4303): the shell is somewhere the walk
-// no longer knows, rooted at the overflow cwd (where the worktree gate denies) and at the walk's
-// own starting cwd (where a worktree-local shadow is denied). A lost cwd is no path bash can climb
-// out of: a relative `cd` keeps it lost, an absolute one makes the cwd known again, and a relative
-// target resolves under its root, never above it (clampRel), so `cd ..; cp a ../../M/f.js` after
-// a collapse still reports a target in the main checkout. That is what keeps the collapse sound
-// (a real overflow path let `../` climb out of the main checkout while bash wrote into it), and it
-// keeps the walk linear: a lost cwd never grows. Without an overflowCwd the set collapses to the
-// starting cwd itself, a real path, as it always has; those callers (the shadow guard,
-// post-tool-use's log-tier read) resolve relative targets there.
+// paths would be quadratic. Past the cap the set collapses, failing closed.
 //
-// Only this module's own consumers (fileWriteTargets, mkdirTargets, gitTargets, through
-// KEEP_LOST) see a LostCwd; any other handler is given its root, the path the collapse handed out
-// before #4303, so the handler contract (a cwd string, or null for unknown) is unchanged.
+// For this module's own consumers (fileWriteTargets, mkdirTargets, gitTargets, through KEEP_LOST)
+// it collapses to lost cwds (LostCwd, #4303): the shell is somewhere the walk no longer knows. A
+// lost cwd is no path bash can climb out of: a relative `cd` or `git -C` keeps it lost, and an
+// absolute one makes the cwd known again. With the caller's `opts.overflowCwd` (a path, or a
+// function returning one, called at most once; pre-tool-use passes the main checkout) one is
+// rooted there, and a relative target from it is that root itself: no exemption covers the main
+// checkout's root, so the worktree gate denies, where a guessed path under it could land in a
+// linked worktree or the exempt `.claude-tweaks/pipelines/` while bash wrote elsewhere in M. The
+// other is rooted at the walk's own starting cwd (the only one without an overflowCwd), and a
+// relative target from it resolves under the start, never above it (clampRel), so the shadow
+// guard still sees `start/.claude-tweaks/pipelines/…`. A lost cwd never grows, so the walk stays
+// linear.
+//
+// Any other handler (pre-tool-use's teardownTargets, the prefilter) is never handed a lost cwd:
+// the set collapses to real paths, the overflow cwd and the start, exactly as before #4303, so the
+// handler contract (a cwd string, or null for unknown) and its decisions are unchanged.
 const CWD_SET_CAP = 16; // four groups each with a relative cd already make 2^4 cwds
 const KEEP_LOST = Symbol('keepLostCwd');
 const keepLost = (opts) => ({ ...(opts || {}), [KEEP_LOST]: true });
@@ -2010,12 +2016,13 @@ function forEachShellSegment(command, cwd, handler, opts = {}) {
   const overflow = () => {
     if (collapsed === null) {
       const o = typeof opts.overflowCwd === 'function' ? opts.overflowCwd() : opts.overflowCwd;
-      collapsed = !o ? [start] : o === start ? [new LostCwd(start)] : [new LostCwd(o), new LostCwd(start)];
+      if (!opts[KEEP_LOST]) collapsed = o && o !== start ? [o, start] : [start];
+      else if (!o) collapsed = [new LostCwd(start, false)];
+      else collapsed = o === start ? [new LostCwd(start, true)] : [new LostCwd(o, true), new LostCwd(start, false)];
     }
     return collapsed;
   };
-  const h = opts[KEEP_LOST] ? handler : (t, c, q, again) => handler(t, c instanceof LostCwd ? c.root : c, q, again);
-  walkShellChunk(String(command || ''), [start], new Map(), h, 0, true, overflow);
+  walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow);
 }
 
 // The union of two cwd lists, collapsing to `overflow()` past CWD_SET_CAP.

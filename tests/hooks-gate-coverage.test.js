@@ -37,6 +37,8 @@ const TEARDOWN_BEGIN = '<!-- teardown-gate-coverage:begin -->';
 const TEARDOWN_END = '<!-- teardown-gate-coverage:end -->';
 // The main-checkout write target the tests below expect, as a native path on win32 too.
 const MAIN_F = path.resolve('/main/f.js');
+// The main checkout's root: what a relative write resolves to once the walk has lost its cwd (#4303).
+const MAIN_ROOT = path.resolve('/main');
 
 // #4303: runs one scanner call in a child node killed after 10 s, so a cap that regresses into a
 // loop fails its test instead of hanging the suite (node:test's `timeout` cannot stop a synchronous
@@ -1841,8 +1843,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   // #4149: each brace group's `}`, each sub group's `}` and each tail can add a cwd, and every
   // later piece is visited once per cwd, so many distinct `cd` paths were quadratic. Past
   // CWD_SET_CAP the set collapses to `overflowCwd` (pre-tool-use passes the main checkout) plus the
-  // walk's own cwd: a relative target past the cap resolves there, an absolute one stays put, and
-  // a handful of groups never collapses.
+  // walk's own cwd: a relative target past the cap resolves there (#4303: to the main checkout's
+  // root itself), an absolute one stays put, and a handful of groups never collapses.
   {
     const distinct = (f, k) => Array.from({ length: k }, (_, i) => f(i)).join('');
     const routes = [
@@ -1854,7 +1856,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     for (const [route, build] of routes) {
       test(`#4149 cwd cap: ${route} past the cap resolve a relative write in the overflow cwd and the walk's own`, () => {
         const files = fileWriteTargets(build(20, 'cp a f.js'), '/r', opts).map((t) => t.file);
-        assert.ok(files.includes(MAIN_F) && files.includes(path.resolve('/r/f.js')), JSON.stringify(files));
+        assert.ok(files.includes(MAIN_ROOT) && files.includes(path.resolve('/r/f.js')), JSON.stringify(files));
         assert.ok(files.length <= 9, JSON.stringify(files));
       });
       test(`#4149 cwd cap: ${route} past the cap leave an absolute write as written`, () => {
@@ -1876,7 +1878,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     test('#4149 cwd cap: a push and a mkdir past the cap resolve in the overflow cwd', () => {
       const cmd = (last) => distinct((i) => `{ cd /a${i}; }; `, 20) + last;
       assert.ok(gitTargets(cmd('git push'), '/r', opts).some((t) => t.dir === path.resolve('/main')));
-      assert.ok(mkdirTargets(cmd('mkdir d'), '/r', opts).some((t) => t.file === path.resolve('/main/d')));
+      assert.ok(mkdirTargets(cmd('mkdir d'), '/r', opts).some((t) => t.file === MAIN_ROOT));
     });
     test('#4149 cwd cap: four groups with relative cds (2^4 cwds) stay below the cap', () => {
       const files = fileWriteTargets('{ cd a; ls; }; { cd b; ls; }; { cd c; ls; }; { cd d; ls; }; cp x y', '/r', opts).map((t) => t.file);
@@ -1886,18 +1888,27 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     test('#4149 cwd cap: a kept shell body past the cap collapses to the overflow cwd too', () => {
       const body = distinct((i) => `{ cd /a${i}; }; `, 20) + 'cp a f.js';
       const files = fileWriteTargets(`bash <<'EOF'\n${body}\nEOF`, '/r', opts).map((t) => t.file);
-      assert.ok(files.includes(MAIN_F), JSON.stringify(files));
+      assert.ok(files.includes(MAIN_ROOT), JSON.stringify(files));
     });
     test('#4149 cwd cap: without an overflowCwd the set collapses to the walk\'s own cwd', () => {
       const files = fileWriteTargets(distinct((i) => `{ cd /a${i}; }; `, 20) + 'cp a f.js', '/r').map((t) => t.file);
       assert.ok(files.includes(path.resolve('/r/f.js')) && !files.includes(path.resolve('/a0/f.js')), JSON.stringify(files));
     });
+    // #4303: without an overflowCwd (the pipeline shadow guard) the collapse is a lost cwd at the
+    // start, so a relative target resolves under the start, never above it. With every /aN and
+    // /r/sub present, bash 3.2 and 5 create /r/.claude-tweaks/pipelines/2026-x and write /r/ok.out;
+    // 3b26440ad collapsed to the real start and reported /.claude-tweaks/pipelines/2026-x and /ok.out.
+    test('#4303 cwd cap: without an overflowCwd a relative target past the cap resolves under the start, never above it', () => {
+      const chain = distinct((i) => `cd /a${i + 1} && `, 16);
+      assert.deepStrictEqual(mkdirTargets(`${chain}cd /r/sub; mkdir -p ../.claude-tweaks/pipelines/2026-x`, '/r').map((t) => t.file),
+        [path.resolve('/r/.claude-tweaks/pipelines/2026-x')]);
+      assert.deepStrictEqual(fileWriteTargets(`${chain}cd /r/sub; echo x > ../ok.out`, '/r').map((t) => t.file), [path.resolve('/r/ok.out')]);
+    });
     // #4303 (S50): past the cap the walk has lost the cwd bash is in, so it collapses to a lost cwd
-    // rooted at the overflow cwd and at its own: a relative target from there resolves under each
-    // root, never above it, so a `../` that climbs out of the overflow cwd still lands in the main
+    // rooted at the overflow cwd and at its own: a relative target from the overflow one is the
+    // main checkout's root, so a `../` that climbs out of the overflow cwd still lands in the main
     // checkout. Each row's step overflows the cap; bash 3.2 and 5 write M/s0/f.js for each (a
-    // sibling-layout worktree; the and-or rows as noted), and the scanner reports M/f.js (denied).
-    const mainDir = path.resolve('/main') + path.sep;
+    // sibling-layout worktree; the and-or rows as noted), and the scanner reports M (denied).
     for (const [label, cmd] of [
       ['the group that overflows the cap', distinct((i) => `{ cd /a${i}; }; `, 15) + '{ cd /main/s0/deep; }; cp a ../f.js'],
       // every /aN present: each cd succeeds, the last one into M/s0/deep (the list-end join)
@@ -1915,7 +1926,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     ]) {
       test(`#4303 cwd cap: ${label} resolves its ../ write into the main checkout`, () => {
         const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
-        assert.ok(files.includes(MAIN_F), JSON.stringify(files));
+        assert.ok(files.includes(MAIN_ROOT), JSON.stringify(files));
       });
     }
     // #4303 (S50): a second collapse keeps the walk lost. Each row: every /bN, M/s0 and M/s0/deep
@@ -1930,7 +1941,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     ]) {
       test(`#4303 cwd cap: ${label} past a second collapse still resolves into the main checkout`, () => {
         const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
-        assert.ok(files.some((f) => f.startsWith(mainDir)), JSON.stringify(files));
+        assert.ok(files.includes(MAIN_ROOT), JSON.stringify(files));
       });
     }
     // #4303 (S50): a list-end join past the cap drops the cwds where an earlier `&&` failed; the lost
@@ -1939,7 +1950,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     test('#4303 cwd cap: a list-end collapse still resolves into the main checkout where an earlier && failed', () => {
       const cmd = distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main/s0; }; { cd s0; }; { cd q; }; cd s0 && cd /main/s0 && cd ..; cp a ../../f.js';
       const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
-      assert.ok(files.includes(MAIN_F), JSON.stringify(files));
+      assert.ok(files.includes(MAIN_ROOT), JSON.stringify(files));
     });
     // #4303 (S50): an `||` ok-join past the cap drops the cwd an earlier `cd` in the list succeeded
     // in. With every /bN and M/q present, bash 3.2 and 5 write M/f.js (`cd q` succeeds in M and
@@ -1948,25 +1959,28 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     test('#4303 cwd cap: an || ok-join collapse still resolves into the main checkout where an earlier cd succeeded', () => {
       const cmd = distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main; }; cd q || cd ../q; echo x > ../f.js';
       const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
-      assert.ok(files.includes(MAIN_F), JSON.stringify(files));
+      assert.ok(files.includes(MAIN_ROOT), JSON.stringify(files));
     });
-    // #4303: the lost cwd's three rules, exactly. A relative target resolves under each root with the
-    // `..` that would climb above it dropped; a relative cd keeps it lost; an absolute cd makes the
-    // cwd known again, and a target from there resolves as written (/t/../f.js is /f.js).
-    test('#4303 cwd cap: a lost cwd resolves a relative target under its roots, never above them', () => {
+    // #4303: the lost cwd's rules, exactly. A relative target from the one rooted at the overflow cwd
+    // is that root itself; from the one rooted at the start it resolves under the start with the `..`
+    // that would climb above it dropped. A relative cd or `git -C` keeps it lost (a git command from
+    // there runs in the root); an absolute cd makes the cwd known again, and a target from there
+    // resolves as written (/t/../f.js is /f.js).
+    test('#4303 cwd cap: a lost cwd resolves a relative target to the overflow root and under the start, never above it', () => {
       const past = distinct((i) => `{ cd /a${i}; }; `, 16); // the 16th group overflows, leaving only the lost cwd
       assert.deepStrictEqual(fileWriteTargets(`${past}cd ..; cd q; cp a ../../x/f.js`, '/r', opts).map((t) => t.file),
-        [path.resolve('/main/x/f.js'), path.resolve('/r/x/f.js')]);
+        [MAIN_ROOT, path.resolve('/r/x/f.js')]);
       assert.deepStrictEqual(fileWriteTargets(`${past}cd /t; cp a ../f.js`, '/r', opts).map((t) => t.file), [path.resolve('/f.js')]);
-      assert.deepStrictEqual(gitTargets(`${past}git -C ../x commit -m m`, '/r', opts).map((t) => t.dir), [path.resolve('/main/x'), path.resolve('/r/x')]);
-      assert.deepStrictEqual(mkdirTargets(`${past}cd ../..; mkdir -p ../d`, '/r', opts).map((t) => t.file), [path.resolve('/main/d'), path.resolve('/r/d')]);
+      assert.deepStrictEqual(gitTargets(`${past}git -C ../x commit -m m`, '/r', opts).map((t) => t.dir), [MAIN_ROOT, path.resolve('/r')]);
+      assert.deepStrictEqual(mkdirTargets(`${past}cd ../..; mkdir -p ../d`, '/r', opts).map((t) => t.file), [MAIN_ROOT, path.resolve('/r/d')]);
     });
-    // #4303: any other handler is never handed a lost cwd: it gets the root, the path the collapse
-    // gave it before, so the handler contract (a cwd string, or null) holds.
-    test('#4303 cwd cap: a handler outside the module is given the lost cwd\'s roots as strings', () => {
+    // #4303: any other handler is never handed a lost cwd. The set collapses to real paths, the
+    // overflow cwd and the start, and a relative cd moves them, exactly as base d9aa6b82d did, so the
+    // handler contract (a cwd string, or null) and the teardown gate's decisions hold.
+    test('#4303 cwd cap: a handler outside the module is handed base\'s real collapse paths, moved by a relative cd', () => {
       const seen = new Set();
       forEachShellSegment(distinct((i) => `{ cd /a${i}; }; `, 16) + 'cd q; true', '/r', (t, cwd) => { if (t[0] === 'true') seen.add(cwd); }, opts);
-      assert.deepStrictEqual([...seen], ['/main', '/r']);
+      assert.deepStrictEqual([...seen], [path.resolve('/main/q'), path.resolve('/r/q')]);
     });
     test('#4303 cwd cap: a set past the cap holds at most CWD_SET_CAP + 2 cwds', () => {
       // The handler's fourth argument is true on every visit of a piece after the first, so the run
@@ -1994,11 +2008,11 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // #4303: a lost cwd never grows, so a relative cd costs nothing however many follow (a kept
     // real path grew one segment per step: 78 s through the hook at 44 KB). With no aN present every
     // cd fails, and bash 3.2 and 5 write ../f.js from the start cwd (R/f.js); the walk resolves it
-    // under the lost roots, failing closed into the main checkout.
+    // to the overflow root and under the start, failing closed into the main checkout.
     test('#4303 cwd cap: 4,000 relative-cd groups finish inside the bound and resolve into the main checkout', () => {
       const cmd = distinct((i) => `{ cd a${i}; }; `, 4000) + 'cp a ../f.js';
       const files = boundedTargets('fileWriteTargets', cmd, '/r/w', opts).map((t) => t.file);
-      assert.deepStrictEqual(files, [MAIN_F, path.resolve('/r/w/f.js')]);
+      assert.deepStrictEqual(files, [MAIN_ROOT, path.resolve('/r/w/f.js')]);
     });
     // #4303: the walk follows a cwd past 4,096 characters and back. From a tree of 2,100 nested `d`
     // directories in the worktree, seven 300-level descents, seven 300-level climbs and `cd ../M`
@@ -2015,13 +2029,13 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // 2017, 3007, 3022, 4012 and 4027. A cap on the number of collapses that fell back to the overflow
     // path alone dropped OTHER at some phases and allowed it. Now the phase only decides whether
     // OTHER is still known (M/leak.out) or the group overflowed the cap and the lost cwd stands for
-    // it (M/M/leak.out, under the overflow root); every N from 1 to 60 is checked.
+    // it (M itself, the overflow root); every N from 1 to 60 is checked.
     test('#4303 cwd cap: a write after any number of collapses resolves into the main checkout', () => {
-      const inM = path.resolve('/s/M') + path.sep;
+      const M = path.resolve('/s/M');
       const run = (n) => fileWriteTargets(`${distinct((i) => `{ cd /nonexist${i}; }; `, n)}{ cd /s/other/deep; }; echo x > ../../M/leak.out`, '/s/wt', { overflowCwd: '/s/M' }).map((t) => t.file);
       for (const n of [...Array.from({ length: 60 }, (_, i) => i + 1), 2002, 2017, 3007, 3022, 4012, 4027]) {
         const files = run(n);
-        assert.ok(files.some((f) => f.startsWith(inM)), `N=${n}: ${JSON.stringify(files)}`);
+        assert.ok(files.some((f) => f === M || f.startsWith(M + path.sep)), `N=${n}: ${JSON.stringify(files)}`);
       }
       assert.ok(run(20).includes(path.resolve('/s/M/leak.out')), JSON.stringify(run(20)));
     });
@@ -2251,30 +2265,34 @@ test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for
   assert.ok(removed.includes(path.join(main, 'x')) && removed.includes(path.join(wt, 'x')), JSON.stringify(removed));
 });
 
-// #4303: a main checkout with a linked worktree beside it (as e2e #4149 sets up), and the hook's
-// decision for a command run from `cwd` (the worktree by default).
-function linkedWorktree4303() {
+// #4303: a main checkout with a linked worktree beside it (as e2e #4149 sets up), or nested in it at
+// `.claude/worktrees/x` (this repo's layout), and the hook's decision for a command run from `cwd`
+// (the worktree by default); `outputFor` returns the whole hookSpecificOutput. The main checkout
+// ignores `.claude/worktrees/`, as this repo does.
+function linkedWorktree4303({ nested = false } = {}) {
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4303-e2e-')));
   const main = path.join(tmp, 'main');
-  const wt = path.join(tmp, 'wt');
+  const wt = nested ? path.join(main, '.claude', 'worktrees', 'x') : path.join(tmp, 'wt');
   fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
+  fs.writeFileSync(path.join(main, '.gitignore'), '.claude/worktrees/\n');
   const git = (...args) => execFileSync('git', ['-C', main, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdio: 'pipe' });
   git('init', '-q');
   git('add', '-A');
   git('commit', '-qm', 'init');
   git('worktree', 'add', '-q', wt);
-  const decisionFor = (command, cwd = wt) => {
+  const outputFor = (command, cwd = wt) => {
     const out = preToolUse.run({
       input: { tool_name: 'Bash', tool_input: { command }, cwd },
       runDir: null, runState: null, ownedRun: {}, cwd,
     });
-    return out.json && out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision;
+    return (out.json && out.json.hookSpecificOutput) || {};
   };
-  return { main, wt, decisionFor };
+  const decisionFor = (command, cwd = wt) => outputFor(command, cwd).permissionDecision;
+  return { main, wt, decisionFor, outputFor, teardownTargets: preToolUse.teardownTargets };
 }
 
 // #4303: one shape per fix, run from a linked worktree with the main checkout's absolute path in
@@ -2312,6 +2330,110 @@ test('AC2.1 e2e #4303: `(( a>1 || b>2 ))` is not denied from the main checkout o
   const { main, decisionFor } = linkedWorktree4303();
   assert.notStrictEqual(decisionFor('(( a>1 || b>2 ))', main), 'deny');
   assert.notStrictEqual(decisionFor('(( a>1 || b>2 ))'), 'deny');
+});
+
+// #4303: `groups4303(n)` is n groups `{ cd /tmp/ct-4303-nK; }`. No such directory exists, so every
+// cd fails and bash stays in the worktree, while the walk passes its cwd cap and loses the cwd.
+const groups4303 = (n) => Array.from({ length: n }, (_, i) => `{ cd /tmp/ct-4303-n${i}; }; `).join('');
+
+// #4303: past the cwd cap, a relative target or `git -C` from the lost cwd is the main checkout's
+// root itself. Run from a worktree nested at M/.claude/worktrees/x, bash 3.2 and 5 write:
+//   A (20 and 50 groups)  M/.claude/.claude/worktrees/x/leak.out
+//   B                     M/.claude/.claude-tweaks/pipelines/r/leak.out
+//   C                     M/.claude/.claude/worktrees/x, then `git commit` in M
+// 3b26440ad clamped each one to a single path under M, which landed in the linked worktree (A, C) or
+// the exempt `.claude-tweaks/pipelines/` (B), and allowed all four; base d9aa6b82d, 40b34714a and
+// 81d9f472b deny each. An absolute write into the worktree, or a write after an absolute cd back
+// into it, stays allowed at every version (bash writes only the worktree).
+test('e2e #4303: past the cwd cap, a relative write or git -C aimed at a nested worktree or the pipelines dir is DENIED', () => {
+  const { wt, decisionFor } = linkedWorktree4303({ nested: true });
+  const wtPath = '../../.claude/worktrees/x';
+  const denied = [
+    ['A', `${groups4303(20)}mkdir -p ${wtPath} && echo x > ${wtPath}/leak.out`],
+    ['A', `${groups4303(50)}mkdir -p ${wtPath} && echo x > ${wtPath}/leak.out`],
+    ['B', `${groups4303(20)}mkdir -p ../../.claude-tweaks/pipelines/r && echo x > ../../.claude-tweaks/pipelines/r/leak.out`],
+    ['C', `${groups4303(20)}mkdir -p ${wtPath} && git -C ${wtPath} commit --allow-empty -qm leak`],
+  ];
+  for (const [shape, command] of denied) assert.strictEqual(decisionFor(command), 'deny', `${shape}: ${command.slice(-70)}`);
+  assert.notStrictEqual(decisionFor(`${groups4303(20)}echo x > ${path.join(wt, 'ok.out')}`), 'deny');
+});
+// #4303: the same from a group that overflows the cap with an absolute cd into the main checkout,
+// which the collapse drops. Bash 3.2 and 5 write, nested and sibling layout alike:
+//   A2  M/sub/.claude/worktrees/x/leak.out     C2  M/sub/.claude/worktrees/x, then `git commit` in M
+//   B2  M/sub/.claude-tweaks/pipelines/r/leak.out
+//   S50 M/sub/f.js (15 and 50 groups before it)
+// 3b26440ad and base d9aa6b82d allow A2 and B2 in both layouts and C2 nested; in the sibling
+// layout M/.claude/worktrees/x, where 3b26440ad resolved C2's `git -C`, is no worktree, and every
+// version denies C2. 40b34714a and 81d9f472b deny all three. S50 with 15 groups: base allows, the rest deny; with 50
+// groups every version denies. Skipped on win32, as AC1.1 is: the commands splice the native temp
+// path.
+test('e2e #4303: past the cwd cap, a write after an overflowing group that cds into the main checkout is DENIED', {
+  skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
+}, () => {
+  for (const nested of [true, false]) {
+    const { main, decisionFor } = linkedWorktree4303({ nested });
+    const denied = [
+      ['A2', `${groups4303(15)}{ cd ${main}/sub; }; mkdir -p .claude/worktrees/x && echo x > .claude/worktrees/x/leak.out`],
+      ['B2', `${groups4303(15)}{ cd ${main}/sub/deep; }; mkdir -p ../.claude-tweaks/pipelines/r && echo x > ../.claude-tweaks/pipelines/r/leak.out`],
+      ['C2', `${groups4303(15)}{ cd ${main}/sub; }; mkdir -p .claude/worktrees/x && git -C .claude/worktrees/x commit --allow-empty -qm leak`],
+      ['S50', `${groups4303(15)}{ cd ${main}/sub/deep; }; echo x > ../f.js`],
+      ['S50', `${groups4303(50)}{ cd ${main}/sub/deep; }; echo x > ../f.js`],
+    ];
+    for (const [shape, command] of denied) assert.strictEqual(decisionFor(command), 'deny', `${shape} nested=${nested}: ${command.slice(-70)}`);
+  }
+});
+// #4303: from the main checkout itself the overflow cwd is the start, and the one lost cwd is still
+// the overflow root. `groups4303(15)` then `{ cd M/sub; }` and a write to `.claude-tweaks/pipelines/r/
+// leak.out` or `.claude/worktrees/x/leak.out`: bash 3.2 and 5 write it under M/sub (nested and sibling
+// layout alike). 3b26440ad and base d9aa6b82d resolved it to the exempt M/.claude-tweaks/pipelines/
+// or the gitignored M/.claude/worktrees/ and allowed it; 40b34714a and 81d9f472b deny. Skipped on
+// win32: the commands splice the native temp path.
+test('e2e #4303: past the cwd cap from the main checkout, a relative write aimed at an exempt path is DENIED', {
+  skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
+}, () => {
+  const { main, decisionFor } = linkedWorktree4303({ nested: true });
+  for (const dir of ['.claude-tweaks/pipelines/r', '.claude/worktrees/x']) {
+    const command = `${groups4303(15)}{ cd ${main}/sub; }; mkdir -p ${dir} && echo x > ${dir}/leak.out`;
+    assert.strictEqual(decisionFor(command, main), 'deny', dir);
+  }
+});
+// #4303: without an overflowCwd (the pipeline shadow guard) the collapse is a lost cwd at the
+// walk's start, so a relative target resolves under the start. An && chain of 16 cds
+// (`cd /tmp/ct-4303-aK && …`), then `cd WT/sub; mkdir -p ../.claude-tweaks/pipelines/2026-x`: with
+// every aK present (each cd succeeds), bash 3.2 and 5 create the shadow run dir
+// WT/.claude-tweaks/pipelines/2026-x (b3 also writes
+// decisions.md in it), nested and sibling layout alike. 3b26440ad collapsed to the real start and
+// resolved `../` above it, so the shadow guard allowed both; base d9aa6b82d, 40b34714a and 81d9f472b
+// deny. Skipped on win32: the commands splice the native temp path.
+test('e2e #4303: the pipeline shadow guard denies a shadow run dir made after an && chain past the cwd cap', {
+  skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
+}, () => {
+  const chain = Array.from({ length: 16 }, (_, i) => `cd /tmp/ct-4303-a${i + 1} && `).join('');
+  for (const nested of [true, false]) {
+    const { wt, outputFor } = linkedWorktree4303({ nested });
+    for (const [shape, command] of [
+      ['b', `${chain}cd ${wt}/sub; mkdir -p ../.claude-tweaks/pipelines/2026-x`],
+      ['b3', `${chain}cd ${wt}/sub; mkdir -p ../.claude-tweaks/pipelines/2026-x && echo x > ../.claude-tweaks/pipelines/2026-x/decisions.md`],
+    ]) {
+      const out = outputFor(command);
+      assert.strictEqual(out.permissionDecision, 'deny', `${shape} nested=${nested}`);
+      assert.match(String(out.permissionDecisionReason), /a NEW pipeline run directory inside a linked worktree/, `${shape} nested=${nested}`);
+    }
+  }
+});
+// #4303: the teardown gate's walk is handed base's collapse, the main checkout and the start as
+// real paths, so `cd ..` after the collapse still reaches the worktree's parent. From a worktree
+// nested at M/.claude/worktrees/x, `G20 cd ..; git worktree remove [--force] x`: bash 3.2 and 5 run
+// it in M/.claude/worktrees, and the --force one removes the session's own worktree. 3b26440ad
+// handed the lost cwd's root, resolved M/x and M/.claude/worktrees/x/x, and allowed both; base
+// d9aa6b82d, 40b34714a and 81d9f472b deny both through the own-cwd guard (#693).
+test('e2e #4303: past the cwd cap, a relative `git worktree remove` of the session\'s own nested worktree is DENIED', () => {
+  const { wt, decisionFor, teardownTargets } = linkedWorktree4303({ nested: true });
+  for (const command of [`${groups4303(20)}cd ..; git worktree remove --force x`, `${groups4303(20)}cd ..; git worktree remove x`]) {
+    assert.strictEqual(decisionFor(command), 'deny', command.slice(-50));
+    const removed = teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: wt }).map((t) => t.path);
+    assert.ok(removed.includes(wt), JSON.stringify(removed));
+  }
 });
 
 test('e2e #3989: a `>` in a heredoc body from a worktree-always main checkout is ALLOWED; a top-level redirect after the delimiter is DENIED', () => {
