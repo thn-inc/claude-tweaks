@@ -706,7 +706,9 @@ test('splitOversized: sizeOf throwing counts as 0 bytes, never aborts the split'
   const big = 20 * 1024;
   const files = ['/c/big/own.js', '/c/big/one/b.js', '/c/big/one/gone.js'];
   const out = [];
+  // POSIX fixture paths, so pin pathImpl to path.posix: this test is about sizeOf, not separators.
   splitOversized('big', '/c/big', out, {
+    pathImpl: path.posix,
     listFiles: () => files,
     sizeOf: (f) => { if (f.endsWith('gone.js')) throw new Error('ENOENT'); return big; },
   });

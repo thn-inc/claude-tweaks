@@ -264,7 +264,7 @@ test('#3493: a regular-file parent under a real directory names that directory a
   try {
     const result = checkA([{ type: 'Create', path: 'plugin/bin/tool.js/new.js' }], repo);
     assert.strictEqual(result.ok, false);
-    assert.deepStrictEqual(result.missingDetail, [{ path: 'plugin/bin/tool.js/new.js', nearestExistingAncestor: path.join('plugin', 'bin') }]);
+    assert.deepStrictEqual(result.missingDetail, [{ path: 'plugin/bin/tool.js/new.js', nearestExistingAncestor: 'plugin/bin' }]);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -295,7 +295,7 @@ test('#3493: a Modify bullet under a regular file names the enclosing directory 
   try {
     const result = checkA([{ type: 'Modify', path: 'plugin/bin/tool.js/x.js' }], repo);
     assert.strictEqual(result.ok, false);
-    assert.deepStrictEqual(result.missingDetail, [{ path: 'plugin/bin/tool.js/x.js', nearestExistingAncestor: path.join('plugin', 'bin') }]);
+    assert.deepStrictEqual(result.missingDetail, [{ path: 'plugin/bin/tool.js/x.js', nearestExistingAncestor: 'plugin/bin' }]);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
