@@ -26,44 +26,44 @@ function bullet(s, opener) {
   return s.slice(start, ends.length ? Math.min(...ends) : undefined);
 }
 
-const OPEN = '- **Run PR open (`conflicting`, `no-conflict`, `unknown`)**';
-const GONE = '- **Run PR merged or closed (`not-open`), or the current-branch route unavailable**';
-const NONE = '- **No PR recorded (`no-pr`)**';
-const UNREADABLE = '- **State unreadable (`gh-absent`, `read-failed`, or any other output)**';
+const CURRENT = '- **`current-branch`**';
+const GONE = '- **`evidence-pr`**';
+const CLI_LINE = 'node "${CLAUDE_PLUGIN_ROOT}/bin/evidence-route.js" --run "{run-dir}"';
+
+// AC4.1: the routing rules live in bin/evidence-route.js, not in Step 4's prose.
+function assertNoRuleRestatement(s) {
+  for (const rule of ['^[A-Za-z0-9._/-]+$', 'resolvePrState', 'git rev-parse --show-toplevel', 'bin/pr-merge-state.js" --run', 'git branch --show-current', 'detached HEAD', 'merge.resolution` reads']) {
+    assert.ok(!s.includes(rule), `Step 4 restates a routing rule the CLI owns: ${rule}`);
+  }
+}
 
 // Every routing assertion in one function, so the go-red control below runs the
 // exact code the positive test runs.
 function assertRouting(s) {
   const local = s.indexOf('**`integration-model: local-merge` or `current-branch` mode** — no PR to read: commit on the current branch with the fence below, with no push and no PR (`_shared/git-discipline.md`: no phase-exit push there).');
-  const check = s.indexOf("**Read the run's own PR before committing");
+  const check = s.indexOf("**Route the commit");
   const commit = s.indexOf('git commit -m "Add demo evidence screenshots');
   assert.ok(local >= 0, 'missing the local-merge / current-branch exception');
   assert.ok(check >= 0, 'missing the PR-state check paragraph');
   assert.ok(check > local, 'the local-merge / current-branch exception must come above the pr-first check');
   assert.ok(commit > check, 'the PR-state check must come before the screenshot commit');
 
-  // Ruling 1: the run's own PR first, via pr-merge-state.js, surviving branch deletion.
-  assert.ok(s.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/pr-merge-state.js" --run "{run-dir}" --phase wrap-up'));
+  // AC4.2: the route comes from the CLI, called as its own Bash call.
+  assert.ok(s.includes(CLI_LINE), 'missing the evidence-route.js invocation');
+  assert.ok(s.includes('```bash\n' + CLI_LINE + '\n```'), 'the invocation is a fenced bash block of its own');
+  assert.ok(s.includes('--in-run'));
+  assert.ok(s.includes('--leave-open'));
+  assert.ok(s.includes('Route on `route` alone'));
+  assert.ok(s.includes('A non-zero exit, or output that does not parse as that line, takes the evidence-PR route'));
+  assertNoRuleRestatement(s);
+
   assert.ok(s.includes('_shared/timing-render.md'), 'archive-path rule cited');
   assert.ok(s.includes('$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/'));
-  // Ruling 2: the branch read is the fallback only.
-  assert.match(s, /resolvePrState/);
-  assert.match(s, /a merged PR wins when the branch has several/);
-  assert.ok(s.includes('`git branch --show-current`'), 'branch name read as its own call');
   assert.ok(!s.includes('$(git'), 'no git inside a command substitution — refused in a worktree session');
-  // Ruling 3: the integration-branch guard.
   assert.ok(s.includes('Step 4 never commits to or pushes `{integration-branch}`'), 'integration-branch guard');
-  assert.match(s, /detached HEAD/);
-  assert.ok(s.includes("The run's own branch is the branch checked out in the worktree `run-state.json`'s `worktree` field records"), 'own-branch definition');
-  assert.match(s, /Outside it \(back in the main checkout\) the current-branch route is unavailable/);
-  assert.match(s, /With no `worktree`\s+recorded .* the run's own branch is the\s+current branch itself, still under the guard above/s, 'a standalone run keeps the current-branch route');
-  assert.ok(s.includes('`git rev-parse --show-toplevel` as its own Bash call and comparing its output with that recorded path'), 'the run-own-branch check names its comparison');
-  assert.match(s, /an exact match after dropping a trailing `\/`; any other output, or an error, counts as outside/);
-  assert.ok(s.includes('`^[A-Za-z0-9._/-]+$`'), 'a branch name with shell metacharacters never reaches a command');
   assert.match(s, /also appends its own "Post-push merge-state check" entry to `decisions\.md`, which is expected/);
-  assert.match(s, /regardless of what the read returned/);
 
-  const open = bullet(s, OPEN);
+  const open = bullet(s, CURRENT);
   assert.match(open, /push that commit straight away/);
   assert.ok(open.includes('`git push origin {branch}`'));
   assert.match(open, /If the push fails, compose the brief without embedded screenshots/);
@@ -96,12 +96,6 @@ function assertRouting(s) {
   assert.match(gone, /If the push succeeded but the PR create fails, the commit is on `origin`/);
   assert.match(gone, /If the ls-remote proof does not return the recorded SHA .* do not discard/);
 
-  const none = bullet(s, NONE);
-  assert.match(none, /commit and push as for an open PR/);
-  const unreadable = bullet(s, UNREADABLE);
-  assert.ok(unreadable.includes('`leave-open`'), 'unreadable state is open only on a leave-open run');
-  assert.match(unreadable, /take the evidence-PR route/);
-  assert.match(s, /Any other output/);
   assert.ok(s.includes('mcp__github__create_pull_request'));
   assert.ok(s.includes('_shared/github-write-transport.md'));
 
@@ -112,8 +106,19 @@ function assertRouting(s) {
   assert.match(s, /name the evidence PR's URL in the brief/);
 }
 
-test('AC1.1 AC2.1 AC3.1 AC4.1 AC5.1 AC6.1 AC7.1: Step 4 routes the screenshot commit on the run PR state', () => {
+test("AC4.1 AC4.2: Step 4 routes the screenshot commit on bin/evidence-route.js's JSON", () => {
   assertRouting(step4(read(BRIEF)));
+});
+
+test('AC4.1 go-red control: restoring a prose rule turns the routing assertions red', () => {
+  const s = step4(read(BRIEF));
+  assert.throws(() => assertRouting(s + 'A branch name that does not match `^[A-Za-z0-9._/-]+$` takes the evidence-PR route.\n'));
+});
+
+test('AC4.2 go-red control: dropping the CLI invocation turns the routing assertions red', () => {
+  const s = step4(read(BRIEF));
+  assert.ok(s.includes(CLI_LINE), 'control premise: Step 4 carries the invocation');
+  assert.throws(() => assertRouting(s.replace(CLI_LINE, 'x')));
 });
 
 test('AC6.1: the wrap-up summary carries an evidence-PR row in Actions Performed', () => {

@@ -47,7 +47,7 @@ files:
   - **A failed read is not landed.** A failed label or comment read, or an empty `Fixes` set, never counts as landed on its own: Step 1 runs unless the other live check (a trusted run comment, or `demo:pending` on every `Fixes` record) lands. An unreadable `verify.json` is not rescued by the live check at all.
   - **Otherwise** it runs `_shared/pr-first-merge.md` Step 1 with `PIPELINE_RUN_DIR` (the resolved dir, or each not-landed member's `spec-{N}/`) and `CLOSING_SUB_ISSUES` (the PR's `Fixes` records), before Mark ready and before the confirmation gate.
   - **No run dir** (no valid marker, or neither path exists): the candidate stops with `stopped: acceptance labeling unverifiable — no run dir`.
-  - **Screenshots from a close-out labeling run** go to their own evidence-only PR (`Refs #{record}`), never onto the dispatcher's main checkout: close-out runs from the main checkout, so `verification-brief.md` Step 4's integration-branch guard takes the evidence-PR route even while the parked PR is still open (#4039 — see `land-demo-evidence-after-the-pr-merged-4039.md`).
+  - **Screenshots from a close-out labeling run** go to their own evidence-only PR (`Refs #{record}`), never onto the dispatcher's main checkout: close-out runs from the main checkout, so `verification-brief.md` Step 4's `bin/evidence-route.js` integration-branch guard takes the evidence-PR route even while the parked PR is still open (#4039 — see `land-demo-evidence-after-the-pr-merged-4039.md`).
 - **Red flags:** a merge reaching the confirmation gate with no labeling and a `fail` row; labeling re-run when `demo:pending` is already on every record; a guess at a run dir; screenshot evidence committed or pushed on the main checkout.
 
 ### 4. Confirm and merge
