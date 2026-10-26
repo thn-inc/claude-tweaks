@@ -131,6 +131,20 @@ test('evaluateDiffBounds', async (t) => {
     assert.deepStrictEqual(out.violations, []);
     assert.strictEqual(out.implLines, 5);
   });
+  // I5: deleting test lines weakens the CI-green net the lane merges on, so deletions in
+  // test files count toward the cap; added test lines stay exempt.
+  await t.test('deleted test lines count toward maxLines; added ones do not', () => {
+    const within = evaluateDiffBounds([f('CLAUDE.md', 20), f('tests/x.test.js', 500, 20)], BOUNDS);
+    assert.deepStrictEqual(within.violations, [], '20 + 20 deleted test lines is exactly the cap');
+    assert.strictEqual(within.implLines, 20, 'implLines stays implementation lines only');
+    const over = evaluateDiffBounds([f('CLAUDE.md', 20), f('tests/x.test.js', 0, 21)], BOUNDS);
+    assert.deepStrictEqual(over.violations, ['20 implementation lines + 21 deleted test lines > 40']);
+    assert.strictEqual(over.withinBounds, false);
+  });
+  await t.test('a deleted test file alone exceeds the cap by its line count', () => {
+    const out = evaluateDiffBounds([f('CLAUDE.md', 1), f('tests/old.test.js', 0, 120)], BOUNDS);
+    assert.deepStrictEqual(out.violations, ['1 implementation lines + 120 deleted test lines > 40']);
+  });
   await t.test('a pipeline artifact is within bounds', () => {
     const out = evaluateDiffBounds([f('CLAUDE.md', 5), f('.claude-tweaks/pipelines/r/work/1-spec.md', 300)], BOUNDS);
     assert.deepStrictEqual(out.violations, []);

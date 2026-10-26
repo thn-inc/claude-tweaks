@@ -7,18 +7,23 @@
 //             --run adds "already escalated in this run" from decisions.md.
 //   check     after the build: the runner pass stamp first, then the diff bounds —
 //             both against the worktree run-state.json records (never the process
-//             cwd); logs a proceed line or an escalation line under ## /express-lane.
+//             cwd); logs a proceed line (naming the HEAD sha the stamp verified, which
+//             the envelope's `head` carries for the push) or an escalation line under
+//             ## /express-lane.
 //   escalate  writes the escalation line; the detail comes from a file, never argv.
 //   verify    the express path's bookend artifacts (claim log, an unsuperseded check
-//             line, PR).
-//   samples   merged express PRs owing a post-merge review, reviewed ones dropped.
+//             line, PR), read from the archived run dir once a merged run's reconcile
+//             has moved it there.
+//   samples   merged express PRs owing a post-merge review, reviewed ones dropped:
+//             global ordinals over every express merge, comments fetched only inside
+//             a lookback, at most a fixed number of reviews per firing.
 // Escalation is only possible before the push: escalate, and check's escalation
 // branches, refuse (exit 1, nothing written) once run-state.json carries `pr`.
 // Exit codes (Combined-2 base plus the sanctioned writers' 3): 0 success — gate and
 // check exit 0 whatever their verdict, which is on stdout; 1 a well-formed verb whose
 // answer is "no" (verify: an artifact is missing; an escalation after the PR exists) or
-// an upstream failure (gate --issue's fetch, samples' fetches or a search at its
-// 1000-result cap, a policy read); 2 malformed invocation (an unreadable or
+// an upstream failure (gate --issue's fetch, samples' fetches or a search still at its
+// 1000-result cap within one second, a policy read); 2 malformed invocation (an unreadable or
 // mis-shaped --records-json / --record-json / --detail-file included) or `gh` absent
 // where it is needed; 3 the --run dir is missing or not anchored under the main checkout
 // (log-decision/append.js's resolveTarget, [IL-127]), or (escalate only) decisions.md is
@@ -40,6 +45,7 @@ const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { computeDerivedDefaults } = require('../policy-derived-defaults');
 const { ghAvailable } = require('../repo-resolve');
+const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
 
@@ -50,7 +56,7 @@ const USAGE = [
   '       express-lane.js verify --run <dir> --issue <n>',
   '       express-lane.js samples [--every <n>] [--repo owner/name]',
   'exit: 0 success (gate/check: verdict JSON on stdout whatever it is); 1 verify found an artifact missing, an escalation was refused',
-  '      because run-state.json already records the PR, or an upstream fetch failed (samples: also a search at its 1000-result cap);',
+  '      because run-state.json already records the PR, or an upstream fetch failed (samples: also a search at its 1000-result cap within one second);',
   '      2 malformed invocation or `gh` absent; 3 --run missing or not anchored under the main checkout, or (escalate) decisions.md unwritable;',
   '      check reports its own failed decisions.md append as `logged: false` in the JSON, exit 0',
   '',
@@ -63,13 +69,26 @@ const CHECK_STEP = 'Express lane check';
 const ESCALATION_REVERSIBILITY = 'high (worktree and branch kept)';
 const ISSUE_FIELDS = 'number,title,body,labels';
 const NO_WORKTREE = 'no worktree recorded in run-state.json';
-// gh pr list's own result cap: a search that fills it may have dropped older merges,
-// which would shift every ordinal — refused, never sampled.
+// GitHub search's own result cap: a window that fills it may have dropped merges, which
+// would shift every later ordinal, so that window is split in half by merge time and
+// each half searched again, until every window returns fewer.
 const SAMPLES_SEARCH_LIMIT = 1000;
+// Quoted: unquoted, the hyphenated marker matches its words anywhere in a body.
+const SAMPLES_SEARCH_PHRASE = '"claude-tweaks-express" in:body';
+// The first window opens before any GitHub pull request could have merged.
+const SAMPLES_SEARCH_EPOCH_MS = Date.parse('2008-01-01T00:00:00Z');
+// Bounds the window splitting; roughly 50,000 express merges fit under it.
+const SAMPLES_MAX_SEARCH_CALLS = 200;
+// Only a sampled merge this recent owes a review: older ones are never comment-fetched,
+// so a long history (or a lowered express-review-sample-every) never re-selects it.
+const SAMPLES_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+// At most this many reviews per firing, oldest first; the rest wait for a later firing.
+const SAMPLES_MAX_REVIEWS = 3;
 // The merged-PR search returns up to SAMPLES_SEARCH_LIMIT bodies; it gets its own
 // bound (materialize.js's SIBLING_PREMISE_SEARCH_TIMEOUT_MS precedent), never shorter
 // than the shared gh bound.
 const SAMPLES_SEARCH_TIMEOUT_MS = 60000;
+const NO_HEAD = 'the runner stamp names no HEAD sha';
 const REPO_RE = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*\/[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
 const VERB_FLAGS = {
   gate: ['--issue', '--records-json', '--run', '--repo'],
@@ -299,6 +318,10 @@ function runCheck(deps, flags) {
   if (!stamp || stamp.verified !== true) {
     return escalate(deps, runDir, n, 'failing-test', `no runner pass stamp verifies HEAD (${stamp && stamp.reason})`, state);
   }
+  // The sha the stamp verified (verify.js --stamp-status's `head`): the procedure pushes
+  // only while the worktree's HEAD still equals it.
+  const head = stamp.status && typeof stamp.status.head === 'string' && stamp.status.head.trim() ? stamp.status.head.trim() : null;
+  if (head === null) return escalate(deps, runDir, n, 'express-error', NO_HEAD, state);
 
   let bounds;
   let mergeVerification;
@@ -315,9 +338,9 @@ function runCheck(deps, flags) {
   if (!bounds.withinBounds) return escalate(deps, runDir, n, 'out-of-bounds', bounds.violations.join('; '), state);
 
   const k = bounds.changedFiles.length;
-  const logged = append(deps, runDir, CHECK_STEP, `#${n} proceed — ${k} changed file(s), ${bounds.implLines} implementation line(s) within bounds; runner stamp verifies HEAD.`);
+  const logged = append(deps, runDir, CHECK_STEP, `#${n} proceed — ${k} changed file(s), ${bounds.implLines} implementation line(s) within bounds; runner stamp verifies HEAD ${head}.`);
   const configSet = `mode=auto,ceremony-profile=fast-lane,merge-verification=${mergeVerification}`;
-  return emit(deps, { action: 'proceed', mergeVerification, configSet, bounds }, logged);
+  return emit(deps, { action: 'proceed', head, mergeVerification, configSet, bounds }, logged);
 }
 
 function runEscalate(deps, flags) {
@@ -329,20 +352,76 @@ function runEscalate(deps, flags) {
   return escalate(deps, flags['--run'], flags['--issue'], flags['--reason'], detail, readRunState(deps, flags['--run']), true);
 }
 
+function hasRunState(deps, runDir) {
+  try { return deps.readFile(path.join(runDir, 'run-state.json')) !== null; } catch { return false; }
+}
+
+// --run -> the dir verify reads. A merged run's post-merge reconcile can move it to
+// {pipelines}/archive/{run-id} (reconcile/archive-merged.js, console-residue.js's
+// main-checkout lookup) before this runs, and a later log write can recreate the live
+// path holding only decisions.md: in both cases an anchored archive twin is read
+// instead. A live dir that is not anchored still exits 3, archive or not.
+function verifyRunDir(deps, runDir) {
+  let live;
+  try { live = resolveTarget({ runDir, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch { live = { ok: false, reason: 'missing' }; }
+  if (live.ok && hasRunState(deps, runDir)) return { dir: runDir, archived: null };
+  if (live.ok || live.reason === 'missing') {
+    let main = null;
+    try { main = deps.mainRoot || mainCheckoutRoot(deps.cwd()); } catch { main = null; }
+    const archived = main ? path.join(main, '.claude-tweaks', 'pipelines', 'archive', path.basename(runDir)) : null;
+    let twin = { ok: false };
+    try { if (archived) twin = resolveTarget({ runDir: archived, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch { twin = { ok: false }; }
+    if (twin.ok) {
+      deps.stderr(`express-lane.js: ${runDir} has moved to ${archived} — verifying the archived copy\n`);
+      return { dir: archived, archived };
+    }
+  }
+  anchoredDecisions(deps, runDir);
+  return { dir: runDir, archived: null };
+}
+
 function runVerify(deps, flags) {
   const n = flags['--issue'];
-  const file = anchoredDecisions(deps, flags['--run']);
+  const { dir, archived } = verifyRunDir(deps, flags['--run']);
   let decisionsText = '';
   let state = null;
-  try { decisionsText = readDecisions(deps, file); } catch { decisionsText = ''; }
-  try { state = JSON.parse(deps.readFile(path.join(flags['--run'], 'run-state.json'))); } catch { state = null; }
+  try { decisionsText = readDecisions(deps, path.join(dir, 'decisions.md')); } catch { decisionsText = ''; }
+  try { state = JSON.parse(deps.readFile(path.join(dir, 'run-state.json'))); } catch { state = null; }
   const missing = [];
   if (!hasCanonicalClaimLogFor(decisionsText, n)) missing.push('claim-log');
   if (!hasProceed(decisionsText, n)) missing.push('express-check');
   const pr = state && typeof state === 'object' ? state.pr : null;
   if (!pr || !Number.isInteger(pr.number) || pr.number <= 0) missing.push('pr');
-  deps.stdout(`${JSON.stringify({ ok: missing.length === 0, missing })}\n`);
+  deps.stdout(`${JSON.stringify({ ok: missing.length === 0, missing, ...(archived ? { archived } : {}) })}\n`);
   return missing.length === 0 ? 0 : 1;
+}
+
+const isoSecond = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+// Every merged PR the marker search finds, epoch to `hiMs` (whole seconds, inclusive),
+// deduplicated by number. A window that returns SAMPLES_SEARCH_LIMIT results is split at
+// its midpoint second and both halves searched again; one that is still full within a
+// single second, or a split past SAMPLES_MAX_SEARCH_CALLS, throws (exit 1).
+function searchMergedExpress(deps, flags, hiMs) {
+  const found = new Map();
+  const windows = [[SAMPLES_SEARCH_EPOCH_MS, hiMs]];
+  const timeout = Math.max(SAMPLES_SEARCH_TIMEOUT_MS, sharedPrimitives.GH_TIMEOUT_MS);
+  let calls = 0;
+  while (windows.length) {
+    const [lo, hi] = windows.pop();
+    if (++calls > SAMPLES_MAX_SEARCH_CALLS) throw new Error(`the merged-PR search needed more than ${SAMPLES_MAX_SEARCH_CALLS} windows`);
+    const search = `${SAMPLES_SEARCH_PHRASE} merged:${isoSecond(lo)}..${isoSecond(hi)}`;
+    const page = JSON.parse(deps.gh(['pr', 'list', ...repoArgs(flags), '--state', 'merged', '--search', search, '--json', 'number,mergedAt,mergeCommit,body', '--limit', String(SAMPLES_SEARCH_LIMIT)], { timeout }));
+    if (!Array.isArray(page)) throw new Error('gh pr list did not return an array');
+    if (page.length < SAMPLES_SEARCH_LIMIT) {
+      for (const m of page) if (m && Number.isInteger(m.number)) found.set(m.number, m);
+      continue;
+    }
+    if (hi <= lo) throw new Error(`the merged-PR search is at its ${SAMPLES_SEARCH_LIMIT}-result search cap within one second (${isoSecond(lo)}) — merges may be missing, so ordinals cannot be trusted`);
+    const mid = lo + Math.floor((hi - lo) / 2000) * 1000;
+    windows.push([mid + 1000, hi], [lo, mid]);
+  }
+  return [...found.values()];
 }
 
 function runSamples(deps, flags) {
@@ -353,22 +432,21 @@ function runSamples(deps, flags) {
   let every = flags['--every'];
   try {
     if (every === undefined) every = deps.resolvePolicy(['express-review-sample-every'], { runDir: null })['express-review-sample-every'].value;
-    const listArgs = ['pr', 'list', ...repoArgs(flags), '--state', 'merged', '--search', 'claude-tweaks-express in:body', '--json', 'number,mergedAt,mergeCommit,body', '--limit', String(SAMPLES_SEARCH_LIMIT)];
-    const merges = JSON.parse(deps.gh(listArgs, { timeout: Math.max(SAMPLES_SEARCH_TIMEOUT_MS, sharedPrimitives.GH_TIMEOUT_MS) }));
-    if (!Array.isArray(merges)) throw new Error('gh pr list did not return an array');
-    if (merges.length >= SAMPLES_SEARCH_LIMIT) {
-      throw new Error(`the merged-PR search returned ${merges.length} results, its ${SAMPLES_SEARCH_LIMIT}-result search cap — older express merges may be missing, so ordinals cannot be trusted`);
-    }
+    const now = deps.now();
+    const merges = searchMergedExpress(deps, flags, Math.floor(now / 1000) * 1000);
     const byNumber = new Map(merges.map((m) => [m.number, m]));
     const expressMerges = merges.filter((m) => m && isExpressPr(m.body) && Number.isFinite(Date.parse(m.mergedAt))).length;
+    const due = selectReviewSamples(merges, every).filter((s) => Date.parse(s.mergedAt) >= now - SAMPLES_LOOKBACK_MS);
     const sampled = [];
-    for (const s of selectReviewSamples(merges, every)) {
+    let capped = false;
+    for (const s of due) {
+      if (sampled.length >= SAMPLES_MAX_REVIEWS) { capped = true; break; }
       const view = JSON.parse(deps.gh(['pr', 'view', ...repoArgs(flags), '--json', 'comments', '--', String(s.number)]));
       if (isReviewed(view && view.comments)) continue;
       const m = byNumber.get(s.number);
       sampled.push({ pr: s.number, ordinal: s.ordinal, mergedAt: s.mergedAt, mergeSha: (m.mergeCommit && m.mergeCommit.oid) || null, records: fixesRecords(m.body) });
     }
-    deps.stdout(`${JSON.stringify({ every, expressMerges, sampled })}\n`);
+    deps.stdout(`${JSON.stringify({ every, expressMerges, sampled, capped })}\n`);
     return 0;
   } catch (err) {
     deps.stderr(`express-lane.js: samples failed: ${err && err.message}\n`);
@@ -392,7 +470,7 @@ function run(argv, deps = realDeps) {
 }
 
 function defaultGit(args, opts = {}) {
-  return execFileSync('git', args, { cwd: opts.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  return execFileSync('git', args, { cwd: opts.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GIT_TIMEOUT_MS, windowsHide: true });
 }
 
 function defaultReadFile(p) {

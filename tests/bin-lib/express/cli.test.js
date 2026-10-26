@@ -15,6 +15,7 @@ const { BlastRadiusError, resolveBlastRadiusConfig } = require(path.join(LIB, 'b
 const { computeAdoption } = require(path.join(LIB, 'flow', 'preflight.js'));
 
 const NOW = new Date(2026, 9, 25, 9, 5, 7).getTime();
+const HEAD_SHA = 'f00dfeedf00dfeedf00dfeedf00dfeedf00dfeed';
 const KEY_FILES = ['plugin/skills/init/claude-md-template.md', 'CLAUDE.md'];
 const ELIGIBLE_LABELS = ['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task'];
 const ESCALATION_RE = (n, reason, detail) => new RegExp(`^- AUTO \\d{2}:\\d{2}:\\d{2} — Express lane: escalated #${n} to \\/flow \\(reason: ${reason}\\) — ${detail}\\. Reversibility: high \\(worktree and branch kept\\)\\.$`, 'm');
@@ -82,7 +83,7 @@ function harness(fx, over = {}, policy = {}) {
       return Object.fromEntries(keys.map((k) => [k, { value: { ...POLICY, ...policy }[k], source: 'policy' }]));
     },
     blastRadiusConfig: resolveBlastRadiusConfig,
-    stampCheck: () => ({ verified: true, reason: null }),
+    stampCheck: () => ({ verified: true, reason: null, status: { head: HEAD_SHA } }),
     now: () => NOW,
     cwd: () => fx.main,
     mainRoot: fx.main,
@@ -286,9 +287,20 @@ test('check proceed: a Key-File-only diff logs the proceed line and no escalatio
   assert.strictEqual(res.mergeVerification, 'merge-when-green');
   assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,merge-verification=merge-when-green');
   assert.strictEqual(res.bounds.implLines, 4);
+  assert.strictEqual(res.head, HEAD_SHA);
   const text = decisions(fx);
-  assert.match(text, /^## \/express-lane\n- AUTO \d{2}:\d{2}:\d{2} — Express lane check: #7 proceed — 1 changed file\(s\), 4 implementation line\(s\) within bounds; runner stamp verifies HEAD\. Reversibility: n\/a\.\n$/);
+  assert.match(text, new RegExp(`^## \\/express-lane\\n- AUTO \\d{2}:\\d{2}:\\d{2} — Express lane check: #7 proceed — 1 changed file\\(s\\), 4 implementation line\\(s\\) within bounds; runner stamp verifies HEAD ${HEAD_SHA}\\. Reversibility: n\\/a\\.\\n$`));
   assert.strictEqual(hasEscalation(text, 7), false);
+});
+
+test('check: a verified stamp that names no HEAD sha escalates as express-error, never a proceed (M7)', () => {
+  for (const status of [undefined, null, {}, { head: '' }, { head: 42 }]) {
+    const fx = fixture();
+    const h = harness(fx, { stampCheck: () => ({ verified: true, reason: null, status }) });
+    assert.strictEqual(run(checkArgv(fx), h.deps), 0, JSON.stringify(status));
+    assert.deepStrictEqual(h.json(), { action: 'escalate', reason: 'express-error', detail: 'the runner stamp names no HEAD sha' }, JSON.stringify(status));
+    assert.strictEqual(hasEscalation(decisions(fx), 7), true);
+  }
 });
 
 test('check fetches the record live when no --record-json is given, and --integration-branch derives the base', () => {
@@ -502,6 +514,61 @@ test('verify: an escalation for the record after its proceed line supersedes it'
   assert.deepStrictEqual(h.json(), { ok: false, missing: ['express-check'] });
 });
 
+// C1: on `merged`, the post-merge file's reconcile archives the run dir to
+// {pipelines}/archive/{run-id} (archive-merged.js) before the dispatcher's verify runs.
+function archiveRun(fx) {
+  const archived = path.join(fx.main, '.claude-tweaks', 'pipelines', 'archive', path.basename(fx.runDir));
+  fs.mkdirSync(path.dirname(archived), { recursive: true });
+  fs.renameSync(fx.runDir, archived);
+  return archived;
+}
+
+test('verify: a merged run whose dir was archived reads the archive and passes (C1)', () => {
+  const fx = fixture();
+  seedVerify(fx);
+  const archived = archiveRun(fx);
+  const h = harness(fx);
+  assert.strictEqual(run(['verify', '--run', fx.runDir, '--issue', '7'], h.deps), 0);
+  assert.deepStrictEqual(h.json(), { ok: true, missing: [], archived });
+  assert.match(h.err.join(''), /has moved to .*archive.* — verifying the archived copy/);
+  assert.strictEqual(fs.existsSync(fx.runDir), false, 'verify recreates nothing');
+});
+
+test('verify: a live dir recreated with a bare decisions.md resolves to the archive (C1)', () => {
+  const fx = fixture();
+  seedVerify(fx);
+  const archived = archiveRun(fx);
+  fs.mkdirSync(fx.runDir, { recursive: true });
+  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), '## /dispatch\n- AUTO 09:09:00 — Step 6: settled #7. Reversibility: n/a.\n');
+  const h = harness(fx);
+  assert.strictEqual(run(['verify', '--run', fx.runDir, '--issue', '7'], h.deps), 0);
+  assert.deepStrictEqual(h.json(), { ok: true, missing: [], archived });
+});
+
+test('verify: a live dir with run-state.json wins over an archive twin; no live and no archive still exits 3 (C1)', () => {
+  const fx = fixture();
+  seedVerify(fx, { pr: false });
+  const twin = path.join(fx.main, '.claude-tweaks', 'pipelines', 'archive', path.basename(fx.runDir));
+  fs.mkdirSync(twin, { recursive: true });
+  fs.writeFileSync(path.join(twin, 'run-state.json'), JSON.stringify({ worktree: '/w', pr: { number: 12, branch: 'b' } }));
+  const live = harness(fx);
+  assert.strictEqual(run(['verify', '--run', fx.runDir, '--issue', '7'], live.deps), 1);
+  assert.deepStrictEqual(live.json(), { ok: false, missing: ['pr'] });
+
+  const gone = fixture();
+  fs.rmSync(gone.runDir, { recursive: true });
+  const h = harness(gone);
+  assert.strictEqual(run(['verify', '--run', gone.runDir, '--issue', '7'], h.deps), 3);
+  assert.strictEqual(h.out.join(''), '');
+  assert.match(h.err.join(''), /run dir does not exist/);
+
+  const bare = fixture();
+  fs.writeFileSync(path.join(bare.runDir, 'decisions.md'), '## /dispatch\n');
+  const b = harness(bare);
+  assert.strictEqual(run(['verify', '--run', bare.runDir, '--issue', '7'], b.deps), 1, 'a bare live dir with no archive is verified as it stands');
+  assert.deepStrictEqual(b.json(), { ok: false, missing: ['claim-log', 'express-check', 'pr'] });
+});
+
 // --- samples --------------------------------------------------------------------
 
 function merges() {
@@ -540,7 +607,9 @@ test('samples: every 5th express merge is sampled; a reviewed one is excluded', 
   assert.strictEqual(all.every, 5);
   assert.strictEqual(all.expressMerges, 10);
   assert.deepStrictEqual(all.sampled.map((s) => s.pr), [105, 110]);
-  assert.deepStrictEqual(both.calls.gh[0], ['pr', 'list', '--repo', 'acme/widgets', '--state', 'merged', '--search', 'claude-tweaks-express in:body', '--json', 'number,mergedAt,mergeCommit,body', '--limit', '1000']);
+  const hi = new Date(Math.floor(NOW / 1000) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  assert.deepStrictEqual(both.calls.gh[0], ['pr', 'list', '--repo', 'acme/widgets', '--state', 'merged', '--search', `"claude-tweaks-express" in:body merged:2008-01-01T00:00:00Z..${hi}`, '--json', 'number,mergedAt,mergeCommit,body', '--limit', '1000']);
+  assert.strictEqual(all.capped, false);
   assert.deepStrictEqual(both.calls.gh.slice(1), [
     ['pr', 'view', '--repo', 'acme/widgets', '--json', 'comments', '--', '105'],
     ['pr', 'view', '--repo', 'acme/widgets', '--json', 'comments', '--', '110'],
@@ -551,7 +620,7 @@ test('samples: every 5th express merge is sampled; a reviewed one is excluded', 
   assert.deepStrictEqual(h.json().sampled, [{ pr: 110, ordinal: 10, mergedAt: '2026-10-10T12:00:00Z', mergeSha: 'sha110', records: [909, 959] }]);
 });
 
-test('samples: the merged-PR search gets its own longer timeout; a result at the 1000 cap exits 1, never sampled', () => {
+test('samples: the merged-PR search gets its own longer timeout; 1000 merges in one second exits 1, never sampled', () => {
   const fx = fixture();
   const opts = [];
   const ok = samplesHarness(fx);
@@ -562,11 +631,74 @@ test('samples: the merged-PR search gets its own longer timeout; a result at the
   assert.ok(list.o && list.o.timeout >= 60000, JSON.stringify(list.o));
 
   const full = Array.from({ length: 1000 }, (_, i) => ({ number: i + 1, mergedAt: '2026-10-01T12:00:00Z', mergeCommit: { oid: `s${i}` }, body: expressMarker(`r${i}`) }));
-  const capped = harness(fx, { gh: (args) => { capped.calls.gh.push(args); return JSON.stringify(full); } });
+  const capped = harness(fx, { gh: (args) => { capped.calls.gh.push(args); return JSON.stringify(searchWindow(full, args)); } });
   assert.strictEqual(run(['samples', '--every', '5'], capped.deps), 1);
   assert.strictEqual(capped.out.join(''), '');
-  assert.match(capped.err.join(''), /1000-result search cap/);
-  assert.strictEqual(capped.calls.gh.length, 1, 'no pr view runs on a capped search');
+  assert.match(capped.err.join(''), /1000-result search cap within one second/);
+  assert.ok(capped.calls.gh.every((a) => a[1] === 'list'), 'no pr view runs on an unsplittable search');
+});
+
+// A fake `gh pr list --search`: the merges inside the query's `merged:lo..hi` range
+// (inclusive), cut at gh's 1000-result cap the way a full search page is.
+function searchWindow(all, args) {
+  const q = args[args.indexOf('--search') + 1];
+  assert.ok(q.startsWith('"claude-tweaks-express" in:body merged:'), q);
+  const [lo, hi] = /merged:(\S+)\.\.(\S+)$/.exec(q).slice(1).map(Date.parse);
+  return all.filter((m) => Date.parse(m.mergedAt) >= lo && Date.parse(m.mergedAt) <= hi).slice(0, 1000);
+}
+
+// `count` express merges, one every `stepHours`, the last one hour before NOW.
+function history(count, stepHours) {
+  const last = NOW - 3600 * 1000;
+  return Array.from({ length: count }, (_, i) => {
+    const at = new Date(last - (count - 1 - i) * stepHours * 3600 * 1000);
+    at.setUTCMilliseconds(0);
+    return { number: 1 + i, mergedAt: at.toISOString().replace(/\.\d{3}Z$/, 'Z'), mergeCommit: { oid: `sha${1 + i}` }, body: expressMarker(`run-${1 + i}`) };
+  });
+}
+
+function historyHarness(fx, all) {
+  const h = harness(fx, {
+    gh: (args) => {
+      h.calls.gh.push(args);
+      if (args[1] === 'list') return JSON.stringify(searchWindow(all, args));
+      if (args[1] === 'view') return JSON.stringify({ comments: [] });
+      throw new Error(`unexpected gh ${args.join(' ')}`);
+    },
+  });
+  return h;
+}
+
+test('samples: a history past the 1000-result search cap is split by merge date, never refused (I3)', () => {
+  const fx = fixture();
+  const all = history(2500, 6);
+  const h = historyHarness(fx, all);
+  assert.strictEqual(run(['samples', '--every', '50'], h.deps), 0, h.err.join(''));
+  const res = h.json();
+  assert.strictEqual(res.expressMerges, 2500, 'every merge counted once across the split windows');
+  const lists = h.calls.gh.filter((a) => a[1] === 'list');
+  assert.ok(lists.length > 3, `the search was split (${lists.length} calls)`);
+  // Ordinals are global: the sampled ones are exactly the multiples of 50 inside the lookback.
+  const cutoff = NOW - 30 * 24 * 3600 * 1000;
+  const expected = all.map((m, i) => ({ m, ordinal: i + 1 }))
+    .filter(({ m, ordinal }) => ordinal % 50 === 0 && Date.parse(m.mergedAt) >= cutoff)
+    .map(({ m, ordinal }) => ({ pr: m.number, ordinal }));
+  assert.ok(expected.length >= 2 && expected.length <= 3, `fixture sanity: ${expected.length} in the lookback`);
+  assert.deepStrictEqual(res.sampled.map((s) => ({ pr: s.pr, ordinal: s.ordinal })), expected);
+});
+
+test('samples: comments are fetched only inside the 30-day lookback, at most 3 reviews per firing (I3)', () => {
+  const fx = fixture();
+  const all = history(200, 24);
+  const h = historyHarness(fx, all);
+  assert.strictEqual(run(['samples', '--every', '1'], h.deps), 0, h.err.join(''));
+  const res = h.json();
+  assert.strictEqual(res.capped, true, 'a lowered --every leaves the rest for later firings');
+  const cutoff = NOW - 30 * 24 * 3600 * 1000;
+  const inLookback = all.filter((m) => Date.parse(m.mergedAt) >= cutoff);
+  assert.deepStrictEqual(res.sampled.map((s) => s.pr), inLookback.slice(0, 3).map((m) => m.number), 'oldest first inside the lookback');
+  const views = h.calls.gh.filter((a) => a[1] === 'view').map((a) => Number(a[a.length - 1]));
+  assert.deepStrictEqual(views, res.sampled.map((s) => s.pr), 'no comment fetch past the cap or outside the lookback');
 });
 
 test('samples: --every absent resolves express-review-sample-every', () => {

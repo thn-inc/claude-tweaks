@@ -95,9 +95,11 @@ function keyFileForm(p) {
 }
 
 // Every changed non-test, non-pipeline-artifact path must be a Key File and
-// count toward implLines; the protected and merge-sensitive checks apply to
-// every changed path, tests included, and to a rename's oldPath. A missing or
-// non-finite maxLines (e.g. Number() of a malformed policy value) fails closed.
+// count toward implLines. A test file's deleted lines count toward maxLines too
+// (deleting tests weakens the CI-green net the lane merges on); its added lines
+// stay exempt. The protected and merge-sensitive checks apply to every changed
+// path, tests included, and to a rename's oldPath. A missing or non-finite
+// maxLines (e.g. Number() of a malformed policy value) fails closed.
 function evaluateDiffBounds(files, opts) {
   const { keyFiles = [], sensitivePaths = [], maxLines } = opts || {};
   const inputs = files || [];
@@ -105,12 +107,15 @@ function evaluateDiffBounds(files, opts) {
   const keySet = new Set(keyFiles.map(keyFileForm));
   const violations = [];
   let implLines = 0;
+  let testDeletions = 0;
 
   if (classified.length === 0) violations.push('no changes');
   classified.forEach((f, i) => {
     if (!f.isTest && !f.isPipelineArtifact) {
       implLines += f.additions + f.deletions;
       if (!keySet.has(keyFileForm(f.path))) violations.push(`outside Key Files: ${f.path}`);
+    } else if (f.isTest && !f.isPipelineArtifact) {
+      testDeletions += f.deletions;
     }
     if (isProtectedPath(f.path)) violations.push(REASONS.protectedPath(f.path));
     if (f.isSensitive) violations.push(REASONS.sensitivePath(f.path));
@@ -122,7 +127,11 @@ function evaluateDiffBounds(files, opts) {
     }
   });
   if (!Number.isFinite(maxLines)) violations.push(`invalid maxLines: ${maxLines}`);
-  else if (implLines > maxLines) violations.push(`${implLines} implementation lines > ${maxLines}`);
+  else if (implLines + testDeletions > maxLines) {
+    violations.push(testDeletions
+      ? `${implLines} implementation lines + ${testDeletions} deleted test lines > ${maxLines}`
+      : `${implLines} implementation lines > ${maxLines}`);
+  }
 
   return { withinBounds: violations.length === 0, violations, implLines, changedFiles: classified.map((f) => f.path) };
 }
