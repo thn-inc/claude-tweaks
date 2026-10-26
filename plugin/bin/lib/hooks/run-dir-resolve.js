@@ -77,7 +77,7 @@ function archiveStatus(pipelinesRoot, runId) {
 // worktree on disk. `runLiveness` is deliberately not consulted here: a `dead` verdict on an
 // `active` run is the crash-resume (owner pid gone) or long-idle (legacy 72h) case, and both
 // must stay adoptable (#3979 red-team, #4419). Adopting an unresumable dir inherits a closed PR
-// number, a stale config.yml, stale staged/items and a foreign claim runId (observed 3 times in
+// number, a stale config.yml, stale staged/ items and a foreign claim runId (observed 3 times in
 // one dispatch firing — this record's own Current State). A bare mkdir-only mint (no
 // run-state.json yet) is not unresumable; `adoptionRefusal` below adopts it.
 function unresumableState(state) {
@@ -95,7 +95,8 @@ function unresumableState(state) {
 // crash or truncated write must never read as "adopt"), a `createdBy: release-standalone`
 // directory, a terminal status (any string outside run-integrity's NON_TERMINAL), then the
 // #1962 unresumable check (`unresumableState` above). An ABSENT run-state.json stays adoptable
-// (a bare mkdir-only mint), and a missing or non-string status is not terminal. Step 1's PIPELINE_RUN_DIR never reaches this.
+// (a bare mkdir-only mint), and a missing or non-string status is not terminal. Step 1's
+// PIPELINE_RUN_DIR never reaches this.
 function adoptionRefusal(dir) {
   // Lazy: run-integrity -> context.js -> this module is a load-time cycle if required at the top.
   const { NON_TERMINAL } = require('./run-integrity');
