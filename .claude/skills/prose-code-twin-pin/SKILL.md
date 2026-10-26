@@ -160,6 +160,23 @@ rank a bundle's aggregated Type (line 199) — with no conformance test pinning 
 Grepping `tests/**/*.js` for `TYPE_PRECEDENCE` returns nothing — fixing it is out of scope for
 this skill (which only detects and names the pattern).
 
+**Placeholder-shaped template instance (#4331):** some fenced templates use placeholders that
+encode a shape the composer cannot emit. Those templates cannot take the whole-string
+`strictEqual` that the composer row in Anti-Patterns below prescribes.
+`plugin/skills/dispatch/close-out-update.md`'s marker template writes
+`update-method: {merge | gh pr update-branch}[, …]`, an alternation plus a repeat that
+`plugin/bin/lib/dispatch/close-out-marker.js`'s `serializeMarker` takes no input for. So
+`tests/close-out-pr-state-contract-conformance.test.js`'s `assertExplanationTwin` pins the template
+line by line. It checks the explanatory paragraph byte-equal to the composer's and `deepEqual`s the
+four field-key prefixes in order, and it has go-red controls for one reworded word, a renamed key
+and a swapped pair. Pin every fixed line that way, not only the ones in view. As built, `fieldKeys`
+starts at the third line (`.slice(2)`), so the template's status line `close-out-update: pending`
+is compared against no code, though `PENDING_LINE` is what `parseMarker` matches. The first line is
+selected by a `startsWith` literal the test retypes instead of importing `MARKER_LINE`. The Clear
+step's hand-written `close-out-update: cleared ({reason})` line has the detector-twin shape of the
+`consoleReplacedByAutoMerge` row below, since `CLEARED_RE` reads it. Walk the fence line by line,
+and name the constant or regex each line must match before you call the pin complete.
+
 ## Existing coverage, checked
 
 `skill-prose-conformance-tests` is the closest sibling, but covers the other half of the problem.
