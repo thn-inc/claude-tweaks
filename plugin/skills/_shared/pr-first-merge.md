@@ -138,11 +138,11 @@ as `wait` for this merge and log `AUTO … Step 2.5: lever unresolved ("{raw}") 
 Never as `off`: an unreadable lever must not become the one value that skips the wait.
 
 **Read state first — never parse stderr first.** Before any merge attempt, regardless of value, resolve this step's scratch paths (`_shared/session-tmp-root.md`)
-and substitute the printed `PR_CHECKS`/`PARK_COMMENT` literals for `{pr-checks-path}`/`{park-comment-path}`
+and substitute the printed `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`
 below (`_shared/scratch-worktree.md` §7):
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PARK_COMMENT=park-comment-{n}.md
+node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PR_RUNS=pr-runs-{n}.json PARK_COMMENT=park-comment-{n}.md
 ```
 
 Then read state:
@@ -219,8 +219,8 @@ DEADLINE=$(( $(date +%s) + 900 ))
 while :; do
   gh pr checks {pr-number} --repo {owner}/{repo} > "{pr-checks-path}" 2>&1; RC=$?
   case "$RC" in
-    0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status > /tmp/pr-runs-{n}.json || { RC=2; break; }
-       PENDING_RUNS=$(node -e "console.log(require(process.argv[1]).filter((r) => r.status !== 'completed').length)" -- /tmp/pr-runs-{n}.json) || { RC=2; break; }
+    0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status > "{pr-runs-path}" || { RC=2; break; }
+       PENDING_RUNS=$(node -e "console.log(require(process.argv[1]).filter((r) => r.status !== 'completed').length)" -- "{pr-runs-path}") || { RC=2; break; }
        [ "${PENDING_RUNS:-x}" = 0 ] && break                 # all green — no head run still in progress
        [ "$(date +%s)" -ge "$DEADLINE" ] && RC=124 && break  # rollup green, a head run still pending at the bound
        sleep 30 ;;

@@ -147,4 +147,5 @@ comments payload (`{kind}-comments-{n}.json`) and its comment body (`{kind}-comm
 in step 1.
 
 **Extended (#4173):** `skills/_shared/pr-first-merge.md`'s Step 2.5, which resolves its checks capture
-(`pr-checks-{n}.txt`) and park-comment body (`park-comment-{n}.md`) in one CLI call at the state read.
+(`pr-checks-{n}.txt`), head-runs capture (`pr-runs-{n}.json`) and park-comment body (`park-comment-{n}.md`)
+in one CLI call at the state read.
