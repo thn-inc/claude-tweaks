@@ -360,8 +360,8 @@ function defaultDeps(root) {
         throw e;
       }
     },
-    // precheck's plan-claim source, as plugin/bin/release.js provides it: a
-    // project without docs/superpowers/plans simply has no plan claims. Read
+    // precheck's plan-claim source: a project without docs/superpowers/plans
+    // simply has no plan claims. Read
     // and catch rather than exists-then-read — a sibling session can prune the
     // directory between the two calls ([IL-146]); a vanished directory is "no
     // plan claims", anything else propagates. The IDs are `/`-joined display IDs

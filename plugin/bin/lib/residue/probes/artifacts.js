@@ -62,7 +62,8 @@ function errLabel(err) {
 }
 
 // Recursive newest file under dir, as `{ mtimeMs, file }` — `file` is the
-// winner's path relative to `dir`. Both fields are null when dir contains no
+// winner's path relative to `dir`, `/`-joined on every OS (a display ID, never
+// handed back to fs). Both fields are null when dir contains no
 // files at any depth. Throws on ANY read error (including ENOENT — this
 // function has no tolerance of its own); the caller turns that into the
 // probe-level ran:false.
@@ -94,7 +95,8 @@ function ageBasisMs(dir) {
 }
 
 // Recursive: does `dir` contain a .zip file at any depth, and what's the
-// newest file's `{ mtimeMs, file }` under it (file relative to dir) — merges
+// newest file's `{ mtimeMs, file }` under it (file relative to dir, `/`-joined
+// as in newestFileMtimeMs) — merges
 // what used to be two separate recursive descents of the same subtree
 // (containsZip + newestFileMtimeMs) into one (#1177).
 function zipAndNewest(dir) {

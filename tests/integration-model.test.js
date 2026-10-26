@@ -229,7 +229,7 @@ function walk(dir, acc = []) {
 test('every file naming integration-model cites the shared fragment or is allowlisted', () => {
   const offenders = [];
   for (const file of walk(SKILLS_DIR)) {
-    // Compared against /-keyed allowlist, so it is a display ID (#4288).
+    // Compared against a /-keyed allowlist, so it is a display ID (#4288).
     const rel = toPosix(path.relative(SKILLS_DIR, file));
     const text = readText(file);
     if (!TOKEN.test(text)) continue;

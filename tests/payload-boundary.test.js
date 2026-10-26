@@ -526,7 +526,7 @@ test('(a) every executable ${CLAUDE_PLUGIN_ROOT}-relative reference in plugin/**
   for (const file of files) {
     const isJson = file.endsWith('hooks.json');
     const text = readText(file);
-    // Compared against /-keyed allowlist, so it is a display ID (#4288).
+    // Compared against a /-keyed allowlist, so it is a display ID (#4288).
     const relFile = toPosix(path.relative(ROOT, file));
     for (const ref of scanMarkdownReferences(text, isJson)) {
       if (hasPlaceholderSegment(ref.suffix)) continue;
@@ -545,7 +545,7 @@ test('(b) every require() in plugin/bin/**/*.js resolves inside plugin/ — no d
   const failures = [];
   for (const file of files) {
     const text = readText(file);
-    // Compared against /-keyed allowlist, so it is a display ID (#4288).
+    // Compared against a /-keyed allowlist, so it is a display ID (#4288).
     const relFile = toPosix(path.relative(ROOT, file));
     const baseDir = path.dirname(file);
     for (const call of findRequireCalls(text)) {

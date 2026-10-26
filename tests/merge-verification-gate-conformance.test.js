@@ -53,7 +53,7 @@ test('merge-when-green appears outside the gate only as a lever value (#559 file
   const LEVER_FILES = new Set(['_shared/policy-schema.md', '_shared/policy-schema-coverage.md', 'flow/manifesto.md']);
   const offenders = [];
   for (const file of otherSkillFiles()) {
-    // Compared against /-keyed allowlist, so it is a display ID (#4288).
+    // Compared against a /-keyed allowlist, so it is a display ID (#4288).
     const rel = toPosix(path.relative(SKILLS, file));
     const text = fs.readFileSync(file, 'utf8');
     if (!/merge-when-green/i.test(text)) continue;
