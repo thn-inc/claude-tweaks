@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "digest",
+  "record": null,
+  "title": "Digest: verify (7)",
+  "action": "Propose cluster: file record absorbing 7 verify entries",
+  "command": "gh issue create --title \"Digest: verify (7)\" --body-file staged/digest-promotion-11.md"
+ }
+]
