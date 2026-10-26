@@ -1076,7 +1076,8 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
     // read off it. In a session whose own repo has worktree-always on, deny before any of them,
     // failing closed. In any other session (no repo, or the policy off or absent) the marker never
     // denies: base d9aa6b82d's own readings of the command (git-command.js's BASE_VIEW, reported
-    // beside the lost targets as known ones) are checked as ordinary targets, as base checked them.
+    // beside the lost targets as known ones; that walk keeps this branch's other scanner fixes, so it
+    // reads at least what base read) are checked as ordinary targets, as base checked them.
     // An indeterminate repo status allows, as below, so a load spike never freezes a run.
     if (lost) {
       const session = sessionWorktreeAlways();
