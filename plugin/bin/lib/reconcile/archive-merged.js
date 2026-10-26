@@ -14,7 +14,8 @@ const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
 const { canonicalRealpath, resolveLeaf } = require('../path-guard');
-const { runLiveness } = require('../run-liveness');
+const { runLiveness, runIdMs, LIVE_PROBES } = require('../run-liveness');
+const { LEGACY_DEAD_MS } = require('../run-liveness/constants');
 const { ownEventRecency } = require('../run-liveness/probes');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
@@ -160,6 +161,18 @@ function isMainCheckoutAdHoc(dir) {
 // silent past the dead threshold reads `dead`.
 function adHocSessionLiveness(dir) {
   return runLiveness(dir, { probes: { pathType: () => ({ type: 'missing' }) } }).verdict;
+}
+
+// #4421: the run-liveness verdict + evidence behind the `abandoned-interrupted`
+// kind — runLiveness's own answer, with the same worktree-path adjustment as
+// adHocSessionLiveness but applied to ANY run dir whose recorded worktree is the
+// main checkout (recordedWorktreeIsMainCheckout, not the ad-hoc-only gate): there
+// the worktree-lock and last-commit evidence belong to the shared checkout, not
+// to this run. State is read from disk, the same file runLiveness reads.
+// -> { verdict, evidence }
+function defaultRunVerdict(dir, now) {
+  const adjust = recordedWorktreeIsMainCheckout(dir, readRunState(dir));
+  return runLiveness(dir, { now, probes: adjust ? { pathType: () => ({ type: 'missing' }) } : {} });
 }
 
 // #1604: the "swept once genuinely superseded" half of #1117's own design
@@ -309,7 +322,9 @@ function archiveOrphanedMint(root, dir) {
 // Same 24h window as ORPHAN_MINT_TTL_MS, and for the same reason — longer than
 // any plausible pause before a session resumes its own run, short enough that
 // a genuinely abandoned one is swept the next day. Deliberately not a second,
-// differently-tuned constant.
+// differently-tuned constant. Since #4421 it is the silence FLOOR below which no
+// run-liveness verdict is even asked, and the window a `dead` verdict must have
+// outlasted; an `unknown` verdict with no live positive waits LEGACY_DEAD_MS (72h).
 const STALE_INTERRUPTED_TTL_MS = ORPHAN_MINT_TTL_MS;
 
 // Thin wrapper kept exported for existing callers (this file's own tests
@@ -336,9 +351,10 @@ function lastOwnEventMs(runDir) {
 // in. There, this half of the criterion never fires — it is not "the"
 // protection, it is an ADDITIONAL guard that only engages when a session id
 // happens to be known. The substantive protection for every caller, known
-// session id or not, is the two checks below: the 24h staleness window
-// (`STALE_INTERRUPTED_TTL_MS`) and, at the call site, the `shipped-unclosed`
-// evidence gate from `checkRunIntegrity`.
+// session id or not, is the run-liveness verdict (`ctx.runVerdict`, #4421) plus
+// its silence floors — 24h (`STALE_INTERRUPTED_TTL_MS`) for `dead`, 72h
+// (`LEGACY_DEAD_MS`) for `unknown` with no live positive — and, at the call
+// site, the `shipped-unclosed` evidence gate from `checkRunIntegrity`.
 // #1732: thin wrapper — the ownership+recency comparison itself now lives
 // solely in classifyRunDir's 'abandoned-interrupted' branch (below); this
 // function only asks the scoped question. The `checkRunIntegrity`
@@ -346,10 +362,11 @@ function lastOwnEventMs(runDir) {
 // function and classifyRunDir — it is call-site-only (archiveMerged's main
 // loop applies it after reading this kind back) — see classifyRunDir's own
 // comment for why folding it in would misattribute the `explicit: true`
-// archival path's justification.
-function isAbandonedInterrupted(runDir, state, sessionId, now = Date.now()) {
+// archival path's justification. `ctx` carries classifyRunDir's injectable
+// hooks (`runVerdict`); the wrapper's own keys win over it.
+function isAbandonedInterrupted(runDir, state, sessionId, now = Date.now(), ctx = {}) {
   return classifyRunDir({
-    dir: runDir, state, sessionId, kinds: ['abandoned-interrupted'],
+    ...ctx, dir: runDir, state, sessionId, kinds: ['abandoned-interrupted'],
   }, now).kind === 'abandoned-interrupted';
 }
 
@@ -1780,7 +1797,11 @@ function isStructurallyStuck(dir, reason, now = Date.now()) {
 //
 // I/O-free apart from the one mtime stat (via isStaleDir) and the one
 // events.jsonl read (via ownEventRecency) that the mtime-based kinds and
-// abandoned-interrupted's recency check respectively need — and the
+// abandoned-interrupted's recency check respectively need — plus
+// abandoned-interrupted's injectable `runVerdict` (#4421, default
+// defaultRunVerdict: runLiveness, which spawns `ps` and reads state, events and
+// git), evaluated only after its cheap guards (status, own session, readable
+// events.jsonl, silence past the 24h floor) — and the
 // `adhoc-session-ended` kind's own I/O: it reads run-state.json (the ad-hoc
 // stamp, and the own-session guard when `state` is not passed), does a
 // realpath, and calls the injectable `liveness` function (which spawns `ps`
@@ -1800,7 +1821,7 @@ const CLASSIFY_ORDER = ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superse
 
 function classifyRunDir(ctx, now = Date.now()) {
   const {
-    dir, state, worktrees, sessionId, prState, consoleState, skipReason, kinds, liveness = adHocSessionLiveness,
+    dir, state, worktrees, sessionId, prState, consoleState, skipReason, kinds, liveness = adHocSessionLiveness, runVerdict = defaultRunVerdict,
   } = ctx;
   const order = kinds || CLASSIFY_ORDER;
 
@@ -1819,9 +1840,26 @@ function classifyRunDir(ctx, now = Date.now()) {
           // activity, not proof of staleness — fail toward not-abandoned
           // rather than collapsing "we can't tell" into "definitely idle".
           const { readable, lastOwnMs: last } = ownEventRecency(dir);
-          const stillRecent = last !== null && (now - last) <= STALE_INTERRUPTED_TTL_MS;
-          if (readable && !stillRecent) {
-            return { kind: 'abandoned-interrupted', ttlMs: STALE_INTERRUPTED_TTL_MS, evidence: { lastOwnMs: last } };
+          // #4421: silence runs from the last own event, else the run id's own
+          // timestamp; with neither there is no reference time and the run is
+          // never abandoned. The liveness verdict is asked only past the 24h
+          // floor (it spawns processes) and only ever ADDS a requirement: a
+          // dead verdict with no probe error clears the floor; an unknown one
+          // with no live probe positive needs 72h. A throwing hook, a missing
+          // evidence array, or any other verdict reads as not abandoned.
+          const ref = last !== null ? last : runIdMs(dir);
+          const silentMs = ref === null ? null : now - ref;
+          if (readable && silentMs !== null && silentMs > STALE_INTERRUPTED_TTL_MS) {
+            let result = null;
+            try { result = runVerdict(dir, now); } catch { result = null; }
+            const evidence = result && Array.isArray(result.evidence) ? result.evidence : null;
+            const verdict = result ? result.verdict : undefined;
+            const dead = !!evidence && verdict === 'dead' && !evidence.some((e) => e && e.result === 'error');
+            const fallback = !!evidence && verdict === 'unknown' && silentMs > LEGACY_DEAD_MS
+              && !evidence.some((e) => e && LIVE_PROBES.includes(e.probe) && e.result === 'positive');
+            if (dead || fallback) {
+              return { kind: 'abandoned-interrupted', ttlMs: dead ? STALE_INTERRUPTED_TTL_MS : LEGACY_DEAD_MS, evidence: { lastOwnMs: last, verdict } };
+            }
           }
         }
       }
@@ -2181,7 +2219,7 @@ async function prefetchArchivePrStates(root, prStates, { cache } = {}) {
 }
 
 function archiveMerged({
-  cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration, prStates, cache, liveness,
+  cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration, prStates, cache, liveness, runVerdict,
 } = {}) {
   const archived = [];
   const skipped = [];
@@ -2270,7 +2308,7 @@ function archiveMerged({
     // first-match order, unchanged from what this loop checked before
     // consolidation.
     const classification = classifyRunDir({
-      dir, state, worktrees, sessionId, liveness,
+      dir, state, worktrees, sessionId, liveness, runVerdict,
       kinds: ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended'],
     });
     let { kind } = classification;
@@ -2283,7 +2321,7 @@ function archiveMerged({
     // early-return did, via one small follow-up classify call scoped to just
     // the two remaining kinds (adhoc-superseded, adhoc-session-ended).
     if (kind === 'abandoned-interrupted' && checkRunIntegrity(dir, { cache }).state !== 'shipped-unclosed') {
-      kind = classifyRunDir({ dir, state, worktrees, sessionId, liveness, kinds: ['adhoc-superseded', 'adhoc-session-ended'] }).kind;
+      kind = classifyRunDir({ dir, state, worktrees, sessionId, liveness, runVerdict, kinds: ['adhoc-superseded', 'adhoc-session-ended'] }).kind;
     }
 
     if (kind === 'orphaned-mint') {
@@ -2570,7 +2608,7 @@ module.exports = {
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
-  isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout, adHocSessionLiveness,
+  isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout, adHocSessionLiveness, defaultRunVerdict,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand,
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,

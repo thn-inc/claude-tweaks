@@ -2,7 +2,8 @@
 // bin/lib/run-liveness/index.js — a three-valued `live | dead | unknown` verdict
 // for a pipeline run directory (#3973), built from POSITIVE evidence over
 // injectable probes. Consumers: reconcile/archive-merged.js's `adhoc-session-ended`
-// sweep, through `adHocSessionLiveness` (#4179), plus `blocksResume`'s two resume
+// sweep, through `adHocSessionLiveness` (#4179), and its `abandoned-interrupted`
+// kind, through `defaultRunVerdict` (#4421), plus `blocksResume`'s two resume
 // callers (#4420). runIdMs and LIVE_PROBES are exported so reconcile's
 // abandoned-interrupted decision reuses them rather than copying (#4421).
 //
