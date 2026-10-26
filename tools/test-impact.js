@@ -8,12 +8,14 @@
 //     code — a failing suite still writes its map, which verify.js then refuses as
 //     map-from-failing-suite. A run in which a traced process could not record a read (a `.lost` marker)
 //     writes no map. Refuses a tree with tracked changes unless --allow-dirty (untracked files
-//     do not count). Prints `trace: {n} test file(s), {paths} path(s), suite exit {code} → {out} ({bytes} bytes)`.
+//     do not count); with --allow-dirty the map records `dirty: true` (verify.js refuses it as map-dirty)
+//     and a warning goes to stderr. Prints `trace: {n} test file(s), {paths} path(s), suite exit {code} → {out} ({bytes} bytes)`.
 //   fetch [--repo owner/name] [--out <path>]
 //     Downloads the map CI built: of the last 30 successful `test-impact-map.yml` runs on main, the
 //     newest whose head commit is an ancestor of HEAD (a branch behind main could never use a newer
-//     one). Skips the download when the cached map already holds that commit; validates the artifact
-//     (parseImpactMap, commit === the run's headSha, exitCode 0) before replacing the cache.
+//     one). Skips the download when the cached map already holds that commit and is not dirty (a dirty
+//     cached map is replaced); validates the artifact (parseImpactMap, commit === the run's headSha,
+//     exitCode 0, not traced from a dirty tree) before replacing the cache.
 //
 // --out defaults to `{git-common-dir}/claude-tweaks-test-impact.json` (shared by every worktree); the
 // map is written atomically. The repo root is `git rev-parse --show-toplevel` of the cwd.
@@ -130,13 +132,13 @@ async function trace(args, deps) {
   }
   const root = loc.repoRoot;
   let commit;
+  let dirty;
   try {
-    if (!parsed.opts['--allow-dirty']) {
-      const status = deps.git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], { cwd: root });
-      if (status.trim() !== '') {
-        deps.err('test-impact.js trace: the working tree is dirty (tracked changes) — commit them or pass --allow-dirty');
-        return 2;
-      }
+    const status = deps.git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], { cwd: root });
+    dirty = status.trim() !== '';
+    if (dirty && !parsed.opts['--allow-dirty']) {
+      deps.err('test-impact.js trace: the working tree is dirty (tracked changes) — commit them or pass --allow-dirty');
+      return 2;
     }
     commit = deps.git(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: root }).trim();
   } catch (e) {
@@ -189,7 +191,7 @@ async function trace(args, deps) {
     if (result.error) deps.err(`test-impact.js trace: the suite did not start: ${errText(result.error)}`);
     const exitCode = Number.isInteger(result.status) ? result.status : 1;
 
-    const built = buildMap({ traceDir, commit, exitCode, node: process.version, now: deps.now, fsImpl: deps.fs });
+    const built = buildMap({ traceDir, commit, exitCode, node: process.version, dirty, now: deps.now, fsImpl: deps.fs });
     if (built.lost > 0) {
       const named = built.lostTests.length ? built.lostTests.join(', ') : 'unknown';
       deps.err(`test-impact.js trace: ${built.lost} traced process(es) could not record a read (tests: ${named}) — no map written`);
@@ -207,6 +209,9 @@ async function trace(args, deps) {
     const text = `${JSON.stringify(built.map)}\n`;
     writeMap(deps, out, text);
     deps.log(`trace: ${tests} test file(s), ${built.map.paths.length} path(s), suite exit ${exitCode} → ${out} (${Buffer.byteLength(text)} bytes)`);
+    if (dirty) {
+      deps.err('test-impact.js trace: traced a dirty tree (tracked changes) — the map records dirty: true, which verify.js refuses as map-dirty');
+    }
     return 0;
   } catch (e) {
     deps.err(`test-impact.js trace: ${errText(e)}`);
@@ -269,7 +274,7 @@ function fetch(args, deps) {
   } catch (_) {
     // no cached map
   }
-  if (cached && cached.ok && cached.map.commit === sha) {
+  if (cached && cached.ok && cached.map.commit === sha && !cached.map.dirty) {
     deps.log(`fetch: map at ${sha} already current → ${out}`);
     return 0;
   }
@@ -300,6 +305,10 @@ function fetch(args, deps) {
     }
     if (map.map.exitCode !== 0) {
       deps.err(`test-impact.js fetch: run ${chosen.databaseId}'s map comes from a failing suite (exit ${map.map.exitCode})`);
+      return 1;
+    }
+    if (map.map.dirty) {
+      deps.err(`test-impact.js fetch: run ${chosen.databaseId}'s map was traced from a dirty tree`);
       return 1;
     }
     writeMap(deps, out, text);

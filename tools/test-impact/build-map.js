@@ -4,7 +4,8 @@
 // tools/test-impact/tracer.js leaves one `{pid}-{ms}-{rand}.trace` file per attributed process in the
 // trace dir: a `["T", test]` header line, then `[kind, relPath]` lines (kinds f/s/d/c). Every file of a
 // test (its worker and each node child) is unioned into that test's entry, and the result is encoded
-// by plugin/bin/lib/verify/impact.js's encodeImpactMap.
+// by plugin/bin/lib/verify/impact.js's encodeImpactMap; `dirty` (whether the traced tree had tracked
+// changes) is passed through unchanged, and absent when the caller gives none.
 //
 // Fails closed: a line of a headed file that does not parse as a record is counted in `skipped` and
 // gives its test `c: ['']` (the whole-repo prefix, selecting it for every change), since the lost
@@ -30,7 +31,7 @@ const isHeader = (r) => Array.isArray(r) && r.length === 2 && r[0] === 'T' && ty
 
 // → { map (encoded), skipped (unparseable record lines), headerless (unattributable files), lost (`.lost`
 // markers), lostTests (sorted unique test names the markers name) }.
-function buildMap({ traceDir, commit, exitCode, node, now = Date.now, fsImpl = fs }) {
+function buildMap({ traceDir, commit, exitCode, node, dirty, now = Date.now, fsImpl = fs }) {
   const tests = new Map();
   let skipped = 0;
   let headerless = 0;
@@ -67,7 +68,7 @@ function buildMap({ traceDir, commit, exitCode, node, now = Date.now, fsImpl = f
   for (const [test, entry] of tests) {
     plain[test] = Object.fromEntries(KINDS.map((k) => [k, [...entry[k]]]));
   }
-  const map = encodeImpactMap({ commit, tracedAt: new Date(now()).toISOString(), exitCode, node, tests: plain });
+  const map = encodeImpactMap({ commit, tracedAt: new Date(now()).toISOString(), exitCode, node, tests: plain, dirty });
   return { map, skipped, headerless, lost, lostTests: [...lostTests].sort() };
 }
 

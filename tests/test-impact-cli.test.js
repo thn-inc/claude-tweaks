@@ -162,8 +162,8 @@ function fakeChild({ status = 0, signal = null, body = () => {}, hold = false, e
   return child;
 }
 
-const mapText = (commit, exitCode = 0) => `${JSON.stringify(encodeImpactMap({
-  commit, tracedAt: '2026-10-24T00:00:00.000Z', exitCode, node: 'v22.0.0', tests: { 'tests/a.test.js': { f: ['lib/x.js'] } },
+const mapText = (commit, exitCode = 0, dirty) => `${JSON.stringify(encodeImpactMap({
+  commit, tracedAt: '2026-10-24T00:00:00.000Z', exitCode, node: 'v22.0.0', tests: { 'tests/a.test.js': { f: ['lib/x.js'] } }, dirty,
 }))}\n`;
 
 // ---- trace ----
@@ -194,7 +194,7 @@ test('trace runs the suite under the tracer env and writes the map, recording a 
     };
     const env = { NODE_OPTIONS: '--max-old-space-size=4096', CT_TRACE_TEST: 'stale.test.js', KEEP: '1' };
     const signals = new EventEmitter();
-    const { deps, out } = makeDeps({ git, spawn, signals, env, cwd: dir });
+    const { deps, out, errs } = makeDeps({ git, spawn, signals, env, cwd: dir });
     assert.strictEqual(await run({ argv: ['trace', '--allow-dirty'], deps }), 0);
     assert.strictEqual(signals.listenerCount('SIGINT') + signals.listenerCount('SIGTERM'), 0, 'a finished run leaves no signal handler');
     const req = `--require "${path.join(dir, 'tools', 'test-impact', 'tracer.js')}"`;
@@ -213,7 +213,27 @@ test('trace runs the suite under the tracer env and writes the map, recording a 
     assert.ok(parsed.ok);
     assert.strictEqual(parsed.map.commit, SHA_C);
     assert.strictEqual(parsed.map.exitCode, 1);
+    assert.strictEqual(parsed.map.dirty, true, 'AC1.1: --allow-dirty on tracked changes records dirty: true');
     assert.deepStrictEqual(out, [`trace: 1 test file(s), 1 path(s), suite exit 1 → ${mapPath} (${Buffer.byteLength(text)} bytes)`]);
+    assert.deepStrictEqual(errs, ['test-impact.js trace: traced a dirty tree (tracked changes) — the map records dirty: true, which verify.js refuses as map-dirty']);
+  });
+});
+
+test('trace on a clean tree writes dirty: false, with or without --allow-dirty', async () => {
+  await withTempDirAsync(async (dir) => {
+    for (const extra of [[], ['--allow-dirty']]) {
+      const git = fakeGit({ root: dir, status: '' });
+      const spawn = (cmd, args, opts) => fakeChild({
+        body: () => fs.writeFileSync(path.join(opts.env.CT_TRACE_DIR, '1-1-a.trace'), traceText([['T', 'tests/a.test.js'], ['f', 'lib/x.js']])),
+      });
+      const out = path.join(dir, 'map.json');
+      const { deps, errs } = makeDeps({ git, spawn, signals: new EventEmitter(), cwd: dir });
+      assert.strictEqual(await run({ argv: ['trace', '--out', out, ...extra], deps }), 0);
+      const text = fs.readFileSync(out, 'utf8');
+      assert.strictEqual(parseImpactMap(text).map.dirty, false, extra.join(' '));
+      assert.match(text, /"dirty":false/);
+      assert.deepStrictEqual(errs, []);
+    }
   });
 });
 
@@ -440,6 +460,32 @@ test('fetch is a no-op when the cached map already has the chosen commit', async
   });
 });
 
+test('fetch replaces a cached dirty map at the chosen commit', async () => {
+  await withTempDirAsync(async (dir) => {
+    const git = fakeGit({ root: dir, ancestors: [SHA_A] });
+    const gh = fakeGh({ runs: [{ databaseId: 6, headSha: SHA_A }], download: { 6: mapText(SHA_A) } });
+    const out = path.join(dir, 'map.json');
+    fs.writeFileSync(out, mapText(SHA_A, 0, true));
+    const { deps } = makeDeps({ git, gh, cwd: dir });
+    assert.strictEqual(await run({ argv: ['fetch', '--out', out], deps }), 0);
+    assert.strictEqual(gh.calls.filter((c) => c[1] === 'download').length, 1, 'a dirty cached map is not current');
+    assert.strictEqual(fs.readFileSync(out, 'utf8'), mapText(SHA_A));
+  });
+});
+
+test('fetch exits 1 on a downloaded map traced from a dirty tree, leaving the cache alone', async () => {
+  await withTempDirAsync(async (dir) => {
+    const git = fakeGit({ root: dir, ancestors: [SHA_A] });
+    const gh = fakeGh({ runs: [{ databaseId: 6, headSha: SHA_A }], download: { 6: mapText(SHA_A, 0, true) } });
+    const out = path.join(dir, 'map.json');
+    fs.writeFileSync(out, mapText(SHA_C));
+    const { deps, errs } = makeDeps({ git, gh, cwd: dir });
+    assert.strictEqual(await run({ argv: ['fetch', '--out', out], deps }), 1);
+    assert.match(errs.join('\n'), /traced from a dirty tree/);
+    assert.strictEqual(fs.readFileSync(out, 'utf8'), mapText(SHA_C));
+  });
+});
+
 test('fetch exits 1 on a downloaded map whose commit is not the run headSha, leaving the cache alone', async () => {
   await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir, ancestors: [SHA_A] });
@@ -576,6 +622,7 @@ test('trace under a path with a space: the real CLI maps lib/x.js to the test th
     assert.ok(parsed.ok, JSON.stringify(parsed));
     assert.strictEqual(parsed.map.commit, head);
     assert.strictEqual(parsed.map.exitCode, 0);
+    assert.strictEqual(parsed.map.dirty, false, '--allow-dirty does not make a committed fixture dirty');
     assert.ok(parsed.map.tests['tests/x.test.js'].f.includes('lib/x.js'), JSON.stringify(parsed.map.tests['tests/x.test.js']));
     assert.ok(parsed.map.tests['tests/y.test.js'].f.includes('lib/y.js'));
     assert.ok(!parsed.map.tests['tests/y.test.js'].f.includes('lib/x.js'));
