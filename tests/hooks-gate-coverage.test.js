@@ -1445,6 +1445,18 @@ for (const cmd of ['x=$(cd /tmp) cd /main; echo hi | tee f.js', 'x=`cd /tmp` cd 
     assert.ok(fileWriteTargets(cmd, '/r').some((t) => t.file === MAIN_F), JSON.stringify(fileWriteTargets(cmd, '/r')));
   });
 }
+// #4303: an appending assignment is an assignment word too. bash 3.2 and 5 write M/f.js for each.
+for (const cmd of ['x+=1 cd /main; cp a f.js', 'x+=1 y=2 cd /main; cp a f.js', 'x=1 y+=2 cd /main; cp a f.js', 'x+=1 cd /main && cp a f.js']) {
+  test(`#4303: \`${cmd}\` changes into the cd after the appending assignment`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'copy', file: MAIN_F }]);
+  });
+}
+// The control: an appending assignment on its own changes no cwd. bash 3.2 and 5 write f.js in the
+// start cwd for `x+=1; cp a f.js`, and M/f.js for `x+=1; cp a M/f.js`.
+test('#4303: an appending assignment alone leaves the cwd as it was', () => {
+  assert.deepStrictEqual(fileWriteTargets('x+=1; cp a f.js', '/r'), [{ action: 'copy', file: path.resolve('/r/f.js') }]);
+  assert.deepStrictEqual(fileWriteTargets('x+=1; cp a /main/f.js', '/r'), [{ action: 'copy', file: MAIN_F }]);
+});
 // bash 3.2 and 5 refuse to parse this ("unexpected EOF") and write nothing; the scanner keeps
 // the trailing write as a deliberate fail-closed tradeoff (this pin passes today and must stay).
 test('#4303: an assignment whose substitution never closes is no cd lead (deliberate fail-closed tradeoff)', () => {

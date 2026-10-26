@@ -611,10 +611,13 @@ function forEachCommandSegment(command, cwd, handler, opts) {
 // `(`, `)`, `{`, `[` or `]` is word text and only a `}` closes it (as advanceNesting reads a `p`
 // frame); a `$(`, `${`, `$[` or backtick still nests there. A backtick span belongs to the inner
 // command, so nothing inside it is counted. A word that never closes is no assignment: bash
-// cannot parse it and runs nothing.
+// cannot parse it and runs nothing. An appending `x+=1` is an assignment word too (bash 3.2 and 5
+// change into M for `x+=1 cd M`); only this lead reads it, since updateAssignment cannot track
+// the value it appends to.
 const WORD_OPENERS = { '(': 'c', '{': 'p', '[': 'a' };
+const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=.*$/; // SIMPLE_ASSIGNMENT_RE, plus `+=`
 function assignmentWordEnd(rawT, spanKinds, i) {
-  if (i >= rawT.length || !SIMPLE_ASSIGNMENT_RE.test(rawT[i])) return i;
+  if (i >= rawT.length || !ASSIGNMENT_WORD_RE.test(rawT[i])) return i;
   let stack = '';
   let inTick = false;
   for (let j = i; j < rawT.length; j += 1) {
