@@ -78,7 +78,7 @@ function archiveStatus(pipelinesRoot, runId) {
 // `active` run is the crash-resume (owner pid gone) or long-idle (legacy 72h) case, and both
 // must stay adoptable (#3979 red-team, #4419). Adopting an unresumable dir inherits a closed PR
 // number, a stale config.yml, stale staged/ items and a foreign claim runId (observed 3 times in
-// one dispatch firing — this record's own Current State). `state` is the plain object
+// one dispatch firing — #1962's own Current State). `state` is the plain object
 // `adoptionRefusal` below has already validated.
 function unresumableState(state) {
   if (state.status === 'interrupted') return true;
