@@ -32,7 +32,8 @@ const { materialityEntryLine, materialityFingerprint } = require('../health-core
 const { createFingerprint } = require('../health-core/fingerprint');
 const { errorText } = require('../feedback/file-feedback');
 const { digestTextOf } = require('./staged-digest-text');
-const { runIdOf } = require('./resolve');
+const { runIdOf, refusedStagedNames } = require('./resolve');
+const { escapeRegExp } = require('../shared-primitives');
 const {
   isApplicableReflect, parseReflectDestination, deferReasonProblem, findingDescription, REFLECT_NO_DESTINATION,
 } = require('./reflect-destination');
@@ -45,15 +46,20 @@ const APPLIED_KINDS = ['edited', 'filed', 'digested'];
 // record's `Type:` line is the one authority for its `type:*` label.
 const STRIPPED_LABEL_RE = /^(auto|bot|type):/i;
 
-function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-
 // The AUTO line markApplied and the gh/decline paths write: `- AUTO {time} — Reflect apply: staged/{name} {outcome} …`.
 function APPLIED_LINE_RE(name) {
-  return new RegExp(`^- AUTO \\d{2}:\\d{2}:\\d{2} — ${STEP}: staged/${escapeRe(name)} (filed|declined|edited|digested)\\b`, 'm');
+  return new RegExp(`^- AUTO \\d{2}:\\d{2}:\\d{2} — ${STEP}: staged/${escapeRegExp(String(name))} (filed|declined|edited|digested)\\b`, 'm');
 }
 
+// Only an absent decisions.md reads as empty. Any other read failure throws: this text is the guard against
+// filing or declining an item twice, so an unreadable file must fail the item, never report "not yet applied".
 function readDecisions(runDir, deps) {
-  try { return String(deps.readFile(path.join(runDir, 'decisions.md'))); } catch { return ''; }
+  try {
+    return String(deps.readFile(path.join(runDir, 'decisions.md')));
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return '';
+    throw err;
+  }
 }
 
 function appliedLine(runDir, name, deps) {
@@ -62,13 +68,9 @@ function appliedLine(runDir, name, deps) {
   return m ? text.slice(m.index).split('\n')[0].replace(/\r$/, '') : null;
 }
 
-// resolve.js's refusedStagedNames, for one name: a `- REFUSED` line naming `staged/{name}`.
+// A `- REFUSED` line already names `staged/{name}` — the console's own reader (resolve.js) decides.
 function alreadyRefused(runDir, name, deps) {
-  return readDecisions(runDir, deps).split('\n').some((line) => {
-    if (!/^- REFUSED /.test(line)) return false;
-    const m = /staged\/([A-Za-z0-9_-]+\.(?:md|patch))/.exec(line);
-    return Boolean(m) && m[1] === name;
-  });
+  return refusedStagedNames(readDecisions(runDir, deps)).has(name);
 }
 
 // A staged file's text: { text } | { error } (unreadable).
@@ -236,7 +238,7 @@ function applyReflectItems({
       }
 
       if (dest.kind === 'edit') {
-        if (!deps.exists(path.join(deps.cwd(), dest.target))) { fail(`edit target not found: ${dest.target}`); continue; }
+        if (!deps.exists(path.join(deps.cwd(), dest.target), deps.cwd())) { fail(`edit target not found: ${dest.target}`); continue; }
         plan('edit');
         if (!dryRun) res.session.push({ item, outcome: 'edit', target: dest.target });
         continue;
@@ -291,11 +293,17 @@ function applyReflectItems({
       plan('filed');
       if (dryRun) continue;
       const bodyFile = deps.tmpFile(`reflect-apply-${stem}.md`);
-      deps.writeFile(bodyFile, proposal.body);
-      const out = deps.gh([
-        'issue', 'create', ...(repo ? ['--repo', repo] : []), '--title', proposal.title, '--body-file', bodyFile,
-        ...recordLabels(proposal).flatMap((l) => ['--label', l]),
-      ]);
+      let out;
+      try {
+        deps.writeFile(bodyFile, proposal.body);
+        out = deps.gh([
+          'issue', 'create', ...(repo ? ['--repo', repo] : []), '--title', proposal.title, '--body-file', bodyFile,
+          ...recordLabels(proposal).flatMap((l) => ['--label', l]),
+        ]);
+      } finally {
+        // The body file's own directory goes once gh has read it; a cleanup failure never changes the outcome.
+        if (deps.cleanupTmp) { try { deps.cleanupTmp(bodyFile); } catch { /* best-effort */ } }
+      }
       const m = /\/issues\/(\d+)/.exec(String(out));
       if (!m) { res.failed.push({ item, error: `could not read the issue number from gh output: ${JSON.stringify(String(out))} — the issue may exist; check before re-running` }); continue; }
       const ref = `#${m[1]}`;

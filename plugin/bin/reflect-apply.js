@@ -51,7 +51,9 @@
 // is missing or not anchored under the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md's
 // Anchoring section, [IL-127]). This is the Sanctioned-writer vocabulary plus a 1 for per-item failures, which
 // a caller branches on to retry the failed items. The proposal body file given to gh and the emitted proposal
-// files are create-or-overwrite with no lock; the body file lives in a fresh os.tmpdir() directory.
+// files are create-or-overwrite with no lock; the body file lives in a fresh os.tmpdir() directory that is
+// removed once gh returns. A decisions.md that exists but cannot be read fails the item (only a missing one
+// reads as empty): it is the guard against filing or declining an item twice.
 'use strict';
 
 const fs = require('fs');
@@ -61,8 +63,8 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { appendEntry } = require('./lib/log-decision/append');
 const { recordDecline } = require('./lib/declined-learning/store');
 const { readWorkTypes } = require('./lib/work-backend');
-const { defaultRunner } = require('./lib/feedback/file-feedback');
-const { lstatType } = require('./lib/path-guard');
+const { defaultRunner, errorText } = require('./lib/feedback/file-feedback');
+const { lstatType, resolveWithin } = require('./lib/path-guard');
 const {
   applyReflectItems, listApplicable, markApplied, declineItem, emptyResult, APPLIED_KINDS,
 } = require('./lib/console/reflect-apply');
@@ -90,6 +92,8 @@ function parseArgs(argv) {
     if (!Object.hasOwn(VALUE_FLAGS, a)) return { error: `unknown argument: ${a}` };
     const v = argv[++i];
     if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: `${a} requires a value` };
+    // --decline and --ref land in a decisions.md entry line; a line break would split it (log-decision.js refuses the same).
+    if ((a === '--decline' || a === '--ref') && /[\r\n]/.test(v)) return { error: `${a} must be one line (no line breaks)` };
     o[VALUE_FLAGS[a]] = v;
   }
   return o;
@@ -102,8 +106,12 @@ const realDeps = {
   readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
   writeFile: (p, s) => fs.writeFileSync(p, s),
   mkdir: (p) => fs.mkdirSync(p, { recursive: true }),
-  // An edit target must be a file the session can edit (or a symlink to one), not merely present.
-  exists: (p) => ['file', 'symlink'].includes(lstatType(p).type),
+  // An edit target must resolve (leaf symlink followed, `..` normalized) to a regular file inside the checkout
+  // the session edits in — a symlink out of it, a dangling one, or a directory never reads as editable.
+  exists: (p, root) => {
+    const real = resolveWithin(p, root);
+    return real !== null && lstatType(real).type === 'file';
+  },
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
   now: () => Date.now(),
@@ -112,6 +120,8 @@ const realDeps = {
   recordDecline: (fp, opts) => recordDecline(fp, opts),
   workTypes: () => readWorkTypes(process.cwd()),
   tmpFile: (name) => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'reflect-apply-')), name),
+  // Removes the directory tmpFile made for that body file.
+  cleanupTmp: (p) => fs.rmSync(path.dirname(p), { recursive: true, force: true }),
 };
 
 function run(argv, overrides = {}) {
@@ -175,9 +185,14 @@ function run(argv, overrides = {}) {
   let result;
   if (itemMode) {
     result = emptyResult();
-    const r = o.decline !== null
-      ? declineItem({ runDir, item: o.item, reason: o.decline, deps })
-      : markApplied({ runDir, item: o.item, kind: o.applied, ref: o.ref, deps });
+    let r;
+    try {
+      r = o.decline !== null
+        ? declineItem({ runDir, item: o.item, reason: o.decline, deps })
+        : markApplied({ runDir, item: o.item, kind: o.applied, ref: o.ref, deps });
+    } catch (err) {
+      r = { failed: { item: o.item, error: errorText(err) } };
+    }
     if (r.error) return usageError(r.error);
     if (r.applied) result.applied.push(r.applied);
     if (r.alreadyApplied) result.alreadyApplied.push(r.alreadyApplied);

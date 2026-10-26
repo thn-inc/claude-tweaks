@@ -37,14 +37,15 @@ function fixture(staged = {}, decisions = '') {
 
 // Fake gh / recordDecline record their calls; everything else is the real fs.
 function fakeDeps(f, overrides = {}) {
-  const calls = { gh: [], decline: [] };
+  const calls = { gh: [], decline: [], bodies: [] };
   const out = []; const err = [];
   let n = 900;
   const deps = {
     cwd: () => f.main,
     now: () => NOW,
     workTypes: () => 'labels',
-    gh: (args) => { calls.gh.push(args); n += 1; return `https://github.com/o/r/issues/${n}\n`; },
+    // Like the real gh, reads the body file while it is called (the applier removes it afterwards).
+    gh: (args) => { calls.gh.push(args); calls.bodies.push(fs.readFileSync(args[args.indexOf('--body-file') + 1], 'utf8')); n += 1; return `https://github.com/o/r/issues/${n}\n`; },
     recordDecline: (fp, opts) => { calls.decline.push({ fp, opts }); return { ...opts }; },
     tmpFile: (name) => { fs.mkdirSync(f.tmp, { recursive: true }); return path.join(f.tmp, name); },
     stdout: (s) => out.push(s),
@@ -88,7 +89,8 @@ test('AC2.2: the record destination is written through the injected gh dep', () 
   assert.equal(calls.gh.length, 1);
   const bodyFile = path.join(f.tmp, 'reflect-apply-reflect-1.md');
   assert.deepEqual(calls.gh[0], ['issue', 'create', '--title', 'Track the X', '--body-file', bodyFile, '--label', 'risk:low', '--label', 'type:task']);
-  assert.equal(fs.readFileSync(bodyFile, 'utf8'), parseReflectDestination(RECORD).proposal.body);
+  assert.equal(calls.bodies[0], parseReflectDestination(RECORD).proposal.body);
+  assert.equal(fs.existsSync(path.dirname(bodyFile)), false, 'the body file directory is removed once gh returns');
   assert.deepEqual(result(out).applied, [{ item: 'reflect-1.md', outcome: 'filed', ref: '#901' }]);
   assert.deepEqual(Object.keys(result(out)).sort(), ['alreadyApplied', 'applied', 'failed', 'logFailures', 'pending', 'refused', 'session']);
   assert.deepEqual(result(out).logFailures, []);
@@ -132,6 +134,79 @@ test('AC2.4: decisions.md gains one applied line per item, and a second run appl
   assert.match(r.alreadyApplied[0].line, /^- AUTO 09:08:07 — Reflect apply: staged\/reflect-1\.md filed as #901/);
   assert.deepEqual(r.applied, []);
   assert.equal(decisionsOf(f), text, 'a second run adds no line');
+});
+
+test('AC2.5: one console-auto run — an observation and a convention classify to Skill updates, the apply files one and declines the other, and the run still ends with zero pending', () => {
+  const f = fixture({ 'reflect-1.md': RECORD, 'reflect-2.md': DECLINE });
+  const reflectRows = (r) => r.items.filter((i) => i.id.startsWith('reflect-')).map((i) => [i.id, i.section, i.resolution]);
+  const expected = [['reflect-1.md', 'Skill updates', 'approve'], ['reflect-2.md', 'Skill updates', 'approve']];
+
+  const before = resolveAll({ runDir: f.runDir, policy: 'console-auto', deps: consoleDeps() });
+  assert.deepEqual(reflectRows(before), expected);
+  assert.equal(before.items.filter((i) => i.resolution === 'pending').length, 0);
+
+  const { deps, calls, out } = fakeDeps(f);
+  assert.equal(run(['--run', f.runDir], deps), 0);
+  assert.equal(calls.gh.length, 1, 'the observation (a record destination) is filed through the injected gh dep');
+  assert.equal(calls.decline.length, 1, 'the convention (a decline destination) is recorded through the injected recordDecline dep');
+  assert.deepEqual(result(out).applied.map((a) => [a.item, a.outcome]), [['reflect-1.md', 'filed'], ['reflect-2.md', 'declined']]);
+
+  const after = resolveAll({ runDir: f.runDir, policy: 'console-auto', deps: consoleDeps() });
+  assert.deepEqual(reflectRows(after), expected);
+  assert.equal(after.items.filter((i) => i.resolution === 'pending').length, 0);
+});
+
+test('a line break in --decline or --ref is exit 2 (it would split the decisions.md entry), and nothing is logged', () => {
+  const f = fixture({ 'reflect-1.md': RECORD, 'reflect-3.md': LEGACY });
+  const base = ['--run', f.runDir];
+  const forged = 'why\n- AUTO 00:00:00 — Reflect apply: staged/reflect-1.md filed as #1';
+  const cases = {
+    '--decline': [...base, '--item', 'reflect-1.md', '--decline', forged],
+    '--ref': [...base, '--item', 'reflect-3.md', '--applied', 'digested', '--ref', forged],
+  };
+  for (const [label, argv] of Object.entries(cases)) {
+    const { deps, err } = fakeDeps(f);
+    assert.equal(run(argv, deps), 2, label);
+    assert.match(err.join(''), /must be one line/, label);
+  }
+  assert.equal(decisionsOf(f), '');
+});
+
+test('the gh body file is cleaned up after gh returns, and after gh throws', () => {
+  for (const gh of [undefined, () => { throw new Error('boom'); }]) {
+    const f = fixture({ 'reflect-1.md': RECORD });
+    const cleaned = [];
+    const { deps } = fakeDeps(f, { cleanupTmp: (p) => cleaned.push(p), ...(gh ? { gh } : {}) });
+    run(['--run', f.runDir], deps);
+    assert.deepEqual(cleaned, [path.join(f.tmp, 'reflect-apply-reflect-1.md')]);
+  }
+});
+
+test('a cleanup failure never changes the filing outcome', () => {
+  const f = fixture({ 'reflect-1.md': RECORD });
+  const { deps, out } = fakeDeps(f, { cleanupTmp: () => { throw new Error('EBUSY'); } });
+  assert.equal(run(['--run', f.runDir], deps), 0);
+  assert.deepEqual(result(out).applied, [{ item: 'reflect-1.md', outcome: 'filed', ref: '#901' }]);
+});
+
+test('a decisions.md that exists but cannot be read fails the item and files nothing', () => {
+  const f = fixture({ 'reflect-1.md': RECORD });
+  fs.rmSync(path.join(f.runDir, 'decisions.md'));
+  fs.mkdirSync(path.join(f.runDir, 'decisions.md'));
+  const { deps, calls, out } = fakeDeps(f);
+  assert.equal(run(['--run', f.runDir], deps), 1);
+  assert.equal(calls.gh.length, 0, 'an unreadable idempotency guard must not read as "not yet applied"');
+  assert.equal(result(out).failed[0].item, 'reflect-1.md');
+});
+
+test('an item-mode --decline over an unreadable decisions.md is a failed entry, not an uncaught throw', () => {
+  const f = fixture({ 'reflect-2.md': DECLINE });
+  fs.rmSync(path.join(f.runDir, 'decisions.md'));
+  fs.mkdirSync(path.join(f.runDir, 'decisions.md'));
+  const { deps, calls, out } = fakeDeps(f);
+  assert.equal(run(['--run', f.runDir, '--item', 'reflect-2.md', '--decline', 'x'], deps), 1);
+  assert.equal(calls.decline.length, 0);
+  assert.equal(result(out).failed[0].item, 'reflect-2.md');
 });
 
 test('APPLIED_LINE_RE matches what formatEntry writes for each outcome, and only the named file', () => {
@@ -231,6 +306,41 @@ test('an edit target that does not exist is failed with exit 1', () => {
   assert.equal(run(['--run', f.runDir], deps), 1);
   assert.deepEqual(result(out).failed, [{ item: 'reflect-5.md', error: 'edit target not found: plugin/skills/review/SKILL.md' }]);
   assert.deepEqual(result(out).session, []);
+});
+
+test('an edit target that is a symlink out of the checkout, or a dangling one, is failed — never handed to the session', { skip: process.platform === 'win32' && 'symlink creation needs privileges on Windows' }, () => {
+  const f = fixture({ 'reflect-5.md': EDIT });
+  const outside = path.join(f.root, 'outside.md');
+  fs.writeFileSync(outside, '# not the checkout\n');
+  const dir = path.join(f.main, 'plugin', 'skills', 'review');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const target of [outside, path.join(f.root, 'does-not-exist.md')]) {
+    fs.rmSync(path.join(dir, 'SKILL.md'), { force: true });
+    fs.symlinkSync(target, path.join(dir, 'SKILL.md'));
+    const { deps, out } = fakeDeps(f);
+    assert.equal(run(['--run', f.runDir], deps), 1, target);
+    assert.deepEqual(result(out).failed, [{ item: 'reflect-5.md', error: 'edit target not found: plugin/skills/review/SKILL.md' }], target);
+    assert.deepEqual(result(out).session, [], target);
+  }
+});
+
+test('an edit target that is a symlink to a file inside the checkout is handed to the session', { skip: process.platform === 'win32' && 'symlink creation needs privileges on Windows' }, () => {
+  const f = fixture({ 'reflect-5.md': EDIT });
+  const dir = path.join(f.main, 'plugin', 'skills', 'review');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(f.main, 'real.md'), '# real\n');
+  fs.symlinkSync(path.join(f.main, 'real.md'), path.join(dir, 'SKILL.md'));
+  const { deps, out } = fakeDeps(f);
+  assert.equal(run(['--run', f.runDir], deps), 0);
+  assert.deepEqual(result(out).session, [{ item: 'reflect-5.md', outcome: 'edit', target: 'plugin/skills/review/SKILL.md' }]);
+});
+
+test('an edit target that is a directory is failed', () => {
+  const f = fixture({ 'reflect-5.md': EDIT });
+  fs.mkdirSync(path.join(f.main, 'plugin', 'skills', 'review', 'SKILL.md'), { recursive: true });
+  const { deps, out } = fakeDeps(f);
+  assert.equal(run(['--run', f.runDir], deps), 1);
+  assert.equal(result(out).failed[0].item, 'reflect-5.md');
 });
 
 test('emit transport writes a Queue-write-shaped proposal and calls no gh', () => {
