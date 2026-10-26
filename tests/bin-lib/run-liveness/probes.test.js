@@ -6,8 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const { DEFAULT_PROBES } = require('../../../plugin/bin/lib/run-liveness/probes');
-const { lastCommitMs } = require('../../../plugin/bin/lib/hooks/resume-freshness');
+const { DEFAULT_PROBES, lastCommitMs } = require('../../../plugin/bin/lib/run-liveness/probes');
 
 function git(args) {
   return execFileSync('git', args, { windowsHide: true, encoding: 'utf8', timeout: 30000 });
@@ -30,6 +29,13 @@ function repoWithLinkedWorktree() {
   git(['-C', main, 'worktree', 'add', '-q', wt, '-b', 'probes-branch']);
   return { main, wt: fs.realpathSync(wt) };
 }
+
+test('AC6.1: run-liveness loads without requiring hooks/resume-freshness', () => {
+  const index = path.join(__dirname, '../../../plugin/bin/lib/run-liveness/index.js');
+  const script = "require(process.argv[1]); process.stdout.write(String(Object.keys(require.cache).some((k) => k.endsWith(require('path').join('hooks', 'resume-freshness.js')))))";
+  const out = execFileSync(process.execPath, ['-e', script, index], { encoding: 'utf8', windowsHide: true });
+  assert.strictEqual(out, 'false');
+});
 
 test('lastCommitMs equals %ct * 1000 on a repo with one commit', () => {
   const dir = emptyRepo();

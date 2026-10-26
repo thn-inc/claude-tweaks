@@ -5,11 +5,12 @@
 // "could not ask" never reads as "the answer is no". Wrappers here therefore
 // THROW when the question went unanswered, and return null/false only for a real
 // answer.
+const fs = require('fs');
 const os = require('os');
+const path = require('path');
 const { parseWorktreeList, findWorktreeEntry, isPidAlive, lockVerdict } = require('../hooks/worktree-reap');
 const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
-const { runGit } = require('../hooks/git-exec');
-const { lastCommitMs } = require('../hooks/resume-freshness');
+const { runGit, FAILURE } = require('../hooks/git-exec');
 const { readEventLines } = require('../hooks/context');
 const { pidStartTime } = require('./process-probe');
 
@@ -93,6 +94,45 @@ function ownEventAt(runDir, ownerSessionId) {
   return { lastOwnMs, lastSessionEndMs };
 }
 
+// Positively identifies an unborn HEAD (a repo or orphan branch with no commit
+// yet), so `git log` failing for any other reason — a damaged repo that HAS
+// commits — is never read as "no commits". All three must hold: HEAD is a
+// symbolic ref; that ref is provably absent (`show-ref --verify` exit 1 — a
+// corrupt ref or a missing object exits 128, a present ref exits 0); and the
+// ref has no reflog (a deleted ref file with history keeps its logs/ entry).
+// Locale-independent: exit codes and files only, no git message matching. Every
+// other outcome, including any probe failing, is "not provably unborn".
+function isUnbornHead(worktree) {
+  const sym = runGit(['symbolic-ref', '-q', 'HEAD'], worktree);
+  if (sym.failure || !sym.stdout) return false;
+  const ref = sym.stdout;
+  const shown = runGit(['show-ref', '--verify', '-q', ref], worktree);
+  if (shown.failure !== FAILURE.GIT_ERROR || shown.exitCode !== 1) return false;
+  const logPath = runGit(['rev-parse', '--git-path', `logs/${ref}`], worktree);
+  if (logPath.failure || !logPath.stdout) return false;
+  try {
+    return fs.statSync(path.resolve(worktree, logPath.stdout)).size === 0;
+  } catch (e) {
+    return !!e && e.code === 'ENOENT';
+  }
+}
+
+// Last-commit time of `worktree` in ms, as a raw probe for the run-liveness
+// verdict module (#3973): null when the repo has no commit yet, THROWS when the
+// answer could not be obtained (not a repo, timeout, unparseable value) so the
+// caller can tell "no evidence" from "could not ask".
+function lastCommitMs(worktree) {
+  const { stdout, failure } = runGit(['log', '-1', '--format=%ct'], worktree);
+  if (failure) {
+    if (failure === FAILURE.GIT_ERROR && isUnbornHead(worktree)) return null;
+    throw new Error(`could not read the last commit time of ${worktree}: git ${failure}`);
+  }
+  if (!stdout) return null;
+  const ms = Number(stdout) * 1000;
+  if (!Number.isFinite(ms)) throw new Error(`could not parse the last commit time of ${worktree}: ${stdout}`);
+  return ms;
+}
+
 const DEFAULT_PROBES = {
   hostname: () => os.hostname(),
   pidAlive: (pid) => isPidAlive(pid),
@@ -102,4 +142,4 @@ const DEFAULT_PROBES = {
   ownEventAt,
 };
 
-module.exports = { DEFAULT_PROBES, ownEventRecency };
+module.exports = { DEFAULT_PROBES, ownEventRecency, lastCommitMs };
