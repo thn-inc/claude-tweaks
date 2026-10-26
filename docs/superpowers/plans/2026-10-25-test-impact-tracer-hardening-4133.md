@@ -319,3 +319,21 @@ Waived: none. AC2.1 is covered by this task's prose plus the per-task tracer-sui
 git add plugin/skills/test/impact-selection.md
 git commit -m "Narrow impact-selection Known limits to the approximations the tracer still makes — #4133 docs"
 ```
+
+---
+
+## Build deviations (Common Step 4.5, all classified Beneficial)
+
+The build extended the plan where following it literally would have left a read unrecorded, which is the failure the spec guards against.
+
+1. **Absent `package.json` probes are recorded as `s`.** The plan recorded `base/package.json` and the exports step's `pkgDir/package.json` only when present (as `f`). Node probes both either way, so an absent one is now `s`. Adding a `package.json` with `exports` changes how `dep/sub` resolves (b947b047e, 19d57d000).
+2. **One planned assertion was dropped.** Task 2's `!s lib/pkg/entry.js` cannot hold: Node realpaths the winning file through the patched `fs.realpathSync`, which records `s` for it independently of the hook. The nested drop is pinned by the `lib/missing` assertions instead (19d57d000, da62bc17e).
+3. **A node child is self-tracing only while its env keeps the trace.** Under `env -i`, `env -u NODE_OPTIONS`/`CT_TRACE_*`, or a `NODE_OPTIONS=`/`CT_TRACE_*=` assignment, it fails closed with `c ''`, because its reads are unknown, and its path arguments are still recorded (4450090ae, da62bc17e; fixture `i.fixture.js`).
+4. **Wrapper parsing keeps the records the generic loop made.** `env -C dir` records `c dir` before moving the cwd, and a `--rcfile`/`--init-file` value is recorded `f` (da62bc17e).
+5. **`.` and `..` with `{ paths }`** union Node 22's lookup set (`paths`) and Node 20's (fake-parent `_resolveLookupPaths`), so either Node version's resolution is covered (da62bc17e).
+
+Measurement for deliverable 3, from a traced full suite before and after the shrink (985 tests, suite exit 0 both times):
+- `s` records went from 135,709 to 31,033 (−77%), and the per-test median from 40 to 7.
+- `f` records went from 64,634 to 64,651.
+- The map went from 2,179,814 to 911,333 bytes.
+- Suite wall time went from 355 s to 342 s.
