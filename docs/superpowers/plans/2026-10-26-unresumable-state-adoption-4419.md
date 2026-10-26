@@ -49,7 +49,7 @@ In `tests/hooks-run-dir-resolve.test.js`:
 Add `const { ownerBlock } = require('../plugin/bin/lib/hooks/context');` below the `run-dir-resolve` import (Real-writer fixture: the owner block comes from the module that writes it in production, not a hand-typed literal).
 
 ```js
-test('AC4: adoptionRefusal on a bare mkdir-only mint (no run-state.json) is adoptable and never throws', () => {
+test('AC4.1 AC4.2: adoptionRefusal on a bare mkdir-only mint (no run-state.json) is adoptable and never throws', () => {
   const main = gitRepo();
   const bare = mkRunDir(main, '2026-01-01T000000-record-1');
   let reason;
@@ -57,7 +57,7 @@ test('AC4: adoptionRefusal on a bare mkdir-only mint (no run-state.json) is adop
   assert.strictEqual(reason, null);
 });
 
-test('AC4: adoptionRefusal on a malformed run-state.json is refused as unreadable rather than throwing', () => {
+test('AC4.1 AC4.2: adoptionRefusal on a malformed run-state.json is refused as unreadable rather than throwing', () => {
   const main = gitRepo();
   const dir = mkRunDir(main, '2026-01-01T000000-record-2');
   fs.writeFileSync(path.join(dir, 'run-state.json'), '{not json');
@@ -68,7 +68,7 @@ test('AC4: adoptionRefusal on a malformed run-state.json is refused as unreadabl
 
 // #4419: adoption is not a liveness verdict. An `active` run whose worktree survives but
 // whose owner process is gone is exactly a crash a resuming session must adopt.
-test('AC3 #4419: step 2 adopts an active run whose worktree survives but whose owner pid is gone (crash-resume)', () => {
+test('AC3.1 AC3.2 #4419: step 2 adopts an active run whose worktree survives but whose owner pid is gone (crash-resume)', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const crashed = mkRunDir(main, '2026-01-01T000000-record-4419');
@@ -101,11 +101,11 @@ Run: `node --test tests/hooks-run-dir-resolve.test.js tests/bin-lib/run-liveness
 Expected: PASS — the migrated tests and the crash-resume test pin behaviour that already holds (this is a no-behaviour-change refactor; they are characterization tests).
 
 Run: `git grep -n isDeadRunDir -- plugin tests docs ':!docs/plans'`
-Expected: FAIL for AC 1 — hits remain in `plugin/bin/lib/hooks/run-dir-resolve.js` (definition and export).
+Expected: FAIL for AC1.1 — hits remain in `plugin/bin/lib/hooks/run-dir-resolve.js` (definition and export).
 
-Prove the crash-resume test discriminates: temporarily add `if (state.owner && state.owner.pid === 2147483646) return 'dead';` just before `adoptionRefusal`'s final `return null;`, re-run `node --test tests/hooks-run-dir-resolve.test.js`, and confirm the `AC3 #4419: step 2 adopts … (crash-resume)` test FAILS. Remove the line.
+Prove the crash-resume test discriminates: temporarily add `if (state.owner && state.owner.pid === 2147483646) return 'dead';` just before `adoptionRefusal`'s final `return null;`, re-run `node --test tests/hooks-run-dir-resolve.test.js`, and confirm the `AC3.1 AC3.2 #4419: step 2 adopts … (crash-resume)` test FAILS. Remove the line.
 
-AC2 is covered by leaving every existing `adoptionRefusal`/`newestMatch` test byte-identical: `git diff -U0 tests/hooks-run-dir-resolve.test.js` after Step 1 shows only the import line, the two replaced `isDeadRunDir` tests, the new AC3 test and the one comment line.
+AC2.1-AC2.5 are covered by leaving every existing `adoptionRefusal`/`newestMatch` test byte-identical: `git diff -U0 tests/hooks-run-dir-resolve.test.js` after Step 1 shows only the import lines, the two replaced `isDeadRunDir` tests, the new AC3.1 test and the one comment line; the AC2.2, AC2.3, AC2.4 and AC2.5 assertions (`interrupted` → `'dead'`, worktree gone → `'dead'`, worktree present → `null`, no worktree → `null`) are among the unchanged lines.
 
 - [ ] **Step 3: Rename and delete in `plugin/bin/lib/hooks/run-dir-resolve.js`**
 
@@ -123,8 +123,8 @@ Expected: PASS
 Run: `git grep -n "isDeadRunDir\|deadState" -- plugin tests docs ':!docs/plans'`
 Expected: no output (exit 1)
 
-Run: `grep -n "run-liveness" plugin/bin/lib/hooks/run-dir-resolve.js`
-Expected: no `require` of `run-liveness` (a comment mention is fine)
+Run: `grep -n "require(.*run-liveness" plugin/bin/lib/hooks/run-dir-resolve.js`
+Expected: no output (AC5.1)
 
 - [ ] **Step 5: Commit**
 
@@ -145,26 +145,28 @@ git commit -m "Rename run-dir adoption precondition to unresumableState — dele
 - Consumes: Task 1's names (`adoptionRefusal`, the `'dead'` reason string unchanged).
 - Produces: nothing code depends on.
 
-- [ ] **Step 1: Confirm the current wording is present**
+- [ ] **Step 1: Write the wording check**
 
-Run: `grep -c "skips a dead directory" docs/hooks.md; grep -c "that is dead" plugin/skills/_shared/pipeline-run-dir.md`
-Expected: `1` and `1` (the RED: both docs still say "dead").
+The check is the pair of counts below: the old "dead" phrasing must be gone from both files and "unresumable" present in both.
 
-- [ ] **Step 2: Edit `docs/hooks.md`**
+- [ ] **Step 2: Run the check to verify it fails**
 
-Replace "Step 2 also skips a dead directory and any other unadoptable one (" with "Step 2 also skips an unresumable directory (`interrupted`, or `active` with its stamped worktree gone) and any other unadoptable one (", and after "falling through to the next-newest match (#1962/#4151)" add "; liveness is not part of the adoption decision — `runLiveness` is never consulted, so a crashed run whose worktree survives stays adoptable (#4419)". Same line, no reflow.
+Run: `grep -l "unresumable" docs/hooks.md plugin/skills/_shared/pipeline-run-dir.md`
+Expected: FAIL — exit 1, no output (neither doc says "unresumable" yet).
 
-- [ ] **Step 3: Edit `plugin/skills/_shared/pipeline-run-dir.md`**
+- [ ] **Step 3: Edit `docs/hooks.md` and `plugin/skills/_shared/pipeline-run-dir.md`**
 
-Replace "that is dead\n  (`interrupted`, or `active` with its stamped worktree gone)" with "that is unresumable\n  (`interrupted`, or `active` with its stamped worktree gone; liveness is not consulted, so a crashed run whose worktree survives is still adopted)". Keep the existing ~100-column wrapping of that paragraph.
+`docs/hooks.md`: Replace "Step 2 also skips a dead directory and any other unadoptable one (" with "Step 2 also skips an unresumable directory (`interrupted`, or `active` with its stamped worktree gone) and any other unadoptable one (", and after "falling through to the next-newest match (#1962/#4151)" add "; liveness is not part of the adoption decision — `runLiveness` is never consulted, so a crashed run whose worktree survives stays adoptable (#4419)". Same line, no reflow.
 
-- [ ] **Step 4: Verify**
+`plugin/skills/_shared/pipeline-run-dir.md`: Replace "that is dead\n  (`interrupted`, or `active` with its stamped worktree gone)" with "that is unresumable\n  (`interrupted`, or `active` with its stamped worktree gone; liveness is not consulted, so a crashed run whose worktree survives is still adopted)". Keep the existing ~100-column wrapping of that paragraph.
+
+- [ ] **Step 4: Run the check to verify it passes**
 
 Run: `grep -c "skips a dead directory" docs/hooks.md; grep -c "that is dead" plugin/skills/_shared/pipeline-run-dir.md; grep -c "unresumable" docs/hooks.md plugin/skills/_shared/pipeline-run-dir.md`
 Expected: `0`, `0`, and a count ≥ 1 for each file.
 
 Run: `npm test` (via `node plugin/bin/verify.js` at the build's Common Step 5)
-Expected: 0 failures — conformance suites pin skill prose.
+Expected: 0 failures (AC6.1) — conformance suites pin skill prose.
 
 - [ ] **Step 5: Commit**
 
