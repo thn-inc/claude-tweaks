@@ -8,7 +8,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const DECL = path.join(REPO_ROOT, '.claude-tweaks', 'verify-scope.json');
@@ -181,4 +183,98 @@ test('init/SKILL.md lists Step 6.6 and its sub-file exists (#1924)', () => {
   assert.ok(skill.includes('### Step 6.6: Verify-Scope Starter'));
   assert.ok(skill.includes('bootstrap/step-06-6-verify-scope.md'));
   assert.ok(fs.existsSync(path.join(REPO_ROOT, 'plugin', 'skills', 'init', 'bootstrap', 'step-06-6-verify-scope.md')));
+});
+
+// #4135: the installed plugin build reads this committed file with the latest RELEASED declaration.js, which
+// the suite above never runs (it requires the working-tree reader). These helpers read git objects only —
+// GIT_NO_LAZY_FETCH keeps a partial clone from reaching the network for a missing blob.
+const GIT_ENV = { ...process.env, GIT_NO_LAZY_FETCH: '1' };
+const READER_PATH = 'plugin/bin/lib/verify/declaration.js';
+// A `git describe` with nothing to name says one of these; any other failure is a broken git call, not a skip.
+const NO_TAG_STDERR = /No names found|No tags can describe|cannot describe/i;
+
+function latestReleaseTag(cwd) {
+  try {
+    const out = execFileSync('git', ['describe', '--tags', '--abbrev=0', '--match', 'v*', 'HEAD'], {
+      cwd, env: GIT_ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    });
+    return { tag: out.trim() };
+  } catch (err) {
+    const stderr = String(err.stderr || '');
+    if (!NO_TAG_STDERR.test(stderr)) throw err;
+    return { skip: `no release tag reachable from HEAD (shallow clone?): ${stderr.split('\n')[0].trim()}` };
+  }
+}
+
+// Materialize {tag}'s declaration.js and every relative require it reaches, transitively, at their
+// repo-relative paths under `dir`, then load the materialized copy. A release that adds a require is followed.
+function loadReleaseReader(tag, dir, cwd = REPO_ROOT) {
+  const seen = new Set();
+  const queue = [READER_PATH];
+  while (queue.length > 0) {
+    const rel = queue.shift();
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    const src = execFileSync('git', ['show', `${tag}:${rel}`], {
+      cwd, env: GIT_ENV, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, windowsHide: true,
+    });
+    const dest = path.join(dir, ...rel.split('/'));
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, src);
+    for (const m of src.matchAll(/require\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g)) {
+      const target = path.posix.join(path.posix.dirname(rel), m[1]);
+      queue.push(/\.(js|json)$/.test(target) ? target : `${target}.js`);
+    }
+  }
+  return require(path.join(dir, ...READER_PATH.split('/'))).readDeclaration;
+}
+
+function assertReleaseReaderAccepts(readDeclaration, tag, declPath) {
+  const r = readDeclaration(declPath);
+  assert.strictEqual(r.ok, true, `release ${tag}'s reader rejects ${path.basename(declPath)}: ${(r.errors || []).join('; ')}`);
+}
+
+test('AC2.1: the committed verify-scope.json parses with the latest release tag\'s declaration reader (#4135)', (t) => {
+  const found = latestReleaseTag(REPO_ROOT);
+  if (found.skip) { t.skip(found.skip); return; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-scope-reader-'));
+  try {
+    const reader = loadReleaseReader(found.tag, dir);
+    assertReleaseReaderAccepts(reader, found.tag, DECL);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1: a rule shape the release reader rejects fails the same assertion, naming the reader\'s error text (#4135)', (t) => {
+  const found = latestReleaseTag(REPO_ROOT);
+  if (found.skip) { t.skip(found.skip); return; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-scope-reader-'));
+  try {
+    const reader = loadReleaseReader(found.tag, dir);
+    const raw = JSON.parse(fs.readFileSync(DECL, 'utf8'));
+    const n = raw.rules.length;
+    raw.rules.push({ match: 'x/**', suites: 'everything', static: true });
+    const fixture = path.join(dir, 'fixture-verify-scope.json');
+    fs.writeFileSync(fixture, JSON.stringify(raw));
+    assert.throws(
+      () => assertReleaseReaderAccepts(reader, found.tag, fixture),
+      (err) => err.message.includes(`rules[${n}].suites:`) && err.message.includes(found.tag),
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('AC3.1: a clone with no reachable release tag skips with its reason (#4135)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-scope-notag-'));
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: dir, windowsHide: true });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: dir, windowsHide: true });
+    const found = latestReleaseTag(dir);
+    assert.deepStrictEqual(Object.keys(found), ['skip']);
+    assert.match(found.skip, /no release tag reachable/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
