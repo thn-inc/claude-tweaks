@@ -90,9 +90,8 @@ function runPrMergeState(deps, runDir) {
     });
   } catch { return 'read-failed'; }
   if (exit !== 0) return 'read-failed';
-  let parsed = null;
   const last = out.join('').trim().split('\n').pop();
-  try { parsed = last ? JSON.parse(last) : null; } catch { parsed = null; }
+  const parsed = attempt(() => JSON.parse(last), null);
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return 'read-failed';
   return typeof parsed.state === 'string' ? parsed.state : 'read-failed';
 }
@@ -106,6 +105,11 @@ function run(argv, overrides = {}) {
   const o = parseArgs(argv);
   if (o.error) { deps.stderr(`evidence-route.js: ${o.error}\n${USAGE}`); return 2; }
   if (o.help) { deps.stdout(USAGE); return 0; }
+
+  // The canonical form when it resolves, else the raw path.
+  function canonicalOrRaw(p) {
+    return attempt(() => deps.canonical(p), null) || p;
+  }
 
   let worktree = null;
   let state = null;
@@ -125,8 +129,8 @@ function run(argv, overrides = {}) {
 
   const currentBranch = attempt(() => String(deps.git(['branch', '--show-current'])).trim(), '');
   let toplevel = attempt(() => String(deps.git(['rev-parse', '--show-toplevel'])).trim(), null);
-  if (toplevel !== null) toplevel = attempt(() => deps.canonical(toplevel), null) || toplevel;
-  if (worktree !== null) worktree = attempt(() => deps.canonical(worktree), null) || worktree;
+  if (toplevel !== null) toplevel = canonicalOrRaw(toplevel);
+  if (worktree !== null) worktree = canonicalOrRaw(worktree);
 
   if (o.run === null || state === 'no-pr') {
     state = branchReadState(attempt(() => deps.resolveBranchPr(deps.cwd(), currentBranch || null), 'read-failed'));

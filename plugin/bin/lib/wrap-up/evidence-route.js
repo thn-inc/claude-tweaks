@@ -36,7 +36,7 @@ function stripTrailingSlash(p) {
 function branchReadState(result) {
   if (result === null) return 'no-pr';
   if (typeof result === 'string') return result === 'gh-absent' ? 'gh-absent' : 'read-failed';
-  if (result && typeof result === 'object') {
+  if (typeof result === 'object') {
     if (result.state === 'OPEN') return 'open';
     if (result.state === 'MERGED' || result.state === 'CLOSED') return 'not-open';
   }
