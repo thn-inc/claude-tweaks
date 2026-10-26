@@ -577,6 +577,36 @@ test('refreshOwnerBlock never throws', () => {
   assert.strictEqual(ctx.refreshOwnerBlock({ input: null, ownedRun: null }), null);
 });
 
+// #4153: one judge — refreshOwnerBlock's takeover decision reads the same owner-pid
+// probe runLiveness reports. Each row: owner-block override, probes, the owner-pid
+// evidence entry, and whether a different current pid re-stamps the block.
+test('AC1.1: refreshOwnerBlock and runLiveness give the same answer on the stamped owner pid, an unreadable start time included', () => {
+  const { gatherEvidence } = require('../plugin/bin/lib/run-liveness');
+  // The invalid-start-time ('stored start time is not a ps string') and no-pid ('stored pid is not a usable pid')
+  // rows prove the routing through probeOwnerPid — the old inline check passed the rest — so do not prune them.
+  const rows = [
+    { name: 'start time cannot be read', startOf: { 200: 'T200' }, entry: ['error', 'start-time-unavailable'], restamp: false },
+    { name: 'stored start time is not a ps string', over: { pidStartedAt: 12345 }, entry: ['error', 'invalid-start-time'], restamp: false },
+    { name: 'alive, start time matches', entry: ['positive', 'alive'], restamp: false },
+    { name: 'alive, no stored start time', over: { pidStartedAt: null }, entry: ['negative', 'alive-no-start-time'], restamp: false },
+    { name: 'pid reused', startOf: { 100: 'other', 200: 'T200' }, entry: ['negative', 'pid-reused'], restamp: true },
+    { name: 'gone', alive: false, entry: ['negative', 'gone'], restamp: true },
+    { name: 'stamped on another host', over: { host: 'elsewhere' }, entry: ['negative', 'other-host'], restamp: true },
+    { name: 'stored pid is not a usable pid', over: { pid: 0 }, entry: ['negative', 'no-pid'], restamp: true },
+  ];
+  for (const row of rows) {
+    const fx = refreshFixture(row.over || {});
+    const deps = refreshDeps({ cur: 200, alive: row.alive ?? true, startOf: row.startOf });
+    const probes = {
+      hostname: deps.hostname, pidAlive: deps.isPidAlive, pidStartTime: deps.pidStartTime,
+      lockInUse: () => false, lastCommitAt: () => null, ownEventAt: () => ({ lastOwnMs: null, lastSessionEndMs: null }),
+    };
+    const e = gatherEvidence(fx.dir, { now: RT0, probes }).evidence.find((x) => x.probe === 'owner-pid');
+    assert.deepStrictEqual([e.result, e.detail], row.entry, row.name);
+    assert.strictEqual(refresh(fx, { deps }) === 'restamp', row.restamp, row.name);
+  }
+});
+
 test('appendEvent writes one JSON line per call, never throws on bad dir', () => {
   const project = tmpProject();
   const run = mkRun(project, '2026-07-01T090000-spec-1');

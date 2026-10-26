@@ -63,6 +63,7 @@ test('AC1.1: cleanup item 2 deletes at On approval step 13 under pr-first, commi
   assert.ok(text.includes('On approval" step 13'), 'paragraph must name On approval step 13');
   assert.ok(text.includes('only a tracked `docs/plans/*-ledger.md`'), 'commit limited to a tracked docs/plans ledger');
   assert.ok(text.includes('log one `SKIP` line'), 'non-deleted reports log a SKIP line');
+  assert.ok(text.includes('The verb logs the `SKIP` line itself for the first four (`condition: delete-ledger reported {report} → fallback: ledger left on disk, nothing committed for item 2`)'), 'the verb-logged reports and their text match hooks.js delete-ledger');
   assert.match(text, /`not found` is a no-op/);
   assert.match(raw, /\| 2 \| Open items ledger \|[^\n]*?then commit only that path/);
 });

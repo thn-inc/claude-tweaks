@@ -17,6 +17,7 @@ const { SHADOW_DUP_RE, SECTIONS, runIdOf } = require('./resolve');
 const { composeFindingProposal, findingFingerprint, fingerprintMap } = require('./finding-filing');
 const { composeShadowDupProposal } = require('./shadow-dup-proposal');
 const { digestTextOf, targetOf } = require('./staged-digest-text');
+const { REFLECT_NO_DESTINATION, isApplicableReflect, parseReflectDestination } = require('./reflect-destination');
 const { BACKFILL_OUTCOMES, BACKFILL_SOURCES } = require('./backfill-apply');
 const { materialityEntryLine, materialityFingerprint, parseMaterialityFingerprints } = require('../health-core/materiality-digest');
 const { fingerprintFromBasis } = require('../health-core/fingerprint');
@@ -28,6 +29,7 @@ const { isTrustedComment } = require('../issues/comment-trust');
 const DIGEST_REASONS = Object.freeze({
   NO_CLAIM: 'console-backfill-no-claim',
   UNMAPPED_KIND: 'console-backfill-unmapped-kind',
+  REFLECT_NO_DESTINATION,
   CONFIRMED_LOW: 'console-backfill-confirmed-low',
   CANT_TELL: 'tiebreak-cant-tell',
 });
@@ -119,7 +121,8 @@ function result(item, action, source, extra) {
 }
 
 // The can't-tell record shape composeFindingProposal reads, built from a work item. A finding with no
-// line has none to cite, so the record names `unknown` rather than printing "null".
+// line passes its null line through; composeFindingProposal cites it by path alone. A staged finding
+// file (backfill.js stagedFindingItem) passes its own title, body and stated severity (#4136).
 function findingProposal(item, verdict, runId, confirmed) {
   const f = item.finding;
   const composed = composeFindingProposal({
@@ -128,7 +131,7 @@ function findingProposal(item, verdict, runId, confirmed) {
         id: item.itemId,
         lens: f.lens,
         path: f.path,
-        line: f.line === null || f.line === undefined ? 'unknown' : f.line,
+        line: f.line,
         severity: verdict.severity || f.reporterSeverity,
         reason: verdict.reason || 'unspecified',
         recommendation: verdict.recommendation,
@@ -136,6 +139,7 @@ function findingProposal(item, verdict, runId, confirmed) {
     },
     finding: { claim: item.claimText },
     runId,
+    staged: item.stagedFinding,
     ...(confirmed ? { verdict: { kind: 'confirmed', evidence: verdict.evidence, mainSha: confirmed.mainSha } } : {}),
   });
   // The record is filed under its claim fingerprint (the first marker, which extractFingerprint reads);
@@ -254,12 +258,15 @@ function disposeStaged({ item, runId, readStaged }) {
   // The files the line names: a reflect file's **Files:** value, else a patch proposal's Target:, else `general`.
   const target = typeof text === 'string' ? targetOf(text) : null;
   const fileRefs = (files && squash(files[1])) || (target && squash(target)) || 'general';
+  // A reflect observation/convention staged before destination lines existed (#4168) digests under its
+  // own reason — the one reflect-apply.js gives a live file with no destination line.
+  const legacyReflect = typeof text === 'string' && isApplicableReflect(s.name, text) && parseReflectDestination(text).kind === 'none';
   return result(item, 'digest', 'digest', {
     digest: digestEntryOf({
       item,
       finding: first ? `${label}: ${first}` : label,
       fileRefs,
-      deferReason: DIGEST_REASONS.UNMAPPED_KIND,
+      deferReason: legacyReflect ? DIGEST_REASONS.REFLECT_NO_DESTINATION : DIGEST_REASONS.UNMAPPED_KIND,
       runId,
     }),
   });

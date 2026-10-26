@@ -53,6 +53,50 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.155.1](https://github.com/thn-inc/claude-tweaks/compare/v6.155.0...v6.155.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* Shipped-candidate detector reads a PR's own filed… ([#4314](https://github.com/thn-inc/claude-tweaks/issues/4314)) ([da3a174](https://github.com/thn-inc/claude-tweaks/commit/da3a174e7cfbdc9934e211ffaa3b9884203aaa06))
+* Skip fenced code blocks when the shared section parsers… ([#4169](https://github.com/thn-inc/claude-tweaks/issues/4169)) ([8fe0d7b](https://github.com/thn-inc/claude-tweaks/commit/8fe0d7b4e1dacf64fedc367e9e2116e044694ba5))
+* Windows: worktree and write guards fail open when a Bash… ([#4281](https://github.com/thn-inc/claude-tweaks/issues/4281)) ([1961010](https://github.com/thn-inc/claude-tweaks/commit/1961010a1851e11afabfe52422651a19361586e2))
+
+### Highlights
+* Records that quote a markdown document no longer have the quoted headings mistaken for their own sections.
+* No user-visible change.
+* Pipelines spend far fewer turns on bookkeeping: tools log the decisions they make, and each phase exit is a single step.
+* Close-out's in-place PR update survives a re-run from another checkout without merging an unverified head.
+* Windows: the worktree-isolation, shadow run-dir, policy.yml and worktree-teardown guards now deny a Bash command that names a quoted native path (`"D:\…"`). Before this fix, such a command passed unchecked.
+* Dispatch no longer mistakes a follow-up record filed during a PR's build for work that PR already shipped, so those records get built instead of excluded with a false close proposal.
+* No user-visible change: run-owner liveness is judged one way across hooks and run cleanup.
+
+## [6.155.0](https://github.com/thn-inc/claude-tweaks/compare/v6.154.1...v6.155.0) (2026-10-25)
+
+
+### Features
+
+* dispatch close-out: offer an update-from-main path for a… ([#4273](https://github.com/thn-inc/claude-tweaks/issues/4273)) ([7b22a02](https://github.com/thn-inc/claude-tweaks/commit/7b22a02e3a73642d478def85506f52303779b10f))
+
+
+### Bug Fixes
+
+* Carry the staged finding title and body when the Review… ([#4136](https://github.com/thn-inc/claude-tweaks/issues/4136)) ([629a546](https://github.com/thn-inc/claude-tweaks/commit/629a546749088e4b7f2a049a05bcde3d998e68fc))
+* Keep a PR-rendered console with a failed finding filing… ([#4172](https://github.com/thn-inc/claude-tweaks/issues/4172)) ([2a6235d](https://github.com/thn-inc/claude-tweaks/commit/2a6235d7a826c0171e3a60744e866cb3d3c5febf))
+* release Step 3 records the reviewed tip with a second… ([#4157](https://github.com/thn-inc/claude-tweaks/issues/4157)) ([45e4b7c](https://github.com/thn-inc/claude-tweaks/commit/45e4b7c5e85ad236b28b596daeb5e743cec413e4))
+* resolve-policy --values: warn on stderr when a requested… ([#4141](https://github.com/thn-inc/claude-tweaks/issues/4141)) ([3d473da](https://github.com/thn-inc/claude-tweaks/commit/3d473da61d88c3beff3f988292a71bcf80475685))
+* Surface can't-tell tiebreak findings on the fast-lane… ([#4171](https://github.com/thn-inc/claude-tweaks/issues/4171)) ([f105fae](https://github.com/thn-inc/claude-tweaks/commit/f105fae1c74dd8e93723e5e8745d3be340dc83cd))
+
+### Highlights
+* Backlog records filed from can't-tell review findings now carry the finding's claim and title instead of only its location.
+* An invalid value in `.claude-tweaks/policy.yml` or a run config now produces a warning when a skill reads it, instead of silently falling back to the default.
+* Closing out a parked PR that has fallen behind or conflicts with main can now update it in place, re-verified, instead of stopping.
+* No user-visible change.
+* Can't-tell review findings are no longer lost when a run merges through the fast-lane auto-merge path.
+* A review finding whose filing failed on a PR-rendered console now blocks archival until someone handles it.
+* No user-visible change: the release skill's pre-merge tip check now runs as tested code instead of step-by-step instructions.
+* A release can no longer record a reviewed tip that differs from the tree its test gate ran on.
+
 ## [6.154.1](https://github.com/thn-inc/claude-tweaks/compare/v6.154.0...v6.154.1) (2026-10-25)
 
 

@@ -23,7 +23,7 @@ files:
 
 ### 1. Wrap-up reads the parked PR's merge state after its last push
 - **URL:** `plugin/skills/wrap-up/execution-and-verification.md` "Leave-open mergeability re-check"
-- **Action:** wrap-up reuses the state the Post-push merge-state check's `pr-merge-state.js --phase wrap-up` call just printed. When that read printed `unknown`, or exited 3 because cleanup item 8 had already archived the run dir, it takes one read of its own as the last call before Verify execution, against the live or archive run-dir path.
+- **Action:** wrap-up reuses the state the Post-push merge-state check's `pr-merge-state.js --phase wrap-up` read just printed, carried as `mergeState` in the wrap-up `phase-exit.js` call's envelope. When that read printed `unknown`, exited 3 because cleanup item 8 had already archived the run dir, or never printed one (`mergeState.exit` is `null`), it takes one read of its own as the last call before Verify execution, against the live or archive run-dir path.
 - **Should feel:** One extra read at most, never a poll — the run ends in seconds either way.
 - **Should understand:**
   - The re-check only runs when the merge path never ran. A `merged`, `armed` or merge-path `pending-review` outcome skips it, because `_shared/pr-first-merge.md` Step 2.5 already read the state.
