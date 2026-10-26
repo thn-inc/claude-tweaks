@@ -2218,6 +2218,32 @@ async function prefetchArchivePrStates(root, prStates, { cache } = {}) {
   await prStates.prefetch({ branches });
 }
 
+const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+
+// #4421: how many run dirs under the main checkout's pipelines/ have no owner block for
+// run-liveness to ask — an owner-less non-clean run state (a missing `status` counts), or no
+// run-state.json at all (runLiveness's legacy route serves an absent file too, spec). An
+// unparseable or non-object file is neither: it is a file the module cannot read, not a run
+// that never had an owner. Rides iterRunDirsWithState, so it keeps that iterator's run-id,
+// archive-twin and `archiving`-claim filters and never counts archive/. 0 when pipelines/ does
+// not exist; null when it cannot be read (the caller then leaves the field out).
+function countOwnerlessNonClean(root) {
+  try {
+    fs.readdirSync(path.join(root, '.claude-tweaks', 'pipelines'));
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? 0 : null;
+  }
+  let count = 0;
+  for (const { dir, state } of iterRunDirsWithState(root)) {
+    if (state === null) {
+      if (!fs.existsSync(path.join(dir, 'run-state.json'))) count++;
+    } else if (isPlainObject(state) && !isPlainObject(state.owner) && state.status !== 'clean') {
+      count++;
+    }
+  }
+  return count;
+}
+
 function archiveMerged({
   cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration, prStates, cache, liveness, runVerdict,
 } = {}) {
@@ -2600,11 +2626,14 @@ function archiveMerged({
   // #4180: its resolve failures come back (the entry is dropped either way) for the caller to report.
   const residueErrors = dryRun ? [] : pruneResidueFailures(root, repoSlug, { runner }).failures;
 
-  return { archived, skipped, residuePlan, residueErrors };
+  // #4421: counted after every archival above, so a dir this pass archived is not in it. Absent
+  // (never 0) on a dry run — nothing moved, the count would overstate — and when the dir is unreadable.
+  const ownerlessNonClean = dryRun ? null : countOwnerlessNonClean(root);
+  return { archived, skipped, residuePlan, residueErrors, ...(ownerlessNonClean === null ? {} : { ownerlessNonClean }) };
 }
 
 module.exports = {
-  archiveMerged, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, listSpecDirs,
+  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,

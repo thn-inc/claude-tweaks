@@ -17,7 +17,7 @@ const {
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, unclosedRecords, runRecordSet, inFlightRecords,
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge, consoleResidue, consoleResidueHint, filingRerunRemedy,
-  unfiledCantTellFindings, CANT_TELL_UNFILED_HINT, defaultRunVerdict,
+  unfiledCantTellFindings, CANT_TELL_UNFILED_HINT, defaultRunVerdict, countOwnerlessNonClean,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { PROBE_ORDER, LIVE_PROBES, runLiveness } = require('../../../plugin/bin/lib/run-liveness');
 const { unfiledCantTell } = require('../../../plugin/bin/lib/console/finding-outcomes');
@@ -5803,4 +5803,69 @@ test('archiveMerged: a cache shared with prefetchArchivePrStates keeps the pass 
     });
     assert.equal(worktreeListSpawns(timings), 1);
   } finally { wrapper.restore(); }
+});
+
+// #4421: archiveMerged reports how many run dirs the pass left with no owner block to ask
+// run-liveness about (spec AC6) — counted AFTER this pass's own archival.
+const ownerlessFixture = (root) => {
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  // `config.yml` adopts the dir (keeps the orphaned-mint sweep off it); `config: false` omits it.
+  const mk = (name, state, { config = true } = {}) => {
+    const dir = path.join(pipelines, name);
+    fs.mkdirSync(dir, { recursive: true });
+    if (config) fs.writeFileSync(path.join(dir, 'config.yml'), 'x: 1\n');
+    if (state !== undefined) fs.writeFileSync(path.join(dir, 'run-state.json'), typeof state === 'string' ? state : JSON.stringify(state));
+    return dir;
+  };
+  return { pipelines, mk };
+};
+
+test('archiveMerged: ownerlessNonClean counts absent or owner-less non-clean run dirs after this pass\'s archival (#4421 AC6.1)', () => {
+  const root = fs.realpathSync(makeRepo());
+  const { pipelines, mk } = ownerlessFixture(root);
+  mk('2026-08-01T090001-record-1', { status: 'active', worktree: path.join(root, 'gone-1') });
+  mk('2026-08-01T090002-record-2', { status: 'active', worktree: path.join(root, 'gone-2') });
+  mk('2026-08-01T090003-record-3', undefined); // config.yml, no run-state.json
+  mk('2026-08-01T090004-record-4', { status: 'active', owner: { sessionId: 's', host: 'h', pid: 1 } });
+  mk('2026-08-01T090005-record-5', { status: 'clean' });
+  const mint = mk('2026-08-01T090006-record-6', { status: 'active' }, { config: false });
+  const old = new Date(Date.now() - ORPHAN_MINT_TTL_MS * 2);
+  fs.utimesSync(mint, old, old);
+  fs.mkdirSync(path.join(pipelines, 'archive', '2026-08-01T090000-old'), { recursive: true });
+  fs.writeFileSync(path.join(pipelines, 'archive', '2026-08-01T090000-old', 'run-state.json'), JSON.stringify({ status: 'active' }));
+
+  const result = archiveMerged({ cwd: root, runVerdict: DEAD });
+  assert.ok(result.archived.includes(mint), `the orphaned mint must be archived this pass, got ${JSON.stringify(result)}`);
+  assert.equal(result.ownerlessNonClean, 3);
+
+  // Review Focus 4: an unparseable file, a non-object file and an archive twin are not counted.
+  mk('2026-08-01T090007-record-7', '{not json');
+  mk('2026-08-01T090008-record-8', '[]');
+  mk('2026-08-01T090009-twin', { status: 'active', worktree: path.join(root, 'gone-9') });
+  fs.mkdirSync(path.join(pipelines, 'archive', '2026-08-01T090009-twin'), { recursive: true });
+  fs.writeFileSync(path.join(pipelines, 'archive', '2026-08-01T090009-twin', 'run-state.json'), JSON.stringify({ status: 'clean' }));
+  assert.equal(archiveMerged({ cwd: root, runVerdict: DEAD }).ownerlessNonClean, 3);
+});
+
+test('archiveMerged: only owner-block runs, or no pipelines dir, count 0 (#4421 AC6.2)', () => {
+  const root = fs.realpathSync(makeRepo());
+  assert.equal(archiveMerged({ cwd: root, runVerdict: DEAD }).ownerlessNonClean, 0, 'a missing pipelines dir counts 0');
+  const { mk } = ownerlessFixture(root);
+  mk('2026-08-01T090001-record-1', { status: 'active', owner: { sessionId: 's', host: 'h', pid: 1 } });
+  mk('2026-08-01T090002-record-2', { status: 'active', owner: { sessionId: 't', host: 'h', pid: 2 } });
+  assert.equal(archiveMerged({ cwd: root, runVerdict: DEAD }).ownerlessNonClean, 0);
+});
+
+test('archiveMerged: a dry run, a pass with no main checkout and an unreadable pipelines dir leave ownerlessNonClean absent (#4421 AC6.4)', () => {
+  const root = fs.realpathSync(makeRepo());
+  const { mk } = ownerlessFixture(root);
+  mk('2026-08-01T090001-record-1', { status: 'active', worktree: path.join(root, 'gone-1') });
+  assert.equal('ownerlessNonClean' in archiveMerged({ cwd: root, dryRun: true, runVerdict: DEAD }), false);
+  assert.equal('ownerlessNonClean' in archiveMerged({ cwd: fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-norepo-')) }), false);
+
+  const blocked = fs.realpathSync(makeRepo());
+  fs.mkdirSync(path.join(blocked, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(blocked, '.claude-tweaks', 'pipelines'), 'not a directory\n'); // readdir -> ENOTDIR
+  assert.equal(countOwnerlessNonClean(blocked), null);
+  assert.equal('ownerlessNonClean' in archiveMerged({ cwd: blocked, runVerdict: DEAD }), false);
 });
