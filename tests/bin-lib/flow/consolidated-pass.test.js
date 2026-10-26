@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { checkPassReentry, REENTRY_REASONS } = require('../../../plugin/bin/lib/flow/consolidated-pass');
+const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 
 const NOT_LANDED = () => ({ landed: false, evidence: { branch: 'b', merged: false } });
 const NO_PR = () => { throw new Error('PR resolver must not be called'); };
@@ -205,25 +206,38 @@ test('AC1.2: a commit under 10 minutes old now blocks a non-interrupted parent',
   assert.equal(r.detail, 'worktree recently committed to');
 });
 
+// A real, unlocked linked worktree: the pre-#4420 code listed it, found a free
+// lock and returned null, so a test on it goes red against that code.
+function unlockedRealWorktreeRun() {
+  return makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: linkedWorktreeOf(gitRepo()) } });
+}
+
 test('AC1.2: a failed last-commit read now blocks a non-interrupted parent', () => {
-  const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
+  const run = unlockedRealWorktreeRun();
   const r = checkPassReentry(run, { deps: deps({ probes: { lockInUse: () => false, lastCommitAt: thrower('could not read the last commit time of W: git error') } }) });
   assert.equal(r.reason, 'parent-live');
   assert.match(r.detail, /^indeterminate: /);
 });
 
 test('AC3.2: parentLiveDetail is non-null for every old indeterminate source', () => {
-  const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
-  const rows = [
+  // Already indeterminate before #4420 (behaviour pins): the worktree listing failed.
+  const pinRun = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
+  for (const probes of [
     { lockInUse: thrower('could not resolve the main checkout of W') },
     { lockInUse: thrower('could not list worktrees from R: git timeout') },
-    { lockInUse: () => false, lastCommitAt: thrower('could not read the last commit time of W: git error') },
-    { lockInUse: () => false, lastCommitAt: () => null },
-    { lockInUse: () => false, lastCommitAt: () => NaN },
-  ];
-  for (const probes of rows) {
-    const r = checkPassReentry(run, { deps: deps({ probes }) });
+  ]) {
+    const r = checkPassReentry(pinRun, { deps: deps({ probes }) });
     assert.equal(r.reason, 'parent-live', JSON.stringify(Object.keys(probes)));
+    assert.match(r.detail, /^indeterminate: ./);
+  }
+  // Changed rows: the old code read these as eligible (null) on a free lock.
+  for (const lastCommitAt of [
+    thrower('could not read the last commit time of W: git error'),
+    () => null,
+    () => NaN,
+  ]) {
+    const r = checkPassReentry(unlockedRealWorktreeRun(), { deps: deps({ probes: { lockInUse: () => false, lastCommitAt } }) });
+    assert.equal(r.reason, 'parent-live');
     assert.match(r.detail, /^indeterminate: ./);
   }
 });
