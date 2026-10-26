@@ -228,14 +228,72 @@ test('an unusable cwd (no tool result, no resolvable worktree) never throws — 
 // per-call ctx seam, extended with one field — there was no other
 // deps-injection seam in this file to reuse) rather than stubbing
 // process.platform, which is process-global and would leak across tests.
-test('warns on win32 when core.longpaths is unset', () => {
+
+// post.run shells to git via execFileSync, which inherits process.env — so the
+// git-config env vars are set there around the call and restored in `finally`
+// (other tests in this worker share process.env).
+function withGitConfigEnv(vars, fn) {
+  const prior = {};
+  for (const [k, v] of Object.entries(vars)) {
+    prior[k] = Object.prototype.hasOwnProperty.call(process.env, k) ? process.env[k] : undefined;
+    process.env[k] = v;
+  }
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(prior)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+function tempGitConfig(contents) {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-gitcfg-')), 'gitconfig');
+  fs.writeFileSync(file, contents);
+  return file;
+}
+
+// Hides the developer's/runner's global and system git config from `fn`.
+function isolatedGitConfig(fn) {
+  return withGitConfigEnv({ GIT_CONFIG_GLOBAL: tempGitConfig(''), GIT_CONFIG_NOSYSTEM: '1' }, fn);
+}
+
+// Reproduces windows-regression.yml's `git config --global core.longpaths true`
+// on any host.
+function runnerLikeGlobalConfig(fn) {
+  return withGitConfigEnv({ GIT_CONFIG_GLOBAL: tempGitConfig('[core]\n\tlongpaths = true\n') }, fn);
+}
+
+// The Windows runner has a global core.longpaths=true; the runner-like config
+// below reproduces that cause on any host, so these two tests pass only
+// because `isolate` (isolatedGitConfig) hides it.
+function assertWarnsWhenUnset(isolate) {
   const { main } = setupProject();
   const wt = harnessWorktreeOf(main);
-  const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32' }));
+  const out = runnerLikeGlobalConfig(() => isolate(
+    () => post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32' })),
+  ));
   assert.ok(out.json && typeof out.json.systemMessage === 'string', 'expected a core.longpaths warning');
   assert.match(out.json.systemMessage, /core\.longpaths/);
   assert.match(out.json.systemMessage, /_shared\/worktree-setup\.md/);
-});
+}
+
+function assertLogsUnset(isolate) {
+  const { main } = setupProject();
+  const wt = harnessWorktreeOf(main);
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const out = runnerLikeGlobalConfig(() => isolate(
+    () => post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } })),
+  ));
+  assert.ok(out.json && typeof out.json.systemMessage === 'string');
+  const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].result, 'unset');
+  assert.notStrictEqual(events[0].result, 'check-failed');
+}
+
+test('warns on win32 when core.longpaths is unset', () => assertWarnsWhenUnset(isolatedGitConfig));
 
 test('does not warn on win32 when core.longpaths is already true', () => {
   const { main } = setupProject();
@@ -333,17 +391,7 @@ test('#2476: a forced spawn failure (EAGAIN) on core.longpaths never warns and l
   assert.strictEqual(events[0].result, 'check-failed');
 });
 
-test('#2476: a real (non-forced) unset key still logs result: unset, distinct from check-failed', () => {
-  const { main } = setupProject();
-  const wt = harnessWorktreeOf(main);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
-  const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } }));
-  assert.ok(out.json && typeof out.json.systemMessage === 'string');
-  const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
-  assert.strictEqual(events.length, 1);
-  assert.strictEqual(events[0].result, 'unset');
-  assert.notStrictEqual(events[0].result, 'check-failed');
-});
+test('#2476: a real (non-forced) unset key still logs result: unset, distinct from check-failed', () => assertLogsUnset(isolatedGitConfig));
 
 test('#3811: resolveWorktreePathViaPorcelain matches win32 forward-slash porcelain against a backslash cwd', () => {
   const porcelain = 'worktree D:/a/x\nbranch refs/heads/trunk\n\nworktree D:/a/x/feat\nbranch refs/heads/feat\n\n';
