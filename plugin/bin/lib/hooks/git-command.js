@@ -2057,7 +2057,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
   // same run of sub pieces, never for the outer walk. A group opened inside the substitution is
   // scoped within that run (its saved cwd is the sub cwd), so its events do not end the run; the
   // next outer piece (the text after the substitution's closer among them) or outer group event does.
-  // The run keeps one and-or list per substitution level (`subLevels`, keyed by nesting depth, a
+  // The run keeps one and-or list per substitution level (`subLevels`, by nesting depth, a
   // top-level backtick span counting as one more level), so a separator or a lone `&` inside a
   // substitution acts on that substitution's own list only, never an enclosing one's or the outer
   // walk's. A level ends when the walk reaches a piece or event at a shallower level: each level is
@@ -2065,23 +2065,31 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
   // deeper `$( )` never reaches the commands after it in the level around it.
   let subCur = null;
   let subVars = null;
-  let subLevels = null; // level → { entry: the cwds the level began at, list: its innermost list }
+  // `subLevels` is a stack of { level, entry: the cwds the level began at, list: its innermost
+  // list }, its levels strictly increasing: reaching a level truncates every deeper one, so each
+  // record is pushed and dropped once and a deep nest costs amortized O(1) per event, not a scan
+  // of every open level (#4303). It holds only the levels the walk has reached, so a level may
+  // be missing between two others.
+  let subLevels = null;
   const startSubRun = () => {
     if (subCur !== null) return;
     subCur = cur;
     subVars = new Map(vars);
-    subLevels = new Map();
+    subLevels = [];
   };
   const subLevelAt = (level) => {
-    let left = null; // the shallowest of the levels the walk has just left
-    for (const [k, rec] of subLevels) {
-      if (k <= level) continue;
-      if (left === null || k < left.k) left = { k, entry: rec.entry };
-      subLevels.delete(k);
+    let keep = subLevels.length;
+    while (keep > 0 && subLevels[keep - 1].level > level) keep -= 1;
+    if (keep < subLevels.length) {
+      subCur = subLevels[keep].entry; // the shallowest of the levels the walk has just left
+      subLevels.length = keep;
     }
-    if (left !== null) subCur = left.entry;
-    if (!subLevels.has(level)) subLevels.set(level, { entry: subCur, list: freshList(subCur) });
-    return subLevels.get(level);
+    let at = subLevels[keep - 1];
+    if (at === undefined || at.level !== level) {
+      at = { level, entry: subCur, list: freshList(subCur) };
+      subLevels.push(at);
+    }
+    return at;
   };
   // A tail piece (the rest of a command after a substitution's closer) is visited on its own, so
   // whether a `cd` or an assignment in it runs (`x=$(…) cd /x`) or is an argument (`echo $(…) cd
