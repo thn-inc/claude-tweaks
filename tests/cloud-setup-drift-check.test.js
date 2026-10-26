@@ -378,7 +378,7 @@ function runTmpDirBlock(block, sessionId) {
   return { ...result, tmpdir: env.TMPDIR };
 }
 
-test('session-id guard: CLAUDE_CODE_SESSION_ID unset does not abort under set -u, CC_TMP_DIR stays unscoped', { skip: SH_STUB_SKIP }, () => {
+test('session-id guard: CLAUDE_CODE_SESSION_ID unset does not abort under set -u, CC_TMP_DIR stays unscoped', () => {
   const scriptSource = readText(SCRIPT_PATH);
   const block = extractTmpDirBlock(scriptSource);
   const result = runTmpDirBlock(block, undefined);
@@ -386,7 +386,7 @@ test('session-id guard: CLAUDE_CODE_SESSION_ID unset does not abort under set -u
   assert.strictEqual(result.stdout.trim(), result.tmpdir);
 });
 
-test('session-id guard: CLAUDE_CODE_SESSION_ID exported still resolves the ct-session-{id} subdirectory unchanged', { skip: SH_STUB_SKIP }, () => {
+test('session-id guard: CLAUDE_CODE_SESSION_ID exported still resolves the ct-session-{id} subdirectory unchanged', () => {
   const scriptSource = readText(SCRIPT_PATH);
   const block = extractTmpDirBlock(scriptSource);
   const result = runTmpDirBlock(block, 'abc123');
@@ -396,7 +396,7 @@ test('session-id guard: CLAUDE_CODE_SESSION_ID exported still resolves the ct-se
   assert.ok(fs.existsSync(expectedDir), 'the ct-session-{id} subdirectory should have been created');
 });
 
-test('go-red proof: the pre-#1779 unguarded session-id test aborts with "unbound variable" under set -u', { skip: SH_STUB_SKIP }, () => {
+test('go-red proof: the pre-#1779 unguarded session-id test aborts with "unbound variable" under set -u', () => {
   const result = runTmpDirBlock(PRE_1779_TMPDIR_BLOCK, undefined);
   assert.notStrictEqual(result.status, 0, 'pre-#1779 code should abort when CLAUDE_CODE_SESSION_ID is unset under set -u');
   assert.match(result.stderr, /unbound variable/);
