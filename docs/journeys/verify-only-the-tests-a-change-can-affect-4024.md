@@ -32,10 +32,14 @@ files:
   - The map is read only when selection needs it. A delta that no impact rule matches never reads the map or runs `fetch`.
   - The map records what Node's resolver actually depends on: `require.resolve`'s `paths`, `node_modules` lookups, and `package.json` `main` and `exports`. It also follows the command a `bash -o … -c`, `sh +e -c` or `env …` wrapper runs. Existence probes are recorded only up to the candidate a `require` resolved to, which cut them by about three quarters. A node child whose environment drops the tracer selects its test for every change.
   - A traced run that could not record a read (a trace write failed, e.g. EMFILE or ENOSPC) writes no map. `trace` exits 1 and names the tests that lost a read: `test-impact.js trace: {n} traced process(es) could not record a read (tests: …) — no map written`. When even the loss marker cannot be written, the traced process exits 1 instead, so the suite, and any map it would record, is red.
+  - A `trace --allow-dirty` run over tracked changes writes a map that records `dirty: true`, and it says so on stderr. Its reads belong to no commit, so verify never uses it: the result is `map-dirty`. `fetch` replaces a cached dirty map and refuses a dirty artifact. A map from before the field existed reads as clean.
+  - Interrupting `trace` with Ctrl-C, `kill`, `timeout` or a closed terminal forwards the signal to the suite. Once the suite exits, `trace` removes its `ct-test-impact-trace-*` temp dir, leaves any existing map untouched and exits 130, 143 or 129 with `test-impact.js trace: interrupted by {SIG} — no map written`. A second signal kills the suite outright.
 - **Red flags:**
   - A build step that starts a traced full-suite run.
   - A fetch that replaces the cache with a map whose commit is not an ancestor of HEAD.
   - A `trace` run that exits 0 after a trace write failed.
+  - A `ct-test-impact-trace-*` directory left in the temp dir after an interrupted trace.
+  - A scoped run that selects a subset from a map whose `dirty` is true.
 
 ### 2. Re-verify a skill-prose edit
 - **URL:** the verify output, and `{git-dir}/claude-tweaks-verify/report.json`.
@@ -60,7 +64,7 @@ files:
 ### 4. Hit a fallback
 - **URL:** the verify stdout and `scope.impact.fallback`.
 - **Action:** Verify on a branch that has drifted far behind, from a checkout with no map, or after changing a path no test reads.
-- **Should feel:** Safe, not mysterious. The output reads `Impact: full tests — {reason}`, for example `map-missing`, `map-stale: 240 commits > 200`, `map-not-ancestor` or `untraced-path: docs/new.md`.
+- **Should feel:** Safe, not mysterious. The output reads `Impact: full tests — {reason}`, for example `map-missing`, `map-stale: 240 commits > 200`, `map-not-ancestor`, `map-dirty` or `untraced-path: docs/new.md`. `scope.impact.mapDirty` says whether the map that was read came from a dirty tree.
 - **Should understand:**
   - An unknown never selects fewer tests.
   - Changing `tools/run-tests.js` or the tracer always runs the whole suite through its own `"suites": "*"` rule.
@@ -73,4 +77,5 @@ files:
 - Created during the build of #4024. A 14-day transcript analysis found verify and `npm test` consumed about 78 hours of tool time, roughly a quarter of dispatch-agent wall time. #3968, a two-line markdown change, still paid a 476-second full run.
 - Updated during the build of #4158: a failed trace write now fails the trace closed, where before it was silently dropped.
 - Updated during the build of #4133: the tracer now resolves a `require` the way Node does, and it parses shell and `env` wrappers. Its existence-probe records fell from 135,709 to 31,033 across the suite with no resolution change lost.
+- Updated during the build of #4131: a map now records whether it was traced from a dirty tree, and verify refuses such a map as `map-dirty`. An interrupted `trace` now forwards the signal to the suite and removes its temp dir; before, a signal left the dir behind.
 - Related: `declare-a-verify-scope-1924.md` (the declaration this extends) and `run-the-suite-alongside-sibling-sessions-3969.md` (the suite slot a subset run holds for less time).
