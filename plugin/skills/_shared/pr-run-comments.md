@@ -23,6 +23,9 @@ etc.).
   `decisions.md` and fall back to the issue-only behavior for *that one post* — the next site
   that checks the gate still finds `pr` present and tries again.
 
+**`close-out-update` is the one exception:** `/claude-tweaks:dispatch close-out` posts it on a PR it already holds by number, outside any run,
+so it skips this gate, and a failed find or write stops the update instead of falling back to the issue (`dispatch/close-out-update.md`'s Update marker).
+
 ## Comment kinds
 
 | Kind | Posted by | Marker |
@@ -33,6 +36,7 @@ etc.).
 | `try-it` | `/claude-tweaks:wrap-up`, a record's Try it block when no brief on the PR carries it | `<!-- run-comment: try-it -->` single-spec; `<!-- run-comment: try-it:{spec} -->` per spec in a multi-spec run, the same qualification as `verdict` |
 | `failure` | `/claude-tweaks:dispatch`'s Settle step, on HARD-GATE failure | `<!-- run-comment: failure -->` |
 | `release-status` | `_shared/pr-first-merge-post-merge.md` Step 4.1, on outcome `merged` when a CHANGELOG backfill is needed | `<!-- run-comment: release-status -->` |
+| `close-out-update` | `/claude-tweaks:dispatch close-out`, before the call that lands an update (`dispatch/close-out-update.md`'s Update marker) | `<!-- run-comment: close-out-update -->` — one per PR, rewritten `cleared (…)` after the verified merge, a decline, or a landing that landed nothing |
 
 Each kind's marker is the **first line** of its comment body, unconditionally — the same
 first-line-marker convention `_shared/pr-early-run-lifecycle.md`'s PR body uses for its own
@@ -139,18 +143,18 @@ plugin's PR-comment surface that edits rather than always-appends.
    `OWNER/REPO` handed to `--repo` is resolved by `gh` against its default host, `github.com`,
    unless the value carries the host as `HOST/OWNER/REPO`).
 
-   Before either route below, resolve the payload and body paths as one plain call with no `eval`
-   (`_shared/session-tmp-root.md`):
+   Before either route below, resolve the payload, body and mutation paths as one plain call with
+   no `eval` (`_shared/session-tmp-root.md`):
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" COMMENTS={kind}-comments-{n}.json BODY={kind}-comment-{n}.md
+   node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" COMMENTS={kind}-comments-{n}.json BODY={kind}-comment-{n}.md MUTATION={kind}-comment-mutation-{n}.graphql
    ```
 
-   It prints `COMMENTS="{path}"` and `BODY="{path}"`. Substitute each printed literal path for its
-   placeholder: `{comments-path}` for the payload (the worktree-safe fetch below), `{body-path}` for
-   the body (steps 2 and 3; a worktree session refuses a runtime variable path,
-   `_shared/scratch-worktree.md` §7). The caller writes the comment body to `{body-path}`, marker as
-   its first line, before step 2 or 3.
+   It prints `COMMENTS="{path}"`, `BODY="{path}"` and `MUTATION="{path}"`. Substitute each printed
+   literal path for its placeholder: `{comments-path}` for the payload (the worktree-safe fetch
+   below), `{body-path}` for the body (steps 2 and 3), `{mutation-path}` for the update mutation
+   (step 2) — a worktree session refuses a runtime variable path, `_shared/scratch-worktree.md` §7.
+   The caller writes the comment body to `{body-path}`, marker as its first line, before step 2 or 3.
 
    In a worktree-isolated session, use the worktree-safe form; it also runs outside one. Each block
    is its own plain Bash call, with no chain, no `--jq`, and no host in `--repo`:
@@ -198,10 +202,13 @@ plugin's PR-comment surface that edits rather than always-appends.
 2. **Found → update in place**, preserving the comment's identity (same GraphQL id, no new
    comment created, no reordering in the thread). `--hostname {host}` is required here even
    though `--repo` is host-qualified elsewhere — the two flags are independent in `gh`, and
-   `gh api graphql` targets `github.com` unless `--hostname` is given:
+   `gh api graphql` targets `github.com` unless `--hostname` is given. Write the mutation
+   `mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}`
+   to `{mutation-path}` with the `Write` tool and pass it by file — the worktree guard refuses it
+   inline (`_shared/scratch-worktree.md` §7, the multi-variable mutation row):
 
    ```bash
-   gh api graphql --hostname {host} -f query='mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}' \
+   gh api graphql --hostname {host} -F query=@"{mutation-path}" \
      -f id="{found-id}" -F body=@"{body-path}"
    ```
 
@@ -238,6 +245,7 @@ call — never silently drop the content.
 | `/claude-tweaks:wrap-up` (`verification-brief.md`'s Try it block) | `try-it` | The human walkthrough (`_shared/try-it.md`) for a below-floor record or a parent-linked sub-issue — the cases with no brief on the PR to embed it (#2821); find-or-update by marker. The one exception to the issue-only fallback above: a failed `try-it` post is logged as a retryable failure and never re-routed to the issue — a below-floor record gets no issue comment. Nothing later in the run re-posts it: the Pipeline Summary still carries the block, and a re-run of wrap-up posts it by marker |
 | `/claude-tweaks:dispatch` (`settle-and-merge.md` Step 6, step 5) | `failure` | The full comment (`bin/lib/issues/retry.js`'s `attemptFailedCommentBody`, marker included) always posts to the **issue**, regardless of pr-first (`#1963`) — this is what `bin/lib/issues/trust.js`, which reads only the issue's comments and is not modified, already sees. Under pr-first, the PR gets a short pointer comment instead of the full narrative, and is closed. Retry-ceiling **counting** (`countFailedAttempts`) merges the issue's comments with every PR ever linked to the record, open or closed, so an attempt is found regardless of which source it originally posted to |
 | `_shared/pr-first-merge-post-merge.md` (Step 4.1) | `release-status` | Body: the human line, then the `--backfill` section, then one line pointing at `docs/releasing.md` "After the merge"; posted only on the backfill outcome, never on `not yet in a release` or `every record named` |
+| `/claude-tweaks:dispatch close-out` (`close-out-update.md`'s Update marker) | `close-out-update` | A resume marker, not a report: written pending before an update lands, read by `close-out.md` step 2 so a re-run from any checkout re-verifies, cleared only after the verified merge, a decline, or a landing that landed nothing. No `run-state.json` gate and no issue fallback — the gate exception above |
 
 ## Anti-Patterns
 

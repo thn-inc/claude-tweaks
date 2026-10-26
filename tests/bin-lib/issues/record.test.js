@@ -608,6 +608,7 @@ test('buildLinkedPRQuery also requests the cross-reference timeline, same-repo P
   assert.match(q, /timelineItems\(itemTypes:\[CROSS_REFERENCED_EVENT\], last:20\)/);
   assert.match(q, /\.\.\. on CrossReferencedEvent \{ source \{ \.\.\. on PullRequest/);
   assert.match(q, /merged mergedAt repository \{ nameWithOwner \}/);
+  assert.match(q, /\.\.\. on PullRequest \{ number title state createdAt merged mergedAt/);
 });
 
 test('buildLinkedPRQuery returns null for an empty array', () => {
@@ -1238,4 +1239,86 @@ test('isRepoRelativeKeyFilePath agrees with specShapedBody on every keyFiles pat
     assert.strictEqual(isRepoRelativeKeyFilePath(p), true, `path ${p}`);
     assert.doesNotThrow(compose(p));
   }
+});
+
+// ---- extractSection skips fenced headings (#4169) ----
+const QUOTED_COPY_BODY = [
+  '## Current State',
+  '',
+  'The staged copy follows verbatim.',
+  '',
+  '````',
+  '## Current State',
+  'quoted state',
+  '## Deliverables',
+  '- [ ] quoted deliverable',
+  '```',
+  '## Acceptance Criteria',
+  '```',
+  '1. quoted AC',
+  '## Release Note',
+  'quoted note',
+  '````',
+  '',
+  '~~~',
+  '## Open Question',
+  'tilde-quoted',
+  '~~~',
+  '',
+  '## Deliverables',
+  '- [ ] real deliverable',
+  '',
+  '## Open Question',
+  'Is it still wanted?',
+  '',
+  '## Release Note',
+  'No user-visible change.',
+].join('\n');
+
+test('AC1.1: extractSection returns empty for a heading that exists only inside a fence', () => {
+  assert.strictEqual(extractSection(QUOTED_COPY_BODY, 'Acceptance Criteria'), '');
+});
+
+test('AC1.1: extractSection returns the whole Current State, fenced blocks included', () => {
+  const cs = extractSection(QUOTED_COPY_BODY, 'Current State', { trim: true });
+  assert.ok(cs.startsWith('The staged copy follows verbatim.'));
+  assert.ok(cs.includes('## Acceptance Criteria\n```\n1. quoted AC'), 'the inner ``` does not close the 4-backtick fence');
+  assert.ok(cs.endsWith('~~~'), 'runs through the tilde fence up to the real ## Deliverables');
+  assert.ok(!cs.includes('real deliverable'));
+});
+
+test('extractSection: the record\'s own section wins over a fenced quote of the same heading', () => {
+  assert.strictEqual(extractSection(QUOTED_COPY_BODY, 'Deliverables', { trim: true }), '- [ ] real deliverable');
+  assert.strictEqual(extractSection(QUOTED_COPY_BODY, 'Release Note', { levelPattern: '2', stopPattern: '2', trim: true }), 'No user-visible change.');
+  assert.strictEqual(extractSection(QUOTED_COPY_BODY, 'Open Question', { trim: true }), 'Is it still wanted?');
+});
+
+test('extractSection: CRLF fenced quote is skipped too', () => {
+  const crlf = QUOTED_COPY_BODY.replace(/\n/g, '\r\n');
+  assert.strictEqual(extractSection(crlf, 'Acceptance Criteria'), '');
+  // The record's own sections must still be found: a CR left on a closing fence line that
+  // stopped it closing would make every fence run to end of text and hide them.
+  assert.strictEqual(extractSection(crlf, 'Deliverables', { trim: true }), '- [ ] real deliverable');
+  assert.strictEqual(extractSection(crlf, 'Open Question', { trim: true }), 'Is it still wanted?');
+});
+
+test('extractSection: a fence is closed only by its own character, at least as long as its opener', () => {
+  const section = (...lines) => extractSection(lines.join('\n'), 'Acceptance Criteria', { trim: true });
+  // A backtick line inside a tilde fence is content, not a closer: the heading after it stays quoted.
+  assert.strictEqual(section('~~~', '```', '## Acceptance Criteria', 'quoted', '~~~', '', '## Deliverables', 'x'), '');
+  // A tilde line inside a backtick fence likewise.
+  assert.strictEqual(section('```', '~~~', '## Acceptance Criteria', 'quoted', '```', '', '## Deliverables', 'x'), '');
+  // A longer closer closes a shorter opener, so the heading after it is the record's own.
+  assert.strictEqual(section('~~~~~', 'quoted', '~~~~~~~', '## Acceptance Criteria', '1. real'), '1. real');
+  assert.strictEqual(section('```', 'quoted', '`````', '## Acceptance Criteria', '1. real'), '1. real');
+  // A shorter closer does not close a longer opener.
+  assert.strictEqual(section('~~~~~', '~~~', '## Acceptance Criteria', 'quoted', '~~~~~', '## Deliverables', 'x'), '');
+  // An opener carrying an info string still opens a fence.
+  assert.strictEqual(section('```md', '## Acceptance Criteria', 'quoted', '```', '## Deliverables', 'x'), '');
+});
+
+test('extractSection: an unclosed fence hides every later heading (CommonMark: it runs to end of text)', () => {
+  const body = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
+  assert.strictEqual(extractSection(body, 'Deliverables'), '');
+  assert.ok(extractSection(body, 'Current State').endsWith('- [ ] d'));
 });

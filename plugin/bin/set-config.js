@@ -44,8 +44,17 @@
 // to forget. Any other invocation shape (single-key form, a partial batch,
 // `mode` other than `auto`) prints only the existing per-lever lines,
 // unchanged.
+//
+// Manifesto write line (#4026): every successful `--set` batch appends
+// `AUTO {time} — Manifesto: levers written to {config.yml path}.
+// Reversibility: n/a.` under decisions.md's `## /flow` — the line
+// flow/manifesto.md's Write mechanism and _shared/auto-decision-log.md's
+// #1826/#1810 example told the caller to log, with the same absolute path
+// printed on stdout. The single-key form logs nothing. A failed append adds
+// one stderr line naming the entry; exit code and stdout are unchanged.
 'use strict';
 
+const { formatEntry, appendEntry } = require('./lib/log-decision/append');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { MANIFESTO_LEVERS, RUN_PINS, isConfigKey, validateLever, setConfigLever } = require('./lib/set-config/write');
 
@@ -128,6 +137,8 @@ const realDeps = {
   mainRoot: undefined,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  now: () => Date.now(),
+  appendDecision: appendEntry,
 };
 
 // Splits a `--set` value into its comma-joined `key=value` pairs. Returns
@@ -157,7 +168,8 @@ function parseSetEntries(raw) {
   return { entries };
 }
 
-function run(argv, deps = realDeps) {
+function run(argv, overrides = {}) {
+  const deps = { ...realDeps, ...overrides };
   const o = parseArgs(argv);
   const usageErrors = (messages) => { deps.stderr(messages.map((m) => `set-config.js: ${m}\n`).join('') + USAGE); return 2; };
   const usageError = (message) => usageErrors([message]);
@@ -233,6 +245,18 @@ function run(argv, deps = realDeps) {
     deps.stdout(`${r.file} (${r.key}: ${r.previous == null ? 'unset' : r.previous} -> ${r.value})\n`);
   }
   if (isManifestoAutoBatch(results)) deps.stdout(renderManifestoFyi(results));
+  if (batchMode) {
+    const text = `levers written to ${results[0].file}`;
+    try {
+      deps.appendDecision({
+        runDir: target.dir,
+        section: '/flow',
+        entry: formatEntry({ status: 'AUTO', now: deps.now(), step: 'Manifesto', text, reversibility: 'n/a' }),
+      });
+    } catch (err) {
+      deps.stderr(`set-config.js: could not append the decisions.md entry (${text}): ${(err && err.message) || err}\n`);
+    }
+  }
   return 0;
 }
 

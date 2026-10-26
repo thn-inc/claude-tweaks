@@ -405,7 +405,7 @@ At the end of the summary, include a `### Key Learnings` section with 1-3 insigh
 
 If no notable learnings emerged, state: "No key learnings — straightforward review."
 
-**Phase exit (`worktree` mode, `integration-model: pr-first` — `_shared/integration-model.md`):** push the branch and flip this phase's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A no-op under `local-merge` or `current-branch` mode.
+**Phase exit (any run with a run dir, `_shared/integration-model.md`):** `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-exit.js" --run "$PIPELINE_RUN_DIR" --phase review --worktree "{worktree-path}" --fixes {n}[,{m}...]` (it pushes only under `pr-first` in `worktree` mode), per `_shared/git-discipline.md` and `_shared/pr-checklist-refresh.md`.
 
 ## Important Notes
 

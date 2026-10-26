@@ -340,6 +340,27 @@ function firstLocation(text) {
   return shaped ? { path: shaped[0], line: null } : null;
 }
 
+// A staged finding file's leading header block: the maximal run of `Key: value` lines from the top. The run
+// counts only when it ends at a blank line or at end of file; a run that ends at prose is no header block.
+// { title, body }: title is the block's `Title:` value (null when absent or empty); body is the text after
+// the block, trimmed, or the whole text, trimmed, when there is no block (#4136). Header lines whose key
+// is not a bookkeeping or claim key (`Invariant:`, `Lenses:`, `Target:` ...) carry content: they lead the
+// body, in order, then a blank line, then the rest.
+const STAGED_HEADER_LINE_RE = /^[A-Za-z][A-Za-z-]*:[ \t]/;
+const STAGED_BOOKKEEPING_KEYS = new Set(['title', 'kind', 'finding', 'staged-at', 'ledger', 'severity', 'defers', 'defer-reason']);
+function stagedHeaderOf(text) {
+  const lines = text.split('\n');
+  let end = 0;
+  while (end < lines.length && STAGED_HEADER_LINE_RE.test(lines[end])) end += 1;
+  if (end === 0 || (end < lines.length && lines[end].trim() !== '')) return { title: null, body: text.trim() };
+  const header = lines.slice(0, end);
+  const titleLine = header.find((l) => l.startsWith('Title:'));
+  const title = titleLine ? titleLine.slice('Title:'.length).trim() : '';
+  const kept = header.filter((l) => !STAGED_BOOKKEEPING_KEYS.has(l.slice(0, l.indexOf(':')).toLowerCase()));
+  const rest = lines.slice(end + 1).join('\n').trim();
+  return { title: title || null, body: [kept.join('\n'), rest].filter(Boolean).join('\n\n') };
+}
+
 // A staged finding file's claim and location come from the same place. A claim taken from the digest
 // text (a table row, a paragraph) takes that row's or paragraph's location when it names one. A
 // `Finding:` line keeps the file's first location, normally its `Location:`/`Target:` field (a path
@@ -356,6 +377,8 @@ function stagedFindingItem(name, text, base, itemId, section) {
   const loc = (!findingLine && firstLocation(claim)) || firstLocation(text);
   const where = { lens: lens ? lens[1] : 'unknown', path: loc.path, line: loc.line };
   if (!claim) return { ...base, itemId, kind: 'no-claim', noClaimReason: 'claim-empty', finding: where, context: text };
+  const header = stagedHeaderOf(text);
+  const stated = sev && SEVERITIES.includes(sev[1].toLowerCase()) ? sev[1].toLowerCase() : null;
   return {
     ...base,
     itemId,
@@ -367,6 +390,7 @@ function stagedFindingItem(name, text, base, itemId, section) {
     },
     claimText: claim,
     context: text,
+    stagedFinding: { title: header.title, body: header.body, severity: stated },
   };
 }
 

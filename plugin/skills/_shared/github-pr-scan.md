@@ -56,7 +56,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    Resolve this item's session-scoped temp path first, per `_shared/session-tmp-root.md`:
 
    ```bash
-   eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_SCAN_OPEN=pr-scan-open.json)"
+   PR_SCAN_OPEN="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-open.json)"
    gh pr list --state open --json number,title,updatedAt,isDraft,reviewDecision,headRefName,url,statusCheckRollup --limit 100 > "$PR_SCAN_OPEN"
    PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" node -e "
      // Only rollup-green PRs get a pr-checks.js call: the rollup lists registered checks, pr-checks.js adds the head-sha runs (#3469).
@@ -93,7 +93,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    Resolve this item's session-scoped temp path first, per `_shared/session-tmp-root.md` (cited throughout this file rather than restated):
 
    ```bash
-   eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_SCAN_RECORDS=pr-scan-records.json)"
+   PR_SCAN_RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-records.json)"
    gh issue list --state open --json number,title,labels --limit 200 > "$PR_SCAN_RECORDS"
    node -e "
      const { parseRecordFacets } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
@@ -120,7 +120,8 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    Resolve this item's session-scoped temp paths first, per `_shared/session-tmp-root.md`:
 
    ```bash
-   eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_SCAN_UNARMED=pr-scan-unarmed.json PR_SCAN_UNARMED_CANDIDATES=pr-scan-unarmed-candidates.json)"
+   PR_SCAN_UNARMED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed.json)"
+   PR_SCAN_UNARMED_CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed-candidates.json)"
    UNARMED_AGE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values pr-unarmed-age-hours)
    HOUSEKEEPING_GRANT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values housekeeping-auto-merge)
    ALLOW_AUTO_MERGE=$(gh api repos/{owner}/{repo} -q .allow_auto_merge 2>/dev/null)
@@ -170,7 +171,8 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    Candidates also need a `green` or `no-ci` `pr-checks.js --pr` verdict; a partial run reads green in the rollup alone. The age/gate/marker filter above narrows to a small candidate set before any further per-PR calls — unresolved threads (the same GraphQL query as `current-pr` item 2, run once per **candidate**, never against the full open-PR list) gate out any candidate that still has one, since a PR with an open thread is not actually ready regardless of CI or age. For each surviving candidate carrying the `claude-tweaks-run` marker (not the housekeeping one), fetch every linked record's labels — `closingIssuesReferences` names the numbers, not their labels. Re-resolve this fence's session-scoped paths (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit the prior fence's shell variable):
 
    ```bash
-   eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_SCAN_UNARMED_CANDIDATES=pr-scan-unarmed-candidates.json PR_SCAN_UNARMED_LINKS=pr-scan-unarmed-links.jsonl)"
+   PR_SCAN_UNARMED_CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed-candidates.json)"
+   PR_SCAN_UNARMED_LINKS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed-links.jsonl)"
    : > "$PR_SCAN_UNARMED_LINKS"
    node -e "
      const seen = new Set();
@@ -184,7 +186,8 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    Classify each surviving candidate — granted when every linked record carries `auto:merge` **and none carries `bot:blocked` or `bot:parked`** (a housekeeping-marker PR is granted instead by `housekeeping-auto-merge` alone, no record grant needed). The `bot:blocked`/`bot:parked` exclusion is what keeps this sweep from un-parking a deliberately parked run: a record carries `bot:blocked` because dispatch hit its retry ceiling, or `bot:parked` because `_shared/pr-first-merge.md`'s Step 2.5 (Merge-verification gate) took the red path, and both mean a human owes a re-triage before anything arms that PR — a later-green rollup does not retract the park. Re-resolve this fence's session-scoped paths:
 
    ```bash
-   eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_SCAN_UNARMED_CANDIDATES=pr-scan-unarmed-candidates.json PR_SCAN_UNARMED_LINKS=pr-scan-unarmed-links.jsonl)"
+   PR_SCAN_UNARMED_CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed-candidates.json)"
+   PR_SCAN_UNARMED_LINKS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed-links.jsonl)"
    HOUSEKEEPING_GRANT="$HOUSEKEEPING_GRANT" ALLOW_AUTO_MERGE="$ALLOW_AUTO_MERGE" node -e "
      const fs = require('fs');
      const HOUSEKEEPING = process.env.HOUSEKEEPING_GRANT === 'true';
@@ -225,10 +228,9 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
     Resolve this item's session-scoped temp paths first, per `_shared/session-tmp-root.md`:
 
     ```bash
-    eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" \
-      PR_SCAN_UNSETTLED_CLAIMS=pr-scan-unsettled-claims.jsonl \
-      PR_SCAN_UNSETTLED_LABELLED=pr-scan-unsettled-labelled.json \
-      PR_SCAN_UNSETTLED_PRS=pr-scan-unsettled-prs.json)"
+    PR_SCAN_UNSETTLED_CLAIMS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unsettled-claims.jsonl)"
+    PR_SCAN_UNSETTLED_LABELLED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unsettled-labelled.json)"
+    PR_SCAN_UNSETTLED_PRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unsettled-prs.json)"
     UNSETTLED_AGE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values unsettled-age-hours)
 
     # 1. Claims-registry: filenames are `issue-{n}.json`; read each blob and pair it
@@ -246,7 +248,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
         if (c.state !== 'live' && c.state !== 'stale') process.exit(0);
         const parsed = JSON.parse(process.argv[2]);
         console.log(JSON.stringify({ number: Number(process.argv[1]), claimedAt: parsed.claimedAt, source: 'claim' }));
-      " "$NUM" "$CONTENT" >> "$PR_SCAN_UNSETTLED_CLAIMS"
+      " -- "$NUM" "$CONTENT" >> "$PR_SCAN_UNSETTLED_CLAIMS"
     done
 
     # 2. bot:in-progress-labelled issues with no matching claim above (a claim/
@@ -273,10 +275,9 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
     Re-resolve this fence's session-scoped paths (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit the prior fence's shell variables):
 
     ```bash
-    eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" \
-      PR_SCAN_UNSETTLED_CLAIMS=pr-scan-unsettled-claims.jsonl \
-      PR_SCAN_UNSETTLED_LABELLED=pr-scan-unsettled-labelled.json \
-      PR_SCAN_UNSETTLED_PRS=pr-scan-unsettled-prs.json)"
+    PR_SCAN_UNSETTLED_CLAIMS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unsettled-claims.jsonl)"
+    PR_SCAN_UNSETTLED_LABELLED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unsettled-labelled.json)"
+    PR_SCAN_UNSETTLED_PRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unsettled-prs.json)"
     node -e "
       const fs = require('fs');
       const { execFileSync } = require('child_process');
@@ -333,7 +334,8 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
     Reuses `$PR_SCAN_UNARMED` from item 9 above (already fetched with `body`/`autoMergeRequest`) — no duplicate `gh pr list` call. Resolve this item's own session-scoped temp path first:
 
     ```bash
-    eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_SCAN_UNARMED=pr-scan-unarmed.json PR_SCAN_STALE_PENDING=pr-scan-stale-pending.json)"
+    PR_SCAN_UNARMED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed.json)"
+    PR_SCAN_STALE_PENDING="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-stale-pending.json)"
     node -e "
       const fs = require('fs');
       const RUN_MARKER = /<!-- claude-tweaks-run: [^\s]+ -->/;
@@ -346,20 +348,20 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
     For each pending-review PR number, re-check mergeability by reusing `resolvePrStateByNumber` from `bin/lib/reconcile/pr-state.js` — the same function `/tidy`'s Merged/closed-branch check and the reconciler's own archive-merged sweep already use for their own PR-state reads, widened (#2367) to also carry `mergeable`/`mergeStateStatus`, rather than adding a third PR-state-reading code path:
 
     ```bash
-    eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_SCAN_STALE_PENDING=pr-scan-stale-pending.json)"
+    PR_SCAN_STALE_PENDING="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-stale-pending.json)"
     REPO_ROOT="{REPO_ROOT}" node -e "
       const { resolvePrStateByNumber } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/reconcile/pr-state.js');
       const numbers = require('$PR_SCAN_STALE_PENDING');
       numbers.forEach((n) => {
         const r = resolvePrStateByNumber(process.env.REPO_ROOT, n);
         if (r && typeof r === 'object' && r.mergeStateStatus === 'DIRTY') {
-          console.log('[pr-stale] PR #' + n + ' — pending-review, gone stale: mergeStateStatus DIRTY (conflicts with the integration branch, purely from other records merging since it was parked) — rebase and re-verify (typecheck, lint, full test suite) before a human merges it');
+          console.log('[pr-stale] PR #' + n + ' — pending-review, gone stale: mergeStateStatus DIRTY (conflicts with the integration branch, purely from other records merging since it was parked) — update from the integration branch and re-verify (typecheck, lint, full test suite) before a human merges it');
         }
       });
     "
     ```
 
-    **Flag-only, never auto-rebase.** The lower-risk default consistent with this scope's report-only posture (`/tidy`'s documented posture for most of its scans) — an unattended rebase changes PR content without the PR author present and would need the same unconditional-at-every-`autonomy`-tier confirmation gate `dispatch/resume-confirmation.md` already establishes elsewhere in this codebase, not a weaker one just because it's a background sweep. This check's job is detection only: it feeds a human, or #2364's own close-out process, which already reuses `assess-agent-autonomy`'s `merge-check` and `_shared/pr-first-merge.md` for the approved-and-ready case — this check never re-implements that second merge path.
+    **Flag-only, never auto-rebase.** The lower-risk default consistent with this scope's report-only posture (`/tidy`'s documented posture for most of its scans) — an unattended rebase changes PR content without the PR author present and would need the same unconditional-at-every-`autonomy`-tier confirmation gate `dispatch/resume-confirmation.md` already establishes elsewhere in this codebase, not a weaker one just because it's a background sweep. This check's job is detection only: it feeds a human, or #2364's own close-out process, which already reuses `assess-agent-autonomy`'s `merge-check` and `_shared/pr-first-merge.md` for the approved-and-ready case and, with the human present, may offer a re-verified update (`dispatch/close-out-update.md`) — this check never re-implements that merge path or performs that update.
 <!-- /when -->
 
 Findings and recommendations (tidy Action Vocabulary):
@@ -378,7 +380,7 @@ Findings and recommendations (tidy Action Vocabulary):
 | Unarmed ready PR, granted (item 9) | Arm `--auto` per `_shared/pr-first-merge.md` — local action, no new merge mechanics |
 | Unarmed ready PR, ungranted (item 9) | Grant `auto:merge` on every linked record, or set `housekeeping-auto-merge` for a tidy PR — judgment call, never auto-granted by this sweep |
 | Unsettled run (item 10) | Resume via the reported command, or release the claim and let a fresh dispatch pick the record back up — judgment call |
-| Stale pending-review PR, `mergeStateStatus DIRTY` (item 11) | Rebase and re-verify (typecheck, lint, full test suite) before it can merge — flag-only, never auto-rebased by this sweep; a human or #2364's close-out process acts on it |
+| Stale pending-review PR, `mergeStateStatus DIRTY` (item 11) | Update from the integration branch and re-verify (typecheck, lint, full test suite) before it can merge — flag-only, never auto-rebased by this sweep; a human acts on it, or accepts close-out's offered update |
 
 Emit `[pr]` and `[gh-issue]` rows per the Output Contract. Backlog-record findings (the record-scan shapes: stale, parked-trigger, unsynced, needs-scoring, `bot:blocked`, legacy-taxonomy, `bot:parked`) no longer originate from this scope — see `tidy/step-1-records.md` for their findings table and `[backlog]`/`[parked]`/`[unsynced]`/`[scoring]`/`[blocked]`/`[legacy]`/`[bot-parked]` row prefixes. Items 9, 10, and 11 emit their own `[pr-unarmed]`, `[unsettled]`, and `[pr-stale]` prefixes instead — see the Output Contract below.
 
@@ -395,7 +397,7 @@ Three cheap counts for the dashboard's Triage Queue section. This scope exists s
    Resolve this item's session-scoped temp path first, per `_shared/session-tmp-root.md`:
 
    ```bash
-   eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" TRIAGE_QUEUE_READY=triage-queue-ready.json)"
+   TRIAGE_QUEUE_READY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value triage-queue-ready.json)"
    gh issue list --label ready --state open --json number,labels --limit 200 > "$TRIAGE_QUEUE_READY"
    node -e "
      const { parseRecordFacets } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
@@ -474,7 +476,7 @@ Two collection prefixes for PR/code-health/harness-health/journey-health/docs-he
 - `[parent-gate]` — decomposition parents with every sub-issue closed and no acceptance disposition on the parent (`parent-gate` scope above): `[parent-gate] #{n}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #{n}`
 - `[pr-unarmed]` — a green, gate-passed, plugin-created PR whose `--auto` was never armed, granted or not (`repo-wide` item 9): `[pr-unarmed] PR #{n}: {title} — {granted-or-ungranted content} — {recommendation}`
 - `[unsettled]` — a claimed or `bot:in-progress` issue whose pipeline shows no progress past the threshold (`repo-wide` item 10): `[unsettled] #{n}: {PR-silent-or-no-PR content} — resume: {command}`
-- `[pr-stale]` — a `pending-review` PR whose `mergeStateStatus` has gone `DIRTY` since it was parked (`repo-wide` item 11, #2367): `[pr-stale] PR #{n} — pending-review, gone stale: mergeStateStatus DIRTY (...) — rebase and re-verify (...) before a human merges it`
+- `[pr-stale]` — a `pending-review` PR whose `mergeStateStatus` has gone `DIRTY` since it was parked (`repo-wide` item 11, #2367): `[pr-stale] PR #{n} — pending-review, gone stale: mergeStateStatus DIRTY (...) — update from the integration branch and re-verify (...) before a human merges it`
 
 Backlog-record findings (the record-scan shapes: stale, parked-trigger, unsynced, needs-scoring, `bot:blocked`, legacy-taxonomy, `bot:parked`) no longer emit from this scope — they are `/tidy` Step 1's `[backlog]` / `[parked]` / `[unsynced]` / `[scoring]` / `[blocked]` / `[legacy]` / `[bot-parked]` rows now (`tidy/step-1-records.md`).
 

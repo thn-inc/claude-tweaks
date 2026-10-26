@@ -13,10 +13,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --all
 Returns the full config JSON — one entry per key: `{value, source, summary, category, tier, type, default}`.
 
 ```bash
-node -e "const {auditPolicy}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/policy-schema.js'); console.log(JSON.stringify(auditPolicy(process.argv[1])))" "$(git rev-parse --show-toplevel)"
+git rev-parse --show-toplevel
 ```
 
-Returns `{unrecognizedKeys, invalidValues, migratableKeys, renamedKeys, sourceExcludedKeys}`.
+```bash
+node -e "const {auditPolicy}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/policy-schema.js'); console.log(JSON.stringify(auditPolicy(process.argv[1])))" -- "{repo-root}"
+```
+
+`{repo-root}` is what the `git rev-parse` call printed — its own call, since the worktree guard refuses `git` inside `$(...)` (`_shared/scratch-worktree.md` §7). Returns `{unrecognizedKeys, invalidValues, migratableKeys, renamedKeys, sourceExcludedKeys}`.
 
 **The `--all` snapshot is held for the whole mode run.** Every render below reads from this one snapshot, never a re-run. The apply path's revert (`## Next Actions` below) reads a key's prior value from THIS snapshot too — never by re-reading `.claude-tweaks/policy.yml` after a write, since a write may have already landed other keys' lines by the time a revert is needed.
 

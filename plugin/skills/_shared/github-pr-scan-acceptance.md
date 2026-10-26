@@ -56,7 +56,8 @@ Record set: closed records from the last 30 days, computed as `Date.now() - 30 d
 Resolve session-scoped paths first (`_shared/session-tmp-root.md`, cited throughout this file rather than restated), then resolve `backlog-fetch-limit` and substitute it into the fetch below (per this file's "Fetch limit" section):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RAW=tidy-closed-records-raw.json CLOSED=tidy-closed-records.json)"
+RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records-raw.json)"
+CLOSED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records.json)"
 LIMIT="{resolved-limit}"
 gh issue list --state closed --limit "$LIMIT" \
   --json number,title,state,labels,closedAt,stateReason \
@@ -129,7 +130,9 @@ scope with exactly the rows the filter exists to remove.
 Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PFG_NEW=tidy-parents-for-gap-new.json PFG_LEG=tidy-parents-for-gap-legacy.json GAP_SUBS=tidy-acceptance-gap-sub-issues.json)"
+PFG_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parents-for-gap-new.json)"
+PFG_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parents-for-gap-legacy.json)"
+GAP_SUBS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-acceptance-gap-sub-issues.json)"
 LIMIT="{resolved-limit}"
 export FETCH_LIMIT="$LIMIT"
 gh issue list --label parent-issue --state all --json number,body --limit "$LIMIT" \
@@ -160,7 +163,9 @@ native branch:
 Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PFG_NEW=tidy-parents-for-gap-new.json PFG_LEG=tidy-parents-for-gap-legacy.json PFG=tidy-parents-for-gap.json)"
+PFG_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parents-for-gap-new.json)"
+PFG_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parents-for-gap-legacy.json)"
+PFG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parents-for-gap.json)"
 LIMIT="{resolved-limit}"
 export FETCH_LIMIT="$LIMIT"
 gh issue list --label parent-issue --state all --json number --limit "$LIMIT" \
@@ -189,7 +194,8 @@ command substitution rather than an `xargs` pipe so an empty parent list still i
 status survives instead of being replaced by the pipe's:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PFG=tidy-parents-for-gap.json GAP_BATCH=tidy-gap-sub-issues-batch.json)"
+PFG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parents-for-gap.json)"
+GAP_BATCH="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-gap-sub-issues-batch.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/fetch-sub-issues.js" --resolve-retries $(node -e "require('$PFG').forEach(p => console.log(p.number))") > "$GAP_BATCH"
 ```
 
@@ -209,7 +215,8 @@ failed would have already made the CLI exit 3 above, naming the parent. The only
 canonicalization — flatten, dedupe, sort:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" GAP_BATCH=tidy-gap-sub-issues-batch.json GAP_SUBS=tidy-acceptance-gap-sub-issues.json)"
+GAP_BATCH="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-gap-sub-issues-batch.json)"
+GAP_SUBS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-acceptance-gap-sub-issues.json)"
 node -e "
   const fs = require('fs');
   const batch = require('$GAP_BATCH');
@@ -229,7 +236,10 @@ Runs only on exit 4 above, for every parent — the older, per-parent REST loop 
 before the batched probe existed. Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PFG=tidy-parents-for-gap.json GAP_NUMS=tidy-acceptance-gap-sub-issue-numbers.jsonl GAP_FAIL=tidy-acceptance-gap-fallback-failures.txt GAP_SUBS=tidy-acceptance-gap-sub-issues.json)"
+PFG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parents-for-gap.json)"
+GAP_NUMS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-acceptance-gap-sub-issue-numbers.jsonl)"
+GAP_FAIL="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-acceptance-gap-fallback-failures.txt)"
+GAP_SUBS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-acceptance-gap-sub-issues.json)"
 : > "$GAP_NUMS"
 : > "$GAP_FAIL"
 node -e "require('$PFG').forEach(p => console.log(p.number))" | while read -r N; do
@@ -276,7 +286,8 @@ reads `risk`/`size` straight off data already in hand — no second round-trip. 
 paths first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" CLOSED=tidy-closed-records.json GAP_SUBS=tidy-acceptance-gap-sub-issues.json)"
+CLOSED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records.json)"
+GAP_SUBS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-acceptance-gap-sub-issues.json)"
 { read -r RISK_FLOOR; read -r SIZE_FLOOR; } < <(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values risk-floor size-floor)
 node -e "
   const { needsBackstop } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
@@ -295,7 +306,7 @@ node -e "
       stateReason: r.stateReason,
     }));
   gaps.forEach(r => console.log('[acceptance-gap] #' + r.number + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo #' + r.number));
-" "$RISK_FLOOR" "$SIZE_FLOOR"
+" -- "$RISK_FLOOR" "$SIZE_FLOOR"
 ```
 
 Note the spread order: derived fields come after the parsed spread, never before (`[IL-01]`). The
@@ -368,7 +379,10 @@ permanently, and with nothing on the output to say it did.
 Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PI_NEW=tidy-parent-issues-new.json PI_LEG=tidy-parent-issues-legacy.json ALL_STATES=tidy-all-issue-states.json PARENTS=tidy-parent-issues.json)"
+PI_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-new.json)"
+PI_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-legacy.json)"
+ALL_STATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-all-issue-states.json)"
+PARENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues.json)"
 LIMIT="{resolved-limit}"
 export FETCH_LIMIT="$LIMIT"
 gh issue list --label parent-issue --state open --json number,title,body,labels --limit "$LIMIT" \
@@ -445,7 +459,9 @@ sub-issue must never let a parent read as `due` (mirrors `parentGateState`'s own
 above; no further `gh` calls. Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PARENTS=tidy-parent-issues.json ALL_STATES=tidy-all-issue-states.json GATES=tidy-parent-gates.json)"
+PARENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues.json)"
+ALL_STATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-all-issue-states.json)"
+GATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-gates.json)"
 node -e "
   const { parseSubIssues } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const fs = require('fs');
@@ -469,7 +485,8 @@ sub-issues API instead, via the same batched aliased-GraphQL probe with a per-pa
 that the `acceptance-gap` scope above uses:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PARENTS=tidy-parent-issues.json PG_BATCH=tidy-parentgate-sub-issues-batch.json)"
+PARENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues.json)"
+PG_BATCH="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parentgate-sub-issues-batch.json)"
 node "${CLAUDE_PLUGIN_ROOT}/bin/fetch-sub-issues.js" --resolve-retries $(node -e "require('$PARENTS').forEach(p => console.log(p.number))") > "$PG_BATCH"
 ```
 
@@ -491,7 +508,10 @@ below reads the envelope's `byParent` directly, per-parent, because `subIssues` 
 parent's own numbers, not existence alone:
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PG_BATCH=tidy-parentgate-sub-issues-batch.json PARENTS=tidy-parent-issues.json ALL_STATES=tidy-all-issue-states.json GATES=tidy-parent-gates.json)"
+PG_BATCH="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parentgate-sub-issues-batch.json)"
+PARENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues.json)"
+ALL_STATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-all-issue-states.json)"
+GATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-gates.json)"
 node -e "
   const fs = require('fs');
   const batch = require('$PG_BATCH');
@@ -526,7 +546,11 @@ call appends its parent number to the failures file, which the composing step th
 silently vanished parent). Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PARENTS=tidy-parent-issues.json ALL_STATES=tidy-all-issue-states.json SUB_ISSUES=tidy-sub-issues.jsonl PG_FAIL=tidy-parentgate-fallback-failures.txt GATES=tidy-parent-gates.json)"
+PARENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues.json)"
+ALL_STATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-all-issue-states.json)"
+SUB_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-sub-issues.jsonl)"
+PG_FAIL="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parentgate-fallback-failures.txt)"
+GATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-gates.json)"
 : > "$SUB_ISSUES"
 : > "$PG_FAIL"
 node -e "require('$PARENTS').forEach(p => console.log(p.number))" | while read -r N; do
@@ -589,7 +613,7 @@ unscored too, matching `exceedsOversightFloor`'s own fail-closed rule for a miss
 session-scoped paths first (`_shared/session-tmp-root.md`):
 
 ```bash
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" GATES=tidy-parent-gates.json)"
+GATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-gates.json)"
 RISK_FLOOR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values risk-floor)
 node -e "
   const { parentGateState } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
@@ -612,7 +636,7 @@ node -e "
     .filter(f => exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds)
     .filter(f => parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) === 'due')
     .forEach(f => console.log('[parent-gate] #' + f.number + ': ' + f.title + ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #' + f.number));
-" "$RISK_FLOOR"
+" -- "$RISK_FLOOR"
 ```
 
 Un-gated parents recommend the `Open parent gate` action (`tidy/SKILL.md`'s Action Vocabulary,

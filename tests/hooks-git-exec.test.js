@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS } = require('../plugin/bin/lib/hooks/git-exec');
+const { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv } = require('../plugin/bin/lib/hooks/git-exec');
 const { gitRepo } = require('./helpers/git-fixtures');
 
 test('runGit: success returns trimmed stdout and a null failure', () => {
@@ -319,4 +319,40 @@ test('runGit: passes windowsHide, so a console-less parent spawns no visible con
   assert.ok(seenOpts, 'the stub must have observed the spawn at all');
   assert.strictEqual(seenOpts.windowsHide, true,
     'without windowsHide:true every git child of a console-less parent allocates its own visible console window on Windows');
+});
+
+test('repoPinnedEnv: drops the four repo-locating vars, keeps the rest, never mutates its input (#4178)', () => {
+  const input = { GIT_DIR: '/x/.git/worktrees/w', GIT_WORK_TREE: '/x', GIT_INDEX_FILE: '/x/i', GIT_COMMON_DIR: '/x/.git', PATH: '/bin', GIT_AUTHOR_NAME: 'a' };
+  const out = repoPinnedEnv(input);
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) assert.ok(!(k in out), `${k} must be dropped`);
+  assert.strictEqual(out.PATH, '/bin');
+  assert.strictEqual(out.GIT_AUTHOR_NAME, 'a');
+  assert.strictEqual(input.GIT_DIR, '/x/.git/worktrees/w', 'input must not be mutated');
+});
+
+test('runGit: opts.env is the spawn environment — a pinned env restores -C repo discovery (#4178)', () => {
+  const a = gitRepo();
+  const b = gitRepo();
+  const foreign = { ...process.env, GIT_DIR: path.join(b, '.git') };
+  const redirected = runGit(['rev-parse', '--absolute-git-dir'], a, { env: foreign });
+  assert.strictEqual(redirected.stdout, fs.realpathSync(path.join(b, '.git')), 'opts.env must reach the child');
+  const pinned = runGit(['rev-parse', '--absolute-git-dir'], a, { env: repoPinnedEnv(foreign) });
+  assert.strictEqual(pinned.stdout, fs.realpathSync(path.join(a, '.git')));
+});
+
+test('repoPinnedEnv: with no argument it reads process.env, dropping the four vars and keeping the rest (#4178)', () => {
+  const keys = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'];
+  const prior = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  for (const k of keys) process.env[k] = `/x/${k}`;
+  try {
+    const out = repoPinnedEnv();
+    for (const k of keys) assert.ok(!(k in out), `${k} must be dropped`);
+    assert.strictEqual(out.PATH, process.env.PATH, 'the rest of process.env must survive');
+    for (const k of keys) assert.strictEqual(process.env[k], `/x/${k}`, 'process.env itself must not be mutated');
+  } finally {
+    for (const k of keys) {
+      if (prior[k] === undefined) delete process.env[k];
+      else process.env[k] = prior[k];
+    }
+  }
 });

@@ -19,6 +19,7 @@ const { readCache, writeCache, isFresh, DEFAULT_TTL_MS } = require('./cache');
 // -> { outcome: 'repaired' }                         set-head wrote refs/remotes/origin/HEAD
 // -> { outcome: 'failed', reason: string }           set-head failed; reason is git's first stderr line, else git-exec's FAILURE class
 // -> { outcome: 'skipped', reason: 'recent-failure' } a prior set-head failed within DEFAULT_TTL_MS; not retried this pass
+// -> { outcome: 'skipped', reason: 'dry-run' }        `opts.dryRun`: set-head (a ref write) and the failure stamp (a cache write) are never attempted (#4180)
 function repairOriginHead(root, opts = {}) {
   const runGit = opts.runGit || defaultRunGit;
   const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : FETCH_TIMEOUT_MS;
@@ -29,6 +30,9 @@ function repairOriginHead(root, opts = {}) {
   try {
     const remote = runGit(['remote', 'get-url', 'origin'], root);
     if (remote.failure) return null;
+    // #4180: a dry run writes neither a ref nor the cache. Checked after the read-only remote
+    // probe so a checkout with no `origin` still reports nothing, as before.
+    if (opts.dryRun) return { outcome: 'skipped', reason: 'dry-run' };
     // #3132 follow-up: a failed set-head (offline, auth reject, a remote
     // that silently drops traffic) otherwise re-runs on every pass — up to
     // FETCH_TIMEOUT_MS each — since the no-remote path below returns before

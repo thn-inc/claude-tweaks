@@ -73,7 +73,9 @@ function resolveBuildLine(env = process.env) {
 // dead owner and stamp a live run. A resume is the one SessionStart that is the
 // owning session returning rather than a new session starting, so it re-stamps.
 // Only an already-stamped run is touched (an unstamped run keeps failing open),
-// and only a run this session owns by id — never a `fallback` guess.
+// and only a run this session owns by id — never a `fallback` guess. #4153:
+// `refreshOwnerBlock` re-stamps `owner.pid` for the same resume, and this function is
+// deleted when `ownerPid` is retired (docs/hooks.md's owner-block paragraph).
 function restampOwnerPidOnResume(ctx) {
   const input = ctx.input;
   if (!input || typeof input !== 'object' || input.source !== 'resume') return;
@@ -347,6 +349,13 @@ async function run(ctx) {
           lines.push(
             `worktree(s) left in place: ${s.notableWorktrees.map((w) => `${path.basename(w.path)} (${w.reason})`).join(', ')}`,
           );
+        }
+        // Escalate/resolve failures the pass swallowed (#4180) — a count plus the latest one; absent
+        // (an older status file) or zero renders nothing.
+        if (typeof s.residueErrors === 'number' && s.residueErrors > 0) {
+          const last = s.lastResidueError;
+          const lastPart = last && typeof last.op === 'string' ? ` (last: ${last.op} — ${last.error})` : '';
+          lines.push(`${s.residueErrors} residue error(s)${lastPart}`);
         }
         if (lines.length) {
           parts.push(`claude-tweaks: background reconcile (from a prior session) — ${lines.join('; ')}.`);

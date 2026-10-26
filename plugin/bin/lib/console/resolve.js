@@ -14,6 +14,7 @@ const { resolveRecords } = require('../wrap-up/pack');
 const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
 const { planFilings } = require('./finding-filing');
 const { FINDINGS_ARTIFACT } = require('../tiebreak');
+const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
 
 // Section names exactly as the console renders them (console-template.md;
 // engine-render.js's SECTION_SPECS for the five curation sections).
@@ -221,15 +222,6 @@ const SECTION_STANCES = {
 
 const ENGINE_ROW_SECTIONS = { skills: SECTIONS.SKILL, docs: SECTIONS.DOC, journeys: SECTIONS.JOURNEY, 'claude-md': SECTIONS.CONFIG, 'decision-records': SECTIONS.CONFIG, references: SECTIONS.REF };
 
-// `**Category:** {value}` — the header line `reflect/SKILL.md` (and any other producer sharing
-// this convention) writes on a staged finding. `null` when the text carries no such line —
-// including every caller that passes no text at all (unknown by design; never routed off it).
-function parseCategory(text) {
-  if (!text) return null;
-  const m = /^\*\*Category:\*\*\s*(\S+)/m.exec(text);
-  return m ? m[1] : null;
-}
-
 // `text` is the staged file's own content, when the caller has it (readSnapshot loads it for
 // every `.md`/`.patch` staged item, every shadow-dup copy, and each copy's anchor).
 // Only the QUEUE bucket's un-reasoned row reads it: that
@@ -238,10 +230,14 @@ function parseCategory(text) {
 // — `convention`/`observation` findings share the same filename prefix but carry no
 // `Title:`/`Type:`/`Labels:` header for record creation to read, so routing them into Queue
 // writes/`apply` the same as a tangential finding would attempt to file a malformed issue
-// (#2473). A `Category:` value other than `tangential` reroutes to Pending review via the
-// existing reason-forces-pending mechanism below; a file with no `Category:` line at all (every
-// other QUEUE-bucket producer — `digest-promotion-*`, `leftover-*`, etc. — none of which carry
-// this field) is unaffected and keeps today's Queue writes/`apply` classification.
+// (#2473). A reflect `observation`/`convention` finding routes to Skill updates instead (#4168):
+// its destination line decides what `bin/reflect-apply.js` applies (an edit, a decline, or a
+// record proposal), a record whose Defer-reason fails the gate is Refused, and an unparseable
+// destination stays Pending review under a named reason. Every other `Category:` value other than
+// `tangential` keeps #2473's reroute to Pending review via the existing reason-forces-pending
+// mechanism below; a file with no `Category:` line at all (every other QUEUE-bucket producer —
+// `digest-promotion-*`, `leftover-*`, etc. — none of which carry this field) is unaffected and
+// keeps today's Queue writes/`apply` classification.
 function classifyStagedItem(filename, text, siblingText) {
   if (SHADOW_DUP_RE.test(filename)) {
     let outcome = 'shadow-dup-collision';
@@ -258,6 +254,12 @@ function classifyStagedItem(filename, text, siblingText) {
     if (section === SECTIONS.QUEUE && !reason) {
       const category = parseCategory(text);
       if (category && category.toLowerCase() !== 'tangential') {
+        if (isApplicableReflect(filename, text)) {
+          const destination = parseReflectDestination(text);
+          if (destination.kind === 'invalid') return { section: SECTIONS.PENDING, reason: `reflect-destination-invalid:${destination.why}` };
+          if (destination.kind === 'record' && deferReasonProblem(destination.proposal) !== null) return { section: SECTIONS.REFUSED };
+          return { section: SECTIONS.SKILL };
+        }
         return { section: SECTIONS.PENDING, reason: `non-tangential-category:${category}` };
       }
     }
@@ -692,7 +694,7 @@ function findingItems({ runDir, deps }) {
   const snapshot = { ...readRunFiles({ runDir, deps }), patchChecks: {} };
   const stagedIds = new Set(snapshot.staged.map((s) => s.name));
   const items = [...stagedItems(snapshot), ...coordinationItems(snapshot, stagedIds)].filter((i) => FINDING_SECTIONS.includes(i.section));
-  return { items, findings: snapshot.findings };
+  return { items, findings: snapshot.findings, decisions: snapshot.decisions, dropped: droppedByTiebreak(snapshot.decisions) };
 }
 
 // Every cell is escaped, ids included: a staged filename is producer-supplied
@@ -711,15 +713,20 @@ function droppedByTiebreak(decisions) {
     .map((t) => ({ id: t.id, lens: t.lens, path: t.path, line: t.line, severity: t.severity, evidence: t.evidence }));
 }
 
+// The read-only "Dropped by tiebreak" block as lines, led by a blank line; [] when nothing dropped.
+function renderDroppedBlock(dropped) {
+  if (!dropped.length) return [];
+  const lines = ['', '#### Dropped by tiebreak (read-only — no decision)', '', '| Path:Line | Lens | Severity | Evidence |', '|---|---|---|---|'];
+  dropped.forEach((d) => lines.push(`| ${cell(`${d.path}:${d.line}`)} | ${cell(d.lens)} | ${cell(d.severity)} | ${cell(d.evidence ?? '—')} |`));
+  return lines;
+}
+
 function renderRows({ items, cleanup, merge, intro, dropped = [] }) {
   const lines = ['### Wrap-Up Review Console (auto-resolved at unattended)', '', intro, '', '| # | Section | Item | Resolution | Reason |', '|---|---|---|---|---|'];
   items.forEach((it, i) => lines.push(`| ${i + 1} | ${cell(it.section)} | ${cell(it.id)} | AUTO-RESOLVED: ${cell(it.resolution)} | ${cell(it.reason)} |`));
   lines.push(`| ${items.length + 1} | Cleanup actions | cleanup-procedures.md items | AUTO-RESOLVED: ${cell(cleanup.resolution)} | ${cell(cleanup.reason)} |`);
   lines.push('', `Merge: **${merge.resolution}** — ${merge.reason}`);
-  if (dropped.length) {
-    lines.push('', '#### Dropped by tiebreak (read-only — no decision)', '', '| Path:Line | Lens | Severity | Evidence |', '|---|---|---|---|');
-    dropped.forEach((d) => lines.push(`| ${cell(`${d.path}:${d.line}`)} | ${cell(d.lens)} | ${cell(d.severity)} | ${cell(d.evidence ?? '—')} |`));
-  }
+  lines.push(...renderDroppedBlock(dropped));
   return lines.join('\n');
 }
 
@@ -777,4 +784,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, runIdOf, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };

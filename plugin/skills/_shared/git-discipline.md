@@ -35,16 +35,53 @@ These apply in ALL modes. They exist because multiple processes may commit to th
 | **Never `--no-verify` / `--no-gpg-sign`** | Skipping hooks or signing bypasses safety the user opted into. If a hook fails, fix the underlying issue. |
 | **A transient `index.lock` collision retries, never `rm`s the lock** | A sibling agent's git call or a PostToolUse hook in the same shared checkout can hold the lock for a couple of seconds — a real process, not a stale one. `bin/lib/git-retry.js`'s `withIndexLockRetry` is the shared, bounded (~15 attempts at 2s) implementation every plugin commit call site routes through (#2346); a hand-written `git commit` in a skill's own procedure follows the same rule — retry on the `index.lock`/"another git process seems to be running" signature, never delete the lock file. |
 
-## Phase-exit push (`integration-model: pr-first` only)
+## Phase exit — one `phase-exit.js` call
 
 Under `pr-first` (`_shared/integration-model.md`), every pipeline phase that commits — build,
-test, review, polish, wrap-up — ends by pushing the branch: `git -C "{worktree-path}" push
-origin {branch}`, its own Bash call, never chained onto anything else (same reason as every
-other push in this file — the `worktree-always` gate denies a compound command whole). This is
-what makes the run's draft PR (`_shared/pr-early-run-lifecycle.md`) show live progress instead
-of only the state as of run start, and what keeps the branch durable at every phase boundary
-rather than only at finish — see `docs/incident-log.md`'s `[IL-128]` for what "only pushed once,
-at the very end" costs when a session never reaches the end.
+test, review, polish, wrap-up — ends by pushing the branch. This is what makes the run's draft PR
+(`_shared/pr-early-run-lifecycle.md`) show live progress instead of only the state as of run
+start, and what keeps the branch durable at every phase boundary rather than only at finish —
+see `docs/incident-log.md`'s `[IL-128]` for what "only pushed once, at the very end" costs when a
+session never reaches the end. One call does the whole phase exit, as its own Bash call, never
+chained onto anything else (the `worktree-always` gate denies a compound command whole):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/phase-exit.js" --run "$PIPELINE_RUN_DIR" --phase {build|test|review|polish|wrap-up} --worktree "{worktree-path}" --fixes {n}[,{m}...]
+```
+
+Call it at every phase exit of a run with a run dir — any model or mode; it pushes only under
+`pr-first` in `worktree` mode, and resolves the route itself. Its sub-steps, flags, envelope and
+exit codes are in `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-exit.js" --help`; an exit 2 or 3 is a bad
+call — fix it and re-run. It runs `_shared/pr-checklist-refresh.md`'s Phase-checklist update
+(`--fixes`, `--remove` and `--summary-file` pass through) and, after a landed push, the Post-push
+merge-state check below, and writes every `decisions.md` line those steps owe itself
+(`_shared/auto-decision-log.md`'s CLIs that log their own entries). **Route the envelope** — every
+call site cites this list rather than restating it:
+
+- `route` `local-merge` or `current-branch` — nothing more, except a `bookkeeping.worktree:
+  'failed'` (below).
+- `push.state: 'pushed'` — route `mergeState` per the Post-push merge-state check below.
+- `push.state: 'failed'` — nothing: the CLI logged it, and the next phase exit's push retries.
+- `push.state: 'skipped'` with a `reason` naming no recorded PR — run
+  `_shared/pr-early-run-lifecycle.md`'s push-and-open-draft-PR procedure, then re-run
+  `phase-exit.js`. Ignore the `checklist.action: 'no-pr'` that comes with it: this route owns it,
+  and the re-run flips the row. Any other `skipped`, and a `refused` push, is already logged:
+  continue.
+- `bookkeeping.worktree: 'failed'` on a live run dir — run `record-worktree` by hand
+  (`build/worktree-setup.md` Step 4.5), then re-run `phase-exit.js`. If that `record-worktree`
+  fails too, log one `SKIP` with `log-decision.js` naming the CLI's `bookkeeping.detail` (class (a)
+  of `_shared/auto-decision-log.md`'s CLIs that log their own entries).
+- `checklist.action: 'no-pr'` with any other push state — `_shared/pr-checklist-refresh.md`'s
+  degraded-run recovery; `'gh-absent'` — its MCP branch. Every other `checklist` result routes per
+  that section.
+- `checklist.exit` or `mergeState.exit` `null` with an `error` (the sub-CLI threw) — proceed: the
+  next phase exit re-runs both, and the pre-merge refresh re-flips the row.
+- `logFailures` — hand-log each `decision` element (its `status`, `step` and `text`) with
+  `log-decision.js`.
+
+Under `MULTISPEC_PARALLEL_WAVE=1` a member never calls it: write one `SKIP` entry naming the
+marker instead (`flow/multispec-parallel-waves.md` runs the wave's build phase exit after
+merge-back).
 
 Ship at every phase exit, not batched — measured at ≥50× headroom against the GitHub API budget
 (spike #405; `git push` itself costs zero REST/GraphQL calls, so per-phase cadence is free
@@ -58,15 +95,9 @@ one didn't, so a single transient failure self-heals without any retry logic of 
 
 `local-merge` runs keep today's behavior: no phase-exit push, one push at finish. So does
 `current-branch` mode (no worktree branch to push mid-run). Either condition is `build/SKILL.md`
-Common Step 7's documented conditional action — write one `SKIP` entry per
-`_shared/auto-decision-log.md`'s degrade-trace rule (the existing failure-degrade warning above is
-unaffected — that already logs on a genuine push failure, a distinct case from this clean no-op):
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP \
-  --section "/build" --step "Common Step 7 phase-exit push (skipped)" \
-  --text "condition: integration-model=local-merge or current-branch mode → fallback: no phase-exit push, one push at finish" --reversibility n/a
-```
+Common Step 7's documented conditional action, and `phase-exit.js --phase build` writes its one
+`SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule (the existing failure-degrade warning above is
+unaffected — that already logs on a genuine push failure, a distinct case from this clean no-op).
 
 Standalone `/build` (no run dir): list the skip in the Step 7 handoff instead (`build/handoff-template.md`'s inline-skip listing).
 
@@ -76,7 +107,8 @@ After every successful phase-exit push — never after a failed one — read the
 state. A PR that conflicts with the integration branch gets no `pull_request` workflow runs from
 GitHub, so its checks list shows nothing at all, which reads exactly like "CI pending" (#2986);
 the cheapest point to learn it is the first phase exit after the base moved, not the merge
-decision. One plain command:
+decision. `phase-exit.js` runs this read itself and carries its output as `mergeState`; on its own
+it is one plain command:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/pr-merge-state.js" --run "$PIPELINE_RUN_DIR" --phase {build|test|review|polish|wrap-up}
@@ -84,8 +116,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/pr-merge-state.js" --run "$PIPELINE_RUN_DIR" --p
 
 At wrap-up's exit, pass `--run` the archive path
 (`$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/`, `_shared/timing-render.md`'s archive-path
-rule) once cleanup item 8 archived the run directory — the CLI exits 3 on the live path it moved
-from. It reads `run-state.json`'s `pr.number` and the PR through `bin/lib/reconcile/pr-state.js`'s
+rule) once cleanup item 8 archived the run directory — to `phase-exit.js` and this CLI alike; both
+exit 3 on the live path it moved from. It reads `run-state.json`'s `pr.number` and the PR through `bin/lib/reconcile/pr-state.js`'s
 `resolvePrStateByNumber` — one resolver call — prints `{state, pr, mergeable, mergeStateStatus, phase,
 logged, reason?}`, and exits 0 in every state; exit 2 or 3 is a tooling problem with the read
 itself — route it like `read-failed`. `local-merge` and `current-branch` runs never reach this
@@ -113,9 +145,10 @@ check (no phase-exit push), and a run with no `pr` in `run-state.json` reads `no
   yet (common straight after a push): no signal, never read as a conflict, and never re-read —
   this check costs the phase one resolver call and no more. The one exception is an `unknown` at
   wrap-up's exit under a leave-open Review Console: `wrap-up/execution-and-verification.md`'s
-  Leave-open mergeability re-check takes one later read of its own. Write one `SKIP` entry per
-  `_shared/auto-decision-log.md`'s degrade-trace rule, the convention
-  `_shared/pr-check-gate.md` applies to its own failed read:
+  Leave-open mergeability re-check takes one later read of its own. The CLI has already written
+  one `SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule, the convention
+  `_shared/pr-check-gate.md` applies to its own failed read. Write it yourself only on `logged:
+  false` (the append failed) or on exit 2/3, which prints no `state` and writes nothing:
   `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "{/build|/test|/review|/flow|/wrap-up}" --step "Post-push merge-state check" --reversibility n/a --text "condition: pr-merge-state.js {state} → fallback: no merge-state signal this phase"` — in
   `{state}` name what you saw: the printed `state` (with its `reason` when it printed one), or
   `exit 2`/`exit 3` when it printed none.

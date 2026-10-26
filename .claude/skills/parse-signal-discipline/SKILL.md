@@ -298,7 +298,7 @@ When mechanizing a prose heuristic into a deterministic check:
     transform that mis-parses produces a clean scan. `tests/helpers/strip-comments.js`'s
     `stripComments` blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `backfill-cli`, `exit-code`, `git-status-optional-locks`,
-    `hooks-harness-refusal`, `path-containment`, `path-guard`, `porcelain-cwd-compare`,
+    `hooks-harness-refusal`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`,
     `raw-markdown-read`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
     `windows-hide-spawn`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
@@ -323,6 +323,20 @@ When mechanizing a prose heuristic into a deterministic check:
     That turned "accurate enough" from a judgment into a count. Pair the comparison with a mutation
     check on every branch the corpus does not reach. A `${}` brace-depth mutant survived both
     every unit test and the whole corpus, so the corpus count says nothing about those branches.
+    A transform that bounds its own work owes a stated answer for the pass that hits the bound.
+    `plugin/bin/lib/hooks/git-command.js`'s heredoc scanner (#4149) caps nesting at
+    `NEST_LEVEL_CAP` and a pass's nested scans at `NEST_STEPS_PER_CHAR` steps per input character
+    plus `NEST_STEPS_FLOOR`, and its two capped outcomes lean opposite ways.
+    `lineLeavesStructureOpen` reads a capped span as a line left open, so every later body stays
+    visible (fail closed). `scanPass` reads a capped pass again whole in the flat, pre-#4149 quote
+    reading and reports no could-not-parse verdict. The #4149 build accepted that divergence from
+    this item as a tradeoff; it is not a shape to copy. The scanner's first capped version fell
+    back to the flat reading partway through a pass, and a reading that switches partway pairs
+    quotes unlike either reading, which can hide a separator both see (`246d40909`). Prefer the fail-closed
+    verdict. Where a capped pass must fall back instead, re-read the whole pass in one reading,
+    state the fallback's direction in the code comment, and pin a nest past the cap with its own
+    case (`tests/hooks-gate-coverage.test.js`'s "a nest past the cap whose fallback would restart
+    the nested reading").
 16. **A precondition probe does not cover the main probe's own failure to run.** Some tools exit
     with one code for both "not found" and "could not run", so item 8's exit-code branch has
     nothing to split on: `git cat-file -e HEAD:<path>` exits 128 for a path missing from HEAD and
@@ -435,6 +449,17 @@ When mechanizing a prose heuristic into a deterministic check:
     evidence, and throw on a lookup miss the caller's own precondition says cannot happen. Pin
     each with a fixture the pre-fix code fails (`tests/bin-lib/run-liveness/index.test.js`,
     `probes.test.js`).
+    The reverse holds for a new consumer of such a verdict: a probe whose subject is a resource
+    many runs share answers for all of them, so its positive evidence can hold every real input at
+    `unknown`, and a sweep that acts only on `dead` then never fires and reports nothing. #4179's
+    premise probe ran `runLiveness` over the 30 main-checkout ad-hoc dirs on disk and got 30/30
+    `unknown`, because the `worktree-lock` and `last-commit` probes read the main checkout every
+    session shares. `plugin/bin/lib/reconcile/archive-merged.js`'s `adHocSessionLiveness`
+    therefore forces the `pathType` probe to `missing`, after which 19 of the 30 read `dead`.
+    Before wiring a verdict to a destructive consumer, measure its distribution over real inputs,
+    neutralise each probe whose subject is not the consumer's subject, and pin the production
+    default with a real fixture as well as an injected stub (`tests/reconcile.test.js`'s
+    production-default liveness case).
 22. **A check that reads its input from an optional context argument owes a fail-closed answer
     when the row it gates is present and the context is not.** A pure decision function that
     takes `ctx = {}` and wraps a check in `if (ctx.x present)` reads "the caller passed nothing" as

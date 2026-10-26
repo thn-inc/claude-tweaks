@@ -44,12 +44,13 @@ count surfacing" section.
    Resolve this run's session-scoped temp paths first, per `_shared/session-tmp-root.md` (cited throughout this file rather than restated):
 
    ```bash
-   eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" WRAP_UP_LEFTOVER_ARGS=wrap-up-leftover-args.json WRAP_UP_LEFTOVER_PAYLOAD=wrap-up-leftover-payload.json)"
+   WRAP_UP_LEFTOVER_ARGS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrap-up-leftover-args.json)"
+   WRAP_UP_LEFTOVER_PAYLOAD="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrap-up-leftover-payload.json)"
    node -e "const {recordPayload,specShapedBody}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
      const args=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));
      const body=specShapedBody(args.compose);
      const p=recordPayload({ ...args.payload, body, deferReason: args.compose.provenance.deferReason });
-     require('fs').writeFileSync(process.argv[2], JSON.stringify(p))" "$WRAP_UP_LEFTOVER_ARGS" "$WRAP_UP_LEFTOVER_PAYLOAD"
+     require('fs').writeFileSync(process.argv[2], JSON.stringify(p))" -- "$WRAP_UP_LEFTOVER_ARGS" "$WRAP_UP_LEFTOVER_PAYLOAD"
    ```
 
    `$WRAP_UP_LEFTOVER_ARGS` carries `{ compose: {header, currentState, deliverables, acceptanceCriteria|openQuestion, releaseNote, filedBy, provenance, keyFiles?, footer}, payload: {title, type, risk?, size?, ready?, parked?} }` — `type`: `task` by default, `bug` for a defect, `feature` for a distinct new capability. The `needs:definition` label is appended at the staging step below (it is a label with no `recordPayload` parameter).
@@ -57,7 +58,7 @@ count surfacing" section.
 3. **Stage it** — render the payload to `{run-dir}/staged/leftover-{slug}.md` (`{slug}` — kebab-case derived from the section title), now through a CLI rather than a direct `writeFileSync` against the run dir — the same anchoring guarantee `bin/log-decision.js` already gives `decisions.md` writes, now extended to this staged file. Re-resolve this fence's session-scoped path (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit the prior fence's shell variable):
 
    ```bash
-   eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" WRAP_UP_LEFTOVER_PAYLOAD=wrap-up-leftover-payload.json)"
+   WRAP_UP_LEFTOVER_PAYLOAD="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrap-up-leftover-payload.json)"
    node -e "const p=require('$WRAP_UP_LEFTOVER_PAYLOAD');
      require('fs').writeFileSync(process.argv[1],
        'Title: ' + p.title + '\nType: ' + p.type + '\nLabels: ' + ((p.labels.concat(process.argv[3]==='true'?['needs:definition']:[]).join(', ')) || 'none') + '\nDefer-reason: ' + process.argv[2] + '\n\n' + p.body)" \
