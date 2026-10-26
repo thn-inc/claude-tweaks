@@ -48,7 +48,7 @@ updates, and `U#` upstream feedback via "On approval" steps 7-9's own per-item p
 unticked item at Resolve time is declined — log it to `decisions.md` exactly as an Override-drill
 decline does today ("declined, no reason given" when the comment carries no free-text rationale,
 since a checkbox has none to read). Every executed or declined item appends its own
-`_shared/auto-decision-log.md` line.
+`_shared/auto-decision-log.md` line. An unticked `staged/reflect-{n}.md` Skill-updates row declines first, through `bin/reflect-apply.js --run {item-run-dir} --item '{name}' --decline 'declined at Review Console, no reason given'`, so the decline is recorded, not only logged; the ticked ones then apply through "On approval" step 2's reflect clause with `--only '{name},…'` naming exactly the ticked rows — never a plain run, which would apply the unticked ones too, and skipped when no reflect row is ticked (`--only` naming no item exits 2).
 
 **Except an `sdd-ruling-*` item** (staged file `staged/sdd-ruling-{N}.md`, or
 `spec-{N}/staged/sdd-ruling-{N}.md` on a multi-spec bundle, #3401): unticked at

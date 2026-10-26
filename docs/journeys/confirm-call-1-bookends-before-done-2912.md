@@ -22,7 +22,7 @@ files:
 - **Should understand:**
   - The check reads `run-state.json`, `config.yml`'s `integration-model` pin, `decisions.md`, the claim blob via git, and `git cat-file -e HEAD:…` for each spec. It never trusts the agent's own narrative, and it runs the same way with or without `gh`.
   - The Manifesto writes the pin (#3350), so on a `pr-first` run the `pr` bookend is evaluated.
-  - With no valid pin (a run older than #3350, or an invalid policy.yml value), the check prints one `verify-run-bookends: degraded — … carries no valid integration-model pin (absent)` line on stderr and leaves the PR bookend unchecked; the exit code is unchanged. The agent logs that line as a `SKIP` decision, never as a failure.
+  - With no valid pin (a run older than #3350, or an invalid policy.yml value), the check prints one `verify-run-bookends: degraded — … carries no valid integration-model pin (absent)` line on stderr and leaves the PR bookend unchecked; the exit code is unchanged. The check logs that line as a `SKIP` decision itself (`logged: true`); the agent writes it by hand only on `logged: false`, never as a failure.
 - **Red flags:**
   - the check skipped because the run was on the `gh` path (it is required on every transport);
   - `"pr":"n/a"` read as proof the draft PR exists (it means the run is pinned `local-merge`, or unpinned);

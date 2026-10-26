@@ -116,11 +116,13 @@ in its own `### Key Files` — two independent signals, never one alone. That ex
 human approval (the staged Close proposal `queue-pull-script.md` stages, never an autonomous
 close) — it is never silent and it never removes a candidate from `dispatch-groups.json` without
 also naming the reason in this run's session-scoped `dispatch-exclusions.json` (`reason:
-'shipped'`, `bin/lib/dispatch/exclusions.js`). A `weak`-tier mention (the base signal
-alone — merged, no second signal) never blocks: the record stays fully eligible, with the mention
-carried forward as build-time context. The residual false negative — a resolving PR that never
-mentions the record at all, by number or otherwise — is accepted: there is no signal left to
-detect it from, and the status quo (dispatch discovers it at build time) is the existing, already-
+'shipped'`, `bin/lib/dispatch/exclusions.js`). A mention from a PR
+opened before the record was created never counts (#4314): a record filed during a PR's build
+is that PR's follow-up, not its target. A `weak`-tier mention (the base signal alone — merged, no
+second signal) never blocks: the record stays fully eligible, with the mention carried forward as
+build-time context. The residual false negative — a resolving PR that never mentions the record at
+all, by number or otherwise, or one already open at filing that only says "refs #N" — is accepted:
+there is no signal left to detect it from, and the status quo (dispatch discovers it at build time) is the existing, already-
 safe fallback this record improves on rather than replaces.
 
 Read `queue-pull-script.md` in this skill's directory and run its script verbatim — it produces this run's session-scoped `dispatch-groups.json` (`_shared/session-tmp-root.md`), which every selection form below reads. That file also carries the MCP-path substitution and the queue-pull-notes pointer.

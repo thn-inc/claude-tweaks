@@ -101,6 +101,9 @@ const GH_TIMEOUT_ENV_VAR = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
 // 8.6s healthy fetch under concurrent dispatch load).
 const DEFAULT_GIT_TIMEOUT_MS = 30000;
 const GIT_TIMEOUT_ENV_VAR = 'CLAUDE_TWEAKS_GIT_TIMEOUT_MS';
+const DEFAULT_GIT_PUSH_TIMEOUT_MS = 600000;
+const GIT_PUSH_TIMEOUT_ENV_VAR = 'CLAUDE_TWEAKS_GIT_PUSH_TIMEOUT_MS';
+const GIT_PUSH_TIMEOUT_BOUNDS = { min: 1000, max: 3600000 };
 const LARGE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 // Memoized once per process — set on first read, never re-read after (the
@@ -108,6 +111,7 @@ const LARGE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 // would add filesystem I/O to a hot path).
 let resolvedGhTimeoutMs;
 let resolvedGitTimeoutMs;
+let resolvedGitPushTimeoutMs;
 
 // A positive-integer env var wins outright; anything else (unset, blank,
 // non-numeric, zero, negative, or outside the `gh-timeout-ms` policy key's
@@ -117,21 +121,33 @@ let resolvedGitTimeoutMs;
 // unbounded value — a malformed override must not crash the caller that
 // only wanted a timeout value, and an operator's typo (an extra zero) must
 // not silently hang every `gh` call for minutes.
-function ghTimeoutFromEnv() {
-  const raw = process.env[GH_TIMEOUT_ENV_VAR];
+// `boundsOf()` returns the {min, max} to clamp against, or nothing; it runs only once a
+// positive integer is set, so an unset variable never loads policy-schema.
+function timeoutFromEnv(envVar, boundsOf) {
+  const raw = process.env[envVar];
   if (raw === undefined || raw === '') return undefined;
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
+  const bounds = boundsOf();
+  if (bounds && (parsed < bounds.min || parsed > bounds.max)) return undefined;
+  return parsed;
+}
+
+// A policy key's own row ({min, max, …}) from POLICY_KEYS.
+function policyKeyBounds(key) {
   try {
     // eslint-disable-next-line global-require
     const { POLICY_KEYS } = require('./policy-schema');
-    const entry = POLICY_KEYS.find((k) => k.key === 'gh-timeout-ms');
-    if (entry && (parsed < entry.min || parsed > entry.max)) return undefined;
+    return POLICY_KEYS.find((k) => k.key === key);
   } catch {
     // policy-schema unresolvable — fall through with the parsed value
     // un-clamped rather than losing an otherwise-legitimate override.
+    return undefined;
   }
-  return parsed;
+}
+
+function ghTimeoutFromEnv() {
+  return timeoutFromEnv(GH_TIMEOUT_ENV_VAR, () => policyKeyBounds('gh-timeout-ms'));
 }
 
 // Policy read is required lazily, inside the function body — never hoisted
@@ -165,20 +181,7 @@ function getGhTimeoutMs() {
 // #3051: same shape as ghTimeoutFromEnv, bounded against the `git-timeout-ms`
 // policy key's own [min, max] rather than a second hard-coded pair.
 function gitTimeoutFromEnv() {
-  const raw = process.env[GIT_TIMEOUT_ENV_VAR];
-  if (raw === undefined || raw === '') return undefined;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
-  try {
-    // eslint-disable-next-line global-require
-    const { POLICY_KEYS } = require('./policy-schema');
-    const entry = POLICY_KEYS.find((k) => k.key === 'git-timeout-ms');
-    if (entry && (parsed < entry.min || parsed > entry.max)) return undefined;
-  } catch {
-    // policy-schema unresolvable — fall through with the parsed value
-    // un-clamped rather than losing an otherwise-legitimate override.
-  }
-  return parsed;
+  return timeoutFromEnv(GIT_TIMEOUT_ENV_VAR, () => policyKeyBounds('git-timeout-ms'));
 }
 
 // Same call-time-lazy-require rationale as ghTimeoutFromPolicy above.
@@ -199,6 +202,16 @@ function resolveGitTimeoutMs() {
 function getGitTimeoutMs() {
   if (resolvedGitTimeoutMs === undefined) resolvedGitTimeoutMs = resolveGitTimeoutMs();
   return resolvedGitTimeoutMs;
+}
+
+// #4026: phase-exit.js's `git push` runs the consumer's pre-push hook (often a test
+// suite) against the remote, so GIT_TIMEOUT_MS's 30 s kills healthy pushes. Env var >
+// a 10-minute default, through the same bounded env reader; no policy key.
+function getGitPushTimeoutMs() {
+  if (resolvedGitPushTimeoutMs === undefined) {
+    resolvedGitPushTimeoutMs = timeoutFromEnv(GIT_PUSH_TIMEOUT_ENV_VAR, () => GIT_PUSH_TIMEOUT_BOUNDS) ?? DEFAULT_GIT_PUSH_TIMEOUT_MS;
+  }
+  return resolvedGitPushTimeoutMs;
 }
 
 function escapeRegExp(s) {
@@ -263,3 +276,4 @@ module.exports = {
 };
 Object.defineProperty(module.exports, 'GH_TIMEOUT_MS', { enumerable: true, get: getGhTimeoutMs });
 Object.defineProperty(module.exports, 'GIT_TIMEOUT_MS', { enumerable: true, get: getGitTimeoutMs });
+Object.defineProperty(module.exports, 'GIT_PUSH_TIMEOUT_MS', { enumerable: true, get: getGitPushTimeoutMs });

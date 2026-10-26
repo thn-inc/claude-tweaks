@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, `gh` CLI through an injected `deps.gh(args, input)` runner.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-25T085140-record-4199/work/4199-spec.md`
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-25T085140-record-4199/work/4199-spec.md`
 
 ## Corrected premise (probe, 2026-10-25, logged as `premise reversed:` in decisions.md)
 
