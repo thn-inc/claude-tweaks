@@ -204,3 +204,47 @@ test('#1328: a clean run dir whose worktree does not match any locked scope entr
   assert.strictEqual(findings.length, 1);
   assert.strictEqual(findings[0].remedy, 'auto');
 });
+
+// #4138: a clean `*-tidy-standalone` / `*-sweep-standalone` run dir that still
+// holds staged items is still approvable — `/claude-tweaks:tidy --approve`
+// finds it by name glob under pipelines/, never under archive/, and archives
+// it itself. The probe must leave it in place rather than flag it remedy: auto.
+function writeStaged(dir, names) {
+  fs.mkdirSync(path.join(dir, 'staged'), { recursive: true });
+  for (const name of names) fs.writeFileSync(path.join(dir, 'staged', name), 'proposal');
+}
+
+test('#4138: a clean tidy-standalone run dir with a non-empty staged/ is not reported', () => {
+  const root = makeFixture();
+  const dir = writeRun(root, '2026-01-01T000000-tidy-standalone', { status: 'clean' });
+  writeStaged(dir, ['01-close-issue.md']);
+  const { ran, findings } = probePipelineRuns({ cwd: root });
+  assert.strictEqual(ran, true);
+  assert.deepStrictEqual(findings, []);
+});
+
+test('#4138: a clean sweep-standalone run dir with a non-empty staged/ is not reported', () => {
+  const root = makeFixture();
+  const dir = writeRun(root, '2026-01-01T000000-sweep-standalone', { status: 'clean' });
+  writeStaged(dir, ['01-close-issue.md']);
+  const { findings } = probePipelineRuns({ cwd: root });
+  assert.deepStrictEqual(findings, []);
+});
+
+test('#4138 control: a clean tidy-standalone run dir with an empty or absent staged/ keeps remedy auto', () => {
+  const root = makeFixture();
+  writeStaged(writeRun(root, '2026-01-01T000000-tidy-standalone', { status: 'clean' }), []);
+  writeRun(root, '2026-01-02T000000-tidy-standalone', { status: 'clean' });
+  const { findings } = probePipelineRuns({ cwd: root });
+  assert.strictEqual(findings.length, 2);
+  assert.ok(findings.every((f) => f.remedy === 'auto'));
+});
+
+test('#4138 control: a clean non-tidy/sweep run dir with a non-empty staged/ is still reported', () => {
+  const root = makeFixture();
+  writeStaged(writeRun(root, '2026-01-01T000000-dream-standalone', { status: 'clean' }), ['01-proposal.md']);
+  writeStaged(writeRun(root, '2026-01-01T000000-record-42', { status: 'clean' }), ['01-proposal.md']);
+  const { findings } = probePipelineRuns({ cwd: root });
+  assert.strictEqual(findings.length, 2);
+  assert.ok(findings.every((f) => f.remedy === 'auto'));
+});

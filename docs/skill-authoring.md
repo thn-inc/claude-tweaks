@@ -122,6 +122,14 @@ fresh dispatch would have to re-derive it from scratch.
   Direct invocation may pass `--source <parent-skill>` as an explicit fallback when ambiguity exists (rare; `$PIPELINE_RUN_DIR` is the primary signal).
   ```
 
+  **Return to caller after a bare render.** A component skill or mode whose last step is a bare render — an "Output ONLY these lines" block, a `## Output to caller` return contract (`design-wrapper`'s modes), or any other verdict block its caller parses (`assess-agent-autonomy`'s four mode files, `challenge`'s framing-check) — must state that control returns to the caller, on its own line immediately after the render template (when the template lists several shapes, the line follows the last one), in exactly this wording:
+
+  ```markdown
+  **Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.
+  ```
+
+  Omitting `## Next Actions` tells the model what not to render, not that the caller's procedure continues, so a model that renders the verdict as its whole reply ends the caller's turn mid-procedure (#4117: `/flow`'s Manifesto stopped after `ceremony-check #4041` before writing `config.yml`). The conformance suite `tests/component-return-to-caller-conformance.test.js` pins this line in every `plugin/skills/**/*.md` file containing "Output ONLY" or a `## Output to caller` section, plus a hand-kept roster of inline modes whose render says neither.
+
 - **Next Actions placement** — Render as `## Next Actions` (top-level section, NOT `###`) placed **at the end of the workflow steps and before Component-Skill Contract / Anti-Patterns**. Conceptually: Next Actions is the user-facing handoff after the last workflow Step; CSC and Anti-Patterns are meta-documentation for skill authors and should come last. The retired Relationship table was meta-documentation of the same kind — which is why it could leave the shipped payload entirely rather than merely move down the file. A skill with no Component-Skill Contract still places Next Actions before Anti-Patterns.
 
 ## Frontmatter conventions

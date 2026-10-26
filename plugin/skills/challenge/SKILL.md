@@ -65,6 +65,8 @@ FRAMING: open | solution-baked
 RATIONALE: {one paragraph naming the specific content signal the verdict is based on}
 ```
 
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.
+
 On `solution-baked`, the RATIONALE must name the assumptions the caller is to write into `## Gotchas` — state each as a claim plus its validation status, e.g. "assumes read volume is the bottleneck (unvalidated — no profile cited)".
 
 ## Mode: bare `#N` (evidence-or-accept-risk)

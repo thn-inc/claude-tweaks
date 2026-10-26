@@ -65,6 +65,7 @@ const MIGRATED_FILES = [
   'wrap-up/unblocked-records.md',
   'wrap-up/verification-brief-parent-gate.md',
   '_shared/pr-run-comments.md', // #4065: Find payload + comment body
+  '_shared/pr-first-merge.md', // #4173: Step 2.5 park comment + checks capture
 ];
 
 // Matches a literal, unscoped /tmp/{prefix}-*.{ext} path -- the shape this
@@ -154,4 +155,44 @@ test('_shared/session-tmp-root.md documents the degrade rule and the record-suff
 test('bin/lib/session-tmp.js is a pure module (no gh/MCP/network calls)', () => {
   const text = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'session-tmp.js'));
   assert.doesNotMatch(text, /execFileSync|execSync|spawn|fetch\(/, 'must stay pure filesystem helpers, no network/process calls');
+});
+
+// #4173: pr-first-merge.md Step 2.5 writes three scratch files -- the bounded watch's checks and
+// head-runs captures and the Red path's park-comment body. All resolve through bin/session-tmp-resolve.js, and the
+// printed literal is substituted into the fence. PRE_CHANGE_PARK_FENCE is the Red path's
+// printf + --body-file pair as it stood at HEAD before #4173 (the go-red half).
+const PRE_CHANGE_PARK_FENCE = String.raw`printf 'Parked by merge-verification (%s): %s on PR #%s. Resume once green.\n' "$VALUE" "$REASON" "$PR" > /tmp/park-comment-{n}.md
+gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file /tmp/park-comment-{n}.md`;
+// The bounded watch's capture line as it stood before #4173.
+const PRE_CHANGE_CHECKS_LINE = String.raw`gh pr checks {pr-number} --repo {owner}/{repo} > /tmp/pr-checks-{n}.txt 2>&1; RC=$?`;
+// The watch's head-runs capture as #4199 landed it on main, before this migration.
+const PRE_CHANGE_RUNS_LINE = String.raw`0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status > /tmp/pr-runs-{n}.json || { RC=2; break; }`;
+// One regex per ban, asserted both ways: absent from the live file, present in the frozen pre-change
+// text -- the same pattern object on both sides, so a green live check cannot be a regex that never
+// matched anything.
+const FIXED_PARK_PATH_RE = /\/tmp\/park-comment-/;
+const FIXED_CHECKS_PATH_RE = /\/tmp\/pr-checks-/;
+const FIXED_RUNS_PATH_RE = /\/tmp\/pr-runs-/;
+
+test('#4173: Step 2.5 resolves its checks and head-runs captures and park-comment body through session-tmp-resolve.js', () => {
+  const text = readText(path.join(ROOT, '_shared', 'pr-first-merge.md'));
+  assert.doesNotMatch(text, FIXED_PARK_PATH_RE, 'no literal /tmp/park-comment- path remains');
+  assert.doesNotMatch(text, FIXED_CHECKS_PATH_RE, 'no literal /tmp/pr-checks- path remains');
+  assert.doesNotMatch(text, FIXED_RUNS_PATH_RE, 'no literal /tmp/pr-runs- path remains');
+  const COMBINED_RESOLVE = 'node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PR_RUNS=pr-runs-{n}.json PARK_COMMENT=park-comment-{n}.md';
+  assert.ok(text.includes(COMBINED_RESOLVE), 'Step 2.5 resolves all three scratch paths in one bin/session-tmp-resolve.js call');
+  const stateAnchor = text.indexOf('**Read state first');
+  const stateFence = text.indexOf('```bash\ngh pr view', stateAnchor);
+  assert.ok(stateAnchor >= 0 && stateFence > stateAnchor, 'the state-read section and its gh pr view fence are present');
+  const resolveAt = text.indexOf(COMBINED_RESOLVE);
+  assert.ok(resolveAt > stateAnchor && resolveAt < stateFence, 'the combined resolve precedes the state-read gh pr view fence, so the Red path (reachable without a watch) is covered');
+  assert.match(text, /> "\{pr-checks-path\}" 2>&1; RC=\$\?/, 'the watch loop redirects into the resolved {pr-checks-path}');
+  assert.match(text, /--json status > "\{pr-runs-path\}" \|\|/, 'the watch loop writes head runs to the resolved {pr-runs-path}');
+  assert.match(text, /-- "\{pr-runs-path\}"\)/, 'the pending-runs count reads the resolved {pr-runs-path}');
+  assert.match(text, /printf .* "\$VALUE" "\$REASON" "\$PR" > "\{park-comment-path\}"/, 'the printf redirect writes the resolved {park-comment-path}');
+  assert.match(text, /--body-file "\{park-comment-path\}"/, '--body-file reads the resolved {park-comment-path}');
+  assert.doesNotMatch(PRE_CHANGE_PARK_FENCE, /session-tmp-resolve\.js/, 'go-red: the pre-change park fence does not resolve through session-tmp-resolve.js');
+  assert.match(PRE_CHANGE_PARK_FENCE, FIXED_PARK_PATH_RE, 'go-red: the park-path ban matches the frozen pre-change fence');
+  assert.match(PRE_CHANGE_CHECKS_LINE, FIXED_CHECKS_PATH_RE, 'go-red: the checks-path ban matches the frozen pre-change watch line');
+  assert.match(PRE_CHANGE_RUNS_LINE, FIXED_RUNS_PATH_RE, 'go-red: the runs-path ban matches the frozen pre-change runs line');
 });

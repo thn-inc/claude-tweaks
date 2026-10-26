@@ -279,6 +279,36 @@ test('AC2.1: archive-run archives an executed PR console with only executed/drop
   assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
 });
 
+// #4170: a planned can't-tell filing with no filed line in decisions.md is `filing-pending` residue;
+// the refusal names the `console-filings.js --only` re-run, and logging the filed line clears it.
+function plannedFilingConsole(runDir, { filed = false } = {}) {
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:aaaaaaaaaaaa', section: 'Low-confidence findings', resolution: 'filed', reason: 'r' }],
+    filings: [{ item: 'tiebreak:aaaaaaaaaaaa', fingerprint: 'consolefinding-0123abcd', title: 't' }],
+  }));
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '## /wrap-up\n' + (filed
+    ? '- AUTO 10:00:00 — Queue write: tiebreak:aaaaaaaaaaaa filed as #501 (work-fingerprint consolefinding-0123abcd). Reversibility: n/a.\n'
+    : ''));
+}
+
+test('AC3.1: archive-run refuses a console whose can\'t-tell filings never ran, naming the console-filings.js --only re-run', () => {
+  const { root, runDir } = runDirFixture('clean');
+  plannedFilingConsole(runDir);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\) no human has reviewed; re-run the planned filing\(s\): console-filings\.js --run ".*" --existing <issues\.json> --out-dir <dir> --only 'tiebreak:aaaaaaaaaaaa', then file each printed `file` entry and log it as '\{item\} filed as #\{n\} \(work-fingerprint \{fp\}\)', hand-log any `logFailures` item as '\{item\} already filed as #\{n\} \(work-fingerprint \{fp\}\)' \(the CLI logs each `deduped` entry itself\), via log-decision\.js `--run` that console's dir, per wrap-up\/review-console\.md's Can't-tell filings; review them, then run console-residue\.js --ack --run .*\) — unresolved: tiebreak:aaaaaaaaaaaa \(filing-pending\)\n$/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('AC4.1: archive-run archives once the planned filing\'s filed line is logged', () => {
+  const { root, runDir } = runDirFixture('clean');
+  plannedFilingConsole(runDir, { filed: true });
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+});
+
 // #1130 AC2: the two-call dispatch handoff shape, walked end-to-end on ONE
 // run dir — call 1 (build,test) parks the run with a rendered-but-unanswered
 // PR console; between calls the run is closed terminal (close-run) but its
