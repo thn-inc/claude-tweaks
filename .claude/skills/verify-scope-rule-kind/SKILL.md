@@ -45,7 +45,7 @@ Before calling a new rule kind or key done, confirm each of these:
 
 | Pattern | Why It Fails |
 |---|---|
-| Committing a rule shape the previous release's reader rejects, because the full suite passes | The suite runs current code; nothing runs the previous reader over the committed file, so the break only appears in an installed build |
+| Committing a rule shape the previous release's reader rejects, because the full suite passes | Every test except the release-reader pin in `tests/verify-scope-declaration.test.js` (#4135) runs current code; a clone with no release tag skips that pin, so the break can still appear only in an installed build |
 | Loading the input a rule kind reads before selection knows a rule matched | Every run pays the load (and any fetch) even when the delta never reaches that rule |
 | Leaving `report.json` fields populated for a run that never read the input | A reader of the report takes stale values for what the run used |
 | Adding the rule kind to `declaration.js` and `scope.js` only | `verify.js`, the docs, the Re-verify scoping table and the starter drift from the engine with every suite green |
