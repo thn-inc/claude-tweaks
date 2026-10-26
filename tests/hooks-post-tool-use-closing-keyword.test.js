@@ -208,15 +208,19 @@ test('#4303: a commit past the cwd cap is not warned about for another checkout\
 // #4303 (P2a): from a cwd outside any repo there is no main checkout to look in, but the cwds the
 // collapse dropped name one. 16 `cd /tmp/ct-4303-aK &&` (every aK present, each cd succeeding),
 // then `cd wt/sub; git commit -qm "work on #12"`: bash 3.2 and 5 commit in the nested worktree wt.
-// The list's end drops `wt/sub`. e8473c015, 4e7d54a9d and 3b26440ad missed the warning (e8473c015's
-// pre-tool-use denied the command outright, citing a policy no repo here has); base d9aa6b82d and
-// 40b34714a warn. Skipped on win32: the command splices the native temp path.
+// The list's end joins past the cap. e8473c015, 4e7d54a9d and 3b26440ad missed the warning
+// (e8473c015's pre-tool-use denied the command outright, citing a policy no repo here has); base
+// d9aa6b82d and 40b34714a warn. The && chain is the walk's own branching (base took every cd to
+// succeed and never collapsed there), so base's own reading of the command names wt/sub, and the
+// lost commit is looked for in its checkout too. wt/sub exists, as it does for bash. Skipped on
+// win32: the command splices the native temp path.
 test('#4303: a commit past the cwd cap from outside any repo is still checked in the checkout the collapse dropped', {
   skip: process.platform === 'win32' && 'win32: the command splices a native temp path, whose backslashes the scanner reads as escapes',
 }, () => {
   const main = gitRepoWithMessage('init', '2020-01-01T00:00:00');
   const wt = path.join(main, '.claude', 'worktrees', 'x');
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt]);
+  fs.mkdirSync(path.join(wt, 'sub'));
   execFileSync('git', ['-C', wt, 'commit', '--allow-empty', '-qm', 'work on #12'], {
     env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
   });

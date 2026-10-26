@@ -598,15 +598,18 @@ function run(ctx) {
   const hasCommand = typeof command === 'string' && !!command;
   // Computed once and shared below — the breadcrumb loop and the
   // closing-keyword check both need the same command/cwd's git targets.
-  const targets = hasCommand ? gitTargets(command, ctx.cwd) : [];
+  const resolved = hasCommand ? gitTargets(command, ctx.cwd) : [];
   // #4303: a git command the scanner resolved from a cwd it lost (`lost: true`, past
   // git-command.js's CWD_SET_CAP) ran in a repo the walk does not know, and its `dir` is only the
   // walk's start. Its commit is looked for in every candidate repo instead: that start, the main
-  // checkout pre-tool-use's walk collapses onto, the main checkout of each of the target's readings
-  // (`bases`: each cwd the walk dropped when it lost the cwd, moved by every relative cd since),
-  // and each worktree `git worktree list` gives for those (the lost cwd may have been any of them).
-  // None is invented: each is a real checkout, and only a fresh commit in one counts
-  // (lostCommitFor, checkClosingKeyword).
+  // checkout pre-tool-use's walk collapses onto, the main checkout of each of the command's readings
+  // (the targets marked `reading`: base d9aa6b82d's own reading of the command, git-command.js's
+  // BASE_VIEW), and each worktree `git worktree list` gives for those (the lost cwd may have been
+  // any of them). A reading is a candidate, never a commit target of its own. None is invented:
+  // each is a real checkout, and only a fresh commit in one counts (lostCommitFor,
+  // checkClosingKeyword).
+  const targets = resolved.filter((t) => !t.reading);
+  const readingDirs = resolved.filter((t) => t.reading).map((t) => t.dir);
   const checkoutsByMain = new Map();
   const checkoutsOf = (main) => {
     if (!checkoutsByMain.has(main)) {
@@ -622,7 +625,7 @@ function run(ctx) {
   };
   const candidateDirs = (t) => {
     if (!t.lost) return [t.dir];
-    const mains = new Set([ctx.cwd || t.dir, ...(t.bases || [])].map(mainCheckoutOf).filter(Boolean));
+    const mains = new Set([ctx.cwd || t.dir, ...readingDirs].map(mainCheckoutOf).filter(Boolean));
     return [...new Set([t.dir, ...[...mains].flatMap(checkoutsOf)].map((d) => path.resolve(d)))];
   };
 
