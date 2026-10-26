@@ -51,17 +51,20 @@ files:
 - **URL:** the same report's `scope.impact.selectedFiles`.
 - **Action:** Add `plugin/skills/new-skill/SKILL.md`, or edit a test file.
 - **Should feel:** Like the right tests woke up. The corpus-sweeping tests, which list `plugin/skills/`, are selected for the new file, and the meta-tests that read every test file are selected for the test edit.
-- **Should understand:** A directory listing matches only an added or deleted path beneath it, because modifying a file does not change a listing. A probe of an ancestor directory also matches an add or a delete.
+- **Should understand:**
+  - A directory listing matches only an added or deleted path beneath it, because modifying a file does not change a listing. A probe of an ancestor directory also matches an add or a delete.
+  - A test file edited after the map was traced (on main before the branch's base, say) runs too: its recorded reads may be stale. `scope.impact.driftTests` names these drifted tests and `driftSelected` counts them. A test the branch itself changed is counted as a changed test, not as drift.
 - **Red flags:**
   - A new file under a listed directory selecting only the tests that read it directly.
   - A changed test file running alone, without the guard tests that read it.
+  - A test edited since the map's commit that is left out when a path it now reads changes.
 
 ### 4. Hit a fallback
 - **URL:** the verify stdout and `scope.impact.fallback`.
 - **Action:** Verify on a branch that has drifted far behind, from a checkout with no map, or after changing a path no test reads.
 - **Should feel:** Safe, not mysterious. The output reads `Impact: full tests — {reason}`, for example `map-missing`, `map-stale: 240 commits > 200`, `map-not-ancestor` or `untraced-path: docs/new.md`.
 - **Should understand:**
-  - An unknown never selects fewer tests.
+  - An unknown never selects fewer tests. When git cannot list the tests that differ since the map's commit, the reason is `map-drift-unreadable`.
   - Changing `tools/run-tests.js` or the tracer always runs the whole suite through its own `"suites": "*"` rule.
   - Standalone `/claude-tweaks:test` and a standalone `/build` stay full.
 - **Red flags:**
@@ -71,4 +74,5 @@ files:
 ## Origin
 - Created during the build of #4024. A 14-day transcript analysis found verify and `npm test` consumed about 78 hours of tool time, roughly a quarter of dispatch-agent wall time. #3968, a two-line markdown change, still paid a 476-second full run.
 - Updated during the build of #4158: a failed trace write now fails the trace closed, where before it was silently dropped.
+- Updated during the build of #4132: test files that differ between the map's commit and HEAD now run as drift, closing the map-to-base drift limit.
 - Related: `declare-a-verify-scope-1924.md` (the declaration this extends) and `run-the-suite-alongside-sibling-sessions-3969.md` (the suite slot a subset run holds for less time).
