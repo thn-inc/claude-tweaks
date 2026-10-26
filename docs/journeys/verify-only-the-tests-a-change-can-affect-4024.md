@@ -53,7 +53,7 @@ files:
 - **Should feel:** Like the right tests woke up. The corpus-sweeping tests, which list `plugin/skills/`, are selected for the new file, and the meta-tests that read every test file are selected for the test edit.
 - **Should understand:**
   - A directory listing matches only an added or deleted path beneath it, because modifying a file does not change a listing. A probe of an ancestor directory also matches an add or a delete.
-  - A test file edited after the map was traced (on main before the branch's base, say) runs too: its recorded reads may be stale. `scope.impact.driftTests` names these drifted tests and `driftSelected` counts them. A test the branch itself changed is counted as a changed test, not as drift.
+  - A test file edited after the map was traced (on main before the branch's base, say) runs too: its recorded reads may be stale. `scope.impact.driftTests` names these drifted tests and `driftSelected` counts them, and the `Impact:` line ends `, N drift` inside its parentheses when there are any. A test the branch itself changed is counted as a changed test, not as drift.
 - **Red flags:**
   - A new file under a listed directory selecting only the tests that read it directly.
   - A changed test file running alone, without the guard tests that read it.

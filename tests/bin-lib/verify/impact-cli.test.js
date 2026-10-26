@@ -157,6 +157,7 @@ test('a test edited after the map commit to read src/x.js is selected when src/x
   assert.deepStrictEqual(imp.driftTests, ['tests/b.test.js']);
   assert.strictEqual(imp.driftSelected, 1);
   assert.strictEqual(imp.fallback, null);
+  assert.match(run.stdout, /^Impact: 2 of 2 test file\(s\) selected \(map [0-9a-f]{9}, \d+ commit\(s\) old, 1 drift\)$/m, 'the stdout line names the drift count');
 });
 
 test('a test the branch itself edited is a changed test, not drift, with the map at the base (#4132)', async () => {
@@ -173,6 +174,7 @@ test('a test the branch itself edited is a changed test, not drift, with the map
   assert.deepStrictEqual(imp.driftTests, []);
   assert.strictEqual(imp.driftSelected, 0);
   assert.strictEqual(imp.fallback, null);
+  assert.doesNotMatch(run.stdout, /drift/, 'a run with no drift prints the Impact line as before');
 });
 
 test('a subset run leaves the count stamp untouched', async () => {
