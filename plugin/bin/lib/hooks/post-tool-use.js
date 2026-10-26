@@ -95,13 +95,13 @@ const BARE_ISSUE_REF_RE = /#\d+/g;
 // Harness-wide, not code-health-specific: fires for any bare issue reference,
 // including harness-health-labelled or human-filed issues.
 //
-// Takes `recentByDir` (dir -> that dir's own recentCommits() results, built
-// once in run() and shared with the breadcrumb loop) rather than the raw
-// target list, so each of possibly several commit-action targets sharing one
-// dir is checked against its OWN commit instead of every target re-reading
-// back the same current-HEAD commit.
-function checkClosingKeyword(recentByDir) {
-  for (const commits of recentByDir.values()) {
+// Takes `commitLists` (each dir's own recentCommits() results, built once in
+// run() and shared with the breadcrumb loop, plus the commits run() matched to
+// lost targets, #4303) rather than the raw target list, so each of possibly
+// several commit-action targets sharing one dir is checked against its OWN
+// commit instead of every target re-reading back the same current-HEAD commit.
+function checkClosingKeyword(commitLists) {
+  for (const commits of commitLists) {
     for (const commit of commits) {
       // Guard against a `git commit` that never actually landed — see
       // recentCommits()'s comment. If this commit isn't fresh, skip it
@@ -598,23 +598,33 @@ function run(ctx) {
   const hasCommand = typeof command === 'string' && !!command;
   // Computed once and shared below — the breadcrumb loop and the
   // closing-keyword check both need the same command/cwd's git targets.
-  const targets = hasCommand ? gitTargets(command, ctx.cwd) : [];
+  const droppedCwds = [];
+  const targets = hasCommand ? gitTargets(command, ctx.cwd, { onDroppedCwd: (p) => { droppedCwds.push(p); return false; } }) : [];
   // #4303: a git command the scanner resolved from a cwd it lost (`lost: true`, past
   // git-command.js's CWD_SET_CAP) ran in a repo the walk does not know, and its `dir` is only the
   // walk's start. Its commit is looked for in every candidate repo instead: that start, the main
-  // checkout pre-tool-use's walk collapses onto, and each worktree `git worktree list` gives for
-  // it (the lost cwd may have been any of them). None is invented: each is a real checkout of the
-  // session's own repo, and only a fresh commit in one counts (commitDirFor, checkClosingKeyword).
-  let lostCandidates = null;
+  // checkout pre-tool-use's walk collapses onto, the main checkout of each cwd the walk dropped
+  // when it lost the cwd (`onDroppedCwd`: an absolute `cd` among them may have put bash in another
+  // repo) and of each of the target's base readings (`bases`), and each worktree `git worktree
+  // list` gives for those (the lost cwd may have been any of them). None is invented: each is a
+  // real checkout, and only a fresh commit in one counts (lostCommitFor, checkClosingKeyword).
+  const checkoutsByMain = new Map();
+  const checkoutsOf = (main) => {
+    if (!checkoutsByMain.has(main)) {
+      const listed = runGit(['worktree', 'list', '--porcelain'], main).stdout;
+      checkoutsByMain.set(main, [main, ...parseWorktreeList(listed).filter((e) => !e.bare && !e.prunable).map((e) => e.path)]);
+    }
+    return checkoutsByMain.get(main);
+  };
+  const mainOf = new Map();
+  const mainCheckoutOf = (d) => {
+    if (!mainOf.has(d)) mainOf.set(d, wtDetect.mainCheckoutRoot(d));
+    return mainOf.get(d);
+  };
   const candidateDirs = (t) => {
     if (!t.lost) return [t.dir];
-    if (lostCandidates === null) {
-      const main = wtDetect.mainCheckoutRoot(ctx.cwd || t.dir);
-      const listed = main ? runGit(['worktree', 'list', '--porcelain'], main).stdout : null;
-      const worktrees = parseWorktreeList(listed).filter((e) => !e.bare && !e.prunable).map((e) => path.resolve(e.path));
-      lostCandidates = [...new Set([main, ...worktrees].filter(Boolean).map((d) => path.resolve(d)))];
-    }
-    return [t.dir, ...lostCandidates.filter((d) => d !== path.resolve(t.dir))];
+    const mains = new Set([ctx.cwd || t.dir, ...droppedCwds, ...(t.bases || [])].map(mainCheckoutOf).filter(Boolean));
+    return [...new Set([t.dir, ...[...mains].flatMap(checkoutsOf)].map((d) => path.resolve(d)))];
   };
 
   // Fetch each dir's own N most recent commits ONCE per dir (a single git
@@ -625,10 +635,11 @@ function run(ctx) {
   // gets each of its own real commits back, not the same current-HEAD
   // commit read N times. Oldest-first, to line up with `targets`' own
   // left-to-right command order (git log itself returns newest-first).
+  // A lost target (#4303) has no dir of its own, so it adds to no count here.
   const commitCountByDir = new Map();
   for (const t of targets) {
-    if (t.action !== 'commit') continue;
-    for (const dir of candidateDirs(t)) commitCountByDir.set(dir, (commitCountByDir.get(dir) || 0) + 1);
+    if (t.action !== 'commit' || t.lost) continue;
+    commitCountByDir.set(t.dir, (commitCountByDir.get(t.dir) || 0) + 1);
   }
   const recentByDir = new Map();
   for (const [dir, count] of commitCountByDir) recentByDir.set(dir, recentCommits(dir, count).reverse());
@@ -643,18 +654,42 @@ function run(ctx) {
     dirCursor.set(dir, (dirCursor.get(dir) || 0) + 1);
     return commit;
   }
-  // The dir a commit target's commit landed in: its own, or for a lost one (#4303) the candidate
-  // whose next commit is the freshest inside COMMIT_FRESHNESS_WINDOW_SECONDS — the commit this
-  // call just made — and the walk's start when no candidate has a fresh one, as before #4303.
-  function commitDirFor(target) {
-    const dirs = candidateDirs(target);
-    let best = null;
-    for (const dir of dirs.length > 1 ? dirs : []) {
-      const commit = peekCommitFor(dir);
-      if (!commit || commit.ts === null || Math.abs(Date.now() / 1000 - commit.ts) > COMMIT_FRESHNESS_WINDOW_SECONDS) continue;
-      if (!best || commit.ts > best.ts) best = { dir, ts: commit.ts };
+  // #4303: the commit a lost commit target made. Each candidate offers its fresh commits (inside
+  // COMMIT_FRESHNESS_WINDOW_SECONDS) that no other target's commit list above already holds, read
+  // once per candidate. When the candidates offer one commit, the target takes it (each one's
+  // oldest): the commit this call made there. With none (the commit did not land), or with two (a
+  // fresh commit in a second checkout, maybe another session's, so which one is this command's own is
+  // unknowable), it stays at the walk's start as before #4303, with that checkout's HEAD, and the
+  // closing-keyword check judges no commit for it: no warning beats a warning about another
+  // session's commit.
+  const lostCommitFor = new Map();
+  const judgedLostCommits = [];
+  const lostCommitTargets = targets.filter((t) => t.action === 'commit' && t.lost);
+  if (lostCommitTargets.length) {
+    const held = new Set();
+    for (const list of recentByDir.values()) for (const c of list) if (c.hash) held.add(c.hash);
+    const isFresh = (c) => c.ts !== null && Math.abs(Date.now() / 1000 - c.ts) <= COMMIT_FRESHNESS_WINDOW_SECONDS;
+    const offers = new Map();
+    const offerOf = (dir) => {
+      if (!offers.has(dir)) {
+        const recent = recentCommits(dir, (commitCountByDir.get(dir) || 0) + lostCommitTargets.length);
+        offers.set(dir, recent.filter((c) => c.hash && isFresh(c) && !held.has(c.hash)).reverse());
+      }
+      return offers.get(dir);
+    };
+    for (const t of lostCommitTargets) {
+      const offering = candidateDirs(t).filter((dir) => offerOf(dir).length > 0);
+      // Two candidates can be one checkout (the start a subdirectory of it): one commit offered is one.
+      const hashes = new Set(offering.map((dir) => offerOf(dir)[0].hash));
+      if (hashes.size === 1) {
+        const commit = offerOf(offering[0])[0];
+        for (const list of offers.values()) if (list.length && list[0].hash === commit.hash) list.shift();
+        lostCommitFor.set(t, { dir: offering[0], commit });
+        judgedLostCommits.push(commit);
+      } else {
+        lostCommitFor.set(t, { dir: t.dir, commit: null });
+      }
     }
-    return best ? best.dir : target.dir;
   }
   // #2553: a 'push' target carries no per-call commit of its own (unlike
   // 'commit', which advances through nextCommitFor above) — it pushes
@@ -695,9 +730,10 @@ function run(ctx) {
       seen.add(`${ev.action}\u0000${ev.hash}\u0000${ev.dir}`);
     }
     for (const target of targets) {
-      const dir = target.action === 'commit' ? commitDirFor(target) : target.dir;
-      const commit = target.action === 'commit' ? nextCommitFor(dir) : null;
-      const hash = commit ? commit.hash : (target.action === 'push' ? headHashFor(dir) : null);
+      const lostCommit = lostCommitFor.get(target);
+      const dir = lostCommit ? lostCommit.dir : target.dir;
+      const commit = lostCommit ? lostCommit.commit : (target.action === 'commit' ? nextCommitFor(dir) : null);
+      const hash = commit ? commit.hash : (target.action === 'push' || lostCommit ? headHashFor(dir) : null);
       if (hash) {
         const key = `${target.action}\u0000${hash}\u0000${dir}`;
         if (seen.has(key)) continue;
@@ -713,7 +749,7 @@ function run(ctx) {
 
   // Closing-keyword check (warn tier) — deliberately NOT gated on ctx.runDir.
   if (hasCommand) {
-    const warning = checkClosingKeyword(recentByDir);
+    const warning = checkClosingKeyword([...recentByDir.values(), judgedLostCommits]);
     if (warning) return warning;
   }
 

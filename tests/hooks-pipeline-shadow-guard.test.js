@@ -334,6 +334,40 @@ test('#4303: past the cwd cap, a lost shadow run dir is denied whatever the segm
   assertDenied(pre.run({ input: bashInput(`${groups(20)}mkdir -p ../${name2}/.Claude-Tweaks/Pipelines/2026-x`, wt), runDir: null, runState: null, cwd: wt }));
 });
 
+// #4303 (A2r, A2rw): a second collapse keeps the segment spelled before it. With
+// wt2/.claude-tweaks/pipelines present, `G16 cd ../wt2/.claude-tweaks/pipelines; G16 mkdir 2026-x`
+// (and `&& echo x > 2026-x/decisions.md`): bash 3.2 and 5 create wt2/.claude-tweaks/pipelines/2026-x
+// (and decisions.md in it), nested and sibling alike. e8473c015 restarted the lost cwd's trail at the
+// second collapse and allowed both, as did 4e7d54a9d, 3b26440ad, 40b34714a and base d9aa6b82d.
+test('#4303: past a second cwd-cap collapse, a shadow run dir named before it is denied', () => {
+  for (const nested of [true, false]) {
+    const { wt, wt2, name2 } = twoWorktrees4303({ nested });
+    fs.mkdirSync(path.join(wt2, '.claude-tweaks', 'pipelines'), { recursive: true });
+    for (const [shape, tail] of [['A2r', 'mkdir 2026-x'], ['A2rw', 'mkdir 2026-x && echo x > 2026-x/decisions.md']]) {
+      const out = pre.run({ input: bashInput(`${groups(16)}cd ../${name2}/.claude-tweaks/pipelines; ${groups(16)}${tail}`, wt), runDir: null, runState: null, cwd: wt });
+      assertDenied(out);
+      assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /more ways than the hook's shell scanner follows/, `${shape} nested=${nested}`);
+    }
+  }
+});
+
+// #4303 (S5): from a session cwd inside an existing run dir, wt/.claude-tweaks/pipelines/2026-old,
+// `G16 mkdir ../2026-x` (every cd failing): bash 3.2 and 5 create the new run dir
+// wt/.claude-tweaks/pipelines/2026-x, nested and sibling alike. Its text names no segment, and the
+// lost cwd's stand-in clamped it under the start (2026-old/2026-x, no new run dir): e8473c015 and
+// 4e7d54a9d allowed it. Base d9aa6b82d, 40b34714a and 3b26440ad deny, reading it from the start; that
+// reading (the lost target's `bases`) is now checked as an ordinary target.
+test('#4303: past the cwd cap, a run dir made beside the session\'s own run dir is denied by base\'s reading', () => {
+  for (const nested of [true, false]) {
+    const { wt } = twoWorktrees4303({ nested });
+    const cwd = path.join(wt, '.claude-tweaks', 'pipelines', '2026-old');
+    fs.mkdirSync(cwd, { recursive: true });
+    const out = pre.run({ input: bashInput(`${groups(16)}mkdir ../2026-x`, cwd), runDir: null, runState: null, cwd });
+    assertDenied(out);
+    assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /a NEW pipeline run directory inside a linked worktree/, `nested=${nested}`);
+  }
+});
+
 // #4303: a lost target whose text names no pipelines segment is not this guard's concern (bash 3.2
 // and 5 create wt2/build), and with no worktree-always policy no other gate denies it, as at every
 // version.

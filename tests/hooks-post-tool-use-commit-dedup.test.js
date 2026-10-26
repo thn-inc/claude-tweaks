@@ -101,6 +101,32 @@ test('#4303: a commit past the cwd cap is logged in the checkout bash made it in
   assert.strictEqual(path.resolve(events[0].dir), main);
 });
 
+// #4303 (M1): the same in the sibling layout, where the walk also knows the main checkout (the
+// groups' absolute dirs sit beside it, so `cd ../main` from each lands there). From wt beside main,
+// `G20 cd ../main; git commit` (20 failing groups `{ cd P/nK; }`): bash 3.2 and 5 commit in main.
+// e8473c015 counted the lost target among main's commits too, read main's two newest oldest-first and
+// logged main with the stale init commit, never the real one; base d9aa6b82d logged main with it.
+// Skipped on win32: the command splices the native temp path.
+test('#4303: a commit past the cwd cap that the walk also resolves in the main checkout logs the real commit there', {
+  skip: process.platform === 'win32' && 'win32: the command splices a native temp path, whose backslashes the scanner reads as escapes',
+}, () => {
+  const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-dedup-')));
+  const main = path.join(parent, 'main');
+  fs.mkdirSync(main);
+  execFileSync('git', ['-C', main, 'init', '-q']);
+  execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-m', 'init', '-q'], { env: { ...gitEnv(), GIT_AUTHOR_DATE: '2020-01-01T00:00:00', GIT_COMMITTER_DATE: '2020-01-01T00:00:00' } });
+  const wt = path.join(parent, 'wt');
+  execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt]);
+  execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-m', 'work', '-q'], { env: gitEnv() });
+  const head = execFileSync('git', ['-C', main, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  const runDir = makeRunDir();
+  const groups = Array.from({ length: 20 }, (_, i) => `{ cd ${parent}/n${i}; }; `).join('');
+  runPost(wt, runDir, `${groups}cd ../main; git commit --allow-empty -qm work`);
+  const events = readEvents(runDir).filter((e) => e.type === 'commit' && e.hash === head);
+  assert.strictEqual(events.length, 1, JSON.stringify(readEvents(runDir)));
+  assert.strictEqual(path.resolve(events[0].dir), main);
+});
+
 // #4303: a candidate counts only with a fresh commit, so a newer but stale commit in the main
 // checkout is never logged as the lost commit's: with no fresh commit anywhere (the commit did not
 // land) the breadcrumb stays at the walk's start, as before #4303.

@@ -414,6 +414,28 @@ test('worktree-required: a DEFINITIVE non-repo answer allows silently, with no w
     'git answering "not a repo" is a real answer — nothing to warn about');
 });
 
+// #4303: a target resolved from a cwd the shell scanner lost (past its cwd cap) follows the same
+// rule. From a worktree-always repo, `G16 echo x > out.txt` (16 groups `{ cd /tmp/ct-4303-nK; }`,
+// every cd failing): bash 3.2 and 5 write out.txt in the repo. With git's answer indeterminate,
+// e8473c015 denied the lost target; base d9aa6b82d, 40b34714a, 3b26440ad and 4e7d54a9d allow and
+// warn, as the gate does for every other indeterminate target, so a load spike never freezes a run.
+test('worktree-required #4303: a lost target with an indeterminate repo status ALLOWS but says so out loud', () => {
+  const wtDetect = require('../plugin/bin/lib/hooks/worktree-detect');
+  const repo = gitRepoWithCommit();
+  withPolicy(repo, 'worktree-always: true\n');
+  const groups = Array.from({ length: 16 }, (_, i) => `{ cd /tmp/ct-4303-n${i}; }; `).join('');
+  const real = wtDetect.repoInfo;
+  wtDetect.repoInfo = () => ({ repoRoot: null, isLinkedWorktree: false, indeterminate: true });
+  let out;
+  try {
+    out = pre.run({ input: bashInput(`${groups}echo x > out.txt`, repo), runDir: null, runState: null, ownedRun: {}, cwd: repo });
+  } finally {
+    wtDetect.repoInfo = real;
+  }
+  assert.ok(!out.json || !out.json.hookSpecificOutput || out.json.hookSpecificOutput.permissionDecision !== 'deny', JSON.stringify(out));
+  assert.match(out.json.systemMessage, /could not determine/i);
+});
+
 test('worktree-required: policy on allows Edit inside a linked worktree', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');

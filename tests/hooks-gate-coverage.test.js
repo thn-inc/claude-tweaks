@@ -2481,6 +2481,97 @@ test('e2e #4303: past the cwd cap from a cwd outside any repo, a relative write 
   fs.writeFileSync(path.join(off.main, '.claude-tweaks', 'policy.yml'), 'worktree-always: false\n');
   assert.notStrictEqual(off.decisionFor(`${groups4303(16)}echo x > ../main/leak.out`), 'deny');
 });
+// #4303 (I1): the lost target's opt-out reads the stand-in's own repo, so a session in a repo with no
+// policy proved nothing about the worktree-always main checkout its relative path climbs into. From
+// N, an unrelated repo beside the main checkout, and from VN, a repo nested at main/vendor/N, after
+// `groups4303(16)` (every cd fails), bash 3.2 and 5 write main/leak.out, main/f or the main/tmp link,
+// or commit in main, for each row. e8473c015, 4e7d54a9d and 3b26440ad allowed every row; base
+// d9aa6b82d and 40b34714a deny each, having read the path from the real start cwd. A lost target now
+// also carries that reading (base's), checked as an ordinary target. Each command spells only
+// relative paths, so this runs on every platform.
+test('e2e #4303: past the cwd cap from a repo with no policy, a relative write or git -C into a worktree-always main checkout is DENIED', () => {
+  const { main, decisionFor } = linkedWorktree4303();
+  const { execFileSync } = require('child_process');
+  const repoAt = (dir) => {
+    fs.mkdirSync(dir, { recursive: true });
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+    return dir;
+  };
+  const N = repoAt(path.join(path.dirname(main), 'N'));
+  const VN = repoAt(path.join(main, 'vendor', 'N'));
+  for (const [shape, command, cwd] of [
+    ['A1w', `${groups4303(16)}echo x > ../main/leak.out`, N],
+    ['A1g', `${groups4303(16)}git -C ../main commit --allow-empty -qm leak`, N],
+    ['A1c', `${groups4303(16)}cd ../main && git commit --allow-empty -qm leak`, N],
+    ['A1t', `${groups4303(16)}truncate -s0 ../main/f`, N],
+    ['A1dd', `${groups4303(16)}dd if=/dev/null of=../main/f`, N],
+    ['A1ln', `${groups4303(16)}ln -s /tmp ../main/tmp`, N],
+    ['A1nw', `${groups4303(16)}echo x > ../../leak.out`, VN],
+    ['A1ng', `${groups4303(16)}git -C ../.. commit --allow-empty -qm leak`, VN],
+  ]) assert.strictEqual(decisionFor(command, cwd), 'deny', `${shape}: ${command.slice(-50)}`);
+  // A write that stays in N is N's own business (bash 3.2 and 5 write N/ok.out), at every version.
+  assert.notStrictEqual(decisionFor(`${groups4303(16)}echo x > ok.out`, N), 'deny');
+});
+// #4303 (A1d): the stand-in says nothing about the cwds the collapse dropped. From N (a repo with no
+// policy) and from a cwd outside any repo, 15 groups `{ cd P/aK; }` (every aK present, each cd
+// succeeding) and `{ cd main/sub; }` overflow the cap, and the collapse drops main/sub; then
+// `echo x > leak.out` or `git commit`: bash 3.2 and 5 write main/sub/leak.out or commit in main.
+// From N, e8473c015, 4e7d54a9d, 3b26440ad and base d9aa6b82d allowed both; 40b34714a denied them
+// through its window. From outside any repo, e8473c015 and 40b34714a deny, the rest allowed. A
+// lost target after the walk dropped a cwd in a worktree-always checkout now takes neither escape
+// (its stand-in's opt-out, or no policy above it). Skipped on win32: the commands splice the
+// native temp path.
+test('e2e #4303: past the cwd cap, a relative write or commit after the collapse dropped a cwd in the main checkout is DENIED', {
+  skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
+}, () => {
+  const { main, decisionFor } = linkedWorktree4303();
+  const { execFileSync } = require('child_process');
+  const parent = path.dirname(main);
+  const N = path.join(parent, 'N');
+  fs.mkdirSync(N);
+  execFileSync('git', ['-C', N, 'init', '-q']);
+  const outside = path.join(parent, 'x0');
+  fs.mkdirSync(outside);
+  fs.mkdirSync(path.join(main, 'sub'));
+  const ok15 = Array.from({ length: 15 }, (_, i) => {
+    fs.mkdirSync(path.join(parent, `a${i}`));
+    return `{ cd ${parent}/a${i}; }; `;
+  }).join('');
+  for (const cwd of [N, outside]) {
+    for (const tail of ['echo x > leak.out', 'git commit --allow-empty -qm leak']) {
+      assert.strictEqual(decisionFor(`${ok15}{ cd ${main}/sub; }; ${tail}`, cwd), 'deny', `${path.basename(cwd)}: ${tail}`);
+    }
+  }
+  // With no dropped cwd in a worktree-always checkout (N/sub is N's), the same write stays allowed.
+  assert.notStrictEqual(decisionFor(`${ok15}{ cd ${N}/sub; }; echo x > leak.out`, N), 'deny');
+});
+// #4303 (A1r): a cwd the collapse drops is checked by its base reading too. From N, beside the main
+// checkout, `G16 cd ../main/sub; G16 echo x > leak.out` (every group's cd failing): bash 3.2 and 5
+// write main/sub/leak.out. The relative cd moves the lost cwd's base reading into main/sub, and the
+// second collapse drops it. Base d9aa6b82d, 40b34714a, 3b26440ad, 4e7d54a9d and e8473c015 all
+// allowed it. Only relative paths are spliced in, so this runs on every platform.
+test('e2e #4303: past a second cwd-cap collapse, a write after a relative cd into the main checkout is DENIED', () => {
+  const { main, decisionFor } = linkedWorktree4303();
+  const { execFileSync } = require('child_process');
+  const N = path.join(path.dirname(main), 'N');
+  fs.mkdirSync(N);
+  execFileSync('git', ['-C', N, 'init', '-q']);
+  fs.mkdirSync(path.join(main, 'sub'));
+  assert.strictEqual(decisionFor(`${groups4303(16)}cd ../main/sub; ${groups4303(16)}echo x > leak.out`, N), 'deny');
+});
+// #4303 (S1): with no policy file anywhere above a session cwd outside any repo, a lost target has
+// nothing to enforce. `groups4303(16)` then `echo x > out.txt`: bash 3.2 and 5 write out.txt in the
+// session cwd. e8473c015 denied it, citing a worktree-always policy that does not exist; base
+// d9aa6b82d, 40b34714a, 3b26440ad and 4e7d54a9d allow it.
+test('e2e #4303: past the cwd cap with no policy file anywhere, a relative write is not denied', () => {
+  const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
+  const plain = fs.realpathSync(fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-4303-plain-')));
+  const out = preToolUse.run({
+    input: { tool_name: 'Bash', tool_input: { command: `${groups4303(16)}echo x > out.txt` }, cwd: plain },
+    runDir: null, runState: null, ownedRun: {}, cwd: plain,
+  });
+  assert.notStrictEqual(out.json && out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision, 'deny', JSON.stringify(out));
+});
 // #4303: without an overflowCwd (the pipeline shadow guard) the collapse is a lost cwd at the
 // walk's start, so a relative target resolves under the start. An && chain of 16 cds
 // (`cd /tmp/ct-4303-aK && …`), then `cd WT/sub; mkdir -p ../.claude-tweaks/pipelines/2026-x`: with

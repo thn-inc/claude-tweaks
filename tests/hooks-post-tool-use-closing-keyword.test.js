@@ -184,6 +184,129 @@ test('#4303: a commit past the cwd cap that lands in a linked worktree is still 
   assert.match(out.json.systemMessage, /closing keyword/i);
 });
 
+// #4303 (M2): only the command's own commit is judged. A second worktree w2 holds a fresh commit
+// "sibling work on #99" (another session's, within the freshness window), and from wt
+// `G20 git commit -qm "Fixes #12"` (every cd failing): bash 3.2 and 5 commit "Fixes #12" in wt.
+// e8473c015 judged every candidate's fresh commits and warned about w2's; base d9aa6b82d, 40b34714a,
+// 3b26440ad and 4e7d54a9d judged wt's alone and did not. With two candidates holding a fresh commit,
+// which one is this command's is unknowable from a lost cwd, and the check judges neither: no
+// warning beats one about another session's commit.
+test('#4303: a commit past the cwd cap is not warned about for another checkout\'s fresh commit', () => {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const main = gitRepoWithMessage('init', '2020-01-01T00:00:00');
+  const wt = path.join(main, '.claude', 'worktrees', 'x');
+  const w2 = path.join(main, '.claude', 'worktrees', 'y');
+  for (const w of [wt, w2]) execFileSync('git', ['-C', main, 'worktree', 'add', '-q', w]);
+  execFileSync('git', ['-C', w2, 'commit', '--allow-empty', '-qm', 'sibling work on #99'], { env });
+  execFileSync('git', ['-C', wt, 'commit', '--allow-empty', '-qm', 'Fixes #12'], { env });
+  const out = post.run({
+    input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}git commit --allow-empty -qm "Fixes #12"` }, cwd: wt },
+    runDir: null, runState: null, cwd: wt,
+  });
+  assert.ok(!(out.json && /closing keyword/i.test(String(out.json.systemMessage))), JSON.stringify(out));
+});
+
+// #4303 (P2a): from a cwd outside any repo there is no main checkout to look in, but the cwds the
+// collapse dropped name one. 16 `cd /tmp/ct-4303-aK &&` (every aK present, each cd succeeding),
+// then `cd wt/sub; git commit -qm "work on #12"`: bash 3.2 and 5 commit in the nested worktree wt.
+// The list's end drops `wt/sub`. e8473c015, 4e7d54a9d and 3b26440ad missed the warning (e8473c015's
+// pre-tool-use denied the command outright, citing a policy no repo here has); base d9aa6b82d and
+// 40b34714a warn. Skipped on win32: the command splices the native temp path.
+test('#4303: a commit past the cwd cap from outside any repo is still checked in the checkout the collapse dropped', {
+  skip: process.platform === 'win32' && 'win32: the command splices a native temp path, whose backslashes the scanner reads as escapes',
+}, () => {
+  const main = gitRepoWithMessage('init', '2020-01-01T00:00:00');
+  const wt = path.join(main, '.claude', 'worktrees', 'x');
+  execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt]);
+  execFileSync('git', ['-C', wt, 'commit', '--allow-empty', '-qm', 'work on #12'], {
+    env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
+  });
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4303-out-')));
+  const chain = Array.from({ length: 16 }, (_, i) => `cd /tmp/ct-4303-a${i + 1} && `).join('');
+  const out = post.run({
+    input: { tool_name: 'Bash', tool_input: { command: `${chain}cd ${wt}/sub; git commit --allow-empty -qm "work on #12"` }, cwd: outside },
+    runDir: null, runState: null, cwd: outside,
+  });
+  assert.ok(out.json && typeof out.json.systemMessage === 'string', 'expected the closing-keyword warning');
+  assert.match(out.json.systemMessage, /closing keyword/i);
+});
+
+// #4303 (M2): the same with the other session's commit in the main checkout, which the candidate list
+// names before the worktrees. From x, `G20 cd ../y; git commit -qm "Fixes #12"`: bash 3.2 and 5
+// commit "Fixes #12" in y, while M holds a fresh "other session on #99". e8473c015 warned about M's;
+// base d9aa6b82d, 40b34714a, 3b26440ad and 4e7d54a9d did not.
+test('#4303: a commit past the cwd cap is not warned about for the main checkout\'s fresh commit either', () => {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const main = gitRepoWithMessage('init', '2020-01-01T00:00:00');
+  const wt = path.join(main, '.claude', 'worktrees', 'x');
+  const w2 = path.join(main, '.claude', 'worktrees', 'y');
+  for (const w of [wt, w2]) execFileSync('git', ['-C', main, 'worktree', 'add', '-q', w]);
+  execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-qm', 'other session on #99'], { env });
+  execFileSync('git', ['-C', w2, 'commit', '--allow-empty', '-qm', 'Fixes #12'], { env });
+  const out = post.run({
+    input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}cd ../y; git commit --allow-empty -qm "Fixes #12"` }, cwd: wt },
+    runDir: null, runState: null, cwd: wt,
+  });
+  assert.ok(!(out.json && /closing keyword/i.test(String(out.json.systemMessage))), JSON.stringify(out));
+});
+
+// #4303 (P3): a lost commit is also looked for where base's reading (`bases`) puts it. From a cwd
+// beside a main checkout and its linked worktree wt, `G16 git -C ../wt commit -qm "work on #12"`
+// (every cd failing): bash 3.2 and 5 commit in wt. e8473c015 and 4e7d54a9d missed the warning (no
+// checkout above the cwd to look in); base d9aa6b82d, 40b34714a and 3b26440ad warn.
+test('#4303: a commit past the cwd cap behind a relative git -C is checked where base reads it', () => {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4303-p3-')));
+  const main = path.join(parent, 'main');
+  fs.mkdirSync(main);
+  execFileSync('git', ['-C', main, 'init', '-q']);
+  execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-qm', 'init'], { env: { ...env, GIT_AUTHOR_DATE: '2020-01-01T00:00:00', GIT_COMMITTER_DATE: '2020-01-01T00:00:00' } });
+  const wt = path.join(parent, 'wt');
+  execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt]);
+  execFileSync('git', ['-C', wt, 'commit', '--allow-empty', '-qm', 'work on #12'], { env });
+  const outside = path.join(parent, 'a0');
+  fs.mkdirSync(outside);
+  const out = post.run({
+    input: { tool_name: 'Bash', tool_input: { command: `${groups4303(16)}git -C ../wt commit --allow-empty -qm "work on #12"` }, cwd: outside },
+    runDir: null, runState: null, cwd: outside,
+  });
+  assert.ok(out.json && /closing keyword/i.test(String(out.json.systemMessage)), JSON.stringify(out));
+});
+
+// #4303: a lost commit's candidates can name one checkout twice (the session cwd wt/sub and wt from
+// `git worktree list`); one commit offered by both is one commit, not two. From wt/sub,
+// `G20 git commit -qm "work on #12"`: bash 3.2 and 5 commit in wt, and every version warns.
+test('#4303: a commit past the cwd cap from a subdirectory of the worktree is still checked', () => {
+  const main = gitRepoWithMessage('init', '2020-01-01T00:00:00');
+  const wt = path.join(main, '.claude', 'worktrees', 'x');
+  execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt]);
+  fs.mkdirSync(path.join(wt, 'sub'));
+  execFileSync('git', ['-C', wt, 'commit', '--allow-empty', '-qm', 'work on #12'], {
+    env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
+  });
+  const cwd = path.join(wt, 'sub');
+  const out = post.run({ input: { tool_name: 'Bash', tool_input: { command: `${groups4303(20)}git commit --allow-empty -qm "work on #12"` }, cwd }, runDir: null, runState: null, cwd });
+  assert.ok(out.json && /closing keyword/i.test(String(out.json.systemMessage)), JSON.stringify(out));
+});
+
+// #4303: a commit another target in the command already holds is not offered to a lost one. From a
+// worktree nested at M/.claude/worktrees/x, `git commit -qm a; G20 cd ../../..; git commit -qm
+// "work on #12"`: bash 3.2 and 5 commit `a` in x and "work on #12" in M, both fresh. The lost commit
+// is M's alone, and every version but 4e7d54a9d warns.
+test('#4303: a commit past the cwd cap is checked even beside the command\'s own earlier commit', () => {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const main = gitRepoWithMessage('init', '2020-01-01T00:00:00');
+  const wt = path.join(main, '.claude', 'worktrees', 'x');
+  execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt]);
+  execFileSync('git', ['-C', wt, 'commit', '--allow-empty', '-qm', 'a'], { env });
+  execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-qm', 'work on #12'], { env });
+  const out = post.run({
+    input: { tool_name: 'Bash', tool_input: { command: `git commit --allow-empty -qm a; ${groups4303(20)}cd ../../..; git commit --allow-empty -qm "work on #12"` }, cwd: wt },
+    runDir: null, runState: null, cwd: wt,
+  });
+  assert.ok(out.json && /closing keyword/i.test(String(out.json.systemMessage)), JSON.stringify(out));
+});
+
 test('does not evaluate a stale HEAD left over from a git commit that never landed (finding 2 regression)', () => {
   // Simulates a rejected/failed `git commit` attempt: PostToolUse still fires, but
   // HEAD is an old, unrelated commit rather than anything the just-attempted Bash
