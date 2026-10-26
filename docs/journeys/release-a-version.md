@@ -9,6 +9,7 @@ files:
   - plugin/bin/release-preflight.js
   - plugin/bin/lib/release-preflight/pack.js
   - plugin/bin/release-local.js
+  - plugin/bin/lib/hooks/run-dir-resolve.js
   - plugin/bin/release-tip-check.js
   - plugin/bin/lib/release-tip/check.js
   - plugin/skills/review/SKILL.md
@@ -53,7 +54,7 @@ files:
 
 ### 5. Release again — a fresh run directory
 - **URL:** `/claude-tweaks:release` a day later, after the previous release finished (or stopped early)
-- **Action:** Step 0 finds the previous release's directory and refuses it. It does this whether that directory is `clean`/`closed` or still `active` from a run that stopped early, because a release's own directory never belongs to a parent pipeline. It mints a fresh standalone directory, logs `Step 0: {dir} is a prior release run's directory (status {status}) — not adopted; minted {new dir}`, and pins its own review ceiling.
+- **Action:** Step 0 finds the previous release's directory and refuses it. It does this whether that directory is `clean`/`closed` or still `active` from a run that stopped early, because a release's own directory never belongs to a parent pipeline. The refusal happens inside `resolve-run-dir`'s step 2, which also refuses a directory whose state file is unreadable. Step 0 then mints a fresh standalone directory and pins its own review ceiling.
 - **Should feel:** Each release is its own run; yesterday's review findings and verdict never leak into today's.
 - **Should understand:** Only a parent pipeline's directory, handed in through `$PIPELINE_RUN_DIR` (for example by `/claude-tweaks:wrap-up`), is ever inherited. An inherited directory is never closed, archived or disposed of by release; its parent owns it.
 - **Red flags:** Today's `## /review` verdict read from yesterday's lines; a standalone run that skipped its ceiling pin or suppressed its Next Actions; a second, stray directory minted mid-run because a later step re-ran the Step 0 fence.
@@ -98,4 +99,5 @@ files:
 - Step 3 red flags updated for #4156 (Step 8's disposition routes every review staging prefix through one roster, so `design-decision-*` and the other review-pass producers no longer fail archival as unrecognised)
 - Step 3 red flags updated for #4155 (Step 8 disposition treats an unreadable `staged/` or `decisions.md` as a failure that blocks archival, never as an empty inventory)
 - Steps 6-7 updated for #4157 (the review-tree check resolves the tip once, in its own first call, prints it as the recorded reviewed tip, and compares the trees against that pasted sha; Step 5's delta takes the new tip from that same printed sha)
+- Step 5 updated for #4151 (Step 0's refusal moved from an inline `node -e` probe into `resolve-run-dir`'s step 2, which also refuses a directory whose `run-state.json` cannot be read; the `refused: {dir}` line and its log line are gone)
 - Step 7 updated for #4152 (the comparison now runs as the tested CLI `bin/release-tip-check.js`; the arrived-commit major is gated per delta, and an interactive Proceed continues with the verdict)
