@@ -8,7 +8,7 @@ reaped       —      4 merged clean worktrees                            2 bran
    dispatch-record-4133, backlog-refine-2718-2730 branches kept for reconcile
 ```
 
-**Approve (24)**
+**Approve (23)**
 ```text
 1  [digest]  #—  Digest: reflect (173)
    Propose cluster: file record absorbing 173 reflect entries
@@ -79,9 +79,6 @@ reaped       —      4 merged clean worktrees                            2 bran
 23  [claim]  #3976  Archive the spec header on the run branch before …
    Release stale claim (TTL expired 2026-10-25)
    release-claim.js 3976 --sweep  (full cmd: staged/tidy-claim-releases-1.md)
-24  [parent-gate]  #3944  Settle unconfirmed review findings with an agent …
-   Compose Verification Brief, add demo:pending
-   gh issue edit 3944 --repo thn-inc/claude-tweaks --add-label demo:pending
 ```
 
 **Yours (41)**
