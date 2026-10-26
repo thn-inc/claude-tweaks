@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { PROBE_ORDER, gatherEvidence, decideVerdict, runLiveness } = require('../../../plugin/bin/lib/run-liveness');
+const { PROBE_ORDER, gatherEvidence, decideVerdict, runLiveness, blocksResume } = require('../../../plugin/bin/lib/run-liveness');
 const { pidStartTime } = require('../../../plugin/bin/lib/run-liveness/process-probe');
 const ctxLib = require('../../../plugin/bin/lib/hooks/context');
 const { adoptionRefusal } = require('../../../plugin/bin/lib/hooks/run-dir-resolve');
@@ -534,4 +534,28 @@ test('runLiveness never throws, even for a missing run directory', () => {
   const res = runLiveness(path.join(os.tmpdir(), 'ct-liveness-missing-dir-xyz'), { now: NOW, probes: baseProbes() });
   assert.ok(['live', 'dead', 'unknown'].includes(res.verdict));
   assert.deepStrictEqual(res.evidence.map((e) => e.probe), PROBE_ORDER);
+});
+
+const evidenceWith = (over) => ({ verdict: 'unknown', evidence: PROBE_ORDER.map((probe) => ({ probe, result: 'negative', detail: 'x', ...(over[probe] || {}) })) });
+
+test('blocksResume: a positive or erroring worktree-lock or last-commit entry blocks', () => {
+  for (const probe of ['worktree-lock', 'last-commit']) {
+    for (const result of ['positive', 'error']) {
+      assert.strictEqual(blocksResume(evidenceWith({ [probe]: { result } })), true, `${probe} ${result}`);
+    }
+  }
+});
+
+test('blocksResume: owner-pid, heartbeat and owner-events never block, whatever their result', () => {
+  for (const probe of ['owner-pid', 'heartbeat', 'owner-events']) {
+    for (const result of ['positive', 'error']) {
+      assert.strictEqual(blocksResume(evidenceWith({ [probe]: { result } })), false, `${probe} ${result}`);
+    }
+  }
+  assert.strictEqual(blocksResume(evidenceWith({})), false);
+  assert.strictEqual(blocksResume(evidenceWith({ 'last-commit': { detail: 'no-commits' } })), false);
+});
+
+test('blocksResume: a result with no evidence array blocks (cannot tell)', () => {
+  for (const r of [null, undefined, {}, { evidence: 'x' }]) assert.strictEqual(blocksResume(r), true);
 });

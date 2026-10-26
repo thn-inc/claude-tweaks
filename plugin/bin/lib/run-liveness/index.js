@@ -1,8 +1,9 @@
 'use strict';
 // bin/lib/run-liveness/index.js — a three-valued `live | dead | unknown` verdict
 // for a pipeline run directory (#3973), built from POSITIVE evidence over
-// injectable probes. One consumer: reconcile/archive-merged.js's `adhoc-session-ended`
-// sweep, through `adHocSessionLiveness` (#4179).
+// injectable probes. Consumers: reconcile/archive-merged.js's `adhoc-session-ended`
+// sweep, through `adHocSessionLiveness` (#4179), plus `blocksResume`'s two resume
+// callers (#4420).
 //
 // Shape: gatherEvidence() asks every probe once and records a tagged entry
 // ({ probe, result: positive | negative | error, detail }) plus the "death
@@ -196,4 +197,20 @@ function runLiveness(runDir, opts) {
   }
 }
 
-module.exports = { PROBE_ORDER, gatherEvidence, decideVerdict, runLiveness };
+// Whether a resume must be refused on this runLiveness result (#4420): only the
+// worktree-lock and last-commit entries can block, on `positive` (the run is in use
+// or just committed) or `error` (could not ask). Maintainer ruling: the owner probes
+// (owner-pid, heartbeat, owner-events) stay informational here — widening this helper
+// to them turns every missing events.jsonl and every just-ended session into a blocked
+// resume (#3979 red-team). `last-commit` `negative`/`no-commits` does NOT block: both
+// callers handle that case themselves. A result with no evidence array is a missing
+// answer, which cannot be read as "no", so it blocks.
+function blocksResume(result) {
+  const evidence = result && result.evidence;
+  if (!Array.isArray(evidence)) return true;
+  return evidence.some((e) => e
+    && (e.probe === 'worktree-lock' || e.probe === 'last-commit')
+    && (e.result === 'positive' || e.result === 'error'));
+}
+
+module.exports = { PROBE_ORDER, gatherEvidence, decideVerdict, runLiveness, blocksResume };
