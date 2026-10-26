@@ -249,36 +249,37 @@ function assertReleaseReaderAccepts(readDeclaration, tag, declPath) {
   assert.strictEqual(r.ok, true, `release ${tag}'s reader rejects ${path.basename(declPath)}: ${(r.errors || []).join('; ')}`);
 }
 
-test('AC2.1: the committed verify-scope.json parses with the latest release tag\'s declaration reader (#4135)', (t) => {
+// Skips the test when no release tag is reachable; otherwise runs `body(reader, tag, dir)` with the latest
+// release's materialized reader and always cleans the temp dir up.
+function withLatestReleaseReader(t, body) {
   const found = latestReleaseTag(REPO_ROOT);
   if (found.skip) { t.skip(found.skip); return; }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-scope-reader-'));
   try {
-    const reader = loadReleaseReader(found.tag, dir);
-    assertReleaseReaderAccepts(reader, found.tag, DECL);
+    body(loadReleaseReader(found.tag, dir), found.tag, dir);
   } finally {
     removeReaderDir(dir);
   }
+}
+
+test('AC2.1: the committed verify-scope.json parses with the latest release tag\'s declaration reader (#4135)', (t) => {
+  withLatestReleaseReader(t, (reader, tag) => {
+    assertReleaseReaderAccepts(reader, tag, DECL);
+  });
 });
 
 test('AC1.1: a rule shape the release reader rejects fails the same assertion, naming the reader\'s error text (#4135)', (t) => {
-  const found = latestReleaseTag(REPO_ROOT);
-  if (found.skip) { t.skip(found.skip); return; }
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-scope-reader-'));
-  try {
-    const reader = loadReleaseReader(found.tag, dir);
+  withLatestReleaseReader(t, (reader, tag, dir) => {
     const raw = JSON.parse(fs.readFileSync(DECL, 'utf8'));
     const n = raw.rules.length;
     raw.rules.push({ match: 'x/**', suites: 'everything', static: true });
     const fixture = path.join(dir, 'fixture-verify-scope.json');
     fs.writeFileSync(fixture, JSON.stringify(raw));
     assert.throws(
-      () => assertReleaseReaderAccepts(reader, found.tag, fixture),
-      (err) => err.message.includes(`rules[${n}].suites:`) && err.message.includes(found.tag),
+      () => assertReleaseReaderAccepts(reader, tag, fixture),
+      (err) => err.message.includes(`rules[${n}].suites:`) && err.message.includes(tag),
     );
-  } finally {
-    removeReaderDir(dir);
-  }
+  });
 });
 
 test('AC3.1: a clone with no reachable release tag skips with its reason (#4135)', () => {
