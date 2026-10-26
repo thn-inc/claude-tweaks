@@ -8,8 +8,8 @@ const { slugForCwd, locateTranscripts, readUsage, isProcedurePath, subagentsDirF
 const { aggregateDispatches } = require('../../../plugin/bin/lib/timing/derive');
 
 // The developer's own CLAUDE_CONFIG_DIR would redirect every homeDir-only
-// lookup below away from its fixture (#3458) — same posture as cli.test.js's
-// fixtureHomeEnv.
+// lookup below away from its fixture (#3458) — same posture as
+// tests/helpers/fixture-home.js's fixtureHomeEnv.
 delete process.env.CLAUDE_CONFIG_DIR;
 
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'transcript-small.jsonl');

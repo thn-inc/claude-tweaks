@@ -11,6 +11,7 @@ const STATUSLINE = path.join(__dirname, '..', 'plugin', 'bin', 'claude-tweaks-st
 const sl = require('../plugin/bin/claude-tweaks-statusline.js');
 const color = require('../plugin/bin/lib/color');
 const { readText } = require('./helpers/read-skill');
+const { fixtureHomeEnv } = require('./helpers/fixture-home');
 
 // The project segment wraps text in OSC 8 hyperlinks (\x1b]8;;URL\x07text\x1b]8;;\x07).
 // Assertions about segment order/content strip those wrappers first; the link
@@ -31,13 +32,12 @@ function linkedName(dir) {
 // dropped so the acct segment sees only what `seedHome` put in that HOME.
 function runStatusline(input, env = {}, seedHome = () => {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-'));
-  const { CLAUDE_CONFIG_DIR: _ignored, ...baseEnv } = process.env;
   try {
     seedHome(home);
     return execFileSync('node', [STATUSLINE], {
       input: JSON.stringify(input),
       encoding: 'utf8',
-      env: { ...baseEnv, HOME: home, ...env },
+      env: { ...fixtureHomeEnv(home), ...env },
     });
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
@@ -1056,11 +1056,5 @@ test('renderPorts: no toplevel resolvable (no cwd, no ancestor .git) -> empty st
 // AC1's "between the git and rate-limit segments" placement is proven by
 // construction (main()'s segments array literally inserts renderPorts(cwd)
 // directly after renderGit(cwd)) rather than by an end-to-end subprocess
-// spawn: this suite's existing HOME-env-override technique for controlling
-// os.homedir() in a child process (see runStatusline) is already unreliable
-// on this Windows machine — the pre-existing 'default ~/.claude layout
-// renders the acct segment from ~/.claude.json' end-to-end test above fails
-// the same way, leaking the real account email instead of the seeded fake
-// home, because os.homedir() on Windows reads USERPROFILE, not HOME. A new
-// end-to-end test built on the same technique would be flaky for the same
-// reason, not a meaningful check of this feature's own logic.
+// spawn: the ordering is a property of main()'s segments array, not of
+// anything a spawned child would add.

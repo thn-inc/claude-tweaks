@@ -6,6 +6,7 @@ const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 
 const { installWrapper, buildWrapperSource } = require('../plugin/bin/install-statusline-wrapper.js');
+const { fixtureHomeEnv } = require('./helpers/fixture-home');
 
 // Every spawn below runs a real `node` process. The budget used to be 5s, which
 // is generous idle and far too tight under this repo's normal working mode:
@@ -22,15 +23,13 @@ const { installWrapper, buildWrapperSource } = require('../plugin/bin/install-st
 const SPAWN_TIMEOUT_MS = 30_000;
 
 // extraEnv lets a test opt into setting CLAUDE_CONFIG_DIR (or other vars) explicitly.
-// The base env always deletes any ambient CLAUDE_CONFIG_DIR first — this repo's own
-// dev sessions commonly run under a real CLAUDE_CONFIG_DIR (a synthetic account
-// directory with its own real plugin cache), and letting that leak through here
+// The base env always drops any ambient CLAUDE_CONFIG_DIR first (fixtureHomeEnv) — this
+// repo's own dev sessions commonly run under a real CLAUDE_CONFIG_DIR (a synthetic
+// account directory with its own real plugin cache), and letting that leak through here
 // would make CLAUDE_CONFIG_DIR-oblivious tests resolve against that real cache
 // instead of the fake tmpHome/.claude tree they set up.
 function runWrapper(scriptPath, tmpHome, extraEnv = {}) {
-  const env = { ...process.env, HOME: tmpHome };
-  delete env.CLAUDE_CONFIG_DIR;
-  Object.assign(env, extraEnv);
+  const env = { ...fixtureHomeEnv(tmpHome), ...extraEnv };
   const result = spawnSync(process.execPath, [scriptPath], {
     encoding: 'utf8',
     env,
