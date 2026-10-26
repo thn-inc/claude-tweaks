@@ -12,9 +12,10 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { gitRepo, linkedWorktreeOf, harnessWorktreeOf } = require('./helpers/git-fixtures');
+const { gitRepo, linkedWorktreeOf, harnessWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
 const { resolve, formatTimestamp, adoptionRefusal } = require('../plugin/bin/lib/hooks/run-dir-resolve');
 const { ownerBlock } = require('../plugin/bin/lib/hooks/context');
+const { runLiveness } = require('../plugin/bin/lib/run-liveness');
 
 function mkRunDir(main, name) {
   const dir = path.join(main, '.claude-tweaks', 'pipelines', name);
@@ -312,17 +313,25 @@ test('AC4.1 AC4.2: adoptionRefusal on a malformed run-state.json is refused as u
 test('AC3.1 AC3.2 #4419: step 2 adopts an active run whose worktree survives but whose owner pid is gone (crash-resume)', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
+  // Backdate the worktree's last commit so no liveness probe reads the run as live.
+  const old = '2026-01-01T00:00:00Z';
+  fixtureGit(['-C', wt, 'commit', '-q', '--allow-empty', '-m', 'old'], {
+    env: { ...process.env, GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old },
+  });
   const crashed = mkRunDir(main, '2026-01-01T000000-record-4419');
+  fs.writeFileSync(path.join(crashed, 'events.jsonl'), '');
   const owner = ownerBlock({
     sessionId: 'crashed-session',
-    now: Date.parse('2026-01-01T00:00:00Z'),
+    now: Date.parse(old),
     deps: {
       resolveOwnerPid: () => ({ pid: 2147483646, pidSource: 'env' }),
       pidStartTime: () => 'T1',
-      hostname: () => 'h',
     },
   });
   writeRunState(crashed, { status: 'active', worktree: wt, sessionId: 'crashed-session', owner });
+  // Precondition: liveness itself reads this run as dead (owner pid gone), so the adoption
+  // assertions below pin the ruling rather than a fixture that liveness would call live.
+  assert.strictEqual(runLiveness(crashed).verdict, 'dead');
   const out = resolve({ cwd: main, env: {}, specSlug: 'record-4419' });
   assert.strictEqual(out.ok, true);
   assert.strictEqual(out.created, false);
