@@ -8,7 +8,9 @@
 // Selection fails CLOSED: a changed non-test path no traced read covers makes
 // selectImpactTests return {ok:false}, and mapProblem names why a map must not
 // be used at all — the caller then runs the full suite. What counts as a test
-// file is the caller's predicate; this module never guesses.
+// file is the caller's predicate; this module never guesses. An optional `dirty`
+// boolean records a trace of a tree with tracked changes; such a map is never
+// used (`map-dirty`).
 //
 // The codec and selection are pure. The I/O helpers at the bottom
 // (gitLocations, loadImpactContext) read the map file, the test files present
@@ -37,7 +39,7 @@ function under(p, prefix) {
   return prefix === '' || p === prefix || p.startsWith(prefix + '/');
 }
 
-function encodeImpactMap({ commit, tracedAt, exitCode, node, tests }) {
+function encodeImpactMap({ commit, tracedAt, exitCode, node, tests, dirty }) {
   const names = Object.keys(tests).sort();
   const paths = sortedUnique(names.flatMap((t) => KINDS.flatMap((k) => tests[t][k] || [])));
   const index = new Map(paths.map((p, i) => [p, i]));
@@ -50,7 +52,11 @@ function encodeImpactMap({ commit, tracedAt, exitCode, node, tests }) {
     }
     encoded[t] = entry;
   }
-  return { version: IMPACT_MAP_VERSION, commit, tracedAt, exitCode, node, paths, tests: encoded };
+  return {
+    version: IMPACT_MAP_VERSION, commit, tracedAt, exitCode, node,
+    ...(dirty === undefined ? {} : { dirty: Boolean(dirty) }),
+    paths, tests: encoded,
+  };
 }
 
 function decodeTests(raw, paths) {
@@ -82,6 +88,7 @@ function parseImpactMap(text) {
   if (raw.version !== IMPACT_MAP_VERSION) return { ok: false, reason: 'wrong-version' };
   if (typeof raw.commit !== 'string' || !SHA_RE.test(raw.commit)) return { ok: false, reason: 'bad-commit' };
   if (!Number.isInteger(raw.exitCode)) return { ok: false, reason: 'bad-shape' };
+  if (raw.dirty !== undefined && typeof raw.dirty !== 'boolean') return { ok: false, reason: 'bad-shape' };
   if (!Array.isArray(raw.paths) || !raw.paths.every((p) => typeof p === 'string')) return { ok: false, reason: 'bad-shape' };
   const tests = decodeTests(raw.tests, raw.paths);
   if (tests === null) return { ok: false, reason: 'bad-shape' };
@@ -89,7 +96,7 @@ function parseImpactMap(text) {
     ok: true,
     map: {
       version: raw.version, commit: raw.commit, tracedAt: raw.tracedAt, exitCode: raw.exitCode, node: raw.node,
-      paths: raw.paths, tests,
+      dirty: raw.dirty === true, paths: raw.paths, tests,
     },
   };
 }
@@ -139,6 +146,7 @@ function mapProblem({ parsed, isAncestor, distance, maxAgeCommits }) {
   if (parsed === null || parsed === undefined) return 'map-missing';
   if (!parsed.ok) return `map-invalid: ${parsed.reason}`;
   if (parsed.map.exitCode !== 0) return 'map-from-failing-suite';
+  if (parsed.map.dirty) return 'map-dirty';
   if (!isAncestor) return 'map-not-ancestor';
   // An unknown age (a failed rev-list) is never read as fresh.
   if (!Number.isInteger(distance)) return `map-stale: unknown commits > ${maxAgeCommits}`;
@@ -213,6 +221,7 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl }) {
   return {
     map: parsed && parsed.ok ? parsed.map : null,
     mapCommit: parsed && parsed.ok ? parsed.map.commit : null,
+    mapDirty: parsed && parsed.ok ? parsed.map.dirty : null,
     distance,
     problem: mapProblem({ parsed, isAncestor, distance, maxAgeCommits: decl.impact.maxAgeCommits }),
   };
@@ -257,6 +266,7 @@ function lazyImpactContext(load) {
     get headTests() { return get().headTests; },
     get mapPath() { return get().mapPath; },
     get mapCommit() { return get().mapCommit; },
+    get mapDirty() { return get().mapDirty; },
     get distance() { return get().distance; },
     get fetch() { return get().fetch; },
   };

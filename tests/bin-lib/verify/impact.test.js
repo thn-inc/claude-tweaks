@@ -60,6 +60,30 @@ test('encode/parse round-trips', () => {
   });
 });
 
+test('AC1.1: a dirty map parses with dirty: true; a clean or older map with dirty: false', () => {
+  const tests = { 'tests/a.test.js': { f: ['src/x.js'] } };
+  const enc = (extra) => encodeImpactMap({ commit: SHA, tracedAt: 't', exitCode: 0, node: 'v', tests, ...extra });
+  assert.strictEqual(enc({ dirty: true }).dirty, true);
+  assert.strictEqual(enc({ dirty: false }).dirty, false);
+  assert.strictEqual(Object.hasOwn(enc({}), 'dirty'), false);
+  assert.strictEqual(parseImpactMap(JSON.stringify(enc({ dirty: true }))).map.dirty, true);
+  assert.strictEqual(parseImpactMap(JSON.stringify(enc({ dirty: false }))).map.dirty, false);
+  assert.strictEqual(parseImpactMap(JSON.stringify(enc({}))).map.dirty, false);
+  for (const dirty of ['true', 1, null, 0]) {
+    assert.deepStrictEqual(parseImpactMap(JSON.stringify({ ...enc({}), dirty })), { ok: false, reason: 'bad-shape' }, String(dirty));
+  }
+});
+
+test('AC1.2: the v1 reader shipped before the dirty field still parses dirty and clean maps', () => {
+  const v1 = require(path.join(__dirname, '..', '..', 'fixtures', 'test-impact', 'parse-impact-map-v1.js'));
+  for (const dirty of [true, false, undefined]) {
+    const text = JSON.stringify(encodeImpactMap({ commit: SHA, tracedAt: 't', exitCode: 0, node: 'v', tests: { 'tests/a.test.js': { f: ['src/x.js'] } }, dirty }));
+    const parsed = v1.parseImpactMap(text);
+    assert.strictEqual(parsed.ok, true, `dirty ${dirty}: ${parsed.reason}`);
+    assert.deepStrictEqual(parsed.map.tests['tests/a.test.js'].f, ['src/x.js']);
+  }
+});
+
 test('a traced test that read nothing is kept (it is traced, not untraced)', () => {
   const encoded = encodeImpactMap({ commit: SHA, tracedAt: 't', exitCode: 0, node: 'v', tests: { 'tests/z.test.js': {} } });
   assert.deepStrictEqual(encoded.tests, { 'tests/z.test.js': {} });
@@ -256,8 +280,11 @@ test('discrimination (AC4.1 AC4.2)', () => {
 test('mapProblem', () => {
   const ok = parseImpactMap(JSON.stringify(encodeImpactMap({ commit: SHA, tracedAt: 't', exitCode: 0, node: 'v', tests: {} })));
   const failing = parseImpactMap(JSON.stringify(encodeImpactMap({ commit: SHA, tracedAt: 't', exitCode: 1, node: 'v', tests: {} })));
+  const dirtyOk = parseImpactMap(JSON.stringify(encodeImpactMap({ commit: SHA, tracedAt: 't', exitCode: 0, node: 'v', tests: {}, dirty: true })));
   const base = { parsed: ok, isAncestor: true, distance: 3, maxAgeCommits: 50 };
   const cases = [
+    [{ ...base, parsed: dirtyOk }, 'map-dirty'],
+    [{ ...base, parsed: dirtyOk, isAncestor: false }, 'map-dirty'],
     [{ ...base, parsed: null }, 'map-missing'],
     [{ ...base, parsed: parseImpactMap('{') }, 'map-invalid: unparseable'],
     [{ ...base, parsed: { ok: false, reason: 'bad-commit' } }, 'map-invalid: bad-commit'],
@@ -351,6 +378,7 @@ test('loadImpactContext: a fresh map loads, with every matching test present at 
   assert.deepStrictEqual(ctx.headTests, ['tests/a.test.js', 'tests/b.test.js'], 'glob-filtered, on disk, deduplicated');
   assert.strictEqual(ctx.mapPath, MAP_PATH);
   assert.strictEqual(ctx.mapCommit, SHA);
+  assert.strictEqual(ctx.mapDirty, false);
   assert.strictEqual(ctx.distance, 2);
   assert.strictEqual(ctx.fetch, null);
   const byCmd = Object.fromEntries(calls.map((c) => [c.args[0], c]));
@@ -369,10 +397,14 @@ test('loadImpactContext: missing, unreadable, invalid, non-ancestor, stale and u
   });
   assert.strictEqual(run({}).problem, 'map-missing');
   assert.strictEqual(run({}).map, null);
+  assert.strictEqual(run({}).mapDirty, null);
   const eisdir = Object.assign(new Error('EISDIR'), { code: 'EISDIR' });
   assert.strictEqual(run({ [path.join(ROOT, '.')]: eisdir }, {}, { map: '.' }).problem, 'map-invalid: unreadable');
   assert.strictEqual(run({ [MAP_PATH]: '{' }).problem, 'map-invalid: unparseable');
   assert.strictEqual(run({ [MAP_PATH]: mapText({ exitCode: 1 }) }).problem, 'map-from-failing-suite');
+  const dirty = run({ [MAP_PATH]: mapText({ dirty: true }) });
+  assert.strictEqual(dirty.problem, 'map-dirty');
+  assert.strictEqual(dirty.mapDirty, true);
   const notAncestor = run({ [MAP_PATH]: mapText() }, { 'merge-base': () => { throw new Error('exit 1'); } });
   assert.strictEqual(notAncestor.problem, 'map-not-ancestor');
   assert.strictEqual(notAncestor.mapCommit, SHA);
@@ -393,12 +425,13 @@ test('loadImpactContext: an unreadable test listing fails closed, never an empty
 
 test('lazyImpactContext: nothing loads until a field is read, then it loads once', () => {
   let loads = 0;
-  const ctx = lazyImpactContext(() => { loads += 1; return { map: null, problem: 'map-missing', headTests: ['tests/a.test.js'], mapPath: '/m', mapCommit: null, distance: null, fetch: null }; });
+  const ctx = lazyImpactContext(() => { loads += 1; return { map: null, problem: 'map-missing', headTests: ['tests/a.test.js'], mapPath: '/m', mapCommit: null, mapDirty: true, distance: null, fetch: null }; });
   assert.strictEqual(ctx.loaded, false);
   assert.strictEqual(loads, 0);
   assert.strictEqual(ctx.problem, 'map-missing');
   assert.deepStrictEqual(ctx.headTests, ['tests/a.test.js']);
   assert.strictEqual(ctx.mapPath, '/m');
+  assert.strictEqual(ctx.mapDirty, true, 'mapDirty is forwarded');
   assert.strictEqual(ctx.loaded, true);
   assert.strictEqual(loads, 1);
   assert.strictEqual({ ...ctx, problem: 'x' }.mapPath, '/m', 'a spread copies the loaded values');

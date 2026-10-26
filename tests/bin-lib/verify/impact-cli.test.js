@@ -129,6 +129,7 @@ test('selects the subset (AC1.1 report shape)', async () => {
   assert.strictEqual(imp.mapPath, path.join(r.gitDir, DEFAULT_MAP_NAME));
   assert.strictEqual(imp.mapCommit, r.base);
   assert.strictEqual(imp.mapAgeCommits, 1);
+  assert.strictEqual(imp.mapDirty, false);
   assert.strictEqual(imp.fetch, null);
   assert.strictEqual(typeof report.durationMs, 'number');
   assert.strictEqual(report.scope.mode, 'scoped');
@@ -164,6 +165,7 @@ test('missing map runs full and names it (AC5.1)', async () => {
   assert.strictEqual(r.marker(), 'FULL');
   const imp = r.report().scope.impact;
   assert.strictEqual(imp.fallback, 'map-missing');
+  assert.strictEqual(imp.mapDirty, null);
   assert.strictEqual(imp.files, null);
   assert.strictEqual(imp.listPath, null);
   assert.strictEqual(imp.selectedFiles, null);
@@ -181,6 +183,20 @@ test('stale map (AC5.1)', async () => {
   assert.strictEqual(r.marker(), 'FULL');
   assert.strictEqual(r.report().scope.impact.fallback, 'map-stale: 2 commits > 1');
   assert.strictEqual(r.report().scope.impact.mapAgeCommits, 2);
+});
+
+test('AC3.1: a map traced from a dirty tree runs full as map-dirty and reports mapDirty', async () => {
+  const r = impactRepo();
+  fs.writeFileSync(path.join(r.gitDir, DEFAULT_MAP_NAME), mapJson(r.base, { dirty: true }));
+  commitFile(r, 'src/x.js', 'x2\n');
+  const run = await runCli(ARGS, r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(r.marker(), 'FULL');
+  const imp = r.report().scope.impact;
+  assert.strictEqual(imp.fallback, 'map-dirty');
+  assert.strictEqual(imp.mapDirty, true);
+  assert.strictEqual(imp.mapCommit, r.base);
+  assert.match(run.stdout, /^Impact: full tests — map-dirty$/m);
 });
 
 test('non-ancestor map', async () => {

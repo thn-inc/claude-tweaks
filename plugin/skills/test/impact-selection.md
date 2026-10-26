@@ -28,7 +28,7 @@ Keep `command` free of those characters.
 
 ## The map
 
-The map is JSON: `{version: 1, commit, tracedAt, exitCode, node, paths, tests}`. `paths` is one sorted table of repo-relative POSIX paths. Each `tests` entry lists indexes into that table under up to four kinds:
+The map is JSON: `{version: 1, commit, tracedAt, exitCode, node, dirty, paths, tests}`. `dirty` is `true` when the traced tree held tracked changes (`trace --allow-dirty`; untracked files never count), so the map's `commit` is not what was traced. A map written before the field existed has no `dirty` key and reads as `false`; an older reader ignores the key, so the version stays 1. A `dirty` that is not a boolean is `bad-shape`. `paths` is one sorted table of repo-relative POSIX paths. Each `tests` entry lists indexes into that table under up to four kinds:
 
 | Kind | Records |
 |------|---------|
@@ -50,6 +50,7 @@ A prefix covers a path when `prefix === ''` (the repo root), `p === prefix`, or 
 | `map-missing` | No map file at the resolved path. |
 | `map-invalid: {reason}` | `{reason}` is `unparseable` (not JSON), `bad-shape`, `wrong-version`, `bad-commit`, or `unreadable` (the file exists but cannot be read). |
 | `map-from-failing-suite` | The traced run's `exitCode` was not 0. |
+| `map-dirty` | The map was traced from a tree with tracked changes (`dirty: true`): its reads belong to no commit, so it is never used. `fetch` replaces a cached dirty map. |
 | `map-not-ancestor` | The map's commit is not an ancestor of HEAD. |
 | `map-stale: {n} commits > {max}` | The map trails HEAD by more than `maxAgeCommits`. An age git cannot count reads as stale. |
 | `untraced-path: {p}` | A changed non-test path that no traced read covers. |
@@ -70,7 +71,7 @@ Changed paths are diffed from the stamp's `fullSha`, as every scoped run is. Wit
 
 ## Report
 
-`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, superseded, mapPath, mapCommit, mapAgeCommits, fetch, listPath, selectedFiles}`. `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. The map is read only when selection needs it, so a delta no impact rule matches (or that a full-suite rule already supersedes) never reads the map or runs `fetch`: `mapPath`, `mapCommit`, `mapAgeCommits` and `fetch` are then `null`. Under `Scope:`, stdout prints one of:
+`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, superseded, mapPath, mapCommit, mapAgeCommits, mapDirty, fetch, listPath, selectedFiles}`. `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. The map is read only when selection needs it, so a delta no impact rule matches (or that a full-suite rule already supersedes) never reads the map or runs `fetch`: `mapPath`, `mapCommit`, `mapAgeCommits`, `mapDirty` and `fetch` are then `null`. Under `Scope:`, stdout prints one of:
 
 - `Impact: {selected} of {n} test file(s) selected (map {commit9}, {age} commit(s) old)`
 - `Impact: {selected} of the {suite} test file(s) selected — no impact-rule path changed, map not read`
