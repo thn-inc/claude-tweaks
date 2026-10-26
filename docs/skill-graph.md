@@ -475,7 +475,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `test/fix-mode.md` | Step 8's disposition inventories its `staged/test-fix-{n}.patch` files (Step 1.5's test gate) as proposals. |
 | `test/flake-handling.md` | Step 8's disposition inventories its `staged/flaky-allowlist-{slug}.md` files (Step 1.5's test gate) as proposals. |
 | `_shared/materiality-floor.md` | Step 8's disposition routes a below-floor finding to the digest container instead of an ordinary record, and surfaces the digest comment URL and count in its own output. |
-| `bin/hooks.js archive-run` | Step 8 archives the run directory it created once disposition reported `0 failed`; Step 0 refuses a step-2 directory that is terminal or carries a prior release run's `createdBy: "release-standalone"` stamp, whatever its status, so a later release never adopts a finished or stopped-early one (#3898). |
+| `bin/hooks.js archive-run` | Step 8 archives the run directory it created once disposition reported `0 failed`; Step 0's `resolve-run-dir --spec-slug release` call refuses (step 2, #4151) a directory that is terminal, carries a prior release run's `createdBy: "release-standalone"` stamp whatever its status, or whose `run-state.json` cannot be read, so a later release never adopts a finished or stopped-early one (#3898). |
 
 ## research
 
