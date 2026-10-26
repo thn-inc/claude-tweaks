@@ -2152,8 +2152,9 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // command taken to succeed, as base took it, with no `&&`/`||` branch, so the set grows only where
 // base's grew, and past the cap it collapses to the overflow cwd and the start as real paths, as
 // base's did (a cwd the walk could not read, null, is dropped there as base dropped it). It keeps
-// this branch's other scanner fixes, which only add targets, so it reads at least what base read.
-// That walk's targets are base's own readings of the command, and fileWriteTargets, mkdirTargets and
+// this branch's other scanner fixes, which add targets base missed and drop ones it invented (the
+// `1` and `2` base read in `(( a>1 || b>2 ))`). That walk's targets are the readings of the command
+// (base's collapse, this branch's reading of each segment), and fileWriteTargets, mkdirTargets and
 // resolvedGitSegments report each that the first walk did not already resolve, as a known target
 // marked `reading: true`, after the first walk's. This walk's own `&&`/`||` branches fill the set
 // where base's did not, so it collapses where base never did; the base view keeps what base would

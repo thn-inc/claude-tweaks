@@ -1986,7 +1986,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // the fields it always had, with an overflowCwd and without one. An absolute target, and a git
     // command after an absolute cd or `-C`, is known and carries none. 4e7d54a9d gave no marker.
     // A command with a lost target also comes back with base d9aa6b82d's own readings of it: the
-    // targets base's walk resolves, plus any this branch's other scanner fixes add (every command taken to succeed; past the cap the set
+    // targets base's walk resolves, as this branch's other scanner fixes correct them (every command taken to succeed; past the cap the set
     // collapses to the overflow cwd and the start, as real paths), each a known target marked
     // `reading`, after the walk's own and once each, unless the walk already resolved it (after
     // `cd q`, ../w/f.js reads /main/w/f.js and /r/w/f.js; from /r alone, /w/f.js). Accepted gap, user
