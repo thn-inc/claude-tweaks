@@ -33,6 +33,8 @@ Import it: `const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } 
 
 Fixing a stripper defect means editing the helper and adding the planted case to `tests/helpers-strip-comments.test.js`. Every scan picks the fix up. The helper's test owns the stripper's own planted cases. Some scans also keep a fixture that proves their matcher still sees code after a literal holding a comment opener (see "Self-test the matcher").
 
+A new suite that imports the stripper is itself a caller, and two hand-written lists must name it by test-file stem: the header comment of `tests/helpers/strip-comments.js` and `parse-signal-discipline` item 15. `tests/strip-comments-callers-twin.test.js` pins both to the tree, so a suite added without them goes red on its first full run (#4153's `owner-pid-probe` suite cost a fix commit and a second full run this way). Add the stem to both lists in the commit that adds the suite. If the suite reads a source file as text, read it through `readText` from `tests/helpers/read-skill.js`, not a raw `fs.readFileSync`: `raw-markdown-read` flags the raw read.
+
 ### A mis-parse must be an offender, not a clean scan
 
 The stripper has one known ambiguity: a `/` right after `)` or `}` is read as division, so a regex there (`if (x) /re/.test(y)`, or one opening a statement after a block-closing `}`) is misread. A misread that blanks code makes the scan count zero sites in the blanked span, which reads as a clean file. The header of the helper states this limit. `parse-signal-discipline` item 15 holds the general rule: a transform in front of a scanner owes its own could-not-parse verdict. This is how this repo applies it:

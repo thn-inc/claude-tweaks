@@ -203,7 +203,7 @@ Read `report-templates.md` for the full templates, the `PASS_WITH_CAVEATS` propa
 
 If tests fail and the failures look straightforward (type errors, lint violations, simple test failures), read `fix-mode.md` in this skill's directory for the full procedure. Auto mode routes per `_shared/auto-mode-contract.md` — auto-fix and re-verify, or stage the fix to `staged/test-fix-{n}.patch` per `_shared/staged-patch.md`, validated per that file's Staging-time gate (`git apply --check`, then its Stacked check) before logging. Interactive mode asks via `AskUserQuestion`, with reproduce-first debugging for behavioral and QA failures.
 
-**Phase exit (`worktree` mode, `integration-model: pr-first` — `_shared/integration-model.md`):** push the branch and flip this phase's PR checklist row — `_shared/git-discipline.md`'s Phase-exit push section and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A no-op under `local-merge` or `current-branch` mode. Skipped under `MULTISPEC_PARALLEL_WAVE=1` (`flow/multispec-parallel-waves.md`), writing one `SKIP` entry naming the marker.
+**Phase exit (any run with a run dir, `_shared/integration-model.md`):** one call, `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-exit.js" --run "$PIPELINE_RUN_DIR" --phase test --worktree "{worktree-path}" --fixes {n}[,{m}...]`, in any model or mode; it pushes only under `pr-first` in `worktree` mode — route its output per `_shared/git-discipline.md`'s Phase exit section and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. Skipped under `MULTISPEC_PARALLEL_WAVE=1` (`flow/multispec-parallel-waves.md`): do not call it; write one `SKIP` entry naming the marker.
 
 ## Next Actions
 

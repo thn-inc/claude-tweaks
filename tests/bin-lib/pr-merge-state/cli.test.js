@@ -110,20 +110,128 @@ test('every state a case can emit is a STATES member, and the cases cover the wh
   assert.ok(Object.isFrozen(STATES));
 });
 
+// Characterization: the whole printed envelope per state, so a logging change cannot
+// silently drift a field a consumer (phase-exit.js, the wrap-up re-check) reads.
+const ENVELOPE_CASES = [
+  [DIRTY, { pr: 7, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY', logged: true, state: 'conflicting', phase: 'build' }],
+  [{ number: 7, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' }, { pr: 7, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', logged: false, state: 'no-conflict', phase: 'build' }],
+  [{ number: 7, mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' }, { pr: 7, mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN', logged: true, state: 'unknown', phase: 'build' }],
+  [{ number: 7, mergeable: 'MERGEABLE' }, { pr: 7, mergeable: 'MERGEABLE', mergeStateStatus: null, logged: true, state: 'unknown', phase: 'build' }],
+  [{ ...DIRTY, state: 'MERGED' }, { pr: 7, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY', logged: false, state: 'not-open', phase: 'build' }],
+  [null, { pr: null, mergeable: null, mergeStateStatus: null, logged: false, state: 'no-pr', phase: 'build' }],
+  ['network-failure', { pr: 7, mergeable: null, mergeStateStatus: null, logged: true, state: 'read-failed', phase: 'build', reason: 'network-failure' }],
+  ['invalid-arguments', { pr: 7, mergeable: null, mergeStateStatus: null, logged: true, state: 'read-failed', phase: 'build', reason: 'invalid-arguments' }],
+  [42, { pr: 7, mergeable: null, mergeStateStatus: null, logged: true, state: 'read-failed', phase: 'build', reason: 'unparseable' }],
+  ['gh-absent', { pr: 7, mergeable: null, mergeStateStatus: null, logged: true, state: 'gh-absent', phase: 'build' }],
+];
+
+test('characterization: every state prints its full envelope', () => {
+  for (const [result, expected] of ENVELOPE_CASES) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, result);
+    assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), 0);
+    assert.deepEqual(h.json(), expected, JSON.stringify(result));
+    assert.equal(h.err.join(''), '', JSON.stringify(result));
+  }
+});
+
+test('characterization: the conflicting entry is the full AUTO line', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, DIRTY);
+  run(['--run', runDir, '--phase', 'review'], h.deps);
+  const entry = fs.readFileSync(decisionsOf(runDir), 'utf8').split('\n').find((l) => l.startsWith('- '));
+  assert.equal(
+    entry.replace(/^- AUTO \d{2}:\d{2}:\d{2} /, ''),
+    '— Post-push merge-state check: PR #7 conflicts with the integration branch at review exit (mergeStateStatus DIRTY, mergeable CONFLICTING) — GitHub runs no pull_request workflows on it until the branch is caught up. Reversibility: n/a.',
+  );
+});
+
+// The text git-discipline.md's Post-push merge-state check told the caller to hand-log through
+// log-decision.js (--status SKIP --step "Post-push merge-state check" --reversibility n/a), as
+// formatEntry renders it after the timestamp — the CLI now writes exactly this line itself.
+const degradeLine = (stateText) => `— Post-push merge-state check: condition: pr-merge-state.js ${stateText} → fallback: no merge-state signal this phase. Reversibility: n/a.`;
+
+test('AC3.1: unknown, read-failed (with reason) and gh-absent each append the SKIP line the prose used to dictate', () => {
+  for (const [result, stateText, phase, section] of [
+    [{ number: 7, mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' }, 'unknown', 'build', '/build'],
+    [{ number: 7, mergeable: 'MERGEABLE' }, 'unknown', 'test', '/test'],
+    ['network-failure', 'read-failed (network-failure)', 'review', '/review'],
+    ['invalid-arguments', 'read-failed (invalid-arguments)', 'build', '/build'],
+    [42, 'read-failed (unparseable)', 'wrap-up', '/wrap-up'],
+    ['gh-absent', 'gh-absent', 'polish', '/flow'],
+  ]) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, result);
+    assert.equal(run(['--run', runDir, '--phase', phase], h.deps), 0);
+    const j = h.json();
+    assert.equal(j.logged, true, stateText);
+    assert.equal(h.calls.length, 1, `${stateText}: still one resolver call`);
+    const text = fs.readFileSync(decisionsOf(runDir), 'utf8');
+    const entries = text.split('\n').filter((l) => l.startsWith('- '));
+    assert.equal(entries.length, 1, stateText);
+    assert.match(entries[0], /^- SKIP \d{2}:\d{2}:\d{2} /, stateText);
+    assert.equal(entries[0].replace(/^- SKIP \d{2}:\d{2}:\d{2} /, ''), degradeLine(stateText));
+    assert.ok(text.indexOf(`## ${section}\n`) !== -1 && text.indexOf(`## ${section}\n`) < text.indexOf('- SKIP'), `${stateText}: under ## ${section}`);
+  }
+});
+
+test('AC3.1: a throwing resolver logs read-failed (resolver-threw)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, null, { resolvePrState: () => { throw new Error('boom'); } });
+  assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), 0);
+  assert.equal(h.json().logged, true);
+  const entry = fs.readFileSync(decisionsOf(runDir), 'utf8').split('\n').find((l) => l.startsWith('- '));
+  assert.equal(entry.replace(/^- SKIP \d{2}:\d{2}:\d{2} /, ''), degradeLine('read-failed (resolver-threw)'));
+});
+
+test('append failure on a degrade state keeps exit 0 and reports logged:false', () => {
+  for (const [result, expected] of [
+    [{ number: 7, mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' }, 'unknown'],
+    ['network-failure', 'read-failed'],
+    ['gh-absent', 'gh-absent'],
+  ]) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, result, { appendDecision: () => { throw new Error('disk full'); } });
+    assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), 0);
+    const j = h.json();
+    assert.equal(j.state, expected);
+    assert.equal(j.logged, false);
+    assert.equal(h.err.join('').trim().split('\n').length, 1);
+    assert.match(h.err.join(''), /disk full/);
+  }
+});
+
+test('silent states — no-conflict, not-open, no-pr (null view, no pr object) write no decisions.md', () => {
+  for (const [runState, result, expected] of [
+    [{ pr: { number: 7 } }, { number: 7, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' }, 'no-conflict'],
+    [{ pr: { number: 7 } }, { ...DIRTY, state: 'CLOSED' }, 'not-open'],
+    [{ pr: { number: 7 } }, null, 'no-pr'],
+    [{ status: 'active' }, DIRTY, 'no-pr'],
+  ]) {
+    const { main, runDir } = fixture(runState);
+    const h = makeDeps(main, result);
+    assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), 0);
+    const j = h.json();
+    assert.equal(j.state, expected);
+    assert.equal(j.logged, false);
+    assert.equal(fs.existsSync(decisionsOf(runDir)), false, expected);
+  }
+});
+
 test('PHASE_SECTIONS maps every phase to its decisions.md section', () => {
   assert.deepEqual(PHASE_SECTIONS, { build: '/build', test: '/test', review: '/review', polish: '/flow', 'wrap-up': '/wrap-up' });
 });
 
-test('AC4.1: UNKNOWN is no signal — one resolver call, no decisions write', () => {
+test('AC4.1: UNKNOWN is no signal — one resolver call, only the SKIP degrade trace', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, { number: 7, mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' });
   assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), 0);
   assert.equal(h.json().state, 'unknown');
   assert.equal(h.calls.length, 1);
-  assert.equal(fs.existsSync(decisionsOf(runDir)), false);
+  assert.doesNotMatch(fs.readFileSync(decisionsOf(runDir), 'utf8'), /- AUTO /);
 });
 
-test('AC4.1: failed read fails open — read-failed, no write', () => {
+test('AC4.1: failed read fails open — read-failed, only the SKIP degrade trace', () => {
   for (const reason of ['network-failure', 'invalid-arguments']) {
     const { main, runDir } = fixture({ pr: { number: 7 } });
     const h = makeDeps(main, reason);
@@ -132,7 +240,7 @@ test('AC4.1: failed read fails open — read-failed, no write', () => {
     assert.equal(j.state, 'read-failed');
     assert.equal(j.reason, reason);
     assert.equal(h.calls.length, 1);
-    assert.equal(fs.existsSync(decisionsOf(runDir)), false);
+    assert.doesNotMatch(fs.readFileSync(decisionsOf(runDir), 'utf8'), /- AUTO /);
   }
 });
 
@@ -156,7 +264,7 @@ test('gh-absent', () => {
   const h = makeDeps(main, 'gh-absent');
   assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), 0);
   assert.equal(h.json().state, 'gh-absent');
-  assert.equal(fs.existsSync(decisionsOf(runDir)), false);
+  assert.match(fs.readFileSync(decisionsOf(runDir), 'utf8'), /^- SKIP .*pr-merge-state\.js gh-absent →/m);
 });
 
 test('no-conflict — CLEAN and BEHIND write nothing', () => {
@@ -283,14 +391,14 @@ test('parseArgs: reads --run and --phase, unknown flag rejected', () => {
   assert.ok(parseArgs(['--bogus']).error);
 });
 
-test('a throwing resolver reads as read-failed and writes nothing', () => {
+test('a throwing resolver reads as read-failed and writes only the SKIP degrade trace', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, null, { resolvePrState: () => { throw new Error('boom'); } });
   assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), 0);
   const j = h.json();
   assert.equal(j.state, 'read-failed');
   assert.equal(j.reason, 'resolver-threw');
-  assert.equal(fs.existsSync(decisionsOf(runDir)), false);
+  assert.doesNotMatch(fs.readFileSync(decisionsOf(runDir), 'utf8'), /- AUTO /);
 });
 
 test('--help prints usage and exits 0 without resolving', () => {

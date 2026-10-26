@@ -14,7 +14,7 @@
 const { buildLinkedPRQuery } = require('./record');
 
 // { numbers, owner, repo, runner } -> Map<number, { openPR: number|null,
-// mentions: {number, title, state, merged, mergedAt}[] }>. ONE batched,
+// mentions: {number, title, state, merged, mergedAt, createdAt}[] }>. ONE batched,
 // aliased GraphQL call (buildLinkedPRQuery) resolving every candidate's
 // closedByPullRequestsReferences connection AND its cross-reference
 // timeline (#1984) at once. owner/repo are already-resolved String! values,
@@ -69,7 +69,7 @@ function fetchLinkedPRs({
     const mentions = timelineNodes
       .map((item) => item && item.source)
       .filter((pr) => pr && pr.repository && pr.repository.nameWithOwner === nameWithOwner)
-      .map((pr) => ({ number: pr.number, title: pr.title, state: pr.state, merged: !!pr.merged, mergedAt: pr.mergedAt || null }));
+      .map((pr) => ({ number: pr.number, title: pr.title, state: pr.state, merged: !!pr.merged, mergedAt: pr.mergedAt || null, createdAt: pr.createdAt || null }));
     // #2676 — wrap-up's carrier-commit ground-truth fallback needs to know
     // whether ANY closing-PR reference exists for this issue (regardless of
     // that PR's own state), not just whether one is currently OPEN —

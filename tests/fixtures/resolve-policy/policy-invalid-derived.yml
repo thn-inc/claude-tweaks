@@ -1,0 +1,5 @@
+# Frozen fixture — a present-but-malformed boolean on a key whose default is
+# derived from autonomy (housekeeping-auto-merge), so the warning's "default"
+# is the derived value, not the schema literal (#4141).
+autonomy: trusted
+housekeeping-auto-merge: maybe

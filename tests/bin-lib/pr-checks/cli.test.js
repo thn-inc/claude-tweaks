@@ -60,7 +60,7 @@ function makeDeps(main, over = {}) {
 }
 
 test('parseArgs: --run required, unknown flag rejected', () => {
-  assert.deepEqual(parseArgs(['--run', 'x']), { run: 'x', pr: null, help: false });
+  assert.deepEqual(parseArgs(['--run', 'x']), { run: 'x', pr: null, section: null, help: false });
   assert.ok(parseArgs(['--bogus']).error);
 });
 
@@ -580,5 +580,183 @@ test('a workflow failing at the base tip only as a run row is inherited; a super
     const h = makeDeps(main, { ...f.over, gh: (args) => (args[0] === 'run' && args[3] === BASE_SHA ? JSON.stringify(rows) : f.over.gh(args)) });
     assert.equal(run(['--run', runDir], h.deps), 0);
     assert.equal(h.json().state, state);
+  }
+});
+
+// Characterization (#4026, pinned before the CLI logged its own decisions.md lines): every
+// state's full stdout line, byte for byte, in both modes. The --pr lines must never change —
+// _shared/github-pr-scan.md, dispatch/settle-parked.md and the wrap-up pack parse them.
+const PASS = { __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' };
+const RUNNING = { __typename: 'CheckRun', name: 'test', status: 'IN_PROGRESS', conclusion: '' };
+const viewGh = (view, runs = '[]') => (args) => (args[0] === 'pr' ? JSON.stringify(view) : runs);
+const STATE_OVERRIDES = {
+  green: () => ({ gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [PASS] }) }),
+  pending: () => ({ gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [RUNNING] }) }),
+  stale: () => ({ gh: viewGh({ headRefOid: 'd'.repeat(40), statusCheckRollup: [PASS] }) }),
+  red: () => ({}),
+  'inherited-red': () => redWithBase(['test'], ['test']).over,
+  'no-ci': () => ({ hasPullRequestCi: () => false, gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [] }) }),
+  'read-failed': () => ({ gh: () => { throw new Error('HTTP 502'); } }),
+  'gh-absent': () => ({ ghAvailable: () => false }),
+};
+const RED_FAILING = [{ name: 'test', url: 'https://ci.example/test' }];
+const RUN_LINES = {
+  green: { failing: [], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'green' },
+  pending: { failing: [], pending: ['test'], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'pending' },
+  stale: { failing: [], pending: [], headRefOid: 'd'.repeat(40), localHead: HEAD, pr: 7, state: 'stale' },
+  red: { failing: RED_FAILING, pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'red', baseSha: null, baseReason: 'integration branch unresolvable', baseBranch: null },
+  'inherited-red': { failing: [{ ...RED_FAILING[0], inherited: true }], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'inherited-red', baseSha: BASE_SHA, baseBranch: 'main' },
+  'no-ci': { failing: [], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'no-ci' },
+  'read-failed': { failing: [], pending: [], headRefOid: null, localHead: HEAD, pr: 7, state: 'read-failed', reason: 'gh pr view failed: HTTP 502' },
+  'gh-absent': { failing: [], pending: [], headRefOid: null, localHead: null, pr: 7, state: 'gh-absent' },
+  'no-pr': { failing: [], pending: [], headRefOid: null, localHead: null, pr: null, state: 'no-pr' },
+};
+// --pr has no local HEAD and cannot be stale or no-pr.
+const PR_LINES = Object.fromEntries(Object.entries(RUN_LINES)
+  .filter(([s]) => s !== 'stale' && s !== 'no-pr')
+  .map(([s, body]) => [s, { ...body, localHead: null }]));
+
+test('characterization: --pr prints each state\'s envelope byte for byte', () => {
+  for (const [state, body] of Object.entries(PR_LINES)) {
+    const { main } = fixture(null);
+    const h = prDeps(main, { integrationBranch: () => null, ...STATE_OVERRIDES[state]() });
+    assert.equal(run(['--pr', '7'], h.deps), 0, state);
+    assert.equal(h.out.join(''), `${JSON.stringify(body)}\n`, state);
+  }
+});
+
+// --run's envelope is the characterized one plus a trailing `logged` (#4026): true for every
+// state the gate logs, false for green and red.
+test('characterization: --run prints each state\'s envelope byte for byte, plus logged', () => {
+  for (const [state, body] of Object.entries(RUN_LINES)) {
+    const { main, runDir } = fixture(state === 'no-pr' ? { status: 'active' } : { pr: { number: 7 } });
+    const h = makeDeps(main, { integrationBranch: () => null, ...(STATE_OVERRIDES[state] || (() => ({})))() });
+    assert.equal(run(['--run', runDir], h.deps), 0, state);
+    assert.equal(h.out.join(''), `${JSON.stringify({ ...body, logged: state !== 'green' && state !== 'red' })}\n`, state);
+  }
+});
+
+// #4026: under --run the CLI writes the PR-check gate's decisions.md line itself — the line
+// _shared/pr-check-gate.md told the caller to hand-log through log-decision.js (--step
+// "PR-check gate"), as formatEntry renders it after the timestamp.
+const decisionsOf = (runDir) => path.join(runDir, 'decisions.md');
+const entriesOf = (runDir) => fs.readFileSync(decisionsOf(runDir), 'utf8').split('\n').filter((l) => l.startsWith('- '));
+const afterStamp = (line) => line.replace(/^- [A-Z-]+ \d{2}:\d{2}:\d{2} /, '');
+
+test('AC3.1: inherited-red under --run logs the caveat line the gate prose dictated', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, redWithBase(['test', 'lint'], ['test', 'lint']).over);
+  assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'inherited-red');
+  assert.equal(j.logged, true);
+  const entries = entriesOf(runDir);
+  assert.equal(entries.length, 1);
+  assert.match(entries[0], /^- AUTO \d{2}:\d{2}:\d{2} /);
+  assert.equal(afterStamp(entries[0]), '— PR-check gate: PR #7 checks red at ccccccc, but every failing check (test, lint) is also failing on main at eeeeeee — inherited, passed with caveat. Reversibility: high.');
+  assert.ok(fs.readFileSync(decisionsOf(runDir), 'utf8').startsWith('## /test\n'), 'the entry sits under the --section heading');
+});
+
+test('pending and stale log their caveat lines', () => {
+  const cases = [
+    ['pending', { gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [RUNNING, { ...RUNNING, name: 'lint' }] }) }, '— PR-check gate: PR #7 checks pending at ccccccc (test, lint) — passed with caveat. Reversibility: high.'],
+    ['stale', STATE_OVERRIDES.stale(), '— PR-check gate: PR #7 checks stale at ddddddd (HEAD not yet pushed) — passed with caveat. Reversibility: high.'],
+    // An empty rollup on a PR whose CI should report reads pending with no names: HEAD is pushed, no check has reported yet.
+    ['pending', { gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [] }) }, '— PR-check gate: PR #7 checks pending at ccccccc (no check reported yet) — passed with caveat. Reversibility: high.'],
+  ];
+  for (const [state, over, line] of cases) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, over);
+    assert.equal(run(['--run', runDir, '--section', '/review'], h.deps), 0, state);
+    assert.equal(h.json().state, state);
+    assert.equal(h.json().logged, true, state);
+    const entries = entriesOf(runDir);
+    assert.equal(entries.length, 1, state);
+    assert.match(entries[0], /^- AUTO /, state);
+    assert.equal(afterStamp(entries[0]), line, state);
+    assert.ok(fs.readFileSync(decisionsOf(runDir), 'utf8').startsWith('## /review\n'), state);
+  }
+});
+
+test('each degrade state logs the SKIP line', () => {
+  const skipLine = (stateText) => `— PR-check gate: condition: pr-checks.js ${stateText} → fallback: local verification only. Reversibility: n/a.`;
+  const cases = [
+    ['no-pr', { status: 'active' }, {}, 'no-pr'],
+    ['gh-absent', { pr: { number: 7 } }, STATE_OVERRIDES['gh-absent'](), 'gh-absent'],
+    ['no-ci', { pr: { number: 7 } }, STATE_OVERRIDES['no-ci'](), 'no-ci'],
+    ['read-failed', { pr: { number: 7 } }, STATE_OVERRIDES['read-failed'](), 'read-failed: gh pr view failed: HTTP 502'],
+    // A multi-line reason (gh stderr) is collapsed so the entry stays one decisions.md line.
+    ['read-failed', { pr: { number: 7 } }, { gh: () => { const e = new Error('HTTP 502'); e.stderr = 'line one\nline two\n'; throw e; } }, 'read-failed: gh pr view failed: HTTP 502 line one line two'],
+  ];
+  for (const [state, runState, over, stateText] of cases) {
+    const { main, runDir } = fixture(runState);
+    const h = makeDeps(main, over);
+    assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0, stateText);
+    assert.equal(h.json().state, state, stateText);
+    assert.equal(h.json().logged, true, stateText);
+    const entries = entriesOf(runDir);
+    assert.equal(entries.length, 1, stateText);
+    assert.match(entries[0], /^- SKIP \d{2}:\d{2}:\d{2} /, stateText);
+    assert.equal(afterStamp(entries[0]), skipLine(stateText), stateText);
+  }
+});
+
+test('with no --section the entry lands with no heading', () => {
+  const { main, runDir } = fixture({ status: 'active' });
+  const h = makeDeps(main);
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().logged, true);
+  assert.ok(!fs.readFileSync(decisionsOf(runDir), 'utf8').includes('## '), 'no section heading');
+  assert.equal(entriesOf(runDir).length, 1);
+});
+
+test('green and red log nothing', () => {
+  for (const state of ['green', 'red']) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { integrationBranch: () => null, ...STATE_OVERRIDES[state]() });
+    assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0, state);
+    assert.equal(h.json().state, state);
+    assert.equal(h.json().logged, false, state);
+    assert.equal(fs.existsSync(decisionsOf(runDir)), false, state);
+  }
+});
+
+test('--pr without --run keeps the envelope byte-identical (no logged key)', () => {
+  for (const state of Object.keys(PR_LINES)) {
+    const { main } = fixture(null);
+    const h = prDeps(main, { integrationBranch: () => null, ...STATE_OVERRIDES[state]() });
+    assert.equal(run(['--pr', '7'], h.deps), 0, state);
+    assert.equal(Object.prototype.hasOwnProperty.call(h.json(), 'logged'), false, state);
+    assert.equal(h.out.join(''), `${JSON.stringify(PR_LINES[state])}\n`, state);
+  }
+});
+
+test('--section without --run is a usage error', () => {
+  const { main } = fixture(null);
+  for (const argv of [['--section', '/test'], ['--pr', '7', '--section', '/test'], ['--section', '/test', '--pr', '7']]) {
+    const h = prDeps(main);
+    assert.equal(run(argv, h.deps), 2, argv.join(' '));
+    assert.equal(h.ghCalls.length, 0, argv.join(' '));
+    assert.match(h.err.join(''), /--section is valid only with --run/, argv.join(' '));
+  }
+  assert.match(parseArgs(['--run', 'x', '--section']).error, /--section needs a value/);
+  assert.match(parseArgs(['--run', 'x', '--section', '']).error, /--section needs a value/);
+  assert.match(parseArgs(['--run', 'x', '--section', '/te\nst']).error, /--section needs a value/);
+  assert.equal(parseArgs(['--run', 'x', '--section', '/test']).section, '/test');
+});
+
+test('append failure reports logged:false and keeps exit 0', () => {
+  for (const [state, runState, over] of [
+    ['inherited-red', { pr: { number: 7 } }, STATE_OVERRIDES['inherited-red']()],
+    ['pending', { pr: { number: 7 } }, STATE_OVERRIDES.pending()],
+    ['no-pr', { status: 'active' }, {}],
+  ]) {
+    const { main, runDir } = fixture(runState);
+    const h = makeDeps(main, { ...over, appendDecision: () => { throw new Error('disk full'); } });
+    assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0, state);
+    assert.equal(h.json().state, state);
+    assert.equal(h.json().logged, false, state);
+    assert.equal(h.err.join('').trim().split('\n').length, 1, state);
+    assert.match(h.err.join(''), /disk full/, state);
   }
 });
