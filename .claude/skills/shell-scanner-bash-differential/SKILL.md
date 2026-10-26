@@ -117,8 +117,8 @@ function runBash(bash, cmd, { cwd, stubDir }) {
       detached: true, // own session and process group: pgid === child.pid
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const pgid = child.pid;
-    live.set(pgid, true);
+    const pgid = child.pid; // undefined when spawn itself failed (missing bash, bad cwd)
+    if (pgid !== undefined) live.set(pgid, true);
 
     const streams = { out: [], err: [], outBytes: 0, errBytes: 0 };
     const collect = (chunk, list, key) => {
@@ -158,8 +158,10 @@ function runBash(bash, cmd, { cwd, stubDir }) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      killGroup(pgid);
-      live.delete(pgid);
+      if (pgid !== undefined) {
+        killGroup(pgid);
+        live.delete(pgid);
+      }
       reject(e);
     });
     child.on('exit', (status, signal) => {
