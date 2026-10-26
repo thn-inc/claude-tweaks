@@ -172,27 +172,65 @@ test('#3497 offline never calls the PR resolver', () => {
 });
 
 // #3497 I1: a run whose parent session is still live is never re-entered.
-// The worktree listing and lock verdict are injected, so no live pid is needed.
+// The lock and last-commit probes are injected through deps.probes, so no live pid is needed.
 const WT = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pass-reentry-wt-'));
-const LISTING = { stdout: `worktree ${WT}\nHEAD abc\nbranch refs/heads/feat\nlocked claude session (pid 4242)\n\n`, failure: null };
+const OLD = Date.parse('2026-01-01T00:00:00Z');
+const thrower = (message) => () => { throw new Error(message); };
 const NO_CALL = (name) => () => { throw new Error(`${name} must not be called`); };
 
 test('#3497 I1 live worktree lock -> parent-live', () => {
   const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
-  const r = checkPassReentry(run, { deps: deps({ listWorktrees: () => LISTING, lockVerdict: () => 'in-use' }) });
+  const r = checkPassReentry(run, { deps: deps({ probes: { lockInUse: () => true, lastCommitAt: () => OLD } }) });
   assert.equal(r.eligible, false);
   assert.equal(r.reason, 'parent-live');
-  assert.match(r.detail, /in-use/);
-  const unknown = checkPassReentry(run, { deps: deps({ listWorktrees: () => LISTING, lockVerdict: () => 'unknown' }) });
+  assert.equal(r.detail, 'worktree lock in-use');
+  const unknown = checkPassReentry(run, { deps: deps({ probes: { lockInUse: thrower('worktree lock state is unknown for W'), lastCommitAt: () => OLD } }) });
   assert.equal(unknown.reason, 'parent-live');
-  const failed = checkPassReentry(run, { deps: deps({ listWorktrees: () => ({ stdout: '', failure: 'timeout' }) }) });
+  const failed = checkPassReentry(run, { deps: deps({ probes: { lockInUse: thrower('could not list worktrees from R: git timeout'), lastCommitAt: () => OLD } }) });
   assert.equal(failed.reason, 'parent-live');
   assert.match(failed.detail, /indeterminate/);
 });
 
+test('AC1.2: an unlisted worktree now blocks the pass', () => {
+  const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
+  const r = checkPassReentry(run, { deps: deps({ probes: { lockInUse: thrower('W is not listed by git worktree list in R'), lastCommitAt: () => OLD } }) });
+  assert.equal(r.reason, 'parent-live');
+  assert.match(r.detail, /^indeterminate: .*not listed/);
+});
+
+test('AC1.2: a commit under 10 minutes old now blocks a non-interrupted parent', () => {
+  const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
+  const r = checkPassReentry(run, { deps: deps({ probes: { lockInUse: () => false, lastCommitAt: () => Date.now() - 60000 } }) });
+  assert.equal(r.reason, 'parent-live');
+  assert.equal(r.detail, 'worktree recently committed to');
+});
+
+test('AC1.2: a failed last-commit read now blocks a non-interrupted parent', () => {
+  const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
+  const r = checkPassReentry(run, { deps: deps({ probes: { lockInUse: () => false, lastCommitAt: thrower('could not read the last commit time of W: git error') } }) });
+  assert.equal(r.reason, 'parent-live');
+  assert.match(r.detail, /^indeterminate: /);
+});
+
+test('AC3.2: parentLiveDetail is non-null for every old indeterminate source', () => {
+  const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
+  const rows = [
+    { lockInUse: thrower('could not resolve the main checkout of W') },
+    { lockInUse: thrower('could not list worktrees from R: git timeout') },
+    { lockInUse: () => false, lastCommitAt: thrower('could not read the last commit time of W: git error') },
+    { lockInUse: () => false, lastCommitAt: () => null },
+    { lockInUse: () => false, lastCommitAt: () => NaN },
+  ];
+  for (const probes of rows) {
+    const r = checkPassReentry(run, { deps: deps({ probes }) });
+    assert.equal(r.reason, 'parent-live', JSON.stringify(Object.keys(probes)));
+    assert.match(r.detail, /^indeterminate: ./);
+  }
+});
+
 test('#3497 I1 own session skips the liveness check', () => {
   const active = makeRun({ runState: { status: 'active', sessionId: 'me', worktree: WT } });
-  const r = checkPassReentry(active, { sessionId: 'me', deps: deps({ listWorktrees: NO_CALL('listWorktrees') }) });
+  const r = checkPassReentry(active, { sessionId: 'me', deps: deps({ probes: { lockInUse: NO_CALL('probes.lockInUse') } }) });
   assert.equal(r.reason, 'eligible');
   const interrupted = makeRun({ runState: { status: 'interrupted', sessionId: 'me', worktree: WT } });
   const r2 = checkPassReentry(interrupted, { sessionId: 'me', deps: deps({ checkResumeFreshness: NO_CALL('checkResumeFreshness') }) });
@@ -205,7 +243,7 @@ test('#3497 I1 interrupted + recent commit -> parent-live', () => {
   const r = checkPassReentry(run, {
     sessionId: 'other',
     deps: deps({
-      listWorktrees: NO_CALL('listWorktrees'),
+      probes: { lockInUse: NO_CALL('probes.lockInUse') },
       checkResumeFreshness: (dir, o) => { seen = [dir, o]; return { safe: false, verdict: 'recent-commit', reason: 'worktree committed to within the last 10 minutes' }; },
     }),
   });
@@ -221,12 +259,10 @@ test('#3497 I1 interrupted + recent commit -> parent-live', () => {
 test('#3497 I1 orphaned lock -> continues to landed check', () => {
   const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
   const landedTrue = () => ({ landed: true, evidence: {} });
-  for (const lock of ['orphaned', 'free']) {
-    const r = checkPassReentry(run, { deps: deps({ listWorktrees: () => LISTING, lockVerdict: () => lock, checkBranchLanded: landedTrue }) });
-    assert.equal(r.reason, 'landed', lock);
-  }
+  const r = checkPassReentry(run, { deps: deps({ probes: { lockInUse: () => false, lastCommitAt: () => OLD }, checkBranchLanded: landedTrue }) });
+  assert.equal(r.reason, 'landed');
   const gone = makeRun({ runState: { status: 'active', worktree: path.join(WT, 'gone') } });
-  assert.equal(checkPassReentry(gone, { deps: deps({ listWorktrees: NO_CALL('listWorktrees') }) }).reason, 'eligible');
+  assert.equal(checkPassReentry(gone, { deps: deps({ probes: { lockInUse: NO_CALL('probes.lockInUse') } }) }).reason, 'eligible');
 });
 
 test('#3497 M3 online OPEN PR + indeterminate merge evidence -> eligible, detail names the PR', () => {
