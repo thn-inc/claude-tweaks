@@ -6,6 +6,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { listSlices, contentHash, selectSlice, listWorkspaceSlices, gitChurn, sliceRecursive, sourceFiles } = require('../../../plugin/bin/lib/code-health/scope');
 const { MAX_STALE_DAYS } = require('../../../plugin/bin/lib/code-health/score');
+const { toPosix } = require('../../../plugin/bin/lib/shared-primitives');
 const { skipUnderRoot } = require('../../helpers/root');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-scope-')); }
@@ -810,7 +811,8 @@ function checkoutUnder(...ancestorSegments) {
   return root;
 }
 
-const relFiles = (root) => sourceFiles(root).map((f) => path.relative(root, f)).sort();
+// Compared against /-keyed literals, so it is a display ID (#4288).
+const relFiles = (root) => sourceFiles(root).map((f) => toPosix(path.relative(root, f))).sort();
 
 // Every ancestor here is a SKIP_DIRS entry. `.claude/worktrees` is the one that
 // bit in production; the others share the exact generated -path shape.
