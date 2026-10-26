@@ -6,6 +6,7 @@ files:
   - plugin/bin/lib/code-health/scope.js
   - plugin/bin/lib/residue/probes/worktrees.js
   - plugin/bin/lib/timing/transcript.js
+  - plugin/bin/lib/timing/turn-class.js
 ---
 
 # Run the Health Tools on a Windows Checkout
