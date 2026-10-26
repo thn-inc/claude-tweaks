@@ -28,7 +28,7 @@ files:
 - **Should feel:** like it knows which PR is its own even after cleanup tore the worktree down.
 - **Should understand:**
   - The route is `current-branch` or `evidence-pr`, and Step 4 routes on `route` alone.
-  - The rules live in the CLI's `--help`, not in Step 4's prose. A non-zero exit, or output that does not parse as that line, takes the evidence-PR route.
+  - The rules live in `decideEvidenceRoute` in `plugin/bin/lib/wrap-up/evidence-route.js` (the CLI's `--help` lists the vocabularies), not in Step 4's prose. A non-zero exit, or output that does not parse as that line, takes the evidence-PR route.
   - The branch's PR is only the fallback, for when no run directory resolves or none was recorded.
 - **Red flags:**
   - The check reads `main`'s state because the session is back in the main checkout.

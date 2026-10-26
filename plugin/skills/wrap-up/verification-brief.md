@@ -260,7 +260,7 @@ branch. A re-run after a `BLOCKED` verify verdict can find the PR merged too. A 
 branch never reaches the integration branch. `bin/evidence-route.js` makes the decision from the
 current branch, the worktree `run-state.json` records, the run's own PR (read through
 `bin/pr-merge-state.js`, which also appends its own "Post-push merge-state check" entry to `decisions.md`, which is expected),
-the branch's PR as the fallback, and `console.json`'s merge resolution. Its rules are in its `--help`, not restated here. Run it as its own Bash call:
+the branch's PR as the fallback, and `console.json`'s merge resolution. Its rules live in `decideEvidenceRoute` in `bin/lib/wrap-up/evidence-route.js` (its `--help` lists the route, reason, and state vocabularies), not restated here. Run it as its own Bash call:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/evidence-route.js" --run "{run-dir}"
@@ -273,7 +273,7 @@ Acceptance-labeling bullet (the Routing table's first row), and `--leave-open` o
 Review Console chose "Approve all, leave PR open" this run.
 
 It prints one JSON line `{route, branch, state, reason}`. Route on `route` alone; `state` feeds the
-log line below. A non-zero exit, or output that does not parse as that line, takes the evidence-PR route.
+log line below. A non-zero exit, or output that does not parse as that line, takes the evidence-PR route, and the log line's `{state}` then reads `unavailable`.
 
 - **`current-branch`** — commit on the current branch (the fence below), then push that commit straight away, as its own Bash call: `git push origin {branch}`, with `{branch}` the JSON's `branch`. The run's later phase-exit push would carry it, but a re-run after that push has none. If the push fails, compose the brief without embedded screenshots and say why — an unpushed SHA does not resolve; the commit stays on the branch.
 - **`evidence-pr`** — never commit to the dead branch or the integration branch, and never switch the session's branch in place. Provision a scratch worktree (`_shared/scratch-worktree.md` §2 create, §3 catch-up) the way `wrap-up/residue-sweep.md`'s `pr-first` landing does ("Landing the batch"), on branch `demo-evidence/{record}` cut from the freshly fetched `origin/{integration-branch}` (`_shared/integration-branch.md`). When that name is already taken locally or on `origin` (check with `git branch --list 'demo-evidence/{record}*'` and `git ls-remote --heads origin 'demo-evidence/{record}*'`, each its own call), append `-2`, `-3`, … and use the first free name. Write the screenshots into that worktree's `docs/demo-evidence/{record}/`, stage them with `git add docs/demo-evidence/{record}/` as its own call (a pathspec commit only takes paths git already tracks), then commit with a pathspec so nothing else rides along: `git commit -m "Add demo evidence screenshots for #{record}" -- docs/demo-evidence/{record}/`. Record `git rev-parse HEAD` — `{commit-sha}` in the embed below is this evidence commit's SHA, never the dead branch's. Then `git push -u origin demo-evidence/{record}` and open an evidence-only PR with `gh pr create --base {integration-branch} --head demo-evidence/{record} --body-file …` — or `mcp__github__create_pull_request` with `gh` absent (`_shared/github-write-transport.md`'s PR create exception). Its body references the record as `Refs #{record}` — never `Fixes`, `Closes`, or `Resolves`: the record's closure belongs to its original PR. The evidence PR is left open for a human to merge and is never auto-merged — no `auto:merge` grant covers it. Tear the worktree down per `_shared/scratch-worktree.md` §6 via `ExitWorktree`; that section's ancestry check would refuse this unmerged commit, so the proof before discarding is that the branch's HEAD is on `origin` — `git ls-remote --heads origin demo-evidence/{record}` returns the recorded SHA. Call `ExitWorktree` with `discard_changes: true` only after the ls-remote proof, stating it as the reason. If provisioning, the commit, or the push fails, nothing reached `origin`: compose the brief without embedded screenshots, say in it why they are missing, and tear the worktree down per `_shared/scratch-worktree.md` §6 — when its ancestry check refuses an unpushed commit, leave the worktree and name its path in the brief and the summary. If the push succeeded but the PR create fails, the commit is on `origin`, so keep the embeds and the teardown, and name the pushed branch and the failure in the brief and the summary row in place of the PR link, for a human to open the PR. If the ls-remote proof does not return the recorded SHA (empty, a different SHA, or an error), do not discard: leave the worktree and name its path in the brief and the summary.
@@ -291,7 +291,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --section "/w
 On the evidence-PR route, name the evidence PR's URL in the brief (one line under the
 screenshots) and in wrap-up's Actions Performed (`summary-template.md`'s evidence-PR row).
 
-The commit, for the open-PR, `no-pr`, `local-merge`, and `current-branch` routes:
+The commit, for the `current-branch` route and the `local-merge` / `current-branch` integration modes:
 
 ```bash
 git add docs/demo-evidence/{record}/
