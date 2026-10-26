@@ -97,7 +97,7 @@ test('AC 1 (pr-first): one unreleased feat since v1.2.0 → proposedVersion 1.3.
   assert.deepStrictEqual(pack.lastTag.value, { tag: 'v1.2.0', version: '1.2.0', tipRef: 'origin/main' });
   assert.strictEqual(pack.unreleased.value.commits.length, 1);
   assert.strictEqual(pack.unreleased.value.commits[0].type, 'feat');
-  assert.deepStrictEqual(pack.proposedVersion.value, { version: '1.3.0', part: 'minor', base: '1.2.0', baseSource: 'tag', preMajor: false, tipRef: 'origin/main' });
+  assert.deepStrictEqual(pack.proposedVersion.value, { version: '1.3.0', part: 'minor', base: '1.2.0', baseSource: 'tag', preMajor: false, bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false, tipRef: 'origin/main' });
   for (const k of PROBE_NAMES) assert.ok(k in pack && typeof pack[k].ok === 'boolean', k);
 });
 
@@ -137,7 +137,7 @@ test('#2954 (local-merge): the same --no-ff merge fixture keeps the first-parent
 test('AC 8 (local-merge): the same fixture yields the same unreleased/proposedVersion shape; releasePr is none, ciTip n/a, hook follows the policy key', async () => {
   const a = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ policy: 'integration-model: local-merge\nrelease-hook: ./publish.sh\n' }).deps });
   assert.strictEqual(a.engine.value, 'local-merge');
-  assert.deepStrictEqual(a.proposedVersion.value, { version: '1.3.0', part: 'minor', base: '1.2.0', baseSource: 'tag', preMajor: false, tipRef: 'origin/main' });
+  assert.deepStrictEqual(a.proposedVersion.value, { version: '1.3.0', part: 'minor', base: '1.2.0', baseSource: 'tag', preMajor: false, bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false, tipRef: 'origin/main' });
   assert.strictEqual(a.unreleased.value.commits[0].type, 'feat');
   assert.deepStrictEqual(a.releasePr, { ok: true, value: 'none', durationMs: 0 });
   assert.deepStrictEqual(a.ciTip, { ok: true, value: 'n/a', durationMs: 0 });
@@ -210,14 +210,14 @@ test('ruling 12: the base is the highest of the v* tags, the manifest at tipRef 
   // This fixture resolves pr-first (the default) — #2954: the history walk
   // this depends on omits --first-parent under that engine.
   assert.ok(withManifest.calls.git.some((c) => c.startsWith('log ') && c.endsWith(' origin/main')));
-  assert.deepStrictEqual(a.proposedVersion.value, { version: '0.2.0', part: 'minor', base: '0.1.0', baseSource: 'manifest', preMajor: true, tipRef: 'origin/main' });
+  assert.deepStrictEqual(a.proposedVersion.value, { version: '0.2.0', part: 'minor', base: '0.1.0', baseSource: 'manifest', preMajor: true, bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false, tipRef: 'origin/main' });
   // A manifest ahead of every tag wins over the tag.
   const ahead = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ tags: ['v1.2.0'], show: { 'origin/main:.release-please-manifest.json': '{ ".": "1.5.0" }' } }).deps });
-  assert.deepStrictEqual(ahead.proposedVersion.value, { version: '1.6.0', part: 'minor', base: '1.5.0', baseSource: 'manifest', preMajor: false, tipRef: 'origin/main' });
+  assert.deepStrictEqual(ahead.proposedVersion.value, { version: '1.6.0', part: 'minor', base: '1.5.0', baseSource: 'manifest', preMajor: false, bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false, tipRef: 'origin/main' });
   // A higher tag that is NOT on the first-parent chain (describe never sees it)
   // still raises the base above the reachable one.
   const offChain = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ tags: ['v1.2.0', 'v2.0.0', 'vnope'] }).deps });
-  assert.deepStrictEqual(offChain.proposedVersion.value, { version: '2.1.0', part: 'minor', base: '2.0.0', baseSource: 'tag', preMajor: false, tipRef: 'origin/main' });
+  assert.deepStrictEqual(offChain.proposedVersion.value, { version: '2.1.0', part: 'minor', base: '2.0.0', baseSource: 'tag', preMajor: false, bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false, tipRef: 'origin/main' });
   // Nothing resolves a base: degrade, never offer 0.0.1.
   const bare = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ noTag: true, tags: [], subjects: ['fix: x'] }).deps });
   assert.strictEqual(bare.proposedVersion.ok, false);
@@ -241,7 +241,7 @@ test('ruling 12: a release-please-config.json at tipRef routes the manifest read
     'origin/main:package.json': '{\n  "name": "x",\n  "version": "3.4.0"\n}\n',
   };
   const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ tags: ['v1.2.0'], show }).deps });
-  assert.deepStrictEqual(pack.proposedVersion.value, { version: '3.5.0', part: 'minor', base: '3.4.0', baseSource: 'manifest', preMajor: false, tipRef: 'origin/main' });
+  assert.deepStrictEqual(pack.proposedVersion.value, { version: '3.5.0', part: 'minor', base: '3.4.0', baseSource: 'manifest', preMajor: false, bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false, tipRef: 'origin/main' });
 });
 
 test('#3470: the tip root listing is read with -z, so a ruby *.gemspec glob target resolves from NUL-delimited names', async () => {
@@ -253,18 +253,26 @@ test('#3470: the tip root listing is read with -z, so a ruby *.gemspec glob targ
   const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
   assert.deepStrictEqual(calls.lsTree[0], ['ls-tree', '--name-only', '-z', '--end-of-options', 'origin/main']);
   // The gemspec's 1.5.0 outranks tag 1.2.0 only if the glob resolved to Foo.gemspec.
-  assert.deepStrictEqual(pack.proposedVersion.value, { version: '1.6.0', part: 'minor', base: '1.5.0', baseSource: 'manifest', preMajor: false, tipRef: 'origin/main' });
+  assert.deepStrictEqual(pack.proposedVersion.value, { version: '1.6.0', part: 'minor', base: '1.5.0', baseSource: 'manifest', preMajor: false, bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false, tipRef: 'origin/main' });
 });
 
 test('#2327 AC 2: a 0.x base with a breaking commit reports part: minor, preMajor: true (bump-minor-pre-major defaults true)', async () => {
   const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ noTag: true, tags: ['v0.4.2'], subjects: ['feat!: drop the old flag'] }).deps });
-  assert.deepStrictEqual(pack.proposedVersion.value, { version: '0.5.0', part: 'minor', base: '0.4.2', baseSource: 'tag', preMajor: true, tipRef: 'origin/main' });
+  assert.deepStrictEqual(pack.proposedVersion.value, { version: '0.5.0', part: 'minor', base: '0.4.2', baseSource: 'tag', preMajor: true, bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false, tipRef: 'origin/main' });
 });
 
 test('#2327: bump-minor-pre-major: false in release-please-config.json at tipRef overrides the default — a 0.x breaking commit stays major', async () => {
   const show = { 'origin/main:release-please-config.json': '{ "packages": { ".": { "release-type": "node", "bump-minor-pre-major": false } } }' };
   const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ noTag: true, tags: ['v0.4.2'], subjects: ['feat!: drop the old flag'], show }).deps });
-  assert.deepStrictEqual(pack.proposedVersion.value, { version: '1.0.0', part: 'major', base: '0.4.2', baseSource: 'tag', preMajor: true, tipRef: 'origin/main' });
+  assert.deepStrictEqual(pack.proposedVersion.value, { version: '1.0.0', part: 'major', base: '0.4.2', baseSource: 'tag', preMajor: true, bumpMinorPreMajor: false, bumpPatchForMinorPreMajor: false, tipRef: 'origin/main' });
+});
+
+test('the pre-major flags the bump was computed from are reported on the pack: the config values when set, the resolved defaults when unset', async () => {
+  const show = { 'origin/main:release-please-config.json': '{ "packages": { ".": { "release-type": "node", "bump-minor-pre-major": false, "bump-patch-for-minor-pre-major": true } } }' };
+  const set = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ noTag: true, tags: ['v0.4.2'], subjects: ['feat: x'], show }).deps });
+  assert.deepStrictEqual(set.proposedVersion.value, { version: '0.4.3', part: 'patch', base: '0.4.2', baseSource: 'tag', preMajor: true, bumpMinorPreMajor: false, bumpPatchForMinorPreMajor: true, tipRef: 'origin/main' });
+  const unset = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ noTag: true, tags: ['v0.4.2'], subjects: ['feat: x'] }).deps });
+  assert.deepStrictEqual(unset.proposedVersion.value, { version: '0.5.0', part: 'minor', base: '0.4.2', baseSource: 'tag', preMajor: true, bumpMinorPreMajor: true, bumpPatchForMinorPreMajor: false, tipRef: 'origin/main' });
 });
 
 const hookOf = async (workflows) => (await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ workflows }).deps })).hook.value;
