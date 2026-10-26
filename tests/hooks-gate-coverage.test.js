@@ -2028,7 +2028,10 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // as base d9aa6b82d's collapse did: the readings are base's own (from the overflow cwd and the
     // start), and no target is marked `capped`. Accepted gap, user decision 2026-10-26 (base parity):
     // 7e269881d marked both lost targets `capped: true` and denied on them whatever the session's
-    // policy; 71931bb44, e8473c015 and base carried no mark.
+    // policy; 71931bb44, e8473c015 and base carried no mark. Per version, now and 1148c5727 /
+    // 7e269881d / 71931bb44 / e8473c015 / base: the two lost targets and the readings /main/f and /r/f
+    // / the two lost targets, each capped with one reading (/main/f, /r/f) / the two lost targets, the
+    // start's with the reading /r/f / the two lost targets alone / /main/f and /r/f, plain targets.
     test('#4303 cwd cap: a collapse that drops a cwd the walk could not read gives base\'s readings, uncapped', () => {
       const past = distinct((i) => `{ cd /a${i}; }; `, 16);
       assert.deepStrictEqual(fileWriteTargets(`cd $(x); ${past}echo x > f`, '/r', opts), [
@@ -2043,7 +2046,12 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // collapse leaves /main and /r, both / after `..`, so f reads /f (the walk's own known /aN reach
     // it too). 70 groups, then `echo x > f` or `cd s; echo x > f`: /main/f and /r/f, or /main/s/f
     // and /r/s/f. Accepted gap, user decision 2026-10-26 (base parity): 7e269881d read every dropped
-    // cwd and capped the first and third past 128 readings.
+    // cwd and capped the first and third past 128 readings. Per version, for the three commands in
+    // turn, beside the two lost targets: now and 1148c5727, /f, then readings /main/f and /r/f, then
+    // /main/s/f and /r/s/f; 7e269881d, both capped with reading /f, then 70 readings uncapped, then
+    // capped with /main/s/f and /main/f (/r/s/f and /r/f on the start's); 71931bb44, the start's
+    // reading alone (/f, /r/f, /r/s/f); e8473c015, no reading (the known /f in the first); base, the
+    // plain targets /f, then /main/f and /r/f, then /main/s/f and /r/s/f.
     test('#4303 cwd cap: a command with a lost target carries base\'s readings however many cwds the walk dropped', () => {
       const shape = (cmd) => fileWriteTargets(cmd, '/r', opts).filter((t) => t.lost || t.reading || t.file === path.resolve('/f'))
         .map((t) => [t.file, !!t.lost, t.capped]);
@@ -2088,7 +2096,12 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // or `env -C` moves the reading as it moves bash: `{ cd a; }; git -C ../M commit` runs in /r/M
     // with /r/a present and in /M without. Accepted gap, user decision 2026-10-26 (base parity):
     // 7e269881d also read every /aN the collapse dropped (bash writes /a15/f.js with /a15 present);
-    // 71931bb44 held the start's readings alone, and none on the overflow root's target.
+    // 71931bb44 held the start's readings alone, and none on the overflow root's target. Per version,
+    // for the write and the commit: now and 1148c5727, the two lost targets with readings /f.js,
+    // /main/f.js, /r/f.js, /main/a/f.js and /r/a/f.js, and /M, /main/M and /r/M; 7e269881d, the two
+    // lost targets with 37 readings each, and with 19 each; 71931bb44, the start's with /f.js,
+    // /r/f.js and /r/a/f.js, and /M and /r/M; e8473c015, the two lost targets alone; base, the five
+    // write paths and the three commit dirs as plain targets.
     test('#4303 cwd cap: a command with a lost target carries base\'s reading under every cwd base\'s walk may be in', () => {
       const past = distinct((i) => `{ cd /a${i}; }; `, 16);
       const abs = (...ps) => ps.map((p) => path.resolve(p));
@@ -2113,6 +2126,35 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       const lostRels = (cmd) => mkdirTargets(cmd, '/r').filter((t) => t.lost).map((t) => t.rel);
       assert.deepStrictEqual(lostRels(`${past}cd .claude-tweaks/pipelines; ${past}mkdir 2026-x`), ['.claude-tweaks/pipelines/2026-x']);
       assert.deepStrictEqual(lostRels(`${past}cd .claude-tweaks; ${past}mkdir pipelines/2026-x`), ['.claude-tweaks/pipelines/2026-x']);
+    });
+    // #4303: a known cwd in the collapsing set seeds the trail with what its own path spells. From
+    // /r with /r/.claude-tweaks/pipelines and /r/sub present and every /aN absent, bash 3.2 and 5
+    // create /r/.claude-tweaks/pipelines/2026-x for `cd .claude-tweaks/pipelines; G16 mkdir 2026-x`
+    // and for the split `cd .claude-tweaks; G16 mkdir pipelines/2026-x`. From /r/.claude-tweaks with
+    // /w/.claude-tweaks/pipelines present, `{ cd /w/.claude-tweaks/pipelines; }; G16 mkdir 2026-x`
+    // creates /w/.claude-tweaks/pipelines/2026-x: each lost cwd keeps the highest trail in the set,
+    // the group's two steps over the start's one. A pipelines cwd the command left by an absolute
+    // cd before the loss seeds nothing (`cd .claude-tweaks/pipelines; cd /r/sub; G16 mkdir 2026-x`
+    // creates /r/sub/2026-x), and a `.claude-tweaks` cwd alone names no `pipelines` for a target
+    // that adds none (`cd .claude-tweaks; G16 mkdir other-x` creates /r/.claude-tweaks/other-x).
+    // 1148c5727 seeded no trail from a known cwd: it reported `2026-x`, `pipelines/2026-x`, `2026-x`
+    // and `.claude-tweaks/2026-x` for the first four rows below, and `other-x` for the sixth.
+    test('#4303 cwd cap: a known cwd in the collapsing set seeds the .claude-tweaks/pipelines trail its path spells', () => {
+      const past = distinct((i) => `{ cd /a${i}; }; `, 16);
+      const lostRels = (cmd, cwd = '/r') => mkdirTargets(cmd, cwd).filter((t) => t.lost).map((t) => t.rel);
+      assert.deepStrictEqual(lostRels(`cd .claude-tweaks/pipelines; ${past}mkdir 2026-x`), ['.claude-tweaks/pipelines/2026-x']);
+      assert.deepStrictEqual(lostRels(`cd .claude-tweaks; ${past}mkdir pipelines/2026-x`), ['.claude-tweaks/pipelines/2026-x']);
+      assert.deepStrictEqual(lostRels(`{ cd /w/.claude-tweaks/pipelines; }; ${past}mkdir 2026-x`, '/r/.claude-tweaks'), ['.claude-tweaks/pipelines/2026-x']);
+      // A lost cwd's own lower trail never lowers a known cwd's seed either: after one loss, `cd
+      // .claude-tweaks` (one step), then `{ cd /w/.claude-tweaks/pipelines; }` (two) and a second
+      // loss; bash 3.2 and 5 create /w/.claude-tweaks/pipelines/2026-x.
+      assert.deepStrictEqual(lostRels(`${past}cd .claude-tweaks; { cd /w/.claude-tweaks/pipelines; }; ${past}mkdir 2026-x`), ['.claude-tweaks/pipelines/2026-x']);
+      assert.deepStrictEqual(lostRels(`cd .claude-tweaks/pipelines; cd /r/sub; ${past}mkdir 2026-x`), ['2026-x']);
+      assert.deepStrictEqual(lostRels(`cd .claude-tweaks; ${past}mkdir other-x`), ['.claude-tweaks/other-x']);
+      // The seed reaches the overflow cwd's lost target too, so every lost cwd of the collapse agrees
+      // (bash 3.2 and 5 write /r/.claude-tweaks/pipelines/f; 1148c5727 reported `f` for both).
+      assert.deepStrictEqual(fileWriteTargets(`cd .claude-tweaks/pipelines; ${past}echo x > f`, '/r', opts).filter((t) => t.lost).map((t) => t.rel),
+        ['.claude-tweaks/pipelines/f', '.claude-tweaks/pipelines/f']);
     });
     // #4303: any other handler is never handed a lost cwd. The set collapses to real paths, the
     // overflow cwd and the start, and a relative cd moves them, exactly as base d9aa6b82d did, so the
@@ -2408,8 +2450,8 @@ test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for
 // #4303: a main checkout with a linked worktree beside it (as e2e #4149 sets up), or nested in it at
 // `.claude/worktrees/x` (this repo's layout), and the hook's decision for a command run from `cwd`
 // (the worktree by default); `outputFor` returns the whole hookSpecificOutput. The main checkout
-// ignores `.claude/worktrees/`, as this repo does.
-function linkedWorktree4303({ nested = false } = {}) {
+// ignores `.claude/worktrees/`, as this repo does. `policy` is its worktree-always value.
+function linkedWorktree4303({ nested = false, policy = true } = {}) {
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
@@ -2417,7 +2459,7 @@ function linkedWorktree4303({ nested = false } = {}) {
   const main = path.join(tmp, 'main');
   const wt = nested ? path.join(main, '.claude', 'worktrees', 'x') : path.join(tmp, 'wt');
   fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
-  fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
+  fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), `worktree-always: ${policy}\n`);
   fs.writeFileSync(path.join(main, '.gitignore'), '.claude/worktrees/\n');
   const git = (...args) => execFileSync('git', ['-C', main, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdio: 'pipe' });
   git('init', '-q');
@@ -2902,6 +2944,49 @@ test('e2e #4303: the pipeline shadow guard denies a shadow run dir made after an
       const out = outputFor(command);
       assert.strictEqual(out.permissionDecision, 'deny', `${shape} nested=${nested}`);
       assert.match(String(out.permissionDecisionReason), /a NEW pipeline run directory inside a linked worktree/, `${shape} nested=${nested}`);
+    }
+  }
+});
+// #4303: a cwd inside a `.claude-tweaks/pipelines` directory that the walk knew when it collapsed seeds
+// the lost cwd's trail, so the pipeline shadow guard still sees the segment. Every groups4303 cd fails
+// and the worktree has `.claude-tweaks/pipelines/` and `sub/`; bash 3.2 and 5 create
+// wt/.claude-tweaks/pipelines/2026-x, a NEW run dir in the linked worktree, for each row (nested and
+// sibling layout alike, worktree-always on or off):
+//   from the worktree   `cd .claude-tweaks/pipelines; G16 mkdir 2026-x`, and the split
+//                       `cd .claude-tweaks; G16 mkdir pipelines/2026-x`
+//   from the main checkout  `cd ../wt/.claude-tweaks/pipelines; G16 mkdir 2026-x` (sibling), or
+//                       `cd .claude/worktrees/x/.claude-tweaks/pipelines; G16 mkdir 2026-x` (nested)
+// Decisions, now / 1148c5727 / 7e269881d / 71931bb44 / e8473c015 / base, for every row in every
+// layout and policy: deny / allow / deny / allow / allow / allow. The guard is unconditional, so the
+// policy changes nothing: the same commands without the loss (`cd .claude-tweaks/pipelines; mkdir
+// 2026-x`) are denied at every version, base included, with worktree-always on or off.
+// A deliberate fail-closed deny: from wt/sub, `cd .claude-tweaks/pipelines` fails and bash creates
+// wt/sub/2026-x, no run dir, but the walk takes the plain cd to succeed and the trail is seeded
+// (now deny; 1148c5727, 7e269881d, 71931bb44, e8473c015 and base allow). Lost targets with no trail
+// decide as at 1148c5727: `cd .claude-tweaks/pipelines; cd ../../sub; G16 mkdir 2026-x` (bash creates
+// wt/sub/2026-x) and `cd .claude-tweaks; G16 mkdir other-x` (wt/.claude-tweaks/other-x) are allowed at
+// every version.
+test('e2e #4303: the pipeline shadow guard denies a run dir made from a pipelines cwd the walk knew before the cwd cap', () => {
+  const lostShadow = /cannot tell whether this relative path creates a NEW pipeline run directory/;
+  for (const policy of [true, false]) {
+    for (const nested of [true, false]) {
+      const { main, wt, outputFor } = linkedWorktree4303({ nested, policy });
+      fs.mkdirSync(path.join(wt, '.claude-tweaks', 'pipelines'), { recursive: true });
+      fs.mkdirSync(path.join(wt, 'sub'));
+      const fromMain = nested ? '.claude/worktrees/x/.claude-tweaks/pipelines' : '../wt/.claude-tweaks/pipelines';
+      const label = (row) => `${row} nested=${nested} policy=${policy}`;
+      for (const [row, command, cwd] of [
+        ['pipelines cwd', `cd .claude-tweaks/pipelines; ${groups4303(16)}mkdir 2026-x`, wt],
+        ['split', `cd .claude-tweaks; ${groups4303(16)}mkdir pipelines/2026-x`, wt],
+        ['from main', `cd ${fromMain}; ${groups4303(16)}mkdir 2026-x`, main],
+        ['fail-closed from wt/sub', `cd .claude-tweaks/pipelines; ${groups4303(16)}mkdir 2026-x`, path.join(wt, 'sub')],
+      ]) {
+        const out = outputFor(command, cwd);
+        assert.strictEqual(out.permissionDecision, 'deny', label(row));
+        assert.match(String(out.permissionDecisionReason), lostShadow, label(row));
+      }
+      assert.notStrictEqual(outputFor(`cd .claude-tweaks/pipelines; cd ../../sub; ${groups4303(16)}mkdir 2026-x`).permissionDecision, 'deny', label('left'));
+      assert.notStrictEqual(outputFor(`cd .claude-tweaks; ${groups4303(16)}mkdir other-x`).permissionDecision, 'deny', label('no pipelines'));
     }
   }
 });

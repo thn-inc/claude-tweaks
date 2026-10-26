@@ -513,13 +513,21 @@ const PIPELINE_STATE_DIR = path.join('.claude-tweaks', 'pipelines');
 // `trail` keeps the one part of the relative `cd`s since the cwd was lost that a consumer reads
 // off a lost target: how far they spelled the `.claude-tweaks/pipelines` segment (LOST_TRAIL), so
 // that `cd .claude-tweaks/pipelines; mkdir 2026-x` still names it (writeTarget prefixes it to
-// `rel`). It is a step count, 0 to LOST_TRAIL.length.
+// `rel`). It is a step count, 0 to LOST_TRAIL.length, and a collapse seeds it from any known cwd
+// in the set, whose own path may spell some of it (forEachShellSegment's overflow).
 //
 // A lost cwd carries no reading of its own: base d9aa6b82d's readings of a command whose walk lost
 // its cwd are the targets base's own walk resolves (BASE_VIEW, see CWD_SET_CAP), which the module's
 // consumers report beside the lost ones. Every lost cwd of one collapse shares `family` (the one it
 // began as), and two are the same cwd when their family and trail match (sameCwd).
 const LOST_TRAIL = PIPELINE_STATE_DIR.split(path.sep);
+// The trail `text` spells on from `trail`: each component that spells the next part of LOST_TRAIL
+// advances it (any components between are skipped, failing closed: bash resolves a `..` through
+// links the text does not show; case is ignored).
+function spellTrail(text, trail) {
+  for (const part of text.toLowerCase().split(/[\\/]+/)) if (part === LOST_TRAIL[trail]) trail += 1;
+  return trail;
+}
 class LostCwd {
   constructor(root, overflow, trail = 0, family = null) {
     this.root = root;
@@ -528,13 +536,9 @@ class LostCwd {
     this.family = family || this;
   }
 
-  // This lost cwd after a relative `cd rel`: the same cwd, its trail advanced by each component of
-  // `rel` that spells the next part of LOST_TRAIL (any components between are skipped, failing
-  // closed: bash resolves a `..` through links the text does not show; case is ignored).
+  // This lost cwd after a relative `cd rel`: the same cwd, its trail advanced as `rel` spells it.
   after(rel) {
-    let trail = this.trail;
-    for (const part of rel.toLowerCase().split(/[\\/]+/)) if (part === LOST_TRAIL[trail]) trail += 1;
-    return this.withTrail(trail);
+    return this.withTrail(spellTrail(rel, this.trail));
   }
 
   withTrail(trail) {
@@ -2128,8 +2132,9 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // it collapses to lost cwds (LostCwd, #4303): the shell is somewhere the walk no longer knows. A
 // lost cwd is no path bash can climb out of: a relative `cd` or `git -C` keeps it lost, and an
 // absolute one makes the cwd known again. With the caller's `opts.overflowCwd` (a path, or a
-// function returning one, called at most once; pre-tool-use passes the main checkout) one is
-// rooted there, and a relative target from it is that root itself: no exemption covers the main
+// function returning one, called at most once per walk: twice for a command whose walk lost its
+// cwd, walked again in BASE_VIEW below; pre-tool-use passes the main checkout) one is rooted
+// there, and a relative target from it is that root itself: no exemption covers the main
 // checkout's root, so the worktree gate denies, where a guessed path under it could land in a
 // linked worktree or the exempt `.claude-tweaks/pipelines/` while bash wrote elsewhere in M. The
 // other is rooted at the walk's own starting cwd (the only one without an overflowCwd), and a
@@ -2182,8 +2187,12 @@ function forEachShellSegment(command, cwd, handler, opts = {}) {
     }
     if (!opts[KEEP_LOST]) return collapsed;
     // Each lost cwd keeps the furthest trail the collapsing set had spelled, so a
-    // `.claude-tweaks/pipelines` segment named before it still names one after.
-    return collapsed.map((c) => c.withTrail(set.reduce((most, x) => (x instanceof LostCwd && x.family === c && x.trail > most ? x.trail : most), 0)));
+    // `.claude-tweaks/pipelines` segment named before it still names one after. A known cwd in the
+    // set may be where the shell is, so its path seeds the trail too: one inside a
+    // `.claude-tweaks/pipelines` directory starts each lost cwd with the whole segment spelled, and
+    // one under a `.claude-tweaks` alone with its first part (spellTrail, as a relative cd spells it).
+    const seed = set.reduce((most, x) => (typeof x === 'string' ? Math.max(most, spellTrail(x, 0)) : most), 0);
+    return collapsed.map((c) => c.withTrail(set.reduce((most, x) => (x instanceof LostCwd && x.family === c && x.trail > most ? x.trail : most), seed)));
   };
   walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow, !!opts[BASE_VIEW]);
 }
