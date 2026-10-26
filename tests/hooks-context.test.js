@@ -646,7 +646,8 @@ test('AC1.1: refreshOwnerBlock and runLiveness give the same answer on the stamp
     };
     const e = gatherEvidence(fx.dir, { now: RT0, probes }).evidence.find((x) => x.probe === 'owner-pid');
     assert.deepStrictEqual([e.result, e.detail], row.entry, row.name);
-    assert.strictEqual(refresh(fx, { deps }) === 'restamp', row.restamp, row.name);
+    // restampWhileFresh: the fixture's heartbeat is fresh at RT0, and #4150 returns before the probe inside the window
+    assert.strictEqual(refresh(fx, { deps, restampWhileFresh: true }) === 'restamp', row.restamp, row.name);
   }
 });
 
