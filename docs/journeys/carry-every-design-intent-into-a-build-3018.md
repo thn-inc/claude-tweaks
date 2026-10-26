@@ -43,6 +43,7 @@ files:
   - The inline `local-files` procedure applies the same stop.
   - Matching is case-sensitive, so `Quiet` is rejected.
   - A space-separated line such as `quiet minimal` is rejected as one unknown value.
+  - Since #4027 `/flow` runs this same gate at Step 1 item 5 as `bin/materialize.js {n} --check`, which writes nothing and exits 1 on the same malformed line, so the stop comes before Step 2's pre-flight checks, the claim and the Config Manifesto.
 - **Red flags:**
   - A `work/{n}-spec.md` file exists after a stop.
   - A run that continued with only the first intent.

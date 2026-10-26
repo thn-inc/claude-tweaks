@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 // bin/materialize.js — record-to-build-time-file materialization in one command.
 //   node bin/materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]
+//   node bin/materialize.js <n> --check [--repo owner/name] [--record-json <path>]
+// --check (#4027) runs only Resolution + the Materialization hard gate —
+// /flow Step 1 item 5's pre-flight — with no --run-dir and no write, and
+// prints {record, check: "passed", title, ceremony, surface}; its exit codes
+// are the same 0 / 1 (gate failed) / 2 (unresolved, gh absent, malformed —
+// including --check beside --run-dir, --ceremony or --multi-record-slug).
 // Implements skills/flow/materialize.md's Resolution + Materialization hard
 // gate + header composition + write, for `work-backend: github-issues`
 // records — the CLI both `/flow` and `/build` invoke instead of hand-
@@ -53,7 +59,10 @@ const { resolveTarget: resolveStageTarget, writeStagedItem } = require('./lib/st
 const { resolvePluginVersion } = require('./lib/plugin-version');
 const { defaultRunner: runPremiseCommand, PREMISE_SELF_CHECK_TIMEOUT_MS } = require('./lib/health-core/premise-self-check');
 
-const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n';
+const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n'
+  + '       materialize.js <n> --check [--repo owner/name] [--record-json <path>]\n'
+  + '  --check: Resolution + the Materialization hard gate only (#4027) — no --run-dir, no write;\n'
+  + '           prints {record, check: "passed", title, ceremony, surface}; exit 0 passed, 1 gate failed, 2 unresolved/malformed\n';
 
 const isPos = (n) => Number.isInteger(n) && n > 0;
 
@@ -166,7 +175,7 @@ function computePremise(command, deps) {
 
 function parseArgs(argv) {
   const opts = {
-    n: null, runDir: null, repo: null, ceremony: null, multiRecordSlug: null, recordJson: null, help: false,
+    n: null, runDir: null, repo: null, ceremony: null, multiRecordSlug: null, recordJson: null, check: false, help: false,
   };
   if (argv[0] === '--help' || argv[0] === '-h') { opts.help = true; return opts; }
   if (argv[0] === undefined || argv[0].startsWith('--')) return { error: 'missing <n> argument' };
@@ -187,6 +196,7 @@ function parseArgs(argv) {
     else if (a === '--ceremony') opts.ceremony = next();
     else if (a === '--multi-record-slug') opts.multiRecordSlug = next();
     else if (a === '--record-json') opts.recordJson = next();
+    else if (a === '--check') opts.check = true;
     else return { error: `unknown argument: ${a}` };
   }
   return opts;
@@ -279,8 +289,15 @@ function run(argv, deps = realDeps) {
   if (opts.error) { deps.stderr(opts.error + '\n' + USAGE); return 2; }
   if (opts.help) { deps.stdout(USAGE); return 0; }
   if (!isPos(opts.n)) { deps.stderr('malformed <n> — must be a positive integer\n' + USAGE); return 2; }
-  if (!opts.runDir) { deps.stderr('missing required --run-dir\n' + USAGE); return 2; }
-  {
+  // #4027: --check is the gate-only mode (/flow Step 1 item 5) — it writes
+  // nothing, so a write-location or header flag beside it is a caller bug.
+  if (opts.check) {
+    const writeFlag = [['--run-dir', opts.runDir], ['--ceremony', opts.ceremony], ['--multi-record-slug', opts.multiRecordSlug]]
+      .find(([, v]) => v !== null && v !== undefined);
+    if (writeFlag) { deps.stderr(`--check cannot be combined with ${writeFlag[0]} (it writes nothing)\n` + USAGE); return 2; }
+  }
+  if (!opts.check && !opts.runDir) { deps.stderr('missing required --run-dir\n' + USAGE); return 2; }
+  if (!opts.check) {
     // #790/[IL-127]: reject an unanchored --run-dir before any gh/git/fs
     // work. cwd/mainRoot are read through deps (not process.cwd()/wtDetect
     // directly) so this guard honors the "all I/O through deps" seam this
@@ -395,6 +412,16 @@ function run(argv, deps = realDeps) {
       + `fix the record's Design-intent: line (run \`/claude-tweaks:specify #${opts.n}\`).\n`,
     );
     return 1;
+  }
+
+  // #4027: --check stops here — Resolution and the hard gate passed. No
+  // drift/premise/sibling work: those log and stage into the run dir, which
+  // the materializing call (Step 4) has and this one does not.
+  if (opts.check) {
+    deps.stdout(JSON.stringify({
+      record: opts.n, check: 'passed', title: record.title, ceremony: parseRecordFacets(record.labels).ceremony || null, surface: meta.surface || null,
+    }) + '\n');
+    return 0;
   }
 
   // #117 AC3: this record's own Verified-as-of: stamp (present when it was
