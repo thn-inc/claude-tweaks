@@ -53,8 +53,10 @@ files:
 - **Should understand:**
   - An invalid `CT_TEST_SUITE_SLOTS` falls back to 1 and prints one line naming it.
   - Nested runs (a test that itself spawns `run-tests.js`) skip the slot via `CT_TEST_SUITE_SLOT_HELD=1`, so they never deadlock on the parent's lock.
+  - The suite's own slot tests still pass with a raised knob. Their sandboxed runner children start without `CT_TEST_SUITE_SLOTS` or `CT_TEST_SUBSET_SLOTS`, so they always measure the default of one slot.
 - **Red flags:**
   - Raising `CT_TEST_SUITE_SLOTS` globally to make waits go away, when the waits were protecting the machine.
+  - A suite run with `CT_TEST_SUITE_SLOTS=2` failing `run-tests.js waits for a slot held by a live pid` with a 60-second timeout — the knob leaked into the test's sandboxed child.
 
 ### 5. Start a Claude session (plugin user)
 - **URL:** any project with claude-tweaks installed.
@@ -69,4 +71,5 @@ files:
 
 ## Origin
 - Created during build of #3969. The trigger was a Mac made unusable by stacked concurrent suites (load average 98–176 on 12 cores) and about 3.9 million leaked fixture entries in `$TMPDIR`.
+- Updated during build of #4336: step 4 now covers the slot tests passing under a raised slot knob.
 - Related: `act-on-a-red-wall-clock-budget-scan-3491.md` (another constraint on tests that run under load).
