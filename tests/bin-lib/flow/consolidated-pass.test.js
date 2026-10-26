@@ -199,18 +199,37 @@ test('AC1.2: an unlisted worktree now blocks the pass', () => {
   assert.match(r.detail, /^indeterminate: .*not listed/);
 });
 
-test('AC1.2: a commit under 10 minutes old now blocks a non-interrupted parent', () => {
-  const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
-  const r = checkPassReentry(run, { deps: deps({ probes: { lockInUse: () => false, lastCommitAt: () => Date.now() - 60000 } }) });
-  assert.equal(r.reason, 'parent-live');
-  assert.equal(r.detail, 'worktree recently committed to');
-});
-
 // A real, unlocked linked worktree: the pre-#4420 code listed it, found a free
 // lock and returned null, so a test on it goes red against that code.
 function unlockedRealWorktreeRun() {
   return makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: linkedWorktreeOf(gitRepo()) } });
 }
+
+test('AC1.2: a commit under 10 minutes old now blocks a non-interrupted parent', () => {
+  const run = unlockedRealWorktreeRun();
+  const r = checkPassReentry(run, { deps: deps({ probes: { lockInUse: () => false, lastCommitAt: () => Date.now() - 60000 } }) });
+  assert.equal(r.reason, 'parent-live');
+  assert.equal(r.detail, 'worktree recently committed to');
+});
+
+test('AC4.1: owner-probe noise never blocks a non-interrupted parent (parentLiveDetail)', () => {
+  const quiet = { lockInUse: () => false, lastCommitAt: () => OLD };
+  const liveOwner = {
+    sessionId: 'parent', host: 'h', pid: 4242, pidSource: 'env', pidStartedAt: 'T1',
+    heartbeatAt: new Date().toISOString(),
+  };
+  const ownerProbes = { hostname: () => 'h', pidAlive: () => true, pidStartTime: () => 'T1' };
+  const rows = [
+    ['fresh heartbeat and live owner pid', { owner: liveOwner }, { ...quiet, ...ownerProbes }],
+    ['owner block from another session', { owner: { ...liveOwner, sessionId: 'other' } }, { ...quiet, ...ownerProbes }],
+  ];
+  for (const [label, state, probes] of rows) {
+    const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT, ...state } });
+    const r = checkPassReentry(run, { deps: deps({ probes }) });
+    assert.notEqual(r.reason, 'parent-live', label);
+    assert.equal(r.reason, 'eligible', label);
+  }
+});
 
 test('AC1.2: a failed last-commit read now blocks a non-interrupted parent', () => {
   const run = unlockedRealWorktreeRun();

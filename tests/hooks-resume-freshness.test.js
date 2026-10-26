@@ -133,6 +133,18 @@ test('AC1.2: an unknown worktree lock is indeterminate, no longer read as unlock
 test('AC1.2: a worktree git does not list is indeterminate', () => {
   const result = probed({ lockInUse: thrower('W is not listed by git worktree list in R'), lastCommitAt: () => OLD });
   assert.equal(result.verdict, 'indeterminate');
+  // Real git, no injected lock probe: a plain subdirectory of a repo resolves a
+  // main checkout but is not in its `git worktree list`. The old code read that
+  // as unlocked, so with a backdated commit it returned `stale`.
+  const main = gitRepo();
+  fixtureGit(['-C', main, 'commit', '--allow-empty', '-m', 'old work', '-q'], { env: OLD_ENV });
+  const sub = path.join(main, 'sub');
+  fs.mkdirSync(sub);
+  const runDir = tmpRunDir({ status: 'interrupted', sessionId: 'sess-a', worktree: sub });
+  const real = checkResumeFreshness(runDir, { sessionId: 'sess-b', now: Date.now() });
+  assert.equal(real.safe, false);
+  assert.equal(real.verdict, 'indeterminate');
+  assert.match(real.reason, /not listed/);
 });
 
 test('AC1.2: a positive beats an erroring probe — lock error + recent commit is recent-commit, commit error + live lock is locked', () => {
