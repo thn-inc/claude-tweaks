@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/docs-health/findability.js
   - plugin/bin/lib/code-health/scope.js
   - plugin/bin/lib/residue/probes/worktrees.js
+  - plugin/bin/lib/residue/probes/pipeline-runs.js
   - plugin/bin/lib/timing/transcript.js
   - plugin/bin/lib/timing/turn-class.js
 ---
@@ -36,9 +37,9 @@ files:
 - **Red flags:** A nested subdirectory missing from the slice list, or a bogus child slice named `one\deeper` — the files inside it silently drop out of rotation.
 
 ### 4. Close out a run's residue — `residue.js` (via `/claude-tweaks:wrap-up`)
-- **Action:** Let the residue sweep classify leftover worktrees, whether git printed them as `C:/repo/.claude/worktrees/x` or `C:\repo\.claude\worktrees\x`.
-- **Should feel:** Like nothing special — plugin-provisioned worktrees read `in reaper domain`, everything else `outside reaper domain (no reaper collects it)`.
-- **Red flags:** A plugin worktree reported as outside the reaper domain (it would be routed to you instead of the reaper), whichever separator git used.
+- **Action:** Let the residue sweep classify leftover worktrees, whether git printed them as `C:/repo/.claude/worktrees/x` or `C:\repo\.claude\worktrees\x`, and report any closed-but-unarchived pipeline run dir.
+- **Should feel:** Like nothing special — plugin-provisioned worktrees read `in reaper domain`, everything else `outside reaper domain (no reaper collects it)`; a leftover run dir's finding reads `.claude-tweaks/pipelines/{run-id}`, the same ID a POSIX sweep prints.
+- **Red flags:** A plugin worktree reported as outside the reaper domain (it would be routed to you instead of the reaper), whichever separator git used; a pipeline-run finding whose subject reads `.claude-tweaks\pipelines\{run-id}`.
 
 ### 5. Measure skill load from a transcript — `skill-load-report.js`
 - **Action:** Measure which skill files a session read, from a transcript recorded on Windows (`file_path` values like `C:\repo\plugin\skills\review\SKILL.md` or the installed plugin cache under `C:\Users\...\.claude\plugins\cache\...`).
@@ -48,4 +49,5 @@ files:
 ## Origin
 - Created during build of record #3315 (flow run `2026-10-22T001546-record-3315`), fixing the latent Windows path producers #2767's class map found.
 - Steps 1-5 built in this session; on POSIX every step's output is unchanged.
+- Step 4's pipeline-run subject added by record #4430 (flow run `2026-10-26T170403-spec-4430`) — the last residue display ID built with a native `path.relative`.
 - Related: record #2767 (the class map), `learn-of-a-windows-regression-after-merge.md` (how a Windows-only break is reported after merge).
