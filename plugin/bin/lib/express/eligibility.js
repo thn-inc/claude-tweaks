@@ -123,9 +123,6 @@ function evaluateRecordEligibility(issue, opts) {
   return { number: issue && issue.number, eligible: reasons.length === 0, reasons, keyFiles };
 }
 
-// Key File comparison form, on both sides.
-const keyFileForm = canonicalPath;
-
 // Every changed non-test, non-pipeline-artifact path must be a Key File and
 // count toward implLines. A test file's deleted lines count toward maxLines too
 // (deleting tests weakens the CI-green net the lane merges on); its added lines
@@ -136,18 +133,21 @@ function evaluateDiffBounds(files, opts) {
   const { keyFiles = [], sensitivePaths = [], maxLines } = opts || {};
   const inputs = files || [];
   const classified = classifyDiffFiles(inputs, sensitivePaths);
-  const keySet = new Set(keyFiles.map(keyFileForm));
+  // Key Files and changed paths are compared in canonicalPath form, on both sides.
+  const keySet = new Set(keyFiles.map(canonicalPath));
   const violations = [];
   let implLines = 0;
   let testDeletions = 0;
 
   if (classified.length === 0) violations.push('no changes');
   classified.forEach((f, i) => {
-    if (!f.isTest && !f.isPipelineArtifact) {
-      implLines += f.additions + f.deletions;
-      if (!keySet.has(keyFileForm(f.path))) violations.push(`outside Key Files: ${f.path}`);
-    } else if (f.isTest && !f.isPipelineArtifact) {
-      testDeletions += f.deletions;
+    if (!f.isPipelineArtifact) {
+      if (f.isTest) {
+        testDeletions += f.deletions;
+      } else {
+        implLines += f.additions + f.deletions;
+        if (!keySet.has(canonicalPath(f.path))) violations.push(`outside Key Files: ${f.path}`);
+      }
     }
     if (isProtectedPath(f.path)) violations.push(REASONS.protectedPath(f.path));
     if (f.isSensitive) violations.push(REASONS.sensitivePath(f.path));

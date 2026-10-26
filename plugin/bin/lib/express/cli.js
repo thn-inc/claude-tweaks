@@ -387,13 +387,12 @@ function runVerify(deps, flags) {
   const n = flags['--issue'];
   const { dir, archived } = verifyRunDir(deps, flags['--run']);
   let decisionsText = '';
-  let state = null;
   try { decisionsText = readDecisions(deps, path.join(dir, 'decisions.md')); } catch { decisionsText = ''; }
-  try { state = JSON.parse(deps.readFile(path.join(dir, 'run-state.json'))); } catch { state = null; }
+  const state = readRunState(deps, dir);
   const missing = [];
   if (!hasCanonicalClaimLogFor(decisionsText, n)) missing.push('claim-log');
   if (!hasProceed(decisionsText, n)) missing.push('express-check');
-  const pr = state && typeof state === 'object' ? state.pr : null;
+  const pr = state ? state.pr : null;
   if (!pr || !Number.isInteger(pr.number) || pr.number <= 0) missing.push('pr');
   deps.stdout(`${JSON.stringify({ ok: missing.length === 0, missing, ...(archived ? { archived } : {}) })}\n`);
   return missing.length === 0 ? 0 : 1;
