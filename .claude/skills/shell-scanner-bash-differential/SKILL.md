@@ -63,9 +63,113 @@ When the tokenizer's word changes meaning (#4281 turned it from typed text into 
 ## Common Operations
 
 This session's Bash guard refuses heredocs, `cd` chains and any argument containing a `git` token. Write the drivers as scratchpad node scripts and run them with `node <script>`:
-- bash verdict: `spawnSync('/bin/bash', ['-c', cmd], { cwd: scratch, env: { ...process.env, PATH: stubDir + ':' + process.env.PATH } })`, then read the stub's log and the files it wrote. Repeat with `/opt/homebrew/bin/bash`.
+- bash verdict: `runBash(bash, cmd, { cwd, stubDir })` from the Bounded bash verdict block below, then read the stub's log and the files it wrote. Repeat with `/opt/homebrew/bin/bash`.
 - base comparison: `git worktree add --detach <scratch> <base>`, then `require(<scratch>/plugin/bin/lib/hooks/git-command.js)` beside the branch copy and diff `fileWriteTargets(cmd, cwd)`.
 - mutant: edit a copy in a scratch worktree and run `node --test tests/hooks-gate-coverage.test.js tests/hooks-git-command.test.js tests/hooks-bash-prefilter.test.js tests/teardown-gate.test.js` there.
+
+### Bounded bash verdict
+
+Every real-bash run goes through this driver, copied from the version that passed its checks (bash 3.2 and 5; dd, cat, backgrounded dd, endless loop, unstubbed word, SIGTERM and SIGKILL of the driver). It caps each file a child writes at 4 MiB (`ulimit -f`, soft and hard, so a child cannot raise it; bash counts 1024-byte blocks), runs bash as its own process group with a 5 s timeout, kills the whole group on timeout, 300 ms after bash exits (so a backgrounded writer has opened its target), and on driver SIGTERM/SIGINT/SIGHUP, closes stdin, and keeps 64 KiB of each stream. PATH is the stub dir alone, so a word with no stub fails as `command not found`. Link into `stubDir` only the real tools a case checks: `cp`, `mv`, `mkdir`, `touch`, `tee`, `ln`, and `dd`/`cat`/`install` only when the case is about them (`fs.symlinkSync('/bin/dd', stubDir + '/dd')`). Redirects need no program.
+
+The cap bounds disk, not CPU: `while :; do :; done` stops only at the timeout. SIGKILL cannot be handled, so after a SIGKILLed driver the cap is the backstop: an orphaned writer dies by SIGXFSZ at 4 MiB.
+
+```js
+'use strict';
+// Bounded real-bash verdict runner for the shell-scanner differential recipe.
+// runBash(bash, cmd, { cwd, stubDir }) -> Promise<{ status, signal, timedOut, stdout, stderr }>
+
+const { spawn } = require('child_process');
+const os = require('os');
+
+const CAP_KB = 4096; // `ulimit -f` counts 1024-byte blocks: 4 MiB per file, per child
+const TIMEOUT_MS = 5000; // wall clock per shape
+const GRACE_MS = 300; // after bash exits, let a backgrounded writer open its target before the group kill
+const KEEP_BYTES = 64 * 1024; // retained output per stream
+
+const live = new Map(); // pgid -> true, every process group not yet killed
+
+function killGroup(pgid) {
+  try {
+    process.kill(-pgid, 'SIGKILL');
+  } catch (e) {
+    if (e.code !== 'ESRCH') throw e;
+  }
+}
+
+function killAll() {
+  for (const pgid of live.keys()) killGroup(pgid);
+  live.clear();
+}
+
+process.on('exit', killAll);
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  process.on(sig, () => {
+    killAll();
+    process.exit(128 + os.constants.signals[sig]);
+  });
+}
+
+function runBash(bash, cmd, { cwd, stubDir }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(bash, ['-c', 'ulimit -f ' + CAP_KB + ' || exit 125\n' + cmd], {
+      cwd,
+      env: { ...process.env, PATH: stubDir },
+      detached: true, // own session and process group: pgid === child.pid
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const pgid = child.pid;
+    live.set(pgid, true);
+
+    const streams = { out: [], err: [], outBytes: 0, errBytes: 0 };
+    const collect = (chunk, list, key) => {
+      if (streams[key] >= KEEP_BYTES) return;
+      const part = chunk.subarray(0, KEEP_BYTES - streams[key]);
+      list.push(part);
+      streams[key] += part.length;
+    };
+    child.stdout.on('data', (c) => collect(c, streams.out, 'outBytes'));
+    child.stderr.on('data', (c) => collect(c, streams.err, 'errBytes'));
+
+    let settled = false;
+    let timedOut = false;
+    let graceTimer = null;
+    const finish = (status, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(graceTimer);
+      killGroup(pgid);
+      live.delete(pgid);
+      resolve({
+        status,
+        signal,
+        timedOut,
+        stdout: Buffer.concat(streams.out).toString(),
+        stderr: Buffer.concat(streams.err).toString(),
+      });
+    };
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      finish(null, 'SIGKILL');
+    }, TIMEOUT_MS);
+
+    child.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      killGroup(pgid);
+      live.delete(pgid);
+      reject(e);
+    });
+    child.on('exit', (status, signal) => {
+      graceTimer = setTimeout(() => finish(status, signal), GRACE_MS);
+    });
+  });
+}
+```
+
+Leftover check, after a session and after any driver run that was killed: `ps -ax -o pid=,ppid=,etime=,command= | awk '$2 == 1 && $4 ~ /(^|\/)g?(dd|cat)$/'` lists PPID-1 writers. `ps` shows the bare word (`dd if=/dev/zero …`) as argv[0], not the stub path, so match the command word. For each pid, `lsof -p <pid>` shows its output file (fd `4u`); if that sits under a `scratchpad/` or `agent-scratch/` path, `kill -9 <pid>`. `lsof +D <scratch dir>` lists every process whose cwd or open file is under that dir, which finds a case's bash and its children, since they inherit the cwd. Freed space can stay pinned by a Time Machine local snapshot: check `tmutil listlocalsnapshots /`.
 
 ## Anti-Patterns
 
@@ -78,6 +182,7 @@ This session's Bash guard refuses heredocs, `cd` chains and any argument contain
 | Asserting wall clock in tests/ | It flakes under sibling-suite load; the timing-free cap pin goes in tests/, the clock in perf/ |
 | Re-checking main only at setup on a long scanner run | #4015 landed mid-run on the same functions and needed a semantic merge at review |
 | Fuzzing only the shapes the change targets | #4281's fuzz missed three escaped-spelling leaks (`\cd`, `2\>`, an escaped newline before an assignment) in rules the change never edited but whose input it redefined |
+| Running a shape under real bash with `spawnSync`, no cap and the real PATH after the stubs | 2026-10-26: three orphaned `dd if=/dev/zero` writers from #4303's oracle tree wrote ~463 GB into deleted files over 7 h, and 30 orphaned `cat a f1` loops from #4281's fuzz scratch were still writing 17 h after that run was archived; `spawnSync` with no timeout kills nobody, and with one it kills only bash. |
 
 ## Reference
 
