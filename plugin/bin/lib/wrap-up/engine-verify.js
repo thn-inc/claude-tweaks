@@ -1103,4 +1103,5 @@ module.exports = {
   enumerateSubIssues,
   resolvePrNumber,
   resolvedIssueNumbers,
+  consoleMergeResolution,
 };
