@@ -460,6 +460,27 @@ When mechanizing a prose heuristic into a deterministic check:
     neutralise each probe whose subject is not the consumer's subject, and pin the production
     default with a real fixture as well as an injected stub (`tests/reconcile.test.js`'s
     production-default liveness case).
+    The predicate that decides when to neutralise a probe owes the same audit, and widening its
+    inputs reopens it. #4421 lifted `isMainCheckoutAdHoc`'s path comparison into
+    `recordedWorktreeIsMainCheckout` so `defaultRunVerdict` could force `pathType` to `missing` for
+    any run dir stamped with the main checkout. A `true` there drops the lock and commit evidence,
+    the direction that leans toward `dead` and archival. Neither version rejected a relative
+    `worktree`, but only ad-hoc dirs reached the old one; with any run dir in scope, the path
+    resolved against the process cwd, so reconcile run from the main checkout read `.` as the main
+    checkout. Review caught it, and `923539cee` returns `false` for a non-absolute path. When a
+    predicate gains callers or a wider input set, re-audit its input validation against the new
+    domain, and pin each newly reachable input (here a relative path under `process.chdir` to the
+    root it would falsely match).
+    A test that pins a caller *not* consulting the verdict, or ignoring some of its probes, goes
+    red only when its fixture makes the verdict disagree with the caller's answer. #4419's
+    crash-resume adoption test first built a run `runLiveness` read as `live` (a fake host blocked
+    the pid witness, the worktree commit was fresh, no events.jsonl), so an `adoptionRefusal` that
+    started refusing dead runs would still have passed it. The fix asserts
+    `runLiveness(crashed).verdict === 'dead'` before the adoption assertions
+    (`tests/hooks-run-dir-resolve.test.js`), and #4420's real-probe case asserts the heartbeat and
+    owner-pid entries read `positive` before asserting the resume still goes through
+    (`tests/hooks-resume-freshness.test.js`). Assert the verdict's reading of the fixture as a
+    precondition, then revert to a consulting version and watch the test go red.
 22. **A check that reads its input from an optional context argument owes a fail-closed answer
     when the row it gates is present and the context is not.** A pure decision function that
     takes `ctx = {}` and wraps a check in `if (ctx.x present)` reads "the caller passed nothing" as
