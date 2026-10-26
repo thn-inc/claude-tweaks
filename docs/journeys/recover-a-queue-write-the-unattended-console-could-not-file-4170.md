@@ -49,7 +49,7 @@ files:
 
 ### 3. Finish the filing and log it
 - **URL:** the printed `re-run filing:` command, then `log-decision.js --run {consoleDir}`
-- **Action:** fetch `<issues.json>` and run the printed command. For each `file` entry, create the record and log `'{item} filed as #{n} (work-fingerprint {fp})'`. For each `deduped` entry, log `'{item} already filed as #{n} (work-fingerprint {fp})'`. Use the `wrap-up/review-console.md` Can't-tell filings form, and log into that console's own dir.
+- **Action:** fetch `<issues.json>` and run the printed command. For each `file` entry, create the record and log `'{item} filed as #{n} (work-fingerprint {fp})'`. The CLI logs each `deduped` entry itself; for any item its `logFailures` names, log `'{item} already filed as #{n} (work-fingerprint {fp})'`. Use the `wrap-up/review-console.md` Can't-tell filings form, and log into that console's own dir.
 - **Should feel:** finite. Re-running is safe, because a session that died after the create but before the log re-runs to `deduped`, not a twin record.
 - **Should understand:** the residue clears only on the logged `- AUTO` line (`FILED_LINE_RE`). Creating the record without logging it leaves the item `filing-pending`.
 - **Red flags:**
@@ -62,7 +62,7 @@ files:
 - **Should feel:** the refusal says exactly what blocks the run and how to unblock it.
 - **Should understand:**
   - Acking a console whose directory has moved fails with `console directory no longer exists` (exit 3) and does not recreate the directory.
-  - Consoles from v6.154.x that filed can't-tell records before created entries logged a filed line read `filing-pending` once after upgrade. Re-run to `deduped` and log, or `--ack-all` after review.
+  - Consoles from v6.154.x that filed can't-tell records before created entries logged a filed line read `filing-pending` once after upgrade. Re-run to `deduped`, which the CLI logs, or `--ack-all` after review.
 - **Red flags:**
   - a run with a `filing-pending` or failed-execution `keep-staged` item archiving unacknowledged
   - a refusal with no re-run command for a pending filing

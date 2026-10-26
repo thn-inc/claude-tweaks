@@ -157,8 +157,9 @@ function filingRerunCommand({ consoleDir, ids, pluginRoot }) {
 }
 
 // #4170: a `filing-pending` item clears only on a logged filed/deduped line (FILED_LINE_RE), so the remedy
-// names the log lines, not just the create — a session that died after the create re-runs to a `deduped` entry.
-const FILING_LOG_REMEDY = "file each printed `file` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', log each `deduped` entry as '{item} already filed as #{n} (work-fingerprint {fp})', via log-decision.js `--run` that console's dir, per wrap-up/review-console.md's Can't-tell filings";
+// names the log lines, not just the create — a session that died after the create re-runs to a `deduped` entry,
+// which console-filings.js logs itself (#4026), leaving only its `logFailures` to hand-log.
+const FILING_LOG_REMEDY = "file each printed `file` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any `logFailures` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each `deduped` entry itself), via log-decision.js `--run` that console's dir, per wrap-up/review-console.md's Can't-tell filings";
 
 // One item line plus its pointer: a `cat` of the staged file, or for a
 // `decision:` item (no staged file — it lives in decisions.md) a `see` line.

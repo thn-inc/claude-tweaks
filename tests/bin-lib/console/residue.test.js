@@ -461,7 +461,7 @@ test('AC3.1: formatResidueLines names the console-filings.js --only re-run for a
   assert.ok(lines.includes(`    re-run filing: node "/p/bin/console-filings.js" --run "${dir}" --existing <issues.json> --out-dir <dir> --only 'tiebreak:aaaaaaaaaaaa'`), lines.join('\n'));
   assert.ok(lines.some((l) => l.startsWith('      (<issues.json>: gh issue list --state all --json number,body')), lines.join('\n'));
   // The remedy names the log line that clears a filing-pending item (FILED_LINE_RE), `deduped` re-run included.
-  assert.ok(lines.some((l) => l.endsWith(`; file each printed \`file\` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', log each \`deduped\` entry as '{item} already filed as #{n} (work-fingerprint {fp})', via log-decision.js \`--run\` that console's dir, per wrap-up/review-console.md's Can't-tell filings)`)), lines.join('\n'));
+  assert.ok(lines.some((l) => l.endsWith(`; file each printed \`file\` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any \`logFailures\` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each \`deduped\` entry itself), via log-decision.js \`--run\` that console's dir, per wrap-up/review-console.md's Can't-tell filings)`)), lines.join('\n'));
 });
 
 test('filingRerunCommand escapes a single quote and omits node without a plugin root (#4170)', () => {
