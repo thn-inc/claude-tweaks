@@ -47,6 +47,18 @@ const LOG_WORD = /\blog\b/;
 const STRING_RECENCY = /(?:^|\s)(?:-1|-n|--max-count)\b|%ct|%cI|committerdate/;
 const FIELD = /\.\s*(locked|lockReason)\b/g;
 
+// Scoped rule: the two liveness tokens may appear in archive-merged.js only inside
+// classifyRunDir, lastOwnEventMs, the import and export lists, and the constant's own
+// declaration. Neither token may appear in the other three scanned files.
+const ARCHIVE = 'plugin/bin/lib/reconcile/archive-merged.js';
+const SCOPED = /\b(ownEventRecency|STALE_INTERRUPTED_TTL_MS)\b/g;
+const SCOPED_DECL = /\bconst\s+STALE_INTERRUPTED_TTL_MS\s*=/g;
+const REQUIRE_DESTRUCTURE = /\bconst\s*\{[^}]*\}\s*=\s*require\s*\([^)]*\)/g;
+const MODULE_EXPORTS = /\bmodule\s*\.\s*exports\s*=\s*\{/g;
+// Allowed scoped-token sites located in archive-merged.js at the commit that landed the
+// scoped rule. Fewer means the matcher stopped matching: never lower this floor.
+const SCOPED_SITE_FLOOR = 8;
+
 function readEntries() {
   return SCANNED.map((rel) => ({ rel, raw: readText(path.join(REPO, rel)) }));
 }
@@ -86,8 +98,95 @@ function bannedHits(raw) {
   return hitsIn(stripComments(raw));
 }
 
-// Offender strings for `entries`: `${rel}:${line} ${form}` per banned site, or
-// `${rel}: ${message}` when the stripper mis-parsed the file.
+// Index of the bracket closing the one at `openIdx`, or -1.
+function matchClose(text, openIdx, open, close) {
+  let depth = 0;
+  for (let i = openIdx; i < text.length; i++) {
+    if (text[i] === open) depth += 1;
+    else if (text[i] === close && --depth === 0) return i;
+  }
+  return -1;
+}
+
+// `function NAME(` through its body's matching `}`, over blank-mode text (so braces in
+// literals do not count). Parens are matched first, so a default-param `{}` stays inside
+// the signature. `name` is a plain identifier. Returns null when the name or a balanced
+// close is missing.
+function functionSpan(blankText, name) {
+  const head = new RegExp(`\\bfunction\\s+${name}\\s*\\(`).exec(blankText);
+  if (!head) return null;
+  const paramsClose = matchClose(blankText, head.index + head[0].length - 1, '(', ')');
+  if (paramsClose < 0) return null;
+  const open = blankText.indexOf('{', paramsClose);
+  if (open < 0) return null;
+  const end = matchClose(blankText, open, '{', '}');
+  return end < 0 ? null : { start: head.index, end };
+}
+
+// The index ranges [start, end) of archive-merged.js where a scoped token is allowed.
+function allowedRegions(blank) {
+  const regions = [];
+  for (const name of ['classifyRunDir', 'lastOwnEventMs']) {
+    const span = functionSpan(blank, name);
+    if (span) regions.push([span.start, span.end + 1]);
+  }
+  for (const m of blank.matchAll(REQUIRE_DESTRUCTURE)) regions.push([m.index, m.index + m[0].length]);
+  for (const m of blank.matchAll(SCOPED_DECL)) regions.push([m.index, m.index + m[0].length]);
+  for (const m of blank.matchAll(MODULE_EXPORTS)) {
+    const open = m.index + m[0].length - 1;
+    const close = matchClose(blank, open, '{', '}');
+    if (close >= 0) regions.push([open, close + 1]);
+  }
+  return regions;
+}
+
+// -> { allowed, hits }: `allowed` counts the scoped-token sites the rule permits (only
+// archive-merged.js has any); `hits` lists the offending ones as [{ line, form }].
+function scopedSites(rel, raw) {
+  const blank = stripComments(raw, { literals: 'blank' });
+  const isArchive = rel === ARCHIVE;
+  const regions = isArchive ? allowedRegions(blank) : [];
+  let allowed = 0;
+  const hits = [];
+  for (const m of blank.matchAll(SCOPED)) {
+    const line = lineOf(blank, m.index);
+    if (!isArchive) {
+      hits.push({ line, form: `${m[1]} outside archive-merged.js` });
+    } else if (regions.some(([s, e]) => m.index >= s && m.index < e)) {
+      allowed += 1;
+    } else {
+      hits.push({ line, form: `${m[1]} outside classifyRunDir/lastOwnEventMs` });
+    }
+  }
+  return { allowed, hits };
+}
+
+// -> [{ line, form }] for every scoped-token site in `raw` that the rule forbids.
+function scopedHits(rel, raw) {
+  return scopedSites(rel, raw).hits;
+}
+
+// The scoped rule passes vacuously when its allowed regions cannot be found, so both
+// function spans must exist in archive-merged.js and the located sites must meet the floor.
+function assertSiteFloor(entries) {
+  const entry = entries.find((e) => e.rel === ARCHIVE);
+  assert.ok(entry, `${ARCHIVE} is not among the scanned entries`);
+  const blank = stripComments(entry.raw, { literals: 'blank' });
+  for (const name of ['classifyRunDir', 'lastOwnEventMs']) {
+    assert.ok(
+      functionSpan(blank, name),
+      `function ${name} not found in archive-merged.js: the scoped rule would pass vacuously without its allowed region`,
+    );
+  }
+  const { allowed } = scopedSites(ARCHIVE, entry.raw);
+  assert.ok(
+    allowed >= SCOPED_SITE_FLOOR,
+    `found ${allowed} allowed scoped-token sites in archive-merged.js, floor is ${SCOPED_SITE_FLOOR}: fewer means the matcher stopped matching`,
+  );
+}
+
+// Offender strings for `entries`: `${rel}:${line} ${form}` per banned or scoped site, or
+// `${rel}: ${message}` when the stripper mis-parsed the file (one per file).
 function scan(entries) {
   const offenders = [];
   for (const { rel, raw } of entries) {
@@ -97,7 +196,13 @@ function scan(entries) {
       offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
       continue;
     }
+    const blankVerdict = stripperVerdict(raw, stripComments(raw, { literals: 'blank' }));
+    if (blankVerdict !== 'ok') {
+      offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[blankVerdict]}`);
+      continue;
+    }
     for (const { line, form } of hitsIn(stripped)) offenders.push(`${rel}:${line} ${form}`);
+    for (const { line, form } of scopedHits(rel, raw)) offenders.push(`${rel}:${line} ${form}`);
   }
   return offenders;
 }
@@ -190,4 +295,41 @@ test('a comment-stripper mis-parse is reported as an offender, not passed as a c
 
 test('a live banned call after a fake comment opener in a string is still seen', () => {
   assert.deepEqual(bannedHits("const a = '/*';\nlockVerdict(x);").map((h) => h.line), [2]);
+});
+
+test('AC4.1: renaming classifyRunDir in a scratch copy fails the site floor, not a vacuous pass', () => {
+  const renamed = (from, to) => readEntries().map((e) => {
+    if (e.rel !== ARCHIVE) return e;
+    const raw = e.raw.replace(`function ${from}(`, `function ${to}(`);
+    assert.notEqual(raw, e.raw, `the rename of ${from} did not apply to the scratch copy`);
+    return { ...e, raw };
+  });
+  assert.throws(() => assertSiteFloor(renamed('classifyRunDir', 'classifyRunDirRenamed')), /classifyRunDir/);
+  assert.throws(() => assertSiteFloor(renamed('lastOwnEventMs', 'lastOwnEventMsRenamed')), /lastOwnEventMs/);
+});
+
+test('floor: the scoped-token sites are located', () => {
+  assertSiteFloor(readEntries());
+});
+
+test('scoped rule self-test: allowed sites pass, a sibling helper and the other files fail', () => {
+  const archive = "const { ownEventRecency } = require('../run-liveness/probes');\nconst STALE_INTERRUPTED_TTL_MS = ORPHAN_MINT_TTL_MS;\nfunction lastOwnEventMs(d) {\n  return ownEventRecency(d).lastOwnMs;\n}\nfunction classifyRunDir(ctx) {\n  const s = '}';\n  return ownEventRecency(ctx.dir) && STALE_INTERRUPTED_TTL_MS;\n}\nfunction newHelper(d) {\n  return ownEventRecency(d);\n}\nmodule.exports = {\n  ownEventRecency, STALE_INTERRUPTED_TTL_MS,\n};";
+  const fmt = (hits) => hits.map((h) => `${h.line}:${h.form}`);
+  assert.deepEqual(fmt(scopedHits(ARCHIVE, archive)), ['11:ownEventRecency outside classifyRunDir/lastOwnEventMs']);
+  const others = SCANNED.filter((rel) => rel !== ARCHIVE);
+  for (const rel of others) {
+    assert.deepEqual(
+      fmt(scopedHits(rel, 'const x = ownEventRecency(d);\nconst y = STALE_INTERRUPTED_TTL_MS;')),
+      ['1:ownEventRecency outside archive-merged.js', '2:STALE_INTERRUPTED_TTL_MS outside archive-merged.js'],
+    );
+  }
+  for (const rel of SCANNED) {
+    assert.deepEqual(scopedHits(rel, '// ownEventRecency is the reader\nconst ok = 1;'), []);
+  }
+});
+
+test('boundary finder ignores braces inside string literals', () => {
+  const blank = stripComments("function f() { const a = '{'; return 1; }\nconst after = 2;", { literals: 'blank' });
+  assert.equal(lineOf(blank, functionSpan(blank, 'f').end), 1);
+  assert.equal(functionSpan(blank, 'missing'), null);
 });
