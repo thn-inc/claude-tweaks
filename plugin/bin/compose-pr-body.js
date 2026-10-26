@@ -39,7 +39,7 @@ function parseArgs(argv) {
     if (Object.hasOwn(BOOL_FLAGS, a)) { o[BOOL_FLAGS[a]] = true; continue; }
     if (!Object.hasOwn(FLAGS, a)) return { error: `unknown argument: ${a}` };
     const v = argv[i + 1];
-    if (v === undefined || v.startsWith('--')) return { error: `${a} needs a value` };
+    if (v === undefined || v === '' || v.startsWith('--')) return { error: `${a} needs a value` };
     o[FLAGS[a]] = v;
     i++;
   }

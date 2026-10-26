@@ -67,6 +67,13 @@ test('an unknown flag or a flag with no value is malformed — exit 2', () => {
   assert.equal(run(['--run-id'], fakeDeps()), 2);
 });
 
+test('an empty-string flag value is malformed — exit 2, nothing written', () => {
+  const deps = fakeDeps();
+  assert.equal(run([...BASE, '--run-dir', ''], deps), 2);
+  assert.match(deps.calls.stderr.join(''), /--run-dir needs a value/);
+  assert.equal(deps.files['/o.md'], undefined);
+});
+
 test('a bare inherited Object.prototype key is an unknown argument — exit 2', () => {
   for (const token of ['constructor', 'toString']) {
     const deps = fakeDeps();
