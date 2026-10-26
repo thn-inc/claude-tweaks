@@ -13,7 +13,7 @@ description: Use when changing or reviewing the write gate's shell scanner in `p
 
 ### Real bash is the oracle, in both versions
 
-Run every case you add or change under `/bin/bash` (3.2, macOS) and a bash 5 (`/opt/homebrew/bin/bash` here). Use a scratch directory, a logging `git` stub first on `PATH`, and real `cp`/`mkdir`/redirect targets, then record what each shell actually wrote and where. Write the verdict into the test comment, the way `tests/hooks-gate-coverage.test.js` does ("bash 3.2 and 5 write /main/f.js for each"). When the versions disagree, note it ("bash 3.2 cannot parse the odd-quote heredoc one") and side with whichever shell writes. Never derive an expected target from the scanner's own output or from memory of the bash manual.
+Run every case you add or change under `/bin/bash` (3.2, macOS) and a bash 5 (`/opt/homebrew/bin/bash` here). Use a scratch directory, a logging `git` stub in a stub dir that is the whole `PATH`, and real `cp`/`mkdir`/redirect targets, then record what each shell actually wrote and where. Write the verdict into the test comment, the way `tests/hooks-gate-coverage.test.js` does ("bash 3.2 and 5 write /main/f.js for each"). When the versions disagree, note it ("bash 3.2 cannot parse the odd-quote heredoc one") and side with whichever shell writes. Never derive an expected target from the scanner's own output or from memory of the bash manual.
 
 ### Bias every unknown toward a visible body or a reported target
 
@@ -69,7 +69,12 @@ This session's Bash guard refuses heredocs, `cd` chains and any argument contain
 
 ### Bounded bash verdict
 
-Every real-bash run goes through this driver, copied from the version that passed its checks (bash 3.2 and 5; dd, cat, backgrounded dd, endless loop, unstubbed word, SIGTERM and SIGKILL of the driver). It caps each file a child writes at 4 MiB (`ulimit -f`, soft and hard, so a child cannot raise it; bash counts 1024-byte blocks), runs bash as its own process group with a 5 s timeout, kills the whole group on timeout, 300 ms after bash exits (so a backgrounded writer has opened its target), and on driver SIGTERM/SIGINT/SIGHUP, closes stdin, and keeps 64 KiB of each stream. PATH is the stub dir alone, so a word with no stub fails as `command not found`. Link into `stubDir` only the real tools a case checks: `cp`, `mv`, `mkdir`, `touch`, `tee`, `ln`, and `dd`/`cat`/`install` only when the case is about them (`fs.symlinkSync('/bin/dd', stubDir + '/dd')`). Redirects need no program.
+Every real-bash run goes through this driver, copied from the version that passed its checks (bash 3.2 and 5; dd, cat, backgrounded dd, endless loop, unstubbed word, SIGTERM and SIGKILL of the driver). It does four things:
+
+- **Cap:** each file a child writes is capped at 4 MiB (`ulimit -f`, soft and hard, so a child cannot raise it; bash counts 1024-byte blocks).
+- **Process group, timeout, kills:** bash runs as its own process group with a 5 s timeout. The whole group is killed on timeout, 300 ms after bash exits (so a backgrounded writer has opened its target), and on driver SIGTERM/SIGINT/SIGHUP.
+- **Stdin and output:** stdin is closed, and at most 64 KiB of each stream is kept.
+- **PATH:** PATH is the stub dir alone, so a word with no stub fails as `command not found`. Link into `stubDir` only the real tools a case checks: `cp`, `mv`, `mkdir`, `touch`, `tee`, `ln`, and `dd`/`cat`/`install` only when the case is about them (`fs.symlinkSync('/bin/dd', stubDir + '/dd')`). Redirects need no program. A stub must not need PATH itself: give it an absolute shebang (`#!/bin/sh`) and use builtins only, since `#!/usr/bin/env node` or a call to `date` fails under the stub-only PATH.
 
 The cap bounds disk, not CPU: `while :; do :; done` stops only at the timeout. SIGKILL cannot be handled, so after a SIGKILLed driver the cap is the backstop: an orphaned writer dies by SIGXFSZ at 4 MiB.
 
@@ -171,7 +176,7 @@ function runBash(bash, cmd, { cwd, stubDir }) {
 }
 ```
 
-Leftover check, after a session and after any driver run that was killed: `ps -ax -o pid=,ppid=,etime=,command= | awk '$2 == 1 && $4 ~ /(^|\/)g?(dd|cat)$/'` lists PPID-1 writers. `ps` shows the bare word (`dd if=/dev/zero …`) as argv[0], not the stub path, so match the command word. For each pid, `lsof -p <pid>` shows its output file (fd `4u`); if that sits under a `scratchpad/` or `agent-scratch/` path, `kill -9 <pid>`. `lsof +D <scratch dir>` lists every process whose cwd or open file is under that dir, which finds a case's bash and its children, since they inherit the cwd. Freed space can stay pinned by a Time Machine local snapshot: check `tmutil listlocalsnapshots /`.
+Leftover check, after a session and after any driver run that was killed: `ps -ax -o pid=,ppid=,etime=,command= | awk '$2 == 1 && $4 ~ /(^|\/)g?(dd|cat)$/'` lists PPID-1 writers. `ps` shows the bare word (`dd if=/dev/zero …`) as argv[0], not the stub path, so match the command word. For each pid, `lsof -p <pid>` shows its open output file; if that sits under a `scratchpad/` or `agent-scratch/` path, `kill -9 <pid>`. `lsof +D <scratch dir>` lists every process whose cwd or open file is under that dir, which finds a case's bash and its children, since they inherit the cwd. Freed space can stay pinned by a Time Machine local snapshot: check `tmutil listlocalsnapshots /`.
 
 ## Anti-Patterns
 
