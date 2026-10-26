@@ -155,12 +155,23 @@ re-derived regexes.
    Spec Step 1, immediately after that step's materialize commit lands (not from within this
    numbered procedure, which ends at Step 5 — the materialize commit that must exist first is a
    Spec Step 1 concern, not a worktree-creation one). Route on `_shared/integration-model.md`;
-   `local-merge` runs skip this step entirely, unchanged from today. A `MULTISPEC_PARALLEL_WAVE=1`
+   a `local-merge` run skips this step and logs (the same command as `_shared/pr-early-run-lifecycle.md`'s
+   local-merge row; a standalone `/build` with no run dir lists it in the Step 7 handoff instead):
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP \
+     --section "/build" --step "Spec Step 1 draft-PR bootstrap (skipped)" \
+     --text "condition: integration-model=local-merge → fallback: no draft PR opened" --reversibility n/a
+   ```
+
+   A `MULTISPEC_PARALLEL_WAVE=1`
    member skips it too, writing one `SKIP` entry naming the marker — the run's one PR is the shared
-   branch's. Full procedure —
-   push-then-create, the draft PR body template, idempotent resume, and degrade behavior for a
-   failed push or a `gh`-absent environment — lives in `_shared/pr-early-run-lifecycle.md`; this
-   step cites it rather than restating it. Once the PR is recorded (or this step's `SKIP` is logged), then run Step 4.6 if it is still pending (#3289).
+   branch's. Otherwise, write a one-paragraph summary of the materialized spec's Overview with the Write tool,
+   never through the shell (spec text carries backticks and `$`), to the path
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-early-summary-{run-id}.md` prints. Then, as its own Bash call:
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/pr-early-open.js" --run "$PIPELINE_RUN_DIR" --target "#{n}[,#{m}…]" --fixes {n}[,{m}…] --title "{record title} (#{n})" --summary-file "{summary path}"`
+   (`{n}` and the title are the lowest-numbered record's). It pushes, then reuses, reopens or opens the draft PR, records it, and logs every line the bookkeeping-stamps gate reads.
+   Exit 0 → the PR is recorded. Exit 3 → a logged degrade (push or create failed): the run proceeds local-only, and a reused or reopened PR may still be recorded. Exit 2 → `gh` absent: follow `_shared/pr-early-run-lifecycle.md`'s MCP path; a refused `--run` or an `integration-branch` value holding whitespace: follow the remedy the CLI's stderr names; otherwise a malformed call: fix it and re-run. Exit 1 → finish by hand from that file. A `reopenRejected` field on stdout (exit 0 too) → repoint the earlier attempt's issue pointer comment. Read `_shared/pr-early-run-lifecycle.md` only on exit 2 (`gh` absent → its MCP path), exit 1, or a `reopenRejected` result (its "Reopen fails" paragraph): it is the CLI's spec. Once the PR is recorded (or this step's `SKIP` is logged), then run Step 4.6 if it is still pending (#3289).
 
 ## Cherry-pick source-branch PR check (#1957)
 

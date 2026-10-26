@@ -56,26 +56,7 @@
 
 const { formatEntry, appendEntry } = require('./lib/log-decision/append');
 const { resolveTarget } = require('./lib/stage-item/write');
-const { MANIFESTO_LEVERS, RUN_PINS, isConfigKey, validateLever, setConfigLever } = require('./lib/set-config/write');
-
-// Canonical lever numbering/labels, per manifesto.md's "Canonical lever
-// numbering" paragraph — presentation-only, so kept here rather than in
-// lib/set-config/write.js (which owns validation/persistence, not render).
-const LEVER_LABELS = Object.freeze({
-  mode: 'Mode',
-  'scope-creep': 'Scope-creep',
-  overlap: 'Overlap',
-  'design-intent': 'Design intent',
-  'leftover-default': 'Leftover routing',
-  'auto-fix-threshold': 'Auto-fix threshold',
-  'review-auto-apply-ceiling': 'Review auto-apply ceiling',
-  'tidy-aggressiveness': 'Tidy aggressiveness',
-  'ceremony-profile': 'Ceremony profile',
-  'model-stance': 'Model stance',
-  'merge-verification': 'Merge verification',
-  'design-critique': 'Design critique',
-  'merge-authorization': 'Merge authorization',
-});
+const { MANIFESTO_LEVERS, LEVER_LABELS, RUN_PINS, isConfigKey, validateLever, setConfigLever } = require('./lib/set-config/write');
 
 // results: array of { key, value, file, previous } from the write loop.
 // Renders the auto-mode FYI table in canonical lever order (MANIFESTO_LEVERS

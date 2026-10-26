@@ -15,6 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const { readManifest } = require('./manifest');
+const { readRunMode: readMode } = require('./run-mode');
 const { lstatType } = require('../path-guard');
 const { checkBranchLanded, repoRootOf } = require('../hooks/run-integrity');
 const { resolvePrStateByNumber } = require('../reconcile/pr-state');
@@ -40,13 +41,6 @@ function readRunState(runDir) {
     const state = JSON.parse(text);
     return state && typeof state === 'object' && !Array.isArray(state) ? state : null;
   } catch { return null; }
-}
-
-function readMode(runDir) {
-  const text = readText(path.join(runDir, 'config.yml'));
-  if (text === null) return null;
-  const m = text.match(/^mode:[ \t]*(\S+)/m);
-  return m ? m[1] : null;
 }
 
 // The recorded worktree's porcelain listing — the same lookup resume-freshness.js

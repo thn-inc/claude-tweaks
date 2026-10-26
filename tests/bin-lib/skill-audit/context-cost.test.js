@@ -243,10 +243,88 @@ test('parseComposeCallLine: a bare repo-relative source is unparsed as install-d
   });
 });
 
-test('findComposeCallSites: finds all three real merge sites in the shipped corpus', () => {
+test('parseComposeCallLine: the --step form\'s remaining unparsed edge cases (characterization, #4027)', () => {
+  const head = 'node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js"';
+  const src = '"${CLAUDE_PLUGIN_ROOT}/skills/_shared/a.md"';
+  for (const [rest, reason] of [
+    ['--run x', 'no step value'],
+    ['--run x --step', 'no step value'],
+    ['--step --run', 'no step value'],
+    ['--run x --step merge', 'no sources'],
+    [`stray --step merge ${src}`, 'unexpected token before --step: stray'],
+    [`--step merge ${src} --out y.md`, 'unknown flag --out'],
+    [`--step merge ${src} --phase second-call`, 'unknown flag --phase'],
+  ]) {
+    assert.deepStrictEqual(parseComposeCallLine(`${head} ${rest}`, '/r'), { unparsed: true, reason }, rest);
+  }
+});
+
+test('parseComposeCallLine: a --phase line expands to the registry\'s bundles for that phase (#4027)', () => {
+  const line = 'node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --phase review-lens';
+  assert.deepStrictEqual(parseComposeCallLine(line, REPO), {
+    phase: 'review-lens',
+    bundles: [{
+      step: 'review-dispatch',
+      sources: [
+        path.resolve(REPO, 'skills/_shared/subagent-dispatch-core.md'),
+        path.resolve(REPO, 'skills/_shared/run-dir-resolution.md'),
+      ],
+    }],
+  });
+  // A placeholder in the --run value is still a call site: the registry, not the line, names the sources.
+  const placeholderRun = '`node "{plugin-root}/bin/compose-context.js" --run "{minted-run-dir}" --phase first-call`';
+  assert.deepStrictEqual(parseComposeCallLine(placeholderRun, REPO).bundles.map((b) => b.step), ['claims']);
+});
+
+test('parseComposeCallLine: a malformed --phase line is unparsed; a placeholder phase name is documentation', () => {
+  const head = 'node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR"';
+  for (const [rest, reason] of [
+    ['--phase nope', 'unknown phase nope'],
+    ['--phase constructor', 'unknown phase constructor'],
+    ['--phase', 'no phase value'],
+    ['--phase --step', 'no phase value'],
+    ['--phase second-call --step merge', 'unexpected token after --phase second-call: --step'],
+    ['--phase second-call "${CLAUDE_PLUGIN_ROOT}/skills/_shared/a.md"', 'unexpected token after --phase second-call: ${CLAUDE_PLUGIN_ROOT}/skills/_shared/a.md'],
+  ]) {
+    assert.deepStrictEqual(parseComposeCallLine(`${head} ${rest}`, REPO), { unparsed: true, reason }, rest);
+  }
+  assert.strictEqual(parseComposeCallLine(`${head} --phase {phase}`, REPO), null);
+  assert.strictEqual(parseComposeCallLine(`${head} --phase <name>`, REPO), null);
+});
+
+test('findComposeCallSites: a --phase line emits one row per registered bundle, each with its own step', () => {
+  const root = tmpRoot('phase');
+  const skillDir = path.join(root, 'skills', 'demo');
+  fs.mkdirSync(skillDir, { recursive: true });
+  const callLine = 'node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --phase second-call';
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `line one\n${callLine}\n`);
+  assert.deepStrictEqual(findComposeCallSites(root), [
+    {
+      step: 'claims', phase: 'second-call', file: 'demo/SKILL.md', line: 2, sources: [path.resolve(root, 'skills/_shared/issue-claims.md')],
+    },
+    {
+      step: 'merge',
+      phase: 'second-call',
+      file: 'demo/SKILL.md',
+      line: 2,
+      sources: [path.resolve(root, 'skills/_shared/pr-first-merge.md'), path.resolve(root, 'skills/_shared/pr-checklist-refresh.md')],
+    },
+  ]);
+});
+
+test('composedRailViolations: an unknown --phase in the prose fails the composed-bytes gate', () => {
+  const root = tmpRoot('phase-unknown');
+  const skillDir = path.join(root, 'skills', 'demo');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), 'node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --phase nope\n');
+  assert.deepStrictEqual(composedRailViolations(root), [{ file: 'null @ demo/SKILL.md:1', error: 'unknown phase nope' }]);
+});
+
+test('findComposeCallSites: finds all four real merge sites in the shipped corpus', () => {
   const sites = findComposeCallSites(REPO).filter((s) => s.step === 'merge');
   const files = sites.map((s) => s.file).sort();
   assert.deepStrictEqual(files, [
+    'dispatch/task-prompt.md',
     'wrap-up/auto-merge-short-circuit.md',
     'wrap-up/merge-mode.md',
     'wrap-up/review-console.md',

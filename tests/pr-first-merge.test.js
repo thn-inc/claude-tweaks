@@ -136,7 +136,7 @@ test('task-prompt.md reports the shared OUTPUT FORMAT vocabulary, with ready-to-
   // second-call templates, so it must list every value either model can
   // actually report — including `ready-to-merge`, which only local-merge
   // reports (pr-first's own prose immediately below disclaims it).
-  assert.match(TASK_PROMPT, /OUTCOME: \{merged \| armed \| pending-review \| ready-to-merge \| failed \| blocked\}/);
+  assert.match(TASK_PROMPT, /OUTCOME: \{merged \| armed \| pending-review \| ready-to-merge \| failed \| blocked \| handoff\}/);
   assert.match(TASK_PROMPT, /There is no `ready-to-merge` value\s*\n?\s*under this model/);
   assert.match(TASK_PROMPT, /report `ready-to-merge` when the group's Auto-merge gate/);
 });

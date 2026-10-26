@@ -5,6 +5,12 @@ Config Manifesto (Step 3). Relocated from `skills/dispatch/claim-outcomes.md` �
 logic below is unchanged from that file; only the call site moved, per #463's identity
 unification (claim identity is `basename($PIPELINE_RUN_DIR)`, never a separate variable).
 
+**The one call.** `SKILL.md` Step 2.8 claims every target in one call, and carries its exit branches:
+`node "${CLAUDE_PLUGIN_ROOT}/bin/claim-targets.js" --run-id "$(basename "$PIPELINE_RUN_DIR")" --targets {n}[,{m}…] --steps {steps} [--keep-going] --run "$PIPELINE_RUN_DIR"`
+With `--steps`, the CLI applies the step-list skip-guard below itself. This file is that call's spec. Read it
+on a non-zero exit, for a non-empty `skipped` array's cards, for the `gh`-absent MCP procedure, or for a direct
+invocation's identity mint and file-overlap warning.
+
 ## Skip-guard
 
 Skip this step entirely (log nothing beyond a one-line note, proceed straight to Step 3) when
@@ -31,7 +37,8 @@ any of:
   already own.
 - **The resolved step list (`SKILL.md` Step 1, item 4) contains neither `build` nor `test`** — a
   teardown-only or resume-from-review-onward invocation has nothing left to build, so there is
-  nothing left to lock. This covers the invocation shapes that would otherwise reach the claim
+  nothing left to lock. `claim-targets.js --steps` applies this guard itself: it claims nothing and
+  exits 0 with `skipGuard: "no-build-or-test"`. This covers the invocation shapes that would otherwise reach the claim
   attempt below with no self-owned `runId` to match against the condition above: a dispatched
   group's *second* Task call (`review,polish,wrap-up` — already claimed by the first call's
   Step 2.8 run), and any `wrap-up`-only invocation, whether a human resuming a parked run
@@ -127,11 +134,12 @@ to Step 3 for any of them. One invocation claims the whole list:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/claim-targets.js" --run-id "$(basename "$PIPELINE_RUN_DIR")" \
-  --targets {n}[,{m}…] [--keep-going] --run "$PIPELINE_RUN_DIR"
+  --targets {n}[,{m}…] --steps {steps} [--keep-going] --run "$PIPELINE_RUN_DIR"
 ```
 
-Pass `--keep-going` only when this run is in `keep-going` mode (below); a default-mode run
-(single- or multi-target) omits the flag. The CLI implements `_shared/issue-claims.md`'s "The
+`{steps}` is the resolved step list (`SKILL.md` Step 1, item 4), comma-joined. Pass `--keep-going`
+only when this run is in `keep-going` mode (below); a default-mode run (single- or multi-target)
+omits the flag. The CLI implements `_shared/issue-claims.md`'s "The
 lock" steps 1-6 — read, classify, and the create-only/conditional/contested branch — via
 `bin/lib/issues/claim-store.js`, the one contents-API implementation this CLI and
 `reconcile/release-merged.js`'s release path both delegate to: the absent branch that

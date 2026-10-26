@@ -68,6 +68,9 @@ const POLICY_KEYS = [
   // every record stays its own group, no bundling (bundleFastLaneSingletons's
   // own doc comment, bin/lib/issues/grouping.js).
   { key: 'dispatch-fastlane-bundle-cap', type: 'integer', default: 3, summary: "Caps how many non-overlapping ceremony:fast-lane singleton groups dispatch merges into one multi-spec run; 0 disables bundling.", category: 'merge-safety', tier: 'advanced' },
+  // #4025: the express lane — opt-in, plus the post-merge review sampling cadence (skills/_shared/express-lane.md).
+  { key: 'express-lane', type: 'boolean', default: false, summary: "Opts into the express lane: a small, low-risk singleton record builds, tests and merges-on-green in one agent, not the full /flow frame.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'express-review-sample-every', type: 'integer', min: 1, default: 5, summary: "Sends every Nth express-lane merge through the normal review lenses after merge, filing what they find as records.", category: 'merge-safety', tier: 'advanced' },
   { key: 'auto-merge-max-lines', type: 'integer', default: 40, summary: "Bounds how large a diff an unattended merge will accept before a human is required — a weighted guideline, not a hard cutoff.", category: 'merge-safety', tier: 'core' },
   { key: 'auto-merge-max-files', type: 'integer', default: 2, summary: "Bounds how many changed files an unattended merge will accept before a human is required — the same weighted guideline, by file count.", category: 'merge-safety', tier: 'core' },
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
@@ -674,7 +677,7 @@ function resolveIntegrationModel(repoRoot, opts = {}) {
 
 // Shared root-resolution + policy.yml/config.yml read + resolvePolicyKeys
 // orchestration for bin/resolve-policy.js's CLI and
-// bin/lib/blast-radius-cli.js's resolveConfig — both independently
+// bin/lib/blast-radius-cli.js's resolveBlastRadiusConfig — both independently
 // reimplemented this exact pathway before #916 (each resolving repo root via
 // `git rev-parse --show-toplevel`, falling back to `process.cwd()` on
 // failure, then reading `.claude-tweaks/policy.yml` and an optional

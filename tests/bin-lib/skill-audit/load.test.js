@@ -405,6 +405,19 @@ test('entryPointLoads: compose sources join the closure and are walked transitiv
   ]);
 });
 
+test('entryPointLoads: a --phase compose line adds every registered bundle\'s sources to the closure (#4027)', () => {
+  const files = {
+    'plugin/skills/s/SKILL.md': 'Run `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --phase second-call`.\n',
+    'plugin/skills/_shared/issue-claims.md': 'claims\n',
+    'plugin/skills/_shared/pr-first-merge.md': 'merge\n',
+  };
+  const [row] = load.entryPointLoads('plugin', tree(files));
+  assert.deepStrictEqual(row.files, [
+    'plugin/skills/_shared/issue-claims.md', 'plugin/skills/_shared/pr-first-merge.md', 'plugin/skills/s/SKILL.md',
+  ]);
+  assert.deepStrictEqual(row.unresolved.map((u) => [u.line, u.token]), [[1, 'plugin/skills/_shared/pr-checklist-refresh.md']]);
+});
+
 test('entryPointLoads: a compose call line in a closure member that parseComposeCallLine cannot parse adds nothing to the closure and does not throw (ledger row 8)', () => {
   const files = {
     'plugin/skills/s/SKILL.md': 'Read `step.md` in this skill\'s directory.\n',

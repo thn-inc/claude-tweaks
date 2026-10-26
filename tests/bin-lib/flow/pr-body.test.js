@@ -3,8 +3,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  composePrEarlyBody, repairPrBody, hasRunMarker, hasPhasesPair, hasFixesPair,
+  composePrEarlyBody, composeExpressBody, repairPrBody, hasRunMarker, hasPhasesPair, hasFixesPair,
 } = require('../../../plugin/bin/lib/flow/pr-body');
+const { isExpressPr } = require('../../../plugin/bin/lib/express/sampling');
 
 test('composePrEarlyBody puts the run marker as the unconditional first line, plain-text companion immediately after', () => {
   const body = composePrEarlyBody({
@@ -198,4 +199,40 @@ test('hasRunMarker/hasPhasesPair/hasFixesPair recognize either the HTML-comment 
   assert.equal(hasPhasesPair('<!-- phases-start -->'), false);
   assert.equal(hasFixesPair('[claude-tweaks-fixes-start]\n[claude-tweaks-fixes-end]'), true);
   assert.equal(hasFixesPair('nothing'), false);
+});
+
+test('#4025: composeExpressBody keeps the dual run markers, the express marker and the fixes span, with no Phases or Resume', () => {
+  const body = composeExpressBody({ runId: 'r1', specSummary: 'One paragraph.', fixesLines: ['Fixes #7'] });
+  assert.equal(body, [
+    '<!-- claude-tweaks-run: r1 -->',
+    'claude-tweaks-run: r1',
+    'claude-tweaks-express: r1',
+    '',
+    '### Spec summary',
+    '',
+    'One paragraph.',
+    '',
+    '<!-- fixes-start -->',
+    '[claude-tweaks-fixes-start]',
+    'Fixes #7',
+    '[claude-tweaks-fixes-end]',
+    '<!-- fixes-end -->',
+    '',
+  ].join('\n'));
+  assert.match(body, /^claude-tweaks-express: r1$/m);
+  assert.equal(hasRunMarker(body), true);
+  assert.equal(hasFixesPair(body), true);
+  assert.equal(hasPhasesPair(body), false);
+  assert.doesNotMatch(body, /### Phases|### Resume/);
+});
+
+test('#4025: isExpressPr tells an express body from a PR-early body', () => {
+  assert.equal(isExpressPr(composeExpressBody({ runId: 'r1', specSummary: 's', fixesLines: ['Fixes #7'] })), true);
+  assert.equal(isExpressPr(composePrEarlyBody({
+    runId: 'r1', specSummary: 's', target: '#7', nextStep: 'build', fixesLines: ['Fixes #7'],
+  })), false);
+});
+
+test('#4025: composeExpressBody requires runId', () => {
+  assert.throws(() => composeExpressBody({ specSummary: 's', fixesLines: [] }), /runId is required/);
 });

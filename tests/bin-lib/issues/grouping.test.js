@@ -1232,3 +1232,23 @@ test('buildDispatchGroups keeps two fast-lane records that share a file out of o
   assert.deepStrictEqual(bundles, [{ records: [1, 3] }]);
   assert.deepStrictEqual(groups.map((g) => g.map((i) => i.number)), [[2], [1, 3]]);
 });
+
+// ── express-eligible singletons stay unbundled (#4025) ──────────────────────
+
+test('AC2.1 grouping: an ineligible fast-lane record is still bundled; an eligible one stays a singleton', () => {
+  const groups = [1, 2, 3].map(fastLaneSingleton);
+  const { groups: out, bundles } = bundleFastLaneSingletons(groups, { keepSingleton: (issue) => issue.number === 2 });
+  assert.deepStrictEqual(bundles, [{ records: [1, 3] }]);
+  assert.deepStrictEqual(out, [groups[1], [groups[0][0], groups[2][0]]]);
+  const plain = bundleFastLaneSingletons(groups);
+  assert.deepStrictEqual(plain.bundles, [{ records: [1, 2, 3] }]);
+  assert.deepStrictEqual(plain.groups, [[groups[0][0], groups[1][0], groups[2][0]]]);
+});
+
+test('buildDispatchGroups passes keepSingleton through to fast-lane bundling', () => {
+  const issues = [1, 2, 3].map((n) => rec(n, [`${n}.js`], { fastLane: true, createdAt: `2026-01-0${n}T00:00:00Z` }));
+  const { groups, bundles } = buildDispatchGroups(issues, { bundleCap: 3, keepSingleton: (issue) => issue.number === 1 });
+  assert.deepStrictEqual(bundles, [{ records: [2, 3] }]);
+  assert.deepStrictEqual(groups.map((g) => g.map((i) => i.number)), [[1], [2, 3]]);
+  assert.deepStrictEqual(buildDispatchGroups(issues).bundles, [{ records: [1, 2, 3] }]);
+});

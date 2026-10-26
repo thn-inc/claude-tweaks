@@ -53,7 +53,7 @@ When `.claude-tweaks/policy.yml` sets `execution-strategy: subagent-only` (or `b
 
 ### Resolve the input
 
-1. **Record reference** (e.g., `#42`; under `work-backend: local-files`, drop the `#`) → **Record mode** — primary input. Checked first, since a leading `#` (or, under `work-backend: local-files`, a bare id that resolves to an existing record) unambiguously means record mode. Resolved, shape-gated, and materialized via `skills/flow/materialize.md` into `{run-dir}/work/{n}-spec.md`; an unshaped record hard-stops with a pointer to `/claude-tweaks:specify #{n}`. Once materialized, that file is the spec for the rest of build — full lifecycle with spec compliance.
+1. **Record reference** (e.g., `#42`; under `work-backend: local-files`, drop the `#`) → **Record mode** — primary input. Checked first, since a leading `#` (or, under `work-backend: local-files`, a bare id that resolves to an existing record) unambiguously means record mode. Resolved, shape-gated, and materialized by `bin/materialize.js` (procedure and failure paths: `skills/flow/materialize.md`) into `{run-dir}/work/{n}-spec.md`; an unshaped record hard-stops with a pointer to `/claude-tweaks:specify #{n}`. Once materialized, that file is the spec for the rest of build — full lifecycle with spec compliance.
 2. **Design doc path** (e.g., `docs/superpowers/specs/2026-02-21-meal-planning-design.md`) → **Design mode** — build directly from the design doc, skipping spec machinery
 3. **Topic name** (e.g., `meal planning`) → search for a matching design doc in `docs/superpowers/specs/*-design.md` AND a matching record via the configured `work-backend`. If both exist, call `AskUserQuestion` with:
 
@@ -84,5 +84,5 @@ When only ONE axis is still unresolved (whether because an argument supplied the
 
 | Mode | Source | Skips | Best for |
 |------|--------|-------|----------|
-| **Record mode** | `#N` — materialized via `skills/flow/materialize.md` into `{run-dir}/work/{n}-spec.md` | Nothing | Primary input — a GitHub issue (or local record) shaped `ready` by `/claude-tweaks:specify` |
+| **Record mode** | `#N` — materialized by `bin/materialize.js` (procedure and failure paths: `skills/flow/materialize.md`) into `{run-dir}/work/{n}-spec.md` | Nothing | Primary input — a GitHub issue (or local record) shaped `ready` by `/claude-tweaks:specify` |
 | **Design mode** | `docs/superpowers/specs/*-design.md` | `/claude-tweaks:specify`, prerequisite checks | Quick builds where the design doc is clear enough to execute directly |

@@ -15,6 +15,7 @@ const { execFile, execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 const { encodeImpactMap, DEFAULT_MAP_NAME } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
+const { substituteFile } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'file-template.js'));
 
 const TMP_DIRS = [];
 after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true }); });
@@ -31,6 +32,14 @@ function runCli(args, cwd) {
     execFile(process.execPath, [CLI, ...args], { maxBuffer: 10 * 1024 * 1024, cwd },
       (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
   });
+}
+
+// The command verify.js records for the subset run, derived from the list path
+// the report names — so the expectation tracks the platform's quoting.
+function expectedSubsetCommand(listPath) {
+  const sub = substituteFile('node scripts/subset.js {files}', listPath, { token: '{files}' });
+  assert.ok(sub.ok, `substituteFile refused the list path: ${sub.reason}`);
+  return sub.command;
 }
 
 const TAP = (n) => `console.log("TAP version 13\\nok 1 - x\\n1..${n}\\n# tests ${n}\\n# pass ${n}\\n# fail 0");`;
@@ -134,7 +143,7 @@ test('selects the subset (AC1.1 report shape)', async () => {
   assert.strictEqual(imp.driftSelected, 0);
   assert.strictEqual(typeof report.durationMs, 'number');
   assert.strictEqual(report.scope.mode, 'scoped');
-  assert.match(report.checks.tests.command, /^node scripts\/subset\.js \S+impact-files\.txt$/, 'the recorded command is the substituted subset command');
+  assert.strictEqual(report.checks.tests.command, expectedSubsetCommand(imp.listPath), 'the recorded command is the substituted subset command');
   assert.match(run.stdout, /^Impact: 1 of 2 test file\(s\) selected/m);
   assert.match(run.stdout, new RegExp(`^Scope: [^\\n]*\\nImpact: 1 of 2 test file\\(s\\) selected \\(map ${r.base.slice(0, 9)}, 1 commit\\(s\\) old\\)$`, 'm'), 'printed right after the Scope: line');
   const stamp = r.stamp();
@@ -296,6 +305,7 @@ test('{files} path with a space is quoted', async () => {
   const report = JSON.parse(fs.readFileSync(path.join(logDir, 'report.json'), 'utf8'));
   assert.strictEqual(report.scope.impact.selected, 1);
   assert.strictEqual(report.scope.impact.listPath, path.join(logDir, 'impact-files.txt'));
+  assert.strictEqual(report.checks.tests.command, expectedSubsetCommand(report.scope.impact.listPath), 'the recorded command is the substituted subset command, quoted');
 });
 
 test('an impact.command with quotes of its own cannot take a path that needs quoting: full, files-list-unquotable', async () => {

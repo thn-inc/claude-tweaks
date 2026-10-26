@@ -758,7 +758,7 @@ function assertCloseOutKindRegistered(comments) {
   assert.match(comments, /^\| `close-out-update` \|[^\n]*`<!-- run-comment: close-out-update -->`[^\n]*\|$/m, 'Comment kinds lists close-out-update with its marker');
   assert.match(comments, /^\| `\/claude-tweaks:dispatch close-out` \(`close-out-update\.md`'s Update marker\) \| `close-out-update` \|[^\n]*\|$/m, 'Consumer table lists close-out-update');
   const gate = comments.slice(comments.indexOf('## The gate'), comments.indexOf('## Comment kinds'));
-  assert.match(gate, /\*\*`close-out-update` is the one exception:\*\*/, 'the gate section names the close-out-update exception');
+  assert.match(gate, /\*\*Two exceptions, `close-out-update` and `express-review`:\*\*/, 'the gate section names the close-out-update exception');
   assert.match(gate, /so it skips this gate, and a failed find or write stops the update instead of falling back to the issue/, 'the exception states it skips the gate and never falls back to the issue');
 }
 
@@ -779,7 +779,7 @@ test('#4317 AC1.1 go-red control: dropping the close-out-update kind row fails',
 });
 
 test('#4317 AC1.1 go-red control: dropping the gate exception fails', () => {
-  const from = '**`close-out-update` is the one exception:**';
+  const from = '**Two exceptions, `close-out-update` and `express-review`:**';
   assertOccursOnce(COMMENTS, from, 'the exception occurs exactly once');
   assert.throws(() => assertCloseOutKindRegistered(COMMENTS.replace(from, '')), /gate section names/);
 });

@@ -4,7 +4,7 @@ Referenced by `skills/dispatch/SKILL.md` Step 5. Each group is dispatched as two
 
 ## 2. The gate
 
-Dispatch the second call only if the first call's status line was `DONE` or `DONE_WITH_CONCERNS` **and** its `OUTCOME` was `build-test-ok`. Anything else — a `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all — means the second call is never dispatched for that group this firing; go to section 5. An `OUTCOME` of `already-shipped` (#2502) is never dispatched to the second call either, but is not a failure — go to section 7 instead of section 5. A dispatched agent that fails mid-flight is a different case from one that completes — see `_shared/subagent-dispatch-core.md`'s "Failed-agent retrieval" section for how to read its result cheaply, without blocking on the full envelope.
+Dispatch the second call only if the first call's status line was `DONE` or `DONE_WITH_CONCERNS` **and** its `OUTCOME` was `build-test-ok`. Anything else — a `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all — means the second call is never dispatched for that group this firing; go to section 5. An `OUTCOME` of `already-shipped` (#2502) is never dispatched to the second call either, but is not a failure — go to section 7 instead of section 5. An `OUTCOME` of `handoff` (#4027) is neither a pass nor a failure: go to section 8, which continues the call and then judges this gate on the last continuation's report. A dispatched agent that fails mid-flight is a different case from one that completes — see `_shared/subagent-dispatch-core.md`'s "Failed-agent retrieval" section for how to read its result cheaply, without blocking on the full envelope.
 
 **Artifact check, gated alongside STATUS/OUTCOME (#2837).** A well-formed `DONE`/`build-test-ok` pair is a self-report — a first call that implemented the record directly instead of invoking `/claude-tweaks:flow`, or that backgrounded the pipeline mid-run, can still produce one. STATUS/OUTCOME clearing the gate above is necessary but not sufficient: the moment they do, also run `plugin/bin/lib/dispatch/first-call-artifact-check.js`'s `checkFirstCallArtifacts({ runDir, issueNumbers, repoSlug })` against this group's minted run directory and member list, before dispatching the second call. It checks that `run-state.json` and `config.yml` exist in that run directory, that every member's `claims/issue-{n}.json` blob on `claims-registry` is live with `runId === basename(runDir)`, and — under `integration-model: pr-first` — that `run-state.json` records a `pr.number` whose head branch exists on `origin`. It also checks (#2775) that every member has a materialized header — `work/{n}-spec.md` or `spec-{n}/work/{n}-spec.md`, in the run directory or its worktree mirror, the same shapes `/wrap-up`'s record-resolution ladder reads — so a group whose first call never materialized (a hand-rolled build) is stopped here rather than reaching the second call with its records unresolved. It also checks (#3577) that the run directory's `decisions.md` carries the canonical `Step 2.8: claimed #{n}` line for every member (`hasCanonicalClaimLogFor`, `plugin/bin/lib/log-decision/claim-log.js`), the same canonical line `verify-run-bookends.js` enforces, so a first call that skipped that self-check is stopped here rather than reaching call 2, whose first push the stamps gate in `pre-tool-use.js` denies when no claim line is logged. A `{ ok: false, reason, message }` result is gated exactly like a missing/malformed status line (`sequential-execution.md`'s "The loop" section, #2429): never dispatch the second call — go to section 5 — and log one `decisions.md` line naming the `message` the check returned, via `log-decision.js --status REFUSED --text-file "{text-file}"`, where `{text-file}` holds `Artifact check failed: {message}` per `_shared/auto-decision-log.md`'s Text from git or a user paragraph (the `{message}` names paths and refs). Only `{ ok: true }` — or the repair branch below — together with a clean STATUS/OUTCOME pair clears this gate. A `first-call-artifact-check: degraded —` stderr line (the run's `config.yml` carries no valid `integration-model` pin, per `_shared/integration-model.md`) is logged as a `SKIP` decision via `log-decision.js --status SKIP --text-file "{text-file}"`, where `{text-file}` holds `condition: {stderr line} → fallback: PR-bookend check not run` per `_shared/auto-decision-log.md`'s Text from git or a user paragraph (the stderr line interpolates the config path), never treated as a failure.
 
@@ -115,3 +115,52 @@ idempotent overlap section 6 item 2 already describes. This dispatching session'
 the group is a **no-op**, never `pending-review` — the record is closed via the staged Close
 proposal, not shipped via a merge this firing performed. Only once that cleanup call returns does
 this session enter the next group's worktree.
+
+## 8. Continuing a handed-off call (#4027)
+
+A first or second call whose report carries `OUTCOME: handoff` crossed `/flow`'s context cap at a
+phase boundary (`flow/context-handoff.md`'s Dispatched call). It pushed its branch, kept its claim,
+worktree and run directory as they are, and stopped with the steps still to run on its
+`NEXT_STEPS:` line. That is not a failure: no Settle, no `cleanup-only` teardown, no claim release,
+and no `firing` exclusion (`firing-exclusion.md`). This session continues the call, in the same
+worktree, before anything else in this file runs for it.
+
+1. **Read `NEXT_STEPS`.** Use `parseNextSteps` in `plugin/bin/lib/dispatch/first-call-artifact-check.js`.
+   For the first call that is `parseNextSteps(reply, FIRST_CALL_STEPS)`, the parse
+   `resolveFirstCallGate` runs before it returns `handoff`. For the second call it is
+   `parseNextSteps(reply, SECOND_CALL_STEPS)`, the steps a second call can still run (`test`,
+   `review`, `polish`, `re-verify`, `wrap-up`). Its `{ ok: true, steps }` is the continuation's step
+   list. A `{ ok: false, reason, message }` result fails closed. That covers
+   NEXT_STEPS missing or empty, a step the call does not run, and a step named twice. Log
+   `Handoff refused: {message}` via `log-decision.js --status REFUSED --text-file "{text-file}"`
+   (`_shared/auto-decision-log.md`'s Text from git or a user paragraph, since `{message}` quotes the
+   agent's own text). Then treat the call as `build-test-blocked` (first call, section 5) or
+   `blocked` (second call, section 6).
+2. **Continue.** Dispatch `task-prompt.md`'s Continuation call: the same call's template, its step
+   list replaced by `NEXT_STEPS`, with the same `{minted-run-dir}` and the same model profile. Log it
+   first via `log-decision.js --status AUTO --step "Dispatch group {group}" --text "call {1|2} handed off ({n} of 3 this run); continuing {NEXT_STEPS} in a fresh call" --reversibility n/a`,
+   `{n}` counting this run's handoffs across both calls.
+   A continuation that reports `handoff` again comes back to item 1 with its own report.
+3. **Bound: at most three handoffs per run.** The gauge enforces the real bound before any
+   handoff is reported. `context-gauge.js` writes no handoff once the run has made `HANDOFF_BOUND`
+   (3, `plugin/bin/lib/timing/context-gauge.js`) handoffs, counted in `handoff.json`'s
+   `handoffCount`. The count is per run, not per call: both calls share one minted run dir, so they
+   share the three. Past it the agent continues in place, and its call ends as it would without
+   the gauge, completing or settling its own HARD-GATE (`flow/context-handoff.md`'s Reading the
+   result). This session's own count, by the same per-run `{n}`, is a backstop for a misbehaving
+   agent and never fires on a well-behaved one. A fourth handoff in the run is not continued:
+   report the call as `build-test-blocked` (first call, section 5) or `blocked` (second call,
+   section 6), naming the bound as the reason.
+   Log `Handoff bound: call {1|2} is the run's fourth handoff; {NEXT_STEPS} not run` first, the same
+   way as item 1's refusal.
+4. **Gate on the last continuation's report.** It stands as the call's report. For the first call,
+   section 2 runs on it as if the first call had returned it: status line, `OUTCOME`, the artifact
+   check, the repair branch, the stamp read. For the second call, its `OUTCOME` routes like any
+   second call's (`SKILL.md` Step 6; section 6 for a missing or malformed status line). A handoff
+   report runs neither the artifact check nor the stamp read, because the steps that leave those
+   artifacts have not all run yet.
+
+A handoff refused for a malformed `NEXT_STEPS` (item 1) never ran Settle, since a handoff never
+settles. That is the same accepted gap as section 5 item 1's report that cannot be parsed: the
+claim is freed by the `cleanup-only` call's Section E release, or lapses via its TTL. No retry is
+counted.

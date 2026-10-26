@@ -20,10 +20,10 @@ apply to the type of change" rule and the severity-floor table.
 > pipeline run directory exists, compose the narrower bundle once, before Step 3's first dispatch:
 >
 > ```bash
-> node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step review-dispatch "${CLAUDE_PLUGIN_ROOT}/skills/_shared/subagent-dispatch-core.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/run-dir-resolution.md"
+> node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --phase review-lens
 > ```
 >
-> then read `$PIPELINE_RUN_DIR/context/review-dispatch.md` for every citation below and in
+> then read `$PIPELINE_RUN_DIR/context/review-dispatch.md` once, whole, for every citation below and in
 > `step3-routing.md`/`step3-debate-and-refutation.md` — composed once per review run, not
 > re-composed per step. **Standalone** (no run directory, or the compose command is unavailable or
 > exits non-zero): read `_shared/subagent-dispatch-core.md` and `_shared/run-dir-resolution.md`

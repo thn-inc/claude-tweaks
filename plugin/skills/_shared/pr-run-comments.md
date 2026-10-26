@@ -23,8 +23,9 @@ etc.).
   `decisions.md` and fall back to the issue-only behavior for *that one post* — the next site
   that checks the gate still finds `pr` present and tries again.
 
-**`close-out-update` is the one exception:** `/claude-tweaks:dispatch close-out` posts it on a PR it already holds by number, outside any run,
+**Two exceptions, `close-out-update` and `express-review`:** `/claude-tweaks:dispatch close-out` posts `close-out-update` on a PR it already holds by number, outside any run,
 so it skips this gate, and a failed find or write stops the update instead of falling back to the issue (`dispatch/close-out-update.md`'s Update marker).
+`_shared/express-lane.md`'s Post-merge sampling posts `express-review` on a merged PR it holds by number, from a sampling run dir that records no `pr`, so it skips this gate too, and a failed post leaves that PR unreviewed instead of falling back to the issue.
 
 ## Comment kinds
 
@@ -37,6 +38,7 @@ so it skips this gate, and a failed find or write stops the update instead of fa
 | `failure` | `/claude-tweaks:dispatch`'s Settle step, on HARD-GATE failure | `<!-- run-comment: failure -->` |
 | `release-status` | `_shared/pr-first-merge-post-merge.md` Step 4.1, on outcome `merged` when a CHANGELOG backfill is needed | `<!-- run-comment: release-status -->` |
 | `close-out-update` | `/claude-tweaks:dispatch close-out`, before the call that lands an update (`dispatch/close-out-update.md`'s Update marker) | `<!-- run-comment: close-out-update -->` — one per PR, rewritten `cleared (…)` after the verified merge, a decline, or a landing that landed nothing |
+| `express-review` | `_shared/express-lane.md`'s Post-merge sampling, once per sampled merged express PR, findings or none | `<!-- run-comment: express-review -->` — the review-done marker `express-lane.js samples` reads (trusted authors only), so a reviewed PR is never sampled again |
 
 Each kind's marker is the **first line** of its comment body, unconditionally — the same
 first-line-marker convention `_shared/pr-early-run-lifecycle.md`'s PR body uses for its own
@@ -246,6 +248,7 @@ call — never silently drop the content.
 | `/claude-tweaks:dispatch` (`settle-and-merge.md` Step 6, step 5) | `failure` | The full comment (`bin/lib/issues/retry.js`'s `attemptFailedCommentBody`, marker included) always posts to the **issue**, regardless of pr-first (`#1963`) — this is what `bin/lib/issues/trust.js`, which reads only the issue's comments and is not modified, already sees. Under pr-first, the PR gets a short pointer comment instead of the full narrative, and is closed. Retry-ceiling **counting** (`countFailedAttempts`) merges the issue's comments with every PR ever linked to the record, open or closed, so an attempt is found regardless of which source it originally posted to |
 | `_shared/pr-first-merge-post-merge.md` (Step 4.1) | `release-status` | Body: the human line, then the `--backfill` section, then one line pointing at `docs/releasing.md` "After the merge"; posted only on the backfill outcome, never on `not yet in a release` or `every record named` |
 | `/claude-tweaks:dispatch close-out` (`close-out-update.md`'s Update marker) | `close-out-update` | A resume marker, not a report: written pending before an update lands, read by `close-out.md` step 2 so a re-run from any checkout re-verifies, cleared only after the verified merge, a decline, or a landing that landed nothing. No `run-state.json` gate and no issue fallback — the gate exception above |
+| `_shared/express-lane.md` (Post-merge sampling) | `express-review` | Posted with `gh pr comment {pr} --body-file "{body-file}"` once per sampled merged express PR, only after every dispatched lens returned `DONE` or `DONE_WITH_CONCERNS`; body: the marker, then each finding filed or listed, or "no findings". Never updated — the marker only tells `express-lane.js samples` the PR is reviewed. No `run-state.json` gate and no issue fallback — the gate exception above: a failed post leaves the PR for the next sweep |
 
 ## Anti-Patterns
 

@@ -62,10 +62,10 @@ function errLabel(err) {
 }
 
 // Recursive newest file under dir, as `{ mtimeMs, file }` — `file` is the
-// winner's path relative to `dir`. Both fields are null when dir contains no
-// files at any depth. Throws on ANY read error (including ENOENT — this
-// function has no tolerance of its own); the caller turns that into the
-// probe-level ran:false.
+// winner's path relative to `dir`, `/`-joined on every OS (a display ID, never
+// handed back to fs). Both fields are null when dir contains no files at any
+// depth. Throws on ANY read error (including ENOENT — this function has no
+// tolerance of its own); the caller turns that into the probe-level ran:false.
 function newestFileMtimeMs(dir) {
   let newest = { mtimeMs: null, file: null };
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -74,7 +74,7 @@ function newestFileMtimeMs(dir) {
     if (entry.isDirectory()) {
       const child = newestFileMtimeMs(p);
       if (child.mtimeMs !== null && (newest.mtimeMs === null || child.mtimeMs > newest.mtimeMs)) {
-        newest = { mtimeMs: child.mtimeMs, file: path.join(entry.name, child.file) };
+        newest = { mtimeMs: child.mtimeMs, file: `${entry.name}/${child.file}` };
       }
     } else if (entry.isFile()) {
       const m = fs.statSync(p).mtimeMs;
@@ -94,9 +94,10 @@ function ageBasisMs(dir) {
 }
 
 // Recursive: does `dir` contain a .zip file at any depth, and what's the
-// newest file's `{ mtimeMs, file }` under it (file relative to dir) — merges
-// what used to be two separate recursive descents of the same subtree
-// (containsZip + newestFileMtimeMs) into one (#1177).
+// newest file's `{ mtimeMs, file }` under it (file relative to dir, `/`-joined
+// as in newestFileMtimeMs) — merges what used to be two separate recursive
+// descents of the same subtree (containsZip + newestFileMtimeMs) into one
+// (#1177).
 function zipAndNewest(dir) {
   let hasZip = false;
   let newest = { mtimeMs: null, file: null };
@@ -107,7 +108,7 @@ function zipAndNewest(dir) {
       const child = zipAndNewest(p);
       if (child.hasZip) hasZip = true;
       if (child.newest.mtimeMs !== null && (newest.mtimeMs === null || child.newest.mtimeMs > newest.mtimeMs)) {
-        newest = { mtimeMs: child.newest.mtimeMs, file: path.join(entry.name, child.newest.file) };
+        newest = { mtimeMs: child.newest.mtimeMs, file: `${entry.name}/${child.newest.file}` };
       }
     } else if (entry.isFile()) {
       if (entry.name.toLowerCase().endsWith('.zip')) hasZip = true;
@@ -137,7 +138,7 @@ function legacyShapeAndAge(rel, base) {
       const child = zipAndNewest(p);
       if (rel !== 'screenshots' && child.hasZip) shaped = true;
       if (child.newest.mtimeMs !== null && (newest.mtimeMs === null || child.newest.mtimeMs > newest.mtimeMs)) {
-        newest = { mtimeMs: child.newest.mtimeMs, file: path.join(entry.name, child.newest.file) };
+        newest = { mtimeMs: child.newest.mtimeMs, file: `${entry.name}/${child.newest.file}` };
       }
     } else if (entry.isFile()) {
       const m = fs.statSync(p).mtimeMs;

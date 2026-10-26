@@ -23,9 +23,15 @@ whenever this firing's attempt on that group did **not** end in a live-held or r
 disposition:
 
 - The first call's status line was not `DONE`/`DONE_WITH_CONCERNS`, or its `OUTCOME` was not
-  `build-test-ok` (second call never dispatched) — append now.
+  `build-test-ok` (second call never dispatched) — append now. A `handoff` outcome is not this
+  case: it is continued first, as the paragraph below says.
 - The second call's `OUTCOME` was `failed`/`blocked` — Settle already released the claim, so the
   label-based pre-filter would let the group right back in — append now.
+
+A call that handed off (`OUTCOME: handoff`, #4027) is judged on its last continuation's report
+(`two-call-gate.md` section 8). The `handoff` itself is never appended: it holds a live claim and
+this firing continues it. A refused handoff reports `build-test-blocked`/`blocked` and appends
+like any other.
 
 Do **not** append on `merged`/`armed`/`pending-review` (`pr-first`) or `ready-to-merge`
 (`local-merge`'s own outcome vocabulary — see `_shared/integration-model.md`): those hold a live

@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "digest",
+  "record": null,
+  "title": "Digest: _shared (21)",
+  "action": "Propose cluster: file record absorbing 21 _shared entries",
+  "command": "gh issue create --title \"Digest: _shared (21)\" --body-file staged/digest-promotion-4.md"
+ }
+]

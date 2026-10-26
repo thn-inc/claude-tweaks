@@ -18,6 +18,7 @@ const { buildMap } = require(path.join(ROOT, 'tools', 'test-impact', 'build-map.
 const { run } = require(CLI);
 const { parseImpactMap, encodeImpactMap } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 const { readText } = require('./helpers/read-skill');
+const { requireOption } = require(path.join(ROOT, 'tools', 'test-impact', 'node-options.js'));
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -33,6 +34,11 @@ function withTempDir(fn) {
 }
 
 const traceText = (lines) => lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n') + '\n';
+
+test('#4134 absorbed helper pin: requireOption forward-slashes a win32 path and keeps the quotes for its space', () => {
+  assert.strictEqual(requireOption('D:\\a\\x y\\tracer.js', path.win32), '--require "D:/a/x y/tracer.js"');
+  assert.strictEqual(requireOption('/a/x y/tracer.js', path.posix), '--require "/a/x y/tracer.js"');
+});
 
 // ---- buildMap ----
 
@@ -165,7 +171,7 @@ test('trace runs the suite under the tracer env and writes the map, recording a 
     const env = { NODE_OPTIONS: '--max-old-space-size=4096', CT_TRACE_TEST: 'stale.test.js', KEEP: '1' };
     const { deps, out } = makeDeps({ git, spawn, env, cwd: dir });
     assert.strictEqual(run({ argv: ['trace', '--allow-dirty'], deps }), 0);
-    const req = `--require "${path.join(dir, 'tools', 'test-impact', 'tracer.js')}"`;
+    const req = requireOption(path.join(dir, 'tools', 'test-impact', 'tracer.js'));
     assert.strictEqual(seen.cmd, process.execPath);
     assert.deepStrictEqual(seen.args, [path.join(dir, 'tools', 'run-tests.js')]);
     assert.strictEqual(seen.opts.cwd, dir);
@@ -448,9 +454,7 @@ function traceFixture(tmp) {
   return { root, env, head: git(['rev-parse', 'HEAD']) };
 }
 
-// Tracing is POSIX-only (plugin/skills/test/impact-selection.md, Known limits): on win32 the quoted
-// NODE_OPTIONS `--require` path loses its backslashes, so the traced children never load the tracer.
-test('trace under a path with a space: the real CLI maps lib/x.js to the test that loads it', { skip: process.platform === 'win32' && 'tracing is POSIX-only' }, () => {
+test('trace under a path with a space: the real CLI maps lib/x.js to the test that loads it', () => {
   withTempDir((tmp) => {
     const { root, env, head } = traceFixture(tmp);
     const out = path.join(tmp, 'map.json');
@@ -470,13 +474,13 @@ test('trace under a path with a space: the real CLI maps lib/x.js to the test th
 
 // A preload (tests/fixtures/test-impact/fail-trace-append.js) loaded before the tracer makes the trace write of
 // the read of lib/y.js fail, so the real CLI must refuse the map rather than record an under-recorded one (#4158).
-test('a trace whose write fails exits 1, writes no map and names the test that lost a read', { skip: process.platform === 'win32' && 'tracing is POSIX-only' }, () => {
+test('a trace whose write fails exits 1, writes no map and names the test that lost a read', () => {
   withTempDir((tmp) => {
     const { root, env } = traceFixture(tmp);
     const out = path.join(tmp, 'map.json');
     const fail = path.join(ROOT, 'tests', 'fixtures', 'test-impact', 'fail-trace-append.js');
     const r = spawnSync(process.execPath, [CLI, 'trace', '--allow-dirty', '--out', out], {
-      cwd: root, env: { ...env, NODE_OPTIONS: `--require "${fail}"` }, encoding: 'utf8', timeout: 120000,
+      cwd: root, env: { ...env, NODE_OPTIONS: requireOption(fail) }, encoding: 'utf8', timeout: 120000,
     });
     assert.strictEqual(r.status, 1, r.stdout + r.stderr);
     assert.strictEqual(fs.existsSync(out), false, 'no map is written');

@@ -160,6 +160,8 @@ const SELF_LOGGING_SOURCES = {
   'reflect-apply.js': ['plugin/bin/reflect-apply.js', 'plugin/bin/lib/console/reflect-apply.js'],
   'review-coordination.js resolve-tiebreak': ['plugin/bin/review-coordination.js'],
   'hooks.js delete-ledger': ['plugin/bin/hooks.js'],
+  'express-lane.js check': ['plugin/bin/express-lane.js', 'plugin/bin/lib/express/cli.js'],
+  'express-lane.js escalate': ['plugin/bin/express-lane.js', 'plugin/bin/lib/express/cli.js'],
 };
 
 function listedSelfLoggers(text) {

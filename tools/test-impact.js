@@ -33,6 +33,7 @@ const { execFileSync, spawnSync } = require('child_process');
 const { parseImpactMap, gitLocations, DEFAULT_MAP_NAME } = require('../plugin/bin/lib/verify/impact');
 const { writeFileAtomic } = require('../plugin/bin/lib/atomic-write');
 const { buildMap } = require('./test-impact/build-map');
+const { requireOption } = require('./test-impact/node-options');
 
 const USAGE = [
   'usage: node tools/test-impact.js trace [--out <path>] [--allow-dirty]',
@@ -142,12 +143,12 @@ function trace(args, deps) {
   try {
     traceDir = deps.fs.mkdtempSync(path.join(deps.tmpdir || os.tmpdir(), 'ct-test-impact-trace-'));
     const realRoot = deps.fs.realpathSync(root);
-    const req = `--require "${path.join(root, 'tools', 'test-impact', 'tracer.js')}"`;
+    const req = requireOption(path.join(root, 'tools', 'test-impact', 'tracer.js'));
     // Inherited CT_TRACE_* is dropped first: the tracer leaves a child alone when its env names a
     // different CT_TRACE_ROOT (a nested trace, tools/test-impact/tracer.js injectEnv), so a stale root
     // from an outer traced session would otherwise mix two repos' reads into this map. `req` keeps the
-    // literal quotes because NODE_OPTIONS is split on spaces and the checkout path may hold one —
-    // the same quoting is why tracing is POSIX-only (plugin/skills/test/impact-selection.md, Known limits).
+    // literal quotes because NODE_OPTIONS is split on spaces and the checkout path may hold one; the
+    // path is forward-slashed because NODE_OPTIONS reads `\` inside quotes as an escape (node-options.js).
     const env = {};
     for (const [k, v] of Object.entries(deps.env)) if (!k.startsWith('CT_TRACE_')) env[k] = v;
     env.CT_TRACE_ROOT = realRoot;

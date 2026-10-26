@@ -28,6 +28,7 @@ const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('../shared-primitives');
 const { lstatType } = require('../path-guard');
 const { worktreeMirror } = require('../wrap-up/pack');
 const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
+const { FLOW_STEPS } = require('../claim-targets/claim-targets');
 
 function defaultReadFile(p) {
   return fs.readFileSync(p, 'utf8');
@@ -335,18 +336,60 @@ function checkFirstCallStamp({ runDir }, deps = {}) {
 }
 
 // resolveFirstCallGate({ reply, artifact })
-//   -> 'blocked' | 'already-shipped' | 'artifact-failed' | 'repair' | 'dispatch'
+//   -> 'blocked' | 'already-shipped' | 'handoff' | 'artifact-failed' | 'repair' | 'dispatch'
 //
 // The code twin of `skills/dispatch/two-call-gate.md` section 2's ordering: the first call's
 // status line is judged FIRST (#2429), then its OUTCOME line, and only then the artifact
 // check (#2837) -- so a repairable `missing-config` (#3226's `repair` branch) can never
 // launder a malformed or non-DONE reply into a re-dispatch. `reply` is the first call's raw
 // text; `artifact` is `checkFirstCallArtifacts`' result (absent fails closed).
+//
+// `handoff` (#4027): the call crossed the context cap at a phase boundary and reported
+// `OUTCOME: handoff` plus `NEXT_STEPS:` (`flow/context-handoff.md`'s Dispatched call). It is
+// decided before the artifact check and never reads `artifact` -- the steps that produce
+// those artifacts have not all run yet. Its NEXT_STEPS must parse within the first call's
+// own steps (`FIRST_CALL_STEPS`), else the verdict is `blocked`; `parseNextSteps` with the
+// same list gives the reason.
 const STATUS_LINE_RE = /^STATUS: (DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED)$/;
 const OUTCOME_LINE_RE = /^OUTCOME:\s*(\S+)/;
+const NEXT_STEPS_LINE_RE = /^NEXT_STEPS:(.*)$/;
+
+// The steps a first (`build,test`) call runs: `build` with its automatic `stories`, then `test`.
+const FIRST_CALL_STEPS = Object.freeze(['build', 'stories', 'test']);
+// The steps a second (`review,polish,wrap-up`) call can still run: a resume at `review`
+// auto-inserts `test` first, and `polish` carries its `re-verify`. Its handoff is read in
+// prose (`two-call-gate.md` section 8 item 1), which passes this list.
+const SECOND_CALL_STEPS = Object.freeze(['test', 'review', 'polish', 're-verify', 'wrap-up']);
+
+function replyLines(reply) {
+  return String(reply == null ? '' : reply).split('\n').map((l) => l.replace(/\r$/, ''));
+}
+
+// parseNextSteps(reply, allowed = FLOW_STEPS)
+//   -> { ok: true, steps } | { ok: false, reason, message }
+//
+// Reads a handoff reply's first `NEXT_STEPS:` line. Fails closed, the same strictness as
+// context-gauge.js's own `--next-steps` parse: no line -> next-steps-missing; a blank value ->
+// next-steps-empty; an empty part or a name outside `allowed` (FLOW_STEPS by default; a
+// first call passes FIRST_CALL_STEPS, a second call SECOND_CALL_STEPS) -> next-steps-invalid; a step named twice ->
+// next-steps-duplicate. A mangled list must never become a continuation that skips or
+// repeats a step.
+function parseNextSteps(reply, allowed = FLOW_STEPS) {
+  const line = replyLines(reply).map((l) => NEXT_STEPS_LINE_RE.exec(l)).find(Boolean);
+  if (!line) return fail('next-steps-missing', 'handoff without NEXT_STEPS');
+  const raw = line[1].trim();
+  if (raw === '') return fail('next-steps-empty', 'handoff with an empty NEXT_STEPS');
+  const parts = raw.split(',').map((s) => s.trim());
+  const bad = parts.find((p) => !allowed.includes(p));
+  if (bad !== undefined) {
+    return fail('next-steps-invalid', `handoff NEXT_STEPS entry ${JSON.stringify(bad)} is not a step this call runs — accepted: ${allowed.join(', ')}`);
+  }
+  if (new Set(parts).size !== parts.length) return fail('next-steps-duplicate', `handoff NEXT_STEPS names a step twice: ${raw}`);
+  return { ok: true, steps: parts };
+}
 
 function resolveFirstCallGate({ reply, artifact }) {
-  const lines = String(reply == null ? '' : reply).split('\n').map((l) => l.replace(/\r$/, ''));
+  const lines = replyLines(reply);
   const lastLine = lines.filter((l) => l.trim().length > 0).pop();
   const status = lastLine ? STATUS_LINE_RE.exec(lastLine) : null;
   if (!status || (status[1] !== 'DONE' && status[1] !== 'DONE_WITH_CONCERNS')) return 'blocked';
@@ -354,6 +397,7 @@ function resolveFirstCallGate({ reply, artifact }) {
   const outcomeLine = lines.map((l) => OUTCOME_LINE_RE.exec(l)).find(Boolean);
   const outcome = outcomeLine ? outcomeLine[1] : null;
   if (outcome === 'already-shipped') return 'already-shipped';
+  if (outcome === 'handoff') return parseNextSteps(reply, FIRST_CALL_STEPS).ok ? 'handoff' : 'blocked';
   if (outcome !== 'build-test-ok') return 'blocked';
 
   if (artifact && artifact.ok === true) return 'dispatch';
@@ -361,4 +405,4 @@ function resolveFirstCallGate({ reply, artifact }) {
   return 'artifact-failed';
 }
 
-module.exports = { checkFirstCallArtifacts, checkFirstCallStamp, resolveFirstCallGate, resolveIntegrationModel, headerBases, hasMaterializedHeader, defaultReadFile };
+module.exports = { checkFirstCallArtifacts, checkFirstCallStamp, resolveFirstCallGate, parseNextSteps, FIRST_CALL_STEPS, SECOND_CALL_STEPS, resolveIntegrationModel, headerBases, hasMaterializedHeader, defaultReadFile };

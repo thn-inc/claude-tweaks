@@ -23,8 +23,14 @@ test('git non-content subcommand with -C', () => {
   execFileSync('git', ['-C', __dirname, 'rev-parse', '--show-toplevel'], quiet(__dirname));
 });
 
+// cmd.exe has no `NAME=value` prefix, so on win32 the command itself fails. The tracer reads the string
+// before the child runs, so the record is the same there and only the command's status differs (#4134).
 test('shell string with an env-assignment prefix', () => {
-  execSync('FOO=1 git ls-files', quiet(path.join(__dirname, 'bin')));
+  try {
+    execSync('FOO=1 git ls-files', quiet(path.join(__dirname, 'bin')));
+  } catch (err) {
+    if (process.platform !== 'win32') throw err;
+  }
 });
 
 test('sh -c script', { skip: process.platform === 'win32' && 'win32: no sh' }, () => {

@@ -62,7 +62,12 @@ companion line, mirroring this file's own dual-marker scheme) rather than restat
 
 | Caller | Invokes from |
 |---|---|
-| `build/worktree-setup.md` Step 6 | Once per run, immediately after `build/SKILL.md` Spec Step 1's materialize commit, before Spec Step 2 |
+| `build/worktree-setup.md` Step 6 | Once per run, immediately after `build/SKILL.md` Spec Step 1's materialize commit, before Spec Step 2 — through `bin/pr-early-open.js` |
+
+With `gh` present, `bin/pr-early-open.js` runs Steps 1-4 and the Resume section below in one call,
+writing every mandatory log line. This file is that CLI's spec. Follow it by hand only when the CLI
+exits 2 with `gh` absent (the MCP path in the Skip / degrade table), or exits 1; a `reopenRejected`
+field in its result sends the caller to Step 1's "Reopen fails" paragraph.
 
 Phase-checklist updates and the pre-merge title/description refresh moved to
 `_shared/pr-checklist-refresh.md` (#2002) — its own Callers table lists that file's callers
