@@ -2331,14 +2331,18 @@ function partitionArgs(rest, valueFlags) {
 // `i` and the options that take a value each end it, so the first of them
 // decides, and every other letter or digit is a plain switch (#4303). perl's
 // -d is a plain switch unless written `-d:MOD`, and BSD sed's -l is one, so
-// neither is listed: `perl -dpi` and BSD `sed -li.bak` edit in place.
-const IN_PLACE_CLUSTER_LETTERS = Object.freeze({ sed: 'ief', perl: 'ieEImMFxDC' });
+// neither is listed: `perl -dpi` and BSD `sed -li.bak` edit in place. BSD
+// (macOS) sed's -I edits in place too, taking its suffix the way -i does
+// (`sed -I '' …`, `sed -I .bak …`); GNU sed has no -I and rejects it, so
+// reading it as in-place there can only add a target, the fail-closed side.
+// perl's -I is an include directory, never an edit.
+const IN_PLACE_CLUSTER_LETTERS = Object.freeze({ sed: 'iIef', perl: 'ieEImMFxDC' });
 function hasInPlaceFlag(flags, cmd) {
   return flags.some((f) => {
     if (f === '--in-place' || f.startsWith('--in-place=')) return true;
     if (f.startsWith('--') || !f.startsWith('-')) return false;
     const opt = readShortCluster(f, IN_PLACE_CLUSTER_LETTERS[cmd]);
-    return opt !== null && opt.letter === 'i';
+    return opt !== null && (opt.letter === 'i' || (cmd === 'sed' && opt.letter === 'I'));
   });
 }
 

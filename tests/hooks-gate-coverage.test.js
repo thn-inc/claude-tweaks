@@ -532,6 +532,16 @@ for (const cmd of ["perl -Ilib -e 'print 1' /main/f.js", "perl -Ipi -e 's/a/b/' 
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), []);
   });
 }
+// #4303: macOS sed's -I edits in place, taking its suffix as the next word. bash 3.2 and 5 with
+// /usr/bin/sed: `sed -I '' 's/a/b/' M/a`, `cd M; sed -I .bak 's/a/b/' a` (also writing M/a.bak) and
+// `cd M; sed -nI '' 's/a/b/' a` each edit M/a. GNU sed has no -I and rejects it, so reading -I as
+// in-place there is the fail-closed side. The suffix word is read as the program, as for -i.
+for (const cmd of ["sed -I '' 's/a/b/' /main/a", "cd /main; sed -I .bak 's/a/b/' a", "cd /main; sed -nI '' 's/a/b/' a"]) {
+  test(`#4303: \`${cmd}\` is a BSD in-place edit`, () => {
+    const files = fileWriteTargets(cmd, '/r').map((t) => t.file);
+    assert.ok(files.includes(path.resolve('/main/a')), JSON.stringify(files));
+  });
+}
 
 // #4015: bash ends a word at an unquoted `>`, so a redirect glued to a
 // preceding word writes its target just like a spaced one.
