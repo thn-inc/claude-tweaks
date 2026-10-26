@@ -1954,10 +1954,10 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // end, the walk continues under every cwd the list could have left, so after `cd x && cmd;` a
 // later write resolves under x and under the cwd before the list (failing closed). The list's
 // last command branches nothing, so the walk takes it to succeed, as after any `cd x;`: its own
-// failure adds no cwd. Each element of
-// a pipeline runs in a subshell from the cwd the pipeline began at, and its `cd` ends there. A
-// substitution's separators act on the substitution's own list, never the outer one, and a cd
-// inside a substitution nested in another ends at its closer, as the outer walk's does.
+// failure adds no cwd. Each element of a pipeline runs in a subshell from the cwd the pipeline
+// began at, and its `cd` ends there. A substitution's separators act on the substitution's own
+// list, never the outer one, and a cd inside a substitution nested in another ends at its closer,
+// as the outer walk's does.
 //
 // The walk carries at most CWD_SET_CAP cwds at once. Each brace group's `}` and each tail can add
 // a cwd, and every later piece is visited once per cwd, so a command with many distinct `cd`
@@ -1968,7 +1968,27 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // overflowed it (#4303: the group or tail that just ended, or the command an and-or list just
 // ran), so that step's `cd` stays visible. When that step alone carries more than the cap, the
 // set keeps its newest CWD_SET_CAP cwds, so it never holds more than CWD_SET_CAP + 2.
+//
+// The cap bounds how many cwds the walk carries, not what each costs (#4303: 78 s through the hook
+// at 44 KB). The cwds a collapse keeps are the newest, and a run of relative `cd`s (`{ cd a1; };
+// { cd a2; }; …`) moves each of them one segment deeper per step, so they never reset to the short
+// overflow paths: every later `cd` resolves CWD_SET_CAP + 2 ever-longer paths, quadratic in
+// characters. Two bounds keep the walk linear, and each falls back onto `overflow()`, the cap's own
+// fail-closed set (without an overflowCwd, the walk's own cwd alone, as for the cap):
+// - Past CWD_WINDOW_CAP collapses in one walk, a collapse keeps `overflow()` alone, as every
+//   collapse did before #4303, so the kept cwds stop carrying on. A walk collapses only once it
+//   holds more than CWD_SET_CAP distinct cwds, and each join past the cap counts (an and-or
+//   separator makes up to three): #4303's fuzzed multi-collapse shapes (12 to 16 distinct groups,
+//   then up to ten more cd steps) reach 51, so 256 keeps the window for anything short of a
+//   generated command, and past it each step costs what the cap alone allowed.
+// - A cwd whose path is longer than CWD_LENGTH_CAP collapses onto `overflow()` (boundCwdLength), so
+//   a relative target after it resolves in the overflow cwd and the walk's own. That bounds a cwd
+//   that grows without the set collapsing (`cd a1; cd a2; …` after a collapse, 18 cwds deep). 4096
+//   is Linux's PATH_MAX, four times macOS's 1024: no path a command works in comes near it, and it
+//   keeps each resolve to a few kilobytes, whatever the command's length.
 const CWD_SET_CAP = 16; // four groups each with a relative cd already make 2^4 cwds
+const CWD_WINDOW_CAP = 256;
+const CWD_LENGTH_CAP = 4096;
 function forEachShellSegment(command, cwd, handler, opts = {}) {
   const start = cwd || '.';
   let collapsed = null;
@@ -1979,18 +1999,31 @@ function forEachShellSegment(command, cwd, handler, opts = {}) {
     }
     return collapsed;
   };
+  let windows = 0;
+  overflow.keepsWindow = () => (windows += 1) <= CWD_WINDOW_CAP; // counts this walk's collapses
   walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow);
 }
 
 // The union of two cwd lists. Past CWD_SET_CAP it collapses to `overflow()` plus `fresh`, the one
 // of the two that carries the cwds of the step being joined, keeping at most CWD_SET_CAP of them:
 // the newest, since a union appends a list's new cwds at its end and a collapse puts `fresh` after
-// `overflow()`. It never drops `fresh` whole, so a second collapse keeps the step's newest cwds.
+// `overflow()`. It never drops `fresh` whole, so a second collapse keeps the step's newest cwds;
+// past CWD_WINDOW_CAP collapses it keeps `overflow()` alone.
 function joinCwds(a, b, overflow, fresh = b) {
   const out = [...a, ...b.filter((c) => !a.includes(c))];
   if (out.length <= CWD_SET_CAP) return out;
   const o = overflow();
+  if (!overflow.keepsWindow()) return o;
   return [...o, ...fresh.filter((c) => !o.includes(c)).slice(-CWD_SET_CAP)];
+}
+
+// A cwd longer than CWD_LENGTH_CAP replaced by `overflow()`, through the cap's own join, so the
+// set stays within CWD_SET_CAP + 2.
+function boundCwdLength(cwds, overflow) {
+  const tooLong = (c) => typeof c === 'string' && c.length > CWD_LENGTH_CAP;
+  if (!cwds.some(tooLong)) return cwds;
+  const kept = cwds.filter((c) => !tooLong(c));
+  return joinCwds(kept, overflow(), overflow, kept);
 }
 
 function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
@@ -2097,8 +2130,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow) {
   // is dropped, as before the closer cut it (forgetting a name would drop the targets that use it).
   const nest = { value: NOT_NESTED }; // carried across this chunk's pieces in text order (#4210)
   const visitPiece = (ev, pieceCwds, pieceVars) => {
-    if (!ev.tail) return visitUnderEach(ev.text, pieceCwds, pieceVars, handler, nest);
-    const next = visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler, nest);
+    if (!ev.tail) return boundCwdLength(visitUnderEach(ev.text, pieceCwds, pieceVars, handler, nest), overflow);
+    const next = boundCwdLength(visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler, nest), overflow);
     return joinCwds(pieceCwds, next, overflow);
   };
   let b = 0;

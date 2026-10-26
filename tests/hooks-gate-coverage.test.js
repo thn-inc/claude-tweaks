@@ -1961,6 +1961,31 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       }, opts);
       assert.ok(most <= 18, `${most} cwds`);
     });
+    // #4303: the cwds a collapse keeps move one segment deeper with every relative cd, so without a
+    // bound on what they cost the walk is quadratic in characters (78 s through the hook at 44 KB). With no aN present every cd fails, and bash 3.2 and 5 write ../f.js from the start
+    // cwd (R/f.js); the walk keeps that target and fails closed into the main checkout.
+    test('#4303 cwd cap: 4,000 relative-cd groups finish inside the bound and resolve into the main checkout', () => {
+      const cmd = distinct((i) => `{ cd a${i}; }; `, 4000) + 'cp a ../f.js';
+      const files = boundedTargets('fileWriteTargets', cmd, '/r/w', opts).map((t) => t.file);
+      assert.ok(files.includes(path.resolve('/r/f.js')) && files.includes(MAIN_F), JSON.stringify(files.slice(0, 20)));
+    });
+    // #4303: past CWD_WINDOW_CAP collapses a collapse keeps the overflow cwd and the walk's own
+    // alone, as before the window, so the cwds stop growing (with the window kept they reach 1,900
+    // characters here). With no aN present, bash 3.2 and 5 write f.js in the start cwd.
+    test('#4303 cwd cap: past CWD_WINDOW_CAP collapses the kept cwds stop growing', () => {
+      const files = fileWriteTargets(distinct((i) => `{ cd a${i}; }; `, 400) + 'cp a f.js', '/r', opts).map((t) => t.file);
+      assert.ok(files.includes(path.resolve('/r/f.js')) && files.includes(MAIN_F), JSON.stringify(files));
+      assert.ok(files.every((f) => f.length < 100), JSON.stringify(files.map((f) => f.length)));
+    });
+    // #4303: a cwd longer than CWD_LENGTH_CAP (4,096) collapses onto the overflow cwd and the walk's
+    // own, so a relative write resolves there (failing closed). bash 3.2 and 5, from a tree of 2,100
+    // nested `d` directories in M, end 4,278 characters deep and write f.js there, in M; the
+    // scanner reports M/f.js. Six steps (3,605 characters) stay under the bound and keep the path.
+    test('#4303 cwd cap: a cwd past CWD_LENGTH_CAP collapses onto the overflow cwd', () => {
+      const steps = (k) => 'cd /main; ' + `cd ${'d/'.repeat(300)}; `.repeat(k) + 'cp a f.js';
+      assert.deepStrictEqual(fileWriteTargets(steps(7), '/r', opts).map((t) => t.file), [MAIN_F, path.resolve('/r/f.js')]);
+      assert.deepStrictEqual(fileWriteTargets(steps(6), '/r', opts).map((t) => t.file), [path.resolve(`/main/${'d/'.repeat(1800)}f.js`)]);
+    });
   }
   // #4149: a pass's nested scans share a step budget, so a shape whose "$( runs off the end from
   // every top-level span (each falls back to the plain quote end and the next one rescans the same
@@ -1973,6 +1998,14 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   test('#4149 nesting: a closed nest deeper than the cap takes the plain quote reading', () => {
     const targets = boundedTargets('fileWriteTargets', `echo ${'"$('.repeat(5000)}${')"'.repeat(5000)} && cp a /main/f.js`, '/r');
     assert.deepStrictEqual(targets, [main('copy')]);
+  });
+  // #4303: the walk keeps one and-or list per substitution level, and reaching a level drops the
+  // deeper ones in amortized constant time, so a deep closed nest stays linear (scanning every open
+  // level on each event was quadratic: 9 s at 20,000 levels). bash 3.2 and 5 crash on this nest
+  // (SIGSEGV) and write nothing; the scanner keeps the write (fail closed).
+  test('#4303 nesting: a 40,000-deep closed $( ) nest finishes inside the bound', () => {
+    const cmd = `${'x=$(true; '.repeat(40000)}cp a f.js${')'.repeat(40000)}`;
+    assert.deepStrictEqual(boundedTargets('fileWriteTargets', cmd, '/r'), [{ action: 'copy', file: path.resolve('/r/f.js') }]);
   });
 
   // lineLeavesStructureOpen: a `)` inside a quoted "$( )" closes no subshell, so the later body stays kept.
