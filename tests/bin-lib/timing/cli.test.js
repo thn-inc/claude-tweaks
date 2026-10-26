@@ -7,6 +7,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { skipUnderRoot } = require('../../helpers/root');
 const { readText } = require('../../helpers/read-skill');
+const { fixtureHomeEnv } = require('../../helpers/fixture-home');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-timing.js');
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'record-1535');
@@ -15,13 +16,6 @@ function tmpRun(copyFixture) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-'));
   if (copyFixture) for (const f of ['events.jsonl', 'manifest.yml']) fs.copyFileSync(path.join(FIX, f), path.join(dir, f));
   return dir;
-}
-// A fixture home for spawned children: os.homedir() reads USERPROFILE on
-// Windows, so both are set; CLAUDE_CONFIG_DIR is dropped so the developer's
-// own config dir cannot redirect the transcript lookup away from the fixture.
-function fixtureHomeEnv(home) {
-  const { CLAUDE_CONFIG_DIR, ...base } = process.env;
-  return { ...base, HOME: home, USERPROFILE: home };
 }
 
 test('#1928 AC4: --markdown prints the table and writes timing.json', () => {

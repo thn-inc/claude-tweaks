@@ -53,6 +53,20 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.156.1](https://github.com/thn-inc/claude-tweaks/compare/v6.156.0...v6.156.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* Fix latent Windows path producers found by the [#2767](https://github.com/thn-inc/claude-tweaks/issues/2767)… ([#3315](https://github.com/thn-inc/claude-tweaks/issues/3315)) ([f5c33d2](https://github.com/thn-inc/claude-tweaks/commit/f5c33d2c0e9667ba91189fba49d4d857b8b40976))
+* Select tests changed between the map's commit and the… ([#4132](https://github.com/thn-inc/claude-tweaks/issues/4132)) ([df4b7c6](https://github.com/thn-inc/claude-tweaks/commit/df4b7c60d839c304c01ab40c87dc1dc66fb6c882))
+
+### Highlights
+* Fixes several tools mis-handling Windows paths and PATH separators.
+* No user-visible change.
+* Test-impact maps record whether they were traced from a clean tree, and an interrupted trace cleans up after itself.
+* Test-impact selection no longer misses a test whose reads changed after the map was traced.
+
 ## [6.156.0](https://github.com/thn-inc/claude-tweaks/compare/v6.155.1...v6.156.0) (2026-10-26)
 
 
