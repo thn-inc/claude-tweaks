@@ -189,7 +189,7 @@ created: 2026-05-15T143207
 
 Suppressed levers are still written to `config.yml` with default values — suppression is a UI affordance, not a semantic skip; downstream skills always have a value to read.
 
-Initialize `decisions.md` in the same directory with the config snapshot header (see `_shared/auto-decision-log.md`) — the header lists the 13 levers, then the run pin as its own `- integration-model: {v}` line. Create the `staged/` subdirectory. Then log the held ceremony-check verdicts, one line per unlabeled record (the Ceremony profile computation above has the command); this applies in every mode that writes `config.yml`.
+Initialize `decisions.md` in the same directory with the config snapshot header (see `_shared/auto-decision-log.md`) — the header lists the 13 levers, then the run pin as its own `- integration-model: {v}` line — prepended above any lines already in the file (Step 2.8's claim-log lines, and the `Manifesto: levers written to {path}` line `set-config.js --set` appended), never written over them. Create the `staged/` subdirectory. Then log the held ceremony-check verdicts, one line per unlabeled record (the Ceremony profile computation above has the command); this applies in every mode that writes `config.yml`.
 
 **On override (option 2) / On cancel (option 3):** `confirm`/`hybrid` only — read `manifesto-confirm.md` in this skill's directory for both branches (override parsing/validation and the `config.yml` write, cancel handling).
 

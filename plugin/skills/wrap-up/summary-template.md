@@ -144,7 +144,7 @@ by hand:
 
     node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" render --run-dir "$PIPELINE_RUN_DIR" --section trace --strict
 
-(Substitute the re-resolved run-dir path — env assignments do not survive between calls.)
+(Substitute the carried run-dir path — env assignments do not survive between calls.)
 
 `--strict` prints the table first and then exits 2 when any worklist row has no
 recorded result, so a hole is visible AND fatal — the exit code is the signal,

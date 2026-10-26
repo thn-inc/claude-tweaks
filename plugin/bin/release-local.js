@@ -36,6 +36,7 @@ const { guardReleasableTree, pushAfterAncestryCheck } = require('./lib/release/r
 const { resolvePolicyKeys } = require('./lib/policy-schema.js');
 const { withIndexLockRetry } = require('./lib/git-retry.js');
 const { isPathContained } = require('./lib/shared-primitives.js');
+const { lstatType } = require('./lib/path-guard');
 
 const USAGE = [
   'usage: release-local.js [--dry-run] [--root <dir>] [--branch <name>] [--release-as <version>]',
@@ -280,9 +281,14 @@ function run(argv, deps) {
 // (release-please-config.json's extra-files, the stack manifest names), so a
 // planted symlink is an ordinary PR away — the IL-150 class: decide on the
 // real path, never the literal one. The parent directory is realpath-resolved
-// and must sit inside the real root; the leaf is opened with O_NOFOLLOW so a
-// symlinked file is refused at the kernel (no lstat-then-write window).
-function writeInsideRoot(root, p, text) {
+// and must sit inside the real root. Where the platform defines O_NOFOLLOW, the
+// leaf is opened with it and the kernel refuses a symlinked file. Where it does
+// not (win32), the leaf is lstat'd before the open and refused if it is a
+// symlink; after the open the fd's dev/ino (bigint, so a 64-bit win32 file ID is
+// not rounded) is compared with a fresh lstat of the leaf, and the file is
+// truncated only once that identity check passes, so a file swapped in during
+// the window is never cut short.
+function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
   const target = path.join(root, p);
   const realRoot = fs.realpathSync(root);
   let realDir;
@@ -295,15 +301,45 @@ function writeInsideRoot(root, p, text) {
   if (!isPathContained(realDir, realRoot, { orEqual: true })) {
     throw new Error(`refusing to write ${p}: its real location ${realDir} is outside the repo root`);
   }
-  const { O_WRONLY, O_CREAT, O_TRUNC, O_NOFOLLOW } = fs.constants;
+  const symlinkError = () => new Error(`refusing to write ${p}: it is a symlink`);
+  const leaf = path.join(realDir, path.basename(target));
+  const { O_WRONLY, O_CREAT, O_EXCL, O_TRUNC, O_NOFOLLOW } = constants;
+  if (typeof O_NOFOLLOW === 'number') {
+    let fd;
+    try {
+      fd = fs.openSync(leaf, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0o644);
+    } catch (e) {
+      if (e.code === 'ELOOP' || e.code === 'EMLINK') throw symlinkError();
+      throw e;
+    }
+    try { fs.writeFileSync(fd, text); } finally { fs.closeSync(fd); }
+    return;
+  }
+  const before = lstatType(leaf);
+  if (before.type === 'symlink') throw symlinkError();
+  if (before.type === 'unreadable') throw new Error(`refusing to write ${p}: cannot inspect it (${before.code})`);
+  // A leaf that was absent is created exclusively and one that was present is
+  // opened without O_CREAT, so a leaf that changed since the lstat fails the open
+  // (EEXIST / ENOENT) instead of leaving a freshly created file behind. That
+  // change may be a symlink swap or a concurrent writer, so it gets its own
+  // message; ELOOP / EMLINK are a symlink, as in the O_NOFOLLOW branch.
   let fd;
   try {
-    fd = fs.openSync(path.join(realDir, path.basename(target)), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0o644);
+    fd = fs.openSync(leaf, before.type === 'missing' ? O_WRONLY | O_CREAT | O_EXCL : O_WRONLY, 0o644);
   } catch (e) {
-    if (e.code === 'ELOOP' || e.code === 'EMLINK') throw new Error(`refusing to write ${p}: it is a symlink`);
+    if (e.code === 'ELOOP' || e.code === 'EMLINK') throw symlinkError();
+    if (e.code === 'EEXIST' || e.code === 'ENOENT') throw new Error(`refusing to write ${p}: it changed between the check and the open`);
     throw e;
   }
-  try { fs.writeFileSync(fd, text); } finally { fs.closeSync(fd); }
+  try {
+    const opened = fs.fstatSync(fd, { bigint: true });
+    const after = fs.lstatSync(leaf, { bigint: true });
+    if (after.isSymbolicLink() || opened.dev !== after.dev || opened.ino !== after.ino) throw symlinkError();
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, text);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function defaultDeps(root) {
