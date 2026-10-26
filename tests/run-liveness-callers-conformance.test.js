@@ -70,6 +70,7 @@ const EXPORT_AFTER = /^[ \t]*(?:[,}]|\r?\n|$)/;
 // Allowed scoped-token sites located in archive-merged.js at the commit that landed the
 // scoped rule. Fewer means the matcher stopped matching: never lower this floor.
 const SCOPED_SITE_FLOOR = 8;
+const BLANK_LITERALS = { literals: 'blank' };
 
 function readEntries() {
   return SCANNED.map((rel) => ({ rel, raw: readText(path.join(REPO, rel)) }));
@@ -79,29 +80,36 @@ function lineOf(src, index) {
   return src.slice(0, index).split('\n').length;
 }
 
+function hitAt(src, index, form) {
+  return { line: lineOf(src, index), form };
+}
+
+function formatHits(hits) {
+  return hits.map((h) => `${h.line}:${h.form}`);
+}
+
 // Matches over already-stripped text. Returns [{ line, form }] sorted by line.
 function hitsIn(src) {
   const hits = [];
-  for (const m of src.matchAll(NAMES)) hits.push({ line: lineOf(src, m.index), form: m[1] });
-  for (const m of src.matchAll(PROCESS_KILL)) hits.push({ line: lineOf(src, m.index), form: 'process.kill(' });
-  for (const m of src.matchAll(FIELD)) hits.push({ line: lineOf(src, m.index), form: `.${m[1]}` });
-  for (const m of src.matchAll(BRACKET_FIELD)) hits.push({ line: lineOf(src, m.index), form: `.${m[2]}` });
+  for (const m of src.matchAll(NAMES)) hits.push(hitAt(src, m.index, m[1]));
+  for (const m of src.matchAll(PROCESS_KILL)) hits.push(hitAt(src, m.index, 'process.kill('));
+  for (const m of src.matchAll(FIELD)) hits.push(hitAt(src, m.index, `.${m[1]}`));
+  for (const m of src.matchAll(BRACKET_FIELD)) hits.push(hitAt(src, m.index, `.${m[2]}`));
   // A git argv array: `log` as one element, and a recency element among the others.
-  const argvSeen = new Set();
+  const argvLines = new Set();
   for (const m of src.matchAll(ARGV)) {
     const elems = [...m[0].matchAll(LITERAL)].map((q) => q[2]);
     if (elems.includes('log') && elems.some((e) => RECENCY.test(e))) {
-      const line = lineOf(src, m.index);
-      argvSeen.add(`${line} ${COMMIT_FORM}`);
-      hits.push({ line, form: COMMIT_FORM });
+      const hit = hitAt(src, m.index, COMMIT_FORM);
+      argvLines.add(hit.line);
+      hits.push(hit);
     }
   }
   // A command string such as `git log -1 --format=%cI`, outside an argv array.
   for (const m of src.matchAll(LITERAL)) {
     if (!LOG_WORD.test(m[2]) || !STRING_RECENCY.test(m[2])) continue;
-    const line = lineOf(src, m.index);
-    if (argvSeen.has(`${line} ${COMMIT_FORM}`)) continue;
-    hits.push({ line, form: COMMIT_FORM });
+    const hit = hitAt(src, m.index, COMMIT_FORM);
+    if (!argvLines.has(hit.line)) hits.push(hit);
   }
   return hits.sort((a, b) => a.line - b.line);
 }
@@ -170,17 +178,16 @@ function allowedRegions(blank) {
 function scopedSites(rel, raw) {
   const kept = stripComments(raw);
   const isArchive = rel === ARCHIVE;
-  const regions = isArchive ? allowedRegions(stripComments(raw, { literals: 'blank' })) : [];
+  const regions = isArchive ? allowedRegions(stripComments(raw, BLANK_LITERALS)) : [];
   let allowed = 0;
   const hits = [];
   for (const m of kept.matchAll(SCOPED)) {
-    const line = lineOf(kept, m.index);
     if (!isArchive) {
-      hits.push({ line, form: `${m[1]} outside archive-merged.js` });
+      hits.push(hitAt(kept, m.index, `${m[1]} outside archive-merged.js`));
     } else if (regions.some(([s, e]) => m.index >= s && m.index < e)) {
       allowed += 1;
     } else {
-      hits.push({ line, form: `${m[1]} outside classifyRunDir/lastOwnEventMs` });
+      hits.push(hitAt(kept, m.index, `${m[1]} outside classifyRunDir/lastOwnEventMs`));
     }
   }
   return { allowed, hits };
@@ -196,7 +203,7 @@ function scopedHits(rel, raw) {
 function assertSiteFloor(entries) {
   const entry = entries.find((e) => e.rel === ARCHIVE);
   assert.ok(entry, `${ARCHIVE} is not among the scanned entries`);
-  const blank = stripComments(entry.raw, { literals: 'blank' });
+  const blank = stripComments(entry.raw, BLANK_LITERALS);
   for (const name of ['classifyRunDir', 'lastOwnEventMs']) {
     assert.ok(
       functionSpan(blank, name),
@@ -216,14 +223,11 @@ function scan(entries) {
   const offenders = [];
   for (const { rel, raw } of entries) {
     const stripped = stripComments(raw);
-    const verdict = stripperVerdict(raw, stripped);
-    if (verdict !== 'ok') {
-      offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
-      continue;
-    }
-    const blankVerdict = stripperVerdict(raw, stripComments(raw, { literals: 'blank' }));
-    if (blankVerdict !== 'ok') {
-      offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[blankVerdict]}`);
+    const misparse = [stripped, stripComments(raw, BLANK_LITERALS)]
+      .map((text) => stripperVerdict(raw, text))
+      .find((verdict) => verdict !== 'ok');
+    if (misparse) {
+      offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[misparse]}`);
       continue;
     }
     for (const { line, form } of hitsIn(stripped)) offenders.push(`${rel}:${line} ${form}`);
@@ -280,11 +284,11 @@ test('matcher self-test: banned names and primitives are flagged at their lines'
     "const fields = ['locked'];", // 24
     'runGit([`log`, `--max-count=${n}`, `--format=%H`]);', // 25
     "sh(['log', '-1', 'git log -1']);", // 26: argv and string on one line, one offender
-    'return [\'locked\'];', // 27
+    "return ['locked'];", // 27
     "const c = entry?.['locked'];", // 28
   ].join('\n');
   assert.deepEqual(
-    bannedHits(planted).map((h) => `${h.line}:${h.form}`),
+    formatHits(bannedHits(planted)),
     [
       '1:lockVerdict',
       '2:isDeadRunDir',
@@ -312,7 +316,7 @@ test('matcher self-test: banned names and primitives are flagged at their lines'
 
 test('AC2.1: a multi-line argv commit-recency read is flagged at its opening line', () => {
   const planted = "x();\nrunGit([\n  'log',\n  '-n', '1',\n  '--format=%ct',\n]);";
-  assert.deepEqual(bannedHits(planted).map((h) => `${h.line}:${h.form}`), [`2:${COMMIT_FORM}`]);
+  assert.deepEqual(formatHits(bannedHits(planted)), [`2:${COMMIT_FORM}`]);
 });
 
 // The four real files, with `appended` added to the end of the one named `rel`.
@@ -355,7 +359,7 @@ test('a blank-mode-only mis-parse is reported as an offender, not passed as a cl
   const raw = "if (b) /'/.test(b); const c = 'x'; ownEventRecency(c);";
   const rel = SCANNED[0];
   assert.equal(stripperVerdict(raw, stripComments(raw)), 'ok');
-  assert.equal(stripperVerdict(raw, stripComments(raw, { literals: 'blank' })), 'misparsed');
+  assert.equal(stripperVerdict(raw, stripComments(raw, BLANK_LITERALS)), 'misparsed');
   assert.deepEqual(scan([{ rel, raw }]), [`${rel}: ${STRIPPER_VERDICT_MESSAGES.misparsed}`]);
 });
 
@@ -380,33 +384,31 @@ test('floor: the scoped-token sites are located', () => {
 
 test('scoped rule self-test: allowed sites pass, a sibling helper and the other files fail', () => {
   const archive = "const { ownEventRecency } = require('../run-liveness/probes');\nconst STALE_INTERRUPTED_TTL_MS = ORPHAN_MINT_TTL_MS;\nfunction lastOwnEventMs(d) {\n  return ownEventRecency(d).lastOwnMs;\n}\nfunction classifyRunDir(ctx) {\n  const s = '}';\n  return ownEventRecency(ctx.dir) && STALE_INTERRUPTED_TTL_MS;\n}\nfunction newHelper(d) {\n  return ownEventRecency(d);\n}\nmodule.exports = {\n  ownEventRecency, STALE_INTERRUPTED_TTL_MS,\n};";
-  const fmt = (hits) => hits.map((h) => `${h.line}:${h.form}`);
-  assert.deepEqual(fmt(scopedHits(ARCHIVE, archive)), ['11:ownEventRecency outside classifyRunDir/lastOwnEventMs']);
+  assert.deepEqual(formatHits(scopedHits(ARCHIVE, archive)), ['11:ownEventRecency outside classifyRunDir/lastOwnEventMs']);
   const others = SCANNED.filter((rel) => rel !== ARCHIVE);
   for (const rel of others) {
     assert.deepEqual(
-      fmt(scopedHits(rel, 'const x = ownEventRecency(d);\nconst y = STALE_INTERRUPTED_TTL_MS;')),
+      formatHits(scopedHits(rel, 'const x = ownEventRecency(d);\nconst y = STALE_INTERRUPTED_TTL_MS;')),
       ['1:ownEventRecency outside archive-merged.js', '2:STALE_INTERRUPTED_TTL_MS outside archive-merged.js'],
     );
   }
   for (const rel of SCANNED) {
     assert.deepEqual(scopedHits(rel, '// ownEventRecency is the reader\nconst ok = 1;'), []);
   }
-  assert.deepEqual(fmt(scopedHits(others[0], "const f = probes['ownEventRecency'];")), [
+  assert.deepEqual(formatHits(scopedHits(others[0], "const f = probes['ownEventRecency'];")), [
     '1:ownEventRecency outside archive-merged.js',
   ]);
 });
 
 test('scoped rule self-test: only a bare token passes in the export list, only top-level declarations count', () => {
-  const fmt = (hits) => hits.map((h) => `${h.line}:${h.form}`);
   const exportsRow = 'module.exports = {\n  sneaky: (d) => ownEventRecency(d),\n  ownEventRecency,\n  alias: STALE_INTERRUPTED_TTL_MS,\n  wrapped: wrap(ownEventRecency),\n  a, ownEventRecency,\n  pick: c ? x : ownEventRecency };';
-  assert.deepEqual(fmt(scopedHits(ARCHIVE, exportsRow)), [
+  assert.deepEqual(formatHits(scopedHits(ARCHIVE, exportsRow)), [
     '2:ownEventRecency outside classifyRunDir/lastOwnEventMs',
     '5:ownEventRecency outside classifyRunDir/lastOwnEventMs',
     '7:ownEventRecency outside classifyRunDir/lastOwnEventMs',
   ]);
   const nested = "function inner() {\n  const STALE_INTERRUPTED_TTL_MS = 1;\n  const { ownEventRecency } = require('x');\n}";
-  assert.deepEqual(fmt(scopedHits(ARCHIVE, nested)), [
+  assert.deepEqual(formatHits(scopedHits(ARCHIVE, nested)), [
     '2:STALE_INTERRUPTED_TTL_MS outside classifyRunDir/lastOwnEventMs',
     '3:ownEventRecency outside classifyRunDir/lastOwnEventMs',
   ]);
@@ -424,7 +426,7 @@ test('AC2.1: scan applies the scoped rule to the real files', () => {
 });
 
 test('boundary finder ignores braces inside string literals', () => {
-  const blank = stripComments("function f() { const a = '{'; return 1; }\nconst after = 2;", { literals: 'blank' });
+  const blank = stripComments("function f() { const a = '{'; return 1; }\nconst after = 2;", BLANK_LITERALS);
   assert.equal(lineOf(blank, functionSpan(blank, 'f').end), 1);
   assert.equal(functionSpan(blank, 'missing'), null);
 });
