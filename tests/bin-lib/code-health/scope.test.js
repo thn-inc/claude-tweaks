@@ -643,12 +643,14 @@ test('listSlices splitting loses no source file — every file lands in exactly 
 
   // Reconstruct the covered set from the emitted slices, honoring each
   // slice's own recursive flag — the same way every consumer reads them.
+  // Windows' find joins what it appends to slice.path with `/`, so normalize
+  // back to native before comparing against path.join's list (#3315).
   const covered = [];
   for (const slice of listSlices(root)) {
     const args = ['find', slice.path, '-type', 'f', '-name', '*.js'];
     if (!slice.recursive) args.splice(2, 0, '-maxdepth', '1');
     const out = execFileSync(args[0], args.slice(1), { encoding: 'utf8' });
-    covered.push(...out.split('\n').filter(Boolean));
+    covered.push(...out.split('\n').filter(Boolean).map((f) => path.normalize(f)));
   }
   assert.deepStrictEqual([...covered].sort(), [...written].sort(), 'split must cover every file exactly once — no drops, no double-counting');
 });
