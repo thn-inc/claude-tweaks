@@ -51,7 +51,7 @@ function boundedTargets(fn, command, cwd, opts) {
   const input = JSON.stringify({ mod: GIT_COMMAND, fn, command, cwd, opts });
   const r = spawnSync(process.execPath, ['-e', BOUNDED_SCRIPT], { input, timeout: 10000, encoding: 'utf8' });
   assert.strictEqual(r.signal, null, `${fn} was killed (${r.signal}): a cap no longer bounds it`);
-  assert.strictEqual(r.status, 0, `${fn} exited ${r.status}: ${r.stderr}`);
+  assert.strictEqual(r.status, 0, `${fn} exited ${r.status}: ${r.error ?? r.stderr}`);
   return JSON.parse(r.stdout);
 }
 
@@ -424,6 +424,24 @@ test('#4303: `>&` with an fd, `-`, or a non-stdout fd prefix resolves no target'
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
   }
 });
+// #4303: only a whole word of digits (or `-`) after `>&` is a descriptor: bash 3.2 and 5 write a
+// file named `2x` for `echo x >&2x` and for `echo x >& 2x`.
+test('#4303: `>&` with a word that starts with digits is a file target', () => {
+  for (const cmd of ['echo x >&2x', 'echo x >& 2x']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'write', file: path.resolve('/r/2x') }], cmd);
+  }
+});
+// #4303: redirectWriteTargets called with no quoting (an exported entry point; every walk passes
+// quoting) reads the operator from the token's start. bash 3.2 and 5 write M/f for `echo x >& M/f`
+// and `echo x >&M/f`, and nothing for `echo x 2>& M/f` (ambiguous redirect) or `echo x >>&M/f`
+// (syntax error).
+test('#4303: redirectWriteTargets without quoting reads `>& file`, and no `2>&` or `>>&` target', () => {
+  const { redirectWriteTargets } = gitCommand;
+  assert.deepStrictEqual(redirectWriteTargets(['echo', 'x', '>&', '/main/f.js'], '/r'), [MAIN_F]);
+  assert.deepStrictEqual(redirectWriteTargets(['echo', 'x', '>&/main/f.js'], '/r'), [MAIN_F]);
+  assert.deepStrictEqual(redirectWriteTargets(['echo', 'x', '2>&', '/main/f.js'], '/r'), []);
+  assert.deepStrictEqual(redirectWriteTargets(['echo', 'x', '>>&/main/f.js'], '/r'), []);
+});
 
 // #4303: GNU getopt reads `-t` inside a short-option cluster: its value is the rest of the
 // cluster, else the next word, and `--target-directory` may be abbreviated (cp, mv, install and
@@ -643,6 +661,16 @@ for (const [cmd, file] of [
     assert.ok(fileWriteTargets(cmd, '/r').some((t) => t.file === file), JSON.stringify(fileWriteTargets(cmd, '/r')));
   });
 }
+// #4303, known open (found by the differential): the opener count that decides whether arithmetic
+// holds a substitution reads every `$((` as arithmetic, so a `$((` that is a `$(` holding a subshell
+// (its inner `(` closes at a `)` not doubled, as groupEvents tests) leaves the arithmetic kept
+// whole, and the substitution's later commands are never cut out. Bash 3.2 and 5 write /main/f.js
+// for each row; before #4303 each resolved /main/f.js, here none resolves anything.
+test.todo('#4303: arithmetic holding a $((…) …) substitution still reads the substitution\'s write', () => {
+  for (const cmd of ['echo $(( $((true); cp a /main/f.js) ))', '(( $(((1)); cp a /main/f.js) ))', 'echo $(( $(((1)); cp a /main/f.js) + 1 ))']) {
+    assert.ok(fileWriteTargets(cmd, '/r').some((t) => t.file === MAIN_F), `${cmd}: ${JSON.stringify(fileWriteTargets(cmd, '/r'))}`);
+  }
+});
 // A backtick inside arithmetic is an opener too: bash 3.2 and 5 write /main/f.js. Before #4303 and
 // here alike, the walk resolves a malformed target from it (a write inside a backtick is the same
 // pre-existing gap), so this pins only that the cut keeps a target, and the deny with it.
@@ -1445,6 +1473,14 @@ test('#4303: an assignment whose `${` or `$[` never closes is no cd lead (delibe
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r2/f.js')], cmd);
   }
 });
+// #4303: a word that never closes swallows the `cd` after it, which is then no command: bash 3.2 and
+// 5 refuse each row and write nothing, and the walk never follows that `cd` (before #4303 each row
+// resolved /main/f.js, reading the `cd` as one).
+test('#4303: the cd after an assignment word that never closes is not followed', () => {
+  for (const cmd of ['x=$(true cd /main; cp a f.js', 'x=${a:-b cd /main; echo x > f.js', 'x=$[1 cd /main; echo x > f.js']) {
+    assert.ok(!fileWriteTargets(cmd, '/r').some((t) => t.file === MAIN_F), cmd);
+  }
+});
 
 // #4149: the write walk cuts at an unquoted lone `&`, so the command after it is
 // read as a command; the backgrounded and-or list runs in a subshell, so its `cd` does not move the
@@ -1487,6 +1523,12 @@ for (const [cmd, expected] of [
   ['cd /main && y=$[ a[1] & 3 ] && cp a f.js', [{ action: 'copy', file: MAIN_F }]],
   // An assignment holding `$[ … & … ]` is one word, so the cd after it changes the shell's cwd.
   ['x=$[1 & 3] cd /main; cp a f.js', [{ action: 'copy', file: MAIN_F }]],
+  // So is one holding a bare `(` with an `&` inside arithmetic: that `(` takes its frame's no-list
+  // reading, so nothing cuts the word (cutting it leaves `y cd /main` a tail on its own, which
+  // misses M). These are the rows that reach a bare `(`'s frame check: a cut inside a deeper level
+  // resets only that level's list.
+  ['x=$(( (1 & 3) )) cd /main; cp a f.js', [{ action: 'copy', file: MAIN_F }]],
+  ['x=$(( (a & 3) ))y cd /main; cp a f.js', [{ action: 'copy', file: MAIN_F }]],
 ]) {
   test(`#4303: \`${cmd}\` keeps the cd past an arithmetic &`, () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), expected);
@@ -1501,6 +1543,9 @@ test('#4303: the S49 shape commits in the main checkout', () => {
 test('#4303: the `]` of `$[ … ]` ends the arithmetic', () => {
   assert.deepStrictEqual(fileWriteTargets('cd /main && y=$[1 & 3] & cp a f.js', '/r'), [{ action: 'copy', file: path.resolve('/r/f.js') }]);
   assert.deepStrictEqual(fileWriteTargets('y=$[ $(true; cd /tmp; true & true) + 1 ] > f.js', '/r'), [{ action: 'write', file: path.resolve('/r/f.js') }]);
+  // The cd after such a `]` is read as the outer command's (a tail, so the start cwd stays too):
+  // bash 3.2 and 5 write M/f.js.
+  assert.ok(fileWriteTargets('x=$[ $(true; true) + 1 ] cd /main; cp a f.js', '/r').some((t) => t.file === MAIN_F));
 });
 // #4303: a process substitution is a command list, and a bare `(` outside arithmetic may be a
 // subshell (a function body, `coproc`), so an `&` in either still cuts and the command after it is
@@ -1570,6 +1615,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     ['cd /main | cp a f.js', [here]],                                    // bash: ./f
     ['cd /main || true & true; cp a f.js', [here]],                      // bash: ./f
     ['cd /main && true & cd /nope || cp a f.js', [here]],                // bash: ./f
+    ['cd /main && true & cd /tmp; cp a f.js', [path.resolve('/tmp/f.js')]], // bash: T/f
+    // A list's end ends what it was skipping too, so the next list starts clean.
+    ['cd /main || cd /tmp; cd /var; echo x > f.js', [path.resolve('/var/f.js')]], // bash: V/f
     ['true | true & cd /main; cp a f.js', [MAIN_F]],                     // bash: M/f
     ['{ cd /main; false; } || cp a f.js', [MAIN_F, here].sort()],        // bash: M/f, ./f when the cd fails
     ['( cd /main || true ) && cp a f.js', [here]],                       // bash: ./f
@@ -1913,7 +1961,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     assert.deepStrictEqual(targets, [main('copy')]);
   });
   test('#4149 nesting: a closed nest deeper than the cap takes the plain quote reading', () => {
-    const targets = boundedTargets('fileWriteTargets',`echo ${'"$('.repeat(5000)}${')"'.repeat(5000)} && cp a /main/f.js`, '/r');
+    const targets = boundedTargets('fileWriteTargets', `echo ${'"$('.repeat(5000)}${')"'.repeat(5000)} && cp a /main/f.js`, '/r');
     assert.deepStrictEqual(targets, [main('copy')]);
   });
 
@@ -2119,6 +2167,53 @@ test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for
   // The teardown gate's walk resolves a relative `worktree remove` path in the main checkout too.
   const removed = preToolUse.teardownTargets({ input: { tool_name: 'Bash', tool_input: { command: `${many}git worktree remove x` } }, cwd: wt }).map((t) => t.path);
   assert.ok(removed.includes(path.join(main, 'x')) && removed.includes(path.join(wt, 'x')), JSON.stringify(removed));
+});
+
+// #4303: one shape per fix, run from a linked worktree with the main checkout's absolute path in
+// it. Bash 3.2 and 5, started in the worktree with every directory present, write into the main
+// checkout for each: U1 and U2 `main/f.js` (U2's tee row too), U3 `main/a` (cp -rt, mv -vt, GNU
+// install -Dt), U4 and U6 `main/f.js`, S49 runs `git commit` in main, S50 writes `main/s0/f.js`.
+// `cd ${wt} && cp a f.js` writes `wt/f.js`, and `(( a>1 || b>2 ))` writes nothing: from the main
+// checkout it resolved `main/1` and `main/2` before #4303 (U14), a spurious deny there.
+test('AC1.1 e2e #4303: every #4303 shape from a linked worktree into the main checkout is DENIED', () => {
+  const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
+  const os = require('os');
+  const { execFileSync } = require('child_process');
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4303-e2e-')));
+  const main = path.join(tmp, 'main');
+  const wt = path.join(tmp, 'wt');
+  fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
+  const git = (...args) => execFileSync('git', ['-C', main, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdio: 'pipe' });
+  git('init', '-q');
+  git('add', '-A');
+  git('commit', '-qm', 'init');
+  git('worktree', 'add', '-q', wt);
+  const decisionFor = (command, cwd = wt) => {
+    const out = preToolUse.run({
+      input: { tool_name: 'Bash', tool_input: { command }, cwd },
+      runDir: null, runState: null, ownedRun: {}, cwd,
+    });
+    return out.json && out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision;
+  };
+  const groups = Array.from({ length: 15 }, (_, i) => `{ cd /tmp/ct-4303-a${i}; }; `).join('');
+  const denied = [
+    ['U1', `cd ${main} || cd /tmp; echo x > f.js`],
+    ['U2', `x=$(cd /tmp) cd ${main}; cp a f.js`],
+    ['U2', `x=$(cd /tmp) cd ${main}; echo hi | tee f.js`],
+    ['U3', `cp -rt ${main} a`],
+    ['U3', `mv -vt ${main} a`],
+    ['U3', `install -Dt ${main} a`],
+    ['U4', `perl -0pi -e 's/a/b/' ${main}/f.js`],
+    ['U6', `echo x >& ${main}/f.js`],
+    ['U6', `echo x >&${main}/f.js`],
+    ['S49', `x=$(true; cd ${main} && y=$(( (1 & 3) )) && git commit -am x)`],
+    ['S50', `${groups}{ cd ${main}/s0/deep; }; cp a ../f.js`],
+  ];
+  for (const [shape, command] of denied) assert.strictEqual(decisionFor(command), 'deny', `${shape}: ${command.slice(-60)}`);
+  assert.notStrictEqual(decisionFor(`cd ${wt} && cp a f.js`), 'deny');
+  assert.notStrictEqual(decisionFor('(( a>1 || b>2 ))', main), 'deny');
+  assert.notStrictEqual(decisionFor('(( a>1 || b>2 ))'), 'deny');
 });
 
 test('e2e #3989: a `>` in a heredoc body from a worktree-always main checkout is ALLOWED; a top-level redirect after the delimiter is DENIED', () => {
