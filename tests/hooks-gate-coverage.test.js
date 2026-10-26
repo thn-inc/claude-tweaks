@@ -661,15 +661,25 @@ for (const [cmd, file] of [
     assert.ok(fileWriteTargets(cmd, '/r').some((t) => t.file === file), JSON.stringify(fileWriteTargets(cmd, '/r')));
   });
 }
-// #4303, known open (found by the differential): the opener count that decides whether arithmetic
-// holds a substitution reads every `$((` as arithmetic, so a `$((` that is a `$(` holding a subshell
-// (its inner `(` closes at a `)` not doubled, as groupEvents tests) leaves the arithmetic kept
-// whole, and the substitution's later commands are never cut out. Bash 3.2 and 5 write /main/f.js
-// for each row; before #4303 each resolved /main/f.js, here none resolves anything.
-test.todo('#4303: arithmetic holding a $((…) …) substitution still reads the substitution\'s write', () => {
-  for (const cmd of ['echo $(( $((true); cp a /main/f.js) ))', '(( $(((1)); cp a /main/f.js) ))', 'echo $(( $(((1)); cp a /main/f.js) + 1 ))']) {
-    assert.ok(fileWriteTargets(cmd, '/r').some((t) => t.file === MAIN_F), `${cmd}: ${JSON.stringify(fileWriteTargets(cmd, '/r'))}`);
+// #4303: a `$((` whose inner `(` closes at a `)` not doubled (the test groupEvents applies) is a `$(`
+// holding a subshell, so arithmetic around it holds a substitution and is cut as before #4303.
+// Bash 3.2 and 5 write /main/f.js for each row but the fourth, which writes /main/a (its target is
+// the -t directory, as for every `cp -t`).
+test('#4303: arithmetic holding a $((…) …) substitution still reads the substitution\'s write', () => {
+  for (const [cmd, file] of [
+    ['echo $(( $((true); cp a /main/f.js) ))', MAIN_F],
+    ['(( $(((1)); cp a /main/f.js) ))', MAIN_F],
+    ['echo $(( $(((1)); cp a /main/f.js) + 1 ))', MAIN_F],
+    ['y=$(( $((( a>1 || b>2 )) ; cp -t /main a) + 1 ))', path.resolve('/main')],
+    ['echo $(( $((cd /main; cp a f.js) ) + 1 ))', MAIN_F],
+  ]) {
+    assert.ok(fileWriteTargets(cmd, '/r').some((t) => t.file === file), `${cmd}: ${JSON.stringify(fileWriteTargets(cmd, '/r'))}`);
   }
+  // Arithmetic, and arithmetic holding an inner `$((` that is arithmetic, stays one piece: bash 3.2
+  // and 5 write nothing for the first three, and M/f.js for the last (S49's `&` with an inner `$((`).
+  assert.deepStrictEqual(fileWriteTargets('(( a>1 || b>2 ))', '/r'), []);
+  for (const cmd of ['echo $(( a>1 || b>2 ))', 'echo $(( a>1 || $(( b>2 )) ))']) assert.deepStrictEqual(gitCommand.splitSegments(cmd), [cmd]);
+  assert.deepStrictEqual(fileWriteTargets('cd /main && y=$(( (1 & 3) + $((2)) )) && cp a f.js', '/r'), [{ action: 'copy', file: MAIN_F }]);
 });
 // A backtick inside arithmetic is an opener too: bash 3.2 and 5 write /main/f.js. Before #4303 and
 // here alike, the walk resolves a malformed target from it (a write inside a backtick is the same

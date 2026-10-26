@@ -91,8 +91,9 @@ function segmentSpansWith(str, spans) {
     // subshell, whose commands are cut as before, and so does a `((` glued to `<` or `>`. Arithmetic
     // that holds a command-substitution opener (a `$(` that is no `$((`, a backtick, `<(` or `>(`,
     // quoted or not) is cut as before #4303 too: bash runs that substitution, and the cuts at its
-    // separators are what expose its writes to the walk.
-    const lead = ch === '$' && str[i + 1] === '(' && str[i + 2] === '(' ? i + 2
+    // separators are what expose its writes to the walk. An inner `$((` counts as such an opener
+    // unless it passes the same arithmetic test (`$(( $((true); cp a f) ))` runs its cp).
+    const lead =ch === '$' && str[i + 1] === '(' && str[i + 2] === '(' ? i + 2
       : ch === '(' && str[i + 1] === '(' && (i === 0 || /[\s;&|(]/.test(str[i - 1])) ? i + 1 : -1;
     if (lead !== -1) {
       if (parens === null) {
@@ -101,7 +102,9 @@ function segmentSpansWith(str, spans) {
         opens = new Uint32Array(str.length - i + 1);
         for (let k = i; k < str.length; k += 1) {
           const c = str[k];
-          const opener = c === '`' || (c === '$' && str[k + 1] === '(' && str[k + 2] !== '(') || ((c === '<' || c === '>') && str[k + 1] === '(');
+          const dollarParen = c === '$' && str[k + 1] === '(';
+          const arith = dollarParen && str[k + 2] === '(' && str[i + parens.get(k + 2 - i) + 1] === ')';
+          const opener = c === '`' || (dollarParen && !arith) || ((c === '<' || c === '>') && str[k + 1] === '(');
           opens[k - i + 1] = opens[k - i] + (opener ? 1 : 0);
         }
       }
