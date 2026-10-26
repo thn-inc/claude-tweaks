@@ -187,19 +187,23 @@ test('init/SKILL.md lists Step 6.6 and its sub-file exists (#1924)', () => {
 
 // #4135: the installed plugin build reads this committed file with the latest RELEASED declaration.js, which
 // the suite above never runs (it requires the working-tree reader). These helpers read git objects only —
-// GIT_NO_LAZY_FETCH keeps a partial clone from reaching the network for a missing blob. GIT_DIR / GIT_INDEX_FILE /
+// GIT_NO_LAZY_FETCH (git 2.44+; an older git ignores it) keeps a partial clone from reaching the network for a missing blob. GIT_DIR / GIT_INDEX_FILE /
 // GIT_WORK_TREE are scrubbed so a spawn in a temp dir never acts on an inherited repo (#4178); LC_ALL=C pins the
 // English stderr NO_TAG_STDERR matches.
 const GIT_ENV = { ...process.env, GIT_NO_LAZY_FETCH: '1', LC_ALL: 'C' };
 for (const k of ['GIT_DIR', 'GIT_INDEX_FILE', 'GIT_WORK_TREE']) delete GIT_ENV[k];
+// The throwaway repo AC3.1 inits and commits in also ignores the user's and the system's git config (a global
+// core.hooksPath or init.templateDir would otherwise run hooks in it) and any GIT_CONFIG_* injected through env.
+const TEMP_REPO_ENV = { ...GIT_ENV, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+for (const k of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS']) delete TEMP_REPO_ENV[k];
 const READER_PATH = 'plugin/bin/lib/verify/declaration.js';
 // A `git describe` with nothing to name says one of these; any other failure is a broken git call, not a skip.
 const NO_TAG_STDERR = /No names found|No tags can describe|cannot describe/i;
 
-function latestReleaseTag(cwd) {
+function latestReleaseTag(cwd, env = GIT_ENV) {
   try {
     const out = execFileSync('git', ['describe', '--tags', '--abbrev=0', '--match', 'v*', 'HEAD'], {
-      cwd, env: GIT_ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+      cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     });
     return { tag: out.trim() };
   } catch (err) {
@@ -280,9 +284,9 @@ test('AC1.1: a rule shape the release reader rejects fails the same assertion, n
 test('AC3.1: a clone with no reachable release tag skips with its reason (#4135)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-scope-notag-'));
   try {
-    execFileSync('git', ['init', '-q'], { cwd: dir, env: GIT_ENV, windowsHide: true });
-    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: dir, env: GIT_ENV, windowsHide: true });
-    const found = latestReleaseTag(dir);
+    execFileSync('git', ['init', '-q'], { cwd: dir, env: TEMP_REPO_ENV, windowsHide: true });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: dir, env: TEMP_REPO_ENV, windowsHide: true });
+    const found = latestReleaseTag(dir, TEMP_REPO_ENV);
     assert.deepStrictEqual(Object.keys(found), ['skip']);
     assert.match(found.skip, /no release tag reachable/);
   } finally {
