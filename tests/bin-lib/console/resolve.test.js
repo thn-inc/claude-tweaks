@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
-const { classifyStagedItem, resolveAll, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption } = require(MOD);
+const { classifyStagedItem, resolveAll, renderTable, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { unresolvedItems, readRunResidue, formatResidueLines } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
@@ -345,8 +345,9 @@ test('every ENGINE_ROW_SECTIONS row classifies a staged finding into its own con
 });
 
 test('renderTable escapes a pipe in the item id, not only in the reason (#1932 M6)', () => {
-  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-a|b.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps() });
-  assert.match(r.table, /reflect-a\\\|b\.md/);
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  const table = renderTable({ ...r, items: r.items.map((it) => ({ ...it, id: 'reflect-a|b.md' })) });
+  assert.match(table, /reflect-a\\\|b\.md/);
 });
 
 test('a needs-human merge-check verdict in decisions.md resolves the merge half to leave-open (#1932 AC3)', () => {
