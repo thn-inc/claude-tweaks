@@ -2,7 +2,7 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
-| 1 | build | SDD ruling — T1 must also pin the Modify-missing producer (checks.js:140) with its own AC1.1 win32 checkA test: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
+| 1 | build | SDD ruling — T1 must also pin the Modify-missing producer (checks.js:140) with its own AC1.1 win32 checkA test: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | accepted | ratified by the user at the Review Console, 2026-10-26: the Modify-branch AC1.1 win32 test stays, since it pins a second real producer of the same display ID |
 | 2 | build | checks.js:481 keeps hand-rolled toPosix(path.relative(...)) — already native-correct, outside #3315's sites (SDD Task 1 minor) | deferred | origin: SDD Task 1 review, run 2026-10-22T001546-record-3315; files: plugin/bin/lib/plan-audit/checks.js; trigger: next DRY pass over plan-audit display IDs (final review: can-stay-deferred, DRY only) |
 | 3 | build | '.' fallback characterization test cannot discriminate a toPosix revert — by design (SDD Task 1 minor) | deferred | origin: SDD Task 1 review, run 2026-10-22T001546-record-3315; files: tests/bin-lib/plan-audit/checks.test.js; trigger: none needed — AC1.1 tests carry discrimination (final review: can-stay-deferred) |
 | 4 | build | findability win32 test uses POSIX-rooted tmp paths — pins separator normalization, not drive-letter semantics (SDD Task 2 minor) | deferred | origin: SDD Task 2 review, run 2026-10-22T001546-record-3315; files: tests/bin-lib/docs-health/findability.test.js; trigger: if findability ever gains an fs seam (final review: can-stay-deferred) |
