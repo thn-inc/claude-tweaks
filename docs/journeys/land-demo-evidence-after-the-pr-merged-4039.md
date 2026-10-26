@@ -78,3 +78,4 @@ files:
 
 ## Origin
 - Created during build of #4039 (verification-brief evidence routing). Filed from a consumer project where a late acceptance-labeling re-run committed screenshots onto an already-merged branch, and the evidence needed a hand-made follow-up PR. #4039's whole-branch review also found that cleanup item 4 runs before Acceptance labeling, so Step 4 can run from the main checkout.
+- Updated during build of #4125. Step 4's route decision moved from prose into `bin/evidence-route.js`, a pure, unit-tested rule module behind a CLI. Every defect #4039's review found had been in that prose decision, which the phrase-pinning conformance test could not catch.
