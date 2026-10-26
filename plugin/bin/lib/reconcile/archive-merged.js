@@ -13,7 +13,7 @@ const { splitNul } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
-const { canonicalRealpath, resolveLeaf } = require('../path-guard');
+const { canonicalRealpath, resolveLeaf, lstatType } = require('../path-guard');
 const { runLiveness, runIdMs, LIVE_PROBES } = require('../run-liveness');
 const { LEGACY_DEAD_MS } = require('../run-liveness/constants');
 const { ownEventRecency } = require('../run-liveness/probes');
@@ -2227,7 +2227,8 @@ function isPlainObject(v) {
 // run-liveness to ask — an owner-less non-clean run state (a missing `status` counts), or no
 // run-state.json at all (runLiveness's legacy route serves an absent file too, spec). An
 // unparseable or non-object file is neither: it is a file the module cannot read, not a run
-// that never had an owner. Rides iterRunDirsWithState, so it keeps that iterator's run-id,
+// that never had an owner; neither is a run-state.json whose type cannot be read (lstatType
+// `unreadable`). Rides iterRunDirsWithState, so it keeps that iterator's run-id,
 // archive-twin and `archiving`-claim filters and never counts archive/. 0 when pipelines/ does
 // not exist; null when it cannot be read (the caller then leaves the field out).
 function countOwnerlessNonClean(root) {
@@ -2239,7 +2240,7 @@ function countOwnerlessNonClean(root) {
   let count = 0;
   for (const { dir, state } of iterRunDirsWithState(root)) {
     if (state === null) {
-      if (!fs.existsSync(path.join(dir, 'run-state.json'))) count++;
+      if (lstatType(path.join(dir, 'run-state.json')).type === 'missing') count++;
     } else if (isPlainObject(state) && !isPlainObject(state.owner) && state.status !== 'clean') {
       // (`status !== 'clean'` is defensive: the iterator already drops `clean` dirs, so nothing relies on it.)
       count++;
