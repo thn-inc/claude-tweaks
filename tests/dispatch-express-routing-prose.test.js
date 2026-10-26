@@ -67,8 +67,8 @@ const STEP5_FACTS = [
   [/\(non-zero: `blocked`\)/, 'verify non-zero is blocked'],
   [/`express-escalated` → re-bind with `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" record-worktree --run "\{minted-run-dir\}" "\{worktree\}" --dispatch`/, 'express-escalated → re-bind with --dispatch'],
   [/then the ordinary first call \(same run dir, same worktree\)/, 'express-escalated → the ordinary first call'],
-  [/`blocked`, `NEEDS_CONTEXT`\/`BLOCKED` or a malformed status → `two-call-gate\.md` §5/, 'blocked or a failed status → §5'],
-  [/\(the express call already ran Settle\)/, '§5 after the express call ran Settle'],
+  [/, `NEEDS_CONTEXT`\/`BLOCKED` or a malformed status → `two-call-gate\.md` §5/, 'blocked or a failed status → §5'],
+  [/`blocked` \(the express call already ran Settle\)/, 'Settle already ran, scoped to blocked only'],
   [/`settle-and-merge\.md`'s Drain-overlap hold/, 'counts for the drain-overlap hold'],
 ];
 const LOOP_FACTS = [
@@ -227,6 +227,7 @@ test('express-prompt.md: the review call\'s run dir is closed by the dispatching
 const SIBLING = path.join(DISPATCH, 'sibling-session-check.md');
 const SIBLING_FACTS = [
   [/An express-eligible singleton is bound with the same call minus `--dispatch`/, 'the bind names the express exception'],
+  [/`express-lane\.js gate` runs first, before this bind/, 'the express gate runs before the bind'],
 ];
 
 test('sibling-session-check.md: the #3225 bind names the express-lane exception', () => {
