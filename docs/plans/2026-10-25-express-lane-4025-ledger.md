@@ -24,3 +24,4 @@
 | 20 | build | I3 sampling still re-fetches every express merge's body each firing (global ordinals, date-windowed search); hard-fails only past 200 windows (~50k merges) | observation |  |
 | 21 | build/blocked | AC1.1 live end-to-end measurement (under 5 min, under 40 tool round trips, timing.json) — needs a released build, express-lane: true, and a real dispatch firing | deferred | filed #4362 (Defer-reason: blocked-dependency); unblocked by the #4025 release |
 | 22 | build | Final-review M9 (CLAUDE.md half): Subagent Contract roster omits the express-lane and sample-review dispatches | deferred | filed #4363 (Defer-reason: needs-human-decision) |
+| 23 | build/skill | Extends gh-api-module-pattern: express-lane.js samples bisects a merged:{lo}..{hi} window at its midpoint second when a gh search returns the 1000-result cap (range probed live as inclusive and UTC) — worth a batching-failure-posture.md note [route: D2] | observation |  |
