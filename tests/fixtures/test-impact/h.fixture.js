@@ -1,11 +1,12 @@
 // Not a `*.test.js` on purpose: the real suite must never collect this. tests/test-impact-tracer.test.js
 // copies this fixture project into a temp root (renaming `*.fixture.js` to `*.test.js`) and runs
 // `node --test` there under tools/test-impact/tracer.js, then reads back what each test file read (#4024).
-// Every git call here must record something narrower than the root prefix: this file records no `c ''`.
+// Every git call here must record something narrower than the root prefix: this file records no `c ''`
+// (the node children whose env drops the trace, which do, are in i.fixture.js).
 'use strict';
 const { test } = require('node:test');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const quiet = (cwd) => ({ cwd, stdio: ['ignore', 'pipe', 'pipe'] });
 const skip = { skip: process.platform === 'win32' && 'win32: no bash/sh/env' };
@@ -30,8 +31,8 @@ test('env -u NAME cmd', skip, () => {
   execFileSync('env', ['-u', 'FOO', 'git', 'ls-files'], quiet(path.join(__dirname, 'bin')));
 });
 
-// `env -i` strips NODE_OPTIONS and CT_TRACE_*, so this node child cannot trace itself (and -i strips PATH,
-// hence the absolute execPath): the parent must record its path argument. `node -e 0` ignores the extra argv.
-test('env -i node', skip, () => {
-  execFileSync('env', ['-i', process.execPath, '-e', '0', 'docs/note.md'], quiet(__dirname));
+// `env -C <dir>` runs its command in <dir>: the directory is read like a non-node child's path argument.
+// macOS's env has no -C, so the status is ignored: the tracer records before the spawn, and `ls` runs nowhere.
+test('env -C dir cmd', skip, () => {
+  spawnSync('env', ['-C', 'docs/listed', 'ls'], quiet(__dirname));
 });

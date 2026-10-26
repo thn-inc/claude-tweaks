@@ -16,7 +16,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const TRACER = path.join(ROOT, 'tools', 'test-impact', 'tracer.js');
 const FIXTURE = path.join(__dirname, 'fixtures', 'test-impact');
-const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js', 'e.test.js', 'f.test.js', 'g.test.js', 'h.test.js'];
+const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js', 'e.test.js', 'f.test.js', 'g.test.js', 'h.test.js', 'i.test.js'];
 
 function copyFixture(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
@@ -187,8 +187,9 @@ test('AC1.1: a require records its candidates up to the one it resolves to, minu
   for (const p of ['lib/pkg', 'lib/pkg.js', 'lib/pkg.json', 'lib/pkg.node']) assert.ok(g.has(rec('s', p)), `g must record s ${p}`);
   assert.ok(g.has(rec('f', 'lib/pkg/package.json')), 'the package.json a directory require reads is kept');
   // lib/pkg/entry.js (the winner, under s lib/pkg) is still recorded as s — by Node's own realpathSync of the
-  // resolved file, not by the candidate list — so the nested drop is pinned on the candidate no read touches.
-  assert.ok(!g.has(rec('s', 'lib/pkg/index.js')), 'lib/pkg/index.js is under s lib/pkg');
+  // resolved file, not by the candidate list. lib/pkg/index.js comes after the winner, so truncation drops it;
+  // the nested drop is pinned by the lib/missing assertions below.
+  assert.ok(!g.has(rec('s', 'lib/pkg/index.js')), 'lib/pkg/index.js comes after the winner lib/pkg/entry.js, so truncation drops it');
   for (const p of ['lib/missing', 'lib/missing.js', 'lib/missing.json', 'lib/missing.node']) {
     assert.ok(g.has(rec('s', p)), `an unresolved require keeps every candidate: ${p}`);
   }
@@ -201,6 +202,7 @@ test('AC1.1: a require resolves the way Node does — paths option, package.json
   assert.ok(g.has(rec('s', 'lib/x.js')), 'require.resolve paths: the candidate under the given path');
   assert.ok(!g.has(rec('s', 'x')) && !g.has(rec('s', 'x.js')), 'paths replaces the requiring file\'s own directory');
   assert.ok(g.has(rec('f', 'lib/pkg/package.json')), 'a directory require reads package.json (content, not existence)');
+  assert.ok(g.has(rec('f', 'lib/dotpkg/package.json')), 'require.resolve(\'.\', { paths }) reads the package.json of the given path (Node 22 counts the exact request . as relative)');
   assert.ok(g.has(rec('f', 'node_modules/dep/package.json')), 'a bare dependency\'s package.json is read');
   assert.ok(g.has(rec('s', 'node_modules/dep')), 'a bare dependency\'s base candidate is probed');
   assert.ok(g.has(rec('f', 'node_modules/exp/package.json')) && g.has(rec('s', 'node_modules/exp')), 'an exports package is covered by its directory');
@@ -255,7 +257,13 @@ test('AC1.1: bash -o / -euo, sh +e and env wrappers are read as the command they
     assert.ok(h.has(rec('c', p)), `the wrapped git ls-files records c ${p}`);
   }
   assert.ok(!h.has(rec('c', '')), 'every wrapped call records its own cwd, never the root');
-  assert.ok(h.has(rec('f', 'docs/note.md')), 'a node child under env -i is not self-tracing, so its path arguments are recorded');
+  assert.ok(h.has(rec('c', 'docs/listed')), 'env -C <dir> records its in-repo directory, as a non-node child\'s directory argument is');
+});
+
+test('AC1.1: a node child whose env drops the trace fails closed: its reads are unknown', { skip: process.platform === 'win32' && 'win32: no env/sh' }, () => {
+  const i = recordsOf('i.test.js');
+  assert.ok(i.has(rec('c', '')), 'env -i node and NODE_OPTIONS=... node each record the whole-repo prefix');
+  assert.ok(i.has(rec('f', 'docs/note.md')), 'the path arguments of env -i node are still recorded');
 });
 
 test('absolute path never consults process.cwd', { skip: process.platform === 'win32' && 'win32: a process cwd cannot be removed' }, () => {

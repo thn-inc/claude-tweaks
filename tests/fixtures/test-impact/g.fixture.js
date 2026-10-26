@@ -2,7 +2,8 @@
 // copies this fixture project into a temp root (renaming `*.fixture.js` to `*.test.js`) and runs
 // `node --test` there under tools/test-impact/tracer.js, then reads back what each test file read (#4024).
 // The require shapes a.fixture.js does not cover: require.resolve with a `paths` option, a directory
-// require through package.json `main`, and bare specifiers through node_modules (`main` and `exports`).
+// require through package.json `main`, bare specifiers through node_modules (`main` and `exports`), and
+// the exact requests `.` / `..` with a `paths` option.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -19,6 +20,16 @@ test('a directory require reads its package.json main', () => {
 test('a bare specifier resolves through node_modules main and exports', () => {
   assert.strictEqual(require.resolve('dep', { paths: [__dirname] }), path.join(__dirname, 'node_modules', 'dep', 'lib', 'main.js'));
   assert.strictEqual(require.resolve('exp', { paths: [__dirname] }), path.join(__dirname, 'node_modules', 'exp', 'src', 'index.js'));
+});
+
+// Node 22 counts the exact request '.' as relative (the given paths are the lookup dirs); Node 20 does not
+// (it derives them from a parentless module), so only the tracer's records are pinned, not the result.
+test('require.resolve of . with paths', () => {
+  try {
+    require.resolve('.', { paths: [path.join(__dirname, 'lib', 'dotpkg')] });
+  } catch (_) {
+    // resolved against the cwd instead, on a Node that does not count '.' as relative
+  }
 });
 
 test('a require that does not resolve', () => {

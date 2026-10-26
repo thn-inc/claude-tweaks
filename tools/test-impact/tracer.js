@@ -12,14 +12,15 @@
 // Output: each attributed process appends JSON lines to `{CT_TRACE_DIR}/{pid}-{ms}-{rand}.trace` —
 // `["T", test]` first, then `[kind, relPath]` once per unique pair, written immediately with the
 // unpatched appendFileSync. JSON, not tab-separated, because fixture paths hold tabs and newlines.
-// Kinds: f content read (read/open/copy source/stat/lstat/module load/cp of a file, and a package.json a
-// require reads for main or exports), s existence probe (exists/access/realpath/readlink, and every
-// candidate a require probes up to the one it resolves to — relative, absolute, node_modules,
-// require.resolve paths — minus those nested under an earlier probe, which impact.js's reads() ancestor
-// rule for an `s` entry already covers), d directory
-// listing (readdir/opendir), c content prefix (a cp of a directory, a non-node child's in-repo
-// directory argument, or a content-reading git subcommand — its cwd, or a pathspec's literal prefix). Paths
-// under `.git/` and outside the root are dropped; `''` is the root itself.
+// Kinds: f content read (read/open/copy source/stat/lstat/module load/cp of a file, a non-node child's in-repo
+// file argument or a shell's rc file, and a package.json a require reads for main or exports), s existence
+// probe (exists/access/realpath/readlink, and every candidate a require probes up to the one it resolves
+// to — relative, absolute, node_modules, require.resolve paths — minus those nested under an earlier probe,
+// which impact.js's reads() ancestor rule for an `s` entry already covers), d directory listing
+// (readdir/opendir), c content prefix (a cp of a directory, a non-node child's in-repo directory argument
+// or an `env -C` directory, a content-reading git subcommand — its cwd, or a pathspec's literal prefix —
+// or `''` for a node child that cannot trace itself). Paths under `.git/` and outside the root are
+// dropped; `''` is the root itself.
 // A trace write that fails (EMFILE, ENOSPC) marks the process lost: `{pid}-{ms}-{rand}.lost` beside the trace
 // file holds `["T", test]`, written with the unpatched appendFileSync. If that marker cannot be written either,
 // an exit listener retries it once and, when it still fails in a process that would exit 0, sets exit code 1
@@ -31,9 +32,11 @@
 // is still traced; an env already naming a different CT_TRACE_ROOT is a nested trace and left alone.
 // Node children trace themselves; for other children the in-repo path arguments are recorded here.
 // `env [options] cmd` and `sh|bash -c` with option clusters (`-o pipefail`, `-euo pipefail`, `+e`) are
-// read as the command they run; an `env` option this does not know falls back to the generic recording.
+// read as the command they run (an `env -C` directory and a shell's `--rcfile` are recorded on the way); an
+// `env` option this does not know falls back to the generic recording of its path arguments.
 // A node child whose env was stripped of the trace (`env -i`, `-u NODE_OPTIONS`, a `NODE_OPTIONS=` or
-// `CT_TRACE_*=` assignment) cannot trace itself, so it is recorded like any other child.
+// `CT_TRACE_*=` assignment) cannot trace itself, so its reads are unknown: it records `c ''`, beside its
+// path arguments.
 //
 // Invariants (each one broke the full suite in the spike): wrapped functions copy the original's own
 // property descriptors (util.promisify.custom — `promisify(execFile)` must keep resolving
@@ -348,6 +351,14 @@ function install() {
         dirs = options.paths.map((p) => toAbs(p));
       } else {
         dirs = [];
+        // Node 22 counts the exact requests `.` and `..` as relative (the given paths are the lookup dirs); Node 20
+        // does not (the fake parent's lookup answers), so both are kept — an over-record is safe.
+        if (request === '.' || request === '..') {
+          for (const p of options.paths) {
+            const abs = toAbs(p);
+            if (abs && !dirs.includes(abs)) dirs.push(abs);
+          }
+        }
         for (const p of options.paths) {
           const abs = toAbs(p);
           if (!abs) continue;
@@ -537,6 +548,14 @@ function install() {
     return base === 'git' || base === 'git.exe';
   };
   const existing = (abs) => (abs === null ? null : statSync(abs, { throwIfNoEntry: false }) || null);
+  // A child's path argument: `c` for an in-repo directory, `f` for an in-repo file, nothing when it is absent.
+  function recordExisting(t, base) {
+    const abs = toAbs(t, base);
+    const r = relOf(abs);
+    if (r === null) return;
+    const st = existing(abs);
+    if (st) emit(st.isDirectory() ? 'c' : 'f', r);
+  }
 
   // The git subcommands whose output depends on the content (or the listing) of tracked files — the
   // ones that are recorded as `c` prefixes. Writers and ref-only commands (add, commit, checkout,
@@ -710,13 +729,17 @@ function install() {
   };
   // The script of `sh [-opts] -c "<script>"` (a `-` cluster holding `c` makes the first operand the script),
   // or null. A cluster holding `o`/`O` takes the next word as its option name (`-o pipefail`, `+O extglob`);
-  // `--rcfile`/`--init-file` take a value; `--` or `-` ends the options. A script file operand is not one.
-  function shellScript(words) {
+  // `--rcfile`/`--init-file` take a value, handed to `onFile` (the shell reads it); `--` or `-` ends the options.
+  // A script file operand is not one.
+  function shellScript(words, onFile) {
     let sawC = false;
     for (let j = 1; j < words.length; j++) {
       const t = words[j];
       if (t === '--' || t === '-') return sawC && j + 1 < words.length ? words[j + 1] : null;
-      if (t === '--rcfile' || t === '--init-file') { j++; continue; }
+      if (t === '--rcfile' || t === '--init-file') {
+        if (++j < words.length) onFile(words[j]);
+        continue;
+      }
       if (t.startsWith('--')) continue;
       if (/^[-+][A-Za-z]+$/.test(t)) {
         if (t[0] === '-' && t.includes('c')) sawC = true;
@@ -730,7 +753,7 @@ function install() {
   }
 
   // `env [options] [NAME=value ...] command ...` as the command it runs: { words (the assignments kept),
-  // base (moved by -C/--chdir), stripped (the env no longer carries the trace) }, or null for an option this
+  // base (moved by -C/--chdir, whose in-repo directory is recorded like any path argument), stripped (the env no longer carries the trace) }, or null for an option this
   // does not know (the caller then records the arguments generically, as for any other command).
   function envCommand(words, base) {
     let j = 1;
@@ -749,8 +772,10 @@ function install() {
       if (t === '-C' || t === '--chdir' || t.startsWith('--chdir=')) {
         const dir = t.startsWith('--chdir=') ? t.slice('--chdir='.length) : words[++j];
         if (dir === undefined) return null;
-        base = toAbs(dir, base);
-        if (base === null) return null;
+        const next = toAbs(dir, base);
+        if (next === null) return null;
+        recordExisting(dir, base);
+        base = next;
         continue;
       }
       if (t.startsWith('-')) return null;
@@ -764,7 +789,7 @@ function install() {
   // read as the shell string it runs; a git command the git rule does not cover falls through with its
   // global options and their values dropped.
   // `stripped`: an enclosing env or assignment removed or replaced the trace variables, so a node child is not
-  // self-tracing and is recorded like any other child.
+  // self-tracing: it records `c ''` (its reads are unknown) and its path arguments like any other child.
   function recordCommand(commandWords, base, strippedIn) {
     let words = commandWords;
     let stripped = strippedIn === true;
@@ -780,9 +805,13 @@ function install() {
       const e = envCommand(words, base);
       if (e) { recordCommand(e.words, e.base, stripped || e.stripped); return; }
     }
-    if (isNode(cmd) && !stripped) return;
+    if (isNode(cmd)) {
+      if (!stripped) return;
+      // It cannot trace itself, so what it reads is unknown: fail closed, beside its path arguments below.
+      emit('c', '');
+    }
     if (isShell(cmd)) {
-      const script = shellScript(words);
+      const script = shellScript(words, (file) => recordExisting(file, base));
       if (script !== null) {
         for (const c of shellCommands(script)) recordCommand(c, base, stripped);
         return;
@@ -800,11 +829,7 @@ function install() {
       const t = words[k];
       if (t === '' || t.startsWith('-')) continue;
       if (k === 0 && !t.includes('/') && !t.includes('\\')) continue;
-      const abs = toAbs(t, base);
-      const r = relOf(abs);
-      if (r === null) continue;
-      const st = existing(abs);
-      if (st) emit(st.isDirectory() ? 'c' : 'f', r);
+      recordExisting(t, base);
     }
   }
 
