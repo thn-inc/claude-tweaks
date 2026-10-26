@@ -3,6 +3,8 @@ files:
   - plugin/skills/wrap-up/verification-brief.md
   - plugin/skills/wrap-up/summary-template.md
   - plugin/bin/pr-merge-state.js
+  - plugin/bin/evidence-route.js
+  - plugin/bin/lib/wrap-up/evidence-route.js
   - plugin/bin/lib/reconcile/pr-state.js
   - plugin/skills/_shared/scratch-worktree.md
   - tests/verification-brief-evidence-routing.test.js
@@ -20,26 +22,27 @@ files:
 
 ## Steps
 
-### 1. Step 4 reads the run's own PR, not whatever branch the session is on
-- **URL:** `verification-brief.md` Step 4 — `node "${CLAUDE_PLUGIN_ROOT}/bin/pr-merge-state.js" --run "{run-dir}" --phase wrap-up`
-- **Action:** wrap-up reads the PR recorded in `run-state.json`, from the live run directory or its archive path once cleanup item 8 archived it, after `git branch --show-current` as its own call.
+### 1. Step 4 asks `bin/evidence-route.js` which route the commit takes
+- **URL:** `verification-brief.md` Step 4 — `node "${CLAUDE_PLUGIN_ROOT}/bin/evidence-route.js" --run "{run-dir}"`
+- **Action:** wrap-up runs the CLI as its own Bash call, with `{run-dir}` the live run directory or its archive path once cleanup item 8 archived it. The CLI reads the PR recorded in `run-state.json` through `bin/pr-merge-state.js`, and prints one JSON line `{route, branch, state, reason}`.
 - **Should feel:** like it knows which PR is its own even after cleanup tore the worktree down.
 - **Should understand:**
-  - `conflicting`/`no-conflict`/`unknown` mean the run's PR is open, and `not-open` means merged or closed.
-  - The branch read through `resolvePrState` is only the fallback, for when no run directory resolves or none was recorded.
+  - The route is `current-branch` or `evidence-pr`, and Step 4 routes on `route` alone.
+  - The rules live in `decideEvidenceRoute` in `plugin/bin/lib/wrap-up/evidence-route.js` (the CLI's `--help` lists the vocabularies), not in Step 4's prose. A non-zero exit, or output that does not parse as that line, takes the evidence-PR route.
+  - The branch's PR is only the fallback, for when no run directory resolves or none was recorded.
 - **Red flags:**
   - The check reads `main`'s state because the session is back in the main checkout.
   - The log call targets a `$PIPELINE_RUN_DIR` that item 8 has already archived (exit 3).
 
 ### 2. The integration-branch guard picks the route
-- **URL:** Step 4's **Guard** sentence
-- **Action:** the session is on `{integration-branch}`, in a detached HEAD, or outside the worktree that `run-state.json` records, which `git rev-parse --show-toplevel` checks against the recorded path. So the current-branch route is unavailable.
+- **URL:** `bin/evidence-route.js`'s integration-branch guard (rules in `plugin/bin/lib/wrap-up/evidence-route.js`)
+- **Action:** the session is on `{integration-branch}`, in a detached HEAD, or outside the worktree that `run-state.json` records. So the CLI prints `evidence-pr`, whatever the PR read said.
 - **Should feel:** safe by construction, with no push to `main` whatever the read said.
-- **Should understand:** an open run PR only takes the commit-and-push route when the session is actually on the run's own branch. If that push fails, the brief goes out without embedded screenshots and says why. A branch name that does not match `^[A-Za-z0-9._/-]+$` (one carrying `$`, quotes or a backtick) also takes the evidence-PR route, so the name never reaches a command. With no `worktree` recorded (a standalone wrap-up), the run's own branch is the current branch itself, still under the guard.
+- **Should understand:** an open run PR only takes the commit-and-push route when the session is actually on the run's own branch. If that push fails, the brief goes out without embedded screenshots and says why. A branch name carrying `$`, quotes or a backtick also takes the evidence-PR route, so the name never reaches a command. With no `worktree` recorded (a standalone wrap-up), the run's own branch is the current branch itself, still under the guard.
 - **Red flags:** a `no-pr` result on `main` treated as "commit and push"; an in-place `git switch` in the shared main checkout; a branch name carrying `$` or a backtick pasted into a git command.
 
 ### 3. The evidence lands through its own PR
-- **URL:** Step 4's merged-or-closed bullet → `_shared/scratch-worktree.md` §2–§3, residue-sweep's `pr-first` landing shape
+- **URL:** Step 4's `evidence-pr` bullet → `_shared/scratch-worktree.md` §2–§3, residue-sweep's `pr-first` landing shape
 - **Action:**
   - A scratch worktree on `demo-evidence/{record}` is cut from the freshly fetched `origin/{integration-branch}`, taking the first free `-2`/`-3` suffix if the name is taken.
   - The screenshots are staged with `git add docs/demo-evidence/{record}/` and committed with a pathspec.
@@ -60,10 +63,10 @@ files:
   - A scratch worktree discarded without the ls-remote proof, or a pushed `demo-evidence/` branch with no PR that the summary never mentions.
 
 ### 4. A gh-absent sandbox doesn't open a second PR for nothing
-- **URL:** Step 4's unreadable-state bullet
-- **Action:** with `gh` absent, the read prints `gh-absent`.
+- **URL:** `bin/evidence-route.js`'s unreadable-state rule
+- **Action:** with `gh` absent, the PR read reports `gh-absent`.
 - **Should feel:** no surprise PR on an ordinary in-run wrap-up.
-- **Should understand:** Step 4 treats the PR as open only when this is the run's own in-run Phase 4, its console left the PR open (`merge.resolution: leave-open`), and the session is on the run's branch. Any other unreadable case takes the evidence-PR route.
+- **Should understand:** the CLI treats the PR as open only when it was called with `--in-run`, the console left the PR open (`--leave-open`, or `merge.resolution: leave-open`), and the session is on the run's branch. Any other unreadable case takes the evidence-PR route.
 - **Red flags:** every UI record in a cloud sandbox getting a second PR; an unreadable state that commits blind.
 
 ### 5. The summary says where the evidence went
@@ -75,3 +78,4 @@ files:
 
 ## Origin
 - Created during build of #4039 (verification-brief evidence routing). Filed from a consumer project where a late acceptance-labeling re-run committed screenshots onto an already-merged branch, and the evidence needed a hand-made follow-up PR. #4039's whole-branch review also found that cleanup item 4 runs before Acceptance labeling, so Step 4 can run from the main checkout.
+- Updated during build of #4125. Step 4's route decision moved from prose into `bin/evidence-route.js`, a pure, unit-tested rule module behind a CLI. Every defect #4039's review found had been in that prose decision, which the phrase-pinning conformance test could not catch.

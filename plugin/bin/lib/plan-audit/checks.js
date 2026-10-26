@@ -11,7 +11,7 @@ const { execFileSync } = require('node:child_process');
 const { lstatType, resolveLeaf } = require('../path-guard');
 const { composedBytesReport, measuredBytes } = require('../skill-audit/context-cost');
 const { RAIL_BYTES } = require('../skill-audit/budgets');
-const { toPosix } = require('../shared-primitives');
+const { toPosix, relativeDisplayId } = require('../shared-primitives');
 const {
   extractAcceptanceClauses, extractCoverageSources, extractSpecPaths, extractPathWaivers,
   extractFileEntries, normalizeRepoPath, extractTaskMarkers, TASK_MARKER_ROLES, TASK_MARKER_RISKS,
@@ -77,7 +77,9 @@ function nearestExistingAncestor(dir) {
   return nearestAncestorWhere(dir, isDirectory);
 }
 
-function checkA(entries, repoRoot) {
+// `pathImpl` feeds only the display IDs (relativeDisplayId); every fs path stays
+// on the native `path`, so a test injects `path.win32` to pin the `/` spelling.
+function checkA(entries, repoRoot, { pathImpl = path } = {}) {
   const missing = [];
   const missingDetail = [];
   for (let i = 0; i < entries.length; i++) {
@@ -114,7 +116,7 @@ function checkA(entries, repoRoot) {
       missing.push(relPath);
       missingDetail.push({
         path: relPath,
-        nearestExistingAncestor: path.relative(repoRoot, nearestExistingAncestor(parentAbs)) || '.',
+        nearestExistingAncestor: relativeDisplayId(repoRoot, nearestExistingAncestor(parentAbs), pathImpl) || '.',
       });
     } else if (!fs.existsSync(abs)) {
       // Ledger row 4: a Modify: bullet naming a path absent on disk still
@@ -137,7 +139,7 @@ function checkA(entries, repoRoot) {
       missing.push(relPath);
       missingDetail.push({
         path: relPath,
-        nearestExistingAncestor: path.relative(repoRoot, nearestExistingAncestor(path.dirname(abs))) || '.',
+        nearestExistingAncestor: relativeDisplayId(repoRoot, nearestExistingAncestor(path.dirname(abs)), pathImpl) || '.',
       });
     }
   }
@@ -167,7 +169,7 @@ function walkFiles(dir, out) {
   }
 }
 
-function checkB(scopeKeywords, plannedPaths, repoRoot) {
+function checkB(scopeKeywords, plannedPaths, repoRoot, { pathImpl = path } = {}) {
   if (scopeKeywords.length === 0) return { ok: true, unplanned: [] };
   const allFiles = [];
   walkFiles(repoRoot, allFiles);
@@ -183,7 +185,7 @@ function checkB(scopeKeywords, plannedPaths, repoRoot) {
       continue; // binary/unreadable — not a text match candidate
     }
     if (patterns.some((re) => re.test(content))) {
-      unplanned.add(path.relative(repoRoot, file));
+      unplanned.add(relativeDisplayId(repoRoot, file, pathImpl));
     }
   }
   const list = [...unplanned].sort();
@@ -476,7 +478,7 @@ function composedHeadroom(governedPaths, repoRoot, { report = composedBytesRepor
   }
   for (const row of rows) {
     if (!row.sources) continue; // unparsed call site — nothing to intersect
-    const relSources = row.sources.map((s) => toPosix(path.relative(repoRoot, s)));
+    const relSources = row.sources.map((s) => relativeDisplayId(repoRoot, s));
     if (!relSources.some((s) => governedPaths.has(s))) continue;
     if (row.error) {
       composedErrors.push({

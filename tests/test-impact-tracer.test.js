@@ -15,6 +15,7 @@ const { spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const TRACER = path.join(ROOT, 'tools', 'test-impact', 'tracer.js');
+const { requireOption } = require(path.join(ROOT, 'tools', 'test-impact', 'node-options.js'));
 const FIXTURE = path.join(__dirname, 'fixtures', 'test-impact');
 const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js', 'e.test.js', 'f.test.js', 'g.test.js', 'h.test.js', 'i.test.js', 'j.test.js', 'k.test.js', 'l.test.js', 'm.test.js'];
 
@@ -36,7 +37,7 @@ function traceEnv(root, dir) {
   }
   delete env.NODE_TEST_CONTEXT;
   delete env.NODE_OPTIONS;
-  const req = `--require "${TRACER}"`;
+  const req = requireOption(TRACER);
   return { ...env, NODE_OPTIONS: req, CT_TRACE_REQUIRE: req, CT_TRACE_ROOT: root, CT_TRACE_DIR: dir };
 }
 
@@ -238,7 +239,7 @@ test('a patch that cannot be installed fails closed with c ""', () => {
   const dir = path.join(tmp, 'fail-closed');
   fs.mkdirSync(dir);
   const env = traceEnv(root, dir);
-  env.NODE_OPTIONS = `--require "${path.join(root, 'freeze-readdir.js')}" ${env.NODE_OPTIONS}`;
+  env.NODE_OPTIONS = `${requireOption(path.join(root, 'freeze-readdir.js'))} ${env.NODE_OPTIONS}`;
   const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap', 'd.test.js'], {
     cwd: root, env, encoding: 'utf8', timeout: 120000,
   });
@@ -307,7 +308,7 @@ test('unattributed process records nothing', () => {
 function failingTraceEnv(dir) {
   const env = traceEnv(root, dir);
   env.CT_TRACE_TEST = 'x.test.js';
-  env.NODE_OPTIONS = `--require "${path.join(root, 'fail-trace-append.js')}" ${env.NODE_OPTIONS}`;
+  env.NODE_OPTIONS = `${requireOption(path.join(root, 'fail-trace-append.js'))} ${env.NODE_OPTIONS}`;
   return env;
 }
 

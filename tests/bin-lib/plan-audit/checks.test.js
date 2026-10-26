@@ -264,7 +264,7 @@ test('#3493: a regular-file parent under a real directory names that directory a
   try {
     const result = checkA([{ type: 'Create', path: 'plugin/bin/tool.js/new.js' }], repo);
     assert.strictEqual(result.ok, false);
-    assert.deepStrictEqual(result.missingDetail, [{ path: 'plugin/bin/tool.js/new.js', nearestExistingAncestor: path.join('plugin', 'bin') }]);
+    assert.deepStrictEqual(result.missingDetail, [{ path: 'plugin/bin/tool.js/new.js', nearestExistingAncestor: 'plugin/bin' }]);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -295,7 +295,7 @@ test('#3493: a Modify bullet under a regular file names the enclosing directory 
   try {
     const result = checkA([{ type: 'Modify', path: 'plugin/bin/tool.js/x.js' }], repo);
     assert.strictEqual(result.ok, false);
-    assert.deepStrictEqual(result.missingDetail, [{ path: 'plugin/bin/tool.js/x.js', nearestExistingAncestor: path.join('plugin', 'bin') }]);
+    assert.deepStrictEqual(result.missingDetail, [{ path: 'plugin/bin/tool.js/x.js', nearestExistingAncestor: 'plugin/bin' }]);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -318,7 +318,71 @@ test('#3493: a parent that is a dangling symlink is reported, not accepted', (t)
   }
 });
 
+// #3315: a counting path.win32 wrapper. On a POSIX host the native `relative`
+// and plain path.win32.relative both already yield `/` for these tmp fixtures,
+// so only a recorded call proves the call site routes its display ID through
+// the injected pathImpl (reverting it to plain path.relative leaves calls empty).
+function countingWin32() {
+  const calls = [];
+  const pathImpl = { ...path.win32, relative: (a, b) => (calls.push([a, b]), path.win32.relative(a, b)) };
+  return { calls, pathImpl };
+}
+
+test('AC1.1: checkA reports nearestExistingAncestor as a / display ID under path.win32 (#3315)', () => {
+  const repo = makeTmpRepo();
+  try {
+    fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+    const { calls, pathImpl } = countingWin32();
+    const r = checkA([{ type: 'Create', path: 'plugin/bin/new/deeper/x.js' }], repo, { pathImpl });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.missingDetail[0].nearestExistingAncestor, 'plugin/bin');
+    assert.ok(calls.length > 0, 'pathImpl.relative must be used for the display ID');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1: checkA reports a Modify-missing-file nearestExistingAncestor as a / display ID under path.win32 (#3315)', () => {
+  const repo = makeTmpRepo();
+  try {
+    fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+    const { calls, pathImpl } = countingWin32();
+    const r = checkA([{ type: 'Modify', path: 'plugin/bin/new/deeper/x.js' }], repo, { pathImpl });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.missingDetail[0].nearestExistingAncestor, 'plugin/bin');
+    assert.ok(calls.length > 0, 'pathImpl.relative must be used for the display ID');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkA keeps the "." ancestor for a repo-root miss under path.win32 (#3315)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const create = checkA([{ type: 'Create', path: 'nowhere/deeper/new.js' }], repo, { pathImpl: path.win32 });
+    assert.strictEqual(create.missingDetail[0].nearestExistingAncestor, '.');
+    const modify = checkA([{ type: 'Modify', path: 'nope.js' }], repo, { pathImpl: path.win32 });
+    assert.strictEqual(modify.missingDetail[0].nearestExistingAncestor, '.');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 // ── Check B ──────────────────────────────────────────────────────────────
+
+test('AC1.1: checkB lists unplanned files as / display IDs under path.win32 (#3315)', () => {
+  const repo = makeTmpRepo();
+  try {
+    fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'plugin', 'bin', 'hit.js'), 'mentions zebrakeyword here');
+    const { calls, pathImpl } = countingWin32();
+    const r = checkB(['zebrakeyword'], [], repo, { pathImpl });
+    assert.deepStrictEqual(r.unplanned, ['plugin/bin/hit.js']);
+    assert.ok(calls.length > 0, 'pathImpl.relative must be used for the display ID');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
 
 test('checkB is a no-op (ok, empty) when the plan declares no Scope keywords', () => {
   const repo = makeTmpRepo();

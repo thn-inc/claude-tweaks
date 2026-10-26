@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { detectIntegrationModel, resolvePolicyKeys, POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const RESOLVE_POLICY = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 const REPO_ROOT = path.join(__dirname, '..');
@@ -228,7 +229,8 @@ function walk(dir, acc = []) {
 test('every file naming integration-model cites the shared fragment or is allowlisted', () => {
   const offenders = [];
   for (const file of walk(SKILLS_DIR)) {
-    const rel = path.relative(SKILLS_DIR, file);
+    // Compared against a /-keyed allowlist, so it is a display ID (#4288).
+    const rel = toPosix(path.relative(SKILLS_DIR, file));
     const text = readText(file);
     if (!TOKEN.test(text)) continue;
     if (ALLOWLIST.has(rel)) continue;

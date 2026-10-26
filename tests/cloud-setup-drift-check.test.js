@@ -160,6 +160,19 @@ function writeFixtures({ pluginId, installedVersion, catalogPlugin, marketplaceN
   fs.writeFileSync(MARKETPLACES_JSON, JSON.stringify([{ name: marketplaceName, installLocation: mktLocation }]));
 }
 
+function prependPath(dir, envPath, delimiter = path.delimiter) {
+  return `${dir}${delimiter}${envPath}`;
+}
+
+// Recorded not-a-bug verdict (#3315): the fake curl is a `#!/bin/sh` stub and the snippet runs
+// under bash, so neither executes under cmd.exe -- the cases that spawn them skip on win32. A
+// second win32 blocker: the fixtures live at hardcoded POSIX `/tmp/cc-*.json` paths
+// (INSTALLED_JSON / MARKETPLACES_JSON above, and the same literals inside the frozen
+// pre-change bodies), which do not resolve on win32. The reason string is truthy only on
+// win32; `process.platform` is never stubbed.
+const SH_STUB_SKIP = process.platform === 'win32'
+  && 'win32: the fake curl is a #!/bin/sh stub and the snippet runs under bash, and the fixtures use hardcoded /tmp/cc-*.json paths; neither works under cmd.exe';
+
 // Runs a VERDICT node -e body (live or frozen) against whatever fixtures are currently at
 // INSTALLED_JSON / MARKETPLACES_JSON, with `curlDir` prepended to PATH so a stubbed `curl`
 // answers the sha-resolution fetch. The live body (#923) reads the two session-scoped
@@ -169,13 +182,18 @@ function writeFixtures({ pluginId, installedVersion, catalogPlugin, marketplaceN
 function runVerdict(body, spec, curlDir) {
   const result = spawnSync('node', ['-e', body, spec, INSTALLED_JSON, MARKETPLACES_JSON], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${curlDir}:${process.env.PATH}` },
+    env: { ...process.env, PATH: prependPath(curlDir, process.env.PATH) },
     timeout: 15_000,
   });
   assert.strictEqual(result.status, 0, `node -e exited nonzero (stderr: ${result.stderr})`);
   const [installed, expected, status, installPath] = result.stdout.trim().split('\t');
   return { installed, expected, status, installPath, stderr: result.stderr };
 }
+
+test('AC1.1: prependPath joins PATH with the platform delimiter (#3315)', () => {
+  assert.strictEqual(prependPath('C:\\stub', 'C:\\Windows', path.win32.delimiter), 'C:\\stub;C:\\Windows');
+  assert.strictEqual(prependPath('/stub', '/usr/bin', path.posix.delimiter), '/stub:/usr/bin');
+});
 
 const SPEC = 'claude-tweaks@claude-tweaks-marketplace';
 const SHA = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
@@ -208,7 +226,7 @@ test('setup: extract the live VERDICT snippet and confirm it is byte-identical t
   );
 });
 
-test('sha-pinned catalog entry: stale resolved version vs newer installed build reports DRIFT', () => {
+test('sha-pinned catalog entry: stale resolved version vs newer installed build reports DRIFT', { skip: SH_STUB_SKIP }, () => {
   const curlDir = makeCurlStub({ [RAW_URL]: JSON.stringify({ version: '6.90.0' }) });
   writeFixtures({
     pluginId: SPEC,
@@ -222,7 +240,7 @@ test('sha-pinned catalog entry: stale resolved version vs newer installed build 
   assert.strictEqual(verdict.status, 'DRIFT');
 });
 
-test('sha-pinned catalog entry: newer resolved version vs stale installed build reports DRIFT (reverse direction)', () => {
+test('sha-pinned catalog entry: newer resolved version vs stale installed build reports DRIFT (reverse direction)', { skip: SH_STUB_SKIP }, () => {
   const curlDir = makeCurlStub({ [RAW_URL]: JSON.stringify({ version: '6.97.0' }) });
   writeFixtures({
     pluginId: SPEC,
@@ -236,7 +254,7 @@ test('sha-pinned catalog entry: newer resolved version vs stale installed build 
   assert.strictEqual(verdict.status, 'DRIFT');
 });
 
-test('sha-pinned catalog entry: identical resolved and installed versions report ok (no drift)', () => {
+test('sha-pinned catalog entry: identical resolved and installed versions report ok (no drift)', { skip: SH_STUB_SKIP }, () => {
   const curlDir = makeCurlStub({ [RAW_URL]: JSON.stringify({ version: '6.97.0' }) });
   writeFixtures({
     pluginId: SPEC,
@@ -249,7 +267,7 @@ test('sha-pinned catalog entry: identical resolved and installed versions report
   assert.strictEqual(verdict.status, 'ok');
 });
 
-test('legacy entry-level version field still compares directly (unaffected by the sha fallback)', () => {
+test('legacy entry-level version field still compares directly (unaffected by the sha fallback)', { skip: SH_STUB_SKIP }, () => {
   const curlDir = makeCurlStub({}); // must not be consulted at all when declared.version is set
   writeFixtures({
     pluginId: 'superpowers@claude-plugins-official',
@@ -263,7 +281,7 @@ test('legacy entry-level version field still compares directly (unaffected by th
   assert.strictEqual(verdict.status, 'DRIFT');
 });
 
-test('go-red proof: the pre-#860 VERDICT body reports "unversioned"/ok on the same sha-pinned mismatch fixture', () => {
+test('go-red proof: the pre-#860 VERDICT body reports "unversioned"/ok on the same sha-pinned mismatch fixture', { skip: SH_STUB_SKIP }, () => {
   // Same fixture as the first sha-pinned DRIFT case above — a real, detectable mismatch — but
   // run through the frozen pre-change body. If this did not report the bug, the new tests
   // above would not be able to go red against the old code [IL-105].
@@ -282,7 +300,7 @@ test('go-red proof: the pre-#860 VERDICT body reports "unversioned"/ok on the sa
 // #1779: two more silent-swallow defects in the same VERDICT block, plus an unguarded `set -u`
 // expansion crash a few lines above it in the plugin-freshness block.
 
-test('non-github.com catalog source url: skip the raw-manifest fetch and announce why, instead of fetching a meaningless rewrite', () => {
+test('non-github.com catalog source url: skip the raw-manifest fetch and announce why, instead of fetching a meaningless rewrite', { skip: SH_STUB_SKIP }, () => {
   const NON_GITHUB_ENTRY = {
     name: 'claude-tweaks',
     source: { source: 'git-subdir', url: 'https://gitlab.com/thomasholknielsen/claude-tweaks', path: 'plugin', sha: SHA },
@@ -303,7 +321,7 @@ test('non-github.com catalog source url: skip the raw-manifest fetch and announc
   );
 });
 
-test('github.com source url: a failed raw-manifest fetch announces a WARNING naming the spec and sha, instead of swallowing it', () => {
+test('github.com source url: a failed raw-manifest fetch announces a WARNING naming the spec and sha, instead of swallowing it', { skip: SH_STUB_SKIP }, () => {
   const curlDir = makeCurlStub({}); // unregistered URL -> stub exits 22, matching real curl -f on a 404
   writeFixtures({
     pluginId: SPEC,
@@ -319,7 +337,7 @@ test('github.com source url: a failed raw-manifest fetch announces a WARNING nam
   );
 });
 
-test('go-red proof: the pre-#1779 VERDICT body swallows both the fetch-failure and non-github cases with zero stderr', () => {
+test('go-red proof: the pre-#1779 VERDICT body swallows both the fetch-failure and non-github cases with zero stderr', { skip: SH_STUB_SKIP }, () => {
   const curlDir = makeCurlStub({});
   writeFixtures({
     pluginId: SPEC,

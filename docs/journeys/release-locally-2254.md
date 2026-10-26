@@ -44,8 +44,8 @@ files:
 - **URL:** any non-zero exit after Step 3 began writing
 - **Action:** The engine names exactly what landed and what to run next, on stderr: edits on disk but not committed (`git restore --staged --worktree -- <the edited files>`, plus `rm <file>` for any file the run created), commit landed but no tag (`git tag -a …`), tagged but not pushed (`git fetch origin main && git rebase origin/main && git tag -f -a v1.3.0 -m v1.3.0 && git push origin main && git push --force origin v1.3.0` — or a plain `git push origin main v1.3.0` when this was the branch's first push), or — exit `5` — everything landed and only the hook failed (`re-run the hook alone: <command>`). Exit `4` is a collision (a sibling worktree or a plan already claims the number) and names the claimant with a suggested renumber.
 - **Should feel:** Recoverable — every message says "do NOT re-run release-local" and hands over the one command that finishes the job.
-- **Should understand:** Re-running blind after a partial state would bump a second time; the exit code alone tells a wrapper script whether git is done (`5`) or not (`1`).
-- **Red flags:** A bare stack trace; a recovery command listing files that were never edited; "NOT pushed" on a repo with no `origin`.
+- **Should understand:** Re-running blind after a partial state would bump a second time; the exit code alone tells a wrapper script whether git is done (`5`) or not (`1`). A plan claimant is named by its repo path with `/` on every OS (`docs/superpowers/plans/….md`), so the same collision reads the same on Windows as on Linux and macOS (#4288).
+- **Red flags:** A bare stack trace; a recovery command listing files that were never edited; "NOT pushed" on a repo with no `origin`; on Windows, a collision line naming the plan as `docs\superpowers\plans\….md`.
 
 ## Origin
 - Created during build of #2254 (record: The local engine `bin/release-local.js`)
@@ -54,3 +54,4 @@ files:
 - Step 2's bump precedence updated during build of #2327 (0.x pre-major bump softening)
 - Steps 1 and 3 updated during build of #2581 (`### Highlights` block, sourced from each commit's `Release-Note:` trailer via the new shared `plugin/bin/lib/release-notes.js`)
 - Step 3 updated during build of #4282 (the symlink refusal holds on Windows, where `O_NOFOLLOW` does not exist)
+- Step 4 updated during build of #4288 (a plan claimant's path prints with `/` on Windows too)

@@ -17,6 +17,7 @@ const ROOT = path.join(__dirname, '..');
 const {
   resolveConcurrency, resolveSlots, listTestFiles, buildTestArgs,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
+  subsetFallbackReason,
 } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('resolveConcurrency defaults to half the cores, at least 1', () => {
@@ -662,3 +663,61 @@ for (const [signal, expectedCode] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHU
     });
   });
 }
+
+test('#4134 AC2.1: subsetFallbackReason is null for a subset that fits, and off win32 for any size', () => {
+  const args = ['--test', '--test-concurrency=2', 'tests/a.test.js'];
+  assert.strictEqual(subsetFallbackReason('C:\\node.exe', args, { platform: 'win32' }), null);
+  const huge = ['--test', '--test-concurrency=2', ...Array.from({ length: 2000 }, (_, i) => `tests/${'a'.repeat(30)}${i}.test.js`)];
+  assert.strictEqual(subsetFallbackReason('/usr/bin/node', huge, { platform: 'linux' }), null);
+});
+
+test('#4134 AC2.1: subsetFallbackReason names the length and the limit once the line reaches 32,767 characters', () => {
+  // Each of execPath and the args costs its length + 3 (two quotes and a separator), minus 1 for the
+  // missing last separator. With execPath 'C:\\node.exe' (11), '--test' (6), '--test-concurrency=2' (20)
+  // and 'x'.repeat(k): (11+3) + (6+3) + (20+3) + (k+3) - 1 = 48 + k. So k = 32718 gives 32766, which
+  // fits, and k = 32719 gives 32767, which falls back.
+  const execPath = 'C:\\node.exe';
+  const lineLength = (k) => [execPath, '--test', '--test-concurrency=2', 'x'.repeat(k)].reduce((n, a) => n + a.length + 3, 0) - 1;
+  const fits = 32766 - 48;
+  assert.strictEqual(lineLength(fits), 32766);
+  assert.strictEqual(lineLength(fits + 1), 32767);
+  const argsFor = (k) => ['--test', '--test-concurrency=2', 'x'.repeat(k)];
+  assert.strictEqual(subsetFallbackReason(execPath, argsFor(fits), { platform: 'win32' }), null);
+  assert.strictEqual(
+    subsetFallbackReason(execPath, argsFor(fits + 1), { platform: 'win32' }),
+    'a 1-file subset needs a 32767-character command line, over the Windows limit of 32767',
+  );
+});
+
+// The preload fakes win32 + Node 22 and stubs child_process.spawn to print its argv and exit 0.
+// The platform fake does not touch the `path` module or `os.tmpdir()`, which stay real on this host.
+test('#4134 AC2.1: a win32 --files-from subset too long for the command line runs the full suite with a named reason', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const root = path.join(sb.suiteRoot, 'repo root');
+    fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'tests'));
+    fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+    const names = Array.from({ length: 400 }, (_, i) => `tests/${'a'.repeat(90)}${i}.test.js`);
+    for (const name of names) fs.writeFileSync(path.join(root, name), '');
+    const list = path.join(sb.suiteRoot, 'list.txt');
+    fs.writeFileSync(list, names.join('\n') + '\n');
+    const preload = path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'win32-node22-spawn-capture-preload.js');
+    const result = spawnSync(process.execPath, ['-r', preload, path.join(root, 'tools', 'run-tests.js'), '--files-from', list], {
+      cwd: root, env: sb.env, encoding: 'utf8', timeout: 60000,
+    });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.match(
+      result.stderr,
+      /--files-from .*: a 400-file subset needs a \d+-character command line, over the Windows limit of 32767 — running the full suite instead\./,
+    );
+    const line = result.stderr.split('\n').find((l) => l.startsWith('SPAWN-ARGS: '));
+    assert.ok(line, result.stderr);
+    const spawned = JSON.parse(line.slice('SPAWN-ARGS: '.length));
+    assert.deepStrictEqual(spawned.slice(-2), ['tests/**/*.test.js', 'tools/upstream-drift/tests/**/*.test.js']);
+    for (const name of names) assert.ok(!spawned.includes(name), `${name} should not be passed`);
+    // The stub exits before the runner releases its slot, so the lock marks the lane it waited in:
+    // the full-suite lane is the slot dir itself, the subset lane its `subset/` child.
+    assert.strictEqual(SLOT_LOCKS(sb.slotDir).length, 1, fs.readdirSync(sb.slotDir).join(', '));
+    assert.ok(!fs.existsSync(path.join(sb.slotDir, 'subset')), 'a fallen-back run must not take the subset lane');
+  });
+});

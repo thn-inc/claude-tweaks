@@ -8,31 +8,36 @@
 //     code — a failing suite still writes its map, which verify.js then refuses as
 //     map-from-failing-suite. A run in which a traced process could not record a read (a `.lost` marker)
 //     writes no map. Refuses a tree with tracked changes unless --allow-dirty (untracked files
-//     do not count). Prints `trace: {n} test file(s), {paths} path(s), suite exit {code} → {out} ({bytes} bytes)`.
+//     do not count); with --allow-dirty the map records `dirty: true` (verify.js refuses it as map-dirty)
+//     and a warning goes to stderr. Prints `trace: {n} test file(s), {paths} path(s), suite exit {code} → {out} ({bytes} bytes)`.
 //   fetch [--repo owner/name] [--out <path>]
 //     Downloads the map CI built: of the last 30 successful `test-impact-map.yml` runs on main, the
 //     newest whose head commit is an ancestor of HEAD (a branch behind main could never use a newer
-//     one). Skips the download when the cached map already holds that commit; validates the artifact
-//     (parseImpactMap, commit === the run's headSha, exitCode 0) before replacing the cache.
+//     one). Skips the download when the cached map already holds that commit and is not dirty (a dirty
+//     cached map is replaced); validates the artifact (parseImpactMap, commit === the run's headSha,
+//     exitCode 0, not traced from a dirty tree) before replacing the cache.
 //
 // --out defaults to `{git-common-dir}/claude-tweaks-test-impact.json` (shared by every worktree); the
 // map is written atomically. The repo root is `git rev-parse --show-toplevel` of the cwd.
 //
 // Exit codes: 0 map written (or, for fetch, already current); 1 failure (no trace data, a trace run whose
 // tracer lost a read, gh/git failure, an invalid or unusable artifact, no ancestor map) with a message on
-// stderr; 2 malformed invocation or, for trace, a dirty tree.
+// stderr; 2 malformed invocation or, for trace, a dirty tree; 129/130/143 trace interrupted by
+// SIGHUP/SIGINT/SIGTERM (the suite is sent the signal, the temp dir removed, no map written).
 //
-// Seam: run({ argv, deps }) returns the exit code; deps holds git(args, {cwd}) and gh(args, {cwd})
-// (stdout; throw on failure), spawn(cmd, args, opts) (→ {status, signal, error}), fs, now, env,
-// execPath, cwd, tmpdir and the log/err line writers.
+// Seam: run({ argv, deps }) returns a Promise of the exit code; deps holds git(args, {cwd}) and
+// gh(args, {cwd}) (stdout; throw on failure), spawn(cmd, args, opts) (→ a child: an EventEmitter with
+// kill(signal) emitting 'exit'(status, signal) and/or 'error'(err)), signals ({ on, removeListener },
+// default process), fs, now, env, execPath, cwd, tmpdir and the log/err line writers.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const { parseImpactMap, gitLocations, DEFAULT_MAP_NAME } = require('../plugin/bin/lib/verify/impact');
 const { writeFileAtomic } = require('../plugin/bin/lib/atomic-write');
 const { buildMap } = require('./test-impact/build-map');
+const { requireOption } = require('./test-impact/node-options');
 
 const USAGE = [
   'usage: node tools/test-impact.js trace [--out <path>] [--allow-dirty]',
@@ -53,7 +58,8 @@ function defaultDeps() {
   return {
     git: exec('git'),
     gh: exec('gh'),
-    spawn: (cmd, args, opts) => spawnSync(cmd, args, { ...opts, stdio: 'inherit' }),
+    spawn: (cmd, args, opts) => spawn(cmd, args, { ...opts, stdio: 'inherit' }),
+    signals: process,
     fs,
     now: Date.now,
     env: process.env,
@@ -106,7 +112,15 @@ function rmQuiet(deps, dir) {
   }
 }
 
-function trace(args, deps) {
+// Resolves once with { status, signal, error } on the child's first 'exit' or 'error'.
+function waitForExit(child) {
+  return new Promise((resolve) => {
+    child.once('exit', (status, signal) => resolve({ status, signal }));
+    child.once('error', (error) => resolve({ error }));
+  });
+}
+
+async function trace(args, deps) {
   const parsed = parseArgs(args, { '--out': 'value', '--allow-dirty': 'bool' });
   if (parsed.error) {
     deps.err(`test-impact.js trace: ${parsed.error}\n${USAGE}`);
@@ -119,13 +133,13 @@ function trace(args, deps) {
   }
   const root = loc.repoRoot;
   let commit;
+  let dirty;
   try {
-    if (!parsed.opts['--allow-dirty']) {
-      const status = deps.git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], { cwd: root });
-      if (status.trim() !== '') {
-        deps.err('test-impact.js trace: the working tree is dirty (tracked changes) — commit them or pass --allow-dirty');
-        return 2;
-      }
+    const status = deps.git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], { cwd: root });
+    dirty = status.trim() !== '';
+    if (dirty && !parsed.opts['--allow-dirty']) {
+      deps.err('test-impact.js trace: the working tree is dirty (tracked changes) — commit them or pass --allow-dirty');
+      return 2;
     }
     commit = deps.git(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: root }).trim();
   } catch (e) {
@@ -139,15 +153,36 @@ function trace(args, deps) {
   const out = resolveOut(parsed.opts['--out'], loc, deps);
 
   let traceDir = null;
+  let interrupted = null;
+  // A signal kills the process before `finally` runs, so the trace dir would leak: SIGHUP/SIGINT/SIGTERM are
+  // caught from before the temp dir exists, forwarded to the suite (a second one is SIGKILL), and handled once
+  // the suite has exited. Before the suite is spawned a signal is only recorded; the spawn is then skipped.
+  let child = null;
+  let escalated = false;
+  const handlers = ['SIGHUP', 'SIGINT', 'SIGTERM'].map((sig) => [sig, () => {
+    if (escalated) return;
+    if (interrupted) {
+      escalated = true;
+      if (child) child.kill('SIGKILL');
+    } else {
+      interrupted = sig;
+      if (child) child.kill(sig);
+    }
+  }]);
+  const interruptedExit = () => {
+    deps.err(`test-impact.js trace: interrupted by ${interrupted} — no map written`);
+    return 128 + os.constants.signals[interrupted];
+  };
   try {
+    for (const [sig, fn] of handlers) deps.signals.on(sig, fn);
     traceDir = deps.fs.mkdtempSync(path.join(deps.tmpdir || os.tmpdir(), 'ct-test-impact-trace-'));
     const realRoot = deps.fs.realpathSync(root);
-    const req = `--require "${path.join(root, 'tools', 'test-impact', 'tracer.js')}"`;
+    const req = requireOption(path.join(root, 'tools', 'test-impact', 'tracer.js'));
     // Inherited CT_TRACE_* is dropped first: the tracer leaves a child alone when its env names a
     // different CT_TRACE_ROOT (a nested trace, tools/test-impact/tracer.js injectEnv), so a stale root
     // from an outer traced session would otherwise mix two repos' reads into this map. `req` keeps the
-    // literal quotes because NODE_OPTIONS is split on spaces and the checkout path may hold one —
-    // the same quoting is why tracing is POSIX-only (plugin/skills/test/impact-selection.md, Known limits).
+    // literal quotes because NODE_OPTIONS is split on spaces and the checkout path may hold one; the
+    // path is forward-slashed because NODE_OPTIONS reads `\` inside quotes as an escape (node-options.js).
     const env = {};
     for (const [k, v] of Object.entries(deps.env)) if (!k.startsWith('CT_TRACE_')) env[k] = v;
     env.CT_TRACE_ROOT = realRoot;
@@ -155,11 +190,16 @@ function trace(args, deps) {
     env.CT_TRACE_REQUIRE = req;
     env.NODE_OPTIONS = env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ${req}` : req;
 
-    const result = deps.spawn(deps.execPath, [path.join(root, 'tools', 'run-tests.js')], { cwd: root, env });
-    if (result && result.error) deps.err(`test-impact.js trace: the suite did not start: ${errText(result.error)}`);
-    const exitCode = result && Number.isInteger(result.status) ? result.status : 1;
+    if (interrupted) return interruptedExit();
+    child = deps.spawn(deps.execPath, [path.join(root, 'tools', 'run-tests.js')], { cwd: root, env });
+    const result = await waitForExit(child);
+    // A signal delivered alongside the suite's own exit must run its handler before the check below.
+    await new Promise((resolve) => setImmediate(resolve));
+    if (interrupted) return interruptedExit();
+    if (result.error) deps.err(`test-impact.js trace: the suite did not start: ${errText(result.error)}`);
+    const exitCode = Number.isInteger(result.status) ? result.status : 1;
 
-    const built = buildMap({ traceDir, commit, exitCode, node: process.version, now: deps.now, fsImpl: deps.fs });
+    const built = buildMap({ traceDir, commit, exitCode, node: process.version, dirty, now: deps.now, fsImpl: deps.fs });
     if (built.lost > 0) {
       const named = built.lostTests.length ? built.lostTests.join(', ') : 'unknown';
       deps.err(`test-impact.js trace: ${built.lost} traced process(es) could not record a read (tests: ${named}) — no map written`);
@@ -177,11 +217,15 @@ function trace(args, deps) {
     const text = `${JSON.stringify(built.map)}\n`;
     writeMap(deps, out, text);
     deps.log(`trace: ${tests} test file(s), ${built.map.paths.length} path(s), suite exit ${exitCode} → ${out} (${Buffer.byteLength(text)} bytes)`);
+    if (dirty) {
+      deps.err('test-impact.js trace: traced a dirty tree (tracked changes) — the map records dirty: true, which verify.js refuses as map-dirty');
+    }
     return 0;
   } catch (e) {
     deps.err(`test-impact.js trace: ${errText(e)}`);
     return 1;
   } finally {
+    for (const [sig, fn] of handlers) deps.signals.removeListener(sig, fn);
     if (traceDir) rmQuiet(deps, traceDir);
   }
 }
@@ -238,7 +282,7 @@ function fetch(args, deps) {
   } catch (_) {
     // no cached map
   }
-  if (cached && cached.ok && cached.map.commit === sha) {
+  if (cached && cached.ok && cached.map.commit === sha && !cached.map.dirty) {
     deps.log(`fetch: map at ${sha} already current → ${out}`);
     return 0;
   }
@@ -271,6 +315,10 @@ function fetch(args, deps) {
       deps.err(`test-impact.js fetch: run ${chosen.databaseId}'s map comes from a failing suite (exit ${map.map.exitCode})`);
       return 1;
     }
+    if (map.map.dirty) {
+      deps.err(`test-impact.js fetch: run ${chosen.databaseId}'s map was traced from a dirty tree`);
+      return 1;
+    }
     writeMap(deps, out, text);
     deps.log(`fetch: run ${chosen.databaseId} map at ${sha} → ${out} (${Buffer.byteLength(text)} bytes)`);
     return 0;
@@ -282,7 +330,7 @@ function fetch(args, deps) {
   }
 }
 
-function run({ argv, deps: given = {} }) {
+async function run({ argv, deps: given = {} }) {
   const deps = { ...defaultDeps(), ...given };
   const [cmd, ...args] = argv;
   if (cmd === '--help' || cmd === '-h') {
@@ -298,5 +346,5 @@ function run({ argv, deps: given = {} }) {
 module.exports = { run };
 
 if (require.main === module) {
-  process.exitCode = run({ argv: process.argv.slice(2) });
+  run({ argv: process.argv.slice(2) }).then((code) => { process.exitCode = code; });
 }

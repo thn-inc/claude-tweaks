@@ -8,11 +8,14 @@
 // Selection fails CLOSED: a changed non-test path no traced read covers makes
 // selectImpactTests return {ok:false}, and mapProblem names why a map must not
 // be used at all — the caller then runs the full suite. What counts as a test
-// file is the caller's predicate; this module never guesses.
+// file is the caller's predicate; this module never guesses. An optional `dirty`
+// boolean records a trace of a tree with tracked changes; such a map is never
+// used (`map-dirty`).
 //
 // The codec and selection are pure. The I/O helpers at the bottom
 // (gitLocations, loadImpactContext) read the map file, the test files present
-// at HEAD and the map commit's ancestry, every git call through an injectable
+// at HEAD, the map commit's ancestry and the test files that differ between
+// the map commit and HEAD (the drift), every git call through an injectable
 // execImpl; they never throw — an unreadable input is a named problem.
 'use strict';
 
@@ -37,7 +40,7 @@ function under(p, prefix) {
   return prefix === '' || p === prefix || p.startsWith(prefix + '/');
 }
 
-function encodeImpactMap({ commit, tracedAt, exitCode, node, tests }) {
+function encodeImpactMap({ commit, tracedAt, exitCode, node, tests, dirty }) {
   const names = Object.keys(tests).sort();
   const paths = sortedUnique(names.flatMap((t) => KINDS.flatMap((k) => tests[t][k] || [])));
   const index = new Map(paths.map((p, i) => [p, i]));
@@ -50,7 +53,11 @@ function encodeImpactMap({ commit, tracedAt, exitCode, node, tests }) {
     }
     encoded[t] = entry;
   }
-  return { version: IMPACT_MAP_VERSION, commit, tracedAt, exitCode, node, paths, tests: encoded };
+  return {
+    version: IMPACT_MAP_VERSION, commit, tracedAt, exitCode, node,
+    ...(dirty === undefined ? {} : { dirty: Boolean(dirty) }),
+    paths, tests: encoded,
+  };
 }
 
 function decodeTests(raw, paths) {
@@ -82,6 +89,7 @@ function parseImpactMap(text) {
   if (raw.version !== IMPACT_MAP_VERSION) return { ok: false, reason: 'wrong-version' };
   if (typeof raw.commit !== 'string' || !SHA_RE.test(raw.commit)) return { ok: false, reason: 'bad-commit' };
   if (!Number.isInteger(raw.exitCode)) return { ok: false, reason: 'bad-shape' };
+  if (raw.dirty !== undefined && typeof raw.dirty !== 'boolean') return { ok: false, reason: 'bad-shape' };
   if (!Array.isArray(raw.paths) || !raw.paths.every((p) => typeof p === 'string')) return { ok: false, reason: 'bad-shape' };
   const tests = decodeTests(raw.tests, raw.paths);
   if (tests === null) return { ok: false, reason: 'bad-shape' };
@@ -89,7 +97,7 @@ function parseImpactMap(text) {
     ok: true,
     map: {
       version: raw.version, commit: raw.commit, tracedAt: raw.tracedAt, exitCode: raw.exitCode, node: raw.node,
-      paths: raw.paths, tests,
+      dirty: raw.dirty === true, paths: raw.paths, tests,
     },
   };
 }
@@ -106,7 +114,10 @@ function reads(entry, p, status) {
   return entry.f.some(ancestorOrSelf) || entry.s.some(ancestorOrSelf) || entry.d.some((pre) => under(p, pre));
 }
 
-function selectImpactTests({ map, changed, headTests, isTestFile }) {
+// `driftTests`: the test files that differ between the map commit and HEAD. One the map knows and HEAD still
+// has is selected like an untraced one — its traced reads describe the old file; unknown ones are untraced already,
+// and a changed test is selected as changed, so neither counts as drift-selected.
+function selectImpactTests({ map, changed, headTests, isTestFile, driftTests = [] }) {
   const atHead = new Set(headTests);
   // A map reader no longer present at HEAD cannot run, so it never selects.
   const readers = Object.keys(map.tests).filter((t) => atHead.has(t));
@@ -125,12 +136,14 @@ function selectImpactTests({ map, changed, headTests, isTestFile }) {
   }
   if (untraced.length) return { ok: false, reason: `untraced-path: ${untraced.sort()[0]}` };
   const untracedTests = sortedUnique(headTests.filter((t) => !Object.hasOwn(map.tests, t)));
+  const drift = sortedUnique(driftTests.filter((t) => atHead.has(t) && Object.hasOwn(map.tests, t) && !changedTests.has(t)));
   return {
     ok: true,
-    tests: sortedUnique([...matched, ...changedTests, ...untracedTests]),
+    tests: sortedUnique([...matched, ...changedTests, ...untracedTests, ...drift]),
     matched: [...matched].sort(),
     changedTests: [...changedTests].sort(),
     untracedTests,
+    driftTests: drift,
   };
 }
 
@@ -139,6 +152,7 @@ function mapProblem({ parsed, isAncestor, distance, maxAgeCommits }) {
   if (parsed === null || parsed === undefined) return 'map-missing';
   if (!parsed.ok) return `map-invalid: ${parsed.reason}`;
   if (parsed.map.exitCode !== 0) return 'map-from-failing-suite';
+  if (parsed.map.dirty) return 'map-dirty';
   if (!isAncestor) return 'map-not-ancestor';
   // An unknown age (a failed rev-list) is never read as fresh.
   if (!Number.isInteger(distance)) return `map-stale: unknown commits > ${maxAgeCommits}`;
@@ -187,6 +201,19 @@ function listHeadTests({ decl, repoRoot, execImpl, fsImpl }) {
     && patterns.some((re) => re.test(p)) && lstatType(path.join(repoRoot, p), { fsImpl }).type !== 'missing'));
 }
 
+// The test files that differ between the map commit and HEAD — a two-revision tree diff, defined whether or
+// not the commit is an ancestor of the base. null when git cannot answer.
+function listDriftTests({ decl, repoRoot, commit, execImpl }) {
+  let out;
+  try {
+    out = git(execImpl, repoRoot, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', commit, 'HEAD']);
+  } catch {
+    return null;
+  }
+  const patterns = decl.impact.tests.map((g) => globToRegExp(g));
+  return sortedUnique(out.split('\0').filter((p) => p !== '' && patterns.some((re) => re.test(p))));
+}
+
 function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl }) {
   let parsed;
   try {
@@ -213,6 +240,7 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl }) {
   return {
     map: parsed && parsed.ok ? parsed.map : null,
     mapCommit: parsed && parsed.ok ? parsed.map.commit : null,
+    mapDirty: parsed && parsed.ok ? parsed.map.dirty : null,
     distance,
     problem: mapProblem({ parsed, isAncestor, distance, maxAgeCommits: decl.impact.maxAgeCommits }),
   };
@@ -230,14 +258,22 @@ function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync,
     fetch = runFetch(decl.impact.fetch);
     if (fetch.exitCode === 0) state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl });
   }
+  // Only a usable map has a drift to read; an unreadable one fails closed like the head-test listing.
+  let driftTests = [];
+  let driftProblem = null;
+  if (!state.problem) {
+    const drift = listDriftTests({ decl, repoRoot, commit: state.mapCommit, execImpl });
+    if (drift === null) driftProblem = 'map-drift-unreadable';
+    else driftTests = drift;
+  }
   const headTests = listHeadTests({ decl, repoRoot, execImpl, fsImpl });
   // A listing that succeeded but names no test file (a sparse checkout, a pathspec oddity) would make
   // every reader "absent at HEAD" and a changed test select nothing — it fails closed like a failed one.
   let headProblem = null;
   if (headTests === null) headProblem = 'head-tests-unreadable';
   else if (headTests.length === 0) headProblem = 'head-tests-empty';
-  const problem = state.problem || headProblem;
-  return { ...state, problem, headTests: headTests || [], mapPath, fetch };
+  const problem = state.problem || driftProblem || headProblem;
+  return { ...state, problem, headTests: headTests || [], driftTests, mapPath, fetch };
 }
 
 // The same context, loaded on first read instead of up front: selectScope only reads it when an
@@ -255,8 +291,10 @@ function lazyImpactContext(load) {
     get map() { return get().map; },
     get problem() { return get().problem; },
     get headTests() { return get().headTests; },
+    get driftTests() { return get().driftTests; },
     get mapPath() { return get().mapPath; },
     get mapCommit() { return get().mapCommit; },
+    get mapDirty() { return get().mapDirty; },
     get distance() { return get().distance; },
     get fetch() { return get().fetch; },
   };

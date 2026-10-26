@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { MAX_STALE_DAYS } = require('./score');
 const { selectByStaleThenChurn } = require('../health-core/rotation');
+const { relativeDisplayId } = require('../shared-primitives');
 
 const SKIP_DIRS = new Set([
   '.claude-tweaks', '.git', 'node_modules', 'dist', 'build', 'coverage', '.next', '.turbo',
@@ -98,8 +99,19 @@ function listSlices(root) {
 // One `find` per candidate: the whole subtree's file list is fetched once and
 // every nested total is derived from that in-memory list, rather than
 // re-spawning `find` per directory visited.
-function splitOversized(id, absDir, out) {
-  const files = sourceFiles(absDir, { recursive: true });
+//
+// The node keys below are `/` display IDs (#3315): on win32 `path.relative`
+// yields `one\deeper`, which the `/`-based ancestor walk and the `${rel}/${kid}`
+// descent would never agree on, silently dropping every nested slice. Keys are
+// normalized once at relDir and walked with path.posix; slice paths are still
+// built with the native pathImpl.join because they are opened later.
+// pathImpl / listFiles / sizeOf are test seams; listSlices passes none of them.
+function splitOversized(id, absDir, out, {
+  pathImpl = path,
+  listFiles = (dir) => sourceFiles(dir, { recursive: true }),
+  sizeOf = (f) => fs.statSync(f).size,
+} = {}) {
+  const files = listFiles(absDir);
   // A candidate with no source files at all still emits exactly one slice, as
   // it did before splitting existed — a directory that is empty today but
   // gains source files later must keep its place in the rotation rather than
@@ -119,8 +131,8 @@ function splitOversized(id, absDir, out) {
   nodeFor('');
   for (const file of files) {
     let size = 0;
-    try { size = fs.statSync(file).size; } catch { size = 0; }
-    const relDir = path.relative(absDir, path.dirname(file));
+    try { size = sizeOf(file); } catch { size = 0; }
+    const relDir = relativeDisplayId(absDir, pathImpl.dirname(file), pathImpl);
     const node = nodeFor(relDir);
     node.own += size;
     node.ownCount += 1;
@@ -129,8 +141,9 @@ function splitOversized(id, absDir, out) {
     for (;;) {
       nodeFor(cur).total += size;
       if (cur === '') break;
-      const parent = path.dirname(cur) === '.' ? '' : path.dirname(cur);
-      nodeFor(parent).kids.add(path.basename(cur));
+      const parentDir = path.posix.dirname(cur);
+      const parent = parentDir === '.' ? '' : parentDir;
+      nodeFor(parent).kids.add(path.posix.basename(cur));
       cur = parent;
     }
   }
@@ -138,7 +151,7 @@ function splitOversized(id, absDir, out) {
   const walk = (rel, sliceId) => {
     const node = nodes.get(rel);
     if (!node || node.total === 0) return;
-    const abs = rel === '' ? absDir : path.join(absDir, rel);
+    const abs = rel === '' ? absDir : pathImpl.join(absDir, rel);
     if (node.total <= MAX_SLICE_BYTES) {
       out.push({ id: sliceId, path: abs, recursive: true });
       return;
@@ -533,6 +546,7 @@ module.exports = {
   gitChurn,
   sliceRecursive,
   sourceFiles,
+  splitOversized,
   SKIP_DIRS,
   SOURCE_EXTS,
 };
