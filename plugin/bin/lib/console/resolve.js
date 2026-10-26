@@ -14,6 +14,7 @@ const { resolveRecords } = require('../wrap-up/pack');
 const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
 const { planFilings } = require('./finding-filing');
 const { FINDINGS_ARTIFACT } = require('../tiebreak');
+const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
 
 // Section names exactly as the console renders them (console-template.md;
 // engine-render.js's SECTION_SPECS for the five curation sections).
@@ -221,15 +222,6 @@ const SECTION_STANCES = {
 
 const ENGINE_ROW_SECTIONS = { skills: SECTIONS.SKILL, docs: SECTIONS.DOC, journeys: SECTIONS.JOURNEY, 'claude-md': SECTIONS.CONFIG, 'decision-records': SECTIONS.CONFIG, references: SECTIONS.REF };
 
-// `**Category:** {value}` — the header line `reflect/SKILL.md` (and any other producer sharing
-// this convention) writes on a staged finding. `null` when the text carries no such line —
-// including every caller that passes no text at all (unknown by design; never routed off it).
-function parseCategory(text) {
-  if (!text) return null;
-  const m = /^\*\*Category:\*\*\s*(\S+)/m.exec(text);
-  return m ? m[1] : null;
-}
-
 // `text` is the staged file's own content, when the caller has it (readSnapshot loads it for
 // every `.md`/`.patch` staged item, every shadow-dup copy, and each copy's anchor).
 // Only the QUEUE bucket's un-reasoned row reads it: that
@@ -238,10 +230,14 @@ function parseCategory(text) {
 // — `convention`/`observation` findings share the same filename prefix but carry no
 // `Title:`/`Type:`/`Labels:` header for record creation to read, so routing them into Queue
 // writes/`apply` the same as a tangential finding would attempt to file a malformed issue
-// (#2473). A `Category:` value other than `tangential` reroutes to Pending review via the
-// existing reason-forces-pending mechanism below; a file with no `Category:` line at all (every
-// other QUEUE-bucket producer — `digest-promotion-*`, `leftover-*`, etc. — none of which carry
-// this field) is unaffected and keeps today's Queue writes/`apply` classification.
+// (#2473). A reflect `observation`/`convention` finding routes to Skill updates instead (#4168):
+// its destination line decides what `bin/reflect-apply.js` applies (an edit, a decline, or a
+// record proposal), a record whose Defer-reason fails the gate is Refused, and an unparseable
+// destination stays Pending review under a named reason. Every other `Category:` value other than
+// `tangential` keeps #2473's reroute to Pending review via the existing reason-forces-pending
+// mechanism below; a file with no `Category:` line at all (every other QUEUE-bucket producer —
+// `digest-promotion-*`, `leftover-*`, etc. — none of which carry this field) is unaffected and
+// keeps today's Queue writes/`apply` classification.
 function classifyStagedItem(filename, text, siblingText) {
   if (SHADOW_DUP_RE.test(filename)) {
     let outcome = 'shadow-dup-collision';
@@ -258,6 +254,12 @@ function classifyStagedItem(filename, text, siblingText) {
     if (section === SECTIONS.QUEUE && !reason) {
       const category = parseCategory(text);
       if (category && category.toLowerCase() !== 'tangential') {
+        if (isApplicableReflect(filename, text)) {
+          const destination = parseReflectDestination(text);
+          if (destination.kind === 'invalid') return { section: SECTIONS.PENDING, reason: `reflect-destination-invalid:${destination.why}` };
+          if (destination.kind === 'record' && deferReasonProblem(destination.proposal) !== null) return { section: SECTIONS.REFUSED };
+          return { section: SECTIONS.SKILL };
+        }
         return { section: SECTIONS.PENDING, reason: `non-tangential-category:${category}` };
       }
     }
@@ -782,4 +784,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };

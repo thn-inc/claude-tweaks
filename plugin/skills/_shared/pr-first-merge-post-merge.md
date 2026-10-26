@@ -25,7 +25,7 @@ will-close record up to 15 s, since GitHub closes it about 2 s after the merge, 
 #{n}` per record to `decisions.md`. Whatever the `action`, report each `failed[]` record (reopen it
 by hand) and each `pendingClose[]` record (the merge may still close it — re-run the step once,
 then reopen it by hand if it closed) in the closing summary, never as anything but `merged`. Exit
-3-5 or `gh-absent`: one `SKIP` line (`bin/log-decision.js --status SKIP`, Reversibility n/a), then continue to Step 4.1. An `armed` outcome never reaches
+5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.1. An `armed` outcome never reaches
 this step, and the reconciler does not run the CLI; with `--keep-open` on the composer, only a
 Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
 

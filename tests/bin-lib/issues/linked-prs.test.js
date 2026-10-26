@@ -70,7 +70,7 @@ test('a same-repo PR mention (no closing keyword) is returned in mentions', () =
       closedByPullRequestsReferences: { nodes: [] },
       timelineItems: {
         nodes: [
-          { source: { number: 1803, title: 'Fix context.js resolveRun fallback', state: 'MERGED', merged: true, mergedAt: '2026-09-03T00:00:00Z', repository: { nameWithOwner: 'o/r' } } },
+          { source: { number: 1803, title: 'Fix context.js resolveRun fallback', state: 'MERGED', createdAt: '2026-09-02T00:00:00Z', merged: true, mergedAt: '2026-09-03T00:00:00Z', repository: { nameWithOwner: 'o/r' } } },
         ],
       },
     },
@@ -78,10 +78,27 @@ test('a same-repo PR mention (no closing keyword) is returned in mentions', () =
   const out = fetchLinkedPRs({ numbers: [1791], owner: 'o', repo: 'r', runner });
   assert.deepStrictEqual(out.get(1791), {
     openPR: null,
-    mentions: [{ number: 1803, title: 'Fix context.js resolveRun fallback', state: 'MERGED', merged: true, mergedAt: '2026-09-03T00:00:00Z' }],
+    mentions: [{ number: 1803, title: 'Fix context.js resolveRun fallback', state: 'MERGED', merged: true, mergedAt: '2026-09-03T00:00:00Z', createdAt: '2026-09-02T00:00:00Z' }],
     hasClosingPRReference: false,
     issueState: null,
   });
+});
+
+test('AC3.1: #4314 fetchLinkedPRs returns the mentioning PR createdAt on each mention, null when the response lacks it', () => {
+  const runner = () => resp({
+    i4300: {
+      number: 4300,
+      closedByPullRequestsReferences: { nodes: [] },
+      timelineItems: {
+        nodes: [
+          { source: { number: 4035, title: 'Earlier PR', state: 'MERGED', createdAt: '2026-10-24T08:24:28Z', merged: true, mergedAt: '2026-10-24T09:00:00Z', repository: { nameWithOwner: 'o/r' } } },
+          { source: { number: 4144, title: 'No createdAt', state: 'MERGED', merged: true, mergedAt: '2026-10-24T10:00:00Z', repository: { nameWithOwner: 'o/r' } } },
+        ],
+      },
+    },
+  });
+  const out = fetchLinkedPRs({ numbers: [4300], owner: 'o', repo: 'r', runner });
+  assert.deepStrictEqual(out.get(4300).mentions.map((m) => m.createdAt), ['2026-10-24T08:24:28Z', null]);
 });
 
 test('a cross-repo mention (different nameWithOwner) is filtered out', () => {

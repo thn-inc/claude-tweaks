@@ -12,17 +12,20 @@
 // Output: one JSON object on stdout keyed by requested name — or, with
 // --values, one plain value per line in request order (scalar mode for shell
 // captures; empty line for unset-no-default and error entries; not valid for
-// model-profiles). --all emits every POLICY_KEYS entry, each decorated with
-// its schema metadata (summary/category/tier/type/default); mutually
-// exclusive with --values and takes no key arguments. Per-key errors
-// ({"error": "unknown-key"}) are data (exit 0). Invocation failures — zero
-// keys, a --run dir that does not exist, or a --run path that resolves
-// inside a checkout other than the main checkout (#1065's anchored-or-outside
-// guard) — exit 1 with a stderr message and no JSON. Repo root comes from
-// `git rev-parse --show-toplevel` at the process cwd (cwd itself outside a
-// git repo) — never from
-// CLAUDE_PLUGIN_ROOT (observed unset in Bash tool environments, #170) and
-// never from a positional path argument.
+// model-profiles). --values also writes one stderr warning per requested key
+// holding a present-but-invalid value (`resolve-policy: warning: {key} has
+// invalid value "{raw}" — using default "{value}"`); stdout and the exit code
+// are unchanged, and JSON and --all modes write no warning. --all emits
+// every POLICY_KEYS entry, each decorated with its schema metadata
+// (summary/category/tier/type/default); mutually exclusive with --values and
+// takes no key arguments. Per-key errors ({"error": "unknown-key"}) are data
+// (exit 0). Invocation failures — zero keys, a --run dir that does not exist,
+// or a --run path that resolves inside a checkout other than the main
+// checkout (#1065's anchored-or-outside guard) — exit 1 with a stderr message
+// and no JSON. Repo root comes from `git rev-parse --show-toplevel` at the
+// process cwd (cwd itself outside a git repo) — never from CLAUDE_PLUGIN_ROOT
+// (observed unset in Bash tool environments, #170) and never from a
+// positional path argument.
 // --mcp-reachable asserts the caller has already confirmed GitHub
 // reachability via its own MCP probe (e.g. a bounded `list_issues`/`get_me`
 // call) inside the current agent turn — pass it only when that probe
@@ -135,7 +138,16 @@ function main(argv) {
 
   // A run dir without a config.yml is not an error — the Manifesto may not
   // have written one yet; readFileSafe's null simply means no overlay.
-  const { root, policyRaw, result } = resolvePolicyConfig({ git: gitRoot, readFile: readFileSafe, runDir, keys });
+  // #4141: the rejected raw value rides a side channel, so the entry shape
+  // stays exactly as the JSON output documents it.
+  const invalidRaw = new Map();
+  const { root, policyRaw, result } = resolvePolicyConfig({
+    git: gitRoot,
+    readFile: readFileSafe,
+    runDir,
+    keys,
+    onInvalid: (key, raw) => invalidRaw.set(key, raw),
+  });
 
   // integration-model / merge-verification have no static schema default
   // (skills/_shared/integration-model.md; #559) — an absent value (never a
@@ -171,6 +183,18 @@ function main(argv) {
   }
 
   if (valuesMode) {
+    // #4141: a rejected value still prints its schema default on stdout, so
+    // name each rejected key on stderr — the caller otherwise cannot tell a
+    // typo from an intentional default. Every `invalid` entry reaching here
+    // came through resolvePolicyKeys's invalid branch, so its raw value is
+    // recorded (model-profiles, the only key set elsewhere, is rejected above
+    // in --values mode).
+    for (const key of keys) {
+      const entry = result[key];
+      if (!entry || !entry.invalid) continue;
+      const shownDefault = entry.value ?? '(none)';
+      process.stderr.write(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}" — using default "${shownDefault}"\n`);
+    }
     // Scalar mode for shell-variable capture at prose read sites: one value
     // per line, request order. An {error} entry and a null value (no-default
     // key unset) both print an empty line — mirroring the empty string the

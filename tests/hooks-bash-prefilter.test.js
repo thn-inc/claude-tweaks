@@ -39,6 +39,14 @@ const DIFFERENTIAL_CORPUS = [
   'echo foo>tracked.js',
   // #4210: a glued redirect after a quoted span.
   'echo "hi">tracked.js',
+  // #4281: a bare redirect to a quoted native path.
+  'echo x > "D:\\r\\tracked.js"',
+  // #4281: a redirect on a cd line.
+  '\\cd sub > tracked.js', 'cd sub > tracked.js',
+  // #4281: a redirect glued to an assignment word.
+  'A=x>tracked.js', '\\\nA=x>tracked.js',
+  // #4281: a backslash-newline inside a program word, which bash and the parsers join.
+  'g\\\nit commit -m x', 't\\\nee tracked.js', '"g\\\nit" commit -m x',
 ];
 const teardown = (command) => teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: CWD });
 const powershell = (command) => (powershellOpaqueCommand(command, CWD) ? [{ action: 'powershell-opaque' }] : []);
@@ -462,5 +470,53 @@ test('e2e #4028: a throwing normalizer exits 0 with no stdout on the skip path a
       env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
     });
     assert.strictEqual(stdout, '', command);
+  }
+});
+
+test('#4281: a drive-relative redirect is a hit whatever the placeholder cwd, so the prefilter stays a superset under path.win32', () => {
+  // bash 3.2 and 5: `echo x > D:x; echo y >> d:notes.md` write the files D:x and d:notes.md. Under path.win32,
+  // fileWriteTargets resolves each against a cwd on that drive (D:\repo\x, d:\repo\notes.md) and
+  // against no other, so the prefilter's '.' placeholder must not hide them. A quoted absolute
+  // native path (the spec's central shape: bash writes D:\main\a.js) is a hit too.
+  const win = { pathImpl: path.win32 };
+  for (const command of ['echo x > D:x', 'echo x >> d:notes.md', 'echo x > D:\\repo\\x', "echo x > 'D:\\main\\a.js'", 'echo x > "D:\\main\\a.js"']) {
+    assert.strictEqual(hasFileRedirection(command, win), true, command);
+  }
+  assert.strictEqual(hasFileRedirection('echo x > /dev/null', win), false);
+  // bash 3.2 writes a, bash 5 writes a\: one Windows file, so the walk's own pathImpl settles the
+  // stray backslash and it counts; under POSIX the two files differ and it is unprovable.
+  assert.strictEqual(hasFileRedirection('echo x > a\\', win), true);
+  assert.strictEqual(hasFileRedirection('echo x > a\\', { pathImpl: path.posix }), false);
+});
+
+test('#4281: a NUL in the command is dropped, so a parser target behind one takes the full-handler path', () => {
+  // bash 3.2 and 5, fed through stdin: `echo x > b<NUL>junk` writes bjunk, and `gi<NUL>t commit -m x` runs git commit.
+  for (const command of ['echo x > /main/b\0junk', 'gi\0t commit -m x']) {
+    assert.ok(targeted('pre-tool-use', command), JSON.stringify(command));
+    assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), true, JSON.stringify(command));
+  }
+  assert.strictEqual(shouldRunFull('post-tool-use', bash('gi\0t commit -m x')), true);
+});
+
+test('#4281: a backslash-newline inside a program word is joined, so the word reaches the full handler', () => {
+  // bash 3.2 and 5 join a backslash-newline: `t\`+newline+`ee f1` and `"t\`+newline+`ee" f1` write f1, and
+  // `g\`+newline+`it --version` runs git. After an escaped backslash the newline separates:
+  // `echo a\\`+newline+`tee f1` writes f1 too, and `x\\`+newline+`G=gi; ${G}t --version` runs git, an
+  // assignment only the unjoined reading sees. bash 3.2 and 5 also run `git push` for
+  // `echo a\\`+newline+`G=gi; $\`+newline+`{G}t push`, `echo a\\`+newline+`X=it; g$\`+newline+`X push` and
+  // `echo a\\`+newline+`G\`+newline+`=gi; ${G}t push`: only a backslash-newline after an even run of
+  // backslashes is joined.
+  for (const command of ['g\\\nit commit -m x', 't\\\nee f1', '"g\\\nit" commit -m x', 'echo a\\\\\ntee f1', 'x\\\\\nG=gi; ${G}t push',
+    'echo a\\\\\nG=gi; $\\\n{G}t push', 'echo a\\\\\nX=it; g$\\\nX push', 'echo a\\\\\nG\\\n=gi; ${G}t push']) {
+    assert.ok(targeted('pre-tool-use', command), JSON.stringify(command));
+    assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), true, JSON.stringify(command));
+  }
+  assert.strictEqual(shouldRunFull('post-tool-use', bash('g\\\nit commit -m x')), true);
+});
+
+test('#4281: a redirect on a cd line takes the full-handler path', () => {
+  // bash 3.2 and 5: `\cd sub > f1` and `cd sub > f1` write f1 in the starting cwd.
+  for (const command of ['\\cd sub > f1', 'cd sub > f1']) {
+    assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), true, command);
   }
 });

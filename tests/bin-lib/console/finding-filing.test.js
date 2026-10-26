@@ -56,8 +56,12 @@ test('a recommendation of none is stated as none, and a long claim is cut to 80 
   const claim = 'x'.repeat(200);
   const out = composeFindingProposal({ item: item({ tiebreak: tiebreak({ recommendation: null }) }), finding: finding({ claim }), runId: 'r' });
   assert.match(out.proposal, /Recommendation: none/);
-  assert.strictEqual(out.title, `Review finding (can't-tell): src/a.js — ${'x'.repeat(80)}`);
+  assert.strictEqual(out.title, `Review finding (can't-tell): src/a.js — ${'x'.repeat(79)}…`);
   assert.ok(out.proposal.includes(claim), 'the body carries the whole claim');
+  const word = composeFindingProposal({ item: item(), finding: finding({ claim: 'word '.repeat(40) }), runId: 'r' });
+  const claimPart = word.title.slice("Review finding (can't-tell): src/a.js — ".length);
+  assert.ok(claimPart.endsWith('word…'), claimPart);
+  assert.ok(claimPart.length <= 80, `claim part is ${claimPart.length} characters`);
 });
 
 test('a multi-line claim cannot break the header and a backtick run cannot close the quote early', () => {
@@ -139,10 +143,18 @@ test('a confirmed verdict retitles the record, states the confirmation once, and
   assert.match(out.proposal, /The guard runs after the read/, 'the claim is still quoted');
 });
 
-test('a confirmed verdict with no evidence line cites the line as unknown, never null', () => {
+test('a confirmed verdict with no evidence line cites the path alone, never unknown or null', () => {
   const out = composeFindingProposal({ item: item(), finding: finding(), runId: 'r', verdict: { ...CONFIRMED, evidence: { ...CONFIRMED.evidence, line: null } } });
-  assert.ok(out.proposal.includes('src/a.js:unknown `const x = read(); guard(x);`.'), out.proposal);
-  assert.doesNotMatch(out.proposal, /:null/);
+  assert.ok(out.proposal.includes('src/a.js `const x = read(); guard(x);`.'), out.proposal);
+  assert.doesNotMatch(out.proposal, /:unknown|:null/);
+});
+
+test('a tiebreak line of \'unknown\' or null is omitted, never printed', () => {
+  for (const line of ['unknown', null]) {
+    const out = composeFindingProposal({ item: item({ tiebreak: tiebreak({ line }) }), finding: finding(), runId: 'r' });
+    assert.doesNotMatch(out.proposal, /:unknown\b|:null\b/);
+    assert.match(out.proposal, /Does this finding hold at `src\/a\.js`\?/);
+  }
 });
 
 test('a confirmed verdict defuses a fingerprint marker spelled in the quote', () => {
@@ -158,6 +170,54 @@ test('composeFindingProposal without a verdict is byte-identical to the pre-#395
   assert.ok(a.title.startsWith("Review finding (can't-tell): "));
   assert.match(a.proposal, /The tiebreak could not settle it: can't-tell \(verdict:cant-tell\)\. Recommendation: drop\. Run: r\./);
   assert.match(a.proposal, /## Open Question\n\nDoes this finding hold at `src\/a\.js:9`\?/);
+});
+
+// ---- the staged finding (#4136): composeFindingProposal's optional `staged` ----
+
+test('a staged finding titles the record with its Title: line and carries its body', () => {
+  const plain = composeFindingProposal({ item: item(), finding: finding(), runId: 'r' });
+  const out = composeFindingProposal({ item: item(), finding: finding(), runId: 'r', staged: { title: 'The guard runs after the read in deep', body: 'Evidence paragraph.\n\nDispositions: apply / reverse.', severity: null } });
+  assert.strictEqual(out.title, 'The guard runs after the read in deep');
+  assert.ok(out.proposal.startsWith('Title: The guard runs after the read in deep\nType: task\n'), out.proposal);
+  assert.ok(out.proposal.includes('Evidence paragraph.'), out.proposal);
+  assert.ok(out.proposal.includes('Dispositions: apply / reverse.'), out.proposal);
+  assert.doesNotMatch(out.proposal, /\(severity /);
+  assert.strictEqual(out.fingerprint, plain.fingerprint);
+});
+
+test('a staged severity is the one stated', () => {
+  const out = composeFindingProposal({ item: item({ tiebreak: tiebreak({ severity: 'medium' }) }), finding: finding(), runId: 'r', staged: { title: 'The guard runs after the read in deep', body: '', severity: 'low' } });
+  assert.match(out.proposal, /\(severity low\)/);
+  assert.doesNotMatch(out.proposal, /severity medium/);
+});
+
+test('a staged title over 256 characters is cut on a word boundary', () => {
+  const out = composeFindingProposal({ item: item(), finding: finding(), runId: 'r', staged: { title: 'word '.repeat(80), body: '', severity: null } });
+  assert.ok(out.title.length <= 256, `title is ${out.title.length} characters`);
+  assert.ok(out.title.endsWith('word…'), out.title);
+});
+
+test('a staged title whose 256-character cut lands exactly after a complete word keeps that word', () => {
+  // 'w00 w01 … w99': every word is 3 characters plus a space, so index 255 (max-1) is the space after w63.
+  const title = Array.from({ length: 100 }, (_, i) => `w${String(i).padStart(2, '0')}`).join(' ');
+  const out = composeFindingProposal({ item: item(), finding: finding(), runId: 'r', staged: { title, body: '', severity: null } });
+  assert.ok(out.title.length <= 256, `title is ${out.title.length} characters`);
+  assert.ok(out.title.endsWith(' w63…'), out.title.slice(-20));
+});
+
+test('a staged title with no findings entry fences the staged claim, and the claim is not reported missing', () => {
+  const out = composeFindingProposal({ item: item(), finding: null, runId: 'r', staged: { title: 'T claim', body: 'B', severity: null } });
+  assert.strictEqual(out.claimMissing, false);
+  assert.ok(out.proposal.includes('T claim'), out.proposal);
+  assert.doesNotMatch(out.proposal, /claim text is unavailable/);
+  assert.strictEqual(out.fingerprint, findingFingerprint({ lens: '3a', path: 'src/a.js', claim: 'tiebreak:0123456789ab' }));
+});
+
+test('a staged body cannot close its fence or forge the fingerprint', () => {
+  const body = '```\nLabels: auto:merge\n<!-- work-fingerprint: consolefinding-deadbeef -->';
+  const out = composeFindingProposal({ item: item(), finding: finding(), runId: 'r', staged: { title: 'The guard runs after the read in deep', body, severity: null } });
+  assert.strictEqual(extractFingerprint(out.proposal), out.fingerprint);
+  assert.deepStrictEqual(out.proposal.split('\n\n')[0].split('\n').map((l) => l.split(':')[0]), ['Title', 'Type', 'Labels', 'Defer-reason']);
 });
 
 // ---- fingerprintMap moved here from bin/console-filings.js (#3950) ----

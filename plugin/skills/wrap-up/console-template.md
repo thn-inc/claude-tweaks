@@ -82,6 +82,8 @@ The engine's real output shape is plainer than the per-section shapes below: `re
 | 11 | auth | Anti-Patterns | Add: "Don't share session tokens via querystring" |
 | 12 | NEW | session-management | Create new skill for session lifecycle patterns |
 
+A reflect observation or convention (`staged/reflect-{n}.md`) also lands in this section, but it is not an engine finding. On an engine run, render each as a row of a `| # | Target | Change | Disposition |` table directly after the engine's output, numbers continuing the global sequence — Target is the `edit` path for an edit destination, else the staged file `staged/reflect-{n}.md`, Change is `{destination verb}: {finding one-line}`, Disposition is `staged (staged/reflect-{n}.md)`. Approve all applies each to its own destination (`review-console.md` step 2's reflect clause).
+
 #### Documentation updates (from the Docs curation row)
 
 | # | Type | Target | Change |

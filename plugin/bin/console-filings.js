@@ -16,7 +16,13 @@
 // remaining proposal is written to <out-dir>/console-filing-{n}.md. The Review
 // Console's Queue-writes step files those proposals. Never calls gh.
 // Prints JSON: { file: [{ item, fingerprint, title, proposal: <path>, claimMissing? }],
-//                deduped: [{ item, fingerprint, number }] }
+//                deduped: [{ item, fingerprint, number }], logFailures: [{ item, error }] }
+// Each deduped entry's trace is appended to the run's decisions.md under `## /wrap-up`
+// (#4026): `AUTO {time} — Queue write: {item} already filed as #{number}
+// (work-fingerprint {fingerprint}). Reversibility: n/a.`, the line review-console.md's
+// Can't-tell filings told the caller to log. A failed append lands in logFailures (always
+// present, empty when none) with one stderr line; it never changes the exit code. --list
+// and every non-zero exit log nothing.
 // claimMissing (true, else absent) marks a proposal whose finding has no entry in the run's
 // review-findings.json: it names the location but not the claim, and stderr says so per item.
 // --list is read-only (no --existing, --out-dir or --only; nothing written): it
@@ -34,7 +40,8 @@
 // when the run dir is missing or not anchored under the main checkout (a
 // worktree-local shadow — _shared/pipeline-run-dir.md's Anchoring section,
 // [IL-127]), or --out-dir is unwritable. This is the Sanctioned-writer vocabulary
-// (no exit 1), though the run dir is only read: the writes are the caller-named
+// (no exit 1), though the run dir's only write is those appended decisions.md
+// lines: the other writes are the caller-named
 // --out-dir's files, create-or-overwrite with no lock, so a caller reusing a
 // directory owns what an earlier run left in it.
 'use strict';
@@ -42,6 +49,7 @@
 const fs = require('fs');
 const path = require('path');
 const { resolveTarget } = require('./lib/stage-item/write');
+const { formatEntry, appendEntry } = require('./lib/log-decision/append');
 const { findingItems, runIdOf } = require('./lib/console/resolve');
 const { planFilings, fingerprintMap } = require('./lib/console/finding-filing');
 const { checkFingerprint } = require('./lib/issues/record');
@@ -80,6 +88,8 @@ const realDeps = {
   mkdir: (p) => fs.mkdirSync(p, { recursive: true }),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  now: () => Date.now(),
+  appendDecision: appendEntry,
 };
 
 // One --list row: the item's console fields plus its tiebreak verdict's, null when it has none.
@@ -91,7 +101,8 @@ function listRow(i) {
   };
 }
 
-function run(argv, deps = realDeps) {
+function run(argv, overrides = {}) {
+  const deps = { ...realDeps, ...overrides };
   const o = parseArgs(argv);
   const usageError = (message) => { deps.stderr(`console-filings.js: ${message}\n${USAGE}`); return 2; };
   if (o.error) return usageError(o.error);
@@ -149,7 +160,7 @@ function run(argv, deps = realDeps) {
   const planned = planFilings({ items: items.map((i) => ({ ...i, resolution: 'filed' })), findings, runId: runIdOf(target.dir) });
 
   const known = fingerprintMap(rows);
-  const result = { file: [], deduped: [] };
+  const result = { file: [], deduped: [], logFailures: [] };
   const toWrite = [];
   for (const p of planned) {
     if (p.claimMissing) deps.stderr(`console-filings.js: ${p.item}: the finding's claim text is unavailable (review-findings.json has no entry for its tiebreak id) — its proposal names the location only\n`);
@@ -169,6 +180,17 @@ function run(argv, deps = realDeps) {
   } catch (err) {
     deps.stderr(`console-filings.js: could not write --out-dir ${o.outDir} (${err && err.message})\n`);
     return 3;
+  }
+  const now = deps.now();
+  for (const d of result.deduped) {
+    const text = `${d.item} already filed as #${d.number} (work-fingerprint ${d.fingerprint})`;
+    try {
+      deps.appendDecision({ runDir: target.dir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now, step: 'Queue write', text, reversibility: 'n/a' }) });
+    } catch (err) {
+      const error = String((err && err.message) || err);
+      result.logFailures.push({ item: d.item, error });
+      deps.stderr(`console-filings.js: could not append the decisions.md entry for ${d.item}: ${error}\n`);
+    }
   }
   deps.stdout(JSON.stringify(result) + '\n');
   return 0;

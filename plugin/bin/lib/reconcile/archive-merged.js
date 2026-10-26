@@ -15,10 +15,11 @@ const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
 const { canonicalRealpath, resolveLeaf } = require('../path-guard');
 const { runLiveness } = require('../run-liveness');
+const { ownEventRecency } = require('../run-liveness/probes');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
-  iterRunDirsWithState, writeRunState, readRunState, readEventLines, isAdHocRunDir,
+  iterRunDirsWithState, writeRunState, readRunState, isAdHocRunDir,
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
 const {
@@ -304,47 +305,8 @@ function archiveOrphanedMint(root, dir) {
 // differently-tuned constant.
 const STALE_INTERRUPTED_TTL_MS = ORPHAN_MINT_TTL_MS;
 
-// #1737: one read of events.jsonl (via context.js's shared readEventLines)
-// answering both questions `isAbandonedInterrupted` used to ask via two
-// separate reads. `readable` is distinct from `lastOwnMs`'s own `null`, which
-// conflates two different things: "the log is readable but has no qualifying
-// (non-fallback, parseable-ts) event" and "the log couldn't be read in the
-// first place." Only the caller below needs to tell those apart (#1673 F9
-// review finding): a genuinely unreadable/absent log is UNKNOWN evidence, not
-// proof of staleness.
-//
-// `lastOwnMs` is the newest event this run can actually claim as its own, in
-// ms — or null when there are none. Deliberately NOT run-state's `updatedAt`,
-// and deliberately excluding `attribution: 'fallback'` lines: a fallback
-// event is one ANOTHER session's hook guessed into this run because the run
-// had no provable owner (context.js's resolveRun). Those lines advance
-// `updatedAt` without this run being alive at all, which is precisely how an
-// abandoned run looks perpetually busy and never becomes closeable (#1673
-// Deliverable 4).
-//
-// Deliberately asymmetric with context.js's `scanWrapupEvents` (read by
-// `checkRunIntegrity`), which does NOT filter fallback-attributed lines: a
-// run whose events.jsonl holds ONLY fallback-attributed lines can therefore
-// read as both "abandoned" here (no self-attributed activity) AND "shipped"
-// there (>=1 skill_invoked still counts, fallback or not). That combination
-// is coherent and intended, not a bug to reconcile: the work shipped, and
-// nothing THIS run itself produced has touched it since — a future reader
-// should not "fix" the two filters into agreement.
-function ownEventRecency(runDir) {
-  const lines = readEventLines(runDir);
-  if (lines === null) return { readable: false, lastOwnMs: null };
-  let newest = null;
-  for (const ev of lines) {
-    if (!ev || ev.attribution === 'fallback') continue;
-    const t = Date.parse(ev.ts);
-    if (Number.isNaN(t)) continue;
-    if (newest === null || t > newest) newest = t;
-  }
-  return { readable: true, lastOwnMs: newest };
-}
-
 // Thin wrapper kept exported for existing callers (this file's own tests
-// import it directly) — `ownEventRecency` above is the one real reader now.
+// import it directly) — `ownEventRecency` (run-liveness/probes.js) is the one real reader now.
 function lastOwnEventMs(runDir) {
   return ownEventRecency(runDir).lastOwnMs;
 }

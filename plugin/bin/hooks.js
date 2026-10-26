@@ -1130,12 +1130,38 @@ async function runDeleteLedger(argv) {
     const { resolveLedgerPath, describeRunLedgers } = require('./lib/wrap-up/ledger-write');
     const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
     const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg || null });
+    // #4026: a report that leaves the ledger on disk logs its own SKIP line
+    // (cleanup-procedures.md Item 2), only into an anchored run dir. A
+    // failed append is one stderr line; stdout and the exit code stay as-is.
+    const logLeftOnDisk = (report) => {
+      try {
+        const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
+        const target = resolveTarget({ runDir, cwd: process.cwd() });
+        if (!target.ok) return;
+        appendEntry({
+          runDir: path.dirname(target.file),
+          section: '/wrap-up',
+          entry: formatEntry({
+            status: 'SKIP',
+            now: Date.now(),
+            step: 'Cleanup item 2 delete-ledger (skipped)',
+            text: `condition: delete-ledger reported ${report} → fallback: ledger left on disk, nothing committed for item 2`,
+            reversibility: 'n/a',
+          }),
+        });
+      } catch (e) {
+        process.stderr.write(`claude-tweaks: delete-ledger: decisions.md append failed (${e && e.message}) — hand-log the Item 2 SKIP line\n`);
+      }
+    };
     if (!resolved.ok && resolved.reason === 'ambiguous') {
       process.stdout.write(`claude-tweaks: delete-ledger: ${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}\nLedger not deleted.\n`);
+      logLeftOnDisk('ambiguous');
     } else if (!resolved.ok && resolved.reason === 'rejected') {
       process.stdout.write(`claude-tweaks: delete-ledger: --ledger ${resolved.candidates[0]} rejected (${resolved.detail}) — ledger not deleted\n`);
+      logLeftOnDisk('rejected');
     } else if (!resolved.ok && resolved.reason === 'unattributable') {
       process.stdout.write(`claude-tweaks: delete-ledger: cannot attribute docs/plans ledgers to ${path.basename(runDir)} (${resolved.detail}) — pass --ledger <path> explicitly; ledger not deleted\n`);
+      logLeftOnDisk('unattributable');
     } else if (!resolved.ok) {
       // #3686: with no --ledger, an inherited-only docs/plans set is named here.
       let inherited = '';
@@ -1152,6 +1178,7 @@ async function runDeleteLedger(argv) {
         process.stdout.write(`claude-tweaks: deleted ledger ${resolved.path}\n`);
       } catch (e) {
         process.stdout.write(`claude-tweaks: delete-ledger: failed to delete ${resolved.path} (${e.message})\n`);
+        logLeftOnDisk('failed to delete');
       }
     }
   }
