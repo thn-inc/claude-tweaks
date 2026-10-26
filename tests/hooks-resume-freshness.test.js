@@ -8,6 +8,7 @@ const {
   checkResumeFreshness,
   RESUME_FRESHNESS_THRESHOLD_MS,
 } = require('../plugin/bin/lib/hooks/resume-freshness');
+const { LIVE_WINDOW_MS } = require('../plugin/bin/lib/run-liveness/constants');
 const { gitRepo, linkedWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
 
 function tmpRunDir(state) {
@@ -102,7 +103,6 @@ test('RESUME_FRESHNESS_THRESHOLD_MS is on the order of minutes', () => {
 
 // --- #4420: checkResumeFreshness reads the lock and last-commit answers through
 // run-liveness's evidence (blocksResume), so an unknown answer fails closed. ---
-const { LIVE_WINDOW_MS } = require('../plugin/bin/lib/run-liveness/constants');
 const OLD = Date.parse('2026-01-01T00:00:00Z');
 const OLD_ENV = { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' };
 const thrower = (msg) => () => { throw new Error(msg); };
