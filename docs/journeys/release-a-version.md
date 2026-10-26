@@ -66,9 +66,10 @@ files:
   - Wrong branch: the line names the current branch, and the recovery is `git -C "$RUN_ROOT" switch main`.
   - Changes outside run dirs: the line lists the files that differ and points to a PR, with no push command.
   - A failed fetch, or another git error: git's own stderr in place of that line (#4012).
+  - With `--as {version}`, Step 5 re-runs the same check before the override. A failure stops with `stopped before the override:` and Step 3's reason, minus the `switch` recovery. On a pass it builds the `Release-As:` commit with `git commit-tree` on the printed tip and pushes only that commit as `{sha}:refs/heads/main`, so the archive commits stay local and local `main` does not move. A rejected push leaves nothing stranded: re-running the release recovers (#4139).
 - **Should feel:** Archive bookkeeping never blocks a release; a real divergence stops it with the one command that fixes it.
 - **Should understand:** Commits ahead are fine only when they touch nothing outside run directories. The review's test gate runs against the tree it stands in, so that tree must match the range being tagged everywhere that ships.
-- **Red flags:** A release refused over `[reconcile] archive run` commits alone; a checkout behind `origin/main` let through; a stop line advising `git push` for local commits that change shipped files; a review run after a fetch that failed; a marker whose reviewed tip differs from the sha the check compared against (a sibling fetch landed between them).
+- **Red flags:** A release refused over `[reconcile] archive run` commits alone; a checkout behind `origin/main` let through; a stop line advising `git push` for local commits that change shipped files; a review run after a fetch that failed; a marker whose reviewed tip differs from the sha the check compared against (a sibling fetch landed between them); a `--as` run refused over archive commits alone, or one whose `Release-As:` push carried `[reconcile] archive run` commits to `origin/main`.
 
 ### 7. `main` moves while the release is in flight
 - **URL:** `/claude-tweaks:release` (pr-first) on a busy repo where teammates keep merging PRs during Step 3's review or the release PR's check watch
@@ -101,3 +102,4 @@ files:
 - Steps 6-7 updated for #4157 (the review-tree check resolves the tip once, in its own first call, prints it as the recorded reviewed tip, and compares the trees against that pasted sha; Step 5's delta takes the new tip from that same printed sha)
 - Step 5 updated for #4151 (Step 0's refusal moved from an inline `node -e` probe into `resolve-run-dir`'s step 2, which also refuses a directory whose `run-state.json` cannot be read; the `refused: {dir}` line and its log line are gone)
 - Step 7 updated for #4152 (the comparison now runs as the tested CLI `bin/release-tip-check.js`; the arrived-commit major is gated per delta, and an interactive Proceed continues with the verdict)
+- Step 6 updated for #4139 (the `--as` anchor re-runs Step 3's review-tree check instead of requiring `HEAD == origin/main`, and builds the override with `commit-tree` on the fetched tip so archive commits never reach origin)

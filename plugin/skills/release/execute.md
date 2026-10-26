@@ -93,32 +93,25 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "{run-dir}" --id release-he
 
 Steps 6 and 7 do not run — there is no tag to verify and nothing shipped to book. This is one of the Step 5 `HELD` stops that is not a Step 4 HARD-GATE; SKILL.md's Step 8 names them all.
 
-**`--as {version}` — push the override, then wait for the re-render.** release-please derives the PR from the commits it sees, so the override must reach the integration branch and be re-read before the PR is merged. Every git call is anchored to `$RUN_ROOT` — a bare `git commit` from a worktree cwd would put the override on the worktree's branch, where release-please will never see it. Assert three things about the anchor first — on the integration branch, clean, and exactly at the fetched `origin/{branch}` tip:
+**`--as {version}` — push the override, then wait for the re-render.** release-please derives the PR from the commits it sees, so the override must reach the integration branch and be re-read before the PR is merged. Every git call is anchored to `$RUN_ROOT` — a bare `git commit` from a worktree cwd would put the override on the worktree's branch, where release-please will never see it. Run SKILL.md Step 3's review-tree check, its two calls unchanged: the fetch-and-resolve call that prints `{tip-sha}`, then the tree check with that printed sha pasted in literally. It passes exactly when `$RUN_ROOT` is on `{branch}`, 0 commits behind `{tip-sha}`, and its tree equals `{tip-sha}`'s outside `.claude-tweaks/pipelines/`, so a checkout whose only unpushed commits are reconcile's `[reconcile] archive run …` commits passes, as it does at Step 3. Any failure is `failed` with no commit made, reported with Step 3's stop line and reason under the prefix `stopped before the override:`, without Step 3's `switch` recovery (the same carve-out the reviewed-tip comparison's step 3 already makes: a sibling session owns the shared checkout's branch). Never compare `HEAD` and `origin/{branch}` shas for equality.
+
+Build the override on `{tip-sha}`, never on `HEAD`: a commit made on `HEAD` would push the archive commits to `origin/{branch}` with the trailer. `commit-tree` writes only the commit object, with `{tip-sha}` as its sole parent and `{tip-sha}`'s tree (`^{tree}` is git's peel syntax, not a placeholder); it moves no branch and reads neither the index nor the working tree, so a sibling's staged work can never be absorbed into the override, which is the only reason the old dirty-anchor precondition existed. Use two calls, one command each, so the printed sha is pasted literally:
 
 ```bash
-git -C "$RUN_ROOT" rev-parse --abbrev-ref HEAD    # must equal {branch}; anything else → failed, no commit
-git -C "$RUN_ROOT" status --porcelain             # must print nothing; anything else → failed, no commit
-git -C "$RUN_ROOT" fetch origin {branch}
-git -C "$RUN_ROOT" rev-parse HEAD origin/{branch} # the two shas must be equal; anything else → failed, no commit
-git -C "$RUN_ROOT" commit --allow-empty -m "chore: release {version}" -m "Release-As: {version}"
-git -C "$RUN_ROOT" push origin {branch}
+git -C "$RUN_ROOT" commit-tree {tip-sha}^{tree} -p {tip-sha} -m "chore: release {version}" -m "Release-As: {version}"
 ```
 
-`{branch}` is the pack's own `branch` field. Each precondition is `failed` with **no commit made**, and each fails for its own reason:
+It prints the new commit's sha `{sha}` as its only stdout line. A non-zero exit, or stdout that is not a single 40-hex sha, is `failed` with nothing pushed: an empty `{sha}` would turn the push below into `git push origin :refs/heads/{branch}`, which deletes the branch on origin. Then:
 
-1. **Wrong branch** — the override would land on some other branch, where release-please never reads it.
-2. **Dirty anchor** — `status --porcelain` must be empty for staged *and* unstaged changes alike. `--allow-empty` means the commit needs no changes of its own, so it would silently absorb whatever is already staged in the main checkout (a sibling session's work-in-progress) into a commit whose whole purpose is to carry one trailer. Report the porcelain output verbatim; there is no recovery command to print — a human decides what to do with their own working tree.
-3. **Tip not at `origin/{branch}`** — a local tip behind origin would push an old tree (or be rejected), and a diverged one would push a history nobody else has. `recover: git -C "$RUN_ROOT" pull --ff-only origin {branch}`, then re-run `/claude-tweaks:release`.
-
-A **rejected push** (non-fast-forward, protected branch, permissions) is `failed`: report `git`'s stderr verbatim and stop with no poll — the override never reached origin, so there is nothing for release-please to re-render and waiting five minutes would only delay the same answer. The commit **has** been made by this point and is stranded locally on `{branch}` in `$RUN_ROOT`, so name its recovery in the same report:
-
-```
-recover: git -C "$RUN_ROOT" pull --rebase origin {branch} && git -C "$RUN_ROOT" push origin {branch}
+```bash
+git -C "$RUN_ROOT" push origin {sha}:refs/heads/{branch}
 ```
 
-Never `git -C "$RUN_ROOT" reset --soft origin/{branch}`: that unmakes the commit into a staged working tree and leaves the `Release-As:` trailer nowhere — the trailer is the entire payload — and in a shared main checkout it also mixes the staged residue into whatever a sibling session commits next.
+The push names that one commit, so origin receives the override and nothing else. `$RUN_ROOT`'s own `{branch}` does not move: its archive commits stay local, and the override reaches the checkout on its next fetch.
 
-Once the push lands, the run's own commit must not read as an unreviewed move, so the reviewed tip advances to the `Release-As:` commit only when `{sha}^` equals the reviewed tip. `{sha}` is `git -C "$RUN_ROOT" rev-parse HEAD` read right after the commit above, and the reviewed tip is read the way the comparison below reads it. Any other parent means a commit this run never reviewed sits beneath the override: nothing advances, and the comparison below counts the whole of it as a move. When it advances, log the full sha after `at reviewed tip`, so the comparison can read it:
+A **rejected push** (non-fast-forward, protected branch, permissions) is `failed`: report `git`'s stderr verbatim and stop with no poll — the override never reached origin, so there is nothing for release-please to re-render and waiting five minutes would only delay the same answer. Nothing is stranded: the commit is on no branch, so the recovery is to re-run `/claude-tweaks:release` once the cause is resolved, which re-runs the anchor against the current tip and builds a fresh override.
+
+Once the push lands, the run's own commit must not read as an unreviewed move, so the reviewed tip advances to the `Release-As:` commit only when `{sha}^` equals the reviewed tip. `{sha}` is the sha `commit-tree` printed (its parent is `{tip-sha}` by construction, so the advance condition reads whether `{tip-sha}` is still the reviewed tip), and the reviewed tip is read the way the comparison below reads it. Any other parent means a commit this run never reviewed sits beneath the override: nothing advances, and the comparison below counts the whole of it as a move. When it advances, log the full sha after `at reviewed tip`, so the comparison can read it:
 
 ```
 AUTO {HH:MM:SS} — Step 5: reviewed tip advanced to this run's Release-As commit {short} (parent is the reviewed tip); at reviewed tip {sha}. Reversibility: n/a.

@@ -137,7 +137,15 @@ empty `--values` line — `invalid: true`, never silently re-derived; or a resol
 as `wait` for this merge and log `AUTO … Step 2.5: lever unresolved ("{raw}") — proceeding as wait`.
 Never as `off`: an unreadable lever must not become the one value that skips the wait.
 
-**Read state first — never parse stderr first.** Before any merge attempt, regardless of value:
+**Read state first — never parse stderr first.** Before any merge attempt, regardless of value, resolve this step's scratch paths (`_shared/session-tmp-root.md`)
+and substitute the printed `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`
+below (`_shared/scratch-worktree.md` §7):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PR_RUNS=pr-runs-{n}.json PARK_COMMENT=park-comment-{n}.md
+```
+
+Then read state:
 
 ```bash
 gh pr view {pr-number} --repo {owner}/{repo} --json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup
@@ -209,10 +217,10 @@ immediately:
 ```bash
 DEADLINE=$(( $(date +%s) + 900 ))
 while :; do
-  gh pr checks {pr-number} --repo {owner}/{repo} > /tmp/pr-checks-{n}.txt 2>&1; RC=$?
+  gh pr checks {pr-number} --repo {owner}/{repo} > "{pr-checks-path}" 2>&1; RC=$?
   case "$RC" in
-    0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status > /tmp/pr-runs-{n}.json || { RC=2; break; }
-       PENDING_RUNS=$(node -e "console.log(require(process.argv[1]).filter((r) => r.status !== 'completed').length)" -- /tmp/pr-runs-{n}.json) || { RC=2; break; }
+    0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status > "{pr-runs-path}" || { RC=2; break; }
+       PENDING_RUNS=$(node -e "console.log(require(process.argv[1]).filter((r) => r.status !== 'completed').length)" -- "{pr-runs-path}") || { RC=2; break; }
        [ "${PENDING_RUNS:-x}" = 0 ] && break                 # all green — no head run still in progress
        [ "$(date +%s)" -ge "$DEADLINE" ] && RC=124 && break  # rollup green, a head run still pending at the bound
        sleep 30 ;;
@@ -236,7 +244,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
   its `workflowName`s); a head run not yet `completed` resumes the bounded watch at the same `DEADLINE`; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) (outcome `merged`,
   then Step 4).
 - `RC=1` (a check failed during the watch) → **Red path**, reason `check-failed:{names}` (names from
-  the `fail` rows of `/tmp/pr-checks-{n}.txt`).
+  the `fail` rows of `{pr-checks-path}`).
 - `RC=124` (still pending at the bound) → **Red path** with reason `checks-pending-timeout` —
   reserved strictly for checks or head runs still running at the bound, never for a check that failed.
 - `RC=2` (unknown `gh` exit) → report `pending-review`, reason `checks-read-failed`; never merge on
@@ -254,10 +262,10 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
    shell string. Check names come from the PR's own workflow YAML (third-party-controlled on a fork
    PR), and every other comment site in this file already builds its body the same way:
    ```bash
-   printf 'Parked by merge-verification (%s): %s on PR #%s. Resume once green.\n' "$VALUE" "$REASON" "$PR" > /tmp/park-comment-{n}.md
-   gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file /tmp/park-comment-{n}.md
+   printf 'Parked by merge-verification (%s): %s on PR #%s. Resume once green.\n' "$VALUE" "$REASON" "$PR" > "{park-comment-path}"
+   gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file "{park-comment-path}"
    ```
-   (`$REASON` holds the check names — from `/tmp/pr-checks-{n}.txt`'s `fail` rows, or the failing
+   (`$REASON` holds the check names — from `{pr-checks-path}`'s `fail` rows, or the failing
    head runs' `workflowName`s — or the pending-timeout phrase — passed as a `printf` argument, never expanded inside the format string.)
    **Verify the label landed** — re-read each record's labels (`gh issue view {n} --json labels`)
    after the add; a missing `bot:parked` is retried once. If it is still missing, the park has no
