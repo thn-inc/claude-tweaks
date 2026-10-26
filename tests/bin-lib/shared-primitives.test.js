@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
-const { runClassified, runClassifiedAsync, isPathContained, toPosix } = require('../../plugin/bin/lib/shared-primitives');
+const { runClassified, runClassifiedAsync, isPathContained, toPosix, relativeDisplayId } = require('../../plugin/bin/lib/shared-primitives');
 const path = require('path');
 
 // A synthetic execFileSync/execFile timeout-kill error — the exact shape
@@ -510,4 +510,13 @@ test('toPosix converts a win32-separated path to forward slashes (#2767)', () =>
 test('toPosix is the identity under a POSIX separator (#2767)', () => {
   assert.strictEqual(toPosix('a/b/c.md', path.posix.sep), 'a/b/c.md');
   assert.strictEqual(toPosix('a\\b', path.posix.sep), 'a\\b', 'a backslash is a filename character on POSIX');
+});
+
+test('AC1.1: relativeDisplayId joins a win32 relative path with forward slashes (#3315)', () => {
+  assert.strictEqual(relativeDisplayId('C:\\repo', 'C:\\repo\\plugin\\bin\\x.js', path.win32), 'plugin/bin/x.js');
+  assert.strictEqual(relativeDisplayId('C:\\repo', 'C:\\repo', path.win32), '');
+});
+
+test('relativeDisplayId is plain path.relative under path.posix (#3315)', () => {
+  assert.strictEqual(relativeDisplayId('/repo', '/repo/a/b.md', path.posix), 'a/b.md');
 });

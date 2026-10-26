@@ -231,6 +231,14 @@ function toPosix(p, sep = path.sep) {
   return sep === '/' ? p : p.split(sep).join('/');
 }
 
+// The `/`-joined repo-display ID of `to` relative to `from` (#3315): the one
+// spelling for a path that lands in a report, JSON ID, or comparison key.
+// `pathImpl` is the seam a test injects `path.win32` through; callers keep
+// opening files with the native path.
+function relativeDisplayId(from, to, pathImpl = path) {
+  return toPosix(pathImpl.relative(from, to), pathImpl.sep);
+}
+
 // Same three-way check bin/lib/hooks/git-exec.js's own `classify()` uses to
 // recognize a killed subprocess: execFileSync/execFile signal a timeout kill
 // via `killed`/`signal` and, depending on platform and Node version, an
@@ -273,6 +281,7 @@ async function runClassifiedAsync(fn, mapError, { retryOnTimeout = false } = {})
 
 module.exports = {
   LARGE_MAX_BUFFER_BYTES, escapeRegExp, isPathContained, isTimeoutError, runClassified, runClassifiedAsync, toPosix,
+  relativeDisplayId,
 };
 Object.defineProperty(module.exports, 'GH_TIMEOUT_MS', { enumerable: true, get: getGhTimeoutMs });
 Object.defineProperty(module.exports, 'GIT_TIMEOUT_MS', { enumerable: true, get: getGitTimeoutMs });

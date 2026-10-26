@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { listSlices, contentHash, selectSlice, listWorkspaceSlices, gitChurn, sliceRecursive, sourceFiles } = require('../../../plugin/bin/lib/code-health/scope');
+const { listSlices, contentHash, selectSlice, listWorkspaceSlices, gitChurn, sliceRecursive, sourceFiles, splitOversized } = require('../../../plugin/bin/lib/code-health/scope');
 const { MAX_STALE_DAYS } = require('../../../plugin/bin/lib/code-health/score');
 const { toPosix } = require('../../../plugin/bin/lib/shared-primitives');
 const { skipUnderRoot } = require('../../helpers/root');
@@ -643,12 +643,14 @@ test('listSlices splitting loses no source file — every file lands in exactly 
 
   // Reconstruct the covered set from the emitted slices, honoring each
   // slice's own recursive flag — the same way every consumer reads them.
+  // Windows' find joins what it appends to slice.path with `/`, so normalize
+  // back to native before comparing against path.join's list (#3315).
   const covered = [];
   for (const slice of listSlices(root)) {
     const args = ['find', slice.path, '-type', 'f', '-name', '*.js'];
     if (!slice.recursive) args.splice(2, 0, '-maxdepth', '1');
     const out = execFileSync(args[0], args.slice(1), { encoding: 'utf8' });
-    covered.push(...out.split('\n').filter(Boolean));
+    covered.push(...out.split('\n').filter(Boolean).map((f) => path.normalize(f)));
   }
   assert.deepStrictEqual([...covered].sort(), [...written].sort(), 'split must cover every file exactly once — no drops, no double-counting');
 });
@@ -671,6 +673,65 @@ test('listSlices splits recursively — an over-cap child is itself split', () =
   fs.writeFileSync(path.join(root, 'big', 'mid', 'leaf', 'x.js'), `// ${BIG}\n`);
   const ids = listSlices(root).map((s) => s.id);
   assert.deepStrictEqual(ids, ['big/mid', 'big/mid/leaf'], 'the split must descend past the first level');
+});
+
+test('splitOversized: a candidate with no source files still emits exactly one recursive slice', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'empty'));
+  const out = [];
+  splitOversized('empty', path.join(root, 'empty'), out);
+  assert.deepStrictEqual(out, [{ id: 'empty', path: path.join(root, 'empty'), recursive: true }]);
+});
+
+test('splitOversized: an over-cap directory whose only subdirectory holds all the bytes emits no own-files slice', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'big', 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'big', 'sub', 'a.js'), `// ${BIG}\n`);
+  const out = [];
+  splitOversized('big', path.join(root, 'big'), out);
+  assert.deepStrictEqual(out, [{ id: 'big/sub', path: path.join(root, 'big', 'sub'), recursive: true }]);
+});
+
+test('splitOversized: a zero-byte subtree emits no slice of its own', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'big', 'one'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'big', 'zero'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'big', 'own.js'), `// ${BIG}\n`);
+  fs.writeFileSync(path.join(root, 'big', 'one', 'a.js'), `// ${BIG}\n`);
+  fs.writeFileSync(path.join(root, 'big', 'zero', 'z.js'), '');
+  const out = [];
+  splitOversized('big', path.join(root, 'big'), out);
+  assert.deepStrictEqual(out.map((s) => s.id), ['big', 'big/one'], 'big/zero holds 0 bytes, so it is not a slice');
+});
+
+test('splitOversized: sizeOf throwing counts as 0 bytes, never aborts the split', () => {
+  const big = 20 * 1024;
+  const files = ['/c/big/own.js', '/c/big/one/b.js', '/c/big/one/gone.js'];
+  const out = [];
+  // POSIX fixture paths, so pin pathImpl to path.posix: this test is about sizeOf, not separators.
+  splitOversized('big', '/c/big', out, {
+    pathImpl: path.posix,
+    listFiles: () => files,
+    sizeOf: (f) => { if (f.endsWith('gone.js')) throw new Error('ENOENT'); return big; },
+  });
+  assert.deepStrictEqual(out, [
+    { id: 'big', path: '/c/big', recursive: false },
+    { id: 'big/one', path: '/c/big/one', recursive: true },
+  ]);
+});
+
+test('AC1.1: splitOversized keeps a nested win32 subdirectory as its own slice (#3315)', () => {
+  const big = 20 * 1024; // two of these exceed MAX_SLICE_BYTES (30 KiB), reaching the split branch
+  const files = ['C:\\c\\big\\own.js', 'C:\\c\\big\\one\\b.js', 'C:\\c\\big\\one\\deeper\\a.js', 'C:\\c\\big\\two\\c.js'];
+  const sizes = { 'C:\\c\\big\\two\\c.js': 1 };
+  const out = [];
+  splitOversized('big', 'C:\\c\\big', out, { pathImpl: path.win32, listFiles: () => files, sizeOf: (f) => sizes[f] ?? big });
+  assert.deepStrictEqual(out, [
+    { id: 'big', path: 'C:\\c\\big', recursive: false },
+    { id: 'big/one', path: 'C:\\c\\big\\one', recursive: false },
+    { id: 'big/one/deeper', path: 'C:\\c\\big\\one\\deeper', recursive: true },
+    { id: 'big/two', path: 'C:\\c\\big\\two', recursive: true },
+  ]);
 });
 
 // ─── gitChurn ──────────────────────────────────────────────────────────────
