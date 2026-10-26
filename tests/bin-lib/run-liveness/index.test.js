@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { PROBE_ORDER, gatherEvidence, decideVerdict, runLiveness, blocksResume } = require('../../../plugin/bin/lib/run-liveness');
+const { PROBE_ORDER, LIVE_PROBES, gatherEvidence, decideVerdict, runLiveness, blocksResume, runIdMs } = require('../../../plugin/bin/lib/run-liveness');
 const { pidStartTime } = require('../../../plugin/bin/lib/run-liveness/process-probe');
 const ctxLib = require('../../../plugin/bin/lib/hooks/context');
 const { adoptionRefusal } = require('../../../plugin/bin/lib/hooks/run-dir-resolve');
@@ -571,4 +571,14 @@ test('blocksResume: a missing lock or commit entry, or an unrecognised result, b
   const withNull = evidenceWith({});
   withNull.evidence.unshift(null);
   assert.strictEqual(blocksResume(withNull), false, 'a null entry beside two negatives is skipped');
+});
+
+test('runIdMs: a run-id basename gives its UTC start in ms; no prefix gives null', () => {
+  assert.strictEqual(runIdMs('/x/2026-08-01T090000-record-1'), Date.parse('2026-08-01T09:00:00Z'));
+  assert.strictEqual(runIdMs('/x/run'), null);
+});
+
+test('LIVE_PROBES is the four live probes, in PROBE_ORDER', () => {
+  assert.deepStrictEqual(LIVE_PROBES, ['owner-pid', 'heartbeat', 'worktree-lock', 'last-commit']);
+  assert.deepStrictEqual(PROBE_ORDER.filter((p) => LIVE_PROBES.includes(p)), LIVE_PROBES);
 });

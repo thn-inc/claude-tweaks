@@ -129,18 +129,25 @@ function isAdHocIntrinsicSkip(dir, reason) {
 // first — 7 days, the same window structurally-stuck gives a stuck dir.
 const ADHOC_SESSION_ENDED_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
-// True only for a genuine ad-hoc dir whose recorded worktree provably resolves
-// to the main checkout that holds it. Compares real paths, so a dir reached
-// through a symlink (/var vs /private/var) never reads a main-checkout stamp as
-// linked; any unprovable path — missing, unresolvable — is false, so an
-// unprovable dir is never swept on liveness evidence.
-function isMainCheckoutAdHoc(dir) {
-  const state = readAdHocState(dir);
-  if (!state) return false;
+// True only when the state's recorded worktree provably resolves to the main
+// checkout that holds `dir` — for any run dir, ad-hoc or not (#4421). Compares
+// real paths, so a dir reached through a symlink (/var vs /private/var) never
+// reads a main-checkout stamp as linked; any unprovable path — missing,
+// unresolvable, absent or non-string — is false. It does no ad-hoc check.
+function recordedWorktreeIsMainCheckout(dir, state) {
+  if (!state || typeof state.worktree !== 'string' || !state.worktree) return false;
   const mainRoot = canonicalRealpath(path.resolve(dir, '..', '..', '..'));
   if (!mainRoot) return false;
   const leaf = resolveLeaf(state.worktree);
   return leaf.state === 'resolved' && leaf.path === mainRoot;
+}
+
+// True only for a genuine ad-hoc dir whose recorded worktree provably resolves
+// to the main checkout that holds it (recordedWorktreeIsMainCheckout, behind the
+// ad-hoc gate), so an unprovable dir is never swept on liveness evidence.
+function isMainCheckoutAdHoc(dir) {
+  const state = readAdHocState(dir);
+  return !!state && recordedWorktreeIsMainCheckout(dir, state);
 }
 
 // runLiveness with its worktree-path probe forced to 'missing'. For a
@@ -2563,7 +2570,7 @@ module.exports = {
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
-  isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, adHocSessionLiveness,
+  isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout, adHocSessionLiveness,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand,
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,

@@ -14,7 +14,7 @@ const {
   archiveMerged, prefetchArchivePrStates, lastOwnEventMs, isAbandonedInterrupted, archiveOrphanedMint, ORPHAN_MINT_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS, isStaleDir,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin, resolveIdenticalWorkTwin,
-  classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc,
+  classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, unclosedRecords, runRecordSet, inFlightRecords,
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge, consoleResidue, consoleResidueHint, filingRerunRemedy,
   unfiledCantTellFindings, CANT_TELL_UNFILED_HINT,
@@ -2159,6 +2159,33 @@ test('#4179: a main-checkout ad-hoc dir owned by the caller\'s own session is ne
 test('#4179: a non-ad-hoc dir stamped with the main checkout is not adhoc-session-ended', () => {
   const { dir } = mkAdHocRunDir({ ageMs: ADHOC_SESSION_ENDED_GRACE_MS * 2, worktree: (root) => root, basename: '2026-10-17T081451-record-1' });
   assert.equal(classifyRunDir({ dir, kinds: ['adhoc-session-ended'], liveness: () => 'dead' }).kind, 'none');
+});
+
+test('AC4.1: recordedWorktreeIsMainCheckout is true for a non-ad-hoc run dir stamped with its main checkout, where isMainCheckoutAdHoc is false', () => {
+  const { dir } = mkAdHocRunDir({ ageMs: 0, worktree: (root) => root, basename: '2026-08-01T090000-record-4421' });
+  const state = JSON.parse(fs.readFileSync(path.join(dir, 'run-state.json'), 'utf8'));
+  assert.equal(recordedWorktreeIsMainCheckout(dir, state), true);
+  assert.equal(isMainCheckoutAdHoc(dir), false);
+});
+
+test('recordedWorktreeIsMainCheckout is false for a linked, missing or absent worktree', () => {
+  const { root, dir } = mkAdHocRunDir({ ageMs: 0, worktree: (r) => r, basename: '2026-08-01T090000-record-4421' });
+  const live = path.join(root, '.claude', 'worktrees', 'live');
+  fs.mkdirSync(live, { recursive: true });
+  assert.equal(recordedWorktreeIsMainCheckout(dir, { worktree: live }), false, 'linked worktree that exists');
+  assert.equal(recordedWorktreeIsMainCheckout(dir, { worktree: path.join(root, '.claude', 'worktrees', 'gone') }), false, 'missing worktree');
+  assert.equal(recordedWorktreeIsMainCheckout(dir, {}), false, 'no worktree key');
+  assert.equal(recordedWorktreeIsMainCheckout(dir, null), false, 'null state');
+  assert.equal(recordedWorktreeIsMainCheckout(dir, { worktree: 7 }), false, 'non-string worktree');
+});
+
+test('recordedWorktreeIsMainCheckout matches through a symlinked dir path', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, () => {
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4421-real-'));
+  const alias = `${real}-alias`;
+  fs.symlinkSync(real, alias, 'dir');
+  const dir = path.join(alias, '.claude-tweaks', 'pipelines', '2026-08-01T090000-record-4421');
+  fs.mkdirSync(dir, { recursive: true });
+  assert.equal(recordedWorktreeIsMainCheckout(dir, { worktree: fs.realpathSync(real) }), true);
 });
 
 test('#4180 trackStuckSkip: dryRun on a past-threshold stuck dir neither escalates nor writes, and returns would-escalate', () => {

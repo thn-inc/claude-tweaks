@@ -3,7 +3,8 @@
 // for a pipeline run directory (#3973), built from POSITIVE evidence over
 // injectable probes. Consumers: reconcile/archive-merged.js's `adhoc-session-ended`
 // sweep, through `adHocSessionLiveness` (#4179), plus `blocksResume`'s two resume
-// callers (#4420).
+// callers (#4420). runIdMs and LIVE_PROBES are exported so reconcile's
+// abandoned-interrupted decision reuses them rather than copying (#4421).
 //
 // Shape: gatherEvidence() asks every probe once and records a tagged entry
 // ({ probe, result: positive | negative | error, detail }) plus the "death
@@ -220,4 +221,4 @@ function resumeEntries(result) {
   return { lock: entry('worktree-lock'), commit: entry('last-commit') };
 }
 
-module.exports = { PROBE_ORDER, gatherEvidence, decideVerdict, runLiveness, blocksResume, resumeEntries };
+module.exports = { PROBE_ORDER, LIVE_PROBES, runIdMs, gatherEvidence, decideVerdict, runLiveness, blocksResume, resumeEntries };
