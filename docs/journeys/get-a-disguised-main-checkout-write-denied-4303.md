@@ -48,7 +48,7 @@ files:
 ### 2. Run a long cd chain: worktree, policy on
 - **URL:** A Bash call with 16 or more distinct `{ cd …; }` groups (`CWD_SET_CAP`), then a relative write, mkdir or commit
 - **Action:** The session runs it.
-- **Should feel:** Refused with the usual denial, without a long hang. A 44 KB command decides in well under a second.
+- **Should feel:** Refused without a long hang, by a denial of its own rather than the usual one: `claude-tweaks: this command changes directory more ways than the hook's shell scanner follows, so it cannot tell where …`. It says to use absolute paths (`git -C <absolute path>` for git) or to split the command. A 44 KB command decides in well under a second.
 - **Should understand:**
   - Past the cap the walk has lost the cwd bash is in, so every target from there carries `lost: true`. In a session whose own repo has worktree-always on, the gate denies a lost target outright. An indeterminate repo status still allows, with a warning.
   - The shadow guard also denies a lost mkdir on a `.claude-tweaks/pipelines` trail, including one entered before the loss.
