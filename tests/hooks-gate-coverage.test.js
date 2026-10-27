@@ -23,6 +23,7 @@ const gitCommand = require('../plugin/bin/lib/hooks/git-command');
 const { WRITE_SHAPES, fileWriteTargets, forEachShellSegment, gitTargets, mkdirTargets, stripHeredocBodies } = gitCommand;
 const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { readText } = require('./helpers/read-skill');
+const { shellQuote } = require('./helpers/shell-quote');
 
 const runsFull = (event, command) => shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } });
 function bashGroupOf(group) {
@@ -2556,7 +2557,9 @@ test('e2e #4303: past the cwd cap, a relative write or git -C aimed at a nested 
     ['C', `${groups4303(20)}mkdir -p ${wtPath} && git -C ${wtPath} commit --allow-empty -qm leak`],
   ];
   for (const [shape, command] of denied) assert.strictEqual(decisionFor(command), 'deny', `${shape}: ${command.slice(-70)}`);
-  assert.notStrictEqual(decisionFor(`${groups4303(20)}echo x > ${path.join(wt, 'ok.out')}`), 'deny');
+  // Quoted (#4281): an unquoted native path loses its backslashes to bash on win32 and names
+  // a drive-relative path instead of the worktree file.
+  assert.notStrictEqual(decisionFor(`${groups4303(20)}echo x > ${shellQuote(path.join(wt, 'ok.out'))}`), 'deny');
 });
 // #4303: the same from a group that overflows the cap with an absolute cd into the main checkout,
 // which the collapse drops. Bash 3.2 and 5 write, nested and sibling layout alike:
