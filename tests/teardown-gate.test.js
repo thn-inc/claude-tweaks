@@ -831,8 +831,8 @@ test('#693: ExitWorktree removing the session\'s own cwd is unaffected by the ow
 //   T3  16 `cd aK &&`, then `cd M/.claude/worktrees; git worktree remove --force x`
 //   T1  15 groups `{ cd aK; }`, then `{ cd M/.claude/worktrees; }; git worktree remove --force x`
 //   T2  15 groups `{ cd nK; }`, then `{ cd wt/sub; }; git -C ../.. worktree remove --force x`
-// 3b26440ad and 4e7d54a9d allow all three; 40b34714a and 81d9f472b deny all three; base d9aa6b82d
-// denies T3 and allows T1 and T2. An absolute path after the cap keeps the ordinary checks: removing
+// Base d9aa6b82d denies T3 and allows T1 and T2 (earlier revisions of this branch allowed or denied
+// all three). An absolute path after the cap keeps the ordinary checks: removing
 // another, unassigned worktree is allowed. Skipped on win32: the commands splice native temp paths.
 test('#4303: past the cwd cap, a relative `git worktree remove` of the session\'s own worktree is denied', {
   skip: process.platform === 'win32' && 'win32: the commands splice native temp paths, whose backslashes the scanner reads as escapes',

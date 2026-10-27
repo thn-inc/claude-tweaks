@@ -418,8 +418,8 @@ test('worktree-required: a DEFINITIVE non-repo answer allows silently, with no w
 // #4303: a target resolved from a cwd the shell scanner lost (past its cwd cap) follows the same
 // rule. From a worktree-always repo, `G16 echo x > out.txt` (16 groups `{ cd /tmp/ct-4303-nK; }`,
 // every cd failing): bash 3.2 and 5 write out.txt in the repo. With git's answer indeterminate,
-// e8473c015 denied the lost target; base d9aa6b82d, 40b34714a, 3b26440ad and 4e7d54a9d allow and
-// warn, as the gate does for every other indeterminate target, so a load spike never freezes a run.
+// an earlier revision of this branch denied the lost target; base d9aa6b82d allows and warns, as
+// the gate does for every other indeterminate target, so a load spike never freezes a run.
 test('worktree-required #4303: a lost target with an indeterminate repo status ALLOWS but says so out loud', () => {
   const wtDetect = require('../plugin/bin/lib/hooks/worktree-detect');
   const repo = gitRepoWithCommit();

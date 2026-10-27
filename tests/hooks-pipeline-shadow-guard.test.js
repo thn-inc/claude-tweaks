@@ -13,7 +13,7 @@
 // Section C step 3.5's transitional guard still tolerates (sunset
 // 2026-11-07). Only a brand-new creation is denied.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
@@ -278,9 +278,13 @@ test('#1778 negative control: a standalone-named directory nested under spec-*/ 
 // this guard is unconditional. `groups(n)` is n groups `{ cd /tmp/ct-4303-nK; }`; no such directory
 // exists, so every cd fails and bash stays where it started.
 const groups =(n) => Array.from({ length: n }, (_, i) => `{ cd /tmp/ct-4303-n${i}; }; `).join('');
+// The sibling-layout parents twoWorktrees4303 creates, removed once the file's tests have run.
+const SIBLING_PARENTS_4303 = [];
+after(() => { for (const dir of SIBLING_PARENTS_4303) fs.rmSync(dir, { recursive: true, force: true }); });
 function twoWorktrees4303({ nested }) {
   const main = gitRepo();
   const parent = nested ? path.join(main, '.claude', 'worktrees') : fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4303-sh-')));
+  if (!nested) SIBLING_PARENTS_4303.push(parent);
   const wt = path.join(parent, nested ? 'x' : 'wt');
   const wt2 = path.join(parent, nested ? 'y' : 'wt2');
   for (const w of [wt, wt2]) fixtureGit(['-C', main, 'worktree', 'add', '-q', w]);
@@ -290,8 +294,8 @@ function twoWorktrees4303({ nested }) {
 
 // Bash 3.2 and 5, run from wt, create a shadow run dir for each (nested and sibling alike):
 //   S2   wt/.claude-tweaks/pipelines/2026-x      S2g, S1, S1d, S3, S3s   wt2/.claude-tweaks/pipelines/2026-x
-// Base d9aa6b82d, 40b34714a, 81d9f472b and 3b26440ad deny each; 4e7d54a9d clamped the `../` under
-// the start (wt/wt/… or wt/wt2/…, inside no pipelines dir) and allowed each. In S3 and S3s the
+// Base d9aa6b82d denies each; an earlier revision of this branch clamped the `../` under the start
+// (wt/wt/… or wt/wt2/…, inside no pipelines dir) and allowed each. In S3 and S3s the
 // segment is spelled by the relative cds before the mkdir, which the lost cwd's trail keeps.
 test('#4303: past the cwd cap, a relative shadow run dir named through `../` is denied', () => {
   for (const nested of [true, false]) {
@@ -311,11 +315,11 @@ test('#4303: past the cwd cap, a relative shadow run dir named through `../` is 
   }
 });
 
-// #4303 (S1c): an && chain of 16 cds (`cd /tmp/ct-4303-aK && …`, every aK present so each succeeds),
+// #4303: an && chain of 16 cds (`cd /tmp/ct-4303-aK && …`, every aK present so each succeeds),
 // then `cd wt/sub; mkdir -p ../../wt2/.claude-tweaks/pipelines/2026-x`: bash 3.2 and 5 create
 // wt2/.claude-tweaks/pipelines/2026-x (nested and sibling alike). The list's end joins past the cap
-// and drops the absolute `cd`. Base d9aa6b82d, 40b34714a and 81d9f472b deny; 3b26440ad and 4e7d54a9d
-// allow. Skipped on win32: the command splices the native temp path.
+// and drops the absolute `cd`. Base d9aa6b82d denies; earlier revisions of this branch allowed it.
+// Skipped on win32: the command splices the native temp path.
 test('#4303: past the cwd cap, a shadow run dir in another worktree after an && chain is denied', {
   skip: process.platform === 'win32' && 'win32: the command splices a native temp path, whose backslashes the scanner reads as escapes',
 }, () => {
@@ -328,18 +332,19 @@ test('#4303: past the cwd cap, a shadow run dir in another worktree after an && 
 
 // #4303: the segment is matched ignoring case (deliberate fail-closed tradeoff): on a case-insensitive
 // volume (APFS here), with wt2/.claude-tweaks/pipelines present, bash 3.2 and 5 create the run dir
-// wt2/.claude-tweaks/pipelines/2026-x for `.Claude-Tweaks/Pipelines/2026-x`. Base d9aa6b82d through
-// 3b26440ad deny; 4e7d54a9d allowed.
+// wt2/.claude-tweaks/pipelines/2026-x for `.Claude-Tweaks/Pipelines/2026-x`. Base d9aa6b82d denies;
+// an earlier revision of this branch allowed it.
 test('#4303: past the cwd cap, a lost shadow run dir is denied whatever the segment\'s case', () => {
   const { wt, name2 } = twoWorktrees4303({ nested: false });
   assertDenied(pre.run({ input: bashInput(`${groups(20)}mkdir -p ../${name2}/.Claude-Tweaks/Pipelines/2026-x`, wt), runDir: null, runState: null, cwd: wt }));
 });
 
-// #4303 (A2r, A2rw): a second collapse keeps the segment spelled before it. With
+// #4303: a second collapse keeps the segment spelled before it. With
 // wt2/.claude-tweaks/pipelines present, `G16 cd ../wt2/.claude-tweaks/pipelines; G16 mkdir 2026-x`
-// (and `&& echo x > 2026-x/decisions.md`): bash 3.2 and 5 create wt2/.claude-tweaks/pipelines/2026-x
-// (and decisions.md in it), nested and sibling alike. e8473c015 restarted the lost cwd's trail at the
-// second collapse and allowed both, as did 4e7d54a9d, 3b26440ad, 40b34714a and base d9aa6b82d.
+// (A2r; A2rw adds `&& echo x > 2026-x/decisions.md`): bash 3.2 and 5 create
+// wt2/.claude-tweaks/pipelines/2026-x (and decisions.md in it), nested and sibling alike. An
+// earlier revision of this branch restarted the lost cwd's trail at the second collapse and
+// allowed both, as did base d9aa6b82d.
 test('#4303: past a second cwd-cap collapse, a shadow run dir named before it is denied', () => {
   for (const nested of [true, false]) {
     const { wt, wt2, name2 } = twoWorktrees4303({ nested });
@@ -352,12 +357,12 @@ test('#4303: past a second cwd-cap collapse, a shadow run dir named before it is
   }
 });
 
-// #4303 (S5): from a session cwd inside an existing run dir, wt/.claude-tweaks/pipelines/2026-old,
+// #4303: from a session cwd inside an existing run dir, wt/.claude-tweaks/pipelines/2026-old,
 // `G16 mkdir ../2026-x` (every cd failing): bash 3.2 and 5 create the new run dir
 // wt/.claude-tweaks/pipelines/2026-x, nested and sibling alike. Its text names no segment, and the
-// lost cwd's stand-in clamped it under the start (2026-old/2026-x, no new run dir): e8473c015 and
-// 4e7d54a9d allowed it. Base d9aa6b82d, 40b34714a and 3b26440ad deny, reading it from the start; that
-// reading (the lost target's `bases`) is now checked as an ordinary target.
+// lost cwd's stand-in clamped it under the start (2026-old/2026-x, no new run dir): earlier
+// revisions of this branch allowed it. Base d9aa6b82d denies, reading it from the start; that
+// reading (the scanner marks the target `reading: true`) is now checked as an ordinary target.
 test('#4303: past the cwd cap, a run dir made beside the session\'s own run dir is denied by base\'s reading', () => {
   for (const nested of [true, false]) {
     const { wt } = twoWorktrees4303({ nested });
@@ -380,8 +385,8 @@ test('#4303: past the cwd cap, a lost target that names no pipelines segment is 
 // #4303: the guard skips git for a candidate whose real path names no `.claude-tweaks/pipelines`
 // segment, so the segment is read off the real path, through any link, never the text. With wt2/p a
 // link to wt2/.claude-tweaks/pipelines, `mkdir -p wt2/p/2026-x`: bash 3.2 and 5 create the run dir
-// wt2/.claude-tweaks/pipelines/2026-x (nested and sibling alike), and every version from base
-// d9aa6b82d to 71931bb44 denies it. Skipped on win32: a symlink there needs a privilege, and the
+// wt2/.claude-tweaks/pipelines/2026-x (nested and sibling alike), and base d9aa6b82d denies it
+// too. Skipped on win32: a symlink there needs a privilege, and the
 // command splices the native temp path.
 test('#4303: a new run dir made through a link into a linked worktree\'s pipelines dir is denied', {
   skip: process.platform === 'win32' && 'win32: symlink creation needs a privilege, and the command splices a native temp path',
