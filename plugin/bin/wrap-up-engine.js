@@ -68,6 +68,8 @@ const USAGE = [
   '       wrap-up-engine.js verify --run-dir <dir> --base <ref>',
   '       wrap-up-engine.js finish-console --run-dir <dir> --approve-all [--ledger <path>]   (JSON {memory?,upstream?,issues?,ledger?} on stdin)',
   '',
+  'plan/record: --dry-run skips only the telemetry append; engine-state.json and decisions.md are still written, so it is no preview.',
+  '',
 ].join('\n');
 
 function usageExit() {
