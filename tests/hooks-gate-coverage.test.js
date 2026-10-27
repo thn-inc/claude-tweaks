@@ -1672,6 +1672,16 @@ test('#4303: the `]` of `$[ … ]` ends the arithmetic', () => {
   // bash 3.2 and 5 write M/f.js.
   assert.ok(fileWriteTargets('x=$[ $(true; true) + 1 ] cd /main; cp a f.js', '/r').some((t) => t.file === MAIN_F));
 });
+// #4303: a `$[` opened on an earlier line keeps its subscript count across a segment whose pass is
+// read again flat (a `${` nest past NEST_LEVEL_CAP), so the second pass starts from the count the
+// first began with and the `] ]` on the next line still closes the `$[`. bash 3.2 and 5 write f.js
+// in the starting directory for both rows (the `&` backgrounds the cd).
+test('#4303: a flat second pass inside a multi-line `$[ … ]` restarts its subscript count', () => {
+  const deep = `"${'${x:-'.repeat(40)}x${'}'.repeat(40)}"`;
+  for (const cmd of [`y=$[ 1 +\na[${deep}\n] ]; cd /tmp & cp a f.js`, 'y=$[ 1 +\na[1\n] ]; cd /tmp & cp a f.js']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'copy', file: path.resolve('/r/f.js') }], cmd.slice(0, 40));
+  }
+});
 // #4303: a process substitution is a command list, and a bare `(` outside arithmetic may be a
 // subshell (a function body, `coproc`), so an `&` in either still cuts and the command after it is
 // read. bash 3.2 and 5 write M/f.js for the `<( )` and /r2/f.js for the function body; bash 3.2
