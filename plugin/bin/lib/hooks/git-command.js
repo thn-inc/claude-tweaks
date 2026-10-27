@@ -2036,6 +2036,7 @@ function groupEventsWith(seg, g, spans, undo) {
   let pieceNesting = g.nesting; // the nesting the current piece began at
   let tail = false; // the current piece follows the closer of a substitution: the rest of its command
   const setCaseDepth = (frame, d) => { const was = frame.caseDepth; frame.caseDepth = d; undo.push(() => { frame.caseDepth = was; }); };
+  const setCasePattern = (frame, on) => { const was = frame.casePattern; frame.casePattern = on; undo.push(() => { frame.casePattern = was; }); };
   const setBrackets = (frame, d) => { const was = frame.brackets; frame.brackets = d; undo.push(() => { frame.brackets = was; }); };
   const cut = (at, ev) => {
     if (at > start) events.push({ text: seg.slice(start, at), sub: inSub, tail, nesting: pieceNesting });
@@ -2054,6 +2055,16 @@ function groupEventsWith(seg, g, spans, undo) {
     atCmd = cmd;
   };
   let parens = null; // parenMatches(seg), computed at the first `((` at command position or `$((`
+  // A bare `()` (`g()`, `function g ()`) ends a function definition's name (#4303): its body is
+  // a compound command, at command position, so a `{` there opens a group and a `case` in it is
+  // read. bash accepts no other empty `( )` (an empty subshell is a syntax error).
+  const emptyParens = (frame, close) => {
+    if (frame.openSeg !== seg) return false;
+    let k = close - 1;
+    while (k > frame.openAt && /\s/.test(seg[k])) k -= 1;
+    return k === frame.openAt;
+  };
+  let fnName = false; // the word after `function` at command position is the name, then the body
   let i = 0;
   while (i < seg.length) {
     const c = seg[i];
@@ -2066,11 +2077,18 @@ function groupEventsWith(seg, g, spans, undo) {
         if (parens === null) parens = parenMatches(seg);
         if (closesDoubled(parens, seg, i + 1)) { nest(2, false); i += 2; continue; }
       }
+      // A `(` that opens a case pattern list (`case x in (a|x) …`) is read as before (#4303), as a
+      // group or a nest, so the arm after its `)` is read as a tail, failing closed; a `|` directly
+      // in it separates patterns (walkShellChunk), and its `)` ends the pattern list.
+      const leadParen = !!top().casePattern && (i === 0 || /\s/.test(seg[i - 1]));
       if (atCmd) {
-        const frame = { kind: '(', caseDepth: 0, cmd: true, sub: g.nesting > 0, nesting: g.nesting };
+        const frame = { kind: '(', caseDepth: 0, cmd: true, sub: g.nesting > 0, nesting: g.nesting, leadParen, openSeg: seg, openAt: i };
         push(frame);
         cut(i, { open: frame });
-      } else nest(1, false, top().cmd);
+      } else {
+        nest(1, false, top().cmd);
+        Object.assign(top(), { leadParen, openSeg: seg, openAt: i });
+      }
       i += 1;
       continue;
     }
@@ -2081,11 +2099,22 @@ function groupEventsWith(seg, g, spans, undo) {
         // of no word (`cp a f.js )`), and the text after it is the rest of the command the
         // substitution sits in, run out there (`$(true; cd /tmp) > f.js` writes from the outer cwd).
         pop();
+        if (t.leadParen) setCasePattern(top(), false);
         if (g.nesting < pieceNesting) { cut(i, null); tail = true; }
-        atCmd = false;
+        atCmd = emptyParens(t, i);
       }
-      else if (t.caseDepth === 0 && t.kind === '(') { pop(); cut(i, { close: t }); atCmd = false; }
-      else { cut(i, null); atCmd = true; }
+      else if (t.caseDepth === 0 && t.kind === '(') {
+        pop();
+        if (t.leadParen) setCasePattern(top(), false);
+        cut(i, { close: t });
+        atCmd = emptyParens(t, i);
+      }
+      else {
+        // A case's pattern list ends at this `)` (#4303), and its arm's commands follow.
+        if (t.caseDepth > 0) setCasePattern(t, false);
+        cut(i, null);
+        atCmd = true;
+      }
       i += 1;
       continue;
     }
@@ -2168,6 +2197,7 @@ function groupEventsWith(seg, g, spans, undo) {
     if (subst === -1) { push({ kind: 'p', caseDepth: 0, cmd: false, bracket: true, brackets: 0 }); atCmd = false; i += 2; continue; }
     if (subst) { nest(subst, subst === 1); i += 1 + subst; continue; }
     if (i === wStart) { i += 1; continue; } // a stray separator character: never a word
+    if (fnName) { fnName = false; atCmd = true; continue; }
     if (!plain || !atCmd) { atCmd = false; continue; }
     const t = top();
     if (w === '{') {
@@ -2177,8 +2207,20 @@ function groupEventsWith(seg, g, spans, undo) {
       continue; // still at command position
     }
     if (w === '}' && t.kind === '{') { pop(); cut(wStart, { close: t }); atCmd = false; continue; }
-    if (w === 'case') setCaseDepth(t, t.caseDepth + 1);
-    else if (w === 'esac') setCaseDepth(t, Math.max(0, t.caseDepth - 1));
+    // `casePattern` (#4303): the frame is in a case's pattern list, from `case` (its subject and `in`
+    // hold no unquoted `|` bash accepts) and again after each `;;`, `;&` or `;;&` (walkShellChunk),
+    // to the `)` that ends the list. A `|` cut there separates patterns: walkShellChunk reads no
+    // separator at it.
+    // `g.caseSeen` tells walkShellChunk a case compound opened (#4303).
+    if (w === 'case') {
+      setCaseDepth(t, t.caseDepth + 1);
+      setCasePattern(t, true);
+      const was = g.caseSeen;
+      g.caseSeen = true;
+      undo.push(() => { g.caseSeen = was; });
+    }
+    else if (w === 'esac') { setCaseDepth(t, Math.max(0, t.caseDepth - 1)); setCasePattern(t, false); }
+    else if (w === 'function') fnName = true;
     atCmd = COMMAND_PREFIX_WORDS.has(w);
   }
   if (seg.length > start) events.push({ text: seg.slice(start), sub: inSub, tail, nesting: pieceNesting });
@@ -2255,7 +2297,8 @@ function visitUnderEach(text, cwds, vars, handler, nest, pathImpl) {
 // later write resolves under x and under the cwd before the list (failing closed). The list's
 // last command branches nothing, so the walk takes it to succeed, as after any `cd x;`: its own
 // failure adds no cwd. Each element of a pipeline runs in a subshell from the cwd the pipeline
-// began at, and its `cd` ends there. A substitution's separators act on the substitution's own
+// began at, and its `cd` ends there; a `|` between case patterns is no pipeline (the separator
+// handling in the loop below). A substitution's separators act on the substitution's own
 // list, never the outer one, and a cd inside a substitution nested in another ends at its closer,
 // as the outer walk's does.
 //
@@ -2338,6 +2381,10 @@ function forEachShellSegment(command, cwd, handler, opts = {}) {
   walkShellChunk(String(command || '').replace(/\0/g, ''), [start], new Map(), handler, 0, true, overflow, !!opts[BASE_VIEW], opts.pathImpl || path);
 }
 
+// A `case` word anywhere in a segment's text, quoted or not (#4303): a superset, read only to fail
+// closed (walkShellChunk's backtick runs).
+const CASE_WORD_RE = /(?:^|[\s;&|(){}`])case(?=[\s;&|()]|$)/;
+
 // The and-or list operator the separator at `outer[at]` is: `&&`, `||`, `|`, or `;` for any other
 // (a `;`, a newline or the end).
 function separatorOp(outer, at) {
@@ -2361,21 +2408,33 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // (after the last `;`, newline, `&` or group opener); `spanStart`, where its current command
   // began (a failed command leaves the cwd there); `skipOk` and `skipFail`, the cwds where the
   // list may already have succeeded or failed and be skipping commands; `pipeStart`, the cwds a
-  // pipeline in progress began at (each element runs in a subshell from there).
-  const freshList = (at) => ({ listStart: at, spanStart: at, skipOk: [], skipFail: [], pipeStart: null });
+  // pipeline in progress began at (each element runs in a subshell from there); `pipeKeep`, whether
+  // one of its `|`s may be a case pattern's or one of its elements is a case compound (endCommand).
+  const freshList = (at) => ({ listStart: at, spanStart: at, skipOk: [], skipFail: [], pipeStart: null, pipeKeep: false });
   // Ends the current command of list `L`, in effect at `at`, at the separator `op`, and returns the
   // cwds the next command runs under. `&&` runs it where the command succeeded and `||` where it
   // failed; whatever the list skips past carries on to its end. A `;`, a newline or the end joins
   // every way the list could have gone, except the last command failing: as after any `cd x;`, the
-  // walk takes a command it does not branch on to succeed.
-  const endCommand = (L, at, op) => {
+  // walk takes a command it does not branch on to succeed. `maybePattern` marks a `|` that may
+  // separate case patterns instead (#4303: one inside a top-level backtick that holds a `case`,
+  // whose structure groupEvents never sees): the walk keeps both readings, the next element running
+  // under the pipeline's start and the cwd in effect, and the pipeline ending under both. `caseSeen`
+  // says a case compound opened since the last separator: as a pipeline element it is one command
+  // whose own `;;` and `;` end no pipeline, and the walk cannot place its `esac` (#4244), so a
+  // pipeline holding one ends under its start and the cwd in effect, failing closed.
+  const endCommand = (L, at, op, maybePattern = false, caseSeen = false) => {
+    if (caseSeen && L.pipeStart !== null) L.pipeKeep = true;
     if (op === '|') {
       if (L.pipeStart === null) L.pipeStart = L.spanStart;
-      return L.pipeStart;
+      if (!maybePattern) return L.pipeStart;
+      L.pipeKeep = true;
+      return joinCwds(L.pipeStart, at, overflow);
     }
     if (L.pipeStart !== null) {
-      at = L.pipeStart; // the pipeline ran in subshells: one command, which changed no cwd
+      // the pipeline ran in subshells: one command, which changed no cwd
+      at = L.pipeKeep ? joinCwds(L.pipeStart, at, overflow) : L.pipeStart;
       L.pipeStart = null;
+      L.pipeKeep = false;
     }
     if (baseLike) {
       // BASE_VIEW: base took every command to succeed and ran the next from where it left the cwd.
@@ -2408,6 +2467,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     L.skipOk = [];
     L.skipFail = [];
     L.pipeStart = null;
+    L.pipeKeep = false;
     L.spanStart = L.listStart;
     return L.listStart;
   };
@@ -2476,6 +2536,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
       if (!bodies[b].shell) walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, false, overflow, baseLike, pathImpl);
     }
   };
+  let btCase = false; // a `case` word shows in the top-level backtick run in progress (#4303)
+  let caseSeen = false; // a case compound opened since the last separator the walk acted on (#4303)
   for (const span of segmentSpans(outer)) {
     const before = cur;
     const inBacktick = span.sub ? 1 : 0; // the backtick span's own level, which g.nesting omits
@@ -2515,16 +2577,37 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
       subCur = null;
     }
     runBodies(span.end, before);
+    caseSeen = caseSeen || !!g.caseSeen;
+    g.caseSeen = false;
     // The separator ends a command of the innermost list open where it stands: a substitution's
     // (by the nesting there, never by whether the sub run is active: an outer piece before the
     // separator has ended the run) or the outer walk's.
     const op = separatorOp(outer, span.end);
+    // #4303: a `|` in a case pattern list (`case x in a|x) cd M;; esac`) separates two patterns, no
+    // pipeline elements: bash 3.2 and 5 run the arm in the current shell, so its `cd` reaches the
+    // commands after `esac` (both write M/f). The walk reads no separator there, so the arm keeps
+    // the cwd semantics base gave it; reading it as `;` would end a pipeline the case sits in
+    // (`true | case …`, which bash runs in a subshell). The frame is groupEvents' innermost one
+    // where the separator stands (a pattern list's leading `(` opens one of its own, `leadParen`),
+    // and a `;;`, `;&` or `;;&` there opens its next pattern list. A
+    // separator inside a top-level backtick is that backtick's own, never the frame's: groupEvents
+    // never reads the backtick's first command, so once a `case` word shows in the backtick run, a
+    // `|` in it is read both ways (endCommand's `maybePattern`), failing closed.
+    if (span.endsInSub) btCase = btCase || CASE_WORD_RE.test(span.text);
+    else {
+      const frame = g.stack[g.stack.length - 1] || g.root;
+      if (op === '|' && (frame.casePattern || frame.leadParen)) continue;
+      if (frame.caseDepth > 0 && outer[span.end] === ';' && (outer[span.end + 1] === ';' || outer[span.end + 1] === '&')) frame.casePattern = true;
+    }
+    const maybePattern = span.endsInSub && btCase;
+    if (!span.endsInSub) btCase = false;
     const level = g.nesting + (span.endsInSub ? 1 : 0);
     if (level > 0) {
       startSubRun();
       const at = subLevelAt(level);
-      subCur = endCommand(at.list, subCur, op);
-    } else cur = endCommand(list, cur, op);
+      subCur = endCommand(at.list, subCur, op, maybePattern, caseSeen);
+    } else cur = endCommand(list, cur, op, maybePattern, caseSeen);
+    caseSeen = false;
   }
   runBodies(Infinity, cur);
 }

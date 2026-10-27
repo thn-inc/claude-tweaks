@@ -1807,6 +1807,78 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   }
 }
 
+// #4303: a `|` between case patterns separates patterns, no pipeline elements, so the arm runs in
+// the current shell and its cd reaches the commands after it, as base d9aa6b82d read it. Bash 3.2
+// and 5 (M = /main, start = /r) write the file each row names; bash 3.2 cannot parse `;&`, `;;&` or
+// an unparenthesized pattern inside `$( )`, and bash 5 writes M/f for each (the pins side with 5).
+{
+  const here = path.resolve('/r/f.js');
+  const files = (cmd) => fileWriteTargets(cmd, '/r').map((t) => t.file).sort();
+  for (const [cmd, expected] of [
+    ['case x in a|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                                // bash: M/f
+    ['case x in x|y) cd /main; echo x > f.js;; esac', [MAIN_F]],                                // bash: M/f
+    ['case x in *|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                                // bash: M/f
+    ['case x in x|a) cd /main;; *) true;; esac; echo x > f.js', [MAIN_F]],                      // bash: M/f
+    ['for i in 1; do case x in a|x) cd /main;; esac; done; echo x > f.js', [MAIN_F]],           // bash: M/f
+    ['if true; then case x in a|x) cd /main;; esac; fi; echo x > f.js', [MAIN_F]],              // bash: M/f
+    ['case x in a|x) cd /main && echo x > f.js;; esac', [MAIN_F]],                              // bash: M/f
+    ['case x in a|x) cd /main\n;; esac; echo x > f.js', [MAIN_F]],                              // bash: M/f
+    ['case x in a|x) cd /main\n echo x > f.js;; esac', [MAIN_F]],                               // bash: M/f
+    ['case $(echo a | cat) in a|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                  // bash: M/f
+    ['case x in a|x) case y in b|y) cd /main;; esac;; esac; echo x > f.js', [MAIN_F]],          // bash: M/f
+    ['( case x in a|x) cd /main;; esac; echo x > f.js )', [MAIN_F]],                            // bash: M/f
+    // A `;;`, `;&` or `;;&` opens the next arm's pattern list.
+    ['case x in a) true;; b|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                      // bash: M/f
+    ['case x in a) true;& b|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                      // bash 5: M/f
+    ['case x in a) true;;& b|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                     // bash 5: M/f
+    ['x=$(case x in a|x) cd /main;; esac; echo x > f.js)', [MAIN_F]],                           // bash 5: M/f
+    // A pipe is still a pipe: in an arm, after `esac`, around the case, and where `case` is no
+    // command word.
+    ['cd /main | true; echo x > f.js', [here]],                                                 // bash: ./f
+    ['case x in a|x) cd /main | true;; esac; echo x > f.js', [here]],                           // bash: ./f
+    ['case x in x) true;; esac; cd /main | true; echo x > f.js', [here]],                       // bash: ./f
+    ['echo case x in a | cd /main; echo x > f.js', [here]],                                     // bash: ./f
+    // A parenthesized pattern list ends at its `)`, so a pipe in the arm after it is a pipe.
+    ['case x in (x) true; cd /main | true;; esac; echo x > f.js', [here]],                      // bash: ./f
+    // A function body is a compound command, so the `case` in it is read too; the brace group's
+    // close also keeps the cwd before it (bash: M/f for each).
+    ['g() { case x in a|x) cd /main;; esac; }; g; echo x > f.js', [MAIN_F, here].sort()],
+    ['function g { case x in a|x) cd /main;; esac; }; g; echo x > f.js', [MAIN_F, here].sort()],
+    ['g() { cd /main; }; g; echo x > f.js', [MAIN_F, here].sort()],
+    ['function g { cd /main; }; g; echo x > f.js', [MAIN_F, here].sort()],
+  ]) {
+    test(`#4303 case: \`${cmd}\` reads a pattern-list | as no pipe and resolves where bash writes`, () => {
+      assert.deepStrictEqual(files(cmd), expected);
+    });
+  }
+  // Deliberate fail-closed tradeoff: a parenthesized pattern list (`(a|x)`) is read as a nest, so
+  // the arm after its `)` is read as a tail and the write resolves under the arm's cd and the
+  // start. bash: M/f.
+  test('#4303 case: the arm after a parenthesized pattern list keeps the start cwd too (deliberate fail-closed tradeoff)', () => {
+    assert.deepStrictEqual(files('case x in (a|x) cd /main;; esac; echo x > f.js'), [MAIN_F, here].sort());
+  });
+  // Deliberate fail-closed tradeoff: a case compound as a pipeline element is one subshell, whose
+  // own `;;` and `;` end no pipeline, and the walk cannot place its `esac`, so the pipeline ends
+  // under both its start and the arm's cwd. bash: M/f for the first two, ./f for the third.
+  test("#4303 case: a pipeline holding a case compound ends under its start and the arm's cwd (deliberate fail-closed tradeoff)", () => {
+    for (const cmd of ['true | case x in a|x) cd /main; echo x > f.js;; esac', 'true | case x in (a|x) cd /main; echo x > f.js;; esac']) {
+      assert.ok(files(cmd).includes(MAIN_F), `${cmd}: ${JSON.stringify(files(cmd))}`);
+    }
+    assert.deepStrictEqual(files('true | case x in a|x) cd /main;; esac; echo x > f.js'), [MAIN_F, here].sort());
+  });
+  // Deliberate fail-closed tradeoff: the walk never reads the case structure inside a top-level
+  // backtick, so once a `case` word shows there, a `|` in it is read both as a pipe and as no
+  // separator. bash: M/f for the first, ./f for the second.
+  test('#4303 case: a | inside a top-level backtick that holds a case keeps both readings (deliberate fail-closed tradeoff)', () => {
+    assert.deepStrictEqual(files('echo `case x in a|x) cd /main; echo x > f.js;; esac`'), [MAIN_F, here].sort());
+    assert.ok(files('case `true; cd /main | echo x > f.js; true` in x) true;; esac').includes(here));
+  });
+  // bash: git runs in M.
+  test('#4303 case: gitTargets reads a pattern-list | the same way', () => {
+    assert.deepStrictEqual(gitTargets('case x in a|x) cd /main;; esac; git commit -m x', '/r').map((t) => t.dir), [path.resolve('/main')]);
+  });
+}
+
 // #4149: inside a double-quoted span, `$( … )`, backticks and `${ … }` nest as in
 // bash, and a quote inside `$(` starts a fresh quoting context; an unquoted `${ … }` nests too. So no
 // `&`, `;`, `(`, `)` or newline inside them is structural, and an earlier `cd` survives. Every case
@@ -2606,6 +2678,16 @@ test('AC1.1 e2e #4303: every #4303 shape from a linked worktree into the main ch
   ];
   for (const [shape, command] of denied) assert.strictEqual(decisionFor(command), 'deny', `${shape}: ${command.slice(-60)}`);
   assert.notStrictEqual(decisionFor(`cd ${wt} && cp a f.js`), 'deny');
+});
+// #4303: a `|` between case patterns is no pipe, so the arm's cd into the main checkout reaches the
+// write after `esac`. Bash 3.2 and 5, started in the worktree, write `main/f.js` for each; base
+// d9aa6b82d denied both. The path is single-quoted, so this runs on every platform.
+test('e2e #4303: a write after a case arm whose pattern list holds a | and cds into the main checkout is DENIED', () => {
+  const { main, decisionFor } = linkedWorktree4303();
+  const m = shellQuote(main);
+  for (const command of [`case x in a|x) cd ${m};; esac; echo x > f.js`, `case x in x|y) cd ${m}; echo x > f.js;; esac`]) {
+    assert.strictEqual(decisionFor(command), 'deny', command);
+  }
 });
 // #4303: bash 3.2 and 5 write nothing for `(( a>1 || b>2 ))`. From the main checkout it
 // resolved `main/1` and `main/2` before #4303, a spurious deny there. No path is spliced in, so
