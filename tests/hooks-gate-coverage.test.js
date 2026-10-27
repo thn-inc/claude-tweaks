@@ -457,6 +457,19 @@ test('#4303: `>&` with a word that starts with digits is a file target', () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'write', file: path.resolve('/r/2x') }], cmd);
   }
 });
+// #4303: an unquoted `)` ends a word, so a target glued to the closer of the `$( )` it sits in ends
+// there. bash 3.2 and 5 write nothing for `$(echo x >&2)` and `$(echo x >& 2)` (fd dups), nor for
+// `$(echo x >&) M/f` (a syntax error, so the word after it is no target), and write ./f for
+// `$(echo x >f)`, `$(echo x > f)`, `$(echo x >f)y`, `$(echo x >&f)` and `$(echo x >& f)`; a quoted
+// or escaped `)` is word text, so `$(echo x >'f)')` and `$(echo x >f\))` write ./f).
+test('#4303: a redirect target glued to a substitution\'s closer ends at the closer', () => {
+  const files = (cmd) => fileWriteTargets(cmd, '/r').map((t) => t.file);
+  for (const cmd of ['echo $(echo x >&2)', 'echo $(echo x >& 2)', 'echo $(echo x >&) /main/f.js']) assert.deepStrictEqual(files(cmd), [], cmd);
+  for (const cmd of ['echo $(echo x >f)', 'echo $(echo x > f)', 'echo $(echo x >f)y', 'echo $(echo x >&f)', 'echo $(echo x >& f)']) {
+    assert.deepStrictEqual(files(cmd), [path.resolve('/r/f')], cmd);
+  }
+  for (const cmd of ["echo $(echo x >'f)')", 'echo $(echo x >f\\))']) assert.deepStrictEqual(files(cmd), [path.resolve('/r/f)')], cmd);
+});
 // #4303: redirectWriteTargets called with no quoting (an exported entry point; every walk passes
 // quoting) reads the operator from the token's start. bash 3.2 and 5 write M/f for `echo x >& M/f`
 // and `echo x >&M/f`, and nothing for `echo x 2>& M/f` (ambiguous redirect) or `echo x >>&M/f`

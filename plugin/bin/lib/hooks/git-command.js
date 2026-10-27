@@ -2588,6 +2588,19 @@ function redirectWriteTargets(t, effCwd, quoting) {
   return redirectRawTargets(t, quoting).map((raw) => resolveWriteTarget(effCwd, raw, pathImpl)).filter(Boolean);
 }
 
+// #4303: an unquoted `)` ends a word, so a target glued to the closer of the substitution it sits in
+// (`$(echo x >f)`, `$(echo x >&2)`) ends there: bash 3.2 and 5 write f, and nothing for `>&2)`. The
+// cut is at the first bare `)`, even one that closes a `(` of the word's own: a `$(` leaves the word
+// unresolvable however it is cut, and the text before a `<(` stays in the same directory, so the
+// cut moves no target out of it. `kinds` are the word's span kinds
+// (tokenize), so a quoted or escaped `)` is word text; null (a word a substitution rewrote, whose
+// kinds no longer line up) leaves it whole, as before.
+function wordBeforeCloser(word, kinds) {
+  if (!kinds) return word;
+  for (let j = 0; j < word.length; j += 1) if (word[j] === ')' && kinds[j] === 'b') return word.slice(0, j);
+  return word;
+}
+
 // The redirection targets of one segment as values, before any cwd resolves them: the scan
 // above without its last step. bash-prefilter.js's hasFileRedirection reads them (#4281), and
 // fileWriteTargets builds its entries from them (writeTarget), so a word from a lost cwd keeps
@@ -2595,8 +2608,11 @@ function redirectWriteTargets(t, effCwd, quoting) {
 function redirectRawTargets(t, quoting) {
   const out = [];
   const kindsOf = quoting && quoting.spanKinds;
+  // The span kinds of token k when they still describe t[k] (no substitution rewrote it), else null.
+  const kindsAt = (k) => (kindsOf && t[k] === quoting.raw[k] ? kindsOf[k] : null);
   for (let i = compoundBodyEnd(t, quoting); i < t.length; i += 1) {
     let rawTarget = null;
+    let targetKinds = null; // rawTarget's span kinds, when known (wordBeforeCloser)
     let plainFd = null; // the fd prefix of a plain `>` ('' when unprefixed); null for any other operator
     // Whether an `&` that starts the target is the operator's own (`>&`). The target is a value
     // (#4281), so an escaped or quoted `&` reads the same: `>\&2` and `> '&2'` write the file `&2`
@@ -2620,6 +2636,7 @@ function redirectRawTargets(t, quoting) {
         if (t[i] === raw) rawTarget = tail;
         else if (t[i].startsWith(head)) rawTarget = t[i].slice(head.length);
         else if (t[i].endsWith(tail)) rawTarget = tail;
+        if (rawTarget === tail) targetKinds = kinds.slice(opEnd);
         // A plain `>` is not the second character of `>>` or `&>`. Its fd prefix is the
         // head's digits when the operator starts the token (`2>`, all bare there); a
         // glued word before it (`x2>`, `"2">`) is a word, not an fd.
@@ -2635,10 +2652,13 @@ function redirectRawTargets(t, quoting) {
     if (rawTarget === '') {
       i += 1; // consume the target token too — never re-scan it as its own operator
       rawTarget = t[i];
+      targetKinds = kindsAt(i);
       // The target is a word of its own: an `&` starting it is literal unless bare.
       if (kindsOf) ampOp = rawTarget !== undefined && kindsOf[i][0] === 'b';
     }
     if (rawTarget === undefined) continue;
+    const whole = rawTarget;
+    rawTarget = wordBeforeCloser(rawTarget, targetKinds);
     // #4303: a target that starts with `&` follows `>&`. After a plain `>` with no fd
     // prefix or the prefix 1, a word that is no fd dup is the csh form `>& file`, which
     // writes the file (bash 3.2 and 5). A bare `&` takes the next token as that word,
@@ -2647,8 +2667,9 @@ function redirectRawTargets(t, quoting) {
     if (ampOp && rawTarget.startsWith('&')) {
       let word = rawTarget.slice(1);
       if (word === '') {
+        if (rawTarget !== whole) continue; // `>&)`: the word ends at the closer, a syntax error
         i += 1; // consume the word token too, as above
-        word = t[i];
+        word = t[i] === undefined ? undefined : wordBeforeCloser(t[i], kindsAt(i));
       }
       const stdout = plainFd === '' || Number(plainFd) === 1; // Number(null) is 0: not stdout
       if (word === undefined || !stdout || isFdDupTarget(word)) continue;
