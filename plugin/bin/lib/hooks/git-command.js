@@ -827,8 +827,11 @@ function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
   // for a shape that has no real effect. An assignment is read from the raw word, whose
   // spanKinds it is aligned with: bash decides it before any `$` expands (#4281).
   let cdLead = 0;
-  let next;
-  while ((next = assignmentWordEnd(rawT, spanKinds, cdLead)) > cdLead) cdLead = next;
+  for (;;) {
+    const next = assignmentWordEnd(rawT, spanKinds, cdLead);
+    if (next === cdLead) break;
+    cdLead = next;
+  }
   const quoting = { raw: rawT, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt, pathImpl };
   // #4281: bash applies a cd line's redirections before the builtin runs, so `cd sub > f1`
   // writes f1 in the cwd before the cd: the handler sees the cd segment under that cwd. Its
