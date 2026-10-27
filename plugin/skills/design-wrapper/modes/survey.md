@@ -98,3 +98,5 @@ The next `/flow` run on the same spec compares the new diff against this cache t
 ```
 
 `suppressed` is the count of observations dropped due to the declined cache — surfaced informationally so callers can mention "N suggestions hidden (previously declined)" if useful. When `recommendations` is empty, the caller omits the Creative Opportunities block entirely.
+
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.

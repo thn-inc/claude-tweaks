@@ -378,10 +378,6 @@ function scanPass(scan) {
   return spans.capped ? scan(topLevelSpans(true)) : r;
 }
 
-function stripQuotes(s) {
-  return s.replace(/^['"]|['"]$/g, '');
-}
-
 // Tokenizer that keeps quoted spans (with spaces) as one token. Also merges a
 // quoted span into an immediately-adjacent (no whitespace between) match —
 // matching real shell word-splitting, where `"/tmp/safe/"$SUFFIX` is ONE word
@@ -389,7 +385,20 @@ function stripQuotes(s) {
 // only ever see the quoted portion in isolation, judge it fully resolvable, and
 // silently drop the unresolvable suffix that would otherwise poison the target.
 //
-// Returns `{ tokens, singleQuoted, doubleQuoted, leadQuoted, spanKinds }` — `singleQuoted[i]` is true
+// #4281: the Bash tool runs every command through bash, Git Bash on Windows, so these
+// are bash's word rules on every platform. `tokens[i]` is the word's VALUE, what bash passes the program, so a quoted
+// native path (`"D:\a\x"`, `'D:\a\x'`) keeps its backslashes as path characters. A bare
+// `\x` is the character `x`; inside double quotes only `\$`, `` \` ``, `\"` and `\\`
+// escape (the `\` goes), and any other `\` stays as typed (`"a\xb"` is `a\xb`); a
+// backslash-newline, bare or double-quoted, is removed. `typed[i]` is the same word as
+// typed, quote delimiters dropped and backslashes kept (the token before #4281, except
+// that a word of backslash-newlines alone is dropped, see the end of tokenize): the
+// heredoc-reader checks name programs from it (checkReaderCommand, planHeredocBodies),
+// so `C:\bin\sh` and `bas\h` still read as shells there. A lone backslash at the end of
+// the text matches no escape and stays in the value as a stray `\` of kind `x`, which the
+// walk then settles by path kind or marks unprovable (see settleStrayBackslash).
+//
+// Returns `{ tokens, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds }` — `singleQuoted[i]` is true
 // when any part of `tokens[i]` was assembled from a single-quoted span, and
 // `doubleQuoted[i]` likewise for a double-quoted span (#4015: the redirect scan
 // treats a `>` in either as literal text). Real bash never performs
@@ -405,42 +414,56 @@ function stripQuotes(s) {
 // quoted delimiter (dropRedirections tells them apart by it).
 //
 // `spanKinds[i]` (#4210) is a string exactly as long as `tokens[i]`, one character
-// per character of the token: `b` bare, `e` backslash-escaped (the `\` and the
-// character it escapes, in a bare span), `s` single-quoted, `d` double-quoted, `x`
-// stray (an unterminated quote character or a lone trailing backslash). Quote
-// delimiters are not part of the token, so they carry no mask character. The
+// per character of the value: `b` bare, `e` backslash-escaped (the one character an
+// escape leaves, bare or double-quoted; #4281), `s` single-quoted, `d` double-quoted
+// (an unescaping `\` inside double quotes included), `x` stray (an unterminated quote
+// character or a lone trailing backslash). Quote delimiters and removed backslashes
+// are not part of the value, so they carry no mask character. The
 // per-token flags above say only THAT a span was quoted; the mask says WHERE, which
 // is what lets the glued-redirect scan accept `echo "hi">x` yet refuse `echo "a>b"`.
 // Two changes to the token regex make the mask truthful: a bare run now stops at a quote
 // (so `foo"bar"` is a bare span plus a double-quoted span, merged into one token as
-// bash does), and a double-quoted span is backslash-aware (`\"` does not close it,
-// and its value keeps the backslashes as typed).
+// bash does), and a double-quoted span is backslash-aware (`\"` does not close it).
 function tokenize(seg) {
   const out = [];
   const singleQuoted = [];
   const doubleQuoted = [];
   const leadQuoted = [];
   const spanKinds = [];
+  const typed = [];
   const re = /"((?:[^"\\]|\\[\s\S])*)"|'([^']*)'|((?:\\[\s\S]|[^\s"'\\])+)|(\S)/g;
   let m;
   let prevEnd = -1;
   while ((m = re.exec(seg)) !== null) {
-    const val = m[1] ?? m[2] ?? m[3] ?? m[4];
+    const text = m[1] ?? m[2] ?? m[3] ?? m[4];
     const isSQ = m[2] !== undefined;
     const isDQ = m[1] !== undefined;
     const isBare = m[3] !== undefined;
+    let val = text;
     let kinds;
-    if (isDQ) kinds = 'd'.repeat(val.length);
-    else if (isSQ) kinds = 's'.repeat(val.length);
-    else if (isBare) kinds = val.replace(/\\[\s\S]|[\s\S]/g, (u) => (u.length === 2 ? 'ee' : 'b'));
-    else kinds = 'x';
+    if (isSQ) kinds = 's'.repeat(text.length);
+    else if (!isDQ && !isBare) kinds = 'x';
+    else {
+      val = '';
+      kinds = '';
+      for (let j = 0; j < text.length; j += 1) {
+        const c = text[j];
+        const next = text[j + 1];
+        if (c === '\\' && next === '\n') { j += 1; continue; }
+        if (c === '\\' && (isBare || '$`"\\'.includes(next))) { val += next; kinds += 'e'; j += 1; continue; }
+        val += c;
+        kinds += isDQ ? 'd' : 'b';
+      }
+    }
     if (out.length && m.index === prevEnd) {
       out[out.length - 1] += val;
+      typed[typed.length - 1] += text;
       spanKinds[spanKinds.length - 1] += kinds;
       if (isSQ) singleQuoted[singleQuoted.length - 1] = true;
       if (isDQ) doubleQuoted[doubleQuoted.length - 1] = true;
     } else {
       out.push(val);
+      typed.push(text);
       spanKinds.push(kinds);
       singleQuoted.push(isSQ);
       doubleQuoted.push(isDQ);
@@ -448,7 +471,11 @@ function tokenize(seg) {
     }
     prevEnd = re.lastIndex;
   }
-  return { tokens: out, singleQuoted, doubleQuoted, leadQuoted, spanKinds };
+  // A word made only of backslash-newlines (`cp a \` then `  b` on the next line) is no
+  // word in bash, which removes them before splitting; `""` stays, an empty word.
+  const keep = out.map((v, i) => v !== '' || singleQuoted[i] || doubleQuoted[i]);
+  const pick = keep.every(Boolean) ? (a) => a : (a) => a.filter((_, i) => keep[i]);
+  return { tokens: pick(out), typed: pick(typed), singleQuoted: pick(singleQuoted), doubleQuoted: pick(doubleQuoted), leadQuoted: pick(leadQuoted), spanKinds: pick(spanKinds) };
 }
 
 // Global git flags that consume the NEXT token as a value.
@@ -456,13 +483,13 @@ const VALUE_FLAGS = new Set(['-C', '-c', '--exec-path', '--namespace']);
 // Flags that make the target unprovable from the command text alone.
 const UNPROVABLE_FLAGS = ['--git-dir', '--work-tree'];
 
-// A raw (unquote-stripped) cd/-C argument that is unresolvable to a concrete,
-// literal path: no argument, "-", starts with "~", contains "$"/backtick, or
-// contains a backslash/double-quote. The last two guard against token-level
-// ambiguity: the tokenizer above is escape-aware, but it keeps backslashes in
-// the token text as typed, so a value that still carries a backslash or stray
-// quote (from an escaped-quote sequence) cannot be trusted as a literal path —
-// never claim an unprovable target. Also unresolvable: anything else that looks
+// A cd/-C argument (its value, from tokenize) that is unresolvable to a concrete,
+// literal path: no argument, "-", starts with "~", contains "$"/backtick,
+// contains a double-quote, or holds the STRAY marker (settleStrayBackslash). The tokenizer
+// above hands over each word's value (#4281), so a backslash inside it, a final one
+// included (`'D:\'`, `"a\\"`, `a\\`), is a literal path character (`"D:\a\x"` names
+// `D:\a\x`), but a double-quote still marks an escaped-quote sequence this module does
+// not trust as a literal path. Never claim an unprovable target. Also unresolvable: anything else that looks
 // like a FLAG (starts with "-", length > 1) — cd's own flags (-L, -P, -e, -@,
 // --) are not path arguments; without this, `cd -P /other-repo` would resolve
 // "-P" itself as a literal (almost certainly nonexistent) child directory of
@@ -475,30 +502,63 @@ function isUnresolvable(raw) {
     raw.startsWith('~') ||
     raw.includes('$') ||
     raw.includes('`') ||
-    raw.includes('\\') ||
+    raw.includes(STRAY) ||
     raw.includes('"')
   );
 }
 
-function isAbsolutePlain(raw) {
-  return !isUnresolvable(raw) && path.isAbsolute(raw);
+// #4281: a stray final backslash, an unquoted `\` with nothing left to escape (`cd /x\` at the end
+// of the command; tokenize gives it kind `x`), is the one place bash versions split: bash 3.2
+// drops it and bash 5 keeps it. Under a win32 pathImpl `a` and `a\` name the same path, so the
+// stray `\` is dropped and the word resolves; under POSIX they differ, and so does `D:\` on win32
+// (3.2: `D:`, the drive's cwd; 5: `D:\`, its root). Each of those keeps its length with its final
+// `\` replaced by STRAY, a NUL no bash word can hold (forEachShellSegment drops every NUL from the
+// command first, as bash drops one from its input), which isUnresolvable rejects. Returns the
+// word values and spanKinds to walk, new arrays only when one changed.
+const STRAY = '\0';
+function settleStrayBackslash(tokens, spanKinds, pathImpl) {
+  const last = tokens.length - 1;
+  if (last < 0 || !tokens[last].endsWith('\\') || !spanKinds[last].endsWith('x')) return { tokens, spanKinds };
+  const settled = tokens[last].slice(0, -1);
+  const sameUnderWin32 = pathImpl.sep === '\\' && !/^[A-Za-z]:$/.test(settled);
+  const t = tokens.slice();
+  const k = spanKinds.slice();
+  if (sameUnderWin32) {
+    t[last] = settled;
+    k[last] = k[last].slice(0, -1);
+  } else t[last] = settled + STRAY;
+  return { tokens: t, spanKinds: k };
+}
+
+function isAbsolutePlain(raw, pathImpl = path) {
+  return !isUnresolvable(raw) && pathImpl.isAbsolute(raw);
+}
+
+// #4281: a drive-relative value (`D:repo`, the value of an unquoted `D:\repo`, or a bare `D:`) names a path
+// relative to that drive's own current directory. Under a win32 pathImpl, when `base` (the cwd it resolves
+// against) is drive-absolute on the same drive (letters compared case-insensitively), that directory is
+// `base` itself, so the value is a provable literal that pathImpl.resolve(base, raw) places. Against
+// another drive, an unknown (null) base or a base with no drive, the drive's own cwd is unknown: unprovable.
+function isUnprovableDriveRelative(raw, base, pathImpl) {
+  if (pathImpl.sep !== '\\' || !/^[A-Za-z]:(?![\\/])/.test(raw)) return false;
+  return base === null || !/^[A-Za-z]:[\\/]/.test(base) || base[0].toLowerCase() !== raw[0].toLowerCase();
 }
 
 // Shared cd-token resolution used by both gitTargets and fileWriteTargets: given
 // the current effective cwd (string, or null meaning UNKNOWN) and a `cd`
-// command's raw (unquote-stripped) argument, returns the new effective cwd (or
+// command's argument (its value, from tokenize), returns the new effective cwd (or
 // null when the argument leaves it unprovable). Kept as one function so a
 // future fix to cd-resolution edge cases (a new isUnresolvable pattern,
 // pushd/popd support, etc.) can never land in one caller and not the other.
-function resolveCd(effCwd, raw) {
-  if (isUnresolvable(raw)) return null;
+function resolveCd(effCwd, raw, pathImpl = path) {
+  if (isUnresolvable(raw) || isUnprovableDriveRelative(raw, driveBase(effCwd), pathImpl)) return null;
   if (effCwd === null || effCwd instanceof LostCwd) {
     // Unknown or lost cwd: only a plain absolute path makes it known; a relative one leaves it as
     // it was (a lost one keeps its trail, LostCwd.after).
-    if (isAbsolutePlain(raw)) return path.resolve(raw);
-    return effCwd === null ? null : effCwd.after(stripQuotes(raw));
+    if (isAbsolutePlain(raw, pathImpl)) return pathImpl.resolve(raw);
+    return effCwd === null ? null : effCwd.after(raw);
   }
-  return path.resolve(effCwd, stripQuotes(raw));
+  return pathImpl.resolve(effCwd, raw);
 }
 
 // The plugin-owned pipeline state directory, relative to a checkout's root. pre-tool-use.js reads
@@ -561,13 +621,21 @@ function sameCwd(a, b) {
   return a === b || (a instanceof LostCwd && b instanceof LostCwd && a.family === b.family && a.trail === b.trail);
 }
 
+// The path a drive-relative value is judged against (isUnprovableDriveRelative, #4281): a known cwd
+// itself, or a lost cwd's root. A lost cwd is on its root's drive: a relative `cd` never changes
+// drive, a drive-relative one to another drive leaves the cwd unknown, and an absolute one makes it
+// known again.
+function driveBase(cwd) {
+  return cwd instanceof LostCwd ? cwd.root : cwd;
+}
+
 // `rel` with every `..` that would climb above its start dropped (`a/../../b` reads `b`), so a
-// target resolved from a lost cwd stays under its root.
-function clampRel(rel) {
-  const parts = path.normalize(rel).split(/[\\/]/);
+// target resolved from a lost cwd stays under its root. `pathImpl` is the walk's (#4281).
+function clampRel(rel, pathImpl = path) {
+  const parts = pathImpl.normalize(rel).split(/[\\/]/);
   let k = 0;
   while (k < parts.length && parts[k] === '..') k += 1;
-  return parts.slice(k).join(path.sep) || '.';
+  return parts.slice(k).join(pathImpl.sep) || '.';
 }
 
 // Matches a segment that is exactly one token shaped like a simple literal
@@ -582,6 +650,25 @@ function clampRel(rel) {
 // rejection.
 const SIMPLE_ASSIGNMENT_RE = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 
+// #4281: a word is an assignment only when its name and its `=` are bare. The value is
+// read after quote removal, so `A\=x` and `"A"=x` both read `A=x`, yet bash runs each as
+// the command `A=x` (exit 127) and assigns nothing. `kinds` is the word's spanKinds. `re` is
+// the shape to test (assignmentWordEnd passes ASSIGNMENT_WORD_RE, which accepts `+=` too: its
+// `+` is part of the name side, so it must be bare as well).
+function isAssignmentWord(tok, kinds, re = SIMPLE_ASSIGNMENT_RE) {
+  if (!re.test(tok)) return false;
+  const eq = tok.indexOf('=');
+  return kinds.slice(0, eq + 1) === 'b'.repeat(eq + 1);
+}
+
+// #4281: `<` and `>` are metacharacters, so a bare one ends a word: `A=x>f1` is the assignment
+// `A=x` plus a redirect to f1 (bash 3.2 and 5), while a quoted or escaped one (`A="x>f1"`,
+// `A=x\>f1`) is value text. The index of the first bare one in `tok`, or its length.
+function bareWordEnd(tok, kinds) {
+  for (let j = 0; j < tok.length; j += 1) if ((tok[j] === '>' || tok[j] === '<') && kinds[j] === 'b') return j;
+  return tok.length;
+}
+
 // Classifies raw (pre-substitution) token array `t` as a simple same-command
 // assignment and updates `vars` in place; returns whether it was one (the
 // caller `continue`s past handler/cd on true, the same way an existing `cd`
@@ -595,12 +682,11 @@ const SIMPLE_ASSIGNMENT_RE = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 // keeps a chained reference (`B=$A/y`) from ever resolving through a second
 // hop: `$A/y`'s raw value still contains `$`, so isUnresolvable rejects it
 // here, before substitution would otherwise have had a chance to touch it.
-function updateAssignment(vars, t) {
-  if (t.length !== 1) return false;
-  const m = SIMPLE_ASSIGNMENT_RE.exec(t[0]);
-  if (!m) return false;
-  const [, name, rawValue] = m;
-  const value = stripQuotes(rawValue);
+// `kinds` is the token's spanKinds (isAssignmentWord). The value ends at bareWordEnd.
+function updateAssignment(vars, t, kinds) {
+  if (t.length !== 1 || !isAssignmentWord(t[0], kinds)) return false;
+  const m = SIMPLE_ASSIGNMENT_RE.exec(t[0].slice(0, bareWordEnd(t[0], kinds)));
+  const [, name, value] = m;
   if (isUnresolvable(value)) vars.delete(name);
   else vars.set(name, value);
   return true;
@@ -650,13 +736,17 @@ function substituteVars(tokens, vars, singleQuoted, spanKinds) {
 // bash-prefilter.js's hasFileRedirection call directly. The walk
 // splits the command into shell segments, tokenizes each, and tracks `cd` to
 // keep the effective cwd in sync. `handler(t, effCwd, quoting, again)` is
-// invoked for every non-cd, non-empty segment with the cwd value in effect for
-// it (string, or null meaning UNKNOWN); `quoting` is
-// `{ raw, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt }`: the
-// pre-substitution tokens, their per-token quote flags from tokenize (#4015 reads
-// the first three, #4149's dropRedirections reads `leadQuoted`), their per-character
-// span kinds (#4210, see tokenize), and the nesting state at each token's start
-// (#4210, see advanceNesting). The nesting state carries from piece to piece within
+// invoked for every non-empty segment that is not a bare assignment with the cwd value in
+// effect for it (string, or null meaning UNKNOWN). A `cd` segment is visited too, under the
+// cwd before the cd (#4281: its redirections run there); no consumer reads `cd` as its own
+// lead word, so it yields only redirect targets. `quoting` is
+// `{ raw, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt, pathImpl }`: the
+// pre-substitution tokens, the words as typed (#4281, see tokenize; powershellOpaqueCommand
+// reads them), their per-token quote flags from tokenize (#4015 reads the first three,
+// #4149's dropRedirections reads `leadQuoted`), their per-character
+// span kinds (#4210, see tokenize), the nesting state at each token's start
+// (#4210, see advanceNesting), and the path module every cd and target resolves through
+// (#4281: `opts.pathImpl`, default `path`, so a path.win32 pin runs on any host). The nesting state carries from piece to piece within
 // one chunk, cd and assignment pieces included: a flat (capped) reading can cut at a
 // `|`/`;`/newline inside an inner quote of `"$( … )"`, and the nested context must
 // survive that cut. Also tracks same-command literal
@@ -685,11 +775,12 @@ function forEachCommandSegment(command, cwd, handler, opts) {
 // command, so nothing inside it is counted. A word that never closes is no assignment: bash
 // cannot parse it and runs nothing. An appending `x+=1` is an assignment word too (bash 3.2 and 5
 // change into M for `x+=1 cd M`); only this lead reads it, since updateAssignment cannot track
-// the value it appends to.
+// the value it appends to. As for isAssignmentWord (#4281), the name and its `=` (or `+=`) must
+// be bare: `"x"=1 cd M` and `A\=x cd M` run the command `x=1` or `A=x` and never change directory.
 const WORD_OPENERS = { '(': 'c', '{': 'p', '[': 'a' };
 const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=.*$/; // SIMPLE_ASSIGNMENT_RE, plus `+=`
 function assignmentWordEnd(rawT, spanKinds, i) {
-  if (i >= rawT.length || !ASSIGNMENT_WORD_RE.test(rawT[i])) return i;
+  if (i >= rawT.length || !isAssignmentWord(rawT[i], spanKinds[i], ASSIGNMENT_WORD_RE)) return i;
   let stack = '';
   let inTick = false;
   for (let j = i; j < rawT.length; j += 1) {
@@ -716,11 +807,14 @@ function assignmentWordEnd(rawT, spanKinds, i) {
 
 // One segment of forEachShellSegment's walk, already tokenized (`tok`, from tokenize, and
 // `nestAt`, the nesting state at each token's start): updates `vars`, calls `handler` for a
-// non-cd, non-assignment segment, and returns the effective cwd after it.
-function visitSegment(tok, nestAt, effCwd, vars, handler) {
-  const { tokens: rawT, singleQuoted, doubleQuoted, leadQuoted, spanKinds } = tok;
+// non-assignment segment (a cd one included), and returns the effective cwd after it.
+function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
+  const { typed, singleQuoted, doubleQuoted, leadQuoted } = tok;
+  const { tokens: rawT, spanKinds } = settleStrayBackslash(tok.tokens, tok.spanKinds, pathImpl);
   if (!rawT.length) return effCwd;
-  if (updateAssignment(vars, rawT)) return effCwd;
+  // An assignment word ended by a bare `<`/`>` (bareWordEnd) carries a redirect, so it still
+  // reaches the handler; bash assigns before it expands that redirect (`A=f0; A=x>$A` writes x).
+  if (updateAssignment(vars, rawT, spanKinds[0]) && bareWordEnd(rawT[0], spanKinds[0]) === rawT[0].length) return effCwd;
   const t = substituteVars(rawT, vars, singleQuoted, spanKinds);
   // `FOO=1 cd /path` really does change the shell's cwd — a preceding
   // assignment on a regular (non-special) builtin like `cd` is scoped only
@@ -730,12 +824,27 @@ function visitSegment(tok, nestAt, effCwd, vars, handler) {
   // is the opposite case and deliberately NOT normalized here: `env` execs
   // an external `cd` binary that does not exist on a normal system, so it
   // errors and never changes cwd — normalizing it would fabricate a target
-  // for a shape that has no real effect.
+  // for a shape that has no real effect. An assignment is read from the raw word, whose
+  // spanKinds it is aligned with: bash decides it before any `$` expands (#4281).
   let cdLead = 0;
   let next;
   while ((next = assignmentWordEnd(rawT, spanKinds, cdLead)) > cdLead) cdLead = next;
-  if (t[cdLead] === 'cd') return resolveCd(effCwd, t[cdLead + 1]);
-  handler(t, effCwd, { raw: rawT, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt });
+  const quoting = { raw: rawT, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt, pathImpl };
+  // #4281: bash applies a cd line's redirections before the builtin runs, so `cd sub > f1`
+  // writes f1 in the cwd before the cd: the handler sees the cd segment under that cwd. Its
+  // redirect words are no argument of cd (`cd > f1 sub` changes to sub). Only the words after
+  // `cd` are read for them: an assignment word before it can span tokens that look like a
+  // redirection (`x=$(echo >f) cd /m`, #4303), and dropping one there would shift the argument.
+  if (t[cdLead] === 'cd') {
+    const from = cdLead + 1;
+    // The word after `cd` is its argument unless it could start a redirection (dropRedirections'
+    // lead test), the common case, which skips the slices.
+    const arg = from >= t.length || leadQuoted[from] || !REDIRECTION_LEAD_RE.test(rawT[from]) ? t[from]
+      : dropRedirections(t.slice(from), { raw: rawT.slice(from), leadQuoted: leadQuoted.slice(from), spanKinds: spanKinds.slice(from) })[0];
+    handler(t, effCwd, quoting);
+    return resolveCd(effCwd, arg, pathImpl);
+  }
+  handler(t, effCwd, quoting);
   return effCwd;
 }
 
@@ -768,7 +877,7 @@ function skipGlobalFlags(t, i, dir, pathImpl = path) {
         // Resolving it would normalize the string and hand the worktree gate
         // a different target than an omitted -C (e.g. `C:\repo` vs `/repo` on
         // Windows) — #3314.
-      } else if (isUnresolvable(raw)) {
+      } else if (isUnresolvable(raw) || isUnprovableDriveRelative(raw, driveBase(dir), pathImpl)) {
         unprovable = true;
       } else if (pathImpl.isAbsolute(raw)) {
         dir = pathImpl.resolve(raw);
@@ -816,7 +925,7 @@ function skipGlobalFlags(t, i, dir, pathImpl = path) {
 // re-splits an opaque program string, which is statically unknowable — the
 // same deliberately-uncovered class as `sh -c`/`python -c` (see
 // fileWriteTargets' header) — so it falls through to the not-git default.
-function findGitLead(t, dir) {
+function findGitLead(t, dir, pathImpl = path) {
   let unprovable = false;
   let i = 0;
   while (i < t.length && SIMPLE_ASSIGNMENT_RE.test(t[i])) i += 1;
@@ -836,7 +945,7 @@ function findGitLead(t, dir) {
           : tok.startsWith('-C') && tok.length > 2 ? tok.slice(2)
           : null;
         const raw = attached !== null ? attached : t[i + 1];
-        const resolved = resolveCd(dir, raw);
+        const resolved = resolveCd(dir, raw, pathImpl);
         if (resolved === null) unprovable = true;
         else dir = resolved;
         i += attached !== null ? 1 : 2;
@@ -863,14 +972,14 @@ function findGitLead(t, dir) {
 // callers instead of drifting between two hand-kept copies — the exact gap
 // #1308 closed for teardownTargets, which used to skip this preamble
 // entirely and check a bare `toks[0] !== 'git'` instead.
-function resolveGitCommand(t, effCwd) {
-  const lead = findGitLead(t, effCwd);
+function resolveGitCommand(t, effCwd, pathImpl = path) {
+  const lead = findGitLead(t, effCwd, pathImpl);
   if (lead.index === -1) return null;
-  const { index, dir, unprovable } = skipGlobalFlags(t, lead.index + 1, lead.dir);
+  const { index, dir, unprovable } = skipGlobalFlags(t, lead.index + 1, lead.dir, pathImpl);
   if (lead.unprovable || unprovable || dir === null) return null;
   // A git command run from a lost cwd (#4303) runs somewhere the walk does not know: `dir` is the
   // lost cwd's root, a stand-in, and `lost: true` says so (see CWD_SET_CAP).
-  if (dir instanceof LostCwd) return { index, dir: path.resolve(dir.root), lost: true };
+  if (dir instanceof LostCwd) return { index, dir: pathImpl.resolve(dir.root), lost: true };
   return { index, dir };
 }
 
@@ -909,12 +1018,13 @@ const PLUMBING_WRITE_SUBCOMMANDS = new Set(['mv', 'rm', 'update-ref', 'apply']);
 // apart from "stash" apart from everything else — the traversal itself stays
 // ignorant of which subcommand pre-tool-use.js's callers each care about.
 function resolvedGitSegments(command, cwd, opts) {
+  const pathImpl = (opts && opts.pathImpl) || path;
   const walk = (walkOpts) => {
     const segments = [];
     let pieceStart = 0; // where the current piece's first-cwd visit began pushing
-    forEachCommandSegment(command, cwd, (t, effCwd, _quoting, again) => {
+    forEachCommandSegment(command, cwd, (t, effCwd, quoting, again) => {
       if (!again) pieceStart = segments.length;
-      const resolved = resolveGitCommand(t, effCwd);
+      const resolved = resolveGitCommand(t, effCwd, quoting.pathImpl);
       if (!resolved) return;
       // A repeat visit under another cwd (after a brace group) that resolves to the same dir adds nothing.
       if (again && segments.slice(pieceStart).some((s) => s.dir === resolved.dir && s.index === resolved.index && s.lost === resolved.lost)) return;
@@ -925,10 +1035,10 @@ function resolvedGitSegments(command, cwd, opts) {
   const segments = walk(keepLost(opts));
   // #4303: a walk that lost its cwd also reports base's own readings (BASE_VIEW), as known segments.
   // A reading's dir can be the collapse's overflow root or start as given, so it is resolved to a
-  // native path as the lost segments' dirs are.
+  // native path as the lost segments' dirs are, through the walk's pathImpl (#4281).
   if (segments.some((s) => s.lost)) {
     const readings = newReadings(walk(baseView(opts)), segments, (s) => `${s.dir}\0${s.index}\0${s.tokens.join('\0')}`);
-    segments.push(...readings.map((s) => ({ ...s, dir: path.resolve(s.dir) })));
+    segments.push(...readings.map((s) => ({ ...s, dir: pathImpl.resolve(s.dir) })));
   }
   return segments;
 }
@@ -1039,17 +1149,23 @@ function gitTargets(command, cwd, opts) {
 // module already accepts in exchange for never fabricating a false deny.
 const POWERSHELL_LEADS = new Set(['powershell', 'pwsh']);
 const POWERSHELL_OPAQUE_FLAGS = new Set(['-command', '-encodedcommand']);
+// The lead is matched on the word's value and on the word as typed (#4281), so an
+// unquoted `C:\Windows\System32\powershell.exe`, whose value has lost its backslashes,
+// still reads as powershell: the deny keeps erring toward the shape.
+function isPowershellLead(word) {
+  const lead = word.toLowerCase().replace(/\.exe$/, '');
+  const cut = Math.max(lead.lastIndexOf('/'), lead.lastIndexOf('\\'));
+  return POWERSHELL_LEADS.has(cut >= 0 ? lead.slice(cut + 1) : lead);
+}
+
 function powershellOpaqueCommand(command, cwd) {
   let found = false;
-  forEachCommandSegment(command, cwd, (t) => {
+  forEachCommandSegment(command, cwd, (t, _effCwd, quoting) => {
     if (found || !t.length) return;
     let i = 0;
     while (i < t.length && SIMPLE_ASSIGNMENT_RE.test(t[i])) i += 1;
     if (i >= t.length) return;
-    const lead = t[i].toLowerCase().replace(/\.exe$/, '');
-    const cut = Math.max(lead.lastIndexOf('/'), lead.lastIndexOf('\\'));
-    const base = cut >= 0 ? lead.slice(cut + 1) : lead;
-    if (!POWERSHELL_LEADS.has(base)) return;
+    if (!isPowershellLead(t[i]) && !isPowershellLead(quoting.typed[i])) return;
     for (let j = i + 1; j < t.length; j++) {
       if (POWERSHELL_OPAQUE_FLAGS.has(t[j].toLowerCase())) { found = true; return; }
     }
@@ -1083,34 +1199,35 @@ function powershellOpaqueCommand(command, cwd) {
 // posture: never fabricate a target from a path this can't prove.
 const DEVNULL_LIKE = new Set(['/dev/null', '/dev/stdout', '/dev/stderr']);
 
-function resolveWriteTarget(effCwd, raw) {
-  if (isUnresolvable(raw)) return null;
-  const stripped = stripQuotes(raw);
+// Also called by bash-prefilter.js's hasFileRedirection with a placeholder cwd, so every
+// exclusion here is one the prefilter applies too: narrowing one narrows both.
+function resolveWriteTarget(effCwd, raw, pathImpl = path) {
+  if (isUnresolvable(raw) || isUnprovableDriveRelative(raw, driveBase(effCwd), pathImpl)) return null;
   // An explicitly-empty token is never a file. It reaches here as BSD sed's
   // separate backup suffix (`sed -i '' ...`); without this it would resolve to
   // effCwd itself and flag the whole directory as a write target.
-  if (stripped === '') return null;
-  if (DEVNULL_LIKE.has(stripped)) return null;
-  if (path.isAbsolute(stripped)) return path.resolve(stripped);
+  if (raw === '') return null;
+  if (DEVNULL_LIKE.has(raw)) return null;
+  if (pathImpl.isAbsolute(raw)) return pathImpl.resolve(raw);
   if (effCwd === null) return null; // cwd UNKNOWN and a relative path — not provable
   // From a lost cwd (#4303): the overflow root itself, or the clamped path under the start.
   // The root itself is resolved too, so a stand-in is a native path as every other target is
   // (a caller's '/main' is D:\main on win32).
-  if (effCwd instanceof LostCwd) return effCwd.overflow ? path.resolve(effCwd.root) : path.resolve(effCwd.root, clampRel(stripped));
-  return path.resolve(effCwd, stripped);
+  if (effCwd instanceof LostCwd) return effCwd.overflow ? pathImpl.resolve(effCwd.root) : pathImpl.resolve(effCwd.root, clampRel(raw, pathImpl));
+  return pathImpl.resolve(effCwd, raw);
 }
 
 // The `{ action, file }` entry for write target word `raw` under `effCwd`, or null. A relative
 // target from a lost cwd (#4303) also carries `lost: true` and `rel`, the target as written (after
 // the lost cwd's trail, LostCwd): the walk does not know the directory it lands in, so `file` is
 // only the lost cwd's stand-in (resolveWriteTarget), and a consumer that reads the marker denies on
-// it (see CWD_SET_CAP).
-function writeTarget(action, effCwd, raw) {
-  const file = resolveWriteTarget(effCwd, raw);
+// it (see CWD_SET_CAP). `raw` is the word's value (#4281), so `rel` is it as bash passes it, and
+// `pathImpl` is the walk's.
+function writeTarget(action, effCwd, raw, pathImpl = path) {
+  const file = resolveWriteTarget(effCwd, raw, pathImpl);
   if (!file) return null;
-  const rel = stripQuotes(raw);
-  if (!(effCwd instanceof LostCwd) || path.isAbsolute(rel)) return { action, file };
-  return { action, file, lost: true, rel: [...LOST_TRAIL.slice(0, effCwd.trail), rel].join('/') };
+  if (!(effCwd instanceof LostCwd) || pathImpl.isAbsolute(raw)) return { action, file };
+  return { action, file, lost: true, rel: [...LOST_TRAIL.slice(0, effCwd.trail), raw].join('/') };
 }
 
 // The word after a redirection's `&` that duplicates a file descriptor
@@ -1439,7 +1556,7 @@ function lineFeedsOnlyDataReaders(lineText) {
 function checkReaderCommand(seg) {
   const unquoted = removeQuotedSpans(seg).split(/\s+/);
   if (unquoted.some((t) => /^[({]/.test(t) || t === '}' || /[<>]\(/.test(t))) return false;
-  const { tokens } = tokenize(seg.trim());
+  const { typed: tokens } = tokenize(seg.trim());
   let p = 0;
   while (p < tokens.length && SIMPLE_ASSIGNMENT_RE.test(tokens[p])) p += 1;
   if (isInertNeighbour(tokens, p)) return true;
@@ -1700,7 +1817,7 @@ function planHeredocBodies(str, start, pending, lineText, lineOpen) {
   const keep = lineOpen || CONTINUATION_RE.test(lineText) || !lineFeedsOnlyDataReaders(lineText);
   const expands = bodies.some(({ h, text }) => !h.quoted && /\$\(|`/.test(text));
   if (keep || expands) {
-    const shell = tokenize(lineText).tokens.some((tok) => programNames(tok).some((n) => KNOWN_SHELL_WORDS.has(n)));
+    const shell = tokenize(lineText).typed.some((tok) => programNames(tok).some((n) => KNOWN_SHELL_WORDS.has(n)));
     return { kind: 'keep', end: p, bodies: bodies.map(({ h, text }) => ({ at: h.at, text, shell })) };
   }
   return { kind: 'strip', end: p };
@@ -2099,7 +2216,7 @@ function closesDoubled(match, str, open, from = 0) {
 // consumer can drop a target that does not depend on the cwd (`git -C /x`) the second time.
 // The piece is tokenized once; `nest.value` is the chunk's nesting state (advanceNesting,
 // #4210), read at the piece's start and advanced past it once, however many cwds visit it.
-function visitUnderEach(text, cwds, vars, handler, nest) {
+function visitUnderEach(text, cwds, vars, handler, nest, pathImpl) {
   const tok = tokenize(text.trim());
   const nestAt = tok.tokens.map((w, i) => {
     const at = nest.value;
@@ -2108,7 +2225,7 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
   });
   const next = [];
   cwds.forEach((c, k) => {
-    const n = visitSegment(tok, nestAt, c, vars, k === 0 ? handler : (t, effCwd, quoting) => handler(t, effCwd, quoting, true));
+    const n = visitSegment(tok, nestAt, c, vars, k === 0 ? handler : (t, effCwd, quoting) => handler(t, effCwd, quoting, true), pathImpl);
     if (!next.some((x) => sameCwd(x, n))) next.push(n);
   });
   return next;
@@ -2187,6 +2304,10 @@ function visitUnderEach(text, cwds, vars, handler, nest) {
 // any cwd already sends it there; powershellOpaqueCommand reads no cwd. A handler that does need it
 // opts in with `keepLost(opts)`, as teardownTargets does, and hands its cwd only to
 // resolveGitCommand, whose `lost` field is the channel: the handler never reads a lost cwd itself.
+//
+// #4281: bash drops a NUL it reads from a script or stdin (`echo x > b<NUL>junk` writes `bjunk`, bash
+// 3.2 and 5), so the walk drops every NUL before it reads the command. That also keeps STRAY, a NUL,
+// from ever meeting one typed in the command (settleStrayBackslash).
 const CWD_SET_CAP = 16; // four groups each with a relative cd already make 2^4 cwds
 const KEEP_LOST = Symbol('keepLostCwd');
 const keepLost = (opts) => ({ ...(opts || {}), [KEEP_LOST]: true });
@@ -2211,7 +2332,7 @@ function forEachShellSegment(command, cwd, handler, opts = {}) {
     const seed = set.reduce((most, x) => (typeof x === 'string' ? Math.max(most, spellTrail(x, 0)) : most), 0);
     return collapsed.map((c) => c.withTrail(set.reduce((most, x) => (x instanceof LostCwd && x.family === c ? Math.max(most, x.trail) : most), seed)));
   };
-  walkShellChunk(String(command || ''), [start], new Map(), handler, 0, true, overflow, !!opts[BASE_VIEW]);
+  walkShellChunk(String(command || '').replace(/\0/g, ''), [start], new Map(), handler, 0, true, overflow, !!opts[BASE_VIEW], opts.pathImpl || path);
 }
 
 // The and-or list operator the separator at `outer[at]` is: `&&`, `||`, `|`, or `;` for any other
@@ -2229,7 +2350,7 @@ function joinCwds(a, b, overflow) {
   return out.length <= CWD_SET_CAP ? out : overflow(out);
 }
 
-function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLike) {
+function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLike, pathImpl) {
   const { outer, bodies } = plan && depth < MAX_HEREDOC_NESTING ? stripHeredocBodies(text) : { outer: text, bodies: [] };
   const g = { root: { kind: 'root', caseDepth: 0, cmd: true }, stack: [], nesting: 0 };
   let cur = cwds;
@@ -2341,15 +2462,15 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // is dropped, as before the closer cut it (forgetting a name would drop the targets that use it).
   const nest = { value: NOT_NESTED }; // carried across this chunk's pieces in text order (#4210)
   const visitPiece = (ev, pieceCwds, pieceVars) => {
-    if (!ev.tail) return visitUnderEach(ev.text, pieceCwds, pieceVars, handler, nest);
-    const next = visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler, nest);
+    if (!ev.tail) return visitUnderEach(ev.text, pieceCwds, pieceVars, handler, nest, pathImpl);
+    const next = visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler, nest, pathImpl);
     return joinCwds(pieceCwds, next, overflow);
   };
   let b = 0;
   const runBodies = (until, bodyCwds) => {
     for (; b < bodies.length && bodies[b].at < until; b += 1) {
-      walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, true, overflow, baseLike);
-      if (!bodies[b].shell) walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, false, overflow, baseLike);
+      walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, true, overflow, baseLike, pathImpl);
+      if (!bodies[b].shell) walkShellChunk(bodies[b].text, bodyCwds, new Map(vars), handler, depth + 1, false, overflow, baseLike, pathImpl);
     }
   };
   for (const span of segmentSpans(outer)) {
@@ -2411,12 +2532,20 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
 // unterminated body (a glued closer such as `y))`) is skipped whole, which fails
 // open (#4015). A compound command may follow a control keyword on the same
 // segment (`if (( x>y ))`, `while [[ a>b ]]`), so the keywords are skipped first.
+// A keyword or opener counts only as a bare word (#4281): bash reserves no quoted or
+// escaped word, so `\[\[ x > f \]\]`, `"[[" x > f ]]` and `\if [[ x > f ]]` are commands
+// whose redirect runs. Given `quoting`, each word is read pre-substitution with its spanKinds.
 const COMPOUND_LEAD_WORDS = new Set(['if', 'elif', 'while', 'until', 'then', 'do', 'else', '!']);
 
-function compoundBodyEnd(t) {
+function compoundBodyEnd(t, quoting) {
+  const word = (i) => {
+    if (!quoting || !quoting.spanKinds) return t[i];
+    const raw = quoting.raw[i];
+    return raw !== undefined && quoting.spanKinds[i] === 'b'.repeat(raw.length) ? raw : null;
+  };
   let lead = 0;
-  while (lead < t.length && COMPOUND_LEAD_WORDS.has(t[lead])) lead += 1;
-  const closer = t[lead] === '[[' ? ']]' : t[lead] === '((' ? '))' : null;
+  while (lead < t.length && COMPOUND_LEAD_WORDS.has(word(lead))) lead += 1;
+  const closer = word(lead) === '[[' ? ']]' : word(lead) === '((' ? '))' : null;
   if (closer === null) return 0;
   const end = t.indexOf(closer, lead);
   return end === -1 ? t.length : end + 1;
@@ -2452,17 +2581,24 @@ function compoundBodyEnd(t) {
 // (compoundBodyEnd), so the scan starts after its closing word. The walk keeps an
 // arithmetic `((…))` command in one piece (groupEvents), so its `((` reaches here.
 function redirectWriteTargets(t, effCwd, quoting) {
-  return redirectWriteWords(t, quoting).map((word) => resolveWriteTarget(effCwd, word)).filter(Boolean);
+  const pathImpl = (quoting && quoting.pathImpl) || path;
+  return redirectRawTargets(t, quoting).map((raw) => resolveWriteTarget(effCwd, raw, pathImpl)).filter(Boolean);
 }
 
-// The target words redirectWriteTargets resolves, as written: fileWriteTargets builds its entries
-// from them (writeTarget), so a word from a lost cwd keeps its text (#4303).
-function redirectWriteWords(t, quoting) {
+// The redirection targets of one segment as values, before any cwd resolves them: the scan
+// above without its last step. bash-prefilter.js's hasFileRedirection reads them (#4281), and
+// fileWriteTargets builds its entries from them (writeTarget), so a word from a lost cwd keeps
+// its text (#4303).
+function redirectRawTargets(t, quoting) {
   const out = [];
   const kindsOf = quoting && quoting.spanKinds;
-  for (let i = compoundBodyEnd(t); i < t.length; i += 1) {
+  for (let i = compoundBodyEnd(t, quoting); i < t.length; i += 1) {
     let rawTarget = null;
     let plainFd = null; // the fd prefix of a plain `>` ('' when unprefixed); null for any other operator
+    // Whether an `&` that starts the target is the operator's own (`>&`). The target is a value
+    // (#4281), so an escaped or quoted `&` reads the same: `>\&2` and `> '&2'` write the file `&2`
+    // (bash 3.2 and 5), so only a bare one counts. Without span kinds every `&` counts, as before.
+    let ampOp = !kindsOf;
     if (!kindsOf) {
       const op = matchRedirectOperator(t[i]);
       if (op) ({ plainFd, target: rawTarget } = op);
@@ -2487,12 +2623,17 @@ function redirectWriteWords(t, quoting) {
         const prev = opEnd - 2;
         const plain = head.endsWith('>') && !(prev >= 0 && kinds[prev] === 'b' && (raw[prev] === '>' || raw[prev] === '&'));
         if (plain) plainFd = leading ? head.slice(0, -1) : '';
+        // A substitution leaves the target's first character in place (substituteVars, above),
+        // so it is `raw[opEnd]` on every branch; one a `$` put there is text too (`>$A`).
+        ampOp = raw[opEnd] === '&' && kinds[opEnd] === 'b';
       }
     }
     if (rawTarget === null) continue;
     if (rawTarget === '') {
       i += 1; // consume the target token too — never re-scan it as its own operator
       rawTarget = t[i];
+      // The target is a word of its own: an `&` starting it is literal unless bare.
+      if (kindsOf) ampOp = rawTarget !== undefined && kindsOf[i][0] === 'b';
     }
     if (rawTarget === undefined) continue;
     // #4303: a target that starts with `&` follows `>&`. After a plain `>` with no fd
@@ -2500,7 +2641,7 @@ function redirectWriteWords(t, quoting) {
     // writes the file (bash 3.2 and 5). A bare `&` takes the next token as that word,
     // so `>& 2` is still a dup. Any other prefix (`2>&f`, `0>&f`) is an ambiguous
     // redirect, and any other operator (`>>&f`) a syntax error: neither writes.
-    if (rawTarget.startsWith('&')) {
+    if (ampOp && rawTarget.startsWith('&')) {
       let word = rawTarget.slice(1);
       if (word === '') {
         i += 1; // consume the word token too, as above
@@ -2670,19 +2811,25 @@ const REDIRECTION_TOKEN_RE = /^(?:\d+|&)?(?:>>|>\||>&|<>|<&|>|<)(?![<(])/;
 // stands alone (`<< EOF`, `> /dev/null`), so none is read as a write shape's files; the
 // redirection's own target is reported by redirectWriteTargets. A token that begins with a
 // quoted span (`'<<'`, `'>f'`) is a literal argument, not an operator, and stays
-// (`leadQuoted`, from tokenize).
-function dropRedirections(tokens, leadQuoted) {
+// (`leadQuoted`, from tokenize). #4281: the operator is matched on the word before expansion
+// (`raw`) with every non-bare character masked out (`spanKinds`), so an escaped or quoted
+// character anywhere in it makes the word literal: `\>x` is the word `>x` and `2\>` the word `2>`.
+// Masking only removes a match, never makes one, so a word whose first character could start no
+// operator (REDIRECTION_LEAD_RE) is kept without building its mask: the walk calls this for every
+// segment, a cd one included, under every cwd it visits (#4303's cost shapes).
+const REDIRECTION_LEAD_RE = /^[\d&<>]/;
+function dropRedirections(tokens, { raw, leadQuoted, spanKinds }) {
   const out = [];
   for (let i = 0; i < tokens.length; i += 1) {
-    const tok = tokens[i];
-    if (leadQuoted && leadQuoted[i]) { out.push(tok); continue; }
-    if (tok.startsWith('<<')) {
-      if (/^<<<?-?$/.test(tok)) i += 1;
+    if (leadQuoted[i] || !REDIRECTION_LEAD_RE.test(raw[i])) { out.push(tokens[i]); continue; }
+    const bare = [...raw[i]].map((c, j) => (spanKinds[i][j] === 'b' ? c : '\0')).join('');
+    if (bare.startsWith('<<')) {
+      if (/^<<<?-?$/.test(bare)) i += 1;
       continue;
     }
-    const m = REDIRECTION_TOKEN_RE.exec(tok);
-    if (!m) { out.push(tok); continue; }
-    if (tok.length === m[0].length) i += 1;
+    const m = REDIRECTION_TOKEN_RE.exec(bare);
+    if (!m) { out.push(tokens[i]); continue; }
+    if (bare.length === m[0].length) i += 1;
   }
   return out;
 }
@@ -2691,16 +2838,17 @@ function fileWriteTargets(command, cwd, opts) {
   const targets = [];
   let reading = false; // the base-view walk's entries are base's readings (#4303)
   const visit = (tokens, effCwd, quoting) => {
+    const { pathImpl } = quoting;
     const add = (action, raw) => {
-      const entry = writeTarget(action, effCwd, raw);
+      const entry = writeTarget(action, effCwd, raw, pathImpl);
       if (entry) targets.push(reading ? { ...entry, reading: true } : entry);
     };
     // Redirection has no command word, so it runs for every segment
     // regardless of t[0] — never gated by the WRITE_SHAPES check below (#3080).
-    for (const word of redirectWriteWords(tokens, quoting)) add('write', word);
+    for (const word of redirectRawTargets(tokens, quoting)) add('write', word);
     // A heredoc/here-string operator is input and a redirection is reported above, so
     // neither is a file the shape writes.
-    const t = dropRedirections(tokens, quoting.leadQuoted);
+    const t = dropRedirections(tokens, quoting);
     if (!WRITE_SHAPES.includes(t[0])) return;
     if (t[0] === 'tee') {
       // tee genuinely writes to EVERY non-flag argument, not just the
@@ -2792,7 +2940,7 @@ function fileWriteTargets(command, cwd, opts) {
       if (positionals.length >= 2) {
         add('link', positionals[positionals.length - 1]);
       } else if (positionals.length === 1) {
-        add('link', path.basename(stripQuotes(positionals[0])));
+        add('link', pathImpl.basename(positionals[0]));
       }
       return;
     }
@@ -2810,9 +2958,8 @@ function fileWriteTargets(command, cwd, opts) {
     if (t[0] === 'dd') {
       // dd takes keyword arguments, not flags: the destination is `of=`.
       for (const arg of t.slice(1)) {
-        const bare = stripQuotes(arg);
-        if (!bare.startsWith('of=')) continue;
-        add('write', bare.slice('of='.length));
+        if (!arg.startsWith('of=')) continue;
+        add('write', arg.slice('of='.length));
       }
       return;
     }
@@ -2848,12 +2995,12 @@ function mkdirTargets(command, cwd, opts) {
   const walk = (walkOpts) => {
     const targets = [];
     let pieceStart = 0; // where the current piece's first-cwd visit began pushing
-    forEachCommandSegment(command, cwd, (t, effCwd, _quoting, again) => {
+    forEachCommandSegment(command, cwd, (t, effCwd, quoting, again) => {
       if (!again) pieceStart = targets.length;
       if (t[0] !== 'mkdir') return;
       const { positionals } = partitionArgs(t.slice(1), MKDIR_VALUE_FLAGS);
       for (const arg of positionals) {
-        const entry = writeTarget('mkdir', effCwd, arg);
+        const entry = writeTarget('mkdir', effCwd, arg, quoting.pathImpl);
         // A repeat visit under another cwd (after a brace group) adds an absolute path only once.
         if (entry && !(again && targets.slice(pieceStart).some((x) => x.file === entry.file && x.rel === entry.rel))) targets.push(entry);
       }
@@ -2867,7 +3014,7 @@ function mkdirTargets(command, cwd, opts) {
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine, namesPipelinesSegment,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, redirectRawTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine, namesPipelinesSegment,
   // The heredoc reader vocabularies, pinned against policy-schema-coverage.md's prose (#4149).
   DATA_READER_WORDS, READER_WRAPPER_WORDS, GIT_DATA_SUBCOMMANDS, INERT_NEIGHBOUR_WORDS,
 };

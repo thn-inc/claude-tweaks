@@ -8,6 +8,10 @@
 // tool name is consulted, so a refused Edit is ceremony, not an edit.
 'use strict';
 
+const path = require('path');
+const { isAncestorOrSelf } = require('../path-guard');
+const { toPosix, relativeDisplayId } = require('../shared-primitives');
+
 const TURN_CLASSES = Object.freeze(['edit', 'read', 'explore', 'procedure', 'bookkeeping', 'orientation', 'verify', 'guard-refusal', 'dispatch', 'other']);
 // The classes whose turns are process overhead rather than the work itself.
 const CEREMONY_CLASSES = Object.freeze(['procedure', 'bookkeeping', 'orientation', 'guard-refusal']);
@@ -25,11 +29,15 @@ const REFUSAL_SCAN_CHARS = 2048;
 // A Read counts as procedure loading when it targets a skill file — the
 // repo's plugin/skills/** or the installed plugin cache's skills/ (a real
 // session reads skills from ~/.claude/plugins/cache/…/skills/, so a
-// repo-only rule would count zero bytes on every real run).
-function isProcedurePath(filePath, worktree) {
+// repo-only rule would count zero bytes on every real run). A path inside the
+// worktree is made worktree-relative, and every path is `/`-normalized (#3315):
+// a win32 transcript records backslash paths, and the regexes below speak `/`.
+// `pathImpl` is the seam a test injects `path.win32` through; callers pass two
+// arguments and get the native path.
+function isProcedurePath(filePath, worktree, pathImpl = path) {
   if (typeof filePath !== 'string' || !filePath) return false;
-  let p = filePath;
-  if (worktree && p.startsWith(worktree)) p = p.slice(worktree.length).replace(/^\/+/, '');
+  const inWorktree = worktree && pathImpl.isAbsolute(filePath) && isAncestorOrSelf(worktree, filePath, { pathImpl });
+  const p = inWorktree ? relativeDisplayId(worktree, filePath, pathImpl) : toPosix(filePath, pathImpl.sep);
   if (/(^|\/)(plugin\/)?skills\/.+\.md$/.test(p)) return true;
   return p.includes('/.claude/plugins/') && p.includes('/skills/') && p.endsWith('.md');
 }

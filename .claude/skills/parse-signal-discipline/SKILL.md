@@ -298,8 +298,8 @@ When mechanizing a prose heuristic into a deterministic check:
     transform that mis-parses produces a clean scan. `tests/helpers/strip-comments.js`'s
     `stripComments` blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `backfill-cli`, `exit-code`, `git-status-optional-locks`,
-    `hooks-harness-refusal`, `path-containment`, `path-guard`, `porcelain-cwd-compare`,
-    `raw-markdown-read`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
+    `hooks-harness-refusal`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`,
+    `raw-markdown-read`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
     `windows-hide-spawn`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
     tree. It models regex literals (#3585); its residual
@@ -460,6 +460,27 @@ When mechanizing a prose heuristic into a deterministic check:
     neutralise each probe whose subject is not the consumer's subject, and pin the production
     default with a real fixture as well as an injected stub (`tests/reconcile.test.js`'s
     production-default liveness case).
+    The predicate that decides when to neutralise a probe owes the same audit, and widening its
+    inputs reopens it. #4421 lifted `isMainCheckoutAdHoc`'s path comparison into
+    `recordedWorktreeIsMainCheckout` so `defaultRunVerdict` could force `pathType` to `missing` for
+    any run dir stamped with the main checkout. A `true` there drops the lock and commit evidence,
+    the direction that leans toward `dead` and archival. Neither version rejected a relative
+    `worktree`, but only ad-hoc dirs reached the old one; with any run dir in scope, the path
+    resolved against the process cwd, so reconcile run from the main checkout read `.` as the main
+    checkout. Review caught it, and `923539cee` returns `false` for a non-absolute path. When a
+    predicate gains callers or a wider input set, re-audit its input validation against the new
+    domain, and pin each newly reachable input (here a relative path under `process.chdir` to the
+    root it would falsely match).
+    A test that pins a caller *not* consulting the verdict, or ignoring some of its probes, goes
+    red only when its fixture makes the verdict disagree with the caller's answer. #4419's
+    crash-resume adoption test first built a run `runLiveness` read as `live` (a fake host blocked
+    the pid witness, the worktree commit was fresh, no events.jsonl), so an `adoptionRefusal` that
+    started refusing dead runs would still have passed it. The fix asserts
+    `runLiveness(crashed).verdict === 'dead'` before the adoption assertions
+    (`tests/hooks-run-dir-resolve.test.js`), and #4420's real-probe case asserts the heartbeat and
+    owner-pid entries read `positive` before asserting the resume still goes through
+    (`tests/hooks-resume-freshness.test.js`). Assert the verdict's reading of the fixture as a
+    precondition, then revert to a consulting version and watch the test go red.
 22. **A check that reads its input from an optional context argument owes a fail-closed answer
     when the row it gates is present and the context is not.** A pure decision function that
     takes `ctx = {}` and wraps a check in `if (ctx.x present)` reads "the caller passed nothing" as
@@ -494,6 +515,26 @@ When mechanizing a prose heuristic into a deterministic check:
     `sdd-ruling-unclassified`). Decide a read failure in the caller that attempted the read, never
     inside the pure classifier, let a recorded read error outrank any text for the same id, and pin
     each cause on each path with its own assertion.
+24. **A composer's validator owes its reader's sentinels and delimiters too, not only its skip set
+    (item 18).** A value the reader reads back as a *different valid value* is worse than one it
+    drops, because every misread answer is one the reader legitimately emits.
+    `plugin/bin/lib/dispatch/close-out-marker.js`'s `parseConflictedFiles` (#4331) reads the
+    `conflicted-files:` field as the sentinel `none` (no conflicts), the sentinel `unknown`, or a
+    `, `-joined path list with each entry trimmed. The field carries untrusted text, since a
+    conflicted path is attacker-nameable, and each of those reader rules is a channel a real path
+    can fall through: a path named `none` reads back as "no conflicts", and a path holding a comma
+    reads back as two paths. The build's tests covered awkward paths but no reserved literal, and
+    review found the `none` case (lenses 3b, 3c and 3f, `918f6db19`). `plugin/bin/close-out-marker.js`'s
+    `readPathsFile` now refuses a comma, a carriage return, a path equal to either sentinel, and a
+    path with leading or trailing whitespace (exit 1), and each refusal names the representable
+    fallback (`--conflicted-files unknown`), so the caller can still record the update. Derive the
+    reject list from every branch of the reader: each sentinel comparison, each split delimiter,
+    each `trim`. Then pin a write-then-read round trip per entry. The `trim` was the branch #4331
+    first missed: its ledger (row 16) accepted space-edged paths as a format limit on the premise
+    that `git diff --name-only` quotes such a path. But git quotes only control characters, `"`,
+    `\` and (under `core.quotePath`) non-ASCII bytes. A scratch merge conflicting on `trail ` and
+    ` lead` printed both bare, so the marker would have read them back as `trail` and `lead`. Probe
+    a format-limit premise before accepting it, as you would any other benign-failure claim.
 
 ## When to use
 

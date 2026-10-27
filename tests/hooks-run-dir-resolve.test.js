@@ -12,8 +12,10 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { gitRepo, linkedWorktreeOf, harnessWorktreeOf } = require('./helpers/git-fixtures');
-const { resolve, formatTimestamp, isDeadRunDir } = require('../plugin/bin/lib/hooks/run-dir-resolve');
+const { gitRepo, linkedWorktreeOf, harnessWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
+const { resolve, formatTimestamp, adoptionRefusal } = require('../plugin/bin/lib/hooks/run-dir-resolve');
+const { ownerBlock } = require('../plugin/bin/lib/hooks/context');
+const { runLiveness } = require('../plugin/bin/lib/run-liveness');
 
 function mkRunDir(main, name) {
   const dir = path.join(main, '.claude-tweaks', 'pipelines', name);
@@ -289,17 +291,141 @@ test('#1962: step 2 falls through to the next-newest match when the newest is de
   assert.strictEqual(out.path, older);
 });
 
-test('isDeadRunDir: no run-state.json at all (a bare mkdir-only mint) is never dead', () => {
+test('AC4.1 AC4.2: adoptionRefusal on a bare mkdir-only mint (no run-state.json) is adoptable and never throws', () => {
   const main = gitRepo();
   const bare = mkRunDir(main, '2026-01-01T000000-record-1');
-  assert.strictEqual(isDeadRunDir(bare), false);
+  let reason;
+  assert.doesNotThrow(() => { reason = adoptionRefusal(bare); });
+  assert.strictEqual(reason, null);
 });
 
-test('isDeadRunDir: malformed run-state.json fails open (not dead) rather than throwing', () => {
+test('AC4.1 AC4.2: adoptionRefusal on a malformed run-state.json is refused as unreadable rather than throwing', () => {
   const main = gitRepo();
   const dir = mkRunDir(main, '2026-01-01T000000-record-2');
   fs.writeFileSync(path.join(dir, 'run-state.json'), '{not json');
-  assert.strictEqual(isDeadRunDir(dir), false);
+  let reason;
+  assert.doesNotThrow(() => { reason = adoptionRefusal(dir); });
+  assert.strictEqual(reason, 'unreadable-run-state');
+});
+
+// #4419: adoption is not a liveness verdict. An `active` run whose worktree survives but
+// whose owner process is gone is exactly a crash a resuming session must adopt.
+test('AC3.1 AC3.2 #4419: step 2 adopts an active run whose worktree survives but whose owner pid is gone (crash-resume)', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  // Backdate the worktree's last commit so no liveness probe reads the run as live.
+  const old = '2026-01-01T00:00:00Z';
+  fixtureGit(['-C', wt, 'commit', '-q', '--allow-empty', '-m', 'old'], {
+    env: { ...process.env, GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old },
+  });
+  const crashed = mkRunDir(main, '2026-01-01T000000-record-4419');
+  fs.writeFileSync(path.join(crashed, 'events.jsonl'), '');
+  const owner = ownerBlock({
+    sessionId: 'crashed-session',
+    now: Date.parse(old),
+    deps: {
+      resolveOwnerPid: () => ({ pid: 2147483646, pidSource: 'env' }),
+      pidStartTime: () => 'T1',
+    },
+  });
+  writeRunState(crashed, { status: 'active', worktree: wt, sessionId: 'crashed-session', owner });
+  // Precondition: liveness itself reads this run as dead (owner pid gone), so the adoption
+  // assertions below pin the ruling rather than a fixture that liveness would call live.
+  assert.strictEqual(runLiveness(crashed).verdict, 'dead');
+  const out = resolve({ cwd: main, env: {}, specSlug: 'record-4419' });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, false);
+  assert.strictEqual(out.path, crashed);
+});
+
+// #4151: step 2 refuses what `/claude-tweaks:release`'s inline adoption guard used to refuse
+// (terminal status, `createdBy: release-standalone`), plus an unreadable run-state.json — via
+// `adoptionRefusal`, which `newestMatch` consults for its refusal reasons, the #1962
+// unresumable check among them.
+test('#4151 AC1.1: adoptionRefusal names each refusal reason', () => {
+  const main = gitRepo();
+  let count = 0;
+  const fresh = () => {
+    count += 1;
+    return mkRunDir(main, `2026-01-01T0000${String(count).padStart(2, '0')}-record-refusal`);
+  };
+  const withState = (state) => { const d = fresh(); writeRunState(d, state); return d; };
+  const withRaw = (raw) => { const d = fresh(); fs.writeFileSync(path.join(d, 'run-state.json'), raw); return d; };
+  const withDirAsFile = () => { const d = fresh(); fs.mkdirSync(path.join(d, 'run-state.json')); return d; };
+
+  assert.strictEqual(adoptionRefusal(withState({ status: 'clean' })), 'terminal');
+  assert.strictEqual(adoptionRefusal(withState({ status: 'closed' })), 'terminal');
+  assert.strictEqual(adoptionRefusal(withState({ status: 'active', createdBy: 'release-standalone' })), 'release-standalone');
+  assert.strictEqual(adoptionRefusal(withState({ createdBy: 'release-standalone' })), 'release-standalone');
+  assert.strictEqual(adoptionRefusal(withRaw('{not json')), 'unreadable-run-state');
+  assert.strictEqual(adoptionRefusal(withRaw('null')), 'unreadable-run-state');
+  assert.strictEqual(adoptionRefusal(withRaw('[]')), 'unreadable-run-state');
+  assert.strictEqual(adoptionRefusal(withDirAsFile()), 'unreadable-run-state');
+  assert.strictEqual(adoptionRefusal(withState({ status: 'interrupted' })), 'dead');
+  assert.strictEqual(adoptionRefusal(withState({ status: 'active' })), null);
+  assert.strictEqual(adoptionRefusal(withState({})), null);
+  assert.strictEqual(adoptionRefusal(withState({ status: 5 })), null);
+  assert.strictEqual(adoptionRefusal(withState({ status: 'active', createdBy: 'flow' })), null);
+  assert.strictEqual(adoptionRefusal(fresh()), null);
+});
+
+function assertReleaseSlugUnresolved(main) {
+  const out = resolve({ cwd: main, env: {}, specSlug: 'release' });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
+}
+
+test('#4151 AC1.1: --spec-slug release never returns a terminal release dir', () => {
+  const main = gitRepo();
+  const dir = mkRunDir(main, '2026-10-01T100000-release-standalone');
+  writeRunState(dir, { status: 'clean', createdBy: 'release-standalone' });
+  assertReleaseSlugUnresolved(main);
+});
+
+test('#4151 AC1.1: --spec-slug release never returns an active release-standalone dir', () => {
+  const main = gitRepo();
+  const dir = mkRunDir(main, '2026-10-01T100000-release-standalone');
+  writeRunState(dir, { status: 'active', createdBy: 'release-standalone' });
+  assertReleaseSlugUnresolved(main);
+});
+
+test('#4151 AC1.1: --spec-slug release never returns a dir whose run-state.json cannot be parsed', () => {
+  const main = gitRepo();
+  const dir = mkRunDir(main, '2026-10-01T100000-release');
+  fs.writeFileSync(path.join(dir, 'run-state.json'), '{not json');
+  assertReleaseSlugUnresolved(main);
+});
+
+test('#4151: a refused newest match falls through to an older adoptable one', () => {
+  const main = gitRepo();
+  const older = mkRunDir(main, '2026-01-01T000000-record-77');
+  const newer = mkRunDir(main, '2026-06-01T000000-record-77');
+  writeRunState(newer, { status: 'clean' });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'record-77' });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.path, older);
+});
+
+test('#4151: step 1 PIPELINE_RUN_DIR is never refused, even when terminal and release-standalone', () => {
+  const main = gitRepo();
+  const dir = mkRunDir(main, '2026-10-02T100000-supplied');
+  writeRunState(dir, { status: 'clean', createdBy: 'release-standalone' });
+  const out = resolve({ cwd: main, env: { PIPELINE_RUN_DIR: dir }, specSlug: 'release' });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(fs.realpathSync(out.path), fs.realpathSync(dir));
+});
+
+test('#4151: --create --standalone with --spec-slug mints fresh past a refused match', () => {
+  const main = gitRepo();
+  const dir = mkRunDir(main, '2026-01-01T000000-record-88');
+  writeRunState(dir, { status: 'clean' });
+  const out = resolve({
+    cwd: main, env: {}, specSlug: 'record-88', standalone: 'record-88', create: true,
+    now: new Date('2026-06-01T12:00:00Z'),
+  });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.strictEqual(path.basename(out.path), '2026-06-01T120000-record-88-standalone');
 });
 
 test('standalone fallback with --create mints a directory with decisions.md and staged/, matching the reference snippet', () => {

@@ -11,12 +11,17 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { findComposeCallSites } = require('../plugin/bin/lib/skill-audit/context-cost.js');
+const { PHASES } = require('../plugin/bin/lib/compose-context/phases.js');
 
 const PLUGIN = path.join(__dirname, '..', 'plugin');
 const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
 const LENS_DISPATCH = path.join(PLUGIN, 'skills', 'review', 'step3-lens-dispatch.md');
+const CONTRACT = path.join(PLUGIN, 'skills', '_shared', 'subagent-output-contract.md');
 
 // Documented gaps: a `_shared/` citation with no compose step behind it yet. Each entry must
 // still occur on a governed line with no fallback clause on it — a stale-exemption check
@@ -144,19 +149,101 @@ test('review/step3-lens-dispatch.md fenced blocks never cite _shared/ at all', (
   assert.deepStrictEqual(offenders, [], `_shared/ citation inside a dispatched fenced block:\n${offenders.join('\n')}`);
 });
 
-test('task-prompt.md composes exactly one claims bundle and one merge bundle before dispatch', () => {
+// #4027: each call composes its bundles with one `--phase` line; the phase registry
+// (bin/lib/compose-context/phases.js) names the bundles, never the line.
+const FIRST_CALL_LINE = '`node "{plugin-root}/bin/compose-context.js" --run "{minted-run-dir}" --phase first-call`';
+const SECOND_CALL_LINE = '`node "{plugin-root}/bin/compose-context.js" --run "{minted-run-dir}" --phase second-call`';
+const READ_ONCE = 'Read {minted-run-dir}/context/merge.md once, whole, with one Read call, before your first step';
+const NO_PIECEWISE = 'never re-read it unless your context was compacted since, and never open its source files piecewise (sed, grep, cat)';
+const flat = (s) => s.replace(/\s+/g, ' ');
+
+test('task-prompt.md composes each call\'s bundles with one --phase line, and no --step line remains', () => {
   const text = readText(TASK_PROMPT);
-  const claimsLines = text.split('\n').filter((l) => l.includes('--step claims'));
-  const mergeLines = text.split('\n').filter((l) => l.includes('--step merge'));
-  assert.equal(claimsLines.length, 1, `expected exactly one --step claims line, found ${claimsLines.length}`);
-  assert.equal(mergeLines.length, 1, `expected exactly one --step merge line, found ${mergeLines.length}`);
-  for (const line of [...claimsLines, ...mergeLines]) {
-    assert.match(line, /--run "\{minted-run-dir\}"/, `compose line missing --run "{minted-run-dir}": ${line}`);
+  const lines = text.split('\n');
+  for (const want of [FIRST_CALL_LINE, SECOND_CALL_LINE]) {
+    const hits = lines.filter((l) => l.startsWith(want));
+    assert.equal(hits.length, 1, `expected exactly one line starting with ${want}, found ${hits.length}`);
   }
+  assert.ok(!text.includes('--step claims'), 'task-prompt.md still composes with --step claims');
+  assert.ok(!text.includes('--step merge'), 'task-prompt.md still composes with --step merge');
   assert.ok(
     text.includes('if the compose command is unavailable or exits non-zero, read the named source files directly'),
     'Context pack section is missing the compose-fallback sentence',
   );
+});
+
+test('the second-call template, and only it, has the agent read merge.md once, whole, before its first step', () => {
+  const text = readText(TASK_PROMPT);
+  const [first, second] = fencedBlocks(text).map((b) => flat(b.join('\n')));
+  assert.ok(second.includes(READ_ONCE), `second-call template is missing: ${READ_ONCE}`);
+  assert.ok(second.includes(NO_PIECEWISE), `second-call template is missing: ${NO_PIECEWISE}`);
+  assert.equal(flat(text).split(READ_ONCE).length - 1, 1, 'the read-once instruction must occur exactly once in the file');
+  assert.ok(!first.includes('context/merge.md'), 'the first-call template must not cite the merge bundle');
+});
+
+test('claims.md stays an on-demand citation with its fallback in both templates; item 5 says which bundle is read up front', () => {
+  const text = readText(TASK_PROMPT);
+  const blocks = fencedBlocks(text);
+  for (const block of blocks) assert.ok(block.includes('{context-pack}'), 'each template must substitute {context-pack}');
+  const packRow = contextPackNumberedRegion(text).filter((l) => l.trim().startsWith('|') && l.includes('context/claims.md'));
+  assert.equal(packRow.length, 1, 'the CLI table must carry the one claims-registry row citing context/claims.md');
+  const cites = [...packRow, ...blocks.flat().filter((l) => l.includes('context/claims.md'))];
+  for (const line of cites) {
+    assert.match(line, FALLBACK_RE, `claims.md citation without its fallback: ${line}`);
+    assert.ok(!/once, whole/.test(line), `claims.md must stay on-demand, not read up front: ${line}`);
+  }
+  const region = contextPackNumberedRegion(text);
+  const start = region.findIndex((l) => l.startsWith('5. **Composed bundles**'));
+  const end = region.findIndex((l) => l.startsWith('6. '));
+  assert.ok(start !== -1 && end > start, 'item 5 not found ahead of item 6');
+  const item5 = flat(region.slice(start, end).join('\n'));
+  assert.match(item5, /`\{minted-run-dir\}\/context\/claims\.md` is on-demand in both calls/);
+  assert.match(item5, /`\{minted-run-dir\}\/context\/merge\.md` is read once, whole, up front by the second call only/);
+});
+
+test('review/step3-lens-dispatch.md composes its bundle with --phase review-lens', () => {
+  const text = readText(LENS_DISPATCH);
+  assert.ok(
+    text.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --phase review-lens'),
+    'step3-lens-dispatch.md is missing its --phase review-lens compose line',
+  );
+  assert.ok(!text.includes('--step review-dispatch'), 'step3-lens-dispatch.md still composes with --step review-dispatch');
+});
+
+test('subagent-output-contract.md names the phase registry as the one home and the always-bundle read rule', () => {
+  const text = flat(readText(CONTRACT));
+  assert.ok(text.includes('`bin/lib/compose-context/phases.js` is the one home of which bundles a phase gets'), 'contract bullet does not name the phase registry as the one home');
+  assert.ok(text.includes('a bundle registered `load: \'always\'` is read once, whole, before the child\'s first step'), 'contract bullet does not state the always-bundle read rule');
+});
+
+// Which registered phases have no shipped `--phase` call line under `root` — a phase with no
+// line is a bundle the composed-bytes rail gate never measures.
+function phasesMissingFromProse(root) {
+  const seen = new Set(findComposeCallSites(root).filter((r) => !r.unparsed && r.phase).map((r) => r.phase));
+  return Object.keys(PHASES).filter((p) => !seen.has(p));
+}
+
+test('every registered phase has a shipped --phase call line, so each of its bundles meets the composed rail gate', () => {
+  assert.deepStrictEqual(phasesMissingFromProse(PLUGIN), []);
+});
+
+test('the phase-coverage guard reports exactly the phase whose line is missing (discrimination proof)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'phase-coverage-'));
+  try {
+    const skillDir = path.join(root, 'skills', 'demo');
+    fs.mkdirSync(skillDir, { recursive: true });
+    const line = (p) => `node "\${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --phase ${p}`;
+    const names = Object.keys(PHASES);
+    assert.ok(names.length > 1, 'setup: the registry must hold more than one phase');
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `${names.map(line).join('\n')}\n`);
+    assert.deepStrictEqual(phasesMissingFromProse(root), []);
+    for (const dropped of names) {
+      fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `${names.filter((n) => n !== dropped).map(line).join('\n')}\n`);
+      assert.deepStrictEqual(phasesMissingFromProse(root), [dropped], `dropping ${dropped}'s line was not caught`);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('the second-call template still runs whole skills via /claude-tweaks:flow, and wrap-up composes its own merge bundle', () => {
@@ -167,8 +254,6 @@ test('the second-call template still runs whole skills via /claude-tweaks:flow, 
   assert.match(joined, /\/claude-tweaks:flow/);
   assert.match(joined, /review,polish,wrap-up/);
 
-  // eslint-disable-next-line global-require
-  const { findComposeCallSites } = require('../plugin/bin/lib/skill-audit/context-cost.js');
   const mergeRows = findComposeCallSites(PLUGIN).filter((c) => c.step === 'merge' && !c.unparsed);
   assert.ok(mergeRows.length > 0, 'expected at least one real (non-placeholder) merge compose call site');
   assert.ok(

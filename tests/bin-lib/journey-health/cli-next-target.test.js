@@ -4,6 +4,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'journey-health.js');
 
@@ -14,15 +15,11 @@ function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-cl
 // remote. Mirrors tests/bin-lib/harness-health/cli-next-target.test.js's
 // makeGitSpy.
 function makeGitSpy() {
-  const spyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-nt-gitspy-'));
-  const logFile = path.join(spyDir, 'git-calls.log');
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-nt-gitspy-'));
+  const logFile = path.join(logDir, 'git-calls.log');
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  fs.writeFileSync(
-    path.join(spyDir, 'git'),
-    `#!/bin/sh\necho "$@" >> "${logFile}"\nexec "${realGit}" "$@"\n`,
-  );
-  fs.chmodSync(path.join(spyDir, 'git'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  return logFile;
+  const restore = installStub('git', `#!/bin/sh\necho "$@" >> "${logFile}"\nexec "${realGit}" "$@"\n`);
+  return { logFile, restore };
 }
 
 // Seeds a real local `origin` remote with a health-state branch so
@@ -155,15 +152,16 @@ test('four next-target -> validate-findings cycles against a permanently broken 
   assert.deepStrictEqual(audited, ids, 'the rotation must reach every journey, not re-pick the broken one');
 });
 
-test('next-target (default no --target path) fetches durable state exactly once, not twice', () => {
+test('next-target (default no --target path) fetches durable state exactly once, not twice', { skip: STUB_SKIP }, () => {
   const root = tmp();
   writeJourney(root, 'checkout-flow');
   seedDurableCursors(root, {});
-  const logFile = makeGitSpy();
-  execFileSync('node', [CLI, 'next-target', '--root', root], {
-    encoding: 'utf8',
-    env: { ...process.env, PATH: `${path.dirname(logFile)}:${process.env.PATH}` },
-  });
+  const { logFile, restore } = makeGitSpy();
+  try {
+    execFileSync('node', [CLI, 'next-target', '--root', root], { encoding: 'utf8' });
+  } finally {
+    restore();
+  }
   const log = fs.readFileSync(logFile, 'utf8');
   const fetchCalls = log.split('\n').filter((line) => /(^|\s)fetch(\s|$)/.test(line)).length;
   assert.strictEqual(

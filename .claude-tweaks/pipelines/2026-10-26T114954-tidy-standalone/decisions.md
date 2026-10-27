@@ -1,0 +1,12 @@
+## /tidy
+- AUTO 12:59:53 — log-decision: Step 7: removed merged clean worktree dispatch-record-4125 (PR merged, unlocked, no live cwd). Reversibility: high. [lever: tidy-aggressiveness=moderate (project)]
+- AUTO 12:59:54 — log-decision: Step 7: removed merged clean worktree dispatch-record-4131 (PR merged, unlocked, no live cwd). Reversibility: high. [lever: tidy-aggressiveness=moderate (project)]
+- AUTO 12:59:54 — log-decision: Step 7: removed merged clean worktree dispatch-record-4132 (PR merged, unlocked, no live cwd). Reversibility: high. [lever: tidy-aggressiveness=moderate (project)]
+- AUTO 12:59:54 — log-decision: Step 7: removed merged clean worktree dispatch-record-4391 (PR merged, unlocked, no live cwd). Reversibility: high. [lever: tidy-aggressiveness=moderate (project)]
+- AUTO 12:59:54 — log-decision: Step 7: deleted 9 orphaned plans (related records closed, no repo citation, re-verified against fresh origin/main) — 4027, shipped-candidate-followup-exclusion, 4133, 4134, 4391, evidence-route-cli, impact-map-drift-selection, 4131, 4288. Reversibility: med. [lever: tidy-aggressiveness=moderate (project)]
+- SKIP 12:59:54 — log-decision: Step 7: kept worktree dispatch-record-4134 — merged clean, but a live process cwd is inside it. Reversibility: n/a. [lever: tidy-aggressiveness=moderate (project)]
+- SKIP 12:59:54 — log-decision: Step 7: Fill Release Note not run — Shape 4.5 candidates file absent (Work Records agent DONE_WITH_CONCERNS); #2724 surfaced under Yours. Reversibility: n/a. [lever: tidy-aggressiveness=moderate (project)]
+- SKIP 12:59:54 — log-decision: Step 6: #4135 close proposal (shipped-close-4135.md) not staged — premise false: no previous-release declaration-reader test exists on origin/main; record stays open. Reversibility: n/a. [lever: tidy-aggressiveness=moderate (project)]
+- SKIP 12:59:54 — log-decision: Step 6: #3315 stale-claim finding dropped — worktree dispatch-record-3315 has a live session cwd and draft PR #3927 updated minutes ago. Reversibility: n/a. [lever: tidy-aggressiveness=moderate (project)]
+- SKIP 12:59:54 — log-decision: Step 6: archival compaction — 46 pre-2026-09-26 run dirs are late-write stubs whose archive/ target already exists; not moved, surfaced under Yours. Reversibility: n/a. [lever: tidy-aggressiveness=moderate (project)]
+- AUTO 13:00:55 — log-decision: Console residue: marked 2026-10-26T063441-record-4132 reviewed — its sdd-ruling-1 (leave as is) was among the SDD rulings the user ratified before merging PR #4386. Reversibility: high.

@@ -157,7 +157,7 @@ test('resolve-tiebreak exits 2 for a malformed finding, an unreadable reply, an 
   for (const args of [[good], [good, r, r]]) {
     const res = runCli(['resolve-tiebreak', ...args]);
     assert.strictEqual(res.code, 2, args.join(' '));
-    assert.match(res.stderr, /^review-coordination\.js: resolve-tiebreak takes <finding\.json> <reply-file> \[--root <dir>\]\nusage: /, args.join(' '));
+    assert.match(res.stderr, /^review-coordination\.js: resolve-tiebreak takes <finding\.json> <reply-file> \[--root <dir>\] \[--run <dir>\]\nusage: /, args.join(' '));
   }
   const noRoot = runCli(['resolve-tiebreak', good, r, '--root']);
   assert.strictEqual(noRoot.code, 2);
@@ -343,4 +343,144 @@ test('--help lists the three tiebreak forms', () => {
   assert.strictEqual(run(['--help'], deps), 0);
   const text = out.join('');
   for (const form of ['resolve-tiebreak', 'write-findings', 'check-coverage']) assert.ok(text.includes(form), form);
+});
+
+// ---- #4026: resolve-tiebreak --run appends the verdict line it prints ----
+
+const { resolveTiebreak } = require('../../../plugin/bin/lib/tiebreak');
+const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
+const logDecision = require('../../../plugin/bin/log-decision');
+
+// A confirmed reply verified under a repo root, and a could-not-parse one (outcome console).
+function tiebreakInputs(d) {
+  const root = path.join(d, 'repo');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'auth.ts'), 'a\nb\nconst ok = token.exp > now;\n');
+  const finding = { ...TB_FINDING, line: 3 };
+  const f = writeText(d, 'finding.json', JSON.stringify(finding));
+  const confirmed = writeText(d, 'confirmed.txt', ['Verdict: confirmed', 'Severity: high', 'Evidence: src/auth.ts:3 `const ok = token.exp > now;`', 'Recommendation: file — real', 'STATUS: DONE'].join('\n'));
+  const garbled = writeText(d, 'garbled.txt', 'I have no idea what format you wanted');
+  const readFile = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+  return { root, finding, f, replies: { confirmed, garbled }, readFile };
+}
+
+const stripTime = (o) => ({ ...o, logLine: o.logLine.replace(/\d{2}:\d{2}:\d{2}/, 'HH:MM:SS') });
+
+test('characterization: resolve-tiebreak without --run prints the resolver result, one JSON line', (t) => {
+  const d = tmpDir(t);
+  const { root, finding, f, replies, readFile } = tiebreakInputs(d);
+  for (const [name, reply] of Object.entries(replies)) {
+    const { deps, out, err } = fakeDeps(d);
+    assert.strictEqual(run(['resolve-tiebreak', f, reply, '--root', root], deps), 0, name);
+    const printed = out.join('');
+    assert.ok(printed.endsWith('}\n') && printed.indexOf('\n') === printed.length - 1, name);
+    const expected = resolveTiebreak(finding, fs.readFileSync(reply, 'utf8'), { readFile });
+    assert.deepStrictEqual(stripTime(JSON.parse(printed)), stripTime(expected), name);
+    assert.deepStrictEqual(Object.keys(JSON.parse(printed)), Object.keys(expected), name);
+    assert.strictEqual(err.join(''), '', name);
+  }
+});
+
+const TB_NOW = new Date(2026, 9, 25, 9, 8, 7);
+function tbDeps(cwd, overrides = {}) {
+  const { deps, out, err } = fakeDeps(cwd);
+  return { deps: { ...deps, now: () => TB_NOW, ...overrides }, out, err };
+}
+
+test('resolve-tiebreak without --run is byte-identical to the resolver result', (t) => {
+  const d = tmpDir(t);
+  const { root, finding, f, replies, readFile } = tiebreakInputs(d);
+  const outcomes = {};
+  for (const [name, reply] of Object.entries(replies)) {
+    const { deps, out } = tbDeps(d);
+    assert.strictEqual(run(['resolve-tiebreak', f, reply, '--root', root], deps), 0, name);
+    const expected = resolveTiebreak(finding, fs.readFileSync(reply, 'utf8'), { readFile, now: TB_NOW });
+    assert.strictEqual(out.join(''), JSON.stringify(expected) + '\n', name);
+    outcomes[name] = expected.outcome;
+  }
+  assert.deepStrictEqual(outcomes, { confirmed: 'confirmed', garbled: 'console' });
+});
+
+test('AC3.1: resolve-tiebreak --run appends the line it prints', (t) => {
+  const d = tmpDir(t);
+  const { root, finding, f, replies, readFile } = tiebreakInputs(d);
+  const { main, runDir } = anchoredRunDir(t);
+  const results = [];
+  for (const [name, reply] of Object.entries(replies)) {
+    const { deps, out, err } = tbDeps(main);
+    assert.strictEqual(run(['resolve-tiebreak', f, reply, '--root', root, '--run', runDir], deps), 0, name);
+    const { logged, ...rest } = JSON.parse(out.join(''));
+    assert.strictEqual(logged, true, name);
+    const expected = resolveTiebreak(finding, fs.readFileSync(reply, 'utf8'), { readFile, now: TB_NOW });
+    assert.strictEqual(JSON.stringify(rest), JSON.stringify(expected), name);
+    assert.strictEqual(err.join(''), '', name);
+    results.push(expected);
+  }
+  const written = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.strictEqual(written, `## /review\n${results.map((r) => `- ${r.logLine}\n`).join('')}`);
+  // Parity: step3-tiebreak.md step 3's log-decision.js command, which the agent ran before #4026.
+  const twin = anchoredRunDir(t);
+  results.forEach((r, i) => {
+    const textFile = writeText(d, `text-${i}.txt`, r.logText);
+    const argv = ['--run', twin.runDir, '--status', r.logStatus, '--step', r.logStep, '--text-file', textFile, '--reversibility', 'high', '--section', '/review'];
+    const sink = [];
+    const code = logDecision.run(argv, { now: () => TB_NOW.getTime(), cwd: () => twin.main, mainRoot: undefined, stdout: (s) => sink.push(s), stderr: (s) => sink.push(s) });
+    assert.strictEqual(code, 0, sink.join(''));
+  });
+  assert.strictEqual(written, fs.readFileSync(path.join(twin.runDir, 'decisions.md'), 'utf8'));
+  assert.strictEqual(formatEntry({ status: results[0].logStatus, now: TB_NOW, step: results[0].logStep, text: results[0].logText, reversibility: 'high' }), `- ${results[0].logLine}`);
+});
+
+test('resolve-tiebreak --run refuses an unanchored or missing run dir with exit 3 and no verdict', (t) => {
+  const d = tmpDir(t);
+  const { root, f, replies } = tiebreakInputs(d);
+  const { main, runDir } = anchoredRunDir(t);
+  const shadow = tmpDir(t);
+  for (const [dir, why] of [[shadow, /not anchored under the main checkout/], [path.join(runDir, 'gone'), /run dir does not exist/]]) {
+    const { deps, out, err } = tbDeps(main);
+    assert.strictEqual(run(['resolve-tiebreak', f, replies.confirmed, '--root', root, '--run', dir], deps), 3, dir);
+    assert.strictEqual(out.join(''), '', dir);
+    assert.match(err.join(''), why, dir);
+  }
+  assert.ok(!fs.existsSync(path.join(shadow, 'decisions.md')));
+  const { deps, err } = tbDeps(main);
+  assert.strictEqual(run(['resolve-tiebreak', f, replies.confirmed, '--run'], deps), 2);
+  assert.match(err.join(''), /^review-coordination\.js: --run needs a directory\nusage: /);
+});
+
+// An unset $PIPELINE_RUN_DIR expands to `--run ""`: a usage error, never a run dir resolved
+// against cwd (from the main checkout root that would anchor and write decisions.md there) —
+// resolve-policy.js's blank---run rule (#1138).
+test('resolve-tiebreak --run with an empty or whitespace value exits 2 and writes nothing, even from the main checkout root', (t) => {
+  const d = tmpDir(t);
+  const { root, f, replies } = tiebreakInputs(d);
+  const { main } = anchoredRunDir(t);
+  for (const blank of ['', '   ', '\t']) {
+    const { deps, out, err } = tbDeps(main);
+    assert.strictEqual(run(['resolve-tiebreak', f, replies.confirmed, '--root', root, '--run', blank], deps), 2, JSON.stringify(blank));
+    assert.strictEqual(out.join(''), '', JSON.stringify(blank));
+    assert.match(err.join(''), /^review-coordination\.js: --run needs a directory\nusage: /, JSON.stringify(blank));
+  }
+  assert.ok(!fs.existsSync(path.join(main, 'decisions.md')));
+});
+
+test('resolve-tiebreak --run: a failed append prints logged: false and one stderr line, exit 0', (t) => {
+  const d = tmpDir(t);
+  const { root, finding, f, replies, readFile } = tiebreakInputs(d);
+  const { main, runDir } = anchoredRunDir(t);
+  const { deps, out, err } = tbDeps(main, { appendDecision: () => { throw new Error('disk full'); } });
+  assert.strictEqual(run(['resolve-tiebreak', f, replies.confirmed, '--root', root, '--run', runDir], deps), 0);
+  const { logged, ...rest } = JSON.parse(out.join(''));
+  assert.strictEqual(logged, false);
+  assert.strictEqual(JSON.stringify(rest), JSON.stringify(resolveTiebreak(finding, fs.readFileSync(replies.confirmed, 'utf8'), { readFile, now: TB_NOW })));
+  const lines = err.join('').split('\n').filter(Boolean);
+  assert.strictEqual(lines.length, 1);
+  assert.match(lines[0], /^review-coordination\.js: could not append the decisions\.md entry .*disk full/);
+  assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')));
+});
+
+test('--help names resolve-tiebreak\'s --run', () => {
+  const { deps, out } = fakeDeps(process.cwd());
+  assert.strictEqual(run(['--help'], deps), 0);
+  assert.ok(out.join('').includes('resolve-tiebreak <finding.json> <reply-file> [--root <dir>] [--run <dir>]'));
 });

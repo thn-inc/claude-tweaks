@@ -17,7 +17,9 @@
 // missing file or a non-`*.test.js` entry exits 1, never handing `node --test` zero files.
 //
 // Elsewhere the explicit file list goes to `node --test`; on Windows (Node >= 22) the root globs
-// go instead, because ~780 paths overflow the 32,767-char command line (#3316).
+// go instead, because ~780 paths overflow the 32,767-char command line (#3316). A `--files-from`
+// subset has no globs to fall back to, so on Windows one whose command line would overflow runs
+// the full suite instead, with a named reason on stderr (#4134).
 //
 // Running the suite also bounds its load on the machine (#3969): concurrent suites from sibling
 // worktrees and fixtures leaked into the shared temp dir made the dev machine unusable. Each run
@@ -162,6 +164,24 @@ function buildTestArgs(files, roots, { platform, nodeMajor, concurrency }) {
     );
   }
   return [...head, ...roots.map((root) => `${root.split(/[\\/]/).join('/')}/**/*.test.js`)];
+}
+
+// The Windows `CreateProcess` command-line limit, in characters (#3316).
+const WIN32_COMMAND_LINE_MAX = 32767;
+
+// Why an explicit `--files-from` subset cannot be passed to `node --test` as-is: null when it
+// fits (always off win32), else a sentence naming the line length and the limit. The line is
+// counted as the space-separated `execPath args...` with every argument charged its length plus
+// two quotes and a separator, and the last separator does not exist. That is an upper bound, not
+// the exact length: libuv quotes an argument only when it holds a space, tab or quote, so most
+// arguments cost two characters less. Keep the estimate pessimistic. `args` is `--test`,
+// `--test-concurrency=<n>` and then the files, so the file count is `args.length - 2`.
+// Pure: `platform` is a parameter, never read from `process`.
+function subsetFallbackReason(execPath, args, { platform }) {
+  if (platform !== 'win32') return null;
+  const len = [execPath, ...args].reduce((n, a) => n + a.length + 3, 0) - 1;
+  if (len < WIN32_COMMAND_LINE_MAX) return null;
+  return `a ${args.length - 2}-file subset needs a ${len}-character command line, over the Windows limit of ${WIN32_COMMAND_LINE_MAX}`;
 }
 
 // Whether `pid` names a live process: signal 0 probes without delivering anything. ESRCH means
@@ -379,7 +399,7 @@ function sweepStaleRoots({ dir, isAlive }) {
 }
 
 module.exports = {
-  listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots,
+  listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots, subsetFallbackReason, WIN32_COMMAND_LINE_MAX,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
 };
 
@@ -430,11 +450,21 @@ if (require.main === module) {
 
   let testArgs;
   try {
-    testArgs = buildTestArgs(files, roots, {
+    const argOptions = {
       platform: process.platform,
       nodeMajor: Number(process.versions.node.split('.')[0]),
       concurrency: resolveConcurrency(process.env, os.availableParallelism()),
-    });
+    };
+    testArgs = buildTestArgs(files, roots, argOptions);
+    // A subset too long for the Windows command line has no globs of its own, so it runs the
+    // full suite (and takes the full-suite slot lane below) rather than failing to spawn (#4134).
+    const reason = roots === null ? subsetFallbackReason(process.execPath, testArgs, { platform: process.platform }) : null;
+    if (reason) {
+      console.error(`run-tests.js: --files-from ${argv[1]}: ${reason} — running the full suite instead.`);
+      roots = DEFAULT_ROOTS;
+      files = listTestFiles(REPO_ROOT, roots).map((f) => path.relative(REPO_ROOT, f));
+      testArgs = buildTestArgs(files, roots, argOptions);
+    }
   } catch (err) {
     console.error(`run-tests.js: ${err.message}`);
     process.exit(1);

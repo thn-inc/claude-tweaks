@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { decideRemotePrune, pruneRemote } = require('../../../plugin/bin/lib/reconcile/prune-remote');
 const { readText } = require('../../helpers/read-skill');
+const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 
 // The delete bar is deliberately stricter than archive-branches' local -D:
 // a pushed deletion is unrecoverable from this checkout once origin GCs the
@@ -346,31 +347,24 @@ test('pruneRemote: branch attached to a live worktree is silently out of scope',
 // classify.js/shared-fetch.js, #820 D2). Intercept at the process-spawn
 // boundary instead: a `git` wrapper placed first on PATH.
 function installPushWrapper(failMultiBranch) {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-gitwrap-'));
-  const logFile = path.join(wrapperDir, 'push-calls.log');
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-gitwrap-'));
+  const logFile = path.join(logDir, 'push-calls.log');
   fs.writeFileSync(logFile, '');
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
-  const wrapperPath = path.join(wrapperDir, 'git');
   // Real invocation shape is `git -C <cwd> push origin --delete <branch...>`,
   // so $1=-C $2=<cwd> $3=push $4=origin $5=--delete $6=<branch1> $7=<branch2?>.
   // When failMultiBranch is set, a push --delete naming 2+ branches (the
   // batch) exits 1 without touching origin; a single-branch push --delete
   // (the per-branch fallback) is let through to real git.
   const failClause = failMultiBranch ? '\n  if [ -n "$7" ]; then\n    exit 1\n  fi' : '';
-  fs.writeFileSync(
-    wrapperPath,
+  const restore = installStub(
+    'git',
     `#!/bin/sh\nif [ "$3" = "push" ]; then\n  echo "$@" >> "${logFile}"${failClause}\nfi\nexec "${realGit}" "$@"\n`,
   );
-  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
-  return {
-    logFile,
-    restore: () => { process.env.PATH = originalPath; },
-  };
+  return { logFile, restore };
 }
 
-test('pruneRemote: multiple prunable branches are deleted with ONE push call, not one per branch', () => {
+test('pruneRemote: multiple prunable branches are deleted with ONE push call, not one per branch', { skip: STUB_SKIP }, () => {
   const { root, integration } = buildTwoPrunableBranchesFixture();
   const wrapper = installPushWrapper(false);
   let result;
@@ -386,7 +380,7 @@ test('pruneRemote: multiple prunable branches are deleted with ONE push call, no
   assert.equal(result.entries.filter((e) => e.action === 'delete').length, 2);
 });
 
-test('pruneRemote: a failed batch push falls back to per-branch deletes, one bad ref does not swallow the rest', () => {
+test('pruneRemote: a failed batch push falls back to per-branch deletes, one bad ref does not swallow the rest', { skip: STUB_SKIP }, () => {
   const { root, integration } = buildTwoPrunableBranchesFixture();
   const wrapper = installPushWrapper(true);
   let result;
@@ -435,13 +429,12 @@ test('pruneRemote: batch fails; a branch already deleted before the fallback pus
 // checkRefExists reporting the ref is still present (or indeterminate, on a
 // bad connection) must never be read as success.
 function installAlwaysFailWrapper(branchToFail) {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-gitwrap2-'));
-  const logFile = path.join(wrapperDir, 'push-calls.log');
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-gitwrap2-'));
+  const logFile = path.join(logDir, 'push-calls.log');
   fs.writeFileSync(logFile, '');
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
-  const wrapperPath = path.join(wrapperDir, 'git');
-  fs.writeFileSync(
-    wrapperPath,
+  const restore = installStub(
+    'git',
     `#!/bin/sh\n` +
     `if [ "$3" = "push" ]; then\n` +
     `  echo "$@" >> "${logFile}"\n` +
@@ -451,13 +444,10 @@ function installAlwaysFailWrapper(branchToFail) {
     `fi\n` +
     `exec "${realGit}" "$@"\n`,
   );
-  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
-  return { logFile, restore: () => { process.env.PATH = originalPath; } };
+  return { logFile, restore };
 }
 
-test('pruneRemote: a genuine per-branch delete failure still reports delete-failed', () => {
+test('pruneRemote: a genuine per-branch delete failure still reports delete-failed', { skip: STUB_SKIP }, () => {
   const { root, integration } = buildTwoPrunableBranchesFixture();
   const wrapper = installAlwaysFailWrapper('build/b1');
   let result;

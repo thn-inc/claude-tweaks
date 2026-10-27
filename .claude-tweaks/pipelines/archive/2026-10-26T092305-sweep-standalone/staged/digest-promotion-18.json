@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "digest",
+  "record": null,
+  "title": "Digest: engine-verify.js (3)",
+  "action": "Propose cluster: file record absorbing 3 engine-verify.js entries",
+  "command": "gh issue create --title \"Digest: engine-verify.js (3)\" --body-file staged/digest-promotion-18.md"
+ }
+]

@@ -19,8 +19,6 @@ const path = require('path');
 const { readText } = require('./helpers/read-skill');
 
 const SCRIPT_PATH = path.resolve(__dirname, '..', 'scripts', 'claude-cloud-setup.sh');
-const INSTALLED_JSON = '/tmp/cc-installed.json';
-const MARKETPLACES_JSON = '/tmp/cc-marketplaces.json';
 
 // Structurally anchored on the shell substitution markers around the VERDICT node -e block,
 // not on any prose sentence inside it — a rewording of the comments cannot break extraction.
@@ -149,7 +147,10 @@ function writeFixtures({ pluginId, installedVersion, catalogPlugin, marketplaceN
     path.join(installPath, '.claude-plugin', 'plugin.json'),
     JSON.stringify({ version: installedVersion }),
   );
-  fs.writeFileSync(INSTALLED_JSON, JSON.stringify([{ id: pluginId, installPath }]));
+  const snapDir = tmpDir('cloud-setup-snap-');
+  const installedJson = path.join(snapDir, 'cc-installed.json');
+  const marketplacesJson = path.join(snapDir, 'cc-marketplaces.json');
+  fs.writeFileSync(installedJson, JSON.stringify([{ id: pluginId, installPath }]));
 
   const mktLocation = tmpDir('cloud-setup-mkt-');
   fs.mkdirSync(path.join(mktLocation, '.claude-plugin'), { recursive: true });
@@ -157,25 +158,44 @@ function writeFixtures({ pluginId, installedVersion, catalogPlugin, marketplaceN
     path.join(mktLocation, '.claude-plugin', 'marketplace.json'),
     JSON.stringify({ plugins: [catalogPlugin] }),
   );
-  fs.writeFileSync(MARKETPLACES_JSON, JSON.stringify([{ name: marketplaceName, installLocation: mktLocation }]));
+  fs.writeFileSync(marketplacesJson, JSON.stringify([{ name: marketplaceName, installLocation: mktLocation }]));
+  return { installedJson, marketplacesJson };
 }
 
-// Runs a VERDICT node -e body (live or frozen) against whatever fixtures are currently at
-// INSTALLED_JSON / MARKETPLACES_JSON, with `curlDir` prepended to PATH so a stubbed `curl`
-// answers the sha-resolution fetch. The live body (#923) reads the two session-scoped
-// snapshot paths from process.argv[2]/[3] rather than hardcoding them (_shared/
-// session-tmp-root.md) — the frozen pre-#860 body ignores the extra args harmlessly, since it
-// still hardcodes its own literals internally.
-function runVerdict(body, spec, curlDir) {
-  const result = spawnSync('node', ['-e', body, spec, INSTALLED_JSON, MARKETPLACES_JSON], {
+function prependPath(dir, envPath, delimiter = path.delimiter) {
+  return `${dir}${delimiter}${envPath}`;
+}
+
+// Recorded not-a-bug verdict (#3315): the fake curl is a `#!/bin/sh` stub and the snippet runs
+// under bash, so neither executes under cmd.exe -- the cases that spawn it skip on win32. The
+// reason string is truthy only on win32; `process.platform` is never stubbed.
+const SH_STUB_SKIP = process.platform === 'win32'
+  && 'win32: the fake curl is a #!/bin/sh stub and the snippet runs under bash; neither works under cmd.exe';
+
+// Runs a VERDICT node -e body (live or frozen) against the per-test snapshots `writeFixtures`
+// returned, with `curlDir` prepended to PATH so a stubbed `curl` answers the sha-resolution
+// fetch. The live body (#923) reads the two session-scoped snapshot paths from process.argv[2]/[3]
+// rather than hardcoding them (_shared/session-tmp-root.md). The frozen pre-#860 body still
+// hardcodes `/tmp/cc-*.json` literals, so they are swapped to the per-test paths before spawning.
+function runVerdict(body, spec, curlDir, snapshots) {
+  const patchedBody = body
+    .split('"/tmp/cc-installed.json"').join(JSON.stringify(snapshots.installedJson))
+    .split('"/tmp/cc-marketplaces.json"').join(JSON.stringify(snapshots.marketplacesJson));
+  assert.ok(!patchedBody.includes('/tmp/cc-'), 'a frozen VERDICT body still names a /tmp/cc-*.json literal the swap did not cover');
+  const result = spawnSync('node', ['-e', patchedBody, spec, snapshots.installedJson, snapshots.marketplacesJson], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${curlDir}:${process.env.PATH}` },
+    env: { ...process.env, PATH: prependPath(curlDir, process.env.PATH) },
     timeout: 15_000,
   });
   assert.strictEqual(result.status, 0, `node -e exited nonzero (stderr: ${result.stderr})`);
   const [installed, expected, status, installPath] = result.stdout.trim().split('\t');
   return { installed, expected, status, installPath, stderr: result.stderr };
 }
+
+test('AC1.1: prependPath joins PATH with the platform delimiter (#3315)', () => {
+  assert.strictEqual(prependPath('C:\\stub', 'C:\\Windows', path.win32.delimiter), 'C:\\stub;C:\\Windows');
+  assert.strictEqual(prependPath('/stub', '/usr/bin', path.posix.delimiter), '/stub:/usr/bin');
+});
 
 const SPEC = 'claude-tweaks@claude-tweaks-marketplace';
 const SHA = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
@@ -208,56 +228,56 @@ test('setup: extract the live VERDICT snippet and confirm it is byte-identical t
   );
 });
 
-test('sha-pinned catalog entry: stale resolved version vs newer installed build reports DRIFT', () => {
+test('sha-pinned catalog entry: stale resolved version vs newer installed build reports DRIFT', { skip: SH_STUB_SKIP }, () => {
   const curlDir = makeCurlStub({ [RAW_URL]: JSON.stringify({ version: '6.90.0' }) });
-  writeFixtures({
+  const snapshots = writeFixtures({
     pluginId: SPEC,
     installedVersion: '6.97.0',
     catalogPlugin: SHA_PINNED_CATALOG_ENTRY,
     marketplaceName: 'claude-tweaks-marketplace',
   });
-  const verdict = runVerdict(liveSnippet, SPEC, curlDir);
+  const verdict = runVerdict(liveSnippet, SPEC, curlDir, snapshots);
   assert.strictEqual(verdict.installed, '6.97.0');
   assert.strictEqual(verdict.expected, '6.90.0', 'expected should resolve to the sha-pinned manifest version, not "unversioned"');
   assert.strictEqual(verdict.status, 'DRIFT');
 });
 
-test('sha-pinned catalog entry: newer resolved version vs stale installed build reports DRIFT (reverse direction)', () => {
+test('sha-pinned catalog entry: newer resolved version vs stale installed build reports DRIFT (reverse direction)', { skip: SH_STUB_SKIP }, () => {
   const curlDir = makeCurlStub({ [RAW_URL]: JSON.stringify({ version: '6.97.0' }) });
-  writeFixtures({
+  const snapshots = writeFixtures({
     pluginId: SPEC,
     installedVersion: '6.90.0',
     catalogPlugin: SHA_PINNED_CATALOG_ENTRY,
     marketplaceName: 'claude-tweaks-marketplace',
   });
-  const verdict = runVerdict(liveSnippet, SPEC, curlDir);
+  const verdict = runVerdict(liveSnippet, SPEC, curlDir, snapshots);
   assert.strictEqual(verdict.installed, '6.90.0');
   assert.strictEqual(verdict.expected, '6.97.0');
   assert.strictEqual(verdict.status, 'DRIFT');
 });
 
-test('sha-pinned catalog entry: identical resolved and installed versions report ok (no drift)', () => {
+test('sha-pinned catalog entry: identical resolved and installed versions report ok (no drift)', { skip: SH_STUB_SKIP }, () => {
   const curlDir = makeCurlStub({ [RAW_URL]: JSON.stringify({ version: '6.97.0' }) });
-  writeFixtures({
+  const snapshots = writeFixtures({
     pluginId: SPEC,
     installedVersion: '6.97.0',
     catalogPlugin: SHA_PINNED_CATALOG_ENTRY,
     marketplaceName: 'claude-tweaks-marketplace',
   });
-  const verdict = runVerdict(liveSnippet, SPEC, curlDir);
+  const verdict = runVerdict(liveSnippet, SPEC, curlDir, snapshots);
   assert.strictEqual(verdict.expected, '6.97.0');
   assert.strictEqual(verdict.status, 'ok');
 });
 
 test('legacy entry-level version field still compares directly (unaffected by the sha fallback)', () => {
   const curlDir = makeCurlStub({}); // must not be consulted at all when declared.version is set
-  writeFixtures({
+  const snapshots = writeFixtures({
     pluginId: 'superpowers@claude-plugins-official',
     installedVersion: '1.2.0',
     catalogPlugin: { name: 'superpowers', version: '1.3.0' },
     marketplaceName: 'claude-plugins-official',
   });
-  const verdict = runVerdict(liveSnippet, 'superpowers@claude-plugins-official', curlDir);
+  const verdict = runVerdict(liveSnippet, 'superpowers@claude-plugins-official', curlDir, snapshots);
   assert.strictEqual(verdict.installed, '1.2.0');
   assert.strictEqual(verdict.expected, '1.3.0');
   assert.strictEqual(verdict.status, 'DRIFT');
@@ -268,13 +288,13 @@ test('go-red proof: the pre-#860 VERDICT body reports "unversioned"/ok on the sa
   // run through the frozen pre-change body. If this did not report the bug, the new tests
   // above would not be able to go red against the old code [IL-105].
   const curlDir = makeCurlStub({ [RAW_URL]: JSON.stringify({ version: '6.90.0' }) });
-  writeFixtures({
+  const snapshots = writeFixtures({
     pluginId: SPEC,
     installedVersion: '6.97.0',
     catalogPlugin: SHA_PINNED_CATALOG_ENTRY,
     marketplaceName: 'claude-tweaks-marketplace',
   });
-  const verdict = runVerdict(PRE_CHANGE_VERDICT_BODY, SPEC, curlDir);
+  const verdict = runVerdict(PRE_CHANGE_VERDICT_BODY, SPEC, curlDir, snapshots);
   assert.strictEqual(verdict.expected, 'unversioned', 'pre-change code should have degraded to "unversioned" on a sha-pinned entry');
   assert.strictEqual(verdict.status, 'ok', 'pre-change code should have silently reported no drift despite the real version mismatch');
 });
@@ -289,13 +309,13 @@ test('non-github.com catalog source url: skip the raw-manifest fetch and announc
   };
   // Must not be consulted at all -- the host gate should skip the fetch before any curl call.
   const curlDir = makeCurlStub({});
-  writeFixtures({
+  const snapshots = writeFixtures({
     pluginId: SPEC,
     installedVersion: '6.97.0',
     catalogPlugin: NON_GITHUB_ENTRY,
     marketplaceName: 'claude-tweaks-marketplace',
   });
-  const verdict = runVerdict(liveSnippet, SPEC, curlDir);
+  const verdict = runVerdict(liveSnippet, SPEC, curlDir, snapshots);
   assert.strictEqual(verdict.expected, 'unversioned');
   assert.match(
     verdict.stderr,
@@ -303,15 +323,15 @@ test('non-github.com catalog source url: skip the raw-manifest fetch and announc
   );
 });
 
-test('github.com source url: a failed raw-manifest fetch announces a WARNING naming the spec and sha, instead of swallowing it', () => {
+test('github.com source url: a failed raw-manifest fetch announces a WARNING naming the spec and sha, instead of swallowing it', { skip: SH_STUB_SKIP }, () => {
   const curlDir = makeCurlStub({}); // unregistered URL -> stub exits 22, matching real curl -f on a 404
-  writeFixtures({
+  const snapshots = writeFixtures({
     pluginId: SPEC,
     installedVersion: '6.97.0',
     catalogPlugin: SHA_PINNED_CATALOG_ENTRY,
     marketplaceName: 'claude-tweaks-marketplace',
   });
-  const verdict = runVerdict(liveSnippet, SPEC, curlDir);
+  const verdict = runVerdict(liveSnippet, SPEC, curlDir, snapshots);
   assert.strictEqual(verdict.expected, 'unversioned');
   assert.match(
     verdict.stderr,
@@ -319,15 +339,15 @@ test('github.com source url: a failed raw-manifest fetch announces a WARNING nam
   );
 });
 
-test('go-red proof: the pre-#1779 VERDICT body swallows both the fetch-failure and non-github cases with zero stderr', () => {
+test('go-red proof: the pre-#1779 VERDICT body swallows both the fetch-failure and non-github cases with zero stderr', { skip: SH_STUB_SKIP }, () => {
   const curlDir = makeCurlStub({});
-  writeFixtures({
+  const snapshots = writeFixtures({
     pluginId: SPEC,
     installedVersion: '6.97.0',
     catalogPlugin: SHA_PINNED_CATALOG_ENTRY,
     marketplaceName: 'claude-tweaks-marketplace',
   });
-  const verdict = runVerdict(PRE_1779_VERDICT_BODY, SPEC, curlDir);
+  const verdict = runVerdict(PRE_1779_VERDICT_BODY, SPEC, curlDir, snapshots);
   assert.strictEqual(verdict.expected, 'unversioned');
   assert.strictEqual(verdict.stderr.trim(), '', 'pre-#1779 code should have swallowed the fetch failure with no stderr output');
 });
@@ -355,9 +375,12 @@ function runTmpDirBlock(block, sessionId) {
   delete env.CLAUDE_CODE_SESSION_ID;
   if (sessionId !== undefined) env.CLAUDE_CODE_SESSION_ID = sessionId;
   env.TMPDIR = tmpDir('cloud-setup-tmpdir-test-');
+  // MSYS bash rewrites a Windows TMPDIR to its own /tmp/… view, so the expected value is read
+  // back from bash itself rather than taken from the native env.TMPDIR string.
+  const shellTmpdir = spawnSync('bash', ['-c', 'printf %s "$TMPDIR"'], { encoding: 'utf8', env, timeout: 5000 }).stdout;
   const script = `set -euo pipefail\n${block}\necho "$CC_TMP_DIR"`;
   const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env, timeout: 5000 });
-  return { ...result, tmpdir: env.TMPDIR };
+  return { ...result, tmpdir: env.TMPDIR, shellTmpdir };
 }
 
 test('session-id guard: CLAUDE_CODE_SESSION_ID unset does not abort under set -u, CC_TMP_DIR stays unscoped', () => {
@@ -365,7 +388,7 @@ test('session-id guard: CLAUDE_CODE_SESSION_ID unset does not abort under set -u
   const block = extractTmpDirBlock(scriptSource);
   const result = runTmpDirBlock(block, undefined);
   assert.strictEqual(result.status, 0, `expected the guarded block to run clean under set -u (stderr: ${result.stderr})`);
-  assert.strictEqual(result.stdout.trim(), result.tmpdir);
+  assert.strictEqual(result.stdout.trim(), result.shellTmpdir);
 });
 
 test('session-id guard: CLAUDE_CODE_SESSION_ID exported still resolves the ct-session-{id} subdirectory unchanged', () => {
@@ -373,9 +396,8 @@ test('session-id guard: CLAUDE_CODE_SESSION_ID exported still resolves the ct-se
   const block = extractTmpDirBlock(scriptSource);
   const result = runTmpDirBlock(block, 'abc123');
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
-  const expectedDir = `${result.tmpdir}/ct-session-abc123`;
-  assert.strictEqual(result.stdout.trim(), expectedDir);
-  assert.ok(fs.existsSync(expectedDir), 'the ct-session-{id} subdirectory should have been created');
+  assert.strictEqual(result.stdout.trim(), `${result.shellTmpdir}/ct-session-abc123`);
+  assert.ok(fs.existsSync(path.join(result.tmpdir, 'ct-session-abc123')), 'the ct-session-{id} subdirectory should have been created');
 });
 
 test('go-red proof: the pre-#1779 unguarded session-id test aborts with "unbound variable" under set -u', () => {

@@ -5,12 +5,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { PROBE_ORDER, gatherEvidence, decideVerdict, runLiveness } = require('../../../plugin/bin/lib/run-liveness');
+const { PROBE_ORDER, LIVE_PROBES, gatherEvidence, decideVerdict, runLiveness, blocksResume, runIdMs } = require('../../../plugin/bin/lib/run-liveness');
 const { pidStartTime } = require('../../../plugin/bin/lib/run-liveness/process-probe');
 const ctxLib = require('../../../plugin/bin/lib/hooks/context');
-const { isDeadRunDir } = require('../../../plugin/bin/lib/hooks/run-dir-resolve');
+const { adoptionRefusal } = require('../../../plugin/bin/lib/hooks/run-dir-resolve');
 const { checkResumeFreshness } = require('../../../plugin/bin/lib/hooks/resume-freshness');
-const { skipUnderRoot } = require('../../helpers/root');
+const { chmodDenialSkip } = require('../../helpers/root');
 
 const MIN = 60_000;
 const HOUR = 3_600_000;
@@ -232,7 +232,7 @@ test('AC9.1 a fail-open variant (probe error mapped to dead) fails the probe-err
 test('AC11.1 a run-state with no owner key reads cleanly everywhere and is legacy to runLiveness', () => {
   const fx = fixture({ state: { status: 'active' } });
   assert.doesNotThrow(() => ctxLib.readRunState(fx.runDir));
-  assert.doesNotThrow(() => isDeadRunDir(fx.runDir));
+  assert.doesNotThrow(() => adoptionRefusal(fx.runDir));
   assert.doesNotThrow(() => checkResumeFreshness(fx.runDir));
   const res = verdictOf(fx);
   assert.strictEqual(entry(res, 'owner-pid').detail, 'no-owner-block');
@@ -374,7 +374,7 @@ test('a worktree path the type lookup reports missing is the no-worktree negativ
   assert.strictEqual(link.verdict, 'live');
 });
 
-test('a real chmod 000 parent makes the default type lookup unreadable, not absent', { skip: process.platform === 'win32' || skipUnderRoot('chmod 000 is not a denial under root').skip }, () => {
+test('a real chmod 000 parent makes the default type lookup unreadable, not absent', chmodDenialSkip('chmod 000 is not a denial under root'), () => {
   const parent = tmp('ct-liveness-locked-');
   const wt = path.join(parent, 'wt');
   fs.mkdirSync(wt);
@@ -534,4 +534,51 @@ test('runLiveness never throws, even for a missing run directory', () => {
   const res = runLiveness(path.join(os.tmpdir(), 'ct-liveness-missing-dir-xyz'), { now: NOW, probes: baseProbes() });
   assert.ok(['live', 'dead', 'unknown'].includes(res.verdict));
   assert.deepStrictEqual(res.evidence.map((e) => e.probe), PROBE_ORDER);
+});
+
+const evidenceWith = (over) => ({ verdict: 'unknown', evidence: PROBE_ORDER.map((probe) => ({ probe, result: 'negative', detail: 'x', ...(over[probe] || {}) })) });
+
+test('blocksResume: a positive or erroring worktree-lock or last-commit entry blocks', () => {
+  for (const probe of ['worktree-lock', 'last-commit']) {
+    for (const result of ['positive', 'error']) {
+      assert.strictEqual(blocksResume(evidenceWith({ [probe]: { result } })), true, `${probe} ${result}`);
+    }
+  }
+});
+
+test('blocksResume: owner-pid, heartbeat and owner-events never block, whatever their result', () => {
+  for (const probe of ['owner-pid', 'heartbeat', 'owner-events']) {
+    for (const result of ['positive', 'error']) {
+      assert.strictEqual(blocksResume(evidenceWith({ [probe]: { result } })), false, `${probe} ${result}`);
+    }
+  }
+  assert.strictEqual(blocksResume(evidenceWith({})), false);
+  assert.strictEqual(blocksResume(evidenceWith({ 'last-commit': { detail: 'no-commits' } })), false);
+});
+
+test('blocksResume: a result with no evidence array blocks (cannot tell)', () => {
+  for (const r of [null, undefined, {}, { evidence: 'x' }]) assert.strictEqual(blocksResume(r), true);
+});
+
+test('blocksResume: a missing lock or commit entry, or an unrecognised result, blocks (cannot tell)', () => {
+  assert.strictEqual(blocksResume({ evidence: [] }), true, 'empty evidence');
+  for (const probe of ['worktree-lock', 'last-commit']) {
+    const without = evidenceWith({});
+    without.evidence = without.evidence.filter((e) => e.probe !== probe);
+    assert.strictEqual(blocksResume(without), true, `${probe} missing`);
+    assert.strictEqual(blocksResume(evidenceWith({ [probe]: { result: 'unknown' } })), true, `${probe} unknown result`);
+  }
+  const withNull = evidenceWith({});
+  withNull.evidence.unshift(null);
+  assert.strictEqual(blocksResume(withNull), false, 'a null entry beside two negatives is skipped');
+});
+
+test('runIdMs: a run-id basename gives its UTC start in ms; no prefix gives null', () => {
+  assert.strictEqual(runIdMs('/x/2026-08-01T090000-record-1'), Date.parse('2026-08-01T09:00:00Z'));
+  assert.strictEqual(runIdMs('/x/run'), null);
+});
+
+test('LIVE_PROBES is the four live probes, in PROBE_ORDER', () => {
+  assert.deepStrictEqual(LIVE_PROBES, ['owner-pid', 'heartbeat', 'worktree-lock', 'last-commit']);
+  assert.deepStrictEqual(PROBE_ORDER.filter((p) => LIVE_PROBES.includes(p)), LIVE_PROBES);
 });

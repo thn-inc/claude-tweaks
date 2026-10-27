@@ -1886,12 +1886,12 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
         assert.deepStrictEqual(files, ['/r', '/a0', '/a1', '/a2', '/a3'].map((d) => path.resolve(d, 'f.js')));
       });
       // Timing-free: the handler runs once per cwd per piece, so the visit count is the cost. Each
-      // repetition holds at most three visited pieces, each visited under at most the cap's 16 cwds
-      // plus one (head: 2,700 to 8,100 visits; uncapped: 45,000 to 136,000).
+      // repetition holds at most four visited pieces (a cd piece is visited too, #4281), each visited
+      // under at most the cap's 16 cwds plus one (head: 5,400 to 10,800 visits; uncapped: 91,000 to 181,000).
       test(`#4149 cwd cap: ${route} stay linear (visits per group bounded by the cap)`, () => {
         let visits = 0;
         forEachShellSegment(build(300, 'true'), '/r', () => { visits += 1; }, opts);
-        assert.ok(visits < 300 * 3 * 17, `${visits} visits`);
+        assert.ok(visits < 300 * 4 * 17, `${visits} visits`);
       });
     }
     test('#4149 cwd cap: a push and a mkdir past the cap resolve in the overflow cwd', () => {
@@ -2500,9 +2500,9 @@ function linkedWorktree4303({ nested = false, policy = true } = {}) {
 // it. Bash 3.2 and 5, started in the worktree with every directory present, write into the main
 // checkout for each: U1 and U2 `main/f.js` (U2's tee row too), U3 `main/a` (cp -rt, mv -vt, GNU
 // install -Dt), U4 and U6 `main/f.js`, S49 runs `git commit` in main, S50 writes `main/s0/f.js`;
-// `cd ${wt} && cp a f.js` writes `wt/f.js`. The commands carry the native temp path, which on win32
-// holds backslashes: the scanner reads a word with a `\` as unresolvable (isUnresolvable), so the
-// rows would resolve nothing there, which says nothing about the walk. Skipped on win32.
+// `cd ${wt} && cp a f.js` writes `wt/f.js`. The commands carry the native temp path unquoted, which
+// on win32 holds backslashes: bash removes an unquoted `\`, and so does the scanner (#4281), so the
+// rows would name a drive-relative path there, which says nothing about the walk. Skipped on win32.
 test('AC1.1 e2e #4303: every #4303 shape from a linked worktree into the main checkout is DENIED', {
   skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
 }, () => {

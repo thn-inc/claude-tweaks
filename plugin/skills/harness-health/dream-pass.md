@@ -54,6 +54,8 @@ Technical Approach: "not the full corpus unbounded." Each qualifying pattern is 
 this project) and logged as one `STAGED` entry in `decisions.md`; a `report.md` at the run dir root
 always summarizes the pass, including the (normal, expected) zero-proposals outcome.
 
+**Every exit runs the close-out.** When this pass created the directory, close it on every exit after the mint — `dream-scan.js` returning any proposal count (zero included) or a non-zero exit (a rejected `--min-sessions`, exit 2): `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "{printed-run-dir}"`. A dream directory records no owning session, so session end never marks it `interrupted`: left alone, it stays `active`. Closing deletes nothing — the staged proposals stay in it for review below. **Created** means the directory did not exist before this pass's own resolution ran — its mint created it; a directory the resolver returned from `$PIPELINE_RUN_DIR` or a most-recent-matching (step 2) match is **inherited**. An **inherited** directory is never closed here — whichever run minted it owns that close.
+
 ## Reviewing proposals
 
 Each staged file is a self-contained writeup: the pattern, the evidence-bar count, up to three

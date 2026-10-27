@@ -7,6 +7,7 @@ files:
   - plugin/skills/dispatch/two-call-gate.md
   - plugin/skills/dispatch/sequential-execution.md
   - plugin/skills/dispatch/task-prompt.md
+  - plugin/skills/flow/context-handoff.md
 ---
 
 # Clear the Two-Call Gate for a Dispatched Group
@@ -22,7 +23,7 @@ files:
 - **URL:** `plugin/skills/flow/claim-targets.md` "Claim every named target, all-or-abort"; the `claim-targets.js` row of `plugin/skills/dispatch/task-prompt.md`'s Context pack CLI table, which carries the `--run "{minted-run-dir}"` shape the dispatched agent copies
 - **Action:** Run `claim-targets.js --run-id "$(basename "$PIPELINE_RUN_DIR")" --targets {n},{m} --run "$PIPELINE_RUN_DIR"`. On success the CLI appends one `- AUTO … — Step 2.8: claimed #n (bin/claim-targets.js, transport: …)` line per claimed target under `## /flow`, through `log-decision`'s own writer and its run-dir anchoring check.
 - **Should feel:** One command, nothing to hand-type — the claim and its audit line land together.
-- **Should understand:** The line is written per target, never as a combined `claimed #a, #b` line. Since #3012 the bookkeeping-stamps gate also recognises a paraphrased line (`paraphrasedClaimNumbers`, `plugin/bin/lib/log-decision/claim-log.js`), including a combined one, for every number it positively names as claimed. The preflight fresh-mint reader (`classifyDecisions`) is narrower: it accepts the per-target canonical line, or a complete paraphrased line whose entry location names the claim step (#3665), so a combined line written under `Step 2.8` still reads as a claim there, while a combined line written under any other step reads as other content. A write the CLI could not make — e.g. a worktree-local, unanchored `--run` path — comes back in the envelope's `claimLogFailures`; the claim itself still stands. This is the `gh` path only: in a `gh`-absent sandbox the manual MCP claim procedure runs instead of the CLI, and the `log-decision.js` call in `claim-targets.md`'s "Log the claim" paragraph is still required once per target it claimed.
+- **Should understand:** The line is written per target, never as a combined `claimed #a, #b` line. Since #3012 the bookkeeping-stamps gate also recognises a paraphrased line (`paraphrasedClaimNumbers`, `plugin/bin/lib/log-decision/claim-log.js`), including a combined one, for every number it positively names as claimed. The preflight fresh-mint reader (`classifyDecisions`) is narrower: it accepts the per-target canonical line, or a complete paraphrased line whose entry location names the claim step (#3665), so a combined line written under `Step 2.8` still reads as a claim there, while a combined line written under any other step reads as other content. A write the CLI could not make — e.g. a worktree-local, unanchored `--run` path — comes back in the envelope's `claimLogFailures`; the claim itself still stands. This is the `gh` path only: in a `gh`-absent sandbox the manual MCP claim procedure runs instead of the CLI, and the `log-decision.js` call in `claim-targets.md`'s "Log the claim" paragraph is still required once per target it claimed. Since #4027 `/flow` Step 2.8 also passes `--steps {steps}` (Step 1's resolved step list, comma-joined). A dispatched second call's `review,polish,wrap-up` list has neither `build` nor `test`, so Step 2.8 skips the claim, and `--steps` makes the CLI apply that guard itself as a backstop: it claims nothing and exits 0 with `skipGuard: "no-build-or-test"`.
 - **Red flags:** A non-empty `claimLogFailures` ignored — the materialize-commit push is then denied by the bookkeeping-stamps gate exactly as before; hand-typing a grouped claim line instead of passing `--run`.
 
 ### 2. Materialize every member before building — `/flow` multi-spec per-record `/build`
@@ -76,6 +77,19 @@ files:
   - A first call reporting `build-test-ok` on a raw `npm test` log alone.
   - A `stamp-absent` note logged for a first call whose chunked suite composed complete at HEAD.
 
+### 6. Dispatching session continues a call that handed off at the context cap
+- **URL:** `plugin/skills/dispatch/two-call-gate.md` §8; `plugin/skills/dispatch/task-prompt.md`'s "Continuation call"; `plugin/skills/flow/context-handoff.md`'s "Dispatched call"; `plugin/bin/lib/dispatch/first-call-artifact-check.js`'s `resolveFirstCallGate` and `parseNextSteps`
+- **Action:** **Dispatched call:** `/flow` Step 4 gauges its own context at a phase boundary (`bin/context-gauge.js`), finds it past the cap with a step left, pushes its branch, keeps its claim and worktree, and reports `OUTCOME: handoff` plus a `NEXT_STEPS:` line, ending `STATUS: DONE`. **Dispatching session:** reads that as neither a pass nor a failure. For a first call, `resolveFirstCallGate` returns `handoff` before any artifact check, only when `NEXT_STEPS` parses within `build`, `stories` and `test`. It then dispatches a fresh Task call in the same worktree: the call's own template, with the step list replaced by `NEXT_STEPS`. The gate (steps 3 to 5 above) runs on the last continuation's report.
+- **Should feel:** Invisible when it works. A long build finishes in a few fresh contexts instead of one slow one, and nothing is torn down or re-claimed between them.
+- **Should understand:**
+  - The artifact check, claim-log check and stamp read all wait for the report that carries `build-test-ok`. A handoff report has not run every step yet, so none of them can pass or fail on it.
+  - A handoff is bounded at three per run (`HANDOFF_BOUND`, counted in `handoff.json`'s `handoffCount`, shared by both calls). At the bound the gauge writes nothing and the call continues in place, so a fourth handoff report is not continued: the call is reported `build-test-blocked` (first call, §5) or `blocked` (second call, §6).
+  - A missing, empty, unknown or duplicated `NEXT_STEPS` entry fails closed to `blocked` rather than becoming a continuation that skips or repeats a step.
+- **Red flags:**
+  - A handoff report routed to §5's teardown, which would release a claim the continuation needs.
+  - The artifact check run on a handoff report.
+  - A continuation dispatched with the original step list, which would re-run steps already done.
+
 ## Origin
 - Created during #2775's build (multi-spec run 2026-10-16T172750-spec-2775-2733-2677): materialized-header check 5 in the two-call gate, and `claim-targets.js --run` writing the canonical Step 2.8 claim-log line.
 - Updated during build of #3012: the bookkeeping-stamps gate now accepts a semantically equivalent paraphrased claim line, so a first call that logged a real claim in different prose no longer gets the second call denied at its first push.
@@ -84,4 +98,5 @@ files:
 - Updated during build of #3577: step 3. Check 6 confirms the canonical Step 2.8 claim line per member from `decisions.md`, so the dispatching session no longer relies on the first call's own `verify-run-bookends.js` self-check.
 - Updated during build of #3661: step 5. The dispatching session reads the first call's `verify.js` pass stamp (`checkFirstCallStamp`) before every call-2 dispatch, as a logged note rather than a gate. The first-call template's artifact is now the runner stamp plus `report.json`, never a raw `npm test` log.
 - Updated during build of #4006: step 5. Bare `verify.js --stamp-status` discovers `.claude-tweaks/verify-scope.json`, and `checkFirstCallStamp` accepts a complete composed per-suite verdict as verified, so a chunked first call no longer logs a degraded stamp note.
+- Updated during build of #4027: step 6. A dispatched call that crosses `/flow`'s context cap reports `OUTCOME: handoff` and is continued in a fresh Task call, bounded at three handoffs per run, instead of being gated as a failure.
 - Related: #2837 (introduced the first-call artifact check), #2861 (claim-log line parser), #2391 (worktree-mirror rung of the record-resolution ladder).

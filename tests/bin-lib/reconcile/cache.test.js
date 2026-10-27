@@ -8,6 +8,7 @@ const {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS,
   RESIDUE_ESCALATE_THRESHOLD, recordResidueFailure, recordResidueSuccess, listResidueFailures,
   trackResidue, pruneResidueFailures, clearResidue, beginCacheBatch, commitCacheBatch, recordResidueError, planClear,
+  applyOwnerlessNonClean,
 } = require('../../../plugin/bin/lib/reconcile/cache');
 
 function tmpRoot() {
@@ -44,6 +45,33 @@ test('writeCache then readCache round-trips', () => {
     lastOriginHeadRepairFailedAt: 4242, prStates: { 'n:1': { v: 'pr-not-found', at: 5 } },
     claimBlobs: { s1: '{"runId":"r"}' }, residueIssueIndex: { 'o/r\nm': 7 },
   });
+});
+
+test('#4421 AC6.2 AC6.3: applyOwnerlessNonClean stamps the first zero, keeps it, and clears it above zero', () => {
+  const first = Date.parse('2026-10-26T00:00:00Z');
+  const zero = applyOwnerlessNonClean({}, 0, first);
+  assert.deepEqual(zero, { ownerlessNonClean: 0, ownerlessNonCleanZeroSince: '2026-10-26T00:00:00.000Z' });
+  const kept = applyOwnerlessNonClean(zero, 0, first + 86400000);
+  assert.equal(kept.ownerlessNonCleanZeroSince, '2026-10-26T00:00:00.000Z');
+  const cleared = applyOwnerlessNonClean(kept, 2, first + 2 * 86400000);
+  assert.deepEqual(cleared, { ownerlessNonClean: 2 });
+  assert.equal('ownerlessNonCleanZeroSince' in cleared, false);
+  assert.deepEqual(kept, { ownerlessNonClean: 0, ownerlessNonCleanZeroSince: '2026-10-26T00:00:00.000Z' }, 'the input is not mutated');
+});
+
+test('#4421 readCache keeps valid ownerless keys and drops invalid ones', () => {
+  const root = tmpRoot();
+  const valid = { ownerlessNonClean: 0, ownerlessNonCleanZeroSince: '2026-10-26T00:00:00.000Z' };
+  writeCache(root, valid);
+  assert.deepEqual(readCache(root), { ...readCache(tmpRoot()), ...valid });
+  for (const bad of [-1, 1.5, '3', null]) {
+    writeCache(root, { ownerlessNonClean: bad });
+    assert.equal('ownerlessNonClean' in readCache(root), false, `ownerlessNonClean ${JSON.stringify(bad)} is dropped`);
+  }
+  for (const bad of ['not a date', null, 5]) {
+    writeCache(root, { ownerlessNonCleanZeroSince: bad });
+    assert.equal('ownerlessNonCleanZeroSince' in readCache(root), false, `ownerlessNonCleanZeroSince ${JSON.stringify(bad)} is dropped`);
+  }
 });
 
 test('readCache: a non-object claimBlobs (array, string) reads as {}', () => {

@@ -8,8 +8,8 @@ const { slugForCwd, locateTranscripts, readUsage, isProcedurePath, subagentsDirF
 const { aggregateDispatches } = require('../../../plugin/bin/lib/timing/derive');
 
 // The developer's own CLAUDE_CONFIG_DIR would redirect every homeDir-only
-// lookup below away from its fixture (#3458) — same posture as cli.test.js's
-// fixtureHomeEnv.
+// lookup below away from its fixture (#3458) — same posture as
+// tests/helpers/fixture-home.js's fixtureHomeEnv.
 delete process.env.CLAUDE_CONFIG_DIR;
 
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'transcript-small.jsonl');
@@ -163,6 +163,44 @@ test('#1929: isProcedurePath matches repo skills, installed-plugin skills, and n
   assert.equal(isProcedurePath('/repo/docs/hooks.md', '/repo'), false);
   assert.equal(isProcedurePath('/repo/plugin/bin/hooks.js', '/repo'), false);
   assert.equal(isProcedurePath('/elsewhere/skills/notes.txt', '/repo'), false);
+});
+
+test('#3315: isProcedurePath POSIX edge cases stay as they were (non-string, empty, no worktree, trailing-slash worktree)', () => {
+  assert.equal(isProcedurePath(undefined, '/repo'), false);
+  assert.equal(isProcedurePath(null, '/repo'), false);
+  assert.equal(isProcedurePath(42, '/repo'), false);
+  assert.equal(isProcedurePath('', '/repo'), false);
+  assert.equal(isProcedurePath('/repo/plugin/skills/review/SKILL.md', null), true);
+  assert.equal(isProcedurePath('/repo/plugin/skills/review/SKILL.md', undefined), true);
+  assert.equal(isProcedurePath('/repo/plugin/skills/review/SKILL.md', '/repo/'), true);
+  assert.equal(isProcedurePath('/repo/docs/notes.md', '/repo/'), false);
+  assert.equal(isProcedurePath('/repo/plugin/skills/review/notes.txt', '/repo'), false);
+});
+
+test('AC1.1: isProcedurePath matches win32 skill paths and nothing else (#3315)', () => {
+  const W = path.win32;
+  assert.equal(isProcedurePath('C:\\repo\\plugin\\skills\\review\\SKILL.md', 'C:\\repo', W), true);
+  assert.equal(isProcedurePath('plugin\\skills\\_shared\\x.md', 'C:\\repo', W), true);
+  assert.equal(isProcedurePath('C:\\Users\\x\\.claude\\plugins\\cache\\m\\claude-tweaks\\6.0.0\\skills\\flow\\multi-spec.md', 'C:\\repo', W), true);
+  assert.equal(isProcedurePath('C:\\repo\\docs\\notes.md', 'C:\\repo', W), false);
+});
+
+test('#3315: isProcedurePath strips a win32 worktree prefix, so a worktree path that itself contains skills/ is not a false positive', () => {
+  const W = path.win32;
+  assert.equal(isProcedurePath('C:\\work\\skills\\repo\\docs\\notes.md', 'C:\\work\\skills\\repo', W), false);
+  assert.equal(isProcedurePath('C:\\work\\skills\\repo\\plugin\\skills\\review\\SKILL.md', 'C:\\work\\skills\\repo', W), true);
+  // POSIX twin: the same shape, native path.
+  assert.equal(isProcedurePath('/work/skills/repo/docs/notes.md', '/work/skills/repo'), false);
+});
+
+test('#3315: isProcedurePath strips the worktree prefix only at a segment boundary, case-insensitively on win32', () => {
+  const W = path.win32;
+  // A lower-case drive letter is still inside the worktree, so the skills/ in the worktree path is stripped.
+  assert.equal(isProcedurePath('C:\\work\\skills\\repo\\docs\\notes.md', 'c:\\work\\skills\\repo', W), false);
+  // A trailing separator on the worktree changes nothing.
+  assert.equal(isProcedurePath('C:\\repo\\plugin\\skills\\review\\SKILL.md', 'C:\\repo\\', W), true);
+  // `/x/skill` is a prefix of `/x/skills/…` but not its ancestor: no strip, so skills/ still matches.
+  assert.equal(isProcedurePath('/x/skills/a.md', '/x/skill'), true);
 });
 
 test('#1929 AC2: readUsage streams rows, sums procedure bytes for skills Reads only, flags tool round-trips', async () => {

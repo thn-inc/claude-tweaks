@@ -17,6 +17,7 @@ const path = require('node:path');
 const { makeFinding } = require('../finding');
 const { mainCheckoutRoot, safeReal } = require('../../hooks/worktree-detect');
 const { RUN_ID_RE } = require('../../hooks/context');
+const { relativeDisplayId } = require('../../shared-primitives');
 const { defaultIsPidAlive, lockedEvidence } = require('./worktrees');
 
 // Realpath both sides of every path comparison: fixture/tmp paths and real
@@ -58,7 +59,17 @@ function findLockedWorktree(worktreePath, scope) {
   return scope.worktrees.find((wt) => wt && wt.locked && safeReal(wt.path) === real) || null;
 }
 
-function probePipelineRuns({ cwd, runId, worktreeRoot, scope } = {}) {
+// True when `{dir}/staged/` exists and holds at least one entry; an absent
+// or unreadable staged/ reads as empty.
+function hasStagedEntries(dir) {
+  try {
+    return fs.readdirSync(path.join(dir, 'staged')).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function probePipelineRuns({ cwd, runId, worktreeRoot, scope, pathImpl = path } = {}) {
   const start = cwd || process.cwd();
   const root = mainCheckoutRoot(start) || start;
   const worktreeRootReal = worktreeRoot ? safeReal(worktreeRoot) : null;
@@ -90,6 +101,15 @@ function probePipelineRuns({ cwd, runId, worktreeRoot, scope } = {}) {
       continue; // no readable run-state.json — nothing to classify as closed
     }
     if (!state || state.status !== 'clean') continue;
+    // #4138: a clean tidy/sweep standalone run dir that still holds staged
+    // items is still approvable — `/claude-tweaks:tidy --approve` finds it by
+    // name glob under pipelines/ (never archive/) and archives it itself, and
+    // tidy's 30-day Archival compaction is the backstop for one never
+    // approved. Auto-archiving it here would hide its staged items from that
+    // lookup. Same predicate as session-residue.js's
+    // collectApprovableStandalone; a dream-standalone dir is deliberately not
+    // exempt (its proposals are reviewed by hand, and archive/ keeps them).
+    if (/-(tidy|sweep)-standalone/.test(entry.name) && hasStagedEntries(dir)) continue;
     // #1328: a status: clean finding is only safe to auto-archive when its
     // recorded worktree isn't still locked by a live sibling session —
     // blindly archiving out from under one corrupts that session's state.
@@ -113,11 +133,11 @@ function probePipelineRuns({ cwd, runId, worktreeRoot, scope } = {}) {
       // (plugin/skills/tidy/step-6-auto.md) — never by reconcile, which
       // structurally never sees a clean dir (see the header comment above).
       scope: isOwnRun(entry.name, state, runId, worktreeRootReal) ? 'blast-radius' : 'observed',
-      subject: path.relative(root, dir),
+      subject: relativeDisplayId(root, dir, pathImpl),
       remedy: lockedWorktree ? 'record' : 'auto',
       evidence: lockedWorktree
         ? `run-state.json status: clean, but recorded worktree is still locked — ${lockedEvidence(lockedWorktree, defaultIsPidAlive)}`
-        : 'run-state.json status: clean, not under .claude-tweaks/pipelines/archive/ — see wrap-up/cleanup-procedures.md Section B for the archival move',
+        : 'run-state.json status: clean, not under .claude-tweaks/pipelines/archive/ — see wrap-up/cleanup-procedures-execution.md Section B for the archival move',
     }));
   }
   return { ran: true, reason: null, findings };

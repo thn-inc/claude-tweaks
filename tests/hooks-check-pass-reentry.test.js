@@ -96,8 +96,9 @@ test('#3553: --online is threaded through (gh absent -> degrade named in detail;
 
 test('#3553: the caller\'s CLAUDE_CODE_SESSION_ID is passed as sessionId (own run skips the parent-live lock check)', () => {
   const { root, wt, runDir } = reentryFixture();
-  // A lock with no pid yields lockVerdict 'unknown', which checkPassReentry reads as
-  // parent-live unless the run's recorded sessionId is the caller's own.
+  // A lock with no pid is a lock whose holder cannot be proven dead, which
+  // checkPassReentry reads as parent-live unless the run's recorded sessionId is
+  // the caller's own.
   reentryGit(root, 'worktree', 'lock', '--reason', 'held', wt);
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wt, sessionId: 'cpr-test' }));
   const own = runCli(['check-pass-reentry', '--run', runDir], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'cpr-test' } });

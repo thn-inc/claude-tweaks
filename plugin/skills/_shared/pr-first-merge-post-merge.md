@@ -25,7 +25,7 @@ will-close record up to 15 s, since GitHub closes it about 2 s after the merge, 
 #{n}` per record to `decisions.md`. Whatever the `action`, report each `failed[]` record (reopen it
 by hand) and each `pendingClose[]` record (the merge may still close it — re-run the step once,
 then reopen it by hand if it closed) in the closing summary, never as anything but `merged`. Exit
-3-5 or `gh-absent`: one `SKIP` line (`bin/log-decision.js --status SKIP`, Reversibility n/a), then continue to Step 4.1. An `armed` outcome never reaches
+5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.1. An `armed` outcome never reaches
 this step, and the reconciler does not run the CLI; with `--keep-open` on the composer, only a
 Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
 
@@ -147,7 +147,8 @@ gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/{branch}"
 ```
 
 Never `git push origin --delete {branch}` — the no-`git push`-in-the-main-checkout rule stated at
-the top of `pr-first-merge.md` stands, and the worktree-always gate denies the push there anyway.
+the top of `pr-first-merge.md` stands, and `gh api` keeps this step off git entirely (the
+worktree-always gate has exempted a branch-delete push since #658, `git -C` form included since #3900).
 Never `gh pr merge --delete-branch` either: by the time this step runs the worktree is already
 gone, but the dedicated ref-delete call keeps this step decoupled from whichever merge command
 Step 3 actually ran — simpler to reason about than retrofitting `--delete-branch` onto Step 3's

@@ -13,12 +13,14 @@ const { splitNul } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
-const { canonicalRealpath, resolveLeaf } = require('../path-guard');
-const { runLiveness } = require('../run-liveness');
+const { canonicalRealpath, resolveLeaf, lstatType } = require('../path-guard');
+const { runLiveness, runIdMs, LIVE_PROBES } = require('../run-liveness');
+const { LEGACY_DEAD_MS } = require('../run-liveness/constants');
+const { ownEventRecency } = require('../run-liveness/probes');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
-  iterRunDirsWithState, writeRunState, readRunState, readEventLines, isAdHocRunDir,
+  iterRunDirsWithState, writeRunState, readRunState, isAdHocRunDir,
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
 const {
@@ -31,7 +33,7 @@ const { closeRunState } = require('../hooks/close-run-state');
 const { checkRunIntegrity, fallbackBranch, worktreeListStdout } = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
-const { readRunResidue } = require('../console/residue');
+const { readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, filingRerunCommand } = require('../console/residue');
 
 // #4178: every call here addresses `root` via `-C`; an inherited GIT_DIR /
 // GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR would silently override that
@@ -128,18 +130,27 @@ function isAdHocIntrinsicSkip(dir, reason) {
 // first — 7 days, the same window structurally-stuck gives a stuck dir.
 const ADHOC_SESSION_ENDED_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
-// True only for a genuine ad-hoc dir whose recorded worktree provably resolves
-// to the main checkout that holds it. Compares real paths, so a dir reached
-// through a symlink (/var vs /private/var) never reads a main-checkout stamp as
-// linked; any unprovable path — missing, unresolvable — is false, so an
-// unprovable dir is never swept on liveness evidence.
-function isMainCheckoutAdHoc(dir) {
-  const state = readAdHocState(dir);
-  if (!state) return false;
+// True only when the state's recorded worktree provably resolves to the main
+// checkout that holds `dir` — for any run dir, ad-hoc or not (#4421). Compares
+// real paths, so a dir reached through a symlink (/var vs /private/var) never
+// reads a main-checkout stamp as linked; any unprovable path — missing,
+// unresolvable, absent, relative or non-string — is false (a relative path would
+// resolve against the process cwd, so reconcile run from the main checkout would
+// read `.` as the main checkout). It does no ad-hoc check.
+function recordedWorktreeIsMainCheckout(dir, state) {
+  if (!state || typeof state.worktree !== 'string' || !state.worktree || !path.isAbsolute(state.worktree)) return false;
   const mainRoot = canonicalRealpath(path.resolve(dir, '..', '..', '..'));
   if (!mainRoot) return false;
   const leaf = resolveLeaf(state.worktree);
   return leaf.state === 'resolved' && leaf.path === mainRoot;
+}
+
+// True only for a genuine ad-hoc dir whose recorded worktree provably resolves
+// to the main checkout that holds it (recordedWorktreeIsMainCheckout, behind the
+// ad-hoc gate), so an unprovable dir is never swept on liveness evidence.
+function isMainCheckoutAdHoc(dir) {
+  const state = readAdHocState(dir);
+  return !!state && recordedWorktreeIsMainCheckout(dir, state);
 }
 
 // runLiveness with its worktree-path probe forced to 'missing'. For a
@@ -152,6 +163,18 @@ function isMainCheckoutAdHoc(dir) {
 // silent past the dead threshold reads `dead`.
 function adHocSessionLiveness(dir) {
   return runLiveness(dir, { probes: { pathType: () => ({ type: 'missing' }) } }).verdict;
+}
+
+// #4421: the run-liveness verdict + evidence behind the `abandoned-interrupted`
+// kind — runLiveness's own answer, with the same worktree-path adjustment as
+// adHocSessionLiveness but applied to ANY run dir whose recorded worktree is the
+// main checkout (recordedWorktreeIsMainCheckout, not the ad-hoc-only gate): there
+// the worktree-lock and last-commit evidence belong to the shared checkout, not
+// to this run. State is read from disk, the same file runLiveness reads.
+// -> { verdict, evidence }
+function defaultRunVerdict(dir, now) {
+  const adjust = recordedWorktreeIsMainCheckout(dir, readRunState(dir));
+  return runLiveness(dir, { now, probes: adjust ? { pathType: () => ({ type: 'missing' }) } : {} });
 }
 
 // #1604: the "swept once genuinely superseded" half of #1117's own design
@@ -301,50 +324,13 @@ function archiveOrphanedMint(root, dir) {
 // Same 24h window as ORPHAN_MINT_TTL_MS, and for the same reason — longer than
 // any plausible pause before a session resumes its own run, short enough that
 // a genuinely abandoned one is swept the next day. Deliberately not a second,
-// differently-tuned constant.
+// differently-tuned constant. Since #4421 it is the silence FLOOR below which no
+// run-liveness verdict is even asked, and the window a `dead` verdict must have
+// outlasted; an `unknown` verdict with no live positive waits LEGACY_DEAD_MS (72h).
 const STALE_INTERRUPTED_TTL_MS = ORPHAN_MINT_TTL_MS;
 
-// #1737: one read of events.jsonl (via context.js's shared readEventLines)
-// answering both questions `isAbandonedInterrupted` used to ask via two
-// separate reads. `readable` is distinct from `lastOwnMs`'s own `null`, which
-// conflates two different things: "the log is readable but has no qualifying
-// (non-fallback, parseable-ts) event" and "the log couldn't be read in the
-// first place." Only the caller below needs to tell those apart (#1673 F9
-// review finding): a genuinely unreadable/absent log is UNKNOWN evidence, not
-// proof of staleness.
-//
-// `lastOwnMs` is the newest event this run can actually claim as its own, in
-// ms — or null when there are none. Deliberately NOT run-state's `updatedAt`,
-// and deliberately excluding `attribution: 'fallback'` lines: a fallback
-// event is one ANOTHER session's hook guessed into this run because the run
-// had no provable owner (context.js's resolveRun). Those lines advance
-// `updatedAt` without this run being alive at all, which is precisely how an
-// abandoned run looks perpetually busy and never becomes closeable (#1673
-// Deliverable 4).
-//
-// Deliberately asymmetric with context.js's `scanWrapupEvents` (read by
-// `checkRunIntegrity`), which does NOT filter fallback-attributed lines: a
-// run whose events.jsonl holds ONLY fallback-attributed lines can therefore
-// read as both "abandoned" here (no self-attributed activity) AND "shipped"
-// there (>=1 skill_invoked still counts, fallback or not). That combination
-// is coherent and intended, not a bug to reconcile: the work shipped, and
-// nothing THIS run itself produced has touched it since — a future reader
-// should not "fix" the two filters into agreement.
-function ownEventRecency(runDir) {
-  const lines = readEventLines(runDir);
-  if (lines === null) return { readable: false, lastOwnMs: null };
-  let newest = null;
-  for (const ev of lines) {
-    if (!ev || ev.attribution === 'fallback') continue;
-    const t = Date.parse(ev.ts);
-    if (Number.isNaN(t)) continue;
-    if (newest === null || t > newest) newest = t;
-  }
-  return { readable: true, lastOwnMs: newest };
-}
-
 // Thin wrapper kept exported for existing callers (this file's own tests
-// import it directly) — `ownEventRecency` above is the one real reader now.
+// import it directly) — `ownEventRecency` (run-liveness/probes.js) is the one real reader now.
 function lastOwnEventMs(runDir) {
   return ownEventRecency(runDir).lastOwnMs;
 }
@@ -354,8 +340,9 @@ function lastOwnEventMs(runDir) {
 // refuse a close; here the same comparison answers "is this session's own
 // run?" — if it is, we are that session and the run is by definition alive, so
 // never auto-close it. A run owned by nobody, or by some other session, is a
-// candidate only if it ALSO shows no self-attributed activity inside the
-// staleness window. Both halves must hold; neither alone is evidence.
+// candidate only if it ALSO clears the run-liveness verdict (#4421): silence past
+// the 24 h floor with a `dead` verdict, or past 72 h with an `unknown` verdict and
+// no live probe positive. Both halves must hold; neither alone is evidence.
 //
 // Honest scope of this ownership half: it only ever engages when BOTH
 // `state.sessionId` and `sessionId` are non-null. `sessionId` is reliably
@@ -367,9 +354,10 @@ function lastOwnEventMs(runDir) {
 // in. There, this half of the criterion never fires — it is not "the"
 // protection, it is an ADDITIONAL guard that only engages when a session id
 // happens to be known. The substantive protection for every caller, known
-// session id or not, is the two checks below: the 24h staleness window
-// (`STALE_INTERRUPTED_TTL_MS`) and, at the call site, the `shipped-unclosed`
-// evidence gate from `checkRunIntegrity`.
+// session id or not, is the run-liveness verdict (`ctx.runVerdict`, #4421) plus
+// its silence floors — 24h (`STALE_INTERRUPTED_TTL_MS`) for `dead`, 72h
+// (`LEGACY_DEAD_MS`) for `unknown` with no live positive — and, at the call
+// site, the `shipped-unclosed` evidence gate from `checkRunIntegrity`.
 // #1732: thin wrapper — the ownership+recency comparison itself now lives
 // solely in classifyRunDir's 'abandoned-interrupted' branch (below); this
 // function only asks the scoped question. The `checkRunIntegrity`
@@ -377,10 +365,11 @@ function lastOwnEventMs(runDir) {
 // function and classifyRunDir — it is call-site-only (archiveMerged's main
 // loop applies it after reading this kind back) — see classifyRunDir's own
 // comment for why folding it in would misattribute the `explicit: true`
-// archival path's justification.
-function isAbandonedInterrupted(runDir, state, sessionId, now = Date.now()) {
+// archival path's justification. `ctx` carries classifyRunDir's injectable
+// hooks (`runVerdict`); the wrapper's own keys win over it.
+function isAbandonedInterrupted(runDir, state, sessionId, now = Date.now(), ctx = {}) {
   return classifyRunDir({
-    dir: runDir, state, sessionId, kinds: ['abandoned-interrupted'],
+    ...ctx, dir: runDir, state, sessionId, kinds: ['abandoned-interrupted'],
   }, now).kind === 'abandoned-interrupted';
 }
 
@@ -412,8 +401,9 @@ function unclosedRecords(prState, records, repoSlug) {
 // #3945: `coverage` (checkRunTiebreakCoverage's `{ artifactPresent,
 // artifactValid, missing }`) is evaluated only at the two points that would
 // otherwise return `{ action: 'archive' }`, so it sits after every guard above.
-// Absent, or `artifactPresent: false`, it is ignored — byte-identical to the
-// 4-arg decision. The skip carries its own recovery `hint`.
+// Absent, it is ignored — byte-identical to the 4-arg decision. `artifactPresent:
+// false` skips only the artifact checks: #4171's `unfiledCantTell` is evaluated
+// regardless of it. Each skip carries its own recovery `hint`.
 function decideArchiveCore(prState, consoleState, hasStagedPending, recordCheck, coverage) {
   if (prState === 'gh-absent') return { action: 'skip', reason: 'gh-absent' };
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
@@ -463,20 +453,61 @@ function decideArchiveCore(prState, consoleState, hasStagedPending, recordCheck,
 // skips carry no hint, and archiveRunDir's refusal() hints are a different path.
 const TIEBREAK_COVERAGE_HINT = "re-run the review step's findings writer for this run, or delete review-findings.json if the run predates the tiebreak";
 
+// #4171: an auto-merge path renders no console, so a can't-tell finding the run held is
+// lost at archive time unless it was filed. `coverage.unfiledCantTell` names the unfiled ones.
+// `{run-dir}` is a placeholder; archive-run substitutes the real run dir before printing.
+const CANT_TELL_UNFILED_HINT = "file the run's can't-tell findings — an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) rendered no console to file them — through wrap-up/review-console.md's Can't-tell filings (console-filings.js --run \"{run-dir}\"; a spec-N/-prefixed id is filed and logged with --run \"{run-dir}/spec-N\", its own decisions.md), logging each as '{item} filed as #{n} (work-fingerprint {fp})', or write a resolved console.json";
+
 // `{ action: 'archive' }` unless the run's findings artifact is present and
-// either unreadable/malformed or lists a finding with no verdict line.
+// either unreadable/malformed or lists a finding with no verdict line, or (#4171)
+// an auto-merge run holds a can't-tell finding with no filed record.
 function archiveUnlessTiebreakGap(coverage) {
-  if (!coverage || !coverage.artifactPresent) return { action: 'archive' };
-  if (!coverage.artifactValid) return { action: 'skip', reason: 'tiebreak-artifact-invalid', hint: TIEBREAK_COVERAGE_HINT };
-  if (Array.isArray(coverage.missing) && coverage.missing.length > 0) {
-    return { action: 'skip', reason: 'tiebreak-coverage-missing', missing: coverage.missing, hint: TIEBREAK_COVERAGE_HINT };
+  if (!coverage) return { action: 'archive' };
+  if (coverage.artifactPresent) {
+    if (!coverage.artifactValid) return { action: 'skip', reason: 'tiebreak-artifact-invalid', hint: TIEBREAK_COVERAGE_HINT };
+    if (Array.isArray(coverage.missing) && coverage.missing.length > 0) {
+      return { action: 'skip', reason: 'tiebreak-coverage-missing', missing: coverage.missing, hint: TIEBREAK_COVERAGE_HINT };
+    }
+  }
+  if (Array.isArray(coverage.unfiledCantTell) && coverage.unfiledCantTell.length > 0) {
+    return { action: 'skip', reason: 'cant-tell-unfiled', unfiled: coverage.unfiledCantTell, hint: CANT_TELL_UNFILED_HINT };
   }
   return { action: 'archive' };
 }
 
+// #4171: the item ids of the run's can't-tell findings with no filed evidence — `[]` unless the run
+// merged through the auto-merge short-circuit with no console (the only shape that silently drops
+// them). A spec dir's items are `spec-N/`-prefixed. A read failure fails closed.
+function unfiledCantTellFindings(runDir) {
+  if (readTopLevelConsoleState(runDir) !== 'none' || !consoleReplacedByAutoMerge(runDir)) return [];
+  // Lazy: finding-outcomes loads console/resolve.js, which loads wrap-up/pack.js — reconcile/index.js
+  // must not pull pack.js at module load (#4060).
+  const { unfiledCantTell } = require('../console/finding-outcomes');
+  const deps = {
+    readFile: (p) => fs.readFileSync(p, 'utf8'),
+    readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
+  };
+  // console/resolve.js swallows a read failure into an empty decisions.md, which would read as "no
+  // findings" — so probe decisions.md here: any non-ENOENT read error is unreadable (fails closed).
+  const unfiledIn = (dir, prefix) => {
+    try { fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'); } catch (err) {
+      if (!(err && err.code === 'ENOENT')) return [`(unreadable: ${prefix}decisions.md: ${err && err.message})`];
+    }
+    return unfiledCantTell({ runDir: dir, deps }).map((u) => `${prefix}${u.item}`);
+  };
+  try {
+    return [
+      ...unfiledIn(runDir, ''),
+      ...listSpecDirs(runDir).sort().flatMap((name) => unfiledIn(path.join(runDir, name), `${name}/`)),
+    ];
+  } catch (err) {
+    return [`(unreadable: ${err && err.message})`];
+  }
+}
+
 // The run's coverage for a caller that holds a run dir; undefined without one.
 function runTiebreakCoverage(dir) {
-  return dir ? checkRunTiebreakCoverage(dir, listSpecDirs(dir)) : undefined;
+  return dir ? { ...checkRunTiebreakCoverage(dir, listSpecDirs(dir)), unfiledCantTell: unfiledCantTellFindings(dir) } : undefined;
 }
 
 function decideArchive(prState, consoleState) {
@@ -497,7 +528,8 @@ function decideArchive(prState, consoleState) {
 // console classifies 'resolved' here while re-detecting as `ready` there.
 //
 // #3949: a 'resolved' or 'none' top-level state becomes 'residue' when the run
-// holds an unresolved item (pending / keep-staged) no human has acknowledged —
+// holds an unresolved item (pending / keep-staged, or a PR console item whose
+// outcome is filing-failed / reverse-failed, #4172) no human has acknowledged —
 // in console.json or any spec-*/console.json — or a console.json that cannot be
 // read (fails closed). 'unresolved' keeps precedence. An item whose staged file
 // is gone is `missing`, not residue (residue.js's readRunResidue).
@@ -521,11 +553,45 @@ function readTopLevelConsoleState(runDir) {
 }
 
 // The unacknowledged-residue evidence for a run: the item count across
-// unacknowledged consoles and the console.json paths that could not be read.
+// unacknowledged consoles, the console.json paths that could not be read, and
+// one `{id} ({resolution})` name per open item (#4172: so a refusal can say which).
 function consoleResidue(runDir) {
   const { consoles, unreadable } = readRunResidue(runDir);
   const open = consoles.filter((c) => !c.acknowledged);
-  return { items: open.reduce((n, c) => n + c.items.length, 0), unreadable };
+  const names = open.flatMap((c) => c.items.map((i) => `${typeof i.id === 'string' ? i.id : '(no id)'} (${i.resolution})`));
+  return { items: names.length, unreadable, names };
+}
+
+// The remedy for open console items, shared by the archive-run verb's refusal
+// line and the reconcile sweep's hint so the two cannot word the ack differently.
+function consoleAckRemedy(runDir) {
+  return `review them, then run console-residue.js --ack --run "${runDir}"`;
+}
+
+// #4170: the remedy for a planned can't-tell filing that has no record — the paste-ready
+// `console-filings.js --only` re-run, one per unacknowledged console holding a `filing-pending`
+// item. '' when no such item is open.
+function filingRerunRemedy(runDir) {
+  const { consoles } = readRunResidue(runDir);
+  const commands = consoles.filter((c) => !c.acknowledged).flatMap((c) => {
+    const ids = c.items.filter((i) => i.resolution === FILING_PENDING_RESOLUTION && typeof i.id === 'string').map((i) => i.id);
+    return ids.length > 0 ? [filingRerunCommand({ consoleDir: path.dirname(c.path), ids })] : [];
+  });
+  if (commands.length === 0) return '';
+  return `re-run the planned filing(s): ${commands.join('; ')}, then ${FILING_LOG_REMEDY}`;
+}
+
+// The recovery line for a console-residue skip: name the open items, the
+// unreadable console.json files to repair, or both when both block.
+function consoleResidueHint(runDir) {
+  const { names, unreadable } = consoleResidue(runDir);
+  const parts = [];
+  if (names.length > 0) {
+    const rerun = filingRerunRemedy(runDir);
+    parts.push(`unresolved: ${names.join(', ')} — ${rerun ? `${rerun}; or ` : ''}${consoleAckRemedy(runDir)}`);
+  }
+  if (unreadable.length > 0) parts.push(`repair or remove ${unreadable.join(', ')}`);
+  return parts.join('; ');
 }
 
 function hasConsoleResidue(runDir) {
@@ -1463,7 +1529,7 @@ function archiveRunDir(root, runDir) {
   // tracked file this function doesn't know how to move, on either a
   // tidy-standalone run or any other — still refuses exactly as before.
   if (fs.existsSync(runDir)) {
-    const lsFiles = runGit(['ls-files', '-z', '--', runDir], root);
+    const lsFiles = runGit(['ls-files', '-z', '--', runDir], root, { raw: true });
     if (lsFiles.failure) return refuseAfterMarker('ls-files-failed');
     const workDir = path.join(runDir, 'work');
     const trackedOutsideWork = splitNul(lsFiles.stdout)
@@ -1698,9 +1764,14 @@ const STRUCTURALLY_STUCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // tracked: a findings artifact with an uncovered or unreadable entry never
 // self-resolves, only a re-run of the findings writer and tiebreak (or deleting
 // a pre-tiebreak artifact) converges it.
+// 'cant-tell-unfiled' (#4171) is tracked on the same grounds: an auto-merge run
+// with no console never gets its can't-tell findings filed on its own — only a
+// human running the Can't-tell filings step (or writing a resolved console.json)
+// converges it.
 const STRUCTURALLY_STUCK_REASONS = new Set([
   'no-worktree', 'no-branch', 'no-pr', 'console-never-rendered-pr-closed', 'console-never-rendered-staged-pending',
   'pr-not-found', 'merged-partial', 'no-repo-slug', 'tiebreak-coverage-missing', 'tiebreak-artifact-invalid',
+  'cant-tell-unfiled',
 ]);
 
 // #1732: thin wrapper — see isOrphanedMint's comment on the `kinds` scoping
@@ -1729,7 +1800,11 @@ function isStructurallyStuck(dir, reason, now = Date.now()) {
 //
 // I/O-free apart from the one mtime stat (via isStaleDir) and the one
 // events.jsonl read (via ownEventRecency) that the mtime-based kinds and
-// abandoned-interrupted's recency check respectively need — and the
+// abandoned-interrupted's recency check respectively need — plus
+// abandoned-interrupted's injectable `runVerdict` (#4421, default
+// defaultRunVerdict: runLiveness, which spawns `ps` and reads state, events and
+// git), evaluated only after its cheap guards (status, own session, readable
+// events.jsonl, silence past the 24h floor) — and the
 // `adhoc-session-ended` kind's own I/O: it reads run-state.json (the ad-hoc
 // stamp, and the own-session guard when `state` is not passed), does a
 // realpath, and calls the injectable `liveness` function (which spawns `ps`
@@ -1749,7 +1824,7 @@ const CLASSIFY_ORDER = ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superse
 
 function classifyRunDir(ctx, now = Date.now()) {
   const {
-    dir, state, worktrees, sessionId, prState, consoleState, skipReason, kinds, liveness = adHocSessionLiveness,
+    dir, state, worktrees, sessionId, prState, consoleState, skipReason, kinds, liveness = adHocSessionLiveness, runVerdict = defaultRunVerdict,
   } = ctx;
   const order = kinds || CLASSIFY_ORDER;
 
@@ -1768,9 +1843,26 @@ function classifyRunDir(ctx, now = Date.now()) {
           // activity, not proof of staleness — fail toward not-abandoned
           // rather than collapsing "we can't tell" into "definitely idle".
           const { readable, lastOwnMs: last } = ownEventRecency(dir);
-          const stillRecent = last !== null && (now - last) <= STALE_INTERRUPTED_TTL_MS;
-          if (readable && !stillRecent) {
-            return { kind: 'abandoned-interrupted', ttlMs: STALE_INTERRUPTED_TTL_MS, evidence: { lastOwnMs: last } };
+          // #4421: silence runs from the last own event, else the run id's own
+          // timestamp; with neither there is no reference time and the run is
+          // never abandoned. The liveness verdict is asked only past the 24h
+          // floor (it spawns processes) and only ever ADDS a requirement: a
+          // dead verdict with no probe error clears the floor; an unknown one
+          // with no live probe positive needs 72h. A throwing hook, a missing
+          // evidence array, or any other verdict reads as not abandoned.
+          const ref = last !== null ? last : runIdMs(dir);
+          const silentMs = ref === null ? null : now - ref;
+          if (readable && silentMs !== null && silentMs > STALE_INTERRUPTED_TTL_MS) {
+            let result = null;
+            try { result = runVerdict(dir, now); } catch { /* a throwing hook reads as not abandoned */ }
+            const evidence = result && Array.isArray(result.evidence) ? result.evidence : null;
+            const verdict = result ? result.verdict : undefined;
+            const dead = !!evidence && verdict === 'dead' && !evidence.some((e) => e && e.result === 'error');
+            const fallback = !!evidence && verdict === 'unknown' && silentMs > LEGACY_DEAD_MS
+              && !evidence.some((e) => e && LIVE_PROBES.includes(e.probe) && e.result === 'positive');
+            if (dead || fallback) {
+              return { kind: 'abandoned-interrupted', ttlMs: dead ? STALE_INTERRUPTED_TTL_MS : LEGACY_DEAD_MS, evidence: { lastOwnMs: last, verdict } };
+            }
           }
         }
       }
@@ -1926,8 +2018,8 @@ function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = esc
 // already closed a `clean` run, so no record is still being built. #3668: this
 // loop tracks only console-never-rendered-staged-pending skips of auto-merge
 // runs (the short-circuit, or since #3740 the dispatch bundle gate), plus (#3945)
-// the two tiebreak reasons, which a closed run can never converge on its own (see
-// the clean loop's onSkip). close-run has already run,
+// the two tiebreak reasons, which a closed run can never converge on its own, and
+// (#4171) cant-tell-unfiled (see the clean loop's onSkip). close-run has already run,
 // so no later step renders a console or applies those staged items, and
 // archive-run refuses exactly that subset — an untracked skip would freeze the
 // dir silently. Other closed no-console staged-pending runs stay untracked:
@@ -1984,12 +2076,15 @@ function settleMergedPartial(root, dir, prState, decision, coverage) {
 }
 
 // #3503: `unclosed` rides along on a merged-partial skip only; #3945: `missing`
-// and `hint` ride along on a tiebreak skip only. Every other reason keeps the
-// bare {runDir, reason} shape.
-function skippedEntry(dir, { reason, unclosed, missing, hint }) {
+// and `hint` ride along on a tiebreak skip only; #4172: `hint` also rides along
+// on a console-residue skip; #4171: `unfiled` rides along on a cant-tell-unfiled
+// skip (with its `hint`). Every other reason keeps the bare {runDir, reason}
+// shape.
+function skippedEntry(dir, { reason, unclosed, missing, unfiled, hint }) {
   const entry = { runDir: dir, reason };
   if (unclosed !== undefined) entry.unclosed = unclosed;
   if (missing !== undefined) entry.missing = missing;
+  if (unfiled !== undefined) entry.unfiled = unfiled;
   if (hint !== undefined) entry.hint = hint;
   return entry;
 }
@@ -2036,7 +2131,7 @@ function resolveRunPrState(root, state, branch, prStates) {
 // differ: the main loop calls `trackStuckSkip` on every `decideArchiveCore`
 // skip (#1613's structurally-stuck visibility); the clean loop passes a hook
 // that tracks only console-never-rendered-staged-pending on auto-merge
-// runs (#3668, #3740) and the two tiebreak reasons (#3945) — see
+// runs (#3668, #3740), the two tiebreak reasons (#3945) and cant-tell-unfiled (#4171) — see
 // iterCleanRunDirs' comment for why that subset, and why the rest stay untracked.
 function archiveMergedRun({
   root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck, prStates,
@@ -2055,8 +2150,9 @@ function archiveMergedRun({
   );
   if (decision.action === 'skip') {
     if (onSkip) onSkip(decision.reason);
+    const hint = decision.reason === 'console-residue' ? consoleResidueHint(dir) : decision.hint;
     return {
-      outcome: 'skipped', reason: decision.reason, unclosed: decision.unclosed, missing: decision.missing, hint: decision.hint,
+      outcome: 'skipped', reason: decision.reason, unclosed: decision.unclosed, missing: decision.missing, unfiled: decision.unfiled, hint,
     };
   }
 
@@ -2125,8 +2221,38 @@ async function prefetchArchivePrStates(root, prStates, { cache } = {}) {
   await prStates.prefetch({ branches });
 }
 
+function isPlainObject(v) {
+  return Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+}
+
+// #4421: how many run dirs under the main checkout's pipelines/ have no owner block for
+// run-liveness to ask — an owner-less non-clean run state (a missing `status` counts), or no
+// run-state.json at all (runLiveness's legacy route serves an absent file too, spec). An
+// unparseable or non-object file is neither: it is a file the module cannot read, not a run
+// that never had an owner; neither is a run-state.json whose type cannot be read (lstatType
+// `unreadable`). Rides iterRunDirsWithState, so it keeps that iterator's run-id,
+// archive-twin and `archiving`-claim filters and never counts archive/. 0 when pipelines/ does
+// not exist; null when it cannot be read (the caller then leaves the field out).
+function countOwnerlessNonClean(root) {
+  try {
+    fs.readdirSync(path.join(root, '.claude-tweaks', 'pipelines'));
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? 0 : null;
+  }
+  let count = 0;
+  for (const { dir, state } of iterRunDirsWithState(root)) {
+    if (state === null) {
+      if (lstatType(path.join(dir, 'run-state.json')).type === 'missing') count++;
+    } else if (isPlainObject(state) && !isPlainObject(state.owner) && state.status !== 'clean') {
+      // (`status !== 'clean'` is defensive: the iterator already drops `clean` dirs, so nothing relies on it.)
+      count++;
+    }
+  }
+  return count;
+}
+
 function archiveMerged({
-  cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration, prStates, cache, liveness,
+  cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration, prStates, cache, liveness, runVerdict,
 } = {}) {
   const archived = [];
   const skipped = [];
@@ -2215,7 +2341,7 @@ function archiveMerged({
     // first-match order, unchanged from what this loop checked before
     // consolidation.
     const classification = classifyRunDir({
-      dir, state, worktrees, sessionId, liveness,
+      dir, state, worktrees, sessionId, liveness, runVerdict,
       kinds: ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended'],
     });
     let { kind } = classification;
@@ -2392,7 +2518,11 @@ function archiveMerged({
           }
           const consoleState = readConsoleState(dir);
           if (consoleState === 'unresolved' || consoleState === 'residue') {
-            skipped.push({ runDir: dir, reason: consoleState === 'residue' ? 'console-residue' : 'console-unresolved' });
+            if (consoleState === 'residue') {
+              skipped.push({ runDir: dir, reason: 'console-residue', hint: consoleResidueHint(dir) });
+            } else {
+              skipped.push({ runDir: dir, reason: 'console-unresolved' });
+            }
             continue;
           }
           if (consoleState === 'none') {
@@ -2466,8 +2596,8 @@ function archiveMerged({
   // the same local-fast-forward check before any move — via the same
   // archiveMergedRun helper. Its onSkip tracks only
   // console-never-rendered-staged-pending on auto-merge runs (#3668, #3740), and
-  // the two tiebreak reasons (#3945): archive-run refuses exactly those closed
-  // subsets (#3668), so an untracked skip would freeze the dir. Other closed
+  // the two tiebreak reasons (#3945) and cant-tell-unfiled (#4171): archive-run
+  // refuses exactly those closed subsets (#3668), so an untracked skip would freeze the dir. Other closed
   // no-console staged-pending runs stay untracked (typically in-terminal
   // consoles that retain staged/ by design).
   for (const { dir, state } of iterCleanRunDirs(root)) {
@@ -2478,7 +2608,7 @@ function archiveMerged({
       root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration, prStates,
       onSkip: (reason) => {
         if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) track(dir, reason);
-        if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid') track(dir, reason);
+        if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid' || reason === 'cant-tell-unfiled') track(dir, reason);
       },
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
@@ -2503,19 +2633,22 @@ function archiveMerged({
   // #4180: its resolve failures come back (the entry is dropped either way) for the caller to report.
   const residueErrors = dryRun ? [] : pruneResidueFailures(root, repoSlug, { runner }).failures;
 
-  return { archived, skipped, residuePlan, residueErrors };
+  // #4421: counted after every archival above, so a dir this pass archived is not in it. Absent
+  // (never 0) on a dry run — nothing moved, the count would overstate — and when the dir is unreadable.
+  const ownerlessNonClean = dryRun ? null : countOwnerlessNonClean(root);
+  return { archived, skipped, residuePlan, residueErrors, ...(ownerlessNonClean === null ? {} : { ownerlessNonClean }) };
 }
 
 module.exports = {
-  archiveMerged, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, archiveRunDir, listSpecDirs,
+  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
-  isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, adHocSessionLiveness,
+  isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout, adHocSessionLiveness, defaultRunVerdict,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand,
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,
   isClosedSlugStuck, recordNumbersFromSlug, runRecordSet, inFlightRecords,
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge,
-  refusal, TIEBREAK_COVERAGE_HINT,
+  refusal, TIEBREAK_COVERAGE_HINT, CANT_TELL_UNFILED_HINT, unfiledCantTellFindings,
 };

@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "digest",
+  "record": null,
+  "title": "Digest: tidy (3)",
+  "action": "Propose cluster: file record absorbing 3 tidy entries",
+  "command": "gh issue create --title \"Digest: tidy (3)\" --body-file staged/digest-promotion-17.md"
+ }
+]

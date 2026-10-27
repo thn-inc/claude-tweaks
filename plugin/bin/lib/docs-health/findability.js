@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const { listDocs } = require('./scope');
-const { toPosix } = require('../shared-primitives');
+const { toPosix, relativeDisplayId } = require('../shared-primitives');
 
 function escapeForRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -27,8 +27,10 @@ function hasBoundedMatch(content, needle) {
 // actual places a human or agent would navigate from — mention this
 // doc's filename. A mechanical, repo-scoped signal; the JUDGE step in
 // docs-health/SKILL.md decides whether a near-zero count means a genuine
-// orphan or an intentionally standalone doc.
-function computeInboundReferences(docId, root) {
+// orphan or an intentionally standalone doc. `pathImpl` feeds only the
+// `referencedBy` display IDs (relativeDisplayId, always '/'); every fs path
+// stays native.
+function computeInboundReferences(docId, root, { pathImpl = path } = {}) {
   const docPath = path.join(root, 'docs', `${docId}.md`);
   // The docs-root-relative, path-qualified form of this doc's own path (e.g.
   // "api/config.md", or just "config.md" when docId has no subdirectory).
@@ -79,7 +81,7 @@ function computeInboundReferences(docId, root) {
       hasBoundedMatch(content, rootRelativePath) ||
       hasBoundedMatch(content, relFromCandidate)
     ) {
-      referencedBy.push(path.relative(root, file));
+      referencedBy.push(relativeDisplayId(root, file, pathImpl));
     }
   }
   return { count: referencedBy.length, referencedBy };

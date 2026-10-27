@@ -54,24 +54,19 @@ Then resolve the run directory per `_shared/run-dir-resolution.md` (steps 1-2: `
 
 ```bash
 RUN_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug release 2>/dev/null)
-REFUSED_DIR=
-# A resolved directory that is terminal, or is a prior release run's own, is refused (#3898) — unless it IS the directory
-# PIPELINE_RUN_DIR names: a stale value (missing dir, archived run-id) falls through to step 2 and is checked like any step-2 directory.
-if [ -n "$RUN_DIR" ] && PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" ENV_RUN_DIR="$PIPELINE_RUN_DIR" node -e 'const { NON_TERMINAL } = require(process.env.PLUGIN_ROOT + "/bin/lib/hooks/run-integrity.js"); const real = (d) => { try { return require("fs").realpathSync(d); } catch { return null; } }; const e = real(process.env.ENV_RUN_DIR || ""); if (e !== null && e === real(process.argv[1])) process.exit(1); const r = JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")); const s = r.status; process.exit((typeof s === "string" && !NON_TERMINAL.has(s)) || r.createdBy === "release-standalone" ? 0 : 1)' -- "$RUN_DIR" 2>/dev/null; then REFUSED_DIR=$RUN_DIR; RUN_DIR=; fi
 if [ -z "$RUN_DIR" ]; then
-  # Steps 1-2 found nothing, or the guard above refused a prior release run's directory (or step 1's
-  # adoption-time anchoring check rejected a worktree-trapped PIPELINE_RUN_DIR, [IL-127]) — clear
+  # Steps 1-2 found nothing (step 2 itself refuses a terminal, release-standalone or unreadable directory, #4151),
+  # or step 1's adoption-time anchoring check rejected a worktree-trapped PIPELINE_RUN_DIR ([IL-127]) — clear
   # PIPELINE_RUN_DIR for this second call so a rejected value is never re-consulted, then mint the standalone fallback.
   RUN_DIR=$(PIPELINE_RUN_DIR= node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --standalone release --create)
   printf '{"status":"active","createdBy":"release-standalone"}\n' > "$RUN_DIR/run-state.json"
 fi
 echo "$RUN_DIR"
-[ -z "$REFUSED_DIR" ] || echo "refused: $REFUSED_DIR (status $(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1] + "/run-state.json", "utf8")).status))' -- "$REFUSED_DIR"))"
 ```
 
 `$RUN_ROOT` is the main checkout, never a worktree cwd — a bare relative path silently shadows the main copy (`[IL-127]`). Later steps use the carried `{run-dir}` path, a fact of this run, and never re-run the fence above: re-running it would now refuse this run's own directory and mint a stray one. The two-line `$RUN_ROOT` snippet keeps its own re-resolve rule.
 
-**Determine inherited-vs-created here, once.** At this point — and only here — record which of the two branches above ran: `$PIPELINE_RUN_DIR` was set at invocation and the resolver returned that very directory (the only directory never subject to the status check above — a stale value, a missing directory or an archived run-id, falls through to step 2 and is checked like any step-2 directory), or an existing directory resolved at step 2 that is neither terminal nor stamped by a release run — its `run-state.json` is `active` (step 2 already skips an `interrupted` one), missing or unreadable, and carries no `createdBy: "release-standalone"` → **inherited**; this run minted the directory and wrote the `createdBy: "release-standalone"` stamp above → **created**. A step-2 directory whose status is terminal, or that carries `createdBy: "release-standalone"` whatever its status (#3898: a prior release run's own directory, which a later release must never reuse — one that stopped early is still `active`), is refused — the fence prints `refused: {dir} (status {status})` as a second stdout line, the fallback mints a fresh directory, and the run is **created**. The mint call omits `--spec-slug` on purpose: with it, `resolve-run-dir` re-runs step 2 and re-adopts the very directory just refused. Once the new directory exists, log `AUTO {HH:MM:SS} — Step 0: {refused-dir} is a prior release run's directory (status {status}) — not adopted; minted {run-dir}. Reversibility: n/a.` through the writer below. Carry that verdict as a run-scoped fact alongside the run dir path itself and **never re-read it from disk later** — the directory can be archived out from under a re-read, exactly as `wrap-up/SKILL.md`'s identical rule records.
+**Determine inherited-vs-created here, once.** At this point — and only here — record which of the two branches above ran. The resolver returned a directory → **inherited**. That directory is either the one `$PIPELINE_RUN_DIR` names (the only directory never subject to step 2's adoption refusal — a stale value, a missing directory or an archived run-id, falls through to step 2 and is checked like any step-2 directory), or a step-2 directory that is neither terminal nor stamped by a release run, whose status is `active` or unset, or whose `run-state.json` is absent. `resolve-run-dir`'s step 2 refuses, and moves past, a directory whose status is terminal, or that carries `createdBy: "release-standalone"` whatever its status (#3898: a prior release run's own directory, which a later release must never reuse — one that stopped early is still `active`), or whose `run-state.json` exists but cannot be read (#4151); it already skips an `interrupted` one. When the resolver returns nothing, the fallback then mints a fresh directory, and the run is **created**: this run minted the directory and wrote the `createdBy: "release-standalone"` stamp above. The mint call omits `--spec-slug` on purpose: with it, `resolve-run-dir` re-runs step 2 and could hand back an existing directory, which the `printf` stamp would then overwrite. Carry that verdict as a run-scoped fact alongside the run dir path itself and **never re-read it from disk later** — the directory can be archived out from under a re-read, exactly as `wrap-up/SKILL.md`'s identical rule records.
 
 **Pin the review's auto-apply ceiling to `none`, here.** Step 3 reviews history that is already merged, so it has nothing to fix in place: a finding applied automatically there would land an unreviewed commit on the integration branch between the gate and the bump, and ship in the very release the gate exists to hold. For a **created** run directory, write the lever once:
 
@@ -104,7 +99,7 @@ Exit **2** (malformed invocation) or **3** (the run directory does not resolve u
 | `engine` | `pr-first` or `local-merge` | **Stop.** Report: `integration-model unresolved — set it in .claude-tweaks/policy.yml` (`integration-model: pr-first` or `local-merge`). A guessed engine picks a release mechanism on a coin flip. |
 | `lastTag` | `{tag, version, tipRef}` | **Continue** — this is the first release. The version base comes from `proposedVersion.value.base` (the pack resolves it from the highest `v*` tag, else the manifest); Step 3's review base is the root commit. |
 | `unreleased` | `{since, tipRef, commits[]}` — each commit `{sha, type, scope, breaking, breakingNote, subject, description, unconventional}` | **Stop.** The shipped set, the bump and the review scope all derive from this list; without it every later step would be rendering a guess. |
-| `proposedVersion` | `{version, part, base, baseSource, tipRef}` | Error beginning `nothing to release` → take **Step 2**'s path. Any other error → **stop**. |
+| `proposedVersion` | `{version, part, base, baseSource, preMajor, bumpMinorPreMajor, bumpPatchForMinorPreMajor, tipRef}` | Error beginning `nothing to release` → take **Step 2**'s path. Any other error → **stop**. |
 | `releasePr` (pr-first only; `none` under local-merge) | `{number, state, mergeable, headRefName, title}`, or the string `none` | Steps 2, 3 and 4 still run — the review and the console are worth having. **Stop before Step 5** and report the error; a release PR that could not be identified (including the pack's `release PR search inconclusive` case) must never be resolved by picking one by eye. |
 | `ciTip` | `{ref, headSha, localSha, tipBehind, state, total, success, failure, pending, truncated}`, or `n/a` under local-merge | Render the console's CI column as `unknown`. **Never green** — an unknown CI state is not a passing one. |
 | `openReleasePrConflict` | `true` when any commit on the release PR has a human author | Treat as **`true`** and say so in the console (`human edit could not be ruled out — {error}`). A human edit that cannot be ruled out is a human edit for gating purposes. |
@@ -152,13 +147,19 @@ Log which of the three resolved, and why — the review's scope is never a silen
 
 Invoke `/claude-tweaks:review base:{base}` (Input rule 9 — a whole-branch scope: every first-parent commit from the base to `origin/{integration-branch}`, spanning many already-merged PRs) with `$PIPELINE_RUN_DIR={run-dir}` set, so its findings stage into this run's own `staged/` directory per `_shared/staged-patch.md` and its decisions land in this run's `decisions.md`. Review is a component skill here: it renders no Next Actions of its own.
 
-**Invoke it from `$RUN_ROOT`, standing at the fetched tip.** Fetch, then run this check; it exits 0 exactly when the review may run:
+**Invoke it from `$RUN_ROOT`, standing at the fetched tip.** The review-tree check is two calls. First fetch and resolve the tip once, as its own call; on exit 0 it prints `{tip-sha}` (its only stdout line):
 
 ```bash
 git -C "$RUN_ROOT" fetch origin {branch} \
-  && git -C "$RUN_ROOT" rev-parse --abbrev-ref HEAD | grep -qxF '{branch}' \
-  && git -C "$RUN_ROOT" rev-list --count HEAD..origin/{branch} | grep -qx 0 \
-  && git -C "$RUN_ROOT" diff --quiet origin/{branch} HEAD -- ':!.claude-tweaks/pipelines'
+  && git -C "$RUN_ROOT" rev-parse --verify origin/{branch}
+```
+
+Then run the tree check with that printed sha pasted in literally as `{tip-sha}` (carrying it in a `$(git …)` substitution inside one call is a shape the worktree guard refuses, `_shared/scratch-worktree.md` §7); it exits 0 exactly when the review may run:
+
+```bash
+git -C "$RUN_ROOT" rev-parse --abbrev-ref HEAD | grep -qxF '{branch}' \
+  && git -C "$RUN_ROOT" rev-list --count HEAD..{tip-sha} | grep -qx 0 \
+  && git -C "$RUN_ROOT" diff --quiet {tip-sha} HEAD -- ':!.claude-tweaks/pipelines'
 ```
 
 `/claude-tweaks:review`'s own test gate verifies the tree it is standing in (`review/code-mode-steps.md`'s Step 1.5), so a review invoked from a feature-branch worktree would gate the release on a tree the reviewed range does not contain. Commits ahead are tolerated because reconcile's `[reconcile] archive run …` commits (`plugin/bin/lib/reconcile/archive-merged.js`) stay local and touch only `.claude-tweaks/pipelines/`, which never ships; the comparison is of trees, so a change reverted outside run dirs also passes.
@@ -179,9 +180,9 @@ Step 8's summary reads `failed` with that same reason.
 AUTO {HH:MM:SS} — Step 3: whole-branch review starting, base {base}..{branch} at reviewed tip {tip-sha}; ## /review marker: {k} existing lines{; review tree HEAD {head-sha} is origin/{branch} {tip-sha} plus run-dir-only commits}. Reversibility: n/a (marker).
 ```
 
-The optional `review tree HEAD` clause is written only when `rev-parse HEAD` and `origin/{branch}` differ, tracing the review's test-gate evidence to the tagged tip.
+The optional `review tree HEAD` clause is written only when `rev-parse HEAD` differs from `{tip-sha}`, tracing the review's test-gate evidence to the tagged tip.
 
-`{tip-sha}` is the full 40-hex `git -C "$RUN_ROOT" rev-parse origin/{branch}`, read right after the check above passes: the tip this review covers, recorded as a run fact. Step 5 compares `origin/{branch}` against it before the merge (`execute.md`) and cites this value, never re-deriving it.
+`{tip-sha}` is the full 40-hex sha that the check's first call prints: `origin/{branch}` resolved once, before the trees are compared, so `HEAD` is compared against the same literal that is recorded. Never re-read it with a second `rev-parse` after the check: a sibling session's fetch into the shared `$RUN_ROOT` in between would record a tip whose tree the review's test gate never ran on. This is the tip this review covers, recorded as a run fact. Step 5 compares `origin/{branch}` against it before the merge (`execute.md`) and cites this value, never re-deriving it.
 
 When it returns, read **only the lines this run appended after index `{k}`** in `{run-dir}/decisions.md`'s `## /review` block — never the whole block — and classify **against the log lines `/claude-tweaks:review` actually writes**, not against a severity field it does not emit. Its two routing shapes (`review/step3-routing.md`'s routing table) are:
 

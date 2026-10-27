@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "digest",
+  "record": null,
+  "title": "Digest: ledger (3)",
+  "action": "Propose cluster: file record absorbing 3 ledger entries",
+  "command": "gh issue create --title \"Digest: ledger (3)\" --body-file staged/digest-promotion-16.md"
+ }
+]

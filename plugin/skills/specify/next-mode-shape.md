@@ -340,6 +340,10 @@ record an iteration happened to be holding: continuing the loop against
 the next candidate would only repeat the identical failure at the cost of
 another self-report, never make progress.
 
+After the self-report, `next-mode-closeout.md`'s close-out still runs on a
+firing-ending failure that follows `## Drain start`'s mint, so the firing's run
+directory does not stay `active`.
+
 **Per-record failures — the loop continues.** A post-claim
 shaping-stage failure — reported here only after Release above has
 already run — also files the self-report, but does **not** end the

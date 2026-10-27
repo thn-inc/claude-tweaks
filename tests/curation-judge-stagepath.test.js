@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { skipUnderRoot } = require('./helpers/root');
+const { chmodDenialSkip } = require('./helpers/root');
 const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
@@ -260,7 +260,7 @@ test('probe: a symlink in the shadow staged/ is skipped with a diagnostic, exit 
   assert.ok(fs.lstatSync(path.join(shadow, 'staged', 'link.md')).isSymbolicLink(), 'symlink left in place');
 });
 
-test('probe: an mv failure is a loud diagnostic, exit 1, not a silent no-op', skipUnderRoot('root ignores directory permissions'), (t) => {
+test('probe: an mv failure is a loud diagnostic, exit 1, not a silent no-op', chmodDenialSkip('root ignores directory permissions'), (t) => {
   const { wt, runDir, shadow } = buildFixture(t);
   fs.mkdirSync(path.join(shadow, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(shadow, 'staged', 'x.md'), 'x\n');

@@ -10,6 +10,7 @@
 
 const { escapeRegExp } = require('../shared-primitives');
 const { neutralizeClosingPhrases } = require('./closing-links');
+const { expressMarker } = require('../express/sampling');
 
 // The five canonical phase rows every PR-early body starts with, unchecked
 // and in this order — never narrowed to a run's step list (#2877): a skipped
@@ -78,6 +79,27 @@ function composePrEarlyBody({ runId, specSummary, target, nextStep, fixesLines, 
     '### Resume',
     '',
     composeResumeLine({ runDir, target, nextStep }),
+    '',
+    composeFixesSpan(fixesLines),
+    '',
+  ].join('\n');
+}
+
+// { runId, specSummary, fixesLines } -> the express lane's (#4025) PR body.
+// One agent builds and merges on green, so there is no Phases checklist and
+// no Resume line; the dual run markers stay (reconciler and archive tooling
+// key on them), the express marker follows, and the fixes span closes the
+// record at merge.
+function composeExpressBody({ runId, specSummary, fixesLines }) {
+  if (!runId) throw new Error('composeExpressBody: runId is required');
+  return [
+    runMarkerHtml(runId),
+    runMarkerPlain(runId),
+    expressMarker(runId),
+    '',
+    '### Spec summary',
+    '',
+    specSummary || '',
     '',
     composeFixesSpan(fixesLines),
     '',
@@ -269,6 +291,7 @@ function reviseSpecSummary({ body, reversals, summary }) {
 module.exports = {
   CANONICAL_PHASES,
   composePrEarlyBody,
+  composeExpressBody,
   composePhasesBlock,
   composeFixesSpan,
   composeResumeLine,

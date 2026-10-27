@@ -6,6 +6,8 @@ const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 
 const { installWrapper, buildWrapperSource } = require('../plugin/bin/install-statusline-wrapper.js');
+const { MODE_BITS_HONORED } = require('./helpers/root');
+const { fixtureHomeEnv } = require('./helpers/fixture-home');
 
 // Every spawn below runs a real `node` process. The budget used to be 5s, which
 // is generous idle and far too tight under this repo's normal working mode:
@@ -22,15 +24,13 @@ const { installWrapper, buildWrapperSource } = require('../plugin/bin/install-st
 const SPAWN_TIMEOUT_MS = 30_000;
 
 // extraEnv lets a test opt into setting CLAUDE_CONFIG_DIR (or other vars) explicitly.
-// The base env always deletes any ambient CLAUDE_CONFIG_DIR first — this repo's own
-// dev sessions commonly run under a real CLAUDE_CONFIG_DIR (a synthetic account
-// directory with its own real plugin cache), and letting that leak through here
+// The base env always drops any ambient CLAUDE_CONFIG_DIR first (fixtureHomeEnv) — this
+// repo's own dev sessions commonly run under a real CLAUDE_CONFIG_DIR (a synthetic
+// account directory with its own real plugin cache), and letting that leak through here
 // would make CLAUDE_CONFIG_DIR-oblivious tests resolve against that real cache
 // instead of the fake tmpHome/.claude tree they set up.
 function runWrapper(scriptPath, tmpHome, extraEnv = {}) {
-  const env = { ...process.env, HOME: tmpHome };
-  delete env.CLAUDE_CONFIG_DIR;
-  Object.assign(env, extraEnv);
+  const env = { ...fixtureHomeEnv(tmpHome), ...extraEnv };
   const result = spawnSync(process.execPath, [scriptPath], {
     encoding: 'utf8',
     env,
@@ -59,7 +59,7 @@ test('installWrapper writes the wrapper script under the injected homedir, not t
   assert.match(contents, /claude-tweaks statusline wrapper/);
 
   const stat = fs.statSync(expectedPath);
-  assert.strictEqual(stat.mode & 0o777, 0o755);
+  if (MODE_BITS_HONORED) assert.strictEqual(stat.mode & 0o777, 0o755);
 
   fs.rmSync(tmpHome, { recursive: true, force: true });
 });
@@ -110,12 +110,12 @@ test('installWrapper restores 0o755 when re-run over an existing, non-executable
 
   const targetPath = installWrapper(tmpHome);
   fs.chmodSync(targetPath, 0o644); // root-safe: asserts mode bits directly via stat, not access-denial behavior
-  assert.strictEqual(fs.statSync(targetPath).mode & 0o777, 0o644, 'precondition: file is non-executable before re-install');
+  if (MODE_BITS_HONORED) assert.strictEqual(fs.statSync(targetPath).mode & 0o777, 0o644, 'precondition: file is non-executable before re-install');
 
   installWrapper(tmpHome);
 
   const stat = fs.statSync(targetPath);
-  assert.strictEqual(stat.mode & 0o777, 0o755, 'expected mode restored to 0o755 after re-running installWrapper over an existing file');
+  if (MODE_BITS_HONORED) assert.strictEqual(stat.mode & 0o777, 0o755, 'expected mode restored to 0o755 after re-running installWrapper over an existing file');
 
   fs.rmSync(tmpHome, { recursive: true, force: true });
 });

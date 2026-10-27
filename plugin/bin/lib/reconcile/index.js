@@ -25,7 +25,7 @@ const { sharedFetch, sharedFetchAsync } = require('./shared-fetch');
 const { repairOriginHead } = require('./origin-head');
 const { createIssueListCache } = require('./issue-list-cache');
 const {
-  readCache, writeCache, isFresh, SHARED_HEALTH_TTL_MS, listResidueFailures,
+  readCache, writeCache, applyOwnerlessNonClean, isFresh, SHARED_HEALTH_TTL_MS, listResidueFailures,
 } = require('./cache');
 const { formatReconcileSummary, archivedCountFromRunsResult } = require('./residue-summary');
 // summarizeTimings is called through the module object (not destructured) so a
@@ -407,10 +407,17 @@ async function reconcileInner(opts, state) {
     // #4032: an over-budget return skips `finalize`, so persist the terminal PR
     // answers this pass already paid for here — otherwise a cold pass that hits
     // the ceiling forgets them and the next pass starts cold and hits it again.
-    // (Only prStates: the freshness stamp and the residue index stay finalize's.)
+    // (Only prStates and, once archive has run, the ownerless count (#4421) — a skipped
+    // finalize would otherwise leave an older ownerlessNonCleanZeroSince standing past a
+    // nonzero reading; the freshness stamp and the residue index stay finalize's.)
     // #4180: a dry run writes nothing, so it forgets the answers as finalize does.
     if (!dryRun) {
       try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
+      if (typeof result.ownerlessNonClean === 'number') {
+        try {
+          writeCache(root, applyOwnerlessNonClean(readCache(root), result.ownerlessNonClean, Date.now()));
+        } catch { /* a lost count write is re-read by the next pass */ }
+      }
     }
     return true;
   }
@@ -532,10 +539,13 @@ async function reconcileInner(opts, state) {
         reason: s.reason,
         ...(s.unclosed !== undefined ? { unclosed: s.unclosed } : {}),
         ...(s.missing !== undefined ? { missing: s.missing } : {}),
+        ...(s.unfiled !== undefined ? { unfiled: s.unfiled } : {}),
         ...(s.hint !== undefined ? { hint: s.hint } : {}),
       })));
     result.residuePlan = r.residuePlan === undefined ? null : r.residuePlan;
     state.archiveResidueErrors = Array.isArray(r.residueErrors) ? r.residueErrors : [];
+    // #4421: present only on a real pass that could read pipelines/ — never defaulted to 0 here.
+    if (typeof r.ownerlessNonClean === 'number') result.ownerlessNonClean = r.ownerlessNonClean;
   }
 
   // Same live-ref dependency as release/archive: derives branch state from
@@ -650,9 +660,12 @@ async function reconcileInner(opts, state) {
       // persists them: like prStates.persist() above, the index records reads
       // (never freshness), so an explicit --checks pass must not drop them.
       const residueIndexChanged = JSON.stringify(issueListCache.index) !== loadedResidueIndexJson;
-      if (!opts.skipCacheStamp || healthJustSucceeded || residueIndexChanged) {
+      // #4421: an archive pass's ownerless count is likewise a read, so a scoped pass that ran it persists it.
+      const ownerlessCounted = typeof result.ownerlessNonClean === 'number';
+      if (!opts.skipCacheStamp || healthJustSucceeded || residueIndexChanged || ownerlessCounted) {
         const cache = readCache(root);
-        const update = { ...cache };
+        let update = { ...cache };
+        if (ownerlessCounted) update = applyOwnerlessNonClean(update, result.ownerlessNonClean, Date.now());
         if (!opts.skipCacheStamp) update.lastRunAt = Date.now();
         if (healthJustSucceeded) update.lastHealthCheckOkAt = now;
         update.residueIssueIndex = issueListCache.index;

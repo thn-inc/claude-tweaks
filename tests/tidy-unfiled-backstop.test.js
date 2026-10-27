@@ -69,7 +69,11 @@ test('feedback/SKILL.md Step 1 names a preserved-draft path as a valid gather so
 
 test('skill-graph.md documents the tidy -> feedback unfiled-drafts edge', () => {
   const text = readText(GRAPH);
-  const feedbackSection = text.slice(text.indexOf('## feedback'), text.indexOf('## flow'));
+  const start = text.search(/^## feedback$/m);
+  assert.ok(start !== -1, 'skill-graph.md must have a ## feedback section');
+  const rest = text.slice(start + '## feedback'.length);
+  const next = rest.search(/^## /m);
+  const feedbackSection = next === -1 ? rest : rest.slice(0, next);
   assert.ok(
     /`\/tidy`.*unfiled/s.test(feedbackSection) || feedbackSection.includes('upstream-unfiled'),
     'skill-graph.md ## feedback section must document the /tidy backstop-scan edge',

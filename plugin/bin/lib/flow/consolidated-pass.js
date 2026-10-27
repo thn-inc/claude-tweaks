@@ -15,13 +15,13 @@
 const fs = require('fs');
 const path = require('path');
 const { readManifest } = require('./manifest');
+const { readRunMode: readMode } = require('./run-mode');
 const { lstatType } = require('../path-guard');
 const { checkBranchLanded, repoRootOf } = require('../hooks/run-integrity');
 const { resolvePrStateByNumber } = require('../reconcile/pr-state');
 const { checkResumeFreshness } = require('../hooks/resume-freshness');
-const { parseWorktreeList, lockVerdict } = require('../hooks/worktree-reap');
-const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
-const { runGit } = require('../hooks/git-exec');
+const { runLiveness, blocksResume, resumeEntries } = require('../run-liveness');
+const { safeReal } = require('../hooks/worktree-detect');
 
 // Evaluation order == this order; the first failing check wins.
 const REENTRY_REASONS = Object.freeze([
@@ -42,25 +42,11 @@ function readRunState(runDir) {
   } catch { return null; }
 }
 
-function readMode(runDir) {
-  const text = readText(path.join(runDir, 'config.yml'));
-  if (text === null) return null;
-  const m = text.match(/^mode:[ \t]*(\S+)/m);
-  return m ? m[1] : null;
-}
-
-// The recorded worktree's porcelain listing — the same lookup resume-freshness.js
-// runs for its lock check. An unresolvable main checkout is a failed listing.
-function listWorktrees(worktree) {
-  const root = mainCheckoutRoot(worktree);
-  if (!root) return { stdout: '', failure: 'no-main-checkout' };
-  return runGit(['worktree', 'list', '--porcelain'], root);
-}
-
-// Detail text when the parent session may still be live, else null. Reuses the
-// existing probes: an `interrupted` run gets resume-freshness's full verdict;
-// any other status gets the recorded worktree's lock. Every "cannot tell"
-// reads as live — fail toward not re-entering a pass someone may be running.
+// Detail text when the parent session may still be live, else null. An
+// `interrupted` run gets resume-freshness's full verdict; any other status gets
+// run-liveness's worktree-lock and last-commit evidence, read through
+// `blocksResume` (the owner probes never block). Every "cannot tell" reads as
+// live — fail toward not re-entering a pass someone may be running.
 function parentLiveDetail(runDir, runState, opts, deps) {
   if (!runState) return null;
   if (opts.sessionId && runState.sessionId === opts.sessionId) return null;
@@ -70,15 +56,15 @@ function parentLiveDetail(runDir, runState, opts, deps) {
   }
   const worktree = typeof runState.worktree === 'string' && runState.worktree ? runState.worktree : null;
   if (!worktree || lstatType(worktree).type === 'missing') return null;
-  const listing = (deps.listWorktrees || listWorktrees)(worktree);
-  if (!listing || listing.failure) return 'indeterminate: could not list worktrees to check the parent lock';
-  const target = safeReal(worktree) || worktree;
-  const entry = parseWorktreeList(listing.stdout).find(
-    (e) => (safeReal(e.path) || e.path) === target || e.path === worktree
-  );
-  if (!entry) return null;
-  const lock = (deps.lockVerdict || lockVerdict)(entry);
-  return lock === 'in-use' || lock === 'unknown' ? `worktree lock ${lock} (${entry.lockReason || 'no reason'})` : null;
+  const result = runLiveness(runDir, { probes: deps.probes || {} });
+  const { lock, commit } = resumeEntries(result);
+  if (lock.result === 'positive') return 'worktree lock in-use';
+  if (commit.result === 'positive') return 'worktree recently committed to';
+  if (blocksResume(result)) return `indeterminate: ${(lock.result !== 'negative' ? lock : commit).detail}`;
+  // An empty log / unborn HEAD is "no evidence of quiet", the same source
+  // checkResumeFreshness holds to indeterminate.
+  if (commit.detail === 'no-commits') return 'indeterminate: no-commits';
+  return null;
 }
 
 // opts.cache      — passed through to checkBranchLanded.
@@ -87,9 +73,11 @@ function parentLiveDetail(runDir, runState, opts, deps) {
 //                   as unmerged. SessionStart never sets it.
 // opts.sessionId  — the caller's own CLAUDE_CODE_SESSION_ID; a run that session
 //                   owns skips the parent-liveness check. SessionStart passes
-//                   none, so a live lock always blocks there.
+//                   none, so a live lock, a recent commit or an indeterminate
+//                   answer always blocks there.
 // opts.deps       — { checkBranchLanded, resolvePrStateByNumber,
-//                   checkResumeFreshness, listWorktrees, lockVerdict } injection.
+//                   checkResumeFreshness, probes } injection; probes is merged
+//                   over run-liveness's DEFAULT_PROBES.
 function checkPassReentry(runDir, opts = {}) {
   const deps = opts.deps || {};
   const landedCheck = deps.checkBranchLanded || checkBranchLanded;

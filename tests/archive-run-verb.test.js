@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
+const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -244,6 +245,70 @@ test('archive-run names both remedies when residue items and an unreadable conso
   assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
 });
 
+// #4172: a PR console's failed item (filing-failed / reverse-failed) is residue
+// with no staged file behind it — the refusal names the item, and --ack clears it.
+function prConsole(runDir, outcomes, extra = {}) {
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    prNumber: 42, commentIds: ['IC_1'], executedAt: '2026-10-25T10:00:00.000Z', resolved: false,
+    items: outcomes.map(([id, outcome]) => ({ id, kind: 'staged', summary: id, outcome })), ...extra,
+  }));
+}
+
+test('AC1.1: archive-run refuses an executed PR console holding a filing-failed item, naming it', () => {
+  const { root, runDir } = runDirFixture('clean');
+  prConsole(runDir, [['1', 'executed'], ['f1', 'filing-failed']]);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\) no human has reviewed; review them, then run console-residue\.js --ack --run .*\) — unresolved: f1 \(filing-failed\)\n$/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('AC1.1: console-residue.js --ack clears a filing-failed PR console and archive-run then archives', () => {
+  const { root, runDir } = runDirFixture('clean');
+  prConsole(runDir, [['f1', 'filing-failed']]);
+  execFileSync('node', [path.join(__dirname, '..', 'plugin', 'bin', 'console-residue.js'), '--ack', '--run', runDir], { cwd: root, encoding: 'utf8' });
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+});
+
+test('AC2.1: archive-run archives an executed PR console with only executed/dropped items', () => {
+  const { root, runDir } = runDirFixture('clean');
+  prConsole(runDir, [['1', 'executed'], ['d1', 'dropped']]);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+});
+
+// #4170: a planned can't-tell filing with no filed line in decisions.md is `filing-pending` residue;
+// the refusal names the `console-filings.js --only` re-run, and logging the filed line clears it.
+function plannedFilingConsole(runDir, { filed = false } = {}) {
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:aaaaaaaaaaaa', section: 'Low-confidence findings', resolution: 'filed', reason: 'r' }],
+    filings: [{ item: 'tiebreak:aaaaaaaaaaaa', fingerprint: 'consolefinding-0123abcd', title: 't' }],
+  }));
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '## /wrap-up\n' + (filed
+    ? '- AUTO 10:00:00 — Queue write: tiebreak:aaaaaaaaaaaa filed as #501 (work-fingerprint consolefinding-0123abcd). Reversibility: n/a.\n'
+    : ''));
+}
+
+test('AC3.1: archive-run refuses a console whose can\'t-tell filings never ran, naming the console-filings.js --only re-run', () => {
+  const { root, runDir } = runDirFixture('clean');
+  plannedFilingConsole(runDir);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-residue \(1 unresolved item\(s\) no human has reviewed; re-run the planned filing\(s\): console-filings\.js --run ".*" --existing <issues\.json> --out-dir <dir> --only 'tiebreak:aaaaaaaaaaaa', then file each printed `file` entry and log it as '\{item\} filed as #\{n\} \(work-fingerprint \{fp\}\)', hand-log any `logFailures` item as '\{item\} already filed as #\{n\} \(work-fingerprint \{fp\}\)' \(the CLI logs each `deduped` entry itself\), via log-decision\.js `--run` that console's dir, per wrap-up\/review-console\.md's Can't-tell filings; review them, then run console-residue\.js --ack --run .*\) — unresolved: tiebreak:aaaaaaaaaaaa \(filing-pending\)\n$/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('AC4.1: archive-run archives once the planned filing\'s filed line is logged', () => {
+  const { root, runDir } = runDirFixture('clean');
+  plannedFilingConsole(runDir, { filed: true });
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+});
+
 // #1130 AC2: the two-call dispatch handoff shape, walked end-to-end on ONE
 // run dir — call 1 (build,test) parks the run with a rendered-but-unanswered
 // PR console; between calls the run is closed terminal (close-run) but its
@@ -475,4 +540,64 @@ test('the #3668 staged-pending refusal wins over a tiebreak refusal when a run t
     assert.match(tiebreakOnly.stdout, new RegExp(`archival refused — ${tiebreakReason} `), tiebreakReason);
     assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
   }
+});
+
+// #4171: the auto-merge short-circuit renders no console, so a can't-tell finding the run held and
+// never filed would be archived unseen. archive-run refuses until each has a filed line.
+const CANT_TELL_ID = '0123456789ab';
+const CANT_TELL_VERDICT = `- STAGED 10:00:00 — Tiebreak tiebreak:${CANT_TELL_ID}: lens "3a" finding src/a.js:3 console: verdict:cant-tell. Severity: medium. Recommendation: file.\n`;
+
+function cantTellRun() {
+  const f = runDirFixture('clean');
+  fs.writeFileSync(path.join(f.runDir, 'decisions.md'), FAST_LANE_FYI + CANT_TELL_VERDICT);
+  writeFindings(f.runDir, [{ ...tbFinding(CANT_TELL_ID), lens: '3a', kind: 'unconfirmed' }]);
+  return f;
+}
+
+test('AC1.1: archive-run refuses an auto-merge run with an unfiled can\'t-tell finding', () => {
+  const { root, runDir } = cantTellRun();
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — cant-tell-unfiled \(1 can't-tell finding\(s\) an auto-merge path never filed: tiebreak:0123456789ab\) — file the run's can't-tell findings/);
+  assert.match(result.stdout, /, then re-run archive-run\n$/);
+  // The printed hint is paste-ready: the real run dir, never the `{run-dir}` placeholder.
+  assert.ok(result.stdout.includes(`console-filings.js --run "${runDir}"; a spec-N/-prefixed id is filed and logged with --run "${runDir}/spec-N"`), result.stdout);
+  assert.ok(!result.stdout.includes('{run-dir}'), result.stdout);
+  assert.equal(result.code, 0);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('archive-run archives the same run once its finding has a filed line', () => {
+  const { root, runDir, runId } = cantTellRun();
+  const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  const [{ fingerprint }] = require('../plugin/bin/lib/console/finding-outcomes').unfiledCantTell({ runDir, deps });
+  // review-console.md's created filed line, built by the real producer (log-decision.js's formatEntry).
+  const filed = formatEntry({
+    status: 'AUTO', now: new Date(2026, 7, 14, 10, 1, 0), step: 'Queue write', reversibility: 'n/a',
+    text: `tiebreak:${CANT_TELL_ID} filed as #501 (work-fingerprint ${fingerprint})`,
+  });
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), `${filed}\n`);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'config.yml')));
+});
+
+test('archive-run: a rendered console turns the can\'t-tell guard off', () => {
+  const { root, runDir, runId } = cantTellRun();
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ commentIds: ['IC_x'], prNumber: 5, items: [], resolved: true, executedAt: '2026-08-14T12:00:00Z' }));
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /cant-tell-unfiled/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'config.yml')));
+});
+
+test('archive-run: a Review Console terminal decision line turns the can\'t-tell guard off', () => {
+  const { root, runDir, runId } = cantTellRun();
+  // review-console-interactive.md's terminal-decision log line, built by the real producer.
+  const terminal = formatEntry({ status: 'AUTO', now: new Date(2026, 7, 14, 10, 2, 0), step: 'Review Console', text: 'terminal decision approve-all', reversibility: 'n/a' });
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), `${terminal}\n`);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /cant-tell-unfiled/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'config.yml')));
 });

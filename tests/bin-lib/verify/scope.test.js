@@ -135,8 +135,8 @@ const MAP = parseImpactMap(JSON.stringify(encodeImpactMap({
 }))).map;
 const HEAD = ['tests/a.test.js', 'tests/b.test.js', 'tests/p.test.js'];
 const CTX = { map: MAP, problem: null, headTests: HEAD };
-const FULL_RUN = { suite: 'tests', files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], superseded: false };
-const NOT_SELECTED = { ...FULL_RUN, files: [], selected: 0 };
+const FULL_RUN = { suite: 'tests', files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], driftTests: [], driftSelected: null, superseded: false };
+const NOT_SELECTED = { ...FULL_RUN, files: [], selected: 0, driftSelected: 0 };
 const SUPERSEDED = { ...FULL_RUN, superseded: true };
 const isel = (files, statuses, impact = CTX, extra = {}) => selectScope({ decl: IMPACT, files, stamp: STAMP, statuses, impact, ...extra });
 
@@ -147,7 +147,7 @@ test('impact subset → scoped, only the tests that read the changed path', () =
   assert.strictEqual(r.static, true);
   assert.strictEqual(r.base, FULL);
   assert.deepStrictEqual(r.matched, [{ file: 'src/x.js', rule: 0 }]);
-  assert.deepStrictEqual(r.impact, { suite: 'tests', files: ['tests/a.test.js'], fallback: null, selected: 1, changedTests: [], untracedTests: [], superseded: false });
+  assert.deepStrictEqual(r.impact, { suite: 'tests', files: ['tests/a.test.js'], fallback: null, selected: 1, changedTests: [], untracedTests: [], driftTests: [], driftSelected: 0, superseded: false });
 });
 
 test('a subset impact suite never yields full, even with every suite selected and static', () => {
@@ -230,9 +230,17 @@ test('changed test files at HEAD and untraced HEAD tests join the subset', () =>
   const r = isel(['src/x.js', 'tests/b.test.js'], { 'src/x.js': 'M', 'tests/b.test.js': 'M' }, { ...CTX, headTests: head });
   assert.deepStrictEqual(r.impact, {
     suite: 'tests', files: ['tests/a.test.js', 'tests/b.test.js', 'tests/new.test.js'], fallback: null, selected: 3,
-    changedTests: ['tests/b.test.js'], untracedTests: ['tests/new.test.js'], superseded: false,
+    changedTests: ['tests/b.test.js'], untracedTests: ['tests/new.test.js'], driftTests: [], driftSelected: 0, superseded: false,
   });
   assert.strictEqual(r.static, true);
+});
+
+test('drifted tests from the context join the subset and are counted (#4132)', () => {
+  const r = isel(['src/x.js'], { 'src/x.js': 'M' }, { ...CTX, driftTests: ['tests/b.test.js'] });
+  assert.deepStrictEqual(r.impact, {
+    suite: 'tests', files: ['tests/a.test.js', 'tests/b.test.js'], fallback: null, selected: 2,
+    changedTests: [], untracedTests: [], driftTests: ['tests/b.test.js'], driftSelected: 1, superseded: false,
+  });
 });
 
 test('an empty subset drops the impact suite', () => {

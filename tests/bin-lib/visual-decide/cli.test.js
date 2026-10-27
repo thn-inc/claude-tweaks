@@ -7,6 +7,7 @@ const path = require('node:path');
 const { execFile, execFileSync, spawn } = require('node:child_process');
 const util = require('node:util');
 const { readText } = require('../../helpers/read-skill');
+const { MODE_BITS_HONORED } = require('../../helpers/root');
 
 const BIN = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'visual-decide.js');
 const CLI_LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'visual-decide', 'cli.js');
@@ -44,7 +45,7 @@ test('AC1: start returns detached-running server-info (mode 0600, url has ?key=)
 
     const infoPath = path.join(stateDir, 'server-info');
     assert.equal(fs.existsSync(infoPath), true);
-    if (process.platform !== 'win32') {
+    if (MODE_BITS_HONORED) {
       // win32 does not represent POSIX mode bits — Node reports 0o666 whatever mode was requested.
       const mode = fs.statSync(infoPath).mode & 0o777;
       assert.equal(mode, 0o600);

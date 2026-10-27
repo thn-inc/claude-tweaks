@@ -5,8 +5,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { skipUnderRoot } = require('../../helpers/root');
+const { chmodDenialSkip } = require('../../helpers/root');
 const { readText } = require('../../helpers/read-skill');
+const { fixtureHomeEnv } = require('../../helpers/fixture-home');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-timing.js');
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'record-1535');
@@ -15,13 +16,6 @@ function tmpRun(copyFixture) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-'));
   if (copyFixture) for (const f of ['events.jsonl', 'manifest.yml']) fs.copyFileSync(path.join(FIX, f), path.join(dir, f));
   return dir;
-}
-// A fixture home for spawned children: os.homedir() reads USERPROFILE on
-// Windows, so both are set; CLAUDE_CONFIG_DIR is dropped so the developer's
-// own config dir cannot redirect the transcript lookup away from the fixture.
-function fixtureHomeEnv(home) {
-  const { CLAUDE_CONFIG_DIR, ...base } = process.env;
-  return { ...base, HOME: home, USERPROFILE: home };
 }
 
 test('#1928 AC4: --markdown prints the table and writes timing.json', () => {
@@ -175,7 +169,7 @@ test('#2550 review fix: the collapsed one-line summary still carries a Guard-den
   assert.equal(r.stdout, `no phase events; 0 tool round-trips, 3/4 tokens\nGuard denials: 1 gate · 0 wd-ambiguous · 1 wd-deny\n\ndispatches: subagent transcripts not found (no subagents/ directory at ${subDir})\n`);
 });
 
-test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', { skip: skipUnderRoot('root ignores file permissions').skip || (process.platform === 'win32' && 'win32: chmod 0o000 only sets the read-only attribute') }, () => {
+test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', chmodDenialSkip('root ignores file permissions'), () => {
   const dir = tmpRun(true);
   const unreadable = path.join(os.tmpdir(), 'ct-timing-unreadable-transcript.jsonl');
   fs.writeFileSync(unreadable, '{}\n');

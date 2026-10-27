@@ -1,14 +1,20 @@
 'use strict';
 // bin/lib/run-liveness/index.js — a three-valued `live | dead | unknown` verdict
 // for a pipeline run directory (#3973), built from POSITIVE evidence over
-// injectable probes. One consumer: reconcile/archive-merged.js's `adhoc-session-ended`
-// sweep, through `adHocSessionLiveness` (#4179).
+// injectable probes. Consumers: reconcile/archive-merged.js's `adhoc-session-ended`
+// sweep, through `adHocSessionLiveness` (#4179), and its `abandoned-interrupted`
+// kind, through `defaultRunVerdict` (#4421), plus `blocksResume`'s two resume
+// callers (#4420). runIdMs and LIVE_PROBES are exported so reconcile's
+// abandoned-interrupted decision reuses them rather than copying (#4421).
 //
 // Shape: gatherEvidence() asks every probe once and records a tagged entry
 // ({ probe, result: positive | negative | error, detail }) plus the "death
 // witnesses" the evidence amounts to; decideVerdict() is a pure function over
 // that. "Could not ask" is an `error` entry — never folded into `negative` — so
 // an unanswered probe can only ever push the verdict toward `unknown`.
+//
+// The owner-pid probe lives in owner-pid-probe.js (a require-nothing leaf, shared with
+// hooks/context.js's stampedOwnerProvablyAlive — #4153).
 //
 // Precedence (decideVerdict): any positive among the four live probes -> live;
 // else any error -> unknown; else any death witness -> dead; else unknown.
@@ -17,29 +23,12 @@ const path = require('path');
 const { lstatType } = require('../path-guard');
 const { runStartIso } = require('../hooks/run-integrity');
 const { DEFAULT_PROBES } = require('./probes');
+const { call, errorMessage, probeOwnerPid } = require('./owner-pid-probe');
 const { LIVE_WINDOW_MS, LEGACY_DEAD_MS } = require('./constants');
 
 const PROBE_ORDER = ['owner-pid', 'heartbeat', 'worktree-lock', 'last-commit', 'owner-events'];
 // owner-events is corroboration for the legacy witness, not a liveness probe.
 const LIVE_PROBES = ['owner-pid', 'heartbeat', 'worktree-lock', 'last-commit'];
-
-// process.kill throws on a pid above int32 (ERR_INVALID_ARG_TYPE, not ESRCH), which
-// isPidAlive reads as "gone" — no real pid is that large, so such a value is garbage,
-// not a death witness.
-const MAX_PID = 2 ** 31 - 1;
-
-function errorMessage(err) {
-  return err && err.message ? err.message : String(err);
-}
-
-// Run a probe; tag the outcome so a throw is "could not ask", never "no".
-function call(fn, ...args) {
-  try {
-    return { ok: true, value: fn(...args) };
-  } catch (err) {
-    return { ok: false, message: errorMessage(err) };
-  }
-}
 
 // The run directory's creation time, from its run-id basename prefix
 // (YYYY-MM-DDTHHMMSS, UTC). null when the basename carries none.
@@ -69,28 +58,6 @@ function readState(runDir) {
   } catch (err) {
     return { unreadable: errorMessage(err) };
   }
-}
-
-function probeOwnerPid(owner, p) {
-  if (!owner) return { result: 'negative', detail: 'no-owner-block' };
-  const host = call(p.hostname);
-  if (!host.ok) return { result: 'error', detail: host.message };
-  if (owner.host !== host.value) return { result: 'negative', detail: 'other-host' };
-  if (!Number.isInteger(owner.pid) || owner.pid <= 0 || owner.pid > MAX_PID) return { result: 'negative', detail: 'no-pid' };
-  const alive = call(p.pidAlive, owner.pid);
-  if (!alive.ok) return { result: 'error', detail: alive.message };
-  if (!alive.value) return { result: 'negative', detail: 'gone', witness: true };
-  if (owner.pidStartedAt === null || owner.pidStartedAt === undefined) {
-    return { result: 'negative', detail: 'alive-no-start-time' };
-  }
-  // A stored start time that is not the raw `ps` string cannot be compared; it is
-  // unjudgeable, not pid reuse.
-  if (typeof owner.pidStartedAt !== 'string') return { result: 'error', detail: 'invalid-start-time' };
-  const started = call(p.pidStartTime, owner.pid);
-  if (!started.ok) return { result: 'error', detail: started.message };
-  if (started.value === null || started.value === undefined) return { result: 'error', detail: 'start-time-unavailable' };
-  if (started.value === owner.pidStartedAt) return { result: 'positive', detail: 'alive' };
-  return { result: 'negative', detail: 'pid-reused', witness: true };
 }
 
 function probeHeartbeat(owner, now) {
@@ -232,4 +199,27 @@ function runLiveness(runDir, opts) {
   }
 }
 
-module.exports = { PROBE_ORDER, gatherEvidence, decideVerdict, runLiveness };
+// Whether a resume must be refused on this runLiveness result (#4420): only the
+// worktree-lock and last-commit entries can block, on `positive` (the run is in use
+// or just committed) or `error` (could not ask). Maintainer ruling: the owner probes
+// (owner-pid, heartbeat, owner-events) stay informational here — widening this helper
+// to them turns every missing events.jsonl and every just-ended session into a blocked
+// resume (#3979 red-team). `last-commit` `negative`/`no-commits` does NOT block: both
+// callers handle that case themselves. A missing answer cannot be read as "no", so
+// only a `negative` on both entries lets a resume through: no evidence array, a
+// missing entry, or an unrecognised result all block.
+function blocksResume(result) {
+  const { lock, commit } = resumeEntries(result);
+  return lock.result !== 'negative' || commit.result !== 'negative';
+}
+
+// The two entries blocksResume reads, as its callers map them to a verdict. A
+// missing evidence array or entry reads as an `error` entry (detail
+// `missing-evidence`), so a caller can never read it as "no".
+function resumeEntries(result) {
+  const evidence = result && Array.isArray(result.evidence) ? result.evidence : [];
+  const entry = (probe) => evidence.find((e) => e && e.probe === probe) || { probe, result: 'error', detail: 'missing-evidence' };
+  return { lock: entry('worktree-lock'), commit: entry('last-commit') };
+}
+
+module.exports = { PROBE_ORDER, LIVE_PROBES, runIdMs, gatherEvidence, decideVerdict, runLiveness, blocksResume, resumeEntries };

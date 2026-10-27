@@ -26,6 +26,12 @@ const NAMESPACE = 'queue-order';
 // `grouping` stamp lets a cache hit refuse groups computed under the old rule.
 const GROUPING_MODE = 'per-record';
 
+// #4025: with the express lane on, express-eligible records stay out of
+// fast-lane bundles, so those groups are stamped apart from GROUPING_MODE's.
+function groupingMode(expressEnabled) {
+  return expressEnabled ? 'per-record+express' : GROUPING_MODE;
+}
+
 function fileSpecs() {
   return [{ key: 'order', file: 'order.json', default: null }];
 }
@@ -86,9 +92,10 @@ function signalsMatch(persisted, current) {
   return true;
 }
 
-// { computedAt, runId, freshnessSignal, groups, excluded, bundles } -> the
-// exact blob shape written to order.json, plus `grouping: GROUPING_MODE`
-// (#3278), the stamp cacheUsable checks. A thin composer, not a validator —
+// { computedAt, runId, freshnessSignal, groups, excluded, bundles, grouping }
+// -> the exact blob shape written to order.json, stamped `grouping` (#3278;
+// default GROUPING_MODE, groupingMode()'s value under #4025), the stamp
+// cacheUsable checks. A thin composer, not a validator —
 // callers already have every field in the right shape; this exists so the
 // field list is stated once, matching claims.js's claimPayload/releasePayload
 // precedent for this codebase's blob-shape convention. `bundles` (#2066) is
@@ -96,23 +103,24 @@ function signalsMatch(persisted, current) {
 // with no `bundles` field gets `undefined` back and applies its own `[]`
 // fallback (queue-pull-script.md's cache-hit path), never this module.
 function composeOrderBlob({
-  computedAt, runId, freshnessSignal, groups, excluded, bundles,
+  computedAt, runId, freshnessSignal, groups, excluded, bundles, grouping = GROUPING_MODE,
 }) {
   return {
-    computedAt, runId, freshnessSignal, groups, excluded, grouping: GROUPING_MODE,
+    computedAt, runId, freshnessSignal, groups, excluded, grouping,
     ...(bundles !== undefined ? { bundles } : {}),
   };
 }
 
-// A persisted blob is reusable only when stamped with the current grouping
-// rule AND its freshness signal still matches. A blob without `grouping` (any
-// older plugin install's write) fails closed. Never throws.
-function cacheUsable(persisted, current) {
-  return !!persisted && persisted.grouping === GROUPING_MODE
+// A persisted blob is reusable only when stamped with the caller's current
+// grouping rule (default GROUPING_MODE) AND its freshness signal still
+// matches. A blob without `grouping` (any older plugin install's write) fails
+// closed. Never throws.
+function cacheUsable(persisted, current, grouping = GROUPING_MODE) {
+  return !!persisted && persisted.grouping === grouping
     && signalsMatch(persisted.freshnessSignal, current);
 }
 
 module.exports = {
   readOrder, writeOrder, buildFreshnessSignal, signalsMatch, composeOrderBlob,
-  cacheUsable, GROUPING_MODE,
+  cacheUsable, GROUPING_MODE, groupingMode,
 };

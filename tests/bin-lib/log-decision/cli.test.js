@@ -210,3 +210,102 @@ test('AC2.1: "bogus (x)" and "lowish" exit 2 with the existing usage message and
     assert.match(streamOf(r.out, 'err'), /--reversibility must be one of high\|med\|low\|n\/a, optionally followed by " \(qualifier\)"/, bad);
   }
 });
+
+const entriesFile = (root, value) => {
+  const file = path.join(root, 'entries.json');
+  fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
+  return file;
+};
+
+test('--entries appends every entry in one call and echoes them', () => {
+  const { main, root, run: runDir } = fixture();
+  const file = entriesFile(root, [
+    { status: 'AUTO', text: 'first', spec: 12, step: 'Step 1', reversibility: 'high' },
+    { status: 'SKIP', text: 'condition: x → fallback: y', lever: 'k=v (policy)' },
+    { status: 'STAGED', text: 'third.', spec: '12', reversibility: 'low (divergence persists)' },
+  ]);
+  const out = [];
+  const code = run(['--run', runDir, '--entries', file, '--section', '/build'], deps(main, out));
+  assert.equal(code, 0, streamOf(out, 'err'));
+  const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.equal(text,
+    '## /build\n' +
+    '- AUTO 09:05:07 — spec #12 — Step 1: first. Reversibility: high.\n' +
+    '- SKIP 09:05:07 — log-decision: condition: x → fallback: y. Reversibility: n/a. [lever: k=v (policy)]\n' +
+    '- STAGED 09:05:07 — spec #12: third. Reversibility: low (divergence persists).\n');
+  assert.equal(streamOf(out, 'out'), text.split('\n').slice(1).join('\n'));
+});
+
+test('--entries rejects a batch with one invalid entry and writes nothing', () => {
+  const { main, root, run: runDir } = fixture();
+  const file = entriesFile(root, [{ status: 'AUTO', text: 'ok' }, { status: 'NOPE', text: 'x' }]);
+  const out = [];
+  assert.equal(run(['--run', runDir, '--entries', file], deps(main, out)), 2);
+  assert.match(streamOf(out, 'err'), /entries\[1\]/);
+  assert.equal(streamOf(out, 'out'), '');
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, 'decisions.md never created');
+});
+
+test('--entries rejects each invalid element shape, naming its index', () => {
+  const bad = [
+    'not-an-object', { text: 'x' }, { status: 'AUTO' }, { status: 'AUTO', text: '  ' }, { status: 'AUTO', text: 'a\nb' },
+    { status: 'AUTO', text: 'x', reversibility: 'sometimes' }, { status: 'AUTO', text: 'x', spec: 'abc' },
+    { status: 'AUTO', text: 'x', step: 'a\nb' }, { status: 'AUTO', text: 'x', reversability: 'high' },
+  ];
+  for (const el of bad) {
+    const { main, root, run: runDir } = fixture();
+    const out = [];
+    assert.equal(run(['--run', runDir, '--entries', entriesFile(root, [{ status: 'AUTO', text: 'ok' }, el])], deps(main, out)), 2, JSON.stringify(el));
+    assert.match(streamOf(out, 'err'), /entries\[1\]/, JSON.stringify(el));
+    assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, JSON.stringify(el));
+  }
+});
+
+test('--entries with --text is a usage error', () => {
+  for (const flag of [['--text', 'x'], ['--status', 'AUTO'], ['--text-file', 'f'], ['--step', 's'], ['--spec', '1'], ['--reversibility', 'high'], ['--lever', 'k=v']]) {
+    const { main, root, run: runDir } = fixture();
+    const out = [];
+    assert.equal(run(['--run', runDir, '--entries', entriesFile(root, [{ status: 'AUTO', text: 'ok' }]), ...flag], deps(main, out)), 2, flag[0]);
+    assert.match(streamOf(out, 'err'), /mutually exclusive/, flag[0]);
+    assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, flag[0]);
+  }
+});
+
+test('--entries: an element section overrides --section', () => {
+  const { main, root, run: runDir } = fixture();
+  const file = entriesFile(root, [{ status: 'AUTO', text: 'a' }, { status: 'AUTO', text: 'b', section: '/review' }]);
+  assert.equal(run(['--run', runDir, '--entries', file, '--section', '/build'], deps(main, [])), 0);
+  assert.equal(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'),
+    '## /build\n- AUTO 09:05:07 — log-decision: a. Reversibility: n/a.\n## /review\n- AUTO 09:05:07 — log-decision: b. Reversibility: n/a.\n');
+});
+
+test('--entries: empty array is a usage error', () => {
+  const { main, root, run: runDir } = fixture();
+  const out = [];
+  assert.equal(run(['--run', runDir, '--entries', entriesFile(root, [])], deps(main, out)), 2);
+  assert.match(streamOf(out, 'err'), /non-empty JSON array/);
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false);
+});
+
+test('--entries: a non-array, unparseable JSON, or a missing file is a usage error', () => {
+  for (const [value, expected] of [['{"status":"AUTO","text":"x"}', /non-empty JSON array/], ['[{"status":', /not valid JSON/], [null, /could not read --entries .*missing\.json/]]) {
+    const { main, root, run: runDir } = fixture();
+    const file = value === null ? path.join(root, 'missing.json') : entriesFile(root, value);
+    const out = [];
+    assert.equal(run(['--run', runDir, '--entries', file], deps(main, out)), 2, String(value));
+    assert.match(streamOf(out, 'err'), expected, String(value));
+    assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, String(value));
+  }
+});
+
+test('--entries: a run dir that is not anchored exits 3 and writes nothing', () => {
+  const { main, root, shadow } = fixture();
+  assert.equal(run(['--run', shadow, '--entries', entriesFile(root, [{ status: 'AUTO', text: 'ok' }])], deps(main, [])), 3);
+  assert.equal(fs.existsSync(path.join(shadow, 'decisions.md')), false);
+});
+
+test('--help names the --entries form', () => {
+  const out = [];
+  assert.equal(run(['--help'], deps(fixture().main, out)), 0);
+  assert.match(streamOf(out, 'out'), /--entries <file>/);
+});

@@ -57,6 +57,8 @@ NOTIFY_NOW: true | false
 RATIONALE: {one paragraph}
 ```
 
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.
+
 The caller (dispatch's Settle step) is responsible for acting on `CLASSIFICATION` — revoking
 `auto:merge` for `correctness`/`ambiguous`, preserving it for `transient` — and for the
 retry-ceiling bookkeeping, which runs unconditionally regardless of this mode's output (see

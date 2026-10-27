@@ -38,22 +38,25 @@ Read-only — never writes `run-state.json`. Reads `run-state.json`'s `status`, 
    probe; safe.
 3. **No recorded worktree, or the recorded worktree no longer exists on disk** — nothing to
    probe; safe.
-4. **Worktree lock-file pid liveness** — resolves the lock verdict directly via
-   `bin/lib/hooks/worktree-reap.js`'s `parseWorktreeList`/`lockVerdict`, not that module's
-   `isWorktreeLocked` — its collapsed boolean cannot distinguish a confirmed lock from an
-   unresolvable check (#676's final review, Important finding #1). A live pid holding the
-   worktree lock blocks (`locked`) — "run appears actively owned". An unresolvable main-checkout
-   root or a failed `git worktree list` fails **closed** to `indeterminate`, never a false "not
-   locked".
-5. **Last-commit age** — `git -C {worktree} log -1 --format=%ct`, compared against a 10-minute
-   threshold ("on the order of minutes" — long enough that one working session's normal commit
-   cadence does not read as a stranger, short enough that a genuinely dead run isn't gated for an
-   unreasonable stretch; see `bin/lib/hooks/resume-freshness.js`'s own header comment for the
-   full rationale). A commit inside the threshold blocks.
+4. **Worktree lock** — `bin/lib/run-liveness`'s `worktree-lock` evidence entry, read through
+   `blocksResume` (only that entry and `last-commit` can block a resume; the owner-pid, heartbeat
+   and owner-events entries never do). A live pid holding the worktree lock blocks (`locked`) —
+   "run appears actively owned". An orphaned lock (its pid is dead) is not a blocker. An
+   **unknown** lock (a `git worktree lock` reason that carries no pid), a worktree git does not
+   list, an unresolvable main-checkout root, or a failed `git worktree list` fails **closed** to
+   `indeterminate`, never a false "not locked".
+5. **Last-commit age** — `run-liveness`'s `last-commit` evidence entry (`git -C {worktree} log -1
+   --format=%ct`), read through `blocksResume` against a 10-minute threshold
+   (`run-liveness/constants.js`'s `LIVE_WINDOW_MS`; "on the order of minutes" — long enough that
+   one working session's normal commit cadence does not read as a stranger, short enough that a
+   genuinely dead run isn't gated for an unreasonable stretch; see
+   `bin/lib/hooks/resume-freshness.js`'s own header comment for the full rationale). A commit
+   inside the threshold blocks (`recent-commit`). A failed `git log`, an unparseable time, or no
+   commits at all (an empty log or unborn HEAD) fails **closed** to `indeterminate`.
 6. Otherwise: safe (`stale`) — the run is genuinely quiet.
 
-An unresolvable git call at step 4 or step 5 (while status is genuinely `interrupted`) fails
-**closed** — blocked (`indeterminate`), not safe-by-default.
+A lock or last-commit probe that could not answer at step 4 or step 5 (while status is genuinely
+`interrupted`) fails **closed** — blocked (`indeterminate`), not safe-by-default.
 
 ## Branching on the result
 
@@ -128,7 +131,13 @@ A `BLOCKED` result stops the resume; it does not mean the run is unrecoverable.
 - **`indeterminate`**: the probe could not resolve the worktree's lock state or its last-commit
   timestamp. Investigate directly (`git -C "{worktree-path}" worktree list --porcelain`, `git -C
   "{worktree-path}" log -1`) rather than retrying blindly — this verdict means the check itself
-  failed, not that the run is busy.
+  failed, not that the run is busy. An **unknown lock** is the commonest cause: a worktree locked
+  with a plain `git worktree lock --reason "..."` carries no pid, so the probe cannot tell whether
+  anything still holds it. Confirm nothing does, then clear it (`git worktree unlock
+  "{worktree-path}"`) or claim the run (`record-worktree`, as under `locked` above). The `reason`
+  names the cause; two others are a recorded worktree path that is a regular file rather than a
+  directory, and a `run-state.json` that cannot be read as a JSON object (`unreadable-run-state`) —
+  fix the path or the file, then rerun.
 
 Never bypass a `BLOCKED` result by skipping the probe on a later attempt — always re-run it after
 taking one of the actions above, and only proceed once it reports `OK`.

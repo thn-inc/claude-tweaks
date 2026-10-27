@@ -3,6 +3,8 @@ files:
   - .github/workflows/windows-regression.yml
   - plugin/bin/verify.js
   - tools/windows-regression/file-issue.js
+  - tests/helpers/root.js
+  - tests/helpers/path-stub.js
 ---
 
 # Prove a Windows Fix on a Branch Before Merge
@@ -29,10 +31,12 @@ files:
 ### 3. Read the verdict and the per-file evidence — the `verify-report` artifact
 - **Action:** Download it with `gh run download {id} -n verify-report`. Check the fixed test file in `verify-report.json` and in its log under `verify-logs/`.
 - **Should feel:** Like evidence you can quote into the PR, not a green badge you have to take on trust.
-- **Should understand:** A test that fails at base and passes at HEAD is the fix working. A failure that also fails at base is pre-existing and is adjudicated, not attributed to the branch. The workflow passes `--no-baseline-fixed` (#3313), so the report never lists the fix under `baselineAdjudicated.fixed`: on an adjudicated run `fixed` is `null` with `fixedReason: "base full run disabled (--no-baseline-fixed)"`, and the step log prints `Baseline: {n} new, fixed not computed — base full run disabled (--no-baseline-fixed)` with no `FIXED:` line. The fixed file's own passing log is the evidence.
+- **Should understand:** A test that fails at base and passes at HEAD is the fix working. A failure that also fails at base is pre-existing and is adjudicated, not attributed to the branch. The workflow passes `--no-baseline-fixed` (#3313), so the report never lists the fix under `baselineAdjudicated.fixed`: on an adjudicated run `fixed` is `null` with `fixedReason: "base full run disabled (--no-baseline-fixed)"`, and the step log prints `Baseline: {n} new, fixed not computed — base full run disabled (--no-baseline-fixed)` with no `FIXED:` line. The fixed file's own passing log is the evidence. `verify-logs/tests.log` is the full suite at the branch head. A file that failed there also gets two per-file logs, where `{file}` is its repo path with each `/` or `\` replaced by `+`: `tests-baseline-{file}.log` is the file run alone at the merge-base, and `tests-isolated-{file}.log` is the file run alone at the branch head (`tests-isolated-retry-{file}.log` when it was retried). The two share the same `{file}` suffix, so match on the `tests-isolated-` prefix: a match on the file name alone can land on the merge-base log. A file the branch fixed outright passes in `tests.log` and has no per-file log. A chmod-denial test's `ok` line ends `# SKIP win32: chmod does not deny access` in its log: `chmodDenialSkip` from `tests/helpers/root.js` skips it on purpose, because chmod never denies access on win32 (#4290), so it is neither a failure nor a fix. A PATH-stub test's line likewise ends `# SKIP win32: execFile resolves only .exe/.com on PATH, so a script stub is never spawned`: `STUB_SKIP` from `tests/helpers/path-stub.js` skips a test whose fake `git`/`gh` is a `#!/bin/sh` script, because libuv never spawns one on win32 (#4285).
 - **Red flags:** The fixed file shows up as baseline-adjudicated "pass" while its log still shows failures. That means the base already contained the fix, and step 2's source line will say why.
 
 ## Origin
 - Created during the build of record #3568, which changed `workflow_dispatch` runs to baseline against the merge-base with the integration branch instead of `HEAD^1`.
 - Step 3 extended by #3313: the workflow skips verify's `fixed` list with `--no-baseline-fixed`, so the report never names the fix.
+- Step 3 extended by #4290: chmod-denial tests skip on win32 with one shared reason, so a skip line is expected, not a regression.
+- Step 3 extended by #4285: PATH-stub tests skip on win32 with one shared reason, for the same reason.
 - Related records: #3316 (the guard itself), #3517, #3518, #3523 (Windows fixes whose acceptance criteria require this dispatch).

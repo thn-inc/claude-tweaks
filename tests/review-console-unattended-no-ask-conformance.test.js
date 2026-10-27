@@ -73,20 +73,33 @@ test('AC7: the unattended branch runs console-filings.js', () => {
   assert.ok(!namesConsoleFilings(mutated), 'control: without the call the check goes red');
 });
 
-// A failed console-filings.js filing is not residue (console.json already says `filed`), so the prose
-// carries it into the `Needs a human` block's channels — the PushNotification and the final stop.
-const CARRY = 'carry a needs-human-action line naming `{item-run-dir}`, the items, and the paste-ready re-run';
-const CARRY_CHANNELS = 'wherever the CLI\'s `Needs a human` block is carried — the `PushNotification` and the run\'s final human-facing stop';
-const carriesFailedFiling = (text) => {
+// An unfiled can't-tell filing is residue (#4170): every `filings` entry reads as `filing-pending` until its
+// filed or deduped line is logged, and the residue lines carry the paste-ready `--only` re-run.
+const PENDING = 'every `console.json` `filings` entry reads as `filing-pending` residue';
+const REUSES_ONLY = "--only '{item},…'";
+const ARCHIVAL = 'archival refuses the run';
+const STALE_CLAIM = 'so they are not residue';
+const filingsReadAsResidue = (text) => {
   const body = section(text, SHORT_CIRCUIT).replace(/\s+/g, ' ');
-  return body.includes(CARRY) && body.includes(CARRY_CHANNELS);
+  return body.includes(PENDING) && body.includes(REUSES_ONLY) && body.includes(ARCHIVAL) && !body.includes(STALE_CLAIM);
 };
 
-test('AC7: a failed console-filings.js filing is carried into the Needs a human block', () => {
-  assert.ok(carriesFailedFiling(REVIEW_CONSOLE));
-  const mutated = REVIEW_CONSOLE.replace('carry a needs-human-action line', 'log a line');
+test("AC3.1: an unfiled can't-tell filing reads as residue with its --only re-run", () => {
+  assert.ok(filingsReadAsResidue(REVIEW_CONSOLE));
+  const mutated = REVIEW_CONSOLE.replace('reads as `filing-pending` residue', 'reads as filed');
   assert.notStrictEqual(mutated, REVIEW_CONSOLE);
-  assert.ok(!carriesFailedFiling(mutated), 'control: without the carry line the check goes red');
+  assert.ok(!filingsReadAsResidue(mutated), 'control: without the filing-pending claim the check goes red');
+});
+
+test("AC3.1 controls: each remaining conjunct, broken alone, turns the filings-as-residue check red", () => {
+  const swap = (from, to) => {
+    const mutated = REVIEW_CONSOLE.split(from).join(to);
+    assert.notStrictEqual(mutated, REVIEW_CONSOLE, `${from} is not in the console prose`);
+    return mutated;
+  };
+  assert.ok(!filingsReadAsResidue(swap(REUSES_ONLY, "--only <items>")), 'the --only re-run');
+  assert.ok(!filingsReadAsResidue(swap(ARCHIVAL, 'archival proceeds')), 'the archival refusal');
+  assert.ok(!filingsReadAsResidue(swap(PENDING, `${PENDING}, ${STALE_CLAIM}`)), 'the retired "not residue" claim');
 });
 
 // AC5's "a record that has since been closed still dedups (state all)" rests on the record list the

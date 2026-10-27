@@ -49,6 +49,12 @@ A missing case is a `critical` finding (persona column `Implicit-Discovery Trust
 
 Why: #4006's spec told `verify.js --stamp-status` to use a discovered `.claude-tweaks/verify-scope.json` "exactly as an explicit `--scope` would", so a committed symlink to an out-of-tree file could widen `generated` under a verified verdict. The path-guard detection above did not fire, because the AC prescribed no containment test, and only review lens 3b caught it.
 
+## Metric-keyed condition probe (deterministic, runs before persona dispatch)
+
+Before dispatching the personas below, scan the sub-issue's composed Acceptance Criteria and Deliverables for a removal, revisit or trigger condition keyed on an observed metric ("remove it when X reaches 0", "revisit once Y stays under N for 7 days"). When one fires, probe its premise on this checkout: compute the metric's current value, and name what drives it toward the trigger value. A condition whose metric nothing drains is unreachable as written. That is a `critical` finding (persona column `Metric Premise Check`) that lands as an `## Open Questions` row naming the metric, its measured value, and the missing drain. It flows through the write-back procedure like a persona finding, and its resolution rewrites the condition or adds the drain, so it is decision-worthy: stage-or-ask per write-back step 5. With no metric-keyed condition, the check is a no-op.
+
+Why: #4421 keyed its legacy-route removal on `ownerlessNonClean` reaching 0, but 98 owner-less run dirs on the shaping checkout had no drain, and only the whole-branch review found it.
+
 ## Parallel dispatch
 
 **Persona selection by tier** (`ceremony:*` label, stamped on the sub-issue in Step 3 — rationale

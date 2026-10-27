@@ -1130,12 +1130,38 @@ async function runDeleteLedger(argv) {
     const { resolveLedgerPath, describeRunLedgers } = require('./lib/wrap-up/ledger-write');
     const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
     const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg || null });
+    // #4026: a report that leaves the ledger on disk logs its own SKIP line
+    // (cleanup-procedures.md Item 2), only into an anchored run dir. A
+    // failed append is one stderr line; stdout and the exit code stay as-is.
+    const logLeftOnDisk = (report) => {
+      try {
+        const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
+        const target = resolveTarget({ runDir, cwd: process.cwd() });
+        if (!target.ok) return;
+        appendEntry({
+          runDir: path.dirname(target.file),
+          section: '/wrap-up',
+          entry: formatEntry({
+            status: 'SKIP',
+            now: Date.now(),
+            step: 'Cleanup item 2 delete-ledger (skipped)',
+            text: `condition: delete-ledger reported ${report} → fallback: ledger left on disk, nothing committed for item 2`,
+            reversibility: 'n/a',
+          }),
+        });
+      } catch (e) {
+        process.stderr.write(`claude-tweaks: delete-ledger: decisions.md append failed (${e && e.message}) — hand-log the Item 2 SKIP line\n`);
+      }
+    };
     if (!resolved.ok && resolved.reason === 'ambiguous') {
       process.stdout.write(`claude-tweaks: delete-ledger: ${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}\nLedger not deleted.\n`);
+      logLeftOnDisk('ambiguous');
     } else if (!resolved.ok && resolved.reason === 'rejected') {
       process.stdout.write(`claude-tweaks: delete-ledger: --ledger ${resolved.candidates[0]} rejected (${resolved.detail}) — ledger not deleted\n`);
+      logLeftOnDisk('rejected');
     } else if (!resolved.ok && resolved.reason === 'unattributable') {
       process.stdout.write(`claude-tweaks: delete-ledger: cannot attribute docs/plans ledgers to ${path.basename(runDir)} (${resolved.detail}) — pass --ledger <path> explicitly; ledger not deleted\n`);
+      logLeftOnDisk('unattributable');
     } else if (!resolved.ok) {
       // #3686: with no --ledger, an inherited-only docs/plans set is named here.
       let inherited = '';
@@ -1152,6 +1178,7 @@ async function runDeleteLedger(argv) {
         process.stdout.write(`claude-tweaks: deleted ledger ${resolved.path}\n`);
       } catch (e) {
         process.stdout.write(`claude-tweaks: delete-ledger: failed to delete ${resolved.path} (${e.message})\n`);
+        logLeftOnDisk('failed to delete');
       }
     }
   }
@@ -1207,8 +1234,8 @@ async function runTeardownRun(argv) {
 
 async function runArchiveRun(argv) {
   const {
-    archiveRunDir, readConsoleState, consoleResidue, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
-    TIEBREAK_COVERAGE_HINT,
+    archiveRunDir, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
+    TIEBREAK_COVERAGE_HINT, CANT_TELL_UNFILED_HINT, unfiledCantTellFindings,
   } = require('./lib/reconcile/archive-merged');
   const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
   const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(
@@ -1256,24 +1283,33 @@ async function runArchiveRun(argv) {
   // #3949: a resolved console can still hold an item no human has reviewed.
   if (consoleState === 'residue') {
     // --ack skips an unparseable console, so an unreadable one's remedy is repairing the file.
-    const { items, unreadable } = consoleResidue(runDir);
+    const { items, unreadable, names } = consoleResidue(runDir);
     const what = [];
     const remedies = [];
     if (items > 0) {
       what.push(`${items} unresolved item(s) no human has reviewed`);
-      remedies.push(`review them, then run console-residue.js --ack --run "${runDir}"`);
+      const rerun = filingRerunRemedy(runDir);
+      if (rerun) remedies.push(rerun);
+      remedies.push(consoleAckRemedy(runDir));
     }
     if (unreadable.length > 0) {
       what.push(`${unreadable.length} console.json file(s) could not be read`);
       remedies.push(`repair or remove ${unreadable.join(', ')}, then re-run archive-run`);
     }
-    process.stdout.write(`claude-tweaks: archival refused — console-residue (${what.join(' and ')}; ${remedies.join('; ')})\n`);
+    const unresolved = names.length > 0 ? ` — unresolved: ${names.join(', ')}` : '';
+    process.stdout.write(`claude-tweaks: archival refused — console-residue (${what.join(' and ')}; ${remedies.join('; ')})${unresolved}\n`);
     return 0;
   }
   if (consoleState === 'none' && consoleReplacedByAutoMerge(runDir)) {
     const pending = listStagedItems(runDir);
     if (pending.length) {
       process.stdout.write(`claude-tweaks: archival refused — console-never-rendered-staged-pending (an auto-merge path — the wrap-up short-circuit or the dispatch bundle Auto-merge gate — rendered no console; pending: ${pending.join(', ')}) — apply or delete the pending staged/ items (and any spec-*/staged/), or write a resolved console.json, then re-run archive-run\n`);
+      return 0;
+    }
+    // #4171: the same auto-merge shape drops a can't-tell finding no run ever filed.
+    const unfiled = unfiledCantTellFindings(runDir);
+    if (unfiled.length) {
+      process.stdout.write(`claude-tweaks: archival refused — cant-tell-unfiled (${unfiled.length} can't-tell finding(s) an auto-merge path never filed: ${unfiled.join(', ')}) — ${CANT_TELL_UNFILED_HINT.replaceAll('{run-dir}', () => runDir)}, then re-run archive-run\n`);
       return 0;
     }
   }
@@ -1763,7 +1799,8 @@ async function runReconcileBackground(argv) {
   // archiveMerged's destructuring default apply the same way an omitted key
   // would. Absent (no spawning session id was ever known) leaves this
   // exactly as unresolvable as before this fix — the other two gates
-  // (24h staleness, shipped-unclosed evidence) still govern alone.
+  // (the run-liveness verdict with its 24h dead / 72h unknown floors, and
+  // shipped-unclosed evidence) still govern alone.
   const sessionId = process.env.CLAUDE_TWEAKS_SESSION_ID || undefined;
   const statusPath = path.join(root, '.claude-tweaks', STATUS_FILENAME);
 

@@ -12,8 +12,7 @@ const { readCache, writeCache } = require('../../../plugin/bin/lib/reconcile/cac
 const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
 const { GRANT_LABELS } = require('../../../plugin/bin/lib/release-claim/release');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../../../plugin/bin/lib/issue-branch-tracking');
-
-const PATH_STUB_SKIP = process.platform === 'win32' && 'win32: execFileSync("gh") never spawns a #!/bin/sh stub named gh on PATH';
+const { STUB_SKIP } = require('../../helpers/path-stub');
 
 // The label a `gh api -X DELETE .../labels/{name}` fake call removes: the last argv entry, URL-encoded.
 function deletedLabelName(args) {
@@ -330,7 +329,7 @@ test('releaseMerged: a non-string cached claimBlobs value is ignored and the cla
 // prune-remote.test.js's `git` wrapper) — reaching a merged-PR release
 // decision proves the async prState resolution actually reaches
 // decideRelease, not just that the module loads.
-test('releaseMerged: Phase 1.5 resolves prState via the pool and reaches a merged-PR release decision', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: Phase 1.5 resolves prState via the pool and reaches a merged-PR release decision', { skip: STUB_SKIP }, async () => {
   // realpathSync up front: on macOS, os.tmpdir() lives under a /var symlink
   // to /private/var, and `git worktree list --porcelain` always reports the
   // resolved form — resolving here once keeps every path built from `root`
@@ -396,7 +395,7 @@ test('releaseMerged: Phase 1.5 resolves prState via the pool and reaches a merge
 // evidence — which may lag the merge. run-state.json's pr.number (stamped
 // once at PR-early-lifecycle time, never cleared) is what the by-number
 // fallback resolves instead.
-test('releaseMerged: releases a live claim via the by-number fallback when the worktree AND its branch are both gone (#3249)', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: releases a live claim via the by-number fallback when the worktree AND its branch are both gone (#3249)', { skip: STUB_SKIP }, async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-')));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
@@ -469,7 +468,7 @@ test('releaseMerged: releases a live claim via the by-number fallback when the w
 // closes-this-issue gate: the PR is MERGED but its closingIssuesReferences name
 // issue 62, not the claim's issue 61, and there is no mergeCommit field, so no
 // commit fetch is attempted — the claim is kept.
-test('releaseMerged: the by-number fallback keeps the claim when the merged PR does not close the issue (#3412)', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: the by-number fallback keeps the claim when the merged PR does not close the issue (#3412)', { skip: STUB_SKIP }, async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-notclosing-')));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
@@ -536,7 +535,7 @@ test('releaseMerged: the by-number fallback keeps the claim when the merged PR d
 // its live worktree's branch would resolve a different PR. `gh pr list --head
 // live-branch` here would answer with a MERGED PR, so the by-number answer
 // must win and `gh pr list` must never run.
-test('releaseMerged: resolves by stamped pr.number ahead of the live-worktree branch join (#3416)', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: resolves by stamped pr.number ahead of the live-worktree branch join (#3416)', { skip: STUB_SKIP }, async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-first-')));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
@@ -653,7 +652,7 @@ function writeReusedBranchFixture(prefix, prViewLine) {
   return { root, ghApi, wrapperDir, putMarker, labelDeletes };
 }
 
-test('AC3.1 AC3.2: a live claim whose stamped pr.number is OPEN is skipped pr-open and never released, even when its branch backs a MERGED PR that closes the issue (#3416)', { skip: PATH_STUB_SKIP }, async () => {
+test('AC3.1 AC3.2: a live claim whose stamped pr.number is OPEN is skipped pr-open and never released, even when its branch backs a MERGED PR that closes the issue (#3416)', { skip: STUB_SKIP }, async () => {
   const fx = writeReusedBranchFixture('reused-open', '  *"pr view 3406"*) cat <<\'EOF\'\n'
     + '{"number":3406,"state":"OPEN","mergedAt":null,"updatedAt":"2026-01-01T00:00:00Z","closingIssuesReferences":[]}\n'
     + 'EOF\n'
@@ -672,7 +671,7 @@ test('AC3.1 AC3.2: a live claim whose stamped pr.number is OPEN is skipped pr-op
   }
 });
 
-test('AC3.1 transport failure: a failed by-number probe on a branch-resolved candidate skips network-failure, never releases via the branch PR (#3416)', { skip: PATH_STUB_SKIP }, async () => {
+test('AC3.1 transport failure: a failed by-number probe on a branch-resolved candidate skips network-failure, never releases via the branch PR (#3416)', { skip: STUB_SKIP }, async () => {
   const fx = writeReusedBranchFixture('reused-fail', '  *"pr view 3406"*) echo "error connecting to api.github.com" >&2; exit 1 ;;\n');
   const originalPath = process.env.PATH;
   process.env.PATH = `${fx.wrapperDir}${path.delimiter}${originalPath}`;
@@ -694,7 +693,7 @@ test('AC3.1 transport failure: a failed by-number probe on a branch-resolved can
 // runs. Setting prState to the failure string would make needsIssueEvidence
 // false and decideRelease skip on the transport failure instead — a
 // regression for a closed record whose pr.number probe happens to fail.
-test('releaseMerged: a failed by-number probe still lets a CLOSED issue release the claim via issue-closed (#3249)', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: a failed by-number probe still lets a CLOSED issue release the claim via issue-closed (#3249)', { skip: STUB_SKIP }, async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-fail-')));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
@@ -763,7 +762,7 @@ test('releaseMerged: a failed by-number probe still lets a CLOSED issue release 
 // recovered branch for the ordinary `gh pr list --head` join — mirroring
 // archive-merged.js, which only reports no-worktree when fallbackBranch
 // ALSO fails. No pr.number here, so the by-number fallback can't rescue it.
-test('releaseMerged: an unstamped worktree with a fallbackBranch-recovered branch still joins by branch (#3249)', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: an unstamped worktree with a fallbackBranch-recovered branch still joins by branch (#3249)', { skip: STUB_SKIP }, async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-unstamped-')));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
@@ -826,7 +825,7 @@ test('releaseMerged: an unstamped worktree with a fallbackBranch-recovered branc
 // stripped via the same injectable `api` seam removeInProgressLabel already
 // uses, and the removal is logged as an AUTO decisions.md entry against the
 // candidate's own run dir.
-test('releaseMerged: a merged: release strips every GRANT_LABELS entry and logs the removal to decisions.md', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: a merged: release strips every GRANT_LABELS entry and logs the removal to decisions.md', { skip: STUB_SKIP }, async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-grants-')));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
@@ -890,7 +889,7 @@ test('releaseMerged: a merged: release strips every GRANT_LABELS entry and logs 
 // `merged:` must leave grants untouched — matches
 // wrap-up/cleanup-procedures-execution.md Section E step 6's existing rule.
 // Only `bot:in-progress` (removeInProgressLabel, pre-existing) is deleted.
-test('releaseMerged: an issue-closed release does not touch grant labels', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: an issue-closed release does not touch grant labels', { skip: STUB_SKIP }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-issueclosed-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
@@ -1115,7 +1114,7 @@ async function run3348Scenario({ refs, commit, issueState, putExit, withMergeCom
 
 const commitBody = (stdout) => () => ({ stdout, failure: null, status: null });
 
-test('releaseMerged: AC1.1 AC5.1 the #3348 shape — merged PR closing other records keeps this record\'s claim and labels', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: AC1.1 AC5.1 the #3348 shape — merged PR closing other records keeps this record\'s claim and labels', { skip: STUB_SKIP }, async () => {
   const { result, labelDeletes, reads } = await run3348Scenario({
     refs: [ref(3306), ref(3307)],
     commit: commitBody('feat: x (#3306)\n\nFixes #3306\nFixes #3307\n'),
@@ -1129,7 +1128,7 @@ test('releaseMerged: AC1.1 AC5.1 the #3348 shape — merged PR closing other rec
   assert.equal(reads.issue, 1);
 });
 
-test('releaseMerged: AC3.1 merged-not-closing PR whose issue is now CLOSED releases via issue-closed', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: AC3.1 merged-not-closing PR whose issue is now CLOSED releases via issue-closed', { skip: STUB_SKIP }, async () => {
   const { result, labelDeletes } = await run3348Scenario({
     refs: [ref(3306), ref(3307)],
     commit: commitBody('feat: x (#3306)\n\nFixes #3306\nFixes #3307\n'),
@@ -1142,7 +1141,7 @@ test('releaseMerged: AC3.1 merged-not-closing PR whose issue is now CLOSED relea
   assert.deepEqual(labelDeletes, ['bot:in-progress'], 'issue-closed release strips no grant labels');
 });
 
-test('releaseMerged: references present, commit fetch fails -> still decided from references (not unknown)', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: references present, commit fetch fails -> still decided from references (not unknown)', { skip: STUB_SKIP }, async () => {
   const { result } = await run3348Scenario({
     refs: [ref(3306), ref(3307)],
     commit: () => ({ stdout: null, failure: 'network-failure' }),
@@ -1155,7 +1154,7 @@ test('releaseMerged: references present, commit fetch fails -> still decided fro
   assert.equal(skip.reason, 'pr-merged-not-closing');
 });
 
-test('releaseMerged: a merge commit closing keyword releases when references do not name the issue', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: a merge commit closing keyword releases when references do not name the issue', { skip: STUB_SKIP }, async () => {
   const { result, labelDeletes, reads } = await run3348Scenario({
     refs: [ref(3306)],
     commit: commitBody('feat: x\n\nFixes #3306\nFixes #3311\n'),
@@ -1170,7 +1169,7 @@ test('releaseMerged: a merge commit closing keyword releases when references do 
   assert.equal(reads.issue, 0, 'a confirmed close needs no issue-state fetch');
 });
 
-test('releaseMerged: references already naming the issue skip the commit fetch entirely', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: references already naming the issue skip the commit fetch entirely', { skip: STUB_SKIP }, async () => {
   const { result, reads } = await run3348Scenario({
     refs: [ref(3311)],
     commit: () => { throw new Error('the commit fetch must not be reached'); },
@@ -1181,7 +1180,7 @@ test('releaseMerged: references already naming the issue skip the commit fetch e
   assert.equal(reads.commit, 0);
 });
 
-test('releaseMerged: a merged PR with no closingIssuesReferences array never releases and fetches no commit (AC4)', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: a merged PR with no closingIssuesReferences array never releases and fetches no commit (AC4)', { skip: STUB_SKIP }, async () => {
   const { result, labelDeletes, reads } = await run3348Scenario({
     refs: undefined,
     commit: () => { throw new Error('the commit fetch must not be reached'); },
@@ -1194,7 +1193,7 @@ test('releaseMerged: a merged PR with no closingIssuesReferences array never rel
   assert.equal(labelDeletes.length, 0);
 });
 
-test('releaseMerged: merged-not-closing references and no mergeCommit field -> pr-merged-not-closing without a commit fetch', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: merged-not-closing references and no mergeCommit field -> pr-merged-not-closing without a commit fetch', { skip: STUB_SKIP }, async () => {
   const { result, labelDeletes, reads } = await run3348Scenario({
     refs: [ref(3306), ref(3307)],
     commit: () => { throw new Error('the commit fetch must not be reached'); },
@@ -1290,7 +1289,7 @@ async function runTwoCandidateScenario({ issueA, issueB, messageForOidA, message
   }
 }
 
-test('releaseMerged: two live claims each resolve through their own merge commit (Phase 1.75 keyed per candidate) (#3412)', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: two live claims each resolve through their own merge commit (Phase 1.75 keyed per candidate) (#3412)', { skip: STUB_SKIP }, async () => {
   const { result, labelDeletes, commitFetches, oids } = await runTwoCandidateScenario({
     issueA: 3401, issueB: 3402, messageForOidA: 'feat: a\n\nFixes #3401\n', messageForOidB: 'feat: b\n\nFixes #3402\n',
   });
@@ -1306,7 +1305,7 @@ test('releaseMerged: two live claims each resolve through their own merge commit
   assert.equal(commitFetches.length, 2, JSON.stringify(commitFetches));
 });
 
-test('releaseMerged: two live claims with the commit messages swapped release neither — a mis-keyed fan-out would release both (#3412)', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: two live claims with the commit messages swapped release neither — a mis-keyed fan-out would release both (#3412)', { skip: STUB_SKIP }, async () => {
   const { result, labelDeletes } = await runTwoCandidateScenario({
     issueA: 3401, issueB: 3402, messageForOidA: 'feat: a\n\nFixes #3402\n', messageForOidB: 'feat: b\n\nFixes #3401\n',
   });
@@ -1329,7 +1328,7 @@ test('decideRelease: pr-not-found skips with reason pr-not-found, even with a cl
   assert.equal(needsIssueEvidence('pr-not-found'), false);
 });
 
-test('AC6.1: a branch-resolved candidate whose stamped pr.number resolves pr-not-found is never released via the branch PR (#3543)', { skip: PATH_STUB_SKIP }, async () => {
+test('AC6.1: a branch-resolved candidate whose stamped pr.number resolves pr-not-found is never released via the branch PR (#3543)', { skip: STUB_SKIP }, async () => {
   const notFoundBody = '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","path":["repository","pullRequest"],"message":"x"}]}';
   const fx = writeReusedBranchFixture('reused-notfound',
     '  *"pr view 3406"*) exit 1 ;;\n'
@@ -1353,7 +1352,7 @@ test('AC6.1: a branch-resolved candidate whose stamped pr.number resolves pr-not
 // one with no stamp, joined by branch (branch batch). The control run asks the
 // real (wrapped) gh; the subject run's gh FAILS and drops a marker on every
 // call, so only a resolver-answered lookup can release either claim.
-test('releaseMerged: prStates async answers replace live lookups (#4032)', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged: prStates async answers replace live lookups (#4032)', { skip: STUB_SKIP }, async () => {
   const closing = (n, issue) => ({
     number: n, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
     closingIssuesReferences: [{ number: issue, repository: { name: 'w', owner: { login: 'acme' } } }],
@@ -1503,7 +1502,7 @@ async function runPrefetchScenario(prefetch) {
   }
 }
 
-test('releaseMerged warms the resolver once per phase', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged warms the resolver once per phase', { skip: STUB_SKIP }, async () => {
   const calls = [];
   const warmed = await runPrefetchScenario(async (arg) => { calls.push(arg); });
   assert.deepStrictEqual(calls, [
@@ -1518,7 +1517,7 @@ test('releaseMerged warms the resolver once per phase', { skip: PATH_STUB_SKIP }
 
 // #4032: release must not act on a PERSISTED cross-pass "no PR" answer — a PR opened inside
 // its 5-minute TTL would flip the verdict from skip (pr-open) to release.
-test('releaseMerged asks the resolver for fresh by-branch answers (freshNull)', { skip: PATH_STUB_SKIP }, async () => {
+test('releaseMerged asks the resolver for fresh by-branch answers (freshNull)', { skip: STUB_SKIP }, async () => {
   const r = await runPrefetchScenario(async () => {});
   assert.deepStrictEqual(r.branchOpts, [
     ['run-br-branch', { freshNull: true }],
@@ -1526,7 +1525,7 @@ test('releaseMerged asks the resolver for fresh by-branch answers (freshNull)', 
   ]);
 });
 
-test('a throwing prefetch never changes release\'s verdicts', { skip: PATH_STUB_SKIP }, async () => {
+test('a throwing prefetch never changes release\'s verdicts', { skip: STUB_SKIP }, async () => {
   let attempts = 0;
   const thrown = await runPrefetchScenario(async () => { attempts += 1; throw new Error('batch exploded'); });
   assert.equal(attempts, 2, 'both phases still attempt the warm-up');

@@ -26,7 +26,7 @@ test('counts a reference from another doc', () => {
   fs.writeFileSync(path.join(root, 'docs', 'guides', 'index.md'), '# Guides\n\nSee [target](target.md).\n');
   const result = computeInboundReferences('guides/target', root);
   assert.strictEqual(result.count, 1);
-  assert.deepStrictEqual(result.referencedBy, [path.join('docs', 'guides', 'index.md')]);
+  assert.deepStrictEqual(result.referencedBy, ['docs/guides/index.md']);
 });
 
 test('counts a reference from README.md', () => {
@@ -103,7 +103,7 @@ test('counts a reference via a nested relative link ("../config.md") from a sibl
   fs.writeFileSync(path.join(root, 'docs', 'api', 'sub', 'other.md'), 'See [config](../config.md).\n');
   const result = computeInboundReferences('api/config', root);
   assert.strictEqual(result.count, 1);
-  assert.deepStrictEqual(result.referencedBy, [path.join('docs', 'api', 'sub', 'other.md')]);
+  assert.deepStrictEqual(result.referencedBy, ['docs/api/sub/other.md']);
 });
 
 test('does NOT count a top-level doc as referenced when only a same-named doc in a NESTED subdirectory is linked', () => {
@@ -127,4 +127,21 @@ test('does NOT count a top-level doc as referenced when only a same-named doc in
   const subResult = computeInboundReferences('sub/config', root);
   assert.strictEqual(subResult.count, 1, 'docs/sub/config.md IS linked from README.md and must be counted');
   assert.deepStrictEqual(subResult.referencedBy, ['README.md']);
+});
+
+test('AC1.1: referencedBy entries are / display IDs under path.win32 (#3315)', () => {
+  const root = makeTmpRoot();
+  fs.mkdirSync(path.join(root, 'docs', 'api'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'docs', 'guide'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'docs', 'api', 'config.md'), '# API Config\n');
+  fs.writeFileSync(path.join(root, 'docs', 'guide', 'howto.md'), 'See [config](../api/config.md).\n');
+  // Counting wrapper: native and plain path.win32 `relative` both yield `/` for
+  // these fixtures on a POSIX host, so only a recorded call proves the call site
+  // routes the display ID through the injected pathImpl.
+  const calls = [];
+  const pathImpl = { ...path.win32, relative: (a, b) => (calls.push([a, b]), path.win32.relative(a, b)) };
+  const r = computeInboundReferences('api/config', root, { pathImpl });
+  assert.deepStrictEqual(r.referencedBy, ['docs/guide/howto.md']);
+  assert.strictEqual(r.count, 1);
+  assert.ok(calls.length > 0, 'pathImpl.relative must be used for the display ID');
 });

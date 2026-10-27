@@ -24,8 +24,11 @@
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { makeFinding } = require('../finding');
+const { toPosix } = require('../../shared-primitives');
 
-const REAPER_DOMAIN = path.join('.claude', 'worktrees');
+// A `/` ID (#3315): `wt.path` is compared after `toPosix`, so a git-style
+// `C:/repo/.claude/worktrees/a` and a native `C:\repo\.claude\worktrees\b` both match.
+const REAPER_DOMAIN = '.claude/worktrees';
 
 // `lockReason` carries the owning pid as free text, e.g.
 // "claude session foo (pid 16478 ...)". Extraction fails toward "unknown"
@@ -117,7 +120,7 @@ function defaultIsDirty(worktreePath) {
 // drops all observed findings under `blast-radius` — so the per-worktree
 // `git status` (one sequential subprocess per unlocked worktree) would be
 // discarded work under that scope. Skip it (#3479).
-function probeWorktrees({ scope, isPidAlive = defaultIsPidAlive, isDirty = defaultIsDirty, cliScope } = {}) {
+function probeWorktrees({ scope, isPidAlive = defaultIsPidAlive, isDirty = defaultIsDirty, cliScope, pathImpl = path } = {}) {
   if (!scope || !scope.ran) {
     return { ran: false, reason: (scope && scope.reason) || 'scope unresolved', findings: [] };
   }
@@ -139,7 +142,7 @@ function probeWorktrees({ scope, isPidAlive = defaultIsPidAlive, isDirty = defau
     // branch, never detaches HEAD, so this gap is unreachable in practice for
     // a worktree this probe could ever be running inside of (#227).
     if (scope.headBranch && wt.branch === scope.headBranch) continue;
-    const reaped = wt.path.includes(REAPER_DOMAIN);
+    const reaped = toPosix(wt.path, pathImpl.sep).includes(REAPER_DOMAIN);
     // Only decides remedy for the unlocked branch — a locked worktree is
     // already `remedy: 'record'` regardless of dirty state. `dirty === true`
     // is the one confirmed-bad case this check can report; `null` ("could

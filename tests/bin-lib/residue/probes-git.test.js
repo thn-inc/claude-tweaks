@@ -370,6 +370,29 @@ test('the blast-radius short-circuit matches what filterResultsByScope would hav
   assert.deepStrictEqual(probeWorktrees({ scope: SCOPE, cliScope: 'blast-radius' }), filtered);
 });
 
+// Characterization (#3315): the in/out-of-reaper-domain wording on POSIX paths,
+// pinned before REAPER_DOMAIN moved to a `/` ID.
+test('probeWorktrees classifies POSIX worktree paths as in / outside the reaper domain', () => {
+  const { findings } = probeWorktrees({ scope: SCOPE, isDirty: () => false });
+  const evidenceOf = (subject) => findings.find((f) => f.subject === subject).evidence;
+  assert.match(evidenceOf('/repo/.claude/worktrees/done'), /, in reaper domain$/);
+  assert.match(evidenceOf('/repo/.worktrees/fallback'), /, outside reaper domain \(no reaper collects it\)$/);
+});
+
+test('AC1.1: probeWorktrees counts both git-style and native win32 paths as in the reaper domain (#3315)', () => {
+  const scope = { ran: true, headBranch: 'main', worktrees: [
+    { path: 'C:/repo', branch: 'main' },
+    { path: 'C:/repo/.claude/worktrees/a', branch: 'a', locked: false },
+    { path: 'C:\\repo\\.claude\\worktrees\\b', branch: 'b', locked: false },
+    { path: 'C:\\elsewhere\\c', branch: 'c', locked: false },
+  ] };
+  const { findings } = probeWorktrees({ scope, isDirty: () => false, pathImpl: path.win32 });
+  const ev = findings.map((f) => f.evidence);
+  assert.match(ev[0], /, in reaper domain$/);
+  assert.match(ev[1], /, in reaper domain$/);
+  assert.match(ev[2], /, outside reaper domain \(no reaper collects it\)$/);
+});
+
 // Fixture-based: exercises the real `defaultIsDirty` (actual `git status
 // --porcelain`) against real worktrees on disk, per #1424's Deliverables.
 function tmpGitRepo() {

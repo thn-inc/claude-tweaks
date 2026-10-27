@@ -164,6 +164,10 @@ function partitionGroupsBySizeGuard(groups, options = {}) {
 // `bundleCap` members and no member it conflicts with, else starts a new
 // chunk. With no conflicts this is the same fixed-size slicing as before.
 //
+// `options.keepSingleton` is an optional `(issue) => boolean` (default: never).
+// A fast-lane singleton it returns true for passes through unbundled — an
+// express-eligible record (#4025) must reach /dispatch as its own group.
+//
 // Returns `{ groups, bundles }` — `groups` is the full output list, every
 // input group appearing exactly once, either untouched or folded into a
 // bundle; `bundles` lists only the groups this pass actually created,
@@ -175,6 +179,7 @@ const FASTLANE_BUNDLE_CAP_DEFAULT = 3;
 function bundleFastLaneSingletons(groups, options = {}) {
   const bundleCap = options.bundleCap ?? FASTLANE_BUNDLE_CAP_DEFAULT;
   const conflicts = options.conflicts ?? (() => false);
+  const keepSingleton = options.keepSingleton ?? (() => false);
   if (!(bundleCap > 1)) return { groups, bundles: [] };
 
   const passthrough = [];
@@ -182,7 +187,7 @@ function bundleFastLaneSingletons(groups, options = {}) {
   for (const group of groups) {
     if (group.length !== 1) { passthrough.push(group); continue; }
     const issue = group[0];
-    if (!normalizeLabelNames(issue.labels).includes('ceremony:fast-lane')) {
+    if (!normalizeLabelNames(issue.labels).includes('ceremony:fast-lane') || keepSingleton(issue)) {
       passthrough.push(group);
       continue;
     }
@@ -296,12 +301,13 @@ function findInFlightNeighbours(candidates, inFlight, options = {}) {
 // single-record group, instead of the transitive file-overlap chains
 // groupByFileOverlap builds. Fast-lane bundling then folds only singletons that
 // share no direct linking file. `issues`: [{ number, body, labels, createdAt }].
+// `options.keepSingleton` passes through to bundleFastLaneSingletons.
 // Returns bundleFastLaneSingletons's `{ groups, bundles }`.
 function buildDispatchGroups(issues, options = {}) {
   const items = issues.map((issue) => ({ id: issue.number, keyFiles: extractKeyFiles(issue) }));
   const overlaps = directOverlaps(items, options);
   const conflicts = (a, b) => (overlaps.get(a) || []).some((edge) => edge.id === b);
-  return bundleFastLaneSingletons(issues.map((issue) => [issue]), { bundleCap: options.bundleCap, conflicts });
+  return bundleFastLaneSingletons(issues.map((issue) => [issue]), { bundleCap: options.bundleCap, conflicts, keepSingleton: options.keepSingleton });
 }
 
 // A path touched by this large a fraction of the *open-PR pool* is generic

@@ -163,7 +163,9 @@ function composeSources(text, citingFile, pluginRoot, { exists }) {
       unresolved.push({ citingFile, line: i + 1, token: `compose-context.js: ${parsed.reason}` });
       return;
     }
-    for (const abs of parsed.sources) {
+    // A `--phase` line (#4027) loads every registered bundle's sources — the closure's upper bound.
+    const sources = parsed.bundles ? parsed.bundles.flatMap((b) => b.sources) : parsed.sources;
+    for (const abs of sources) {
       const p = posix.join(pluginRoot, toPosix(path.relative(SENTINEL_ROOT, abs)));
       if (withinRoot(pluginRoot, p) && exists(p)) resolved.push(p);
       else unresolved.push({ citingFile, line: i + 1, token: p });

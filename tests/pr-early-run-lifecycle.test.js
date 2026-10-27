@@ -123,7 +123,7 @@ test('record-pr is cited as the sanctioned run-state write path, not a direct wr
 });
 
 test('git-discipline.md states the phase-exit push rule once, cites the spike headroom, and never persists a degrade flag', () => {
-  assert.match(GIT_DISCIPLINE, /## Phase-exit push \(`integration-model: pr-first` only\)/);
+  assert.match(GIT_DISCIPLINE, /## Phase exit — one `phase-exit\.js` call/);
   assert.match(GIT_DISCIPLINE, /≥50× headroom/);
   assert.match(
     GIT_DISCIPLINE,

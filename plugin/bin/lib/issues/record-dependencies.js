@@ -180,6 +180,8 @@ function partitionByOpenNativeBlockers(candidates, repoData) {
 // which linked-prs.js's fetchLinkedPRs filters out; `repository{
 // nameWithOwner }` lets it filter to same-repo mentions only (a
 // CrossReferencedEvent's source can live in an unrelated repository).
+// #4314: also selects the source PR's createdAt — classifyShipped skips
+// a mention whose PR was already open when the record was filed.
 //
 // #2449: `timelineItems` paginates oldest-first, so `first:N` fetches the
 // OLDEST N cross-reference events — for a long-lived record that
@@ -204,7 +206,7 @@ function partitionByOpenNativeBlockers(candidates, repoData) {
 function buildLinkedPRQuery(numbers) {
   if (!Array.isArray(numbers) || numbers.length === 0) return null;
   const fields = numbers
-    .map((n) => `i${n}: issue(number:${n}){ number state closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state merged mergedAt repository { nameWithOwner } } } } } } }`)
+    .map((n) => `i${n}: issue(number:${n}){ number state closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state createdAt merged mergedAt repository { nameWithOwner } } } } } } }`)
     .join('\n      ');
   return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
 }

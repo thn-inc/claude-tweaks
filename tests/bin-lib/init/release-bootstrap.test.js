@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const rb = require('../../../plugin/bin/lib/init/release-bootstrap');
-const { skipUnderRoot } = require('../../helpers/root');
+const { chmodDenialSkip } = require('../../helpers/root');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'release-bootstrap-')); }
 function write(root, rel, content) {
@@ -500,7 +500,7 @@ test('bootstrapRelease: the real (non-injected) listTags path on a plain directo
   assert.equal(r.version, '0.1.0');
 });
 
-test('detectReleaseProcess: an unreadable config (EACCES) is a conflict naming the real cause, not "foreign config" (ledger row 39)', skipUnderRoot('root bypasses chmod restrictions'), () => {
+test('detectReleaseProcess: an unreadable config (EACCES) is a conflict naming the real cause, not "foreign config" (ledger row 39)', chmodDenialSkip('root bypasses chmod restrictions'), () => {
   const root = tmp(); write(root, 'release-please-config.json', SHAPED);
   fs.chmodSync(path.join(root, 'release-please-config.json'), 0o000);
   try {
@@ -553,4 +553,44 @@ test('bootstrapRelease: no override, auto-detected simple with a found manifest 
   assert.equal(r.releaseType, 'simple');
   assert.equal(r.version, '6.121.0');
   assert.deepEqual(JSON.parse(read(root, '.release-please-manifest.json')), { '.': '6.121.0' });
+});
+
+test('#4282 AC2.1 AC2.2: segmentsOf splits a relative path on both separators, under path.win32 too', () => {
+  for (const rel of ['.github/workflows/release-please.yml', '.github\\workflows\\release-please.yml']) {
+    assert.deepEqual(rb.segmentsOf(rel, path.win32), ['.github', 'workflows'], rel);
+  }
+  assert.deepEqual(rb.segmentsOf('.github/workflows/release-please.yml', path.posix), ['.github', 'workflows']);
+  assert.deepEqual(rb.segmentsOf('./.github//workflows/x.yml', path.posix), ['.github', 'workflows']);
+  assert.deepEqual(rb.segmentsOf('release-please-config.json', path.win32), []);
+  // '\' is a filename character on posix, a separator only under win32 semantics
+  assert.deepEqual(rb.segmentsOf('a\\b/x.yml', path.posix), ['a\\b']);
+  assert.deepEqual(rb.segmentsOf('a\\b\\x.yml', path.win32), ['a', 'b']);
+});
+
+test("#4282: assertSafeWriteTarget lstats every intermediate segment of a '/'-separated rel under win32 path semantics", () => {
+  const rel = '.github/workflows/release-please.yml';
+  const errWith = (code) => Object.assign(new Error(code), { code });
+  const fakeFor = (onGithub) => {
+    const seen = [];
+    return {
+      seen,
+      lstatSync(p) {
+        seen.push(p);
+        if (p.endsWith('\\.github')) return onGithub();
+        throw errWith('ENOENT');
+      },
+    };
+  };
+  const symlinked = fakeFor(() => ({ isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false }));
+  assert.throws(
+    () => rb.assertSafeWriteTarget('C:\\repo', rel, { pathImpl: path.win32, fsImpl: symlinked }),
+    /refusing to write through a symlink: \.github\/workflows\/release-please\.yml/,
+  );
+  assert.ok(symlinked.seen.includes('C:\\repo\\.github'), `lstat saw ${JSON.stringify(symlinked.seen)}`);
+  // an uninspectable segment fails closed rather than reading as "doesn't exist yet"
+  const unreadable = fakeFor(() => { throw errWith('EACCES'); });
+  assert.throws(
+    () => rb.assertSafeWriteTarget('C:\\repo', rel, { pathImpl: path.win32, fsImpl: unreadable }),
+    /cannot inspect .*\.github.*EACCES/,
+  );
 });

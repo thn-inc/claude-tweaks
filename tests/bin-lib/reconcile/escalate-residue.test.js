@@ -331,6 +331,16 @@ test('structurallyStuckBody: names both tiebreak reasons and carries their remed
   assert.ok(mergedPartial >= 0 && tiebreak > mergedPartial, 'the tiebreak remedy follows the merged-partial line');
 });
 
+test('structurallyStuckBody: names cant-tell-unfiled and carries its remedy line (#4171)', () => {
+  const body = structurallyStuckBody([]);
+  assert.ok(body.split('\n')[0].includes('`cant-tell-unfiled`'), 'expected the reason list to name `cant-tell-unfiled`');
+  const remedy = body.split('\n').find((l) => l.startsWith('For a `cant-tell-unfiled` directory'));
+  assert.ok(remedy, 'expected a `cant-tell-unfiled` remedy line');
+  for (const needle of ['an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate)', 'a `spec-N/`-prefixed id is filed and logged with `--run {run-dir}/spec-N`, its own `decisions.md`']) {
+    assert.ok(remedy.includes(needle), `the remedy line must carry ${needle}: ${remedy}`);
+  }
+});
+
 test('escalateResidue: structurally-stuck re-escalating the SAME already-named path is a plain dedup-hit, never appended twice', () => {
   const marker = structurallyStuckMarker();
   const body = structurallyStuckBody(['/x/run-a']);

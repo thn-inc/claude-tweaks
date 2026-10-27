@@ -59,6 +59,8 @@ CEREMONY: fast-lane | standard
 RATIONALE: {one paragraph, naming the specific content signal the verdict is based on}
 ```
 
+**Return to caller:** this output is consumed by the calling skill — control returns to the caller, whose next step runs in this same turn; never end the turn on this render.
+
 If nothing in the record's content clearly supports `fast-lane`, output `standard` — the same
 conservative-on-ambiguity principle as this skill's other three modes (see `SKILL.md`'s Error Handling).
 

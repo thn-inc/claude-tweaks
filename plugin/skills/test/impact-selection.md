@@ -28,18 +28,20 @@ Keep `command` free of those characters.
 
 ## The map
 
-The map is JSON: `{version: 1, commit, tracedAt, exitCode, node, paths, tests}`. `paths` is one sorted table of repo-relative POSIX paths. Each `tests` entry lists indexes into that table under up to four kinds:
+The map is JSON: `{version: 1, commit, tracedAt, exitCode, node, dirty, paths, tests}`. `dirty` is `true` when the traced tree held tracked changes (`trace --allow-dirty`; untracked files never count), so the map's `commit` is not what was traced. A map written before the field existed has no `dirty` key and reads as `false`; an older reader ignores the key, so the version stays 1. A `dirty` that is not a boolean is `bad-shape`. `paths` is one sorted table of repo-relative POSIX paths. Each `tests` entry lists indexes into that table under up to four kinds:
 
 | Kind | Records |
 |------|---------|
-| `f` | content reads: file reads and opens, copy sources, `stat`/`lstat`, module loads |
-| `s` | existence probes: `exists`, `access`, `realpath`, `readlink`, a `require`'s resolution candidates |
+| `f` | content reads: file reads and opens, copy sources, `stat`/`lstat`, module loads, and a `package.json` a `require` reads for `main` or `exports` |
+| `s` | existence probes: `exists`, `access`, `realpath`, `readlink`, the candidates a `require` probes up to the one it resolves to (all of them when it fails), minus those under an earlier probe |
 | `d` | directory listings: `readdir`, `opendir` |
-| `c` | content prefixes: the source directory of a recursive copy, a non-node child's in-repo directory argument, or a content-reading `git` subcommand's cwd or pathspec prefix |
+| `c` | content prefixes: the source directory of a recursive copy, a non-node child's in-repo directory argument, a content-reading `git` subcommand's cwd or pathspec prefix, or `''` (the whole repo) for a node child whose env lost the trace |
 
 A prefix covers a path when `prefix === ''` (the repo root), `p === prefix`, or `p` starts with `prefix + '/'`.
 
 **Selection.** Each changed path matched by an impact rule is checked against every map test still present at HEAD. A modified path (`M`) selects a test that content-read it (`f`) or holds a covering `c` prefix. An added, deleted or renamed path (`A`/`D`) also selects a test that probed it (`s`), listed a directory covering it (`d`), or probed or stat'd an ancestor directory of it (`s`/`f`, never the repo root `''`), since adding a directory's first file or deleting its last changes whether it exists. A path with no recorded status counts as `A`, the broader match. A changed test file also selects the other tests that read it by these rules (a test that reads or lists every test file); it is never `untraced-path`. The selected set is the matched tests, plus changed test files present at HEAD, plus test files at HEAD that the map does not know (untraced tests, which always run).
+
+Every test file the map knows, present at HEAD, whose content differs between the map's commit and HEAD (`git diff --no-renames {commit} HEAD`) is selected too, as untraced, since its recorded reads may be stale. This is a tree diff, so it holds whether or not the map's commit is an ancestor of the base. Any map problem (missing, invalid, failing-suite, not-ancestor, stale) skips the drift read, and those already run the suite full; the map's commit need not be an ancestor of the base. With the map at the base, the drifted tests are the branch's own committed test edits, which are already changed tests, so the selection is unchanged and `driftTests` stays empty (a changed test is never counted as drift). Under merge-narrowing (a stamp-anchored run whose branch later merged the integration branch) the merged-in test edits are dropped from the changed set but still differ from the map's commit, so drift selects them; that is intended and conservative.
 
 ## When the impact suite runs full
 
@@ -50,11 +52,13 @@ A prefix covers a path when `prefix === ''` (the repo root), `p === prefix`, or 
 | `map-missing` | No map file at the resolved path. |
 | `map-invalid: {reason}` | `{reason}` is `unparseable` (not JSON), `bad-shape`, `wrong-version`, `bad-commit`, or `unreadable` (the file exists but cannot be read). |
 | `map-from-failing-suite` | The traced run's `exitCode` was not 0. |
+| `map-dirty` | The map was traced from a tree with tracked changes (`dirty: true`): its reads belong to no commit, so it is never used. `fetch` replaces a cached dirty map. |
 | `map-not-ancestor` | The map's commit is not an ancestor of HEAD. |
 | `map-stale: {n} commits > {max}` | The map trails HEAD by more than `maxAgeCommits`. An age git cannot count reads as stale. |
 | `untraced-path: {p}` | A changed non-test path that no traced read covers. |
 | `head-tests-unreadable` | git could not list the test files at HEAD. |
 | `head-tests-empty` | The listing succeeded but named no test file (a sparse checkout, say), so no selection could be trusted. |
+| `map-drift-unreadable` | git could not list the test files that differ between the map's commit and HEAD. |
 | `map-unlocatable` | git could not name the checkout root or common dir. |
 | `files-list-unquotable: {reason}` | `{files}` could not be substituted safely. `{reason}` is `leading-dash` or `control-character` (the log dir's list path itself), `cmd-unquotable` (win32 `cmd`), or `template-quotes` (other quoting left in `command`). |
 | `files-list-unwritable: line break in {path}` | A selected path holds a line break, so the list file cannot carry it. |
@@ -70,9 +74,9 @@ Changed paths are diffed from the stamp's `fullSha`, as every scoped run is. Wit
 
 ## Report
 
-`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, superseded, mapPath, mapCommit, mapAgeCommits, fetch, listPath, selectedFiles}`. `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. The map is read only when selection needs it, so a delta no impact rule matches (or that a full-suite rule already supersedes) never reads the map or runs `fetch`: `mapPath`, `mapCommit`, `mapAgeCommits` and `fetch` are then `null`. Under `Scope:`, stdout prints one of:
+`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, driftTests, driftSelected, superseded, mapPath, mapCommit, mapAgeCommits, mapDirty, fetch, listPath, selectedFiles}`. `driftTests` names the drift-selected tests and `driftSelected` their count (`null` when no selection ran). `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. The map is read only when selection needs it, so a delta no impact rule matches (or that a full-suite rule already supersedes) never reads the map or runs `fetch`: `mapPath`, `mapCommit`, `mapAgeCommits`, `mapDirty` and `fetch` are then `null`. Under `Scope:`, stdout prints one of:
 
-- `Impact: {selected} of {n} test file(s) selected (map {commit9}, {age} commit(s) old)`
+- `Impact: {selected} of {n} test file(s) selected (map {commit9}, {age} commit(s) old)`, with `, {driftSelected} drift` inside the parentheses when any drift-selected test ran
 - `Impact: {selected} of the {suite} test file(s) selected — no impact-rule path changed, map not read`
 - `Impact: full {suite} — {fallback | superseded by a full-suite rule}`
 
@@ -82,10 +86,8 @@ The map is built outside the runner by a traced full-suite run: a read tracer pr
 
 **Known limits — what a map can miss:**
 
-- **Module loads.** CommonJS loads and a relative or absolute `require`'s resolution candidates are traced. ESM `import` loads are seen only through the file-system calls the loader makes.
-- **Non-node children.** Reads by a non-node child process are approximated. Its in-repo path arguments are recorded, and a content-reading `git` subcommand records a content prefix.
-- **Map-to-base drift.** A test that started reading a file after the map's commit is not selected for that file until the map refreshes.
-- **POSIX only.** Tracing runs on POSIX: on win32, `NODE_OPTIONS` quoting drops the tracer path's backslashes.
+- **Module loads.** CommonJS loads and `require` resolution are traced the way Node resolves: relative, absolute, `node_modules` lookups, `require.resolve`'s `paths`, and `package.json` `main`/`exports`. `#` imports and a package's self-reference are not followed, and a native addon (`.node`) is probed but its content is not recorded as read. ESM `import` loads are seen only through the file-system calls the loader makes.
+- **Non-node children.** Reads by a non-node child process are approximated. Its in-repo path arguments are recorded, and a content-reading `git` subcommand records a content prefix. `sh`/`bash -c` scripts (with their option clusters) and `env` wrappers are read as the command they run. A node child whose env lost the trace (`env -i`, `-u NODE_OPTIONS`, a `NODE_OPTIONS=` assignment) cannot trace itself, so its reads are unknown: it records the whole-repo prefix `c ''`, which selects the test for every change. Other wrappers (`xargs`, `timeout`, `nice`) and a mid-script `export`/`unset` of `NODE_OPTIONS` are not read; `env` options it does not know (`-S`, a combined cluster such as `-iu`) fall back to recording its path arguments.
 - **Trace environment.** The map records reads in the environment it was traced in (CI's, for a post-merge job). A test whose reads depend on the local environment (a skip gated on an installed plugin, say) can be under-selected locally.
 - **Tooling not shipped.** The tracer and map builder are the plugin repo's own tooling, not part of the plugin. Another project must produce a map in the format above itself.
 

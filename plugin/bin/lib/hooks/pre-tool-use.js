@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, powershellOpaqueCommand, keepLost,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, keepLost,
   PIPELINE_STATE_DIR, namesPipelinesSegment,
 } = require('./git-command');
 const ctxLib = require('./context');
@@ -357,7 +357,7 @@ const POLICY_COMMIT_STATUSES = new Set(['A', 'M', 'D']);
 function isPolicyOnlyCommit(command, cwd) {
   if (typeof command !== 'string' || !POLICY_COMMIT_ALLOWLIST.test(command)) return false;
   try {
-    const { stdout, failure } = runGit(['diff', '--cached', '--name-status', '-z'], cwd);
+    const { stdout, failure } = runGit(['diff', '--cached', '--name-status', '-z'], cwd, { raw: true });
     if (failure !== null || typeof stdout !== 'string') return false;
     const records = parseNameStatusZ(stdout);
     if (records.length !== 1) return false;
@@ -374,7 +374,12 @@ function isPolicyOnlyCommit(command, cwd) {
 // 1's decision: EXEMPT): admits EXACTLY `git push <remote> --delete <branch>`
 // or `git push <remote> :<branch>` — one remote, one branch, nothing else —
 // no other flag, no shell operator (&&, ;, |, $(), backticks), no env-var
-// prefix, no path to git other than the bare word. Mirrors
+// prefix, no path to git other than the bare word. One optional leading
+// `-C <path>` (quoted or bare, the same CQ_ARG rules as every other token
+// here — so no `$`, backtick, or backslash in a double-quoted path, and no
+// second `-C`) is admitted between `git` and `push` (#3900): `-C` only picks
+// the directory the same delete-only push runs in, so it adds no command
+// shape the grammar did not already admit. Mirrors
 // POLICY_COMMIT_ALLOWLIST's whole-command, default-deny-by-construction
 // discipline directly: a compound command or an extra flag/positional simply
 // fails to match, the same way a compound commit does above. Unlike the
@@ -382,7 +387,7 @@ function isPolicyOnlyCommit(command, cwd) {
 // ref target is fully determined by the command text alone (a commit's
 // staged content is not), so the regex match is the whole check.
 const DELETE_ONLY_PUSH_ALLOWLIST = Object.freeze(new RegExp(
-  `^\\s*git\\s+push\\s+${CQ_ARG}\\s+(?:--delete\\s+${CQ_ARG}|:${CQ_BARE})\\s*$`,
+  `^\\s*git\\s+(?:-C\\s+${CQ_ARG}\\s+)?push\\s+${CQ_ARG}\\s+(?:--delete\\s+${CQ_ARG}|:${CQ_BARE})\\s*$`,
 ));
 
 function isDeleteOnlyPush(command) {
@@ -506,7 +511,9 @@ function fileToolTargetPath(toolName, toolInput) {
 // toplevel (see the block comment above this function) and IS the sanctioned
 // own-cwd removal path, so the same "target is my own cwd" shape must never
 // deny it the way it denies a raw `git worktree remove`.
-function teardownTargets(ctx) {
+// `pathImpl` (#4281, default `path`) is the path module every cd and the target resolve through,
+// injected so a path.win32 pin proves the Windows shape on any host.
+function teardownTargets(ctx, { pathImpl } = {}) {
   const toolName = ctx.input && ctx.input.tool_name;
   const toolInput = ctx.input && ctx.input.tool_input;
   if (GATE_COVERAGE.teardownTools.includes(toolName)) {
@@ -517,7 +524,7 @@ function teardownTargets(ctx) {
   if (toolName !== 'Bash' || !toolInput || typeof toolInput.command !== 'string') return [];
   const out = [];
   const cwd = ctx.cwd || process.cwd();
-  forEachCommandSegment(toolInput.command, cwd, (toks, effCwd) => {
+  forEachCommandSegment(toolInput.command, cwd, (toks, effCwd, quoting) => {
     // Shares gitTargets' own findGitLead -> skipGlobalFlags preamble via
     // resolveGitCommand: findGitLead walks past a leading NAME=value
     // assignment and/or the env builtin (with env's own flags, including
@@ -528,7 +535,7 @@ function teardownTargets(ctx) {
     // or an unrecognized `-...` flag), which used to defeat this parser
     // entirely when it only checked for a literal `-C`, silently allowing
     // `git -c foo=bar worktree remove <path>` past the gate.
-    const resolved = resolveGitCommand(toks, effCwd);
+    const resolved = resolveGitCommand(toks, effCwd, quoting.pathImpl);
     if (!resolved) return; // not git, or unprovable, or cwd unknown with no provable -C
     const { index: i, dir, lost } = resolved;
     // Derived from GATE_COVERAGE.teardownGitCommands rather than a hardcoded
@@ -540,13 +547,17 @@ function teardownTargets(ctx) {
     // `--`, like `--force`/`-f`, is a flag/terminator, never the path itself.
     const rest = toks.slice(i + 2).filter((t) => t !== '--force' && t !== '-f' && t !== '--');
     if (rest.length !== 1 || rest[0].startsWith('-')) return; // unconfident -> allow
+    // The same resolver as every write target (#4281): an unprovable value ($VAR, ~, a
+    // cross-drive D:wt under win32) is no target, never a literal child of `dir`.
+    const target = resolveWriteTarget(dir, rest[0], quoting.pathImpl);
+    if (!target) return;
     // #4303: a relative path from a cwd the walk lost (past git-command.js's CWD_SET_CAP) names
     // no directory the gate can place; `path` is the lost cwd's stand-in and `lost` says so. An
     // absolute path does not depend on the cwd and keeps the ordinary checks.
-    const entry = { path: path.resolve(dir, rest[0]), source: 'bash' };
-    if (lost && !path.isAbsolute(rest[0])) entry.lost = true;
+    const entry = { path: target, source: 'bash' };
+    if (lost && !quoting.pathImpl.isAbsolute(rest[0])) entry.lost = true;
     out.push(entry);
-  }, keepLost(walkOptions(cwd))); // keepLost: the walk's lost cwd reaches resolveGitCommand, which reports it
+  }, keepLost({ ...walkOptions(cwd), pathImpl })); // keepLost: the walk's lost cwd reaches resolveGitCommand, which reports it
   return out;
 }
 
@@ -2042,6 +2053,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   }
 
   if (!runState.pr) {
+    // lib/phase-exit/phase-exit.js prPushReleased applies this branch's release rules to the
+    // push phase-exit.js makes itself (#4026) -- a change to them here belongs there too.
     // Model resolution moved ahead of the #989 exemption below (#1800) — the
     // exemption's own precondition now depends on `model` (a resolved
     // `local-merge` run never runs pr-early-run-lifecycle.md's Step 1 at all,
@@ -2456,6 +2469,10 @@ module.exports = {
   checkDispatchConfigGate,
   hasLoggedPrDegrade,
   hasPrEarlyStep1LineFor,
+  // Exported for bin/lib/phase-exit/phase-exit.js (#4026), whose push applies the
+  // same pr-first no-PR release conditions as checkBookkeepingStampsGate's PR-stamp branch.
+  hasLoggedPrEarlyStep1,
+  hasNoUpstreamYet,
   // Exported for check-pr-bookkeeping.js's phase-boundary precondition check
   // (#2472) to reuse rather than reimplement — the same integration-model
   // resolution checkBookkeepingStampsGate's own PR-stamp branch already uses.

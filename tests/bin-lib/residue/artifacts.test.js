@@ -9,9 +9,9 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { probeArtifacts, THIRTY_DAYS_MS } = require('../../../plugin/bin/lib/residue/probes/artifacts');
+const { probeArtifacts, ARTIFACT_ROOTS, THIRTY_DAYS_MS } = require('../../../plugin/bin/lib/residue/probes/artifacts');
 const { validateFinding } = require('../../../plugin/bin/lib/residue/finding');
-const { skipUnderRoot } = require('../../helpers/root');
+const { chmodDenialSkip } = require('../../helpers/root');
 
 const NOW = Date.UTC(2026, 7, 20, 12, 0, 0);
 const OLD = new Date(NOW - THIRTY_DAYS_MS - 24 * 60 * 60 * 1000); // 31 days ago
@@ -189,7 +189,7 @@ test('no runner injected at all is UNPROVEN, never untracked', () => {
   assert.ok(r.findings[0].evidence.includes('git could not prove the tree untracked'));
 });
 
-test('an unreadable root fails the whole probe loudly, naming it', skipUnderRoot('root ignores directory permissions'), () => {
+test('an unreadable root fails the whole probe loudly, naming it', chmodDenialSkip('root ignores directory permissions'), () => {
   const root = tmpRoot();
   const locked = path.join(root, '.claude-tweaks/artifacts/traces');
   fs.mkdirSync(locked, { recursive: true });
@@ -202,6 +202,41 @@ test('an unreadable root fails the whole probe loudly, naming it', skipUnderRoot
     assert.deepStrictEqual(r.findings, []);
   } finally {
     fs.chmodSync(locked, 0o755);
+  }
+});
+
+test('ARTIFACT_ROOTS are /-joined display IDs on every OS (#4396)', () => {
+  assert.deepStrictEqual(ARTIFACT_ROOTS, [
+    '.claude-tweaks/artifacts/screenshots/qa',
+    '.claude-tweaks/artifacts/screenshots/browse',
+    '.claude-tweaks/artifacts/traces',
+  ]);
+});
+
+test('an aged-dir subject is the /-joined root ID plus the entry name (#4396)', () => {
+  const root = tmpRoot();
+  mkFile(path.join(root, '.claude-tweaks/artifacts/screenshots/qa/20260601_010101_abc123/shot.png'), OLD);
+  const r = probeArtifacts({ cwd: root, now: NOW, run: UNTRACKED });
+  assert.strictEqual(r.findings[0].subject, '.claude-tweaks/artifacts/screenshots/qa/20260601_010101_abc123');
+});
+
+test('a root that is a file fails the probe naming its /-joined ID (#4396)', () => {
+  const root = tmpRoot();
+  mkFile(path.join(root, '.claude-tweaks/artifacts/traces'), FRESH);
+  const r = probeArtifacts({ cwd: root, now: NOW, run: UNTRACKED });
+  assert.deepStrictEqual(r, { ran: false, reason: 'could not read .claude-tweaks/artifacts/traces (ENOTDIR)', findings: [] });
+});
+
+test('an unreadable aged entry is a /-joined failed entry (#4396)', chmodDenialSkip('root ignores directory permissions'), () => {
+  const root = tmpRoot();
+  const entry = path.join(root, '.claude-tweaks/artifacts/screenshots/qa/run1');
+  mkFile(path.join(entry, 'sub/a.png'), OLD);
+  fs.chmodSync(path.join(entry, 'sub'), 0o000);
+  try {
+    const r = probeArtifacts({ cwd: root, now: NOW, run: UNTRACKED });
+    assert.deepStrictEqual(r, { ran: false, reason: 'could not read .claude-tweaks/artifacts/screenshots/qa/run1 (EACCES)', findings: [] });
+  } finally {
+    fs.chmodSync(path.join(entry, 'sub'), 0o755);
   }
 });
 

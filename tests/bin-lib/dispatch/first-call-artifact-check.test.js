@@ -526,6 +526,78 @@ test('resolveFirstCallGate: OUTCOME already-shipped -> already-shipped; build-te
   assert.equal(resolveFirstCallGate({ reply: gateReply('STATUS: DONE'), artifact: undefined }), 'artifact-failed');
 });
 
+// #4027 Task 9: a first call that crossed the context cap reports `OUTCOME: handoff` plus
+// `NEXT_STEPS:` (flow/context-handoff.md's Dispatched call). The gate continues it -- never
+// reading the artifact check -- and a malformed NEXT_STEPS fails closed to `blocked`.
+const { parseNextSteps, FIRST_CALL_STEPS } = require('../../../plugin/bin/lib/dispatch/first-call-artifact-check');
+const { FLOW_STEPS } = require('../../../plugin/bin/lib/claim-targets/claim-targets');
+
+const handoffReply = (nextLine, status = 'STATUS: DONE') => `GROUP: 4027\nOUTCOME: handoff\n${nextLine === null ? '' : `${nextLine}\n`}MANIFEST: /x\n\n${status}\n`;
+// An artifact whose every read throws: a handoff verdict that consults it fails the test.
+const UNREAD_ARTIFACT = { get ok() { throw new Error('artifact read on a handoff'); }, get reason() { throw new Error('artifact read on a handoff'); } };
+
+test('resolveFirstCallGate: OUTCOME handoff with NEXT_STEPS test -> handoff, without reading the artifact check', () => {
+  for (const status of ['STATUS: DONE', 'STATUS: DONE_WITH_CONCERNS']) {
+    assert.equal(resolveFirstCallGate({ reply: handoffReply('NEXT_STEPS: test', status), artifact: UNREAD_ARTIFACT }), 'handoff');
+  }
+  assert.equal(resolveFirstCallGate({ reply: handoffReply('NEXT_STEPS: test'), artifact: undefined }), 'handoff');
+  assert.equal(resolveFirstCallGate({ reply: handoffReply('NEXT_STEPS: test').replace(/\n/g, '\r\n'), artifact: undefined }), 'handoff');
+  assert.deepEqual(parseNextSteps(handoffReply('NEXT_STEPS: test')), { ok: true, steps: ['test'] });
+});
+
+test('resolveFirstCallGate: the status line still wins over a handoff', () => {
+  assert.equal(resolveFirstCallGate({ reply: handoffReply('NEXT_STEPS: test', 'STATUS: BLOCKED'), artifact: undefined }), 'blocked');
+  assert.equal(resolveFirstCallGate({ reply: handoffReply('NEXT_STEPS: test', 'STATUS: DONE (handed off)'), artifact: undefined }), 'blocked');
+});
+
+test('resolveFirstCallGate: a handoff with a missing, empty, unknown, duplicate or out-of-call NEXT_STEPS fails closed to blocked, with a reason naming the defect', () => {
+  const cases = [
+    [null, 'next-steps-missing', /^handoff without NEXT_STEPS$/],
+    ['NEXT_STEPS:', 'next-steps-empty', /empty NEXT_STEPS/],
+    ['NEXT_STEPS:    ', 'next-steps-empty', /empty NEXT_STEPS/],
+    ['NEXT_STEPS: Test', 'next-steps-invalid', /"Test"/],
+    ['NEXT_STEPS: build,,test', 'next-steps-invalid', /""/],
+    ['NEXT_STEPS: test,test', 'next-steps-duplicate', /twice/],
+    ['NEXT_STEPS: test,review', 'next-steps-invalid', /"review"/],
+  ];
+  for (const [line, reason, message] of cases) {
+    const reply = handoffReply(line);
+    assert.equal(resolveFirstCallGate({ reply, artifact: UNREAD_ARTIFACT }), 'blocked', `${line} must block`);
+    const parsed = parseNextSteps(reply, FIRST_CALL_STEPS);
+    assert.equal(parsed.ok, false, `${line} must not parse`);
+    assert.equal(parsed.reason, reason, `${line}: reason`);
+    assert.match(parsed.message, message, `${line}: message`);
+  }
+});
+
+test('parseNextSteps validates against FLOW_STEPS by default -- a second-call list parses, a misspelled step does not', () => {
+  assert.deepEqual(parseNextSteps(handoffReply('NEXT_STEPS: polish,re-verify,wrap-up')), { ok: true, steps: ['polish', 're-verify', 'wrap-up'] });
+  assert.deepEqual(parseNextSteps(handoffReply('NEXT_STEPS:  review , wrap-up ')), { ok: true, steps: ['review', 'wrap-up'] });
+  const bad = parseNextSteps(handoffReply('NEXT_STEPS: wrapup'));
+  assert.equal(bad.ok, false);
+  assert.equal(bad.reason, 'next-steps-invalid');
+  assert.ok(bad.message.includes(`accepted: ${FLOW_STEPS.join(', ')}`), bad.message);
+  // the first call's own steps are a subset of FLOW_STEPS
+  for (const step of FIRST_CALL_STEPS) assert.ok(FLOW_STEPS.includes(step), step);
+  assert.deepEqual([...FIRST_CALL_STEPS], ['build', 'stories', 'test']);
+});
+
+// Final review fix: a second call's continuation is restricted to the steps a second call can
+// still run (a resume at review auto-inserts test), so a build, stories or review-console entry
+// fails closed instead of becoming a continuation.
+test('parseNextSteps with SECOND_CALL_STEPS: the second call\'s steps parse, a first-call or review-console step fails closed', () => {
+  const { SECOND_CALL_STEPS } = require('../../../plugin/bin/lib/dispatch/first-call-artifact-check');
+  assert.deepEqual([...SECOND_CALL_STEPS], ['test', 'review', 'polish', 're-verify', 'wrap-up']);
+  assert.deepEqual(parseNextSteps(handoffReply('NEXT_STEPS: test,review,polish,re-verify,wrap-up'), SECOND_CALL_STEPS), { ok: true, steps: ['test', 'review', 'polish', 're-verify', 'wrap-up'] });
+  assert.deepEqual(parseNextSteps(handoffReply('NEXT_STEPS: wrap-up'), SECOND_CALL_STEPS), { ok: true, steps: ['wrap-up'] });
+  for (const step of ['build', 'stories', 'review-console']) {
+    const parsed = parseNextSteps(handoffReply(`NEXT_STEPS: ${step},wrap-up`), SECOND_CALL_STEPS);
+    assert.equal(parsed.ok, false, `${step} must not parse for a second call`);
+    assert.equal(parsed.reason, 'next-steps-invalid', step);
+    assert.ok(parsed.message.includes(`accepted: ${SECOND_CALL_STEPS.join(', ')}`), parsed.message);
+  }
+});
+
 // ---- #3661: checkFirstCallStamp -- the first call's runner-written pass stamp at HEAD ----
 // Every case injects `stampStatus` / `exists` except the last two, which exercise the real
 // default report check and the real verify.js spawn (its worktree cwd) against temp fixtures.

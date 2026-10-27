@@ -73,7 +73,9 @@ function resolveBuildLine(env = process.env) {
 // dead owner and stamp a live run. A resume is the one SessionStart that is the
 // owning session returning rather than a new session starting, so it re-stamps.
 // Only an already-stamped run is touched (an unstamped run keeps failing open),
-// and only a run this session owns by id — never a `fallback` guess.
+// and only a run this session owns by id — never a `fallback` guess. #4153:
+// `refreshOwnerBlock` re-stamps `owner.pid` for the same resume, and this function is
+// deleted when `ownerPid` is retired (docs/hooks.md's owner-block paragraph).
 function restampOwnerPidOnResume(ctx) {
   const input = ctx.input;
   if (!input || typeof input !== 'object' || input.source !== 'resume') return;
@@ -123,7 +125,8 @@ async function run(ctx) {
   const pluginRootEnv = process.env.CLAUDE_PLUGIN_ROOT;
   try { restampOwnerPidOnResume(ctx); } catch { /* best-effort */ }
   // #3973: re-stamp the owner block (a resume runs under a new process) before anything below spawns.
-  try { ctxLib.refreshOwnerBlock(ctx); } catch { /* best-effort */ }
+  // #4150: restampWhileFresh keeps the full pid probe here — a resume must re-stamp at once, not at the next window edge.
+  try { ctxLib.refreshOwnerBlock(ctx, { restampWhileFresh: true }); } catch { /* best-effort */ }
   try { parts.push(...deps.collect()); } catch { /* best-effort */ }
   try {
     const buildLine = resolveBuildLine({ CLAUDE_PLUGIN_ROOT: pluginRootEnv });
