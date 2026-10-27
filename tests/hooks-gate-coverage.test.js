@@ -532,8 +532,8 @@ for (const cmd of ["perl -Mi -e 'print' /main/f.js", "perl -0p -e 's/a/b/' /main
 // #4303: every letter that is not a value-taking option is a plain switch, so an i after it is
 // still -i. bash 3.2 and 5 (Homebrew perl 5.44, macOS sed): perl -pi, -i -pe, -wpi, -0api,
 // -lapi, and `-dpi` and `-pdi` under PERLDB_OPTS=NonStop edit M/g (perl's -d takes a value only
-// as `-d:MOD`, so d is a plain switch here, and a `-d:…pi` reading as in-place is the deliberate
-// fail-closed side); macOS sed -i.bak, -i.bak -n, -Ei.bak and -li.bak edit M/g (BSD sed's -l is a
+// when a `:` or `=` follows it, so d is a plain switch here; see the -d:MOD rows below); macOS
+// sed -i.bak, -i.bak -n, -Ei.bak and -li.bak edit M/g (BSD sed's -l is a
 // plain switch; where GNU sed's -l takes a value instead, reading l as a plain switch can only
 // add a target, the fail-closed side). `sed -ni` is #70's GNU form: macOS sed takes the next
 // word as its suffix and fails without writing, so the edit pinned here is GNU's (no GNU sed on
@@ -546,12 +546,25 @@ for (const cmd of ["perl -pi -e 's/a/b/' /main/f.js", "perl -i -pe 's/a/b/' /mai
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'edit', file: MAIN_F }]);
   });
 }
-// #4303: the deliberate fail-closed side named above: the letters of a `-d:MOD` module name are read
-// as plain switches, so an i among them reads as -i. bash 3.2 and 5 write nothing for this row (perl
-// finds no Devel::Tiny), and the scanner reports the edit, which this pin holds.
-test('#4303: an i in a `perl -d:MOD` module name reads as -i (deliberate fail-closed tradeoff)', () => {
-  assert.deepStrictEqual(fileWriteTargets('perl -d:Tiny -e 1 /main/f.js', '/r'), [{ action: 'edit', file: MAIN_F }]);
-});
+// #4303: a `:` or `=` after perl's -d (or after its `t`) makes the rest of the cluster a debugger
+// module and its arguments, so an i there is no -i. bash 3.2 and 5 (Homebrew perl 5.44, a
+// Devel::Wiki module on -Ilib) leave M/g unchanged for `-d:Wiki -pe`, `-dt:Wiki -pe`, `-d=Wiki
+// -pe`, `-wd:Wiki -pe` and `-d:Wiki=pi -pe`, and write nothing for `-d:Tiny -e 1` (no Devel::Tiny).
+for (const cmd of ["perl -Ilib -d:Wiki -pe 's/a/b/' /main/f.js", "perl -Ilib -dt:Wiki -pe 's/a/b/' /main/f.js",
+  "perl -Ilib -d=Wiki -pe 's/a/b/' /main/f.js", "perl -Ilib -wd:Wiki -pe 's/a/b/' /main/f.js",
+  "perl -Ilib -d:Wiki=pi -pe 's/a/b/' /main/f.js", 'perl -d:Tiny -e 1 /main/f.js']) {
+  test(`#4303: \`${cmd}\` is a read, its i inside a -d module`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), []);
+  });
+}
+// The controls: a -i beside the module still edits. bash 3.2 and 5 edit M/g for `-d:Wiki -pi -e`,
+// and for `-pid:Wiki -e`, whose -i reads first and takes `d:Wiki` as its backup suffix (also
+// writing M/gd:Wiki).
+for (const cmd of ["perl -Ilib -d:Wiki -pi -e 's/a/b/' /main/f.js", "perl -Ilib -pid:Wiki -e 's/a/b/' /main/f.js"]) {
+  test(`#4303: \`${cmd}\` is an in-place edit beside a -d module`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'edit', file: MAIN_F }]);
+  });
+}
 // #4303: each of perl's -e -E -I -m -M -F -x -D -C and sed's -e -f takes the rest of the cluster.
 // bash 3.2 and 5 write nothing for perl -Ilib, -Ipi, -Fpi, -Cpi (an unknown Unicode letter),
 // -Dpi (no -DDEBUGGING), -xpi (no script found), -mpi (no pi.pm), and `-ei -e 1` and `-Epi -e 1`

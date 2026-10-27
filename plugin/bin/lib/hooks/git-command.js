@@ -2688,19 +2688,25 @@ function partitionArgs(rest, valueFlags) {
 // (`-i.bak`), and short flags bundle (`perl -pi -e`, `sed -ni`, `perl -0pi`,
 // `perl -pi.bak`). A cluster is read the way getopt reads it (readShortCluster):
 // `i` and the options that take a value each end it, so the first of them
-// decides, and every other letter or digit is a plain switch (#4303). perl's
-// -d is a plain switch unless written `-d:MOD`, and BSD sed's -l is one, so
-// neither is listed: `perl -dpi` and BSD `sed -li.bak` edit in place. BSD
+// decides, and every other letter or digit is a plain switch (#4303). BSD
+// sed's -l is a plain switch, so it is not listed: BSD `sed -li.bak` edits in
+// place. perl's -d is one too (`perl -dpi` edits in place) unless a `:` or `=`
+// follows it, directly or after its `t` (`-d:MOD`, `-dt:MOD`, `-d=MOD`): then
+// the rest of the cluster is a debugger module and its arguments, so the
+// cluster ends there (PERL_DEBUG_MODULE_RE) and an i in `-d:Wiki` is no -i. BSD
 // (macOS) sed's -I edits in place too, taking its suffix the way -i does
 // (`sed -I '' …`, `sed -I .bak …`); GNU sed has no -I and rejects it, so
 // reading it as in-place there can only add a target, the fail-closed side.
 // perl's -I is an include directory, never an edit.
 const IN_PLACE_CLUSTER_LETTERS = Object.freeze({ sed: 'iIef', perl: 'ieEImMFxDC' });
+const PERL_DEBUG_MODULE_RE = /dt?[:=][\s\S]*$/;
 function hasInPlaceFlag(flags, cmd) {
   return flags.some((f) => {
     if (f === '--in-place' || f.startsWith('--in-place=')) return true;
     if (f.startsWith('--') || !f.startsWith('-')) return false;
-    const opt = readShortCluster(f, IN_PLACE_CLUSTER_LETTERS[cmd] || ''); // never throw on a new cmd
+    // A letter before the module's `d` still reads first (`-pid:x` is -i with the suffix `d:x`).
+    const cluster = cmd === 'perl' ? f.replace(PERL_DEBUG_MODULE_RE, '') : f;
+    const opt = readShortCluster(cluster, IN_PLACE_CLUSTER_LETTERS[cmd] || ''); // never throw on a new cmd
     return opt !== null && (opt.letter === 'i' || (cmd === 'sed' && opt.letter === 'I'));
   });
 }
