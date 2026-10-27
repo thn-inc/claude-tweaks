@@ -870,7 +870,7 @@ function resolveGitCommand(t, effCwd) {
   if (lead.unprovable || unprovable || dir === null) return null;
   // A git command run from a lost cwd (#4303) runs somewhere the walk does not know: `dir` is the
   // lost cwd's root, a stand-in, and `lost: true` says so (see CWD_SET_CAP).
-  if (dir instanceof LostCwd) return { index, dir: dir.root, lost: true };
+  if (dir instanceof LostCwd) return { index, dir: path.resolve(dir.root), lost: true };
   return { index, dir };
 }
 
@@ -924,8 +924,11 @@ function resolvedGitSegments(command, cwd, opts) {
   };
   const segments = walk(keepLost(opts));
   // #4303: a walk that lost its cwd also reports base's own readings (BASE_VIEW), as known segments.
+  // A reading's dir can be the collapse's overflow root or start as given, so it is resolved to a
+  // native path as the lost segments' dirs are.
   if (segments.some((s) => s.lost)) {
-    segments.push(...newReadings(walk(baseView(opts)), segments, (s) => `${s.dir}\0${s.index}\0${s.tokens.join('\0')}`));
+    const readings = newReadings(walk(baseView(opts)), segments, (s) => `${s.dir}\0${s.index}\0${s.tokens.join('\0')}`);
+    segments.push(...readings.map((s) => ({ ...s, dir: path.resolve(s.dir) })));
   }
   return segments;
 }
@@ -1091,7 +1094,9 @@ function resolveWriteTarget(effCwd, raw) {
   if (path.isAbsolute(stripped)) return path.resolve(stripped);
   if (effCwd === null) return null; // cwd UNKNOWN and a relative path — not provable
   // From a lost cwd (#4303): the overflow root itself, or the clamped path under the start.
-  if (effCwd instanceof LostCwd) return effCwd.overflow ? effCwd.root : path.resolve(effCwd.root, clampRel(stripped));
+  // The root itself is resolved too, so a stand-in is a native path as every other target is
+  // (a caller's '/main' is D:\main on win32).
+  if (effCwd instanceof LostCwd) return effCwd.overflow ? path.resolve(effCwd.root) : path.resolve(effCwd.root, clampRel(stripped));
   return path.resolve(effCwd, stripped);
 }
 
