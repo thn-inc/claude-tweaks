@@ -53,6 +53,13 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.156.3](https://github.com/thn-inc/claude-tweaks/compare/v6.156.2...v6.156.3) (2026-10-27)
+
+
+### Bug Fixes
+
+* Write gate misses writes after a conditional or pipelined… ([#4303](https://github.com/thn-inc/claude-tweaks/issues/4303)) ([4d81a3e](https://github.com/thn-inc/claude-tweaks/commit/4d81a3e0c34ccfbdc74ebd5be3dcc5c99a3ca1be))
+
 ## [6.156.2](https://github.com/thn-inc/claude-tweaks/compare/v6.156.1...v6.156.2) (2026-10-27)
 
 
