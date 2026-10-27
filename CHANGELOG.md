@@ -53,6 +53,24 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.156.2](https://github.com/thn-inc/claude-tweaks/compare/v6.156.1...v6.156.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* run-tests-isolation slot-wait test fails when the suite… ([#4336](https://github.com/thn-inc/claude-tweaks/issues/4336)) ([07e544d](https://github.com/thn-inc/claude-tweaks/commit/07e544d10b772e53a1d415dd327ec1fda3d4db09)), closes [#4419](https://github.com/thn-inc/claude-tweaks/issues/4419) [#4420](https://github.com/thn-inc/claude-tweaks/issues/4420) [#4421](https://github.com/thn-inc/claude-tweaks/issues/4421)
+* Windows: residue pipeline-runs probe reports its subject… ([#4430](https://github.com/thn-inc/claude-tweaks/issues/4430)) ([eda1b15](https://github.com/thn-inc/claude-tweaks/commit/eda1b151b016440a215ae96c72419d60a72abc6a))
+* Windows: test PATH stand-ins (sh stubs, git/node… ([#4285](https://github.com/thn-inc/claude-tweaks/issues/4285)) ([dd46c48](https://github.com/thn-inc/claude-tweaks/commit/dd46c48dba64228b9caafed4299aa26d93175e8c)), closes [#4290](https://github.com/thn-inc/claude-tweaks/issues/4290) [#4396](https://github.com/thn-inc/claude-tweaks/issues/4396)
+* Windows: test-environment one-offs — HOME/USERPROFILE… ([#4291](https://github.com/thn-inc/claude-tweaks/issues/4291)) ([4fc576f](https://github.com/thn-inc/claude-tweaks/commit/4fc576ff3aa0c1070f990606cd2b3417c0c7a516))
+
+### Highlights
+* Changes to the committed verify-scope declaration are now checked against the previous release's reader, so a new rule shape cannot break verification for installed builds.
+* No user-visible change.
+* Fixed: on Windows, the residue sweep now reports a leftover pipeline run directory with `/` separators, like every other residue finding.
+* No user-visible change.
+* No user-visible change: fixes Windows-only test failures.
+* No user-visible change: fixes Windows-only failures caused by test-environment assumptions (home dir, `/tmp`, MSYS env rewriting, path length, global git config, file-name characters, jq line endings).
+
 ## [6.156.1](https://github.com/thn-inc/claude-tweaks/compare/v6.156.0...v6.156.1) (2026-10-26)
 
 

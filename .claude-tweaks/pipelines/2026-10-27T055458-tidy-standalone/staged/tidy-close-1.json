@@ -1,0 +1,1 @@
+[{"tag": "parent-gate", "record": 3979, "title": "Route isDeadRunDir, abandoned-interrupted recen…", "action": "Close below-floor parent: all 4 sub-issues closed, no demo gate", "command": "gh issue close 3979 --repo thn-inc/claude-tweaks --reason completed"}]
