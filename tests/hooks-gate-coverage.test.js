@@ -1930,7 +1930,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   }
   // #4481 round 2: a group's pipe inside a first-element arm adds no cwd of its own: bash 3.2, bash 5
   // and zsh write /r/f only, so /q/f is a spurious target.
-  test('#4481 case: `case a in a) { cd /q | cat;; esac | cat; echo x > f` does not carry the group pipe cwd out', () => {
+  test('#4481 case: `case a in a) { cd /q | cat; };; esac | cat; echo x > f` does not carry the group pipe cwd out', () => {
     assert.deepStrictEqual(files('case a in a) { cd /q | cat; };; esac | cat; echo x > f'), [path.resolve('/r/f')]);
   });
   // #4481 round 2: a leading-paren pattern's arm keeps its own `cd` for its later commands. bash 3.2,
@@ -1938,6 +1938,44 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   for (const cmd of ['case a in (a) cd /wt; echo y > g;; esac', 'case a in (a) cd /wt; echo y > g;; esac | cat; echo x > f']) {
     test(`#4481 case: \`${cmd}\` keeps the arm's cd for its own writes`, () => {
       assert.ok(files(cmd).includes(path.resolve('/wt/g')), 'bash: /wt/g');
+    });
+  }
+  // #4481 round 3: a first-element case pipeline inside an outer case's arm, with no group wrapper. The
+  // inner `esac` returns the walk to the outer arm, which is still open. bash 3.2, bash 5 and zsh write
+  // /r/g for each, and /r/f for the trailing write (verdict-r3.txt lines 2-21).
+  for (const cmd of [
+    'case a in a) case b in b) cd /wt;; esac | cat; echo y > g;; esac',
+    'case a in a) case b in b) cd /wt;; esac | cat; echo y > g;; esac; echo x > f',
+  ]) {
+    test(`#4481 case: \`${cmd}\` ends its first-element pipeline under the start cwd inside an outer arm`, () => {
+      assert.ok(files(cmd).includes(path.resolve('/r/g')), 'bash 3.2, bash 5 and zsh: /r/g');
+    });
+  }
+  test('#4481 case: a first-element case pipeline inside an outer arm ends under its start at a newline', () => {
+    assert.ok(files('case a in a) case b in b) cd /wt;; esac | cat\necho y > g;; esac').includes(path.resolve('/r/g')), 'bash 3.2, bash 5 and zsh: /r/g');
+  });
+  // #4481 round 3: the `||` branch of a first-element case pipeline ends at the pipeline's start cwd. `cat`
+  // succeeds on empty stdin, so `|| …` does not run here; with `false` for `cat` bash writes the `||`
+  // branch's target at /r (verdict-r3-false.txt lines 2-10 and 22-26, bash 3.2, bash 5 and zsh).
+  test('#4481 case: `case a in a) cd /m;; esac | cat || echo x > f` ends its pipeline under the start cwd', () => {
+    assert.ok(files('case a in a) cd /m;; esac | cat || echo x > f').includes(path.resolve('/r/f')), 'bash: /r/f when the pipeline fails');
+  });
+  test('#4481 case: `case a in a) case b in b) cd /wt;; esac | cat || echo y > g;; esac` ends its pipeline under the start cwd', () => {
+    assert.ok(files('case a in a) case b in b) cd /wt;; esac | cat || echo y > g;; esac').includes(path.resolve('/r/g')), 'bash: /r/g when the pipeline fails');
+  });
+  test('#4481 substitution: `echo $(case a in a) cd /q;; esac | cat || echo y > g)` ends its pipeline under the start cwd', () => {
+    assert.ok(files('echo $(case a in a) cd /q;; esac | cat || echo y > g)').includes(path.resolve('/r/g')), 'bash 5 and zsh: /r/g when the pipeline fails');
+  });
+  // #4481 round 3: a leading-paren arm's group, subshell and function body keep their cd for the commands
+  // after them. bash 3.2, bash 5 and zsh write /wt/f and /wt/g for the first, /wt/g for the others
+  // (verdict-r3.txt lines 33-46).
+  for (const [cmd, wants] of [
+    ['case a in (a) { cd /wt; echo y > g; };; esac; echo x > f', ['/wt/f', '/wt/g']],
+    ['case a in (a) ( cd /wt; echo y > g );; esac', ['/wt/g']],
+    ['case a in (a) function f { cd /wt; }; f; echo y > g;; esac', ['/wt/g']],
+  ]) {
+    test(`#4481 case: \`${cmd}\` keeps the arm's cd across its own group`, () => {
+      for (const want of wants) assert.ok(files(cmd).includes(path.resolve(want)), `bash: ${want}`);
     });
   }
   // #4481 characterization: the shapes the first-element and `a=()` fixes must leave as they are.
