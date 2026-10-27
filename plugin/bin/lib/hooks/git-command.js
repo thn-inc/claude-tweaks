@@ -2058,19 +2058,22 @@ function groupEventsWith(seg, g, spans, undo) {
   // A bare `()` (`g()`, `function g ()`) ends a function definition's name (#4303): its body is
   // a compound command, at command position, so a `{` there opens a group and a `case` in it is
   // read. An empty `( )` after a word ending in `=` is an empty array assignment (`a=()`, #4481),
-  // not a definition: the word after it is an argument, not a command. Any other bare `()` still
-  // reads as a definition's, as before: zsh (this host's shell) runs `() { …; }` as an anonymous
-  // function in the current shell, so its `cd` persists.
+  // not a definition: the word after it is an argument, not a command. A `()` right after a
+  // `function` name is the definition's whatever the name ends in (`function a=() { cd /m; }` runs
+  // its body, bash 3.2, bash 5 and zsh alike, #4481). Any other bare `()` still reads as a
+  // definition's, as before: zsh (this host's shell) runs `() { …; }` as an anonymous function in
+  // the current shell, so its `cd` persists.
   const emptyParens = (frame, close) => {
     if (frame.openSeg !== seg) return false;
     let k = close - 1;
     while (k > frame.openAt && /\s/.test(seg[k])) k -= 1;
     if (k !== frame.openAt) return false;
-    let p = frame.openAt - 1;
-    while (p >= 0 && /\s/.test(seg[p])) p -= 1;
+    if (frame.fnDef) return true;
+    const p = frame.openAt - 1;
     return p < 0 || seg[p] !== '=';
   };
   let fnName = false; // the word after `function` at command position is the name, then the body
+  let fnNameEnd = -1; // where the last such name ended (#4481): the `()` right after it is the definition's
   let i = 0;
   while (i < seg.length) {
     const c = seg[i];
@@ -2088,7 +2091,7 @@ function groupEventsWith(seg, g, spans, undo) {
       // in it separates patterns (walkShellChunk), and its `)` ends the pattern list.
       const leadParen = !!top().casePattern && (i === 0 || /\s/.test(seg[i - 1]));
       if (atCmd) {
-        const frame = { kind: '(', caseDepth: 0, cmd: true, sub: g.nesting > 0, nesting: g.nesting, leadParen, openSeg: seg, openAt: i };
+        const frame = { kind: '(', caseDepth: 0, cmd: true, sub: g.nesting > 0, nesting: g.nesting, leadParen, openSeg: seg, openAt: i, fnDef: fnNameEnd >= 0 && /^\s*$/.test(seg.slice(fnNameEnd, i)) };
         push(frame);
         cut(i, { open: frame });
       } else {
@@ -2203,7 +2206,7 @@ function groupEventsWith(seg, g, spans, undo) {
     if (subst === -1) { push({ kind: 'p', caseDepth: 0, cmd: false, bracket: true, brackets: 0 }); atCmd = false; i += 2; continue; }
     if (subst) { nest(subst, subst === 1); i += 1 + subst; continue; }
     if (i === wStart) { i += 1; continue; } // a stray separator character: never a word
-    if (fnName) { fnName = false; atCmd = true; continue; }
+    if (fnName) { fnName = false; fnNameEnd = i; atCmd = true; continue; }
     if (!plain || !atCmd) { atCmd = false; continue; }
     const t = top();
     if (w === '{') {
@@ -2613,8 +2616,10 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     // never reads the backtick's first command, so once a `case` word shows in the backtick run, a
     // `|` in it is read both ways (endCommand's `maybePattern`), failing closed.
     // A separator inside an open case (the arm's own `;;`, or a `|` in its body) is not the case's
-    // pipeline's end (#4481): the case is open at the root or in the innermost frame.
-    const inCase = g.root.caseDepth > 0 || (g.stack[g.stack.length - 1] || g.root).caseDepth > 0;
+    // pipeline's end (#4481): the case is open in the innermost frame, or at the root when none is.
+    // An outer case around a group or a subshell does not count: that group's own list ends the
+    // pipeline (`case a in a) { case b in b) cd /q;; esac | cat; echo x > f; };; esac` writes /r/f).
+    const inCase = (g.stack[g.stack.length - 1] || g.root).caseDepth > 0;
     if (span.endsInSub) btCase = btCase || CASE_WORD_RE.test(span.text);
     else {
       const frame = g.stack[g.stack.length - 1] || g.root;

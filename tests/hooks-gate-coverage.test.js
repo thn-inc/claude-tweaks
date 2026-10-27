@@ -1879,9 +1879,48 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   test('#4481 case: `a=()` does not open command position for the word after it', () => {
     assert.ok(files('a=() case x | cd /tmp; echo hi > f.js').includes(here), 'bash: ./f.js');
   });
+  // #4481: a `()` after a function name is the definition's, whatever the name's last character: its
+  // `{ … }` is a group, so the `cd` in it reaches the commands after the call. bash 3.2, bash 5 and
+  // zsh each write M/f for both spellings.
+  for (const cmd of ['function a=() { cd /main; }; "a="; echo x > f.js', 'function a= () { cd /main; }; "a="; echo x > f.js']) {
+    test(`#4481 function: \`${cmd}\` runs the body's cd for a name ending in =`, () => {
+      assert.ok(files(cmd).includes(MAIN_F), 'bash 3.2, bash 5 and zsh: M/f');
+    });
+  }
+  // #4481: a case that is a pipeline's first element ends the pipeline under its start, inside a
+  // group, a subshell or a `$( )`, and after a nested case. bash 3.2 and 5 write /r/f for each, except
+  // the `$( )` form: bash 3.2 cannot parse its unparenthesized pattern, so bash 5 and zsh decide it.
+  for (const cmd of [
+    'case x in a) cd /wt; case y in b) cd /q;; esac;; esac | cat; echo x > f',
+    '{ case x in a) cd /wt;; esac | cat; echo x > f; }',
+    '( case x in a) cd /wt;; esac | cat; echo x > f )',
+    'x=$(case x in a) cd /wt;; esac | cat; echo x > f)',
+  ]) {
+    test(`#4481 case: \`${cmd}\` ends its first-element pipeline under the start cwd`, () => {
+      assert.ok(files(cmd).includes(path.resolve('/r/f')), 'bash: /r/f');
+    });
+  }
+  // #4481: a first-element case pipeline inside a group or a subshell that sits in another case's arm:
+  // the group's own list ends the pipeline, and the outer case being open is no test of it. bash 3.2,
+  // bash 5 and zsh write /r/f for each (the pipeline element's cd stays in its subshell).
+  for (const cmd of [
+    'case a in a) { case b in b) cd /q;; esac | cat; echo x > f; };; esac',
+    'case a in a) ( case b in b) cd /q;; esac | cat; echo x > f );; esac',
+  ]) {
+    test(`#4481 case: \`${cmd}\` ends its first-element pipeline under the start cwd inside an outer arm`, () => {
+      assert.ok(files(cmd).includes(path.resolve('/r/f')), 'bash 3.2, bash 5 and zsh: /r/f');
+    });
+  }
+  // #4481: a first-element case pipeline ends under both its start and the cwd the arm left. bash
+  // writes /r/f; /wt/f is the fail-closed superset the walk keeps, as the later-element shape does (#4244).
+  test('#4481 case: `case a in a) cd /wt;; esac | cat; echo x > f` ends under both cwds', () => {
+    const got = files('case a in a) cd /wt;; esac | cat; echo x > f');
+    assert.ok(got.includes(path.resolve('/r/f')), 'bash: /r/f');
+    assert.ok(got.includes(path.resolve('/wt/f')), 'the arm cwd, kept as a superset');
+  });
   // #4481 characterization: the shapes the first-element and `a=()` fixes must leave as they are.
   for (const [cmd, expected] of [
-    ['case x in a) cd /wt;; esac; echo x > f', [path.resolve('/wt/f')]],                          // bash: /wt/f
+    ['case a in a) cd /wt;; esac; echo x > f', [path.resolve('/wt/f')]],                          // bash: /wt/f
     ['cat | case x in a) cd /wt;; esac; echo x > f', [path.resolve('/r/f'), path.resolve('/wt/f')].sort()], // bash: /r/f only; /wt/f kept, failing closed
     ['a=(); echo hi > f.js', [here]],                                                              // bash: ./f.js
     ['a=(x y); echo hi > f.js', [here]],                                                           // bash: ./f.js
