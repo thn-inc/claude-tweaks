@@ -60,6 +60,8 @@ const BOUNDED_SCRIPT = [
 ].join('\n');
 function runBounded(label, script, payload) {
   const r = spawnSync(process.execPath, ['-e', script], { input: JSON.stringify(payload), timeout: 10000, encoding: 'utf8' });
+  // A killed or failed child would also fail the JSON.parse below, on empty stdout; these two run
+  // first so the failure names its cause (the 10 s kill, or the child's own error) instead.
   assert.strictEqual(r.signal, null, `${label} was killed (${r.signal}): a cap no longer bounds it`);
   assert.strictEqual(r.status, 0, `${label} exited ${r.status}: ${r.error ?? r.stderr}`);
   return JSON.parse(r.stdout);
