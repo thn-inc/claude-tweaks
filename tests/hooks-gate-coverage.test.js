@@ -1918,6 +1918,28 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     assert.ok(got.includes(path.resolve('/r/f')), 'bash: /r/f');
     assert.ok(got.includes(path.resolve('/wt/f')), 'the arm cwd, kept as a superset');
   });
+  // #4481 round 2: a first-element case whose arm holds a group with its own pipe. bash 3.2, bash 5
+  // and zsh write /r/f for each: the group's `|` belongs to the group, so the pipeline still starts at /r.
+  for (const cmd of [
+    'case a in a) ( cd /q | cat ); cd /wt;; esac | cat; echo x > f',
+    'case a in a) { cd /q | cat; }; cd /wt;; esac | cat; echo x > f',
+  ]) {
+    test(`#4481 case: \`${cmd}\` keeps the pipeline's start cwd past the arm's own pipe`, () => {
+      assert.ok(files(cmd).includes(path.resolve('/r/f')), 'bash 3.2, bash 5 and zsh: /r/f');
+    });
+  }
+  // #4481 round 2: a group's pipe inside a first-element arm adds no cwd of its own: bash 3.2, bash 5
+  // and zsh write /r/f only, so /q/f is a spurious target.
+  test('#4481 case: `case a in a) { cd /q | cat;; esac | cat; echo x > f` does not carry the group pipe cwd out', () => {
+    assert.deepStrictEqual(files('case a in a) { cd /q | cat; };; esac | cat; echo x > f'), [path.resolve('/r/f')]);
+  });
+  // #4481 round 2: a leading-paren pattern's arm keeps its own `cd` for its later commands. bash 3.2,
+  // bash 5 and zsh write /wt/g for each (the arm's redirect runs after its cd).
+  for (const cmd of ['case a in (a) cd /wt; echo y > g;; esac', 'case a in (a) cd /wt; echo y > g;; esac | cat; echo x > f']) {
+    test(`#4481 case: \`${cmd}\` keeps the arm's cd for its own writes`, () => {
+      assert.ok(files(cmd).includes(path.resolve('/wt/g')), 'bash: /wt/g');
+    });
+  }
   // #4481 characterization: the shapes the first-element and `a=()` fixes must leave as they are.
   for (const [cmd, expected] of [
     ['case a in a) cd /wt;; esac; echo x > f', [path.resolve('/wt/f')]],                          // bash: /wt/f

@@ -2055,25 +2055,23 @@ function groupEventsWith(seg, g, spans, undo) {
     atCmd = cmd;
   };
   let parens = null; // parenMatches(seg), computed at the first `((` at command position or `$((`
-  // A bare `()` (`g()`, `function g ()`) ends a function definition's name (#4303): its body is
-  // a compound command, at command position, so a `{` there opens a group and a `case` in it is
-  // read. An empty `( )` after a word ending in `=` is an empty array assignment (`a=()`, #4481),
-  // not a definition: the word after it is an argument, not a command. A `()` right after a
-  // `function` name is the definition's whatever the name ends in (`function a=() { cd /m; }` runs
-  // its body, bash 3.2, bash 5 and zsh alike, #4481). Any other bare `()` still reads as a
-  // definition's, as before: zsh (this host's shell) runs `() { …; }` as an anonymous function in
-  // the current shell, so its `cd` persists.
+  // A bare `()` (`g()`, `function g ()`, `function a=()`) ends a function definition's name (#4303,
+  // #4481): its body is a compound command, at command position, so a `{` there opens a group and a
+  // `case` in it is read. A `(` at command position always opens such a definition, since a word ending
+  // in `=` clears command position unless it is a `function` name (#4481). An empty `( )` after any
+  // other `=`-ended word is an empty array assignment (`a=()`), so the word after it is an argument,
+  // not a command. zsh (this host's shell) runs `() { …; }` as an anonymous function in the current
+  // shell, so its `cd` persists.
   const emptyParens = (frame, close) => {
     if (frame.openSeg !== seg) return false;
     let k = close - 1;
     while (k > frame.openAt && /\s/.test(seg[k])) k -= 1;
     if (k !== frame.openAt) return false;
-    if (frame.fnDef) return true;
+    if (frame.kind === '(') return true;
     const p = frame.openAt - 1;
     return p < 0 || seg[p] !== '=';
   };
   let fnName = false; // the word after `function` at command position is the name, then the body
-  let fnNameEnd = -1; // where the last such name ended (#4481): the `()` right after it is the definition's
   let i = 0;
   while (i < seg.length) {
     const c = seg[i];
@@ -2086,12 +2084,12 @@ function groupEventsWith(seg, g, spans, undo) {
         if (parens === null) parens = parenMatches(seg);
         if (closesDoubled(parens, seg, i + 1)) { nest(2, false); i += 2; continue; }
       }
-      // A `(` that opens a case pattern list (`case x in (a|x) …`) is read as before (#4303), as a
-      // group or a nest, so the arm after its `)` is read as a tail, failing closed; a `|` directly
-      // in it separates patterns (walkShellChunk), and its `)` ends the pattern list.
+      // A `(` that opens a case pattern list (`case x in (a|x) …`) is read as a nest (#4303), and its
+      // `)` ends the pattern list, so the arm after it starts a command: its `cd` runs for its own
+      // later commands (#4481). A `|` directly in it separates patterns (walkShellChunk).
       const leadParen = !!top().casePattern && (i === 0 || /\s/.test(seg[i - 1]));
       if (atCmd) {
-        const frame = { kind: '(', caseDepth: 0, cmd: true, sub: g.nesting > 0, nesting: g.nesting, leadParen, openSeg: seg, openAt: i, fnDef: fnNameEnd >= 0 && /^\s*$/.test(seg.slice(fnNameEnd, i)) };
+        const frame = { kind: '(', caseDepth: 0, cmd: true, sub: g.nesting > 0, nesting: g.nesting, leadParen, openSeg: seg, openAt: i };
         push(frame);
         cut(i, { open: frame });
       } else {
@@ -2110,7 +2108,8 @@ function groupEventsWith(seg, g, spans, undo) {
         pop();
         if (t.leadParen) setCasePattern(top(), false);
         if (g.nesting < pieceNesting) { cut(i, null); tail = true; }
-        atCmd = emptyParens(t, i);
+        else if (t.leadParen) cut(i, null);
+        atCmd = t.leadParen || emptyParens(t, i);
       }
       else if (t.caseDepth === 0 && t.kind === '(') {
         pop();
@@ -2206,7 +2205,7 @@ function groupEventsWith(seg, g, spans, undo) {
     if (subst === -1) { push({ kind: 'p', caseDepth: 0, cmd: false, bracket: true, brackets: 0 }); atCmd = false; i += 2; continue; }
     if (subst) { nest(subst, subst === 1); i += 1 + subst; continue; }
     if (i === wStart) { i += 1; continue; } // a stray separator character: never a word
-    if (fnName) { fnName = false; fnNameEnd = i; atCmd = true; continue; }
+    if (fnName) { fnName = false; atCmd = true; continue; }
     if (!plain || !atCmd) { atCmd = false; continue; }
     const t = top();
     if (w === '{') {
@@ -2220,13 +2219,12 @@ function groupEventsWith(seg, g, spans, undo) {
     // hold no unquoted `|` bash accepts) and again after each `;;`, `;&` or `;;&` (walkShellChunk),
     // to the `)` that ends the list. A `|` cut there separates patterns: walkShellChunk reads no
     // separator at it.
-    // `g.caseSeen` tells walkShellChunk a case compound opened (#4303).
+    // `g.caseDepths` tells walkShellChunk the frame depth a case compound opened at (#4303, #4481).
     if (w === 'case') {
       setCaseDepth(t, t.caseDepth + 1);
       setCasePattern(t, true);
-      const was = g.caseSeen;
-      g.caseSeen = true;
-      undo.push(() => { g.caseSeen = was; });
+      g.caseDepths.push(g.stack.length);
+      undo.push(() => { g.caseDepths.pop(); });
     }
     else if (w === 'esac') { setCaseDepth(t, Math.max(0, t.caseDepth - 1)); setCasePattern(t, false); }
     else if (w === 'function') fnName = true;
@@ -2411,7 +2409,7 @@ function joinCwds(a, b, overflow) {
 
 function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLike, pathImpl) {
   const { outer, bodies } = plan && depth < MAX_HEREDOC_NESTING ? stripHeredocBodies(text) : { outer: text, bodies: [] };
-  const g = { root: { kind: 'root', caseDepth: 0, cmd: true }, stack: [], nesting: 0 };
+  const g = { root: { kind: 'root', caseDepth: 0, cmd: true }, stack: [], nesting: 0, caseDepths: [] };
   let cur = cwds;
   // An and-or list's state (#4303), besides the cwds in effect: `listStart`, where the list began
   // (after the last `;`, newline, `&` or group opener); `spanStart`, where its current command
@@ -2559,7 +2557,9 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     }
   };
   let btCase = false; // a `case` word shows in the top-level backtick run in progress (#4303)
-  let caseSeen = false; // a case compound opened since the last separator the walk acted on (#4303)
+  // The frame depths of the case compounds opened since the last separator at or above each (#4303,
+  // #4481): a separator consumes the cases opened at its depth or deeper, never an outer one's.
+  let casePending = [];
   for (const span of segmentSpans(outer)) {
     const before = cur;
     const inBacktick = span.sub ? 1 : 0; // the backtick span's own level, which g.nesting omits
@@ -2599,8 +2599,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
       subCur = null;
     }
     runBodies(span.end, before);
-    caseSeen = caseSeen || !!g.caseSeen;
-    g.caseSeen = false;
+    casePending.push(...g.caseDepths);
+    g.caseDepths.length = 0;
     // The separator ends a command of the innermost list open where it stands: a substitution's
     // (by the nesting there, never by whether the sub run is active: an outer piece before the
     // separator has ended the run) or the outer walk's.
@@ -2629,12 +2629,16 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     const maybePattern = span.endsInSub && btCase;
     if (!span.endsInSub) btCase = false;
     const level = g.nesting + (span.endsInSub ? 1 : 0);
+    // A case compound opened at this separator's depth or deeper is this separator's case (#4481): a
+    // group's own `|` inside an outer case's arm does not consume the outer case's flag.
+    const sepDepth = g.stack.length;
+    const caseSeen = casePending.some((d) => d >= sepDepth);
+    casePending = casePending.filter((d) => d < sepDepth);
     if (level > 0) {
       startSubRun();
       const at = subLevelAt(level);
       subCur = endCommand(at.list, subCur, op, maybePattern, caseSeen, inCase);
     } else cur = endCommand(list, cur, op, maybePattern, caseSeen, inCase);
-    caseSeen = false;
   }
   runBodies(Infinity, cur);
 }
