@@ -64,6 +64,7 @@ files:
 - **Should understand:**
   - The command is walked a second time the way base d9aa6b82d walked it, and the targets that walk finds are checked as ordinary ones.
   - **The accepted gap (user decision, 2026-10-26):** a session that is not opted in and climbs into a policy repo through 16 or more cds stays allowed wherever base allowed it.
+  - A lost `git commit` that runs here is found afterwards by `post-tool-use.js`, which looks in the main checkout, each of its worktrees and base's readings' checkouts for a fresh commit whose subject is the command's own `-m` text. It judges that commit's closing keyword and logs its breadcrumb only when exactly one checkout offers one; with none or two, it warns about none.
 - **Red flags:** A refusal here that cites `worktree-always`.
 
 ### 4. Know the documented gaps: same session
