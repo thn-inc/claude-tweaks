@@ -45,17 +45,17 @@ const { readWorkBackend } = require('../work-backend');
 // Every realpath resolution in this file goes through canonicalRealpath (#3682); lexical containment checks (isPipelineBookkeeping) resolve nothing.
 const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
 
-// #4149: the options the worktree-required, E1 and teardown walks pass the shell scanner. A walk that
-// carries more distinct cwds than its cap (brace groups and substitution tails whose scope end it
-// cannot place) collapses them, failing closed, to this repo's main checkout plus the walk's own
-// cwd: a relative write, a git target or a `worktree remove` path then resolves in the main
-// checkout too, where checkWorktreeRequired denies it. checkPipelineShadowGuard passes none: the
-// walk's own cwd, which the collapse always keeps, is where it denies a shadow run dir. Resolved
-// only when a walk overflows (wtDetect.mainCheckoutRoot walks the fs). #4303: every target the
-// collapse resolves from a lost cwd also carries `lost: true` rather than a trusted path: the
-// teardown gate denies on it, and checkWorktreeRequired denies on it in a session whose own repo
-// has worktree-always on and otherwise checks base's readings of the command, the known targets
-// the scanner reports beside it.
+// #4149, #4303: the options the worktree-required, E1 and teardown walks pass the shell scanner. A
+// walk that carries more distinct cwds than its cap (brace groups and substitution tails whose scope
+// end it cannot place) has lost the cwd bash is in, and collapses, failing closed, to a lost cwd
+// rooted at this repo's main checkout and one at the walk's own cwd. Every target resolved from
+// there carries `lost: true` beside a stand-in path (a relative target from the main-checkout root
+// resolves to that root): the teardown gate denies on the marker, checkWorktreeRequired denies on it
+// in a session whose own repo has worktree-always on and otherwise checks base's readings of the
+// command (the known targets the scanner reports beside it), and E1 checks the stand-in and the
+// readings as ordinary targets, as base checked its collapsed paths. checkPipelineShadowGuard passes
+// none, so its collapse keeps the lost cwd at the walk's own cwd alone. Resolved only when a walk
+// overflows (wtDetect.mainCheckoutRoot walks the fs).
 function walkOptions(cwd) {
   return { overflowCwd: () => (cwd ? wtDetect.mainCheckoutRoot(cwd) || cwd : null) };
 }
@@ -2292,6 +2292,10 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   // it denied one in the wrong in-project checkout.
   const mainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(assigned), { fsImpl });
 
+  // #4303: E1 never reads the scanner's `lost` marker. A lost target's stand-in and the readings
+  // beside it are checked here as ordinary targets, as base checked its collapsed paths
+  // (policy-schema-coverage.md's "Where a relative target resolves").
+  //
   // #1431 audit: every appendEvent call in this loop (wd-ambiguous,
   // wd-push-mismatch, wd-foreign-session, wd-deny below) deliberately uses
   // ctx.runDir, not ctx.ownedRun. E1 is, by this whole function's own header
