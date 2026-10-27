@@ -513,6 +513,30 @@ for (const [cmd, file] of [
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', file)]);
   });
 }
+// #4303: a GNU long option that takes a value takes the next word when no `=` follows, abbreviated
+// or not, so a `-t` there is that value and no option. bash 3.2 and 5 with GNU coreutils 9.12 write
+// M/g for each row (`cp --suffix -t a M/g` copies a to M/g); `install --strip -t M g` writes M/g
+// (`--strip` is an exact name, so it takes no value though it abbreviates `--strip-program`), and
+// `cp --backup -t M a` writes M/a (`--backup` takes a value only after `=`). macOS's BSD tools
+// reject each long option and write nothing.
+for (const [cmd, file] of [
+  ['cp --suffix -t a /main/f.js', '/main/f.js'], ['cp --suf -t a /main/f.js', '/main/f.js'], ['mv --suffix -t a /main/f.js', '/main/f.js'],
+  ['ln --suffix -t a /main/f.js', '/main/f.js'], ['install --suffix -t a /main/f.js', '/main/f.js'], ['install --mode -t a /main/f.js', '/main/f.js'],
+  ['install --strip-program -t a /main/f.js', '/main/f.js'], ['install --suf -t a /main/f.js', '/main/f.js'], ['ln --suf -t a /main/f.js', '/main/f.js'],
+  ['install --strip -t /main g', '/main'], ['cp --backup -t /main a', '/main'],
+]) {
+  test(`#4303: \`${cmd}\` reads a long option's value as no operand`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', file)]);
+  });
+}
+// #4303: after an operand, macOS's BSD install and ln read every word as an operand, so an
+// abbreviated long option there takes no value: bash 3.2 and 5 with /usr/bin/install and /bin/ln
+// write M/a and M/b for `install a b --suf M` and `ln -s a b --suf M` (GNU writes b).
+for (const cmd of ['install a b --suf /main', 'ln -s a b --suf /main']) {
+  test(`#4303: \`${cmd}\` keeps the BSD reading of a long option after an operand`, () => {
+    assert.ok(fileWriteTargets(cmd, '/r').some((t) => t.file === MAIN_ROOT), JSON.stringify(fileWriteTargets(cmd, '/r')));
+  });
+}
 // #4303: a digit or a backup suffix in a cluster does not hide -i. bash 3.2 and 5: perl -0pi,
 // -00pi and -l0pi edit M/g; perl -pi.bak edits M/g and writes M/g.bak.
 for (const cmd of ["perl -0pi -e 's/a/b/' /main/f.js", "perl -00pi -e 's/a/b/' /main/f.js", "perl -l0pi -e 's/a/b/' /main/f.js",

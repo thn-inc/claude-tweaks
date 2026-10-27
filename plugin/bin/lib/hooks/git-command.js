@@ -2663,7 +2663,8 @@ function redirectRawTargets(t, quoting) {
 // Split a shape's argument list into positionals and the flags seen, given the
 // flags that consume the FOLLOWING token as their value. Long `--flag=value`
 // forms are self-contained and never consume the next token. `--` ends option
-// parsing, as it does for every one of these commands.
+// parsing, as it does for every one of these commands. `valueFlags.has` is also
+// handed the number of positionals before the flag (coreutilsValueFlags reads it).
 function partitionArgs(rest, valueFlags) {
   const positionals = [];
   const flags = [];
@@ -2672,7 +2673,7 @@ function partitionArgs(rest, valueFlags) {
     if (a === '--') { positionals.push(...rest.slice(i + 1)); break; }
     if (a.startsWith('-') && a !== '-') {
       flags.push(a);
-      if (valueFlags.has(a) && i + 1 < rest.length) i += 1;
+      if (valueFlags.has(a, positionals.length) && i + 1 < rest.length) i += 1;
       continue;
     }
     positionals.push(a);
@@ -2752,6 +2753,33 @@ const SED_VALUE_FLAGS = new Set(['-e', '-f', '--expression', '--file', '-l', '--
 const PERL_VALUE_FLAGS = new Set(['-e', '-E', '-I', '-m', '-M', '-F', '-x']);
 const INSTALL_VALUE_FLAGS = new Set(['-m', '--mode', '-o', '--owner', '-g', '--group', '-t', '--target-directory', '-S', '--suffix']);
 const LN_VALUE_FLAGS = new Set(['-t', '--target-directory', '-S', '--suffix']);
+
+// The GNU long options of cp, mv, ln and install that take a required value besides
+// --target-directory: with no `=`, the next word is that value (`--suffix .bak`), never an
+// option (#4303). getopt accepts any unambiguous abbreviation (`--suf`), and an exact name wins
+// over one it abbreviates: install's `--strip` takes no value though it abbreviates
+// `--strip-program`. An ambiguous abbreviation (`cp --s`) fails the command, so reading it either
+// way writes nothing. An optional value (`--backup[=CONTROL]`) is only ever given with `=`.
+const LONG_VALUE_OPTIONS = Object.freeze({
+  cp: ['--no-preserve', '--sparse', '--suffix'],
+  mv: ['--suffix'],
+  ln: ['--suffix'],
+  install: ['--group', '--mode', '--owner', '--strip-program', '--suffix'],
+});
+const LONG_NO_VALUE_EXACT = Object.freeze({ install: ['--strip'] });
+function takesLongValue(word, cmd) {
+  return word.length > 2 && !word.includes('=') && !(LONG_NO_VALUE_EXACT[cmd] || []).includes(word)
+    && LONG_VALUE_OPTIONS[cmd].some((o) => o.startsWith(word));
+}
+
+// partitionArgs' value flags for install or ln (`set`), with each long value option (takesLongValue,
+// abbreviated or not) before the first operand taking its value too, as GNU getopt reads it: BSD's
+// tool rejects a long option there, so GNU's is the only reading that writes. After an operand the
+// set alone decides, as before #4303: BSD reads every later word as an operand (`install a b --suf
+// M` installs into M), GNU an abbreviated option.
+function coreutilsValueFlags(set, cmd) {
+  return { has: (a, operandsSeen) => set.has(a) || (operandsSeen === 0 && a.startsWith('--') && takesLongValue(a, cmd)) };
+}
 const TRUNCATE_VALUE_FLAGS = new Set(['-s', '--size', '-r', '--reference', '-o', '--io-blocks']);
 
 // Reads a short-option cluster (`-vtM`) the way getopt does: left to right, each
@@ -2773,15 +2801,19 @@ function readShortCluster(word, valueLetters) {
 // of `--target-directory`, since none of the four has another `--t…` option.
 // valueLetters are the command's short options that take a value: the first one
 // in a cluster ends it, so `cp -tr DIR` targets `r` and `cp -St DIR` has no -t
-// (#4303). `--` ends option parsing.
-function explicitTargetDir(rest, valueLetters) {
+// (#4303), and so does a long option's value (takesLongValue): in `cp --suffix -t
+// a M/f`, `-t` is the suffix. `--` ends option parsing.
+function explicitTargetDir(rest, valueLetters, cmd) {
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '--') break;
     if (a.startsWith('--')) {
       const eq = a.indexOf('=');
       const name = eq === -1 ? a : a.slice(0, eq);
-      if (!'--target-directory'.startsWith(name)) continue;
+      if (!'--target-directory'.startsWith(name)) {
+        if (takesLongValue(a, cmd)) i += 1;
+        continue;
+      }
       if (eq !== -1) return a.slice(eq + 1);
       if (i + 1 < rest.length) return rest[i + 1];
       continue;
@@ -2876,7 +2908,7 @@ function fileWriteTargets(command, cwd, opts) {
       // the destination" rule below only applies when neither form is
       // present.
       const rest = t.slice(1);
-      const targetDirRaw = explicitTargetDir(rest, 'St');
+      const targetDirRaw = explicitTargetDir(rest, 'St', t[0]);
       // Read only when no -t resolved, so a `-t` word here is -S's value or a
       // trailing -t with no argument (cp refuses it). After `--` every word is
       // an operand (`cp -- -tfoo dest`).
@@ -2916,8 +2948,8 @@ function fileWriteTargets(command, cwd, opts) {
       // Same source→dest shape as cp, plus `-d`, under which EVERY positional
       // is a directory being created rather than a source.
       const rest = t.slice(1);
-      const { positionals, flags } = partitionArgs(rest, INSTALL_VALUE_FLAGS);
-      const targetDirRaw = explicitTargetDir(rest, 'mogSt');
+      const { positionals, flags } = partitionArgs(rest, coreutilsValueFlags(INSTALL_VALUE_FLAGS, 'install'));
+      const targetDirRaw = explicitTargetDir(rest, 'mogSt', 'install');
       if (targetDirRaw !== null) {
         add('install', targetDirRaw);
         return;
@@ -2940,8 +2972,8 @@ function fileWriteTargets(command, cwd, opts) {
       // The LINK name is what gets created — the last positional. With a single
       // positional the link lands in the cwd under the source's basename.
       const rest = t.slice(1);
-      const targetDirRaw = explicitTargetDir(rest, 'St');
-      const { positionals } = partitionArgs(rest, LN_VALUE_FLAGS);
+      const targetDirRaw = explicitTargetDir(rest, 'St', 'ln');
+      const { positionals } = partitionArgs(rest, coreutilsValueFlags(LN_VALUE_FLAGS, 'ln'));
       if (targetDirRaw !== null) {
         add('link', targetDirRaw);
         return;
