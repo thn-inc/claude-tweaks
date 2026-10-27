@@ -1866,6 +1866,33 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     }
     assert.deepStrictEqual(files('true | case x in a|x) cd /main;; esac; echo x > f.js'), [MAIN_F, here].sort());
   });
+  // #4481: a case compound that is a pipeline's first element runs in the pipeline's subshell, so
+  // the arm's cd never reaches the commands after it: bash 3.2 and 5 write /r/f for each row. The
+  // pipeline ends under its start, and the arm's cwd is kept too, as a later element already does.
+  for (const cmd of ['case x in a) cd /wt;; esac | cat; echo x > f', 'case x in a|x) cd M;; esac | cat; echo hi > f']) {
+    test(`#4481 case: \`${cmd}\` ends its first-element pipeline under the start cwd`, () => {
+      assert.ok(files(cmd).includes(path.resolve('/r/f')), 'bash: /r/f');
+    });
+  }
+  // #4481: `a=()` is an empty array assignment, so the `case` after it is a command word, not a
+  // keyword, and the `|` after it is a pipe: bash prints `case: command not found` and writes ./f.js.
+  test('#4481 case: `a=()` does not open command position for the word after it', () => {
+    assert.ok(files('a=() case x | cd /tmp; echo hi > f.js').includes(here), 'bash: ./f.js');
+  });
+  // #4481 characterization: the shapes the first-element and `a=()` fixes must leave as they are.
+  for (const [cmd, expected] of [
+    ['case x in a) cd /wt;; esac; echo x > f', [path.resolve('/wt/f')]],                          // bash: /wt/f
+    ['cat | case x in a) cd /wt;; esac; echo x > f', [path.resolve('/r/f'), path.resolve('/wt/f')].sort()], // bash: /r/f only; /wt/f kept, failing closed
+    ['a=(); echo hi > f.js', [here]],                                                              // bash: ./f.js
+    ['a=(x y); echo hi > f.js', [here]],                                                           // bash: ./f.js
+    ['function g () { cd /main; }; g; echo x > f.js', [MAIN_F, here].sort()],                     // bash: M/f
+    // A nameless `()` is no assignment, so it still reads as a definition (zsh: an anonymous function).
+    ['() { cd /main; }; echo x > f.js', [MAIN_F, here].sort()],                                   // zsh: M/f; bash: a syntax error
+  ]) {
+    test(`#4481 characterization: \`${cmd}\` keeps its write targets`, () => {
+      assert.deepStrictEqual(files(cmd), expected);
+    });
+  }
   // Deliberate fail-closed tradeoff: the walk never reads the case structure inside a top-level
   // backtick, so once a `case` word shows there, a `|` in it is read both as a pipe and as no
   // separator. bash: M/f for the first, ./f for the second.

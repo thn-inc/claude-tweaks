@@ -2057,12 +2057,18 @@ function groupEventsWith(seg, g, spans, undo) {
   let parens = null; // parenMatches(seg), computed at the first `((` at command position or `$((`
   // A bare `()` (`g()`, `function g ()`) ends a function definition's name (#4303): its body is
   // a compound command, at command position, so a `{` there opens a group and a `case` in it is
-  // read. bash accepts no other empty `( )` (an empty subshell is a syntax error).
+  // read. An empty `( )` after a word ending in `=` is an empty array assignment (`a=()`, #4481),
+  // not a definition: the word after it is an argument, not a command. Any other bare `()` still
+  // reads as a definition's, as before: zsh (this host's shell) runs `() { …; }` as an anonymous
+  // function in the current shell, so its `cd` persists.
   const emptyParens = (frame, close) => {
     if (frame.openSeg !== seg) return false;
     let k = close - 1;
     while (k > frame.openAt && /\s/.test(seg[k])) k -= 1;
-    return k === frame.openAt;
+    if (k !== frame.openAt) return false;
+    let p = frame.openAt - 1;
+    while (p >= 0 && /\s/.test(seg[p])) p -= 1;
+    return p < 0 || seg[p] !== '=';
   };
   let fnName = false; // the word after `function` at command position is the name, then the body
   let i = 0;
@@ -2409,8 +2415,9 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // began (a failed command leaves the cwd there); `skipOk` and `skipFail`, the cwds where the
   // list may already have succeeded or failed and be skipping commands; `pipeStart`, the cwds a
   // pipeline in progress began at (each element runs in a subshell from there); `pipeKeep`, whether
-  // one of its `|`s may be a case pattern's or one of its elements is a case compound (endCommand).
-  const freshList = (at) => ({ listStart: at, spanStart: at, skipOk: [], skipFail: [], pipeStart: null, pipeKeep: false });
+  // one of its `|`s may be a case pattern's or one of its elements is a case compound (endCommand);
+  // `caseFrom`, the cwds the command holding a case compound began at while that case is open (#4481).
+  const freshList = (at) => ({ listStart: at, spanStart: at, skipOk: [], skipFail: [], pipeStart: null, pipeKeep: false, caseFrom: null });
   // Ends the current command of list `L`, in effect at `at`, at the separator `op`, and returns the
   // cwds the next command runs under. `&&` runs it where the command succeeded and `||` where it
   // failed; whatever the list skips past carries on to its end. A `;`, a newline or the end joins
@@ -2421,10 +2428,20 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // under the pipeline's start and the cwd in effect, and the pipeline ending under both. `caseSeen`
   // says a case compound opened since the last separator: as a pipeline element it is one command
   // whose own `;;` and `;` end no pipeline, and the walk cannot place its `esac` (#4244), so a
-  // pipeline holding one ends under its start and the cwd in effect, failing closed.
-  const endCommand = (L, at, op, maybePattern = false, caseSeen = false) => {
+  // pipeline holding one ends under its start and the cwd in effect, failing closed. `caseFrom`
+  // (#4481) keeps the cwds the command holding a case began at while the case is open (`inCase`):
+  // the arm's own `;;` resets `caseSeen`, so a `|` after that case's `esac` would take the arm's
+  // post-`cd` cwd as the pipeline's start. With no pipeline open, that `|` starts one at `caseFrom`
+  // and keeps both cwds, as a case that is a later element does.
+  const endCommand = (L, at, op, maybePattern = false, caseSeen = false, inCase = false) => {
     if (caseSeen && L.pipeStart !== null) L.pipeKeep = true;
+    if (caseSeen && L.pipeStart === null && L.caseFrom === null) L.caseFrom = L.spanStart;
     if (op === '|') {
+      if (L.pipeStart === null && L.caseFrom !== null && !inCase) {
+        L.pipeStart = L.caseFrom;
+        L.pipeKeep = true;
+        return joinCwds(L.pipeStart, at, overflow);
+      }
       if (L.pipeStart === null) L.pipeStart = L.spanStart;
       if (!maybePattern) return L.pipeStart;
       L.pipeKeep = true;
@@ -2436,6 +2453,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
       L.pipeStart = null;
       L.pipeKeep = false;
     }
+    if (!inCase) L.caseFrom = null;
     if (baseLike) {
       // BASE_VIEW: base took every command to succeed and ran the next from where it left the cwd.
       if (op !== '&&' && op !== '||') L.listStart = at;
@@ -2468,6 +2486,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     L.skipFail = [];
     L.pipeStart = null;
     L.pipeKeep = false;
+    L.caseFrom = null;
     L.spanStart = L.listStart;
     return L.listStart;
   };
@@ -2593,6 +2612,9 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     // separator inside a top-level backtick is that backtick's own, never the frame's: groupEvents
     // never reads the backtick's first command, so once a `case` word shows in the backtick run, a
     // `|` in it is read both ways (endCommand's `maybePattern`), failing closed.
+    // A separator inside an open case (the arm's own `;;`, or a `|` in its body) is not the case's
+    // pipeline's end (#4481): the case is open at the root or in the innermost frame.
+    const inCase = g.root.caseDepth > 0 || (g.stack[g.stack.length - 1] || g.root).caseDepth > 0;
     if (span.endsInSub) btCase = btCase || CASE_WORD_RE.test(span.text);
     else {
       const frame = g.stack[g.stack.length - 1] || g.root;
@@ -2605,8 +2627,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     if (level > 0) {
       startSubRun();
       const at = subLevelAt(level);
-      subCur = endCommand(at.list, subCur, op, maybePattern, caseSeen);
-    } else cur = endCommand(list, cur, op, maybePattern, caseSeen);
+      subCur = endCommand(at.list, subCur, op, maybePattern, caseSeen, inCase);
+    } else cur = endCommand(list, cur, op, maybePattern, caseSeen, inCase);
     caseSeen = false;
   }
   runBodies(Infinity, cur);
