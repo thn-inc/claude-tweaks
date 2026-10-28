@@ -52,7 +52,7 @@ test('AC1.3: Common Step 5 section names Common Steps 6 and 6.5', () => {
 function assertCategoryABeforeVerify(text) {
   const step5 = sectionOf(text, '### Common Step 5:');
   assert.match(step5, /\*\*Operational fixes first \(#3489\)\.\*\*/);
-  assert.match(step5, /`operational-checklist\.md`'s Category A triggers, apply that file's Category A fixes and commit them, so the verified tree includes them/);
+  assert.match(step5, /`operational-checklist\.md`'s Category A triggers \(schema\/migration files, a changed shared-constant value, new env access, a changed `package\.json` `exports`\), apply that file's Category A fixes and commit them, so the verified tree includes them/);
   assert.match(step5, /re-check those triggers against any fix commit below before re-running verification/);
   assert.doesNotMatch(step5, /\*\*On skip\*\*/);
   const step55 = sectionOf(text, '### Common Step 5.5:');
@@ -72,7 +72,14 @@ test('#3489 AC1.1 go-red: the assertion fails when the Step 5 paragraph is remov
   assert.throws(() => assertCategoryABeforeVerify(doctored), assert.AssertionError);
 });
 
+test('#3489 AC1.1 go-red: the assertion fails when the widened Step 5.5 entry clause is reverted', () => {
+  const doctored = BUILD_SKILL.replace(', or Common Step 5 applied a Category A fix', '');
+  assert.notEqual(doctored, BUILD_SKILL, 'doctoring must actually remove the widened clause');
+  assert.throws(() => assertCategoryABeforeVerify(doctored), assert.AssertionError);
+});
+
 test('#3489 AC1.1: operational-checklist.md applies Category A in Step 5 and writes its ledger rows in Step 5.5', () => {
+  assert.ok(CHECKLIST.includes('## Category A'), 'heading must exist: ## Category A');
   const catA = CHECKLIST.split('## Category A')[1].split('## Category B')[0];
   assert.match(catA, /Common Step 5 applies them before its verification run/);
   assert.match(catA, /Common Step 5\.5 appends each Category A finding to the open items ledger/);
