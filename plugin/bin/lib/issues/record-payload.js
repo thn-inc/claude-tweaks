@@ -97,12 +97,15 @@ function fencedBlock(text) {
 // extractCurrentStateAnchors (near-duplicate.js) (#4369): an opener is a
 // column-0 run of 3+ backticks or tildes; the closer is the same character, at
 // least the opener's length, and nothing else on its line but trailing
-// whitespace. Matches what fenceFor and fencedBlock write.
-function fencedLineRanges(lines) {
+// whitespace. A backtick opener's info string may not itself contain a backtick
+// (CommonMark: such a line is an inline code span, not a fence). Matches what
+// fenceFor and fencedBlock write.
+function scanFences(lines) {
   const ranges = [];
+  let unclosed = false;
   let i = 0;
   while (i < lines.length) {
-    const fenceMatch = lines[i].match(/^(`{3,}|~{3,})/);
+    const fenceMatch = lines[i].match(/^(`{3,}(?=[^`]*$)|~{3,})/);
     if (!fenceMatch) {
       i++;
       continue;
@@ -112,18 +115,28 @@ function fencedLineRanges(lines) {
     const closeRe = new RegExp(`^${fenceChar}{${fenceLen},}\\s*$`);
     let j = i + 1;
     while (j < lines.length && !closeRe.test(lines[j])) j++;
-    const end = j < lines.length ? j : lines.length - 1;
+    unclosed = j >= lines.length;
+    const end = unclosed ? lines.length - 1 : j;
     ranges.push([i, end]);
     i = end + 1;
   }
-  return ranges;
+  return { ranges, unclosed };
+}
+
+function fencedLineRanges(lines) {
+  return scanFences(lines).ranges;
 }
 
 // lines -> boolean[] parallel to lines: true for every line inside a fenced
-// block, per fencedLineRanges (#4369).
-function fencedLineMask(lines) {
+// block, per fencedLineRanges (#4369). `{ unclosedAsText: true }` leaves a
+// trailing unclosed fence out of the mask, for a caller that gates on a heading
+// and must not lose it to a stray unclosed fence — an unclosed fence is read as
+// the prose it likely is rather than as a block swallowing the rest of the body.
+function fencedLineMask(lines, { unclosedAsText = false } = {}) {
   const mask = new Array(lines.length).fill(false);
-  for (const [s, e] of fencedLineRanges(lines)) {
+  const { ranges, unclosed } = scanFences(lines);
+  const kept = unclosedAsText && unclosed ? ranges.slice(0, -1) : ranges;
+  for (const [s, e] of kept) {
     for (let k = s; k <= e; k += 1) mask[k] = true;
   }
   return mask;

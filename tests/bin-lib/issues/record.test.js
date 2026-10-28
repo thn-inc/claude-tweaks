@@ -1326,6 +1326,23 @@ test('fencedLineMask marks exactly the lines inside fenced blocks, fence lines i
   assert.deepStrictEqual(fencedLineMask([]), []);
 });
 
+test('fencedLineRanges: a backtick line whose info string holds a backtick is an inline span, not a fence (#4369)', () => {
+  const { fencedLineRanges } = require('../../../plugin/bin/lib/issues/record-payload');
+  assert.deepStrictEqual(fencedLineRanges(['```a``` inline span', '## Current State']), []);
+  assert.deepStrictEqual(fencedLineRanges(['```js', 'x', '```']), [[0, 2]]);
+  assert.deepStrictEqual(fencedLineRanges(['~~~a`b', 'x', '~~~']), [[0, 2]]);
+});
+
+test('fencedLineMask unclosedAsText leaves only a trailing unclosed fence out of the mask (#4369)', () => {
+  const { fencedLineMask } = require('../../../plugin/bin/lib/issues/record-payload');
+  const unclosed = ['a', '```', '## h', 'b'];
+  assert.deepStrictEqual(fencedLineMask(unclosed), [false, true, true, true]);
+  assert.deepStrictEqual(fencedLineMask(unclosed, { unclosedAsText: true }), [false, false, false, false]);
+  const closedThenUnclosed = ['```', 'in', '```', '~~~', '## h'];
+  assert.deepStrictEqual(fencedLineMask(closedThenUnclosed, { unclosedAsText: true }), [true, true, true, false, false]);
+  assert.deepStrictEqual(fencedLineMask(['```', 'in', '```'], { unclosedAsText: true }), [true, true, true]);
+});
+
 test('extractSection: an unclosed fence hides every later heading (CommonMark: it runs to end of text)', () => {
   const body = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
   assert.strictEqual(extractSection(body, 'Deliverables'), '');
