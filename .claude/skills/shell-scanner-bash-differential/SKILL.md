@@ -49,6 +49,10 @@ The same holds for a separator. #4303 gave `|` subshell semantics (a pipeline el
 
 When a scanner fix needs a new marker or state that more than one consumer of `fileWriteTargets`/`gitTargets`/`mkdirTargets` must interpret, stop and ask for a design decision before building the consumers, with base parity (re-walk the command as base did) as the default option. #4303's cwd-cap fix grew a lost-cwd marker that four consumers read (the worktree gate, the shadow guard, teardown, post-tool-use). Fix rounds 5 and 6 each closed one leak and opened another, round 6 at over 10x base, until the user chose base parity before round 7.
 
+### A compound in a list position re-opens every separator in its body
+
+#4481 made a `case … esac` that sits in a pipeline or an and-or list follow #4303's pipeline rules. Each of its six fix rounds found a new leak where a separator or word inside the case met the list outside it: a nested case, a case after `||`, a leading-paren arm, a redirect on the compound, the `esac` keyword, and an arm's inner `;` that dropped the outer list's `||`/`&&`-skipped branch. The whole-branch review then found one more: a lone `&` before an arm's first separator wipes that skipped state and the pipeline's start. The state the walk keeps for the enclosing list (the skipped cwds, the pipeline's start, the point a `&` returns to) belongs to the compound's own frame, with one record per nesting level, and no separator inside the body may reset it. When a change lets a compound (`case`, a `{ }` group, a subshell) take part in a pipeline or an and-or list, list everything that can appear in its body: `;;`, `;`, a newline, `&`, `|`, `&&`/`||`, a nested compound, and a redirect after its closer. Pin each one with the compound as the first element, as a later element, and after `||`/`&&`, in the same change. Add `case`/`esac`, `;;`, paren patterns and nested compounds to the fuzz alphabet.
+
 ## Decision Framework
 
 | Situation | Do |
@@ -61,6 +65,7 @@ When a scanner fix needs a new marker or state that more than one consumer of `f
 | Each round keeps finding a new divergence class | Stop modelling more bash; recognise a fixed set of shapes and keep every other body visible |
 | A change gives `\|`, `&&`/`\|\|` or `&` new cwd meaning | List every context where the splitter cuts at it (case patterns, `[[ ]]`, arithmetic, `\|&`, `${x//a\|b/c}`); pin each against bash |
 | A fix needs a marker more than one consumer must read | Stop; ask for the design, with base parity as the default |
+| A compound (`case`, group, subshell) can now sit in a pipeline or and-or list | Pin every body separator, nesting and closer redirect at first element, later element and after `\|\|`/`&&` |
 
 ## Project Conventions
 
@@ -219,6 +224,7 @@ Leftover check, after a session and after any driver run that was killed: `ps -a
 | Fuzzing only the shapes the change targets | #4281's fuzz missed three escaped-spelling leaks (`\cd`, `2\>`, an escaped newline before an assignment) in rules the change never edited but whose input it redefined |
 | Running a shape under real bash with `spawnSync`, no cap and the real PATH after the stubs | 2026-10-26: three orphaned `dd if=/dev/zero` writers from #4303's oracle tree wrote ~463 GB into deleted files over 7 h, and 30 orphaned `cat a f1` loops from #4281's fuzz scratch were still writing 17 h after that run was archived; `spawnSync` with no timeout kills nobody, and with one it kills only bash. |
 | Spawning the oracle with `{ ...process.env }` and only PATH replaced | #4303 round 5: fuzz seed 99's `(cd - && git commit -qm "work on #12")` ran under bash 5 in the session's worktree, which the imported OLDPWD named, and put four empty commits on the live branch |
+| Judging a case only under bash 3.2 and 5 | The session's Bash tool runs the user's shell, which is zsh on this host. #4481: zsh runs a pipeline's last element in the current shell, so `true \| cd ../main; echo x > f.js` writes main/f.js while the scanner's bash model reports ./f.js. Run zsh as a third oracle, as #4481's test comments do, and add each zsh-only divergence to the known gaps in `policy-schema-coverage.md`. Whether the scanner should follow zsh is still an open decision (#4455), so do not quietly side with zsh in the expected target |
 
 ## Reference
 
