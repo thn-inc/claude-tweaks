@@ -2059,12 +2059,12 @@ function groupEventsWith(seg, g, spans, undo) {
     atCmd = cmd;
   };
   let parens = null; // parenMatches(seg), computed at the first `((` at command position or `$((`
-  // A bare `()` (`g()`, `function g ()`, `function a=()`) ends a function definition's name (#4303,
-  // #4481): its body is a compound command, at command position, so a `{` there opens a group and a
-  // `case` in it is read. A `(` at command position opens a `(` frame, whose `)` always leaves command
-  // position on (#4481), so only a nesting `(` comes here. An empty `( )` after an `=`-ended word is an
-  // empty array assignment (`a=()`), so the word after it is an argument, not a command. zsh (this host's
-  // shell) runs `() { …; }` as an anonymous function in the current shell, so its `cd` persists.
+  // A bare `()` after a word (`g()`) ends a function definition's name (#4303, #4481): its body is a
+  // compound command, at command position, so a `{` there opens a group and a `case` in it is read.
+  // `function g ()` and `function a=()` never come here: the `(` opens a `(` frame, whose `)` always
+  // leaves command position on (#4481), so only a nesting `(` reaches this. An empty `( )` after an
+  // `=`-ended word is an empty array assignment (`a=()`): the word after it is still the command word,
+  // but it is not read as a reserved word (`a=() case x` runs a command named `case`).
   const emptyParens = (frame, close) => {
     if (frame.openSeg !== seg) return false;
     let k = close - 1;
@@ -2091,6 +2091,8 @@ function groupEventsWith(seg, g, spans, undo) {
       // `)` ends the pattern list, so the arm after it starts a command: its `cd` runs for its own
       // later commands (#4481). A `|` directly in it separates patterns (walkShellChunk).
       const leadParen = !!top().casePattern && (i === 0 || /\s/.test(seg[i - 1]));
+      // (zsh, this host's shell, runs a command-position `() { …; }` as an anonymous function in the
+      // current shell, so its `cd` persists; this frame treats it as a subshell, as bash does.)
       if (atCmd) {
         const frame = { kind: '(', caseDepth: 0, cmd: true, sub: g.nesting > 0, nesting: g.nesting, leadParen, openSeg: seg, openAt: i };
         push(frame);
@@ -2243,15 +2245,15 @@ function groupEventsWith(seg, g, spans, undo) {
     // hold no unquoted `|` bash accepts) and again after each `;;`, `;&` or `;;&` (walkShellChunk),
     // to the `)` that ends the list. A `|` cut there separates patterns: walkShellChunk reads no
     // separator at it.
-    // `g.caseDepths` tells walkShellChunk the frame depth a case compound opened at and its `level`, how
+    // `g.casesOpened` tells walkShellChunk the frame depth a case compound opened at and its `level`, how
     // many cases are open in that frame once it is (#4303, #4481): the case is closed once fewer are. The
     // push is journaled like the rest of the group state, so a flat pass takes back its own (a duplicate
     // entry is harmless: it gives the same case a second, identical record; the journal keeps the list exact).
     if (w === 'case') {
       setCaseDepth(t, t.caseDepth + 1);
       setCasePattern(t, true);
-      g.caseDepths.push({ depth: g.stack.length, level: t.caseDepth });
-      undo.push(() => { g.caseDepths.pop(); });
+      g.casesOpened.push({ depth: g.stack.length, level: t.caseDepth });
+      undo.push(() => { g.casesOpened.pop(); });
     }
     // A reserved word may follow `esac` directly (#4481): `case a in a) cd ../wt; case b in b) cd ../q;; esac
     // esac | cat; echo y > g` closes both cases (bash 3.2, bash 5 and zsh write r/g), so the next word is at
@@ -2445,7 +2447,7 @@ function joinCwds(a, b, overflow) {
 
 function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLike, pathImpl) {
   const { outer, bodies } = plan && depth < MAX_HEREDOC_NESTING ? stripHeredocBodies(text) : { outer: text, bodies: [] };
-  const g = { root: { kind: 'root', caseDepth: 0, cmd: true }, stack: [], nesting: 0, caseDepths: [] };
+  const g = { root: { kind: 'root', caseDepth: 0, cmd: true }, stack: [], nesting: 0, casesOpened: [] };
   let cur = cwds;
   // An and-or list's state (#4303), besides the cwds in effect: `listStart`, where the list began
   // (after the last `;`, newline, `&` or group opener); `spanStart`, where its current command
@@ -2472,8 +2474,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // whose structure groupEvents never sees): the walk keeps both readings, the next element running
   // under the pipeline's start and the cwd in effect, and the pipeline ending under both. `caseSeen`
   // says a case compound opened since the last separator: as a pipeline element it is one command
-  // whose own `;;` and `;` end no pipeline, and the walk cannot place its `esac` (#4244), so a
-  // pipeline holding one ends under its start and the cwd in effect, failing closed. The arm's own
+  // whose own `;;` and `;` end no pipeline (#4244), so a pipeline holding one ends under its start and
+  // the cwd in effect, failing closed (the per-case records below place its `esac`). The arm's own
   // `;;` resets `caseSeen` and moves the list on to the arm's post-`cd` cwd, so each case gets a record
   // in `L.cases` (#4481) at the first separator after its `case` word (`opened`, the levels of the cases
   // that opened in this list's frame since the last separator): `from`, the cwds its command began at,
@@ -2498,6 +2500,9 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   const endCommand = (L, at, op, maybePattern = false, caseSeen = false, openCases = 0, opened = []) => {
     if (caseSeen && L.pipeStart !== null) L.pipeKeep = true;
     for (const level of opened) {
+      // One record per case: nested cases each start their own pipeline and list, so a single per-list
+      // `caseFrom`/`caseOpen` pair mixed an inner case's start with the outer's (an inner case first in an
+      // outer arm, a command before an inner case; #4481 review rounds 3-4).
       L.cases.push({ level, from: L.spanStart, listStart: L.listStart, skipOk: L.skipOk, skipFail: L.skipFail, pipeStart: L.pipeStart });
       L.listStart = L.spanStart;
     }
@@ -2701,8 +2706,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
       subCur = null;
     }
     runBodies(span.end, before);
-    casePending.push(...g.caseDepths);
-    g.caseDepths.length = 0;
+    casePending.push(...g.casesOpened);
+    g.casesOpened.length = 0;
     // The separator ends a command of the innermost list open where it stands: a substitution's
     // (by the nesting there, never by whether the sub run is active: an outer piece before the
     // separator has ended the run) or the outer walk's.

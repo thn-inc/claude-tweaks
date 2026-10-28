@@ -1929,7 +1929,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     });
   }
   // #4481 round 2: a group's pipe inside a first-element arm adds no cwd of its own: bash 3.2, bash 5
-  // and zsh write /r/f only, so /q/f is a spurious target.
+  // and zsh write /r/f only, so /q/f is a spurious target. Guard: passes on origin/main too; it pins the
+  // rule against an earlier review round's regression.
   test('#4481 case: `case a in a) { cd /q | cat; };; esac | cat; echo x > f` does not carry the group pipe cwd out', () => {
     assert.deepStrictEqual(files('case a in a) { cd /q | cat; };; esac | cat; echo x > f'), [path.resolve('/r/f')]);
   });
@@ -1949,6 +1950,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   ]) {
     test(`#4481 case: \`${cmd}\` ends its first-element pipeline under the start cwd inside an outer arm`, () => {
       assert.ok(files(cmd).includes(path.resolve('/r/g')), 'bash 3.2, bash 5 and zsh: /r/g');
+      if (cmd.includes('echo x > f')) assert.ok(files(cmd).includes(path.resolve('/r/f')), 'bash 3.2, bash 5 and zsh: /r/f');
     });
   }
   test('#4481 case: a first-element case pipeline inside an outer arm ends under its start at a newline', () => {
@@ -2002,7 +2004,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   }
   // #4481: the arm's `;;` merges into the arm's cwd the cwds the list was skipping past, and a pipeline drops
   // the cwd in effect, so a first-element case pipeline takes them back from its record. bash 3.2, bash 5 and
-  // zsh write /m/f (`cd /m` succeeds, so the whole pipeline is skipped).
+  // zsh write /m/f (`cd /m` succeeds, so the whole pipeline is skipped). Guard: passes on origin/main too;
+  // it pins the rule against an earlier review round's regression.
   test('#4481 case: `cd /m || case a in a) true;; esac | cat | case a in a) true;; esac; echo x > f` keeps the skipped cwd', () => {
     assert.ok(files('cd /m || case a in a) true;; esac | cat | case a in a) true;; esac; echo x > f').includes(path.resolve('/m/f')), 'bash: /m/f');
   });
@@ -2014,12 +2017,12 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   });
   // #4481: an `&` inside an open arm backgrounds the arm's own list, never the case, so the case's record
   // survives it. bash 3.2, bash 5 and zsh write /r/f for each (and /q/g for the first).
-  for (const cmd of [
-    'case a in a) cd /q; true & echo y > g;; esac | cat; echo x > f',
-    'case a in a) cd /q;; b) true & ;; esac | cat; echo x > f',
+  for (const [cmd, wants] of [
+    ['case a in a) cd /q; true & echo y > g;; esac | cat; echo x > f', ['/r/f', '/q/g']],
+    ['case a in a) cd /q;; b) true & ;; esac | cat; echo x > f', ['/r/f']],
   ]) {
     test(`#4481 case: \`${cmd}\` keeps the case's start cwd past an & in its arm`, () => {
-      assert.ok(files(cmd).includes(path.resolve('/r/f')), 'bash 3.2, bash 5 and zsh: /r/f');
+      for (const want of wants) assert.ok(files(cmd).includes(path.resolve(want)), `bash 3.2, bash 5 and zsh: ${want}`);
     });
   }
   // The case began after `cd /m &&`, where the list did not: bash 3.2, bash 5 and zsh write /m/f.
@@ -2081,7 +2084,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     for (const want of ['/r/k', '/wt/k']) assert.ok(got.includes(path.resolve(want)), `bash: ${want}`);
   });
   // The redirect goes where the case its `esac` closes began, not an outer case: bash 3.2, bash 5 and zsh
-  // write /q/k for the armless inner case.
+  // write /q/k for the armless inner case. Guard: passes on origin/main too; it pins the rule against an
+  // earlier review round's regression.
   test('#4481 case: `case a in a) cd /q; case x in esac > k;; esac` resolves the redirect where the inner case began', () => {
     assert.deepStrictEqual(files('case a in a) cd /q; case x in esac > k;; esac'), [path.resolve('/q/k')]);
   });
@@ -2107,7 +2111,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     assert.deepStrictEqual(files('case x in esac; cd /q; echo y > g'), [path.resolve('/q/g')]);
   });
   // An armless case that is a later pipeline element is born and closed at the `|` after it, and the
-  // pipeline goes on from its own start: bash 3.2, bash 5 and zsh write /r/g only.
+  // pipeline goes on from its own start: bash 3.2, bash 5 and zsh write /r/g only. Guard: passes on
+  // origin/main too; it pins the rule against an earlier review round's regression.
   test('#4481 case: `true | { cd /q; } | case x in esac | cat; echo y > g` keeps the pipeline\'s start', () => {
     assert.deepStrictEqual(files('true | { cd /q; } | case x in esac | cat; echo y > g'), [path.resolve('/r/g')]);
   });

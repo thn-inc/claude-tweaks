@@ -86,7 +86,8 @@ files:
   | `cd -`, `$OLDPWD`, a symlinked dir or a failing cd | #4450 |
   | Compound-command bodies, `pushd` and `builtin cd` | #4244 |
   | zsh-only redirect forms | #4455 |
-  | A `case` whose cd arm does not match, a case or `cd` inside an `if`/`while`/`for` body, a function called after a later cd, zsh's pipeline last element | follow-ups recorded by #4481's build |
+  | A `case` whose cd arm does not match, a case or `cd` inside an `if`/`while`/`for` body, a function called after a later cd, zsh's pipeline last element | deferred by #4481; records filed at its wrap-up |
+  | A lone `&` before a case arm's first separator | deferred by #4481; records filed at its wrap-up |
 - **Red flags:** A skill or procedure that tells agents to use one of these shapes because the gate misses it.
 
 ## Origin
