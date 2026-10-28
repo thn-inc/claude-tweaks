@@ -45,5 +45,5 @@ files:
 
 ## Origin
 - Created during the build of #3763, a reflect finding from #3712 (review fix 0a5d6cf24). #3789 had added a narrower form of the check, keyed only on a skill's description, with no "none apply" escape and no pin. #3763 widened it.
-- Pinned by `tests/plan-authoring-governing-skill-quote-prose.test.js`. Its per-fact go-red controls make each clause of the check fail the suite when that clause is removed, and removing the whole paragraph fails it too.
+- Pinned by `tests/plan-authoring-governing-skill-quote-prose.test.js`. Its per-fact go-red controls make each rule clause of the check fail the suite when that clause is removed (the rationale sentence is not pinned; only the #3712 citation is), and removing the whole paragraph fails it too.
 - Related: `reprove-checks-after-an-inserted-guard-3988.md` and `prove-an-absence-grep-can-match-3571.md`, two other plan-authoring checks in the same file.
