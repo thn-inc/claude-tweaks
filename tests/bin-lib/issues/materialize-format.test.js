@@ -99,6 +99,14 @@ test('stripCodeSpans: removes a fenced code block, any info string', () => {
   assert.ok(stripped.includes('after'));
 });
 
+test('stripCodeSpans: a fence indented 1-3 spaces hides its quoted content too (#4368)', () => {
+  for (const pad of [' ', '  ', '   ']) {
+    const stripped = stripCodeSpans(`before\n${pad}\`\`\`md\nquoted TODO\n${pad}\`\`\`\nafter`);
+    assert.ok(!stripped.includes('quoted TODO'), `pad ${pad.length}`);
+    assert.ok(stripped.includes('before') && stripped.includes('after'), `pad ${pad.length}`);
+  }
+});
+
 test('stripCodeSpans: removes an inline code span, matching exact backtick-run length', () => {
   assert.equal(stripCodeSpans('a `T-O-D-O` b'), 'a  b');
   assert.equal(stripCodeSpans('a ``T-O-D-O`` b'), 'a  b');

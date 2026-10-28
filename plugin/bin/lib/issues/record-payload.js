@@ -29,7 +29,11 @@ const DEFER_REASONS = Object.freeze([
 // Matches a Defer-reason: line on ANY line of the body (the /m flag) — the
 // suppression check is "no line matching", per deferral-gate.md's hard gate;
 // the first line of the body is where the insert path and producers put it
-// (deferral-gate.md's "Where the reason lives").
+// (deferral-gate.md's "Where the reason lives"). Read through unfencedText: a
+// Defer-reason: line quoted inside a fenced block is never the record's own
+// (#4368). Still fence-blind, not covered by #4368: the Origin: readers
+// (provenance.js, trust.js) and the work-fingerprint reader — #4368 scopes to the
+// metadata lines an executor, the drift checks, or this insert path consume.
 const DEFER_REASON_LINE_RE = /^Defer-reason: (\S+)[ \t]*$/m;
 
 // Freshness stamp (#117): the commit each health-sweep skill actually read at
@@ -95,16 +99,19 @@ function fencedBlock(text) {
 // The one fence rule shared by stripCodeSpans (materialize-format.js), sectionText
 // and extractSection (#4169), and the three body-metadata extractors
 // extractVerifiedAsOf / extractPremiseCheck / extractTemplateStamp (#4368): an
-// opener is 0-3 leading spaces (CommonMark) then a run of 3+ backticks or
-// tildes; the closer is 0-3 leading spaces, then the same character, at least
-// the opener's length, and nothing else on its line but trailing spaces/tabs.
-// Four or more leading spaces is an indented code block, not a fence. Matches
-// what fenceFor and fencedBlock write (column-0 fences).
+// opener is an optional U+FEFF byte-order mark, 0-3 leading spaces (CommonMark),
+// then a run of 3+ backticks or tildes — a backtick run only when no backtick
+// follows it on the line, since CommonMark reads "```a`b" as an inline code span,
+// not a fence; the closer is 0-3 leading spaces, then the same character, at
+// least the opener's length, and nothing else on its line but trailing
+// spaces/tabs (plus the CR a LF-only split leaves on a CRLF body). Four or more
+// leading spaces is an indented code block, not a fence. Matches what fenceFor
+// and fencedBlock write (column-0 fences).
 function fencedLineRanges(lines) {
   const ranges = [];
   let i = 0;
   while (i < lines.length) {
-    const fenceMatch = lines[i].match(/^ {0,3}(`{3,}|~{3,})/);
+    const fenceMatch = lines[i].match(/^﻿? {0,3}(`{3,}(?=[^`]*$)|~{3,})/);
     if (!fenceMatch) {
       i++;
       continue;
@@ -175,7 +182,7 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
   let reasonBody = body;
   if (deferReason !== undefined) {
     oneOf('deferReason', deferReason, DEFER_REASONS);
-    const existing = DEFER_REASON_LINE_RE.exec(body);
+    const existing = DEFER_REASON_LINE_RE.exec(unfencedText(body));
     if (existing) {
       if (existing[1] !== deferReason) {
         throw new Error(`body already carries "Defer-reason: ${existing[1]}" but deferReason is "${deferReason}"`);

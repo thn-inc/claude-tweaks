@@ -1213,6 +1213,36 @@ test('fence-blind metadata (#4368): a closer trailed by a non-space/tab characte
   assert.strictEqual(extractPremiseCheck('```\nx\n``` \t\nPremise-check: echo REAL'), 'echo REAL');
 });
 
+test('fence-blind metadata (#4368): a backtick opener whose info string holds a backtick is an inline code span, not a fence', () => {
+  // CommonMark: "```a`b" is a paragraph, so the real fence opens at the third line and the
+  // line after it is quoted. Reading the first line as an opener pairs the fences wrongly
+  // and would run the quoted command.
+  const body = ['```a`b', 'Premise-check: echo REAL', '```', 'Premise-check: echo QUOTED', '```'].join('\n');
+  assert.strictEqual(extractPremiseCheck(body), 'echo REAL');
+  // A backtick-free info string still opens a fence, and tilde fences take any info string.
+  assert.strictEqual(extractPremiseCheck(['```js', 'Premise-check: echo QUOTED', '```'].join('\n')), null);
+  assert.strictEqual(extractPremiseCheck(['~~~a`b', 'Premise-check: echo QUOTED', '~~~'].join('\n')), null);
+});
+
+test('fence-blind metadata (#4368): a leading byte-order mark does not hide a fence opener', () => {
+  assert.strictEqual(extractPremiseCheck('﻿```\nPremise-check: echo QUOTED\n```'), null);
+  assert.strictEqual(extractPremiseCheck('﻿```\nPremise-check: echo QUOTED\n```\nPremise-check: echo REAL'), 'echo REAL');
+});
+
+test('recordPayload (#4368): a Defer-reason: line quoted inside a fenced block is not the body\'s own', () => {
+  // A different fenced value neither throws nor suppresses the insert of the real first line.
+  const fencedOther = recordPayload({ title: 't', body: fenced('Defer-reason: genuinely-larger'), type: 'task', deferReason: 'tangential' });
+  assert.ok(fencedOther.body.startsWith('Defer-reason: tangential\n\n'));
+  // A fenced value equal to deferReason still gets the real line inserted ahead of it.
+  const fencedSame = recordPayload({ title: 't', body: fenced('Defer-reason: tangential'), type: 'task', deferReason: 'tangential' });
+  assert.ok(fencedSame.body.startsWith('Defer-reason: tangential\n\n'));
+  // An unfenced contradicting line still throws.
+  assert.throws(
+    () => recordPayload({ title: 't', body: 'Defer-reason: genuinely-larger\n\n## Current State\nx', type: 'task', deferReason: 'tangential' }),
+    /already carries/,
+  );
+});
+
 test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {
   assert.strictEqual(parseRecordFacets(['breaking']).breaking, true);
   assert.strictEqual(parseRecordFacets([{ name: 'breaking' }]).breaking, true);
