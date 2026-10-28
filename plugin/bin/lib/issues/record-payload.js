@@ -93,10 +93,11 @@ function fencedBlock(text) {
 // the opening fence line through its closing fence line, or lines.length - 1
 // when unclosed (a truncated fence is quoted content, the safer direction).
 // The one fence rule shared by stripCodeSpans (materialize-format.js), sectionText
-// and extractSection (#4169): an opener is a column-0 run of 3+ backticks or
-// tildes; the closer is the same character, at least the opener's length, and
-// nothing else on its line but trailing whitespace. Matches what fenceFor and
-// fencedBlock write.
+// and extractSection (#4169), and the three body-metadata extractors
+// extractVerifiedAsOf / extractPremiseCheck / extractTemplateStamp (#4368): an
+// opener is a column-0 run of 3+ backticks or tildes; the closer is the same
+// character, at least the opener's length, and nothing else on its line but
+// trailing whitespace. Matches what fenceFor and fencedBlock write.
 function fencedLineRanges(lines) {
   const ranges = [];
   let i = 0;
@@ -116,6 +117,21 @@ function fencedLineRanges(lines) {
     i = end + 1;
   }
   return ranges;
+}
+
+// body -> body with every line inside a fenced block (per fencedLineRanges)
+// blanked to ''. Splits on every CommonMark line ending (CRLF, lone CR, LF)
+// keeping the separators, so every unfenced line and every separator stays
+// byte-identical and a metadata regex reads unfenced text exactly as it did
+// on the raw body (#4368).
+function unfencedText(body) {
+  const parts = body.split(/(\r\n|\r|\n)/);
+  const lines = [];
+  for (let i = 0; i < parts.length; i += 2) lines.push(parts[i]);
+  for (const [s, e] of fencedLineRanges(lines)) {
+    for (let k = s; k <= e; k++) parts[k * 2] = '';
+  }
+  return parts.join('');
 }
 
 // { title, body, type, origin?, risk?, size?, ceremony?, solutionUnjustified?, ready?, parked?, priority?, fingerprint?, deferReason? }
@@ -207,10 +223,12 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
 // diff this against current HEAD to say something actionable about drift —
 // see [IL-71]: presence of a fresh stamp bounds drift, it never establishes
 // correctness, so a consumer still must not skip verification just because
-// this reads recent.
+// this reads recent. The three extractors below read only unfenced lines: a
+// metadata line inside a fenced block is quoted content, never the record's
+// own, so it never matches (#4368).
 function extractVerifiedAsOf(body) {
   if (typeof body !== 'string' || !body) return null;
-  const m = VERIFIED_AS_OF_RE.exec(body);
+  const m = VERIFIED_AS_OF_RE.exec(unfencedText(body));
   return m ? m[1].toLowerCase() : null;
 }
 
@@ -220,7 +238,7 @@ function extractVerifiedAsOf(body) {
 // Current State claim still hold at base" before a build starts.
 function extractPremiseCheck(body) {
   if (typeof body !== 'string' || !body) return null;
-  const m = PREMISE_CHECK_RE.exec(body);
+  const m = PREMISE_CHECK_RE.exec(unfencedText(body));
   return m ? m[1].trim() : null;
 }
 
@@ -232,7 +250,7 @@ function extractPremiseCheck(body) {
 // version to decide whether the Proposed block needs re-deriving.
 function extractTemplateStamp(body) {
   if (typeof body !== 'string' || !body) return null;
-  const m = TEMPLATE_STAMP_RE.exec(body);
+  const m = TEMPLATE_STAMP_RE.exec(unfencedText(body));
   return m ? { path: m[1], version: m[2] } : null;
 }
 

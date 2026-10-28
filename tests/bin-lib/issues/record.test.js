@@ -1136,6 +1136,59 @@ test('extractTemplateStamp: null when absent, when body is empty, and for non-st
   assert.strictEqual(extractTemplateStamp(undefined), null);
 });
 
+// --- fence-blind metadata (#4368) ---
+
+const fenced = (line, fence = '```') => [fence, line, fence].join('\n');
+
+test('AC1.1: extractPremiseCheck — fenced command before the record\'s own yields the unfenced one', () => {
+  const body = [fenced('Premise-check: echo QUOTED'), '', 'Premise-check: echo REAL', '', '## Current State', 'x'].join('\n');
+  assert.strictEqual(extractPremiseCheck(body), 'echo REAL');
+});
+
+test('AC2.1: extractPremiseCheck — a body whose only command line is fenced yields null', () => {
+  const body = ['## Current State', fenced('Premise-check: echo QUOTED'), 'x'].join('\n');
+  assert.strictEqual(extractPremiseCheck(body), null);
+});
+
+test('extractPremiseCheck — real-only body is unchanged', () => {
+  assert.strictEqual(extractPremiseCheck('Premise-check: echo REAL\n\n## Current State\nx'), 'echo REAL');
+});
+
+test('AC3.1: extractVerifiedAsOf — fenced-before-real, fenced-only, real-only', () => {
+  assert.strictEqual(extractVerifiedAsOf([fenced('Verified-as-of: aaaaaaa'), 'Verified-as-of: bbbbbbb'].join('\n')), 'bbbbbbb');
+  assert.strictEqual(extractVerifiedAsOf(['## Current State', fenced('Verified-as-of: aaaaaaa')].join('\n')), null);
+  assert.strictEqual(extractVerifiedAsOf('Verified-as-of: bbbbbbb\n\n## Current State'), 'bbbbbbb');
+});
+
+test('AC3.1: extractTemplateStamp — fenced-before-real, fenced-only, real-only', () => {
+  assert.deepStrictEqual(
+    extractTemplateStamp([fenced('Template: quoted.md @ 1.0.0'), 'Template: real.md @ 2.0.0'].join('\n')),
+    { path: 'real.md', version: '2.0.0' },
+  );
+  assert.strictEqual(extractTemplateStamp(['## Current State', fenced('Template: quoted.md @ 1.0.0')].join('\n')), null);
+  assert.deepStrictEqual(extractTemplateStamp('Template: real.md @ 2.0.0\n'), { path: 'real.md', version: '2.0.0' });
+});
+
+test('fence-blind metadata (#4368): tilde and longer backtick fences hide the line too', () => {
+  assert.strictEqual(extractPremiseCheck(fenced('Premise-check: echo QUOTED', '~~~')), null);
+  assert.strictEqual(extractPremiseCheck(fenced('Premise-check: echo QUOTED', '````')), null);
+});
+
+test('fence-blind metadata (#4368): an unclosed fence hides every later metadata line', () => {
+  assert.strictEqual(extractPremiseCheck('```\nquoted\n\nPremise-check: echo REAL'), null);
+});
+
+test('fence-blind metadata (#4368): CRLF body — fenced line skipped, real command read and trimmed', () => {
+  const body = ['```', 'Premise-check: echo QUOTED', '```', 'Premise-check: echo REAL', '## Current State'].join('\r\n');
+  assert.strictEqual(extractPremiseCheck(body), 'echo REAL');
+});
+
+test('fence-blind metadata (#4368): bare-CR line endings — a CR-separated fence hides its line too', () => {
+  assert.strictEqual(extractPremiseCheck('intro\r```\rPremise-check: echo QUOTED\r```'), null);
+  assert.strictEqual(extractPremiseCheck('```\rPremise-check: echo QUOTED\r```\rPremise-check: echo REAL\r'), 'echo REAL');
+  assert.strictEqual(extractVerifiedAsOf('```\rVerified-as-of: aaaaaaa\r```'), null);
+});
+
 test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {
   assert.strictEqual(parseRecordFacets(['breaking']).breaking, true);
   assert.strictEqual(parseRecordFacets([{ name: 'breaking' }]).breaking, true);
