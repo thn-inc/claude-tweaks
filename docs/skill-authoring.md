@@ -199,7 +199,7 @@ For the empirically observed boundary of what Bash commands pass and fail in a w
 
 A refusal without the plugin's deny prefix is not automatically this guard, either. A Claude Code permission rule denies with different wording — `Permission to use Bash with command … has been denied` — when a configured `deny` rule matches the command or a path it names. Check the session's permission rules before filing it against the guard or the plugin. That section's `.log`-read row (#2776) records one such report, produced by a user-scope `Read(**/*.log)` rule.
 
-Since #2783 the plugin does see these refusals after the fact: the `post-tool-use-failure` hook (`PostToolUseFailure`, Bash only) logs each refusal whose text carries the harness's `This session is isolated in the worktree … Refusing to run it` frame to the run dir's `events.jsonl` as `wd-guard-refusal` with `reason: harness-worktree-isolation`, and `/claude-tweaks:reflect`'s Friction Lens reads them. That is observation only, never enforcement — see `docs/hooks.md`'s "Observed here, not enforced" paragraph.
+Since #2783 the plugin does see these refusals after the fact: the `post-tool-use-failure` hook (`PostToolUseFailure`, Bash only) logs each refusal whose text carries the harness's `This session` / `This agent` `is isolated in the worktree … Refusing to run it` / `Refusing to run there` frame to the run dir's `events.jsonl` as `wd-guard-refusal` with `reason: harness-worktree-isolation` (each event records `actor` and `variant`), and `/claude-tweaks:reflect`'s Friction Lens reads them. That is observation only, never enforcement — see `docs/hooks.md`'s "Observed here, not enforced" paragraph.
 
 ## Harness-level skill re-invocation vs. batched Skill calls (#2728)
 

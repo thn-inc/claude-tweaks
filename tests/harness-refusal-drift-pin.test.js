@@ -14,7 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { checkAssertions } = require('../tools/upstream-drift/checks');
 const { loadManifest } = require('../tools/upstream-drift/manifest');
-const { REFUSAL_FRAGMENTS, REFUSAL_SIGNATURE } = require('../plugin/bin/lib/hooks/harness-refusal');
+const { REFUSAL_FRAGMENTS, REFUSAL_SIGNATURE, WORKTREE_GONE_SIGNATURE } =require('../plugin/bin/lib/hooks/harness-refusal');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
@@ -148,4 +148,5 @@ test('AC1.1: no installed Claude Code means skipped assertions, never drift', ()
 test('AC1.1: the reflect Friction lens transcript grep names the same signature', () => {
   const prose = readText(path.join(ROOT, 'plugin', 'skills', 'reflect', 'full-mode.md'));
   assert.ok(prose.includes('`' + REFUSAL_SIGNATURE + '`'), 'reflect/full-mode.md does not name the refusal signature');
+  assert.ok(prose.includes('`' + WORKTREE_GONE_SIGNATURE + '`'), 'reflect/full-mode.md does not name the worktree-gone signature');
 });
