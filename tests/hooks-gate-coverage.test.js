@@ -552,6 +552,23 @@ for (const cmd of ['install a b --suf /main', 'ln -s a b --suf /main']) {
     assert.ok(fileWriteTargets(cmd, '/r').some((t) => t.file === MAIN_ROOT), JSON.stringify(fileWriteTargets(cmd, '/r')));
   });
 }
+// #4449: a cp or mv value option (-S, --suffix, --suf, -bS) takes the word after it, so that word is
+// no operand. bash 3.2 probed on macOS: GNU coreutils cp and mv write b for each row (`cp a b -S .bak`
+// copies a to b), while macOS's BSD /bin/cp and /bin/mv stop option parsing at the first operand and
+// write .bak/a and .bak/b. No -t resolves, so both readings are reported, the GNU one first.
+for (const cmd of ['cp a b -S .bak', 'cp a b --suffix .bak', 'cp a b --suf .bak', 'mv a b -S .bak', 'cp a b -bS .bak']) {
+  test(`#4449: \`${cmd}\` reports the GNU destination and the BSD destination`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', 'b'), path.resolve('/r', '.bak')]);
+  });
+}
+// #4449: the two readings agree when no option value sits among the operands, so one destination is
+// reported. `cp --suffix -t X a` copies X to a (the -t is --suffix's value, and GNU and BSD both end
+// at a); `cp -S .bak a b` and `cp a b --suffix=.bak` write b.
+for (const [cmd, file] of [['cp --suffix -t X a', 'a'], ['cp -S .bak a b', 'b'], ['cp a b --suffix=.bak', 'b']]) {
+  test(`#4449: \`${cmd}\` resolves exactly one destination`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', file)]);
+  });
+}
 // #4303: a digit or a backup suffix in a cluster does not hide -i. bash 3.2 and 5: perl -0pi,
 // -00pi and -l0pi edit M/g; perl -pi.bak edits M/g and writes M/g.bak.
 for (const cmd of ["perl -0pi -e 's/a/b/' /main/f.js", "perl -00pi -e 's/a/b/' /main/f.js", "perl -l0pi -e 's/a/b/' /main/f.js",

@@ -3168,11 +3168,30 @@ function fileWriteTargets(command, cwd, opts) {
         if (a.startsWith('-')) continue; // other flags — never a positional
         nonFlags.push(a);
       }
+      // #4449: the GNU reading skips each value-taking option's value (explicitTargetDir's rules), so
+      // `cp a b -S .bak` operates on a and b. GNU coreutils writes b; macOS's BSD cp and mv stop option
+      // parsing at the first operand and write .bak/a and .bak/b, so the last non-flag word is reported
+      // too when it differs.
+      const gnuOperands = [];
+      for (let i = 0; i < rest.length; i++) {
+        const a = rest[i];
+        if (a === '--') { gnuOperands.push(...rest.slice(i + 1)); break; }
+        if (a.startsWith('--')) {
+          if (takesLongValue(a, t[0])) i += 1;
+          continue;
+        }
+        if (!a.startsWith('-')) { gnuOperands.push(a); continue; }
+        const opt = readShortCluster(a, 'St');
+        if (opt !== null && opt.value === null) i += 1;
+      }
       const action = t[0] === 'cp' ? 'copy' : 'move';
       if (targetDirRaw !== null) {
         add(action, targetDirRaw);
-      } else if (nonFlags.length >= 2) {
-        add(action, nonFlags[nonFlags.length - 1]);
+      } else {
+        const gnuDest = gnuOperands.length >= 2 ? gnuOperands[gnuOperands.length - 1] : null;
+        const bsdDest = nonFlags.length >= 2 ? nonFlags[nonFlags.length - 1] : null;
+        if (gnuDest !== null) add(action, gnuDest);
+        if (bsdDest !== null && bsdDest !== gnuDest) add(action, bsdDest);
       }
       return;
     }
