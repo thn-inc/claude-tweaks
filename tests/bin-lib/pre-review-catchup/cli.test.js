@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { originWithTwoClones } = require('../../helpers/git-fixtures');
+const { readText } = require('../../helpers/read-skill');
 const { run, parseArgs } = require('../../../plugin/bin/pre-review-catchup');
 const { OUTCOMES, FETCH_TIMEOUT_MS, formatLine } = require('../../../plugin/bin/lib/worktree/pre-review-catchup');
 
@@ -469,7 +470,7 @@ test('OUTCOMES is the frozen seven-value list and formatLine covers every outcom
 });
 
 test('the CLI shell itself appends through formatEntry and appendEntry', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'pre-review-catchup.js'), 'utf8')
+  const src = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'pre-review-catchup.js'))
     .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
   assert.match(src, /require\('\.\/lib\/log-decision\/append'\)/);
   assert.match(src, /formatEntry\(/);
