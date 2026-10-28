@@ -2113,15 +2113,28 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     assert.deepStrictEqual(files('true | { cd /q; } | case x in esac | cat; echo y > g'), [path.resolve('/r/g')]);
   });
   // #4481: an `&` in an arm backgrounds the arm's own list, which began where the case did, also when no
-  // separator came before it in the arm. bash 3.2, bash 5 and zsh write /wt/f for each.
+  // separator came before it in the arm, and the write after the closed case runs there too. bash 3.2,
+  // bash 5 and zsh write /wt/f and /wt/g for each.
   for (const cmd of [
-    'cd /wt && case a in a) cd /q & echo x > f ;; esac',
-    'cd /wt && case a in a) case a in a) cd /q ;; esac & echo x > f ;; esac',
+    'cd /wt && case a in a) cd /q & echo x > f ;; esac; echo y > g',
+    'cd /wt && case a in a) case a in a) cd /q ;; esac & echo x > f ;; esac; echo y > g',
   ]) {
     test(`#4481 case: \`${cmd}\` returns to the arm's start after the &`, () => {
-      assert.ok(files(cmd).includes(path.resolve('/wt/f')), 'bash 3.2, bash 5 and zsh: /wt/f');
+      const got = files(cmd);
+      for (const want of ['/wt/f', '/wt/g']) assert.ok(got.includes(path.resolve(want)), `bash 3.2, bash 5 and zsh: ${want}`);
     });
   }
+  // #4481: the arm's own `;` resolves the branch `||` was skipping past into the arm's cwd, which its `cd`
+  // then drops, so the closed case gives it back. bash 3.2, bash 5 and zsh write /r/f (`true` succeeds,
+  // so the case is skipped).
+  test('#4481 case: `true || case a in a) true; cd /q;; esac && echo x > f` keeps the skipped branch', () => {
+    assert.ok(files('true || case a in a) true; cd /q;; esac && echo x > f').includes(path.resolve('/r/f')), 'bash 3.2, bash 5 and zsh: /r/f');
+  });
+  // #4481: a top-level backtick holding `&&` in one arm and a group in the next. bash 3.2, bash 5 and zsh
+  // write /tmp/h (the group's `cd` runs before its write).
+  test('#4481 case: `case a in b) ( echo `true && > g` ) ;; *) { cd /tmp && > h; } ;; esac` keeps the later arm group\'s cd', () => {
+    assert.ok(files('case a in b) ( echo `true && > g` ) ;; *) { cd /tmp && > h; } ;; esac').includes(path.resolve('/tmp/h')), 'bash 3.2, bash 5 and zsh: /tmp/h');
+  });
   // #4481: a case that is a later pipeline element ends the pipeline at its `esac`, even after its arm's own
   // `;` ended it early. bash 3.2 and 5 write /r/k (zsh /m/k: it runs the last element in the current shell).
   test('#4481 case: `true | case a in a) true; case a in a) cd /m ;; esac; esac; echo w > k` ends the pipeline under its start', () => {

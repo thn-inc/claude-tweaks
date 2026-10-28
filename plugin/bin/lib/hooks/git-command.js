@@ -2488,12 +2488,13 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // start from before its `case` word back into the list's, so a later `&` returns there too (`case a in
   // a) cd ../q;; esac | cat & echo x > f` writes r/f; the walk keeps q/f as well). A `|` that a closed
   // case stands before starts its pipeline at the case's `from`, and the case's command began there, so a
-  // failed pipeline (`||`) leaves the cwd there too; the arm's `;;` has merged into the arm's cwd the cwds
-  // the list was skipping past, which the pipeline drops, so they come back from the record (`cd ../m ||
-  // case a in a) true;; esac | cat | case …; echo x > f` writes m/f). A case that was a later pipeline
-  // element ends that pipeline at any other separator, even after its arm's own `;` ended it early, so
-  // its end joins the pipeline's start back in (`true | case a in a) true; case a in a) cd ../m ;; esac;
-  // esac; echo w > k` writes r/k). bash 3.2 and 5 agree on each.
+  // failed pipeline (`||`) leaves the cwd there too. The arm's own separators resolve the cwds the list was
+  // skipping past into the arm's cwd, which a later `cd` in the arm or a pipeline drops, so every closed
+  // case gives them back from its record (`cd ../m || case a in a) true;; esac | cat | case …; echo x > f`
+  // writes m/f, `true || case a in a) true; cd ../q;; esac && echo x > f` writes r/f). A case that was a
+  // later pipeline element ends that pipeline at any other separator, even after its arm's own `;` ended
+  // it early, so its end joins the pipeline's start back in (`true | case a in a) true; case a in a) cd
+  // ../m ;; esac; esac; echo w > k` writes r/k). bash 3.2 and 5 agree on each.
   const endCommand = (L, at, op, maybePattern = false, caseSeen = false, openCases = 0, opened = []) => {
     if (caseSeen && L.pipeStart !== null) L.pipeKeep = true;
     for (const level of opened) {
@@ -2501,6 +2502,10 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
       L.listStart = L.spanStart;
     }
     const closed = closeCases(L, openCases);
+    if (closed) {
+      L.skipOk = joinCwds(L.skipOk, closed.skipOk, overflow);
+      L.skipFail = joinCwds(L.skipFail, closed.skipFail, overflow);
+    }
     if (op === '|') {
       // A case with no separator of its own is born and closed at this `|` while a pipeline it is a later
       // element of goes on (`true | { cd ../q; } | case x in esac | cat; echo y > g` writes r/g only), so
@@ -2508,8 +2513,6 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
       if (L.pipeStart === null && closed) {
         L.pipeStart = closed.from;
         L.spanStart = closed.from;
-        L.skipOk = joinCwds(L.skipOk, closed.skipOk, overflow);
-        L.skipFail = joinCwds(L.skipFail, closed.skipFail, overflow);
         L.pipeKeep = true;
         return joinCwds(L.pipeStart, at, overflow);
       }
@@ -2642,8 +2645,9 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // does: a function body the walk reads once, where it is defined, runs again from wherever a later call
   // stands (`function f { case a in a) cd ../wt;; esac > k; }; f; f` writes r/k and wt/k). The cwd in
   // effect is left as the arm left it. A case with no record yet had no separator in its list since its
-  // `case` word, so its arm is one command or group, and the cwd in effect already holds where it began
-  // (a `{ … }` close joins the cwd before it): it is visited there alone.
+  // `case` word, so its arm is one command or group, and the piece is visited under the cwd in effect,
+  // which already holds where the case began (a `{ … }` close joins the cwd before it): `case a in a) {
+  // cd ../m; } esac > k` reports m/k and r/k.
   const caseBegan = (L, level, at) => {
     for (let k = L.cases.length - 1; k >= 0; k -= 1) if (L.cases[k].level === level) return joinCwds(L.cases[k].from, at, overflow);
     return null;
