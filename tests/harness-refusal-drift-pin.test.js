@@ -14,7 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { checkAssertions } = require('../tools/upstream-drift/checks');
 const { loadManifest } = require('../tools/upstream-drift/manifest');
-const { REFUSAL_FRAGMENTS, REFUSAL_SIGNATURE, WORKTREE_GONE_SIGNATURE } =require('../plugin/bin/lib/hooks/harness-refusal');
+const { REFUSAL_FRAGMENTS, REFUSAL_SIGNATURE, WORKTREE_GONE_SIGNATURE } = require('../plugin/bin/lib/hooks/harness-refusal');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');

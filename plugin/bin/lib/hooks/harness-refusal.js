@@ -3,7 +3,8 @@
 // Refusing to run it — …"), measured 2026-10-16 against Claude Code 2.1.x
 // (#2783, #3304). #3819 widened it to the sibling templates: the subject noun is
 // "This session" or "This agent", and a worktree whose working directory is gone
-// ends "Refusing to run there" instead. This is the one place a wording update
+// ends "Refusing to run there" instead (the agent-noun and worktree-gone templates
+// were measured 2026-10-28 against Claude Code 2.1.302). This is the one place a wording update
 // lands: both post-tool-use-failure.js (the regex, via classifyRefusal) and
 // bash-prefilter.js (the signatures) derive from it.
 // tools/upstream-drift/manifest.yml's `claude-code` entry asserts each fragment
@@ -23,7 +24,7 @@ const WORKTREE_GONE_SIGNATURE = 'Refusing to run there';
 // Signature tails, for a raw-substring prefilter.
 const REFUSAL_SIGNATURES = Object.freeze([REFUSAL_SIGNATURE, WORKTREE_GONE_SIGNATURE]);
 
-// Fragments in message order.
+// Fragments: the two nouns, the isolation clause, then the two signatures.
 const REFUSAL_FRAGMENTS = Object.freeze([SESSION_NOUN, AGENT_NOUN, ISOLATION_CLAUSE, REFUSAL_SIGNATURE, WORKTREE_GONE_SIGNATURE]);
 
 function escapeRegex(s) {

@@ -34,7 +34,7 @@
 
 ## Review Focus
 
-1. A different-worktree guard refusal ends `Refusing to run it there`. It must classify `variant: 'guard'`, not `worktree-gone`: the alternation tries `Refusing to run it` first. Pinned in Task 1's classifier test.
+1. A different-worktree guard refusal ends `Refusing to run it there`. It must classify `variant: 'guard'`, not `worktree-gone`: `Refusing to run there` never matches inside `Refusing to run it there`. Pinned in Task 1's classifier test.
 2. A harness message that carries the noun and the isolation clause but no `Refusing to run` signature must not match. Example: the Edit-tool refusal `This agent is isolated in the worktree <wt>, so its writes are limited to that folder. …`. Pinned in Task 1.
 3. The prefilter must still pass (skip: false) every matched refusal, including both worktree-gone texts and a JSON-escaped spelling. Pinned in Task 1.
 4. Events logged before this change carry no `actor`/`variant`. The Friction lens must read a missing `actor` as `session` and a missing `variant` as `guard`, never drop such events. Stated in Task 3's prose.

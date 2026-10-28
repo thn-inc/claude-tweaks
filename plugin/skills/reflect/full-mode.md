@@ -239,7 +239,7 @@ differently than an 8-task record with 8 stops), never against a hardcoded numbe
 **Isolation-refusal breakdown (#3819).** For `wd-guard-refusal` events with `reason:
 harness-worktree-isolation`, report the count split by `actor`: `session` is the operator's own,
 `agent` a dispatched agent's (still the run's friction, usually traceable to the dispatch prompt the
-run wrote). Name every `variant: worktree-gone` event individually: the agent's isolation worktree
+run wrote). Name every `variant: worktree-gone` event individually: the refused actor's isolation worktree
 was removed under it — lost isolation, not a command-shape refusal. An event with no `actor`/`variant`
 (logged before #3819) counts as `actor: session`, `variant: guard`. **Known limitation:** an agent
 refusal from its own still-live isolation worktree lands in an ad-hoc dir keyed to that worktree,

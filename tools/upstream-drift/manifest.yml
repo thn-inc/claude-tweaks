@@ -420,7 +420,7 @@ dependencies:
         upstream-path: "."
         must-match: " is isolated in the worktree "
       - file: "plugin/bin/lib/hooks/harness-refusal.js"
-        claims: "every isolation refusal carries Refusing to run it (REFUSAL_SIGNATURE, the prefilter's gate)"
+        claims: "the command-shape and cwd-escape isolation refusals carry Refusing to run it (REFUSAL_SIGNATURE, one of the prefilter's two signatures)"
         upstream-path: "."
         must-match: "Refusing to run it"
       - file: "plugin/bin/lib/hooks/harness-refusal.js"
