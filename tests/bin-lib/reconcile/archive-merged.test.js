@@ -3461,6 +3461,51 @@ test('archiveMerged: same shape as above, but the merge commit is not yet locall
   assert.equal(fs.existsSync(runDir), true);
 });
 
+// #4387: the by-number MERGED path passes the dry-run flag into localHasMerge.
+// Local main sits behind origin, which holds the merge: a dry-run previews the
+// archive through origin's ancestry (the real pass's mirror would fast-forward
+// first), while nothing moves.
+test('archiveMerged: dry-run by-number MERGED path with local main behind origin previews the archive (#4387)', { skip: STUB_SKIP }, () => {
+  const root = fs.realpathSync(makeRepo());
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-origin-'));
+  git(origin, 'init', '--bare', '-b', 'main');
+  git(root, 'remote', 'add', 'origin', origin);
+  git(root, 'push', '-q', 'origin', 'main');
+  const seed = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-seed-'));
+  git(seed, 'clone', '-q', origin, '.');
+  git(seed, 'config', 'user.email', 't@t');
+  git(seed, 'config', 'user.name', 't');
+  commitPath(seed, 'merged.txt', 'merged\n');
+  git(seed, 'push', '-q', 'origin', 'main');
+  const mergeOid = git(seed, 'rev-parse', 'HEAD').trim();
+  git(root, 'fetch', '-q', 'origin', 'main'); // only origin/main advances; root stays on main
+
+  const runId = '2026-08-01T090000-record-4387-by-number-dry-run';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-4387-by-number'), // stamped, never created here
+    pr: { number: 4387001, branch: 'feat-4387-gone' }, // branch never existed locally
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+
+  const wrapper = installGhWrapper({
+    number: 4387001, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    mergeCommit: { oid: mergeOid },
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root, dryRun: true, integration: 'main' });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} previewed as archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), true, 'a dry-run must move nothing');
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), false, 'a dry-run must not archive');
+  assert.notEqual(git(root, 'rev-parse', 'main').trim(), mergeOid, 'a dry-run must not fast-forward local main');
+});
+
 // #2228: the #1962 fallback's outer gate used to require `stampedWorktree`
 // truthy, so a run dir whose worktree was never stamped in the first place
 // (the #1684 gap — e.g. a two-Task-call /flow run whose record-worktree
