@@ -97,7 +97,7 @@ function fencedBlock(text) {
 // extractVerifiedAsOf / extractPremiseCheck / extractTemplateStamp (#4368): an
 // opener is 0-3 leading spaces (CommonMark) then a run of 3+ backticks or
 // tildes; the closer is 0-3 leading spaces, then the same character, at least
-// the opener's length, and nothing else on its line but trailing whitespace.
+// the opener's length, and nothing else on its line but trailing spaces/tabs.
 // Four or more leading spaces is an indented code block, not a fence. Matches
 // what fenceFor and fencedBlock write (column-0 fences).
 function fencedLineRanges(lines) {
@@ -111,7 +111,7 @@ function fencedLineRanges(lines) {
     }
     const fenceChar = fenceMatch[1][0];
     const fenceLen = fenceMatch[1].length;
-    const closeRe = new RegExp(`^ {0,3}${fenceChar}{${fenceLen},}\\s*$`);
+    const closeRe = new RegExp(`^ {0,3}${fenceChar}{${fenceLen},}[ \\t\\r]*$`);
     let j = i + 1;
     while (j < lines.length && !closeRe.test(lines[j])) j++;
     const end = j < lines.length ? j : lines.length - 1;
@@ -219,15 +219,17 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
   return { title, body: finalBody, labels, type };
 }
 
+// The three extractors below read only unfenced lines: a metadata line inside
+// a fenced block is quoted content, never the record's own, so it never
+// matches (#4368).
+
 // body -> the git sha the sweep read when it filed this issue, or null when
 // absent (a pre-#117 issue, or a body that was never run through
 // specShapedBody's verifiedAsOf param). Consumers (e.g. bin/materialize.js)
 // diff this against current HEAD to say something actionable about drift —
 // see [IL-71]: presence of a fresh stamp bounds drift, it never establishes
 // correctness, so a consumer still must not skip verification just because
-// this reads recent. The three extractors below read only unfenced lines: a
-// metadata line inside a fenced block is quoted content, never the record's
-// own, so it never matches (#4368).
+// this reads recent.
 function extractVerifiedAsOf(body) {
   if (typeof body !== 'string' || !body) return null;
   const m = VERIFIED_AS_OF_RE.exec(unfencedText(body));

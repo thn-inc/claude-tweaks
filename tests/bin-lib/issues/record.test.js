@@ -1199,6 +1199,18 @@ test('fence-blind metadata (#4368): a fence indented 1–3 spaces hides its line
   assert.strictEqual(extractPremiseCheck('```\nPremise-check: echo QUOTED\n  ```\nPremise-check: echo REAL'), 'echo REAL');
   // Four spaces is an indented code block, not a fence opener — the following column-0 line is read.
   assert.strictEqual(extractPremiseCheck('    ```\nPremise-check: echo REAL'), 'echo REAL');
+  // A 4-space-indented ``` inside a fence is content, not a closer — the closer's upper bound.
+  assert.strictEqual(extractPremiseCheck('```\n    ```\nPremise-check: echo QUOTED\n```'), null);
+  // Indented tilde fences hide their line too.
+  assert.strictEqual(extractPremiseCheck('  ~~~\nPremise-check: echo QUOTED\n  ~~~'), null);
+});
+
+test('fence-blind metadata (#4368): a closer trailed by a non-space/tab character is not a closer', () => {
+  // NBSP after the backticks: GitHub keeps the fence open, so the line after it is still quoted.
+  assert.strictEqual(extractPremiseCheck('```\nx\n``` \nPremise-check: echo QUOTED\n```'), null);
+  assert.strictEqual(extractPremiseCheck('```\nx\n```\u000b\nPremise-check: echo QUOTED\n```'), null);
+  // A trailing space/tab still closes.
+  assert.strictEqual(extractPremiseCheck('```\nx\n``` \t\nPremise-check: echo REAL'), 'echo REAL');
 });
 
 test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {
@@ -1391,4 +1403,14 @@ test('extractSection: an unclosed fence hides every later heading (CommonMark: i
 test('extractSection: a heading inside a 3-space-indented fence is not a section (#4368)', () => {
   const body = ['## Current State', 'x', '   ```', '## Deliverables', 'quoted', '   ```', '', '## Release Note', 'n'].join('\n');
   assert.strictEqual(extractSection(body, 'Deliverables'), '');
+});
+
+test('extractSection: 1- and 2-space-indented fences hide a heading; a 4-space pad is not a fence (#4368)', () => {
+  const bodyFor = (pad) => ['## Current State', 'x', `${pad}\`\`\``, '## Deliverables', 'quoted', `${pad}\`\`\``, '', '## Release Note', 'n'].join('\n');
+  for (const pad of [' ', '  ']) {
+    assert.strictEqual(extractSection(bodyFor(pad), 'Deliverables'), '', `pad ${pad.length}`);
+  }
+  const four = extractSection(bodyFor('    '), 'Deliverables');
+  assert.ok(four.length > 0);
+  assert.ok(four.startsWith('quoted'));
 });
