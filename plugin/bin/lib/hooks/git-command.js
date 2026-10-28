@@ -3161,6 +3161,7 @@ function fileWriteTargets(command, cwd, opts) {
       // #4449: two readings of the same words, both reported. GNU coreutils (getopt permutes) skips
       // each value-taking option's value (explicitTargetDir's rules), so `cp a b -S .bak` operates on a
       // and b and writes b. A lone `-` is an operand, and `--` ends options (`cp -- -tfoo dest`).
+      const isOperand = (w) => w === '-' || !w.startsWith('-');
       const gnuOperands = [];
       for (let i = 0; i < rest.length; i++) {
         const a = rest[i];
@@ -3169,7 +3170,7 @@ function fileWriteTargets(command, cwd, opts) {
           if (takesLongValue(a, t[0])) i += 1;
           continue;
         }
-        if (a === '-' || !a.startsWith('-')) { gnuOperands.push(a); continue; }
+        if (isOperand(a)) { gnuOperands.push(a); continue; }
         const opt = readShortCluster(a, 'St');
         if (opt !== null && opt.value === null) i += 1;
       }
@@ -3180,12 +3181,13 @@ function fileWriteTargets(command, cwd, opts) {
       // operand drops it the same way, which is harmless: after `--` both readings agree.
       let bsdStart = rest.length;
       for (let i = 0; i < rest.length; i++) {
-        if (rest[i] === '-' || !rest[i].startsWith('-')) { bsdStart = i; break; }
+        if (isOperand(rest[i])) { bsdStart = i; break; }
       }
       const bsdOperands = rest.slice(bsdStart);
       const bsdRefuses = rest.slice(0, bsdStart).some((w) => w.startsWith('--') || readShortCluster(w, 'St') !== null);
       const action = t[0] === 'cp' ? 'copy' : 'move';
-      const gnuDest =targetDirRaw !== null ? targetDirRaw : (gnuOperands.length >= 2 ? gnuOperands[gnuOperands.length - 1] : null);
+      let gnuDest = targetDirRaw;
+      if (gnuDest === null && gnuOperands.length >= 2) gnuDest = gnuOperands[gnuOperands.length - 1];
       const bsdDest = !bsdRefuses && bsdOperands.length >= 2 ? bsdOperands[bsdOperands.length - 1] : null;
       // A destination word that starts with `-` (`-`, `-v`) names a file here, but resolveWriteTarget
       // reads any such word as a flag and drops it, so it is reported as `./-v`.
