@@ -24,7 +24,7 @@ Scope keywords: Operational Checklist, operational-checklist, Common Step 5.5
 
 1. A build whose only Category A finding is a schema change with no documented push command: nothing is edited before Step 5, and Step 5.5 must still write its `open` ledger row — checked by Task 1's checklist assertion naming the `open` case.
 2. A diff matching no Category A or B trigger: Step 5's new paragraph does nothing and Step 5.5's existing SKIP trace is the only record — the skip sentence is pinned unchanged by `build-skip-degrade-trace-adoption.test.js`.
-3. A Category A fix that breaks the suite: it now fails Step 5 itself, and Step 5's existing "If anything fails, fix it and commit the fix" paragraph handles it — no new prose needed; covered by reading order, not a test.
+3. A Category A fix that breaks the suite fails Step 5 itself, and Step 5's existing "If anything fails, fix it and commit the fix" paragraph handles it; a suite fix that introduces a new Category A trigger (a new `process.env.*` read) is caught by the new paragraph's re-check clause — pinned by Task 1's `re-check those triggers` assertion.
 4. A reader of Step 5.5 alone (it is still where the checklist is "loaded"): it must say the Category A fixes already happened, or they get re-applied after verification — Task 1's `Category A fixes already landed before Common Step 5` assertion.
 5. The #3060 journey still describing a post-verification Category A fix as the exception — Task 2 corrects it.
 
@@ -33,6 +33,7 @@ Scope keywords: Operational Checklist, operational-checklist, Common Step 5.5
 ### Task 1: Move Category A fixes ahead of Common Step 5 in SKILL.md and the checklist
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/build/SKILL.md` (Common Step 5 section, after the "After Common Steps 6 and 6.5" paragraph; Common Step 5.5's first paragraph)
@@ -52,9 +53,12 @@ function assertCategoryABeforeVerify(text) {
   const step5 = sectionOf(text, '### Common Step 5:');
   assert.match(step5, /\*\*Operational fixes first \(#3489\)\.\*\*/);
   assert.match(step5, /`operational-checklist\.md`'s Category A triggers, apply that file's Category A fixes and commit them, so the verified tree includes them/);
+  assert.match(step5, /re-check those triggers against any fix commit below before re-running verification/);
   assert.doesNotMatch(step5, /\*\*On skip\*\*/);
   const step55 = sectionOf(text, '### Common Step 5.5:');
   assert.match(step55, /Category A fixes already landed before Common Step 5/);
+  // a shared-constant or exports-only Category A fix must still reach Step 5.5's ledger row
+  assert.match(step55, /schema\/env\/IaC\/CI\/platform-config files, or Common Step 5 applied a Category A fix, read/);
   assert.doesNotMatch(step55, /Operational fixes first/);
 }
 
@@ -86,7 +90,7 @@ Expected: FAIL — the two `#3489 AC1.1:` tests fail on the missing `Operational
 Insert this paragraph as its own paragraph directly after Common Step 5's first paragraph (the one beginning "After Common Steps 6 and 6.5"):
 
 ```
-**Operational fixes first (#3489).** Before that run, when the build's diff matches `operational-checklist.md`'s Category A triggers, apply that file's Category A fixes and commit them, so the verified tree includes them and no fix moves HEAD past `VERIFICATION_SHA`. Category B tasks and every ledger row stay in Common Step 5.5, after verification.
+**Operational fixes first (#3489).** Before that run, when the build's diff matches `operational-checklist.md`'s Category A triggers, apply that file's Category A fixes and commit them, so the verified tree includes them and no fix moves HEAD past `VERIFICATION_SHA`; re-check those triggers against any fix commit below before re-running verification. Category B tasks and every ledger row stay in Common Step 5.5, after verification.
 ```
 
 Replace Common Step 5.5's first paragraph with:
@@ -95,7 +99,7 @@ Replace Common Step 5.5's first paragraph with:
 After verification passes, check for operational tasks that are easy to forget — deployment and environment concerns that slip through code review (schema/migration files, env access patterns, IaC, CI/CD, container configs). Category A fixes already landed before Common Step 5; this step runs the Category B tasks and writes every ledger row, a `fixed` row per Category A fix included.
 ```
 
-Leave Step 5.5's second paragraph (the skip sentence) byte-identical.
+In Step 5.5's second paragraph, widen only its entry clause: `If your build's diff matches schema/env/IaC/CI/platform-config files, read` becomes `If your build's diff matches schema/env/IaC/CI/platform-config files, or Common Step 5 applied a Category A fix, read` — so a build whose only Category A finding is a shared-constant or `exports` change still reaches Step 5.5 and writes its `fixed` row. Everything from `Otherwise skip this step entirely.` onward stays byte-identical.
 
 - [ ] **Step 4: Edit `plugin/skills/build/operational-checklist.md`**
 
@@ -160,7 +164,7 @@ Step 2's Action becomes:
 In step 3's Should understand, replace the sentence `The exception is a Step 5.5 Category A operational fix (schema push, env-example entry), which edits tracked files and moves HEAD past `VERIFICATION_SHA`.` with:
 
 ```
-Category A operational fixes no longer run there: they land before Common Step 5 (#3489), so Step 5.5 writes only Category B ledger rows and the `fixed` rows for those earlier fixes.
+Category A operational fixes no longer run there: they land before Common Step 5 (#3489), so Step 5.5 writes the Category B ledger rows and one row per earlier Category A finding (`fixed`, or `open` for a schema change with no documented push command).
 ```
 
 Append to step 3's Red flags: `; a Category A fix commit (schema, env-example, test-literal, exports) appearing after the commit `report.json`'s `sha` names.` (replacing the line's final period).
