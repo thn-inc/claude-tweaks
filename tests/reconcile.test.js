@@ -461,16 +461,37 @@ test('localHasMerge: checked out ON the integration branch — passing integrati
   assert.strictEqual(localHasMerge(root, { oid: 'f'.repeat(40) }, branch), localHasMerge(root, { oid: 'f'.repeat(40) }));
 });
 
-// #4387: on the integration branch the archive's `git mv` runs against this
-// checkout's working tree, so a behind local branch must not borrow origin's
-// ancestry — the tracked work/ only arrives with the local fast-forward.
-test('localHasMerge: on the integration branch with local behind origin — reports false (no origin fallback, #4387)', () => {
-  const { seedDir, mainDir } = pairedFixture();
+// #4387 fixtures: origin holds a merge commit pushed from seedDir; mainDir is untouched until a test fetches.
+function pairedFixtureWithPushedMerge() {
+  const fixture = pairedFixture();
+  const { seedDir } = fixture;
   fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
   git(['add', 'b.txt'], seedDir);
   git(['commit', '-q', '-m', 'merge commit'], seedDir);
   git(['push', '-q', 'origin', 'main'], seedDir);
-  const mergeOid = git(['rev-parse', 'main'], seedDir).trim();
+  return { ...fixture, mergeOid: git(['rev-parse', 'main'], seedDir).trim() };
+}
+
+// Fails every `git branch --show-current` probe with `error`; the returned counter records how many ran.
+function failBranchProbe(t, error) {
+  const cp = require('child_process');
+  const realExecFileSync = cp.execFileSync;
+  const counter = { calls: 0 };
+  t.mock.method(cp, 'execFileSync', (file, args, opts) => {
+    if (Array.isArray(args) && args.includes('branch') && args.includes('--show-current')) {
+      counter.calls += 1;
+      throw error;
+    }
+    return realExecFileSync(file, args, opts);
+  });
+  return counter;
+}
+
+// #4387: on the integration branch the archive's `git mv` runs against this
+// checkout's working tree, so a behind local branch must not borrow origin's
+// ancestry — the tracked work/ only arrives with the local fast-forward.
+test('localHasMerge: on the integration branch with local behind origin — reports false (no origin fallback, #4387)', () => {
+  const { mainDir, mergeOid } = pairedFixtureWithPushedMerge();
 
   git(['fetch', '-q', 'origin', 'main'], mainDir); // only origin/main advances; mainDir stays on main
   assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), false);
@@ -482,12 +503,7 @@ test('localHasMerge: on the integration branch with local behind origin — repo
 // #4387: a dry-run previews the fast-forward the real pass's mirror runs first,
 // so on the integration branch it keeps the origin fallback.
 test('localHasMerge: dry-run on the integration branch with local behind origin keeps the origin fallback (#4387)', () => {
-  const { seedDir, mainDir } = pairedFixture();
-  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
-  git(['add', 'b.txt'], seedDir);
-  git(['commit', '-q', '-m', 'merge commit'], seedDir);
-  git(['push', '-q', 'origin', 'main'], seedDir);
-  const mergeOid = git(['rev-parse', 'main'], seedDir).trim();
+  const { mainDir, mergeOid } = pairedFixtureWithPushedMerge();
 
   git(['fetch', '-q', 'origin', 'main'], mainDir); // only origin/main advances; mainDir stays on main
   assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main', { dryRun: true }), true);
@@ -497,52 +513,24 @@ test('localHasMerge: dry-run on the integration branch with local behind origin 
 // know `--show-current`), the integration-branch rule cannot apply, so localHasMerge
 // falls through to the origin fallback.
 test('localHasMerge: a failed `git branch --show-current` probe falls through to the origin fallback (#4387)', (t) => {
-  const cp = require('child_process');
-  const { seedDir, mainDir } = pairedFixture();
-  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
-  git(['add', 'b.txt'], seedDir);
-  git(['commit', '-q', '-m', 'merge commit'], seedDir);
-  git(['push', '-q', 'origin', 'main'], seedDir);
-  const mergeOid = git(['rev-parse', 'main'], seedDir).trim();
+  const { mainDir, mergeOid } = pairedFixtureWithPushedMerge();
   git(['fetch', '-q', 'origin', 'main'], mainDir);
 
-  const realExecFileSync = cp.execFileSync;
-  let probes = 0;
-  t.mock.method(cp, 'execFileSync', (file, args, opts) => {
-    if (Array.isArray(args) && args.includes('branch') && args.includes('--show-current')) {
-      probes += 1;
-      throw Object.assign(new Error('simulated probe failure'), { status: 128, stderr: 'fatal: simulated probe failure\n' });
-    }
-    return realExecFileSync(file, args, opts);
-  });
+  const probe = failBranchProbe(t, Object.assign(new Error('simulated probe failure'), { status: 128, stderr: 'fatal: simulated probe failure\n' }));
   assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), true);
-  assert.strictEqual(probes, 1, 'the probe must have run and failed');
+  assert.strictEqual(probe.calls, 1, 'the probe must have run and failed');
 });
 
 // #4387 (final-review M2): an indeterminate probe failure (timeout / spawn failure) means
 // the question went unanswered, so the guard answers in the retryable direction (false)
 // instead of falling toward the origin fallback and an archive.
 test('localHasMerge: an indeterminate `git branch --show-current` probe failure answers false, not the origin fallback (#4387)', (t) => {
-  const cp = require('child_process');
-  const { seedDir, mainDir } = pairedFixture();
-  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
-  git(['add', 'b.txt'], seedDir);
-  git(['commit', '-q', '-m', 'merge commit'], seedDir);
-  git(['push', '-q', 'origin', 'main'], seedDir);
-  const mergeOid = git(['rev-parse', 'main'], seedDir).trim();
+  const { mainDir, mergeOid } = pairedFixtureWithPushedMerge();
   git(['fetch', '-q', 'origin', 'main'], mainDir);
 
-  const realExecFileSync = cp.execFileSync;
-  let probes = 0;
-  t.mock.method(cp, 'execFileSync', (file, args, opts) => {
-    if (Array.isArray(args) && args.includes('branch') && args.includes('--show-current')) {
-      probes += 1;
-      throw Object.assign(new Error('simulated probe timeout'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' });
-    }
-    return realExecFileSync(file, args, opts);
-  });
+  const probe = failBranchProbe(t, Object.assign(new Error('simulated probe timeout'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' }));
   assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), false);
-  assert.strictEqual(probes, 1, 'the probe must have run and failed');
+  assert.strictEqual(probe.calls, 1, 'the probe must have run and failed');
 });
 
 // #4387: the origin fallback's false direction with `integration` supplied — a parked
@@ -563,12 +551,7 @@ test('localHasMerge: parked checkout, integration supplied, merge held by neithe
 // #2565 parked shape with no local integration ref at all: the origin fallback
 // is still the only path that can see the merge.
 test('AC3.1: localHasMerge parked with no local integration ref — still falls back to origin (#2565)', () => {
-  const { seedDir, mainDir } = pairedFixture();
-  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
-  git(['add', 'b.txt'], seedDir);
-  git(['commit', '-q', '-m', 'merge commit'], seedDir);
-  git(['push', '-q', 'origin', 'main'], seedDir);
-  const mergeOid = git(['rev-parse', 'main'], seedDir).trim();
+  const { mainDir, mergeOid } = pairedFixtureWithPushedMerge();
 
   git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
   git(['branch', '-q', '-D', 'main'], mainDir);
@@ -579,12 +562,7 @@ test('AC3.1: localHasMerge parked with no local integration ref — still falls 
 // Detached HEAD names no branch, so the integration-branch rule does not apply
 // and the origin fallback still answers.
 test('localHasMerge: detached HEAD with local behind — still falls back to origin', () => {
-  const { seedDir, mainDir } = pairedFixture();
-  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
-  git(['add', 'b.txt'], seedDir);
-  git(['commit', '-q', '-m', 'merge commit'], seedDir);
-  git(['push', '-q', 'origin', 'main'], seedDir);
-  const mergeOid = git(['rev-parse', 'main'], seedDir).trim();
+  const { mainDir, mergeOid } = pairedFixtureWithPushedMerge();
 
   git(['fetch', '-q', 'origin', 'main'], mainDir);
   git(['checkout', '-q', '--detach'], mainDir);
