@@ -35,7 +35,7 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 
   | Check | Prerequisite | Satisfied by | Why |
   |---|---|---|---|
-  | `archive` | `mirror` | `remote-prune` | `localHasMerge` reads `refs/heads/{integration}`, then `origin/{integration}`, and only the shared fetch refreshes the latter. Without it, a PR GitHub merged asynchronously skips as `local-behind-merge`. |
+  | `archive` | `mirror` | `remote-prune` | `localHasMerge` reads `refs/heads/{integration}`, then `origin/{integration}` (the fallback only when the main checkout is not on `{integration}`), and only the shared fetch refreshes the latter. Without it, a PR GitHub merged asynchronously skips as `local-behind-merge`. |
   | `red-tip` | `mirror` | `remote-prune` | It reads `origin/{integration}` right after the shared fetch, and otherwise skips as `no-fetch-this-pass`. |
 
   `release,archive,reap` runs as `mirror,release,archive,reap`; `reap` alone stays `reap`; a

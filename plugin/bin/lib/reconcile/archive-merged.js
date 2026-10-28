@@ -713,6 +713,14 @@ function consoleReplacedByAutoMerge(runDir) {
 // branch-name context) keeps checking HEAD exactly as before this fix, and
 // a main checkout actually ON the integration branch is unaffected either
 // way, since HEAD and `refs/heads/{integration}` then name the same commit.
+//
+// #4387: on the integration branch itself the origin fallback is wrong. The
+// archive's `git mv` runs against this checkout's working tree, so the tracked
+// work/ subtree only exists once the local branch has fast-forwarded to the
+// merge; origin/{integration} being ahead says nothing about that tree. The
+// fallback is for #2565's parked / no-local-ref shapes only: when the main
+// checkout is on the integration branch and that branch lacks the merge, the
+// answer is false. A detached HEAD names no branch, so it keeps the fallback.
 function localHasMerge(root, mergeCommit, integration) {
   const oid = mergeCommit && typeof mergeCommit.oid === 'string' && /^[0-9a-f]{40}$/.test(mergeCommit.oid)
     ? mergeCommit.oid : null;
@@ -723,6 +731,8 @@ function localHasMerge(root, mergeCommit, integration) {
   }
   const local = runGit(['merge-base', '--is-ancestor', oid, `refs/heads/${integration}`], root);
   if (!local.failure) return true;
+  const current = runGit(['branch', '--show-current'], root);
+  if (!current.failure && current.stdout === integration) return false;
   // Local ref missing the merge (or missing entirely) — fall back to
   // origin/{integration}, which reconcile's own mirror/fetch step keeps
   // current independent of what's checked out here.
