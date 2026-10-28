@@ -152,3 +152,15 @@ test('planMergeGateSplit: integrationBranch \'master\' gates a "merged into mast
   assert.deepEqual(split.deferred, [2]);
   assert.deepEqual(split.kept, [1, 3, 4]);
 });
+
+test('AC1.1: mergeStateDemands finds a demand after a fenced ## line inside Deliverables (#4369)', () => {
+  const body = ['## Deliverables', '```markdown', '## not heading', '```',
+    '- [ ] confirm `#10` is actually merged'].join('\n');
+  assert.deepEqual(mergeStateDemands(body, [10]).map((d) => d.requires), [10]);
+});
+
+test('AC2.1: a fenced ## Prerequisites line does not open a Prerequisites section (#4369)', () => {
+  const body = ['## Current State', '~~~', '## Prerequisites', '~~~',
+    '- #10 is actually merged'].join('\n');
+  assert.deepEqual(mergeStateDemands(body, [10]), []);
+});
