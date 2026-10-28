@@ -3720,6 +3720,64 @@ test('archiveMerged: abandoned-interrupted run archived but closeRunState\'s run
   assert.equal(fs.existsSync(path.join(archiveDir, 'work', '4387-spec.md')), true);
 });
 
+// #4387: fails (with `error`) every git call `predicate(args)` matches; the counter records how many.
+function failGitWhere(t, predicate, error) {
+  const counter = { calls: 0 };
+  t.mock.method(cp, 'execFileSync', (file, args, opts) => {
+    if (Array.isArray(args) && predicate(args)) {
+      counter.calls += 1;
+      throw error;
+    }
+    return execFileSync(file, args, opts);
+  });
+  return counter;
+}
+const PROBE_TIMEOUT = () => Object.assign(new Error('simulated probe timeout'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' });
+
+// #4387 (#2565 parked shape): a main checkout parked on another branch never has the work/ subtree
+// to move, so the abandoned-interrupted path keeps archiving on origin's shipped evidence even
+// though the local integration ref is behind.
+test('archiveMerged: abandoned-interrupted run shipped on origin/main, main checkout parked on another branch with local main behind — still archives (#4387)', () => {
+  const { root, runDir, archiveDir } = fixtureAbandonedBehindOrigin();
+  git(root, 'checkout', '-q', '-b', 'someone-elses-work');
+
+  const result = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(path.join(archiveDir, 'run-state.json')), true);
+});
+
+// #4387: an indeterminate branch probe (timeout) leaves "is the checkout on main?" unanswered,
+// so the same parked-checkout run now skips in the retryable direction instead of archiving.
+test('archiveMerged: abandoned-interrupted run, local main behind, indeterminate `git branch --show-current` probe — skips local-behind-merge (#4387)', (t) => {
+  const { root, runDir, archiveDir } = fixtureAbandonedBehindOrigin();
+  git(root, 'checkout', '-q', '-b', 'someone-elses-work');
+  const probe = failGitWhere(t, (args) => args.includes('branch') && args.includes('--show-current'), PROBE_TIMEOUT());
+
+  const result = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.ok(probe.calls >= 1, 'the probe must have run and failed');
+  assert.ok(!result.archived.includes(runDir), `expected ${runDir} not archived, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'local-behind-merge');
+  assert.equal(fs.existsSync(archiveDir), false);
+});
+
+// #4387: local main holds the merge, but the guard's own `merge-base --is-ancestor` against the
+// local ref times out — unanswered evidence is not proof, so the run skips rather than archives.
+test('archiveMerged: abandoned-interrupted run, local main holds the merge, indeterminate merge-base on the local ref — skips local-behind-merge (#4387)', (t) => {
+  const { root, runDir, archiveDir } = fixtureAbandonedBehindOrigin();
+  git(root, 'merge', '-q', '--ff-only', 'origin/main');
+  const probe = failGitWhere(t, (args) => args.includes('merge-base') && args.includes('refs/heads/main'), PROBE_TIMEOUT());
+
+  const result = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.equal(probe.calls, 1, 'the local-ref ancestor probe must have run and failed');
+  assert.ok(!result.archived.includes(runDir), `expected ${runDir} not archived, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'local-behind-merge');
+  assert.equal(fs.existsSync(archiveDir), false);
+});
+
 // #2228: the #1962 fallback's outer gate used to require `stampedWorktree`
 // truthy, so a run dir whose worktree was never stamped in the first place
 // (the #1684 gap — e.g. a two-Task-call /flow run whose record-worktree

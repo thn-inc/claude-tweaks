@@ -762,6 +762,9 @@ function localHasMerge(root, mergeCommit, integration, { dryRun = false } = {}) 
 function runBehindLocalIntegration(root, branch, integration) {
   if (!integration || !branch) return false;
   if (integrationCheckoutState(root, integration) === 'other') return false;
+  // mergedEvidence's own self-branch guard compares against the bare name, which the
+  // `refs/heads/` form below defeats; a run on the integration branch itself proves nothing.
+  if (branch === integration) return true;
   const evidence = mergedEvidence(root, branch, `refs/heads/${integration}`);
   return evidence !== 'ancestor' && evidence !== 'cherry';
 }
@@ -1769,7 +1772,9 @@ const STRUCTURALLY_STUCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // as opposed to a benign, transient in-flight state. 'console-unresolved'/
 // 'console-residue' (#3949; a human acknowledges it)/'console-never-rendered'/'local-behind-merge'/'merge-commit-unknown' are
 // deliberately excluded — each already has its own clear resolution path
-// (a human answering a console, a local fetch catching up) that doesn't
+// (a human answering a console, a local fetch catching up — or, for
+// 'local-behind-merge' on a main checkout that is dirty or diverged, a human
+// fixing that checkout so mirror's fast-forward can land, #4387) that doesn't
 // need this generic staleness backstop. 'console-never-rendered-pr-closed'
 // (#2231) is one exception carved out of that exclusion: it fires only
 // when the by-number fallback below confirms the run's PR is CLOSED
@@ -2389,7 +2394,9 @@ function archiveMerged({
     // (adhoc-superseded) exactly as the pre-consolidation `&&`-chained
     // early-return did, via one small follow-up classify call scoped to just
     // the two remaining kinds (adhoc-superseded, adhoc-session-ended).
-    if (kind === 'abandoned-interrupted' && checkRunIntegrity(dir, { cache }).state !== 'shipped-unclosed') {
+    // #4387: the verdict is kept — its evidence.branch is the branch the shipped proof used.
+    const integrity = kind === 'abandoned-interrupted' ? checkRunIntegrity(dir, { cache }) : null;
+    if (integrity && integrity.state !== 'shipped-unclosed') {
       kind = classifyRunDir({ dir, state, worktrees, sessionId, liveness, kinds: ['adhoc-superseded', 'adhoc-session-ended'] }).kind;
     }
 
@@ -2413,7 +2420,7 @@ function archiveMerged({
       if (dryRun) { archived.push(dir); continue; }
       // #4387: the shipped evidence above may be origin-side; archive only once the
       // checkout the `git mv` runs against holds the run's branch too.
-      if (runBehindLocalIntegration(root, runDirBranch(root, dir, state, worktrees), integration)) {
+      if (runBehindLocalIntegration(root, integrity.evidence.branch, integration)) {
         skipped.push({ runDir: dir, reason: 'local-behind-merge' });
         continue;
       }
