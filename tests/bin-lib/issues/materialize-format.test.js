@@ -7,6 +7,7 @@ const path = require('path');
 const {
   shapeGate, liftMetadata, composeHeader, composeFile, sectionText, stripCodeSpans, normalizeDesignIntent,
 } = require('../../../plugin/bin/lib/issues/materialize-format');
+const { extractSection } = require('../../../plugin/bin/lib/issues/record-payload');
 const wtDetect = require('../../../plugin/bin/lib/hooks/worktree-detect');
 
 const SHAPED_BODY = [
@@ -549,4 +550,57 @@ test('sectionText: an unclosed fence hides every later heading (CommonMark: it r
   const body = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
   assert.equal(sectionText(body, 'Deliverables'), null);
   assert.ok(sectionText(body, 'Current State').endsWith('- [ ] d'));
+});
+
+// ---- line-anchored, whole-name headings (#4367) ----
+const INLINE_MENTION_BODY = [
+  '## Current State',
+  'Mentions the `## Acceptance Criteria` and `## Release Note` headings.',
+  '',
+  '## Deliverables',
+  '- [ ] d',
+].join('\n');
+
+const BLOCKQUOTE_MENTION_BODY = [
+  '## Current State',
+  'Some current state text.',
+  '',
+  '> ## Acceptance Criteria',
+  '> 1. It works',
+  '',
+  '## Deliverables',
+  '- [ ] d',
+  '',
+  '## Release Note',
+  'Fixed the thing.',
+].join('\n');
+
+const RELEASE_NOTES_PREFIX_BODY = SHAPED_BODY.replace('## Release Note\n', '## Release Notes\n');
+
+test('shapeGate: an inline-code mention of Acceptance Criteria and Release Note in Current State reports both missing (#4367)', () => {
+  assert.deepEqual(shapeGate(INLINE_MENTION_BODY), { ok: false, missing: ['Acceptance Criteria', 'Release Note'] });
+});
+
+test('shapeGate: a blockquote line naming Acceptance Criteria does not supply that section (#4367)', () => {
+  assert.deepEqual(shapeGate(BLOCKQUOTE_MENTION_BODY), { ok: false, missing: ['Acceptance Criteria'] });
+});
+
+test('shapeGate: a Release Notes heading does not satisfy Release Note (#4367)', () => {
+  const gate = shapeGate(RELEASE_NOTES_PREFIX_BODY);
+  assert.equal(gate.ok, false);
+  assert.ok(gate.missing.includes('Release Note'));
+  assert.equal(sectionText(RELEASE_NOTES_PREFIX_BODY, 'Release Note'), null);
+});
+
+test('sectionText and extractSection agree on absent (null vs empty) and present (same text) headings (#4367)', () => {
+  const bodies = [INLINE_MENTION_BODY, BLOCKQUOTE_MENTION_BODY, RELEASE_NOTES_PREFIX_BODY, SHAPED_BODY];
+  const names = ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note', 'Nonexistent'];
+  for (const body of bodies) {
+    for (const name of names) {
+      const text = sectionText(body, name);
+      const viaExtract = extractSection(body, name, { levelPattern: '2', stopPattern: '2', trim: true });
+      if (text === null) assert.equal(viaExtract, '', `${name} absent in sectionText but extractSection returned text`);
+      else assert.equal(viaExtract, text, `${name} present: sectionText and extractSection disagree`);
+    }
+  }
 });

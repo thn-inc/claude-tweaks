@@ -258,7 +258,7 @@ function isRepoRelativeKeyFilePath(filePath) {
 
 const ANY_HEADING_RE = /^#{1,6}[ \t]/;
 
-// body, heading text, options -> the section text under that heading, or ''
+// body, heading text, options -> the section text under that heading, or null
 // when absent. Shared line-boundary finder behind compose-subject.js's
 // Breaking Change/Release Note/Overview extraction, decomposition-crossref.js's
 // Gotchas/Prerequisites extraction, and grouping.js's Key Files extraction —
@@ -277,8 +277,8 @@ const ANY_HEADING_RE = /^#{1,6}[ \t]/;
 // `[IL-160]`) could silently fail every heading match; this fixes that as a
 // side effect rather than as its own goal. Headings inside fenced blocks are
 // quoted content and never match (#4169); a fenced line never stops the section.
-function extractSection(body, heading, { levelPattern = '2,4', stopPattern = '1,6', trim = false } = {}) {
-  if (typeof body !== 'string') return '';
+function findSection(body, heading, { levelPattern = '2,4', stopPattern = '1,6', trim = false } = {}) {
+  if (typeof body !== 'string') return null;
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const headingRe = new RegExp(`^#{${levelPattern}}[ \\t]+${escaped}[ \\t]*$`);
   const stopRe = new RegExp(`^#{${stopPattern}}[ \\t]`);
@@ -288,7 +288,7 @@ function extractSection(body, heading, { levelPattern = '2,4', stopPattern = '1,
     for (let k = s; k <= e; k += 1) fenced[k] = true;
   }
   const start = lines.findIndex((line, idx) => !fenced[idx] && headingRe.test(line));
-  if (start === -1) return '';
+  if (start === -1) return null;
   const out = [];
   for (let i = start + 1; i < lines.length; i += 1) {
     if (!fenced[i] && stopRe.test(lines[i])) break;
@@ -296,6 +296,12 @@ function extractSection(body, heading, { levelPattern = '2,4', stopPattern = '1,
   }
   const joined = out.join('\n');
   return trim ? joined.trim() : joined;
+}
+
+// findSection's text, or '' when the heading is absent. A caller that must tell absent
+// from empty (sectionText, #4367) calls findSection directly.
+function extractSection(body, heading, options) {
+  return findSection(body, heading, options) ?? '';
 }
 
 // { header?, currentState, deliverables, acceptanceCriteria?, openQuestion?, filedBy,
@@ -441,5 +447,5 @@ function specShapedBody({
 module.exports = {
   DEFER_REASONS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
   extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp,
-  fenceFor, fencedBlock, fencedLineRanges, extractSection,
+  fenceFor, fencedBlock, fencedLineRanges, findSection, extractSection,
 };
