@@ -7,6 +7,7 @@ const { readTsv } = require('./lib/calibration/tsv-reader.js');
 const { readEventsKinds } = require('./lib/calibration/events-reader.js');
 const { aggregate } = require('./lib/calibration/aggregate.js');
 const { ROW_IDS } = require('./lib/wrap-up/registry.js');
+const { lstatType } = require('./lib/path-guard/index.js');
 
 function parseArgs(argv) {
   const out = { runs: 20, json: false, root: process.cwd() };
@@ -138,12 +139,12 @@ function main() {
     process.exitCode = 0;
     return;
   }
-  const runs = loadRuns(args.root);
-  if (!runs) {
-    process.stdout.write('no archived runs found\n');
-    process.exitCode = 0;
-    return;
-  }
+  const loaded = loadRuns(args.root);
+  // No archive dir yet is a normal state (a project's first run awaits its
+  // first archival): live-dir stubs below still apply, so only an empty
+  // result after them is "no archived runs".
+  const archiveAbsent = loaded === null;
+  const runs = loaded || [];
   if (tsv.rows.length > 0) {
     // #917: a partially-pruned archive (older run dirs archived-then-deleted
     // while wrap-up-outcomes.tsv persists) must not silently drop TSV rows
@@ -164,6 +165,11 @@ function main() {
           continue;
         }
         const liveDir = path.join(args.root, '.claude-tweaks', 'pipelines', runId);
+        // lstat, not stat: a symlink at pipelines/{runId} must not redirect the read.
+        if (lstatType(liveDir).type !== 'directory') {
+          runs.push({ runId, decisionLines: [], events: { counts: {} } });
+          continue;
+        }
         runs.push({
           runId,
           decisionLines: readDecisionLines(path.join(liveDir, 'decisions.md')),
@@ -171,6 +177,11 @@ function main() {
         });
       }
     }
+  }
+  if (archiveAbsent && runs.length === 0) {
+    process.stdout.write('no archived runs found\n');
+    process.exitCode = 0;
+    return;
   }
   const result = aggregate({ tsv, runs, rowIds: ROW_IDS, windowN: args.runs });
   const ceiling = resolveAutonomyCeiling(args.root);

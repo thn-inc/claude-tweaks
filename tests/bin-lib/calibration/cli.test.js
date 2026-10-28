@@ -148,6 +148,67 @@ test('a TSV-only run id with a path separator never reads outside the pipelines 
   assert.ok(!jsonOut.frictionCounts['gate-denial'], 'the outside events.jsonl must not be read');
 });
 
+test('a TSV-only run id with a backslash never reads a live dir of that literal name', () => {
+  // On POSIX a backslash is an ordinary filename character, so only the guard
+  // keeps this id from being read as a live dir; on Windows it is a separator.
+  const backslashId = '2026-08-05T000000-x\\..\\..\\outside';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-backslash-'));
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
+    `2026-08-01\t2026-08-01T000000-run-1\tskills\tclosed\t0\tna\n2026-08-05\t${backslashId}\tskills\tclosed\t0\tna\n`,
+  );
+  const decision = '- AUTO 12:00:00 — Review Console: terminal decision approve-all. Reversibility: n/a.\n';
+  const archived = path.join(root, '.claude-tweaks', 'pipelines', 'archive', '2026-08-01T000000-run-1');
+  fs.mkdirSync(archived, { recursive: true });
+  fs.writeFileSync(path.join(archived, 'decisions.md'), decision);
+  const literal = path.join(root, '.claude-tweaks', 'pipelines', backslashId);
+  fs.mkdirSync(literal, { recursive: true });
+  fs.writeFileSync(path.join(literal, 'decisions.md'), decision);
+  const jsonOut = JSON.parse(run(['--json'], root));
+  assert.ok(jsonOut.window.runIds.includes(backslashId), 'the backslash run id must reach the window');
+  assert.strictEqual(jsonOut.consoleDist['approve-all'], 1, 'the literal-named dir must not be read');
+});
+
+test('a symlinked live run dir is not read', { skip: process.platform === 'win32' }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-symlink-'));
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
+    '2026-08-01\t2026-08-01T000000-run-1\tskills\tclosed\t0\tna\n2026-08-06\t2026-08-06T000000-link-1\tskills\tclosed\t0\tna\n',
+  );
+  const decision = '- AUTO 12:00:00 — Review Console: terminal decision approve-all. Reversibility: n/a.\n';
+  const archived = path.join(root, '.claude-tweaks', 'pipelines', 'archive', '2026-08-01T000000-run-1');
+  fs.mkdirSync(archived, { recursive: true });
+  fs.writeFileSync(path.join(archived, 'decisions.md'), decision);
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-symlink-target-'));
+  fs.writeFileSync(path.join(target, 'decisions.md'), decision);
+  fs.symlinkSync(target, path.join(root, '.claude-tweaks', 'pipelines', '2026-08-06T000000-link-1'), 'dir');
+  const jsonOut = JSON.parse(run(['--json'], root));
+  assert.ok(jsonOut.window.runIds.includes('2026-08-06T000000-link-1'));
+  assert.strictEqual(jsonOut.consoleDist['approve-all'], 1, 'the symlink target must not be read');
+});
+
+test('a TSV-only run with a live dir is read before any archive dir exists', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-live-noarchive-'));
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
+    '2026-08-03\t2026-08-03T000000-live-1\tskills\tclosed\t0\tna\n',
+  );
+  const live = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-03T000000-live-1');
+  fs.mkdirSync(live, { recursive: true });
+  fs.writeFileSync(path.join(live, 'decisions.md'), '- AUTO 12:00:00 — Review Console: terminal decision approve-all. Reversibility: n/a.\n');
+  const jsonOut = JSON.parse(run(['--json'], root));
+  assert.deepStrictEqual(jsonOut.window.runIds, ['2026-08-03T000000-live-1']);
+  assert.strictEqual(jsonOut.consoleDist['approve-all'], 1);
+});
+
+test('header carries no excluded note when every run id is dated', () => {
+  const root = makeFixtureRoot();
+  assert.match(run([], root), /^Window: last 2 archived run\(s\)\.$/m);
+});
+
 test('header names how many undated run ids were excluded', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-excluded-'));
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
