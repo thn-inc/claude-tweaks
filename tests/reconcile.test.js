@@ -493,8 +493,9 @@ test('localHasMerge: dry-run on the integration branch with local behind origin 
   assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main', { dryRun: true }), true);
 });
 
-// #4387: when the branch probe itself fails, the integration-branch rule cannot
-// apply, so localHasMerge falls through to the origin fallback.
+// #4387: when the branch probe itself fails with an ordinary git error (a git too old to
+// know `--show-current`), the integration-branch rule cannot apply, so localHasMerge
+// falls through to the origin fallback.
 test('localHasMerge: a failed `git branch --show-current` probe falls through to the origin fallback (#4387)', (t) => {
   const cp = require('child_process');
   const { seedDir, mainDir } = pairedFixture();
@@ -515,6 +516,32 @@ test('localHasMerge: a failed `git branch --show-current` probe falls through to
     return realExecFileSync(file, args, opts);
   });
   assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), true);
+  assert.strictEqual(probes, 1, 'the probe must have run and failed');
+});
+
+// #4387 (final-review M2): an indeterminate probe failure (timeout / spawn failure) means
+// the question went unanswered, so the guard answers in the retryable direction (false)
+// instead of falling toward the origin fallback and an archive.
+test('localHasMerge: an indeterminate `git branch --show-current` probe failure answers false, not the origin fallback (#4387)', (t) => {
+  const cp = require('child_process');
+  const { seedDir, mainDir } = pairedFixture();
+  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
+  git(['add', 'b.txt'], seedDir);
+  git(['commit', '-q', '-m', 'merge commit'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
+  const mergeOid = git(['rev-parse', 'main'], seedDir).trim();
+  git(['fetch', '-q', 'origin', 'main'], mainDir);
+
+  const realExecFileSync = cp.execFileSync;
+  let probes = 0;
+  t.mock.method(cp, 'execFileSync', (file, args, opts) => {
+    if (Array.isArray(args) && args.includes('branch') && args.includes('--show-current')) {
+      probes += 1;
+      throw Object.assign(new Error('simulated probe timeout'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' });
+    }
+    return realExecFileSync(file, args, opts);
+  });
+  assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), false);
   assert.strictEqual(probes, 1, 'the probe must have run and failed');
 });
 

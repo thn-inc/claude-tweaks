@@ -3577,6 +3577,76 @@ test('archiveMerged: main checkout on main but behind origin\'s merge — skips 
   assert.ok(headShow.includes(`.claude-tweaks/pipelines/archive/${runId}/work/4387-spec.md`), `HEAD should add the archived work file:\n${headShow}`);
 });
 
+// #4387 (final-review I2): the abandoned-interrupted path archives straight away, on
+// checkRunIntegrity's shipped evidence — which reads origin/main under the policy-
+// configured integration branch. With the main checkout on a local main that is behind
+// origin's merge, the tracked work/ subtree is not in the working tree yet, so the run
+// must be skipped (`local-behind-merge`) and archived only after the fast-forward.
+test('archiveMerged: abandoned-interrupted run shipped on origin/main while the main checkout on main is behind — skips local-behind-merge, then archives with the work/ git mv once main fast-forwards (#4387)', () => {
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-origin-'));
+  git(origin, 'init', '--bare', '-b', 'main');
+  const seed = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-seed-'));
+  git(seed, 'clone', '-q', origin, '.');
+  git(seed, 'config', 'user.email', 't@t');
+  git(seed, 'config', 'user.name', 't');
+  commitPath(seed, 'a.txt', 'a\n');
+  git(seed, 'push', '-q', 'origin', 'main');
+  const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-clone-'));
+  git(clone, 'clone', '-q', origin, '.');
+  const root = fs.realpathSync(clone);
+  git(root, 'config', 'user.email', 't@t');
+  git(root, 'config', 'user.name', 't');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
+
+  const runId = '2026-08-01T090000-record-4387-abandoned';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  // The feature commit (dated after the run's start so the run-start corroboration passes)
+  // carries the run's tracked work/ file, then lands on origin/main by fast-forward.
+  git(seed, 'checkout', '-q', '-b', 'feat-4387-abandoned');
+  fs.mkdirSync(path.join(seed, '.claude-tweaks', 'pipelines', runId, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(seed, '.claude-tweaks', 'pipelines', runId, 'work', '4387-spec.md'), '# spec 4387\n');
+  git(seed, 'add', '.claude-tweaks');
+  execFileSync('git', ['commit', '-q', '-m', 'feature work'], {
+    cwd: seed,
+    encoding: 'utf8',
+    env: { ...process.env, GIT_AUTHOR_DATE: '2026-08-01T10:00:00Z', GIT_COMMITTER_DATE: '2026-08-01T10:00:00Z' },
+  });
+  const featureOid = git(seed, 'rev-parse', 'HEAD').trim();
+  git(seed, 'checkout', '-q', 'main');
+  git(seed, 'merge', '-q', '--ff-only', 'feat-4387-abandoned');
+  git(seed, 'push', '-q', 'origin', 'main');
+  git(root, 'fetch', '-q', 'origin', 'main'); // only origin/main advances; root stays on a behind main
+  git(root, 'branch', 'feat-4387-abandoned', featureOid); // the run's branch ref survives locally
+
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'interrupted', worktree: path.join(root, 'gone-4387'), pr: { branch: 'feat-4387-abandoned' },
+  }));
+  fs.writeFileSync(
+    path.join(runDir, 'events.jsonl'),
+    '{"skill":"claude-tweaks:build","ts":"2020-01-01T09:05:00.000Z","type":"skill_invoked"}\n',
+  );
+  const headBefore = git(root, 'rev-parse', 'HEAD').trim();
+
+  const first = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.ok(!first.archived.includes(runDir), `expected ${runDir} not archived yet, got ${JSON.stringify(first)}`);
+  const skip = first.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(first)}`);
+  assert.equal(skip.reason, 'local-behind-merge');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8')).status, 'interrupted');
+  assert.equal(fs.existsSync(archiveDir), false, 'a behind checkout must archive nothing');
+  assert.equal(git(root, 'rev-parse', 'HEAD').trim(), headBefore);
+
+  git(root, 'merge', '-q', '--ff-only', 'origin/main'); // work/ arrives with the fast-forward
+  const second = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.ok(second.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(second)}`);
+  assert.equal(fs.existsSync(runDir), false, 'original run dir must have been archived away');
+  assert.equal(fs.existsSync(path.join(archiveDir, 'work', '4387-spec.md')), true);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(archiveDir, 'run-state.json'), 'utf8')).status, 'clean');
+});
+
 // #2228: the #1962 fallback's outer gate used to require `stampedWorktree`
 // truthy, so a run dir whose worktree was never stamped in the first place
 // (the #1684 gap — e.g. a two-Task-call /flow run whose record-worktree

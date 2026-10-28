@@ -7,7 +7,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { runGit: runGitInherited, repoPinnedEnv } = require('../hooks/git-exec');
+const { runGit: runGitInherited, repoPinnedEnv, isIndeterminate } = require('../hooks/git-exec');
 const { withIndexLockRetry } = require('../git-retry');
 const { splitNul } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
@@ -30,7 +30,7 @@ const { escalateResidue, resolveResidue } = require('./escalate-residue');
 const { isWorktreeAlwaysOn } = require('../policy');
 const { repoSlugOf, prClosesIssue } = require('./release-merged');
 const { closeRunState } = require('../hooks/close-run-state');
-const { checkRunIntegrity, fallbackBranch, worktreeListStdout } = require('../hooks/run-integrity');
+const { checkRunIntegrity, fallbackBranch, worktreeListStdout, mergedEvidence } = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
 const { readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, filingRerunCommand } = require('../console/residue');
@@ -690,6 +690,14 @@ function consoleReplacedByAutoMerge(runDir) {
     || /Auto-merge: group \[[^\]\n]*\], assess-agent-autonomy verdict auto-merge for every member/.test(raw);
 }
 
+// #4387: 'on' | 'other' | 'unknown' — is the main checkout on the integration branch?
+// 'unknown' = the probe went unanswered (git-exec.js's isIndeterminate).
+function integrationCheckoutState(root, integration) {
+  const current = runGit(['branch', '--show-current'], root);
+  if (current.failure) return isIndeterminate(current.failure) ? 'unknown' : 'other';
+  return current.stdout === integration ? 'on' : 'other';
+}
+
 // #1130: gh's MERGED state is a remote fact; the local main checkout may not
 // have fast-forwarded to include the merge commit yet. The run dir's tracked
 // work/ subtree only reaches the main checkout via that merge, so archiving
@@ -721,8 +729,11 @@ function consoleReplacedByAutoMerge(runDir) {
 // fallback is for #2565's parked / no-local-ref shapes only: when the main
 // checkout is on the integration branch and that branch lacks the merge, the
 // answer is false. A detached HEAD names no branch, so it keeps the fallback.
-// A dry-run keeps the fallback too: its preview models the fast-forward the real
-// pass's mirror runs first, so origin's ancestry is what the real pass will see.
+// A dry-run keeps the fallback too: its preview assumes mirror's fast-forward
+// succeeds, so origin's ancestry is what it reports; a dirty, diverged or ahead main
+// skips in the real pass. An indeterminate branch probe (timeout / spawn failure)
+// also answers false — the retryable direction — while an ordinary git error (a git
+// too old to know `--show-current`) keeps the fallback.
 function localHasMerge(root, mergeCommit, integration, { dryRun = false } = {}) {
   const oid = mergeCommit && typeof mergeCommit.oid === 'string' && /^[0-9a-f]{40}$/.test(mergeCommit.oid)
     ? mergeCommit.oid : null;
@@ -733,13 +744,26 @@ function localHasMerge(root, mergeCommit, integration, { dryRun = false } = {}) 
   }
   const local = runGit(['merge-base', '--is-ancestor', oid, `refs/heads/${integration}`], root);
   if (!local.failure) return true;
-  const current = runGit(['branch', '--show-current'], root);
-  if (!dryRun && !current.failure && current.stdout === integration) return false;
+  if (!dryRun && integrationCheckoutState(root, integration) !== 'other') return false;
   // Local ref missing the merge (or missing entirely) — fall back to
   // origin/{integration}, which reconcile's own mirror/fetch step keeps
   // current independent of what's checked out here.
   const upstream = runGit(['merge-base', '--is-ancestor', oid, `origin/${integration}`], root);
   return !upstream.failure;
+}
+
+// #4387: the abandoned-interrupted path's twin of localHasMerge. Its shipped evidence
+// (checkRunIntegrity) may read origin/{integration}, but the archive's `git mv` runs
+// against this checkout's working tree. True = the main checkout is on the integration
+// branch (or that probe went unanswered) and the run's branch has not landed on the
+// LOCAL integration ref, so the caller skips and retries once mirror fast-forwards.
+// False keeps today's behavior: no integration name, no resolvable branch, or a checkout
+// parked elsewhere.
+function runBehindLocalIntegration(root, branch, integration) {
+  if (!integration || !branch) return false;
+  if (integrationCheckoutState(root, integration) === 'other') return false;
+  const evidence = mergedEvidence(root, branch, `refs/heads/${integration}`);
+  return evidence !== 'ancestor' && evidence !== 'cherry';
 }
 
 // Moves-first, close-last ordering (the reverse of cleanup-procedures.md
@@ -2387,6 +2411,12 @@ function archiveMerged({
     // fallback evidence is what lets checkRunIntegrity answer at all here.
     if (kind === 'abandoned-interrupted') {
       if (dryRun) { archived.push(dir); continue; }
+      // #4387: the shipped evidence above may be origin-side; archive only once the
+      // checkout the `git mv` runs against holds the run's branch too.
+      if (runBehindLocalIntegration(root, runDirBranch(root, dir, state, worktrees), integration)) {
+        skipped.push({ runDir: dir, reason: 'local-behind-merge' });
+        continue;
+      }
       // Moves-first, close-last — the same invariant this file's own header
       // comment above archiveRunDir (line ~185, "Moves-first, close-last
       // ordering") states for the pre-existing archive path: marking a run
