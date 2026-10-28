@@ -11,7 +11,6 @@ const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const BUILD_SKILL = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'SKILL.md'));
-
 const CHECKLIST = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'operational-checklist.md'));
 
 function sectionOf(text, heading) {
