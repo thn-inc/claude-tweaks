@@ -1,0 +1,346 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const { originWithTwoClones } = require('../../helpers/git-fixtures');
+const { run, parseArgs } = require('../../../plugin/bin/pre-review-catchup');
+const { OUTCOMES, formatLine } = require('../../../plugin/bin/lib/worktree/pre-review-catchup');
+
+const roots = [];
+test.after(() => {
+  for (const dir of roots) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+const FIVE_LINES = ['l1', 'l2', 'l3', 'l4', 'l5'];
+
+// `work` is the build checkout on branch `feat` (cut from `main`, which already carries
+// a.txt and b.txt); `other` pushes upstream commits to origin's `main`.
+function fixture() {
+  const f = originWithTwoClones('ct-precatchup-');
+  roots.push(f.root);
+  const { work, other } = f;
+  const write = (dir, name, lines, msg) => {
+    fs.writeFileSync(path.join(dir, name), `${lines.join('\n')}\n`);
+    f.run(dir, ['add', name]);
+    f.run(dir, ['commit', '-q', '-m', msg]);
+  };
+  write(work, 'a.txt', FIVE_LINES, 'a');
+  write(work, 'b.txt', FIVE_LINES, 'b');
+  f.run(work, ['push', '-q', 'origin', 'main']);
+  f.run(other, ['pull', '-q', 'origin', 'main']);
+  f.run(work, ['checkout', '-q', '-b', 'feat']);
+  // Replace line `n` (1-based) of a file with `value`, commit it.
+  const editLine = (dir, name, n, value, msg) => {
+    const lines = [...FIVE_LINES];
+    lines[n - 1] = value;
+    write(dir, name, lines, msg);
+  };
+  const pushUpstream = () => f.run(other, ['push', '-q', 'origin', 'main']);
+  return { ...f, editLine, pushUpstream, head: () => f.run(work, ['rev-parse', 'HEAD']).trim() };
+}
+
+// A fake-.git anchored run dir under the fixture root, the shape resolveTarget accepts
+// when mainRoot is the fixture root.
+function withRunDir(f) {
+  fs.mkdirSync(path.join(f.root, '.git'), { recursive: true });
+  const runDir = path.join(f.root, '.claude-tweaks', 'pipelines', 'r1');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '');
+  return runDir;
+}
+
+function invoke(f, args, over = {}) {
+  const out = []; const err = [];
+  const code = run(args, {
+    cwd: () => f.work,
+    mainRoot: f.root,
+    git: f.gitIn(f.work),
+    stdout: (s) => out.push(s),
+    stderr: (s) => err.push(s),
+    ...over,
+  });
+  return { code, err: err.join(''), json: out.length ? JSON.parse(out.join('')) : null };
+}
+
+// A git seam that delegates to the real one but throws when `trap(args)` matches.
+function trapGit(f, trap, stderr) {
+  const real = f.gitIn(f.work);
+  return (args) => {
+    if (trap(args)) throw Object.assign(new Error(`git ${args[0]} failed`), { stderr });
+    return real(args);
+  };
+}
+
+const decisionsOf = (runDir) => fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+const MAIN = ['--integration-branch', 'main'];
+
+test('AC1.1: overlapping upstream commit is merged before review', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
+  f.pushUpstream();
+  const r = invoke(f, MAIN);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.outcome, 'merged');
+  f.run(f.work, ['merge-base', '--is-ancestor', 'origin/main', 'HEAD']);
+  assert.deepEqual(r.json.overlapFiles, ['a.txt']);
+  assert.equal(r.json.overlapCommits, 1);
+  assert.equal(r.json.upstreamCommits, 1);
+  assert.equal(r.json.after, f.head());
+  assert.match(r.json.line, /^- AUTO \d{2}:\d{2}:\d{2} — Pre-review catch-up: worktree branch advanced from [0-9a-f]{9} to [0-9a-f]{9} \(1 commit\(s\) from origin\/main; 1 touching 1 file\(s\) this branch changed: a\.txt\) — re-run the suite before the whole-branch review\. Reversibility: med \(merge commit on top of the build's own commits\)\.$/);
+});
+
+test('AC1.2: the merged tree is what the review sees (reviewBase)', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
+  f.pushUpstream();
+  const r = invoke(f, MAIN);
+  assert.equal(r.json.outcome, 'merged');
+  assert.equal(r.json.reviewBase, f.run(f.work, ['rev-parse', 'origin/main']).trim());
+  const changed = f.run(f.work, ['diff', '--name-only', r.json.reviewBase, 'HEAD']).trim().split('\n');
+  assert.deepEqual(changed, ['a.txt']);
+});
+
+test('AC2.1: no overlap runs no merge and logs the check', () => {
+  const f = fixture();
+  const runDir = withRunDir(f);
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.editLine(f.other, 'b.txt', 5, 'O5', 'upstream edit');
+  f.pushUpstream();
+  const before = f.head();
+  const r = invoke(f, [...MAIN, '--run', runDir]);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.outcome, 'no-overlap');
+  assert.equal(r.json.logged, true);
+  assert.equal(r.json.upstreamCommits, 1);
+  assert.equal(r.json.branchFileCount, 1);
+  assert.equal(r.json.reviewBase, r.json.mergeBase);
+  assert.equal(f.head(), before);
+  const text = decisionsOf(runDir);
+  assert.match(text, /SCANNED/);
+  assert.match(text, /Pre-review catch-up:/);
+  assert.match(text, /none touching the 1 file\(s\)/);
+  assert.ok(text.indexOf('## /build') !== -1 && text.indexOf('## /build') < text.indexOf('- SCANNED'));
+  assert.equal(text.split('\n').filter((l) => l.startsWith('- ')).length, 1);
+});
+
+test('AC2.1: zero upstream commits is still a logged no-overlap', () => {
+  const f = fixture();
+  const runDir = withRunDir(f);
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const r = invoke(f, [...MAIN, '--run', runDir]);
+  assert.equal(r.json.outcome, 'no-overlap');
+  assert.equal(r.json.upstreamCommits, 0);
+  assert.equal(r.json.logged, true);
+  assert.match(decisionsOf(runDir), /^- SCANNED /m);
+});
+
+test('AC3.1: conflicting catch-up stops with the merge in progress', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 3, 'FEAT', 'feat edit');
+  f.editLine(f.other, 'a.txt', 3, 'UPSTREAM', 'upstream edit');
+  f.pushUpstream();
+  const r = invoke(f, MAIN);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.outcome, 'conflict');
+  assert.deepEqual(r.json.conflictFiles, ['a.txt']);
+  assert.equal(r.json.reviewBase, null);
+  f.run(f.work, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+  assert.match(r.json.line, /^- SCANNED /);
+  assert.match(r.json.line, /conflicted on a\.txt — merge left in progress/);
+});
+
+test('fetch failure fails open with a distinct SKIP line', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.run(f.work, ['remote', 'set-url', 'origin', path.join(f.root, 'missing.git')]);
+  const r = invoke(f, MAIN);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.outcome, 'fetch-failed');
+  assert.ok(r.json.reason && r.json.reason.length <= 200);
+  assert.match(r.json.line, /^- SKIP /);
+  assert.match(r.json.line, /git fetch origin main failed/);
+  assert.match(r.json.line, /fallback: no pre-review catch-up/);
+});
+
+test('not-applicable on the integration branch itself', () => {
+  const f = fixture();
+  f.run(f.work, ['checkout', '-q', 'main']);
+  const r = invoke(f, MAIN);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.outcome, 'not-applicable');
+  assert.match(r.json.line, /^- SKIP /);
+  assert.match(r.json.line, /build branch is the integration branch main/);
+});
+
+test("overlap counts a rename's old path", () => {
+  const f = fixture();
+  f.run(f.work, ['mv', 'a.txt', 'c.txt']);
+  f.run(f.work, ['commit', '-q', '-m', 'rename']);
+  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
+  f.pushUpstream();
+  const r = invoke(f, MAIN);
+  assert.equal(r.code, 0);
+  assert.ok(['merged', 'conflict'].includes(r.json.outcome), `outcome was ${r.json.outcome}`);
+  assert.deepEqual(r.json.overlapFiles, ['a.txt']);
+});
+
+test('Filename too long is windows-longpath, not fetch-failed', () => {
+  const stderr = 'error: unable to create file x: Filename too long';
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
+  f.pushUpstream();
+  for (const verb of ['fetch', 'merge']) {
+    const r = invoke(f, MAIN, { git: trapGit(f, (a) => a[0] === verb, stderr) });
+    assert.equal(r.code, 0, verb);
+    assert.equal(r.json.outcome, 'windows-longpath', verb);
+    assert.match(r.json.line, /^- SKIP /, verb);
+    assert.ok(r.json.line.includes(`git ${verb} failed with Filename too long`), verb);
+    assert.ok(!r.json.line.includes('fallback: no pre-review catch-up'), verb);
+    assert.match(r.json.line, /_shared\/worktree-setup-windows-longpath\.md/, verb);
+  }
+});
+
+test('dirty tree refuses', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
+  f.pushUpstream();
+  fs.appendFileSync(path.join(f.work, 'a.txt'), 'uncommitted\n');
+  const before = f.head();
+  const r = invoke(f, MAIN);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.outcome, 'dirty-tree');
+  assert.equal(r.json.reason, 'a.txt');
+  assert.match(r.json.line, /^- SKIP /);
+  assert.equal(f.head(), before);
+  assert.throws(() => f.run(f.work, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']));
+});
+
+test('no --run: line is returned, nothing logged', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const r = invoke(f, MAIN);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.logged, false);
+  assert.ok(!('logError' in r.json));
+  assert.match(r.json.line, /^- SCANNED /);
+});
+
+test('unanchored --run keeps the outcome and reports logError', () => {
+  const f = fixture();
+  withRunDir(f);
+  const shadow = path.join(f.work, '.claude-tweaks', 'pipelines', 'r1');
+  fs.mkdirSync(shadow, { recursive: true });
+  fs.writeFileSync(path.join(shadow, 'decisions.md'), 'shadow\n');
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
+  f.pushUpstream();
+  const r = invoke(f, [...MAIN, '--run', shadow]);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.outcome, 'merged');
+  assert.equal(r.json.logged, false);
+  assert.equal(typeof r.json.logError, 'string');
+  assert.ok(r.json.logError.length > 0);
+  assert.match(r.json.line, /^- AUTO /);
+  assert.match(r.err, /pre-review-catchup\.js: could not append the decisions\.md entry: /);
+  assert.equal(fs.readFileSync(path.join(shadow, 'decisions.md'), 'utf8'), 'shadow\n');
+});
+
+test('a missing --run dir keeps the outcome and reports logError', () => {
+  const f = fixture();
+  withRunDir(f);
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const r = invoke(f, [...MAIN, '--run', path.join(f.root, 'no-such-run')]);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.outcome, 'no-overlap');
+  assert.equal(r.json.logged, false);
+  assert.match(r.json.logError, /does not exist/);
+});
+
+test('a throwing append keeps the outcome and reports logError', () => {
+  const f = fixture();
+  const runDir = withRunDir(f);
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const r = invoke(f, [...MAIN, '--run', runDir], { appendDecision: () => { throw new Error('disk full'); } });
+  assert.equal(r.code, 0);
+  assert.equal(r.json.logged, false);
+  assert.equal(r.json.logError, 'disk full');
+  assert.match(r.err, /could not append the decisions\.md entry: disk full/);
+});
+
+test('an undecided git failure outside the fetch exits 1', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const r = invoke(f, MAIN, { git: trapGit(f, (a) => a[0] === 'merge-base', 'fatal: boom') });
+  assert.equal(r.code, 1);
+  assert.equal(r.json, null);
+  assert.match(r.err, /pre-review-catchup\.js: /);
+});
+
+test('usage errors exit 2 and never spawn git', () => {
+  const f = fixture();
+  const calls = [];
+  const git = (args) => { calls.push(args); return ''; };
+  const cases = [
+    [],
+    ['--integration-branch'],
+    ['--integration-branch', ''],
+    ['--integration-branch', '  '],
+    ['--integration-branch', '--run'],
+    [...MAIN, '--run'],
+    [...MAIN, '--run', ''],
+    [...MAIN, '--bogus'],
+  ];
+  for (const argv of cases) {
+    const r = invoke(f, argv, { git });
+    assert.equal(r.code, 2, JSON.stringify(argv));
+    assert.match(r.err, /usage: pre-review-catchup\.js/, JSON.stringify(argv));
+    assert.equal(r.json, null, JSON.stringify(argv));
+  }
+  assert.deepEqual(calls, []);
+});
+
+test('--help prints the usage with every outcome and exits 0 without git', () => {
+  const f = fixture();
+  const calls = [];
+  const out = [];
+  const code = run(['--help'], { cwd: () => f.work, git: (a) => { calls.push(a); return ''; }, stdout: (s) => out.push(s), stderr: () => {} });
+  assert.equal(code, 0);
+  assert.deepEqual(calls, []);
+  for (const o of OUTCOMES) assert.ok(out.join('').includes(o), o);
+});
+
+test('parseArgs reads both flags and rejects malformed values', () => {
+  assert.deepEqual(parseArgs(['--integration-branch', 'main', '--run', '/r']), { integrationBranch: 'main', run: '/r', help: false });
+  assert.ok(parseArgs(['--integration-branch']).error);
+  assert.ok(parseArgs(['--run']).error);
+  assert.ok(parseArgs(['--run', '--help']).error);
+});
+
+test('OUTCOMES is the frozen seven-value list and formatLine covers every outcome', () => {
+  assert.ok(Object.isFrozen(OUTCOMES));
+  assert.deepEqual([...OUTCOMES], ['not-applicable', 'fetch-failed', 'windows-longpath', 'dirty-tree', 'no-overlap', 'merged', 'conflict']);
+  const base = {
+    integrationBranch: 'main', before: 'a'.repeat(40), after: 'b'.repeat(40), mergeBase: 'c'.repeat(40), reviewBase: null,
+    upstreamCommits: 3, branchFileCount: 2, overlapCommits: 2, overlapFiles: ['1', '2', '3', '4', '5', '6'], conflictFiles: ['x'], reason: 'fetch',
+  };
+  for (const outcome of OUTCOMES) {
+    const l = formatLine({ ...base, outcome });
+    assert.ok(['AUTO', 'SKIP', 'SCANNED'].includes(l.status), outcome);
+    assert.ok(l.text && l.reversibility, outcome);
+  }
+  assert.match(formatLine({ ...base, outcome: 'merged' }).text, /changed: 1, 2, 3, 4, 5, …\)/);
+  assert.ok(formatLine({ ...base, outcome: 'merged' }).text.includes(`from ${'a'.repeat(9)} to ${'b'.repeat(9)}`));
+});
+
+test('the CLI shell itself appends through formatEntry and appendEntry', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'pre-review-catchup.js'), 'utf8')
+    .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  assert.match(src, /require\('\.\/lib\/log-decision\/append'\)/);
+  assert.match(src, /formatEntry\(/);
+  assert.match(src, /appendEntry/);
+});
