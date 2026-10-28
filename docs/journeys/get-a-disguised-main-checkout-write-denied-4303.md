@@ -29,6 +29,7 @@ files:
   - `x=$(cd Q) cd ../main; echo hi | tee f`
   - `cp -rt ../main src`
   - `cp src ../main/f -S .bak` and `mv src ../main/f --suffix .bak`
+  - `cp a b -t d ../main`
   - `perl -0pi -e 's/a/b/' ../main/f`
   - `echo x >& ../main/f`
   - `x=$(true; cd ../main && y=$(( (1 & 3) )) && git commit -am x)`
@@ -42,7 +43,7 @@ files:
   - A cd in a pipeline element runs in a subshell and does not carry over.
   - An assignment-prefixed cd still runs.
   - `-t` inside a flag cluster, and a glued `-tDIR`, name the target dir.
-  - A cp or mv value option after the operands (`-S .bak`, `--suffix .bak`) takes the word after it. GNU coreutils writes the last real operand. macOS's BSD cp and mv stop option parsing at the first operand and write into that last word. The walk reports both destinations when they differ.
+  - A cp or mv value option after the operands (`-S .bak`, `--suffix .bak`) takes the word after it. GNU coreutils writes the last real operand. macOS's BSD cp and mv stop option parsing at the first operand and write into that last word, a dash word and a `-t` after the first operand included (`cp a b -t d ../main` writes `../main/a` and `../main/b` under BSD). The walk reports both destinations when they differ, and drops the BSD one when an option BSD lacks (`-t`, `-S`, a long option) comes before the first operand.
   - A digit in a perl cluster (`-0pi`) does not hide `-i`.
   - `>& word` and `>&word` write to the file `word`.
   - An `&` inside arithmetic parentheses is not a background.

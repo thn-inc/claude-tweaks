@@ -500,7 +500,8 @@ for (const [cmd, dir] of [
 // #4303: the -t forms that resolved before the cluster reading still resolve. bash 3.2 and 5 with
 // GNU coreutils write M/a or M/f for `cp -t M a`, `mv -t M a`, `cp --target-directory=M a`,
 // `cp --target-directory M a`, `install -t M f`, `install -m644 -t M f`, `install -m 644 -t M f`
-// and `ln -t M a`, and for `cp a -tM` (getopt permutes, so an option after the operands counts).
+// and `ln -t M a`; `cp a -tM` (getopt permutes, so an option after the operands counts) is pinned in
+// #4449's two-destination rows below, where macOS's BSD reading is reported too.
 // The first value-taking letter ends the cluster: `cp -St M/g a` and `cp -S -t M/g a` copy M/g
 // to a (`t`, then the word `-t`, is -S's backup suffix), `cp -S -tfoo a M/g` writes M/g, and
 // `cp -S .bak -t M a` writes M/a; `install -m -t M/g h` writes h (`-t` is the mode), and
@@ -508,7 +509,7 @@ for (const [cmd, dir] of [
 for (const [cmd, file] of [
   ['cp -t /main a', '/main'], ['mv -t /main a', '/main'], ['cp --target-directory=/main a', '/main'],
   ['cp --target-directory /main a', '/main'], ['install -t /main f', '/main'], ['install -m644 -t /main f', '/main'],
-  ['install -m 644 -t /main f', '/main'], ['ln -t /main a', '/main'], ['cp a -t/main', '/main'],
+  ['install -m 644 -t /main f', '/main'], ['ln -t /main a', '/main'],
   ['cp -St /main/f.js a', 'a'], ['cp -S -t /main/f.js a', 'a'], ['cp -S -tfoo a /main/f.js', '/main/f.js'],
   ['cp -S .bak -t /main a', '/main'], ['install -m -t /main/f.js g', 'g'], ['ln -St /main/f.js a', 'a'],
 ]) {
@@ -555,24 +556,50 @@ for (const cmd of ['install a b --suf /main', 'ln -s a b --suf /main']) {
 // #4449: a cp or mv value option (-S, --suffix, --suf, -bS) takes the word after it, so that word is
 // no operand. bash 3.2 probed on macOS: GNU coreutils cp and mv write b for each row (`cp a b -S .bak`
 // copies a to b), while macOS's BSD /bin/cp and /bin/mv stop option parsing at the first operand and
-// write .bak/a and .bak/b. No -t resolves, so both readings are reported, the GNU one first.
-for (const cmd of ['cp a b -S .bak', 'cp a b --suffix .bak', 'cp a b --suf .bak', 'mv a b -S .bak', 'cp a b -bS .bak']) {
+// write .bak/a and .bak/b. The GNU reading is reported first, then the BSD one.
+//
+// The BSD reading takes every word from the first operand on as an operand, so its destination is
+// the literal last word, a dash word included. bash 3.2 probed on macOS (/bin/cp, /bin/mv against
+// gcp, gmv, with directories d, e, -v and --suffix=.bak present): `cp a b -t d e` writes e/a and
+// e/b under BSD and d/a and d/b under GNU; `cp a b -v` writes -v/a and -v/b under BSD; `cp a b
+// --suffix=.bak` writes --suffix=.bak/a and /b under BSD; `cp a b --sparse always` has the BSD
+// destination always. A dash word is a file here, so it is reported as ./-v.
+for (const [cmd, files] of [
+  ['cp a b -S .bak', ['b', '.bak']], ['cp a b --suffix .bak', ['b', '.bak']], ['cp a b --suf .bak', ['b', '.bak']],
+  ['mv a b -S .bak', ['b', '.bak']], ['cp a b -bS .bak', ['b', '.bak']],
+  ['cp a b -t d e', ['d', 'e']], ['mv a b -t d e', ['d', 'e']], ['cp a -t/main', ['/main', '-t/main']],
+  ['cp a b -v', ['b', '-v']], ['cp a b --suffix=.bak', ['b', '--suffix=.bak']],
+  ['cp a b --sparse always', ['b', 'always']], ['cp a b --no-preserve mode', ['b', 'mode']],
+  ['cp a b -S', ['b', '-S']], ['cp a b --suffix', ['b', '--suffix']],
+]) {
   test(`#4449: \`${cmd}\` reports the GNU destination and the BSD destination`, () => {
-    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', 'b'), path.resolve('/r', '.bak')]);
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), files.map((f) => path.resolve('/r', f)));
   });
 }
 // #4449: each row resolves exactly one destination. `cp --suffix -t X a` copies X to a under GNU (the
-// -t is --suffix's value); macOS's BSD cp rejects --suffix as an illegal option and writes nothing, and
-// the scanner's BSD reading also lands on a. `cp -S .bak a b` and `cp a b --suffix=.bak` write b.
-// `cp -- a -x b -S .bak` writes .bak: after `--` every word is an operand, so the readings agree.
-// `cp a -S .bak` has one GNU operand, so GNU writes nothing (no destination) and only the BSD reading,
-// .bak, is reported.
+// -t is --suffix's value); macOS's BSD cp rejects --suffix as an illegal option and writes nothing, so
+// its reading is dropped. `cp -t d a b` is the same: BSD has no -t (illegal option, nothing written), so
+// only the -t directory is reported. `cp -S .bak a b` writes b. `cp -- a -x b -S .bak` writes .bak:
+// after `--` every word is an operand, so the readings agree. `cp a -S .bak` has one GNU operand, so
+// GNU writes nothing (no destination) and only the BSD reading, .bak, is reported. A lone `-` is a
+// file operand for GNU and BSD alike: `cp a -` writes the file ./-, `cp - /x/y` writes /x/y, and
+// `cp -- a -v` writes ./-v.
 for (const [cmd, file] of [
-  ['cp --suffix -t X a', 'a'], ['cp -S .bak a b', 'b'], ['cp a b --suffix=.bak', 'b'],
+  ['cp --suffix -t X a', 'a'], ['cp -S .bak a b', 'b'], ['cp -t d a b', 'd'],
   ['cp -- a -x b -S .bak', '.bak'], ['cp a -S .bak', '.bak'],
+  ['cp a -', '-'], ['mv a -', '-'], ['cp - /x/y', '/x/y'], ['cp -- a -v', '-v'],
+  ['cp - -S', '-S'], ['cp -S .bak a -', '-'], ['cp -S .bak -- a b', 'b'],
 ]) {
   test(`#4449: \`${cmd}\` resolves exactly one destination`, () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', file)]);
+  });
+}
+// #4449: one operand and a value option leave no destination under either reading: GNU needs two
+// operands once the option's value is skipped, and BSD rejects the option (illegal option, nothing
+// written), so its reading is dropped.
+for (const cmd of ['cp --sparse always a', 'cp -S .bak a', 'cp --suffix .bak a']) {
+  test(`#4449: \`${cmd}\` reports no destination`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), []);
   });
 }
 // #4303: a digit or a backup suffix in a cluster does not hide -i. bash 3.2 and 5: perl -0pi,

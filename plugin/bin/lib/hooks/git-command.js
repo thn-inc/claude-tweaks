@@ -3158,20 +3158,9 @@ function fileWriteTargets(command, cwd, opts) {
       // present.
       const rest = t.slice(1);
       const targetDirRaw = explicitTargetDir(rest, 'St', t[0]);
-      // Read only when no -t resolved, so a `-t` word here is -S's value or a
-      // trailing -t with no argument (cp refuses it). After `--` every word is
-      // an operand (`cp -- -tfoo dest`).
-      const nonFlags = [];
-      for (let i = 0; i < rest.length; i++) {
-        const a = rest[i];
-        if (a === '--') { nonFlags.push(...rest.slice(i + 1)); break; }
-        if (a.startsWith('-')) continue; // other flags — never a positional
-        nonFlags.push(a);
-      }
-      // #4449: the GNU reading skips each value-taking option's value (explicitTargetDir's rules), so
-      // `cp a b -S .bak` operates on a and b. GNU coreutils writes b; macOS's BSD cp and mv stop option
-      // parsing at the first operand and write .bak/a and .bak/b, so the last non-flag word is reported
-      // too when it differs.
+      // #4449: two readings of the same words, both reported. GNU coreutils (getopt permutes) skips
+      // each value-taking option's value (explicitTargetDir's rules), so `cp a b -S .bak` operates on a
+      // and b and writes b. A lone `-` is an operand, and `--` ends options (`cp -- -tfoo dest`).
       const gnuOperands = [];
       for (let i = 0; i < rest.length; i++) {
         const a = rest[i];
@@ -3180,19 +3169,29 @@ function fileWriteTargets(command, cwd, opts) {
           if (takesLongValue(a, t[0])) i += 1;
           continue;
         }
-        if (!a.startsWith('-')) { gnuOperands.push(a); continue; }
+        if (a === '-' || !a.startsWith('-')) { gnuOperands.push(a); continue; }
         const opt = readShortCluster(a, 'St');
         if (opt !== null && opt.value === null) i += 1;
       }
-      const action = t[0] === 'cp' ? 'copy' : 'move';
-      if (targetDirRaw !== null) {
-        add(action, targetDirRaw);
-      } else {
-        const gnuDest = gnuOperands.length >= 2 ? gnuOperands[gnuOperands.length - 1] : null;
-        const bsdDest = nonFlags.length >= 2 ? nonFlags[nonFlags.length - 1] : null;
-        if (gnuDest !== null) add(action, gnuDest);
-        if (bsdDest !== null && bsdDest !== gnuDest) add(action, bsdDest);
+      // macOS's BSD cp and mv stop option parsing at the first operand, so every later word is an
+      // operand, a dash word and a `-t` included: `cp a b -S .bak` writes .bak/a and .bak/b, and
+      // `cp a b -t d e` writes e/a and e/b. BSD has no long option, -S or -t, so such a word before
+      // the first operand makes it write nothing and its reading is dropped. A `--` before the first
+      // operand drops it the same way, which is harmless: after `--` both readings agree.
+      let bsdStart = rest.length;
+      for (let i = 0; i < rest.length; i++) {
+        if (rest[i] === '-' || !rest[i].startsWith('-')) { bsdStart = i; break; }
       }
+      const bsdOperands = rest.slice(bsdStart);
+      const bsdRefuses = rest.slice(0, bsdStart).some((w) => w.startsWith('--') || readShortCluster(w, 'St') !== null);
+      const action = t[0] === 'cp' ? 'copy' : 'move';
+      const gnuDest =targetDirRaw !== null ? targetDirRaw : (gnuOperands.length >= 2 ? gnuOperands[gnuOperands.length - 1] : null);
+      const bsdDest = !bsdRefuses && bsdOperands.length >= 2 ? bsdOperands[bsdOperands.length - 1] : null;
+      // A destination word that starts with `-` (`-`, `-v`) names a file here, but resolveWriteTarget
+      // reads any such word as a flag and drops it, so it is reported as `./-v`.
+      const dashSafe = (w) => (w.startsWith('-') ? `./${w}` : w);
+      if (gnuDest !== null) add(action, dashSafe(gnuDest));
+      if (bsdDest !== null && bsdDest !== gnuDest) add(action, dashSafe(bsdDest));
       return;
     }
 
