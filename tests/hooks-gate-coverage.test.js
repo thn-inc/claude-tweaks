@@ -1982,6 +1982,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   // own start, whether its `esac` follows an inner case's (`esac;; esac |`, `esac; esac |`, a paren outer
   // arm) or a command precedes it in an outer arm. bash 3.2, bash 5 and zsh write each listed target,
   // except the `cd /q && echo w > k` row, where zsh runs the last element in the current shell (/q/k).
+  // The `| cat && echo z > h` row needs a real `cat` for its /r/h: with no `cat` the pipeline fails and
+  // `&&` skips the write (the walk reads `cat` the same either way).
   for (const [cmd, wants] of [
     ['case a in a) case a in a) cd /q;; esac;; esac | cat; echo y > g', ['/r/g']],
     ['case a in a) case a in a) cd /q;; esac;; esac | cat; echo y > g; echo x > f', ['/r/f', '/r/g']],
@@ -2051,6 +2053,80 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       for (const want of wants) assert.ok(files(cmd).includes(path.resolve(want)), `bash: ${want}`);
     });
   }
+  // #4481: a redirect on a case compound opens before its arm runs, so it resolves where the case began.
+  // bash 3.2, bash 5 and zsh write /r/k for each (/q/k after the leading `cd /q;`); the walk keeps the
+  // arm's /m/k too, failing closed (a function body may run again from another cwd).
+  for (const [cmd, want] of [
+    ['case a in a) cd /m;; esac > k', '/r/k'],
+    ['case a in (a) cd /m;; esac > k', '/r/k'],
+    ['case a in a) cd /m;; esac >> k', '/r/k'],
+    ['case a in a) cd /m;; esac 2> k', '/r/k'],
+    ['cd /q; case a in a) cd /m;; esac > k', '/q/k'],
+    ['f() { case a in a) cd /m;; esac > k; }; f', '/r/k'],
+  ]) {
+    test(`#4481 case: \`${cmd}\` resolves the compound's redirect where the case began`, () => {
+      assert.ok(files(cmd).includes(path.resolve(want)), `bash 3.2, bash 5 and zsh: ${want}`);
+    });
+  }
+  // A last arm that ends in a group or a subshell is followed by its `esac` directly, so the `esac` after
+  // `}` or `)` is read too. bash 3.2, bash 5 and zsh write /r/k for each.
+  for (const cmd of ['case a in a) cd /m; { true; } esac > k', 'case a in a) cd /m; ( true ) esac > k']) {
+    test(`#4481 case: \`${cmd}\` reads the esac after the arm's closer`, () => {
+      assert.ok(files(cmd).includes(path.resolve('/r/k')), 'bash 3.2, bash 5 and zsh: /r/k');
+    });
+  }
+  // A function body the walk reads once runs again from where a later call stands: bash 3.2, bash 5 and
+  // zsh write /r/k for the first call and /wt/k for the second.
+  test('#4481 case: `function f { case a in a) cd /wt;; esac > k; }; f; f` keeps the arm cwd for the redirect', () => {
+    const got = files('function f { case a in a) cd /wt;; esac > k; }; f; f');
+    for (const want of ['/r/k', '/wt/k']) assert.ok(got.includes(path.resolve(want)), `bash: ${want}`);
+  });
+  // The redirect goes where the case its `esac` closes began, not an outer case: bash 3.2, bash 5 and zsh
+  // write /q/k for the armless inner case.
+  test('#4481 case: `case a in a) cd /q; case x in esac > k;; esac` resolves the redirect where the inner case began', () => {
+    assert.deepStrictEqual(files('case a in a) cd /q; case x in esac > k;; esac'), [path.resolve('/q/k')]);
+  });
+  // The `$( )` form: bash 3.2 cannot parse its unparenthesized pattern; bash 5 and zsh write /r/k.
+  test('#4481 substitution: `x=$(case a in a) cd /m;; esac > k)` resolves the compound\'s redirect where the case began', () => {
+    assert.ok(files('x=$(case a in a) cd /m;; esac > k)').includes(path.resolve('/r/k')), 'bash 5 and zsh: /r/k');
+  });
+  // #4481: a reserved word may follow `esac` directly, so `esac esac` closes both cases. bash 3.2, bash 5 and
+  // zsh write /r/g for the first (the outer case is the pipeline's first element) and /wt/g for the
+  // `esac }` control, where the walk keeps /r/g too, as after any brace group.
+  test('#4481 case: `case a in a) cd /wt; case b in b) cd /q;; esac esac | cat; echo y > g` reads the second esac', () => {
+    assert.ok(files('case a in a) cd /wt; case b in b) cd /q;; esac esac | cat; echo y > g').includes(path.resolve('/r/g')), 'bash: /r/g');
+  });
+  test('#4481 case: `{ case a in a) cd /wt;; esac }; echo y > g` keeps the brace group closed after esac', () => {
+    assert.ok(files('{ case a in a) cd /wt;; esac }; echo y > g').includes(path.resolve('/wt/g')), 'bash: /wt/g');
+  });
+  // #4481: a case with no arm ends at the `esac` right after `in`, so the `|` after it is a pipe. bash 3.2,
+  // bash 5 and zsh write /r/g for the first and /q/g for the control.
+  test('#4481 case: `case x in esac; cd /q | cat; echo y > g` closes the armless case', () => {
+    assert.deepStrictEqual(files('case x in esac; cd /q | cat; echo y > g'), [path.resolve('/r/g')]);
+  });
+  test('#4481 case: `case x in esac; cd /q; echo y > g` keeps the cd after an armless case', () => {
+    assert.deepStrictEqual(files('case x in esac; cd /q; echo y > g'), [path.resolve('/q/g')]);
+  });
+  // An armless case that is a later pipeline element is born and closed at the `|` after it, and the
+  // pipeline goes on from its own start: bash 3.2, bash 5 and zsh write /r/g only.
+  test('#4481 case: `true | { cd /q; } | case x in esac | cat; echo y > g` keeps the pipeline\'s start', () => {
+    assert.deepStrictEqual(files('true | { cd /q; } | case x in esac | cat; echo y > g'), [path.resolve('/r/g')]);
+  });
+  // #4481: an `&` in an arm backgrounds the arm's own list, which began where the case did, also when no
+  // separator came before it in the arm. bash 3.2, bash 5 and zsh write /wt/f for each.
+  for (const cmd of [
+    'cd /wt && case a in a) cd /q & echo x > f ;; esac',
+    'cd /wt && case a in a) case a in a) cd /q ;; esac & echo x > f ;; esac',
+  ]) {
+    test(`#4481 case: \`${cmd}\` returns to the arm's start after the &`, () => {
+      assert.ok(files(cmd).includes(path.resolve('/wt/f')), 'bash 3.2, bash 5 and zsh: /wt/f');
+    });
+  }
+  // #4481: a case that is a later pipeline element ends the pipeline at its `esac`, even after its arm's own
+  // `;` ended it early. bash 3.2 and 5 write /r/k (zsh /m/k: it runs the last element in the current shell).
+  test('#4481 case: `true | case a in a) true; case a in a) cd /m ;; esac; esac; echo w > k` ends the pipeline under its start', () => {
+    assert.ok(files('true | case a in a) true; case a in a) cd /m ;; esac; esac; echo w > k').includes(path.resolve('/r/k')), 'bash 3.2 and 5: /r/k');
+  });
   // #4481 characterization: the shapes the first-element and `a=()` fixes must leave as they are.
   for (const [cmd, expected] of [
     ['case a in a) cd /wt;; esac; echo x > f', [path.resolve('/wt/f')]],                          // bash: /wt/f
