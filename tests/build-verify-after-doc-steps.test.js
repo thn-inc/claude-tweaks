@@ -80,7 +80,14 @@ test('#3489 AC1.1 go-red: the assertion fails when the widened Step 5.5 entry cl
 
 test('#3489 AC1.1: operational-checklist.md applies Category A in Step 5 and writes its ledger rows in Step 5.5', () => {
   assert.ok(CHECKLIST.includes('## Category A'), 'heading must exist: ## Category A');
+  assert.ok(CHECKLIST.includes('## Category B'), 'heading must exist: ## Category B');
   const catA = CHECKLIST.split('## Category A')[1].split('## Category B')[0];
+  const catARows = catA.split('\n').filter((l) => l.startsWith('| ') && !l.startsWith('| Check |') && !l.startsWith('|---'));
+  assert.equal(
+    catARows.length,
+    4,
+    'Category A table row count changed: update the inline trigger list in SKILL.md\'s Common Step 5 "Operational fixes first" paragraph to match, then update this count',
+  );
   assert.match(catA, /Common Step 5 applies them before its verification run/);
   assert.match(catA, /Common Step 5\.5 appends each Category A finding to the open items ledger/);
   assert.match(catA, /`open` for a schema change with no documented push command/);
