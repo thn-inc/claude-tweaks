@@ -28,10 +28,13 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
-const { FETCH_TIMEOUT_MS } = require('../reconcile/classify');
 
 const OUTCOMES = Object.freeze(['not-applicable', 'fetch-failed', 'windows-longpath', 'dirty-tree', 'no-overlap', 'merged', 'conflict']);
 
+// A once-per-build CLI budget (precedent: lib/flow/preflight.js's PROBE_TIMEOUT_MS), not
+// reconcile/classify.js's 5 s hook hot-path value, which would turn an ordinary slow fetch
+// into a silent fail-open that skips the overlap check this exists to run.
+const FETCH_TIMEOUT_MS = 60000;
 const REMOTE = 'origin';
 const LONGPATH = 'Filename too long';
 const MAX_REASON = 200;
@@ -211,4 +214,4 @@ function formatLine(body) {
   }
 }
 
-module.exports = { OUTCOMES, runCatchup, formatLine, makeGit };
+module.exports = { OUTCOMES, FETCH_TIMEOUT_MS, runCatchup, formatLine, makeGit };

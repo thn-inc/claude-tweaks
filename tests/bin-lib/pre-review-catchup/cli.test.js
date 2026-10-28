@@ -5,8 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { originWithTwoClones } = require('../../helpers/git-fixtures');
 const { run, parseArgs } = require('../../../plugin/bin/pre-review-catchup');
-const { OUTCOMES, formatLine } = require('../../../plugin/bin/lib/worktree/pre-review-catchup');
-const { FETCH_TIMEOUT_MS } = require('../../../plugin/bin/lib/reconcile/classify');
+const { OUTCOMES, FETCH_TIMEOUT_MS, formatLine } = require('../../../plugin/bin/lib/worktree/pre-review-catchup');
 
 const roots = [];
 test.after(() => {
@@ -237,6 +236,7 @@ test('a timed-out or prompting fetch is bounded, non-interactive and lands in fe
   assert.match(r.json.reason, /ETIMEDOUT/);
   assert.equal(f.head(), before);
   assert.equal(fetchOpts.length, 1);
+  assert.equal(FETCH_TIMEOUT_MS, 60000);
   assert.equal(fetchOpts[0].timeout, FETCH_TIMEOUT_MS);
   assert.equal(fetchOpts[0].env.GIT_TERMINAL_PROMPT, '0');
 });
