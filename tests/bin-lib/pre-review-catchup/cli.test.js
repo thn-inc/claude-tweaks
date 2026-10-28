@@ -91,6 +91,20 @@ test('AC1.1: overlapping upstream commit is merged before review', () => {
   assert.match(r.json.line, /^- AUTO \d{2}:\d{2}:\d{2} — Pre-review catch-up: worktree branch advanced from [0-9a-f]{9} to [0-9a-f]{9} \(1 commit\(s\) from origin\/main; 1 touching 1 file\(s\) this branch changed: a\.txt\) — re-run the suite before the whole-branch review\. Reversibility: med \(merge commit on top of the build's own commits\)\.$/);
 });
 
+test('overlapCommits counts only the upstream commits that touch an overlap file', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream a');
+  f.run(f.other, ['commit', '-q', '--allow-empty', '-m', 'upstream empty']);
+  f.editLine(f.other, 'b.txt', 5, 'O5', 'upstream b');
+  f.pushUpstream();
+  const r = invoke(f, MAIN);
+  assert.equal(r.json.outcome, 'merged');
+  assert.equal(r.json.upstreamCommits, 3);
+  assert.equal(r.json.overlapCommits, 1);
+  assert.deepEqual(r.json.overlapFiles, ['a.txt']);
+});
+
 test('AC1.2: the merged tree is what the review sees (reviewBase)', () => {
   const f = fixture();
   f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');

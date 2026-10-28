@@ -43,6 +43,30 @@ function makeGit(cwd) {
 const errText = (e) => `${(e && e.stderr) || ''}\n${(e && e.message) || ''}`;
 const nulList = (out) => String(out).split('\0').filter(Boolean);
 
+// Count the commits in a `log --format=%x01%H -z --name-only` read that touch any file
+// in `files`. Each commit is a `\x01{sha}` token followed by its paths, NUL-separated;
+// git puts one `\n` in front of a commit's first path. A merge commit lists no paths
+// (its parents' commits are in the range and count themselves).
+const COMMIT_TOKEN = /^\x01[0-9a-f]{40,64}$/;
+
+function countTouching(log, files) {
+  let count = 0;
+  let touched = false;
+  let afterSha = false;
+  for (const token of String(log).split('\0')) {
+    if (COMMIT_TOKEN.test(token)) {
+      if (touched) count++;
+      touched = false;
+      afterSha = true;
+      continue;
+    }
+    const file = afterSha ? token.replace(/^\n/, '') : token;
+    if (file) afterSha = false;
+    if (files.has(file)) touched = true;
+  }
+  return touched ? count + 1 : count;
+}
+
 function blankBody(integrationBranch) {
   return {
     outcome: null,
@@ -79,27 +103,28 @@ function runCatchup({ integrationBranch }, { git }) {
     return done('fetch-failed', { reason: firstLine(e) });
   }
 
-  const dirty = git(['status', '--porcelain', '--untracked-files=no']).split('\n').find((l) => l.trim());
+  const dirty = nulList(git(['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=no']))[0];
   if (dirty) return done('dirty-tree', { reason: dirty.slice(3) });
 
   const before = git(['rev-parse', 'HEAD']).trim();
   const mergeBase = git(['merge-base', 'HEAD', upstream]).trim();
   const upstreamCommits = Number(git(['rev-list', '--count', `${mergeBase}..${upstream}`]).trim());
-  const branchFiles = nulList(git(['diff', '--name-only', '-z', '--no-renames', mergeBase, 'HEAD']));
-  const upstreamFiles = new Set(nulList(git(['diff', '--name-only', '-z', '--no-renames', mergeBase, upstream])));
+  const branchFiles = nulList(git(['diff', '--name-only', '-z', '--no-renames', '--end-of-options', mergeBase, 'HEAD']));
+  const upstreamFiles = new Set(nulList(git(['diff', '--name-only', '-z', '--no-renames', '--end-of-options', mergeBase, upstream])));
   const overlapFiles = [...new Set(branchFiles.filter((f) => upstreamFiles.has(f)))].sort();
   Object.assign(body, { before, mergeBase, upstreamCommits, branchFileCount: branchFiles.length, overlapFiles });
 
   if (!overlapFiles.length) return done('no-overlap', { reviewBase: mergeBase, overlapCommits: 0 });
 
-  const overlapCommits = Number(git(['rev-list', '--count', `${mergeBase}..${upstream}`, '--', ...overlapFiles]).trim());
-  body.overlapCommits = overlapCommits;
+  // One log read, counted in JS: the overlap paths never ride a command line (ARG_MAX).
+  const upstreamLog = git(['log', '--format=%x01%H', '-z', '--name-only', '--no-renames', '--end-of-options', `${mergeBase}..${upstream}`]);
+  body.overlapCommits = countTouching(upstreamLog, new Set(overlapFiles));
 
   try {
     git(['merge', '--no-edit', upstream]);
   } catch (e) {
     if (errText(e).includes(LONGPATH)) return done('windows-longpath', { reason: 'merge' });
-    const conflictFiles = nulList(git(['diff', '--name-only', '-z', '--diff-filter=U']));
+    const conflictFiles = nulList(git(['diff', '--name-only', '-z', '--diff-filter=U', '--end-of-options']));
     if (!conflictFiles.length) throw e;
     return done('conflict', { conflictFiles });
   }
