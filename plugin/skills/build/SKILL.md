@@ -300,7 +300,7 @@ If anything fails, fix it and commit the fix. If a fix changes behavior, re-chec
 
 ### Common Step 5.5: Operational Checklist
 
-After verification passes, check for operational tasks that are easy to forget — deployment and environment concerns that slip through code review (schema/migration files, env access patterns, IaC, CI/CD, container configs). Category A fixes already landed before Common Step 5; this step runs the Category B tasks and writes every ledger row, a `fixed` row per Category A fix included.
+After verification passes, check for operational tasks that are easy to forget — deployment and environment concerns that slip through code review (schema/migration files, env access patterns, IaC, CI/CD, container configs). Category A fixes already landed in Common Step 5, before its verification run; this step runs the Category B tasks and writes every ledger row, a `fixed` row per Category A fix included.
 
 If your build's diff matches schema/env/IaC/CI/platform-config files, or Common Step 5 applied a Category A fix, read `operational-checklist.md` in this skill's directory for the full Category A/B trigger lists, check tables, probe-then-classify procedure, and ledger format. Otherwise skip this step entirely. **On skip**, write a `SKIP` entry per the degrade-trace rule (condition: no schema/env/IaC/CI/platform-config files in diff); standalone: list in the handoff.
 

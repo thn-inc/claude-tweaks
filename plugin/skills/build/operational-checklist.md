@@ -1,6 +1,6 @@
 # Build — Operational Checklist
 
-Loaded by `/claude-tweaks:build` when the diff touches files matching Category A or B triggers: Common Step 5 reads the Category A section before its verification run, and Common Step 5.5 reads the rest after it (#3489).
+Loaded by `/claude-tweaks:build` when the diff touches files matching Category A or B triggers: Common Step 5 reads the Category A section before its verification run; Common Step 5.5 reads the whole file after it, for Category B and every ledger row (#3489).
 
 Operational tasks are not code quality issues — they're deployment and environment concerns that slip through code review. This file contains the full check tables plus the ledger format used to record findings that survive triage.
 

@@ -54,9 +54,11 @@ function assertCategoryABeforeVerify(text) {
   assert.match(step5, /\*\*Operational fixes first \(#3489\)\.\*\*/);
   assert.match(step5, /`operational-checklist\.md`'s Category A triggers \(schema\/migration files, a changed shared-constant value, new env access, a changed `package\.json` `exports`\), apply that file's Category A fixes and commit them, so the verified tree includes them/);
   assert.match(step5, /re-check those triggers against any fix commit below before re-running verification/);
+  assert.match(step5, /Category B tasks and every ledger row stay in Common Step 5\.5/);
   assert.doesNotMatch(step5, /\*\*On skip\*\*/);
   const step55 = sectionOf(text, '### Common Step 5.5:');
-  assert.match(step55, /Category A fixes already landed before Common Step 5/);
+  assert.match(step55, /Category A fixes already landed in Common Step 5, before its verification run/);
+  assert.match(step55, /a `fixed` row per Category A fix/);
   // a shared-constant or exports-only Category A fix must still reach Step 5.5's ledger row
   assert.match(step55, /schema\/env\/IaC\/CI\/platform-config files, or Common Step 5 applied a Category A fix, read/);
   assert.doesNotMatch(step55, /Operational fixes first/);
@@ -88,6 +90,12 @@ test('#3489 AC1.1: operational-checklist.md applies Category A in Step 5 and wri
     4,
     'Category A table row count changed: update the inline trigger list in SKILL.md\'s Common Step 5 "Operational fixes first" paragraph to match, then update this count',
   );
+  for (const name of ['Schema changes', 'Shared constant value changed', 'New environment variables', 'New package exports']) {
+    assert.ok(
+      catARows.some((l) => l.startsWith(`| ${name} |`)),
+      `Category A check "${name}" missing or renamed: update the inline trigger list in SKILL.md's Common Step 5 "Operational fixes first" paragraph to match, then update this name list`,
+    );
+  }
   assert.match(catA, /Common Step 5 applies them before its verification run/);
   assert.match(catA, /Common Step 5\.5 appends each Category A finding to the open items ledger/);
   assert.match(catA, /`open` for a schema change with no documented push command/);
