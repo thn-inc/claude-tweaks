@@ -39,13 +39,14 @@ The one bundled addition is `build/worktree-setup.md` step 4's pointer sentence,
 2. **A rename on either side** (the branch renamed a file that upstream edited at its old path). This must count as overlap: use `--no-renames` so both paths appear. Test `overlap counts a rename's old path` in Task 1.
 3. **A dirty working tree when the CLI runs.** It must refuse before merging: outcome `dirty-tree`, no merge. A merge onto uncommitted edits would mix them into the merge commit. Test `dirty tree refuses` in Task 1.
 4. **The review package's base after a merge.** If the package still diffs against the old base, the reviewer sees upstream's commits as branch work. Task 2's prose says to take `reviewBase` from the CLI's JSON. Task 1 tests that `reviewBase` equals `git merge-base HEAD origin/{ib}` after the merge.
-5. **Running from the integration branch itself** (`current-branch` mode on `{ib}`). Expect `not-applicable`, no fetch-dependent merge, and a `SKIP` line. Test in Task 1.
+5. **Running from the integration branch itself.** The prose scopes the check to the worktree strategy (the user decided Reading A at plan review). The CLI still guards this case defensively: expect `not-applicable`, no merge, and a `SKIP` line. Test in Task 1.
 
 ---
 
 ### Task 1: `pre-review-catchup` module and CLI
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/lib/worktree/pre-review-catchup.js`
@@ -54,12 +55,12 @@ The one bundled addition is `build/worktree-setup.md` step 4's pointer sentence,
 
 **Interfaces:**
 - Produces: `bin/pre-review-catchup.js --integration-branch <b> [--run <run-dir>] [--help]`. It prints one JSON line: `{outcome, integrationBranch, before, after, mergeBase, reviewBase, upstreamCommits, branchFileCount, overlapCommits, overlapFiles, conflictFiles, reason, logged, line}`. When `--run` was passed, it also carries `logError` (string, present only when the append was refused or threw).
-- Lib exports: `OUTCOMES = Object.freeze(['not-applicable','fetch-failed','dirty-tree','no-overlap','merged','conflict'])`, `runCatchup({ integrationBranch }, { git }) -> body`, and `formatLine(body) -> { status, text, reversibility }`. The CLI exports `run(argv, overrides) -> exitCode` with seams `{ cwd, mainRoot, git, appendDecision, now, stdout, stderr }`.
+- Lib exports: `OUTCOMES = Object.freeze(['not-applicable','fetch-failed','windows-longpath','dirty-tree','no-overlap','merged','conflict'])`, `runCatchup({ integrationBranch }, { git }) -> body`, and `formatLine(body) -> { status, text, reversibility }`. The CLI exports `run(argv, overrides) -> exitCode` with seams `{ cwd, mainRoot, git, appendDecision, now, stdout, stderr }`.
 - Exit codes: status-as-data. `0` on every `OUTCOMES` value, including `conflict` (the merge is left in progress) and `dirty-tree`. `2` for a malformed invocation, which never spawns git. `1` only for an undecided crash: a git error outside the fetch, or a failed merge with no unmerged paths. An unanchored or missing `--run` changes nothing in the exit code. It yields `logged:false`, a `logError` and one stderr line.
 
 **Algorithm (lib)** — `git` is `(args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore','pipe','pipe'], windowsHide: true })`:
 1. If `git branch --show-current` (trimmed) equals `integrationBranch`, return `not-applicable`.
-2. Run `git fetch origin <b>`. If it throws, return `fetch-failed` with `reason` set to the first non-empty stderr line (≤200 chars).
+2. Run `git fetch origin <b>`. If it throws and its stderr contains `Filename too long`, return `windows-longpath`. That case is a fixable misconfiguration, never the fail-open path (`_shared/worktree-setup.md`). Otherwise return `fetch-failed` with `reason` set to the first non-empty stderr line (≤200 chars). Step 7's merge applies the same `Filename too long` check before its conflict check.
 3. If `git status --porcelain --untracked-files=no` is non-empty, return `dirty-tree` with `reason` naming the first dirty path.
 4. Set:
    - `before = rev-parse HEAD`
@@ -76,14 +77,15 @@ The one bundled addition is `build/worktree-setup.md` step 4's pointer sentence,
 
 | outcome | status | text | reversibility |
 |---|---|---|---|
-| merged | AUTO | `worktree branch advanced from {before} to {after} ({overlapCommits} overlapping commit(s) from origin/{b} on {n} file(s) this branch changed: {files}) — re-run the suite before the whole-branch review` | `med (merge commit on top of the build's own commits)` |
+| merged | AUTO | `worktree branch advanced from {before} to {after} ({upstreamCommits} commit(s) from origin/{b}; {overlapCommits} touching {n} file(s) this branch changed: {files}) — re-run the suite before the whole-branch review` (the existing Post-creation catch-up shape, plus the overlap clause) | `med (merge commit on top of the build's own commits)` |
+| windows-longpath | SKIP | `condition: git {fetch\|merge} failed with Filename too long → fallback: none yet; apply _shared/worktree-setup-windows-longpath.md and re-run before the whole-branch review` | `n/a` |
 | no-overlap | SCANNED | `origin/{b} has {upstreamCommits} commit(s) since merge base {mergeBase}, none touching the {branchFileCount} file(s) this branch changed — no merge` | `n/a` |
 | conflict | SCANNED | `merging origin/{b} ({overlapCommits} overlapping commit(s)) conflicted on {files} — merge left in progress; resolve it before the whole-branch review` | `n/a` |
 | fetch-failed | SKIP | `condition: git fetch origin {b} failed ({reason}) → fallback: no pre-review catch-up; the whole-branch review runs on the unchecked tree` | `n/a` |
 | not-applicable | SKIP | `condition: build branch is the integration branch {b} → fallback: nothing to catch up` | `n/a` |
 | dirty-tree | SKIP | `condition: uncommitted changes ({reason}) → fallback: no merge yet; commit them and re-run before the whole-branch review` | `n/a` |
 
-The CLI always sets `line` to the formatted entry. With `--run`, it resolves the target with `resolveTarget` and appends under `/build`, setting `logged:true`. If the target is refused or the append throws, it writes one stderr line naming the `decisions.md` append, sets `logged:false` and `logError`, and leaves the exit code unchanged. Without `--run`, it logs nothing and sets `logged:false`; the caller reports `line` per `_shared/worktree-catchup-no-run-dir.md`.
+The CLI always sets `line` to the formatted entry. With `--run`, it resolves the target with `resolveTarget` and appends under `/build`, setting `logged:true`. If the target is refused or the append throws, it writes one stderr line, `pre-review-catchup.js: could not append the decisions.md entry: {message}` (the phrase `_shared/auto-decision-log.md`'s roster paragraph names), sets `logged:false` and `logError`, and leaves the exit code unchanged. Without `--run`, it logs nothing and sets `logged:false`; the caller reports `line` per `_shared/worktree-catchup-no-run-dir.md`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/pre-review-catchup/cli.test.js`.
   - Fixtures: `originWithTwoClones` from `tests/helpers/git-fixtures.js`. `work` checks out branch `feat` off `main`; `other` pushes upstream commits to `main`. Pass `cwd: () => work` and a `git` seam bound to `work` with the fixture `env`. For `--run`, create `<root>/.claude-tweaks/pipelines/r1/decisions.md` and pass `mainRoot: root`.
@@ -95,6 +97,7 @@ The CLI always sets `line` to the formatted entry. With `--run`, it resolves the
   - `fetch failure fails open with a distinct SKIP line` — `git remote set-url origin <root>/missing.git`. Assert: exit 0, `outcome === 'fetch-failed'`, the line contains `SKIP` and `git fetch origin main failed`.
   - `not-applicable on the integration branch itself` — run in `work` on `main`. Assert the `SKIP` line contains `build branch is the integration branch main`.
   - `overlap counts a rename's old path` — `feat` runs `git mv a.txt c.txt`; `other` edits `a.txt`. Assert `outcome` is `merged` or `conflict`, never `no-overlap`.
+  - `Filename too long is windows-longpath, not fetch-failed` — a `git` seam whose fetch throws with stderr `error: unable to create file x: Filename too long`. Assert `outcome === 'windows-longpath'` and that the `SKIP` line does not contain `fallback: no pre-review catch-up`. A second case makes the merge throw the same way, and expects the same outcome.
   - `dirty tree refuses` — an uncommitted edit to `a.txt`, with an overlapping upstream commit pushed. Assert: exit 0, `outcome === 'dirty-tree'`, HEAD unchanged, no `MERGE_HEAD`.
   - `no --run: line is returned, nothing logged` — assert `logged === false` and that `line` starts with `SCANNED`.
   - `unanchored --run keeps the outcome and reports logError` — `--run` names a worktree-local shadow dir. Assert: exit 0, the merge outcome is unchanged, `logged === false`, `logError` is set, and the shadow's `decisions.md` is byte-unchanged.
@@ -122,8 +125,8 @@ Expected: FAIL with `Cannot find module '../../../plugin/bin/pre-review-catchup.
 - Modify: `plugin/skills/build/worktree-setup.md` (Procedure step 4 at line 149 gets one sentence of ≤ 300 B)
 - Modify: `plugin/skills/build/dispatch.md` (line 19: a new bold-labelled instruction, inserted immediately before `After the final code review completes — or, on the skip path, after the last task review — **stop the skill and return here**`)
 - Modify: `docs/plugin-structure.md` (a CLI line after the `pr-merge-state.js` line at line 201)
-- Modify: `plugin/skills/_shared/auto-decision-log.md` (add `pre-review-catchup.js` to the "CLIs that log their own entries" roster paragraph, and bump that paragraph's count word if it carries one)
-- Modify: `tests/phase-exit-call-sites-conformance.test.js` (add `pre-review-catchup.js` to `SELF_LOGGING_SOURCES`)
+- Modify: `plugin/skills/_shared/auto-decision-log.md` (in the "CLIs that log their own entries" paragraph, after `#4025's ... append the same way.` and before `A skill never re-logs`, add the sentence ``#4304's `pre-review-catchup.js` appends the same way.``, which keeps it inside the test's `#4026 moved these ones there: (.*?)\. A skill never re-logs` capture)
+- Modify: `tests/phase-exit-call-sites-conformance.test.js` (add `'pre-review-catchup.js': ['plugin/bin/pre-review-catchup.js']` to `SELF_LOGGING_SOURCES`)
 - Modify: `docs/skill-graph.md` (after the `bin/lib/worktree/name.js` row at line 119, add a `_shared/pre-review-catchup.md` row and a `bin/pre-review-catchup.js` row to `/build`'s table)
 - Test: `tests/pre-review-catchup-conformance.test.js`
 
@@ -132,19 +135,23 @@ Expected: FAIL with `Cannot find module '../../../plugin/bin/pre-review-catchup.
 
 **Prose content** — the dispatcher voice, addressed to `/superpowers:subagent-driven-development` like its siblings in `dispatch.md`:
 - `dispatch.md`, `**Pre-review catch-up (#4304; `_shared/pre-review-catchup.md`).**` In the same invocation instruction, direct `/superpowers:subagent-driven-development` to do the following:
-  - Before it builds its final whole-branch review package, run `node "${CLAUDE_PLUGIN_ROOT}/bin/pre-review-catchup.js" --integration-branch {integration-branch} --run "$PIPELINE_RUN_DIR"` from the worktree root. `{integration-branch}` is the value Common Step 1 resolved. Omit `--run` for a standalone `/build`. On the single-task fast-lane skip path, run it after the last task review instead, before returning here.
-  - Then route on `outcome`:
-    - `merged` → re-run the full suite on the merged tree, and fix any failure before review. Build the review package with `reviewBase` from the CLI's JSON as its base commit, so the reviewer judges the branch's own diff against the combined tree.
-    - `conflict` → stop. Resolve the in-progress merge per `_shared/git-discipline.md`'s Merge conflict resolution, then commit. Log `AUTO … — Pre-review catch-up: conflict on {files} resolved in {sha}` via `log-decision.js`, re-run the full suite, and only then build the package with base `git merge-base HEAD origin/{integration-branch}`. Never review the pre-merge tree, and never `git merge --abort` to get past the conflict.
+  - **Scope (plan review, decided by the user, Reading A):** worktree strategy only. A `current-branch` build runs no CLI and logs `SKIP {time} — Pre-review catch-up: condition: current-branch strategy → fallback: no pre-review catch-up (worktree strategy only)`, the same scope as the post-creation catch-up. A `MULTISPEC_PARALLEL_WAVE=1` member also runs no CLI and logs `SKIP … — condition: parallel-wave member (MULTISPEC_PARALLEL_WAVE=1) → fallback: the wave orchestrator merges member branches into the shared branch, whose own whole-branch review runs the catch-up`. A sequential multi-spec run in the shared worktree runs it per spec, as normal.
+  - Before it builds its final whole-branch review package, run `node "${CLAUDE_PLUGIN_ROOT}/bin/pre-review-catchup.js" --integration-branch {integration-branch} --run "$PIPELINE_RUN_DIR"` from the worktree root. Resolve `{integration-branch}` at this call site through `_shared/integration-branch.md`'s canonical ladder. Never carry it from Common Step 1: a resumed build or a context-handoff continuation never ran that step in this session. Omit `--run` for a standalone `/build`. On the single-task fast-lane skip path, run it after the last task review instead, before returning here.
+  - Then route on `outcome`. The controller never fixes code itself (SDD's own rule), so every repair below is one implementer dispatch at the plan's implementer tier. That dispatch gets the failing output or the conflicted files, the merge's two sides (`{before}` and `origin/{integration-branch}`), and the instruction to resolve per `_shared/git-discipline.md`'s Merge conflict resolution and commit.
+    - `merged` → re-run the full suite on the merged tree. On a failure, send the failing output through that one fix dispatch and re-run the suite. Then build the review package with `reviewBase` from the CLI's JSON as its base commit, so the reviewer judges the branch's own diff against the combined tree.
+    - `conflict` → stop. Send the `conflictFiles` through that one dispatch. After its commit, log `AUTO … — Pre-review catch-up: conflict on {files} resolved in {sha}` via `log-decision.js`, re-run the full suite, and only then build the package with base `git merge-base HEAD origin/{integration-branch}`. Never review the pre-merge tree, and never `git merge --abort` to get past the conflict.
+    - If the fix dispatch does not leave a committed, green tree, stop SDD before the review with the merge state intact and return here. `/build` then fails the HARD-GATE: the test failure, or for a conflict, the unresolved merge, surfaced to the human with its files.
+    - `windows-longpath` → not the fail-open path. Follow `_shared/worktree-setup-windows-longpath.md` (the `core.longpaths` fix), then re-run the CLI.
     - `no-overlap`, `not-applicable` or `fetch-failed` → proceed unchanged. The CLI already logged its line, and `fetch-failed` is the fail-open path.
     - `dirty-tree` → commit the named changes and re-run the CLI. A non-zero exit → read stderr, fix the cause, and re-run. Never skip the check.
   - The CLI logs its own line, so the controller adds none beyond the conflict-resolution line. Hand-log `line` with `log-decision.js` only when `logged` is `false` under a run dir. With no run dir, report `line` in the build's output.
 - `_shared/pre-review-catchup.md`, titled `# Pre-review Catch-up`. The intro says when it runs (that dispatch instruction, cited by name) and why it is overlap-gated rather than unconditional: a merge commit and a suite re-run happen only when upstream touched this branch's files, citing the #4149 evidence. Then add:
-  - `## Integration branch`: reuse the value Common Step 1 resolved through `_shared/worktree-setup.md`'s Post-creation catch-up ladder (`_shared/integration-branch.md`).
+  - `## Scope`: worktree strategy only (current-branch builds and parallel-wave members `SKIP`, as above). The integration branch is resolved at the call site through `_shared/integration-branch.md`'s canonical ladder, the same full ladder `_shared/worktree-setup.md`'s Post-creation catch-up uses, and never carried from Common Step 1.
   - `## Outcomes`: the CLI, each `OUTCOMES` value as a backticked token, and its posture, reusing the Post-creation catch-up's language:
     - a conflict stops for resolution per `_shared/git-discipline.md`, never reset or discarded;
     - a fetch failure fails open with its own `SKIP` line, distinct from `no-overlap`'s `SCANNED` line;
-    - Windows `Filename too long` is not a fetch failure, and is handled per `_shared/worktree-setup-windows-longpath.md`.
+    - Windows `Filename too long` is the separate `windows-longpath` outcome, not a fetch failure. It is handled per `_shared/worktree-setup-windows-longpath.md` and never fails open;
+    - a repair (suite failure or conflict) is one implementer dispatch, never a controller-side fix. A repair that does not leave a committed green tree is a HARD-GATE stop with the merge state intact.
   - `## Anti-patterns` table:
     - `Running the pre-review catch-up only when the PR shows DIRTY` | `DIRTY surfaces at merge, after the review judged a stale tree — the #4149 cost this check exists to avoid`
     - `Building the review package on the pre-merge base after a merge` | `the reviewer then reads upstream's commits as branch work`
@@ -153,6 +160,7 @@ Expected: FAIL with `Cannot find module '../../../plugin/bin/pre-review-catchup.
 - [ ] **Step 1: Write the failing conformance test** `tests/pre-review-catchup-conformance.test.js`, using `readText` from `tests/helpers/read-skill.js`.
   - `AC1.1: dispatch.md runs the catch-up before the whole-branch review` — assert that the index of `bin/pre-review-catchup.js` is greater than the index of `Single-task fast-lane skip (#1926` and less than the index of `After the final code review completes — or, on the skip path`.
   - `AC1.2: the review package base comes from reviewBase` — `dispatch.md` contains `reviewBase`.
+  - `scope: worktree only, current-branch and wave members SKIP` — `dispatch.md` contains `current-branch strategy → fallback: no pre-review catch-up` and `MULTISPEC_PARALLEL_WAVE=1`. The sentence that names `bin/pre-review-catchup.js` contains no `value Common Step 1 resolved`.
   - `AC3.1: a conflict stops before review` — `dispatch.md` contains `` `conflict` → stop `` and `Never review the pre-merge tree`. The CLI shell's source requires `log-decision/append` and calls `formatEntry(`, which the roster test checks.
   - `shared file and naming` — `_shared/pre-review-catchup.md` exists with an `## Outcomes` heading, and `build/worktree-setup.md`'s step-4 paragraph (the line starting `4. **Catch up with the integration branch**`) contains `_shared/pre-review-catchup.md`.
   - `every outcome is documented` — for each `OUTCOMES` value from `plugin/bin/lib/worktree/pre-review-catchup.js`, `_shared/pre-review-catchup.md`'s `## Outcomes` section contains it as a backticked token, and the `docs/plugin-structure.md` CLI line contains it.
