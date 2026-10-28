@@ -83,15 +83,19 @@ function lastFetchedBase(git, upstream) {
   try { return git(['merge-base', 'HEAD', upstream]).trim() || null; } catch { return null; }
 }
 
+function unmergedPaths(git) {
+  return splitNul(git(['diff', '--name-only', '-z', '--diff-filter=U', '--end-of-options']));
+}
+
 const errText = (e) => `${(e && e.stderr) || ''}\n${(e && e.message) || ''}`;
+
+const COMMIT_TOKEN = /^\x01[0-9a-f]{40,64}$/;
 
 // Count the commits in a `log --format=%x01%H -z --name-only` read that touch any file
 // in `files`. Each commit is a `\x01{sha}` token followed by its paths, NUL-separated
 // (git-z.js's splitLogZ owns the stream and the `\n` git puts in front of a commit's
 // first path). A merge commit lists no paths (its parents' commits are in the range and
 // count themselves).
-const COMMIT_TOKEN = /^\x01[0-9a-f]{40,64}$/;
-
 function countTouching(log, files) {
   return splitLogZ(log, (token) => COMMIT_TOKEN.test(token)).filter((c) => c.tokens.some((f) => files.has(f))).length;
 }
@@ -132,7 +136,7 @@ function runCatchup({ integrationBranch }, { git }) {
   if (mergeInProgress(git)) {
     return done('conflict', {
       before: git(['rev-parse', 'HEAD']).trim(),
-      conflictFiles: splitNul(git(['diff', '--name-only', '-z', '--diff-filter=U', '--end-of-options'])),
+      conflictFiles: unmergedPaths(git),
       reason: MERGE_IN_PROGRESS,
     });
   }
@@ -168,7 +172,7 @@ function runCatchup({ integrationBranch }, { git }) {
       abortPartialMerge(git);
       return done('windows-longpath', { reason: 'merge' });
     }
-    const conflictFiles = splitNul(git(['diff', '--name-only', '-z', '--diff-filter=U', '--end-of-options']));
+    const conflictFiles = unmergedPaths(git);
     if (!conflictFiles.length) throw e;
     return done('conflict', { conflictFiles });
   }
