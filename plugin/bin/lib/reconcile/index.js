@@ -25,7 +25,7 @@ const { sharedFetch, sharedFetchAsync } = require('./shared-fetch');
 const { repairOriginHead } = require('./origin-head');
 const { createIssueListCache } = require('./issue-list-cache');
 const {
-  readCache, writeCache, applyOwnerlessNonClean, isFresh, SHARED_HEALTH_TTL_MS, listResidueFailures,
+  readCache, writeCache, applyOwnerlessNonClean, applyRunDispositions, isFresh, SHARED_HEALTH_TTL_MS, listResidueFailures,
 } = require('./cache');
 const { formatReconcileSummary, archivedCountFromRunsResult } = require('./residue-summary');
 // summarizeTimings is called through the module object (not destructured) so a
@@ -146,7 +146,7 @@ async function reconcileInner(opts, state) {
   const requestedChecks = Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS;
   let checks = expandChecks(requestedChecks);
   const cwd = opts.cwd || process.cwd();
-  const result = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, skipped: [] };
+  const result = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, runDispositions: null, skipped: [] };
 
   // Declined-learning store prune (#1399) — local, gitignored bookkeeping unrelated to git/
   // GitHub reachability, so it runs unconditionally on every reconcile pass regardless of
@@ -400,6 +400,12 @@ async function reconcileInner(opts, state) {
   // and nothing before it in the dispatch order changes the worktree set.
   const runIntegrityCache = opts.cache || { worktreeList: new Map(), integrationBranch: new Map() };
   const DISPATCH_ORDER = ['mirror', 'red-tip', 'console', 'release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
+  // #3977: a disposition report is persisted only when the archive pass produced
+  // one without an error (a failed pass must not overwrite the last good report).
+  function dispositionsToPersist() {
+    const d = result.runDispositions;
+    return !!(d && typeof d === 'object' && !d.error && Array.isArray(d.wouldClose) && Array.isArray(d.orphaned));
+  }
   function overBudget(remainingFromHere) {
     if (!budget.exceeded()) return false;
     const notYetRun = remainingFromHere.filter((c) => checks.includes(c));
@@ -417,6 +423,12 @@ async function reconcileInner(opts, state) {
         try {
           writeCache(root, applyOwnerlessNonClean(readCache(root), result.ownerlessNonClean, Date.now()));
         } catch { /* a lost count write is re-read by the next pass */ }
+      }
+      // #3977: likewise the report-only disposition pass, once archive has run.
+      if (dispositionsToPersist()) {
+        try {
+          writeCache(root, applyRunDispositions(readCache(root), result.runDispositions, Date.now()));
+        } catch { /* a lost report write is re-made by the next pass */ }
       }
     }
     return true;
@@ -546,6 +558,8 @@ async function reconcileInner(opts, state) {
     state.archiveResidueErrors = Array.isArray(r.residueErrors) ? r.residueErrors : [];
     // #4421: present only on a real pass that could read pipelines/ — never defaulted to 0 here.
     if (typeof r.ownerlessNonClean === 'number') result.ownerlessNonClean = r.ownerlessNonClean;
+    // #3977: the report-only disposition pass (archive-merged.js reportRunDispositions).
+    result.runDispositions = r.runDispositions || null;
   }
 
   // Same live-ref dependency as release/archive: derives branch state from
@@ -662,10 +676,13 @@ async function reconcileInner(opts, state) {
       const residueIndexChanged = JSON.stringify(issueListCache.index) !== loadedResidueIndexJson;
       // #4421: an archive pass's ownerless count is likewise a read, so a scoped pass that ran it persists it.
       const ownerlessCounted = typeof result.ownerlessNonClean === 'number';
-      if (!opts.skipCacheStamp || healthJustSucceeded || residueIndexChanged || ownerlessCounted) {
+      // #3977: the disposition report is a read too, persisted by a scoped pass that ran archive.
+      const dispositionsReported = dispositionsToPersist();
+      if (!opts.skipCacheStamp || healthJustSucceeded || residueIndexChanged || ownerlessCounted || dispositionsReported) {
         const cache = readCache(root);
         let update = { ...cache };
         if (ownerlessCounted) update = applyOwnerlessNonClean(update, result.ownerlessNonClean, Date.now());
+        if (dispositionsReported) update = applyRunDispositions(update, result.runDispositions, Date.now());
         if (!opts.skipCacheStamp) update.lastRunAt = Date.now();
         if (healthJustSucceeded) update.lastHealthCheckOkAt = now;
         update.residueIssueIndex = issueListCache.index;

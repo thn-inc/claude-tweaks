@@ -338,6 +338,9 @@ module.exports = {
   // only evaluates NON_TERMINAL ('active'/'interrupted') statuses, so a
   // 'clean' dir can't reuse that entry point and needs this piece directly.
   fallbackBranch,
+  // #3977: the run-disposition report needs the recorded branch NAME even when
+  // the branch is gone (fallbackBranch returns only a branch that still exists).
+  branchFromDecisions,
   worktreePathForBranch,
   // #3973: run-liveness ages a legacy run from the same run-id prefix.
   runStartIso,

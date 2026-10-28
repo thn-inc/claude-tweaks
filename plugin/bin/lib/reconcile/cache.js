@@ -99,10 +99,34 @@ function readCache(root) {
       ...(Number.isInteger(parsed.ownerlessNonClean) && parsed.ownerlessNonClean >= 0 ? { ownerlessNonClean: parsed.ownerlessNonClean } : {}),
       ...(typeof parsed.ownerlessNonCleanZeroSince === 'string' && Number.isFinite(Date.parse(parsed.ownerlessNonCleanZeroSince))
         ? { ownerlessNonCleanZeroSince: parsed.ownerlessNonCleanZeroSince } : {}),
+      ...(Array.isArray(parsed.wouldClose) ? { wouldClose: parsed.wouldClose.filter(isDispositionEntry) } : {}),
+      ...(Array.isArray(parsed.orphaned) ? { orphaned: parsed.orphaned.filter(isDispositionEntry) } : {}),
+      ...(typeof parsed.reportOnlyPassAt === 'string' && Number.isFinite(Date.parse(parsed.reportOnlyPassAt))
+        ? { reportOnlyPassAt: parsed.reportOnlyPassAt } : {}),
     };
   } catch {
     return empty;
   }
+}
+
+// #3977: a cached disposition entry is kept only with a string runId and reason;
+// the banner reads these lists, so a malformed row is dropped, never rendered.
+function isDispositionEntry(e) {
+  return !!e && typeof e === 'object' && !Array.isArray(e)
+    && typeof e.runId === 'string' && e.runId !== '' && typeof e.reason === 'string' && e.reason !== '';
+}
+
+// #3977: record a report-only disposition pass (archive-merged.js reportRunDispositions)
+// on a cache object. Pure — a new object, `nowMs` passed in. `reportOnlyPassAt` is
+// the marker the enabling record (#3978) reads: auto-close never acts on a checkout
+// that has not first had a report-only pass.
+function applyRunDispositions(cache, report, nowMs) {
+  return {
+    ...cache,
+    wouldClose: report.wouldClose.map(({ runId, runDir, reason, evidence }) => ({ runId, runDir, reason, evidence })),
+    orphaned: report.orphaned.map(({ runId, runDir, reason, pr }) => ({ runId, runDir, reason, pr: Number.isInteger(pr) ? pr : null })),
+    reportOnlyPassAt: new Date(nowMs).toISOString(),
+  };
 }
 
 // #4421: record archiveMerged's ownerless-non-clean count on a cache object. Pure — a new object,
@@ -432,7 +456,7 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
 }
 
 module.exports = {
-  readCache, writeCache, applyOwnerlessNonClean, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
+  readCache, writeCache, applyOwnerlessNonClean, applyRunDispositions, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
   RESIDUE_ESCALATE_THRESHOLD, residueKey, recordResidueFailure, recordResidueSuccess, clearResidue, listResidueFailures,
   recordResidueError, planClear, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 };

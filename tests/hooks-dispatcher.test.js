@@ -1492,19 +1492,25 @@ test('check-session-residue: reports no pending residue when this is the only ru
   assert.match(result.stdout, /no pending residue from session start/);
 });
 
-test('check-session-residue: reports a sibling interrupted run, excluding the --run target itself', () => {
+test('check-session-residue: reports a sibling orphaned run, excluding the --run target itself', () => {
+  // #3977: a run is residue only once reconcile cached it as orphaned and its owner is gone.
+  const { seedOrphan, deadOwner, writeOldEvents } = require('./helpers/orphan-fixture');
   const project = gitRepo();
   const own = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-02T000000-record-7');
   fs.mkdirSync(own, { recursive: true });
   fs.writeFileSync(path.join(own, 'decisions.md'), '');
-  fs.writeFileSync(path.join(own, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  fs.writeFileSync(path.join(own, 'run-state.json'), JSON.stringify({ status: 'active', ...deadOwner() }));
+  writeOldEvents(own);
+  seedOrphan(project, own);
   const sibling = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-01T000000-record-6');
   fs.mkdirSync(sibling, { recursive: true });
-  fs.writeFileSync(path.join(sibling, 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
+  fs.writeFileSync(path.join(sibling, 'run-state.json'), JSON.stringify({ status: 'interrupted', ...deadOwner() }));
+  writeOldEvents(sibling);
+  seedOrphan(project, sibling, 'unpushed commits on feat-6');
   const result = runHook(['check-session-residue', '--run', own], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /pending residue from session start still unresolved/);
-  assert.match(result.stdout, /2026-08-01T000000-record-6 \(status: interrupted\)/);
+  assert.match(result.stdout, /2026-08-01T000000-record-6 \(status: interrupted\) — unpushed commits on feat-6: resume with /);
   assert.match(result.stdout, /close-run --run/);
   assert.doesNotMatch(result.stdout, /2026-08-02T000000-record-7/, "the --run target's own dir must never be reported as its own residue");
 });

@@ -112,6 +112,29 @@ function formatOwnerlessLine(n) {
   return `ownerless non-clean: ${n} ${pluralize('run dir', n)}`;
 }
 
+// #3977: the archive pass's report-only disposition pass (archive-merged.js
+// reportRunDispositions). One `would close` line per run, with the evidence it
+// was judged on; then the orphan and unknown-liveness counts, each only when
+// above 0. Nothing renders when the archive pass did not run (no report).
+function formatDispositionLines(report) {
+  if (!report || typeof report !== 'object') return [];
+  const lines = [];
+  if (report.error) lines.push(`would close: report failed (${report.error})`);
+  for (const w of Array.isArray(report.wouldClose) ? report.wouldClose : []) {
+    const ev = w.evidence && typeof w.evidence === 'object'
+      ? Object.entries(w.evidence).filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => `${k}=${v}`).join(', ')
+      : '';
+    const drops = Array.isArray(w.dropFindings) && w.dropFindings.length
+      ? `, would drop ${w.dropFindings.length} ${pluralize('finding', w.dropFindings.length)}: run-abandoned`
+      : '';
+    lines.push(`would close ${w.runId} (${w.reason}${ev ? `, evidence: ${ev}` : ''}${drops})`);
+  }
+  const orphans = Array.isArray(report.orphaned) ? report.orphaned.length : 0;
+  if (orphans > 0) lines.push(`orphaned: ${orphans} ${pluralize('run dir', orphans)}`);
+  if (Number.isInteger(report.unknown) && report.unknown > 0) lines.push(`unknown liveness: ${report.unknown} ${pluralize('run dir', report.unknown)}`);
+  return lines;
+}
+
 function formatConsoleReadyLine(console_) {
   const ready = console_ && console_.ready;
   if (!Array.isArray(ready) || ready.length === 0) return null;
@@ -220,6 +243,8 @@ function formatSummary(result) {
   const ownerlessLine = formatOwnerlessLine(result.ownerlessNonClean);
   if (ownerlessLine) lines.push(ownerlessLine);
 
+  lines.push(...formatDispositionLines(result.runDispositions));
+
   const consoleReadyLine = formatConsoleReadyLine(result.console);
   if (consoleReadyLine) lines.push(consoleReadyLine);
 
@@ -232,4 +257,4 @@ function formatSummary(result) {
   return lines.join('\n');
 }
 
-module.exports = { formatSummary };
+module.exports = { formatSummary, formatDispositionLines };

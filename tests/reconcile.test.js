@@ -3316,6 +3316,39 @@ test('#4421 AC6.2 AC7.1: a pass over only owner-block runs reports 0 on the resu
   assert.equal(cacheJson().ownerlessNonCleanZeroSince, stamp, 'the zero-since stamp is kept byte-equal');
 });
 
+test('#3977 a real pass persists the disposition report and stamps reportOnlyPassAt; a dry run writes none', async () => {
+  const { run, owned, cacheJson, root } = ownerlessFixture();
+  owned(2); // owner blocks with no heartbeat — run-liveness reads them `unknown`
+  const dry = await run({ dryRun: true });
+  assert.equal(dry.runDispositions.reportOnly, true);
+  assert.equal(fs.existsSync(cachePath(root)), false, 'a dry run writes no cache file');
+  const r = await run({});
+  assert.equal(r.runDispositions.unknown, 2);
+  assert.match(formatSummary(r), /^unknown liveness: 2 run dirs$/m);
+  const c = cacheJson();
+  assert.deepEqual(c.wouldClose, []);
+  assert.deepEqual(c.orphaned, []);
+  assert.ok(Number.isFinite(Date.parse(c.reportOnlyPassAt)));
+});
+
+test('#3977 formatSummary renders one would-close line per entry with evidence, and the counts only above 0', () => {
+  const report = {
+    reportOnly: true,
+    wouldClose: [
+      { runId: 'r1', reason: 'pr-closed-unmerged', evidence: { verdict: 'dead', pr: 'closed-unmerged', prNumber: 4, dirty: null }, dropFindings: ['staged/review-unconfirmed-1.md'] },
+      { runId: 'r2', reason: 'adhoc-dead', evidence: { verdict: 'dead' }, dropFindings: [] },
+    ],
+    orphaned: [{ runId: 'r3', reason: 'PR #5 open, session gone', pr: 5 }],
+    unknown: 0,
+  };
+  const s = formatSummary({ skipped: [], runDispositions: report });
+  assert.match(s, /^would close r1 \(pr-closed-unmerged, evidence: verdict=dead, pr=closed-unmerged, prNumber=4, would drop 1 finding: run-abandoned\)$/m);
+  assert.match(s, /^would close r2 \(adhoc-dead, evidence: verdict=dead\)$/m);
+  assert.match(s, /^orphaned: 1 run dir$/m);
+  assert.doesNotMatch(s, /unknown liveness/);
+  assert.doesNotMatch(formatSummary({ skipped: [], runDispositions: null }), /would close|orphaned|unknown liveness/);
+});
+
 test('#4421 AC6.3: a later pass with a count above 0 clears ownerlessNonCleanZeroSince', async () => {
   const { run, owned, mk, cacheJson } = ownerlessFixture();
   owned(2);

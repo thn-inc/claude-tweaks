@@ -32,6 +32,11 @@ const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest
 const { readText } = require('../../helpers/read-skill');
 const { STUB_SKIP } = require('../../helpers/path-stub');
 
+// #3977: archiveMerged skips every archive path for a `live` run. A fixture whose
+// worktree carries a seconds-old commit reads `live` on the real probes, so a test
+// about a non-liveness rule injects this instead.
+const UNKNOWN_VERDICT = () => ({ verdict: 'unknown', evidence: [] });
+
 // #1892: stamps `worktree-always: true` in `.claude-tweaks/policy.yml` — the
 // flat kebab-case format `bin/lib/policy.js` reads directly (no YAML dep).
 function setWorktreeAlways(root, value) {
@@ -2612,7 +2617,7 @@ test('archiveMerged: a main-loop decideArchive skip (no-pr) enters the structura
   const wrapper = installGhWrapper([]);
   let result;
   try {
-    result = archiveMerged({ cwd: root });
+    result = archiveMerged({ cwd: root, runVerdict: UNKNOWN_VERDICT });
   } finally {
     wrapper.restore();
   }
@@ -4484,7 +4489,7 @@ test('AC1.1: archiveMerged skips pr-open a live run whose stamped pr.number is O
   });
   let result;
   try {
-    result = archiveMerged({ cwd: root });
+    result = archiveMerged({ cwd: root, runVerdict: UNKNOWN_VERDICT });
   } finally {
     wrapper.restore();
   }
@@ -4505,7 +4510,7 @@ test('AC1.1 orthogonal: a stamped pr.number that is MERGED archives even when th
   });
   let result;
   try {
-    result = archiveMerged({ cwd: root });
+    result = archiveMerged({ cwd: root, runVerdict: UNKNOWN_VERDICT });
   } finally {
     wrapper.restore();
   }
@@ -4522,7 +4527,7 @@ test('AC1.1 transport failure: a by-number probe that fails skips network-failur
   });
   let result;
   try {
-    result = archiveMerged({ cwd: root });
+    result = archiveMerged({ cwd: root, runVerdict: UNKNOWN_VERDICT });
   } finally {
     wrapper.restore();
   }
@@ -4551,7 +4556,7 @@ function runStaleStampPass({ runId, graphql }) {
   });
   let result;
   try {
-    result = archiveMerged({ cwd: root });
+    result = archiveMerged({ cwd: root, runVerdict: UNKNOWN_VERDICT });
   } finally {
     wrapper.restore();
   }

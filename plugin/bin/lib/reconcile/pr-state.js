@@ -33,8 +33,8 @@ function classifyExecError(e) {
 }
 
 const FETCH_TIMEOUT_MS = 5000;
-const PR_LIST_ARGS = ['pr', 'list', '--state', 'all', '--json', 'number,state,mergedAt,updatedAt,mergeCommit,closingIssuesReferences'];
-const PR_VIEW_JSON_FIELDS = 'number,state,mergedAt,updatedAt,mergeCommit,mergeable,mergeStateStatus,closingIssuesReferences';
+const PR_LIST_ARGS = ['pr', 'list', '--state', 'all', '--json', 'number,state,isDraft,mergedAt,updatedAt,mergeCommit,closingIssuesReferences'];
+const PR_VIEW_JSON_FIELDS = 'number,state,isDraft,mergedAt,updatedAt,mergeCommit,mergeable,mergeStateStatus,closingIssuesReferences';
 
 // #2567: every runClassified/runClassifiedAsync call below opts in to
 // retryOnTimeout — a single slow cold `gh` call is retried once, at this
@@ -332,7 +332,7 @@ const BULK_CHUNK = 50; // probe-validated 2026-08-20: a 50-alias chunk costs 1 G
 // escape anyway); owner/name travel as typed variables, never placeholders.
 function buildBulkQuery(branches) {
   const fields = branches
-    .map((b, i) => `b${i}: ref(qualifiedName:${JSON.stringify('refs/heads/' + b)}){ associatedPullRequests(first:10){ nodes{ number state mergedAt updatedAt } pageInfo{ hasNextPage } } }`)
+    .map((b, i) => `b${i}: ref(qualifiedName:${JSON.stringify('refs/heads/' + b)}){ associatedPullRequests(first:10){ nodes{ number state isDraft mergedAt updatedAt } pageInfo{ hasNextPage } } }`)
     .join('\n    ');
   return `query($owner:String!,$name:String!){\n  repository(owner:$owner,name:$name){\n    ${fields}\n  }\n}`;
 }

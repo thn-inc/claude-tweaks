@@ -275,6 +275,18 @@ test('resolvePrStatesBulk: hasNextPage:false (the normal case) still resolves th
   assert.equal(r.get('few-prs').number, 10);
 });
 
+// #3977: the run-disposition table's open-PR row names draft vs ready, so every
+// PR-state read carries isDraft.
+test('#3977 every PR-state read selects isDraft', () => {
+  const calls = [];
+  const runner = (args) => { calls.push(args.join(' ')); return graphqlResponse([{ prs: [PR_MERGED_10] }]); };
+  resolvePrStatesBulk(REPO_ROOT, ['b'], { runner, repoSlug: 'o/r' });
+  assert.match(calls[0], /nodes\{ number state isDraft mergedAt updatedAt \}/);
+  const src = fs.readFileSync(require.resolve('../../../plugin/bin/lib/reconcile/pr-state'), 'utf8');
+  assert.match(src, /const PR_LIST_ARGS = \[[^\]]*'number,state,isDraft,/);
+  assert.match(src, /const PR_VIEW_JSON_FIELDS = 'number,state,isDraft,/);
+});
+
 test('resolvePrStatesBulk: response missing an alias key classifies network-failure — never a silent null', () => {
   const oneOfTwo = JSON.stringify({ data: { repository: { b0: null } } }); // b1 absent
   assert.equal(resolvePrStatesBulk(REPO_ROOT, ['a', 'b'], { runner: () => oneOfTwo, repoSlug: 'o/r' }), 'network-failure');

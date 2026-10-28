@@ -464,6 +464,15 @@ test('clean status is a VALID run-state shape but NOT in the non-terminal set ->
 });
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
+// #3977: the SessionStart banner lists a run only once reconcile cached it as
+// orphaned and its run-liveness verdict reads dead (here: the owner pid is gone;
+// the fixtures' commits are already dated in the past).
+const { seedOrphan, deadOwner } = require('./helpers/orphan-fixture');
+function markDeadOrphan(root, runDir) {
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  writeRunState(runDir, { ...state, ...deadOwner() });
+  seedOrphan(root, runDir);
+}
 function runSessionStart(cwd) {
   try {
     const stdout = execFileSync('node', [HOOKS, 'session-start'], {
@@ -480,6 +489,7 @@ test('SessionStart: shipped-unclosed run line names both remediations (AC1 messa
   const { root, runDir } = fixtureRepo();
   sh(root, 'merge', '-q', '--no-edit', 'feat-branch');
   writeEvents(runDir, [EV_BUILD]);
+  markDeadOrphan(root, runDir);
   const r = runSessionStart(root);
   assert.strictEqual(r.code, 0);
   const ctxOut = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
@@ -494,6 +504,7 @@ test('#1672 AC1: SessionStart renders the shipped-unclosed hint for a torn-down-
     status: 'active', worktree: wt,
     pr: { number: 7, url: 'https://example.test/pr/7', branch: 'feat-branch' },
   });
+  markDeadOrphan(root, runDir);
   const r = runSessionStart(root);
   assert.strictEqual(r.code, 0);
   const ctxOut = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
@@ -505,11 +516,12 @@ test('#1672 AC1: SessionStart renders the shipped-unclosed hint for a torn-down-
 test('SessionStart: genuinely in-progress run line is byte-identical to the pre-change format (AC6 half)', () => {
   const { runDir, root } = fixtureRepo(); // unmerged branch -> in-progress
   writeEvents(runDir, [EV_BUILD]);
+  markDeadOrphan(root, runDir);
   const r = runSessionStart(root);
   assert.strictEqual(r.code, 0);
   const ctxOut = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
   const base = path.basename(runDir);
-  assert.ok(ctxOut.includes(`- ${base} (status: active)`), `expected the unchanged line, got: ${ctxOut}`);
+  assert.ok(ctxOut.includes(`- ${base} (status: active) — PR #7 open, session gone: resume with `), `expected the base line plus its #3977 reason, got: ${ctxOut}`);
   assert.ok(!ctxOut.includes('appears shipped'), 'in-progress run must not carry the new text');
 });
 

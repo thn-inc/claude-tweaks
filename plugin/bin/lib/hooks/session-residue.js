@@ -46,25 +46,86 @@ function sameDir(a, b) {
   return (safeReal(a) || path.resolve(a)) === (safeReal(b) || path.resolve(b));
 }
 
-// Unfinished pipeline runs (interrupted or still-active) under
-// .claude-tweaks/pipelines/, newest first, capped at MAX_REPORTED. `exclude`
-// drops one dir (a caller's own in-flight run) from the result so a
-// wrap-up console never reports its own run as "residue". `-adhoc-standalone`
-// dirs are skipped (#2783): they hold only friction events, nothing to resume
-// or close, and EnterWorktree mints one per session — newest first, they
-// would fill MAX_REPORTED ahead of a genuinely interrupted run.
-function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
+// #3977: the overflow line under the orphaned-runs rows, in CONSOLE_OVERFLOW_LINE's
+// style, naming the command that lists every orphan.
+function ORPHANED_OVERFLOW_LINE(n, pluginRoot) {
+  return `- … and ${n} more orphaned run(s) (newest ${MAX_REPORTED} shown): node "${pluginRoot}/bin/hooks.js" reconcile --dry-run --json --checks archive`;
+}
+
+// The `orphaned` list the last real reconcile pass cached (reconcile/cache.js,
+// #3977), keyed by run id. Empty before the first pass, or on any read failure.
+function cachedOrphans(mainRoot, readReconcileCache) {
+  const byId = new Map();
+  try {
+    const read = readReconcileCache || require('../reconcile/cache').readCache;
+    const list = (read(mainRoot) || {}).orphaned;
+    for (const e of Array.isArray(list) ? list : []) {
+      if (e && typeof e.runId === 'string' && typeof e.reason === 'string') byId.set(e.runId, e);
+    }
+  } catch { /* no cache, no rows */ }
+  return byId;
+}
+
+// The verdict reconcile itself judged by (archive-merged.js defaultRunVerdict):
+// offline — `ps`, the run's own files and `git worktree list`, never the network.
+// The lock probe reads the one worktree listing the run-integrity `cache` holds,
+// so a SessionStart with several orphans still lists worktrees once (#381).
+// Lazy: archive-merged.js is a large module SessionStart only needs when a cached orphan exists.
+function livenessFor(cache) {
+  const { lockInUse } = require('../run-liveness/probes').DEFAULT_PROBES;
+  const { defaultRunVerdict } = require('../reconcile/archive-merged');
+  const listStdout = (root) => runIntegrity.worktreeListStdout(root, cache);
+  return (dir) => defaultRunVerdict(dir, Date.now(), { lockInUse: (wt) => lockInUse(wt, { listStdout }) });
+}
+
+// The run's record ids for its resume command, sigil per work-backend; [] when
+// the slug and manifest name none (or any id is not an integer).
+function resumeIds(dir, sigil) {
+  try {
+    const ids = require('../reconcile/archive-merged').runRecordSet(dir);
+    if (!Array.isArray(ids) || !ids.length || !ids.every((id) => Number.isInteger(id))) return [];
+    return ids.map((id) => sigil + id);
+  } catch {
+    return [];
+  }
+}
+
+// Orphaned pipeline runs whose session is gone (#3977): a non-clean run is
+// listed only when the last reconcile pass's report-only disposition pass named
+// it an orphan (reconcile-cache.json's `orphaned`, so nothing is listed before
+// the first pass) AND its run-liveness verdict, re-checked offline now, is
+// still `dead` — a live sibling session's run, or one whose liveness cannot be
+// told, is never listed. Newest first, capped at MAX_REPORTED; when more pass
+// the filter, one trailing `{ dir: null, state: null, overflow: N, line }`
+// element carries ORPHANED_OVERFLOW_LINE. `exclude` drops one dir (a caller's
+// own in-flight run) so a wrap-up console never reports its own run as
+// "residue". `-adhoc-standalone` dirs are skipped (#2783): they hold only
+// friction events, and EnterWorktree mints one per session — newest first, they
+// would fill MAX_REPORTED ahead of a genuinely orphaned run. `liveness` and
+// `readReconcileCache` are test seams.
+function collectStaleRuns(cwd, {
+  cache, exclude, pluginRoot, liveness, readReconcileCache,
+} = {}) {
   const root = pluginRoot || '${CLAUDE_PLUGIN_ROOT}';
+  const mainRoot = wtDetect.mainCheckoutRoot(cwd) || cwd;
+  const orphans = cachedOrphans(mainRoot, readReconcileCache);
+  if (!orphans.size) return [];
+  const judge = liveness || livenessFor(cache);
   const stale = [];
   for (const entry of ctxLib.iterRunDirsWithState(cwd)) {
     if (sameDir(entry.dir, exclude)) continue;
     if (ctxLib.isAdHocRunDir(entry.dir)) continue;
-    stale.push(entry);
-    if (stale.length >= MAX_REPORTED) break;
+    const cached = orphans.get(path.basename(entry.dir));
+    if (!cached) continue;
+    let verdict = 'unknown';
+    try { verdict = (judge(entry.dir) || {}).verdict; } catch { /* unknown: not listed */ }
+    if (verdict !== 'dead') continue;
+    stale.push({ ...entry, reason: cached.reason });
   }
   if (!stale.length) return [];
-  const sigil = readWorkBackend(wtDetect.mainCheckoutRoot(cwd) || cwd) === 'local-files' ? '' : '#';
-  return stale.map(({ dir, state }) => {
+  const overflow = stale.length - MAX_REPORTED;
+  const sigil = readWorkBackend(mainRoot) === 'local-files' ? '' : '#';
+  const rows = stale.slice(0, MAX_REPORTED).map(({ dir, state, reason }) => {
     const prSuffix = state && state.pr && state.pr.url ? ` — PR ${state.pr.url}` : '';
     const base = `- ${path.basename(dir)} (status: ${(state && state.status) || 'unknown'})${prSuffix}`;
     try {
@@ -104,8 +165,16 @@ function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
         };
       }
     } catch { /* re-entry check is advisory — never break the scan */ }
-    return { dir, state, line: base };
+    // #3977: the cached disposition reason, and a resume command /flow adopts
+    // (an anchored run dir with config.yml is its Step 3 adoption case 1).
+    const ids = resumeIds(dir, sigil);
+    const how = ids.length
+      ? `resume with PIPELINE_RUN_DIR="${dir}" /claude-tweaks:flow ${ids.join(',')}`
+      : `list with node "${root}/bin/hooks.js" reconcile --dry-run --json --checks archive`;
+    return { dir, state, line: `${base} — ${reason}: ${how}` };
   });
+  if (overflow > 0) rows.push({ dir: null, state: null, overflow, line: ORPHANED_OVERFLOW_LINE(overflow, root) });
+  return rows;
 }
 
 // Standalone runs (`*-tidy-standalone*` / `*-sweep-standalone*`) that
@@ -207,6 +276,6 @@ function consoleAckAllLine(pluginRoot) {
 }
 
 module.exports = {
-  MAX_REPORTED, SCAN_WINDOW, CONSOLE_OVERFLOW_LINE, collectStaleRuns, collectApprovableStandalone,
+  MAX_REPORTED, SCAN_WINDOW, CONSOLE_OVERFLOW_LINE, ORPHANED_OVERFLOW_LINE, collectStaleRuns, collectApprovableStandalone,
   scanUnresolvedConsoles, collectUnresolvedConsoles, consoleAckAllLine,
 };

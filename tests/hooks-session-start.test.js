@@ -36,6 +36,15 @@ function mkStagedFile(run, name, content) {
   fs.mkdirSync(stagedDir, { recursive: true });
   fs.writeFileSync(path.join(stagedDir, name), content || '{}');
 }
+// #3977: the banner lists a run only once reconcile cached it as orphaned and
+// its run-liveness verdict reads `dead` on the real probes (owner pid gone).
+const { seedOrphan, deadOwner, writeOldEvents } = require('./helpers/orphan-fixture');
+function mkDeadOrphan(project, name, state, reason) {
+  const run = mkRun(project, name, { ...deadOwner(), ...state });
+  writeOldEvents(run);
+  seedOrphan(project, run, reason);
+  return run;
+}
 
 // #1909: the Interaction-style directive moved out of 35+ verbatim per-SKILL.md
 // copies into this one hook injection point (plugin/bin/lib/hooks/interaction-style.js).
@@ -56,21 +65,22 @@ test('deps.collect returns an array of strings and prints nothing', () => {
   for (const m of msgs) assert.strictEqual(typeof m, 'string');
 });
 
-test('stale runs are reported in additionalContext, capped at 3, newest first', async () => {
+test('orphaned runs are reported in additionalContext, capped at 3, newest first', async () => {
   const project = tmpProject();
-  // Four non-clean runs (more than MAX_REPORTED=3) so the cap is actually exercised —
-  // with only 2 non-clean candidates, listRunDirsWithState's own clean-status filter
+  // Four orphaned runs (more than MAX_REPORTED=3) so the cap is actually exercised —
+  // with only 2 candidates, listRunDirsWithState's own clean-status filter
   // (which drops spec-0 below) does all the work and .slice(0, 3) is a no-op, unable to
   // distinguish "the cap correctly keeps 3" from "there is no cap at all".
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
-  mkRun(project, '2026-07-02T090000-spec-2', { status: 'active' });
-  mkRun(project, '2026-07-03T090000-spec-3', { status: 'interrupted' });
-  mkRun(project, '2026-07-04T090000-spec-4', { status: 'active' });
+  mkDeadOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-02T090000-spec-2', { status: 'active' });
+  mkDeadOrphan(project, '2026-07-03T090000-spec-3', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-04T090000-spec-4', { status: 'active' });
   mkRun(project, '2026-06-30T090000-spec-0', { status: 'clean' });
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.strictEqual(out.json.hookSpecificOutput.hookEventName, 'SessionStart');
-  assert.match(ctx, /unfinished pipeline run/i);
+  assert.match(ctx, /orphaned pipeline run\(s\) whose session is gone/i);
+  assert.match(ctx, /… and 1 more orphaned run\(s\) \(newest 3 shown\)/);
   assert.match(ctx, /spec-4/);
   assert.match(ctx, /spec-3/);
   assert.match(ctx, /spec-2/);
@@ -82,21 +92,33 @@ test('stale runs are reported in additionalContext, capped at 3, newest first', 
 
 test('#803: the banner names a designated consumer — relay the list once in the first reply', async () => {
   const project = tmpProject();
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /Relay this list once, in your first reply to the user/);
-  assert.ok(ctx.includes('do not proceed silently without mentioning it, and never run either command yourself'), 'AC1.1: unfinished-runs banner says never run the command yourself');
+  assert.ok(ctx.includes('do not proceed silently without mentioning it, and never run any of these commands yourself'), 'AC1.1: orphaned-runs banner says never run the command yourself');
+});
+
+test('#3977 AC8: session-start.js no longer carries the owning-session warning', () => {
+  const src = fs.readFileSync(require.resolve('../plugin/bin/lib/hooks/session-start'), 'utf8');
+  assert.ok(!src.includes('only the session owning a run should close it'));
+});
+
+test('#3977: a non-clean run never cached as orphaned is not listed', async () => {
+  const project = tmpProject();
+  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted', ...deadOwner() });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /spec-1/);
 });
 
 test('#1493 AC5: a fixture with one interrupted run + one cleanly-clean standalone run with non-empty staged/ renders both — close-run for the interrupted run, tidy --approve for the standalone one', async () => {
   const project = tmpProject();
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
   const standalone = mkRun(project, '2026-07-02T090000-tidy-standalone', { status: 'clean' });
   mkStagedFile(standalone, 'stale-close-1.json', '{}');
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
-  assert.match(ctx, /spec-1 \(status: interrupted\)/, 'the interrupted run keeps its existing entry');
+  assert.match(ctx, /spec-1 \(status: interrupted\)/, 'the orphaned run keeps its existing entry');
   assert.match(ctx, /close-run --run/, 'the interrupted run keeps its close-run pointer');
   assert.match(ctx, /2026-07-02T090000-tidy-standalone/, 'the cleanly-finished standalone run is named');
   assert.match(ctx, /\/claude-tweaks:tidy --approve/, 'the standalone run points at tidy --approve, not close-run');
@@ -261,17 +283,17 @@ test('#1493: a cleanly-clean standalone run with EMPTY staged/ renders no tidy -
 
 test('#410: a stale run carrying a recorded pr URL includes it in the reported line; one without does not', async () => {
   const project = tmpProject();
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'active', pr: { number: 42, url: 'https://github.com/o/r/pull/42' } });
-  mkRun(project, '2026-07-02T090000-spec-2', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-01T090000-spec-1', { status: 'active', pr: { number: 42, url: 'https://github.com/o/r/pull/42' } });
+  mkDeadOrphan(project, '2026-07-02T090000-spec-2', { status: 'interrupted' }, 'unpushed commits on feat-2');
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /spec-1 \(status: active\) — PR https:\/\/github\.com\/o\/r\/pull\/42/);
-  assert.match(ctx, /spec-2 \(status: interrupted\)\n/, 'a run with no recorded pr must not gain a PR suffix');
+  assert.match(ctx, /spec-2 \(status: interrupted\) — unpushed commits on feat-2: /, 'a run with no recorded pr must not gain a PR suffix');
 });
 
 test('close-run hint substitutes CLAUDE_PLUGIN_ROOT when set, else keeps the literal placeholder', async () => {
   const project = tmpProject();
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
   const orig = process.env.CLAUDE_PLUGIN_ROOT;
 
   try {
@@ -295,7 +317,7 @@ test('close-run hint substitutes CLAUDE_PLUGIN_ROOT when set, else keeps the lit
 test('#2070: the build line and the close-run hint derive from the same single CLAUDE_PLUGIN_ROOT read', async () => {
   const root = tmpPluginRoot('6.120.0');
   const project = tmpProject();
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
   const orig = process.env.CLAUDE_PLUGIN_ROOT;
   try {
     process.env.CLAUDE_PLUGIN_ROOT = root;
@@ -1043,8 +1065,9 @@ function fixtureRepoNoPolicy() {
 test('AC1 (#381): one worktree-list spawn and one origin/HEAD spawn per SessionStart, not one per stale run', async (t) => {
   const { root, wt } = fixtureRepoNoPolicy();
   for (const name of ['2026-08-01T090000-spec-1', '2026-08-01T090100-spec-2', '2026-08-01T090200-spec-3']) {
-    const run = mkRun(root, name, { status: 'active', worktree: wt });
+    const run = mkRun(root, name, { status: 'active', worktree: wt, ...deadOwner() });
     fs.writeFileSync(path.join(run, 'events.jsonl'), '');
+    seedOrphan(root, run); // #3977: only cached orphans are judged, each through the shared listing
   }
 
   const cp = require('child_process');
@@ -1383,12 +1406,20 @@ test('#3380: the notice is inform-only — no permissionDecision, no exit code',
 const { reentryFixture } = require('./helpers/reentry-fixture');
 
 test('AC6.1 SessionStart banner carries the review-console suffix for an eligible multi-spec run', async () => {
-  const { root } = reentryFixture();
+  const { root, wt, runDir } = reentryFixture();
+  // #3977: the banner lists only a dead, cached orphan — age the parent's commit
+  // past the live window and stamp a gone owner, then seed the reconcile cache.
+  execFileSync('git', ['-C', wt, 'commit', '-q', '--amend', '--no-edit', '--date', '2026-09-01T00:00:00Z'], {
+    env: { ...process.env, GIT_COMMITTER_DATE: '2026-09-01T00:00:00Z' },
+  });
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ ...state, ...deadOwner() }));
+  seedOrphan(root, runDir);
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: root });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.ok(ctx.includes('/claude-tweaks:flow #11,#12 review-console'), ctx);
-  assert.ok(ctx.includes('one line per run naming its close-run command, or its re-entry command where the line carries one'), ctx);
-  assert.ok(ctx.includes('never run either command yourself'), ctx);
+  assert.ok(ctx.includes('one line per run naming its reason and the command on its line'), ctx);
+  assert.ok(ctx.includes('never run any of these commands yourself'), ctx);
   assert.ok(ctx.includes('PIPELINE_RUN_DIR="'), ctx);
 });
 

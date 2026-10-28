@@ -8,7 +8,7 @@ const {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS,
   RESIDUE_ESCALATE_THRESHOLD, recordResidueFailure, recordResidueSuccess, listResidueFailures,
   trackResidue, pruneResidueFailures, clearResidue, beginCacheBatch, commitCacheBatch, recordResidueError, planClear,
-  applyOwnerlessNonClean,
+  applyOwnerlessNonClean, applyRunDispositions,
 } = require('../../../plugin/bin/lib/reconcile/cache');
 
 function tmpRoot() {
@@ -72,6 +72,38 @@ test('#4421 readCache keeps valid ownerless keys and drops invalid ones', () => 
     writeCache(root, { ownerlessNonCleanZeroSince: bad });
     assert.equal('ownerlessNonCleanZeroSince' in readCache(root), false, `ownerlessNonCleanZeroSince ${JSON.stringify(bad)} is dropped`);
   }
+});
+
+test('#3977 applyRunDispositions stamps reportOnlyPassAt and both lists', () => {
+  const now = Date.parse('2026-10-26T00:00:00Z');
+  const report = {
+    reportOnly: true,
+    wouldClose: [{ runId: 'r1', runDir: '/p/r1', reason: 'adhoc-dead', evidence: { verdict: 'dead' }, dropFindings: [] }],
+    orphaned: [{ runId: 'r2', runDir: '/p/r2', reason: 'PR #4 open, session gone', pr: 4 }],
+    unknown: 3,
+  };
+  const before = { lastRunAt: 1 };
+  const next = applyRunDispositions(before, report, now);
+  assert.deepEqual(next, {
+    lastRunAt: 1,
+    wouldClose: [{ runId: 'r1', runDir: '/p/r1', reason: 'adhoc-dead', evidence: { verdict: 'dead' } }],
+    orphaned: [{ runId: 'r2', runDir: '/p/r2', reason: 'PR #4 open, session gone', pr: 4 }],
+    reportOnlyPassAt: '2026-10-26T00:00:00.000Z',
+  });
+  assert.deepEqual(before, { lastRunAt: 1 }, 'the input is not mutated');
+});
+
+test('#3977 readCache keeps valid disposition keys and drops malformed entries', () => {
+  const root = tmpRoot();
+  const good = { runId: 'r1', runDir: '/p/r1', reason: 'adhoc-dead' };
+  writeCache(root, { wouldClose: [good, { runId: '', reason: 'x' }, null, 'r'], orphaned: [{ runId: 'r2', reason: 7 }, { ...good, reason: 'draft PR #3, session gone', pr: 3 }], reportOnlyPassAt: '2026-10-26T00:00:00.000Z' });
+  const c = readCache(root);
+  assert.deepEqual(c.wouldClose, [good]);
+  assert.deepEqual(c.orphaned, [{ ...good, reason: 'draft PR #3, session gone', pr: 3 }]);
+  assert.equal(c.reportOnlyPassAt, '2026-10-26T00:00:00.000Z');
+  writeCache(root, { wouldClose: 'x', reportOnlyPassAt: 'not a date' });
+  assert.equal('wouldClose' in readCache(root), false);
+  assert.equal('reportOnlyPassAt' in readCache(root), false);
 });
 
 test('readCache: a non-object claimBlobs (array, string) reads as {}', () => {

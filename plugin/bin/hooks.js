@@ -1528,7 +1528,7 @@ async function runCheckSessionResidue(argv) {
   if (staleEntries.length) {
     blocks.push(
       `${staleEntries.map((e) => e.line).join('\n')}\n` +
-        `  resolve with: review {run}/decisions.md and staged/ to resume, or close a finished run with: node "${root}/bin/hooks.js" close-run --run <dir>`,
+        `  resolve with: the command on each run's line (its session is gone), or close one you decide is abandoned with: node "${root}/bin/hooks.js" close-run --run <dir>`,
     );
   }
   if (approvableEntries.length) {
@@ -1712,7 +1712,7 @@ async function runReconcile(argv) {
       out.background = background;
     }
   } catch {
-    out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
+    out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, runDispositions: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
     if (!checksList.length) out.background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
   }
   if (jsonOut) {

@@ -73,6 +73,8 @@ A containment idiom can also reach the matcher split across lines. `plugin/bin/l
 
 `assert.deepEqual(offenders, [])` over the walk also passes when the matcher matches nothing. For a scan that matches compliant and non-compliant sites alike, assert a lower bound on matches across the tree, and make the message say what a low count means. The git-status scan uses `assert.ok(total >= 12, …)`, and its comment says that fewer matches means the patterns stopped matching, not that the calls went away. Set the floor to the count at the time the scan lands. Raise it when sites are added. Never lower it to make the suite green.
 
+A constant that must be read at exactly one site (a one-line enable switch meant to be flipped and deleted, never re-read elsewhere) takes a ceiling as well as a floor: `tests/bin-lib/reconcile/report-only-constant-conformance.test.js` (#3977) asserts `reads.length === 1` and names the one file it expects, excluding the declaration line and any `module.exports` listing from the count.
+
 Two scans get the same protection another way. The path-guard scan's exact per-file counts fail when a count drifts either way. The exit-code scan asserts `files.length > 50` over the walk. The windows-hide and path-containment scans have no floor. A scan whose zero-offender result is the expected one needs the planted self-test below to show its matcher can still match.
 
 ### Self-test the matcher
@@ -123,7 +125,7 @@ Assert the exact flagged line numbers, not just a count, because the right count
 
 ## Reference
 
-- Instances: `tests/git-status-optional-locks.test.js`, `tests/windows-hide-spawn-conformance.test.js`, `tests/bin-lib/exit-code-conformance.test.js`, `tests/path-guard-conformance.test.js`, `tests/path-containment-conformance.test.js`, `tests/porcelain-cwd-compare-conformance.test.js`
+- Instances: `tests/git-status-optional-locks.test.js`, `tests/windows-hide-spawn-conformance.test.js`, `tests/bin-lib/exit-code-conformance.test.js`, `tests/path-guard-conformance.test.js`, `tests/path-containment-conformance.test.js`, `tests/porcelain-cwd-compare-conformance.test.js`, `tests/bin-lib/reconcile/report-only-constant-conformance.test.js`
 - Shared helper and its planted cases: `tests/helpers/strip-comments.js` and `tests/helpers-strip-comments.test.js`
 - Could-not-parse principle: `.claude/skills/parse-signal-discipline/SKILL.md`, item 15
 - Rule: the `--no-optional-locks` line in `docs/donts.md`

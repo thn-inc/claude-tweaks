@@ -55,6 +55,13 @@ test('buildBatchQuery: aliases, typed variables, escaped heads', () => {
   assert.ok(q.includes('closingIssuesReferences(first:20)'), q);
 });
 
+test('#3977 buildBatchQuery selects isDraft and parseBatchResponse carries it', () => {
+  const q = buildBatchQuery({ numbers: [4145], heads: ['x'] });
+  assert.ok(q.includes('number state isDraft mergedAt'), q);
+  const { byNumber } = parseBatchResponse(body({ n0: { ...OPEN_4145, isDraft: true } }), { numbers: [4145], heads: [] });
+  assert.equal(byNumber.get(4145).isDraft, true);
+});
+
 test('buildBatchQuery: a non-integer number is never spliced into the query', () => {
   const q = buildBatchQuery({ numbers: ['1) { x } #', 7], heads: [] });
   assert.ok(!q.includes('x }'), q);
@@ -65,6 +72,7 @@ test('parseBatchResponse: reshapes a merged PR like gh pr view', () => {
   const { byNumber } = parseBatchResponse(body({ n0: MERGED_3992 }), { numbers: [3992], heads: [] });
   const want = {
     ...MERGED_3992,
+    isDraft: false,
     closingIssuesReferences: [{ number: 3816, repository: { name: 'claude-tweaks', owner: { login: 'thn-inc' } } }],
   };
   assert.deepEqual(byNumber.get(3992), want);

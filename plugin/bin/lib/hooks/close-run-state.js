@@ -71,7 +71,7 @@ function hasUnarchivedWork(runDir) {
 // run exactly as before; that caller passes `treatCleanAsAlreadyClosed:
 // false` to opt out.
 function closeRunState(runDir, {
-  explicit = false, callerIdentity = null, checkLiveWorktree = true, treatCleanAsAlreadyClosed = true,
+  explicit = false, callerIdentity = null, checkLiveWorktree = true, treatCleanAsAlreadyClosed = true, closedBy = null,
 } = {}) {
   // #3198: a run dir can be removed (archived) by a concurrent, unlocked
   // reconcile pass between whatever resolved `runDir` for this call and
@@ -147,6 +147,8 @@ function closeRunState(runDir, {
   const usable = (v) => (typeof v === 'string' && v ? v : null);
   const priorWorktree = prev && (usable(prev.worktree) || usable(prev.worktreeAtClose));
   if (priorWorktree) patch.worktreeAtClose = priorWorktree;
+  // #3977: who closed it, when a caller other than close-run/wrap-up does (session-end.js).
+  if (typeof closedBy === 'string' && closedBy) patch.closedBy = closedBy;
   const writeOk = !!ctxLib.writeRunState(runDir, patch);
   return { status: 'closed', foreignOwner, wrapupSeen, writeOk, notYetArchived };
 }
