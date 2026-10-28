@@ -15,6 +15,8 @@ description: Use when changing or reviewing the write gate's shell scanner in `p
 
 Run every case you add or change under `/bin/bash` (3.2, macOS) and a bash 5 (`/opt/homebrew/bin/bash` here). Use a scratch directory, a logging `git` stub in a stub dir that is the whole `PATH`, and real `cp`/`mkdir`/redirect targets, then record what each shell actually wrote and where. Write the verdict into the test comment, the way `tests/hooks-gate-coverage.test.js` does ("bash 3.2 and 5 write /main/f.js for each"). When the versions disagree, note it ("bash 3.2 cannot parse the odd-quote heredoc one") and side with whichever shell writes. Never derive an expected target from the scanner's own output or from memory of the bash manual.
 
+An option-parsing rule (which word `-t` or a long option takes as its value: `LONG_VALUE_OPTIONS`, `explicitTargetDir`) is judged by GNU coreutils, not by bash. macOS's own `cp` and `install` are BSD and reject every long option, so link Homebrew's GNU build into `stubDir` under the bare name (`fs.symlinkSync('/opt/homebrew/bin/gcp', stubDir + '/cp')`, `ginstall` for `install`). Run each shape before writing its row, a shape a record hands you included: GNU validates some values, so `cp --no-preserve -t a M/f.js`, `cp --sparse -t …` and `install --group -t …` exit 1 (`invalid argument`, `invalid group`) and write nothing. Give such a row a value the tool accepts (`install --gro staff -d M/x`), or say in its comment that it pins a reading, not a write (#4483).
+
 ### Bias every unknown toward a visible body or a reported target
 
 The gate's tradeoff is that a spurious deny is acceptable and a leak is not. A shape the scanner cannot place keeps its heredoc body visible, or resolves a relative target in the overflow cwd (`walkOptions` in `pre-tool-use.js` passes the main checkout). That is how the reader allowlist works: a non-reader on the opener line keeps the body, and `while read l; do …; done <<EOF` keeps it by design. Pin each fail-closed tradeoff as deliberate, so a later "fix" cannot quietly reopen it (`#4149: a shell loop on the opener line keeps its body (deliberate fail-closed tradeoff)`).
@@ -36,6 +38,8 @@ The scanner runs on every Bash call, so a super-linear shape stalls the session.
 ### Every rule earns a mutant that turns a test red
 
 In a scratch worktree, delete or invert each rule one at a time and run the four suites. A mutant that every test survives means one of two things: a pin is missing (add a case that fails on the mutant), or the rule is dead (remove it). #4149 dropped six rules this way (`5f8729589`, `9ba9e4d4a`). Mutate the checks downstream of a rule too: a rule that is only reachable through another rule's branch can look pinned when it is not.
+
+Run the mutant rather than predicting which rows it turns red. A rule the scanner reads in two places reaches the rows through both: #4483's plan said full-name `install --group`/`--owner` rows could not catch a dropped `LONG_VALUE_OPTIONS` entry, because `INSTALL_VALUE_FLAGS` also lists those names for `partitionArgs`, but `explicitTargetDir` reads them through `takesLongValue` alone and the rows went red. A pin tagged with a record gets the same check against the release before that record: load that release's `git-command.js` from a scratch worktree, and if the pin passes there too, it pins nothing the record changed. Give it an input that fails there, or retitle it as a pre-existing pin. #4483 replaced a #4303 `$[ … ]` test that returned the same targets at v6.156.2.
 
 ### A change to what a word means re-opens every rule keyed on its spelling
 
@@ -71,7 +75,7 @@ When a scanner fix needs a new marker or state that more than one consumer of `f
 
 - A new guarded program word or parser needs its own line in the differential corpus in `tests/hooks-bash-prefilter.test.js` (`docs/hooks.md`, #3092). The prefilter and the five guard parsers must agree on every command in it.
 - The fail-closed cases are stated once, in `plugin/skills/_shared/policy-schema-coverage.md`'s coverage block. Its reader lists are pinned to `DATA_READER_WORDS`, `READER_WRAPPER_WORDS`, `GIT_DATA_SUBCOMMANDS` and `INERT_NEIGHBOUR_WORDS`, so changing a list means editing the prose in the same change.
-- Test titles name the record and the behavior (`#4149: …`), never review-round labels (m1, F2, round N).
+- Test titles name the record and the behavior (`#4149: …`), never review-round labels (m1, F2, round N). Test comments state what bash and the scanner do now, citing the record that set it: no `Fix round 1 (#3989):` or `#4481 round 2:` lead and no "an earlier revision of this branch", since the squash merge erases the history they narrate (#4483 rewrote about 25). A comparison with a released version (`before #4210 it did`) is fine.
 - Expected paths the scanner resolves go through `path.resolve` (`MAIN_F` in `tests/hooks-gate-coverage.test.js`), or the pin fails on win32.
 - A marker the scanner plants in a word value (`STRAY`, a NUL, in `settleStrayBackslash`) needs every typed copy stripped from the input before the walk, or a typed one reads as the marker. `forEachShellSegment` and `shouldRunFull` both drop every NUL first, as bash does with one it reads (#4281).
 
