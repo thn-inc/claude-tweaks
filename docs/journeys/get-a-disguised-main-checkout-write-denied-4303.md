@@ -31,6 +31,9 @@ files:
   - `perl -0pi -e 's/a/b/' ../main/f`
   - `echo x >& ../main/f`
   - `x=$(true; cd ../main && y=$(( (1 & 3) )) && git commit -am x)`
+  - `cd ../main && case a in a) cd ../wt;; esac | cat; echo x > f`
+  - `cd ../main; case a in a) cd ../wt;; esac > f`
+  - `a=() case x | cd ../wt; echo hi > ../main/f.js`
 - **Action:** The session runs each.
 - **Should feel:** Refused, with the same denial and "use a worktree" remediation a plain `echo x > ../main/f` gets. No shape slips through because of how the cd or flag was written.
 - **Should understand:** The walk follows bash's semantics, each checked against bash 3.2 and 5:
@@ -41,6 +44,9 @@ files:
   - A digit in a perl cluster (`-0pi`) does not hide `-i`.
   - `>& word` and `>&word` write to the file `word`.
   - An `&` inside arithmetic parentheses is not a background.
+  - A `case … esac` that is the first element of a pipeline runs in a subshell, so its arm's cd does not reach the next command. The walk checks the write under both the pipeline's start and the arm's cwd, and keeps a separate record per nested case.
+  - A redirect on a `case … esac` opens before any arm runs, so it resolves under the case's start (and, failing closed, the arm's cwd too).
+  - `x=()` is an empty array assignment, not a function definition, so the word after it is a command.
 - **Red flags:**
   - One of these runs while its plain form is denied.
   - A denial names a fragment such as `&` or `1` as the path. `(( a>1 || b>2 ))` resolves no target.
@@ -80,10 +86,12 @@ files:
   | `cd -`, `$OLDPWD`, a symlinked dir or a failing cd | #4450 |
   | Compound-command bodies, `pushd` and `builtin cd` | #4244 |
   | zsh-only redirect forms | #4455 |
+  | A `case` whose cd arm does not match, a case or `cd` inside an `if`/`while`/`for` body, a function called after a later cd, zsh's pipeline last element | follow-ups recorded by #4481's build |
 - **Red flags:** A skill or procedure that tells agents to use one of these shapes because the gate misses it.
 
 ## Origin
 - Created during the build of #4303. That build fixed the seven fail-opens #4149's review left (U1–U6, S49, S50), then made the cwd cap affordable. Losing track of the cwd past the cap led to the `lost` marker and its consumers, which were settled on base parity by the user's decision.
+- Updated during the build of #4481: a `case` compound that starts a pipeline, a redirect on a case compound, nested cases, and `x=()` no longer leak a main-checkout write.
 - Related journeys:
   - `write-a-glued-redirect-from-the-main-checkout-4015.md`, the redirect scan the same walk feeds.
   - `run-a-heredoc-node-script-from-the-main-checkout-3989.md`, the heredoc carve-out.
