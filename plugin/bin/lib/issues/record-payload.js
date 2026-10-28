@@ -263,7 +263,8 @@ const ANY_HEADING_RE = /^#{1,6}[ \t]/;
 // Breaking Change/Release Note/Overview extraction, decomposition-crossref.js's
 // Gotchas/Prerequisites extraction, and grouping.js's Key Files extraction —
 // three independent re-implementations of the same "find a heading, walk
-// lines until the next one" loop (#2251 review row 18).
+// lines until the next one" loop (#2251 review row 18) — and, called directly
+// for its null-on-absent result, materialize-format.js's sectionText (#4367).
 //   levelPattern: the `{...}` regex-quantifier body for this heading's own
 //     level (default '2,4' — h2 through h4, decomposition-crossref.js's and
 //     grouping.js's shared original range).

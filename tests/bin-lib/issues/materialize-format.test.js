@@ -625,3 +625,24 @@ test('sectionText: a CRLF body with a real Release Note heading line is found, t
   assert.equal(sectionText(crlf, 'Release Note'), 'Fixed the thing.');
   assert.equal(shapeGate(crlf).ok, true);
 });
+
+test('shapeGate: a level-3 Release Note heading is not the level-2 section (#4367)', () => {
+  const level3 = SHAPED_BODY.replace('## Release Note\n', '### Release Note\n');
+  assert.notEqual(level3, SHAPED_BODY);
+  assert.deepEqual(shapeGate(level3), { ok: false, missing: ['Release Note'] });
+  assert.equal(sectionText(level3, 'Release Note'), null);
+});
+
+test('shapeGate: a closed-ATX Acceptance Criteria heading is not the whole heading (#4367)', () => {
+  const closed = SHAPED_BODY.replace('## Acceptance Criteria\n', '## Acceptance Criteria ##\n');
+  assert.notEqual(closed, SHAPED_BODY);
+  assert.deepEqual(shapeGate(closed), { ok: false, missing: ['Acceptance Criteria'] });
+  assert.equal(sectionText(closed, 'Acceptance Criteria'), null);
+});
+
+test('sectionText returns null and extractSection returns an empty string for a non-string body (#4367)', () => {
+  for (const body of [undefined, null, 42, {}]) {
+    assert.equal(sectionText(body, 'Release Note'), null);
+    assert.equal(extractSection(body, 'Release Note', { levelPattern: '2', stopPattern: '2', trim: true }), '');
+  }
+});
