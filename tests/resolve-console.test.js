@@ -354,6 +354,39 @@ test('a finding row whose tick no comment carries reads declined and leaves Reso
   assert.equal(written.resolved, false);
 });
 
+// #3942 — ratifying a deferral ruling files a record; when that filing failed the
+// executing session names the ruling in filingFailed: filing-failed, not cleared,
+// outranking the tick — never executed, which would read as a clean ratify.
+test('AC3.1: a ticked ruling named in filingFailed reads filing-failed, uncleared, Resolve unticked (#3942)', async () => {
+  const { result, markerBody, replyBody, written } = await runRuling(RULING_ITEMS, { approve: ['1', 'r1'], decline: [], filingFailed: ['r1'] });
+  const r1 = result.outcomes.find((o) => o.id === 'r1');
+  assert.equal(r1.outcome, 'filing-failed');
+  assert.equal(r1.note, FILING_FAILED_NOTE);
+  assert.equal(r1.isRulingRow, true);
+  assert.equal(result.resolved, false);
+  assert.doesNotMatch(markerBody, /<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[x\]/i);
+  assert.ok(replyBody.includes(`\`r1\`: ${FILING_FAILED_NOTE}`));
+  assert.equal(written.resolved, false);
+  assert.equal(written.items.find((i) => i.id === 'r1').outcome, 'filing-failed');
+});
+
+test('#3942: a ruling id in both reverseFailed and filingFailed is rejected as conflicting-failure-ids before any write', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir, { items: RULING_ITEMS });
+  const ghCalls = [];
+  const writeCalls = [];
+  const result = await resolveConsoleExecution(dir, { approve: [], decline: [], reverseFailed: ['r1'], filingFailed: ['r1'] }, {
+    now: () => Date.now(),
+    gh: fakeGh(ghCalls, { prViewBody: primaryCommentBody(['1', 'r1']) }),
+    writeFile: (p, c) => writeCalls.push({ p, c }),
+  });
+  assert.equal(result.status, 'error');
+  assert.equal(result.reason, 'conflicting-failure-ids');
+  assert.deepEqual(result.ids, ['r1']);
+  assert.ok(ghCalls.every((a) => !(a[0] === 'pr' && a[1] === 'comment') && a[0] !== 'api'));
+  assert.equal(writeCalls.length, 0);
+});
+
 test('an id without findingItem in filingFailed is rejected as not-finding-items before any write', async () => {
   const dir = makeRunDir();
   writeConsoleJson(dir, { items: FINDING_ITEMS });

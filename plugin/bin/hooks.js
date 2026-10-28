@@ -1440,7 +1440,11 @@ async function runResolveConsole(argv) {
     return 1;
   }
   if (result.reason === 'not-finding-items') {
-    process.stdout.write(`claude-tweaks: --filing-failed id(s) ${result.ids.join(', ')} are not finding rows (no findingItem), console not resolved\n`);
+    process.stdout.write(`claude-tweaks: --filing-failed id(s) ${result.ids.join(', ')} are neither finding rows nor sdd-ruling rows (no findingItem, no isRulingRow flag), console not resolved\n`);
+    return 1;
+  }
+  if (result.reason === 'conflicting-failure-ids') {
+    process.stdout.write(`claude-tweaks: id(s) ${result.ids.join(', ')} named in both --reverse-failed and --filing-failed, console not resolved\n`);
     return 1;
   }
   process.stdout.write(`claude-tweaks: console resolution failed for ${path.basename(runDir)} — ${result.reason}${result.error ? `: ${result.error}` : ''}\n`);

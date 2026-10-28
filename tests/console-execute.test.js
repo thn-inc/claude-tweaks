@@ -585,6 +585,24 @@ test('decideConsoleExecute: a null / missing ruling text is a gap (sdd-ruling-un
   ]);
 });
 
+test('#3942: decideConsoleExecute attaches ratifyAction to each ungapped ruling item, none to a gapped one', () => {
+  const cj = rulingConsoleJson([
+    { id: 'r-yes', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'r-no', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'r-gap', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'plain', kind: 'staged', summary: 'plain' },
+  ]);
+  const result = decideConsoleExecute(cj, tickedComment(['r-yes', 'r-no', 'r-gap', 'plain']), Date.now(), {
+    rulingTexts: { 'r-yes': RULING_TEXT_DEFERS_YES_REASONED, 'r-no': RULING_TEXT_DEFERS_NO, 'r-gap': RULING_TEXT_DEFERS_YES },
+  });
+  const byId = Object.fromEntries(result.items.map((i) => [i.id, i]));
+  assert.strictEqual(byId['r-yes'].ratifyAction, 'file-record');
+  assert.strictEqual(byId['r-no'].ratifyAction, 'accept');
+  assert.ok(!('ratifyAction' in byId['r-gap']));
+  assert.ok(!('ratifyAction' in byId.plain));
+  assert.deepStrictEqual(result.rulingGateGaps, [{ id: 'r-gap', reason: 'sdd-ruling-deferral-no-defer-reason' }]);
+});
+
 test('decideConsoleExecute: Defers: no and a reasoned deferral are not gaps; non-ruling items are never gated', () => {
   const cj = rulingConsoleJson([
     { id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true },

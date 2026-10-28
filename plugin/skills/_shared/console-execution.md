@@ -55,11 +55,15 @@ since a checkbox has none to read). Every executed or declined item appends its 
 Resolve time, or named in `resolve-console --decline`, it routes to **reverse**, never to a plain
 decline — compose and file the reversal record per `wrap-up/review-console-appendix.md`'s
 `sdd-ruling-*` bullet (ledger row → `deferred`, Resolution `reversed → #{new record}`; the row stays
-`open`, cause logged, when the record is refused or not created). Ticked, it is ratify (ledger row →
-`accepted`, per the same bullet). Log it as an `AUTO` line naming `reversed → #{new record}` only
+`open`, cause logged, when the record is refused or not created). Ticked, it is ratify, per the same
+bullet: the ready item's `ratifyAction` (#3942) says which — `accept` writes the ledger row →
+`accepted`; `file-record` (a deferral) files the deferred work as a record, as a reverse does, and
+writes the row → `deferred`, Resolution `ratified → #{new record}`, once the record exists. Log
+either filing as an `AUTO` line naming `reversed → #{new record}` or `ratified → #{new record}` only
 once the record exists; when the record is refused or not created, log that cause instead
 (`REFUSED` when `wrap-up/refused-proposals.md` refuses it, else `SKIP` — `FAILED` is reserved for
-its two refine writers) — never `declined`, and never `reversed` without a record number.
+its two refine writers) — never `declined`, and never `reversed` or `ratified` without a record
+number.
 
 **Except a finding row** (`findingItem` on its item — a can't-tell Low-confidence/Contested row,
 `_shared/console-on-pr.md`'s Row shape, #3949): ticked, it files through `wrap-up/review-console.md`
@@ -141,7 +145,9 @@ just posted to the PR. Two surfaces, one answer: whichever resolves first wins.
   reversal record was filed. When the reverse was refused or never created, also pass that
   ruling's id in `--reverse-failed`: the reply then labels it
   `reverse not filed — see decisions.md` and Resolve stays unticked. Never let such a ruling
-  default to `reversed`.
+  default to `reversed`. When a deferral ratify's record was refused or never created, pass that
+  ruling's id in `--filing-failed` instead (#3942): the reply labels it
+  `filing failed — see decisions.md`, Resolve stays unticked, and the ruling never reads `executed`.
 - **PR ticks resolve first** (a human ticked boxes on the PR while the chat prompt was still open,
   or a reconciler pass executed it in the interim): before acting on the chat answer, re-check the
   console comment for the resolved marker. If present, do not execute again and do not re-render

@@ -21,22 +21,37 @@ const SDD_RULING_REASONS = Object.freeze({
   UNREADABLE: 'sdd-ruling-unreadable',
 });
 
-function sddRulingDeferralReason(text) {
-  if (text === null || text === undefined) return SDD_RULING_REASONS.UNCLASSIFIED;
+// #3942: what ratifying a ruling does. A deferral files the deferred work as a
+// backlog record (ledger row `deferred`, `ratified → #{n}`); a settled
+// `Defers: no` ruling keeps the `accepted` write-back. Prose twin: the same
+// appendix bullet's ratify sentence, which names each value.
+const SDD_RULING_RATIFY_ACTIONS = Object.freeze({
+  FILE_RECORD: 'file-record',
+  ACCEPT: 'accept',
+});
+
+// The header's two keys, read once for both exports below. Both header keys match
+// case-insensitively; the reason VALUE check stays exact (in sddRulingDeferralReason).
+function readHeader(text) {
   const header = [];
   for (const raw of String(text).split(/\r?\n/)) {
     const line = raw.replace(/\s+$/, '');
     if (line === '') break;
     header.push(line);
   }
-  // Both header keys match case-insensitively; the reason VALUE check below stays exact. More than one
-  // `Defers:` line fails closed (the first line must not silently win).
   const defersMatches = header.map((l) => /^defers:[ \t]*(\S+)$/i.exec(l)).filter(Boolean);
-  if (defersMatches.length > 1) return SDD_RULING_REASONS.UNCLASSIFIED;
-  const defers = defersMatches.length ? defersMatches[0][1].toLowerCase() : null;
   // Every header line beginning with `Defer-reason:` is a reason line, whatever its value looks like
   // (#3880 fix round 1): a malformed one must fail closed, not fall through as if it were absent.
   const reasons = header.map((l) => /^defer-reason:(.*)$/i.exec(l)).filter(Boolean).map((m) => m[1].trim());
+  return { defersMatches, reasons };
+}
+
+function sddRulingDeferralReason(text) {
+  if (text === null || text === undefined) return SDD_RULING_REASONS.UNCLASSIFIED;
+  const { defersMatches, reasons } = readHeader(text);
+  // More than one `Defers:` line fails closed (the first line must not silently win).
+  if (defersMatches.length > 1) return SDD_RULING_REASONS.UNCLASSIFIED;
+  const defers = defersMatches.length ? defersMatches[0][1].toLowerCase() : null;
   if (defers === 'yes' || reasons.length > 0) {
     return reasons.length === 1 && DEFER_REASONS.includes(reasons[0]) ? null : SDD_RULING_REASONS.NO_DEFER_REASON;
   }
@@ -44,4 +59,16 @@ function sddRulingDeferralReason(text) {
   return SDD_RULING_REASONS.UNCLASSIFIED;
 }
 
-module.exports = { SDD_RULING_REASONS, sddRulingDeferralReason };
+// null when the ruling is not ratifiable (sddRulingDeferralReason names a gap);
+// otherwise file-record for a deferral (`Defers: yes`, or any `Defer-reason:`
+// header line), else accept.
+function sddRulingRatifyAction(text) {
+  if (sddRulingDeferralReason(text) !== null) return null;
+  const { defersMatches, reasons } = readHeader(text);
+  const defers = defersMatches.length ? defersMatches[0][1].toLowerCase() : null;
+  return defers === 'yes' || reasons.length > 0 ? SDD_RULING_RATIFY_ACTIONS.FILE_RECORD : SDD_RULING_RATIFY_ACTIONS.ACCEPT;
+}
+
+module.exports = {
+  SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
+};

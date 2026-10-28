@@ -122,7 +122,8 @@ test('AC5.1: the appendix maps apply on an sdd-ruling-* item to ratify (ledger a
   assert.ok((APPENDIX.match(/sdd-ruling/g) || []).length >= 2, 'prefix list plus the Resolution-to-step bullet');
   // Wrap-tolerant pins: `\s+` wherever the hard-wrapped bullet may break a line, so a reflow
   // with no wording change stays green (review #3401, lens 3f).
-  assert.match(APPENDIX, ws('- `apply` on an `sdd-ruling-*` item — still step 1, but it executes no code change: it writes the item\'s `Ledger:` row back to `accepted`, Resolution `ratified at Review Console — {the ruling\'s own "— why" clause, or "no — why clause on the ruling line" when it carries none}`'));
+  assert.match(APPENDIX, ws('- `apply` on an `sdd-ruling-*` item — ratify. It executes no code change'));
+  assert.match(APPENDIX, ws('Still step 1: it writes the item\'s `Ledger:` row back to `accepted`, Resolution `ratified at Review Console — {the ruling\'s own "— why" clause, or "no — why clause on the ruling line" when it carries none}`'));
   assert.match(APPENDIX, ws('never an empty clause: `finish-console` rejects an `accepted` entry with no resolution text before writing anything'));
   assert.match(APPENDIX, ws('through `finish-console`\'s existing `ledger` array'));
   assert.match(APPENDIX, ws('composes a born-ready record proposal exactly as `_shared/ledger-format.md`\'s Phase 3 `Keep` does (`specShapedBody`'));
@@ -130,8 +131,8 @@ test('AC5.1: the appendix maps apply on an sdd-ruling-* item to ratify (ledger a
   assert.match(APPENDIX, ws('stages it as `staged/ledger-record-sdd-ruling-{N}.md`, routes it through step 7 in the same pass, and — once step 7 has created the record — writes the row back to `deferred`, Resolution `reversed → #{new record}`'));
   assert.match(APPENDIX, ws('when step 7 declines or fails to create it (`refused-proposals.md`, a `gh` failure), the row stays `open` with the cause logged'));
   assert.match(APPENDIX, ws('never `deferred` without a record number'));
-  assert.match(APPENDIX, ws('Outside Approve all, a ratify writes the row directly at step 1 per `_shared/staged-patch.md`\'s Write-back to the ledger'));
-  assert.match(APPENDIX, ws('a `reverse` on any path writes it at step 7, as above, never at step 1'));
+  assert.match(APPENDIX, ws('Outside Approve all, an `accept` ratify writes the row directly at step 1 per `_shared/staged-patch.md`\'s Write-back to the ledger'));
+  assert.match(APPENDIX, ws('a `file-record` ratify and a `reverse` on any path write it at step 7, as above, never at step 1'));
 });
 
 test('AC5.2: the interactive console names ratify/reverse as the Override vocabulary for a ruling row and refuses a bare skip', () => {
@@ -141,7 +142,7 @@ test('AC5.2: the interactive console names ratify/reverse as the Override vocabu
 });
 
 test('review-console.md step 1 points an sdd-ruling-* write-back at the appendix bullet', () => {
-  assert.match(CONSOLE, /an `sdd-ruling-\*` item's write-back follows `review-console-appendix\.md`'s `sdd-ruling-\*` bullet \(ratify → `accepted` here; reverse → `deferred` at step 7, once the reversal record exists\), not the patch table/);
+  assert.match(CONSOLE, /an `sdd-ruling-\*` item's write-back follows `review-console-appendix\.md`'s `sdd-ruling-\*` bullet \(an `accept` ratify → `accepted` here; a `file-record` ratify — a deferral — stages its record proposal here and writes `deferred`, `ratified → #\{n\}`, at step 7 once the record exists; reverse → `deferred` at step 7, once the reversal record exists\), not the patch table/);
 });
 
 test('review #3401 → #3510: the CLI owns the failure branch; the hand-performed rewrite and ordering clauses are gone', () => {
@@ -175,8 +176,9 @@ test('AC1.1 #3513: console-execution.md — an unticked or --decline sdd-ruling-
   assert.match(CONSOLE_EXECUTION, ws('it routes to **reverse**, never to a plain decline'));
   assert.match(CONSOLE_EXECUTION, ws("per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet"));
   assert.match(CONSOLE_EXECUTION, ws('only once the record exists; when the record is refused or not created, log that cause instead'));
-  assert.match(CONSOLE_EXECUTION, ws('never `reversed` without a record number'));
-  assert.match(CONSOLE_EXECUTION, ws('Ticked, it is ratify (ledger row → `accepted`, per the same bullet)'));
+  assert.match(CONSOLE_EXECUTION, ws('never `reversed` or `ratified` without a record number'));
+  assert.match(CONSOLE_EXECUTION, ws('Ticked, it is ratify, per the same bullet'));
+  assert.match(CONSOLE_EXECUTION, ws('`accept` writes the ledger row → `accepted`'));
   assert.match(CONSOLE_EXECUTION, ws('(staged file `staged/sdd-ruling-{N}.md`, or `spec-{N}/staged/sdd-ruling-{N}.md` on a multi-spec bundle, #3401)'));
   assert.match(CONSOLE_EXECUTION, ws('`REFUSED` when `wrap-up/refused-proposals.md` refuses it, else `SKIP`'));
   assert.match(CONSOLE_EXECUTION, ws('a ruling the chat answer ratifies must be passed in `--approve` (an unticked ruling id in neither list is recorded `reversed`'));
@@ -206,7 +208,7 @@ test('#3636: console-on-pr.md documents the isRulingRow flag on sdd-ruling-* ite
 const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');
 
 test('AC1.1 #3513: multispec-review-console.md — step 1 ratifies a ruling, Override offers ratify/reverse and refuses skip/modify/revert on one', () => {
-  assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` file is no patch — Approve all ratifies it: this step writes its `Ledger:` row to `accepted` directly (per `_shared/staged-patch.md`'s Write-back to the ledger, Resolution per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet — this console has no `finish-console` step); reverse is Override's `reverse {#}`"));
+  assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` file is no patch — Approve all ratifies it: this step writes its `Ledger:` row to `accepted` directly (per `_shared/staged-patch.md`'s Write-back to the ledger, Resolution per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet — this console has no `finish-console` step), except a deferral (`file-record`), whose record is staged as `reverse {#}`'s is and created at step 2, then `deferred`, `ratified → #{n}`; reverse is Override's `reverse {#}`"));
   assert.match(MULTISPEC_CONSOLE, ws('ratify/reverse {#} for an SDD ruling row'));
   assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` row takes only `ratify {#}`/`reverse {#}` (the appendix bullet); `skip`/`modify`/`revert` on one is refused as `wrap-up/review-console-interactive.md` refuses it"));
   assert.match(MULTISPEC_CONSOLE, ws("`reverse {#}` stages its reversal record under that spec's `spec-{N}/staged/` and creates it at this console's step 2 (queue writes), not the appendix's step 7, then writes the row to `deferred` once the record exists"));

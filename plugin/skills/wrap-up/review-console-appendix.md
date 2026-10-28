@@ -75,12 +75,26 @@ procedure — no row is left unrouted:
   `Invariant:` re-derivation below), and a staged `.md` proposal (`polish-suggestion-*`,
   `visual-review-*`, `design-decision-*`, `build-deviation-*`, `simplify-*`, `deepen-*`, `sdd-ruling-*`) applied
   as that step already describes for a non-patch item.
-- `apply` on an `sdd-ruling-*` item — still step 1, but it executes no code change: it
-  writes the item's `Ledger:` row back to `accepted`, Resolution
-  `ratified at Review Console — {the ruling's own "— why" clause, or "no — why clause on the ruling line" when it carries none}`
-  — never an empty clause: `finish-console` rejects an `accepted` entry with no resolution text
-  before writing anything (under Approve all,
-  through `finish-console`'s existing `ledger` array — `review-console.md` step 11).
+- `apply` on an `sdd-ruling-*` item — ratify. It executes no code change, and what it writes
+  depends on the staged header, classified by `bin/lib/console/sdd-ruling.js`'s
+  `sddRulingRatifyAction` (#3942):
+  - `accept` — a settled design decision (`Defers: no` with no `Defer-reason:` header line).
+    Still step 1: it writes the item's `Ledger:` row back to `accepted`, Resolution
+    `ratified at Review Console — {the ruling's own "— why" clause, or "no — why clause on the ruling line" when it carries none}`
+    — never an empty clause: `finish-console` rejects an `accepted` entry with no resolution text
+    before writing anything (under Approve all,
+    through `finish-console`'s existing `ledger` array — `review-console.md` step 11).
+  - `file-record` — a deferral (`Defers: yes`, or any `Defer-reason:` header line, with a valid
+    reason). Ratifying it files the deferred work, so it never ends as a bare `accepted` row: it
+    composes a born-ready record proposal exactly as `reverse` does below (`specShapedBody`;
+    Current State = the ruling and the finding it deferred; Deliverables = the deferred work;
+    `Origin: SDD ruling ratified at Review Console`; `Defer-reason:` = the staged file's own
+    `Defer-reason:` value), stages it as `staged/ledger-record-sdd-ruling-{N}.md`, routes it
+    through step 7 in the same pass, and — once step 7 has created the record — writes the row
+    back to `deferred`, Resolution `ratified → #{new record}` (under Approve all, through
+    `finish-console`'s `ledger` array, which refuses a `ratified` deferral with no record
+    number). When step 7 declines or fails to create it, the row stays `open` with the cause
+    logged — never `accepted`, never `deferred` without a record number.
   `reverse` (the Override vocabulary for a ruling row, `review-console-interactive.md`)
   composes a born-ready record proposal exactly as
   `_shared/ledger-format.md`'s Phase 3 `Keep` does (`specShapedBody`; Current State = the
@@ -94,10 +108,10 @@ procedure — no row is left unrouted:
   `deferred` without a record number, since terminal statuses are final. The console
   cannot change code for a reversal — the fix wave is closed — so filing is the only
   reverse action.
-  Outside Approve all, a ratify writes the row directly at step 1
+  Outside Approve all, an `accept` ratify writes the row directly at step 1
   per `_shared/staged-patch.md`'s Write-back to the ledger — the same per-item write that
-  step already performs for a `.patch`; a `reverse` on any path writes it at step 7, as
-  above, never at step 1.
+  step already performs for a `.patch`; a `file-record` ratify and a `reverse` on any path
+  write it at step 7, as above, never at step 1.
   Under `console-resolve.js --policy console-auto` (unattended) an `sdd-ruling-*` item resolves
   `apply` (ratify) only when its staged header shows it is safe (#3880): `Defers: no` with no
   `Defer-reason:` header line — a settled design decision, resolved exactly as before — or a
@@ -109,6 +123,9 @@ procedure — no row is left unrouted:
   `pending — sdd-ruling-unreadable` (the reconciler's gap names why: `no-staged-path`, `path-rejected`,
   `not-found`, or `read-failed`). None is ever auto-ratified, and the reconciler's
   `consoleAutoResolve` path withholds the same rows (`_shared/console-execution.md`).
+  A `file-record` ruling that does auto-ratify resolves `apply` with the reason
+  `ratify files a deferral record …`, and its record is filed at step 7 like a `Q#`; a failed
+  filing follows `refused-proposals.md`'s failed-execution rewrite, so the row stays `open`.
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
   runs first (a `.shadow-dup` copy is composed by `shadow-dup-proposal.js` before that, as that step states); on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
   `MEMORY.md` index line).

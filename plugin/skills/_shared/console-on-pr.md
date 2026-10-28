@@ -116,7 +116,7 @@ Render this block, unmodified, immediately before the final Resolve checkbox:
 
 The SDD-ruling and finding-row bullets are the two exceptions to the declined rule: the executing
 session performs the ratify or reverse write-back per `wrap-up/review-console-appendix.md`'s
-`sdd-ruling-*` bullet, and the file or drop per `wrap-up/review-console.md` step 7
+`sdd-ruling-*` bullet (a ticked deferral ruling files its record too, then reads `ratified → #{n}`), and the file or drop per `wrap-up/review-console.md` step 7
 (`_shared/console-execution.md`'s Execution routing).
 
 ## Resolve checkbox

@@ -217,6 +217,32 @@ test('finish-console rejects an invalid ledger status (e.g. "open") at payload v
   assert.ok(!fs.existsSync(path.join(runDir, 'verify-expectations.json')), 'validation failure must precede any write, including step 1');
 });
 
+// #3942: a ratified deferral ruling's row goes deferred only with the record its ratify filed.
+test('AC3.1: finish-console rejects a deferred "ratified" ledger entry with no record number before any write (#3942)', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE);
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'deferred', resolution: 'ratified at Review Console — deferral' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /ledger\[0\]: a ratified deferral needs its record number \(ratified → #\{n\}\)/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
+});
+
+test('AC1.1: finish-console accepts a deferred "ratified → #4501" ledger entry and an accepted ratify (#3942)', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE);
+  const payload = JSON.stringify({ ledger: [
+    { item: 1, status: 'deferred', resolution: 'ratified → #4501' },
+    { item: 2, status: 'accepted', resolution: 'ratified at Review Console — settled' },
+  ] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const ledgerText = fs.readFileSync(path.join(runDir, 'ledger.md'), 'utf8');
+  assert.match(ledgerText, /\| 1 \| review \| Needs a memory capture \| deferred \| ratified → #4501 \|/);
+  assert.match(ledgerText, /\| 2 \| test \| Flaky selector \| accepted \| ratified at Review Console — settled \|/);
+});
+
 test('finish-console validates the stdin payload shape before writing anything (malformed memory entry)', () => {
   const runDir = makeRunDir();
   const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: '{"memory":[{"file":"m.md"}]}' });

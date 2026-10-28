@@ -65,7 +65,7 @@ test('resolve-console --filing-failed on a non-finding item is refused by the CL
     result = { code: e.status, stdout: e.stdout || '' };
   }
   assert.equal(result.code, 1);
-  assert.match(result.stdout, /--filing-failed id\(s\) 1 are not finding rows \(no findingItem\)/);
+  assert.match(result.stdout, /--filing-failed id\(s\) 1 are neither finding rows nor sdd-ruling rows \(no findingItem, no isRulingRow flag\)/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
 });
 

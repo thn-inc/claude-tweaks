@@ -626,6 +626,11 @@ function validateFinishConsolePayload(payload) {
     if (!l || !Number.isInteger(l.item) || l.item <= 0) return `ledger[${i}].item must be a positive integer`;
     if (!TERMINAL_STATUSES.includes(l.status)) return `ledger[${i}].status must be one of ${TERMINAL_STATUSES.join(', ')}`;
     if (l.status !== 'observation' && !String(l.resolution || '').trim()) return `ledger[${i}].resolution is required for status '${l.status}'`;
+    // #3942: ratifying a deferral ruling files a record; its row goes deferred only
+    // with that record's number — an uncreated record leaves the row open instead.
+    if (l.status === 'deferred' && /^ratified\b/i.test(String(l.resolution).trim()) && !/#\d+/.test(l.resolution)) {
+      return `ledger[${i}]: a ratified deferral needs its record number (ratified → #{n}) — leave the row open when the record was not created`;
+    }
   }
   return null;
 }

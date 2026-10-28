@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
-const { classifyStagedItem, resolveAll, renderTable, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption } = require(MOD);
+const { classifyStagedItem, resolveAll, renderTable, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption, RATIFY_FILES_RECORD_REASON } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { unresolvedItems, readRunResidue, formatResidueLines } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
@@ -1225,6 +1225,13 @@ test('defers-no-resolves-apply: Defers: no keeps the Pending-review stance (#388
 
 test('defers-yes-valid-reason-resolves-apply: Defers: yes with one valid Defer-reason keeps the stance (#3880 AC3)', () => {
   assert.strictEqual(resolveStaged('sdd-ruling-1.md', RULING('Defers: yes\nDefer-reason: needs-human-decision\n')).resolution, 'apply');
+});
+
+test('defers-yes-valid-reason-names-file-record: a deferral ruling resolves apply with the file-record reason (#3942)', () => {
+  const item = resolveStaged('sdd-ruling-1.md', RULING('Defers: yes\nDefer-reason: needs-human-decision\n'));
+  assert.strictEqual(item.resolution, 'apply');
+  assert.strictEqual(item.reason, RATIFY_FILES_RECORD_REASON);
+  assert.notStrictEqual(resolveStaged('sdd-ruling-1.md', RULING('Defers: no\n')).reason, RATIFY_FILES_RECORD_REASON);
 });
 
 test('defers-yes-no-reason-pending: Defers: yes with no Defer-reason resolves pending (#3880 AC3)', () => {
