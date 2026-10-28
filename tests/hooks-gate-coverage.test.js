@@ -1034,7 +1034,7 @@ test('#3989: a body fed to a shell is still scanned (bash, pipe into sh, unresol
   assert.deepStrictEqual(fileWriteTargets('$SHELL <<EOF\necho x > f.js\nEOF', '/r'), expected);
 });
 
-// Fix round 1 (#3989): bash expands `$(...)` and backticks in an unquoted body, so
+// #3989: bash expands `$(...)` and backticks in an unquoted body, so
 // those bodies stay visible; a quoted delimiter's body is never expanded.
 // The parser is token-based, so the closing `)` stays on the target name (`f.js)`),
 // exactly as a one-line `echo $(echo x > f.js)` already does on main. The gate
@@ -1057,7 +1057,7 @@ test('#3989: a quoted heredoc delimiter is never expanded, so its body command s
   assert.deepStrictEqual(fileWriteTargets('node x.js <<"EOF"\n$(echo x > f.js)\nEOF', '/r'), []);
 });
 
-// Fix round 1 (#3989): an opener bash reads differently from this parser (or a
+// #3989: an opener bash reads differently from this parser (or a
 // body with no closing line) must not swallow the commands after it. Each opener
 // below is a real command in bash; the trailing redirect must still resolve.
 test('#3989: a body with no closing delimiter keeps the text from its opener on, so a trailing redirect resolves', () => {
@@ -1076,7 +1076,7 @@ test('#3989: a delimiter with a backslash ends at its own spelling, as bash read
   assert.deepStrictEqual(fileWriteTargets('cat <<"E\\F"\nx > a\nE\\F\necho x > f.js', '/r'), f);
 });
 
-// Fix round 1 (#3989): a line ending in a continuation operator hands its bodies to
+// #3989: a line ending in a continuation operator hands its bodies to
 // the next command, so they stay visible.
 test('#3989: an opener line ending in |, && or || keeps its bodies, since the next command receives them', () => {
   const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
@@ -1085,7 +1085,7 @@ test('#3989: an opener line ending in |, && or || keeps its bodies, since the ne
   assert.deepStrictEqual(fileWriteTargets('cat <<EOF ||   # piped on\necho x > f.js\nEOF\nsh', '/r'), f);
 });
 
-// Fix round 1 (#3989): the shell carve-out covers the wider shell family and the
+// #3989: the shell carve-out covers the wider shell family and the
 // wrappers that run a program, and a backslash no longer hides a shell's name.
 test('#3989: the shell carve-out covers su, tcsh, versioned shells, backslash-escaped names, and wrapped shells', () => {
   const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
@@ -1098,7 +1098,7 @@ test('#3989: the shell carve-out covers su, tcsh, versioned shells, backslash-es
   assert.deepStrictEqual(fileWriteTargets('sudo node x.js <<EOF\nif (a > 0) b();\nEOF', '/r'), [], 'a wrapper running a non-shell program is not widened');
 });
 
-// Fix round 2 (#3989): a shell reader the carve-out must still recognize, in the shapes
+// #3989: a shell reader the carve-out must still recognize, in the shapes
 // a glued operator, a group, or a process substitution gives it. Each body runs as
 // shell in bash, so its `echo x > f.js` must still resolve.
 test('#3989: a shell glued to its heredoc operator (`sh<<EOF`, `bash<<-EOF`) keeps its body visible', () => {
@@ -1116,14 +1116,14 @@ test('#3989: a shell in a group or process substitution (`(bash)`, `| (bash)`, `
   assert.ok(fileWriteTargets('cat <<EOF | tee >(bash)\necho x > f.js\nEOF', '/r').some((t) => t.file === path.resolve('/r', 'f.js')));
 });
 
-// Fix round 2 (#3989): bash decodes `$'...'`/`$"..."`, which this parser does not, so
+// #3989: bash decodes `$'...'`/`$"..."`, which this parser does not, so
 // a terminator here is unprovable. The text from the opener on stays visible.
 test('#3989: a `$\'...\'` heredoc delimiter is unprovable, so a planted terminator cannot strip a real command', () => {
   assert.deepStrictEqual(fileWriteTargets("cat <<$'EOF'\nEOF\necho x > f.js\n$EOF", '/r'), [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
   assert.deepStrictEqual(fileWriteTargets('cat <<$"EOF"\nEOF\necho x > f.js\n$EOF', '/r'), [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
 });
 
-// Fix round 3 (#3989): bash decodes `$'...'`/`$"..."` anywhere in the delimiter word,
+// #3989: bash decodes `$'...'`/`$"..."` anywhere in the delimiter word,
 // not only at its start, so `a$'EOF'` ends at `aEOF`. Any `$'`/`$"` is unprovable.
 test('#3989: a `$\'...\'` or `$"..."` delimiter mid-word is unprovable too, so the trailing redirect resolves', () => {
   const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
@@ -1930,7 +1930,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     assert.ok(got.includes(path.resolve('/r/f')), 'bash: /r/f');
     assert.ok(got.includes(path.resolve('/wt/f')), 'the arm cwd, kept as a superset');
   });
-  // #4481 round 2: a first-element case whose arm holds a group with its own pipe. bash 3.2, bash 5
+  // #4481: a first-element case whose arm holds a group with its own pipe. bash 3.2, bash 5
   // and zsh write /r/f for each: the group's `|` belongs to the group, so the pipeline still starts at /r.
   for (const cmd of [
     'case a in a) ( cd /q | cat ); cd /wt;; esac | cat; echo x > f',
@@ -1946,14 +1946,14 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   test('#4481 case: `case a in a) { cd /q | cat; };; esac | cat; echo x > f` does not carry the group pipe cwd out', () => {
     assert.deepStrictEqual(files('case a in a) { cd /q | cat; };; esac | cat; echo x > f'), [path.resolve('/r/f')]);
   });
-  // #4481 round 2: a leading-paren pattern's arm keeps its own `cd` for its later commands. bash 3.2,
+  // #4481: a leading-paren pattern's arm keeps its own `cd` for its later commands. bash 3.2,
   // bash 5 and zsh write /wt/g for each (the arm's redirect runs after its cd).
   for (const cmd of ['case a in (a) cd /wt; echo y > g;; esac', 'case a in (a) cd /wt; echo y > g;; esac | cat; echo x > f']) {
     test(`#4481 case: \`${cmd}\` keeps the arm's cd for its own writes`, () => {
       assert.ok(files(cmd).includes(path.resolve('/wt/g')), 'bash: /wt/g');
     });
   }
-  // #4481 round 3: a first-element case pipeline inside an outer case's arm, with no group wrapper. The
+  // #4481: a first-element case pipeline inside an outer case's arm, with no group wrapper. The
   // inner `esac` returns the walk to the outer arm, which is still open. bash 3.2, bash 5 and zsh write
   // /r/g for each, and /r/f for the trailing write.
   for (const [cmd, wants] of [
@@ -1967,7 +1967,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   test('#4481 case: a first-element case pipeline inside an outer arm ends under its start at a newline', () => {
     assert.ok(files('case a in a) case b in b) cd /wt;; esac | cat\necho y > g;; esac').includes(path.resolve('/r/g')), 'bash 3.2, bash 5 and zsh: /r/g');
   });
-  // #4481 round 3: the `||` branch of a first-element case pipeline ends at the pipeline's start cwd. The
+  // #4481: the `||` branch of a first-element case pipeline ends at the pipeline's start cwd. The
   // pipeline ends in `false`, so it fails and `|| …` runs: bash 3.2, bash 5 and zsh write the `||` branch's
   // target at /r (bash 3.2 cannot parse the `$( )` row's unparenthesized pattern, so bash 5 and zsh decide it).
   test('#4481 case: `case a in a) cd /m;; esac | false || echo x > f` ends its pipeline under the start cwd', () => {
@@ -1979,7 +1979,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   test('#4481 substitution: `echo $(case a in a) cd /q;; esac | false || echo y > g)` ends its pipeline under the start cwd', () => {
     assert.ok(files('echo $(case a in a) cd /q;; esac | false || echo y > g)').includes(path.resolve('/r/g')), 'bash 5 and zsh: /r/g when the pipeline fails');
   });
-  // #4481 round 3: a leading-paren arm's group, subshell and function body keep their cd for the commands
+  // #4481: a leading-paren arm's group, subshell and function body keep their cd for the commands
   // after them. bash 3.2, bash 5 and zsh write /wt/f and /wt/g for the first, /wt/g for the others.
   for (const [cmd, wants] of [
     ['case a in (a) { cd /wt; echo y > g; };; esac; echo x > f', ['/wt/f', '/wt/g']],
