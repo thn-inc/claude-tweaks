@@ -40,6 +40,7 @@ files:
 - **Should understand:**
   - An event logged before #3819 carries no `actor`/`variant`. It counts as `session`/`guard`, which is all the old matcher could see.
   - The agent and worktree-gone counts are lower bounds. An agent's refusals from its own still-live isolation worktree go into an ad-hoc dir keyed to that worktree, which `friction-events.js` merges only once the worktree is removed. A worktree-gone refusal with no owned run is dropped, as step 2 describes.
+  - One isolation refusal is not counted at all. Claude Code 2.1.302 also refuses with "The working-directory isolation context for this agent was lost, so this command would run in the parent session's directory instead of this agent's worktree (…). Refusing to run it." That text carries neither noun, so `classifyRefusal` returns null and no `wd-guard-refusal` event is logged. A lost-context refusal the maintainer remembers but the breakdown lacks is this known gap, not a broken hook.
 - **Red flags:**
   - every refusal reads `actor: session` in a run that dispatched isolated agents which visibly hit the guard;
   - a `worktree-gone` event is folded into the total without being named.
