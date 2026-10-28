@@ -64,7 +64,7 @@ function parseArgs(argv) {
 const realDeps = {
   cwd: () => process.cwd(),
   mainRoot: undefined,
-  git: (args) => makeGit(process.cwd())(args),
+  git: (args, opts) => makeGit(process.cwd())(args, opts),
   appendDecision: (args) => appendEntry(args),
   now: () => Date.now(),
   stdout: (s) => process.stdout.write(s),

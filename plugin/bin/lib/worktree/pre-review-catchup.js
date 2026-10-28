@@ -27,7 +27,8 @@
 // when no merge base is trustworthy (conflict, and every pre-scan outcome).
 'use strict';
 
-const { execFileSync } = require('child_process');
+// The module object, not a destructured binding, so a test can spy on the real spawn.
+const childProcess = require('child_process');
 
 const OUTCOMES = Object.freeze(['not-applicable', 'fetch-failed', 'windows-longpath', 'dirty-tree', 'no-overlap', 'merged', 'conflict']);
 
@@ -43,12 +44,14 @@ const SHA_LEN = 9;
 
 // `opts` (the fetch's { timeout, env }) is spread last; every other call runs unbounded.
 function makeGit(cwd) {
-  return (args, opts = {}) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...opts });
+  return (args, opts = {}) => childProcess.execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...opts });
 }
 
 // A stalled network or an HTTPS credential prompt (git reads /dev/tty, not stdin) must
-// not block the build with no outcome: the fetch is bounded by the same budget the
-// reconcile mirror fetch uses, and may not prompt, so either failure lands in fetch-failed.
+// not block the build with no outcome: the fetch is bounded by FETCH_TIMEOUT_MS (a
+// once-per-build 60 s, see above) and may not prompt, so either failure lands in
+// fetch-failed. The caller's git seam must forward these opts (bin/pre-review-catchup.js's
+// realDeps does; its test drives that wiring).
 const FETCH_OPTS = () => ({ timeout: FETCH_TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
 
 // Best effort: a merge that died with a long-path error can leave MERGE_HEAD behind, and

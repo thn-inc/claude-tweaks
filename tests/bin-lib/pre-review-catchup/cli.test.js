@@ -222,10 +222,12 @@ test('a timed-out or prompting fetch is bounded, non-interactive and lands in fe
   const f = fixture();
   f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
   const fetchOpts = [];
+  const fetchArgs = [];
   const real = f.gitIn(f.work);
   const git = (args, opts) => {
     if (args[0] !== 'fetch') return real(args);
     fetchOpts.push(opts);
+    fetchArgs.push(args);
     throw Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT', killed: true, stderr: '' });
   };
   const before = f.head();
@@ -236,9 +238,38 @@ test('a timed-out or prompting fetch is bounded, non-interactive and lands in fe
   assert.match(r.json.reason, /ETIMEDOUT/);
   assert.equal(f.head(), before);
   assert.equal(fetchOpts.length, 1);
+  assert.deepEqual(fetchArgs, [['fetch', '--end-of-options', 'origin', 'main']]);
   assert.equal(FETCH_TIMEOUT_MS, 60000);
   assert.equal(fetchOpts[0].timeout, FETCH_TIMEOUT_MS);
   assert.equal(fetchOpts[0].env.GIT_TERMINAL_PROMPT, '0');
+});
+
+test('the real CLI wiring forwards the fetch timeout and no-prompt env to the spawn', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const childProcess = require('child_process');
+  const original = childProcess.execFileSync;
+  const fetchCalls = [];
+  // Records the fetch's argv/options as the CLI built them, then runs every call for real
+  // against the fixture checkout (cwd) with the fixture identity env.
+  childProcess.execFileSync = (cmd, args, opts) => {
+    if (cmd === 'git' && args[0] === 'fetch') fetchCalls.push({ args, opts });
+    return original(cmd, args, { ...opts, cwd: f.work, env: { ...f.env, GIT_TERMINAL_PROMPT: opts.env && opts.env.GIT_TERMINAL_PROMPT } });
+  };
+  let code; const out = [];
+  try {
+    // No `git` override: this drives realDeps.git.
+    code = run(MAIN, { cwd: () => f.work, mainRoot: f.root, stdout: (s) => out.push(s), stderr: () => {} });
+  } finally {
+    childProcess.execFileSync = original;
+  }
+  assert.equal(code, 0);
+  assert.equal(JSON.parse(out.join('')).outcome, 'no-overlap');
+  assert.equal(fetchCalls.length, 1);
+  assert.deepEqual(fetchCalls[0].args, ['fetch', '--end-of-options', 'origin', 'main']);
+  assert.equal(fetchCalls[0].opts.timeout, FETCH_TIMEOUT_MS);
+  assert.equal(fetchCalls[0].opts.env.GIT_TERMINAL_PROMPT, '0');
+  assert.equal(fetchCalls[0].opts.windowsHide, true);
 });
 
 test('a failed merge with no unmerged paths is an undecided crash: exit 1, HEAD unchanged', () => {
