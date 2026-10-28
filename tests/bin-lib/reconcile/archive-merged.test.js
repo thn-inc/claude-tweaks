@@ -3577,12 +3577,11 @@ test('archiveMerged: main checkout on main but behind origin\'s merge — skips 
   assert.ok(headShow.includes(`.claude-tweaks/pipelines/archive/${runId}/work/4387-spec.md`), `HEAD should add the archived work file:\n${headShow}`);
 });
 
-// #4387 (final-review I2): the abandoned-interrupted path archives straight away, on
-// checkRunIntegrity's shipped evidence — which reads origin/main under the policy-
-// configured integration branch. With the main checkout on a local main that is behind
-// origin's merge, the tracked work/ subtree is not in the working tree yet, so the run
-// must be skipped (`local-behind-merge`) and archived only after the fast-forward.
-test('archiveMerged: abandoned-interrupted run shipped on origin/main while the main checkout on main is behind — skips local-behind-merge, then archives with the work/ git mv once main fast-forwards (#4387)', () => {
+// The shared fixture of the abandoned-interrupted local-behind tests below: a clone whose
+// local main is behind origin/main, which holds the run's work/ file — landed by fast-forward,
+// or (squash) as a new commit carrying the same patch, so the run's branch tip is no ancestor
+// of main and only the cherry shape recognises it as merged.
+function fixtureAbandonedBehindOrigin({ squash = false } = {}) {
   const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-origin-'));
   git(origin, 'init', '--bare', '-b', 'main');
   const seed = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-seed-'));
@@ -3603,7 +3602,7 @@ test('archiveMerged: abandoned-interrupted run shipped on origin/main while the 
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
   // The feature commit (dated after the run's start so the run-start corroboration passes)
-  // carries the run's tracked work/ file, then lands on origin/main by fast-forward.
+  // carries the run's tracked work/ file, then lands on origin/main.
   git(seed, 'checkout', '-q', '-b', 'feat-4387-abandoned');
   fs.mkdirSync(path.join(seed, '.claude-tweaks', 'pipelines', runId, 'work'), { recursive: true });
   fs.writeFileSync(path.join(seed, '.claude-tweaks', 'pipelines', runId, 'work', '4387-spec.md'), '# spec 4387\n');
@@ -3615,10 +3614,17 @@ test('archiveMerged: abandoned-interrupted run shipped on origin/main while the 
   });
   const featureOid = git(seed, 'rev-parse', 'HEAD').trim();
   git(seed, 'checkout', '-q', 'main');
-  git(seed, 'merge', '-q', '--ff-only', 'feat-4387-abandoned');
+  if (squash) {
+    git(seed, 'merge', '-q', '--squash', 'feat-4387-abandoned');
+    git(seed, 'commit', '-q', '-m', 'squash feature work');
+  } else {
+    git(seed, 'merge', '-q', '--ff-only', 'feat-4387-abandoned');
+  }
   git(seed, 'push', '-q', 'origin', 'main');
+  if (squash) git(seed, 'push', '-q', 'origin', 'feat-4387-abandoned'); // the tip is no ancestor of main: ship it for root to fetch
   git(root, 'fetch', '-q', 'origin', 'main'); // only origin/main advances; root stays on a behind main
-  git(root, 'branch', 'feat-4387-abandoned', featureOid); // the run's branch ref survives locally
+  if (squash) git(root, 'fetch', '-q', 'origin', 'feat-4387-abandoned:feat-4387-abandoned');
+  else git(root, 'branch', 'feat-4387-abandoned', featureOid); // the run's branch ref survives locally
 
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
@@ -3628,6 +3634,16 @@ test('archiveMerged: abandoned-interrupted run shipped on origin/main while the 
     path.join(runDir, 'events.jsonl'),
     '{"skill":"claude-tweaks:build","ts":"2020-01-01T09:05:00.000Z","type":"skill_invoked"}\n',
   );
+  return { root, runDir, archiveDir, featureOid };
+}
+
+// #4387 (final-review I2): the abandoned-interrupted path archives straight away, on
+// checkRunIntegrity's shipped evidence — which reads origin/main under the policy-
+// configured integration branch. With the main checkout on a local main that is behind
+// origin's merge, the tracked work/ subtree is not in the working tree yet, so the run
+// must be skipped (`local-behind-merge`) and archived only after the fast-forward.
+test('archiveMerged: abandoned-interrupted run shipped on origin/main while the main checkout on main is behind — skips local-behind-merge, then archives with the work/ git mv once main fast-forwards (#4387)', () => {
+  const { root, runDir, archiveDir } = fixtureAbandonedBehindOrigin();
   const headBefore = git(root, 'rev-parse', 'HEAD').trim();
 
   const first = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
@@ -3645,6 +3661,63 @@ test('archiveMerged: abandoned-interrupted run shipped on origin/main while the 
   assert.equal(fs.existsSync(runDir), false, 'original run dir must have been archived away');
   assert.equal(fs.existsSync(path.join(archiveDir, 'work', '4387-spec.md')), true);
   assert.equal(JSON.parse(fs.readFileSync(path.join(archiveDir, 'run-state.json'), 'utf8')).status, 'clean');
+});
+
+// #4387: the same guard for a squash-merged run — the branch tip is no ancestor of main, so
+// the guard's cherry (patch-id) shape is the only thing recognising it as merged on main.
+// It must read the LOCAL integration ref: against origin/main it would archive on the first pass.
+test('archiveMerged: abandoned-interrupted run squash-merged on origin/main while the main checkout on main is behind — skips local-behind-merge on the cherry shape, then archives once main fast-forwards (#4387)', () => {
+  const { root, runDir, archiveDir, featureOid } = fixtureAbandonedBehindOrigin({ squash: true });
+  assert.throws(
+    () => git(root, 'merge-base', '--is-ancestor', featureOid, 'origin/main'),
+    'fixture: the run\'s tip must not be an ancestor of origin/main (squash shape)',
+  );
+  const headBefore = git(root, 'rev-parse', 'HEAD').trim();
+
+  const first = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.ok(!first.archived.includes(runDir), `expected ${runDir} not archived yet, got ${JSON.stringify(first)}`);
+  const skip = first.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(first)}`);
+  assert.equal(skip.reason, 'local-behind-merge');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8')).status, 'interrupted');
+  assert.equal(fs.existsSync(archiveDir), false, 'a behind checkout must archive nothing');
+  assert.equal(git(root, 'rev-parse', 'HEAD').trim(), headBefore);
+
+  git(root, 'merge', '-q', '--ff-only', 'origin/main'); // work/ arrives with the fast-forward
+  const second = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.ok(second.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(second)}`);
+  assert.equal(fs.existsSync(runDir), false, 'original run dir must have been archived away');
+  assert.equal(fs.existsSync(path.join(archiveDir, 'work', '4387-spec.md')), true);
+});
+
+// #4387: the abandoned-interrupted path's close-write-failed branch. The move has landed (local main
+// already holds the merge, so the guard passes), then closeRunState's own run-state write fails: the
+// run stays physically archived and the failure is reported in `skipped`, never as a clean archive.
+// closeRunState writes through `ctxLib.writeRunState` by property access (archive-merged and
+// archiveRunDir hold a destructured binding), so a mock on that property fails only the close
+// write; no real filesystem condition can fail one run-state write and not the identical one
+// archiveRunDir makes a moment earlier.
+test('archiveMerged: abandoned-interrupted run archived but closeRunState\'s run-state write fails — reports close-write-failed and keeps the archive in place (#4387)', (t) => {
+  const { root, runDir, archiveDir } = fixtureAbandonedBehindOrigin();
+  git(root, 'merge', '-q', '--ff-only', 'origin/main'); // local main holds the merge: the guard passes
+  const ctxLib = require('../../../plugin/bin/lib/hooks/context');
+  const realWriteRunState = ctxLib.writeRunState;
+  const closeWrites = [];
+  t.mock.method(ctxLib, 'writeRunState', (dir, patch) => {
+    if (dir !== archiveDir) return realWriteRunState(dir, patch);
+    closeWrites.push(patch);
+    return null; // the write failed
+  });
+
+  const result = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.equal(closeWrites.length, 1, 'closeRunState must attempt exactly one write against the archived dir');
+  assert.equal(closeWrites[0].status, 'clean');
+  assert.ok(!result.archived.includes(runDir), `a failed close write must not report a clean archive, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'close-write-failed');
+  assert.equal(fs.existsSync(runDir), false, 'the move already succeeded and is never rolled back');
+  assert.equal(fs.existsSync(path.join(archiveDir, 'work', '4387-spec.md')), true);
 });
 
 // #2228: the #1962 fallback's outer gate used to require `stampedWorktree`

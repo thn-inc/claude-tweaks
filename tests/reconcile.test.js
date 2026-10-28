@@ -545,6 +545,21 @@ test('localHasMerge: an indeterminate `git branch --show-current` probe failure 
   assert.strictEqual(probes, 1, 'the probe must have run and failed');
 });
 
+// #4387: the origin fallback's false direction with `integration` supplied — a parked
+// checkout (not on main) and a merge that neither local main nor origin/main holds
+// (a commit that exists only in another, unpushed clone) is not locally present.
+test('localHasMerge: parked checkout, integration supplied, merge held by neither local main nor origin/main — reports false (#4387)', () => {
+  const { seedDir, mainDir } = pairedFixture();
+  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
+  git(['add', 'b.txt'], seedDir);
+  git(['commit', '-q', '-m', 'unpushed commit'], seedDir); // never pushed
+  const unpushedOid = git(['rev-parse', 'HEAD'], seedDir).trim();
+
+  git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
+  assert.strictEqual(localHasMerge(mainDir, { oid: unpushedOid }, 'main'), false);
+  assert.strictEqual(localHasMerge(mainDir, { oid: 'f'.repeat(40) }, 'main'), false);
+});
+
 // #2565 parked shape with no local integration ref at all: the origin fallback
 // is still the only path that can see the merge.
 test('AC3.1: localHasMerge parked with no local integration ref — still falls back to origin (#2565)', () => {
