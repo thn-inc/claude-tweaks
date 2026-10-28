@@ -51,16 +51,24 @@ test('AC1.3: Common Step 5 section names Common Steps 6 and 6.5', () => {
 function assertCategoryABeforeVerify(text) {
   const step5 = sectionOf(text, '### Common Step 5:');
   assert.match(step5, /\*\*Operational fixes first \(#3489\)\.\*\*/);
-  assert.match(step5, /`operational-checklist\.md`'s Category A triggers \(schema\/migration files, a changed shared-constant value, new env access, a changed `package\.json` `exports`\), apply that file's Category A fixes and commit them, so the verified tree includes them/);
+  assert.match(step5, /`operational-checklist\.md`'s Category A triggers \(schema\/migration files, a changed shared-constant value, new env access, a changed `package\.json` `exports`\), read that file's Category A section in this skill's directory, then apply that file's Category A fixes and commit them with `Category A` in the subject, so the verified tree includes them/);
   assert.match(step5, /re-check those triggers against any fix commit below before re-running verification/);
+  assert.match(step5, /A Category A action that fails or cannot complete .* is not `fixed`: resolve it like any failure in this step, or leave it `open` for Common Step 5\.5's ledger row/);
+  // the fix runs before the verification run: the paragraph follows the verification sentence and says so
+  assert.match(step5, /Before that run, when the build's diff matches/);
+  assert.ok(
+    step5.indexOf('run the shared verification procedure') < step5.indexOf('**Operational fixes first (#3489).**'),
+    'the Category A paragraph must follow the verification sentence its "Before that run" points back to',
+  );
   assert.match(step5, /Category B tasks and every ledger row stay in Common Step 5\.5/);
   assert.doesNotMatch(step5, /\*\*On skip\*\*/);
   const step55 = sectionOf(text, '### Common Step 5.5:');
   assert.match(step55, /Category A fixes already landed in Common Step 5, before its verification run/);
   assert.match(step55, /a `fixed` row per Category A fix/);
   // a shared-constant or exports-only Category A fix must still reach Step 5.5's ledger row
-  assert.match(step55, /schema\/env\/IaC\/CI\/platform-config files, or Common Step 5 applied a Category A fix, read/);
+  assert.match(step55, /schema\/env\/IaC\/CI\/platform-config files, or Common Step 5 applied a Category A fix \(a `Category A` commit in `git log` since build start\), read/);
   assert.doesNotMatch(step55, /Operational fixes first/);
+  assert.doesNotMatch(step55, /\bapply\b[^.\n]*Category A/, 'Step 5.5 must not apply Category A fixes after verification');
 }
 
 test('#3489 AC1.1: Common Step 5 applies Category A operational fixes before its verification; Step 5.5 does not', () => {
@@ -76,6 +84,18 @@ test('#3489 AC1.1 go-red: the assertion fails when the Step 5 paragraph is remov
 test('#3489 AC1.1 go-red: the assertion fails when the widened Step 5.5 entry clause is reverted', () => {
   const doctored = BUILD_SKILL.replace(', or Common Step 5 applied a Category A fix', '');
   assert.notEqual(doctored, BUILD_SKILL, 'doctoring must actually remove the widened clause');
+  assert.throws(() => assertCategoryABeforeVerify(doctored), assert.AssertionError);
+});
+
+test('#3489 AC1.1 go-red: the assertion fails when the Step 5 paragraph says the fix runs after verification', () => {
+  const doctored = BUILD_SKILL.replace('Before that run, when the build', 'After that run, when the build');
+  assert.notEqual(doctored, BUILD_SKILL, 'doctoring must actually change the timing word');
+  assert.throws(() => assertCategoryABeforeVerify(doctored), assert.AssertionError);
+});
+
+test('#3489 AC1.1 go-red: the assertion fails when Step 5.5 regains an instruction to apply Category A fixes', () => {
+  const doctored = BUILD_SKILL.replace('After verification passes, check for operational tasks', 'After verification passes, apply Category A fixes and check for operational tasks');
+  assert.notEqual(doctored, BUILD_SKILL, 'doctoring must actually add the instruction');
   assert.throws(() => assertCategoryABeforeVerify(doctored), assert.AssertionError);
 });
 

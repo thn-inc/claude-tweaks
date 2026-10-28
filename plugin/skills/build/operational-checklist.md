@@ -19,7 +19,7 @@ These findings have an in-codebase fix. Common Step 5 applies them before its ve
 | New environment variables | Grep changed files for new `process.env.*` or env access patterns | Check `.env.example` (or equivalent) includes the new variable. Add if missing. |
 | New package exports | `package.json` `exports` field changed | Run the package build to verify exports resolve correctly. |
 
-Common Step 5.5 appends each Category A finding to the open items ledger (see `/claude-tweaks:ledger`) with the appropriate phase and status `fixed` — `open` for a schema change with no documented push command.
+Common Step 5.5 appends each Category A finding to the open items ledger (see `/claude-tweaks:ledger`) with the appropriate phase and status `fixed` once its Common Step 5 action completed — `open` for a schema change with no documented push command, or for any action that did not complete.
 
 ---
 
