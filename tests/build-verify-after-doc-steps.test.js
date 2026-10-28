@@ -75,28 +75,29 @@ test('#3489 AC1.1: Common Step 5 applies Category A operational fixes before its
   assertCategoryABeforeVerify(BUILD_SKILL);
 });
 
+function assertDoctoredGoesRed(doctored, doctoringDescription) {
+  assert.notEqual(doctored, BUILD_SKILL, `doctoring must actually ${doctoringDescription}`);
+  assert.throws(() => assertCategoryABeforeVerify(doctored), assert.AssertionError);
+}
+
 test('#3489 AC1.1 go-red: the assertion fails when the Step 5 paragraph is removed', () => {
   const doctored = BUILD_SKILL.replace(/\*\*Operational fixes first \(#3489\)\.\*\*[^\n]*\n\n/, '');
-  assert.notEqual(doctored, BUILD_SKILL, 'doctoring must actually remove the paragraph');
-  assert.throws(() => assertCategoryABeforeVerify(doctored), assert.AssertionError);
+  assertDoctoredGoesRed(doctored, 'remove the paragraph');
 });
 
 test('#3489 AC1.1 go-red: the assertion fails when the widened Step 5.5 entry clause is reverted', () => {
   const doctored = BUILD_SKILL.replace(', or Common Step 5 applied a Category A fix', '');
-  assert.notEqual(doctored, BUILD_SKILL, 'doctoring must actually remove the widened clause');
-  assert.throws(() => assertCategoryABeforeVerify(doctored), assert.AssertionError);
+  assertDoctoredGoesRed(doctored, 'remove the widened clause');
 });
 
 test('#3489 AC1.1 go-red: the assertion fails when the Step 5 paragraph says the fix runs after verification', () => {
   const doctored = BUILD_SKILL.replace('Before that run, when the build', 'After that run, when the build');
-  assert.notEqual(doctored, BUILD_SKILL, 'doctoring must actually change the timing word');
-  assert.throws(() => assertCategoryABeforeVerify(doctored), assert.AssertionError);
+  assertDoctoredGoesRed(doctored, 'change the timing word');
 });
 
 test('#3489 AC1.1 go-red: the assertion fails when Step 5.5 regains an instruction to apply Category A fixes', () => {
   const doctored = BUILD_SKILL.replace('After verification passes, check for operational tasks', 'After verification passes, apply Category A fixes and check for operational tasks');
-  assert.notEqual(doctored, BUILD_SKILL, 'doctoring must actually add the instruction');
-  assert.throws(() => assertCategoryABeforeVerify(doctored), assert.AssertionError);
+  assertDoctoredGoesRed(doctored, 'add the instruction');
 });
 
 test('#3489 AC1.1: operational-checklist.md applies Category A in Step 5 and writes its ledger rows in Step 5.5', () => {
