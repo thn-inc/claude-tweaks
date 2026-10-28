@@ -1,8 +1,8 @@
 // bin/lib/hooks/post-tool-use-failure.js — log tier only (#2783 Deliverable 2).
 // Claude Code's own worktree-isolation Bash guard refuses a command in a
 // worktree-isolated session or agent ("This session|This agent is isolated in the
-// worktree … Refusing to run it|there …"; the text lives in harness-refusal.js, #3819 widened
-// it to the agent noun and the worktree-gone template). No PreToolUse/PostToolUse
+// worktree … Refusing to run it|there …"; the text lives in harness-refusal.js,
+// which #3819 widened to the agent noun and the worktree-gone template). No PreToolUse/PostToolUse
 // consumer sees that refusal; the harness reports it as a PostToolUseFailure whose
 // `error` is the full refusal text (measured 2026-10-16 with a headless probe — the
 // hooks docs do not state it). Every ordinary non-zero exit fires the same event,

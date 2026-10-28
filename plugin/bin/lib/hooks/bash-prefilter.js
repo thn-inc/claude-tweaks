@@ -153,8 +153,9 @@ function shouldRunFull(event, input) {
 // JSON-escaped spelling still runs.
 // Unparseable input skips: the handler does nothing with it either.
 function failureCarriesRefusal(raw, input) {
-  if (REFUSAL_SIGNATURES.some((s) => raw.includes(s))) return true;
-  return Boolean(input && typeof input.error === 'string' && REFUSAL_SIGNATURES.some((s) => input.error.includes(s)));
+  const carriesSignature = (text) => REFUSAL_SIGNATURES.some((signature) => text.includes(signature));
+  if (carriesSignature(raw)) return true;
+  return Boolean(input && typeof input.error === 'string' && carriesSignature(input.error));
 }
 
 // Reads stdin once — the caller must hand `raw` on to the full handler, since
