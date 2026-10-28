@@ -1207,7 +1207,7 @@ test('fence-blind metadata (#4368): a fence indented 1–3 spaces hides its line
 
 test('fence-blind metadata (#4368): a closer trailed by a non-space/tab character is not a closer', () => {
   // NBSP after the backticks: GitHub keeps the fence open, so the line after it is still quoted.
-  assert.strictEqual(extractPremiseCheck('```\nx\n``` \nPremise-check: echo QUOTED\n```'), null);
+  assert.strictEqual(extractPremiseCheck('```\nx\n```\u00a0\nPremise-check: echo QUOTED\n```'), null);
   assert.strictEqual(extractPremiseCheck('```\nx\n```\u000b\nPremise-check: echo QUOTED\n```'), null);
   // A trailing space/tab still closes.
   assert.strictEqual(extractPremiseCheck('```\nx\n``` \t\nPremise-check: echo REAL'), 'echo REAL');
