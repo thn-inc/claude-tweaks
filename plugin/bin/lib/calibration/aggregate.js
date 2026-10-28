@@ -14,6 +14,10 @@ function runIdTimestamp(runId) {
   return `${m[1]}${m[2]}${m[3]}${m[4]}${m[5]}${m[6] || '00'}`;
 }
 
+function cmp(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function aggregate({ tsv, runs, rowIds, windowN }) {
   const datedRuns = [];
   let excluded = 0;
@@ -23,7 +27,7 @@ function aggregate({ tsv, runs, rowIds, windowN }) {
     else datedRuns.push({ run, key });
   }
   const sortedRuns = datedRuns
-    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.run.runId < b.run.runId ? -1 : a.run.runId > b.run.runId ? 1 : 0))
+    .sort((a, b) => cmp(a.key, b.key) || cmp(a.run.runId, b.run.runId))
     .map((d) => d.run);
   const windowRuns = sortedRuns.slice(-windowN);
   const windowRunIds = new Set(windowRuns.map((r) => r.runId));

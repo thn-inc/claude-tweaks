@@ -100,7 +100,29 @@ test('#917: a partially-pruned archive still reports the TSV row whose runId has
   assert.strictEqual(jsonOut.frictionCounts['gate-denial'], 1);
 });
 
-test('header names how many undated archive entries were excluded', () => {
+test('a TSV-only run with a live run dir contributes its decisions', () => {
+  // A finished run awaiting archival has a TSV row and a live dir (no archive dir yet).
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-live-'));
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
+    '2026-08-01\t2026-08-01T000000-run-1\tskills\tclosed\t0\tna\n2026-08-03\t2026-08-03T000000-live-1\tskills\tclosed\t0\tna\n',
+  );
+  const decision = '- AUTO 12:00:00 — Review Console: terminal decision approve-all. Reversibility: n/a.\n';
+  const archived = path.join(root, '.claude-tweaks', 'pipelines', 'archive', '2026-08-01T000000-run-1');
+  fs.mkdirSync(archived, { recursive: true });
+  fs.writeFileSync(path.join(archived, 'decisions.md'), decision);
+  const live = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-03T000000-live-1');
+  fs.mkdirSync(live, { recursive: true });
+  fs.writeFileSync(path.join(live, 'decisions.md'), decision);
+  fs.writeFileSync(path.join(live, 'events.jsonl'), '{"type":"gate-denial"}\n');
+  const jsonOut = JSON.parse(run(['--json'], root));
+  assert.ok(jsonOut.window.runIds.includes('2026-08-03T000000-live-1'));
+  assert.strictEqual(jsonOut.consoleDist['approve-all'], 2);
+  assert.strictEqual(jsonOut.frictionCounts['gate-denial'], 1);
+});
+
+test('header names how many undated run ids were excluded', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-excluded-'));
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(
@@ -114,7 +136,7 @@ test('header names how many undated archive entries were excluded', () => {
   const jsonOut = JSON.parse(run(['--json'], root));
   assert.deepStrictEqual(jsonOut.window.runIds, ['2026-08-01T000000-run-1', '2026-08-02T000000-run-2']);
   assert.strictEqual(jsonOut.window.excluded, 2);
-  assert.match(run([], root), /^Window: last 2 archived run\(s\); 2 archive entries without a run-id timestamp excluded\.$/m);
+  assert.match(run([], root), /^Window: last 2 archived run\(s\); 2 run ids without a timestamp excluded\.$/m);
 });
 
 test('header with only undated entries reports an empty window and exits 0', () => {
@@ -122,7 +144,7 @@ test('header with only undated entries reports an empty window and exits 0', () 
   fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', 'unresolved-provenance'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'), '');
   const out = run([], root);
-  assert.match(out, /^Window: last 0 archived run\(s\); 1 archive entry without a run-id timestamp excluded\.$/m);
+  assert.match(out, /^Window: last 0 archived run\(s\); 1 run id without a timestamp excluded\.$/m);
   assert.match(out, /Console terminal-decision distribution/);
 });
 

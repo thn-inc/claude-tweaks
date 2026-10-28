@@ -79,7 +79,7 @@ function renderText(result, ceiling) {
   lines.push('');
   const { excluded } = result.window;
   const excludedNote = excluded > 0
-    ? `; ${excluded} archive ${excluded === 1 ? 'entry' : 'entries'} without a run-id timestamp excluded`
+    ? `; ${excluded} run id${excluded === 1 ? '' : 's'} without a timestamp excluded`
     : '';
   lines.push(`Window: last ${result.window.runIds.length} archived run(s)${excludedNote}.`);
   lines.push('');
@@ -155,7 +155,17 @@ function main() {
     const tsvRunIds = new Set(tsv.rows.map((r) => r.runId));
     for (const runId of tsvRunIds) {
       if (!existingRunIds.has(runId)) {
-        runs.push({ runId, decisionLines: [], events: { counts: {} } });
+        // A finished run still awaiting archival has a live dir under
+        // pipelines/{runId}/ — load it so the newest runs aren't empty stubs.
+        // Only a single path segment is a dir name; anything else stays empty.
+        const liveDir = /^[^/\\]+$/.test(runId) && runId !== '.' && runId !== '..'
+          ? path.join(args.root, '.claude-tweaks', 'pipelines', runId)
+          : null;
+        runs.push({
+          runId,
+          decisionLines: liveDir ? readDecisionLines(path.join(liveDir, 'decisions.md')) : [],
+          events: (liveDir && readEventsKinds(path.join(liveDir, 'events.jsonl'))) || { counts: {} },
+        });
       }
     }
   }
