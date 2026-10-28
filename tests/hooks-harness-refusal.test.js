@@ -58,6 +58,12 @@ test('classifyRefusal: each refusal template classifies by noun and signature', 
   }
 });
 
+test('matcher: HARNESS_ISOLATION_REFUSAL_RE matches every refusal template on its own, apart from actor/variant attribution', () => {
+  for (const [name, text] of FIXTURES) {
+    assert.ok(HARNESS_ISOLATION_REFUSAL_RE.test(text), name);
+  }
+});
+
 test('classifyRefusal: non-refusals return null', () => {
   const editToolText = `This agent is isolated in the worktree ${WT}, so its writes are limited to that folder. This path is in a different worktree (/w). Edit the copy of this file under ${WT} instead.`;
   for (const text of ['Exit code 1\nfatal: not a git repository', undefined, 42, editToolText]) {

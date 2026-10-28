@@ -150,3 +150,9 @@ test('AC1.1: the reflect Friction lens transcript grep names the same signature'
   assert.ok(prose.includes('`' + REFUSAL_SIGNATURE + '`'), 'reflect/full-mode.md does not name the refusal signature');
   assert.ok(prose.includes('`' + WORKTREE_GONE_SIGNATURE + '`'), 'reflect/full-mode.md does not name the worktree-gone signature');
 });
+
+test('the reflect Friction lens keeps its actor breakdown and worktree-gone callout', () => {
+  const prose = readText(path.join(ROOT, 'plugin', 'skills', 'reflect', 'full-mode.md'));
+  assert.ok(prose.includes('**Isolation-refusal breakdown'), 'reflect/full-mode.md lost the isolation-refusal breakdown paragraph');
+  assert.ok(prose.includes('`variant: worktree-gone`'), 'reflect/full-mode.md no longer names worktree-gone events');
+});
