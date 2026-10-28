@@ -2127,6 +2127,33 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       for (const want of ['/wt/f', '/wt/g']) assert.ok(got.includes(path.resolve(want)), `bash 3.2, bash 5 and zsh: ${want}`);
     });
   }
+  // #4481: that `&` before the arm's first separator backgrounds the arm's own list, so the list holding the
+  // case keeps the cwds `||`/`&&` was skipping past and the pipeline the case is a later element of, which
+  // the arm's `;;` then saves in the case's record (the first, third and fourth rows pass with `;` for the `&`). bash
+  // 3.2 and 5 write each listed target: /q/g where `cd /q` succeeds and `||` skips the case, /r/g where
+  // `false &&` skips it, /r/f where the case runs in a pipeline subshell (zsh writes /q/f for the matching
+  // nested row, running the last element in the current shell; zsh agrees on every other row).
+  for (const [cmd, want] of [
+    ['cd /q || case a in a) true & true;; esac; echo y > g', '/q/g'],
+    ['cd /q || case a in a) { true; } & true;; esac; echo y > g', '/q/g'],
+    ['false && case a in a) true & cd /m;; esac; echo y > g', '/r/g'],
+    ['true | case x in a) true & cd /q;; esac; echo y > f', '/r/f'],
+    ['cd /q || case a in a) case b in b) true & true;; esac;; esac; echo y > g', '/q/g'],
+    ['case a in a) cd /q || case b in b) true & true;; esac; echo y > g;; esac', '/q/g'],
+    ['true | case a in a) case b in b) true & cd /q;; esac;; esac; echo y > f', '/r/f'],
+    ['echo $(true; cd /q || case a in (a) true & true;; esac; echo y > g)', '/q/g'],
+    ['x=$(true; false && case a in (a) true & cd /m;; esac; echo y > g)', '/r/g'],
+  ]) {
+    test(`#4481 case: \`${cmd}\` keeps the enclosing list's state past an & before the arm's first separator`, () => {
+      assert.ok(files(cmd).includes(path.resolve(want)), `bash 3.2 and 5: ${want}`);
+    });
+  }
+  // The same pipeline start from a worktree cwd, after a `cd` into the main checkout: bash 3.2, bash 5 and
+  // zsh write /main/f.
+  test('#4481 case: `cd /main; true | case x in a) true & cd /wt;; esac; echo y > f` keeps the pipeline start in the main checkout', () => {
+    const got = fileWriteTargets('cd /main; true | case x in a) true & cd /wt;; esac; echo y > f', '/wt').map((t) => t.file);
+    assert.ok(got.includes(path.resolve('/main/f')), 'bash 3.2, bash 5 and zsh: /main/f');
+  });
   // #4481: the arm's own `;` resolves the branch `||` was skipping past into the arm's cwd, which its `cd`
   // then drops, so the closed case gives it back. bash 3.2, bash 5 and zsh write /r/f (`true` succeeds,
   // so the case is skipped).

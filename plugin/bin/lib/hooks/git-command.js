@@ -2566,11 +2566,15 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // case, so the case's record stays (`case a in a) cd ../q; true & echo y > g;; esac | cat; echo x > f`
   // writes r/f). A case still open with no record yet (no separator since its `case` word) began its arm's
   // list where its command began, `spanStart` (`cd ../wt && case a in a) cd ../q & echo x > f ;; esac`
-  // writes wt/f). bash 3.2 and 5 agree on each.
+  // writes wt/f), and the list holding the case keeps its own state: the cwds it was skipping past and
+  // the pipeline the case is an element of, which the record pushed at the arm's first separator saves
+  // (`cd ../q || case a in a) true & true;; esac; echo y > g` writes q/g, `true | case a in a) true & cd
+  // ../q;; esac; echo y > f` writes r/f). bash 3.2 and 5 agree on each.
   const background = (L, openCases) => {
     closeCases(L, openCases);
     const recorded = L.cases.length > 0 ? L.cases[L.cases.length - 1].level : 0;
-    const back = openCases > recorded ? L.spanStart : L.listStart;
+    if (openCases > recorded) return L.spanStart;
+    const back = L.listStart;
     L.skipOk = [];
     L.skipFail = [];
     L.pipeStart = null;
