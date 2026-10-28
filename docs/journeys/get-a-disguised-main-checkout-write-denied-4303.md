@@ -84,9 +84,10 @@ files:
   | The command inside `$( … )` or backticks | #4446 |
   | A NAME=value, `env` or `sudo` prefix | #4448 |
   | `cd -`, `$OLDPWD`, a symlinked dir or a failing cd | #4450 |
-  | Compound-command bodies, `pushd` and `builtin cd` | #4244 |
-  | zsh-only redirect forms | #4455 |
-  | A `case` whose cd arm does not match, a case or `cd` inside an `if`/`while`/`for` body, a function called after a later cd, zsh's pipeline last element | deferred by #4481; records filed at its wrap-up |
+  | Compound-command bodies (including a case or `cd` inside an `if`/`while`/`for` body), `pushd` and `builtin cd` | #4244 |
+  | zsh-only forms (redirects, a pipeline's last element) | #4455 |
+  | A `case` whose cd arm does not match | #4486 |
+  | A function called after a later cd | #4487 |
 - **Red flags:** A skill or procedure that tells agents to use one of these shapes because the gate misses it.
 
 ## Origin
