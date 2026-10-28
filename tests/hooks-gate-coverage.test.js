@@ -529,18 +529,17 @@ for (const [cmd, file] of [
   });
 }
 // #4303: a GNU long option that takes a value takes the next word when no `=` follows, abbreviated
-// or not, so a `-t` there is that value and no option. bash 3.2 and 5 with GNU coreutils 9.12 write
-// M/g for each row but the two cp rows below (`cp --suffix -t a M/g` copies a to M/g);
-// `install --strip -t M g` writes M/g
-// (`--strip` is an exact name, so it takes no value though it abbreviates `--strip-program`), and
-// `cp --backup -t M a` writes M/a (`--backup` takes a value only after `=`). macOS's BSD tools
-// reject each long option and write nothing. The `cp --no-preserve` and `cp --sparse` rows are the
-// exception: GNU checks those values as it parses them, so it rejects `-t` (`invalid argument`) and
-// writes nothing; the rows still pin the reading that keeps `-t` from naming the target. The
-// `install --gro staff -d` and `install --own root -d` rows create their directory with GNU (`--own`
-// as a non-root user creates it, then fails the chown), and `install --mo -t` writes its file, since
-// `-t` is a valid symbolic mode. `-d` makes every positional a directory, so a dropped value shows up
-// as an extra one.
+// or not, so a `-t` there is that value and no option. With GNU coreutils 9.12 under bash 3.2 and 5,
+// every row below except the exceptions named here writes its target: `cp --suffix -t a /main/f.js`
+// copies a to /main/f.js, and `install --strip -t /main g` installs g into /main. `--strip` is an
+// exact name, so it takes no value though it abbreviates `--strip-program`, and `cp --backup -t M a`
+// writes M/a (`--backup` takes a value only after `=`). macOS's BSD tools reject each long option and
+// write nothing. The exceptions: `install --gro staff -d` and `install --own root -d` create the
+// directory they name (`-d` makes every positional a directory, so a dropped value shows up as an
+// extra one; `--own` as a non-root user creates it, then fails the chown), and `cp --no-preserve` and
+// `cp --sparse` are rejected by GNU (`invalid argument`), so nothing is written; their rows pin the
+// reading that keeps `-t` from naming the target. `install --mo -t` writes its file, since `-t` is a
+// valid symbolic mode.
 for (const [cmd, file] of [
   ['cp --suffix -t a /main/f.js', '/main/f.js'], ['cp --suf -t a /main/f.js', '/main/f.js'], ['mv --suffix -t a /main/f.js', '/main/f.js'],
   ['ln --suffix -t a /main/f.js', '/main/f.js'], ['install --suffix -t a /main/f.js', '/main/f.js'], ['install --mode -t a /main/f.js', '/main/f.js'],
@@ -2709,9 +2708,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // checkout. N groups `{ cd /nonexistK; }` (each cd fails, so bash stays in the worktree) then
     // `{ cd OTHER; }; echo x > ../../M/leak.out`: bash 3.2 and 5 write M/leak.out for N = 20, 2002,
     // 2017, 3007, 3022, 4012 and 4027. A cap on the number of collapses that fell back to the overflow
-    // path alone dropped OTHER at some phases and allowed it. Now the phase only decides whether
-    // OTHER is still known (M/leak.out) or the group overflowed the cap and the lost cwd stands for
-    // it (M itself, the overflow root); every N from 1 to 60 is checked.
+    // path alone would drop OTHER at some phases and allow the write. The phase decides instead: OTHER
+    // is still known (M/leak.out) or the group overflowed the cap and the lost cwd stands for it (M
+    // itself, the overflow root); every N from 1 to 60 is checked.
     test('#4303 cwd cap: a write after any number of collapses resolves into the main checkout', () => {
       const M = path.resolve('/s/M');
       const ns = [...Array.from({ length: 60 }, (_, i) => i + 1), 2002, 2017, 3007, 3022, 4012, 4027];
@@ -3099,9 +3098,9 @@ test('e2e #4303: past the cwd cap from the main checkout, a relative write aimed
 // and commit in M for `git -C ../main commit`. The overflow cwd is then the session cwd itself, which
 // is no repo, so the lost cwd's stand-in named no worktree-always repo, and a lost target there
 // would allow both; base d9aa6b82d denies. The gate denies a lost target whose stand-in proves no
-// repo opted out. A worktree-always repo that opted out (policy off) has
-// nothing to enforce, so the same lost write from its worktree stays allowed, as at every version.
-// No path is spliced in, so this runs on every platform.
+// repo opted out. A worktree-always repo that opted out (policy off) has nothing to enforce, so the
+// same lost write from its worktree stays allowed, as at every version. No path is spliced in, so
+// this runs on every platform.
 test('e2e #4303: past the cwd cap from a cwd outside any repo, a relative write or git -C into the main checkout is DENIED', () => {
   const { main, decisionFor } = linkedWorktree4303();
   const outside = path.join(path.dirname(main), 'a0');
