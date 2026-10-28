@@ -604,3 +604,20 @@ test('sectionText and extractSection agree on absent (null vs empty) and present
     }
   }
 });
+
+test('shapeGate: a heading with trailing spaces and a tab is still the whole heading (#4367)', () => {
+  const body = SHAPED_BODY.replace('## Release Note\n', '## Release Note \t\n');
+  assert.deepEqual(shapeGate(body), { ok: true, missing: [] });
+  assert.equal(sectionText(body, 'Release Note'), 'Fixed the thing.');
+});
+
+test('shapeGate: a CRLF inline-code mention still reports both sections missing (#4367)', () => {
+  const crlf = INLINE_MENTION_BODY.replace(/\n/g, '\r\n');
+  assert.deepEqual(shapeGate(crlf), { ok: false, missing: ['Acceptance Criteria', 'Release Note'] });
+});
+
+test('sectionText: a CRLF body with a real Release Note heading line is found, text without a trailing CR (#4367)', () => {
+  const crlf = SHAPED_BODY.replace(/\n/g, '\r\n');
+  assert.equal(sectionText(crlf, 'Release Note'), 'Fixed the thing.');
+  assert.equal(shapeGate(crlf).ok, true);
+});
