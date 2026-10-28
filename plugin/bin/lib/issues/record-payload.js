@@ -94,10 +94,10 @@ function fencedBlock(text) {
 // when unclosed (a truncated fence is quoted content, the safer direction).
 // The one fence rule shared by stripCodeSpans (materialize-format.js), sectionText
 // and extractSection (#4169), mergeStateDemands (merge-gate.js) and
-// extractCurrentStateAnchors (near-duplicate.js) (#4369): an opener is a column-0 run of 3+ backticks or
-// tildes; the closer is the same character, at least the opener's length, and
-// nothing else on its line but trailing whitespace. Matches what fenceFor and
-// fencedBlock write.
+// extractCurrentStateAnchors (near-duplicate.js) (#4369): an opener is a
+// column-0 run of 3+ backticks or tildes; the closer is the same character, at
+// least the opener's length, and nothing else on its line but trailing
+// whitespace. Matches what fenceFor and fencedBlock write.
 function fencedLineRanges(lines) {
   const ranges = [];
   let i = 0;
