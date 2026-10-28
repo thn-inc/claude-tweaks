@@ -3506,6 +3506,77 @@ test('archiveMerged: dry-run by-number MERGED path with local main behind origin
   assert.notEqual(git(root, 'rev-parse', 'main').trim(), mergeOid, 'a dry-run must not fast-forward local main');
 });
 
+// #4387: the main checkout sits on the integration branch but origin/main
+// already holds the merge that carries the run's work/ subtree. The first pass
+// must skip the run (`local-behind-merge`) and move nothing — archiving here
+// would git-mv files the checkout does not have yet. Once main fast-forwards,
+// the second pass archives the run and its work/ rename lands in one commit.
+test('archiveMerged: main checkout on main but behind origin\'s merge — skips local-behind-merge, then archives with the work/ git mv once main fast-forwards (#4387)', { skip: STUB_SKIP }, () => {
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-origin-'));
+  git(origin, 'init', '--bare', '-b', 'main');
+  const seed = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-seed-'));
+  git(seed, 'clone', '-q', origin, '.');
+  git(seed, 'config', 'user.email', 't@t');
+  git(seed, 'config', 'user.name', 't');
+  commitPath(seed, 'a.txt', 'a\n');
+  git(seed, 'push', '-q', 'origin', 'main');
+  const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-clone-'));
+  git(clone, 'clone', '-q', origin, '.');
+  const root = fs.realpathSync(clone);
+  git(root, 'config', 'user.email', 't@t');
+  git(root, 'config', 'user.name', 't');
+
+  const runId = '2026-08-01T090000-record-4387-local-behind';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  commitPath(seed, `.claude-tweaks/pipelines/${runId}/work/4387-spec.md`, '# spec 4387\n');
+  git(seed, 'push', '-q', 'origin', 'main');
+  const mergeOid = git(seed, 'rev-parse', 'HEAD').trim();
+  git(root, 'fetch', '-q', 'origin', 'main'); // only origin/main advances; root stays on main
+
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-4387'), // stamped, never created here
+    pr: { number: 4510, branch: 'feat-4387-gone' }, // branch never existed locally
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+
+  const prJson = { number: 4510, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', mergeCommit: { oid: mergeOid } };
+  const headBefore = git(root, 'rev-parse', 'HEAD').trim();
+
+  const wrapper1 = installGhWrapper(prJson, { 4387: 'CLOSED' });
+  let first;
+  try {
+    first = archiveMerged({ cwd: root, integration: 'main' });
+  } finally {
+    wrapper1.restore();
+  }
+  assert.ok(!first.archived.includes(runDir), `expected ${runDir} not archived yet, got ${JSON.stringify(first)}`);
+  const skip = first.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(first)}`);
+  assert.equal(skip.reason, 'local-behind-merge');
+  assert.equal(STRUCTURALLY_STUCK_REASONS.has('local-behind-merge'), false);
+  assert.equal(fs.existsSync(path.join(runDir, 'run-state.json')), true);
+  assert.equal(fs.existsSync(archiveDir), false, 'a behind checkout must archive nothing');
+  assert.equal(git(root, 'rev-parse', 'HEAD').trim(), headBefore);
+
+  git(root, 'merge', '-q', '--ff-only', 'origin/main'); // work/ arrives with the fast-forward
+  const wrapper2 = installGhWrapper(prJson, { 4387: 'CLOSED' });
+  let second;
+  try {
+    second = archiveMerged({ cwd: root, integration: 'main' });
+  } finally {
+    wrapper2.restore();
+  }
+  assert.ok(second.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(second)}`);
+  assert.equal(fs.existsSync(runDir), false, 'original run dir must have been archived away');
+  assert.equal(fs.existsSync(path.join(archiveDir, 'work', '4387-spec.md')), true);
+  const headShow = git(root, 'show', '--name-status', 'HEAD');
+  assert.ok(headShow.includes(`.claude-tweaks/pipelines/${runId}/work/4387-spec.md`), `HEAD should delete the live work file:\n${headShow}`);
+  assert.ok(headShow.includes(`.claude-tweaks/pipelines/archive/${runId}/work/4387-spec.md`), `HEAD should add the archived work file:\n${headShow}`);
+});
+
 // #2228: the #1962 fallback's outer gate used to require `stampedWorktree`
 // truthy, so a run dir whose worktree was never stamped in the first place
 // (the #1684 gap — e.g. a two-Task-call /flow run whose record-worktree
