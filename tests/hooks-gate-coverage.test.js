@@ -1944,13 +1944,12 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   // #4481 round 3: a first-element case pipeline inside an outer case's arm, with no group wrapper. The
   // inner `esac` returns the walk to the outer arm, which is still open. bash 3.2, bash 5 and zsh write
   // /r/g for each, and /r/f for the trailing write.
-  for (const cmd of [
-    'case a in a) case b in b) cd /wt;; esac | cat; echo y > g;; esac',
-    'case a in a) case b in b) cd /wt;; esac | cat; echo y > g;; esac; echo x > f',
+  for (const [cmd, wants] of [
+    ['case a in a) case b in b) cd /wt;; esac | cat; echo y > g;; esac', ['/r/g']],
+    ['case a in a) case b in b) cd /wt;; esac | cat; echo y > g;; esac; echo x > f', ['/r/g', '/r/f']],
   ]) {
     test(`#4481 case: \`${cmd}\` ends its first-element pipeline under the start cwd inside an outer arm`, () => {
-      assert.ok(files(cmd).includes(path.resolve('/r/g')), 'bash 3.2, bash 5 and zsh: /r/g');
-      if (cmd.includes('echo x > f')) assert.ok(files(cmd).includes(path.resolve('/r/f')), 'bash 3.2, bash 5 and zsh: /r/f');
+      for (const want of wants) assert.ok(files(cmd).includes(path.resolve(want)), `bash 3.2, bash 5 and zsh: ${want}`);
     });
   }
   test('#4481 case: a first-element case pipeline inside an outer arm ends under its start at a newline', () => {
