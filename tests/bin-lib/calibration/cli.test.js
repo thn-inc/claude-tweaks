@@ -100,6 +100,32 @@ test('#917: a partially-pruned archive still reports the TSV row whose runId has
   assert.strictEqual(jsonOut.frictionCounts['gate-denial'], 1);
 });
 
+test('header names how many undated archive entries were excluded', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-excluded-'));
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
+    '2026-08-01\t2026-08-01T000000-run-1\tskills\tclosed\t0\tna\n2026-08-02\tspec-259\tskills\tclosed\t0\tna\n',
+  );
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive');
+  for (const runId of ['2026-08-01T000000-run-1', '2026-08-02T000000-run-2', 'unresolved-provenance']) {
+    fs.mkdirSync(path.join(archiveDir, runId), { recursive: true });
+  }
+  const jsonOut = JSON.parse(run(['--json'], root));
+  assert.deepStrictEqual(jsonOut.window.runIds, ['2026-08-01T000000-run-1', '2026-08-02T000000-run-2']);
+  assert.strictEqual(jsonOut.window.excluded, 2);
+  assert.match(run([], root), /^Window: last 2 archived run\(s\); 2 archive entries without a run-id timestamp excluded\.$/m);
+});
+
+test('header with only undated entries reports an empty window and exits 0', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-undated-'));
+  fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', 'unresolved-provenance'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'), '');
+  const out = run([], root);
+  assert.match(out, /^Window: last 0 archived run\(s\); 1 archive entry without a run-id timestamp excluded\.$/m);
+  assert.match(out, /Console terminal-decision distribution/);
+});
+
 test('no archive dir is stated explicitly', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-noarchive-'));
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });

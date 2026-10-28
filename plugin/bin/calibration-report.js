@@ -77,7 +77,11 @@ function renderText(result, ceiling) {
   const lines = [];
   lines.push('## Calibration read-out');
   lines.push('');
-  lines.push(`Window: last ${result.window.runIds.length} archived run(s).`);
+  const { excluded } = result.window;
+  const excludedNote = excluded > 0
+    ? `; ${excluded} archive ${excluded === 1 ? 'entry' : 'entries'} without a run-id timestamp excluded`
+    : '';
+  lines.push(`Window: last ${result.window.runIds.length} archived run(s)${excludedNote}.`);
   lines.push('');
   lines.push('### Per-registry-row finding rate');
   for (const [rowId, v] of Object.entries(result.perRow)) {
