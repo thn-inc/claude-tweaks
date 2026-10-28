@@ -2707,6 +2707,13 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     // (by the nesting there, never by whether the sub run is active: an outer piece before the
     // separator has ended the run) or the outer walk's.
     const op = separatorOp(outer, span.end);
+    // How many cases are open in the frame where the separator stands (#4481): a separator inside an open
+    // case (the arm's own `;;`, or a `|` in its body) is not the case's pipeline's end, while one after
+    // the case's own `esac` is (endCommand's case records). An outer case around a group or a subshell does
+    // not count: that group's own list ends the pipeline (`case a in a) { case b in b) cd /q;; esac | cat;
+    // echo x > f; };; esac` writes /r/f).
+    const frame = g.stack[g.stack.length - 1] || g.root;
+    const openCases = frame.caseDepth;
     // #4303: a `|` in a case pattern list (`case x in a|x) cd M;; esac`) separates two patterns, no
     // pipeline elements: bash 3.2 and 5 run the arm in the current shell, so its `cd` reaches the
     // commands after `esac` (both write M/f). The walk reads no separator there, so the arm keeps
@@ -2717,15 +2724,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     // separator inside a top-level backtick is that backtick's own, never the frame's: groupEvents
     // never reads the backtick's first command, so once a `case` word shows in the backtick run, a
     // `|` in it is read both ways (endCommand's `maybePattern`), failing closed.
-    // How many cases are open in the frame where the separator stands (#4481): a separator inside an open
-    // case (the arm's own `;;`, or a `|` in its body) is not the case's pipeline's end, while one after
-    // the case's own `esac` is (endCommand's case records). An outer case around a group or a subshell does
-    // not count: that group's own list ends the pipeline (`case a in a) { case b in b) cd /q;; esac | cat;
-    // echo x > f; };; esac` writes /r/f).
-    const openCases = (g.stack[g.stack.length - 1] || g.root).caseDepth;
     if (span.endsInSub) btCase = btCase || CASE_WORD_RE.test(span.text);
     else {
-      const frame = g.stack[g.stack.length - 1] || g.root;
       if (op === '|' && (frame.casePattern || frame.leadParen)) continue;
       if (frame.caseDepth > 0 && outer[span.end] === ';' && (outer[span.end + 1] === ';' || outer[span.end + 1] === '&')) frame.casePattern = true;
     }

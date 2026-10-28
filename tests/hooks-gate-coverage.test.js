@@ -1942,7 +1942,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   }
   // #4481 round 3: a first-element case pipeline inside an outer case's arm, with no group wrapper. The
   // inner `esac` returns the walk to the outer arm, which is still open. bash 3.2, bash 5 and zsh write
-  // /r/g for each, and /r/f for the trailing write (verdict-r3.txt lines 2-21).
+  // /r/g for each, and /r/f for the trailing write.
   for (const cmd of [
     'case a in a) case b in b) cd /wt;; esac | cat; echo y > g;; esac',
     'case a in a) case b in b) cd /wt;; esac | cat; echo y > g;; esac; echo x > f',
@@ -1967,8 +1967,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     assert.ok(files('echo $(case a in a) cd /q;; esac | false || echo y > g)').includes(path.resolve('/r/g')), 'bash 5 and zsh: /r/g when the pipeline fails');
   });
   // #4481 round 3: a leading-paren arm's group, subshell and function body keep their cd for the commands
-  // after them. bash 3.2, bash 5 and zsh write /wt/f and /wt/g for the first, /wt/g for the others
-  // (verdict-r3.txt lines 33-46).
+  // after them. bash 3.2, bash 5 and zsh write /wt/f and /wt/g for the first, /wt/g for the others.
   for (const [cmd, wants] of [
     ['case a in (a) { cd /wt; echo y > g; };; esac; echo x > f', ['/wt/f', '/wt/g']],
     ['case a in (a) ( cd /wt; echo y > g );; esac', ['/wt/g']],
