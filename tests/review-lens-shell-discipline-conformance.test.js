@@ -63,7 +63,7 @@ test('AC1.1 go-red: the line assertion fails on a bundle without the line', () =
     .split('\n')
     .filter((l) => !l.includes('SHELL DISCIPLINE:'))
     .join('\n');
-  assert.throws(() => assertShellLine(bundle));
+  assert.throws(() => assertShellLine(bundle), /must carry one verbatim prompt line/);
 });
 
 test('AC1.1: step3-lens-dispatch.md instructs inlining the line, outside the byte-pinned Calibration block', () => {
