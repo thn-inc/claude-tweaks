@@ -12,11 +12,17 @@ const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
 const BUILD_SKILL = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'SKILL.md'));
 
-function section(heading) {
-  const start = BUILD_SKILL.indexOf(heading);
+const CHECKLIST = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'operational-checklist.md'));
+
+function sectionOf(text, heading) {
+  const start = text.indexOf(heading);
   assert.ok(start > -1, `heading must exist: ${heading}`);
-  const next = BUILD_SKILL.indexOf('\n### ', start + heading.length);
-  return BUILD_SKILL.slice(start, next === -1 ? undefined : next);
+  const next = text.indexOf('\n### ', start + heading.length);
+  return text.slice(start, next === -1 ? undefined : next);
+}
+
+function section(heading) {
+  return sectionOf(BUILD_SKILL, heading);
 }
 
 test('AC1.1: Common Step headings appear in execution order 4.5 < 6 < 6.5 < 5 < 5.5 < 7', () => {
@@ -41,4 +47,34 @@ test('AC1.2: Common Step 6 section does not contain "After verification passes"'
 
 test('AC1.3: Common Step 5 section names Common Steps 6 and 6.5', () => {
   assert.match(section('### Common Step 5:'), /Common Steps 6 and 6\.5/);
+});
+
+function assertCategoryABeforeVerify(text) {
+  const step5 = sectionOf(text, '### Common Step 5:');
+  assert.match(step5, /\*\*Operational fixes first \(#3489\)\.\*\*/);
+  assert.match(step5, /`operational-checklist\.md`'s Category A triggers, apply that file's Category A fixes and commit them, so the verified tree includes them/);
+  assert.match(step5, /re-check those triggers against any fix commit below before re-running verification/);
+  assert.doesNotMatch(step5, /\*\*On skip\*\*/);
+  const step55 = sectionOf(text, '### Common Step 5.5:');
+  assert.match(step55, /Category A fixes already landed before Common Step 5/);
+  // a shared-constant or exports-only Category A fix must still reach Step 5.5's ledger row
+  assert.match(step55, /schema\/env\/IaC\/CI\/platform-config files, or Common Step 5 applied a Category A fix, read/);
+  assert.doesNotMatch(step55, /Operational fixes first/);
+}
+
+test('#3489 AC1.1: Common Step 5 applies Category A operational fixes before its verification; Step 5.5 does not', () => {
+  assertCategoryABeforeVerify(BUILD_SKILL);
+});
+
+test('#3489 AC1.1 go-red: the assertion fails when the Step 5 paragraph is removed', () => {
+  const doctored = BUILD_SKILL.replace(/\*\*Operational fixes first \(#3489\)\.\*\*[^\n]*\n\n/, '');
+  assert.notEqual(doctored, BUILD_SKILL, 'doctoring must actually remove the paragraph');
+  assert.throws(() => assertCategoryABeforeVerify(doctored), assert.AssertionError);
+});
+
+test('#3489 AC1.1: operational-checklist.md applies Category A in Step 5 and writes its ledger rows in Step 5.5', () => {
+  const catA = CHECKLIST.split('## Category A')[1].split('## Category B')[0];
+  assert.match(catA, /Common Step 5 applies them before its verification run/);
+  assert.match(catA, /Common Step 5\.5 appends each Category A finding to the open items ledger/);
+  assert.match(catA, /`open` for a schema change with no documented push command/);
 });
