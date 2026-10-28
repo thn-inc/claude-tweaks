@@ -474,15 +474,13 @@ function pairedFixtureWithPushedMerge() {
 
 // Fails every `git branch --show-current` probe with `error`; the returned counter records how many ran.
 function failBranchProbe(t, error) {
-  const cp = require('child_process');
-  const realExecFileSync = cp.execFileSync;
   const counter = { calls: 0 };
-  t.mock.method(cp, 'execFileSync', (file, args, opts) => {
+  t.mock.method(require('child_process'), 'execFileSync', (file, args, opts) => {
     if (Array.isArray(args) && args.includes('branch') && args.includes('--show-current')) {
       counter.calls += 1;
       throw error;
     }
-    return realExecFileSync(file, args, opts);
+    return execFileSync(file, args, opts); // the real one, destructured at load before the mock
   });
   return counter;
 }

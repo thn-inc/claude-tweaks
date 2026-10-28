@@ -3506,12 +3506,8 @@ test('archiveMerged: dry-run by-number MERGED path with local main behind origin
   assert.notEqual(git(root, 'rev-parse', 'main').trim(), mergeOid, 'a dry-run must not fast-forward local main');
 });
 
-// #4387: the main checkout sits on the integration branch but origin/main
-// already holds the merge that carries the run's work/ subtree. The first pass
-// must skip the run (`local-behind-merge`) and move nothing — archiving here
-// would git-mv files the checkout does not have yet. Once main fast-forwards,
-// the second pass archives the run and its work/ rename lands in one commit.
-test('archiveMerged: main checkout on main but behind origin\'s merge — skips local-behind-merge, then archives with the work/ git mv once main fast-forwards (#4387)', { skip: STUB_SKIP }, () => {
+// #4387: a bare origin seeded with one commit (a.txt) from `seed`, plus `root`, a configured clone of it.
+function cloneOfSeededOrigin() {
   const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-origin-'));
   git(origin, 'init', '--bare', '-b', 'main');
   const seed = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-seed-'));
@@ -3525,6 +3521,16 @@ test('archiveMerged: main checkout on main but behind origin\'s merge — skips 
   const root = fs.realpathSync(clone);
   git(root, 'config', 'user.email', 't@t');
   git(root, 'config', 'user.name', 't');
+  return { seed, root };
+}
+
+// #4387: the main checkout sits on the integration branch but origin/main
+// already holds the merge that carries the run's work/ subtree. The first pass
+// must skip the run (`local-behind-merge`) and move nothing — archiving here
+// would git-mv files the checkout does not have yet. Once main fast-forwards,
+// the second pass archives the run and its work/ rename lands in one commit.
+test('archiveMerged: main checkout on main but behind origin\'s merge — skips local-behind-merge, then archives with the work/ git mv once main fast-forwards (#4387)', { skip: STUB_SKIP }, () => {
+  const { seed, root } = cloneOfSeededOrigin();
 
   const runId = '2026-08-01T090000-record-4387-local-behind';
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
@@ -3582,19 +3588,7 @@ test('archiveMerged: main checkout on main but behind origin\'s merge — skips 
 // or (squash) as a new commit carrying the same patch, so the run's branch tip is no ancestor
 // of main and only the cherry shape recognises it as merged.
 function fixtureAbandonedBehindOrigin({ squash = false } = {}) {
-  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-origin-'));
-  git(origin, 'init', '--bare', '-b', 'main');
-  const seed = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-seed-'));
-  git(seed, 'clone', '-q', origin, '.');
-  git(seed, 'config', 'user.email', 't@t');
-  git(seed, 'config', 'user.name', 't');
-  commitPath(seed, 'a.txt', 'a\n');
-  git(seed, 'push', '-q', 'origin', 'main');
-  const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-clone-'));
-  git(clone, 'clone', '-q', origin, '.');
-  const root = fs.realpathSync(clone);
-  git(root, 'config', 'user.email', 't@t');
-  git(root, 'config', 'user.name', 't');
+  const { seed, root } = cloneOfSeededOrigin();
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
 
