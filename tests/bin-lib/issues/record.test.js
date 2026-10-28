@@ -1225,8 +1225,8 @@ test('fence-blind metadata (#4368): a backtick opener whose info string holds a 
 });
 
 test('fence-blind metadata (#4368): a leading byte-order mark does not hide a fence opener', () => {
-  assert.strictEqual(extractPremiseCheck('﻿```\nPremise-check: echo QUOTED\n```'), null);
-  assert.strictEqual(extractPremiseCheck('﻿```\nPremise-check: echo QUOTED\n```\nPremise-check: echo REAL'), 'echo REAL');
+  assert.strictEqual(extractPremiseCheck('\uFEFF```\nPremise-check: echo QUOTED\n```'), null);
+  assert.strictEqual(extractPremiseCheck('\uFEFF```\nPremise-check: echo QUOTED\n```\nPremise-check: echo REAL'), 'echo REAL');
 });
 
 test('recordPayload (#4368): a Defer-reason: line quoted inside a fenced block is not the body\'s own', () => {
@@ -1430,14 +1430,9 @@ test('extractSection: an unclosed fence hides every later heading (CommonMark: i
   assert.ok(extractSection(body, 'Current State').endsWith('- [ ] d'));
 });
 
-test('extractSection: a heading inside a 3-space-indented fence is not a section (#4368)', () => {
-  const body = ['## Current State', 'x', '   ```', '## Deliverables', 'quoted', '   ```', '', '## Release Note', 'n'].join('\n');
-  assert.strictEqual(extractSection(body, 'Deliverables'), '');
-});
-
-test('extractSection: 1- and 2-space-indented fences hide a heading; a 4-space pad is not a fence (#4368)', () => {
+test('extractSection: 1- to 3-space-indented fences hide a heading; a 4-space pad is not a fence (#4368)', () => {
   const bodyFor = (pad) => ['## Current State', 'x', `${pad}\`\`\``, '## Deliverables', 'quoted', `${pad}\`\`\``, '', '## Release Note', 'n'].join('\n');
-  for (const pad of [' ', '  ']) {
+  for (const pad of [' ', '  ', '   ']) {
     assert.strictEqual(extractSection(bodyFor(pad), 'Deliverables'), '', `pad ${pad.length}`);
   }
   const four = extractSection(bodyFor('    '), 'Deliverables');

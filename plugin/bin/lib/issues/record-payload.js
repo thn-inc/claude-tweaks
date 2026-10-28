@@ -111,7 +111,7 @@ function fencedLineRanges(lines) {
   const ranges = [];
   let i = 0;
   while (i < lines.length) {
-    const fenceMatch = lines[i].match(/^﻿? {0,3}(`{3,}(?=[^`]*$)|~{3,})/);
+    const fenceMatch = lines[i].match(/^\uFEFF? {0,3}(`{3,}(?=[^`]*$)|~{3,})/);
     if (!fenceMatch) {
       i++;
       continue;
