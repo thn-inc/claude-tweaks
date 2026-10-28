@@ -2,7 +2,7 @@
 
 An overlap-gated catch-up with the integration branch, run by `/claude-tweaks:build` immediately before `/superpowers:subagent-driven-development` builds its whole-branch review package (#4304). The call site is `build/dispatch.md`'s **Pre-review catch-up** instruction, which names `bin/pre-review-catchup.js`; this file is the procedure and the posture behind it, cited rather than restated there.
 
-It is overlap-gated, not unconditional: a merge commit and a full-suite re-run happen only when upstream commits touch files this branch changed. A branch whose files upstream never touched pays one fetch and a file-list comparison (the #4149 evidence: a review that judged a stale tree surfaced as DIRTY only at merge, and only overlapping files cause that). Merging every time would add a commit and a suite run to builds that gain nothing from either.
+It is overlap-gated, not unconditional: a merge commit and a full-suite re-run happen only when upstream commits touch files this branch changed. A branch whose files upstream never touched pays one fetch and a file-list comparison (the #4149 evidence: #4015 landed mid-run on the same functions, surfaced only at review Step 2, and cost a semantic-merge dispatch, a win32 follow-up and a second full suite; at merge, PR #4166 went `DIRTY` twice in one merge-mode invocation, the second time needing a hand semantic merge plus a three-way bash differential). Merging every time would add a commit and a suite run to builds that gain nothing from either.
 
 ## Scope
 

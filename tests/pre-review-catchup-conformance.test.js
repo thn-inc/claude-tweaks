@@ -36,14 +36,30 @@ function requireOrder(text, markers) {
   }
 }
 
-// The sentence (period-space bounded) that holds the first occurrence of `needle`.
-function sentenceContaining(text, needle) {
-  const at = text.indexOf(needle);
-  assert.notStrictEqual(at, -1, `no sentence names ${needle}`);
-  const start = text.lastIndexOf('. ', at) + 1;
-  const end = text.indexOf('. ', at);
-  return text.slice(start, end === -1 ? undefined : end + 1);
+// The catch-up instruction itself: from its bold label to the return marker. Both anchors
+// are asserted before slicing, so a missing end cannot widen the span to the rest of the file.
+const SPAN_START = '**Pre-review catch-up (#4304';
+function catchupSpan(text) {
+  const start = text.indexOf(SPAN_START);
+  assert.notStrictEqual(start, -1, `marker missing: ${SPAN_START}`);
+  const end = text.indexOf(REVIEW_RETURN_MARKER, start);
+  assert.notStrictEqual(end, -1, `marker missing after the catch-up instruction: ${REVIEW_RETURN_MARKER}`);
+  return text.slice(start, end);
 }
+
+// The routing facts the catch-up instruction must state: the call-site rule, every OUTCOMES
+// token, and the windows-longpath posture. Returns the names of the facts that are absent.
+const OUTCOME_FACTS = OUTCOMES.map((o) => ({ name: `outcome ${o}`, token: `\`${o}\``, has: (s) => s.includes(`\`${o}\``) }));
+const ROUTING_FACTS = [
+  { name: 'call-site rule', has: (s) => s.includes('never carried from Common Step 1') },
+  { name: 'non-zero exit rule', has: (s) => s.includes('On any non-zero exit (not an outcome), read stderr, fix the cause and re-run — never skip the check') },
+  { name: 'windows-longpath is not the fail-open path', has: (s) => /`windows-longpath` → not the fail-open path/.test(s) },
+  ...OUTCOME_FACTS,
+];
+const missingRoutingFacts = (text) => {
+  const span = catchupSpan(text);
+  return ROUTING_FACTS.filter((f) => !f.has(span)).map((f) => f.name);
+};
 
 function section(text, heading) {
   const start = text.indexOf(heading);
@@ -74,9 +90,47 @@ test('AC1.2: the review package base comes from reviewBase', () => {
 test('scope: worktree only, current-branch and wave members SKIP', () => {
   assert.ok(DISPATCH.includes('current-branch strategy → fallback: no pre-review catch-up'));
   assert.ok(DISPATCH.includes('MULTISPEC_PARALLEL_WAVE=1'));
-  const sentence = sentenceContaining(DISPATCH, CLI_MARKER);
-  assert.ok(!sentence.includes('value Common Step 1 resolved'), 'the integration branch is resolved at the call site, not carried from Common Step 1');
+  assert.ok(DISPATCH.includes('never carried from Common Step 1'), 'the integration branch is resolved at the call site, not carried from Common Step 1');
   assert.ok(DISPATCH.includes('_shared/integration-branch.md'), 'dispatch.md must route {integration-branch} through the canonical ladder');
+});
+
+test('routing: the catch-up instruction states the call-site rule, every outcome and the windows-longpath posture', () => {
+  assert.deepEqual(missingRoutingFacts(DISPATCH), []);
+});
+
+test('routing control: each fact goes red alone when only it is removed from the text', () => {
+  const swapAll = (text, from, to) => {
+    const out = text.split(from).join(to);
+    assert.notEqual(out, text, `control matched nothing: ${from}`);
+    return out;
+  };
+  assert.deepEqual(missingRoutingFacts(swapAll(DISPATCH, 'never carried from Common Step 1', 'carried from Common Step 1')), ['call-site rule']);
+  assert.deepEqual(missingRoutingFacts(swapAll(DISPATCH, 'On any non-zero exit (not an outcome)', 'On a non-zero exit')), ['non-zero exit rule']);
+  assert.deepEqual(
+    missingRoutingFacts(swapAll(DISPATCH, '`windows-longpath` → not the fail-open path', '`windows-longpath` → handled')),
+    ['windows-longpath is not the fail-open path'],
+  );
+  for (const f of OUTCOME_FACTS) {
+    // The windows-longpath clause is anchored on its token, so losing the token loses both facts.
+    const expected = f.name === 'outcome windows-longpath' ? ['windows-longpath is not the fail-open path', f.name] : [f.name];
+    assert.deepEqual(missingRoutingFacts(swapAll(DISPATCH, f.token, 'OUTCOME')), expected);
+  }
+  // Deleting the whole windows-longpath clause loses both of its facts.
+  const clause = /`windows-longpath` → not the fail-open path: follow `_shared\/worktree-setup-windows-longpath\.md` \(the `core\.longpaths` fix\), then re-run the CLI\. /;
+  assert.ok(clause.test(DISPATCH), 'the windows-longpath clause shape changed — update this control');
+  assert.deepEqual(
+    missingRoutingFacts(DISPATCH.replace(clause, '')),
+    ['windows-longpath is not the fail-open path', 'outcome windows-longpath'],
+  );
+  // A token that only appears outside the catch-up span (before its label) must not satisfy the pin.
+  const outside = DISPATCH.replace(SPAN_START, '`windows-longpath` not-a-clause\n' + SPAN_START);
+  assert.notEqual(outside, DISPATCH);
+  const cut = outside.split('`windows-longpath`');
+  assert.ok(cut.length > 2);
+  const keptOnlyOutside = cut[0] + '`windows-longpath`' + cut.slice(1).join('WLP');
+  assert.ok(missingRoutingFacts(keptOnlyOutside).includes('outcome windows-longpath'));
+  // The end anchor is asserted, not assumed.
+  assert.throws(() => catchupSpan(DISPATCH.replace(REVIEW_RETURN_MARKER, 'x')), /marker missing after/);
 });
 
 test('AC3.1: a conflict stops before review', () => {
