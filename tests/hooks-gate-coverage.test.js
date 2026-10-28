@@ -561,10 +561,16 @@ for (const cmd of ['cp a b -S .bak', 'cp a b --suffix .bak', 'cp a b --suf .bak'
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', 'b'), path.resolve('/r', '.bak')]);
   });
 }
-// #4449: the two readings agree when no option value sits among the operands, so one destination is
-// reported. `cp --suffix -t X a` copies X to a (the -t is --suffix's value, and GNU and BSD both end
-// at a); `cp -S .bak a b` and `cp a b --suffix=.bak` write b.
-for (const [cmd, file] of [['cp --suffix -t X a', 'a'], ['cp -S .bak a b', 'b'], ['cp a b --suffix=.bak', 'b']]) {
+// #4449: each row resolves exactly one destination. `cp --suffix -t X a` copies X to a under GNU (the
+// -t is --suffix's value); macOS's BSD cp rejects --suffix as an illegal option and writes nothing, and
+// the scanner's BSD reading also lands on a. `cp -S .bak a b` and `cp a b --suffix=.bak` write b.
+// `cp -- a -x b -S .bak` writes .bak: after `--` every word is an operand, so the readings agree.
+// `cp a -S .bak` has one GNU operand, so GNU writes nothing (no destination) and only the BSD reading,
+// .bak, is reported.
+for (const [cmd, file] of [
+  ['cp --suffix -t X a', 'a'], ['cp -S .bak a b', 'b'], ['cp a b --suffix=.bak', 'b'],
+  ['cp -- a -x b -S .bak', '.bak'], ['cp a -S .bak', '.bak'],
+]) {
   test(`#4449: \`${cmd}\` resolves exactly one destination`, () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', file)]);
   });
