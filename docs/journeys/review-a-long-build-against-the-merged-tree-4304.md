@@ -10,7 +10,7 @@ files:
 
 **Persona:** A maintainer who started `/claude-tweaks:flow #N` (or `/claude-tweaks:build #N`) in a worktree on a multi-task record, and let it run for an hour or more while sibling sessions kept merging PRs into `main`, some of them touching the same files.
 **Goal:** Have the whole-branch review judge the branch on top of today's `main`, not the `main` the worktree was cut from, so an overlapping upstream change surfaces during the build instead of as a `DIRTY` PR at merge.
-**Entry point:** SDD has finished its last task review, and `/build`'s `dispatch.md` **Pre-review catch-up** instruction runs `bin/pre-review-catchup.js --integration-branch {integration-branch} --run "$PIPELINE_RUN_DIR"` from the worktree root, before the final review package is built.
+**Entry point:** SDD has finished its last task review, and `/build`'s `dispatch.md` **Pre-review catch-up** instruction runs `bin/pre-review-catchup.js --integration-branch {integration-branch} --run "$PIPELINE_RUN_DIR"` from the worktree root, before the final review package is built. That instruction carries only the call; what each outcome means and what the build does next is `_shared/pre-review-catchup.md`'s `## Outcomes`.
 **Success state:** `decisions.md` holds one `Pre-review catch-up` line per CLI run, the last naming the outcome the review went ahead on; the review package's base is the JSON's `reviewBase`; and when upstream overlapped, the review and the full suite both ran on the merged tree.
 
 ## Steps
@@ -39,8 +39,14 @@ files:
    - **Should understand:** A `fetch-failed` line differs from a `no-overlap` line: `SKIP` means "not checked", `SCANNED` means "checked, clean".
    - **Red flags:** A failed fetch is logged as `SCANNED`, or the build hangs on an ssh prompt with no timeout.
 
-5. **Read it back** — the maintainer opens the run's `decisions.md`, or the Review Console at wrap-up.
-   - **Action:** Under `/build` there is one `Pre-review catch-up` entry per CLI run (one, unless a fixable outcome below made the build re-run it), plus the conflict-resolution line when step 3 happened. A `current-branch` build shows only a `SKIP` naming the worktree-only scope.
+5. **The CLI itself fails** — it exits 2 (a malformed invocation, such as an `--integration-branch` value that starts with `-`) or 1 (an undecided crash, typically upstream adding a path that sits untracked in the worktree).
+   - **Action:** There is no JSON outcome and the CLI wrote no `decisions.md` line, so `/build` logs one itself: `SKIP … — Pre-review catch-up: condition: the CLI exited {n} ({stderr line}) → fallback: environment cause fixed, CLI re-run once`, written with `log-decision.js --text-file` because the stderr line is tool-supplied. It fixes the cause named on stderr and re-runs the CLI once. A second non-zero exit logs the same line with `fallback: none; HARD-GATE stop`, and the build stops with that stderr in front of the maintainer.
+   - **Should feel:** Like a tool that broke, said so, and got one retry, never a check that quietly passed.
+   - **Should understand:** Exit 0 covers every outcome, `fetch-failed` included; a non-zero exit is not an outcome and is never skipped past to the review. The untracked files a crash names are not the catch-up's to move or delete.
+   - **Red flags:** A non-zero exit with no `SKIP` line, a third CLI run, untracked files moved or deleted to get the merge through, or the whole-branch review running after a second non-zero exit.
+
+6. **Read it back** — the maintainer opens the run's `decisions.md`, or the Review Console at wrap-up.
+   - **Action:** Under `/build` there is one `Pre-review catch-up` entry per CLI run (one, unless a fixable outcome below or step 5's non-zero exit made the build re-run it), plus the conflict-resolution line when step 3 happened. A `current-branch` build shows only a `SKIP` naming the worktree-only scope.
    - **Should feel:** Traceable. One line says what the catch-up found and what it did.
    - **Should understand:** A `windows-longpath` or `dirty-tree` outcome is a fixable state, not a pass: the log names the fix taken (the `core.longpaths` repair, or committing the build's own uncommitted work) before the CLI re-ran.
    - **Red flags:** Two entries for one CLI run (the CLI's line plus a hand-logged duplicate), or no entry at all.
@@ -49,4 +55,4 @@ files:
 
 A long build no longer reviews a tree that `main` has already moved past on the same files. Overlapping upstream work is merged, tested and reviewed inside the build, a conflict stops the build rather than the merge, and a branch that upstream never touched pays one fetch.
 
-_Origin: record #4304 (pre-review integration catch-up), built 2026-10-28._
+_Origin: record #4304 (pre-review integration catch-up), built 2026-10-28. Updated at the same record's wrap-up: the review fix wave (b4ad51a81) moved the procedure into `_shared/pre-review-catchup.md` and added the caller-owed `SKIP` on a non-zero exit (step 5)._
