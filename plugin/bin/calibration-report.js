@@ -158,13 +158,16 @@ function main() {
         // A finished run still awaiting archival has a live dir under
         // pipelines/{runId}/ — load it so the newest runs aren't empty stubs.
         // Only a single path segment is a dir name; anything else stays empty.
-        const liveDir = /^[^/\\]+$/.test(runId) && runId !== '.' && runId !== '..'
-          ? path.join(args.root, '.claude-tweaks', 'pipelines', runId)
-          : null;
+        const isDirName = /^[^/\\]+$/.test(runId) && runId !== '.' && runId !== '..';
+        if (!isDirName) {
+          runs.push({ runId, decisionLines: [], events: { counts: {} } });
+          continue;
+        }
+        const liveDir = path.join(args.root, '.claude-tweaks', 'pipelines', runId);
         runs.push({
           runId,
-          decisionLines: liveDir ? readDecisionLines(path.join(liveDir, 'decisions.md')) : [],
-          events: (liveDir && readEventsKinds(path.join(liveDir, 'events.jsonl'))) || { counts: {} },
+          decisionLines: readDecisionLines(path.join(liveDir, 'decisions.md')),
+          events: readEventsKinds(path.join(liveDir, 'events.jsonl')) || { counts: {} },
         });
       }
     }
