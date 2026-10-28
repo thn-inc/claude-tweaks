@@ -23,7 +23,7 @@ files:
 - **Red flags:** a journey or doc commit appearing in `git log` after the commit `report.json`'s `sha` names; the "After verification passes" wording back in Step 6.
 
 ### 2. Final verification covers the final tree
-- **URL:** `plugin/skills/build/SKILL.md` Common Step 5; `plugin/skills/test/verification.md`
+- **URL:** `plugin/skills/build/SKILL.md` Common Step 5; `plugin/skills/build/operational-checklist.md` Category A; `plugin/skills/test/verification.md`
 - **Action:** Common Step 5 first applies any Category A operational fix the diff calls for (schema push, `.env.example` entry, test-literal rewrite, exports build) and commits it (#3489), then runs the full verification once, after Steps 6 and 6.5, and forwards `VERIFICATION_PASSED=true` with `VERIFICATION_SHA` from `report.json`.
 - **Should feel:** One full-suite wait per build, not two.
 - **Should understand:** Test-pinned docs like `docs/plugin-structure.md` are verified in the same run as the code they describe, because the doc edit is already in the tree. If a Step 5 failure needs a behavior-changing fix, re-check any journey or doc Steps 6/6.5 wrote that the fix contradicts *before* re-running verification, so the last green run still covers the final tree. A Step 5 fix commit is re-checked against the Category A triggers before verification re-runs, so a fix that adds a new env read or schema edit gets its operational fix in the same verified tree.
@@ -39,7 +39,7 @@ files:
 ## Origin
 - Created during `/claude-tweaks:build` of record #3060 (2026-10-17): Common Steps 6 and 6.5 moved ahead of Common Step 5 (numbers kept), order pinned by `tests/build-verify-after-doc-steps.test.js`. Prompted by #3043's build, where a full-suite launch was aborted and re-run after Steps 6/6.5 moved HEAD.
 - Step 3 updated during `/claude-tweaks:build` of record #3284 (2026-10-19): the moved-HEAD case now re-stamps through the runner instead of a hand-classified skip.
-- Steps 2 and 3 updated during `/claude-tweaks:build` of record #3489 (2026-10-28): Category A operational fixes moved into Common Step 5, ahead of its verification run, closing the last tracked-file write after verification.
 - Step 2's red flags extended after #3757 (`verify.js` withholds the pass stamp when HEAD moved during the run, and `report.json`'s `sha` is the start commit): a commit landing mid-verification now shows as the `tree moved during the run` line instead of a stamp crediting it.
 - Step 2 revisited after #4024: under an `impact` declaration, Common Step 5's single run is the impact-selected subset when the build is scoped-eligible (a run dir or `--source`), and the full suite otherwise; the run-once rule and the `report.json` `sha` = `VERIFICATION_SHA` link are unchanged. See `docs/journeys/verify-only-the-tests-a-change-can-affect-4024.md`.
+- Steps 2 and 3 updated during `/claude-tweaks:build` of record #3489 (2026-10-28): Category A operational fixes moved into Common Step 5, ahead of its verification run, closing the last tracked-file write after verification.
 - Related: `docs/journeys/run-a-deterministic-verification-check.md` (the `report.json` / pass-stamp evidence this journey relies on), `docs/journeys/declare-a-verify-scope-1924.md` (the bookkeeping classification in Step 3).
