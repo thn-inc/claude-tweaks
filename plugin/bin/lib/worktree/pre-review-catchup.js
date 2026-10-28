@@ -34,6 +34,8 @@
 
 // The module object, not a destructured binding, so a test can spy on the real spawn.
 const childProcess = require('child_process');
+const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
+const { splitNul, splitLogZ, parseStatusPorcelainZ } = require('../git-z');
 
 const OUTCOMES = Object.freeze(['not-applicable', 'fetch-failed', 'windows-longpath', 'dirty-tree', 'no-overlap', 'merged', 'conflict']);
 
@@ -49,15 +51,17 @@ const MAX_FILES = 5;
 const SHA_LEN = 9;
 
 // `opts` (the fetch's { timeout, env }) is spread last; every other call runs unbounded.
+// maxBuffer is the house 64 MiB: the name-only reads over a long-behind branch's upstream
+// range would overflow Node's 1 MiB default with ENOBUFS.
 function makeGit(cwd) {
-  return (args, opts = {}) => childProcess.execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...opts });
+  return (args, opts = {}) => childProcess.execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, maxBuffer: LARGE_MAX_BUFFER_BYTES, ...opts });
 }
 
 // A stalled network or an HTTPS credential prompt (git reads /dev/tty, not stdin) must
 // not block the build with no outcome: the fetch is bounded by FETCH_TIMEOUT_MS (a
 // once-per-build 60 s, see above) and may not prompt, so either failure lands in
-// fetch-failed. The caller's git seam must forward these opts (bin/pre-review-catchup.js's
-// realDeps does; its test drives that wiring).
+// fetch-failed. The caller's git seam must forward these opts (makeGit's `...opts` spread
+// does; the CLI's test drives that wiring).
 const FETCH_OPTS = () => ({ timeout: FETCH_TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
 
 function mergeInProgress(git) {
@@ -80,30 +84,16 @@ function lastFetchedBase(git, upstream) {
 }
 
 const errText = (e) => `${(e && e.stderr) || ''}\n${(e && e.message) || ''}`;
-const nulList = (out) => String(out).split('\0').filter(Boolean);
 
 // Count the commits in a `log --format=%x01%H -z --name-only` read that touch any file
-// in `files`. Each commit is a `\x01{sha}` token followed by its paths, NUL-separated;
-// git puts one `\n` in front of a commit's first path. A merge commit lists no paths
-// (its parents' commits are in the range and count themselves).
+// in `files`. Each commit is a `\x01{sha}` token followed by its paths, NUL-separated
+// (git-z.js's splitLogZ owns the stream and the `\n` git puts in front of a commit's
+// first path). A merge commit lists no paths (its parents' commits are in the range and
+// count themselves).
 const COMMIT_TOKEN = /^\x01[0-9a-f]{40,64}$/;
 
 function countTouching(log, files) {
-  let count = 0;
-  let touched = false;
-  let afterSha = false;
-  for (const token of String(log).split('\0')) {
-    if (COMMIT_TOKEN.test(token)) {
-      if (touched) count++;
-      touched = false;
-      afterSha = true;
-      continue;
-    }
-    const file = afterSha ? token.replace(/^\n/, '') : token;
-    if (file) afterSha = false;
-    if (files.has(file)) touched = true;
-  }
-  return touched ? count + 1 : count;
+  return splitLogZ(log, (token) => COMMIT_TOKEN.test(token)).filter((c) => c.tokens.some((f) => files.has(f))).length;
 }
 
 function blankBody(integrationBranch) {
@@ -142,7 +132,7 @@ function runCatchup({ integrationBranch }, { git }) {
   if (mergeInProgress(git)) {
     return done('conflict', {
       before: git(['rev-parse', 'HEAD']).trim(),
-      conflictFiles: nulList(git(['diff', '--name-only', '-z', '--diff-filter=U', '--end-of-options'])),
+      conflictFiles: splitNul(git(['diff', '--name-only', '-z', '--diff-filter=U', '--end-of-options'])),
       reason: MERGE_IN_PROGRESS,
     });
   }
@@ -154,14 +144,14 @@ function runCatchup({ integrationBranch }, { git }) {
     return done('fetch-failed', { reason: firstLine(e), reviewBase: lastFetchedBase(git, upstream) });
   }
 
-  const dirty = nulList(git(['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=no']))[0];
-  if (dirty) return done('dirty-tree', { reason: dirty.slice(3) });
+  const dirty = parseStatusPorcelainZ(git(['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=no']))[0];
+  if (dirty) return done('dirty-tree', { reason: dirty.path });
 
   const before = git(['rev-parse', 'HEAD']).trim();
   const mergeBase = git(['merge-base', 'HEAD', upstream]).trim();
   const upstreamCommits = Number(git(['rev-list', '--count', `${mergeBase}..${upstream}`]).trim());
-  const branchFiles = nulList(git(['diff', '--name-only', '-z', '--no-renames', '--end-of-options', mergeBase, 'HEAD']));
-  const upstreamFiles = new Set(nulList(git(['diff', '--name-only', '-z', '--no-renames', '--end-of-options', mergeBase, upstream])));
+  const branchFiles = splitNul(git(['diff', '--name-only', '-z', '--no-renames', '--end-of-options', mergeBase, 'HEAD']));
+  const upstreamFiles = new Set(splitNul(git(['diff', '--name-only', '-z', '--no-renames', '--end-of-options', mergeBase, upstream])));
   const overlapFiles = [...new Set(branchFiles.filter((f) => upstreamFiles.has(f)))].sort();
   Object.assign(body, { before, mergeBase, upstreamCommits, branchFileCount: branchFiles.length, overlapFiles });
 
@@ -178,7 +168,7 @@ function runCatchup({ integrationBranch }, { git }) {
       abortPartialMerge(git);
       return done('windows-longpath', { reason: 'merge' });
     }
-    const conflictFiles = nulList(git(['diff', '--name-only', '-z', '--diff-filter=U', '--end-of-options']));
+    const conflictFiles = splitNul(git(['diff', '--name-only', '-z', '--diff-filter=U', '--end-of-options']));
     if (!conflictFiles.length) throw e;
     return done('conflict', { conflictFiles });
   }

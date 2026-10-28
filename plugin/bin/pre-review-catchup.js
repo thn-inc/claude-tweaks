@@ -30,6 +30,7 @@
 'use strict';
 
 const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
+const { isValidBranchName } = require('./lib/init/release-bootstrap');
 const { OUTCOMES, runCatchup, formatLine, makeGit } = require('./lib/worktree/pre-review-catchup');
 
 const SECTION = '/build';
@@ -54,8 +55,9 @@ function parseArgs(argv) {
     } else if (Object.hasOwn(VALUE_FLAGS, a)) {
       const v = argv[++i];
       if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: `${a} needs a value` };
-      // A git ref name cannot start with `-`; such a value would parse as a git option.
-      if (a === '--integration-branch' && v.startsWith('-')) return { error: `${a} is not a branch name: ${v}` };
+      // Anything that is not a branch name would reach `git fetch` as a refspec
+      // (`main:refs/heads/x`) or an option (`-v`); isValidBranchName also rejects a leading `-`.
+      if (a === '--integration-branch' && !isValidBranchName(v)) return { error: `${a} is not a branch name: ${v}` };
       o[VALUE_FLAGS[a]] = v;
     } else {
       return { error: `unknown argument: ${a}` };

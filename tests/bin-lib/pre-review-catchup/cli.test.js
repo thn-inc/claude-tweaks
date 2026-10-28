@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { originWithTwoClones } = require('../../helpers/git-fixtures');
 const { readText } = require('../../helpers/read-skill');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { run, parseArgs } = require('../../../plugin/bin/pre-review-catchup');
 const { OUTCOMES, FETCH_TIMEOUT_MS, formatLine } = require('../../../plugin/bin/lib/worktree/pre-review-catchup');
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
@@ -530,6 +531,10 @@ test('usage errors exit 2 and never spawn git', () => {
     ['--integration-branch', '--run'],
     ['--integration-branch', '-v'],
     ['--integration-branch', '-'],
+    // A refspec, not a branch name: `git fetch origin <it>` would create or force-update a local ref.
+    ['--integration-branch', 'main:refs/heads/x'],
+    ['--integration-branch', '+main:main'],
+    ['--integration-branch', 'a..b'],
     [...MAIN, '--run'],
     [...MAIN, '--run', ''],
     [...MAIN, '--bogus'],
@@ -577,8 +582,10 @@ test('OUTCOMES is the frozen seven-value list and formatLine covers every outcom
 });
 
 test('the CLI shell itself appends through formatEntry and appendEntry', () => {
-  const src = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'pre-review-catchup.js'))
-    .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  const raw = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'pre-review-catchup.js'));
+  const src = stripComments(raw);
+  const verdict = stripperVerdict(raw, src);
+  assert.equal(verdict, 'ok', STRIPPER_VERDICT_MESSAGES[verdict]);
   assert.match(src, /require\('\.\/lib\/log-decision\/append'\)/);
   assert.match(src, /formatEntry\(/);
   assert.match(src, /appendEntry/);
