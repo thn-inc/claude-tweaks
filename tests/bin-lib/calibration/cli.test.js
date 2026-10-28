@@ -122,6 +122,32 @@ test('a TSV-only run with a live run dir contributes its decisions', () => {
   assert.strictEqual(jsonOut.frictionCounts['gate-denial'], 1);
 });
 
+test('a TSV-only run id with a path separator never reads outside the pipelines dir', () => {
+  // The dated prefix lets runIdTimestamp accept the id into the window; the
+  // `../..` tail makes path.join(pipelines, runId) resolve outside pipelines/.
+  const escapeId = '2026-08-04T000000-x/../../outside';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-escape-'));
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
+    `2026-08-01\t2026-08-01T000000-run-1\tskills\tclosed\t0\tna\n2026-08-04\t${escapeId}\tskills\tclosed\t0\tna\n`,
+  );
+  const decision = '- AUTO 12:00:00 — Review Console: terminal decision approve-all. Reversibility: n/a.\n';
+  const archived = path.join(root, '.claude-tweaks', 'pipelines', 'archive', '2026-08-01T000000-run-1');
+  fs.mkdirSync(archived, { recursive: true });
+  fs.writeFileSync(path.join(archived, 'decisions.md'), decision);
+  // The intermediate dir makes the escaping path resolvable on every platform.
+  fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', '2026-08-04T000000-x'), { recursive: true });
+  const outside = path.join(root, '.claude-tweaks', 'pipelines', escapeId);
+  fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(outside, 'decisions.md'), decision);
+  fs.writeFileSync(path.join(outside, 'events.jsonl'), '{"type":"gate-denial"}\n');
+  const jsonOut = JSON.parse(run(['--json'], root));
+  assert.ok(jsonOut.window.runIds.includes(escapeId), 'the multi-segment run id must reach the window');
+  assert.strictEqual(jsonOut.consoleDist['approve-all'], 1, 'the outside decisions.md must not be read');
+  assert.ok(!jsonOut.frictionCounts['gate-denial'], 'the outside events.jsonl must not be read');
+});
+
 test('header names how many undated run ids were excluded', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-excluded-'));
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
