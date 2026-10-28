@@ -25,3 +25,5 @@
 | 21 | review | [low, Architecture] skill-graph row re-enumerated the outcome roster — docs/skill-graph.md:121 | fixed | b4ad51a81 |
 | 22 | review | [low, Convention] stale self-logging roster ("eleven CLIs") — .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md:43 | fixed | b4ad51a81 |
 | 23 | review | [low, Error Handling] merge-base after a successful fetch throws on a shallow clone — plugin/bin/lib/worktree/pre-review-catchup.js:161 | accepted | Fails closed into the documented exit-1 retry-then-HARD-GATE contract; tiebreak recommended drop |
+| 24 | review/hindsight | [skill: shared-contract-extraction] an instruction forwarded into an in-session skill invocation (SDD) restated a `_shared` procedure instead of citing it; extend the "Cite, don't restate" bullet — staged/reflect-1.md | open | — |
+| 25 | review/hindsight | `pre-review-catchup.js` imports `isValidBranchName` from `lib/init/release-bootstrap.js` (an init module) | accepted | Pure, exported, tested validator matching `git check-ref-format --branch`; relocating it now is churn with no behavior change — move it when a third consumer appears |
