@@ -60,6 +60,23 @@ function loadRuns(root) {
   });
 }
 
+// A finished run still awaiting archival has a live dir under
+// pipelines/{runId}/ — load it so the newest runs aren't empty stubs. Only a
+// single path segment is a dir name, and lstat (not stat) keeps a symlink at
+// pipelines/{runId} from redirecting the read; anything else stays an empty stub.
+function loadLiveRun(root, runId) {
+  const emptyRun = { runId, decisionLines: [], events: { counts: {} } };
+  const isDirName = /^[^/\\]+$/.test(runId) && runId !== '.' && runId !== '..';
+  if (!isDirName) return emptyRun;
+  const liveDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  if (lstatType(liveDir).type !== 'directory') return emptyRun;
+  return {
+    runId,
+    decisionLines: readDecisionLines(path.join(liveDir, 'decisions.md')),
+    events: readEventsKinds(path.join(liveDir, 'events.jsonl')) || { counts: {} },
+  };
+}
+
 // resolve-policy.js resolves its project root via `git rev-parse
 // --show-toplevel` at ITS OWN process cwd (never from a --run value or a
 // positional argument — see that file's own header comment: "--run" there
@@ -156,25 +173,7 @@ function main() {
     const tsvRunIds = new Set(tsv.rows.map((r) => r.runId));
     for (const runId of tsvRunIds) {
       if (!existingRunIds.has(runId)) {
-        // A finished run still awaiting archival has a live dir under
-        // pipelines/{runId}/ — load it so the newest runs aren't empty stubs.
-        // Only a single path segment is a dir name; anything else stays empty.
-        const isDirName = /^[^/\\]+$/.test(runId) && runId !== '.' && runId !== '..';
-        if (!isDirName) {
-          runs.push({ runId, decisionLines: [], events: { counts: {} } });
-          continue;
-        }
-        const liveDir = path.join(args.root, '.claude-tweaks', 'pipelines', runId);
-        // lstat, not stat: a symlink at pipelines/{runId} must not redirect the read.
-        if (lstatType(liveDir).type !== 'directory') {
-          runs.push({ runId, decisionLines: [], events: { counts: {} } });
-          continue;
-        }
-        runs.push({
-          runId,
-          decisionLines: readDecisionLines(path.join(liveDir, 'decisions.md')),
-          events: readEventsKinds(path.join(liveDir, 'events.jsonl')) || { counts: {} },
-        });
+        runs.push(loadLiveRun(args.root, runId));
       }
     }
   }
