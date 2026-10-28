@@ -2112,10 +2112,14 @@ function groupEventsWith(seg, g, spans, undo) {
         atCmd = t.leadParen || emptyParens(t, i);
       }
       else if (t.caseDepth === 0 && t.kind === '(') {
+        // A later arm's leading `(` stands at command position (after the `;;`), so it opened a `(` frame;
+        // its `)` starts the arm's command as the first arm's does (#4481), so a group or a case there is read
+        // as one: `case a in b) true;; (a) { cd ../wt; echo y > g; };; esac; echo x > f` writes wt/f and wt/g
+        // in bash 3.2 and 5, and an inner case's `esac` there no longer closes the outer case.
         pop();
         if (t.leadParen) setCasePattern(top(), false);
         cut(i, { close: t });
-        atCmd = emptyParens(t, i);
+        atCmd = t.leadParen || emptyParens(t, i);
       }
       else {
         // A case's pattern list ends at this `)` (#4303), and its arm's commands follow.
@@ -2136,8 +2140,8 @@ function groupEventsWith(seg, g, spans, undo) {
         // dropped from the text, with no background. Inside a substitution or a group in one it
         // backgrounds that subshell's own list (`sub`: the walk resets the sub run, never the outer
         // cwd); in a frame that is no command list (`$(( ))`, `$[ ]`, a bare `(` inside one) it is
-        // arithmetic, so it is left alone.
-        if (top().cmd) cut(i, i > 0 ? { bg: true, sub: g.nesting > 0, nesting: g.nesting } : null);
+        // arithmetic, so it is left alone. `cases` is how many cases are open in the frame there (#4481).
+        if (top().cmd) cut(i, i > 0 ? { bg: true, sub: g.nesting > 0, nesting: g.nesting, cases: top().caseDepth } : null);
         atCmd = true;
       }
       // Any other operator is a redirection. Its target is read as an ordinary word, which ends
@@ -2219,13 +2223,14 @@ function groupEventsWith(seg, g, spans, undo) {
     // hold no unquoted `|` bash accepts) and again after each `;;`, `;&` or `;;&` (walkShellChunk),
     // to the `)` that ends the list. A `|` cut there separates patterns: walkShellChunk reads no
     // separator at it.
-    // `g.caseDepths` tells walkShellChunk the frame depth a case compound opened at (#4303, #4481). The
+    // `g.caseDepths` tells walkShellChunk the frame depth a case compound opened at and its `level`, how
+    // many cases are open in that frame once it is (#4303, #4481): the case is closed once fewer are. The
     // push is journaled like the rest of the group state, so a flat pass takes back its own (a duplicate
-    // depth is harmless: walkShellChunk reads the depths as a set; the journal keeps the list exact).
+    // entry is harmless: it gives the same case a second, identical record; the journal keeps the list exact).
     if (w === 'case') {
       setCaseDepth(t, t.caseDepth + 1);
       setCasePattern(t, true);
-      g.caseDepths.push(g.stack.length);
+      g.caseDepths.push({ depth: g.stack.length, level: t.caseDepth });
       undo.push(() => { g.caseDepths.pop(); });
     }
     else if (w === 'esac') { setCaseDepth(t, Math.max(0, t.caseDepth - 1)); setCasePattern(t, false); }
@@ -2419,8 +2424,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // list may already have succeeded or failed and be skipping commands; `pipeStart`, the cwds a
   // pipeline in progress began at (each element runs in a subshell from there); `pipeKeep`, whether
   // one of its `|`s may be a case pattern's or one of its elements is a case compound (endCommand);
-  // `caseFrom`, the cwds the command holding a case compound began at while that case is open (#4481).
-  const freshList = (at) => ({ listStart: at, spanStart: at, skipOk: [], skipFail: [], pipeStart: null, pipeKeep: false, caseFrom: null });
+  // `cases`, one record per case compound open in the list, outermost first (#4481, endCommand).
+  const freshList = (at) => ({ listStart: at, spanStart: at, skipOk: [], skipFail: [], pipeStart: null, pipeKeep: false, cases: [] });
   // Ends the current command of list `L`, in effect at `at`, at the separator `op`, and returns the
   // cwds the next command runs under. `&&` runs it where the command succeeded and `||` where it
   // failed; whatever the list skips past carries on to its end. A `;`, a newline or the end joins
@@ -2431,21 +2436,37 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // under the pipeline's start and the cwd in effect, and the pipeline ending under both. `caseSeen`
   // says a case compound opened since the last separator: as a pipeline element it is one command
   // whose own `;;` and `;` end no pipeline, and the walk cannot place its `esac` (#4244), so a
-  // pipeline holding one ends under its start and the cwd in effect, failing closed. `caseFrom`
-  // (#4481) keeps the cwds the command holding a case began at: the arm's own `;;` resets `caseSeen`,
-  // so a `|` after that case's `esac` would take the arm's post-`cd` cwd as the pipeline's start.
-  // `caseOpen` is how many cases were open in the frame when `caseFrom` was taken, `openCases` how
-  // many are open where the separator stands: the `|` after the case's own `esac` starts a pipeline
-  // at `caseFrom`, even inside an outer case's arm (#4481 round 3), and the case's command began there,
-  // so a failed pipeline (`||`) leaves the cwd there too.
-  const endCommand = (L, at, op, maybePattern = false, caseSeen = false, openCases = 0) => {
+  // pipeline holding one ends under its start and the cwd in effect, failing closed. The arm's own
+  // `;;` resets `caseSeen` and moves the list on to the arm's post-`cd` cwd, so each case gets a record
+  // in `L.cases` (#4481) at the first separator after its `case` word (`opened`, the levels of the cases
+  // that opened in this list's frame since the last separator): `from`, the cwds its command began at,
+  // and the list's `listStart`, `skipOk` and `skipFail` there. `level` is its own nesting in the frame
+  // and `openCases` how many cases are open where the separator stands, so a case is closed once
+  // `openCases` falls below its level: an inner case's `esac` closes neither its outer case (`case a in
+  // a) case a in a) cd ../q;; esac;; esac | cat` writes r/g) nor a case opened after a command in the
+  // outer arm (`case a in a) true; case b in b) … esac | cat`). A closed case gives the list back the
+  // start the arm's `;;` moved, so a later `&` returns there (`case a in a) cd ../q;; esac | cat & echo x
+  // > f` writes r/f). A `|` that a closed case stands before starts its pipeline at the case's `from`,
+  // and the case's command began there, so a failed pipeline (`||`) leaves the cwd there too; the arm's
+  // `;;` has merged into the arm's cwd the cwds the list was skipping past, which the pipeline drops, so
+  // they come back from the record (`cd ../m || case a in a) true;; esac | cat | case …; echo x > f`
+  // writes m/f). bash 3.2 and 5 agree on each.
+  const closeCases = (L, openCases) => {
+    let closed = null; // the outermost case closed here
+    while (L.cases.length > 0 && L.cases[L.cases.length - 1].level > openCases) closed = L.cases.pop();
+    if (closed) L.listStart = joinCwds(L.listStart, closed.listStart, overflow);
+    return closed;
+  };
+  const endCommand = (L, at, op, maybePattern = false, caseSeen = false, openCases = 0, opened = []) => {
     if (caseSeen && L.pipeStart !== null) L.pipeKeep = true;
-    if (caseSeen && L.pipeStart === null && L.caseFrom === null) { L.caseFrom = L.spanStart; L.caseOpen = openCases; }
-    const caseClosed = L.caseFrom !== null && openCases < L.caseOpen;
+    for (const level of opened) L.cases.push({ level, from: L.spanStart, listStart: L.listStart, skipOk: L.skipOk, skipFail: L.skipFail });
+    const closed = closeCases(L, openCases);
     if (op === '|') {
-      if (L.pipeStart === null && caseClosed) {
-        L.pipeStart = L.caseFrom;
-        L.spanStart = L.caseFrom;
+      if (L.pipeStart === null && closed) {
+        L.pipeStart = closed.from;
+        L.spanStart = closed.from;
+        L.skipOk = joinCwds(L.skipOk, closed.skipOk, overflow);
+        L.skipFail = joinCwds(L.skipFail, closed.skipFail, overflow);
         L.pipeKeep = true;
         return joinCwds(L.pipeStart, at, overflow);
       }
@@ -2460,7 +2481,6 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
       L.pipeStart = null;
       L.pipeKeep = false;
     }
-    if (caseClosed) L.caseFrom = null;
     if (baseLike) {
       // BASE_VIEW: base took every command to succeed and ran the next from where it left the cwd.
       if (op !== '&&' && op !== '||') L.listStart = at;
@@ -2487,13 +2507,18 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     L.spanStart = next;
     return next;
   };
-  // A lone `&` ran list `L` in the background: the cwd returns to where the list began.
-  const background = (L) => {
+  // A lone `&` ran list `L` in the background: the cwd returns to where the list began. `openCases` is
+  // how many cases are open in the frame at the `&` (#4481): one closed before it was part of the
+  // backgrounded list, so its record closes and gives back the list's start (`case a in a) cd ../tmp;;
+  // esac & echo y > g` writes r/g), while an `&` in an open arm backgrounds the arm's own list, never the
+  // case, so the case's record stays (`case a in a) cd ../q; true & echo y > g;; esac | cat; echo x > f`
+  // writes r/f). bash 3.2 and 5 agree on each.
+  const background = (L, openCases) => {
+    closeCases(L, openCases);
     L.skipOk = [];
     L.skipFail = [];
     L.pipeStart = null;
     L.pipeKeep = false;
-    L.caseFrom = null;
     L.spanStart = L.listStart;
     return L.listStart;
   };
@@ -2584,7 +2609,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
           const at = subLevelAt(level);
           subCur = ev.close.kind === '(' ? saved : joinCwds(saved, subCur, overflow);
           at.list = closeGroup(ev.close, subCur);
-        } else subCur = background(subLevelAt(ev.nesting + inBacktick).list);
+        } else subCur = background(subLevelAt(ev.nesting + inBacktick).list, ev.cases);
         continue;
       }
       if (ev.open) {
@@ -2595,7 +2620,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
         const { saved } = ev.close;
         cur = ev.close.kind === '(' ? saved : joinCwds(saved, cur, overflow);
         list = closeGroup(ev.close, cur);
-      } else if (ev.bg) cur = background(list);
+      } else if (ev.bg) cur = background(list, ev.cases);
       else if (ev.sub || span.sub) {
         startSubRun();
         subLevelAt(ev.nesting + inBacktick);
@@ -2623,7 +2648,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     // `|` in it is read both ways (endCommand's `maybePattern`), failing closed.
     // How many cases are open in the frame where the separator stands (#4481): a separator inside an open
     // case (the arm's own `;;`, or a `|` in its body) is not the case's pipeline's end, while one after
-    // the case's own `esac` is (endCommand's `caseOpen`). An outer case around a group or a subshell does
+    // the case's own `esac` is (endCommand's case records). An outer case around a group or a subshell does
     // not count: that group's own list ends the pipeline (`case a in a) { case b in b) cd /q;; esac | cat;
     // echo x > f; };; esac` writes /r/f).
     const openCases = (g.stack[g.stack.length - 1] || g.root).caseDepth;
@@ -2637,15 +2662,17 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     if (!span.endsInSub) btCase = false;
     const level = g.nesting + (span.endsInSub ? 1 : 0);
     // A case compound opened at this separator's depth or deeper is this separator's case (#4481): a
-    // group's own `|` inside an outer case's arm does not consume the outer case's flag.
+    // group's own `|` inside an outer case's arm does not consume the outer case's flag. One opened at
+    // this depth is in this separator's list, which keeps its record; a deeper one's group has closed.
     const sepDepth = g.stack.length;
-    const caseSeen = casePending.some((d) => d >= sepDepth);
-    casePending = casePending.filter((d) => d < sepDepth);
+    const caseSeen = casePending.some((c) => c.depth >= sepDepth);
+    const opened = casePending.filter((c) => c.depth === sepDepth).map((c) => c.level);
+    casePending = casePending.filter((c) => c.depth < sepDepth);
     if (level > 0) {
       startSubRun();
       const at = subLevelAt(level);
-      subCur = endCommand(at.list, subCur, op, maybePattern, caseSeen, openCases);
-    } else cur = endCommand(list, cur, op, maybePattern, caseSeen, openCases);
+      subCur = endCommand(at.list, subCur, op, maybePattern, caseSeen, openCases, opened);
+    } else cur = endCommand(list, cur, op, maybePattern, caseSeen, openCases, opened);
   }
   runBodies(Infinity, cur);
 }

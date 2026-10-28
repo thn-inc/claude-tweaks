@@ -1954,17 +1954,17 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   test('#4481 case: a first-element case pipeline inside an outer arm ends under its start at a newline', () => {
     assert.ok(files('case a in a) case b in b) cd /wt;; esac | cat\necho y > g;; esac').includes(path.resolve('/r/g')), 'bash 3.2, bash 5 and zsh: /r/g');
   });
-  // #4481 round 3: the `||` branch of a first-element case pipeline ends at the pipeline's start cwd. `cat`
-  // succeeds on empty stdin, so `|| …` does not run here; with `false` for `cat` bash writes the `||`
-  // branch's target at /r (verdict-r3-false.txt lines 2-10 and 22-26, bash 3.2, bash 5 and zsh).
-  test('#4481 case: `case a in a) cd /m;; esac | cat || echo x > f` ends its pipeline under the start cwd', () => {
-    assert.ok(files('case a in a) cd /m;; esac | cat || echo x > f').includes(path.resolve('/r/f')), 'bash: /r/f when the pipeline fails');
+  // #4481 round 3: the `||` branch of a first-element case pipeline ends at the pipeline's start cwd. The
+  // pipeline ends in `false`, so it fails and `|| …` runs: bash 3.2, bash 5 and zsh write the `||` branch's
+  // target at /r (bash 3.2 cannot parse the `$( )` row's unparenthesized pattern, so bash 5 and zsh decide it).
+  test('#4481 case: `case a in a) cd /m;; esac | false || echo x > f` ends its pipeline under the start cwd', () => {
+    assert.ok(files('case a in a) cd /m;; esac | false || echo x > f').includes(path.resolve('/r/f')), 'bash: /r/f when the pipeline fails');
   });
-  test('#4481 case: `case a in a) case b in b) cd /wt;; esac | cat || echo y > g;; esac` ends its pipeline under the start cwd', () => {
-    assert.ok(files('case a in a) case b in b) cd /wt;; esac | cat || echo y > g;; esac').includes(path.resolve('/r/g')), 'bash: /r/g when the pipeline fails');
+  test('#4481 case: `case a in a) case b in b) cd /wt;; esac | false || echo y > g;; esac` ends its pipeline under the start cwd', () => {
+    assert.ok(files('case a in a) case b in b) cd /wt;; esac | false || echo y > g;; esac').includes(path.resolve('/r/g')), 'bash: /r/g when the pipeline fails');
   });
-  test('#4481 substitution: `echo $(case a in a) cd /q;; esac | cat || echo y > g)` ends its pipeline under the start cwd', () => {
-    assert.ok(files('echo $(case a in a) cd /q;; esac | cat || echo y > g)').includes(path.resolve('/r/g')), 'bash 5 and zsh: /r/g when the pipeline fails');
+  test('#4481 substitution: `echo $(case a in a) cd /q;; esac | false || echo y > g)` ends its pipeline under the start cwd', () => {
+    assert.ok(files('echo $(case a in a) cd /q;; esac | false || echo y > g)').includes(path.resolve('/r/g')), 'bash 5 and zsh: /r/g when the pipeline fails');
   });
   // #4481 round 3: a leading-paren arm's group, subshell and function body keep their cd for the commands
   // after them. bash 3.2, bash 5 and zsh write /wt/f and /wt/g for the first, /wt/g for the others
@@ -1975,6 +1975,79 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     ['case a in (a) function f { cd /wt; }; f; echo y > g;; esac', ['/wt/g']],
   ]) {
     test(`#4481 case: \`${cmd}\` keeps the arm's cd across its own group`, () => {
+      for (const want of wants) assert.ok(files(cmd).includes(path.resolve(want)), `bash: ${want}`);
+    });
+  }
+  // #4481: each case compound keeps its own record, so a first-element case pipeline starts at that case's
+  // own start, whether its `esac` follows an inner case's (`esac;; esac |`, `esac; esac |`, a paren outer
+  // arm) or a command precedes it in an outer arm. bash 3.2, bash 5 and zsh write each listed target,
+  // except the `cd /q && echo w > k` row, where zsh runs the last element in the current shell (/q/k).
+  for (const [cmd, wants] of [
+    ['case a in a) case a in a) cd /q;; esac;; esac | cat; echo y > g', ['/r/g']],
+    ['case a in a) case a in a) cd /q;; esac;; esac | cat; echo y > g; echo x > f', ['/r/f', '/r/g']],
+    ['case a in a) case a in a) cd /q;; esac || cd /tmp;; esac | cat; echo x > f', ['/r/f']],
+    ['case a in a|b) case a in (*) cd /tmp;; esac && ( echo z > h );; esac | cd /q && echo w > k', ['/r/k']],
+    ['case a in a) case a in a) cd /q;; esac;; esac | cat\necho y > g', ['/r/g']],
+    ['case a in a) case a in a) cd /q; esac; esac | cat; echo y > g', ['/r/g']],
+    ['case a in (a) case a in a) cd /q;; esac;; esac | cat; echo y > g', ['/r/g']],
+    ['case a in a) true; case b in b) cd /wt;; esac | cat; echo y > g;; esac', ['/r/g']],
+    ['case a in a) true\ncase a in a) cd /q;; esac | cat && echo z > h;; esac', ['/r/h']],
+    ['case a in a) cd /q; case b in b) cd /wt;; esac | cat; echo y > g;; esac', ['/q/g']],
+    ['case a in a) true; case b in b) cd /wt;; esac | cat; echo y > g;; esac; echo x > f', ['/r/f', '/r/g']],
+  ]) {
+    test(`#4481 case: \`${cmd}\` starts each case's pipeline at that case's own start`, () => {
+      for (const want of wants) assert.ok(files(cmd).includes(path.resolve(want)), `bash: ${want}`);
+    });
+  }
+  // #4481: the arm's `;;` merges into the arm's cwd the cwds the list was skipping past, and a pipeline drops
+  // the cwd in effect, so a first-element case pipeline takes them back from its record. bash 3.2, bash 5 and
+  // zsh write /m/f (`cd /m` succeeds, so the whole pipeline is skipped).
+  test('#4481 case: `cd /m || case a in a) true;; esac | cat | case a in a) true;; esac; echo x > f` keeps the skipped cwd', () => {
+    assert.ok(files('cd /m || case a in a) true;; esac | cat | case a in a) true;; esac; echo x > f').includes(path.resolve('/m/f')), 'bash: /m/f');
+  });
+  // #4481: a case that is a later pipeline element keeps a record too, so the `|` after its `esac` goes on
+  // with the pipeline's own start and a failed pipeline leaves the cwd there. bash 3.2, bash 5 and zsh
+  // write /r/f only (the arm's /q stays in its subshell).
+  test('#4481 case: `true | case a in a) cd /q;; esac | false || echo x > f` ends its pipeline under the start cwd only', () => {
+    assert.deepStrictEqual(files('true | case a in a) cd /q;; esac | false || echo x > f'), [path.resolve('/r/f')]);
+  });
+  // #4481: an `&` inside an open arm backgrounds the arm's own list, never the case, so the case's record
+  // survives it. bash 3.2, bash 5 and zsh write /r/f for each (and /q/g for the first).
+  for (const cmd of [
+    'case a in a) cd /q; true & echo y > g;; esac | cat; echo x > f',
+    'case a in a) cd /q;; b) true & ;; esac | cat; echo x > f',
+  ]) {
+    test(`#4481 case: \`${cmd}\` keeps the case's start cwd past an & in its arm`, () => {
+      assert.ok(files(cmd).includes(path.resolve('/r/f')), 'bash 3.2, bash 5 and zsh: /r/f');
+    });
+  }
+  // The case began after `cd /m &&`, where the list did not: bash 3.2, bash 5 and zsh write /m/f.
+  test("#4481 case: `cd /m && case a in a) cd /q; true & echo y > g;; esac | cat; echo x > f` keeps the case's own start past an & in its arm", () => {
+    assert.ok(files('cd /m && case a in a) cd /q; true & echo y > g;; esac | cat; echo x > f').includes(path.resolve('/m/f')), 'bash 3.2, bash 5 and zsh: /m/f');
+  });
+  // #4481: an `&` after a case's `esac` backgrounds the list holding the case, so the cwd returns to where
+  // that list began, not to where the arm's `;;` moved it, whether the `esac` stands right before the `&`
+  // or a `|` or `&&` follows it. bash 3.2 and 5 write each listed target (zsh writes /q/f for the `&&` row,
+  // running `case … esac && true` in the current shell).
+  for (const [cmd, wants] of [
+    ['case a in a) cd /tmp;; esac & echo y > g', ['/r/g']],
+    ['case a in a) cd /q;; esac | cat & echo x > f', ['/r/f']],
+    ['case a in a) cd /q;; esac && true & echo x > f', ['/r/f']],
+    ['case a in a) case b in b) cd /q;; esac & echo y > g;; esac; echo x > f', ['/r/f', '/r/g']],
+  ]) {
+    test(`#4481 case: \`${cmd}\` returns to the list's start after the &`, () => {
+      for (const want of wants) assert.ok(files(cmd).includes(path.resolve(want)), `bash: ${want}`);
+    });
+  }
+  // #4481: a later arm's leading-paren pattern starts the arm's command as the first arm's does, so a group
+  // or a case at its start is read as one. bash 3.2, bash 5 and zsh write /wt/f and /wt/g for the first,
+  // /r/f (and /wt/g) for the others.
+  for (const [cmd, wants] of [
+    ['case a in b) true;; (a) { cd /wt; echo y > g; };; esac; echo x > f', ['/wt/f', '/wt/g']],
+    ['case a in b) true;; (a) case b in b) true;; esac; cd /wt; echo y > g;; esac | cat; echo x > f', ['/r/f', '/wt/g']],
+    ['case a in b) true;; (a) case b in *) esac | cat; cd /wt; echo y > g;; esac | cat; echo x > f', ['/r/f', '/wt/g']],
+  ]) {
+    test(`#4481 case: \`${cmd}\` reads a later paren arm's first word as a command`, () => {
       for (const want of wants) assert.ok(files(cmd).includes(path.resolve(want)), `bash: ${want}`);
     });
   }
