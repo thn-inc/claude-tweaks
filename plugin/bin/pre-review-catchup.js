@@ -19,7 +19,8 @@
 // (_shared/worktree-catchup-no-run-dir.md).
 //
 // Status is data: exit 0 on every outcome, including conflict (the merge is left
-// in progress for the caller to resolve) and dirty-tree. A refused or unanchored
+// in progress for the caller to resolve; reason merge-in-progress when it already
+// was at entry, with conflictFiles empty once resolved but not committed) and dirty-tree. A refused or unanchored
 // --run, or a failed append, never changes the exit code: logged:false, logError,
 // and one stderr line. 2 malformed invocation (git is never spawned); 1 only for
 // an undecided crash -- a git error outside the fetch, or a failed merge with no
@@ -61,10 +62,10 @@ function parseArgs(argv) {
   return o;
 }
 
+// No `git` here: run() binds the real one to deps.cwd(), so an injected cwd is the checkout git runs in.
 const realDeps = {
   cwd: () => process.cwd(),
   mainRoot: undefined,
-  git: (args, opts) => makeGit(process.cwd())(args, opts),
   appendDecision: (args) => appendEntry(args),
   now: () => Date.now(),
   stdout: (s) => process.stdout.write(s),
@@ -102,7 +103,7 @@ function run(argv, overrides = {}) {
 
   let body;
   try {
-    body = runCatchup({ integrationBranch: o.integrationBranch }, { git: deps.git });
+    body = runCatchup({ integrationBranch: o.integrationBranch }, { git: deps.git || makeGit(deps.cwd()) });
   } catch (e) {
     deps.stderr(`${NAME}: ${(e && e.message) || e}\n`);
     return 1;

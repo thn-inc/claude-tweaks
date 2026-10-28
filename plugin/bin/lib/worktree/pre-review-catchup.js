@@ -16,7 +16,10 @@
 //   dirty-tree        uncommitted tracked changes: nothing merged, `reason` names a path
 //   no-overlap        upstream moved but touches none of the branch's files: no merge
 //   merged            the overlapping upstream commits were merged in
-//   conflict          the merge conflicted and is left in progress (conflictFiles)
+//   conflict          the merge conflicted and is left in progress (conflictFiles); or,
+//                     `reason` merge-in-progress, a merge was already in progress at entry
+//                     (a resumed run) -- nothing fetched or merged, conflictFiles are its
+//                     unmerged paths, empty when resolved but not yet committed
 // A git error outside the fetch, or a failed merge with no unmerged paths, is not
 // an outcome: runCatchup rethrows it.
 //
@@ -38,6 +41,7 @@ const OUTCOMES = Object.freeze(['not-applicable', 'fetch-failed', 'windows-longp
 const FETCH_TIMEOUT_MS = 60000;
 const REMOTE = 'origin';
 const LONGPATH = 'Filename too long';
+const MERGE_IN_PROGRESS = 'merge-in-progress';
 const MAX_REASON = 200;
 const MAX_FILES = 5;
 const SHA_LEN = 9;
@@ -54,11 +58,15 @@ function makeGit(cwd) {
 // realDeps does; its test drives that wiring).
 const FETCH_OPTS = () => ({ timeout: FETCH_TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
 
+function mergeInProgress(git) {
+  try { git(['rev-parse', '-q', '--verify', 'MERGE_HEAD']); return true; } catch { return false; }
+}
+
 // Best effort: a merge that died with a long-path error can leave MERGE_HEAD behind, and
 // the dirty-tree pre-check guarantees there were no uncommitted tracked changes to lose.
 // A failed abort never changes the outcome.
 function abortPartialMerge(git) {
-  try { git(['rev-parse', '-q', '--verify', 'MERGE_HEAD']); } catch { return; }
+  if (!mergeInProgress(git)) return;
   try { git(['merge', '--abort']); } catch { /* best effort */ }
 }
 
@@ -117,6 +125,18 @@ function runCatchup({ integrationBranch }, { git }) {
   const done = (outcome, extra) => Object.assign(body, { outcome }, extra);
 
   if (git(['branch', '--show-current']).trim() === integrationBranch) return done('not-applicable');
+
+  // A re-run on a merge already in progress (the resume a conflict stop sets up): its
+  // unmerged paths would read as dirty-tree, and committing those commits the markers.
+  // Checked before the fetch, so a failing fetch cannot fail open past a mid-merge tree.
+  // An empty conflictFiles means resolved but not yet committed.
+  if (mergeInProgress(git)) {
+    return done('conflict', {
+      before: git(['rev-parse', 'HEAD']).trim(),
+      conflictFiles: nulList(git(['diff', '--name-only', '-z', '--diff-filter=U', '--end-of-options'])),
+      reason: MERGE_IN_PROGRESS,
+    });
+  }
 
   try {
     git(['fetch', '--end-of-options', REMOTE, integrationBranch], FETCH_OPTS());
@@ -189,6 +209,15 @@ function formatLine(body) {
         reversibility: 'n/a',
       };
     case 'conflict':
+      if (body.reason === MERGE_IN_PROGRESS) {
+        return {
+          status: 'SCANNED',
+          text: body.conflictFiles.length
+            ? `a merge already in progress (MERGE_HEAD) has unmerged paths on ${fileList(body.conflictFiles)} — no new merge; resolve it before the whole-branch review`
+            : 'a merge already in progress (MERGE_HEAD) has every conflict resolved but is not committed — no new merge; commit it before the whole-branch review',
+          reversibility: 'n/a',
+        };
+      }
       return {
         status: 'SCANNED',
         text: `merging ${REMOTE}/${b} (${body.overlapCommits} overlapping commit(s)) conflicted on ${fileList(body.conflictFiles)} — merge left in progress; resolve it before the whole-branch review`,
@@ -209,7 +238,7 @@ function formatLine(body) {
     case 'dirty-tree':
       return {
         status: 'SKIP',
-        text: `condition: uncommitted changes (${body.reason}) → fallback: no merge yet; commit them and re-run before the whole-branch review`,
+        text: `condition: uncommitted changes (${body.reason}) → fallback: no merge yet; the build's own work is committed and the CLI re-run before the whole-branch review, anything else stops the build`,
         reversibility: 'n/a',
       };
     default:

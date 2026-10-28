@@ -6,23 +6,23 @@ It is overlap-gated, not unconditional: a merge commit and a full-suite re-run h
 
 ## Scope
 
-Worktree strategy only. A `current-branch` build and a `MULTISPEC_PARALLEL_WAVE=1` wave member run no CLI and log a `SKIP` (the wording is `build/dispatch.md`'s); a wave member's work reaches the shared branch through the wave orchestrator, whose own whole-branch review runs the catch-up.
+Worktree strategy only. A `current-branch` build runs no CLI and logs a `SKIP` (the wording is `build/dispatch.md`'s); that is the only skip. Every worktree-strategy build runs it, including a `MULTISPEC_PARALLEL_WAVE=1` wave member in its own worktree: concurrent members' fetches that contend on the same ref land in the logged `fetch-failed` fail-open path. A sequential multi-spec run in the shared worktree runs it per spec.
 
 `{integration-branch}` is resolved at the call site through `_shared/integration-branch.md`'s canonical ladder, the same full ladder `_shared/worktree-setup.md`'s Post-creation catch-up uses. It is never carried from Common Step 1: a resumed build or a context-handoff continuation never ran that step in this session.
 
 ## Outcomes
 
-`node "${CLAUDE_PLUGIN_ROOT}/bin/pre-review-catchup.js" --integration-branch {integration-branch} [--run "$PIPELINE_RUN_DIR"]` prints one JSON line and exits 0 on every outcome. Exit 2 is a malformed invocation and exit 1 an undecided crash; neither is an outcome, and neither is skipped past. The CLI appends its own `decisions.md` line (section `/build`, step `Pre-review catch-up`) when `--run` is passed; `logged: false` means the append failed and `line` is what to hand-log.
+`node "${CLAUDE_PLUGIN_ROOT}/bin/pre-review-catchup.js" --integration-branch {integration-branch} [--run "$PIPELINE_RUN_DIR"]` prints one JSON line and exits 0 on every outcome. Exit 2 is a malformed invocation and exit 1 an undecided crash; neither is an outcome, and neither is skipped past. Fix the environment cause from stderr and re-run once; a second non-zero exit is a HARD-GATE stop surfaced to the human with its stderr. Never move or delete untracked files to get past one: a realistic exit 1 is upstream adding a path that exists untracked in the worktree ("untracked working tree files would be overwritten"), and those files are not the catch-up's to discard. The CLI appends its own `decisions.md` line (section `/build`, step `Pre-review catch-up`) when `--run` is passed; `logged: false` means the append failed and `line` is what to hand-log.
 
 | `outcome` | Meaning | Posture |
 |-----------|---------|---------|
 | `not-applicable` | The build branch is the integration branch | Proceed unchanged |
 | `fetch-failed` | `git fetch` failed or timed out, not for a long path | Fail open, with its own `SKIP` line, distinct from `no-overlap`'s `SCANNED` line; the overlap check did not run |
-| `windows-longpath` | Fetch or merge failed with `Filename too long` | A fixable misconfiguration, never the fail-open path: follow `_shared/worktree-setup-windows-longpath.md`, then re-run the CLI |
-| `dirty-tree` | Uncommitted tracked changes | Nothing merged; commit the named changes and re-run |
-| `no-overlap` | Upstream moved but touches none of this branch's files | Proceed unchanged; no merge, no suite re-run |
+| `windows-longpath` | Fetch or merge failed with `Filename too long` | A fixable misconfiguration, never the fail-open path: apply `_shared/worktree-setup-windows-longpath.md`'s `core.longpaths` fix, then re-run the CLI. A `merge` failure self-aborts with no `MERGE_HEAD` and can leave untracked leftovers; that file's reset-then-clean recovery (`git reset --hard HEAD`, then `git clean -f -d -- {leftover paths}`, only paths the failed merge created) is safe here too, not only on a freshly created worktree, because the CLI's dirty-tree pre-check guaranteed no uncommitted tracked changes and the branch's commits are kept |
+| `dirty-tree` | Uncommitted tracked changes (`reason` names the first path) | Nothing merged, and never committed blindly: the build's own uncommitted work is committed through the implementer dispatch below and the CLI re-run; anything else is a HARD-GATE stop surfaced to the human |
+| `no-overlap` | Upstream moved but touches none of this branch's files | No merge, no suite re-run; build the review package on the JSON's `reviewBase` (the merge base with `origin/{integration-branch}`, not with the possibly stale local branch) |
 | `merged` | The overlapping upstream commits were merged in | Re-run the full suite on the merged tree, and build the review package on the JSON's `reviewBase` |
-| `conflict` | The merge conflicted and is left in progress | Stop for resolution per `_shared/git-discipline.md`'s Merge conflict resolution; never reset, discard, or `git merge --abort` past it |
+| `conflict` | The merge conflicted and is left in progress; or (`reason` `merge-in-progress`) a merge was already in progress when the CLI started, so nothing was fetched or merged | Stop for resolution per `_shared/git-discipline.md`'s Merge conflict resolution; never reset, discard, or `git merge --abort` past it. On a resumed run an empty `conflictFiles` means resolved but not yet committed: the same implementer dispatch commits the merge |
 
 A repair (a suite failure after `merged`, or the conflicted files after `conflict`) is one implementer dispatch at the plan's implementer tier, never a controller-side fix: the controller does not edit code itself. That dispatch gets the failing output or the conflicted files and the merge's two sides. A repair that does not leave a committed green tree is a HARD-GATE stop with the merge state intact, surfaced to the human with its files.
 
@@ -31,4 +31,5 @@ A repair (a suite failure after `merged`, or the conflicted files after `conflic
 | Pattern | Why it fails |
 |---------|--------------|
 | Running the pre-review catch-up only when the PR shows DIRTY | DIRTY surfaces at merge, after the review judged a stale tree — the #4149 cost this check exists to avoid |
-| Building the review package on the pre-merge base after a merge | The reviewer then reads upstream's commits as branch work |
+| Building the review package on any base but the JSON's `reviewBase` after `merged` or `no-overlap` (the pre-merge base, or `git merge-base` against the local integration branch) | The reviewer then reads upstream's commits as branch work |
+| Committing a `dirty-tree` path without knowing it is the build's own work | A change the build did not make (or a leftover conflict marker) is then recorded as branch work and reviewed as such |

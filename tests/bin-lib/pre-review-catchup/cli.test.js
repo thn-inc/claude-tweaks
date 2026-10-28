@@ -106,6 +106,19 @@ test('overlapCommits counts only the upstream commits that touch an overlap file
   assert.deepEqual(r.json.overlapFiles, ['a.txt']);
 });
 
+test('overlapCommits counts commits, not files: two upstream commits on one overlap file', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream a 1');
+  f.editLine(f.other, 'a.txt', 4, 'O4', 'upstream a 2');
+  f.pushUpstream();
+  const r = invoke(f, MAIN);
+  assert.equal(r.json.outcome, 'merged');
+  assert.equal(r.json.upstreamCommits, 2);
+  assert.equal(r.json.overlapCommits, 2);
+  assert.deepEqual(r.json.overlapFiles, ['a.txt']);
+});
+
 test('AC1.2: the merged tree is what the review sees (reviewBase)', () => {
   const f = fixture();
   f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
@@ -165,6 +178,51 @@ test('AC3.1: conflicting catch-up stops with the merge in progress', () => {
   f.run(f.work, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
   assert.match(r.json.line, /^- SCANNED /);
   assert.match(r.json.line, /conflicted on a\.txt — merge left in progress/);
+});
+
+// The resume path a HARD-GATE conflict stop sets up: the tree is mid-merge, so the
+// unmerged paths show as uncommitted changes. That must stay `conflict`, never `dirty-tree`.
+function conflictedFixture() {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 3, 'FEAT', 'feat edit');
+  f.editLine(f.other, 'a.txt', 3, 'UPSTREAM', 'upstream edit');
+  f.pushUpstream();
+  assert.equal(invoke(f, MAIN).json.outcome, 'conflict');
+  return f;
+}
+
+test('AC3.1: a re-run on an unresolved conflict is still conflict, not dirty-tree', () => {
+  const f = conflictedFixture();
+  const before = f.head();
+  const r = invoke(f, MAIN);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.outcome, 'conflict');
+  assert.deepEqual(r.json.conflictFiles, ['a.txt']);
+  assert.equal(r.json.reason, 'merge-in-progress');
+  assert.equal(r.json.before, before);
+  assert.equal(r.json.reviewBase, null);
+  assert.equal(f.head(), before);
+  f.run(f.work, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+  assert.match(r.json.line, /^- SCANNED /);
+  assert.match(r.json.line, /a merge already in progress \(MERGE_HEAD\) has unmerged paths on a\.txt — no new merge/);
+  // The guard runs before the fetch: a failing fetch cannot turn a mid-merge tree into fail-open.
+  f.run(f.work, ['remote', 'set-url', 'origin', path.join(f.root, 'missing.git')]);
+  assert.equal(invoke(f, MAIN).json.outcome, 'conflict');
+});
+
+test('AC3.1: a resolved but uncommitted merge is conflict with no conflictFiles', () => {
+  const f = conflictedFixture();
+  const before = f.head();
+  fs.writeFileSync(path.join(f.work, 'a.txt'), `${['l1', 'l2', 'BOTH', 'l4', 'l5'].join('\n')}\n`);
+  f.run(f.work, ['add', 'a.txt']);
+  const r = invoke(f, MAIN);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.outcome, 'conflict');
+  assert.deepEqual(r.json.conflictFiles, []);
+  assert.equal(r.json.reason, 'merge-in-progress');
+  assert.equal(f.head(), before);
+  f.run(f.work, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+  assert.match(r.json.line, /has every conflict resolved but is not committed — no new merge; commit it before the whole-branch review/);
 });
 
 test('fetch failure fails open with a distinct SKIP line', () => {
@@ -251,11 +309,15 @@ test('the real CLI wiring forwards the fetch timeout and no-prompt env to the sp
   const childProcess = require('child_process');
   const original = childProcess.execFileSync;
   const fetchCalls = [];
-  // Records the fetch's argv/options as the CLI built them, then runs every call for real
-  // against the fixture checkout (cwd) with the fixture identity env.
+  const cwds = [];
+  // Records the fetch's argv/options and every call's cwd as the CLI built them, then runs
+  // the call for real with the fixture identity env. A call bound anywhere but the injected
+  // cwd is refused, never run: it would act on whatever checkout the test process sits in.
   childProcess.execFileSync = (cmd, args, opts) => {
     if (cmd === 'git' && args[0] === 'fetch') fetchCalls.push({ args, opts });
-    return original(cmd, args, { ...opts, cwd: f.work, env: { ...f.env, GIT_TERMINAL_PROMPT: opts.env && opts.env.GIT_TERMINAL_PROMPT } });
+    cwds.push(opts.cwd);
+    if (opts.cwd !== f.work) throw new Error(`git spawned outside the injected cwd: ${opts.cwd}`);
+    return original(cmd, args, { ...opts, env: { ...f.env, GIT_TERMINAL_PROMPT: opts.env && opts.env.GIT_TERMINAL_PROMPT } });
   };
   let code; const out = [];
   try {
@@ -264,6 +326,7 @@ test('the real CLI wiring forwards the fetch timeout and no-prompt env to the sp
   } finally {
     childProcess.execFileSync = original;
   }
+  assert.deepEqual([...new Set(cwds)], [f.work]);
   assert.equal(code, 0);
   assert.equal(JSON.parse(out.join('')).outcome, 'no-overlap');
   assert.equal(fetchCalls.length, 1);
@@ -295,15 +358,17 @@ test('a long-path merge failure aborts a partial merge, best effort', () => {
   const real = f.gitIn(f.work);
   const seam = ({ mergeHead, abortThrows }) => {
     const calls = [];
+    // MERGE_HEAD exists only once the failed merge has left it behind (`mergeHead`).
+    let mergeTried = false;
     const git = (args) => {
       calls.push(args.join(' '));
       if (args[0] === 'merge' && args[1] === '--abort') {
         if (abortThrows) throw new Error('abort failed');
         return '';
       }
-      if (args[0] === 'merge') throw Object.assign(new Error('git merge failed'), { stderr });
+      if (args[0] === 'merge') { mergeTried = true; throw Object.assign(new Error('git merge failed'), { stderr }); }
       if (args[0] === 'rev-parse' && args.includes('MERGE_HEAD')) {
-        if (!mergeHead) throw new Error('no MERGE_HEAD');
+        if (!mergeHead || !mergeTried) throw new Error('no MERGE_HEAD');
         return 'deadbeef\n';
       }
       return real(args);
