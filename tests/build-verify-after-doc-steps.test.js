@@ -56,8 +56,12 @@ function assertCategoryABeforeVerify(text) {
   assert.match(step5, /A Category A action that fails or cannot complete .* is not `fixed`: resolve it like any failure in this step, or leave it `open` for Common Step 5\.5's ledger row/);
   // the fix runs before the verification run: the paragraph follows the verification sentence and says so
   assert.match(step5, /Before that run, when the build's diff matches/);
+  const verifyAt = step5.indexOf('run the shared verification procedure');
+  const categoryAAt = step5.indexOf('**Operational fixes first (#3489).**');
+  assert.notStrictEqual(verifyAt, -1, 'Common Step 5 must keep the verification sentence marker');
+  assert.notStrictEqual(categoryAAt, -1, 'Common Step 5 must keep the Category A paragraph marker');
   assert.ok(
-    step5.indexOf('run the shared verification procedure') < step5.indexOf('**Operational fixes first (#3489).**'),
+    verifyAt < categoryAAt,
     'the Category A paragraph must follow the verification sentence its "Before that run" points back to',
   );
   assert.match(step5, /Category B tasks and every ledger row stay in Common Step 5\.5/);
@@ -75,29 +79,38 @@ test('#3489 AC1.1: Common Step 5 applies Category A operational fixes before its
   assertCategoryABeforeVerify(BUILD_SKILL);
 });
 
-function assertDoctoredGoesRed(doctored, doctoringDescription) {
+// `message` is the failing assertion's own message (the first line of a `match` failure names the
+// pattern), so a doctoring cannot go red on an earlier, unrelated assertion and leave the one it
+// targets vacuous.
+function assertDoctoredGoesRed(doctored, doctoringDescription, message) {
   assert.notEqual(doctored, BUILD_SKILL, `doctoring must actually ${doctoringDescription}`);
-  assert.throws(() => assertCategoryABeforeVerify(doctored), assert.AssertionError);
+  assert.throws(() => assertCategoryABeforeVerify(doctored), { name: 'AssertionError', message });
 }
 
 test('#3489 AC1.1 go-red: the assertion fails when the Step 5 paragraph is removed', () => {
   const doctored = BUILD_SKILL.replace(/\*\*Operational fixes first \(#3489\)\.\*\*[^\n]*\n\n/, '');
-  assertDoctoredGoesRed(doctored, 'remove the paragraph');
+  assertDoctoredGoesRed(doctored, 'remove the paragraph', /^The input did not match the regular expression [^\n]*Operational fixes first/);
 });
 
 test('#3489 AC1.1 go-red: the assertion fails when the widened Step 5.5 entry clause is reverted', () => {
   const doctored = BUILD_SKILL.replace(', or Common Step 5 applied a Category A fix', '');
-  assertDoctoredGoesRed(doctored, 'remove the widened clause');
+  assertDoctoredGoesRed(doctored, 'remove the widened clause', /^The input did not match the regular expression [^\n]*applied a Category A fix/);
 });
 
 test('#3489 AC1.1 go-red: the assertion fails when the Step 5 paragraph says the fix runs after verification', () => {
   const doctored = BUILD_SKILL.replace('Before that run, when the build', 'After that run, when the build');
-  assertDoctoredGoesRed(doctored, 'change the timing word');
+  assertDoctoredGoesRed(doctored, 'change the timing word', /^The input did not match the regular expression [^\n]*Before that run/);
+});
+
+test('#3489 AC1.1 go-red: the assertion fails when the Step 5 paragraph is spliced above the verification sentence', () => {
+  const paragraph = BUILD_SKILL.match(/\*\*Operational fixes first \(#3489\)\.\*\*[^\n]*\n\n/)[0];
+  const doctored = BUILD_SKILL.replace(paragraph, '').replace('After Common Steps 6 and 6.5, so the verified tree', `${paragraph}After Common Steps 6 and 6.5, so the verified tree`);
+  assertDoctoredGoesRed(doctored, 'splice the paragraph above the verification sentence', /^the Category A paragraph must follow the verification sentence/);
 });
 
 test('#3489 AC1.1 go-red: the assertion fails when Step 5.5 regains an instruction to apply Category A fixes', () => {
   const doctored = BUILD_SKILL.replace('After verification passes, check for operational tasks', 'After verification passes, apply Category A fixes and check for operational tasks');
-  assertDoctoredGoesRed(doctored, 'add the instruction');
+  assertDoctoredGoesRed(doctored, 'add the instruction', /^Step 5\.5 must not apply Category A fixes after verification/);
 });
 
 test('#3489 AC1.1: operational-checklist.md applies Category A in Step 5 and writes its ledger rows in Step 5.5', () => {
