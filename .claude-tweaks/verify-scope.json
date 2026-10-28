@@ -10,6 +10,7 @@
     "files": ["tests/bin-lib/log-decision/append.test.js", "tests/bin-lib/verify/cli.test.js", "tests/bin-lib/gif/palette.test.js", "tests/statusline.test.js", "tests/bin-lib/staged-patch/cli.test.js", "tests/bin-lib/staged-patch/stack-check.test.js"],
     "maxRetries": 1
   },
+  "ci": { "tests": { "workflow": "test.yml", "job": "test" } },
   "impact": {
     "suite": "tests",
     "command": "node tools/run-tests.js --files-from {files}",

@@ -48,6 +48,7 @@ const {
 const { selectScope } = require('./lib/verify/scope');
 const { gitLocations, loadImpactContext, lazyImpactContext } = require('./lib/verify/impact');
 const { substituteFile, describePath } = require('./lib/verify/file-template');
+const { fetchCiVerdict } = require('./lib/verify/ci-source');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -337,6 +338,13 @@ function stampStatus(parsed) {
     liveGeneratedExempt,
     scopeError,
   };
+  // #4347: a CI-sourced pass verifies HEAD exactly as a local one does; the
+  // source is named only when the stamp carries one, so a local stamp's
+  // status is unchanged.
+  if (present && stamp.source === 'ci') {
+    status.source = 'ci';
+    status.ci = stamp.ci;
+  }
   process.stdout.write(`${JSON.stringify(status)}\n`);
   process.exitCode = 0;
 }
@@ -768,11 +776,50 @@ async function main() {
     });
     return { ...retried, retryDecision: decision };
   };
-  const results = (sel && sel.mode === 'none' ? [] : (await runChecks({
+  // #4347: a suite whose declaration names a `ci` source takes its verdict
+  // from the PR's CI job on HEAD instead of running here — the CI job ran the
+  // whole suite, so it also stands in for an impact subset — on a tree CI
+  // actually saw (clean at start). Every other outcome is a named fallback in
+  // report.json's `ci`, and the suite runs locally exactly as selected.
+  const ciAttempts = [];
+  const ciResults = [];
+  if (decl && decl.ci && sel && !parsed.stampSuite && sel.mode !== 'none') {
+    for (const [suite, source] of Object.entries(decl.ci)) {
+      if (!cmds.some((c) => c.name === suite)) continue;
+      const skipCi = (reason) => ciAttempts.push({
+        suite, workflow: source.workflow, job: source.job, used: false, fallback: reason,
+        prNumber: null, runId: null, runUrl: null, jobId: null, conclusion: null, waitedMs: 0,
+      });
+      if (startGit.dirty !== false) { skipCi(startGit.dirty === null ? 'tree-state-unreadable' : 'dirty-tree'); continue; }
+      const verdict = await fetchCiVerdict({
+        suite, source, headSha: startSha, logDir, localRoot: logCwd, cwd: parsed.cwd || process.cwd(),
+      });
+      ciAttempts.push(verdict.ci);
+      if (!verdict.used) continue;
+      const ciResult = { ...verdict.result, ci: { runId: verdict.ci.runId, runUrl: verdict.ci.runUrl, jobId: verdict.ci.jobId } };
+      ciResults.push(ciResult.exitCode === 0
+        ? ciResult
+        : await retryHook(ciResult, { logDir, spawnImpl: spawn, now: Date.now, cwd: parsed.cwd }));
+    }
+  }
+  const ciSuites = new Set(ciResults.map((r) => r.name));
+  const localCmds = cmds.filter((c) => !ciSuites.has(c.name));
+  // runChecks' own order (types/lint, tests, then the rest in --cmd order),
+  // with the CI-answered suites back in the places they would have run.
+  const stageOf = (name) => {
+    if (name === 'types' || name === 'lint') return 0;
+    return name === 'tests' ? 1 : 2;
+  };
+  const cmdIndex = (name) => cmds.findIndex((c) => c.name === name);
+  const ranChecks = sel && sel.mode === 'none' ? [] : (localCmds.length || !ciResults.length ? await runChecks({
     // #3511: any --baseline run needs every suite's evidence — a fail-fast
     // skip makes the adjudicator refuse (baseline.js), so suites keep running.
-    cmds, logDir, retry: retryHook, cwd: parsed.cwd, continueSuitesAfterFailure: Boolean(parsed.baseline),
-  })).map(enrich)).map((c) => {
+    cmds: localCmds, logDir, retry: retryHook, cwd: parsed.cwd, continueSuitesAfterFailure: Boolean(parsed.baseline),
+  }) : []);
+  const ordered = ciResults.length
+    ? [...ranChecks, ...ciResults].sort((a, b) => (stageOf(a.name) - stageOf(b.name)) || (cmdIndex(a.name) - cmdIndex(b.name)))
+    : ranChecks;
+  const results = ordered.map(enrich).map((c) => {
     // #1837: countsUnparsed is real report content only when a count stamp
     // is actually in play — never disable the comparison silently, but also
     // never surface the field when there is no comparison to have skipped.
@@ -1035,6 +1082,9 @@ async function main() {
   // so a consumer reads it instead of re-deriving it from the adjudication fields.
   const effectivePass = report.pass || adjudicatedPass || preExistingPass;
   report.effectivePass = effectivePass;
+  // #4347: one entry per CI-declared suite this run considered — absent when
+  // the declaration names no `ci` source, so such a report is unchanged.
+  if (ciAttempts.length) report.ci = ciAttempts;
   writeReportAtomic(report, jsonPath);
 
   // Verify event (#1928): the runner is the mechanical source for the
@@ -1185,6 +1235,10 @@ async function main() {
       // say nothing about whether THIS run's tree is dirty for an unrelated
       // reason. Always freshly computed (or null) for the run being stamped.
       generatedExempt,
+      // #4347: the suites whose verdict came from a CI job, by suite name.
+      ci: ciResults.length
+        ? Object.fromEntries(ciResults.map((r) => [r.name, { runId: r.ci.runId, runUrl: r.ci.runUrl }]))
+        : null,
     });
     // H1 (review): the legacy bare-SHA twin only ever names a real FULL
     // pass — a narrowed run leaves it untouched rather than repointing it
@@ -1260,6 +1314,12 @@ async function main() {
     }
     lines.push('');
   }
+  for (const a of ciAttempts) {
+    lines.push(a.used
+      ? `CI: ${a.suite} — taken from ${a.workflow} / ${a.job} run ${a.runId} on HEAD (${a.conclusion}${a.runUrl ? `, ${a.runUrl}` : ''})`
+      : `CI: ${a.suite} — ran locally (${a.fallback})`);
+  }
+  if (ciAttempts.length) lines.push('');
   lines.push('| Check | Status | Duration | Summary |', '|---|---|---|---|');
   for (const check of results) {
     const duration = check.skipped ? '—' : `${(check.durationMs / 1000).toFixed(1)}s`;
