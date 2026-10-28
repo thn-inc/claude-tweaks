@@ -95,21 +95,23 @@ function fencedBlock(text) {
 // The one fence rule shared by stripCodeSpans (materialize-format.js), sectionText
 // and extractSection (#4169), and the three body-metadata extractors
 // extractVerifiedAsOf / extractPremiseCheck / extractTemplateStamp (#4368): an
-// opener is a column-0 run of 3+ backticks or tildes; the closer is the same
-// character, at least the opener's length, and nothing else on its line but
-// trailing whitespace. Matches what fenceFor and fencedBlock write.
+// opener is 0-3 leading spaces (CommonMark) then a run of 3+ backticks or
+// tildes; the closer is 0-3 leading spaces, then the same character, at least
+// the opener's length, and nothing else on its line but trailing whitespace.
+// Four or more leading spaces is an indented code block, not a fence. Matches
+// what fenceFor and fencedBlock write (column-0 fences).
 function fencedLineRanges(lines) {
   const ranges = [];
   let i = 0;
   while (i < lines.length) {
-    const fenceMatch = lines[i].match(/^(`{3,}|~{3,})/);
+    const fenceMatch = lines[i].match(/^ {0,3}(`{3,}|~{3,})/);
     if (!fenceMatch) {
       i++;
       continue;
     }
     const fenceChar = fenceMatch[1][0];
     const fenceLen = fenceMatch[1].length;
-    const closeRe = new RegExp(`^${fenceChar}{${fenceLen},}\\s*$`);
+    const closeRe = new RegExp(`^ {0,3}${fenceChar}{${fenceLen},}\\s*$`);
     let j = i + 1;
     while (j < lines.length && !closeRe.test(lines[j])) j++;
     const end = j < lines.length ? j : lines.length - 1;

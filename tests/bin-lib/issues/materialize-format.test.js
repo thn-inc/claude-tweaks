@@ -550,3 +550,14 @@ test('sectionText: an unclosed fence hides every later heading (CommonMark: it r
   assert.equal(sectionText(body, 'Deliverables'), null);
   assert.ok(sectionText(body, 'Current State').endsWith('- [ ] d'));
 });
+
+test('sectionText: an indented (1–3 space) fence hides quoted headings; a 4-space one does not (#4368)', () => {
+  const bodyFor = (pad) => ['## Current State', 'x', `${pad}\`\`\``, '## Deliverables', 'quoted', `${pad}\`\`\``, '', '## Release Note', 'n'].join('\n');
+  for (const pad of [' ', '  ', '   ']) {
+    assert.equal(sectionText(bodyFor(pad), 'Deliverables'), null, `pad ${pad.length}`);
+  }
+  // Four spaces is an indented code block, not a fence: the heading is the record's own.
+  const four = sectionText(bodyFor('    '), 'Deliverables');
+  assert.notEqual(four, null);
+  assert.ok(four.startsWith('quoted'));
+});

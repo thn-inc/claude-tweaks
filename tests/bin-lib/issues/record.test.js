@@ -1189,6 +1189,18 @@ test('fence-blind metadata (#4368): bare-CR line endings — a CR-separated fenc
   assert.strictEqual(extractVerifiedAsOf('```\rVerified-as-of: aaaaaaa\r```'), null);
 });
 
+test('fence-blind metadata (#4368): a fence indented 1–3 spaces hides its line; 4 spaces is not a fence', () => {
+  for (const pad of [' ', '  ', '   ']) {
+    assert.strictEqual(extractPremiseCheck(`${pad}\`\`\`\nPremise-check: echo QUOTED\n${pad}\`\`\``), null, `pad ${pad.length}`);
+  }
+  // An indented opener closed by a column-0 closer still pairs.
+  assert.strictEqual(extractPremiseCheck('  ```\nPremise-check: echo QUOTED\n```\nPremise-check: echo REAL'), 'echo REAL');
+  // A column-0 opener closed by an indented closer still pairs (pins the closer's indent allowance).
+  assert.strictEqual(extractPremiseCheck('```\nPremise-check: echo QUOTED\n  ```\nPremise-check: echo REAL'), 'echo REAL');
+  // Four spaces is an indented code block, not a fence opener — the following column-0 line is read.
+  assert.strictEqual(extractPremiseCheck('    ```\nPremise-check: echo REAL'), 'echo REAL');
+});
+
 test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {
   assert.strictEqual(parseRecordFacets(['breaking']).breaking, true);
   assert.strictEqual(parseRecordFacets([{ name: 'breaking' }]).breaking, true);
@@ -1374,4 +1386,9 @@ test('extractSection: an unclosed fence hides every later heading (CommonMark: i
   const body = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
   assert.strictEqual(extractSection(body, 'Deliverables'), '');
   assert.ok(extractSection(body, 'Current State').endsWith('- [ ] d'));
+});
+
+test('extractSection: a heading inside a 3-space-indented fence is not a section (#4368)', () => {
+  const body = ['## Current State', 'x', '   ```', '## Deliverables', 'quoted', '   ```', '', '## Release Note', 'n'].join('\n');
+  assert.strictEqual(extractSection(body, 'Deliverables'), '');
 });
