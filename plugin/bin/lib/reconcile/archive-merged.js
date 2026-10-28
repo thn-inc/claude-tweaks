@@ -721,7 +721,9 @@ function consoleReplacedByAutoMerge(runDir) {
 // fallback is for #2565's parked / no-local-ref shapes only: when the main
 // checkout is on the integration branch and that branch lacks the merge, the
 // answer is false. A detached HEAD names no branch, so it keeps the fallback.
-function localHasMerge(root, mergeCommit, integration) {
+// A dry-run keeps the fallback too: its preview models the fast-forward the real
+// pass's mirror runs first, so origin's ancestry is what the real pass will see.
+function localHasMerge(root, mergeCommit, integration, { dryRun = false } = {}) {
   const oid = mergeCommit && typeof mergeCommit.oid === 'string' && /^[0-9a-f]{40}$/.test(mergeCommit.oid)
     ? mergeCommit.oid : null;
   if (!oid) return null;
@@ -732,7 +734,7 @@ function localHasMerge(root, mergeCommit, integration) {
   const local = runGit(['merge-base', '--is-ancestor', oid, `refs/heads/${integration}`], root);
   if (!local.failure) return true;
   const current = runGit(['branch', '--show-current'], root);
-  if (!current.failure && current.stdout === integration) return false;
+  if (!dryRun && !current.failure && current.stdout === integration) return false;
   // Local ref missing the merge (or missing entirely) — fall back to
   // origin/{integration}, which reconcile's own mirror/fetch step keeps
   // current independent of what's checked out here.
@@ -2166,7 +2168,7 @@ function archiveMergedRun({
     };
   }
 
-  const hasMerge = localHasMerge(root, prState.mergeCommit, integration);
+  const hasMerge = localHasMerge(root, prState.mergeCommit, integration, { dryRun });
   if (hasMerge !== true) {
     return { outcome: 'skipped', reason: hasMerge === false ? 'local-behind-merge' : 'merge-commit-unknown' };
   }
@@ -2520,7 +2522,7 @@ function archiveMerged({
         if (byNumber === 'pr-not-found') skipReason = 'pr-not-found';
         if (byNumber && typeof byNumber === 'object' && (byNumber.state === 'CLOSED' || byNumber.state === 'MERGED')) {
           if (byNumber.state === 'MERGED') {
-            const hasMerge = localHasMerge(root, byNumber.mergeCommit, integration);
+            const hasMerge = localHasMerge(root, byNumber.mergeCommit, integration, { dryRun });
             if (hasMerge !== true) {
               skipped.push({ runDir: dir, reason: hasMerge === false ? 'local-behind-merge' : 'merge-commit-unknown' });
               continue;

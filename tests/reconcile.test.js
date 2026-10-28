@@ -479,6 +479,20 @@ test('localHasMerge: on the integration branch with local behind origin — repo
   assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), true);
 });
 
+// #4387: a dry-run previews the fast-forward the real pass's mirror runs first,
+// so on the integration branch it keeps the origin fallback.
+test('localHasMerge: dry-run on the integration branch with local behind origin keeps the origin fallback (#4387)', () => {
+  const { seedDir, mainDir } = pairedFixture();
+  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
+  git(['add', 'b.txt'], seedDir);
+  git(['commit', '-q', '-m', 'merge commit'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
+  const mergeOid = git(['rev-parse', 'main'], seedDir).trim();
+
+  git(['fetch', '-q', 'origin', 'main'], mainDir); // only origin/main advances; mainDir stays on main
+  assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main', { dryRun: true }), true);
+});
+
 // #2565 parked shape with no local integration ref at all: the origin fallback
 // is still the only path that can see the merge.
 test('AC3.1: localHasMerge parked with no local integration ref — still falls back to origin (#2565)', () => {
@@ -1494,7 +1508,7 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
     out.archiveCalled = true;
     out.seenAtArchive = {
       localMain: git(['rev-parse', 'main'], mainDir).trim(),
-      hasMerge: localHasMerge(mainDir, { oid: NEW }, 'main'),
+      hasMerge: localHasMerge(mainDir, { oid: NEW }, 'main', { dryRun: !!extra.dryRun }),
     };
     return { archived: [], skipped: [] };
   };
@@ -1542,7 +1556,7 @@ test('AC2 (#3630): dispatch-style checks release,archive,reap sees the asynchron
 // AC2 end to end: the real archiveMerged (no stub) over a PR GitHub merged
 // asynchronously — origin's main holds the merge commit, the clone's local main
 // does not. Without the added mirror, the run skips as local-behind-merge.
-// extra: { dryRun?, stuck?, localCurrent? } — localCurrent fast-forwards the clone's local main to the merge before reconcile (a dry-run mirror cannot), and stuck seeds an escalated structurally-stuck entry for the run dir
+// extra: { dryRun?, stuck? } — stuck seeds an escalated structurally-stuck entry for the run dir
 // and serves a consolidated stuck-paths record naming it; out.ghIssueCalls logs every `gh issue` argv.
 async function archiveAsyncMergedRun(checks, extra = {}) {
   const { seedDir, mainDir } = pairedFixture();
@@ -1583,10 +1597,6 @@ async function archiveAsyncMergedRun(checks, extra = {}) {
     `cat <<'EOF'\n${JSON.stringify(pr)}\nEOF`,
     '',
   ].join('\n');
-  if (extra.localCurrent) {
-    git(['fetch', '-q', 'origin', 'main'], mainDir);
-    git(['merge', '-q', '--ff-only', 'origin/main'], mainDir);
-  }
   const preflight = require('../plugin/bin/lib/reconcile/preflight');
   const original = { health: preflight.ghHealthCheck, healthAsync: preflight.ghHealthCheckAsync };
   preflight.ghHealthCheck = () => ({ ok: true, reason: null });
@@ -1620,20 +1630,17 @@ test('#4202 end to end: archiving an escalated stuck run dir edits the consolida
 });
 
 test('#4202 end to end: a dry-run pass over the same run neither edits the record nor clears the entry', { skip: STUB_SKIP }, async () => {
-  const { r, mainDir, ghIssueCalls } = await archiveAsyncMergedRun(['archive'], { stuck: true, dryRun: true, localCurrent: true });
+  const { r, mainDir, ghIssueCalls } = await archiveAsyncMergedRun(['archive'], { stuck: true, dryRun: true });
   assert.deepEqual((r.runs || []).map((x) => x.action), ['archived'], JSON.stringify(r.runs));
   assert.ok(!ghIssueCalls.some((c) => /^issue (edit|comment|close) /.test(c)), ghIssueCalls.join('\n'));
   assert.deepEqual(listResidueFailures(mainDir).map((e) => e.reason), ['structurally-stuck']);
 });
 
-// #4387: the dry-run mirror leaves local main behind, and on the integration
-// branch the archive no longer borrows origin/{integration}'s ancestry, so the
-// preview reports local-behind-merge where a real run would fast-forward first.
-test('(#3630, #4387): dryRun with an added mirror prerequisite moves nothing and archive sees local main behind', async () => {
+test('(#3630): dryRun with an added mirror prerequisite moves nothing but archive still sees origin\'s merge', async () => {
   const { r, seenAtArchive, NEW, mainDir } = await reconcileWithAsyncMerge(['archive'], { dryRun: true });
   assert.deepEqual(r.mirror, { state: 'behind', action: 'skipped', reason: 'dry-run' });
   assert.notEqual(git(['rev-parse', 'main'], mainDir).trim(), NEW, 'a dry-run must not fast-forward local main');
-  assert.equal(seenAtArchive.hasMerge, false, 'the integration-branch check reads local main, which the dry-run left behind');
+  assert.equal(seenAtArchive.hasMerge, true, 'the shared fetch still refreshes origin/main for the preview');
 });
 
 test('(#3630): a gh preflight failure does not run a mirror the caller never named', async () => {
