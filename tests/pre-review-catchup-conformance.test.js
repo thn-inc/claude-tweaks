@@ -209,7 +209,7 @@ test('shared file and naming', () => {
 test('every outcome is documented', () => {
   assert.equal(OUTCOMES.length, 7, 'OUTCOMES roster size changed — document the new outcome and bump this literal');
   const outcomes = section(readShared(), '## Outcomes');
-  const cliLine = PLUGIN_STRUCTURE.split('\n').find((l) => l.includes('pre-review-catchup.js'));
+  const cliLine = PLUGIN_STRUCTURE.split('\n').find((l) => l.startsWith('node plugin/bin/pre-review-catchup.js '));
   assert.ok(cliLine, 'docs/plugin-structure.md needs a pre-review-catchup.js line');
   for (const outcome of OUTCOMES) {
     assert.ok(outcomes.includes(`\`${outcome}\``), `_shared/pre-review-catchup.md ## Outcomes must name \`${outcome}\``);
