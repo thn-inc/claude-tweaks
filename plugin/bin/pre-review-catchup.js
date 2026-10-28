@@ -11,11 +11,13 @@
 //
 // Prints one JSON line: {outcome, integrationBranch, before, after, mergeBase,
 // reviewBase, upstreamCommits, branchFileCount, overlapCommits, overlapFiles,
-// conflictFiles, reason, logged, line} (+ logError when --run was passed and the
-// append was refused or threw). outcome is not-applicable | fetch-failed |
+// conflictFiles, reason, logged, line, entry} (+ logError when --run was passed and
+// the append was refused or threw). outcome is not-applicable | fetch-failed |
 // windows-longpath | dirty-tree | no-overlap | merged | conflict. `line` is the
-// formatted decisions.md entry; with --run the CLI appends it under /build and sets
-// logged:true, without --run nothing is written and the caller reports `line`
+// formatted decisions.md entry and `entry` its parts ({status, text, step,
+// reversibility, section}, one log-decision.js --entries element that reproduces
+// `line`); with --run the CLI appends it under /build and sets logged:true, without
+// --run nothing is written and the caller reports `line`
 // (_shared/worktree-catchup-no-run-dir.md).
 //
 // Status is data: exit 0 on every outcome, including conflict (the merge is left
@@ -36,7 +38,7 @@ const NAME = 'pre-review-catchup.js';
 
 const USAGE = `usage: ${NAME} --integration-branch <b> [--run <run-dir>] [--help]\n`
   + '  prints {outcome, integrationBranch, before, after, mergeBase, reviewBase, upstreamCommits,\n'
-  + '          branchFileCount, overlapCommits, overlapFiles, conflictFiles, reason, logged, line, logError?};\n'
+  + '          branchFileCount, overlapCommits, overlapFiles, conflictFiles, reason, logged, line, entry, logError?};\n'
   + `  outcome: ${OUTCOMES.join(' | ')}\n`
   + '  with --run, appends the entry to decisions.md under /build; without it, logs nothing\n'
   + '  exit 0 on every outcome (status is data); 2 malformed invocation; 1 undecided git failure\n';
@@ -108,8 +110,10 @@ function run(argv, overrides = {}) {
     deps.stderr(`${NAME}: ${(e && e.message) || e}\n`);
     return 1;
   }
-  const entry = formatEntry({ ...formatLine(body), now: deps.now(), step: STEP });
-  const out = { ...body, logged: false, line: entry };
+  const { status, text, reversibility } = formatLine(body);
+  const entry = formatEntry({ status, text, reversibility, now: deps.now(), step: STEP });
+  // `entry` holds line's parts, a ready --entries element for the logged:false hand-log.
+  const out = { ...body, logged: false, line: entry, entry: { status, text, step: STEP, reversibility, section: SECTION } };
   if (o.run) {
     const logError = appendLine(deps, o.run, entry);
     if (logError) {

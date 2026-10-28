@@ -25,9 +25,11 @@
 //
 // File lists come from `diff --name-only -z --no-renames`, so a rename counts as a
 // delete of the old path plus an add of the new one and an upstream edit to the old
-// path overlaps. `reviewBase` is the merge base after a merge (what the review
-// should diff against) or the original merge base when nothing was merged; null
-// when no merge base is trustworthy (conflict, and every pre-scan outcome).
+// path overlaps. `reviewBase` is the base the review package diffs against whenever it
+// is non-null, whatever the outcome: the merge base after a merge, the original merge
+// base when nothing was merged, and on fetch-failed the merge base with the last-fetched
+// origin ref (best effort). Null when no merge base is trustworthy (conflict, a
+// fetch-failed with no fetched ref, and every other pre-scan outcome).
 'use strict';
 
 // The module object, not a destructured binding, so a test can spy on the real spawn.
@@ -68,6 +70,13 @@ function mergeInProgress(git) {
 function abortPartialMerge(git) {
   if (!mergeInProgress(git)) return;
   try { git(['merge', '--abort']); } catch { /* best effort */ }
+}
+
+// Best effort on fetch-failed: the merge base with the last-fetched upstream ref, so the review
+// still diffs against origin rather than a stale local integration branch. Null when that ref
+// does not resolve (never fetched) or shares no history with HEAD.
+function lastFetchedBase(git, upstream) {
+  try { return git(['merge-base', 'HEAD', upstream]).trim() || null; } catch { return null; }
 }
 
 const errText = (e) => `${(e && e.stderr) || ''}\n${(e && e.message) || ''}`;
@@ -142,7 +151,7 @@ function runCatchup({ integrationBranch }, { git }) {
     git(['fetch', '--end-of-options', REMOTE, integrationBranch], FETCH_OPTS());
   } catch (e) {
     if (errText(e).includes(LONGPATH)) return done('windows-longpath', { reason: 'fetch' });
-    return done('fetch-failed', { reason: firstLine(e) });
+    return done('fetch-failed', { reason: firstLine(e), reviewBase: lastFetchedBase(git, upstream) });
   }
 
   const dirty = nulList(git(['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=no']))[0];

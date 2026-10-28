@@ -59,10 +59,14 @@ const ROUTING_FACTS = [
   { name: 'wave members run it', has: (s) => s.includes('Every worktree-strategy build runs it, including a `MULTISPEC_PARALLEL_WAVE=1` wave member') },
   { name: 'call-site rule', has: (s) => s.includes('never carried from Common Step 1') },
   { name: 'skip path has no review package', anchors: ['`merged`'], has: (s) => s.includes('`merged` there means re-running the suite (with its one fix dispatch on a failure) and nothing more') },
+  { name: 'any non-null reviewBase is the package base', has: (s) => s.includes("Whatever the outcome, a non-null `reviewBase` is the review package's base commit; SDD's own base") && s.includes('is used only when `reviewBase` is null') },
   { name: 'merged route names reviewBase', anchors: ['`merged`'], has: (s) => /`merged` →[^.]*`reviewBase`/.test(s) },
   { name: 'no-overlap route names reviewBase', anchors: ['`no-overlap`'], has: (s) => /`no-overlap` →[^.]*`reviewBase`/.test(s) },
+  { name: 'fetch-failed route names reviewBase', anchors: ['`fetch-failed`'], has: (s) => /`fetch-failed` →[^.]*`reviewBase`/.test(s) },
   { name: 'resolved-but-uncommitted resume is committed by the dispatch', has: (s) => s.includes('an empty `conflictFiles` means resolved but not yet committed, and that same dispatch commits the merge') },
   { name: 'conflict-resolved line uses --text-file', has: (s) => /resolved in \{sha\}\. Reversibility: n\/a\.` with `log-decision\.js --text-file`/.test(s) },
+  { name: '{files} has a source on a resumed run', anchors: ['`conflict`'], has: (s) => s.includes('where `{files}` is the `conflictFiles` of the run that first returned `conflict` with a non-empty list, or `resolved before resume` when that output is gone') },
+  { name: 'logged:false hand-logs entry through --entries', has: (s) => s.includes("hand-log the JSON's `entry`, never `line`") && s.includes('PRC_ENTRY=pre-review-catchup-entry.json') && s.includes('log-decision.js --run "$PIPELINE_RUN_DIR" --entries "{that path}"') },
   { name: 'windows-longpath is not the fail-open path', anchors: ['`windows-longpath`'], has: (s) => /`windows-longpath` → not the fail-open path/.test(s) },
   { name: 'windows-longpath leftovers are cleared, safe after the dirty-tree pre-check', has: (s) => s.includes('`git clean -f -d -- {leftover paths}`') && s.includes("because the CLI's dirty-tree pre-check guaranteed no uncommitted tracked changes") },
   { name: 'dirty-tree is never committed blindly', anchors: ['`dirty-tree`'], has: (s) => /`dirty-tree` → the controller never commits blindly:[^.]*build's own work[^.]*HARD-GATE stop/.test(s) },
@@ -129,7 +133,11 @@ test('routing control: each fact goes red alone when only it is removed from the
     ['there means re-running the suite (with its one fix dispatch on a failure) and nothing more', 'there means building the package', 'skip path has no review package'],
     ["the JSON's `reviewBase` as its base commit, so", "the JSON's base as its base commit, so", 'merged route names reviewBase'],
     ["the JSON's `reviewBase` as its base commit too", "the JSON's base as its base commit too", 'no-overlap route names reviewBase'],
+    ['Whatever the outcome, a non-null `reviewBase`', 'After `merged`, a non-null `reviewBase`', 'any non-null reviewBase is the package base'],
+    ['and the package is built on `reviewBase` when it is non-null', 'and the package is built on SDD\'s base', 'fetch-failed route names reviewBase'],
     ['and that same dispatch commits the merge', 'and the controller commits the merge', 'resolved-but-uncommitted resume is committed by the dispatch'],
+    ['or `resolved before resume` when that output is gone', 'or nothing when that output is gone', '{files} has a source on a resumed run'],
+    ["hand-log the JSON's `entry`, never `line`", "hand-log the JSON's `line`", 'logged:false hand-logs entry through --entries'],
     ['with `log-decision.js --text-file`', 'with `log-decision.js --text`', 'conflict-resolved line uses --text-file'],
     ['`windows-longpath` → not the fail-open path', '`windows-longpath` → handled', 'windows-longpath is not the fail-open path'],
     ["because the CLI's dirty-tree pre-check guaranteed", 'because it is fine and guaranteed', 'windows-longpath leftovers are cleared, safe after the dirty-tree pre-check'],
@@ -178,6 +186,10 @@ test("the shared Outcomes table carries the routes dispatch.md states", () => {
   };
   assert.ok(row('no-overlap').includes('`reviewBase`'), 'the no-overlap row must build the package on reviewBase');
   assert.ok(row('merged').includes('`reviewBase`'), 'the merged row must build the package on reviewBase');
+  assert.ok(row('fetch-failed').includes('`reviewBase`'), 'the fetch-failed row must build the package on a non-null reviewBase');
+  assert.ok(outcomes.includes("Whatever the outcome, a non-null `reviewBase` is the review package's base commit"), 'the shared file must make any non-null reviewBase the package base');
+  assert.ok(outcomes.includes('PRC_ENTRY=pre-review-catchup-entry.json') && outcomes.includes('--entries "{that path}"'), 'the shared file must hand-log entry through --entries');
+  assert.ok(row('conflict').includes('`resolved before resume`'), 'the conflict row must give {files} a source on a resumed run');
   assert.ok(row('dirty-tree').includes('never committed blindly') && row('dirty-tree').includes('HARD-GATE stop'), 'the dirty-tree row must not commit blindly');
   assert.ok(row('conflict').includes('`merge-in-progress`') && row('conflict').includes('resolved but not yet committed'), 'the conflict row must cover the resumed merge');
   assert.ok(row('windows-longpath').includes('`git clean -f -d -- {leftover paths}`') && row('windows-longpath').includes('dirty-tree pre-check'), 'the windows-longpath row must carry the leftover recovery');

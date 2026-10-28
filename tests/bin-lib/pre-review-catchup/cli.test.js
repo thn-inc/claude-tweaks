@@ -7,6 +7,8 @@ const { originWithTwoClones } = require('../../helpers/git-fixtures');
 const { readText } = require('../../helpers/read-skill');
 const { run, parseArgs } = require('../../../plugin/bin/pre-review-catchup');
 const { OUTCOMES, FETCH_TIMEOUT_MS, formatLine } = require('../../../plugin/bin/lib/worktree/pre-review-catchup');
+const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
+const { run: logDecision } = require('../../../plugin/bin/log-decision');
 
 const roots = [];
 test.after(() => {
@@ -238,6 +240,20 @@ test('fetch failure fails open with a distinct SKIP line', () => {
   assert.match(r.json.line, /fallback: no pre-review catch-up/);
 });
 
+test('fetch-failed carries reviewBase from the last-fetched ref, null when it does not resolve', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.run(f.work, ['remote', 'set-url', 'origin', path.join(f.root, 'missing.git')]);
+  const r = invoke(f, MAIN);
+  assert.equal(r.json.outcome, 'fetch-failed');
+  assert.equal(r.json.reviewBase, f.run(f.work, ['merge-base', 'HEAD', 'origin/main']).trim());
+  f.run(f.work, ['update-ref', '-d', 'refs/remotes/origin/main']);
+  const none = invoke(f, MAIN);
+  assert.equal(none.code, 0);
+  assert.equal(none.json.outcome, 'fetch-failed');
+  assert.equal(none.json.reviewBase, null);
+});
+
 test('not-applicable on the integration branch itself', () => {
   const f = fixture();
   f.run(f.work, ['checkout', '-q', 'main']);
@@ -443,6 +459,32 @@ test('unanchored --run keeps the outcome and reports logError', () => {
   assert.match(r.json.line, /^- AUTO /);
   assert.match(r.err, /pre-review-catchup\.js: could not append the decisions\.md entry: /);
   assert.equal(fs.readFileSync(path.join(shadow, 'decisions.md'), 'utf8'), 'shadow\n');
+});
+
+// The hand-log route for logged:false: `entry` written as `[entry]` and passed to
+// log-decision.js --entries must yield exactly `line`, never a re-prefixed copy of it.
+test('entry is the parts of line: formatEntry and log-decision --entries reproduce it', () => {
+  const NOW = Date.UTC(2026, 9, 28, 7, 8, 9);
+  const f = fixture();
+  const runDir = withRunDir(f);
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
+  f.pushUpstream();
+  const r = invoke(f, MAIN, { now: () => NOW });
+  assert.equal(r.json.outcome, 'merged');
+  assert.deepEqual(Object.keys(r.json.entry).sort(), ['reversibility', 'section', 'status', 'step', 'text']);
+  assert.equal(r.json.entry.section, '/build');
+  assert.equal(r.json.entry.step, 'Pre-review catch-up');
+  assert.equal(formatEntry({ ...r.json.entry, now: NOW }), r.json.line);
+  const file = path.join(f.root, 'entry.json');
+  fs.writeFileSync(file, JSON.stringify([r.json.entry]));
+  const code = logDecision(['--run', runDir, '--entries', file], {
+    cwd: () => f.work, mainRoot: f.root, now: () => NOW, stdout: () => {}, stderr: (s) => assert.fail(s),
+  });
+  assert.equal(code, 0);
+  const text = decisionsOf(runDir);
+  assert.ok(text.includes(`\n${r.json.line}\n`), text);
+  assert.equal(text.split('\n').filter((l) => l.startsWith('- ')).length, 1);
 });
 
 test('a missing --run dir keeps the outcome and reports logError', () => {
