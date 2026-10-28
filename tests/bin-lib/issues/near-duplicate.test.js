@@ -234,6 +234,11 @@ test('extractCurrentStateAnchors: a fenced ## Current State line does not start 
   assert.deepStrictEqual([...extractCurrentStateAnchors(body)], []);
 });
 
+test('extractCurrentStateAnchors: a CRLF body still finds its Current State anchors (#4369)', () => {
+  const body = '## Current State\r\n\r\n`alpha.js`\r\n```bash\r\n# comment\r\n```\r\n`beta.js`\r\n\r\n## Deliverables\r\n`gamma.js`\r\n';
+  assert.deepStrictEqual([...extractCurrentStateAnchors(body)].sort(), ['alpha.js', 'beta.js']);
+});
+
 test('isGenericAnchor classifies each shape', () => {
   for (const g of ['--run-dir', '-x', '--run <dir>', '--key=value', '/claude-tweaks:dispatch', '/claude-tweaks:flow #3124 build', '/flow', '/specify', '/tmp', 'bot:in-progress', 'needs:decision', 'ready', 'parked']) {
     assert.strictEqual(isGenericAnchor(g), true, g);

@@ -1317,6 +1317,15 @@ test('extractSection: a fence is closed only by its own character, at least as l
   assert.strictEqual(section('```md', '## Acceptance Criteria', 'quoted', '```', '## Deliverables', 'x'), '');
 });
 
+test('fencedLineMask marks exactly the lines inside fenced blocks, fence lines included (#4369)', () => {
+  const { fencedLineMask, fencedLineRanges } = require('../../../plugin/bin/lib/issues/record-payload');
+  const lines = ['a', '```md', '## in', '```', 'b', '~~~', 'open-ended', 'c'];
+  assert.deepStrictEqual(fencedLineMask(lines), [false, true, true, true, false, true, true, true]);
+  assert.deepStrictEqual(fencedLineRanges(lines), [[1, 3], [5, 7]]);
+  assert.deepStrictEqual(fencedLineMask(['no fence', '## h']), [false, false]);
+  assert.deepStrictEqual(fencedLineMask([]), []);
+});
+
 test('extractSection: an unclosed fence hides every later heading (CommonMark: it runs to end of text)', () => {
   const body = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
   assert.strictEqual(extractSection(body, 'Deliverables'), '');

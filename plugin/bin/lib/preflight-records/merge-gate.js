@@ -11,7 +11,7 @@
 'use strict';
 
 const { escapeRegExp } = require('../shared-primitives');
-const { fencedLineRanges } = require('../issues/record-payload');
+const { fencedLineMask } = require('../issues/record-payload');
 
 // integrationBranch (default 'main') -> the strict merge-state RegExp. A demand
 // that a prerequisite be "actually merged", or merged/landed to/into/on the
@@ -37,10 +37,7 @@ function mergeStateDemands(body, candidates, re = MERGE_STATE_RE) {
   const lines = String(body || '').split(/\r?\n/);
   // A heading-shaped line inside a fenced block is quoted content, not a
   // section boundary (#4369) — it stays section content, minus its heading role.
-  const fenced = new Array(lines.length).fill(false);
-  for (const [s, e] of fencedLineRanges(lines)) {
-    for (let k = s; k <= e; k += 1) fenced[k] = true;
-  }
+  const fenced = fencedLineMask(lines);
   for (let i = 0; i < lines.length; i += 1) {
     const raw = lines[i];
     if (!fenced[i] && H2_RE.test(raw)) { inSection = SECTION_RE.test(raw); continue; }
