@@ -15,10 +15,10 @@ function makeFixtureRoot() {
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(
     path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
-    '2026-08-01\trun-1\tskills\tclosed\t0\tna\n2026-08-02\trun-2\tskills\tclosed\t0\tna\n',
+    '2026-08-01\t2026-08-01T000000-run-1\tskills\tclosed\t0\tna\n2026-08-02\t2026-08-02T000000-run-2\tskills\tclosed\t0\tna\n',
   );
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive');
-  for (const runId of ['run-1', 'run-2']) {
+  for (const runId of ['2026-08-01T000000-run-1', '2026-08-02T000000-run-2']) {
     const dir = path.join(archiveDir, runId);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'decisions.md'), '- AUTO 12:00:00 — Review Console: terminal decision approve-all. Reversibility: n/a.\n');
@@ -54,7 +54,7 @@ test('CLI --json round-trips the same numbers as the text report', () => {
 
 test('CLI renders a named Failed writes bucket, not silent other', () => {
   const root = makeFixtureRoot();
-  const dir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', 'run-1');
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', '2026-08-01T000000-run-1');
   fs.writeFileSync(
     path.join(dir, 'decisions.md'),
     '- AUTO 12:00:00 — Review Console: terminal decision approve-all. Reversibility: n/a.\n' +
@@ -82,18 +82,18 @@ test('#917: a partially-pruned archive still reports the TSV row whose runId has
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(
     path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
-    '2026-08-01\trun-1\tskills\tclosed\t0\tna\n2026-08-02\trun-2\tskills\tclosed\t0\tna\n',
+    '2026-08-01\t2026-08-01T000000-run-1\tskills\tclosed\t0\tna\n2026-08-02\t2026-08-02T000000-run-2\tskills\tclosed\t0\tna\n',
   );
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive');
   // Only run-2's archive dir exists — run-1's was pruned.
-  const dir = path.join(archiveDir, 'run-2');
+  const dir = path.join(archiveDir, '2026-08-02T000000-run-2');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'decisions.md'), '- AUTO 12:00:00 — Review Console: terminal decision approve-all. Reversibility: n/a.\n');
   fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"gate-denial"}\n');
 
   const jsonOut = JSON.parse(run(['--json'], root));
-  assert.ok(jsonOut.window.runIds.includes('run-1'), 'run-1 (pruned archive) must still appear in the window');
-  assert.ok(jsonOut.window.runIds.includes('run-2'), 'run-2 (real archived run) must still appear in the window');
+  assert.ok(jsonOut.window.runIds.includes('2026-08-01T000000-run-1'), 'run-1 (pruned archive) must still appear in the window');
+  assert.ok(jsonOut.window.runIds.includes('2026-08-02T000000-run-2'), 'run-2 (real archived run) must still appear in the window');
   // run-2's real decision line must still be counted — the stub-synthesis
   // for run-1 must not clobber or dilute run-2's actually-loaded data.
   assert.strictEqual(jsonOut.consoleDist['approve-all'], 1);
@@ -147,7 +147,7 @@ test('autonomy-raising signal fires at 100% approve-all over >=10 stops under th
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'), '');
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive');
   for (let i = 1; i <= 10; i++) {
-    const dir = path.join(archiveDir, `run-${i}`);
+    const dir = path.join(archiveDir, `2026-08-${String(i).padStart(2, '0')}T000000-run-${i}`);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'decisions.md'), '- AUTO 12:00:00 — Review Console: terminal decision approve-all. Reversibility: n/a.\n');
   }
@@ -164,7 +164,7 @@ test('narrowing signal renders with a paste-ready command on its own line at >=1
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-narrow-'));
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   const lines = [];
-  for (let i = 1; i <= 10; i++) lines.push(`2026-08-${String(i).padStart(2, '0')}\trun-${i}\tskills\tclosed\t0\tna`);
+  for (let i = 1; i <= 10; i++) lines.push(`2026-08-${String(i).padStart(2, '0')}\t2026-08-${String(i).padStart(2, '0')}T000000-run-${i}\tskills\tclosed\t0\tna`);
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'), lines.join('\n') + '\n');
   fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive'), { recursive: true });
   const out = run(['--runs', '20'], root);
@@ -197,8 +197,8 @@ test('auto-decision-log.md lists bin/lib/calibration/ as a consumer', () => {
 test('AC1.1: calibration-report counts only the real gate-denial when a run also holds a test:true one (#4186)', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-testdenial-'));
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
-  fs.writeFileSync(path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'), '2026-08-01\trun-1\tskills\tclosed\t0\tna\n');
-  const dir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', 'run-1');
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'), '2026-08-01\t2026-08-01T000000-run-1\tskills\tclosed\t0\tna\n');
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', '2026-08-01T000000-run-1');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'decisions.md'), '- AUTO 12:00:00 — Review Console: terminal decision approve-all. Reversibility: n/a.\n');
   fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"gate-denial","test":true}\n{"type":"gate-denial"}\n');
