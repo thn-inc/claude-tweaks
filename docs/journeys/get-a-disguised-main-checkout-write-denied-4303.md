@@ -33,7 +33,7 @@ files:
   - `x=$(true; cd ../main && y=$(( (1 & 3) )) && git commit -am x)`
   - `cd ../main && case a in a) cd ../wt;; esac | cat; echo x > f`
   - `cd ../main; case a in a) cd ../wt;; esac > f`
-  - `a=() case x | cd ../wt; echo hi > ../main/f.js`
+  - `cd ../main; a=() case x | cd ../wt; echo hi > f.js`
 - **Action:** The session runs each.
 - **Should feel:** Refused, with the same denial and "use a worktree" remediation a plain `echo x > ../main/f` gets. No shape slips through because of how the cd or flag was written.
 - **Should understand:** The walk follows bash's semantics, each checked against bash 3.2 and 5:
