@@ -6,6 +6,7 @@ const path = require('path');
 const { originWithTwoClones } = require('../../helpers/git-fixtures');
 const { run, parseArgs } = require('../../../plugin/bin/pre-review-catchup');
 const { OUTCOMES, formatLine } = require('../../../plugin/bin/lib/worktree/pre-review-catchup');
+const { FETCH_TIMEOUT_MS } = require('../../../plugin/bin/lib/reconcile/classify');
 
 const roots = [];
 test.after(() => {
@@ -218,6 +219,89 @@ test('Filename too long is windows-longpath, not fetch-failed', () => {
   }
 });
 
+test('a timed-out or prompting fetch is bounded, non-interactive and lands in fetch-failed', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  const fetchOpts = [];
+  const real = f.gitIn(f.work);
+  const git = (args, opts) => {
+    if (args[0] !== 'fetch') return real(args);
+    fetchOpts.push(opts);
+    throw Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT', killed: true, stderr: '' });
+  };
+  const before = f.head();
+  const r = invoke(f, MAIN, { git });
+  assert.equal(r.code, 0);
+  assert.equal(r.json.outcome, 'fetch-failed');
+  assert.match(r.json.line, /^- SKIP /);
+  assert.match(r.json.reason, /ETIMEDOUT/);
+  assert.equal(f.head(), before);
+  assert.equal(fetchOpts.length, 1);
+  assert.equal(fetchOpts[0].timeout, FETCH_TIMEOUT_MS);
+  assert.equal(fetchOpts[0].env.GIT_TERMINAL_PROMPT, '0');
+});
+
+test('a failed merge with no unmerged paths is an undecided crash: exit 1, HEAD unchanged', () => {
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
+  f.pushUpstream();
+  const before = f.head();
+  const r = invoke(f, MAIN, { git: trapGit(f, (a) => a[0] === 'merge', 'fatal: refusing') });
+  assert.equal(r.code, 1);
+  assert.equal(r.json, null);
+  assert.match(r.err, /pre-review-catchup\.js: /);
+  assert.equal(f.head(), before);
+});
+
+test('a long-path merge failure aborts a partial merge, best effort', () => {
+  const stderr = 'error: unable to create file x: Filename too long';
+  const f = fixture();
+  f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
+  f.editLine(f.other, 'a.txt', 5, 'O5', 'upstream edit');
+  f.pushUpstream();
+  const real = f.gitIn(f.work);
+  const seam = ({ mergeHead, abortThrows }) => {
+    const calls = [];
+    const git = (args) => {
+      calls.push(args.join(' '));
+      if (args[0] === 'merge' && args[1] === '--abort') {
+        if (abortThrows) throw new Error('abort failed');
+        return '';
+      }
+      if (args[0] === 'merge') throw Object.assign(new Error('git merge failed'), { stderr });
+      if (args[0] === 'rev-parse' && args.includes('MERGE_HEAD')) {
+        if (!mergeHead) throw new Error('no MERGE_HEAD');
+        return 'deadbeef\n';
+      }
+      return real(args);
+    };
+    return { git, aborted: () => calls.includes('merge --abort') };
+  };
+
+  const partial = seam({ mergeHead: true });
+  const r1 = invoke(f, MAIN, { git: partial.git });
+  assert.equal(r1.json.outcome, 'windows-longpath');
+  assert.equal(partial.aborted(), true);
+
+  const clean = seam({ mergeHead: false });
+  const r2 = invoke(f, MAIN, { git: clean.git });
+  assert.equal(r2.json.outcome, 'windows-longpath');
+  assert.equal(clean.aborted(), false);
+
+  const failing = seam({ mergeHead: true, abortThrows: true });
+  const r3 = invoke(f, MAIN, { git: failing.git });
+  assert.equal(r3.code, 0);
+  assert.equal(r3.json.outcome, 'windows-longpath');
+  assert.equal(failing.aborted(), true);
+
+  // A fetch long-path failure has no merge to abort.
+  const onFetch = seam({ mergeHead: true });
+  const guarded = (args, opts) => { if (args[0] === 'fetch') throw Object.assign(new Error('x'), { stderr }); return onFetch.git(args, opts); };
+  assert.equal(invoke(f, MAIN, { git: guarded }).json.outcome, 'windows-longpath');
+  assert.equal(onFetch.aborted(), false);
+});
+
 test('dirty tree refuses', () => {
   const f = fixture();
   f.editLine(f.work, 'a.txt', 1, 'F1', 'feat edit');
@@ -305,6 +389,8 @@ test('usage errors exit 2 and never spawn git', () => {
     ['--integration-branch', ''],
     ['--integration-branch', '  '],
     ['--integration-branch', '--run'],
+    ['--integration-branch', '-v'],
+    ['--integration-branch', '-'],
     [...MAIN, '--run'],
     [...MAIN, '--run', ''],
     [...MAIN, '--bogus'],

@@ -51,6 +51,8 @@ function parseArgs(argv) {
     } else if (Object.hasOwn(VALUE_FLAGS, a)) {
       const v = argv[++i];
       if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: `${a} needs a value` };
+      // A git ref name cannot start with `-`; such a value would parse as a git option.
+      if (a === '--integration-branch' && v.startsWith('-')) return { error: `${a} is not a branch name: ${v}` };
       o[VALUE_FLAGS[a]] = v;
     } else {
       return { error: `unknown argument: ${a}` };

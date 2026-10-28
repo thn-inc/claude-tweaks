@@ -11,7 +11,8 @@
 //   fetch-failed      git fetch failed (not a long-path failure): fail open, no merge
 //   windows-longpath  fetch or merge failed with `Filename too long`: a fixable
 //                     misconfiguration (_shared/worktree-setup-windows-longpath.md),
-//                     never the fail-open path; `reason` is `fetch` or `merge`
+//                     never the fail-open path; `reason` is `fetch` or `merge` (a
+//                     merge that left MERGE_HEAD behind is aborted, best effort)
 //   dirty-tree        uncommitted tracked changes: nothing merged, `reason` names a path
 //   no-overlap        upstream moved but touches none of the branch's files: no merge
 //   merged            the overlapping upstream commits were merged in
@@ -27,6 +28,7 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
+const { FETCH_TIMEOUT_MS } = require('../reconcile/classify');
 
 const OUTCOMES = Object.freeze(['not-applicable', 'fetch-failed', 'windows-longpath', 'dirty-tree', 'no-overlap', 'merged', 'conflict']);
 
@@ -36,8 +38,22 @@ const MAX_REASON = 200;
 const MAX_FILES = 5;
 const SHA_LEN = 9;
 
+// `opts` (the fetch's { timeout, env }) is spread last; every other call runs unbounded.
 function makeGit(cwd) {
-  return (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  return (args, opts = {}) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...opts });
+}
+
+// A stalled network or an HTTPS credential prompt (git reads /dev/tty, not stdin) must
+// not block the build with no outcome: the fetch is bounded by the same budget the
+// reconcile mirror fetch uses, and may not prompt, so either failure lands in fetch-failed.
+const FETCH_OPTS = () => ({ timeout: FETCH_TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+
+// Best effort: a merge that died with a long-path error can leave MERGE_HEAD behind, and
+// the dirty-tree pre-check guarantees there were no uncommitted tracked changes to lose.
+// A failed abort never changes the outcome.
+function abortPartialMerge(git) {
+  try { git(['rev-parse', '-q', '--verify', 'MERGE_HEAD']); } catch { return; }
+  try { git(['merge', '--abort']); } catch { /* best effort */ }
 }
 
 const errText = (e) => `${(e && e.stderr) || ''}\n${(e && e.message) || ''}`;
@@ -97,7 +113,7 @@ function runCatchup({ integrationBranch }, { git }) {
   if (git(['branch', '--show-current']).trim() === integrationBranch) return done('not-applicable');
 
   try {
-    git(['fetch', REMOTE, integrationBranch]);
+    git(['fetch', '--end-of-options', REMOTE, integrationBranch], FETCH_OPTS());
   } catch (e) {
     if (errText(e).includes(LONGPATH)) return done('windows-longpath', { reason: 'fetch' });
     return done('fetch-failed', { reason: firstLine(e) });
@@ -123,7 +139,10 @@ function runCatchup({ integrationBranch }, { git }) {
   try {
     git(['merge', '--no-edit', upstream]);
   } catch (e) {
-    if (errText(e).includes(LONGPATH)) return done('windows-longpath', { reason: 'merge' });
+    if (errText(e).includes(LONGPATH)) {
+      abortPartialMerge(git);
+      return done('windows-longpath', { reason: 'merge' });
+    }
     const conflictFiles = nulList(git(['diff', '--name-only', '-z', '--diff-filter=U', '--end-of-options']));
     if (!conflictFiles.length) throw e;
     return done('conflict', { conflictFiles });
