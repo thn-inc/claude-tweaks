@@ -4,7 +4,7 @@
 
 **Goal:** Log a `wd-guard-refusal` friction event for every Claude Code worktree-isolation Bash refusal, covering the `This agent` noun and the worktree-gone `Refusing to run there` templates. Each event gets `actor` (`session`/`agent`) and `variant` (`guard`/`worktree-gone`), and reflect's Friction lens breaks the count down by actor.
 
-**Architecture:** `plugin/bin/lib/hooks/harness-refusal.js` stays the one place the refusal text lives. It gains the agent noun, the worktree-gone signature, a widened regex built from those string constants, and a pure `classifyRefusal(text)`. `post-tool-use-failure.js` logs the classification. `bash-prefilter.js` gates on either signature. The upstream-drift manifest's `claude-code` entry and its drift-pin test move in lockstep.
+**Architecture:** `plugin/bin/lib/hooks/harness-refusal.js` stays the one place the friction-event path's refusal text lives. Out of scope: the timing turn classifier keeps its own separate `GUARD_REFUSAL_RE` in `plugin/bin/lib/timing/turn-class.js` (session noun only); that follow-up is ledgered, per the plan review. It gains the agent noun, the worktree-gone signature, a widened regex built from those string constants, and a pure `classifyRefusal(text)`. `post-tool-use-failure.js` logs the classification. `bash-prefilter.js` gates on either signature. The upstream-drift manifest's `claude-code` entry and its drift-pin test move in lockstep.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, YAML manifest read by `tools/upstream-drift/`.
 
@@ -30,7 +30,7 @@
   - Worktree-gone, `${noun}` variant: `${NI(so).noun} is isolated in the worktree …, but its working directory "…" no longer exists and the recovery target (…) is outside that worktree. Refusing to run there. Report this instead of retrying.`
 - **Occurrence counts (byte search).** `noun:"This session"` 1x, `noun:"This agent"` 1x, ` is isolated in the worktree ` 9x, `Refusing to run it` 5x, `Refusing to run there` 3x, `Refusing to run it — ` 1x, `Refusing to run it there` 2x, `Refusing to run there — ` 1x, `outside that worktree. Refusing to run there.` 2x (the template plus a compiled string-table copy).
 - **Live hook payload.** A `claude -p` probe in a scratch repo had an `isolation: "worktree"` agent run `d=.; sed -n 1,2p $d/README.md`. The parent session's `PostToolUseFailure` hook fired with `tool_name: "Bash"`, an `agent_id`, and `error`: `This agent is isolated in the worktree <wt>, but this command runs sed with a value computed at runtime (the variable d) where an option may stand (…) in a plain command, so what it runs cannot be shown not to be git. Refusing to run it — a worktree-isolated agent's git operations must target its own worktree. Run the plain command from <wt>.` This confirms the spec's ASSUMPTION Gotcha.
-- **Design decision.** `variant` comes from which signature matched (`Refusing to run there` means `worktree-gone`), not from a `no longer exists` substring. The two are equivalent at 2.1.302, since both worktree-gone templates and only they end `Refusing to run there`. The signature is already a pinned manifest fragment with unique anchors. `no longer exists` occurs 57x in the binary, so it cannot be anchored, and an unpinned literal would drift silently.
+- **Design decision.** `variant` comes from which signature matched (`Refusing to run there` means `worktree-gone`), not from a `no longer exists` substring. The two are equivalent at 2.1.302, since both worktree-gone templates and only they end `Refusing to run there`. The signature is already a pinned manifest fragment with unique anchors. `no longer exists` occurs 57x in the binary, so it cannot be anchored, and an unpinned literal would drift silently. This departs from the spec's Technical Approach sentence ("`variant` from the presence of 'no longer exists'"). It is a deliberate deviation for build Common Step 4.5 (architecture alignment) to classify. The outcome the Acceptance Criteria name (both worktree-gone templates give `variant: worktree-gone`) is unchanged.
 
 ## Review Focus
 
@@ -43,6 +43,8 @@
 ---
 
 ### Task 1: Widen the matcher, classify, log actor/variant, keep the prefilter firing
+
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/hooks/harness-refusal.js` (whole module, about 30 lines)
@@ -93,6 +95,12 @@ Tests to add:
   - Call `require('../plugin/bin/lib/hooks/post-tool-use-failure').run(ctx)`, where `ctx` has the same shape as `failureCtx` in `tests/hooks-post-tool-use-failure.test.js`, with the fixture's `WT` replaced by the real worktree path.
   - Read the minted `*-adhoc-standalone` dir's events with `ctxLib.readEventLines`.
   - Assert exactly one `wd-guard-refusal` with `reason: 'harness-worktree-isolation'` and the expected `actor`/`variant`.
+- `a worktree-gone refusal whose cwd no longer exists logs into the session's trusted owned run`.
+  - Build a `gitRepo()` and pass `ctx.cwd` as a path under it that does not exist (the removed working directory).
+  - Set `ctx.ownedRun = { dir: <a run dir created under the repo's .claude-tweaks/pipelines/> }` with no `attribution`.
+  - Pass `GONE_FIXED` as the error.
+  - Assert that dir's `events.jsonl` holds one `wd-guard-refusal` with `actor: 'agent'` and `variant: 'worktree-gone'`.
+  - This pins the reachable path; Task 3's prose states the unreachable one.
 - `post-tool-use-failure logs nothing for an unrelated Bash failure`. An ordinary `'Exit code 128\nfatal: …'` error mints no ad-hoc dir.
 - `bash-prefilter earlyGate passes every refusal template to the handler`. For each of the five fixtures, `earlyGate('post-tool-use-failure', () => JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'x' }, error: text })).skip === false`. Also `GONE_FIXED`'s payload with `Refusing` rewritten as `\\u0052efusing` (JSON-escaped) still gives `skip: false`.
 
@@ -137,9 +145,9 @@ git commit -m "Count agent and worktree-gone isolation refusals — refs #3819"
   - 2 `" is isolated in the worktree "`
   - 3 `"Refusing to run it"`
   - 4 `"Refusing to run there"`
-  - 5 `'Refusing to run it — '` (git anchor)
+  - 5 the existing git anchor, unchanged (`manifest.yml:421`'s single-quoted `Refusing to run it` + space + the six-character escape backslash-u-2-0-1-4 + space, never the em dash character itself)
   - 6 `"Refusing to run it there"` (cwd anchor)
-  - 7 `'Refusing to run there — '` (fixed worktree-gone anchor)
+  - 7 the fixed worktree-gone anchor, single-quoted YAML, spelled like assertion 5: `Refusing to run there` + space + the six-character escape backslash-u-2-0-1-4 + space. The binary holds the escape, not the character; the em dash character here would fail AC3 and the `DASH`-based stand-in tests.
   - 8 `"outside that worktree. Refusing to run there."` (noun worktree-gone anchor)
 
   Every entry has `file: "plugin/bin/lib/hooks/harness-refusal.js"` and `upstream-path: "."`. Assertions 0–6 keep their current `claims` text; the old index-2 claim now sits at index 3, with the old 3/4 claims moving to 5/6. Write new claims for 1 (`AGENT_NOUN`), 4 (`WORKTREE_GONE_SIGNATURE`), 7 (`the fixed-noun worktree-gone refusal …`) and 8 (`the noun worktree-gone refusal …`). The claim for 7 must contain `fixed worktree-gone refusal`, and the claim for 8 must contain `noun worktree-gone refusal`. Task 2's tests match on those phrases.
@@ -203,6 +211,7 @@ Expected: FAIL, because `reflect/full-mode.md does not name` the worktree-gone s
   - Report the count split by `actor`: `session` is the operator's own; `agent` is a dispatched agent's. An agent's refusal is still the run's friction, usually traceable to the dispatch prompt the run wrote.
   - Name every `variant: worktree-gone` event individually: the agent's isolation worktree was removed under it, which is lost isolation and not a command-shape refusal.
   - An event with no `actor`/`variant` (logged before #3819) counts as `actor: session`, `variant: guard`.
+  - **Known limitation**, stated in the same paragraph (plan review, ledgered follow-up). An agent refusal from its own still-live isolation worktree lands in an ad-hoc dir keyed to that worktree, and `friction-events.js` merges it only once that worktree is removed (`findAdHocRunsBySessionId`). A worktree-gone refusal in a session with no trusted owned run has no listed cwd to key a stamp on, so it lands on the fallback guess, which the primary read drops. The agent and worktree-gone counts are therefore lower bounds.
   - Keep it to one paragraph of 5-7 lines; `full-mode.md` is at 37,691 of 52,500 rail bytes.
 - **`docs/hooks.md:11`.** Name both nouns and the worktree-gone templates, plus the `actor`/`variant` fields.
 - **`docs/hooks.md:16`.** "carries `Refusing to run it`" becomes "carries `Refusing to run it` or `Refusing to run there` (`REFUSAL_SIGNATURES`)".
