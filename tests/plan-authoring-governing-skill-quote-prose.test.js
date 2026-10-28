@@ -11,7 +11,8 @@ const FACTS = [
   '`.claude/skills/`',
   'for each file the plan creates or modifies',
   'whose description or body names that file or its module',
-  "quote their applicable rule bullets verbatim into the plan's Global Constraints",
+  "quote their applicable rules (bullets, paragraphs, table rows) verbatim into the plan's Global Constraints",
+  '(never a paraphrase)',
   'or say there why none apply',
   '#3712',
 ];
@@ -47,7 +48,7 @@ test('AC2.1 (#3763): the pin goes red when the check paragraph is removed', () =
 test('AC2.1 (#3763): each fact goes red on its own when stripped', () => {
   const live = paragraph(CHECKS);
   for (const fact of FACTS) {
-    const mutated = CHECKS.replace(live, live.replace(fact, ''));
+    const mutated = CHECKS.replace(live, () => live.replace(fact, ''));
     assert.notEqual(mutated, CHECKS, `fact not found to strip: ${fact}`);
     assert.deepEqual(missingFacts(mutated), [fact]);
   }
