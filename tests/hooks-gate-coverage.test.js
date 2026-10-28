@@ -531,12 +531,12 @@ for (const [cmd, file] of [
 // #4303: a GNU long option that takes a value takes the next word when no `=` follows, abbreviated
 // or not, so a `-t` there is that value and no option. With GNU coreutils 9.12 under bash 3.2 and 5,
 // every row below except the exceptions named here writes its target: `cp --suffix -t a /main/f.js`
-// copies a to /main/f.js, and `install --strip -t /main g` installs g into /main. `--strip` is an
-// exact name, so it takes no value though it abbreviates `--strip-program`, and `cp --backup -t M a`
-// writes M/a (`--backup` takes a value only after `=`). macOS's BSD tools reject each long option and
-// write nothing. The exceptions: `install --gro staff -d` and `install --own root -d` create the
-// directory they name (`-d` makes every positional a directory, so a dropped value shows up as an
-// extra one; `--own` as a non-root user creates it, then fails the chown), and `cp --no-preserve` and
+// copies a to /main/f.js, `install --strip -t /main g` installs g into /main, and `cp --backup -t /main a`
+// copies a into /main. `--strip` is an exact name, so it takes no value though it abbreviates
+// `--strip-program`. `--backup` takes a value only after `=`. macOS's BSD tools reject each long option
+// and write nothing. The exceptions: `install --gro staff -d` and `install --own root -d` create the
+// directory they name, not a file (`-d` makes every positional a directory, so a dropped value shows up
+// as an extra one; `--own` as a non-root user creates it, then fails the chown). `cp --no-preserve` and
 // `cp --sparse` are rejected by GNU (`invalid argument`), so nothing is written; their rows pin the
 // reading that keeps `-t` from naming the target. `install --mo -t` writes its file, since `-t` is a
 // valid symbolic mode.
@@ -891,8 +891,8 @@ test('#4210 F1: a closed "$( … )" or "${ … }" still lets a later redirect re
   }
 });
 
-// #4210 review: two shapes the nesting walk used to leave nested for the rest of the
-// command, hiding a later genuine redirect that main resolved. A heredoc opened inside
+// #4210 review: two shapes the nesting walk must not leave nested for the rest of the
+// command, hiding a later genuine redirect that main resolved (before #4210 it did). A heredoc opened inside
 // "$( … )" is found by stripHeredocBodies, so its body's `'` or backtick is data; a `(`,
 // `)` or `'` inside "${ … }" is literal word text, so only the `}` closes it.
 test('#4210 review: a heredoc body inside "$( … )" does not leave the nesting state open', () => {
@@ -1940,9 +1940,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       assert.ok(files(cmd).includes(path.resolve('/r/f')), 'bash 3.2, bash 5 and zsh: /r/f');
     });
   }
-  // #4481 round 2: a group's pipe inside a first-element arm adds no cwd of its own: bash 3.2, bash 5
-  // and zsh write /r/f only, so /q/f is a spurious target. Guard: passes on origin/main too; it pins the
-  // rule against an earlier review round's regression.
+  // #4481: a group's pipe inside a first-element arm adds no cwd of its own: bash 3.2, bash 5
+  // and zsh write /r/f only, so /q/f is a spurious target. Guard: passes on origin/main too; it pins
+  // the rule against a regression that would carry the group pipe's cwd out of the arm.
   test('#4481 case: `case a in a) { cd /q | cat; };; esac | cat; echo x > f` does not carry the group pipe cwd out', () => {
     assert.deepStrictEqual(files('case a in a) { cd /q | cat; };; esac | cat; echo x > f'), [path.resolve('/r/f')]);
   });
@@ -2016,7 +2016,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   // #4481: the arm's `;;` merges into the arm's cwd the cwds the list was skipping past, and a pipeline drops
   // the cwd in effect, so a first-element case pipeline takes them back from its record. bash 3.2, bash 5 and
   // zsh write /m/f (`cd /m` succeeds, so the whole pipeline is skipped). Guard: passes on origin/main too;
-  // it pins the rule against an earlier review round's regression.
+  // it pins the rule against a regression that would lose the skipped cwd at a first-element case
+  // pipeline.
   test('#4481 case: `cd /m || case a in a) true;; esac | cat | case a in a) true;; esac; echo x > f` keeps the skipped cwd', () => {
     assert.ok(files('cd /m || case a in a) true;; esac | cat | case a in a) true;; esac; echo x > f').includes(path.resolve('/m/f')), 'bash: /m/f');
   });
@@ -2094,9 +2095,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     const got = files('function f { case a in a) cd /wt;; esac > k; }; f; f');
     for (const want of ['/r/k', '/wt/k']) assert.ok(got.includes(path.resolve(want)), `bash: ${want}`);
   });
-  // The redirect goes where the case its `esac` closes began, not an outer case: bash 3.2, bash 5 and zsh
-  // write /q/k for the armless inner case. Guard: passes on origin/main too; it pins the rule against an
-  // earlier review round's regression.
+  // #4481: the redirect goes where the case its `esac` closes began, not an outer case: bash 3.2, bash 5
+  // and zsh write /q/k for the armless inner case. Guard: passes on origin/main too; it pins the rule
+  // against a regression that would resolve the redirect to an outer case.
   test('#4481 case: `case a in a) cd /q; case x in esac > k;; esac` resolves the redirect where the inner case began', () => {
     assert.deepStrictEqual(files('case a in a) cd /q; case x in esac > k;; esac'), [path.resolve('/q/k')]);
   });
@@ -2121,9 +2122,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   test('#4481 case: `case x in esac; cd /q; echo y > g` keeps the cd after an armless case', () => {
     assert.deepStrictEqual(files('case x in esac; cd /q; echo y > g'), [path.resolve('/q/g')]);
   });
-  // An armless case that is a later pipeline element is born and closed at the `|` after it, and the
-  // pipeline goes on from its own start: bash 3.2, bash 5 and zsh write /r/g only. Guard: passes on
-  // origin/main too; it pins the rule against an earlier review round's regression.
+  // #4481: an armless case that is a later pipeline element is born and closed at the `|` after it, and
+  // the pipeline goes on from its own start: bash 3.2, bash 5 and zsh write /r/g only. Guard: passes on
+  // origin/main too; it pins the rule against a regression that would restart the pipeline at the case.
   test('#4481 case: `true | { cd /q; } | case x in esac | cat; echo y > g` keeps the pipeline\'s start', () => {
     assert.deepStrictEqual(files('true | { cd /q; } | case x in esac | cat; echo y > g'), [path.resolve('/r/g')]);
   });
@@ -2697,9 +2698,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     });
     // #4303: the walk follows a cwd past 4,096 characters and back. From a tree of 2,100 nested `d`
     // directories in the worktree, seven 300-level descents, seven 300-level climbs and `cd ../M`
-    // (10.6 KB) end in M: bash 5 writes M/leak.out (bash 3.2 did not finish within 1,000 s on the
-    // oracle machine; it was later seen to write M/leak.out too). A length bound that collapsed the
-    // cwd onto the overflow path started the climbs from M and missed it.
+    // (10.6 KB) end in M: bash 5 writes M/leak.out, and bash 3.2 also writes M/leak.out, though it
+    // takes over 1,000 s on the oracle machine. A length bound that collapsed the cwd onto the overflow
+    // path would start the climbs from M and miss it.
     test('#4303 cwd cap: a cwd that descends past 4,096 characters and climbs back resolves where bash is', () => {
       const cmd = `cd ${'d/'.repeat(300)}; `.repeat(7) + `cd ${'../'.repeat(300)}; `.repeat(7) + 'cd ../M; echo x > leak.out';
       assert.deepStrictEqual(boundedTargets('fileWriteTargets', cmd, '/s/wt', { overflowCwd: '/s/M' }).map((t) => t.file), [path.resolve('/s/M/leak.out')]);
