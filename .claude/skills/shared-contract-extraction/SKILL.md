@@ -59,7 +59,7 @@ The steps above assume the consolidated artifact is prose. #1752 ran the same re
 ## Project conventions
 
 - **The contract owns recognition and policy; consumers own outcomes.** Never let the extracted contract dictate what a consumer *does* about a condition it recognizes — only how it recognizes and classifies it. This is what keeps step 2's third class (outcome-wording-stays-owned) from collapsing into a restatement.
-- **Cite, don't restate — including in the same author's own later prose.** A migration that gets the first N consumers right can still regress on the N+1th: two consumers in record #796's own migration restated burst-shape rules the same plan had written cite-only for the rest, caught only at final whole-branch review.
+- **Cite, don't restate — including in the same author's own later prose.** A migration that gets the first N consumers right can still regress on the N+1th: two consumers in record #796's own migration restated burst-shape rules the same plan had written cite-only for the rest, caught only at final whole-branch review. An instruction a skill forwards into another in-session skill invocation (SDD, a component skill) is no exception: the invoked skill runs in the same session and reads the citation, so keep only the call-site wiring inline. #4304's `build/dispatch.md` restated `_shared/pre-review-catchup.md`'s outcome routing on the theory that a forwarded instruction must be self-contained; the copies had already drifted within three fix commits, and collapsing them took a review debate, two tiebreaks and a conformance-test rewrite (b4ad51a81).
 
 ## Gotchas
 

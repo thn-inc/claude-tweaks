@@ -4,8 +4,33 @@ const { classifyDecisionLine } = require('./decisions-classifier.js');
 const NARROWING_MIN_APPEARANCES = 10;
 const CEILING_MIN_STOPS = 10;
 
+const HYPHENATED_ID = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})?(?:-|$)/;
+const COMPACT_ID = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(?:-|$)/;
+
+// 14-digit YYYYMMDDHHMMSS key from a run id's leading timestamp, or null when it has none.
+function runIdTimestamp(runId) {
+  const m = HYPHENATED_ID.exec(runId) || COMPACT_ID.exec(runId);
+  if (!m) return null;
+  return `${m[1]}${m[2]}${m[3]}${m[4]}${m[5]}${m[6] || '00'}`;
+}
+
+function cmp(a, b) {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 function aggregate({ tsv, runs, rowIds, windowN }) {
-  const sortedRuns = [...runs].sort((a, b) => (a.runId < b.runId ? -1 : a.runId > b.runId ? 1 : 0));
+  const datedRuns = [];
+  let excluded = 0;
+  for (const run of runs) {
+    const key = runIdTimestamp(run.runId);
+    if (key === null) excluded++;
+    else datedRuns.push({ run, key });
+  }
+  const sortedRuns = datedRuns
+    .sort((a, b) => cmp(a.key, b.key) || cmp(a.run.runId, b.run.runId))
+    .map((d) => d.run);
   const windowRuns = sortedRuns.slice(-windowN);
   const windowRunIds = new Set(windowRuns.map((r) => r.runId));
 
@@ -54,7 +79,7 @@ function aggregate({ tsv, runs, rowIds, windowN }) {
   const ceiling = consoleStops < CEILING_MIN_STOPS;
 
   return {
-    window: { runIds: windowRuns.map((r) => r.runId) },
+    window: { runIds: windowRuns.map((r) => r.runId), excluded },
     perRow,
     consoleDist,
     reversibilityDist,
@@ -66,4 +91,4 @@ function aggregate({ tsv, runs, rowIds, windowN }) {
   };
 }
 
-module.exports = { aggregate, NARROWING_MIN_APPEARANCES, CEILING_MIN_STOPS };
+module.exports = { aggregate, runIdTimestamp, NARROWING_MIN_APPEARANCES, CEILING_MIN_STOPS };

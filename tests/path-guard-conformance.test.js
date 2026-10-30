@@ -107,7 +107,7 @@ function readTree(root = BIN_ROOT) {
 }
 
 const ALLOWLIST = {
-  'calibration-report.js': { existsSync: 2, reason: 'line 52 probes the archive dir before readdirSync and returns null when absent; line 113 sits inside a printed `node -e` suggestion string that this file never runs.' },
+  'calibration-report.js': { existsSync: 2, reason: 'line 53 probes the archive dir before readdirSync and returns null when absent; line 135 sits inside a printed `node -e` suggestion string that this file never runs.' },
   'claude-tweaks-statusline.js': { realpathSync: 1, reason: 'realpaths the nearest-.git toplevel to match a port-registry lease path; ports/registry.js stores leases from the same JS fs.realpathSync, so both sides resolve alike, and any throw falls to the renderer try/catch.' },
   'docs-health.js': { existsSync: 1, reason: 'find-refs guard that only selects the "could not read file" message and exit code for the target path before it is handed to computeInboundReferences; presence is the question.' },
   'hooks.js': { existsSync: 6, reason: 'run-dir marker probes (isInitializedRunDir, the archive copy-out of decisions.md / report.md / staged/, and the work/ tracked-content check in runArchiveRun); each is a presence question about a path this plugin wrote, and the copy or readdir that follows throws loudly on a wrong type rather than acting on it.' },

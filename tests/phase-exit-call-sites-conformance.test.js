@@ -162,6 +162,7 @@ const SELF_LOGGING_SOURCES = {
   'hooks.js delete-ledger': ['plugin/bin/hooks.js'],
   'express-lane.js check': ['plugin/bin/express-lane.js', 'plugin/bin/lib/express/cli.js'],
   'express-lane.js escalate': ['plugin/bin/express-lane.js', 'plugin/bin/lib/express/cli.js'],
+  'pre-review-catchup.js': ['plugin/bin/pre-review-catchup.js'],
 };
 
 function listedSelfLoggers(text) {
