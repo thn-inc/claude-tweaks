@@ -41,23 +41,24 @@
 //      text alone. Judged per hunk: a deleted body line, a renumbered heading
 //      whose text also changed, or a heading that is not re-added as a heading
 //      leaves a hunk that fails this test.
-//   5. Reference-preserving Origin line: every deleted line is an `Origin:`
-//      line, and the hunk re-adds each as an `Origin:` line (paired in order)
+//   5. Reference-preserving Origin line: every non-blank deleted line is an
+//      `Origin:` line (plain, `_italic_` or `**bold**`) citing at least one
+//      `#N`, and the hunk re-adds each as an `Origin:` line (paired in order)
 //      that still cites every `#N` the deleted one did. A later spec recording
 //      its own build in a journey's closing `Origin:` line rewrites that one
 //      line but keeps the earlier spec's reference. Judged per hunk: a deleted
-//      non-`Origin:` line, an `Origin:` line that drops a `#N`, or fewer added
-//      `Origin:` lines than deleted ones leaves a hunk that fails this test.
+//      non-`Origin:` line, an `Origin:` line citing no `#N`, one that drops a
+//      `#N`, or fewer added `Origin:` lines than deleted ones leaves a hunk
+//      that fails this test.
 //
 // A hunk that fails all five tests — deletes non-list content that is not a
 // pure step-markup conversion, step renumber, or reference-preserving Origin
-// rewrite, or shrinks a list — is a real overwrite and trips the gate. This is
-// deliberately general rather than journeys-format-specific: tests 1 and 2
-// never parse step headings or section names, test 3 recognizes numbered step
-// headings only to normalize them, test 4 parses numbered step headings to
-// compare their numbers, and test 5 keys on lines starting `Origin:` and the
-// `#N` references in them, so the same rules apply unchanged to a
-// stories/*.yaml file's own shared list.
+// rewrite, or shrinks a list — is a real overwrite and trips the gate. Tests
+// 1-3 are format-general: tests 1 and 2 never parse step headings or section
+// names, and test 3 recognizes numbered step headings only to normalize them.
+// Tests 4 and 5 are journey-shaped (numbered step headings, an `Origin:` line)
+// and simply never fire on a stories/*.yaml file's own shared list, which has
+// neither.
 // Fails closed: an unattributable deletion (no blame, no refs trailer, not a
 // list reflow, step-markup reformat, step renumber, or reference-preserving
 // Origin line) is treated as an overwrite.
@@ -257,7 +258,9 @@ function isStepRenumber(hunk) {
   return deleted.every((_, di) => tryMatch(di, new Set()));
 }
 
-const ORIGIN_LINE_RE = /^\s*Origin:/;
+// A plain `Origin:` line, or one wrapped in emphasis: the italic `_Origin: ..._`
+// inline line and the bold `**Origin:** ...` label journeys already use.
+const ORIGIN_LINE_RE = /^\s*(?:_|\*{1,2})?Origin:/;
 
 // Every `#N` reference in a line, as numbers (a whole-number match, so `#10` is
 // not found inside `#101`).
@@ -269,16 +272,20 @@ function originRefs(line) {
 // each as an `Origin:` line (paired in order) that still cites every `#N` the
 // deleted one did. A later spec recording its own build in a journey's closing
 // `Origin:` line rewrites that one line but keeps the earlier spec's reference.
-// Fewer added `Origin:` lines than deleted ones, or any dropped reference,
-// leaves a hunk that fails this test.
+// Blank deleted lines are ignored (as in tests 3 and 4) but at least one
+// non-blank deleted line is required, and each deleted `Origin:` line must cite
+// at least one `#N` — a line with no reference has nothing to preserve, so it
+// falls through to blame. Fewer added `Origin:` lines than deleted ones, or any
+// dropped reference, leaves a hunk that fails this test.
 function isReferencePreservingOriginLine(hunk) {
-  if (hunk.deletedLines.length === 0) return false;
-  if (!hunk.deletedLines.every((d) => ORIGIN_LINE_RE.test(d.content))) return false;
+  const deleted = hunk.deletedLines.map((d) => d.content).filter((c) => c.trim().length > 0);
+  if (deleted.length === 0) return false;
+  if (!deleted.every((c) => ORIGIN_LINE_RE.test(c) && originRefs(c).size > 0)) return false;
   const added = hunk.addedLines.filter((l) => ORIGIN_LINE_RE.test(l));
-  if (added.length < hunk.deletedLines.length) return false;
-  return hunk.deletedLines.every((d, i) => {
+  if (added.length < deleted.length) return false;
+  return deleted.every((c, i) => {
     const kept = originRefs(added[i]);
-    return [...originRefs(d.content)].every((n) => kept.has(n));
+    return [...originRefs(c)].every((n) => kept.has(n));
   });
 }
 
@@ -370,7 +377,7 @@ function checkArtifactOverwrite(opts) {
       const diffOut = git(['diff', '--no-color', '-U0', `${commit}~1`, commit, '--', path], cwd);
       const hunks = parseHunks(diffOut);
 
-      let blame = null; // lazily fetched — only needed when a hunk isn't a list reflow or step-markup reformat
+      let blame = null; // lazily fetched — only needed when a hunk isn't cleared by tests 2-5
       let overwrite = false;
       let culprit = null;
 
@@ -404,7 +411,7 @@ function checkArtifactOverwrite(opts) {
         const reason = culprit.blamedSha
           ? `deleted line ${culprit.lineNo} (as of parent ${commit}~1) traces to commit ${culprit.blamedSha}, `
             + `whose refs trailer does not match ${commit}'s own refs trailer, and the deletion is neither a list reflow, a step-markup reformat, a step renumber, nor a reference-preserving Origin line`
-          : `deleted line ${culprit.lineNo} has no blame attribution — cannot confirm self-edit or list reflow`;
+          : `deleted line ${culprit.lineNo} has no blame attribution — cannot confirm self-edit or any extension test (list reflow, step-markup reformat, step renumber, reference-preserving Origin line)`;
         overwrites.push({ path, commit, reason });
       }
     }

@@ -776,3 +776,108 @@ test('isReferencePreservingOriginLine: a deletion-only hunk is not reference-pre
   const hunks = parseHunks(diff);
   assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
 });
+
+// The closing `_Origin: ..._` line below is copied verbatim from the real
+// docs/journeys/reap-merged-worktrees-at-drain-end-3026.md (its pre-#3630 form):
+// the inline italic shape later records extend in place.
+const REAL_ITALIC_ORIGIN = "_Origin: record #3026 (reconcile's 18 s budget starved `reap` even under an explicit `--checks` subset), built 2026-10-19._";
+
+test('AC3.1 (real italic shape): a later spec appending "Updated by record #11" to an _Origin:_ line while keeping #3026 passes clean', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', ['# Demo', '', REAL_ITALIC_ORIGIN, ''].join('\n'));
+  commit(fx, 'Add demo journey (refs #3026)');
+  const extended = REAL_ITALIC_ORIGIN.replace(/\._$/, '. Updated by record #11, built 2026-10-22: a footer step was added._');
+  assert.notStrictEqual(extended, REAL_ITALIC_ORIGIN);
+  write(fx.dir, 'docs/journeys/demo.md', ['# Demo', '', extended, ''].join('\n'));
+  commit(fx, 'Cite this build in the italic Origin line (refs #11)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+test('AC3.2 (real italic shape): an _Origin:_ line rewrite that drops #3026 reports an overwrite', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', ['# Demo', '', REAL_ITALIC_ORIGIN, ''].join('\n'));
+  commit(fx, 'Add demo journey (refs #3026)');
+  write(fx.dir, 'docs/journeys/demo.md', ['# Demo', '', '_Origin: record #11, built 2026-10-22._', ''].join('\n'));
+  const commitB = commit(fx, 'Replace the italic Origin line (refs #11)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].commit, commitB);
+});
+
+test('isReferencePreservingOriginLine: the bold **Origin:** form that keeps its reference and adds one is reference-preserving', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6 +6 @@',
+    '-**Origin:** #3026',
+    '+**Origin:** #3026, #3630',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), true);
+});
+
+test('isReferencePreservingOriginLine: an italic _Origin:_ rewrite that drops the reference is not reference-preserving', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6 +6 @@',
+    '-_Origin: record #10, built 2026-10-19._',
+    '+_Origin: record #11, built 2026-10-22._',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: a deleted Origin: line citing no #N is not reference-preserving (nothing to preserve)', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6 +6 @@',
+    '-Origin: built here',
+    '+Origin: something else',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: blank deleted lines beside the Origin rewrite are ignored', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6,2 +6 @@',
+    '-_Origin: record #10_',
+    '-',
+    '+_Origin: record #10, #11_',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), true);
+});
+
+test('isReferencePreservingOriginLine: a hunk deleting only blank lines is not reference-preserving', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6 +5,0 @@',
+    '-',
+    '+Origin: built in #10',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isStepRenumber: a blank deleted line beside the renumbered heading is ignored', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5,2 +5 @@',
+    '-### 3. X',
+    '-',
+    '+### 4. X',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepRenumber(hunks[0]), true);
+});
