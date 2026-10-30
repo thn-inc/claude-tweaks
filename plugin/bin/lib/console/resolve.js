@@ -610,20 +610,27 @@ function tiebreakModel(snapshot) {
   // The second pass settles the partners' own staged files. Only `review-contested-*` files carry a
   // Positions section (SECTIONS.CONTESTED also holds `review-debate-*`).
   const stagedText = new Map(snapshot.staged.map((s) => [s.name, s.text]));
-  const latestStaged = new Map(); // key -> index of its latest STAGED line (same filter as `naming`)
+  // key -> index of its latest STAGED line: `naming`'s STAGED filter, but no named staged file is
+  // required, so a keyless-file re-flag counts too.
+  const latestStaged = new Map();
   lines.forEach((line, index) => {
     if (!/^- STAGED /.test(line) || parseTiebreakLine(line)) return;
     for (const key of lineKeys(line)) latestStaged.set(key, index);
   });
+  const superseded = new Set(); // ids of console verdicts a re-stage outdated and a pair's verdict replaced
   for (const [name, chosen] of computeSettledFiles().settledFiles) {
     if (!/^review-contested-/.test(name)) continue;
     for (const key of contestedPositionKeys(stagedText.get(name))) {
       const own = settledByKey.get(key);
       const stagedAt = latestStaged.get(key);
-      if (!own || (own.index < stagedAt && chosen.index > stagedAt)) settledByKey.set(key, { ...chosen, key, inheritedFrom: name });
+      if (!own || (own.index < stagedAt && chosen.index > stagedAt)) {
+        if (own && own.kind === 'console') superseded.add(own.id);
+        settledByKey.set(key, { ...chosen, key, inheritedFrom: name });
+      }
     }
   }
   const result = computeSettledFiles();
+  for (const id of superseded) result.absorbed.add(id);
   return { lines, latestById, settledAfter, settledFiles: result.settledFiles, absorbed: result.absorbed };
 }
 
