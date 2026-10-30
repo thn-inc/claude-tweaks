@@ -142,7 +142,9 @@ narrowed set. The parent fetches share the same
 exposure for a different reason — they are `--state all` over the repo's entire history, and
 `gh issue list` returns newest-first, so a fixed cap drops the **oldest** parents first. Those are
 precisely the parents whose sub-issues have already closed, so truncation silently re-floods this
-scope with exactly the rows the filter exists to remove.
+scope with exactly the rows the filter exists to remove. A label-filtered
+`gh issue list` is capped at 1000 by GitHub whatever `--limit` says (`--label risk:low --limit 1500` returned 1000 of
+1513), so raising `backlog-fetch-limit` past 1000 does not widen these fetches.
 
 **`work-links: body-text`** — every parent's task list comes back in the same fetch:
 
@@ -168,8 +170,8 @@ node -e "
   const fetched = ['$PFG_NEW', '$PFG_LEG'].map(require);
   // Number-keyed dedup across the two label fetches — identical rows, either fetch may win.
   const parents = [...new Map(fetched.flat().map((p) => [p.number, p])).values()];
-  if (fetched.some((f) => f.length === LIMIT)) {
-    console.error('WARNING: a parent fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped, so their sub-issues re-enter this scope as false acceptance-gap rows. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before acting on any row below.');
+  if (fetched.some((f) => f.length >= Math.min(LIMIT, 1000))) {
+    console.error('WARNING: a parent fetch reached its cap of ' + Math.min(LIMIT, 1000) + ' records (the smaller of backlog-fetch-limit and the 1000-result ceiling) — older parents were dropped, so their sub-issues re-enter this scope as false acceptance-gap rows. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before acting on any row below.');
   }
   const subIssueNumbers = parents.flatMap((p) => parseSubIssues(p.body));
   fs.writeFileSync('$GAP_SUBS', JSON.stringify(subIssueNumbers));
@@ -199,8 +201,8 @@ node -e "
   const fetched = ['$PFG_NEW', '$PFG_LEG'].map(require);
   // Number-keyed dedup across the two label fetches — identical rows, either fetch may win.
   const parents = [...new Map(fetched.flat().map((p) => [p.number, p])).values()];
-  if (fetched.some((f) => f.length === Number(process.env.FETCH_LIMIT))) {
-    console.error('WARNING: a parent fetch returned exactly ' + process.env.FETCH_LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped, so their sub-issues re-enter this scope as false acceptance-gap rows. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before acting on any row below.');
+  if (fetched.some((f) => f.length >= Math.min(Number(process.env.FETCH_LIMIT), 1000))) {
+    console.error('WARNING: a parent fetch reached its cap of ' + Math.min(Number(process.env.FETCH_LIMIT), 1000) + ' records (the smaller of backlog-fetch-limit and the 1000-result ceiling) — older parents were dropped, so their sub-issues re-enter this scope as false acceptance-gap rows. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before acting on any row below.');
   }
   fs.writeFileSync('$PFG', JSON.stringify(parents));
 "
@@ -447,8 +449,8 @@ node -e "
   const parents = [...new Map(fetched.flat().map((p) => [p.number, p])).values()];
   fs.writeFileSync('$PARENTS', JSON.stringify(parents));
   const states = require('$ALL_STATES');
-  if (fetched.some((f) => f.length === LIMIT)) {
-    console.error('WARNING: a parent fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped and are invisible to this scope entirely. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete.');
+  if (fetched.some((f) => f.length >= Math.min(LIMIT, 1000))) {
+    console.error('WARNING: a parent fetch reached its cap of ' + Math.min(LIMIT, 1000) + ' records (the smaller of backlog-fetch-limit and the 1000-result ceiling) — older parents were dropped and are invisible to this scope entirely. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete.');
   }
   const STATE_CAP = process.env.STATE_SEARCH ? Math.min(LIMIT, 1000) : LIMIT;
   if (states.length >= STATE_CAP) {
@@ -484,8 +486,8 @@ a sub-issue's own `state` field wherever one happens to already be present in a 
 REST responses (the `sub_issues` endpoint included) report lowercase `open`/`closed`, while
 `parentGateState` and the state map both use the `gh issue list --json state` uppercase
 `OPEN`/`CLOSED` form; reading from one source only avoids a silent casing mismatch. A sub-issue
-number absent from the state map (the fetch above truncated before reaching it — the warning
-above fires when that is possible) defaults to `OPEN`, the fail-safe direction — an unresolved
+number absent from the state map (the fetch above truncated before reaching it, warned above; or,
+under `native`, the search index lagged a just-linked one, unwarned) defaults to `OPEN`, the fail-safe direction — an unresolved
 sub-issue must never let a parent read as `due` (mirrors `parentGateState`'s own "never reports
 `due` for a parent with no discoverable sub-issues" rule).
 

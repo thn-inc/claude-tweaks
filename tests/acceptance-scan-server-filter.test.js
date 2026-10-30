@@ -320,3 +320,81 @@ test('state-map guard failure stops the scope', () => {
   // Control for the control: the same sentences adjacent do match, so the window is what rejects the far one.
   assert.ok(stops.test(`${sentence}${outcome}`));
 });
+
+// ---- label-filtered parent fetches (#4469 Task 3) ---------------------------------------------
+
+// The three exact-equality parent-fetch tests as they read before #4469, in file order.
+const PRE_CHANGE_PARENT_WARN = [
+  '  if (fetched.some((f) => f.length === LIMIT)) {',
+  '  if (fetched.some((f) => f.length === Number(process.env.FETCH_LIMIT))) {',
+  '  if (fetched.some((f) => f.length === LIMIT)) {',
+].join('\n');
+
+const PARENT_CEILING_TEST = /if \(fetched\.some\(\(f\) => f\.length >= Math\.min\((?:LIMIT|Number\(process\.env\.FETCH_LIMIT\)), 1000\)\)\)/g;
+
+test('label-filtered parent fetches warn at the search ceiling', () => {
+  assert.equal((LIVE.match(PARENT_CEILING_TEST) || []).length, 3, 'all three parent-fetch warnings compare against min(limit, 1000)');
+  assert.equal(PRE_CHANGE_PARENT_WARN.match(PARENT_CEILING_TEST), null, 'the frozen lines carry none of the ceiling comparisons');
+  for (const stale of ['f.length === LIMIT', 'f.length === Number(process.env.FETCH_LIMIT)']) {
+    assert.ok(!LIVE.includes(stale), `the exact-equality test must be gone: ${stale}`);
+    assert.ok(PRE_CHANGE_PARENT_WARN.includes(stale), `the frozen lines must carry the anchor: ${stale}`);
+  }
+  // Control: a `>` slip is not the ceiling comparison.
+  assert.equal('if (fetched.some((f) => f.length > Math.min(LIMIT, 1000)))'.match(PARENT_CEILING_TEST), null);
+});
+
+test('ceiling arithmetic', () => {
+  const cap = (limit) => Math.min(limit, 1000);
+  const warns = (limit, rows) => rows >= cap(limit);
+  assert.equal(warns(1500, 1000), true, 'limit above 1000, ceiling reached');
+  assert.equal(warns(1000, 743), false, 'under the cap stays silent');
+  assert.equal(warns(500, 500), true, 'limit below 1000, limit reached');
+  assert.equal(warns(500, 499), false, 'one under the cap stays silent');
+});
+
+// The parent-fetch warning lines (the `console.error` calls naming "a parent fetch") and what each must say.
+const parentWarnings = (text) => text.split('\n').filter((l) => l.includes('console.error') && /a\s+parent\s+fetch/.test(l));
+const parentWarnParts = (line) => ({
+  cap: /reached\s+its\s+cap\s+of\s+'\s*\+/.test(line),
+  ceiling: /1000-result\s+ceiling/.test(line),
+});
+const PRE_CHANGE_PARENT_MESSAGE = "    console.error('WARNING: a parent fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped and are invisible to this scope entirely.');";
+
+test('parent-fetch warnings name the cap and the label-filtered ceiling', () => {
+  const lines = parentWarnings(LIVE);
+  assert.equal(lines.length, 3);
+  for (const line of lines) assert.deepEqual(parentWarnParts(line), { cap: true, ceiling: true });
+  // Controls: the pre-change message names neither; a bare cap without the ceiling is caught; rewrapping is tolerated.
+  assert.deepEqual(parentWarnParts(PRE_CHANGE_PARENT_MESSAGE), { cap: false, ceiling: false });
+  assert.deepEqual(parentWarnParts("console.error('a parent fetch reached its cap of ' + CAP);"), { cap: true, ceiling: false });
+  assert.deepEqual(parentWarnParts("reached its\n cap of ' + CAP 1000-result\n ceiling"), { cap: true, ceiling: true });
+});
+
+// The parent-fetch half of the acceptance-gap "Fetch limit" paragraph as it read before #4469.
+const PRE_CHANGE_PARENT_PARAGRAPH = `narrowed set. The parent fetches share the same
+exposure for a different reason — they are \`--state all\` over the repo's entire history, and
+\`gh issue list\` returns newest-first, so a fixed cap drops the **oldest** parents first. Those are
+precisely the parents whose sub-issues have already closed, so truncation silently re-floods this
+scope with exactly the rows the filter exists to remove.`;
+
+test('fetch-limit paragraph says a label-filtered list is capped at 1000 whatever --limit says', () => {
+  const says = /parent\s+fetches[\s\S]{0,700}label-filtered[\s\S]{0,120}capped\s+at\s+1000[\s\S]{0,160}backlog-fetch-limit`?\s+past\s+1000/;
+  assertClaimPinned(GAP, PRE_CHANGE_PARENT_PARAGRAPH, says, 'the parent-fetch half must state the 1000 ceiling');
+  // Control: the ceiling without the backlog-fetch-limit consequence is not enough.
+  assert.ok(!says.test('parent fetches share the same exposure. A label-filtered list is capped at 1000 by GitHub.'));
+});
+
+test('state-map absence names both causes and keeps the OPEN default', () => {
+  const absent = (text) => {
+    const m = /absent\s+from\s+the\s+state\s+map[\s\S]{0,400}?defaults\s+to\s+`OPEN`/.exec(text);
+    assert.ok(m, 'the absent-from-state-map sentence must be present');
+    return m[0];
+  };
+  const bothCauses = (s) => /truncat/.test(s) && /search\s+index\s+lag/.test(s);
+  assert.equal(bothCauses(absent(PG)), true);
+  // Controls: the pre-change sentence names truncation only; the lag alone is not both; rewrapping is tolerated.
+  const pre = 'number absent from the state map (the fetch above truncated before reaching it — the warning\nabove fires when that is possible) defaults to `OPEN`, the fail-safe direction';
+  assert.equal(bothCauses(absent(pre)), false);
+  assert.equal(bothCauses(absent('absent from the state map (search index lagged) defaults to `OPEN`')), false);
+  assert.equal(bothCauses('truncated, or the search\n index lagged'), true);
+});
