@@ -1,6 +1,0 @@
-# Open Items — tidy step-7-5: housekeeping PR merge timing and closing-keyword screen (#4467)
-
-| # | Phase | Item | Status | Resolution |
-|---|-------|------|--------|------------|
-| 1 | wrap-up | Reflect: gh-absent MCP PR-body writes have no post-write check that HTML-comment marker syntax survived an inline compose (this run's own near-miss on PR #4586, caught by an incidental read-back) | deferred | Staged at staged/reflect-1.md — Destination: edit plugin/skills/_shared/pr-checklist-refresh.md. Origin: this run's review-phase checklist update (2026-10-30). Affected: plugin/bin/pr-checklist.js, plugin/skills/_shared/pr-first-merge.md, plugin/skills/_shared/pr-checklist-refresh.md. Revisit: next time the gh-absent MCP body-write path is touched. |
-| 2 | wrap-up | Reflect: 3 wd-guard-refusal harness worktree-isolation Bash refusals during this record's build phase (2 unnecessary main-checkout status probes, 1 cat-heredoc append instead of Edit/Write) | accepted | Already covered by existing CLAUDE.md Bash-tool guidance (prefer Write/Edit over heredoc) and the worktree-isolation contract (docs/hooks.md); an isolated execution lapse in a sibling call this run does not control, not a documentation or skill gap. Declined via declined-learning.js (fingerprint reflect-8cb2a1aa). |
