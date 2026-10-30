@@ -12,7 +12,7 @@ Every project-config lever claude-tweaks skills read, in one place — the way `
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" [--values | --all] [--run "$PIPELINE_RUN_DIR"] <key> [<key>…]
 ```
 
-For shell-variable capture, `--values` prints one plain value per line in request order instead of the JSON envelope — coerced values render natively (`true`, `14`); an unset no-default key and an unknown key each print an empty line (the same empty string the retired grep pipeline produced); `model-profiles` has no scalar form and is an invocation error under `--values`. A present-but-invalid value prints its schema default on stdout with exit 0, and gets one stderr line naming the key, the rejected value and the default (#4141). JSON mode carries `invalid: true` instead. List-typed keys (e.g. `merge-sensitive-paths`) resolve to the raw comma-separated string in both modes when configured — callers split on `,`; only the unset default is a JSON `[]`, which `--values` renders as an empty line (same empty-means-none reading as the retired grep).
+For shell-variable capture, `--values` prints one plain value per line in request order instead of the JSON envelope — coerced values render natively (`true`, `14`); an unset no-default key and an unknown key each print an empty line (the same empty string the retired grep pipeline produced); `model-profiles` and `risk-path-globs` have no scalar form and are invocation errors under `--values`. A present-but-invalid value prints its schema default on stdout with exit 0, and gets one stderr line naming the key, the rejected value and the default (#4141). JSON mode carries `invalid: true` instead. List-typed keys (e.g. `merge-sensitive-paths`) resolve to the raw comma-separated string in both modes when configured — callers split on `,`; only the unset default is a JSON `[]`, which `--values` renders as an empty line (same empty-means-none reading as the retired grep).
 
 The `${CLAUDE_PLUGIN_ROOT}` spelling is a model-resolved placeholder, not a live env var — the substitution contract is `docs/skill-authoring.md`'s "Plugin-root references (`CLAUDE_PLUGIN_ROOT`)" section; follow it, it is not restated here.
 
@@ -26,6 +26,7 @@ Two carve-outs:
 
 - The PreToolUse hook's `worktree-always` read stays an in-process `bin/lib/policy.js` call — hot path, never shells out.
 - `model-profiles` is policy-only (the `--run` overlay never applies) and returns `{value: null, source: "default"}` when the block is absent. Any fragment-reader failure — a malformed block, or a malformed sibling model key such as `frontier-run-cap` (the reader parses all four model keys; its throws aren't sub-classified) — degrades to `{value: null, source: "default", invalid: true}`.
+- `risk-path-globs` is policy-only too (never reads `--run`) and returns `{value: {}, source: "default"}` when absent; a malformed block degrades to `{value: {}, source: "default", invalid: true}`, never a partial map.
 
 **Derived-default keys** come in two shapes; both are live, so a new derived key picks one deliberately and states the choice in its row.
 
@@ -246,6 +247,7 @@ Inert flat keys (#4609, #4608). `control-mode: on` implies its levers at skill-d
 | `owned-owners` | `policy.yml` | none yet (#4608) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]` |
 | `trusted-authors` | `policy.yml` | none yet (#4608) | `[]` | Logins, as `owned-owners` |
 | `risk-categories` | `policy.yml` | none yet (#4608) | `[]` | Extra lowercase slugs |
+| `risk-path-globs` | `policy.yml`, block | none yet (#4608) | `{}` | Slug to glob list, indented; rows are `slug: [a, b]` or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (`{a,b}` needs quotes) |
 
 ## Additional levers
 

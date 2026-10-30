@@ -1,6 +1,6 @@
 // tests/resolve-policy-control-mode.test.js — #4609: the thirteen flat
-// control-mode policy keys, the `element` list validation they introduced, and
-// isControlModeOn. Every test builds a throwaway fixture repo under
+// control-mode policy keys, the `element` list validation they introduced,
+// isControlModeOn, and the `risk-path-globs` block key. Every test builds a throwaway fixture repo under
 // os.tmpdir() (never inside this repo — IL-80), writes policy.yml into it, and
 // spawns bin/resolve-policy.js with cwd set there. The keys are inert: nothing
 // reads them yet, so this file pins only resolution and validation.
@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
+const { resolvePolicyKeys, parseRiskPathGlobs, auditPolicy } = require('../plugin/bin/lib/policy-schema');
 const { isControlModeOn } = require('../plugin/bin/lib/policy');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
@@ -209,4 +209,161 @@ test('a list row without element and a string row without pattern behave as befo
   assert.deepStrictEqual(resolve('integration-branch', 'not-a-url'), { value: 'not-a-url', source: 'policy' });
   assert.deepStrictEqual(resolve('integration-branch', 'dev branch'), { value: null, source: 'default', invalid: true });
   assert.deepStrictEqual(resolve('release-hook', 'npm run publish'), { value: 'npm run publish', source: 'policy' });
+});
+
+// ---- risk-path-globs: the block key (#4609 Task 2) ----
+
+const BLOCK = [
+  'risk-path-globs:',
+  '  migrations: [migrations/**, db/schema.rb]',
+  '  auth: ["src/auth/**"]   # trailing comment',
+  '  public-contract:',
+  '    - openapi/**',
+  '    - "sdk/**"   # trailing comment',
+  'autonomy: trusted',
+  '',
+].join('\n');
+
+const globs = (policy) => json(policy, 'risk-path-globs')['risk-path-globs'];
+const REJECTED = { value: {}, source: 'default', invalid: true };
+
+test('AC1.3: risk-path-globs is {} in JSON when unset, and --values rejects it with no scalar form', () => {
+  assert.deepStrictEqual(globs(undefined), { value: {}, source: 'default' });
+  const res = values(undefined, 'risk-path-globs');
+  assert.strictEqual(res.status, 1);
+  assert.match(res.stderr, /risk-path-globs/);
+  assert.match(res.stderr, /no scalar form/);
+  assert.strictEqual(res.stdout, '');
+});
+
+test('AC4.1: risk-path-globs accepts a slug-to-glob-list map (inline and block lists) and round-trips unchanged', () => {
+  assert.deepStrictEqual(globs(BLOCK), {
+    value: { migrations: ['migrations/**', 'db/schema.rb'], auth: ['src/auth/**'], 'public-contract': ['openapi/**', 'sdk/**'] },
+    source: 'policy',
+  });
+});
+
+test('the same block with CRLF line endings parses identically', () => {
+  assert.deepStrictEqual(globs(BLOCK.replace(/\n/g, '\r\n')), {
+    value: { migrations: ['migrations/**', 'db/schema.rb'], auth: ['src/auth/**'], 'public-contract': ['openapi/**', 'sdk/**'] },
+    source: 'policy',
+  });
+  assert.strictEqual(json(BLOCK.replace(/\n/g, '\r\n'), 'autonomy').autonomy.value, 'trusted');
+});
+
+test('a key after the block still parses, and is not swallowed into the block', () => {
+  assert.deepStrictEqual(json(BLOCK, 'autonomy').autonomy, { value: 'trusted', source: 'policy' });
+  // A column-0 comment inside the block does not end it.
+  const withComment = 'risk-path-globs:\n  auth: [a]\n# note\n  migrations: [b]\nautonomy: trusted\n';
+  assert.deepStrictEqual(globs(withComment).value, { auth: ['a'], migrations: ['b'] });
+});
+
+test('AC4.2: risk-categories accepts extra slugs usable as map keys', () => {
+  const out = globs('risk-categories: pii\nrisk-path-globs:\n  pii: [x/**]\n  auth: [y]\n');
+  assert.deepStrictEqual(out, { value: { pii: ['x/**'], auth: ['y'] }, source: 'policy' });
+});
+
+test('AC4.3: an unknown slug is rejected', () => {
+  assert.deepStrictEqual(globs('risk-path-globs:\n  nope: [a]\n'), REJECTED);
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [a]\n  nope: [b]\n'), REJECTED);
+});
+
+test('a slug from an invalid risk-categories value is rejected, so a typo cannot widen the map', () => {
+  assert.deepStrictEqual(globs('risk-categories: Bad_Slug\nrisk-path-globs:\n  Bad_Slug: [a]\n'), REJECTED);
+  assert.deepStrictEqual(globs('risk-categories: pii,\nrisk-path-globs:\n  pii: [a]\n'), REJECTED);
+});
+
+test('AC4.4: a non-list value is rejected', () => {
+  const cases = [
+    'risk-path-globs:\n  auth: src/**\n',
+    'risk-path-globs:\n  auth:\n',
+    'risk-path-globs:\n  auth:\n  migrations: [a]\n',
+    'risk-path-globs: x\n',
+    'risk-path-globs: {auth: [a]}\n',
+    'risk-path-globs: x\n  auth: [a]\n',
+    'risk-path-globs:\n  auth: [a]\n    - x\n',
+    'risk-path-globs:\n  auth: [a]\n  - x\n',
+    'risk-path-globs:\n  auth: "[a]"\n',
+    'risk-path-globs:\n  auth:src/**\n',
+    'risk-path-globs:\n  - auth\n',
+  ];
+  for (const policy of cases) assert.deepStrictEqual(globs(policy), REJECTED, JSON.stringify(policy));
+});
+
+test('AC4.5: a non-string glob is rejected, inline and as a sequence item; a quoted one is a string', () => {
+  for (const bad of ['1', 'true', 'false', 'null', '~', '1.5', 'True', '{a: 1}']) {
+    assert.deepStrictEqual(globs(`risk-path-globs:\n  auth: [${bad}]\n`), REJECTED, `[${bad}]`);
+    assert.deepStrictEqual(globs(`risk-path-globs:\n  auth:\n    - ${bad}\n`), REJECTED, `- ${bad}`);
+  }
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth: ["1", \'true\']\n').value, { auth: ['1', 'true'] });
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth:\n    - "null"\n').value, { auth: ['null'] });
+});
+
+test('a nested list, an empty element, an unbalanced brace and a duplicate slug are rejected', () => {
+  const cases = [
+    'risk-path-globs:\n  auth: [[a]]\n',
+    'risk-path-globs:\n  auth: [a,,b]\n',
+    'risk-path-globs:\n  auth: [a,]\n',
+    'risk-path-globs:\n  auth: [""]\n',
+    'risk-path-globs:\n  auth: [src/{a,b}/**]\n', // an unquoted comma splits the brace group
+    'risk-path-globs:\n  auth: [src/{a/**]\n',
+    'risk-path-globs:\n  auth: [src/a}/**]\n',
+    'risk-path-globs:\n  auth: [a]\n  auth: [b]\n',
+    'risk-path-globs:\n  auth: [a]\n  migrations: [b]\n  auth:\n    - c\n',
+    'risk-path-globs:\n  auth:\n    -\n',
+    'risk-path-globs:\n  auth:\n    - a\n    - \n',
+    'risk-path-globs:\n  auth: ["a\n',
+    'risk-path-globs:\n  auth: ["a" b]\n',
+    'risk-path-globs:\n  auth:\n    - "a\n',
+    'risk-path-globs:\n  auth: [a]\n    migrations: [b]\n', // rows must share one indent
+  ];
+  for (const policy of cases) assert.deepStrictEqual(globs(policy), REJECTED, JSON.stringify(policy));
+});
+
+test('a brace group is accepted when quoted or written as a sequence item', () => {
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth: ["src/{a,b}/**"]\n').value, { auth: ['src/{a,b}/**'] });
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth:\n    - "src/{a,b}/**"\n').value, { auth: ['src/{a,b}/**'] });
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth:\n    - src/{a,b}/**\n').value, { auth: ['src/{a,b}/**'] });
+});
+
+test('a sequence written at the row\'s own indent (normal YAML) is accepted', () => {
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth:\n  - a\n  - b\n  migrations: [c]\n').value, { auth: ['a', 'b'], migrations: ['c'] });
+});
+
+test('an empty glob list is valid, and so is a key with no rows', () => {
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth: []\n'), { value: { auth: [] }, source: 'policy' });
+  assert.deepStrictEqual(globs('risk-path-globs:\n'), { value: {}, source: 'policy' });
+});
+
+test('--values model-profiles still errors with its existing message', () => {
+  const res = values('model-profiles:\n  standard:\n    effort: low\n', 'model-profiles');
+  assert.strictEqual(res.status, 1);
+  assert.strictEqual(res.stderr, 'resolve-policy: --values does not support model-profiles (no scalar form) — use the JSON output\n');
+  assert.strictEqual(res.stdout, '');
+  const joined = values(undefined, 'autonomy,risk-path-globs');
+  assert.strictEqual(joined.status, 1);
+  assert.match(joined.stderr, /risk-path-globs/);
+});
+
+test('parseRiskPathGlobs returns its three shapes', () => {
+  assert.deepStrictEqual(parseRiskPathGlobs(null, []), { present: false });
+  assert.deepStrictEqual(parseRiskPathGlobs('autonomy: trusted\n', []), { present: false });
+  assert.deepStrictEqual(parseRiskPathGlobs('risk-path-globs:\n  auth: [a]\n', []), { present: true, ok: true, value: { auth: ['a'] } });
+  const bad = parseRiskPathGlobs('risk-path-globs:\n  nope: [a]\nautonomy: trusted\n', []);
+  assert.strictEqual(bad.present, true);
+  assert.strictEqual(bad.ok, false);
+  assert.strictEqual(bad.raw, 'risk-path-globs:\n  nope: [a]');
+  assert.deepStrictEqual(parseRiskPathGlobs('risk-path-globs:\n  pii: [a]\n', ['pii']).value, { pii: ['a'] });
+});
+
+test('auditPolicy reports an invalid block once, and nothing for a valid one', () => {
+  const flagged = (policy) => auditPolicy(makeRepo(policy)).invalidValues.filter((row) => row.key === 'risk-path-globs');
+  assert.strictEqual(flagged('risk-path-globs:\n  nope: [a]\n').length, 1);
+  assert.strictEqual(flagged('risk-path-globs: x\n').length, 1, 'an inline value is flagged once, not twice');
+  assert.strictEqual(flagged('risk-path-globs:\n  auth:\n').length, 1);
+  assert.strictEqual(flagged(BLOCK).length, 0);
+  assert.strictEqual(flagged('autonomy: trusted\n').length, 0);
+  const report = auditPolicy(makeRepo(BLOCK));
+  assert.deepStrictEqual(report.invalidValues, []);
+  assert.deepStrictEqual(report.unrecognizedKeys, []);
 });

@@ -90,6 +90,8 @@ const POLICY_KEYS = [
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
   // risk-categories (#4609): project-added invisible-risk slugs, beside the four BUILTIN_RISK_CATEGORIES. `element: 'slug'` validates each comma-separated entry.
   { key: 'risk-categories', type: 'list', default: [], element: 'slug', summary: "Read only with control mode on: extra risk categories added to the four built-in ones; pairs with risk-path-globs.", category: 'merge-safety', tier: 'advanced' },
+  // risk-path-globs (#4609): the second block-style key. A slug -> glob-list map, read by parseRiskPathGlobs (not parseFlatLines, which ignores indented lines); `keys` names the built-in slugs, and risk-categories adds more at resolve time.
+  { key: 'risk-path-globs', type: 'map', keys: BUILTIN_RISK_CATEGORIES, default: {}, summary: "Read only with control mode on: maps each risk category to the path globs that signal it, written as an indented block of lists.", category: 'merge-safety', tier: 'advanced' },
   // commit-scope / commit-scope-paths (#3298): the merge-subject scope source bin/compose-subject.js resolves when --scope is absent — explicit flag > a commit-scope-paths match over the changed files > commit-scope > unscoped. Both advanced: the core tier is at its cap.
   { key: 'commit-scope', type: 'string', summary: "Names the one Conventional-Commits scope every merge subject carries, and the fallback when a path rule is ambiguous.", category: 'merge-safety', tier: 'advanced' },
   { key: 'commit-scope-paths', type: 'list', default: [], summary: "Maps changed-path prefixes to the Conventional-Commits scope a merge subject carries when the matched files all agree on one scope.", category: 'merge-safety', tier: 'advanced' },
@@ -391,9 +393,9 @@ function parseFlatLines(raw) {
     // indentation. Dotted names still parse (the RENAMED_KEYS aliases such as
     // harness-health.scoped-rule-budget are dotted inputs), but new keys are
     // flat kebab-case per skills/_shared/policy-key-naming.md.
-    // An indented line belongs to a nested block's own field (today, only
-    // model-profiles' rows) and must never be read as a flat key in its own
-    // right.
+    // An indented line belongs to a nested block's own field (model-profiles'
+    // and risk-path-globs' rows, the two block keys) and must never be read as
+    // a flat key in its own right.
     if (/^\s/.test(rawLine)) continue;
     const line = rawLine.trim();
     if (!line || line.startsWith('#')) continue;
@@ -560,11 +562,25 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
 
   const result = {};
   for (const requested of requestedKeys) {
-    // model-profiles is the one block-style key — invisible to this flat
+    // model-profiles is a block-style key — invisible to this flat
     // resolver by design. Emit its documented absent shape; the CLI overwrites
     // this entry via its parsePolicyModelConfig delegation before printing.
     if (requested === 'model-profiles') {
       result[requested] = { value: null, source: 'default' };
+      continue;
+    }
+    // risk-path-globs is the other block-style key, resolved here from the
+    // policy source only (run configs hold flat lever lines, never blocks) by
+    // its own parser. A rejected block resolves to the empty map, flagged
+    // invalid, never to a partial one.
+    if (requested === 'risk-path-globs') {
+      const parsed = parseRiskPathGlobs(policyRaw, riskExtraSlugs(policyRaw));
+      if (!parsed.present) result[requested] = { value: {}, source: 'default' };
+      else if (parsed.ok) result[requested] = { value: parsed.value, source: 'policy' };
+      else {
+        result[requested] = { value: {}, source: 'default', invalid: true };
+        if (onInvalid) onInvalid(requested, parsed.raw);
+      }
       continue;
     }
     // A request by an alias's old name resolves the replacement key. A
@@ -633,7 +649,8 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
 
 // Shallow extractor for a nested `{topKey}:` block's first-level indented key
 // names — parseFlatLines only sees flat `key: value` lines, so a block-style
-// value (today, only model-profiles) is otherwise invisible to auditPolicy.
+// value (model-profiles, the one caller) is otherwise invisible to auditPolicy.
+// risk-path-globs, the other block key, has its own parser: parseRiskPathGlobs.
 // Returns undefined when the block is absent, distinct from an empty map.
 function extractMapEntry(raw, topKey) {
   if (!raw) return undefined;
@@ -655,6 +672,130 @@ function extractMapEntry(raw, topKey) {
     // shallow means only the row's own key name is read here.
   }
   return found ? map : undefined;
+}
+
+// The extra slugs `risk-categories` adds beside BUILTIN_RISK_CATEGORIES — only
+// from a value that passes its own validation, so a malformed list can never
+// widen the slugs a risk-path-globs row may name (#4609).
+function riskExtraSlugs(policyRaw) {
+  const raw = parseFlatLines(typeof policyRaw === 'string' ? policyRaw : null)['risk-categories'];
+  if (raw === undefined || !isValidValue(SCHEMA_BY_KEY.get('risk-categories'), raw)) return [];
+  return raw.split(',').map((slug) => slug.trim());
+}
+
+// A YAML scalar that is not a string when written bare: a boolean, null, or a number.
+const YAML_NON_STRING = /^(?:true|false|null|~|[-+]?(?:\d[\d_]*(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?|0x[0-9a-f]+|0o[0-7]+|[-+]?\.(?:inf|nan))$/i;
+
+// One glob element -> its string, or null when it is not an acceptable glob:
+// empty, a nested list or a mapping, a non-string scalar (unless quoted), or
+// braces that do not balance.
+function acceptGlob(text, quoted) {
+  if (text === '') return null;
+  if (!quoted && (YAML_NON_STRING.test(text) || text.startsWith('[') || text.startsWith('{'))) return null;
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === '{') depth += 1;
+    else if (ch === '}') depth -= 1;
+    if (depth < 0) return null;
+  }
+  return depth === 0 ? text : null;
+}
+
+// The inside of an inline `[…]` list -> [{ text, quoted }], or null when a
+// quote never closes or has text after it. A quoted element may hold a comma;
+// a bare one is cut at every comma, so a brace group like {a,b} must be quoted.
+function splitInlineList(inner) {
+  if (inner.trim() === '') return [];
+  const items = [];
+  let i = 0;
+  for (;;) {
+    while (i < inner.length && /\s/.test(inner[i])) i += 1;
+    if (inner[i] === '"' || inner[i] === "'") {
+      const close = inner.indexOf(inner[i], i + 1);
+      if (close === -1) return null;
+      items.push({ text: inner.slice(i + 1, close), quoted: true });
+      i = close + 1;
+      while (i < inner.length && /\s/.test(inner[i])) i += 1;
+      if (i < inner.length && inner[i] !== ',') return null;
+    } else {
+      let end = inner.indexOf(',', i);
+      if (end === -1) end = inner.length;
+      items.push({ text: inner.slice(i, end).trim(), quoted: false });
+      i = end;
+    }
+    if (i >= inner.length) return items;
+    i += 1; // past the comma — a trailing one leaves an empty last element, rejected by acceptGlob
+  }
+}
+
+// risk-path-globs (#4609): a block mapping each risk slug to a glob list.
+//   risk-path-globs:
+//     migrations: [migrations/**, db/schema.rb]
+//     public-contract:
+//       - openapi/**
+// parseFlatLines cannot see it (it skips indented lines), so this reads the
+// block itself. Returns { present: false } when no column-0 `risk-path-globs:`
+// line exists, { present: true, ok: true, value: {slug: [glob…]} }, or
+// { present: true, ok: false, raw } when anything in the block is malformed —
+// the caller then resolves an empty map rather than a partial one. The block
+// ends at the first non-blank, non-comment column-0 line. `extraSlugs` are the
+// slugs allowed beside BUILTIN_RISK_CATEGORIES.
+function parseRiskPathGlobs(policyRaw, extraSlugs = []) {
+  if (typeof policyRaw !== 'string') return { present: false };
+  const lines = policyRaw.split('\n').map((line) => line.trimEnd()); // trimming also drops a CRLF's \r
+  const start = lines.findIndex((line) => line.startsWith('risk-path-globs:'));
+  if (start === -1) return { present: false };
+  let end = start + 1;
+  while (end < lines.length && (lines[end] === '' || /^\s/.test(lines[end]) || lines[end].startsWith('#'))) end += 1;
+  const fail = () => ({ present: true, ok: false, raw: lines.slice(start, end).join('\n').trimEnd() });
+
+  // Nothing but a comment may follow the colon: an inline value is not a block.
+  if (lines[start].slice('risk-path-globs:'.length).replace(/(^|\s)#.*$/, '').trim() !== '') return fail();
+
+  const allowed = new Set([...BUILTIN_RISK_CATEGORIES, ...extraSlugs]);
+  const value = {};
+  let rowIndent = null; // every row shares the first row's indent
+  let open = null; // the row whose value is empty, collecting `- item` lines
+  for (let i = start + 1; i < end; i += 1) {
+    const line = lines[i].replace(/\s+#.*$/, '').trimEnd();
+    if (line.trim() === '' || /^\s*#/.test(line)) continue;
+    const row = /^(\s+)([A-Za-z0-9_-]+):(?:\s+(.*))?$/.exec(line);
+    const item = /^(\s+)-(?:\s+(.*))?$/.exec(line);
+    if (row) {
+      if (open && open.list.length === 0) return fail(); // `slug:` with no sequence under it
+      const slug = row[2];
+      if (rowIndent === null) rowIndent = row[1].length;
+      if (row[1].length !== rowIndent || !allowed.has(slug) || Object.prototype.hasOwnProperty.call(value, slug)) return fail();
+      value[slug] = [];
+      open = null;
+      const rest = (row[3] || '').trim();
+      if (rest === '') {
+        open = { list: value[slug] };
+      } else if (rest.startsWith('[') && rest.endsWith(']')) {
+        const elements = splitInlineList(rest.slice(1, -1));
+        if (elements === null) return fail();
+        for (const { text, quoted } of elements) {
+          const glob = acceptGlob(text, quoted);
+          if (glob === null) return fail();
+          value[slug].push(glob);
+        }
+      } else {
+        return fail();
+      }
+    } else if (item && open && item[1].length >= rowIndent) {
+      const text = (item[2] || '').trim();
+      const unquoted = stripMatchedQuotes(text);
+      const quoted = unquoted !== text;
+      if (!quoted && (text.startsWith('"') || text.startsWith("'"))) return fail(); // an unterminated quote
+      const glob = acceptGlob(unquoted, quoted);
+      if (glob === null) return fail();
+      open.list.push(glob);
+    } else {
+      return fail();
+    }
+  }
+  if (open && open.list.length === 0) return fail();
+  return { present: true, ok: true, value };
 }
 
 // Computed default for `integration-model` when absent from every config
@@ -744,9 +885,10 @@ function auditPolicy(repoRoot) {
   const claudeMdRaw = readFileSafe(path.join(repoRoot, 'CLAUDE.md'));
   const policyEntries = parseFlatLines(policyRaw);
   const claudeMdEntries = parseFlatLines(claudeMdRaw);
-  // model-profiles is the one block-style (non-flat) key today; parseFlatLines
+  // model-profiles is one of two block-style (non-flat) keys; parseFlatLines
   // can't see it, so it's read separately and merged in under its own name —
-  // this never collides with a flat-line entry of the same key.
+  // this never collides with a flat-line entry of the same key. The other,
+  // risk-path-globs, is checked by parseRiskPathGlobs after the flat loop below.
   const modelProfilesEntry = extractMapEntry(policyRaw, 'model-profiles');
   if (modelProfilesEntry !== undefined) policyEntries['model-profiles'] = modelProfilesEntry;
 
@@ -795,6 +937,12 @@ function auditPolicy(repoRoot) {
       sourceExcludedKeys.push({ key, value });
     }
   }
+  // A rejected risk-path-globs block (an inline value on the key line is also
+  // seen by the flat loop above, which flags it first — report it once).
+  const riskGlobs = parseRiskPathGlobs(policyRaw, riskExtraSlugs(policyRaw));
+  if (riskGlobs.present && !riskGlobs.ok && !invalidValues.some((row) => row.key === 'risk-path-globs')) {
+    invalidValues.push({ key: 'risk-path-globs', value: riskGlobs.raw, expected: SCHEMA_BY_KEY.get('risk-path-globs') });
+  }
 
   // A recognized key still sitting in CLAUDE.md no longer applies to anything.
   // Its value is not audited — correcting a value nobody reads is not the fix;
@@ -817,6 +965,6 @@ function auditPolicy(repoRoot) {
 }
 
 module.exports = {
-  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
+  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, parseRiskPathGlobs, resolvePolicyKeys,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
 };

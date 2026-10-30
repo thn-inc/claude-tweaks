@@ -5,14 +5,15 @@
 // config.yml overlays (#329). A thin shell — argument parsing plus file
 // reads over two library calls: bin/lib/policy-schema.js#resolvePolicyKeys
 // (all precedence/alias/validation logic) and
-// bin/lib/model-profiles/policy-fragment.js#parsePolicyModelConfig (the one
-// nested-block key). No resolution logic lives here. Zero runtime npm deps.
+// bin/lib/model-profiles/policy-fragment.js#parsePolicyModelConfig (the
+// model-profiles nested-block key; risk-path-globs, the other, resolves inside
+// resolvePolicyKeys). No resolution logic lives here. Zero runtime npm deps.
 //
 // Usage: resolve-policy.js [--values | --all] [--mcp-reachable] [--run <dir>] <key> [<key>…]
 // Output: one JSON object on stdout keyed by requested name — or, with
 // --values, one plain value per line in request order (scalar mode for shell
 // captures; empty line for unset-no-default and error entries; not valid for
-// model-profiles). --values also writes one stderr warning per requested key
+// model-profiles or risk-path-globs). --values also writes one stderr warning per requested key
 // holding a present-but-invalid value (`resolve-policy: warning: {key} has
 // invalid value "{raw}" — using default "{value}"`); stdout and the exit code
 // are unchanged, and JSON and --all modes write no warning. --all emits
@@ -39,6 +40,9 @@ const { POLICY_KEYS, resolvePolicyConfig } = require('./lib/policy-schema');
 const { computeDerivedDefaults } = require('./lib/policy-derived-defaults');
 const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
+
+// The nested-block keys: no scalar form under --values, and policy-only.
+const BLOCK_KEYS = ['model-profiles', 'risk-path-globs'];
 
 function fail(msg) {
   process.stderr.write(`resolve-policy: ${msg}\n`);
@@ -109,9 +113,10 @@ function main(argv) {
     fail('usage: resolve-policy.js [--values | --all] [--mcp-reachable] [--run <dir>] <key> [<key>…]');
     return;
   }
-  if (valuesMode && keys.includes('model-profiles')) {
-    // The one nested-block key has no scalar form.
-    fail('--values does not support model-profiles (no scalar form) — use the JSON output');
+  const blockKey = BLOCK_KEYS.find((key) => keys.includes(key));
+  if (valuesMode && blockKey) {
+    // A nested-block key has no scalar form.
+    fail(`--values does not support ${blockKey} (no scalar form) — use the JSON output`);
     return;
   }
   // #1065: anchored-or-outside guard — runs after the flag-conflict checks
@@ -162,10 +167,10 @@ function main(argv) {
   // (--mcp-reachable, #1421).
   computeDerivedDefaults(result, keys, root, { mcpReachable });
 
-  // model-profiles is the one block-style key — policy-only (the --run
+  // model-profiles is a block-style key — policy-only (the --run
   // overlay never applies; run configs hold flat lever lines, not nested
-  // blocks). Overwrite the flat resolver's placeholder entry via the
-  // dedicated fragment reader.
+  // blocks; risk-path-globs is policy-only the same way). Overwrite the flat
+  // resolver's placeholder entry via the dedicated fragment reader.
   if (keys.includes('model-profiles')) {
     try {
       const parsed = parsePolicyModelConfig(policyRaw);
@@ -187,8 +192,7 @@ function main(argv) {
     // name each rejected key on stderr — the caller otherwise cannot tell a
     // typo from an intentional default. Every `invalid` entry reaching here
     // came through resolvePolicyKeys's invalid branch, so its raw value is
-    // recorded (model-profiles, the only key set elsewhere, is rejected above
-    // in --values mode).
+    // recorded (the block keys are rejected above in --values mode).
     for (const key of keys) {
       const entry = result[key];
       if (!entry || !entry.invalid) continue;
