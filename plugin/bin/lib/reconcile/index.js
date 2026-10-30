@@ -62,7 +62,8 @@ const NOT_CONVERGED_REASONS = new Set([
 // order is still DISPATCH_ORDER's job, not this table's.
 const PREREQUISITES = {
   // archive-merged.js's localHasMerge reads refs/heads/{integration}, then
-  // origin/{integration}; only the shared fetch refreshes the latter.
+  // origin/{integration} (only when the main checkout is not on {integration} or under --dry-run,
+  // whose preview assumes mirror's fast-forward succeeds); only the shared fetch refreshes the latter.
   // remote-prune's `--prune` shared fetch refreshes origin/{integration} too.
   archive: { check: 'mirror', satisfiedBy: ['remote-prune'] },
   // red-tip.js reads origin/{integration} right after the shared fetch.

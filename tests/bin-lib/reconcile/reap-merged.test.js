@@ -168,15 +168,13 @@ test('reapMerged: a closed-unmerged PR is skipped (never reaped) and logs worktr
 });
 
 // #4180: a dry run writes nothing, so the skip is reported but never appended to events.jsonl.
-test('#4180 reapMerged: a dry run reports a closed-unmerged skip without appending a worktree-reap-skipped event', { skip: STUB_SKIP }, () => {
+test('#4180 reapMerged: a dry run reports a closed-unmerged skip without appending a worktree-reap-skipped event', () => {
   const { root, wtPath, runDir } = buildReapableFixture();
-  const wrapper = installGhWrapper([{ number: 7, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z' }]);
-  let result;
-  try {
-    result = reapMerged({ cwd: root, dryRun: true });
-  } finally {
-    wrapper.restore();
-  }
+  const prStates = createPrStateResolver({
+    root,
+    deps: { byBranch: () => ({ number: 7, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z' }) },
+  });
+  const result = reapMerged({ cwd: root, dryRun: true, prStates });
   assert.deepEqual(result.skipped.map((s) => s.reason), ['pr-closed-unmerged']);
   assert.equal(fs.existsSync(wtPath), true);
   assert.equal(fs.existsSync(path.join(runDir, 'events.jsonl')), false, 'a dry run appends to no run\'s event log');
