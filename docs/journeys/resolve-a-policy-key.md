@@ -4,6 +4,7 @@ files:
   - plugin/bin/lib/hooks/worktree-detect.js
   - plugin/bin/lib/policy-schema.js
   - plugin/bin/lib/policy.js
+  - plugin/bin/lib/risk-path-globs.js
   - plugin/bin/lib/merge-verification.js
   - plugin/bin/lib/shared-primitives.js
   - plugin/skills/_shared/policy-schema.md
@@ -54,7 +55,15 @@ files:
 - **Should understand:** The PreToolUse worktree gate never calls `plugin/bin/resolve-policy.js` — it reads `policy.yml` directly through `resolveWorktreeAlways`, which consults the same `RENAMED_KEYS` table the CLI does and returns `{on, matchedKey}` rather than a bare boolean. The current name wins whenever it is present, in any file order; the retired spelling contributes only when the current one is absent. That precedence is what lets a `policy.yml` carry both lines during a migration without ambiguity. `session-start.js`'s unconditional SessionStart banner (`claude-tweaks: worktree-always: ON/OFF (matched key: {key})`) calls this same function, so its answer and the gate's answer can never disagree (`docs/incident-log.md` IL-133).
 - **Red flags:** `worktree.always: true` on its own reading as policy-OFF — an un-migrated project would silently lose worktree enforcement with no error anywhere; the retired spelling winning over the current one when both are set.
 
+### 6. Read a block-style key — `risk-path-globs`
+- **URL:** `node plugin/bin/resolve-policy.js risk-path-globs`
+- **Action:** Run it with no block set; again with a `risk-path-globs:` block in `policy.yml` holding `  auth: [src/auth/**]` and `  migrations:` followed by `    - db/**`; then again with a typo in one row (`  nope: [a]`).
+- **Should feel:** A typo is impossible to mistake for "nothing configured" — the three answers look different.
+- **Should understand:** Unset reads `{"value":{},"source":"default"}`. A valid block reads the slug-to-glob map with `source: "policy"`, in either list form. A malformed block reads `{"value":null,"source":"default","invalid":true}` — the whole block is rejected, never a partial map, and `null` keeps a consumer from reading it as "no globs" (#4609). `--values` refuses this key as it does `model-profiles`, and `--run` never overlays it.
+- **Red flags:** A malformed block resolving `{}`, which would silently switch off a safety check; a key after the block (`autonomy: trusted`) swallowed into it.
+
 ## Origin
+- Step 2 and step 6 updated during build of #4609 (control-mode keys) — `risk-path-globs` is the second block-style key, parsed by `plugin/bin/lib/risk-path-globs.js`
 - Created during build of #329 (policy resolver CLI); step 3 and the alias red-flag in step 2 updated during build of #332 (policy-key naming convention + rename program — `review-severity-floor` → `review-auto-apply-ceiling`, seven identity aliases); step 5 added during build of #602, when the hook's own read path (`isWorktreeAlwaysOn`/`rawValue` in `plugin/bin/lib/policy.js`) became alias-aware
 - No step change during build of #194 (Phase 2 doc-convention wiring) — five new keys (`doc-convention-{tutorial,how-to,reference,explanation,journey}`) were registered following `doc-convention-adr`'s exact existing shape, so step 4's `--all` snapshot already covers them with no new mechanism to demonstrate
 - No step change during build of #1654 (dispatch group-size guard lever) — `dispatch-group-size-guard` was registered following `dispatch-batch-size`/`dispatch-retry-ceiling`'s exact existing `type: 'integer'` shape, so step 4's `--all` snapshot already covers it with no new mechanism to demonstrate
