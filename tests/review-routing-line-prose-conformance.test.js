@@ -110,6 +110,7 @@ const RECORD_PROPOSAL_CLAUSES = [
   ['Finding: {severity} {category}', 'writes the Finding: header line'],
   ['session-tmp-resolve.js" --value review-followup-proposal.md', 'resolves a .md scratch path'],
   ['written `deferred`', 'writes the ledger row deferred'],
+  ['The materiality floor is not applied at staging: a below-floor finding is staged here like any other and never routed to the digest at this step, because the Defer bullet writes a digest entry only once a human approves that row; `release/disposition.md`\'s `proposal` row applies the floor test to the staged file.', 'leaves the materiality floor to release disposition, not staging'],
 ];
 
 function missingRecordProposalClauses(paragraph) {
