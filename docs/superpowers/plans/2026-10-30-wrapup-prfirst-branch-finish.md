@@ -34,6 +34,12 @@
 
 The merge (`_shared/pr-first-merge.md`, `gh pr merge`) executes today at `review-console.md` "On approval" step 13. After this change it executes at `execution-and-verification.md`'s Branch finish. Readers/writers between the new tree-changing actions and the merge: the apply-list edits (Reference repairs, Genre convention resolution, unblocked `[doc]` rows), cleanup items 1/3/5, the execution commit, `phase-exit.js --phase wrap-up` (needs the un-archived run dir — item 8 now runs after it), and `pr-first-merge.md` Step 1 acceptance labeling (idempotent; the execution step's Acceptance labeling bullet now lands first). After the merge: items 4 (Section C reads the merge outcome and the `pr` stamp), 6, 7 (release reason from the outcome), 8, the leave-open re-check (archive-aware already), Verify execution. Sibling site stating the same rule: `flow/multispec-review-console.md` Shared teardown (step 0 tree writes and push → step 2 merge → step 6 worktree removal) — matched by Task 3.
 
+## Waivers
+
+Waived AC3.1: a real `pr-first` "Approve all + merge" run's PR commit list can only be quoted once a wrap-up runs on a plugin build carrying this change; the "before" evidence is gathered at build time and the "after" check is carried as an `ops` ledger row for the post-release run.
+Waived _shared/pr-first-merge.md: read only — its procedure moves call site, its text is unchanged.
+Waived plugin/skills/wrap-up/auto-merge-short-circuit.md: read only — it bypasses the execution step and runs its own pre-merge ledger delete; it cites no "step 13", so nothing there changes (Task 1's test pins that the Branch finish names it as a skip).
+
 ---
 
 ### Task 1: Move the pr-first branch finish into the execution step
@@ -51,7 +57,7 @@ The merge (`_shared/pr-first-merge.md`, `gh pr merge`) executes today at `review
 **Interfaces:**
 - Produces: the paragraph heading `**Branch finish (\`worktree\` mode, \`integration-model: pr-first\`, #3813).**` in `execution-and-verification.md`; the ordering paragraph heading `**\`integration-model: pr-first\` in \`worktree\` mode — one finish point after the last tree writer (#3813).**`. Task 2 and Task 4 cite "the execution step's Branch finish".
 
-- [ ] **Step 1: Write the failing test** `tests/wrap-up-branch-finish-after-execution.test.js` with an exported-in-file `assertFinishAfterLastWriter(execText, consoleText)` that:
+- [ ] **Step 1: Write the failing test (covers AC1.1, AC1.2, AC4.1)** `tests/wrap-up-branch-finish-after-execution.test.js` with an exported-in-file `assertFinishAfterLastWriter(execText, consoleText)` that:
   - finds the ordering paragraph and asserts it names, in this order: `items 1, 3 and 5`, `apply list`, `commit`, `phase-exit push`, `Branch finish`, `items 4, 6, 7 and 8`;
   - asserts file order: the Reference repairs bullet, the Genre convention resolution bullet, `Commit with a message summarizing the wrap-up actions`, the `**Phase exit` paragraph, the Branch finish paragraph, the `**Leave-open mergeability re-check` paragraph, `### Verify execution`;
   - asserts the Branch finish paragraph contains `runs \`_shared/pr-first-merge.md\`'s procedure`, `push.state`, `never merge a remote head that lacks`, `MULTISPEC_REVIEW_DEFER=1`, `auto-merge short-circuit`, `Override`, `empty-console fast path`, and `items 4, 6, 7 and 8`;
@@ -81,8 +87,12 @@ Expected: PASS
 - Modify: `plugin/skills/wrap-up/execution-and-verification.md` (bullets Documentation, CLAUDE.md/rules, New docs, Docs-health restructural filings, Decision records, Skill updates)
 - Test: `tests/wrap-up-branch-finish-after-execution.test.js` (add tests)
 
-- [ ] **Step 1: Write the failing test** — for each of the six bullet prefixes (`- **Documentation**`, `- **CLAUDE.md, rules**`, `- **New docs from missing-doc detection**`, `- **Docs-health restructural filings**`, `- **Decision records (ADRs)**`, `- **Skill updates**`) the bullet text contains `**\`pr-first\`: confirm-only**`; Reference repairs and Genre convention resolution bullets do not. Go-red: stripping the marker from one bullet fails.
-- [ ] **Step 2: Run** `node --test tests/wrap-up-branch-finish-after-execution.test.js` — Expected: FAIL
+- [ ] **Step 1: Write the failing test (covers AC2.1)** — for each of the six bullet prefixes (`- **Documentation**`, `- **CLAUDE.md, rules**`, `- **New docs from missing-doc detection**`, `- **Docs-health restructural filings**`, `- **Decision records (ADRs)**`, `- **Skill updates**`) the bullet text contains `**\`pr-first\`: confirm-only**`; Reference repairs and Genre convention resolution bullets do not. Go-red: stripping the marker from one bullet fails.
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `node --test tests/wrap-up-branch-finish-after-execution.test.js`
+Expected: FAIL (confirm-only marker missing)
+
 - [ ] **Step 3: Append the marker sentence** to each of the six bullets naming the console step that applied it (2 skills, 3 docs/D1/D2, 5 CLAUDE.md/rules/ADRs); New docs keeps applying a `[doc]` row the console left for an unanswered convention row.
 - [ ] **Step 4: Run** — Expected: PASS
 - [ ] **Step 5: Commit** — `Make console-applied wrap-up entries confirm-only under pr-first — refs #3813`
@@ -95,7 +105,11 @@ Expected: PASS
 - Test: `tests/wrap-up-branch-finish-after-execution.test.js` (add tests)
 
 - [ ] **Step 1: Write the failing test** — Shared teardown step 0 contains `Section A` and `item 3`, positioned before `2. **Finish the shared branch.**`; the commit/push sentence covers the caches when the ledger was not deleted; `cleanup-procedures.md`'s item 3 deferred bullet names `Shared teardown step 0`. File stays under `RAIL_BYTES`.
-- [ ] **Step 2: Run** — Expected: FAIL
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `node --test tests/wrap-up-branch-finish-after-execution.test.js`
+Expected: FAIL (Shared teardown step 0 lacks Section A)
+
 - [ ] **Step 3: Edit** step 0 (one or two sentences) and the bullet.
 - [ ] **Step 4: Run** `node --test tests/wrap-up-branch-finish-after-execution.test.js tests/multispec-ledger-deletion-order.test.js` — Expected: PASS
 - [ ] **Step 5: Commit** — `Delete multi-spec design caches before the shared merge — refs #3813`
@@ -108,5 +122,8 @@ Expected: PASS
 - Modify: `docs/journeys/close-out-only-this-runs-ledger-3566.md` step 5 + Origin line
 
 - [ ] **Step 1: Edit** the three files.
-- [ ] **Step 2: Run** `npm test > /tmp/…/npm-test.log 2>&1; tail -20` — Expected: `ℹ fail 0`
+- [ ] **Step 2: Run the full test suite to verify (covers AC5.1)**
+
+Run: `npm test`
+Expected: PASS (`ℹ fail 0`)
 - [ ] **Step 3: Commit** — `Sync wrap-up branch-finish docs — refs #3813`
