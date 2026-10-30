@@ -6,6 +6,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { execFileSync } = require('child_process');
 
 const { readText } = require('./helpers/read-skill');
 
@@ -47,22 +50,58 @@ test('tidy Step 4 resolves superpowers-plans-retention (#4465)', () => {
 test('tidy Step 4 routes a would-be plan Delete by the policy value (#4465)', () => {
   const s = step4Section();
   assert.match(s, /`prune-after-wrapup` → Delete, unchanged/);
-  assert.match(s, /`ask` → `Prune plan \(ask\)`/);
-  assert.match(s, /`keep-forever` \(the default\) → Keep, unless 30 or more plans are past the cutoff and no live decline exists — then one `Prune plan \(archive\)` listing them all/);
-  assert.match(s, /The 30 counts only uncited would-be-Delete plans \(after the citation check\), so a staged archive never lists fewer than 30/);
+  assert.match(s, /`ask` → `Prune plan \(ask\)`, regardless of age/);
+  assert.match(s, /`keep-forever` \(the default\) → Keep, unless 30 or more plans are past the cutoff and no live decline exists/);
+  assert.match(s, /then one `Prune plan \(archive\)` listing them all/);
+  assert.match(s, /The 30 counts only uncited would-be-Delete plans/);
+  assert.match(s, /a staged archive never lists fewer than 30/);
   assert.match(s, /only a would-be Delete is routed — a Keep row stays Keep under every value/);
+});
+
+test('tidy Step 4 states why the 30 threshold exists and why ask skips cutoff, threshold, and decline memory (#4465)', () => {
+  const s = step4Section();
+  assert.match(s, /30 is where the archive counts as ADR-0007's "large enough to be noise itself"/);
+  assert.match(s, /Asking every run is what `ask` means, so it has no cutoff, no threshold, and no decline memory/);
 });
 
 test('tidy Step 4 remembers a declined keep-forever prune and fails closed (#4465)', () => {
   const s = step4Section();
   assert.match(s, /declined-learning\.js" lookup --source tidy/);
-  assert.match(s, /declined-learning\.js" record-decline --source tidy/);
-  assert.match(s, /"description":"tidy Prune plan \(archive\): docs\/superpowers\/plans\/"\}' \| node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/declined-learning\.js" lookup --source tidy/);
-  assert.match(s, /"description":"tidy Prune plan \(archive\): docs\/superpowers\/plans\/","reason":"\{why\}"\}' \| node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/declined-learning\.js" record-decline --source tidy/);
+  assert.match(s, /declined-learning\.js" record-decline --source tidy < "\{D\}"/);
   assert.match(s, /a non-null `decline`, or a lookup that exits non-zero, routes them to Keep/);
-  assert.match(s, /Before staging a `Prune plan \(archive\)`, look up the decline memory/);
-  assert.match(s, /excludes a `Prune plan \(archive\)` `tidy-prune-plan-\{n\}` item/);
-  assert.match(s, /Decline memory covers `keep-forever` only: excluding a `Prune plan \(ask\)` item records nothing, and `ask` stages every run/);
+  assert.match(s, /Before staging a `Prune plan \(archive\)`, look up a decline/);
+  assert.match(s, /excludes every row of a `Prune plan \(archive\)` `tidy-prune-plan-\{n\}` item/);
+  assert.match(s, /\*\*Decline memory\*\* \(`keep-forever` only — excluding a `Prune plan \(ask\)` item records nothing\)/);
+  assert.match(s, /stays live for 180 days \(reconcile's `pruneDeclines` expires it\)/);
+});
+
+test('tidy Step 4 keeps the human decline reason off the command line (#4465)', () => {
+  const s = step4Section();
+  assert.match(s, /The human's reason never touches a command line/);
+  assert.match(s, /session-tmp-resolve\.js" D=tidy-plan-decline\.json/);
+  assert.doesNotMatch(s, /"reason":"\{why\}"\}' \|/, 'the reason must not be interpolated into a single-quoted printf argument');
+});
+
+// Executes the prose's own lookup/record payloads against the real CLI, in a sandbox cwd (the store is
+// cwd-relative), so a drift between the two description strings, the verbs, or the CLI's stdin contract fails here.
+test('tidy Step 4 decline commands round-trip through declined-learning.js (#4465)', () => {
+  const s = step4Section();
+  const lookup = s.match(/`printf '%s' '(\{[^']*\})' \| node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/declined-learning\.js" (lookup) --source (\w+)`/);
+  const payload = s.match(/`Write` `(\{"description":[^`]*\})`/);
+  const record = s.match(/`node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/declined-learning\.js" (record-decline) --source (\w+) < "\{D\}"`/);
+  assert.ok(lookup && payload && record, 'Step 4 carries the lookup command, the record payload, and the record command');
+
+  const cli = path.join(REPO_ROOT, 'plugin', 'bin', 'declined-learning.js');
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'tidy-plan-decline-'));
+  const run = (verb, source, input) => JSON.parse(execFileSync(process.execPath, [cli, verb, '--source', source], { cwd: sandbox, input, encoding: 'utf8' }));
+  try {
+    assert.equal(run(lookup[2], lookup[3], lookup[1]).decline, null);
+    const why = 'it\'s "noise", per ADR-0007';
+    run(record[1], record[2], payload[1].replace('{why}', JSON.stringify(why).slice(1, -1)));
+    assert.equal(run(lookup[2], lookup[3], lookup[1]).decline.reason, why);
+  } finally {
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
 });
 
 test('tidy Step 4 pins the 7-day cutoff and fails closed toward Keep (#4465)', () => {
@@ -98,7 +137,8 @@ test('step-6-auto.md stages Prune plan at every tier (#4465)', () => {
 test('step-6-auto.md auto-deletes plans only under prune-after-wrapup (#4465)', () => {
   assert.doesNotMatch(STEP6_AUTO, /orphaned plans whose related spec is complete,/);
   assert.match(STEP6_AUTO, /— plans whose related spec is complete \(`docs\/superpowers\/plans\/` only under `prune-after-wrapup`; `~\/\.claude\/plans\/` at every value\), orphaned ledger files/);
-  assert.match(STEP6_AUTO, /old plans whose spec status is unclear, and orphan plans with no related spec \(`docs\/superpowers\/plans\/` only under `prune-after-wrapup`; `~\/\.claude\/plans\/` at every value\)/);
+  assert.match(STEP6_AUTO, /old plans whose spec status is unclear or was never started, and orphan plans with no related spec \(`docs\/superpowers\/plans\/` only under `prune-after-wrapup`; `~\/\.claude\/plans\/` at every value;/);
+  assert.match(STEP6_AUTO, /judgment-tier because, unlike a complete spec, a missing or never-started one does not prove the plan's work is over/);
 });
 
 test('step-6-auto.md routes orphan plans through the judgment Delete row, not the every-tier Auto row (#4465)', () => {
@@ -117,6 +157,12 @@ test('SKILL.md Prune plan row says the 30 threshold gates staging, not execution
   const row = findRow(TIDY_SKILL, '| **Prune plan**');
   assert.ok(row);
   assert.match(row, /The 30 threshold gates staging, not execution: an approved archive still executes after `stale — skipped` drops leave fewer than 30/);
+  assert.match(row, /When every listed plan drops, run no `git rm` and no commit/);
+});
+
+test('plan-citation-check.md and skill-graph.md name the Prune plan execution re-verify as a reader (#4465)', () => {
+  assert.match(PLAN_CITATION, /`SKILL\.md`'s `Prune plan` execution re-verify/);
+  assert.match(SKILL_GRAPH, /`tidy\/SKILL\.md`'s `Prune plan` execution re-verify are the file's other readers/);
 });
 
 test('SKILL.md Step 7.5 verification checklist has a Pruned plans line (#4465)', () => {
@@ -157,7 +203,7 @@ test('policy-schema.md names tidy Step 4 as a superpowers-plans-retention consum
   const row = findRow(POLICY_SCHEMA, '| `superpowers-plans-retention`');
   assert.ok(row);
   assert.match(row, /`\/claude-tweaks:tidy` Step 4 \(`tidy\/scan-procedures\.md`\)/);
-  assert.match(row, /tidy keeps them until 30 or more are past a 7-day cutoff, then stages one bulk prune/);
+  assert.match(row, /tidy keeps them, staging one bulk prune only once enough uncited plans pass Step 4's Plan retention cutoff and threshold/);
   assert.match(row, /tidy's Approve section/);
   assert.match(row, /tidy deletes Step 4's would-be-Delete plans/);
   assert.doesNotMatch(row, /tidy deletes closed-record plans/);
@@ -165,19 +211,23 @@ test('policy-schema.md names tidy Step 4 as a superpowers-plans-retention consum
 
 test('tidy Step 4: the cutoff gates keep-forever only; ask stages regardless of age, an uncommitted plan stays Keep (#4465)', () => {
   const s = step4Section();
-  assert.match(s, /The cutoff applies to `keep-forever` only: `ask` stages every would-be Delete regardless of age, but an uncommitted plan \(that same empty output or non-zero exit\) stays Keep under `ask` too, because `git rm` would fail on it\./);
+  assert.match(s, /\*\*Cutoff\*\* \(`keep-forever` only\)/);
+  assert.match(s, /An uncommitted plan \([^)]*\) still stays Keep, because `git rm` would fail on it/);
 });
 
-test('tidy Step 4: a decline is recorded only for an entirely excluded item; {why} is escaped; failure degrades open; commands run from REPO_ROOT (#4465)', () => {
+test('tidy Step 4: a decline is recorded only for an entirely excluded item; failure degrades open; commands run from REPO_ROOT (#4465)', () => {
   const s = step4Section();
-  assert.match(s, /A decline is recorded only when every row of the `tidy-prune-plan-\{n\}` item is excluded; excluding some rows records nothing\./);
-  assert.match(s, /`\{why\}` is JSON- and shell-escaped\./);
-  assert.match(s, /A `record-decline` failure degrades open: log one SKIP note and continue — the proposal may recur\./);
-  assert.match(s, /Run both `declined-learning\.js` commands from `\{REPO_ROOT\}` — the store path is relative to the working directory\./);
+  assert.match(s, /excluding some rows records nothing/);
+  assert.match(s, /`\{why\}` JSON-escaped/);
+  assert.match(s, /A `record-decline` failure degrades open: log one SKIP note and continue/);
+  assert.match(s, /Run both commands from `\{REPO_ROOT\}` — the store path is relative to the working directory/);
 });
 
 test('tidy Step 4: under keep-forever the citation check runs on past-cutoff candidates only once they reach 30 (#4465)', () => {
-  assert.match(step4Section(), /Under `keep-forever`, run the citation check on past-cutoff candidates only once their pre-check count reaches 30; below 30 the count can never yield 30 uncited, so a cited plan is a plain Keep, never a Yours row\./);
+  const s = step4Section();
+  assert.match(s, /\*\*Citation check\*\* \(`keep-forever` only\)\. Run it on past-cutoff candidates only once their pre-check count reaches 30/);
+  assert.match(s, /a cited plan is a plain Keep, never a Yours row/);
+  assert.match(s, /At 30 or more, a cited candidate renders per `plan-citation-check\.md` and does not count toward the 30/);
 });
 
 test('skill-graph.md tidy section names the declined-learning store row (#4465)', () => {
