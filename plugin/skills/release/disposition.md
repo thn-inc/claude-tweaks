@@ -61,7 +61,7 @@ The Recommended column is what the batch table below pre-fills for each row.
 | A `contested` file, otherwise | `declined (contested: {verdicts})` |
 | A `decisions.md`-only `STAGED` line at critical/high | The same Defer |
 | A `decisions.md`-only `STAGED` line, otherwise | `declined (unconfirmed: {the line's own reason, e.g. not reproduced})` |
-| A file on a `proposal` roster row | The same Defer path and Defer-reason, so the materiality floor routes a small one to the digest. Severity is read from the file when it carries one, else treated as medium for the floor test |
+| A file on a `proposal` roster row | The same Defer path and Defer-reason, so the materiality floor routes a small one to the digest. Severity is read from the file when it carries one, else treated as medium for the floor test. A `review-followup-` file already holds a composed record, so after the floor test it is filed as written, under its own `Title:`, `Labels:` and `Defer-reason:` header and its own body, never recomposed with `specShapedBody` |
 | Any other staged file | No route: a failure (below), never archived unread |
 | An open record already covering the same file and defect, found by searching open records for the finding's path | `declined (covered by #{n})` |
 

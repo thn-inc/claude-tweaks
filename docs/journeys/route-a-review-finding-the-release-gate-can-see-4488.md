@@ -35,7 +35,7 @@ files:
 ### 3. No patch to stage — a record proposal (`staged/review-followup-{n}.md`)
 - **URL:** `plugin/skills/review/step3-routing.md`'s "Staging a record proposal" paragraph
 - **Action:** A finding the table routes AUTO or STAGED fails the deferral gate's fix-now criteria with a valid `Defer-reason:`. Its fix is a new work record, not a diff.
-  - **Below the materiality floor and not `tangential`:** the finding goes to the digest with the floor's `AUTO … materiality-floor:` line, and its ledger row is written `accepted`.
+  - **Low or medium, below the materiality floor and not `tangential`:** the finding goes to the digest with the floor's `AUTO … materiality-floor:` line, and its ledger row is written `accepted`. A `high` finding never takes this branch, so its staged line always carries `high-severity finding`.
   - **Otherwise:**
     1. The agent writes the proposal (`Title:`/`Type:`/`Labels:`/`Defer-reason:`/`Finding:` header, a blank line, then the body) to a `.md` scratch path.
     2. It stages the file with `stage-item.js --id review-followup-1 … --allocate`.
@@ -43,7 +43,7 @@ files:
     4. It logs `review-routing-line.js --route staged … --stage-path staged/review-followup-{n}.md`.
 - **Should feel:** Like the patch path with a different payload. The name is fixed, so there is nothing to invent.
 - **Should understand:** Nothing is filed here: the Review Console's Queue writes step files the record on approval. The ledger row is written `deferred`, naming the staged file. `--id review-{n}.md` is refused as `unmapped-prefix`, and a literal `{n}` in `--id` exits 2.
-- **Red flags:** A record proposal staged as `review-{n}.md`, a STAGED line naming a different `{n}` than the file `--allocate` wrote, or a low/low/low finding filed as a backlog record.
+- **Red flags:** A record proposal staged as `review-{n}.md`, a STAGED line naming a different `{n}` than the file `--allocate` wrote, a low/low/low finding filed as a backlog record, or a `high` finding digested with no `high-severity finding` line.
 
 ### 4. A hand-typed prefix is refused — `log-decision.js`
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status STAGED --step "Step 3 Routing" --text "Step 3 Routing: …"`

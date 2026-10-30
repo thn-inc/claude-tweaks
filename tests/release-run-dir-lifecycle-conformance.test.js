@@ -19,6 +19,7 @@ const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { gitRepo, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
 const { classifyStagedItem, stagingExemption, CANONICAL_PREFIXES } = require('../plugin/bin/lib/console/resolve');
+const { composeRoutingLine } = require('../plugin/bin/lib/log-decision/review-routing');
 
 const ROOT = path.join(__dirname, '..');
 const SKILL = path.join(ROOT, 'plugin', 'skills', 'release', 'SKILL.md');
@@ -380,6 +381,7 @@ const DISPOSITION_ROUTING = [
   [/declined \(unconfirmed: \{the line's own reason/, 'any other decisions.md-only line is declined with its own reason'],
   [/A file on a `proposal` roster row \| The same Defer path and Defer-reason/, 'a file on a proposal roster row takes the same Defer path and Defer-reason'],
   [/else treated as medium for the floor test/, 'a severity-less reflect/simplify/deepen file is medium for the floor'],
+  [/A `review-followup-` file already holds a composed record, so after the floor test it is filed as written/, 'a review-followup- file is filed as written, never recomposed'],
   [/Any other staged file \| No route/, 'any other staged file has no route'],
   [/_shared\/github-write-transport\.md/, 'filing and the covered-by lookup go through the write transport'],
 ];
@@ -844,6 +846,28 @@ test('AC2.1 go-red: restoring the review-{n}.{patch,md} example goes red on revi
   const doctored = text.replace(line, line.replace('`staged/review-{n}.patch`', '`staged/review-{n}.{patch,md}`'));
   assert.notEqual(doctored, text, 'anchor: the review-{n} Example cell is not `staged/review-{n}.patch` — proof cannot discriminate');
   assert.throws(() => assertRosterMatchesSectionMap(doctored), /review-1\.md/);
+});
+
+// --- Roster <-> review-routing-line.js stage paths (#4484 review) ---
+// Step 3 Routing logs every staged file through the composer, so a roster Example on a row step3-routing.md
+// stages that the composer refuses could be staged but never logged.
+function unloggableReviewExamples(roster) {
+  return roster
+    .filter((row) => row.stagedBy === 'review/step3-routing.md')
+    .flatMap((row) => exampleNames(row.example))
+    .filter((name) => composeRoutingLine({ route: 'staged', severity: 'high', category: 'x', at: 'a.js:1', stagePath: `staged/${name}` }).error);
+}
+
+test('every roster example step3-routing.md stages is a stage path review-routing-line.js accepts', () => {
+  assert.deepEqual(unloggableReviewExamples(parseRoster(readDisposition())), []);
+});
+
+test('go-red: a review-followup- example the composer refuses is reported', () => {
+  const text = readDisposition();
+  const line = rosterLine(text, 'review-followup-');
+  const doctored = text.replace(line, line.replace('`staged/review-followup-{n}.md`', '`staged/review-followup-{n}.txt`'));
+  assert.notEqual(doctored, text, 'anchor: the review-followup- Example cell is not `staged/review-followup-{n}.md` — proof cannot discriminate');
+  assert.deepEqual(unloggableReviewExamples(parseRoster(doctored)), ['review-followup-1.txt']);
 });
 
 test('AC1.1: review-followup-1.md routes to the proposal row, which the Routing table defers', () => {

@@ -95,11 +95,18 @@ for (const c of CASES) {
   });
 }
 
-// #4484: the record-proposal paragraph is not a `- **Label** —` bullet, so it gets its own finder.
+// #4484: the record proposal is two paragraphs, the staging steps and then their below-floor digest branch.
+// Neither is a `- **Label** —` bullet, so they get their own finder. Each paragraph is one physical line;
+// a wrapped paragraph reports every clause after the break as missing.
+const RECORD_PROPOSAL_LABELS = ['**Staging a record proposal', '**Below the materiality floor'];
+
 function recordProposalParagraph() {
-  const paragraph = md.split('\n').find((l) => l.startsWith('**Staging a record proposal'));
-  assert.ok(paragraph, 'step3-routing.md must carry a paragraph starting "**Staging a record proposal"');
-  return paragraph;
+  const lines = md.split('\n');
+  return RECORD_PROPOSAL_LABELS.map((label) => {
+    const paragraph = lines.find((l) => l.startsWith(label));
+    assert.ok(paragraph, `step3-routing.md must carry a paragraph starting "${label}"`);
+    return paragraph;
+  }).join('\n');
 }
 
 // Each clause is one literal the paragraph must carry, so removing it turns exactly that clause red.
@@ -123,8 +130,14 @@ const RECORD_PROPOSAL_CLAUSES = [
   ['entry on `local-files`', 'names the specs/digest.md entry in the digest-routed ledger row on local-files'],
   ['when a run directory resolves', 'logs the audit line only when a run directory resolves'],
   ['end-of-run summary states the digest comment URL', 'states the digest comment URL and count in the end-of-run summary'],
-  ['A `tangential` finding, or one that clears the floor, is staged', 'stages a tangential or floor-clearing finding'],
+  ['A `tangential` finding, a `high` one, or one that clears the floor, is staged', 'stages a tangential, high or floor-clearing finding'],
   ['A digest entry is not a work record', 'states a digest entry is not a work record'],
+  ['A `high` finding never takes the digest branch', 'keeps a high finding off the digest branch, so its composer line reaches the release gate'],
+  ['A non-zero `stage-item.js` exit stages nothing', 'leaves the ledger row open when staging fails'],
+  ['the entry a Dedup match folded it into', 'names the existing digest entry on a Dedup match'],
+  ['A digest write that fails leaves the row `open`', 'leaves the ledger row open when the digest write fails'],
+  ['names the finding as `{category} at {file:line}`, never its text', 'keeps finding text out of the materiality-floor audit line'],
+  ['the two exceptions to the "status `open`" wording', 'names both ledger-status exceptions'],
 ];
 
 function missingRecordProposalClauses(paragraph) {
