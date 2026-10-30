@@ -1,16 +1,16 @@
 {
-  "computedAt": "2026-10-30T09:03:33.903Z",
+  "computedAt": "2026-10-30T12:37:53.159Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
         "number": 4589,
-        "updatedAt": "2026-10-30T08:51:51Z",
+        "updatedAt": "2026-10-30T11:45:15Z",
         "state": "OPEN"
       },
       {
-        "number": 4587,
-        "updatedAt": "2026-10-30T08:51:36Z",
+        "number": 4580,
+        "updatedAt": "2026-10-30T12:37:17Z",
         "state": "OPEN"
       },
       {
@@ -79,18 +79,8 @@
         "state": "OPEN"
       },
       {
-        "number": 4488,
-        "updatedAt": "2026-10-30T04:26:01Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4484,
-        "updatedAt": "2026-10-30T06:42:15Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4477,
-        "updatedAt": "2026-10-30T04:28:16Z",
+        "updatedAt": "2026-10-30T10:29:28Z",
         "state": "OPEN"
       },
       {
@@ -104,28 +94,8 @@
         "state": "OPEN"
       },
       {
-        "number": 4469,
-        "updatedAt": "2026-10-30T05:16:19Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4468,
-        "updatedAt": "2026-10-30T04:50:43Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4467,
         "updatedAt": "2026-10-30T08:28:47Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4466,
-        "updatedAt": "2026-10-30T07:06:55Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4465,
-        "updatedAt": "2026-10-30T06:54:27Z",
         "state": "OPEN"
       },
       {
@@ -206,11 +176,6 @@
       {
         "number": 4424,
         "updatedAt": "2026-10-28T18:38:33Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4423,
-        "updatedAt": "2026-10-30T08:55:13Z",
         "state": "OPEN"
       },
       {
@@ -477,6 +442,16 @@
         "number": 4505,
         "updatedAt": "2026-10-30T04:29:37Z",
         "state": "OPEN"
+      },
+      {
+        "number": 4108,
+        "updatedAt": "2026-10-30T09:03:52Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 4609,
+        "updatedAt": "2026-10-30T12:20:01Z",
+        "state": "OPEN"
       }
     ]
   },
@@ -532,7 +507,7 @@
         "number": 4589,
         "state": "OPEN",
         "title": "Render dispatch Task prompts from a CLI instead of hand-substituting task-prompt.md",
-        "updatedAt": "2026-10-30T08:51:51Z",
+        "updatedAt": "2026-10-30T11:45:15Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -561,8 +536,8 @@
     ],
     [
       {
-        "body": "Origin: session 2026-10-30, resumed #3903 build (PR #4541, run 2026-10-30T063836-record-3903)\n\nDefer-reason: tangential\n\n## Current State\n\n`sddRulingDeferralReason` (`plugin/bin/lib/console/sdd-ruling.js`) returns `null` — \"may auto-ratify\" — for any deferring `sdd-ruling-*` item whose header carries exactly one valid `Defer-reason:` from `DEFER_REASONS`. `needs-human-decision` is one of those values, so `console-resolve.js --policy console-auto` ratifies an item whose own reason says a human must decide. #3880 closed the missing-reason case only.\n\nObserved on #3903's run: `staged/sdd-ruling-1..4.md` each carry `Defers: yes` and `Defer-reason: needs-human-decision`, and their body states the spec \"requires every needs-human-decision ruling to be staged for the human, never auto-applied\". The unattended console applied all four (`decisions.md` 09:03:59, \"apply — Approve-all default\"), and the merge proceeded with no human having seen them.\n\n## Deliverables\n\n1. `sddRulingDeferralReason` returns a new pending reason (e.g. `sdd-ruling-needs-human-decision`) when the single valid `Defer-reason:` is `needs-human-decision`, so `console-auto` resolves the item `pending`, never ratify.\n2. `plugin/skills/wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet names the new pending reason beside the existing three.\n3. `reconcile/console-execute.js`'s `decideConsoleExecute` (the other caller) treats the new reason the same way.\n4. A test: a `needs-human-decision` ruling resolves `pending` under `console-auto`; a `tangential` one still ratifies.\n\n## Acceptance Criteria\n\n- [ ] Under `autonomy: unattended`, an `sdd-ruling-*` item with `Defer-reason: needs-human-decision` lands in `console.json` as `pending — sdd-ruling-needs-human-decision` and appears in `console-residue.js --run` output.\n- [ ] Rulings with any other valid reason resolve exactly as today.\n- [ ] The new test fails when the change to `sdd-ruling.js` is reverted.\n\n## Release Note\n\nUnattended runs no longer approve design rulings that were explicitly marked as needing a human decision; they wait in the Review Console instead.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/console/sdd-ruling.js` — modify\n- `plugin/bin/lib/reconcile/console-execute.js` — modify\n- `plugin/skills/wrap-up/review-console-appendix.md` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-10-30T08:36:55Z",
+        "body": "Origin: reflect full from #3903\n\nDefer-reason: tangential\n\n**Related:** #4588\n\n## Current State\n\nA resumed run that adopts a prior attempt's branch and finds its draft PR still OPEN reuses that PR without rebinding its body, so the body keeps naming the prior run. `bin/pr-checklist.js` refuses every phase-checklist update on a body naming another run (exit 4), so the resumed run's checklist stays frozen until someone rewrites the body by hand.\n\nObserved in run `2026-10-30T063836-record-3903` (record #3903, PR #4541): `decisions.md` shows `reusing open PR #4541` (build, 07:45:10), then `PR checklist refresh: refused on PR #4541 — run marker mismatch (body names run 2026-10-28T231420-record-3903)` (08:11:33), then a manual rebind at build Common Step 7 (08:12:08). The build phase exit wrote nothing.\n\nProbe on `origin/main` (fetched this session): `git grep -n -F -e 'Rebind a retry' origin/main -- plugin/skills/_shared/pr-early-run-lifecycle.md` matches only the CLOSED/reopen branch (`pr-early-run-lifecycle.md:115`, #3887). The OPEN-reuse bullet (`:92-97`) has no rebind, and `git log -S 'rebound reused' origin/main` over that file and `plugin/skills/build` returns nothing. `plugin/bin/lib/flow/pr-early-open.js` rebinds only after `gh pr reopen` (lines 163-191); its two reuse returns (lines 110 and 156-159) do not.\n\n## Deliverables\n\n- `plugin/bin/lib/flow/pr-early-open.js`: on both reuse outcomes (the recorded PR still open, and an OPEN PR found by head branch), when the PR body names a run other than the current one, rebind it exactly as the reopen branch does (compose this run's body, `gh pr edit --body-file`, log `rebound reused PR #{n} to run {run-id}`; a failed rebind is a logged `SKIP` degrade, never a stop).\n\n- `plugin/skills/_shared/pr-early-run-lifecycle.md`: the OPEN-reuse bullet states the rebind and its log line, mirroring the `Rebind a retry (#3887)` paragraph, and says when it applies (the run adopted a prior attempt, or the body names another run).\n\n- `tests/bin-lib/flow/pr-early-open.test.js`: a case per reuse path asserting the rebind call and the log line, and a case where the body already names this run and no edit is made.\n\n## Acceptance Criteria\n\n- Run `pr-early-open` against a fake `gh` whose OPEN PR body names run A while the current run is B: the PR body is rewritten to name B before the first push, and `decisions.md` carries `rebound reused PR #{n} to run B`.\n\n- The same run with a body that already names B makes no `gh pr edit` call.\n\n- After a rebind, `node bin/pr-checklist.js --run {run-dir} --phase build --fixes {n}` exits 0 with `action: written` instead of exit 4.\n\n- A failing `gh pr edit` logs the `SKIP` degrade line and still returns the reused PR, recorded.\n\n## Release Note\n\nA resumed run that reuses a still-open draft PR now rebinds the PR body to the new run, so the phase checklist updates at every phase exit instead of being refused until a manual rewrite.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/flow/pr-early-open.js` — rebind on both reuse outcomes\n- `plugin/skills/_shared/pr-early-run-lifecycle.md` — state the rebind in the OPEN-reuse bullet\n- `tests/bin-lib/flow/pr-early-open.test.js` — cover the two reuse paths\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-10-30T08:06:54Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -571,16 +546,16 @@
             "color": "2EA44F"
           },
           {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
             "id": "LA_kwDORUwzVM8AAAACruyrJA",
             "name": "size:low",
             "description": "Scoring: small, agent-sized change",
             "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACry2nbg",
@@ -595,31 +570,25 @@
             "color": "F9D0C4"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
           }
         ],
-        "number": 4587,
+        "number": 4580,
         "state": "OPEN",
-        "title": "Hold needs-human-decision SDD rulings for a human at the unattended console",
-        "updatedAt": "2026-10-30T08:51:36Z",
+        "title": "Rebind the run PR body when a resumed run reuses a still-open PR",
+        "updatedAt": "2026-10-30T12:37:17Z",
         "facets": {
-          "origin": "capture",
-          "risk": "medium",
+          "origin": null,
+          "risk": "low",
           "size": "low",
           "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
-          "priority": "high",
+          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -1397,96 +1366,6 @@
         "state": "OPEN",
         "title": "policy resolution in worktrees: gitignored policy.yml is invisible, so pr-early-open targets the default branch",
         "updatedAt": "2026-10-30T04:28:24Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #4408\n\n## Current State\n\n`claude-tweaks:qa-agent` (`plugin/agents/qa-agent.md`) runs one story through `playwright-cli`. It takes an accessibility `snapshot` before every element action and every `verify` (`qa-agent.md:100-136`), writes a screenshot at every step under `SCREENSHOT_PATH` (`:22`, `:31`), and writes failure traces under `TRACES_BASE` (`:23`). The story schema (v2, `plugin/skills/stories/SKILL.md:35`) has no way to mark a value as sensitive, and nothing in the agent or `plugin/bin/qa-report.js` scrubs artifacts.\n\nObserved on 6.145.0: one of 18 stories in a local QA run exercised a \"token shown once\" flow. The story prompt told the agent never to print or store the token, and the agent's own output complied. The value still landed in 4 artifact files the tooling wrote on its own: snapshot YAML, the trace, and step screenshots. A manual search found and deleted them afterwards, with 0 matches left. Prompt instructions cannot reach artifacts the tooling writes unprompted, so every \"reveal a secret once\" story leaves the secret behind. That covers API keys, recovery codes, one-time tokens and invite links.\n\n## Deliverables\n\n1. Add an optional story-level field to schema v2 that marks a story's revealed values as sensitive. The reporter proposed `secrets:`: a list of semantic locators (same locator types as steps) and/or regexes. Document it in `stories/SKILL.md`'s schema section and `story-examples.md`.\n2. After a story that declares the field finishes, pass or fail, scrub every artifact the story produced. Replace matched values with a fixed marker in snapshot YAML, trace files and console logs. Delete any screenshot taken at or after the step that first revealed the value, since pixels cannot be reliably redacted by regex. The scrub runs in a `bin/` helper the qa-agent calls, so it is deterministic and testable, rather than in agent prose.\n3. The QA report records the outcome per story as `{N} secret value(s) scrubbed from {M} artifact(s); {K} screenshot(s) removed`. If scrubbing fails, the story is reported as failed with the remaining artifact paths, never as clean.\n\n## Acceptance Criteria\n\n- A fixture run of a story with a `secrets:` regex leaves zero matches of the secret value under that story's snapshot, trace and screenshot directories (`grep -r` over them returns nothing).\n- Screenshots from the reveal step onward are absent for that story. Earlier screenshots are kept.\n- The QA report line names the scrubbed and removed counts.\n- A story without the field produces byte-identical artifacts to today. The scrub helper is not invoked.\n- A scrub failure (e.g. an unreadable trace file) marks the story failed and lists the unscrubbed paths.\n- The scrub helper has unit tests over fixture snapshot YAML, a trace file, and a console log.\n\n## Release Note\n\nQA stories can now mark values as secret, and the QA run removes those values from its snapshots, traces and screenshots afterwards.\n\n## Technical Approach\n\nTwo shapes were possible: scrub the artifacts after the story, or suppress artifact capture for sensitive stories. Scrubbing is chosen. Suppression would lose the evidence trail for exactly the stories most worth auditing, and the tooling writes snapshots as part of ref resolution, so they cannot simply be turned off. Resolve a locator-form secret to its value at runtime from the snapshot taken at the reveal step. The value then joins the regex list for the rest of the scrub. Keep the value only in the helper's memory, never in a file or the agent's reply.\n\n### Key Files\n\n- `plugin/skills/stories/SKILL.md` — schema v2: the new optional field\n- `plugin/skills/stories/story-examples.md` — an example \"reveal once\" story\n- `plugin/agents/qa-agent.md` — call the scrub helper after a story that declares the field\n- `plugin/bin/qa-report.js` — the scrub outcome line\n- `plugin/bin/` — new scrub helper (e.g. `qa-scrub.js`) plus `tests/` coverage\n\n## Gotchas\n\n- Trace files may be zip archives. The scrub must handle the container format the tooling writes, or delete the trace and say so in the report line, rather than silently skipping it.\n- `playwright-cli` may write snapshots outside `SCREENSHOT_PATH`/`TRACES_BASE` (its own output directory under the cwd). Enumerate every directory the session writes to before declaring zero matches.\n- Never log the secret value in `decisions.md`, the QA report, or test fixtures that look real. Fixtures use an obviously fake token.\n\n## Original request\n\nqa-agent / stories: a story that reveals a one-time secret leaves it in snapshot, trace and screenshot artifacts\n\n**Summary:** A QA story that reveals a one-time secret leaves that secret in the run's snapshot, trace and screenshot artifacts. The story schema has no way to mark the value sensitive, so nothing scrubs it.\n\n**Kind:** Gap\n\n**Affected component:** qa-agent + /claude-tweaks:stories (story schema)\n\n**Use case:** A QA story exercised a \"token shown once\" flow: issue a push token, then check that the panel shows it once. The story prompt told the agent never to print or store the value. The agent complied in its own output. But the browser tooling records every accessibility snapshot, its trace, and the step screenshots on its own. So the freshly minted token ended up in gitignored snapshot/trace files and a screenshot under the tooling's output directory. A manual search found and deleted them after the run.\n\nPrompt instructions can't reach artifacts the tooling writes on its own. Any story whose expected behavior is \"reveal a secret once\" — API keys, recovery codes, one-time tokens, invite links — will leave that secret in the QA artifacts.\n\nProposal:\n- Add an optional story-level `secrets:` field (or `redact:`): a list of locators or regexes whose matched values are sensitive.\n- After each story, the qa-agent scrubs those values from snapshot YAML, traces and console logs, and deletes or redacts screenshots of the matching element.\n- The run report then states \"N secret values scrubbed from M artifacts\", so the operator can trust the cleanup without auditing it by hand.\n\nEvidence: one story out of 18 in a local QA run. 4 artifact files held the value. 0 matches remained after the manual cleanup.\n\n**Definition:** Clear\n\n**Plugin version:** 6.145.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-28ab7950 -->\n\n",
-        "createdAt": "2026-10-27T16:08:09Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4477,
-        "state": "OPEN",
-        "title": "qa-agent / stories: a story that reveals a one-time secret leaves it in snapshot, trace and screenshot artifacts",
-        "updatedAt": "2026-10-30T04:28:16Z",
         "facets": {
           "origin": null,
           "risk": "medium",
