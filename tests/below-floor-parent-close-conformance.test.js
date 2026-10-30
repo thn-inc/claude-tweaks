@@ -76,15 +76,16 @@ const closeSection = (gate) => section(gate, '## Close the parent below the floo
 
 test('AC2.2: the exceeds: false bullet routes the close by entry and never closes ahead of the merge', () => {
   const below = belowFloorBullet(read(GATE_REL));
-  assert.ok(!collapse(below).includes('closes cleanly'), 'the unbacked "closes cleanly" claim is gone');
+  const collapsedBelow = collapse(below);
+  assert.ok(!collapsedBelow.includes('closes cleanly'), 'the unbacked "closes cleanly" claim is gone');
   assert.match(below, /no `demo:pending`, no brief/);
   assert.match(below, /Step 4\.0b/);
   assert.match(below, /\*\*Close the parent below the floor\*\*/);
   assert.match(below, /never closed ahead of the merge/);
   assert.match(below, /commit the parent record with the entry's own close commit/);
-  assert.ok(collapse(below).includes("never closed ahead of the merge, per that section's step 5."), 'points at step 5');
-  assert.ok(!collapse(below).includes(CLOSE_TIMING), 'the close-timing invariant is not restated in the bullet');
-  for (const claim of FALSE_MERGE_CLAIMS) assert.ok(!collapse(below).includes(claim), `false claim gone: ${claim}`);
+  assert.ok(collapsedBelow.includes("never closed ahead of the merge, per that section's step 5."), 'points at step 5');
+  assert.ok(!collapsedBelow.includes(CLOSE_TIMING), 'the close-timing invariant is not restated in the bullet');
+  for (const claim of FALSE_MERGE_CLAIMS) assert.ok(!collapsedBelow.includes(claim), `false claim gone: ${claim}`);
   assert.match(below, /end-to-end variant/, 'the Try-it walkthrough sentence is kept');
   assert.match(below, /Parent-side entry/);
 });
@@ -102,25 +103,25 @@ test('AC1.1: the close section excludes pre-merge github entries, lists sub-issu
   assert.ok(write !== -1 && closeRec > write, `writeRecord (${write}) before closeRecord (${closeRec})`);
   assert.match(close, /which call failed/);
   assert.match(close, /the entry's own close commit/);
-  assert.ok(collapse(close).includes(CLOSE_TIMING), 'per-path close-timing invariant');
-  for (const claim of FALSE_MERGE_CLAIMS) assert.ok(!collapse(close).includes(claim), `false claim gone: ${claim}`);
+  const collapsed = collapse(close);
+  assert.ok(collapsed.includes(CLOSE_TIMING), 'per-path close-timing invariant');
+  for (const claim of FALSE_MERGE_CLAIMS) assert.ok(!collapsed.includes(claim), `false claim gone: ${claim}`);
   assert.ok(
-    collapse(close).includes(
+    collapsed.includes(
       'When the entry has no later commit before its merge (the auto-merge short-circuit), commit the parent record file itself before the merge, with a `{Verb} … — refs #{parent}` subject, and, under `pr-first`, push it before the merge, so the squash carries it.',
     ),
     'the short-circuit commits the parent record itself and pushes it under pr-first',
   );
-  assert.ok(!collapse(close).includes("item 5's commit"), 'no claim of sharing cleanup item 5\'s commit');
+  assert.ok(!collapsed.includes("item 5's commit"), 'no claim of sharing cleanup item 5\'s commit');
   assert.ok(
-    collapse(close).includes('A pre-merge sub-issue-side entry under `github-issues` never runs this section.'),
+    collapsed.includes('A pre-merge sub-issue-side entry under `github-issues` never runs this section.'),
     'the opener states the pre-merge exclusion',
   );
-  const prChoice = collapse(close);
-  const mergingFirst = prChoice.indexOf('For a `$CLOSING_SUB_ISSUES` member, `{pr}` is `$MERGING_PR` when it is non-empty');
-  const fallback = prChoice.indexOf("Otherwise `{pr}` is the `number` of the sub-issue's `closedByPullRequestsReferences` entry");
+  const mergingFirst = collapsed.indexOf('For a `$CLOSING_SUB_ISSUES` member, `{pr}` is `$MERGING_PR` when it is non-empty');
+  const fallback = collapsed.indexOf("Otherwise `{pr}` is the `number` of the sub-issue's `closedByPullRequestsReferences` entry");
   assert.ok(mergingFirst !== -1 && fallback > mergingFirst, `$MERGING_PR first (${mergingFirst}), last reference as fallback (${fallback})`);
-  assert.ok(prChoice.includes('so this fallback is arbitrary but deterministic'), 'the fallback keeps its honest note');
-  assert.ok(!prChoice.includes('uses `$MERGING_PR` instead'), 'MERGING_PR is no longer only the empty-references fallback');
+  assert.ok(collapsed.includes('so this fallback is arbitrary but deterministic'), 'the fallback keeps its honest note');
+  assert.ok(!collapsed.includes('uses `$MERGING_PR` instead'), 'MERGING_PR is no longer only the empty-references fallback');
 });
 
 test('AC5.1: the close section is idempotent on a closed parent, a human reopen and a counted heading comment', () => {
