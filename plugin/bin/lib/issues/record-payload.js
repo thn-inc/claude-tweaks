@@ -29,7 +29,11 @@ const DEFER_REASONS = Object.freeze([
 // Matches a Defer-reason: line on ANY line of the body (the /m flag) — the
 // suppression check is "no line matching", per deferral-gate.md's hard gate;
 // the first line of the body is where the insert path and producers put it
-// (deferral-gate.md's "Where the reason lives").
+// (deferral-gate.md's "Where the reason lives"). Read through unfencedText: a
+// Defer-reason: line quoted inside a fenced block is never the record's own
+// (#4368). Still fence-blind, not covered by #4368: the Origin: readers
+// (provenance.js, trust.js) and the work-fingerprint reader — #4368 scopes to the
+// metadata lines an executor, the drift checks, or this insert path consume.
 const DEFER_REASON_LINE_RE = /^Defer-reason: (\S+)[ \t]*$/m;
 
 // Freshness stamp (#117): the commit each health-sweep skill actually read at
@@ -94,25 +98,29 @@ function fencedBlock(text) {
 // when unclosed (a truncated fence is quoted content, the safer direction).
 // The one fence rule shared by stripCodeSpans (materialize-format.js), sectionText
 // and extractSection (#4169), mergeStateDemands (merge-gate.js) and
-// extractCurrentStateAnchors (near-duplicate.js) (#4369): an opener is a
-// column-0 run of 3+ backticks or tildes; the closer is the same character, at
-// least the opener's length, and nothing else on its line but trailing
-// whitespace. A backtick opener's info string may not itself contain a backtick
-// (CommonMark: such a line is an inline code span, not a fence). Matches what
-// fenceFor and fencedBlock write.
+// extractCurrentStateAnchors (near-duplicate.js) (#4369), and the three
+// body-metadata extractors extractVerifiedAsOf / extractPremiseCheck /
+// extractTemplateStamp (#4368): an opener is an optional U+FEFF byte-order mark,
+// 0-3 leading spaces (CommonMark), then a run of 3+ backticks or tildes — a
+// backtick run only when no backtick follows it on the line, since CommonMark
+// reads "```a`b" as an inline code span, not a fence; the closer is 0-3 leading
+// spaces, then the same character, at least the opener's length, and nothing
+// else on its line but trailing spaces/tabs (plus the CR a LF-only split leaves
+// on a CRLF body). Four or more leading spaces is an indented code block, not a
+// fence. Matches what fenceFor and fencedBlock write (column-0 fences).
 function scanFences(lines) {
   const ranges = [];
   let unclosed = false;
   let i = 0;
   while (i < lines.length) {
-    const fenceMatch = lines[i].match(/^(`{3,}(?=[^`]*$)|~{3,})/);
+    const fenceMatch = lines[i].match(/^\uFEFF? {0,3}(`{3,}(?=[^`]*$)|~{3,})/);
     if (!fenceMatch) {
       i++;
       continue;
     }
     const fenceChar = fenceMatch[1][0];
     const fenceLen = fenceMatch[1].length;
-    const closeRe = new RegExp(`^${fenceChar}{${fenceLen},}\\s*$`);
+    const closeRe = new RegExp(`^ {0,3}${fenceChar}{${fenceLen},}[ \\t\\r]*$`);
     let j = i + 1;
     while (j < lines.length && !closeRe.test(lines[j])) j++;
     unclosed = j >= lines.length;
@@ -140,6 +148,21 @@ function fencedLineMask(lines, { unclosedAsText = false } = {}) {
     for (let k = s; k <= e; k += 1) mask[k] = true;
   }
   return mask;
+}
+
+// body -> body with every line inside a fenced block (per fencedLineRanges)
+// blanked to ''. Splits on every CommonMark line ending (CRLF, lone CR, LF)
+// keeping the separators, so every unfenced line and every separator stays
+// byte-identical and a metadata regex reads unfenced text exactly as it did
+// on the raw body (#4368).
+function unfencedText(body) {
+  const parts = body.split(/(\r\n|\r|\n)/);
+  const lines = [];
+  for (let i = 0; i < parts.length; i += 2) lines.push(parts[i]);
+  for (const [s, e] of fencedLineRanges(lines)) {
+    for (let k = s; k <= e; k++) parts[k * 2] = '';
+  }
+  return parts.join('');
 }
 
 // { title, body, type, origin?, risk?, size?, ceremony?, solutionUnjustified?, ready?, parked?, priority?, fingerprint?, deferReason? }
@@ -181,7 +204,7 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
   let reasonBody = body;
   if (deferReason !== undefined) {
     oneOf('deferReason', deferReason, DEFER_REASONS);
-    const existing = DEFER_REASON_LINE_RE.exec(body);
+    const existing = DEFER_REASON_LINE_RE.exec(unfencedText(body));
     if (existing) {
       if (existing[1] !== deferReason) {
         throw new Error(`body already carries "Defer-reason: ${existing[1]}" but deferReason is "${deferReason}"`);
@@ -225,6 +248,10 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
   return { title, body: finalBody, labels, type };
 }
 
+// The three extractors below read only unfenced lines: a metadata line inside
+// a fenced block is quoted content, never the record's own, so it never
+// matches (#4368).
+
 // body -> the git sha the sweep read when it filed this issue, or null when
 // absent (a pre-#117 issue, or a body that was never run through
 // specShapedBody's verifiedAsOf param). Consumers (e.g. bin/materialize.js)
@@ -234,7 +261,7 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
 // this reads recent.
 function extractVerifiedAsOf(body) {
   if (typeof body !== 'string' || !body) return null;
-  const m = VERIFIED_AS_OF_RE.exec(body);
+  const m = VERIFIED_AS_OF_RE.exec(unfencedText(body));
   return m ? m[1].toLowerCase() : null;
 }
 
@@ -244,7 +271,7 @@ function extractVerifiedAsOf(body) {
 // Current State claim still hold at base" before a build starts.
 function extractPremiseCheck(body) {
   if (typeof body !== 'string' || !body) return null;
-  const m = PREMISE_CHECK_RE.exec(body);
+  const m = PREMISE_CHECK_RE.exec(unfencedText(body));
   return m ? m[1].trim() : null;
 }
 
@@ -256,7 +283,7 @@ function extractPremiseCheck(body) {
 // version to decide whether the Proposed block needs re-deriving.
 function extractTemplateStamp(body) {
   if (typeof body !== 'string' || !body) return null;
-  const m = TEMPLATE_STAMP_RE.exec(body);
+  const m = TEMPLATE_STAMP_RE.exec(unfencedText(body));
   return m ? { path: m[1], version: m[2] } : null;
 }
 
