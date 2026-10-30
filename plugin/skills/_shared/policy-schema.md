@@ -46,7 +46,7 @@ Consolidating the two is deferred until a further derived lever appears (#580's 
 absent, empty, or fails validation — never throwing on malformed input. `integer` and `boolean`
 entries are additionally coerced to their native JS type; other types pass through unchanged once
 validated. A `string` entry rejects whitespace by default (a mistyped branch name); an entry carrying
-`allowWhitespace: true` — today only `release-hook`, a shell command — accepts it. An unrecognized
+`allowWhitespace: true` — `release-hook`, a shell command, and the control-mode string keys — accepts it. An unrecognized
 `key` returns `rawValue` untouched (nothing to coerce against).
 `bin/lib/issues/trust.js`'s `resolveRevertWindowDays` is the first caller
 (`trust-revert-window-days`); any future lever of the same shape — read a policy key, coerce with a
@@ -230,7 +230,7 @@ Registered by #4029; read by `readEfficiencyCeilings` in `bin/lib/policy.js` for
 
 ## Control mode
 
-Inert flat keys (#4609, #4608). `control-mode: on` implies its levers at skill-default precedence: an explicitly set lever wins, and `autonomy` is unchanged. Every other key here is consulted only when it is `on`. `isControlModeOn` in `bin/lib/policy.js` is the one comparison site (exactly `on`). Built-in risk slugs: `migrations`, `auth`, `public-contract`, `irreversible-side-effect`. List entries are logins written `a,b` (no brackets, `@`, `/`, spaces or empty entries), compared case-insensitively by consumers. A `#` ends a value, so `deploy-command` stops there; URL keys are written unquoted.
+Inert flat keys (#4609, #4608). `control-mode: on` implies its levers at skill-default precedence: an explicitly set lever wins, and `autonomy` is unchanged. Every other key here is consulted only when it is `on`. `isControlModeOn` in `bin/lib/policy.js` is the one comparison site (exactly `on`). Built-in risk slugs: `migrations`, `auth`, `public-contract`, `irreversible-side-effect`. A list is written on one line as `a,b`: a quoted or bracketed list is rejected and a dash-style block is ignored. `owned-owners` and `trusted-authors` entries are logins, compared case-insensitively by consumers; `risk-categories` entries are slugs. An entry is never empty and holds no bracket, `@`, `/` or inner space (`a, b` is fine). A `#` ends a value even inside quotes, so `deploy-command` stops there, and a quoted string key here (`deploy-command`, `deploy-live-workflow`, `dev-test-account`) whose opening quote is never closed is rejected, as is any quoted string key blank inside its quotes (`release-hook` included); URL keys are written unquoted.
 
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|

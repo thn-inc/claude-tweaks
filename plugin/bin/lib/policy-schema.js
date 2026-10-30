@@ -173,16 +173,16 @@ const POLICY_KEYS = [
   // semantics live in _shared/record-batch-input.md, not restated here.
   { key: 'specify-budget', type: 'integer', default: 5, summary: "Caps how many eligible backlog records one bare /specify drain attempts before stopping.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'autonomy', type: 'enum', values: ['supervised', 'trusted', 'unattended'], default: 'supervised', summary: "Caps how much the pipeline may do without a human — trust that classes earn can never exceed this ceiling.", category: 'autonomy-trust', tier: 'core' },
-  // Control mode (#4609, human-in-control #4608): thirteen inert flat keys. Nothing reads them yet; later records consume them, always behind isControlModeOn (bin/lib/policy.js). Every key below `control-mode` is consulted only with control mode on. All advanced — the core tier is at its cap.
+  // Control mode (#4609, human-in-control #4608): thirteen inert flat keys. Nothing reads them yet; later records consume them, always behind isControlModeOn (bin/lib/policy.js). Besides `control-mode` itself, the keys in this block, `risk-categories` and `risk-path-globs` are consulted only with control mode on. All advanced — the core tier is at its cap.
   { key: 'control-mode', type: 'enum', values: ['off', 'on'], default: 'off', summary: "The single human-in-control switch; implied levers default at skill-default precedence, so any explicitly set lever wins.", category: 'autonomy-trust', tier: 'advanced' },
   { key: 'acceptance-target', type: 'enum', values: ['local', 'dev'], default: 'local', summary: "Read only with control mode on: where a human accepts work, locally or on the dev environment; pairs with deploy-reach when dev.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'deploy-reach', type: 'enum', values: ['on-merge', 'command', 'none'], default: 'none', summary: "Read only with control mode on: how a merge reaches the dev environment, if at all; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
-  // deploy-command is an executed string: consumers read it from the base branch's policy only (never from a PR's own copy). allowWhitespace — it is a shell command, like release-hook.
-  { key: 'deploy-command', type: 'string', allowWhitespace: true, summary: "Executed string, read only from the base branch's policy; meaningful only with deploy-reach command and control mode on.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'deploy-live-workflow', type: 'string', allowWhitespace: true, summary: "Read only with control mode on: names the CI workflow whose success means dev is live; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
+  // deploy-command is an executed string: consumers read it from the base branch's policy only (never from a PR's own copy). allowWhitespace — it is a shell command, like release-hook. closedQuote on the three allowWhitespace rows below: a quoted value holding a `#` is cut mid-quote by parseFlatLines, so an opening quote that never closes is invalid rather than a malformed command.
+  { key: 'deploy-command', type: 'string', allowWhitespace: true, closedQuote: true, summary: "Executed string, read only from the base branch's policy; meaningful only with deploy-reach command and control mode on.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-live-workflow', type: 'string', allowWhitespace: true, closedQuote: true, summary: "Read only with control mode on: names the CI workflow whose success means dev is live; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'deploy-version-url', type: 'string', pattern: HTTP_URL, summary: "Read only with control mode on: a URL returning the deployed version; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'dev-base-url', type: 'string', pattern: HTTP_URL, summary: "Read only with control mode on: the dev environment's base URL, where acceptance runs; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'dev-test-account', type: 'string', allowWhitespace: true, summary: "Read only with control mode on: the vault entry name of the dedicated test account the smoke check signs in with; pairs with dev-base-url.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'dev-test-account', type: 'string', allowWhitespace: true, closedQuote: true, summary: "Read only with control mode on: the vault entry name of the dedicated test account the smoke check signs in with; pairs with dev-base-url.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'deploy-wait-seconds', type: 'integer', min: 0, default: 900, summary: "Read only with control mode on: how long to wait for a deploy to go live; 0 skips the wait. Pairs with a live signal.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'deploy-poll-seconds', type: 'integer', min: 1, default: 30, summary: "Read only with control mode on: how often the live signal is polled while waiting; pairs with deploy-wait-seconds.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'owned-owners', type: 'list', default: [], element: 'login', summary: "Read only with control mode on: GitHub users and orgs, beside the repo's own owner, whose repos count as owned. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
@@ -428,6 +428,18 @@ function isValidValue(schemaEntry, value) {
       // release-hook) out of the whitespace-free rule, but not out of the
       // non-blank rule — a whitespace-only value is still invalid.
       // An optional `pattern` (#4609) must also match — e.g. a URL key.
+      // For an allowWhitespace key the non-blank rule reads the value with one
+      // matched quote pair stripped (as resolveValue does), so `""` is blank.
+      // A `closedQuote` key also rejects an opening quote that never closes —
+      // what a `#` inside the quotes leaves behind, since parseFlatLines cuts
+      // at any `#`.
+      if (schemaEntry.allowWhitespace === true) {
+        const trimmed = value.trim();
+        // closedQuote: true (the #4609 keys only — release-hook's pinned F6/#2253
+        // contract keeps an unbalanced quote as an ordinary value).
+        if (schemaEntry.closedQuote === true && (trimmed[0] === '"' || trimmed[0] === "'") && trimmed.indexOf(trimmed[0], 1) === -1) return false;
+        if (stripMatchedQuotes(trimmed).trim().length === 0) return false;
+      }
       return value.trim().length > 0 && (schemaEntry.allowWhitespace === true || !/\s/.test(value))
         && (schemaEntry.pattern === undefined || schemaEntry.pattern.test(value));
     case 'list':

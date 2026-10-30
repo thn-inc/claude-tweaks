@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { resolvePolicyKeys, parseRiskPathGlobs, auditPolicy } = require('../plugin/bin/lib/policy-schema');
+const { resolvePolicyKeys, parseRiskPathGlobs, auditPolicy, BUILTIN_RISK_CATEGORIES } = require('../plugin/bin/lib/policy-schema');
 const { isControlModeOn } = require('../plugin/bin/lib/policy');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
@@ -56,6 +56,9 @@ test('AC1.2: each empty list key prints one empty line and exits 0, like merge-s
     const res = values(undefined, key);
     assert.strictEqual(res.status, 0, key);
     assert.strictEqual(res.stdout, '\n', key);
+    // --values also prints an empty line for an unregistered key, so the JSON
+    // form is what proves the key is registered with its [] default.
+    assert.deepStrictEqual(json(undefined, key)[key], { value: [], source: 'default' }, key);
   }
 });
 
@@ -156,6 +159,24 @@ test('AC4.7: list elements failing the login rule are rejected', () => {
   }
 });
 
+test('a list is read from one line only: a dash-style block is ignored, a quoted or bracketed list is rejected', () => {
+  // Pre-existing parser limit (parseFlatLines skips indented lines), and it fails safe: nobody is trusted.
+  assert.deepStrictEqual(json('owned-owners:\n  - acme\n', 'owned-owners')['owned-owners'], { value: [], source: 'default' });
+  for (const raw of ['"Thn-Inc,acme"', "'acme'"]) {
+    assert.deepStrictEqual(json(`owned-owners: ${raw}\n`, 'owned-owners')['owned-owners'], { value: [], source: 'default', invalid: true }, raw);
+  }
+});
+
+test('the built-in risk slugs are the four from the spec, and the prose section names each', () => {
+  assert.deepStrictEqual(BUILTIN_RISK_CATEGORIES, ['migrations', 'auth', 'public-contract', 'irreversible-side-effect']);
+  const md = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema.md'), 'utf8');
+  const start = md.indexOf('\n## Control mode\n');
+  assert.notStrictEqual(start, -1, 'policy-schema.md has no "## Control mode" section');
+  const next = md.indexOf('\n## ', start + 1);
+  const section = md.slice(start, next === -1 ? md.length : next);
+  for (const slug of BUILTIN_RISK_CATEGORIES) assert.ok(section.includes(`\`${slug}\``), `the Control mode section does not name \`${slug}\``);
+});
+
 test('login rule accepts a bot login and an underscore login', () => {
   for (const login of ['dependabot[bot]', 'user_corp', 'a', '9lives', 'Thn-Inc, acme']) {
     const out = json(`owned-owners: ${login}\n`, 'owned-owners');
@@ -182,6 +203,44 @@ test('risk-categories accepts extra slugs and rejects a non-slug', () => {
 test('deploy-command is cut at a # like every flat value', () => {
   const res = values('deploy-command: curl https://x/#y\n', 'deploy-command');
   assert.strictEqual(res.stdout, 'curl https://x/\n');
+});
+
+test('quoting does not protect a #: a quoted value cut mid-quote is rejected, not resolved malformed', () => {
+  for (const key of ['deploy-command', 'deploy-live-workflow', 'dev-test-account']) {
+    for (const raw of ['"curl https://x/#y"', "'curl https://x/#y'", '"never closed']) {
+      const out = json(`${key}: ${raw}\n`, key);
+      assert.deepStrictEqual(out[key], { value: null, source: 'default', invalid: true }, `${key}: ${raw}`);
+    }
+  }
+});
+
+// Characterization (pre-existing, pinned by tests/policy-schema.test.js F6/#2253):
+// release-hook keeps an unbalanced quote as an ordinary value; the closed-quote
+// rule is opt-in per row and belongs to the #4609 keys only.
+test('release-hook is unaffected by the closed-quote rule', () => {
+  assert.deepStrictEqual(json('release-hook: "never closed\n', 'release-hook')['release-hook'], { value: '"never closed', source: 'policy' });
+});
+
+test('a blank quoted allowWhitespace value is rejected, not resolved to a missing value', () => {
+  for (const key of ['deploy-command', 'deploy-live-workflow', 'dev-test-account', 'release-hook']) {
+    for (const raw of ['""', "''", '"  "']) {
+      const out = json(`${key}: ${raw}\n`, key);
+      assert.deepStrictEqual(out[key], { value: null, source: 'default', invalid: true }, `${key}: ${raw}`);
+    }
+  }
+});
+
+// Characterization (pre-existing, unchanged): the command-shaped string rule keeps
+// accepting a bare command, a matched-quote command, and a command that merely
+// starts with a closed quoted word.
+test('a whitespace-allowed command keeps resolving as before', () => {
+  const resolve = (key, raw) => json(`${key}: ${raw}\n`, key)[key];
+  for (const key of ['deploy-command', 'release-hook']) {
+    assert.deepStrictEqual(resolve(key, 'npm run deploy'), { value: 'npm run deploy', source: 'policy' }, key);
+    assert.deepStrictEqual(resolve(key, '"npm run deploy"'), { value: 'npm run deploy', source: 'policy' }, key);
+    assert.deepStrictEqual(resolve(key, "'npm run deploy'"), { value: 'npm run deploy', source: 'policy' }, key);
+    assert.deepStrictEqual(resolve(key, '"/opt/my tools/run.sh" --go'), { value: '"/opt/my tools/run.sh" --go', source: 'policy' }, key);
+  }
 });
 
 test('URL keys require http(s) and reject a quoted value', () => {
