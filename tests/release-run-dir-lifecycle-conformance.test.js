@@ -18,6 +18,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { gitRepo, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+const { classifyStagedItem, stagingExemption, CANONICAL_PREFIXES } = require('../plugin/bin/lib/console/resolve');
 
 const ROOT = path.join(__dirname, '..');
 const SKILL = path.join(ROOT, 'plugin', 'skills', 'release', 'SKILL.md');
@@ -347,7 +348,8 @@ function stepEightOf(text) {
 const DISPOSITION_SCOPE = [
   [/\*\*created\*\* run director/, 'disposition covers a created run directory only'],
   [/inherited[\s\S]{0,200}parent's Review Console/, 'an inherited directory is left to the parent\'s Review Console'],
-  [/staged\/review-\{n\}\.\{md,patch\}/, 'inventory: confirmed findings, staged/review-{n}.{md,patch}'],
+  [/staged\/review-\{n\}\.patch/, 'inventory: confirmed findings, staged/review-{n}.patch'],
+  [/staged\/review-followup-\{n\}\.md/, 'inventory: record-routed confirmed findings, staged/review-followup-{n}.md'],
   [/staged\/review-unconfirmed-\{n\}\.md/, 'inventory: unconfirmed entries'],
   [/staged\/review-contested-\{n\}\.md/, 'inventory: contested findings'],
   [/staged\/review-debate-\{n\}\.md/, 'inventory: debate findings'],
@@ -581,7 +583,7 @@ function parseRoster(text) {
     assert.ok(stagedBy, `roster row ${tick(prefix)} names no Staged by path`);
     const route = unticked(cells[4]);
     assert.ok(ROUTES.includes(route), `roster row ${tick(prefix)} has route "${route}", outside the closed set`);
-    return { prefix, stagedBy: stagedBy[1], route };
+    return { prefix, stagedBy: stagedBy[1], route, example: cells[1] };
   });
 }
 
@@ -778,4 +780,67 @@ test('roster-vs-routing go-red: removing the proposal routing row trips the keye
 test('roster-vs-routing go-red: a stale producer name trips the Staged by check', () => {
   const stale = (rel) => (rel === 'visual-review/SKILL.md' ? readSkillFile(rel).replace(/staged\/visual-review-/g, 'staged/vr-') : readSkillFile(rel));
   assert.throws(() => assertProven(parseRoster(readDisposition()), stale), /visual-review-/);
+});
+
+// --- Roster <-> Review Console SECTION_MAP (#4484) ---
+// A roster Example the console cannot route is refused at staging (stage-item.js's unmapped-prefix) and so
+// never reaches disposition. A review-* prefix the console maps but the roster omits is a staged file
+// disposition would call unrecognised.
+
+// Every staged/{name} literal in an Example cell as concrete names. Unlike stagedNamesIn, every alternative of a
+// {a,b} group is kept, so `review-{n}.{md,patch}` yields review-1.md and review-1.patch.
+function exampleNames(cell) {
+  return [...cell.matchAll(/staged\/([a-zA-Z][\w{},.*-]*)/g)].flatMap((m) => {
+    const name = m[1].replace(/\.$/, '').replace(/\{(?:n|N|slug)\}/g, '1').replace(/\*/g, 'x');
+    const group = /\{([^{}]*,[^{}]*)\}/.exec(name);
+    return group ? group[1].split(',').map((alt) => name.replace(group[0], alt)) : [name];
+  });
+}
+
+// Example names, on a row a review producer stages, that the console would refuse as an unmapped prefix.
+function unstageableRosterNames(roster) {
+  return roster
+    .filter((row) => row.route !== 'not staged by review')
+    .flatMap((row) => exampleNames(row.example))
+    .filter((name) => stagingExemption(name) === null && classifyStagedItem(name).reason === 'unmapped-prefix');
+}
+
+// review-* prefixes the console maps that the roster has no row for.
+function reviewPrefixesWithoutRow(roster) {
+  return CANONICAL_PREFIXES.filter((p) => p.startsWith('review-') && !roster.some((r) => r.prefix === p));
+}
+
+function assertRosterMatchesSectionMap(text) {
+  const roster = parseRoster(text);
+  const unstageable = unstageableRosterNames(roster);
+  assert.deepEqual(unstageable, [], 'roster examples the Review Console refuses as unmapped-prefix: ' + unstageable.join(', '));
+  const missing = reviewPrefixesWithoutRow(roster);
+  assert.deepEqual(missing, [], 'review-* SECTION_MAP prefixes with no roster row: ' + missing.join(', '));
+}
+
+test('AC2.1: every roster example a review producer can name is stageable (no review-{n}.md)', () => {
+  assertRosterMatchesSectionMap(readDisposition());
+});
+
+test('AC3.1: every review-* SECTION_MAP prefix has a roster row — deleting the review-followup- row goes red', () => {
+  const text = readDisposition();
+  assertRosterMatchesSectionMap(text);
+  assert.throws(() => assertRosterMatchesSectionMap(withoutRosterRow(text, 'review-followup-')), /review-followup-/);
+});
+
+test('AC2.1 go-red: restoring the review-{n}.{md,patch} example goes red on review-1.md', () => {
+  const text = readDisposition();
+  const line = rosterLine(text, 'review-{n}');
+  const doctored = text.replace(line, line.replace('`staged/review-{n}.patch`', '`staged/review-{n}.{md,patch}`'));
+  assert.notEqual(doctored, text, 'anchor: the review-{n} Example cell is not `staged/review-{n}.patch` — proof cannot discriminate');
+  assert.throws(() => assertRosterMatchesSectionMap(doctored), /review-1\.md/);
+});
+
+test('AC1.1: review-followup-1.md routes to the proposal row, which the Routing table defers', () => {
+  const text = readDisposition();
+  const row = classify('review-followup-1.md', parseRoster(text));
+  assert.ok(row, 'review-followup-1.md must classify to a roster row (#4484)');
+  assert.equal(row.route, 'proposal');
+  const routed = routingRowOf(text, 'proposal');
+  assert.ok(routed && routed.includes('The same Defer path and Defer-reason'), 'the proposal routing row must carry "The same Defer path and Defer-reason"');
 });

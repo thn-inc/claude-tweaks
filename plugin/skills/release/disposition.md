@@ -33,7 +33,8 @@ SCANNED {HH:MM:SS} — Step 8 disposition: no staged review findings. Reversibil
 
 | Prefix | Example | Staged by | Counted as | Route |
 |---|---|---|---|---|
-| `review-{n}` | `staged/review-{n}.{md,patch}` | `review/step3-routing.md` (Step 3; a critical lands here too, because the KEPT-PROMPT row stages a patch as well as surfacing it inline) | one confirmed finding per file, its severity read from the file's `Finding: {severity} {category} — …` line | `confirmed` |
+| `review-{n}` | `staged/review-{n}.patch` | `review/step3-routing.md` (Step 3; a critical lands here too, because the KEPT-PROMPT row stages a patch as well as surfacing it inline) | one confirmed finding per file, its severity read from the file's `Finding: {severity} {category} — …` line | `confirmed` |
+| `review-followup-` | `staged/review-followup-{n}.md` | `review/step3-routing.md` (Step 3; a confirmed finding whose fix is a new record, not a patch) | one finding per file, its severity read from the file's `Finding: {severity} {category} — …` line | `proposal` |
 | `review-unconfirmed-` | `staged/review-unconfirmed-{n}.md` | `_shared/multi-agent-coordination.md` (Step 3 tiebreak) | one finding per entry line | `unconfirmed` |
 | `review-contested-` | `staged/review-contested-{n}.md` | `review/step3-debate-and-refutation.md` (Step 3) | one finding per file, both verdicts side by side | `contested` |
 | `review-debate-` | `staged/review-debate-{n}.md` | `_shared/multi-agent-coordination.md` (Step 3) | one finding per file, both verdicts side by side | `contested` |

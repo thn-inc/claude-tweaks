@@ -95,6 +95,56 @@ for (const c of CASES) {
   });
 }
 
+// #4484: the record-proposal paragraph is not a `- **Label** —` bullet, so it gets its own finder.
+function recordProposalParagraph() {
+  const paragraph = md.split('\n').find((l) => l.startsWith('**Staging a record proposal'));
+  assert.ok(paragraph, 'step3-routing.md must carry a paragraph starting "**Staging a record proposal"');
+  return paragraph;
+}
+
+// Each clause is one literal the paragraph must carry, so removing it turns exactly that clause red.
+const RECORD_PROPOSAL_CLAUSES = [
+  ['--id review-followup-{n}', 'stages under the review-followup-{n} id'],
+  ['--allocate', 'allocates the number'],
+  ['from the path its first stdout line prints', 'takes {n} from the path stage-item.js prints'],
+  ['Finding: {severity} {category}', 'writes the Finding: header line'],
+  ['session-tmp-resolve.js" --value review-followup-proposal.md', 'resolves a .md scratch path'],
+  ['written `deferred`', 'writes the ledger row deferred'],
+];
+
+function missingRecordProposalClauses(paragraph) {
+  return RECORD_PROPOSAL_CLAUSES.filter(([literal]) => !paragraph.includes(literal)).map(([, fact]) => fact);
+}
+
+function assertRecordProposalClauses(paragraph) {
+  assert.deepEqual(missingRecordProposalClauses(paragraph), [], 'the record-proposal paragraph is missing clauses');
+}
+
+test('#4484: the record-proposal paragraph cites a composer command that stages a review-followup line', () => {
+  const paragraph = recordProposalParagraph();
+  const span = paragraph.match(/`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/review-routing-line\.js"[^`]*)`/);
+  assert.ok(span, 'the record-proposal paragraph must cite review-routing-line.js in a backticked command');
+  const { main, runDir } = fixture();
+  const out = [];
+  const argv = instantiate(span[1], 'high', runDir);
+  assert.equal(run(argv, deps(main, out)), 0, `exit 0 for: ${argv.join(' ')}`);
+  const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.match(text, /^- STAGED /m);
+  assert.ok(text.includes('high-severity finding'), `appended line must carry "high-severity finding": ${text}`);
+  assert.ok(text.includes('Stage path: staged/review-followup-3.md'), `appended line must name the review-followup stage path: ${text}`);
+  assertRecordProposalClauses(paragraph);
+});
+
+for (const [literal, fact] of RECORD_PROPOSAL_CLAUSES) {
+  test(`#4484 go-red: removing the clause that ${fact} turns that clause red`, () => {
+    const paragraph = recordProposalParagraph();
+    const doctored = paragraph.split(literal).join('');
+    assert.notEqual(doctored, paragraph, `anchor: "${literal}" not found — proof cannot discriminate`);
+    assert.deepEqual(missingRecordProposalClauses(doctored), [fact]);
+    assert.throws(() => assertRecordProposalClauses(doctored));
+  });
+}
+
 test('step3-routing.md carries no hand-typed Step 3 Routing template', () => {
   assert.doesNotMatch(md, /`[^`\n]*\{time\} — Step 3 Routing:/);
 });

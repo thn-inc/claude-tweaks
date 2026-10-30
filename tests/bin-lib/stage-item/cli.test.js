@@ -6,6 +6,8 @@ const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/stage-item');
 const { readText } = require('../../helpers/read-skill');
+const { classifyStagedItem } = require('../../../plugin/bin/lib/console/resolve');
+const { specShapedBody } = require('../../../plugin/bin/lib/issues/record');
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sicli-'));
@@ -241,6 +243,29 @@ test('AC1.2: cli: a canonical id prints nothing to stderr (#3370)', () => {
   const b = fakeDeps(main);
   assert.equal(run(['--run', runDir, '--id', 'review-2', '--file', sourceFile], b.deps), 0);
   assert.equal(b.err.join(''), '');
+});
+
+test('AC1.1: --id review-followup-1 (.md) stages with no refusal (#4484)', () => {
+  const { main, runDir } = fixture();
+  const md = path.join(path.dirname(main), 'proposal.md');
+  fs.writeFileSync(md, 'Title: t\n');
+  const { deps, err } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--id', 'review-followup-1', '--file', md], deps), 0);
+  assert.ok(fs.existsSync(path.join(fs.realpathSync(runDir), 'staged', 'review-followup-1.md')));
+  assert.equal(err.join(''), '');
+});
+
+test('#4484: a header+specShapedBody record proposal classifies to Queue writes', () => {
+  const body = specShapedBody({
+    currentState: 'The finding is confirmed.',
+    deliverables: '- Fix it.',
+    acceptanceCriteria: ['x'],
+    releaseNote: 'No user-visible change.',
+    filedBy: 'review',
+    provenance: { origin: 'spec #1 review (3a)', deferReason: 'genuinely-larger' },
+  });
+  const text = 'Title: t\nType: task\nLabels: ready\nDefer-reason: genuinely-larger\nFinding: high security — x\n\n' + body;
+  assert.deepEqual(classifyStagedItem('review-followup-1.md', text), { section: 'Queue writes' });
 });
 
 // #3488: producers whose runs never reach the wrap-up Review Console are exempt from the
