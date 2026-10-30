@@ -2,3 +2,17 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD ruling — window.fetch( / globalThis.fetch( third-party calls not matched — keep-deferred (digest row 6): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
+| 2 | build | SDD ruling — isRouteFile naming trap — keep-deferred until a second caller appears (digest row 7): ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
+| 3 | build | SDD ruling — Nuxt/h3/@trpc/server/Elysia read as not applicable — keep-deferred (digest row 8): ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
+| 4 | build | SDD ruling — criteria-scale-readiness severity calibration gaps — keep-deferred (digest row 9): ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
+| 5 | build | SDD ruling — Implementers and reviewers run focused suites only; /build Common Step 5 runs the full suite once: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
+| 6 | build | SDD ruling — Widen Task 1 skill-prose edits to two more stale stripper-location sentences: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
+| 7 | build | SDD ruling — Keep STRIPPER_VERDICT_MESSAGES pointing at tests/helpers/strip-comments.js: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
+| 8 | build | SDD ruling — An object returned by an arrow function is per-call: amend the plan object-brace prefix rule: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
+| 9 | build | SDD ruling — Fold Task 3 review Minors 2-5 into fix round 1: ratify or reverse at the Review Console (staged/sdd-ruling-9.md) | open | — |
+| 10 | build | SDD ruling — Final fix wave: => [{ like => ({, spread prefix, ternary disclosed (superseded by the next ruling): ratify or reverse at the Review Console (staged/sdd-ruling-10.md) | open | — |
+| 11 | flow | Pre-flight branch-divergence-check (held Step 2.5 note): origin/main was 18 commits ahead of the resumed branch | fixed | Catch-up merge `057cc5753` (one conflict in `.claude/skills/parse-signal-discipline/SKILL.md`, resolved keeping the branch's plugin/bin/lib location sentence plus main's `cli` caller stem) |
+| 12 | build | Digest row 2 — scale-readiness capitalized-receiver `X.find(value)` / filtered `Model.find` without `.limit` reads as unbounded | accepted | Won't-fix: telling an in-memory constant from a model needs binding resolution a text screen does not have, and a filtered `Model.find` with no `.limit` on a growing collection is a correct flag; the fragment's What NOT to flag already directs the judge |
+| 13 | build | Digest row 3 — scale-readiness `findMany(args)` with a non-literal argument or a spread-only `{ ...opts }` reads as unbounded | accepted | Computed string-literal key fixed in `0e54bf2ba`; won't-fix for a variable argument and a spread: the bound is not visible to the screen, flagging keeps recall, and the fragment tells the judge to read where `args` is built |
+| 14 | build | Task 2 (parked): a JSX text node holding an apostrophe opens a string to end of line, so a trailing `//` comment on that line stays as code in `normalizeBranch` | observation | Code stands: both compared branches are treated alike, the worst case is a missed dead-branch/identical-branches signal, and it is the shared stripper's documented line-bounded unterminated-literal behavior |
