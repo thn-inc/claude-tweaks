@@ -93,12 +93,19 @@ test('tidy Step 4 decline commands round-trip through declined-learning.js (#446
 
   const cli = path.join(REPO_ROOT, 'plugin', 'bin', 'declined-learning.js');
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'tidy-plan-decline-'));
-  const run = (verb, source, input) => JSON.parse(execFileSync(process.execPath, [cli, verb, '--source', source], { cwd: sandbox, input, encoding: 'utf8' }));
+  const [, lookupInput, lookupVerb, lookupSource] = lookup;
+  const [, recordVerb, recordSource] = record;
+
+  function run(verb, source, input) {
+    const stdout = execFileSync(process.execPath, [cli, verb, '--source', source], { cwd: sandbox, input, encoding: 'utf8' });
+    return JSON.parse(stdout);
+  }
+
   try {
-    assert.equal(run(lookup[2], lookup[3], lookup[1]).decline, null);
+    assert.equal(run(lookupVerb, lookupSource, lookupInput).decline, null);
     const why = 'it\'s "noise", per ADR-0007';
-    run(record[1], record[2], payload[1].replace('{why}', JSON.stringify(why).slice(1, -1)));
-    assert.equal(run(lookup[2], lookup[3], lookup[1]).decline.reason, why);
+    run(recordVerb, recordSource, payload[1].replace('{why}', JSON.stringify(why).slice(1, -1)));
+    assert.equal(run(lookupVerb, lookupSource, lookupInput).decline.reason, why);
   } finally {
     fs.rmSync(sandbox, { recursive: true, force: true });
   }
