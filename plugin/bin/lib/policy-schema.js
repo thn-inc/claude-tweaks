@@ -91,7 +91,7 @@ const POLICY_KEYS = [
   // risk-categories (#4609): project-added invisible-risk slugs, beside the four BUILTIN_RISK_CATEGORIES. `element: 'slug'` validates each comma-separated entry.
   { key: 'risk-categories', type: 'list', default: [], element: 'slug', summary: "Read only with control mode on: extra risk categories added to the four built-in ones; pairs with risk-path-globs.", category: 'merge-safety', tier: 'advanced' },
   // risk-path-globs (#4609): the second block-style key. A slug -> glob-list map, read by parseRiskPathGlobs (not parseFlatLines, which ignores indented lines); `keys` names the built-in slugs, and risk-categories adds more at resolve time.
-  { key: 'risk-path-globs', type: 'map', keys: BUILTIN_RISK_CATEGORIES, default: {}, summary: "Read only with control mode on: maps each risk category to the path globs that signal it, written as an indented block of lists.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'risk-path-globs', type: 'map', keys: BUILTIN_RISK_CATEGORIES, default: {}, summary: "Read only with control mode on: maps each risk category to its signal path globs, as an indented block; pairs with risk-categories.", category: 'merge-safety', tier: 'advanced' },
   // commit-scope / commit-scope-paths (#3298): the merge-subject scope source bin/compose-subject.js resolves when --scope is absent — explicit flag > a commit-scope-paths match over the changed files > commit-scope > unscoped. Both advanced: the core tier is at its cap.
   { key: 'commit-scope', type: 'string', summary: "Names the one Conventional-Commits scope every merge subject carries, and the fallback when a path rule is ambiguous.", category: 'merge-safety', tier: 'advanced' },
   { key: 'commit-scope-paths', type: 'list', default: [], summary: "Maps changed-path prefixes to the Conventional-Commits scope a merge subject carries when the matched files all agree on one scope.", category: 'merge-safety', tier: 'advanced' },
@@ -449,17 +449,15 @@ function isValidValue(schemaEntry, value) {
       // release-hook) out of the whitespace-free rule, but not out of the
       // non-blank rule — a whitespace-only value is still invalid.
       // An optional `pattern` (#4609) must also match — e.g. a URL key.
-      // For an allowWhitespace key the non-blank rule reads the value with one
-      // matched quote pair stripped (as resolveValue does), so `""` is blank.
       // A `closedQuote` key also rejects an opening quote that never closes —
       // what a `#` inside the quotes leaves behind, since parseFlatLines cuts
-      // at any `#`.
-      if (schemaEntry.allowWhitespace === true) {
+      // at any `#` — and a blank value inside its quotes (`""`).
+      // closedQuote: true (the #4609 keys only — release-hook's pinned F6/#2253
+      // contract keeps an unbalanced quote as an ordinary value).
+      if (schemaEntry.closedQuote === true) {
         const trimmed = value.trim();
-        // closedQuote: true (the #4609 keys only — release-hook's pinned F6/#2253
-        // contract keeps an unbalanced quote as an ordinary value).
-        if (schemaEntry.closedQuote === true && endsInsideQuote(trimmed)) return false;
-        if (stripMatchedQuotes(trimmed).trim().length === 0) return false;
+        if (endsInsideQuote(trimmed)) return false;
+        if (stripEnclosingQuotes(trimmed).trim().length === 0) return false;
       }
       return value.trim().length > 0 && (schemaEntry.allowWhitespace === true || !/\s/.test(value))
         && (schemaEntry.pattern === undefined || schemaEntry.pattern.test(value));
@@ -503,11 +501,31 @@ function stripMatchedQuotes(value) {
   return value;
 }
 
+// A closedQuote row's stripping: the outer pair goes only when it encloses the
+// whole value, meaning the first unescaped same quote is the last character, so
+// `"a" "b"` stays exactly as written. A `\` escapes except inside single quotes,
+// as in endsInsideQuote. Nothing is unescaped.
+function stripEnclosingQuotes(value) {
+  const quote = value[0];
+  if (quote !== '"' && quote !== "'") return value;
+  for (let i = 1; i < value.length; i += 1) {
+    if (value[i] === '\\' && quote === '"') i += 1;
+    else if (value[i] === quote) return i === value.length - 1 ? value.slice(1, -1) : value;
+  }
+  return value;
+}
+
 function resolveValue(key, rawValue) {
   const entry = SCHEMA_BY_KEY.get(key);
   if (!entry) return rawValue;
   if (rawValue === undefined || rawValue === null || rawValue === '') return entry.default;
   let strValue = String(rawValue);
+  // A closedQuote row validates the value as written, then strips: the rule reads
+  // quotes, so judging the stripped text would re-read `"a 'b"` as an unclosed `'`.
+  if (entry.closedQuote === true) {
+    const trimmed = strValue.trim();
+    return isValidValue(entry, trimmed) ? stripEnclosingQuotes(trimmed) : entry.default;
+  }
   // allowWhitespace entries (a shell command, e.g. release-hook) may be
   // quoted for readability in policy.yml — strip one matched pair before
   // validating, so a quoted command validates and resolves unquoted.
@@ -529,7 +547,8 @@ function hasOwn(obj, key) {
 //   { value, source }                      source: "run-config" | "policy" | "default"
 //   { value, source, "renamed-from": k }   value arrived via a RENAMED_KEYS migration
 //   { value: default, source: "default", invalid: true }   present-but-invalid at
-//                                          the winning source (never cascades)
+//                                          the winning source (never cascades;
+//                                          risk-path-globs: null, not its default)
 //   { error: "unknown-key" }               key in neither POLICY_KEYS nor RENAMED_KEYS
 // Precedence per key: run-config (only when runConfigRaw is a string) ->
 // policy -> schema default. Alias normalization happens per source, BEFORE
@@ -604,14 +623,15 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
     }
     // risk-path-globs is the other block-style key, resolved here from the
     // policy source only (run configs hold flat lever lines, never blocks) by
-    // its own parser. A rejected block resolves to the empty map, flagged
-    // invalid, never to a partial one.
+    // its own parser. A rejected block resolves to null, flagged invalid, never
+    // to a partial map or the {} that means unset — the absent shape model-profiles
+    // uses too, unlike the flat keys' schema default.
     if (requested === 'risk-path-globs') {
-      const parsed = parseRiskPathGlobs(policyRaw, riskExtraSlugs(policyRaw));
+      const parsed = parseRiskPathGlobs(policyRaw, riskAllowedSlugs(policyRaw));
       if (!parsed.present) result[requested] = { value: {}, source: 'default' };
       else if (parsed.ok) result[requested] = { value: parsed.value, source: 'policy' };
       else {
-        result[requested] = { value: {}, source: 'default', invalid: true };
+        result[requested] = { value: null, source: 'default', invalid: true };
         if (onInvalid) onInvalid(requested, parsed.raw);
       }
       continue;
@@ -707,13 +727,13 @@ function extractMapEntry(raw, topKey) {
   return found ? map : undefined;
 }
 
-// The extra slugs `risk-categories` adds beside BUILTIN_RISK_CATEGORIES — only
-// from a value that passes its own validation, so a malformed list can never
-// widen the slugs a risk-path-globs row may name (#4609).
-function riskExtraSlugs(policyRaw) {
+// The slugs a risk-path-globs row may name: BUILTIN_RISK_CATEGORIES plus what
+// `risk-categories` adds — only from a value that passes its own validation, so
+// a malformed list can never widen them (#4609).
+function riskAllowedSlugs(policyRaw) {
   const raw = parseFlatLines(typeof policyRaw === 'string' ? policyRaw : null)['risk-categories'];
-  if (raw === undefined || !isValidValue(SCHEMA_BY_KEY.get('risk-categories'), raw)) return [];
-  return raw.split(',').map((slug) => slug.trim());
+  if (raw === undefined || !isValidValue(SCHEMA_BY_KEY.get('risk-categories'), raw)) return BUILTIN_RISK_CATEGORIES;
+  return [...BUILTIN_RISK_CATEGORIES, ...raw.split(',').map((slug) => slug.trim())];
 }
 
 // A YAML scalar that is not a string when written bare: a boolean, null, or a number.
@@ -743,14 +763,19 @@ function acceptGlob(text, quoted) {
   return isBalanced(text, '{', '}') ? text : null;
 }
 
-// Where the quote opening at line[i] closes, or -1 when none opens there. A
-// quote opens only at the start of a token (line start, after whitespace, `[`
-// or `,`) and only when a matching one follows, so an apostrophe inside a word,
-// or a stray unmatched one, opens nothing. No escapes are read.
-function quoteClose(line, i) {
-  const ch = line[i];
-  if ((ch !== '"' && ch !== "'") || !(i === 0 || /[\s[,]/.test(line[i - 1]))) return -1;
-  return line.indexOf(ch, i + 1);
+// The tokenizer's one quote rule: where the quote opening at text[i] closes, or
+// -1 when none opens there. A quote opens only at the start of a token: at the
+// start of the text, right after `[` or `,`, or after whitespace that follows
+// `[`, `,`, `-` or nothing. It also needs a matching one after it, so an
+// apostrophe inside a word, or a stray unmatched one, opens nothing. No escapes
+// are read.
+function quoteClose(text, i) {
+  const ch = text[i];
+  if (ch !== '"' && ch !== "'") return -1;
+  const before = text.slice(0, i).trimEnd();
+  const prev = before[before.length - 1];
+  const opens = prev === undefined || prev === '[' || prev === ',' || (prev === '-' && before.length < i);
+  return opens ? text.indexOf(ch, i + 1) : -1;
 }
 
 // One line with a trailing `# comment` cut: a `#` inside a quote is text, and
@@ -776,33 +801,46 @@ function bracketDepth(text) {
   return depth;
 }
 
-// The inside of an inline `[…]` list -> [{ text, quoted }], or null when a
-// quote never closes or has text after it. A quoted element may hold a comma;
-// a bare one is cut at every comma, so a brace group like {a,b} must be quoted.
-// One trailing comma is tolerated (`[a, b,]`); a doubled one leaves an empty
-// element, which acceptGlob rejects.
+function skipSpace(text, i) {
+  let at = i;
+  while (at < text.length && /\s/.test(text[at])) at += 1;
+  return at;
+}
+
+// One element starting at or after text[start] -> { text, quoted, next }, with
+// `next` at the separator or the end of the text, or null when a quote never
+// closes or has anything but the separator after it. A bare element runs to the
+// separator; with a null separator (a sequence item) it runs to the end, so it
+// may hold a comma, and a quoted one may have nothing after it.
+function readElement(text, start, separator) {
+  const i = skipSpace(text, start);
+  if (text[i] === '"' || text[i] === "'") {
+    const close = quoteClose(text, i);
+    if (close === -1) return null;
+    const next = skipSpace(text, close + 1);
+    if (next < text.length && text[next] !== separator) return null;
+    return { text: text.slice(i + 1, close), quoted: true, next };
+  }
+  const cut = separator === null ? -1 : text.indexOf(separator, i);
+  const next = cut === -1 ? text.length : cut;
+  return { text: text.slice(i, next).trim(), quoted: false, next };
+}
+
+// The inside of an inline `[…]` list -> [{ text, quoted }], or null when an
+// element is malformed. A quoted element may hold a comma; a bare one is cut at
+// every comma, so a brace group like {a,b} must be quoted. One trailing comma is
+// tolerated (`[a, b,]`); a doubled one leaves an empty element, which acceptGlob
+// rejects.
 function splitInlineList(inner) {
   if (inner.trim() === '') return [];
   const items = [];
   let i = 0;
   for (;;) {
-    while (i < inner.length && /\s/.test(inner[i])) i += 1;
-    if (inner[i] === '"' || inner[i] === "'") {
-      const close = inner.indexOf(inner[i], i + 1);
-      if (close === -1) return null;
-      items.push({ text: inner.slice(i + 1, close), quoted: true });
-      i = close + 1;
-      while (i < inner.length && /\s/.test(inner[i])) i += 1;
-      if (i < inner.length && inner[i] !== ',') return null;
-    } else {
-      let end = inner.indexOf(',', i);
-      if (end === -1) end = inner.length;
-      items.push({ text: inner.slice(i, end).trim(), quoted: false });
-      i = end;
-    }
-    if (i >= inner.length) return items;
-    i += 1; // past the comma
-    while (i < inner.length && /\s/.test(inner[i])) i += 1;
+    const element = readElement(inner, i, ',');
+    if (element === null) return null;
+    items.push(element);
+    if (element.next >= inner.length) return items;
+    i = skipSpace(inner, element.next + 1); // past the comma
     if (i >= inner.length) return items; // the one trailing comma
   }
 }
@@ -813,39 +851,44 @@ function splitInlineList(inner) {
 //     public-contract:
 //       - openapi/**
 // parseFlatLines cannot see it (it skips indented lines), so this reads the
-// block itself. Returns { present: false } when no column-0 `risk-path-globs:`
-// line exists, { present: true, ok: true, value: {slug: [glob…]} }, or
+// block itself. Returns { present: false } when no line spells the key,
+// { present: true, ok: true, value: {slug: [glob…]} }, or
 // { present: true, ok: false, raw } when anything in the block is malformed —
-// the caller then resolves an empty map rather than a partial one. The block
-// ends at the first non-blank, non-comment column-0 line. `extraSlugs` are the
-// slugs allowed beside BUILTIN_RISK_CATEGORIES.
-function parseRiskPathGlobs(policyRaw, extraSlugs = []) {
+// the caller then resolves null rather than a partial map. The block ends at the
+// first non-blank, non-comment column-0 line. `allowedSlugs` are the slugs a row
+// may name.
+function parseRiskPathGlobs(policyRaw, allowedSlugs) {
   if (typeof policyRaw !== 'string') return { present: false };
   const lines = policyRaw.split('\n').map((line) => line.trimEnd()); // trimming also drops a CRLF's \r
-  const start = lines.findIndex((line) => line.startsWith('risk-path-globs:'));
+  const spellsKey = (line) => /^\s*["']?risk-path-globs["']?\s*:/.test(line);
+  const start = lines.findIndex(spellsKey);
   if (start === -1) return { present: false };
+  const allowed = new Set(allowedSlugs);
   const blockEnd = (from) => {
     let stop = from + 1;
     while (stop < lines.length && (lines[stop] === '' || /^\s/.test(lines[stop]) || lines[stop].startsWith('#'))) stop += 1;
     return stop;
   };
   const end = blockEnd(start);
-  // A column-0 `- x` ending the block is a root-level sequence, not a map, and a
-  // second column-0 block is ambiguous: reject both rather than resolve {}. `raw`
-  // then also carries the offending dash line or the second block.
-  const dashEnds = end < lines.length && /^-(\s|$)/.test(lines[end]);
-  const second = lines.findIndex((line, i) => i > start && line.startsWith('risk-path-globs:'));
+  // A column-0 `- x` ending the block is a root-level sequence, not a map, a
+  // column-0 slug ending it is a row that lost its indent, and a second block is
+  // ambiguous: reject all three rather than resolve {}. `raw` then also carries the
+  // offending line or the second block.
+  const slugLine = end < lines.length ? /^["']?([A-Za-z0-9_-]+)["']?\s*:/.exec(lines[end]) : null;
+  const strayEnds = end < lines.length && (/^-(\s|$)/.test(lines[end]) || (slugLine !== null && allowed.has(slugLine[1])));
+  const second = lines.findIndex((line, i) => i >= end && spellsKey(line));
   const fail = () => {
-    const parts = [lines.slice(start, dashEnds ? end + 1 : end)];
+    const parts = [lines.slice(start, strayEnds ? end + 1 : end)];
     if (second !== -1) parts.push(lines.slice(second, blockEnd(second)));
     return { present: true, ok: false, raw: parts.map((part) => part.join('\n').trimEnd()).join('\n') };
   };
-  if (dashEnds || second !== -1) return fail();
+  if (strayEnds || second !== -1) return fail();
 
-  // Nothing but a comment may follow the colon: an inline value is not a block.
-  if (lines[start].slice('risk-path-globs:'.length).replace(/(^|\s)#.*$/, '').trim() !== '') return fail();
+  // Only the exact column-0 spelling is read (`"risk-path-globs":` is the same key
+  // in YAML, so it must not read as absent), and nothing but a comment may follow
+  // the colon: an inline value is not a block.
+  if (!/^risk-path-globs:\s*(?:#.*)?$/.test(lines[start])) return fail();
 
-  const allowed = new Set([...BUILTIN_RISK_CATEGORIES, ...extraSlugs]);
   const value = {};
   let rowIndent = null; // every row shares the first row's indent
   let open = null; // the row whose value is empty, collecting `- item` lines at one indent
@@ -885,12 +928,8 @@ function parseRiskPathGlobs(policyRaw, extraSlugs = []) {
     } else if (item && open && item[1].length >= rowIndent) {
       if (open.indent === null) open.indent = item[1].length;
       else if (item[1].length !== open.indent) return fail(); // uneven sequence indent
-      const text = (item[2] || '').trim();
-      const unquoted = stripMatchedQuotes(text);
-      const quoted = unquoted !== text;
-      if (!quoted && (text.startsWith('"') || text.startsWith("'"))) return fail(); // an unterminated quote
-      if (quoted && unquoted.includes(text[0])) return fail(); // `"a" "b"`: no escapes are read
-      const glob = acceptGlob(unquoted, quoted);
+      const element = readElement((item[2] || '').trim(), 0, null); // null: `"a" "b"`, or a quote never closed
+      const glob = element === null ? null : acceptGlob(element.text, element.quoted);
       if (glob === null) return fail();
       open.list.push(glob);
     } else {
@@ -1042,7 +1081,7 @@ function auditPolicy(repoRoot) {
   }
   // A rejected risk-path-globs block (an inline value on the key line is also
   // seen by the flat loop above, which flags it first — report it once).
-  const riskGlobs = parseRiskPathGlobs(policyRaw, riskExtraSlugs(policyRaw));
+  const riskGlobs = parseRiskPathGlobs(policyRaw, riskAllowedSlugs(policyRaw));
   if (riskGlobs.present && !riskGlobs.ok && !invalidValues.some((row) => row.key === 'risk-path-globs')) {
     invalidValues.push({ key: 'risk-path-globs', value: riskGlobs.raw, expected: SCHEMA_BY_KEY.get('risk-path-globs') });
   }
