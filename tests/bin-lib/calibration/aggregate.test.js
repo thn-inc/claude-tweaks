@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { aggregate } = require('../../../plugin/bin/lib/calibration/aggregate.js');
+const { aggregate, runIdTimestamp } = require('../../../plugin/bin/lib/calibration/aggregate.js');
 
 function makeRuns(n, { withFindingsOnRow = null } = {}) {
   const runs = [];
@@ -66,9 +66,53 @@ test('aggregate: failedCount counts FAILED lines across the window, starting at 
   assert.strictEqual(withFailures.failedCount, 2);
 });
 
-test('aggregate: window selects the last N runIds by name sort', () => {
-  const runs = makeRuns(25);
+function stubRuns(ids, decisionLines = []) {
+  return ids.map((runId) => ({ runId, decisionLines, events: { counts: {} } }));
+}
+
+test('AC1.1: with the 2026-10-27 archive shape, the window is the 20 most recent hyphenated-timestamp runs', () => {
+  const dated = [];
+  for (let d = 1; d <= 25; d++) dated.push(`2026-10-${String(d).padStart(2, '0')}T120000-record-${d}`);
+  const undated = ['spec-339', 'spec-852', 'unresolved-provenance'];
+  const olderDated = ['20260911T131119-backlog-standalone', '2026-07-19T1900-record-39'];
+  // input deliberately unsorted: undated and older ids interleaved
+  const ids = [...undated.slice(0, 1), ...dated.slice().reverse(), ...olderDated, ...undated.slice(1)];
+  const runs = stubRuns(ids);
   const result = aggregate({ tsv: { rows: [] }, runs, rowIds: [], windowN: 20 });
-  assert.strictEqual(result.window.runIds.length, 20);
-  assert.strictEqual(result.window.runIds[19], runs[24].runId);
+  assert.deepStrictEqual(result.window.runIds, dated.slice(5));
+  assert.strictEqual(result.window.excluded, 3);
+});
+
+test('runIdTimestamp: parses hyphenated, minute-precision and compact ids; null for undated', () => {
+  assert.strictEqual(runIdTimestamp('2026-10-27T055458-tidy-standalone'), '20261027055458');
+  assert.strictEqual(runIdTimestamp('2026-07-19T1900-record-39'), '20260719190000');
+  assert.strictEqual(runIdTimestamp('20260911T131119-backlog-standalone'), '20260911131119');
+  assert.strictEqual(runIdTimestamp('2026-10-01T120000'), '20261001120000');
+  assert.strictEqual(runIdTimestamp('spec-339'), null);
+  assert.strictEqual(runIdTimestamp('unresolved-provenance'), null);
+  assert.strictEqual(runIdTimestamp('run-1'), null);
+});
+
+test('compact and minute-precision ids order by time, not by text', () => {
+  const ids = ['2026-10-01T0001-c', '20261001T000000-a', '2026-09-30T235959-b'];
+  const runs = stubRuns(ids);
+  const result = aggregate({ tsv: { rows: [] }, runs, rowIds: [], windowN: 2 });
+  assert.deepStrictEqual(result.window.runIds, ['20261001T000000-a', '2026-10-01T0001-c']);
+  assert.strictEqual(result.window.excluded, 0);
+});
+
+test('ties on timestamp break by run id', () => {
+  const ids = ['2026-08-09T094731-spec-246-247-254-untracked-halves', '2026-08-09T094731-spec-246-247-254'];
+  const runs = stubRuns(ids);
+  const result = aggregate({ tsv: { rows: [] }, runs, rowIds: [], windowN: 20 });
+  assert.deepStrictEqual(result.window.runIds, ['2026-08-09T094731-spec-246-247-254', '2026-08-09T094731-spec-246-247-254-untracked-halves']);
+});
+
+test('undated runs never pad a short window', () => {
+  const ids = ['2026-08-01T000000-a', 'run-1', '2026-08-02T000000-b', 'spec-12'];
+  const runs = stubRuns(ids, ['- AUTO 12:00:00 — Review Console: terminal decision approve-all. Reversibility: n/a.']);
+  const result = aggregate({ tsv: { rows: [] }, runs, rowIds: [], windowN: 20 });
+  assert.deepStrictEqual(result.window.runIds, ['2026-08-01T000000-a', '2026-08-02T000000-b']);
+  assert.strictEqual(result.window.excluded, 2);
+  assert.strictEqual(result.consoleDist['approve-all'], 2);
 });
