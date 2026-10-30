@@ -869,6 +869,37 @@ test('isReferencePreservingOriginLine: a hunk deleting only blank lines is not r
   assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
 });
 
+test('isReferencePreservingOriginLine: a deleted non-Origin line carrying a #N is not reference-preserving even when enough Origin lines are added back', () => {
+  // Two Origin: lines are added back, so the added-count check passes and
+  // every cited #N is kept; only the deleted-line `Origin:` check rejects the
+  // deleted `Built earlier in #9.` line.
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -5,2 +5,2 @@',
+    '-Built earlier in #9.',
+    '-Origin: built in #10',
+    '+Origin: built in #9, #10',
+    '+Origin: built in #9, #10, #11',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: deleted and added Origin: lines pair in order (the second pair drops #11)', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6,2 +6,2 @@',
+    '-Origin: built in #10',
+    '-Origin: built in #11',
+    '+Origin: built in #10, #11',
+    '+Origin: other',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
 test('isStepRenumber: a blank deleted line beside the renumbered heading is ignored', () => {
   const diff = [
     '--- a/docs/journeys/demo.md',
