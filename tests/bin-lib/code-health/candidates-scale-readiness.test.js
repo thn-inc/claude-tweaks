@@ -767,7 +767,7 @@ test('#3903 per-request-db-client: closers match their own opener within the cur
       'const deps = { db: new PrismaClient() };',
       '',
     ].join('\n'),
-    // A mismatched `foo(a[ )` closes both groups; the module-scope object after it is skipped, the handler client is flagged.
+    // Smoke case: after a mismatched `foo(a[ )` the module-scope object is still skipped and the handler client still flagged. A leaked `(`/`[` frame here has no observable effect, so this pins no closer rule; `scoped-closer.js` below does.
     'routes/mismatch.js': [
       'foo(a[ );',
       'const deps = { db: new PrismaClient() };',
