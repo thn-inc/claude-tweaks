@@ -5,8 +5,8 @@
 **Goal:** A decomposition parent whose last sub-issue closes below the oversight floor gets closed, after that merge lands, with a comment listing each sub-issue and its closing PR. Tidy surfaces any parent the close missed.
 
 **Architecture:** `wrap-up/verification-brief-parent-gate.md` gets one canonical `## Close the parent below the floor` section. It has two callers:
-- **`github-issues`:** a new post-merge step, `_shared/pr-first-merge-post-merge.md` Step 4.0b, which every pr-first `merged` outcome reaches. Dispatch close-out step 7 and wrap-up `merge` mode step 3 also cite it.
-- **`local-files`:** the sub-issue-side `exceeds: false` branch writes the parent record's closure in-branch, so the closure lands with the run's merge.
+- **`github-issues`:** a new post-merge step, `_shared/pr-first-merge-post-merge.md` Step 4.0b, which every pr-first `merged` outcome reaches. Dispatch close-out step 7, wrap-up `merge` mode step 3, and the three local-merge push sites (`dispatch/settle-and-merge.md`, `wrap-up/auto-merge-short-circuit.md`, `flow/worktree-merge.md`) also run it.
+- **`local-files`:** the sub-issue-side `exceeds: false` branch writes the parent record's closure in-branch and commits it with the sub-issue's own close, so the closure reaches the integration branch only with the run's merge commit (plan-review decision, 2026-10-30).
 
 The pre-merge sub-issue-side callers never close a `github-issues` parent.
 
@@ -29,11 +29,12 @@ Scope keywords: closes cleanly, ever closes a parent, never closes the parent, b
 - **`local-files` close sequence:** append the section to the parent body with `writeRecord`, then `closeRecord(parentPath)` (`plugin/bin/lib/issues/local-store.js`).
 - **Idempotence:** a parent already `CLOSED` (`facets.closed` under `local-files`) is a no-op. A trusted comment (`_shared/pr-run-comments.md`'s Trusted authors) already carrying the heading means close only, with no second comment. The `local-files` equivalent is a body already holding the heading.
 - **No acceptance labels:** the below-floor close never writes `demo:pending`, `demo:approved` or `demo:changes-requested`, and never composes a Verification Brief.
-- **Close timing:** a `github-issues` parent is never closed by a pre-merge caller (wrap-up Phase 4, wrap-up's auto-merge short-circuit, dispatch's group auto-merge gate).
+- **Close timing:** a `github-issues` parent is never closed by a pre-merge caller (wrap-up Phase 4, wrap-up's auto-merge short-circuit, dispatch's group auto-merge gate). A `local-files` parent closes in-branch in the same commit as the sub-issue's close.
+- **Step 4.0b is a post-merge entry:** it posts no Try it block, appends nothing to `"$TRY_IT"`, and on a `gh` failure skips that parent and reports it; it never falls back to the no-parent path.
 - **Comment-body temp file:** session-scoped `parent-close-comment.md`, via `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value parent-close-comment.md`. Never `/tmp`.
 - **Byte caps:**
-  - `plugin/skills/tidy/step-6-auto.md` is 48,934 bytes; after Task 3, `wc -c` must stay under 49,400.
-  - `plugin/skills/_shared/github-pr-scan-acceptance.md` is 46,268 bytes; after Tasks 1 and 3 it must stay at or below 47,200 (`RAIL_BYTES` is 52,500).
+  - `plugin/skills/tidy/step-6-auto.md` is 48,934 bytes; after Task 4, `wc -c` must stay under 49,400.
+  - `plugin/skills/_shared/github-pr-scan-acceptance.md` is 46,268 bytes; after Tasks 1 and 4 it must stay at or below 47,200 (`RAIL_BYTES` is 52,500).
 - **Commits:** subject `{Verb} {what} — refs #4466`, never `closes`/`fixes`, ending with the line `Claude-Session: https://claude.ai/code/session_017vXcAdzjXoYPckYwSbBNA3`. Run git as `git -C "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow+spec-4469-4466" …`, one plain command per call. Never `git stash`.
 - **Scope and edit discipline:** commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same.
 - **Test runs:** targeted suites only (`node --test <file>`). The full suite runs centrally.
@@ -45,9 +46,9 @@ Scope keywords: closes cleanly, ever closes a parent, never closes the parent, b
 
 ## Review Focus
 
-1. **The merge never lands** (`armed` that never merges, or `pending-review`). Expected: the parent stays open. Step 4.0b runs only on outcome `merged`, and tidy's backstop surfaces the parent once every sub-issue really is closed. Pinned in Task 2's prose test: Step 4.0b names `merged` only, and the `exceeds: false` bullet says pre-merge callers never close a `github-issues` parent.
+1. **The merge never lands** (`armed` that never merges, or `pending-review`). Expected: the parent stays open. Step 4.0b runs only on outcome `merged`, and tidy's backstop surfaces the parent once every sub-issue really is closed. Pinned in Task 3's prose test (Step 4.0b names `merged`) and Task 2's (the `exceeds: false` bullet says the parent is never closed ahead of the merge).
 2. **Running the close twice** (close-out after an earlier Step 4.0b, or a tidy approval after Step 4.0b). Expected: one comment, one close. Pinned in Task 2: the prose names both idempotence checks, already `CLOSED` and a trusted heading comment.
-3. **Unscored sibling** (a sub-issue with no `risk:*`). Expected: `maxRiskTier` is `undefined`, the parent fails closed to `exceeds: true`, and it is never closed silently. Pinned in Task 3's scan-execution tests: an unscored due parent prints the above-floor row.
+3. **Unscored sibling** (a sub-issue with no `risk:*`). Expected: `maxRiskTier` is `undefined`, the parent fails closed to `exceeds: true`, and it is never closed silently. Pinned in Task 4's scan-execution tests: an unscored due parent prints the above-floor row.
 4. **A just-merged sub-issue still reads `OPEN`** (GitHub closes it about 2 s after `mergedAt`). Expected: Step 4.0b passes the merge's closing records as `$CLOSING_SUB_ISSUES`, so the Self-inclusion rule counts them `CLOSED`. Pinned in Task 2: the Self-inclusion table gains a Step 4.0b row.
 5. **An untrusted comment carrying the marker heading.** Expected: it does not count as the listing comment, and the parent still gets a comment of its own. Pinned in Task 2: the close section cites Trusted authors.
 
@@ -55,12 +56,12 @@ Scope keywords: closes cleanly, ever closes a parent, never closes the parent, b
 
 | Spec item | Task |
 |---|---|
-| Deliverable 1, AC1, AC2 (post-merge close, both drivers) | Task 2 |
+| Deliverable 1, AC1, AC2 (post-merge close, both drivers; the spec's "close-out step 3" is close-out step 7, the `merged` step — intent-resolvable, plan review 2026-10-30) | Tasks 2, 3 |
 | Deliverable 2 (comment format, PR references) | Task 2 |
-| Deliverable 3, AC3 (tidy parent-gate Close row) | Task 3 |
+| Deliverable 3, AC3 (tidy parent-gate row whose approved action closes the parent — plan-review decision, 2026-10-30) | Task 4 |
 | Deliverable 4, AC4 (acceptance-gap excludes parents) | Task 1 |
 | Deliverable 5, AC5 (idempotent close) | Task 2 |
-| Deliverable 6 (engine-verify tests, journey doc) | Task 4 |
+| Deliverable 6 (engine-verify tests, journey doc) | Task 5 |
 
 ---
 
@@ -103,76 +104,128 @@ Expected: PASS, 0 failures
 
 ---
 
-### Task 2: Close a below-floor parent after the merge lands
+### Task 2: The Parent-Gate Procedure's below-floor close section
 
 **Role:** judgment
 **Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/wrap-up/verification-brief-parent-gate.md`
-  - **`## Enumerate the parent's sub-issues` fetch:** `gh issue view {n} --json state,labels` becomes `state,labels,title,closedByPullRequestsReferences`.
+  - **`## Enumerate the parent's sub-issues` fetch:** `gh issue view {n} --json state,labels` becomes `state,labels,title,closedByPullRequestsReferences` (probe-run on #4459: `closedByPullRequestsReferences` → `[4516]`).
   - **`**exceeds: false**` bullet in `## Evaluate the gate`:** replace "the parent closes cleanly: no `demo:pending`, no brief, same as …" with:
     - the literal "no `demo:pending`, no brief" (`tests/try-it-contract-conformance.test.js:170` pins it);
-    - sub-issue-side entry: under `github-issues` the parent stays open, because this run's merge has not landed, and `_shared/pr-first-merge-post-merge.md`'s Step 4.0b closes it after the merge (`/claude-tweaks:tidy`'s `parent-gate` backstop catches a merge that closes outside a session). Under `local-files`, run **Close the parent below the floor** now, because the record write lands with the run's merge;
+    - sub-issue-side entry under `github-issues`: the parent stays open, because this run's merge has not landed. `_shared/pr-first-merge-post-merge.md`'s Step 4.0b closes it after the merge (Task 3), and `/claude-tweaks:tidy`'s `parent-gate` backstop catches a merge no session saw land;
+    - sub-issue-side entry under `local-files`: run **Close the parent below the floor** now, and commit the parent record together with the sub-issue's own close. The parent reaches the integration branch only with the merge commit, so it is never closed ahead of the merge (plan-review decision, 2026-10-30);
     - parent-side entry (`/claude-tweaks:tidy`): run **Close the parent below the floor**;
     - keep the Try-it walkthrough sentence. The parent-side entry still carries no walkthrough.
+  - **`## Two entry shapes`:** the sub-issue-side bullet now counts five callers, not "the four sub-issue callers". The fifth is `_shared/pr-first-merge-post-merge.md` Step 4.0b, a **post-merge** sub-issue-side entry that:
+    - posts no Try it block and appends nothing to `"$TRY_IT"` (amend the **Return to the Try it post** paragraph to exempt it);
+    - on any `gh` failure skips that parent and reports it, never falling back to the no-parent path (amend the **Fail open** paragraph to exempt it);
+    - acts only on `due` + `exceeds: false`.
   - **New `## Close the parent below the floor` section,** between `## Evaluate the gate` and `## Compose the parent brief`:
     1. Idempotence, per Global Constraints, reading `gh issue view $PARENT_NUM --json state,comments`. Untrusted heading comments are named in a skip notice.
-    2. Body: the heading; one sentence naming the highest sub-issue `risk:{maxTier}` and the resolved `risk-floor`, saying no Verification Brief or `demo:pending` sign-off is owed; then one listing line per enumerated sub-issue (Global Constraints). A `$CLOSING_SUB_ISSUES` member whose `closedByPullRequestsReferences` is still empty uses the run's `run-state.json` `pr` number.
+    2. Body: the heading; one sentence naming the highest sub-issue `risk:{maxTier}` and the resolved `risk-floor`, saying no Verification Brief or `demo:pending` sign-off is owed; then one listing line per enumerated sub-issue (Global Constraints). State the no-SHA rule in a sentence beginning "Never" that names a merge SHA. A `$CLOSING_SUB_ISSUES` member whose `closedByPullRequestsReferences` is still empty uses the merging PR's number (Step 4.0b passes it). On a no-PR local merge it carries no suffix.
     3. Write the body to `parent-close-comment.md`, then comment, then close.
     4. Partial state: report exactly which call failed, and never fall back to the no-parent path. A rerun's idempotence check, or tidy's backstop, finishes it.
-    5. `local-files`: the same, through `writeRecord` then `closeRecord(parentPath)`, with `parentPath` resolved as **Apply the gate** resolves it.
-  - **Self-inclusion caller table:** add the row `` `_shared/pr-first-merge-post-merge.md` Step 4.0b `` with the merged PR's closing records.
-- Modify: `plugin/skills/_shared/pr-first-merge-post-merge.md`. Add `### Step 4.0b: Close below-floor parents (#4466)` between Step 4.0 and Step 4.1. It applies only under `work-backend: github-issues`.
-  - **Inputs:** take `$CLOSING_SUB_ISSUES` from the merged PR's own closing records, `gh pr view {pr} --json closingIssuesReferences --jq '[.closingIssuesReferences[].number]'` (probe-run on PR #4529 → `[4369]`), minus any record Step 4.0 reopened. It does not come from a run-dir fact pack: a multi-spec merge runs against the parent run dir, which has no per-spec pack.
-  - **Per record with a resolvable parent:** run the Parent-Gate Procedure from **Resolve the parent** through **Evaluate the gate**, and on `due` with `exceeds: false` run **Close the parent below the floor**. Every other outcome is a no-op.
-  - **Logging:** log one `decisions.md` line per parent closed.
-  - **Failure:** a failing `gh` call is reported in the closing summary, never a stop.
-- Modify: `plugin/skills/dispatch/close-out.md` step 7 ("First run `_shared/pr-first-merge-post-merge.md`'s Step 4.0, …") and `plugin/skills/wrap-up/merge-mode.md` step 3 ("run Step 4.0 (…), then Step 4.1"): each now runs Step 4.0 and then Step 4.0b. Keep the substring `` pr-first-merge-post-merge.md`'s Step 4.0 `` / `` Step 4.0 (`_shared/pr-first-merge-post-merge.md`), then Step 4.1 `` that `tests/closing-links-prose-conformance.test.js` pins.
+    5. `local-files`: the same, through `writeRecord` then `closeRecord(parentPath)`, with `parentPath` resolved as **Apply the gate** resolves it. On a sub-issue-side entry, stage the parent record file into the same commit as the sub-issue's close (`wrap-up/cleanup-procedures.md` item 5's commit).
+  - **Self-inclusion caller table:** add the row `` `_shared/pr-first-merge-post-merge.md` Step 4.0b `` with the merge's closing records.
+- Modify: `plugin/skills/wrap-up/verification-brief.md`, the Routing section.
+  - "Five call sites exist today:" becomes "Six call sites exist today:". Retarget the pin at `tests/verify-json-acceptance-guard-conformance.test.js:106` from `/Five call sites exist today/` to `/Six call sites exist today/`.
+  - Add the table row `` `_shared/pr-first-merge-post-merge.md` Step 4.0b (post-merge) `` / `one or more **sub-issues** (the merge's closing records), after the merge landed — runs only the below-floor close`.
 - Modify: `plugin/skills/demo/SKILL.md:264`. The "nothing else in the system ever closes a parent" clause now names the Parent-Gate Procedure's **Close the parent below the floor** as the closer below the floor, and keeps /demo's Approve as the only close for a parent above it.
-- Test: `tests/below-floor-parent-close-conformance.test.js` (append).
+- Test: `tests/below-floor-parent-close-conformance.test.js` (append), `tests/verify-json-acceptance-guard-conformance.test.js` (retarget one pin).
 
 **Interfaces:**
-- Consumes: Task 1 — none.
-- Produces: the section name `## Close the parent below the floor`, the heading `## Closed below the oversight floor`, and the step `### Step 4.0b: Close below-floor parents (#4466)`. Task 3 cites the section, and Task 4 cites Step 4.0b.
+- Consumes: none.
+- Produces: the section name `## Close the parent below the floor`, the heading `## Closed below the oversight floor`, and the caller name `_shared/pr-first-merge-post-merge.md` Step 4.0b. Task 3 writes that step, Task 4 cites the section, and Task 5 cites Step 4.0b.
 
 - [ ] **Step 1: Write the failing tests.** Each test name carries its clause id:
   - `AC1.1:` the close section and its comment shape;
-  - `AC2.1:` Step 4.0b, merged-only;
   - `AC2.2:` the pre-merge-callers-never-close-`github-issues` bullet;
   - `AC5.1:` the idempotence clauses.
 
   The test cases:
-  - **`exceeds: false` slice:** `between(gate, '**`exceeds: false`**', '**`exceeds: true`**')` does not match `/closes cleanly/`. It matches `/Step 4\.0b/`, `/\*\*Close the parent below the floor\*\*/`, and the kept Try-it pins `/end-to-end variant/` and `/Parent-side entry/`.
+  - **`exceeds: false` slice:** `between(gate, '**`exceeds: false`**', '**`exceeds: true`**')`:
+    - collapsed (`s.replace(/\s+/g, ' ')`), does not include `closes cleanly`;
+    - matches `/Step 4\.0b/`, `/\*\*Close the parent below the floor\*\*/`, `/never closed ahead of the merge/`, and the kept Try-it pins `/end-to-end variant/` and `/Parent-side entry/`.
   - **Close section** (`between(gate, '## Close the parent below the floor', '## Compose the parent brief')`):
-    - it includes `## Closed below the oversight floor` and `closed by PR #{pr}`, states the no-SHA rule (matches `/never[^.]*merge SHA/i`), and does not include `mergeCommit`;
+    - it includes `## Closed below the oversight floor` and `closed by PR #{pr}`, and matches `/Never[^.]*merge SHA/`;
     - in index order, `gh issue comment $PARENT_NUM --body-file` comes before `gh issue close $PARENT_NUM --reason completed`, and `writeRecord(parentPath` comes before `closeRecord(parentPath)`;
-    - it matches `/already `CLOSED`/`, `/Trusted authors/` and `/which call failed/`.
-  - **Post-merge step:**
-    - `pr-first-merge-post-merge.md` has `### Step 4.0b` between `### Step 4.0` and `### Step 4.1`;
-    - its body names `closingIssuesReferences`, `**Close the parent below the floor**` and `merged`;
-    - `close-out.md` step 7 and `merge-mode.md` step 3 each include `Step 4.0b`;
-    - the gate's Self-inclusion table includes `Step 4.0b`.
-  - **Demo claim:** `demo/SKILL.md` does not match `/nothing else in the system ever closes a parent/` and matches `/Close the parent below the floor/`.
-  - **Go-red control:** read `git show 1ab4e17d9:plugin/skills/wrap-up/verification-brief-parent-gate.md` (`execFileSync`, guarded by try/catch as `tests/tidy-needs-worklist-rule.test.js` does) and assert its `exceeds: false` slice matches `/closes cleanly/`.
+    - it matches `/already `CLOSED`/`, `/Trusted authors/`, `/which call failed/` and `/same commit/`.
+  - **Entry shapes:**
+    - the `## Two entry shapes` slice includes `Step 4.0b` and does not include `the four sub-issue callers`;
+    - the Return-to-Try-it and Fail-open paragraphs each name `Step 4.0b`;
+    - the Self-inclusion table includes `Step 4.0b`;
+    - `verification-brief.md`'s Routing slice includes `Six call sites exist today` and `Step 4.0b`.
+  - **Demo claim:** collapsed `demo/SKILL.md` does not include `nothing else in the system ever closes a parent`, and matches `/Close the parent below the floor/`.
+  - **Go-red control:** read `git show 1ab4e17d9:plugin/skills/wrap-up/verification-brief-parent-gate.md` (`execFileSync`, guarded by try/catch as `tests/tidy-needs-worklist-rule.test.js` does) and assert its `exceeds: false` slice includes `closes cleanly` and its Two-entry-shapes slice includes `the four sub-issue callers`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/below-floor-parent-close-conformance.test.js`
 Expected: FAIL (`## Close the parent below the floor` not found)
 
-- [ ] **Step 3: Write the prose** in the five files above.
+- [ ] **Step 3: Write the prose** in the three skill files above, and retarget the one pin.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `node --test tests/below-floor-parent-close-conformance.test.js tests/closing-links-prose-conformance.test.js tests/try-it-contract-conformance.test.js tests/comment-trust-conformance.test.js tests/session-tmp-root-migration.test.js tests/skill-fence-guard-shapes.test.js tests/fetch-sub-issues-prose-conformance.test.js`
+Run: `node --test tests/below-floor-parent-close-conformance.test.js tests/verify-json-acceptance-guard-conformance.test.js tests/try-it-contract-conformance.test.js tests/comment-trust-conformance.test.js tests/session-tmp-root-migration.test.js tests/skill-fence-guard-shapes.test.js tests/fetch-sub-issues-prose-conformance.test.js`
 Expected: PASS, 0 failures
 
-- [ ] **Step 5: Commit** the six files: `Close below-floor decomposition parents after the merge lands — refs #4466`
+- [ ] **Step 5: Commit** the five files: `Add the Parent-Gate Procedure's below-floor parent close — refs #4466`
 
 ---
 
-### Task 3: Tidy's parent-gate backstop surfaces stranded below-floor parents
+### Task 3: Post-merge Step 4.0b closes below-floor parents on every merge path
+
+**Role:** judgment
+**Review risk:** high
+
+**Files:**
+- Modify: `plugin/skills/_shared/pr-first-merge-post-merge.md`. Add `### Step 4.0b: Close below-floor parents (#4466)` between Step 4.0 and Step 4.1. It applies only under `work-backend: github-issues`; `local-files` closes in-branch (Task 2).
+  - **Inputs (`$CLOSING_SUB_ISSUES`), minus any record Step 4.0 reopened:**
+    - after a PR merge (outcome `merged`): the PR's closing records, `gh pr view {pr} --json closingIssuesReferences --jq '[.closingIssuesReferences[].number]'` (probe-run on PR #4529 → `[4369]`);
+    - after a no-PR local merge, the call sites below: the `Fixes #{n}` lines of the pushed merge commit's message, `git log -1 --format=%B {merge-sha}`.
+
+    The input never comes from a run-dir fact pack: a multi-spec merge runs against the parent run dir, which has no per-spec pack.
+  - **Per record with a resolvable parent:** run the Parent-Gate Procedure as its post-merge sub-issue-side entry (Task 2), from **Resolve the parent** through **Evaluate the gate**, and on `due` with `exceeds: false` run **Close the parent below the floor**. Every other outcome is a no-op. One parent is closed once, even when several of its sub-issues are in the set.
+  - **Logging and failure:** log one `decisions.md` line per parent closed. A failing `gh` call skips that parent, is reported in the closing summary, and is never a stop. Tidy's backstop is the recovery.
+- Modify the call sites so each runs Step 4.0b right after Step 4.0, or before its Step 4.1 where it runs no Step 4.0:
+  - `plugin/skills/dispatch/close-out.md` step 7 ("First run `_shared/pr-first-merge-post-merge.md`'s Step 4.0, …"): keep the substring `` pr-first-merge-post-merge.md`'s Step 4.0 `` (`tests/closing-links-prose-conformance.test.js` pins it), then add "then Step 4.0b".
+  - `plugin/skills/wrap-up/merge-mode.md` step 3 ("run Step 4.0 (…), then Step 4.1"): keep the pinned substring `` Step 4.0 (`_shared/pr-first-merge-post-merge.md`), then Step 4.1 ``, adding Step 4.0b before Step 4.1 in a following sentence.
+  - `plugin/skills/dispatch/settle-and-merge.md:397`, `plugin/skills/wrap-up/auto-merge-short-circuit.md:363`, `plugin/skills/flow/worktree-merge.md:141` (the local-merge push sites that already run Step 4.1): run Step 4.0b first, against the pushed merge commit.
+- Test: `tests/below-floor-parent-close-conformance.test.js` (append).
+
+**Interfaces:**
+- Consumes: Task 2's `## Close the parent below the floor` and its post-merge entry rules.
+- Produces: `### Step 4.0b: Close below-floor parents (#4466)`.
+
+- [ ] **Step 1: Write the failing tests** (names prefixed `AC2.1:`):
+  - **The step itself:**
+    - `pr-first-merge-post-merge.md` has `### Step 4.0b` between `### Step 4.0` and `### Step 4.1`;
+    - its body names `closingIssuesReferences`, `git log -1 --format=%B`, `**Close the parent below the floor**`, `merged` and `work-backend: github-issues`.
+  - **Call sites:**
+    - `close-out.md` step 7 (slice `'7. **On `merged`'` to `'\n## '`) and `merge-mode.md` step 3 (slice `'3. On `merged`:'` to `'\n## '`) each include `Step 4.0b`;
+    - in each of `settle-and-merge.md`, `auto-merge-short-circuit.md` and `worktree-merge.md`, the paragraph naming `Step 4.1` against the merge commit also includes `Step 4.0b`, at a lower index.
+  - **Go-red control:** at `git show 1ab4e17d9:plugin/skills/_shared/pr-first-merge-post-merge.md`, the file does not include `Step 4.0b`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `node --test tests/below-floor-parent-close-conformance.test.js`
+Expected: FAIL (`### Step 4.0b` not found)
+
+- [ ] **Step 3: Write the prose** in the six files above.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `node --test tests/below-floor-parent-close-conformance.test.js tests/closing-links-prose-conformance.test.js tests/skill-fence-guard-shapes.test.js tests/session-tmp-root-migration.test.js`
+Expected: PASS, 0 failures
+
+- [ ] **Step 5: Commit** the seven files: `Close below-floor parents after the merge lands on every merge path — refs #4466`
+
+---
+
+### Task 4: Tidy's parent-gate backstop surfaces stranded below-floor parents
 
 **Role:** integration
 **Review risk:** high
@@ -225,9 +278,9 @@ Expected: PASS, 0 failures
 
 ---
 
-### Task 4: engine-verify names the post-merge close
+### Task 5: engine-verify names the post-merge close
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/bin/lib/wrap-up/engine-verify.js:909`: `skipped.push(\`parent #${target} below oversight floor\`)` becomes `` `parent #${target} below oversight floor — closes after the merge lands (Step 4.0b)` ``. Update the #3222 comment above `registerCheck('acceptance-labeling', …)` to match.
