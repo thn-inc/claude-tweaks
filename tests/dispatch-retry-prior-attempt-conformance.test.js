@@ -99,9 +99,11 @@ function assertReusedRebind(text) {
   assert.ok(para.includes('rebind of reused PR #{number} failed ({error}); phase-checklist updates will exit 4 until its body names run {run-id}. Reversibility: n/a.'), 'SKIP log line missing');
   assert.ok(para.includes("before Step 2's push"), 'the before-push ordering is missing');
   assert.match(para, /"Skipped when Step 1 found a reusable open PR" header does not apply to this compose/);
+  assert.ok(para.includes('`mcp__github__update_pull_request`'), 'the gh-absent MCP rebind is missing');
   assert.ok(t.slice(step1, step2).includes('--json number,url,state,isDraft,body'), "Step 1's gh pr list must request the body");
   const resume = t.indexOf('## Resume: reconcile a recorded PR');
   assert.ok(resume !== -1 && t.slice(resume).includes('--json state,isDraft,url,body'), "Resume's gh pr view must request the body");
+  assert.match(t.slice(resume), /\*\*Still open\*\*: when its body names another run, rebind it per Step 1's \*\*Rebind a reused body \(#4580\)\*\*/);
 }
 
 test('AC1.1: a reopened retry PR is rebound to this run before any checklist update', () => {
@@ -123,6 +125,16 @@ test('go-red: assertReusedRebind throws once the #4580 AUTO log line is removed'
   const stripped = norm(PR_EARLY).replace(REUSED_AUTO_LINE, '');
   assert.notStrictEqual(stripped, norm(PR_EARLY), 'control did not remove anything');
   assert.throws(() => assertReusedRebind(stripped));
+});
+
+test('go-red: assertReusedRebind throws once the MCP rebind or the Resume bullet is removed', () => {
+  const t = norm(PR_EARLY);
+  const noMcp = t.replace(/(Rebind a reused body \(#4580\)\.\*\*.*?)`mcp__github__update_pull_request`/s, '$1`gh`');
+  const noResume = t.replace("rebind it per Step 1's **Rebind a reused body (#4580)**", 'leave it');
+  for (const stripped of [noMcp, noResume]) {
+    assert.notStrictEqual(stripped, t, 'control did not remove anything');
+    assert.throws(() => assertReusedRebind(stripped));
+  }
 });
 
 test('AC3.1: the failure comment\'s plan-for-retry claim matches what the retry does', () => {
