@@ -40,7 +40,10 @@ concurrent `/claude-tweaks:wrap-up` may already have gated the same parent. If t
 gate no longer reads `due` (already gated, or a sub-issue reopened), this is a silent no-op — skip it,
 don't error, and don't recommend `/claude-tweaks:demo {id}` for it in the applied report either.
 
-If it still reads `due`, compose the parent brief and apply the gate exactly as that procedure's
+If it still reads `due` and **Evaluate the gate** reads `exceeds: false` (below the oversight
+floor), run that procedure's **Close the parent below the floor** instead of composing a brief: it
+appends the listing section and calls `closeRecord`, writes no `facets.acceptance`, and a parent
+already closed is a no-op; it stays staged, per the paragraph below. Otherwise compose the parent brief and apply the gate exactly as that procedure's
 **Compose the parent brief** and **Apply the gate** sections describe for this driver: append the
 brief to the parent record's body and set `facets.acceptance = 'pending'`, written through a
 single `writeRecord` call. That is one composed write, not two, so this action has no

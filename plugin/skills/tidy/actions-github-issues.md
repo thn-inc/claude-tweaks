@@ -37,7 +37,10 @@ and the parent's labels fresh, and re-run **Evaluate the gate** — do not reuse
 snapshot, since time has passed since Step 4.8 ran). If the re-verified gate no longer reads
 `due` (another process already gated the parent, or a sub-issue reopened), this is a silent no-op —
 skip it, don't error, and don't recommend `/claude-tweaks:demo #{n}` for it in the applied-report
-either. If it still reads `due`, compose the parent brief and apply the gate exactly as that
+either. If it still reads `due` and **Evaluate the gate** reads `exceeds: false` (below the
+oversight floor), run that procedure's **Close the parent below the floor** instead of composing a
+brief: it comments and closes the parent, writes no `demo:*` label, and a parent already closed is
+a no-op; it stays staged, per the paragraph below. Otherwise compose the parent brief and apply the gate exactly as that
 procedure's own **Compose the parent brief** and **Apply the gate** sections describe — posting
 the brief comment before adding `demo:pending`, matching that same invariant.
 

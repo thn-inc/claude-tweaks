@@ -266,6 +266,7 @@ GitHub mutations recommended here (Close (GitHub), Resolve thread), `acceptance-
 → Collect each as: `[gh-issue] #{n}: {title} — {issue} — {recommendation}`
 → Collect each as: `[acceptance-gap] #{n}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo #{n}`
 → Collect each as: `[parent-gate] #{n}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #{n}`
+→ Collect each as: `[parent-gate] #{n}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`
 
 ## Step 4.9: Audit Impeccable Design Record
 

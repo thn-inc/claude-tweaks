@@ -4,8 +4,10 @@
 // floor is closed by the pipeline with a closing comment. The prose in plugin/skills/ is the
 // contract (an agent runs these fences), so the live files are read.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
@@ -258,4 +260,145 @@ try {
 
 test('go-red control: the pre-change post-merge file has no Step 4.0b', { skip: postMergeGoRedSkip }, () => {
   assert.ok(!preChangePostMerge.includes('Step 4.0b'));
+});
+
+// ---- Task 4: tidy's parent-gate backstop surfaces stranded below-floor parents ----
+
+const PLUGIN_ROOT = path.join(ROOT, 'plugin');
+const ABOVE_ROW_TAIL = ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ';
+const BELOW_ROW_TAIL = ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)';
+
+// Same shape as tests/help-acceptance-queue-local-files.test.js: `node -e "` ... closing `"` at a line start.
+function extractNodeScripts(text) {
+  const scripts = [];
+  const re = /node -e "\n([\s\S]*?)\n\s*"/g;
+  let m;
+  while ((m = re.exec(text)) !== null) scripts.push(m[1].replace(/\\"/g, '"').replace(/\\\$/g, '$'));
+  return scripts;
+}
+
+function scanScript(text, needle) {
+  const found = extractNodeScripts(text).filter((s) => s.includes(needle));
+  assert.equal(found.length, 1, `exactly one node -e block carries ${needle}`);
+  return found[0].split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_ROOT);
+}
+
+const tmpRoots = [];
+after(() => {
+  for (const dir of tmpRoots) fs.rmSync(dir, { recursive: true, force: true });
+});
+function mkTmp(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tmpRoots.push(dir);
+  return dir;
+}
+
+// Three due parents against a `high` floor: #1's sub-issues are risk:medium (below), #2's risk:high
+// (above), #3 has one unscored sub-issue (fails closed, above).
+test('AC3.1: the GitHub parent-gate scan prints a Close row for a due below-floor parent', () => {
+  const script = scanScript(
+    section(read('_shared/github-pr-scan-acceptance.md'), '## Scope: `parent-gate`', null),
+    "'[parent-gate] #'",
+  );
+  const sub = (number, risk) => ({ number, state: 'CLOSED', labels: risk ? [{ name: `risk:${risk}` }] : [] });
+  const gates = [
+    { number: 1, title: 'Medium parent', parentLabels: [], subIssues: [sub(11, 'medium'), sub(12, 'low')] },
+    { number: 2, title: 'High parent', parentLabels: [], subIssues: [sub(21, 'high')] },
+    { number: 3, title: 'Unscored parent', parentLabels: [], subIssues: [sub(31, 'medium'), sub(32, null)] },
+  ];
+  const gatesFile = path.join(mkTmp('bf-parent-gate-gh-'), 'gates.json');
+  fs.writeFileSync(gatesFile, JSON.stringify(gates));
+  const out = execFileSync('node', ['-e', script.split('$GATES').join(gatesFile.replace(/\\/g, '/')), '--', 'high'], {
+    encoding: 'utf8',
+  });
+  assert.deepEqual(out.trim().split('\n'), [
+    '[parent-gate] #1: Medium parent' + BELOW_ROW_TAIL,
+    '[parent-gate] #2: High parent' + ABOVE_ROW_TAIL + '#2',
+    '[parent-gate] #3: Unscored parent' + ABOVE_ROW_TAIL + '#3',
+  ]);
+});
+
+test('AC3.1: Shape 7 prints a Close row for a due below-floor local parent', () => {
+  const script = scanScript(
+    section(read('tidy/step-1-records.md'), '### Shape 7 — decomposition parent gate due', '### Shape 8 —'),
+    "'\\t[parent-gate] '",
+  );
+  const { writeRecord, closeRecord, defaultFacets } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'local-store.js'));
+  const cwd = mkTmp('bf-parent-gate-local-');
+  const recordFile = (n, slug) => path.join(cwd, 'specs', `${String(n).padStart(2, '0')}-${slug}.md`);
+  const parent = (n, slug, title) =>
+    writeRecord(recordFile(n, slug), { title, body: 'Parent body.', facets: { ...defaultFacets(), isParentIssue: true } });
+  const closedSub = (n, slug, parentId, risk) => {
+    const file = recordFile(n, slug);
+    writeRecord(file, { title: slug, body: 'Sub body.', facets: { ...defaultFacets(), parent: parentId, ...(risk ? { risk } : {}) } });
+    closeRecord(file);
+  };
+  parent(1, 'medium-parent', 'Medium parent');
+  parent(2, 'high-parent', 'High parent');
+  parent(3, 'unscored-parent', 'Unscored parent');
+  closedSub(4, 'sub-medium', 1, 'medium');
+  closedSub(5, 'sub-high', 2, 'high');
+  closedSub(6, 'sub-medium-b', 3, 'medium');
+  closedSub(7, 'sub-unscored', 3, null);
+
+  const out = execFileSync('node', ['-e', script, '--', 'high'], { cwd, encoding: 'utf8' });
+  const lines = out.trim().split('\n').map((line) => line.split('\t'));
+  assert.deepEqual(
+    lines.map(([, row]) => row),
+    [
+      '[parent-gate] 1: Medium parent' + BELOW_ROW_TAIL,
+      '[parent-gate] 2: High parent' + ABOVE_ROW_TAIL + '2',
+      '[parent-gate] 3: Unscored parent' + ABOVE_ROW_TAIL + '3',
+    ],
+  );
+  assert.ok(lines[0][0].endsWith('01-medium-parent.md'), 'the path column is kept on the below-floor row');
+});
+
+test('AC3.1: the Collect lines and the pre-filter prose carry the below-floor form', () => {
+  const pg = section(read('_shared/github-pr-scan-acceptance.md'), '## Scope: `parent-gate`', null);
+  assert.ok(collapse(pg).includes('a due parent below the floor is surfaced'), 'prose before the block');
+  assert.ok(!collapse(pg).includes('filter to parents that both exceed the floor'), 'old filter-out prose gone');
+  const unGated = collapse(paragraph(pg, 'Un-gated parents recommend'));
+  assert.ok(unGated.includes('**Close the parent below the floor**'), 'approval closes through the section');
+  assert.ok(unGated.includes('`wrap-up/verification-brief-parent-gate.md`'));
+  assert.ok(unGated.includes('no `/claude-tweaks:demo` step'));
+
+  const shape7 = section(read('tidy/step-1-records.md'), '### Shape 7 — decomposition parent gate due', '### Shape 8 —');
+  assert.ok(!collapse(shape7).includes('Both backstop shapes below (this one and Shape 8) filter out below-floor candidates'));
+  assert.ok(collapse(shape7).includes('Shape 8 filters out below-floor candidates'), 'the filter-out claim applies to Shape 8 only');
+  const collect = shape7.split('\n').find((l) => l.startsWith('→ Collect each as:'));
+  assert.ok(collect.includes('`[parent-gate] {id}: {title}' + BELOW_ROW_TAIL + '`'), 'Shape 7 below-floor Collect form');
+  assert.ok(collect.includes('`[parent-gate] {id}: {title}' + ABOVE_ROW_TAIL + '{id}`'), 'Shape 7 keeps the above-floor Collect form');
+  assert.ok(shape7.includes('.filter((f) => !f.needsDefinition)'), 'needsDefinition filter kept byte-identical');
+  const procedures = read('tidy/scan-procedures.md');
+  assert.ok(
+    procedures.includes('→ Collect each as: `[parent-gate] #{n}: {title}' + BELOW_ROW_TAIL + '`'),
+    'scan-procedures below-floor Collect line',
+  );
+});
+
+test('AC3.1: Open parent gate closes the parent below the floor, staged, with no brief', () => {
+  const FLOOR = '**Close the parent below the floor**';
+  for (const rel of ['tidy/actions-github-issues.md', 'tidy/actions-local-files.md']) {
+    const text = read(rel);
+    const action = section(text, '## Open parent gate', text.includes('## Arm ready PR') ? '## Arm ready PR' : null);
+    assert.ok(collapse(action).includes(FLOOR), `${rel}: runs Close the parent below the floor`);
+    assert.ok(collapse(action).includes('instead of composing a brief'), `${rel}: no brief below the floor`);
+  }
+  const skill = read('tidy/SKILL.md');
+  assert.ok(!collapse(skill).includes('never closes the parent'), 'the Action Vocabulary no longer says the action never closes the parent');
+  assert.ok(collapse(skill).includes('closes the parent only below the oversight floor (no brief owed)'));
+  const step6 = read('tidy/step-6-auto.md');
+  const row = step6.slice(step6.indexOf('| **Open parent gate** ('), step6.indexOf('| **Fill Release Note**'));
+  assert.ok(row.includes('closeRecord'), 'the Step 6 row names the local-files close');
+  assert.ok(row.includes('sub-issue-listing comment'));
+});
+
+test('AC3.1: the capped files stay under their byte caps', () => {
+  const bytes = (rel) => fs.statSync(path.join(SKILLS_DIR, rel)).size;
+  assert.ok(bytes('tidy/step-6-auto.md') < 49400, `step-6-auto.md is ${bytes('tidy/step-6-auto.md')} bytes`);
+  assert.ok(
+    bytes('_shared/github-pr-scan-acceptance.md') <= 47200,
+    `github-pr-scan-acceptance.md is ${bytes('_shared/github-pr-scan-acceptance.md')} bytes`,
+  );
 });

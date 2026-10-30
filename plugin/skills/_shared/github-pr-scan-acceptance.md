@@ -649,7 +649,7 @@ no `size:*` label of its own (`specify/record-creation.md`'s Parent record secti
 size at this level would mean gating on a fact that does not exist.
 
 With this run's session-scoped `tidy-parent-gates.json` assembled by whichever branch above
-applies, filter to parents that both exceed the floor and whose gate is due. A parent's aggregate
+applies, filter to parents whose gate is due; a due parent below the floor is surfaced, not filtered out. A parent's aggregate
 risk is the **max** risk tier across its `subIssues` — never a size read at the parent level, and
 never omitted or defaulted to the resolved `size-floor` value, which would silently fail every
 sub-issue's missing `size` facet closed and gate every parent regardless of risk. Any single
@@ -678,9 +678,10 @@ node -e "
     return hasUnscored ? undefined : TIERS[maxIndex];
   }
   gates
-    .filter(f => exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds)
     .filter(f => parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) === 'due')
-    .forEach(f => console.log('[parent-gate] #' + f.number + ': ' + f.title + ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #' + f.number));
+    .forEach(f => console.log('[parent-gate] #' + f.number + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
+      ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #' + f.number
+      : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)')));
 " -- "$RISK_FLOOR"
 ```
 
@@ -699,8 +700,10 @@ step of a pipeline a human already launched against one named record and sits in
 all, unlike this action. Separately, and independent of the write-level reasoning above, this
 scope and the `Open parent gate` action it feeds never write `demo:approved` or
 `demo:changes-requested` under any circumstance — that disposition stays exclusively
-`/claude-tweaks:demo`'s job, staged and human-only, which is why the recommendation always still
-ends with "then `/claude-tweaks:demo #{n}`" even once the gate is open.
+`/claude-tweaks:demo`'s job, staged and human-only, which is why an above-floor recommendation still
+ends with "then `/claude-tweaks:demo #{n}`" even once the gate is open. Approving a below-floor row
+closes the parent through `wrap-up/verification-brief-parent-gate.md`'s **Close the parent below the
+floor**, with no `/claude-tweaks:demo` step.
 
 Emit `[parent-gate]` rows per the Output Contract, at severity `info` — the same severity
 `acceptance-gap` uses and for the same reason: `/claude-tweaks:tidy` runs this scope in the same

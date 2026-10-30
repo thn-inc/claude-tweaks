@@ -208,8 +208,10 @@ when it closes a parent's last sub-issue. A parent whose last sub-issue closes a
 hand, or by a run that ended before wrap-up — never reaches that eager path; this shape catches it
 after.
 
-Both backstop shapes below (this one and Shape 8) filter out below-floor candidates the same way
-their `github-issues` counterparts do — the same `bin/lib/issues/oversight-floor.js` predicate
+This shape surfaces a due below-floor parent as a Close row (`Open parent gate` closes it, no brief
+owed — `wrap-up/verification-brief-parent-gate.md`'s **Close the parent below the floor**), like its
+`github-issues` counterpart. Shape 8 filters out below-floor candidates the same way its counterpart
+does. Both use the same `bin/lib/issues/oversight-floor.js` predicate
 (#366), mirrored here rather than reimplemented. Each shape resolves `risk-floor`/`size-floor`
 **once, inside its own code block** (one `resolve-policy.js` call regardless of population size,
 never resolved per record) and passes the printed values as literal `process.argv` arguments to
@@ -278,9 +280,10 @@ node -e "
   }
   gates
     .filter((f) => !f.needsDefinition)
-    .filter((f) => exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds)
     .filter((f) => parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) === 'due')
-    .forEach((f) => console.log(f.path + '\t[parent-gate] ' + f.id + ': ' + f.title + ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ' + f.id));
+    .forEach((f) => console.log(f.path + '\t[parent-gate] ' + f.id + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
+      ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ' + f.id
+      : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)')));
 " -- "$RISK_FLOOR"
 ```
 
@@ -296,13 +299,13 @@ merge for the same reason: one call alone drops every closed sub-issue, exactly 
 a gate due. No fetch-limit or truncation warning applies, unlike the API-paging twin —
 `queryRecords` reads the whole `specs/` directory every call.
 
-→ Collect each as: `[parent-gate] {id}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo {id}`
+→ Collect each as: `[parent-gate] {id}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo {id}`, or below the floor: `[parent-gate] {id}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`
 
 Severity `info` — with several open decompositions this is a standing backlog, not a defect
 count, and Step 6 caps rows highest-severity-first (the same tier and reason as its
 `github-issues` twin). The recommendation is the `Open parent gate` action, staged at every
-aggressiveness tier and never writing `demo:approved`/`demo:changes-requested`, which is why the
-row still ends with `/claude-tweaks:demo {id}`; `actions-local-files.md`'s `## Open parent gate`
+aggressiveness tier and never writing `demo:approved`/`demo:changes-requested`, which is why an
+above-floor row still ends with `/claude-tweaks:demo {id}`; `actions-local-files.md`'s `## Open parent gate`
 and `step-6-auto.md`'s row carry that action's execution, its staging reasoning, and what it
 does not cover.
 
