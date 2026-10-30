@@ -789,12 +789,16 @@ test('roster-vs-routing go-red: a stale producer name trips the Staged by check'
 
 // Every staged/{name} literal in an Example cell as concrete names. Unlike stagedNamesIn, every alternative of a
 // {a,b} group is kept, so `review-{n}.{md,patch}` yields review-1.md and review-1.patch.
+// Several groups expand as a cross product, the first group varying slowest.
+function expandBraces(name) {
+  const group = /\{([^{}]*,[^{}]*)\}/.exec(name);
+  return group ? group[1].split(',').flatMap((alt) => expandBraces(name.replace(group[0], alt))) : [name];
+}
+
 function exampleNames(cell) {
-  return [...cell.matchAll(/staged\/([a-zA-Z][\w{},.*-]*)/g)].flatMap((m) => {
-    const name = m[1].replace(/\.$/, '').replace(/\{(?:n|N|slug)\}/g, '1').replace(/\*/g, 'x');
-    const group = /\{([^{}]*,[^{}]*)\}/.exec(name);
-    return group ? group[1].split(',').map((alt) => name.replace(group[0], alt)) : [name];
-  });
+  return [...cell.matchAll(/staged\/([a-zA-Z][\w{},.*-]*)/g)].flatMap((m) => expandBraces(
+    m[1].replace(/\.$/, '').replace(/\{(?:n|N|slug)\}/g, '1').replace(/\*/g, 'x'),
+  ));
 }
 
 // Example names, on a row a review producer stages, that the console would refuse as an unmapped prefix.
@@ -828,10 +832,16 @@ test('AC3.1: every review-* SECTION_MAP prefix has a roster row — deleting the
   assert.throws(() => assertRosterMatchesSectionMap(withoutRosterRow(text, 'review-followup-')), /review-followup-/);
 });
 
-test('AC2.1 go-red: restoring the review-{n}.{md,patch} example goes red on review-1.md', () => {
+test('exampleNames expands every brace group as a cross product', () => {
+  assert.deepEqual(exampleNames('`staged/x-{a,b}.{c,d}`'), ['x-a.c', 'x-a.d', 'x-b.c', 'x-b.d']);
+});
+
+// The offending alternative `md` is second, so an expansion that keeps only a group's first alternative
+// (what stagedNamesIn does) would not see review-1.md and this test would stay green.
+test('AC2.1 go-red: restoring the review-{n}.{patch,md} example goes red on review-1.md (offender is the second alternative)', () => {
   const text = readDisposition();
   const line = rosterLine(text, 'review-{n}');
-  const doctored = text.replace(line, line.replace('`staged/review-{n}.patch`', '`staged/review-{n}.{md,patch}`'));
+  const doctored = text.replace(line, line.replace('`staged/review-{n}.patch`', '`staged/review-{n}.{patch,md}`'));
   assert.notEqual(doctored, text, 'anchor: the review-{n} Example cell is not `staged/review-{n}.patch` — proof cannot discriminate');
   assert.throws(() => assertRosterMatchesSectionMap(doctored), /review-1\.md/);
 });

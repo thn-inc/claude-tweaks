@@ -249,9 +249,10 @@ test('AC1.1: --id review-followup-1 (.md) stages with no refusal (#4484)', () =>
   const { main, runDir } = fixture();
   const md = path.join(path.dirname(main), 'proposal.md');
   fs.writeFileSync(md, 'Title: t\n');
-  const { deps, err } = fakeDeps(main);
-  assert.equal(run(['--run', runDir, '--id', 'review-followup-1', '--file', md], deps), 0);
+  const { deps, out, err } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--id', 'review-followup-1', '--file', md, '--allocate'], deps), 0);
   assert.ok(fs.existsSync(path.join(fs.realpathSync(runDir), 'staged', 'review-followup-1.md')));
+  assert.ok(out.join('').split('\n')[0].endsWith(path.join('staged', 'review-followup-1.md')), `the first stdout line must be the written path: ${out.join('')}`);
   assert.equal(err.join(''), '');
 });
 
