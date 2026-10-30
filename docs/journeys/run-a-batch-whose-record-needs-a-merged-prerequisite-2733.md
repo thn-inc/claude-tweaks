@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/preflight-records/merge-gate.js
+  - plugin/bin/lib/issues/record-payload.js
   - plugin/bin/preflight-records.js
   - plugin/skills/flow/multispec-merge-gate.md
   - plugin/skills/flow/multispec-preflight-failure.md
@@ -20,8 +21,8 @@ files:
 - **URL:** `plugin/skills/flow/multi-spec.md` Validation step 3
 - **Action:** `/flow` runs `bin/preflight-records.js {targets in run order} --merge-gate --integration-branch "$INTEGRATION_BRANCH"`, with `$INTEGRATION_BRANCH` resolved per `_shared/integration-branch.md`. One call returns `{records, overlapGroups, directOverlaps, workLinks, mergeGate}`.
 - **Should feel:** Invisible — no extra fetch pass and no question; the gate rides the pre-flight call that already ran.
-- **Should understand:** The gate fires only on a strict demand, on a `## Deliverables` / `## Prerequisites` line that names one of the record's own in-batch `blocked-by` prerequisites. Examples: "#2670 is actually merged", "merged to/into {integration branch}", "lands on main". The generic "must be merged first" phrasing does not fire, because the shared branch already carries that prerequisite's content ahead of the dependent's build.
-- **Red flags:** The flag passed with the claim step's open-queue extras appended; a hardcoded `main` in a repo whose integration branch is something else.
+- **Should understand:** The gate fires only on a strict demand, on a `## Deliverables` / `## Prerequisites` line that names one of the record's own in-batch `blocked-by` prerequisites. Examples: "#2670 is actually merged", "merged to/into {integration branch}", "lands on main". The generic "must be merged first" phrasing does not fire, because the shared branch already carries that prerequisite's content ahead of the dependent's build. A `## …` line inside a fenced code block is quoted content, not a section boundary: it neither ends the Deliverables scan nor opens a Prerequisites one (#4369).
+- **Red flags:** The flag passed with the claim step's open-queue extras appended; a hardcoded `main` in a repo whose integration branch is something else; a demand after a fenced `## …` line in Deliverables that is not split out.
 
 ### 2. Split before claiming — Validation step 4a
 - **URL:** `plugin/skills/flow/multispec-merge-gate.md` Procedure steps 2–3
@@ -48,3 +49,4 @@ files:
 - Created during #2733's build (multi-spec run 2026-10-16T172750-spec-2775-2733-2677): the multi-spec merge-state gate, `merge-gate.js`, and `preflight-records.js --merge-gate --integration-branch`.
 - Related: #2682 (the incident batch whose record demanded #2670/#2681 "actually merged"), `respond-to-multispec-boundary-drift.md` (the later, per-boundary freshness check).
 - Updated during #3351's build (run 2026-10-17T095806-spec-3351): step 4's "proceed unsplit with a SKIP" fallback was replaced by Step 3's failure ruling (`multispec-preflight-failure.md`).
+- Updated during #4369's build (run 2026-10-28T192900-record-4369): the section scan skips heading lines inside fenced blocks (shared `fencedLineMask`, `plugin/bin/lib/issues/record-payload.js`).
