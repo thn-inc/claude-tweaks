@@ -224,6 +224,21 @@ test('extractCurrentStateAnchors keeps file paths, symbols and file:line locatio
   );
 });
 
+test('AC3.1: extractCurrentStateAnchors keeps anchors after a fenced # comment line inside Current State (#4369)', () => {
+  const body = '## Current State\n\n`alpha.js`\n```bash\n# comment\nrun it\n```\n`beta.js`\n\n## Deliverables\n`gamma.js`\n';
+  assert.deepStrictEqual([...extractCurrentStateAnchors(body)].sort(), ['alpha.js', 'beta.js']);
+});
+
+test('extractCurrentStateAnchors: a fenced ## Current State line does not start the section (#4369)', () => {
+  const body = '## Summary\n```\n## Current State\n`fake.js`\n```\n';
+  assert.deepStrictEqual([...extractCurrentStateAnchors(body)], []);
+});
+
+test('extractCurrentStateAnchors: a CRLF body still finds its Current State anchors (#4369)', () => {
+  const body = '## Current State\r\n\r\n`alpha.js`\r\n```bash\r\n# comment\r\n```\r\n`beta.js`\r\n\r\n## Deliverables\r\n`gamma.js`\r\n';
+  assert.deepStrictEqual([...extractCurrentStateAnchors(body)].sort(), ['alpha.js', 'beta.js']);
+});
+
 test('isGenericAnchor classifies each shape', () => {
   for (const g of ['--run-dir', '-x', '--run <dir>', '--key=value', '/claude-tweaks:dispatch', '/claude-tweaks:flow #3124 build', '/flow', '/specify', '/tmp', 'bot:in-progress', 'needs:decision', 'ready', 'parked']) {
     assert.strictEqual(isGenericAnchor(g), true, g);
