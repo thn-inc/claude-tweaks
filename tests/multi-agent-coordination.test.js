@@ -1264,7 +1264,7 @@ test('/review debate integration: cross-lens overlap with contradicting verdicts
   assert.strictEqual(c.resolveDebate('disagree', 'disagree'), 'unconfirmed');
   assert.strictEqual(c.resolveDebate('agree', 'partial'), 'contested');
 
-  const confirmedEntry = `- AUTO 14:41:02 — Debate: cross-lens disagreement on src/auth.ts:42 converged positive after 1 round. Reversibility: high.`;
+  const confirmedEntry = `- AUTO 14:41:02 — Debate: cross-lens disagreement on src/auth.ts:42 converged positive after 1 round (lens "security" finding src/auth.ts:42; lens "architecture" finding src/auth.ts:45 — both confirmed). Reversibility: high.`;
   assert.match(confirmedEntry, decisionLogPattern(REVIEW_SKILL, ['Both `agree`']));
   const unconfirmedEntry = `- STAGED 14:41:05 — Debate: lens "security" finding src/auth.ts:42 — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.`;
   assert.match(unconfirmedEntry, decisionLogPattern(REVIEW_SKILL, ['Both `disagree`']));

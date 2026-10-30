@@ -1066,6 +1066,47 @@ test('an inherited can\'t-tell verdict files once: the partner\'s own staged fil
   const p = items.find((i) => i.id === 'review-unconfirmed-2.md');
   assert.deepStrictEqual([p.resolution, p.reason], ['dismissed', 'covered by review-contested-1.md — its contested pair\'s tiebreak item carries the verdict']);
 });
+// ---- #4563: producer pin — the review skill's shipped templates are the shapes the reader settles on ----
+const DEBATE_DOC = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-debate-and-refutation.md'));
+const docLine = (prefix) => DEBATE_DOC.split('\n').filter((l) => l.startsWith(prefix));
+// The pre-change Both-`agree` template (names no lens): the control that proves the pin can go red.
+const PRE_CHANGE_AGREE_TPL = 'AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged positive after 1 round. Reversibility: high.';
+const instantiateAgree = (tpl) => `- ${tpl.replace('{HH:MM:SS}', '10:00:00').replace(/\{lensA\}/g, '3a').replace(/\{lensB\}/g, '3e')
+  .replace(/\{pathA\}|\{pathB\}|\{path\}/g, 'src/a.js').replace(/\{lineA\}|\{line\}/g, '5').replace(/\{lineB\}/g, '9')}`;
+
+test('the debate step\'s converged-positive template, instantiated, settles both findings (#4563 producer pin)', () => {
+  const lines = docLine('   - Both `agree`');
+  assert.strictEqual(lines.length, 1, 'exactly one Both `agree` bullet');
+  const tpl = lines[0].match(/`(AUTO \{HH:MM:SS\}[^`]*)`/)[1];
+  const line = instantiateAgree(tpl);
+  assert.doesNotMatch(line, /[{}]/, 'every placeholder in the template is instantiated');
+  assert.deepStrictEqual(findings([stagedLow('3a', 'src/a.js:5'), stagedLow('3e', 'src/a.js:9'), line].join('\n')), []);
+  // Control: the pre-change template names no lens, so the same instantiation settles nothing.
+  const before = findings([stagedLow('3a', 'src/a.js:5'), stagedLow('3e', 'src/a.js:9'), instantiateAgree(PRE_CHANGE_AGREE_TPL)].join('\n'));
+  assert.deepStrictEqual(before.map((i) => i.resolution), ['keep-staged', 'keep-staged']);
+});
+
+test('the Mixed / partial bullet\'s Positions bullet templates, instantiated, let a verdict settle the partner (#4563 producer pin)', () => {
+  const lines = docLine('   - Mixed / partial');
+  assert.strictEqual(lines.length, 1, 'exactly one Mixed / partial bullet');
+  const [a, b] = ['A', 'B'].map((x) => {
+    const m = lines[0].match(new RegExp(`\`(- \\*\\*Finding ${x} \\(lens [^\`]*)\``));
+    assert.ok(m, `the Mixed / partial bullet carries a backticked Finding ${x} Positions template`);
+    return m[1];
+  });
+  const fill = (t, lens, line) => t.replace(/\{lens[AB]\}/g, lens).replace(/\{severity\}/g, 'low').replace(/\{path[AB]\}/g, 'src/a.js')
+    .replace(/\{line[AB]\}/g, String(line)).replace(/\{claim\}/g, 'a claim');
+  const positionsFile = `# Review — contested finding\n\n## Positions\n\n${fill(a, '3a', 9)}\n${fill(b, '3f', 7)}\n\n## Judge 1 (partial)\n\nx\n`;
+  assert.doesNotMatch(positionsFile, /[{}]/, 'every placeholder in the Positions templates is instantiated');
+  const f = tbFinding();
+  const d = [stagedLow('3f', 'src/a.js:7'), tbDebate(f, 'review-contested-1.md'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n');
+  assert.deepStrictEqual(findings(d, { 'review-contested-1.md': positionsFile }).map((i) => [i.id, i.resolution]), [['review-contested-1.md', 'dismissed']]);
+  // Control: a Positions file without the partner's bullet leaves the partner's STAGED line open.
+  const noPartner = positionsFile.split('\n').filter((l) => !l.includes('lens 3f')).join('\n');
+  assert.notStrictEqual(noPartner, positionsFile);
+  assert.deepStrictEqual(findings(d, { 'review-contested-1.md': noPartner }).map((i) => i.resolution).sort(), ['dismissed', 'keep-staged']);
+});
+
 test('run 2026-10-28T060616-spec-4304 (real excerpt) resolves with zero keep-staged items (#4563 AC3)', () => {
   const dir = path.join(__dirname, 'fixtures', 'debate-settlement-4304');
   const { items } = findingItems({ runDir: dir, deps: bareDeps() });
