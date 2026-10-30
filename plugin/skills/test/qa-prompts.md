@@ -63,6 +63,8 @@ This phase dispatches qa-agent subagents in parallel — one per story, bounded 
 
 19. For each Task call, use the appropriate prompt template. If the story has `auth: { vault: "<name>" }`, include the `**Auth (vault):**` field.
 
+    **Secrets (#4477).** If a structured-format story declares `secrets:`, write that block as a JSON array to `{RUN_DIR}/secrets/{story.id}.json` with the Write tool before dispatch — each entry `{"pattern": "<regex>"}` or `{"locator": {…}}`, copied as written; the file holds patterns and locators, never a value — and include both `**Secrets file:**` (that file's absolute path) and `**Scrub helper:**` (the literal absolute path of `${CLAUDE_PLUGIN_ROOT}/bin/qa-scrub.js`, resolved once for the run) in the prompt. A story without `secrets:` gets neither field, so its agent never runs the scrub. Legacy `workflow` stories have no `secrets:` field.
+
 **Resolve each story's dispatch URL against `APP_URL`** (the value `_shared/dev-url-detection.md` resolved during pre-flight — see `qa-procedures.md`'s URL Resolution section) before assembling any prompt below — never substitute `story.url` directly. For each story, compute `resolved_url`:
 - Root-relative (`story.url` starts with `/`, or carries no scheme+host at all): join it to `APP_URL` unchanged — `resolved_url = new URL(story.url, APP_URL).toString()`. No regression here; this is already the working case.
 - Absolute origin (scheme+host+port) that **differs** from `APP_URL`'s own origin: replace just the origin with `APP_URL`'s, preserving the story's path/query/fragment exactly — e.g. a story pinning `http://127.0.0.1:9999/dashboard` under a resolved `APP_URL = http://localhost:54321` becomes `http://localhost:54321/dashboard`, never the literal `9999` port. This is deliberately mechanical — a story that genuinely needs a different host on purpose (e.g. one exercising an external service) still gets rewritten; that's a known limitation, not something this step tries to distinguish.
@@ -107,6 +109,9 @@ Execute this user story and report results using the playwright-cli CLI.
 
 **Viewport:** {story.viewport or setup.viewport or omit}
 
+**Secrets file:** {absolute path to {RUN_DIR}/secrets/{story.id}.json — omit if the story declares no secrets:}
+**Scrub helper:** {absolute path to bin/qa-scrub.js — omit if the story declares no secrets:}
+
 **Setup:**
 {serialize setup block as YAML, if present}
 
@@ -136,6 +141,7 @@ Instructions:
   - Stop executing remaining steps.
 - On success, if `Teardown` is present, execute its steps now, before closing the session.
 - On success, close the session at the end: `playwright-cli -s={story.id} close`.
+- If `Secrets file` is present: before `open`, record the story's start time with `node -p "new Date().toISOString()"`. After the session is closed (pass or fail), run `node "{Scrub helper}" --secrets "{Secrets file}" --screenshots "{SCREENSHOT_PATH}" --traces "{TRACES_BASE}/{story.id}" --cli-dir "{ABSOLUTE_WORKTREE_PATH}/.playwright-cli" --since "{start time}"`. It prints one JSON line and never a secret value. Exit 0: add a `SCRUB: {line}` line after `RESULT:`, put the JSON in `REPORT_JSON` as `"scrub"`, and when it says `"no_matches": true` add the caveat "secrets declared but no artifact matched — check the story's secrets: entries". Exit 3: the story is FAIL with error `secret scrub incomplete: {n} path(s) still hold a secret value or could not be checked`; list its `remaining` paths and still put the JSON in `"scrub"`. Exit 1 or 2: the story is FAIL with error `secret scrub did not run: {error}`, and `"scrub"` is `{"ok": false, "values_scrubbed": 0, "artifacts_scrubbed": 0, "screenshots_removed": 0, "remaining": [<the three dirs>]}`. Never print a secret value or a snapshot line that holds one.
 - Report each step as PASS or FAIL with a brief explanation.
 - **Decide your status word:** exactly one of `DONE` | `DONE_WITH_CONCERNS` | `NEEDS_CONTEXT` | `BLOCKED`. Mapping:
   - `PASS` → `DONE`
@@ -151,7 +157,7 @@ Instructions:
   ```
   <!-- REPORT_JSON: {"caveats": ["{observation 1}", "{observation 2}"], "recovered_locators": [{"step_index": {N}, "original_locator": "{old}", "recovered_locator": "{new}", "reason": "{description}"}], "page_inventories": [{"url": "{absolute URL}", "interactive_elements": {"buttons": {N}, "links": {N}, "inputs": {N}, "selects": {N}, "checkboxes": {N}}, "forms": {"count": {N}, "fields_per_form": [{N}, {N}]}, "navigation": {"nav_elements": {N}, "breadcrumbs": {bool}, "tabs": {N}}, "accessibility": {"aria_landmarks": {N}, "heading_levels": [1, 2, 3], "missing_labels": {N}}, "layout": {"viewport_overflow": {bool}, "scroll_height": {N}}}]} -->
   ```
-  All three arrays are required keys (use `[]` when empty — never omit). `caveats` is non-empty only when RESULT is `PASS_WITH_CAVEATS`. `recovered_locators` lists any locators the agent auto-recovered during step execution. `page_inventories` is one entry per unique URL visited; use snapshot/snapshot-i data to populate interactive element counts, form structure, navigation, accessibility, and layout details. Keep the entire comment on a single line so downstream parsing can use a simple regex.
+  All three arrays are required keys (use `[]` when empty — never omit). When the scrub helper ran (only when `Secrets file` is present), add a fourth key, `"scrub"`, holding its JSON as described above; never add it otherwise. `caveats` is non-empty only when RESULT is `PASS_WITH_CAVEATS`. `recovered_locators` lists any locators the agent auto-recovered during step execution. `page_inventories` is one entry per unique URL visited; use snapshot/snapshot-i data to populate interactive element counts, form structure, navigation, accessibility, and layout details. Keep the entire comment on a single line so downstream parsing can use a simple regex.
 - **Status line (required, the true last line of your reply, after the `REPORT_JSON` comment):** `STATUS: {word}` — the same word you decided above (`bin/lib/hooks/subagent-stop.js`'s canonical format, #2265).
 ```
 

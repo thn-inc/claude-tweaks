@@ -53,8 +53,11 @@ Extract from the prompt:
 - **Viewport** — from `**Viewport:**` (optional, e.g. `1440x900`; defaults to `1440x1600` when absent — see Setup step 2d)
 - **Steps** — the YAML step array from `**Steps:**`
 - **SCREENSHOT_PATH** — from `**SCREENSHOT_PATH:**` (the directory to write screenshots to for this run)
+- **Secrets file** and **Scrub helper** — from `**Secrets file:**` and `**Scrub helper:**` (optional, present only when the story declares `secrets:`; the file holds patterns and locators, never a value — see Section 6.5)
 
 ### 2. Setup
+
+0. **Secrets stories only:** when `**Secrets file:**` is present, record the story's start time before anything else — `node -p "new Date().toISOString()"` — and keep the printed value as `STORY_STARTED_AT` for Section 6.5. Without the field, skip this.
 
 a. **Create the screenshot directory** (`mkdir -p {SCREENSHOT_PATH}` via the Bash tool).
 
@@ -200,7 +203,7 @@ Collect all emitted PAGE_INVENTORY entries and include them in the REPORT_JSON a
 
 ### 5. Teardown
 
-Teardown runs at the end of every path through Setup and the step loop — whether every step completed, a failure stopped the step loop early (Section 4 Step 8 for action steps, or the verify-only-steps FAIL step), or Setup itself aborted before the step loop began (Section 2 Step e or Step f). Execute the **Teardown** block if present. Run teardown best-effort — do not fail the story if teardown fails. Teardown always runs regardless of pass/fail status, but on a failure it runs *after* Section 6 Step 1 has already captured the failure trace, so later teardown actions do not disturb the page state the trace was meant to diagnose. Close (Section 6 Step 3) is the last thing that happens, after Teardown, in both outcomes.
+Teardown runs at the end of every path through Setup and the step loop — whether every step completed, a failure stopped the step loop early (Section 4 Step 8 for action steps, or the verify-only-steps FAIL step), or Setup itself aborted before the step loop began (Section 2 Step e or Step f). Execute the **Teardown** block if present. Run teardown best-effort — do not fail the story if teardown fails. Teardown always runs regardless of pass/fail status, but on a failure it runs *after* Section 6 Step 1 has already captured the failure trace, so later teardown actions do not disturb the page state the trace was meant to diagnose. Close (Section 6 Step 3) is the last browser action, after Teardown, in both outcomes — only Section 6.5's secret scrub, which touches no browser, follows it.
 
 ### 6. Failure Handling and Close
 
@@ -224,9 +227,27 @@ Teardown runs at the end of every path through Setup and the step loop — wheth
 playwright-cli -s=<story-id> close
 ```
 
+### 6.5 Secret scrub
+
+Runs only when the prompt carries `**Secrets file:**`, after the session is closed (Section 6), on both outcomes. A story without that field never runs it, so its artifacts are exactly what Sections 2-6 wrote.
+
+`playwright-cli` writes the story's revealed values into artifacts on its own — every snapshot under `.playwright-cli/`, the trace and its network log and resources, the console log, and the step screenshots — and no instruction to this agent reaches them. The scrub helper (`bin/qa-scrub.js`, its absolute path given as `**Scrub helper:**`) does, deterministically:
+
+```
+node "{Scrub helper}" --secrets "{Secrets file}" --screenshots "{SCREENSHOT_PATH}" --traces "{TRACES_BASE}/<story-id>" --cli-dir "<working directory>/.playwright-cli" --since "{STORY_STARTED_AT}"
+```
+
+All paths absolute; `<working directory>` is the prompt's `**Working directory:**`. It prints one JSON line — counts, paths and a `line` — and never a secret value. Branch on its exit code:
+
+- **exit 0** — scrubbed. Add `SCRUB: {line}` after the `RESULT:` (and `TRACE:`) line and put the JSON in `REPORT_JSON` as `"scrub"`. When it carries `"no_matches": true`, add the caveat "secrets declared but no artifact matched — check the story's secrets: entries" (a pattern that never matches may mean the value is still there).
+- **exit 3** — incomplete: some path still holds a value or could not be checked. The story is **FAIL**, whatever its steps did, with error `secret scrub incomplete: {n} path(s) still hold a secret value or could not be checked`. List every `remaining` path in the Failure Detail and put the JSON in `REPORT_JSON` as `"scrub"`.
+- **exit 1 or 2** — the scrub did not run (an invalid secrets file, a malformed call, or a crash). The story is **FAIL** with error `secret scrub did not run: {error}`; put `{"ok": false, "values_scrubbed": 0, "artifacts_scrubbed": 0, "screenshots_removed": 0, "remaining": [<the three directories above>]}` in `REPORT_JSON` as `"scrub"`.
+
+Never print a secret value, a snapshot line holding one, or the contents of a scrubbed file in the report — the helper keeps values in its own memory only, and this reply is an artifact too.
+
 ### 7. Report
 
-Return the structured report as detailed in the "Report" section below. If `recovered_locators` is non-empty, include it. If a trace was captured, append a `TRACE:` line.
+Return the structured report as detailed in the "Report" section below. If `recovered_locators` is non-empty, include it. If a trace was captured, append a `TRACE:` line. If Section 6.5 ran, append its `SCRUB:` line and `"scrub"` key.
 
 **Important:** The agent does NOT update story YAML files directly. Recovered locators are buffered in the report; the orchestrator (`qa-reporting.md`, Phase 4.5) applies them after all agents in a tier complete to avoid file write conflicts between parallel agents.
 
