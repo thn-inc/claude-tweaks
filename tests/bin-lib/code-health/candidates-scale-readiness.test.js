@@ -210,6 +210,11 @@ function ofKind(root, kind) {
   return scanScaleReadiness(root).candidates.filter((x) => x.kind === kind);
 }
 
+// The `file:line` each candidate of `kind` anchors to, in report order.
+function sitesOf(root, kind) {
+  return ofKind(root, kind).map((c) => c.evidence.match(/^(\S+:\d+) /)[1]);
+}
+
 function prismaRoute(body, rel = 'app/api/users/route.ts') {
   const root = tmpGitRepo();
   write(root, 'package.json', PRISMA_PKG);
@@ -330,7 +335,7 @@ test('#3903 unbounded-list-query: a computed string-literal take/limit key bound
       '',
     ].join('\n'),
   });
-  assert.deepEqual(ofKind(root, 'unbounded-list-query').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]), ['routes/posts.js:3', 'routes/posts.js:5', 'routes/posts.js:6']);
+  assert.deepEqual(sitesOf(root, 'unbounded-list-query'), ['routes/posts.js:3', 'routes/posts.js:5', 'routes/posts.js:6']);
 });
 
 const POST_SCHEMA = 'model Post {\n  id Int @id\n  authorId Int\n  title String\n}\n';
@@ -649,7 +654,7 @@ test('#3903 AC4.1: a client held in a module-scope object literal is not per-req
     ].join('\n'),
     'routes/items.js': "router.get('/', async (req, res) => {\n  const deps = { db: new PrismaClient() };\n  res.json(await deps.db.item.findMany({ take: 5 }));\n});\n",
   });
-  assert.deepEqual(ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]), ['routes/items.js:2']);
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/items.js:2']);
 });
 
 test('#3903 AC4.1 per-request-db-client: an object an arrow function returns per call (Apollo and tRPC context) is still flagged', () => {
@@ -682,7 +687,7 @@ test('#3903 AC4.1 per-request-db-client: an object an arrow function returns per
     ].join('\n'),
   });
   assert.deepEqual(
-    ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]),
+    sitesOf(root, 'per-request-db-client'),
     ['pages/api/graphql.ts:9', 'pages/api/trpc/[trpc].ts:7'],
   );
 });
@@ -702,7 +707,7 @@ test('#3903 AC4.1 per-request-db-client: objects after `: [ ? | &` at module sco
       '',
     ].join('\n'),
   });
-  assert.deepEqual(ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]), ['routes/mixed.js:7']);
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/mixed.js:7']);
 });
 
 test('#3903 per-request-db-client: an array of objects an arrow function returns per call is flagged; a spread object at module scope is skipped', () => {
@@ -726,7 +731,7 @@ test('#3903 per-request-db-client: an array of objects an arrow function returns
       '',
     ].join('\n'),
   });
-  assert.deepEqual(ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]), ['routes/factory.js:2', 'routes/spread-handler.js:2']);
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/factory.js:2', 'routes/spread-handler.js:2']);
 });
 
 test('#3903 per-request-db-client: Unicode whitespace (U+2003, U+3000) counts as whitespace before `{` and after `=>`, as /\\s/ does', () => {
@@ -741,7 +746,7 @@ test('#3903 per-request-db-client: Unicode whitespace (U+2003, U+3000) counts as
     'routes/unicode-arrow-expr.js': 'const h = () => x\nconst e = { db: new PrismaClient() }\n',
   });
   assert.deepEqual(
-    ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]),
+    sitesOf(root, 'per-request-db-client'),
     ['routes/unicode-arrow-expr.js:2', 'routes/unicode-space.js:1'],
   );
 });
@@ -753,7 +758,7 @@ test('#3903 per-request-db-client: a `=>` followed by a newline then `{` is a bl
     // Positive pair: `=> x` is an expression body, so the object after it (no `;` yet) reads as per-request.
     'routes/newline-expr.js': 'const h = () =>\nx\nconst e = { db: new PrismaClient() }\n',
   });
-  assert.deepEqual(ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]), ['routes/newline-expr.js:3']);
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/newline-expr.js:3']);
 });
 
 test('#3903 per-request-db-client: closers match their own opener within the current `{` scope; a `}` discards unclosed groups above its `{`', () => {
@@ -789,7 +794,7 @@ test('#3903 per-request-db-client: closers match their own opener within the cur
     ].join('\n'),
   });
   assert.deepEqual(
-    ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]),
+    sitesOf(root, 'per-request-db-client'),
     ['routes/comment-paren.js:3', 'routes/mismatch.js:4', 'routes/scoped-closer.js:4'],
   );
 });
@@ -809,7 +814,7 @@ test('#3903 per-request-db-client: an object inside an arrow expression body is 
     ].join('\n'),
   });
   assert.deepEqual(
-    ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]),
+    sitesOf(root, 'per-request-db-client'),
     ['routes/server.js:2', 'routes/server.js:3', 'routes/server.js:4'],
   );
 });
@@ -825,7 +830,7 @@ test('#3903 per-request-db-client: unmatched parens in a comment or string do no
       '',
     ].join('\n'),
   });
-  assert.deepEqual(ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]), ['routes/smiley.js:4']);
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/smiley.js:4']);
 });
 
 test('#3903 per-request-db-client: a stray `}` at module scope does not hide the next handler\'s client', () => {
@@ -839,7 +844,7 @@ test('#3903 per-request-db-client: a stray `}` at module scope does not hide the
       '',
     ].join('\n'),
   });
-  assert.deepEqual(ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]), ['routes/tpl.js:3']);
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/tpl.js:3']);
 });
 
 test('AC2.1 AC2.2 no-cache-layer: DB-backed routes with no cache signal anchor to package.json', () => {
