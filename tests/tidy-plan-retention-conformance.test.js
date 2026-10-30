@@ -16,6 +16,8 @@ const SCAN_PROCEDURES = read('plugin/skills/tidy/scan-procedures.md');
 const PLAN_CITATION = read('plugin/skills/tidy/plan-citation-check.md');
 const STEP6_AUTO = read('plugin/skills/tidy/step-6-auto.md');
 const TIDY_SKILL = read('plugin/skills/tidy/SKILL.md');
+const STEP6_INTERACTIVE = read('plugin/skills/tidy/step-6-interactive.md');
+const APPROVE_MODE = read('plugin/skills/tidy/approve-mode.md');
 const POLICY_SCHEMA = read('plugin/skills/_shared/policy-schema.md');
 
 function step4Section() {
@@ -86,8 +88,33 @@ test('step-6-auto.md stages Prune plan at every tier (#4465)', () => {
 
 test('step-6-auto.md auto-deletes plans only under prune-after-wrapup (#4465)', () => {
   assert.doesNotMatch(STEP6_AUTO, /orphaned plans whose related spec is complete,/);
-  assert.match(STEP6_AUTO, /plans whose related spec is complete or that have no related spec, under `prune-after-wrapup`/);
-  assert.match(STEP6_AUTO, /old plans whose spec status is unclear, under `prune-after-wrapup`/);
+  assert.match(STEP6_AUTO, /plans whose related spec is complete or that have no related spec \(`docs\/superpowers\/plans\/` only under `prune-after-wrapup`; `~\/\.claude\/plans\/` at every value\)/);
+  assert.match(STEP6_AUTO, /old plans whose spec status is unclear \(`docs\/superpowers\/plans\/` only under `prune-after-wrapup`; `~\/\.claude\/plans\/` at every value\)/);
+});
+
+test('step-6-auto.md re-verify covers the orphan plan case (#4465)', () => {
+  assert.match(STEP6_AUTO, /the plan's related spec is still complete \(or, for an orphan plan, still has no related spec\) and no repo file cites/);
+});
+
+test('SKILL.md Prune plan row says the 30 threshold gates staging, not execution (#4465)', () => {
+  const row = TIDY_SKILL.split('\n').find((l) => l.startsWith('| **Prune plan**'));
+  assert.ok(row);
+  assert.match(row, /The 30 threshold gates staging, not execution: an approved archive still executes after `stale — skipped` drops leave fewer than 30/);
+});
+
+test('SKILL.md Step 7.5 verification checklist has a Pruned plans line (#4465)', () => {
+  const s = TIDY_SKILL.slice(TIDY_SKILL.indexOf('## Step 7.5: Verify Execution'));
+  assert.match(s, /- \[x\] Pruned plans: \{n\} — each listed plan removed \(`git rm`\) and committed, or reported `stale — skipped`/);
+});
+
+test('step-6-interactive.md lists prune among the recommendation kinds (#4465)', () => {
+  assert.match(STEP6_INTERACTIVE, /every active recommendation from the scans \(delete, prune, defer,/);
+});
+
+test('both approval paths record an excluded Prune plan (archive) decline, never an ask one (#4465)', () => {
+  const sentence = /An excluded `Prune plan \(archive\)` item records its decline per `scan-procedures\.md` Step 4's Plan retention \(never a `Prune plan \(ask\)` item\)\./;
+  assert.match(STEP6_INTERACTIVE, sentence);
+  assert.match(APPROVE_MODE, sentence);
 });
 
 test('SKILL.md Action Vocabulary defines Prune plan execution and re-verify (#4465)', () => {
@@ -105,4 +132,6 @@ test('policy-schema.md names tidy Step 4 as a superpowers-plans-retention consum
   assert.match(row, /`\/claude-tweaks:tidy` Step 4 \(`tidy\/scan-procedures\.md`\)/);
   assert.match(row, /tidy keeps them until 30 or more are past a 7-day cutoff, then stages one bulk prune/);
   assert.match(row, /tidy's Approve section/);
+  assert.match(row, /tidy deletes Step 4's would-be-Delete plans/);
+  assert.doesNotMatch(row, /tidy deletes closed-record plans/);
 });

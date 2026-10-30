@@ -48,7 +48,7 @@ This reads `staged/*.json` sidecars directly, so a later `--approve` run renders
 Approve section a fresh run would from the same `staged/` contents. Then obtain approval the
 interactive way — this skill's own Interaction style directive at the top of `SKILL.md`: one
 `AskUserQuestion` call, one option ("Approve all") marked Recommended, plus an override path
-naming specific items to exclude. This mode is never reached from `auto` mode itself — it exists
+naming specific items to exclude. An excluded `Prune plan (archive)` item records its decline per `scan-procedures.md` Step 4's Plan retention (never a `Prune plan (ask)` item). This mode is never reached from `auto` mode itself — it exists
 precisely because an earlier auto or interactive run left items staged rather than applied.
 
 ## Re-verify before applying
