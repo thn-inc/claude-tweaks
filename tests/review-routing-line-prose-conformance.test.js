@@ -173,6 +173,37 @@ for (const [literal, fact] of RECORD_PROPOSAL_CLAUSES) {
   });
 }
 
+// _shared/staged-patch.md's Stacked check: each non-clean outcome's flags, cited in the "Staging a patch" paragraph,
+// are appended to the STAGED bullet's command and must compose that outcome's line.
+const STACKED_OUTCOMES = [
+  { flag: '--rederived-onto', fills: { '{earlier}': 'review-1' }, logged: 'Re-derived onto staged/review-1.patch' },
+  { flag: '--conflict', fills: { '{failing}': 'review-3', '{other}': 'review-1', '{first stderr line}': 'patch failed' }, logged: 'stacked check: staged/review-3.patch does not apply on top of staged/review-1.patch in apply order (patch failed)' },
+  { flag: '--stack-exit', fills: { '{code}': '2', '{first stderr line}': 'usage' }, logged: 'gate could not run: stacked check exit 2 (usage)' },
+];
+
+function stackedOutcomeFlags(flag) {
+  const paragraph = md.split('\n').find((l) => l.startsWith('**Staging a patch'));
+  assert.ok(paragraph, 'step3-routing.md must carry the "Staging a patch" paragraph');
+  const span = [...paragraph.matchAll(/`(--[^`]*)`/g)].map((m) => m[1]).find((s) => s.startsWith(`${flag} `));
+  assert.ok(span, `the "Staging a patch" paragraph must cite the ${flag} outcome's flags`);
+  return span;
+}
+
+for (const o of STACKED_OUTCOMES) {
+  test(`the "Staging a patch" paragraph's ${o.flag} outcome, appended to the STAGED command, logs that outcome with its release token`, () => {
+    let flags = stackedOutcomeFlags(o.flag);
+    for (const [placeholder, value] of Object.entries(o.fills)) flags = flags.split(placeholder).join(value);
+    const { main, runDir } = fixture();
+    const out = [];
+    assert.doesNotMatch(flags, /\{[a-z: ]+\}/, `every placeholder must be filled: ${flags}`);
+    const argv = [...instantiate(citedCommand('STAGED'), 'high', runDir), ...argvOf(flags)];
+    assert.equal(run(argv, deps(main, out)), 0, `exit 0 for: ${argv.join(' ')}`);
+    const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+    assert.ok(text.includes('high-severity finding'), `the line keeps the release token: ${text}`);
+    assert.ok(text.includes(o.logged), `the line carries the ${o.flag} outcome: ${text}`);
+  });
+}
+
 test('step3-routing.md carries no hand-typed Step 3 Routing template', () => {
   assert.doesNotMatch(md, /`[^`\n]*\{time\} — Step 3 Routing:/);
 });

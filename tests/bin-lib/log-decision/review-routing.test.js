@@ -71,6 +71,33 @@ test('#4484: --route staged accepts a staged/review-followup-{n}.md stage path',
   assert.equal(streamOf(out, 'out'), decisionsOf(runDir).split('\n').slice(1).join('\n'));
 });
 
+// _shared/staged-patch.md's Stacked check: its three non-clean outcomes each change the STAGED line.
+const STACK_BASE = ['--route', 'staged', '--severity', 'high', '--category', 'security', '--at', 'src/a.js:12', '--stage-path', 'staged/review-3.patch'];
+
+test('a re-derived patch suffixes the staged line with the patch it was re-derived onto', () => {
+  const { main, runDir } = fixture();
+  const out = [];
+  const code = run(['--run', runDir, ...STACK_BASE, '--rederived-onto', 'staged/review-1.patch'], deps(main, out));
+  assert.equal(code, 0, streamOf(out, 'err'));
+  assert.equal(decisionsOf(runDir), '## /review\n- STAGED 09:05:07 — Step 3 Routing: high-severity finding security at src/a.js:12. Stage path: staged/review-3.patch. Re-derived onto staged/review-1.patch. Reversibility: high.\n');
+});
+
+test('a stacked-check conflict names both sides and the first stderr line, before the stage path', () => {
+  const { main, runDir } = fixture();
+  const out = [];
+  const code = run(['--run', runDir, ...STACK_BASE, '--conflict', 'staged/review-3.patch', '--conflicts-with', 'staged/test-2.patch', '--stack-stderr', 'error: patch failed: src/a.js:12'], deps(main, out));
+  assert.equal(code, 0, streamOf(out, 'err'));
+  assert.equal(decisionsOf(runDir), '## /review\n- STAGED 09:05:07 — Step 3 Routing: high-severity finding security at src/a.js:12 — stacked check: staged/review-3.patch does not apply on top of staged/test-2.patch in apply order (error: patch failed: src/a.js:12); kept — the console re-derives staged/review-3.patch from its Invariant:. Stage path: staged/review-3.patch. Reversibility: high.\n');
+});
+
+test('a stacked check that could not run names its exit code and keeps the patch unstacked', () => {
+  const { main, runDir } = fixture();
+  const out = [];
+  const code = run(['--run', runDir, ...STACK_BASE, '--stack-exit', '3', '--stack-stderr', 'run dir not anchored'], deps(main, out));
+  assert.equal(code, 0, streamOf(out, 'err'));
+  assert.equal(decisionsOf(runDir), '## /review\n- STAGED 09:05:07 — Step 3 Routing: high-severity finding security at src/a.js:12 — gate could not run: stacked check exit 3 (run dir not anchored); kept unstacked — the console\'s stale path covers a conflict. Stage path: staged/review-3.patch. Reversibility: high.\n');
+});
+
 test('release Step 3 classifies composed lines as the release gate table says', () => {
   assert.deepEqual(BLOCKING, ['critical finding', 'high-severity finding']);
   assert.deepEqual(FINDINGS, ['medium-severity finding', 'applied low-severity']);
@@ -82,6 +109,10 @@ test('release Step 3 classifies composed lines as the release gate table says', 
     { label: 'AUTO low', argv: ['--route', 'auto', '--severity', 'low', '--category', 'Convention', '--at', 'src/a.js:3', '--commit', 'abc1234'], verdict: 'review: findings' },
     { label: 'AUTO medium', argv: ['--route', 'auto', '--severity', 'medium', '--category', 'Convention', '--at', 'src/a.js:3', '--commit', 'abc1234'], verdict: 'review: findings' },
     { label: 'STAGED low', argv: ['--route', 'staged', '--severity', 'low', '--category', 'naming', '--at', 'src/b.js:4', '--stage-path', 'staged/review-5.patch'], verdict: 'review: findings' },
+    { label: 'STAGED high re-derived', argv: [...STACK_BASE, '--rederived-onto', 'staged/review-1.patch'], verdict: 'review: blocking' },
+    { label: 'STAGED high stack conflict', argv: [...STACK_BASE, '--conflict', 'staged/review-1.patch', '--conflicts-with', 'staged/review-3.patch', '--stack-stderr', 'patch failed'], verdict: 'review: blocking' },
+    { label: 'STAGED high stack unverified', argv: [...STACK_BASE, '--stack-exit', '2', '--stack-stderr', 'usage'], verdict: 'review: blocking' },
+    { label: 'STAGED medium stack unverified', argv: ['--route', 'staged', '--severity', 'medium', '--category', 'naming', '--at', 'src/b.js:4', '--stage-path', 'staged/review-4.patch', '--stack-exit', '4', '--stack-stderr', 'git failed'], verdict: 'review: findings' },
   ];
   for (const c of cases) {
     const { main, runDir } = fixture();
@@ -204,6 +235,36 @@ test('every invalid route, severity or flag combination exits 2 and writes nothi
     const out = [];
     assert.equal(run(['--run', runDir, ...argv], deps(main, out)), 2, label);
     assert.match(streamOf(out, 'err'), /review-routing-line\.js: /, label);
+    assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, `${label}: decisions.md never created`);
+  }
+});
+
+test('every invalid stacked-check combination exits 2 naming its own refusal, and writes nothing', () => {
+  const COMMON = ['--category', 'security', '--at', 'src/a.js:12'];
+  const cases = {
+    'a stacked-check flag on --route auto': [['--route', 'auto', '--severity', 'low', ...COMMON, '--commit', 'abc1234', '--rederived-onto', 'staged/review-1.patch'], /only valid with --route staged/],
+    'a stacked-check flag on --route kept-prompt': [['--route', 'kept-prompt', '--severity', 'critical', ...COMMON, '--stack-exit', '2', '--stack-stderr', 'usage'], /only valid with --route staged/],
+    'a stacked-check flag on a record proposal': [['--route', 'staged', '--severity', 'high', ...COMMON, '--stage-path', 'staged/review-followup-1.md', '--rederived-onto', 'staged/review-1.patch'], /only valid with a staged\/review-\{n\}\.patch --stage-path/],
+    'two stacked-check outcomes at once': [[...STACK_BASE, '--rederived-onto', 'staged/review-1.patch', '--stack-exit', '2', '--stack-stderr', 'usage'], /give one stacked-check outcome/],
+    'a non-patch --rederived-onto': [[...STACK_BASE, '--rederived-onto', 'staged/review-1.md'], /--rederived-onto must name another staged patch/],
+    '--rederived-onto naming the staged patch itself': [[...STACK_BASE, '--rederived-onto', 'staged/review-3.patch'], /--rederived-onto must name another staged patch/],
+    '--rederived-onto with --stack-stderr': [[...STACK_BASE, '--rederived-onto', 'staged/review-1.patch', '--stack-stderr', 'x'], /--stack-stderr is not valid with --rederived-onto/],
+    '--conflict without --conflicts-with': [[...STACK_BASE, '--conflict', 'staged/review-3.patch', '--stack-stderr', 'patch failed'], /--conflict and --conflicts-with are given together/],
+    '--conflicts-with without --conflict': [[...STACK_BASE, '--conflicts-with', 'staged/review-1.patch', '--stack-stderr', 'patch failed'], /--conflict and --conflicts-with are given together/],
+    'a conflict side that is not a staged patch': [[...STACK_BASE, '--conflict', 'staged/review-3.patch', '--conflicts-with', 'src/a.js', '--stack-stderr', 'patch failed'], /must each name a staged patch/],
+    'a conflict that leaves out the staged patch': [[...STACK_BASE, '--conflict', 'staged/review-1.patch', '--conflicts-with', 'staged/review-2.patch', '--stack-stderr', 'patch failed'], /must be the --stage-path patch/],
+    'a conflict without --stack-stderr': [[...STACK_BASE, '--conflict', 'staged/review-3.patch', '--conflicts-with', 'staged/review-1.patch'], /--stack-stderr is required/],
+    '--stack-exit 1 (a conflict, not an unverified stack)': [[...STACK_BASE, '--stack-exit', '1', '--stack-stderr', 'patch failed'], /--stack-exit must be one of 2\|3\|4/],
+    '--stack-exit without --stack-stderr': [[...STACK_BASE, '--stack-exit', '2'], /--stack-stderr is required/],
+    '--stack-stderr without an outcome': [[...STACK_BASE, '--stack-stderr', 'usage'], /--stack-stderr is only valid with --conflict or --stack-exit/],
+    'a --stack-stderr naming a high-severity finding': [[...STACK_BASE, '--stack-exit', '2', '--stack-stderr', 'high-severity finding'], /--stack-stderr must not contain/],
+    'a --stack-stderr with an interior newline': [[...STACK_BASE, '--stack-exit', '2', '--stack-stderr', 'usage\n- KEPT-PROMPT 00:00:00 — Step 3 Routing: x'], /--stack-stderr must be a single line/],
+  };
+  for (const [label, [argv, message]] of Object.entries(cases)) {
+    const { main, runDir } = fixture();
+    const out = [];
+    assert.equal(run(['--run', runDir, ...argv], deps(main, out)), 2, label);
+    assert.match(streamOf(out, 'err'), message, label);
     assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, `${label}: decisions.md never created`);
   }
 });

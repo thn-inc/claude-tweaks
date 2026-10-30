@@ -19,6 +19,10 @@ const ALLOWED_SEVERITIES = {
 };
 // Two staging shapes: a patch (review-{n}.patch), or a record proposal (review-followup-{n}.md, #4484).
 const STAGE_PATH_RE = /^staged\/(?:review-\d+\.patch|review-followup-\d+\.md)$/;
+// The other side of a Stacked check (_shared/staged-patch.md) is any site's staged patch, not only review's.
+const STACKED_PATCH_RE = /^staged\/[a-z][a-z0-9-]*-\d+\.patch$/;
+// bin/check-staged-stack.js's exits that leave the stack unverified (1 is a conflict, --conflict's case).
+const STACK_EXITS = ['2', '3', '4'];
 // An abbreviated (7) through full SHA-1 (40) commit sha, the bound the repo's other sha validators use.
 const COMMIT_RE = /^[0-9a-f]{7,40}$/;
 // The release gate classifies Step 3 lines by these literals; --category and --at are written into the line, so neither may inject one.
@@ -33,10 +37,49 @@ function textProblem(flag, value) {
   return null;
 }
 
-// { route, severity, category, at, stagePath?, commit?, lever? } -> { status, text, reversibility } | { error }.
+// A staged patch's non-clean Stacked check outcome (_shared/staged-patch.md) -> { finding, suffix } | { error }:
+// `finding` follows the "{sev}-severity finding … at …" lead, `suffix` follows the stage path. Each outcome's wording
+// is that file's, with the stage path kept on every line so the console can still read it.
+function stackedOutcome({ stagePath, rederivedOnto, conflict, conflictsWith, stackExit, stackStderr }) {
+  const given = [rederivedOnto != null, conflict != null || conflictsWith != null, stackExit != null].filter(Boolean).length;
+  if (given === 0) {
+    if (stackStderr != null) return { error: '--stack-stderr is only valid with --conflict or --stack-exit' };
+    return { finding: '', suffix: '' };
+  }
+  if (given > 1) return { error: 'give one stacked-check outcome: --rederived-onto, --conflict/--conflicts-with, or --stack-exit' };
+  if (!/\.patch$/.test(stagePath)) return { error: 'a stacked-check outcome is only valid with a staged/review-{n}.patch --stage-path' };
+  if (rederivedOnto != null) {
+    if (stackStderr != null) return { error: '--stack-stderr is not valid with --rederived-onto' };
+    if (!STACKED_PATCH_RE.test(rederivedOnto) || rederivedOnto === stagePath) {
+      return { error: '--rederived-onto must name another staged patch (staged/{slug}-{n}.patch)' };
+    }
+    return { finding: '', suffix: `. Re-derived onto ${rederivedOnto}` };
+  }
+  const stderrProblem = textProblem('--stack-stderr', stackStderr);
+  if (stderrProblem) return { error: stderrProblem };
+  if (stackExit != null) {
+    if (!STACK_EXITS.includes(stackExit)) return { error: `--stack-exit must be one of ${STACK_EXITS.join('|')} (exit 1 is a conflict: use --conflict)` };
+    return { finding: ` — gate could not run: stacked check exit ${stackExit} (${stackStderr}); kept unstacked — the console's stale path covers a conflict`, suffix: '' };
+  }
+  if (conflict == null || conflictsWith == null) return { error: '--conflict and --conflicts-with are given together' };
+  if (!STACKED_PATCH_RE.test(conflict) || !STACKED_PATCH_RE.test(conflictsWith)) {
+    return { error: '--conflict and --conflicts-with must each name a staged patch (staged/{slug}-{n}.patch)' };
+  }
+  if (conflict !== stagePath && conflictsWith !== stagePath) return { error: '--conflict or --conflicts-with must be the --stage-path patch' };
+  return {
+    finding: ` — stacked check: ${conflict} does not apply on top of ${conflictsWith} in apply order (${stackStderr}); kept — the console re-derives ${conflict} from its Invariant:`,
+    suffix: '',
+  };
+}
+
+const STACK_FIELDS = ['rederivedOnto', 'conflict', 'conflictsWith', 'stackExit', 'stackStderr'];
+
+// { route, severity, category, at, stagePath?, commit?, lever?, rederivedOnto?, conflict?, conflictsWith?, stackExit?,
+// stackStderr? } -> { status, text, reversibility } | { error }.
 // `text` never begins with `Step 3 Routing:` (the step prefix is log-decision's to write), so the
 // --text repeat refusal never fires on a composed line.
-function composeRoutingLine({ route, severity, category, at, stagePath, commit, lever }) {
+function composeRoutingLine(fields) {
+  const { route, severity, category, at, stagePath, commit, lever } = fields;
   if (!ROUTES.includes(route)) return { error: `--route must be one of ${ROUTES.join('|')}` };
   const sev = typeof severity === 'string' ? severity.toLowerCase() : severity;
   if (!SEVERITIES.includes(sev)) return { error: `--severity must be one of ${SEVERITIES.join('|')}` };
@@ -45,6 +88,9 @@ function composeRoutingLine({ route, severity, category, at, stagePath, commit, 
   }
   const problem = textProblem('--category', category) || textProblem('--at', at) || (lever != null ? textProblem('--lever', lever) : null);
   if (problem) return { error: problem };
+  if (route !== 'staged' && STACK_FIELDS.some((k) => fields[k] != null)) {
+    return { error: `a stacked-check flag is only valid with --route staged` };
+  }
 
   if (route === 'auto') {
     if (stagePath != null) return { error: '--stage-path is not valid with --route auto' };
@@ -58,7 +104,9 @@ function composeRoutingLine({ route, severity, category, at, stagePath, commit, 
     if (typeof stagePath !== 'string' || !STAGE_PATH_RE.test(stagePath)) {
       return { error: '--stage-path must match staged/review-{n}.patch or staged/review-followup-{n}.md with --route staged' };
     }
-    return { status: 'STAGED', text: `${sev}-severity finding ${category} at ${at}. Stage path: ${stagePath}`, reversibility: 'high' };
+    const stacked = stackedOutcome(fields);
+    if (stacked.error) return { error: stacked.error };
+    return { status: 'STAGED', text: `${sev}-severity finding ${category} at ${at}${stacked.finding}. Stage path: ${stagePath}${stacked.suffix}`, reversibility: 'high' };
   }
   if (stagePath != null) return { error: '--stage-path is not valid with --route kept-prompt' };
   if (commit != null) return { error: '--commit is not valid with --route kept-prompt' };
