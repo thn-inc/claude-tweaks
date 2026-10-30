@@ -9,7 +9,8 @@
 // { status, text, step?, spec?, reversibility?, lever?, section? } (an element's section wins over --section),
 // each validated like the single-entry flags before any is written; exclusive with --status/--text/--text-file/
 // --step/--spec/--reversibility/--lever.
-// Exit 0 appended (every entry echoed to stdout, in order); 2 malformed invocation; 3 run dir missing or not
+// Exit 0 appended (every entry echoed to stdout, in order); 2 malformed invocation (incl. a text beginning with
+// its own --step value followed by `:` — formatEntry writes that prefix, so the repeat is refused); 3 run dir missing or not
 // anchored under the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md).
 // The decisions.md half of #637; the staged/ half now ships as bin/stage-item.js.
 'use strict';
@@ -81,6 +82,7 @@ function run(argv, deps = realDeps) {
       o.text = line;
     }
     if (!o.text || !String(o.text).trim()) return usageError('--text or --text-file is required');
+    if (repeatsStep(o.step, o.text)) return usageError(repeatsStepMessage(o.step, o.text, false));
     if (!REVERSIBILITY_RE.test(String(o.reversibility))) return usageError(`--reversibility must be one of ${REVERSIBILITY.join('|')}, optionally followed by " (qualifier)"`);
     if (o.spec !== null && !/^\d+$/.test(String(o.spec))) return usageError('--spec must be a record number');
     specs = [{ status: o.status, step: o.step, spec: o.spec, text: o.text, reversibility: o.reversibility, lever: o.lever, section: o.section }];
@@ -122,6 +124,19 @@ function readEntries(file, defaultSection) {
   return { entries };
 }
 
+// True iff text opens with `{step}:` — the prefix formatEntry already writes before the text. The text is
+// trimmed because formatEntry trims it before writing, so leading whitespace still lands as a doubled prefix;
+// the step is compared as given, since formatEntry writes it as given.
+function repeatsStep(step, text) {
+  return typeof step === 'string' && step !== '' && String(text).trim().startsWith(step + ':');
+}
+
+// The --entries form names its element fields (text/step); the single-entry flags keep --text/--step.
+function repeatsStepMessage(step, text, fromEntry) {
+  const [textName, stepName] = fromEntry ? ['text', 'step'] : ['--text', '--step'];
+  return `${textName} repeats ${stepName}: ${stepName} "${step}", ${textName} "${text}" — the step prefix is written for you; drop it from the text`;
+}
+
 // The single-entry flags' checks, applied to one --entries element; null when valid.
 function entryProblem(el) {
   if (!el || typeof el !== 'object' || Array.isArray(el)) return 'must be an object';
@@ -133,6 +148,7 @@ function entryProblem(el) {
   for (const key of ['step', 'lever', 'section']) {
     if (el[key] != null && (typeof el[key] !== 'string' || /[\r\n]/.test(el[key]))) return `${key} must be a single-line string`;
   }
+  if (repeatsStep(el.step, el.text)) return repeatsStepMessage(el.step, el.text, true);
   if (el.reversibility != null && (typeof el.reversibility !== 'string' || !REVERSIBILITY_RE.test(el.reversibility))) return `reversibility must be one of ${REVERSIBILITY.join('|')}, optionally followed by " (qualifier)"`;
   if (el.spec != null && !/^\d+$/.test(String(el.spec))) return 'spec must be a record number';
   return null;

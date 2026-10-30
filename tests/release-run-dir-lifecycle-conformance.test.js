@@ -18,6 +18,8 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { gitRepo, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+const { classifyStagedItem, stagingExemption, CANONICAL_PREFIXES } = require('../plugin/bin/lib/console/resolve');
+const { composeRoutingLine } = require('../plugin/bin/lib/log-decision/review-routing');
 
 const ROOT = path.join(__dirname, '..');
 const SKILL = path.join(ROOT, 'plugin', 'skills', 'release', 'SKILL.md');
@@ -347,7 +349,8 @@ function stepEightOf(text) {
 const DISPOSITION_SCOPE = [
   [/\*\*created\*\* run director/, 'disposition covers a created run directory only'],
   [/inherited[\s\S]{0,200}parent's Review Console/, 'an inherited directory is left to the parent\'s Review Console'],
-  [/staged\/review-\{n\}\.\{md,patch\}/, 'inventory: confirmed findings, staged/review-{n}.{md,patch}'],
+  [/staged\/review-\{n\}\.patch/, 'inventory: confirmed findings, staged/review-{n}.patch'],
+  [/staged\/review-followup-\{n\}\.md/, 'inventory: record-routed confirmed findings, staged/review-followup-{n}.md'],
   [/staged\/review-unconfirmed-\{n\}\.md/, 'inventory: unconfirmed entries'],
   [/staged\/review-contested-\{n\}\.md/, 'inventory: contested findings'],
   [/staged\/review-debate-\{n\}\.md/, 'inventory: debate findings'],
@@ -370,6 +373,7 @@ const DISPOSITION_ROUTING = [
   [/pre-existing-outside-diff/, 'the Defer-reason is pre-existing-outside-diff'],
   [/_shared\/materiality-floor\.md/, 'the materiality floor is cited'],
   [/Digest — below floor/, 'a below-floor finding is Digest — below floor'],
+  [/a `high` or `critical` finding clears it by that file's severity override/, 'a high or critical confirmed finding clears the floor by its severity override'],
   [/unconfirmed[\s\S]{0,80}critical\/high[\s\S]{0,80}Defer/, 'an unconfirmed critical/high finding takes the same Defer'],
   [/declined \(unconfirmed: one reproduction agent of the pair\)/, 'an unconfirmed medium/low/info finding is declined, naming the pair'],
   [/declined \(contested: \{verdicts\}\)/, 'a contested finding is declined, naming the verdicts'],
@@ -378,6 +382,7 @@ const DISPOSITION_ROUTING = [
   [/declined \(unconfirmed: \{the line's own reason/, 'any other decisions.md-only line is declined with its own reason'],
   [/A file on a `proposal` roster row \| The same Defer path and Defer-reason/, 'a file on a proposal roster row takes the same Defer path and Defer-reason'],
   [/else treated as medium for the floor test/, 'a severity-less reflect/simplify/deepen file is medium for the floor'],
+  [/A `review-followup-` file already holds a composed record, so after the floor test it is filed as written/, 'a review-followup- file is filed as written, never recomposed'],
   [/Any other staged file \| No route/, 'any other staged file has no route'],
   [/_shared\/github-write-transport\.md/, 'filing and the covered-by lookup go through the write transport'],
 ];
@@ -581,7 +586,7 @@ function parseRoster(text) {
     assert.ok(stagedBy, `roster row ${tick(prefix)} names no Staged by path`);
     const route = unticked(cells[4]);
     assert.ok(ROUTES.includes(route), `roster row ${tick(prefix)} has route "${route}", outside the closed set`);
-    return { prefix, stagedBy: stagedBy[1], route };
+    return { prefix, stagedBy: stagedBy[1], route, example: cells[1] };
   });
 }
 
@@ -778,4 +783,99 @@ test('roster-vs-routing go-red: removing the proposal routing row trips the keye
 test('roster-vs-routing go-red: a stale producer name trips the Staged by check', () => {
   const stale = (rel) => (rel === 'visual-review/SKILL.md' ? readSkillFile(rel).replace(/staged\/visual-review-/g, 'staged/vr-') : readSkillFile(rel));
   assert.throws(() => assertProven(parseRoster(readDisposition()), stale), /visual-review-/);
+});
+
+// --- Roster <-> Review Console SECTION_MAP (#4484) ---
+// A roster Example the console cannot route is refused at staging (stage-item.js's unmapped-prefix) and so
+// never reaches disposition. A review-* prefix the console maps but the roster omits is a staged file
+// disposition would call unrecognised.
+
+// Every staged/{name} literal in an Example cell as concrete names. Unlike stagedNamesIn, every alternative of a
+// {a,b} group is kept, so `review-{n}.{md,patch}` yields review-1.md and review-1.patch.
+// Several groups expand as a cross product, the first group varying slowest.
+function expandBraces(name) {
+  const group = /\{([^{}]*,[^{}]*)\}/.exec(name);
+  return group ? group[1].split(',').flatMap((alt) => expandBraces(name.replace(group[0], alt))) : [name];
+}
+
+function exampleNames(cell) {
+  return [...cell.matchAll(/staged\/([a-zA-Z][\w{},.*-]*)/g)].flatMap((m) => expandBraces(
+    m[1].replace(/\.$/, '').replace(/\{(?:n|N|slug)\}/g, '1').replace(/\*/g, 'x'),
+  ));
+}
+
+// Example names, on a row a review producer stages, that the console would refuse as an unmapped prefix.
+function unstageableRosterNames(roster) {
+  return roster
+    .filter((row) => row.route !== 'not staged by review')
+    .flatMap((row) => exampleNames(row.example))
+    .filter((name) => stagingExemption(name) === null && classifyStagedItem(name).reason === 'unmapped-prefix');
+}
+
+// review-* prefixes the console maps that the roster has no row for.
+function reviewPrefixesWithoutRow(roster) {
+  return CANONICAL_PREFIXES.filter((p) => p.startsWith('review-') && !roster.some((r) => r.prefix === p));
+}
+
+function assertRosterMatchesSectionMap(text) {
+  const roster = parseRoster(text);
+  const unstageable = unstageableRosterNames(roster);
+  assert.deepEqual(unstageable, [], 'roster examples the Review Console refuses as unmapped-prefix: ' + unstageable.join(', '));
+  const missing = reviewPrefixesWithoutRow(roster);
+  assert.deepEqual(missing, [], 'review-* SECTION_MAP prefixes with no roster row: ' + missing.join(', '));
+}
+
+test('AC2.1: every roster example a review producer can name is stageable (no review-{n}.md)', () => {
+  assertRosterMatchesSectionMap(readDisposition());
+});
+
+test('AC3.1: every review-* SECTION_MAP prefix has a roster row — deleting the review-followup- row goes red', () => {
+  const text = readDisposition();
+  assertRosterMatchesSectionMap(text);
+  assert.throws(() => assertRosterMatchesSectionMap(withoutRosterRow(text, 'review-followup-')), /review-followup-/);
+});
+
+test('exampleNames expands every brace group as a cross product', () => {
+  assert.deepEqual(exampleNames('`staged/x-{a,b}.{c,d}`'), ['x-a.c', 'x-a.d', 'x-b.c', 'x-b.d']);
+});
+
+// The offending alternative `md` is second, so an expansion that keeps only a group's first alternative
+// (what stagedNamesIn does) would not see review-1.md and this test would stay green.
+test('AC2.1 go-red: restoring the review-{n}.{patch,md} example goes red on review-1.md (offender is the second alternative)', () => {
+  const text = readDisposition();
+  const line = rosterLine(text, 'review-{n}');
+  const doctored = text.replace(line, line.replace('`staged/review-{n}.patch`', '`staged/review-{n}.{patch,md}`'));
+  assert.notEqual(doctored, text, 'anchor: the review-{n} Example cell is not `staged/review-{n}.patch` — proof cannot discriminate');
+  assert.throws(() => assertRosterMatchesSectionMap(doctored), /review-1\.md/);
+});
+
+// --- Roster <-> review-routing-line.js stage paths (#4484 review) ---
+// Step 3 Routing logs every staged file through the composer, so a roster Example on a row step3-routing.md
+// stages that the composer refuses could be staged but never logged.
+function unloggableReviewExamples(roster) {
+  return roster
+    .filter((row) => row.stagedBy === 'review/step3-routing.md')
+    .flatMap((row) => exampleNames(row.example))
+    .filter((name) => composeRoutingLine({ route: 'staged', severity: 'high', category: 'x', at: 'a.js:1', stagePath: `staged/${name}` }).error);
+}
+
+test('every roster example step3-routing.md stages is a stage path review-routing-line.js accepts', () => {
+  assert.deepEqual(unloggableReviewExamples(parseRoster(readDisposition())), []);
+});
+
+test('go-red: a review-followup- example the composer refuses is reported', () => {
+  const text = readDisposition();
+  const line = rosterLine(text, 'review-followup-');
+  const doctored = text.replace(line, line.replace('`staged/review-followup-{n}.md`', '`staged/review-followup-{n}.txt`'));
+  assert.notEqual(doctored, text, 'anchor: the review-followup- Example cell is not `staged/review-followup-{n}.md` — proof cannot discriminate');
+  assert.deepEqual(unloggableReviewExamples(parseRoster(doctored)), ['review-followup-1.txt']);
+});
+
+test('AC1.1: review-followup-1.md routes to the proposal row, which the Routing table defers', () => {
+  const text = readDisposition();
+  const row = classify('review-followup-1.md', parseRoster(text));
+  assert.ok(row, 'review-followup-1.md must classify to a roster row (#4484)');
+  assert.equal(row.route, 'proposal');
+  const routed = routingRowOf(text, 'proposal');
+  assert.ok(routed && routed.includes('The same Defer path and Defer-reason'), 'the proposal routing row must carry "The same Defer path and Defer-reason"');
 });

@@ -309,3 +309,81 @@ test('--help names the --entries form', () => {
   assert.equal(run(['--help'], deps(fixture().main, out)), 0);
   assert.match(streamOf(out, 'out'), /--entries <file>/);
 });
+
+test('AC1.1: --text repeating --step exits 2 and writes nothing', () => {
+  const { main, run: runDir } = fixture();
+  const out = [];
+  const code = run(['--run', runDir, '--status', 'AUTO', '--step', 'Step 3 Routing', '--text', 'Step 3 Routing: x'], deps(main, out));
+  assert.equal(code, 2);
+  assert.match(streamOf(out, 'err'), /Step 3 Routing/);
+  assert.ok(streamOf(out, 'err').includes('--text repeats --step: --step "Step 3 Routing", --text "Step 3 Routing: x"'), 'stderr names the repeated --text');
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, 'decisions.md never created');
+});
+
+test('--text-file holding a repeated step prefix exits 2 and writes nothing', () => {
+  const { main, root, run: runDir } = fixture();
+  const file = path.join(root, 'entry.txt');
+  fs.writeFileSync(file, 'Step 3 Routing: x\n');
+  const out = [];
+  const code = run(['--run', runDir, '--status', 'AUTO', '--step', 'Step 3 Routing', '--text-file', file], deps(main, out));
+  assert.equal(code, 2);
+  assert.ok(streamOf(out, 'err').includes('Step 3 Routing: x'), 'stderr names the repeated text');
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, 'decisions.md never created');
+});
+
+test('--text with leading whitespace before the repeated step prefix exits 2 and writes nothing', () => {
+  const { main, run: runDir } = fixture();
+  const out = [];
+  const code = run(['--run', runDir, '--status', 'AUTO', '--step', 'Step 3 Routing', '--text', '  Step 3 Routing: x'], deps(main, out));
+  assert.equal(code, 2);
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, 'decisions.md never created');
+});
+
+test('--entries element repeating its step exits 2, names entries[1], and writes nothing', () => {
+  const { main, root, run: runDir } = fixture();
+  const file = entriesFile(root, [{ status: 'AUTO', step: 'a', text: 'ok' }, { status: 'STAGED', step: 'Step 3 Routing', text: 'Step 3 Routing: y' }]);
+  const out = [];
+  const code = run(['--run', runDir, '--entries', file], deps(main, out));
+  assert.equal(code, 2);
+  const err = streamOf(out, 'err');
+  assert.match(err, /entries\[1\]/);
+  assert.ok(err.includes('Step 3 Routing'), 'stderr names the step');
+  assert.ok(err.includes('text repeats step: step "Step 3 Routing", text "Step 3 Routing: y"'), 'stderr names the repeated text in element-field terms');
+  assert.equal(streamOf(out, 'out'), '');
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, 'decisions.md never created');
+});
+
+test('--entries element with leading whitespace before its repeated step prefix exits 2, names entries[1], and writes nothing', () => {
+  const { main, root, run: runDir } = fixture();
+  const file = entriesFile(root, [{ status: 'AUTO', text: 'ok' }, { status: 'AUTO', step: 'Step 3 Routing', text: '  Step 3 Routing: x' }]);
+  const out = [];
+  assert.equal(run(['--run', runDir, '--entries', file], deps(main, out)), 2);
+  assert.ok(streamOf(out, 'err').includes('entries[1]: text repeats step: step "Step 3 Routing", text "  Step 3 Routing: x"'));
+  assert.equal(streamOf(out, 'out'), '');
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, 'decisions.md never created');
+});
+
+test('--entries element whose multi-line step its text repeats exits 2 on the text line-break check, not the repeat message', () => {
+  const { main, root, run: runDir } = fixture();
+  const file = entriesFile(root, [{ status: 'AUTO', text: 'ok' }, { status: 'AUTO', step: 'Step 3\nRouting', text: 'Step 3\nRouting: x' }]);
+  const out = [];
+  assert.equal(run(['--run', runDir, '--entries', file], deps(main, out)), 2);
+  const err = streamOf(out, 'err');
+  assert.match(err, /entries\[1\]: text must be one line/);
+  assert.doesNotMatch(err, /repeats/);
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, 'decisions.md never created');
+});
+
+test('AC3.1: a text mentioning the step without the colon prefix is accepted', () => {
+  const { main, run: runDir } = fixture();
+  const code = run(['--run', runDir, '--status', 'STAGED', '--step', 'Step 3 Routing', '--text', 'Step 3 Routing applied x'], deps(main, []));
+  assert.equal(code, 0);
+  assert.equal(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), '- STAGED 09:05:07 — Step 3 Routing: Step 3 Routing applied x. Reversibility: n/a.\n');
+});
+
+test('AC3.1: a step-shaped text with no --step is accepted', () => {
+  const { main, run: runDir } = fixture();
+  const code = run(['--run', runDir, '--status', 'AUTO', '--text', 'Step 3 Routing: x'], deps(main, []));
+  assert.equal(code, 0);
+  assert.equal(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), '- AUTO 09:05:07 — log-decision: Step 3 Routing: x. Reversibility: n/a.\n');
+});

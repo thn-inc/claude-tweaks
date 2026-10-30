@@ -36,6 +36,38 @@ No such test → flag it: either the vocabulary needs a pinning test (model it o
 examples below), or the "table" isn't actually a closed vocabulary and the prose should say so
 plainly instead of reading like one.
 
+When one vocabulary lives in three or more hand-kept places, list every pair. Pin each pair a real
+failure can travel along, or say why that pair cannot drift. #4484 keeps review staging names in
+three places:
+
+- the release roster (`plugin/skills/release/disposition.md`);
+- the console's `SECTION_MAP`/`CANONICAL_PREFIXES` (`plugin/bin/lib/console/resolve.js`);
+- the composer's `STAGE_PATH_RE` (`plugin/bin/lib/log-decision/review-routing.js`).
+
+The build pinned only roster↔SECTION_MAP. Review then found roster↔composer unpinned, the same drift
+the record itself fixed. The fix (`9a22084c2`) added `unloggableReviewExamples` in
+`tests/release-run-dir-lifecycle-conformance.test.js`.
+
+The roster↔SECTION_MAP edge is neither full set equality nor the containment-only exemption in the
+Anti-Patterns one-direction row below. Full equality is wrong because `SECTION_MAP` is a superset
+router. Containment of one producer is not enough either, because the console can map a `review-*`
+prefix that the roster omits. The pin works in both directions, with each side filtered first:
+
+- Every roster Example on a row a review producer stages goes through the live
+  `classifyStagedItem`, and must not come back `unmapped-prefix`.
+- Every `review-*` entry in `CANONICAL_PREFIXES` must have a roster row
+  (`assertRosterMatchesSectionMap`).
+
+When the code side routes more than one vocabulary, restrict it to the prefix namespace the prose
+owns, and assert equality inside that namespace.
+
+When the extractor expands brace alternatives (`staged/review-{n}.{md,patch}`), the go-red control
+must put the offending alternative second (`{patch,md}`). The roster's own `stagedNamesIn` keeps only
+the first alternative. If a regression made the new expander do the same, an offender in first
+position would still be caught, so the control would pass and prove nothing about the expander.
+#4484 recorded the plan override as SDD ruling ledger row 25. Pin the expander's cross product
+directly as well: `exampleNames('`staged/x-{a,b}.{c,d}`')` must give all four names.
+
 ## Worked examples
 
 The first two instances below are the two records the originating reflect finding named — one
@@ -152,6 +184,24 @@ pre-fix shape and stay unpinned (`tests/pr-check-gate-conformance.test.js` check
 bullet with `includes`). Step 1's key/case/array-literal grep misses this twin; grep each term as
 a property value (`grep -rn "state: 'no-pr'" plugin/bin/`). The fix is the one above: export a
 frozen list from the CLI and `deepEqual` it against the words parsed from the prose.
+
+**Projected-twin instance (#4488):** the code side need not be a row-for-row copy of the table. It
+can be a per-cell projection of it. `plugin/bin/lib/log-decision/review-routing.js`'s
+`ALLOWED_SEVERITIES` maps each route (`auto`, `staged`, `kept-prompt`) to the severities that route
+takes across all three ceiling columns of `plugin/skills/review/step3-routing.md`'s ceiling-keyed
+routing table. No table row equals any map entry, so step 2's "parsed row-for-row" reading finds
+nothing to compare. `tests/bin-lib/log-decision/review-routing.test.js`'s "the composer allows
+exactly the route/severity pairings step3-routing.md's ceiling-keyed table produces" test
+(`b5669aa6f`) builds the projection from the prose instead:
+
+1. It parses the four severity rows.
+2. It takes each cell's first word as the route. The Low row's `STAGED (unless …)` cell reads as
+   `staged`.
+3. It collects `{route → Set(severity)}`.
+4. It `deepEqual`s that, sorted, against the imported map.
+
+It went red under an `auto: ['low','medium','high']` mutant. When the code side is a projection,
+apply the same projection to the prose, and compare at that level.
 
 **Candidate instance (a live, currently-unpinned gap this check surfaces today):**
 `plugin/bin/lib/compose-subject.js:69`'s `TYPE_PRECEDENCE = ['feature', 'bug', 'task']` is a

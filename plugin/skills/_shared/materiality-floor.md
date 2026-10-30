@@ -24,6 +24,10 @@ fails toward filing an ordinary issue, never toward the digest.
 - `Defer-reason: tangential` always clears the floor and files as an ordinary issue — a tangential
   finding is a new idea the finding suggests, not residue of the current work, and ideas are
   intent, not exhaust (`_shared/deferral-gate.md`'s vocabulary).
+- A finding carrying severity `high` or `critical` always clears the floor and files as an ordinary
+  issue. The three axes score the record's filing size, not the finding's severity, so without
+  this a small fix to a high-severity finding could be digested where no gate that blocks on it
+  (release Step 3's `high-severity finding` token) ever looks again.
 - Human-typed `/capture` input is out of this contract's scope entirely — human input is intent,
   never exhaust, and never routes to the digest.
 
