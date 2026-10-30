@@ -1071,7 +1071,7 @@ test('a converged-positive debate naming a bracketed route path settles that fin
   assert.deepStrictEqual(findings([stagedLow('3a', 'app/[id]/page.tsx:9'), debate].join('\n')), []);
 });
 test('a verdict for one dynamic-route or scoped path never settles a sibling at the same lens and line (#4582)', () => {
-  const settle = (staged, other) => findings([stagedLow('3a', staged.path + ':' + staged.line), tbVerdict(tbFinding(other), { verdict: 'confirmed' }).entry].join('\n')).map((i) => i.resolution);
+  const settle = (staged, other) => findings([stagedLow('3a', `${staged.path}:${staged.line}`), tbVerdict(tbFinding(other), { verdict: 'confirmed' }).entry].join('\n')).map((i) => i.resolution);
   assert.deepStrictEqual(settle({ path: 'app/[id]/page.tsx', line: 9 }, { path: 'blog/[id]/page.tsx', line: 9 }), ['keep-staged']);
   assert.deepStrictEqual(settle({ path: 'packages/@a/x.ts', line: 4 }, { path: 'packages/@b/x.ts', line: 4 }), ['keep-staged']);
   // Control: the same path does settle.
