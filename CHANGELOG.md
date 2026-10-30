@@ -80,6 +80,30 @@ Three conventions follow from how this repo works, and all are visible below:
 * Write gate misreads cp/mv value-taking options… ([#4449](https://github.com/thn-inc/claude-tweaks/issues/4449)) ([d1be775](https://github.com/thn-inc/claude-tweaks/commit/d1be775ae07f17b802a7ab89f2fa064897a36f73))
 * Write gate reads a case compound that starts a pipeline… ([#4481](https://github.com/thn-inc/claude-tweaks/issues/4481)) ([fbffbd0](https://github.com/thn-inc/claude-tweaks/commit/fbffbd0e3c255a0fe74d996e87022cb9b84c5dfc))
 
+### Highlights
+* Review findings in files whose paths contain characters such as `@` or brackets are now settled at the Review Console like any other.
+* Broken-reference repairs found at wrap-up now show in the Review Console's Reference repairs section instead of waiting for you as unreviewed items.
+* No user-visible change.
+* Review findings that a cross-lens debate already settled no longer wait at the end of a run for you to acknowledge them.
+* Code-health's scale-readiness and experiment-cleanup screens raise fewer false candidates for non-database pools, module-scope clients and comment-like text inside strings.
+* A record that only mentions a required section heading in passing no longer passes the shape gate as if it had that section.
+* Reflect's friction report now counts worktree-guard refusals hit by dispatched agents, not just by the main session.
+* A command quoted inside a code block in a work record can no longer be picked up and run as that record's own premise check.
+* No user-visible change: fixes a Windows-only test failure.
+* Build plans now carry any project-skill rule that governs the files they touch, so subagents implementing a task see it.
+* Build: operational fixes for schema, env and shared-constant changes no longer land after the final verification, so /test stops re-running the full suite on those builds.
+* Reconcile no longer half-archives a merged run while the main checkout is behind, so its spec file is never left stranded.
+* No user-visible change.
+* The worktree-always guard now reads cp and mv backup-suffix options correctly.
+* No user-visible change.
+* Resuming an interrupted pipeline run no longer treats a worktree path it cannot read as deleted, so it waits instead of resuming over a possibly live run.
+* No user-visible change.
+* Long builds now pick up overlapping changes from main before the final review, so conflicts surface during the build instead of at merge.
+* Records that quote code or markdown in their Deliverables or Current State no longer confuse merge-order checks or duplicate detection.
+* the calibration read-out in /claude-tweaks:tidy now reflects your most recent runs.
+* No user-visible change — documentation accuracy fix.
+* The worktree-always guard now blocks a write into the main checkout that follows a piped case statement whose arm changes directory.
+
 ## [6.156.3](https://github.com/thn-inc/claude-tweaks/compare/v6.156.2...v6.156.3) (2026-10-27)
 
 
