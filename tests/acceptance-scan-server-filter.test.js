@@ -179,7 +179,11 @@ test('since-date is validated', () => {
   // The prose says the server date is wider on purpose.
   const widerSaid = /one\s+date\s+wider[\s\S]{0,160}on\s+purpose/;
   assert.ok(widerSaid.test(GAP), 'the scope must say the server date is one date wider than the client cutoff, on purpose');
-  assert.ok(!widerSaid.test(PRE_CHANGE_GAP_FETCH));
+  // Control: the replaced sentence as it read at 70cb1d3f1 carries the {since-date} anchor and the 30-day
+  // one-liner but lacks the clause.
+  const PRE_CHANGE_SINCE_SENTENCE = 'Resolve `{since-date}` first, as its own call, with `node -e "console.log(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))"` (cross-platform, no shell `date` variant needed), and substitute its `YYYY-MM-DD` output literally.';
+  assert.ok(PRE_CHANGE_SINCE_SENTENCE.includes('{since-date}') && PRE_CHANGE_SINCE_SENTENCE.includes(FROZEN_30_ONE_LINER));
+  assert.ok(!widerSaid.test(PRE_CHANGE_SINCE_SENTENCE));
 });
 
 test('since-date guard failure stops the scope', () => {
@@ -208,6 +212,12 @@ test('trust-table no longer says the window does not bound the closed fetch', ()
   // Discrimination: the same two checks run over the frozen parenthetical must come out the other way.
   assert.ok(PRE_CHANGE_TRUST.includes(STALE));
   assert.ok(!parenthetical(PRE_CHANGE_TRUST).includes('server'));
+  // The server window is one date wider than the 30-day cutoff: the parenthetical must say so, not "its 30-day window".
+  const wider = /bounded\s+server-side\s+by\s+its\s+date\s+window\s+\(one\s+date\s+wider\s+than\s+the\s+30-day\s+cutoff\)/;
+  const PRE_CHANGE_TRUST_30 = "(`acceptance-gap`'s own *closed-record* fetch is bounded server-side by its 30-day window and\ndisposition filter, and still carries the same `{resolved-limit}` and truncation-warning\ndiscipline, per that file's \"Fetch limit\" section — not a separate hardcoded cap.)";
+  assert.ok(wider.test(parenthetical(live)), 'the parenthetical must say the server window is one date wider than the 30-day cutoff');
+  assert.ok(!parenthetical(live).includes('by its 30-day window'), 'the server-side 30-day wording must be gone');
+  assert.ok(!wider.test(parenthetical(PRE_CHANGE_TRUST_30)) && parenthetical(PRE_CHANGE_TRUST_30).includes('server-side'));
 });
 
 // ---- parent-gate state map (#4469 Task 2) ----------------------------------------------------

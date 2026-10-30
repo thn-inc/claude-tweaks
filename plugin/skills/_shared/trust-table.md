@@ -63,7 +63,7 @@ and older parents are exactly the ones most likely to already sit inside a `tota
 truncation would reopen the exact defect this filter exists to close, with no warning. The
 parent-issue fetches below therefore use the same `{resolved-limit}` and the same
 truncation-warning discipline as the main record fetch further down, not a separate hardcoded cap.
-(`acceptance-gap`'s own *closed-record* fetch is bounded server-side by its 30-day window and
+(`acceptance-gap`'s own *closed-record* fetch is bounded server-side by its date window (one date wider than the 30-day cutoff) and
 disposition filter, and still carries the same `{resolved-limit}` and truncation-warning
 discipline, per that file's "Fetch limit" section — not a separate hardcoded cap.)
 
