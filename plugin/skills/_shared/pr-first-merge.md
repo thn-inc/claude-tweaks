@@ -303,7 +303,7 @@ merge (capture (a)), so the confirmation itself carries the choice: wait for gre
 
 ## Step 3: Attempt auto-merge, degrading on specific failure signatures
 
-**Creation-time caller:** `tidy/SKILL.md`'s Step 7.5 `pr-first` branch invokes only this step's initial compose + `gh pr merge --auto` fences at PR-creation time, with the degrade chain below replaced by leave-unarmed + report — see that step's own text for the full routing.
+**Creation-time caller:** tidy's Step 7.5 `pr-first` arm runs Step 2.5 first, then this step's fences only where Step 2.5 routes here, its Red path and ready+comment degrades replaced by leave-unarmed + report — see `tidy/step-7-5-worktree-always.md` for the full routing.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --keep-open {keep-open} --pr {pr-number} --out-dir "{subject-dir}"
