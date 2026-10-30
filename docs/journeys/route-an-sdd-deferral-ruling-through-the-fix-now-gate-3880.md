@@ -2,6 +2,7 @@
 files:
   - plugin/skills/build/dispatch.md
   - plugin/skills/_shared/deferral-gate.md
+  - plugin/bin/lib/console/sdd-ruling.js
   - plugin/bin/lib/console/resolve.js
   - plugin/bin/lib/reconcile/console-execute.js
   - plugin/skills/wrap-up/review-console-appendix.md
