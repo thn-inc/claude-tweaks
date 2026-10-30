@@ -553,10 +553,11 @@ function hasOwn(obj, key) {
 //                                          risk-path-globs: null, not its default)
 //   { error: "unknown-key" }               key in neither POLICY_KEYS nor RENAMED_KEYS
 // Precedence per key: run-config (only when runConfigRaw is a string, and never
-// for a policyOnly row) -> policy -> schema default. Alias normalization happens per source, BEFORE
-// precedence: old key alone -> migrate() contributes under the new name with
-// a renamed-from tag (a null migration contributes nothing, but still tags
-// renamed-from when the final resolution falls to the default); old + new in
+// for a policyOnly row) -> policy -> schema default. Alias normalization
+// happens per source, BEFORE precedence: old key alone -> migrate() contributes
+// under the new name with a renamed-from tag (a null migration contributes
+// nothing, but still tags renamed-from when the final resolution falls to the
+// default); old + new in
 // one source -> the new key wins with no tag (the stray old key is
 // auditPolicy's business).
 
