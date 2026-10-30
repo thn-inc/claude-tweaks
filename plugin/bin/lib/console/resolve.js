@@ -509,11 +509,12 @@ function lineKeys(line) {
 // closed group inside one segment, so a citation wrapped in them (`[src/a.ts:4]`) still keys the bare path. A space, `=` and `,` stay out.
 const FINDING_PATH = String.raw`(?:[A-Za-z0-9_./@+~%$-]|\[{1,2}[A-Za-z0-9_.@+~%$-]+\]{1,2}|\([A-Za-z0-9_.@+~%$-]+\))+\.[A-Za-z0-9]+`;
 const DEBATE_CONVERGED_RE = new RegExp(String.raw`^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on (${FINDING_PATH}):(\d+) converged positive\b(.*)$`);
+const DEBATE_ENTRY_RE = new RegExp(String.raw`\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
+const FINDING_LOC_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
 function debateConvergedKeys(line) {
   const m = DEBATE_CONVERGED_RE.exec(line);
   if (!m) return [];
-  const entry = new RegExp(String.raw`\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
-  return Array.from(m[3].matchAll(entry), (e) => `${e[1]}|${e[2] || m[1]}:${e[3]}`);
+  return Array.from(m[3].matchAll(DEBATE_ENTRY_RE), (e) => `${e[1]}|${e[2] || m[1]}:${e[3]}`);
 }
 
 const FINDING_SECTIONS = [SECTIONS.LOW, SECTIONS.CONTESTED];
@@ -731,7 +732,7 @@ function engineItems(snapshot, stagedIds) {
 // as one `tiebreak:{id}` item (#3949).
 function findingKey(line) {
   const lens = /\blens\s+"?([A-Za-z0-9_-]+)"?/i.exec(line);
-  const loc = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`).exec(line);
+  const loc = FINDING_LOC_RE.exec(line);
   return lens && loc ? `${lens[1]}|${loc[1]}:${loc[2]}` : null;
 }
 

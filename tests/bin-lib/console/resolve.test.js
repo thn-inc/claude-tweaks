@@ -1063,6 +1063,8 @@ test('a converged-positive debate logged before the STAGED line does not superse
 test('a confirmed verdict for a scoped-package path supersedes its STAGED line (#4582 AC1)', () => {
   const f = tbFinding({ path: 'packages/@scope/x.ts', line: 4 });
   assert.deepStrictEqual(findings([stagedLow('3a', 'packages/@scope/x.ts:4'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n')), []);
+  // Direct key: both sides truncate to `x.ts:4` without the fix, so the settle above passes either way.
+  assert.strictEqual(parseTiebreakLine(tbVerdict(f, { verdict: 'confirmed' }).entry).key, '3a|packages/@scope/x.ts:4');
 });
 test('a converged-positive debate naming a bracketed route path settles that finding (#4582 AC2)', () => {
   const debate = '- AUTO 10:00:00 — Debate: cross-lens disagreement on app/[id]/page.tsx:9 converged positive after 1 round (lens "3a" finding app/[id]/page.tsx:9 — confirmed). Reversibility: high.';
@@ -1080,6 +1082,10 @@ test('a citation wrapped in brackets or parentheses keys the bare path (#4582)',
   const verdict = tbVerdict(f, { verdict: 'confirmed' }).entry;
   assert.deepStrictEqual(findings([stagedLow('3a', '[src/a.ts:4]'), verdict].join('\n')), []);
   assert.deepStrictEqual(findings([stagedLow('3a', '(src/a.ts:4)'), verdict].join('\n')), []);
+});
+test('a STAGED citation with a leading + keys whole, so a verdict for the bare path leaves it open (#4582, fail-safe direction)', () => {
+  const verdict = tbVerdict(tbFinding({ path: 'src/a.ts', line: 4 }), { verdict: 'confirmed' }).entry;
+  assert.deepStrictEqual(findings([stagedLow('3a', '+src/a.ts:4'), verdict].join('\n')).map((i) => i.resolution), ['keep-staged']);
 });
 test('a tiebreak verdict line for a $-path round-trips through parseTiebreakLine (#4582)', () => {
   const f = tbFinding({ path: 'routes/$id.tsx', line: 7 });
