@@ -536,6 +536,15 @@ When mechanizing a prose heuristic into a deterministic check:
     `\` and (under `core.quotePath`) non-ASCII bytes. A scratch merge conflicting on `trail ` and
     ` lead` printed both bare, so the marker would have read them back as `trail` and `lead`. Probe
     a format-limit premise before accepting it, as you would any other benign-failure claim.
+25. **An unanchored extractor with a narrow character class truncates instead of failing, so an
+    out-of-class input yields a confident wrong value, not "no match".** `plugin/bin/lib/console/resolve.js`'s
+    `findingKey` (#4582) searched with `[A-Za-z0-9_./-]+\.[A-Za-z0-9]+`, so `packages/@scope/x.ts:4`
+    keyed `scope/x.ts:4`, and `app/[id]/page.tsx:9` and `blog/[id]/page.tsx:9` both keyed
+    `/page.tsx:9`: a verdict on one settled the other. The record called this "yields no key, fails
+    safe", and its settle-behaviour criterion passed at base, because both sides of the comparison
+    truncate alike. Run the extractor on an out-of-class input before stating its failure direction.
+    Assert the extracted value directly, and pin two inputs that differ only in the part it would
+    drop (`tests/bin-lib/console/resolve.test.js`).
 
 ## When to use
 
