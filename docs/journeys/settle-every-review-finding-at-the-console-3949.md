@@ -133,6 +133,7 @@ files:
 - Updated during the build of #4170: a planned can't-tell filing with no logged filed line, and a Queue write whose execution failed, now hold an unattended run out of archival too (step 5).
 - Updated during the build of #4563: step 1's "Should understand" list gained the two new ways a finding leaves the console, a confirmed cross-lens debate and a settled contested pair's partner.
 - Updated during the build of #4582: a finding at a path holding `@`, `+`, `~`, `%`, `$`, `[id]` or `(group)` now settles by its whole path. Before this, `app/[id]/page.tsx:9` and `blog/[id]/page.tsx:9` shared a truncated key, so a verdict on one settled the other.
+- Updated during the build of #4583: a contested pair's verdict now settles a partner re-staged after its own earlier verdict. A can't-tell verdict that re-stage outdated files nothing once the pair's verdict replaces it.
 - Related journeys:
   - `get-a-verdict-on-every-unverified-review-finding-3947.md`: how each finding gets the verdict this console acts on.
   - `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`: the archive refusal for a finding with no verdict line at all.
