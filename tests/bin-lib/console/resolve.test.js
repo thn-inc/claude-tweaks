@@ -1087,15 +1087,18 @@ test('a partner with its own later verdict keeps it over the inherited one (#456
   // The partner's staged file follows its OWN console verdict (filed), not the inherited confirmed one (dismissed).
   assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]).sort(), [['review-contested-1.md', 'dismissed'], ['review-unconfirmed-2.md', 'filed']]);
 });
-test('inheritance chains: a contested file settled by inheritance passes the verdict to its own partner (#4563)', () => {
+test('inheritance is one hop: a pair whose own tiebreak logged nothing stays keep-staged, and so does its partner (#4563)', () => {
   const f = tbFinding();
   const mid = { lens: '3f', path: 'src/a.js', line: 7 };
   const third = { lens: '3g', path: 'src/a.js', line: 3 };
   const d = [`${stagedLow('3g', 'src/a.js:3')} Stage path: staged/review-unconfirmed-3.md.`, tbDebate(f, 'review-contested-1.md'), tbDebate(mid, 'review-contested-2.md'),
-    tbVerdict(f, { recommendation: 'file' }).entry].join('\n');
+    tbVerdict(f, { verdict: 'refuted', severity: 'low' }).entry].join('\n');
   const items = findings(d, { 'review-contested-1.md': positions(f, mid), 'review-contested-2.md': positions(mid, third), 'review-unconfirmed-3.md': 'x' });
-  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]).sort(), [['review-contested-1.md', 'filed'], ['review-contested-2.md', 'dismissed'], ['review-unconfirmed-3.md', 'dismissed']]);
-  assert.strictEqual(items.find((i) => i.id === 'review-unconfirmed-3.md').reason, 'covered by review-contested-1.md — its contested pair\'s tiebreak item carries the verdict', 'the reason names the file that carries the filing');
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]).sort(), [['review-contested-1.md', 'dropped'], ['review-contested-2.md', 'keep-staged'], ['review-unconfirmed-3.md', 'keep-staged']]);
+  // Control: once the second pair's own tiebreak verdict lands, it settles both its file and its partner.
+  const judged = `${d}\n${tbVerdict(tbFinding({ ...mid, claim: 'mid claim' }), { verdict: 'confirmed' }).entry}`;
+  const settled = findings(judged, { 'review-contested-1.md': positions(f, mid), 'review-contested-2.md': positions(mid, third), 'review-unconfirmed-3.md': 'x' });
+  assert.deepStrictEqual(settled.map((i) => [i.id, i.resolution]).sort(), [['review-contested-1.md', 'dropped'], ['review-contested-2.md', 'dismissed'], ['review-unconfirmed-3.md', 'dismissed']]);
 });
 test('a partner\'s own verdict logged BEFORE the pair\'s verdict still wins over inheritance (#4563)', () => {
   const f = tbFinding();

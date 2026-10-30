@@ -577,6 +577,9 @@ function tiebreakModel(snapshot) {
       }
       if (!refs.every((r) => settledAfter(r.index, r.keys))) continue;
       const verdicts = refs.flatMap((r) => r.keys.map((k) => settledByKey.get(k)));
+      // A contested file settles only on a verdict judged for it: an inherited one leaves its own
+      // pair (and the partner it names) unjudged, so the file stays keep-staged.
+      if (/^review-contested-/.test(name) && verdicts.some((v) => v.inheritedFrom)) continue;
       const chosen = VERDICT_PRECEDENCE.map((kind) => verdicts.find((v) => v.kind === kind)).find(Boolean);
       settledFiles.set(name, chosen);
     }
@@ -588,25 +591,19 @@ function tiebreakModel(snapshot) {
   // #4563's plan review). The partner takes the pair's verdict (and its index) only where no verdict
   // names its key at all: one tiebreak wave logs in arbitrary order, so a direct verdict wins
   // whatever its position relative to the pair's.
-  // A partner's own contested file may settle only once its key is inherited, and then passes the
-  // verdict on to its own partners: repeat until a pass adds no entry. Passes only add entries and
-  // the key set is finite, so it terminates; the `has()` guard is what ends the loop (removing it
-  // hangs rather than fails). A chained file keeps the original carrier's name. Only
-  // `review-contested-*` files carry a Positions section (SECTIONS.CONTESTED also holds `review-debate-*`).
+  // Inheritance is one hop: only a contested file settled by its own tiebreak verdict passes it on,
+  // and computeSettledFiles never settles a contested file on an inherited verdict, so a pair whose
+  // own tiebreak logged nothing stays keep-staged instead of taking a neighbouring pair's outcome.
+  // The second pass settles the partners' own staged files. Only `review-contested-*` files carry a
+  // Positions section (SECTIONS.CONTESTED also holds `review-debate-*`).
   const stagedText = new Map(snapshot.staged.map((s) => [s.name, s.text]));
-  let result = computeSettledFiles();
-  for (let added = true; added;) {
-    added = false;
-    for (const [name, chosen] of result.settledFiles) {
-      if (!/^review-contested-/.test(name)) continue;
-      for (const key of contestedPositionKeys(stagedText.get(name))) {
-        if (settledByKey.has(key)) continue;
-        settledByKey.set(key, { ...chosen, key, inheritedFrom: chosen.inheritedFrom || name });
-        added = true;
-      }
+  for (const [name, chosen] of computeSettledFiles().settledFiles) {
+    if (!/^review-contested-/.test(name)) continue;
+    for (const key of contestedPositionKeys(stagedText.get(name))) {
+      if (!settledByKey.has(key)) settledByKey.set(key, { ...chosen, key, inheritedFrom: name });
     }
-    if (added) result = computeSettledFiles();
   }
+  const result = computeSettledFiles();
   return { lines, latestById, settledAfter, settledFiles: result.settledFiles, absorbed: result.absorbed };
 }
 
