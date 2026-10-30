@@ -60,7 +60,7 @@ otherwise (probe with a plain file-existence check, not a guess); a test file fr
 or implied by the Acceptance Criteria is its own `Test:` line; a read-only entry is a
 `Waived {path}: {its Key Files description}` line, never `Modify:`}
 
-- [ ] **Step 1: Failing test** — write the test(s) the spec's `## Acceptance Criteria` describe.
+- [ ] **Step 1: Failing test** — write the test(s) the spec's `## Acceptance Criteria` describe, and run them before Step 2. A test already green at base proves nothing about this fix: add an assertion that goes red, or say in the report why none can.
 - [ ] **Step 2: Implement** — satisfy every `## Deliverables` checkbox against the files above.
 - [ ] **Step 3: Run** the test(s) from Step 1 — PASS.
 - [ ] **Step 4: Commit** — one commit, message drawn from the spec title, `refs #{n}`.
