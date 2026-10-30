@@ -25,6 +25,7 @@ const { hasClaimLogFor, classifyDecisions } = require('../../../plugin/bin/lib/l
 // a `gitRunner`, so claim-store.js never consults the field) while silently
 // reintroducing the I1/C1 false-contest / lost-update bug in production.
 const claimStore = require('../../../plugin/bin/lib/issues/claim-store');
+const { composePrEarlyBody, composeExpressBody } = require('../../../plugin/bin/lib/flow/pr-body');
 
 const REPO = 'acme/w';
 const NOW = Date.parse('2026-08-17T00:00:00.000Z');
@@ -823,6 +824,25 @@ test('staleClaimInFlightPr: an HTML-comment and a plain marker line both match; 
     null,
     'a PR with no isCrossRepository field is not proven same-repo',
   );
+});
+
+// The matcher is a detector over a line pr-body.js composes, so it is pinned against the composer's own
+// output, not a hand-typed marker: a reworded marker would otherwise switch the stale check off silently.
+test('staleClaimInFlightPr matches the run marker pr-body.js composes, in either form alone', () => {
+  const bodies = {
+    'PR-early': composePrEarlyBody({ runId: RUN, specSummary: 's', target: '#1', nextStep: 'build', fixesLines: [] }),
+    express: composeExpressBody({ runId: RUN, specSummary: 's', fixesLines: [] }),
+  };
+  const match = (body) => claimStore.staleClaimInFlightPr(
+    staleMarker(RUN), () => JSON.stringify([{ url: PR_URL, body, isCrossRepository: false }]), 'acme', 'w');
+  for (const [name, body] of Object.entries(bodies)) {
+    assert.deepEqual(match(body), { link: PR_URL }, `${name} body`);
+    // A gh-absent MCP read strips every HTML comment, leaving the plain companion.
+    assert.deepEqual(match(body.replace(/<!--[\s\S]*?-->/g, '')), { link: PR_URL }, `${name} body, HTML comments stripped`);
+    const withoutPlain = body.split('\n').filter((l) => !l.startsWith('claude-tweaks-run:')).join('\n');
+    assert.notEqual(withoutPlain, body, `${name} body carries the plain marker`);
+    assert.deepEqual(match(withoutPlain), { link: PR_URL }, `${name} body, HTML-comment marker alone`);
+  }
 });
 
 // (c) stale target -> conditional PUT (re-claim)
