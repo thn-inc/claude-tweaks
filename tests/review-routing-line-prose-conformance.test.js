@@ -104,13 +104,23 @@ function recordProposalParagraph() {
 
 // Each clause is one literal the paragraph must carry, so removing it turns exactly that clause red.
 const RECORD_PROPOSAL_CLAUSES = [
-  ['--id review-followup-{n}', 'stages under the review-followup-{n} id'],
+  ['--id review-followup-1', 'stages under a review-followup id with a starting slot'],
   ['--allocate', 'allocates the number'],
   ['from the path its first stdout line prints', 'takes {n} from the path stage-item.js prints'],
+  ['a literal `{n}` passed to `--id` exits 2', 'warns that a literal {n} id exits 2'],
   ['Finding: {severity} {category}', 'writes the Finding: header line'],
+  ['above the blank line', 'places the Finding: line above the header blank line'],
+  ["`tidy/console-backfill.md`'s File step", 'cites the File step for the body-after-blank-line convention'],
   ['session-tmp-resolve.js" --value review-followup-proposal.md', 'resolves a .md scratch path'],
   ['written `deferred`', 'writes the ledger row deferred'],
-  ['The materiality floor is not applied at staging: a below-floor finding is staged here like any other and never routed to the digest at this step, because the Defer bullet writes a digest entry only once a human approves that row; `release/disposition.md`\'s `proposal` row applies the floor test to the staged file.', 'leaves the materiality floor to release disposition, not staging'],
+  ["Before composing, apply `_shared/materiality-floor.md`'s floor test", 'applies the materiality floor before composing'],
+  ['other than `tangential` goes to the digest container', 'routes a below-floor non-tangential finding to the digest'],
+  ['(`isMaterialityDuplicate`)', 'runs the digest dedup check'],
+  ['`AUTO … materiality-floor:` audit line', 'logs the materiality-floor audit line'],
+  ['skips the compose, stage and composer-log steps', 'skips compose, stage and composer-log for a digest-routed finding'],
+  ['the Resolution naming the digest comment URL', 'writes the digest-routed ledger row naming the digest comment URL'],
+  ['A `tangential` finding, or one that clears the floor, is staged', 'stages a tangential or floor-clearing finding'],
+  ['A digest entry is not a work record', 'states a digest entry is not a work record'],
 ];
 
 function missingRecordProposalClauses(paragraph) {

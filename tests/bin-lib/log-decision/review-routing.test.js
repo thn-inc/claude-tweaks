@@ -68,6 +68,7 @@ test('#4484: --route staged accepts a staged/review-followup-{n}.md stage path',
   const code = run(['--run', runDir, '--route', 'staged', '--severity', 'medium', '--category', 'security', '--at', 'src/a.js:12', '--stage-path', 'staged/review-followup-2.md'], deps(main, out));
   assert.equal(code, 0, streamOf(out, 'err'));
   assert.equal(decisionsOf(runDir), '## /review\n- STAGED 09:05:07 — Step 3 Routing: medium-severity finding security at src/a.js:12. Stage path: staged/review-followup-2.md. Reversibility: high.\n');
+  assert.equal(streamOf(out, 'out'), decisionsOf(runDir).split('\n').slice(1).join('\n'));
 });
 
 test('release Step 3 classifies composed lines as the release gate table says', () => {
