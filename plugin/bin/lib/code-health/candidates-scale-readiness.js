@@ -855,11 +855,11 @@ const OBJECT_BRACE_PREFIX = '=(,:[?|&.';
 // mismatched `)`, `]` or `}` is ignored, and a `}` discards any unclosed `(` or
 // `[` above its `{`. The caller passes the file text with comments and string,
 // template-text and regex bodies blanked (`stripComments`, same offsets), so a
-// brace inside one is never counted. One left-to-right pass
-// from the start of the file, not a window before the match: a handler longer
-// than MAX_SCAN_CHARS would otherwise lose its opening brace and read as
-// module scope. The scan position persists across calls, so the per-file cost
-// is linear in the file, not in matches times file length; idx must be
+// brace inside one is never counted. One left-to-right pass from the start of
+// the file, not a window before the match: a handler longer than
+// MAX_SCAN_CHARS would otherwise lose its opening brace and read as module
+// scope. The scan position persists across calls, so the per-file cost is
+// linear in the file, not in matches times file length; idx must be
 // non-decreasing (a smaller idx restarts the scan).
 function braceTracker(text) {
   const root = { t: 'root', block: false, marked: false, p: 0, b: 0 };
@@ -880,6 +880,7 @@ function braceTracker(text) {
     pos = 0;
     prev = -1;
   };
+  const innermostFrame = () => (stack.length > 0 ? stack[stack.length - 1] : root);
   const discard = (f) => {
     if (f.marked) activeMarks--;
     if (f.block) blockBraces--;
@@ -901,7 +902,6 @@ function braceTracker(text) {
     if (idx < pos) reset();
     for (; pos < idx; pos++) {
       const code = text.charCodeAt(pos);
-      const top = stack.length > 0 ? stack[stack.length - 1] : root;
       if (code === 123) { // {
         const p = prev === -1 ? '' : text[prev];
         let isObject = p !== '' && OBJECT_BRACE_PREFIX.includes(p);
@@ -928,6 +928,7 @@ function braceTracker(text) {
           scopes.pop();
         }
       } else if (code === 44 || code === 59) { // , ;
+        const top = innermostFrame();
         if (top.marked) {
           top.marked = false;
           activeMarks--;
@@ -935,6 +936,7 @@ function braceTracker(text) {
       } else if (code === 62 && pos > 0 && text.charCodeAt(pos - 1) === 61) { // =>
         let k = pos + 1;
         while (k < text.length && isSpaceCode(text.charCodeAt(k))) k++;
+        const top = innermostFrame();
         if (k < text.length && text.charCodeAt(k) !== 123 && !top.marked) {
           top.marked = true;
           activeMarks++;
