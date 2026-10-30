@@ -34,10 +34,13 @@
 
 ### Task 1: Stale-claim in-flight check in claim-targets
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/issues/claim-store.js` (new function beside `tombstoneInFlightPr`, ~line 512; export it)
 - Modify: `plugin/bin/lib/claim-targets/claim-targets.js` (~lines 410-427 cache comment; insert the stale check after the live/unreadable block, before the "Reclaimable" payload at ~line 488)
-- Modify: `plugin/skills/_shared/issue-claims.md` ("In-flight detection at claim time (#315)" paragraph, ~line 478)
+- Modify: `plugin/skills/_shared/issue-claims.md` ("The lock" step 4, the MCP-transport in-flight check, ~lines 163-178; and the "In-flight detection at claim time (#315)" paragraph, ~line 478)
 - Modify: `plugin/skills/flow/claim-targets.md` (exit-3 in-flight bullet, ~line 244)
 - Test: `tests/bin-lib/claim-targets/claim-targets.test.js`
 
@@ -56,6 +59,7 @@ In the test file, extend `makeGh` with an `openPrs = null` option and a `fail.pr
 - `(stale-pr-5)`: `staleMarker('otherRun')` with an `openPrs` body carrying `claude-tweaks-run: otherRun`. Assert: reclaims, and `ghCalls` has no `pr list` call.
 - `(stale-pr-6)`: two stale targets 774 and 775, both with `RUN`, under `--keep-going`. Assert: both are skipped `in-flight`, and exactly one `pr list` call is made.
 - `(stale-pr-7)`: a stale blob whose `runId` equals this run's `--run-id` (`RUN`, passed as `--run-id`), with an open marked PR. Assert: `body.alreadyOwned` deep-equals `[776]`, `code === 0`, and no `pr list` call. The fake `gh` must also answer the label calls `makeGh` already handles.
+- In a new `tests/issue-claims-stale-open-pr-conformance.test.js` (house style: `readText` from `./helpers/read-skill`), slice `_shared/issue-claims.md`'s "The lock" step 4. Assert it names `mcp__github__list_pull_requests`, `claude-tweaks-run: {runId}`, the `'stale'` trigger and `staleClaimInFlightPr`, and that it falls through to the write when the listing fails.
 - A direct unit test `staleClaimInFlightPr: an HTML-comment and a plain marker line both match; a cross-repo url never returns`. Call `claimStore.staleClaimInFlightPr(staleMarker(RUN), fakeGh, 'acme', 'w')` with the plain form `claude-tweaks-run: ${RUN}` and assert `{ link }`. Then use a body whose url is `https://github.com/evil/x/pull/1` and assert `null`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -77,24 +81,32 @@ Call it through `claimStore.` so the module-level spy pattern the file already u
 
 In `issue-claims.md`'s "In-flight detection at claim time (#315)" paragraph, add one sentence. A `'stale'` claim whose `runId` matches an open same-repo PR's `claude-tweaks-run:` marker is in flight too (#4423, `staleClaimInFlightPr`). It reports through the same `inFlight` envelope and fails open the same way.
 
+In `issue-claims.md`'s "The lock" step 4, the MCP-transport in-flight check (decided at plan review, Reading B), add the `'stale'` counterpart after the existing `pr-opened:` tombstone check. For a `'stale'` blob, validate its `runId` against the run-id shape. On a mismatch, skip the check and write. Otherwise list the repo's open PRs once per claim run via `mcp__github__list_pull_requests` (`state: open`), and look for a body with a trimmed line equal to `claude-tweaks-run: {runId}` or `<!-- claude-tweaks-run: {runId} -->` whose URL is a same-repo PR URL. A match stops the claim, writes nothing, and reports through `flow/claim-targets.md`'s in-flight card, exactly as the tombstone case does. A failed or unparseable listing falls through to the write (fail open). Cite `claim-store.js`'s `staleClaimInFlightPr` as the gh-CLI twin. Keep the addition under 1,200 bytes; `issue-claims.md` is at 45,449.
+
 In `flow/claim-targets.md`'s exit-3 in-flight bullet, extend the trigger clause to say: "…or a `'stale'` claim whose run's marker sits on an open PR (#4423, `claim-store.js`'s `staleClaimInFlightPr`)". The card and resume routing below it stay unchanged.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `node --test "tests/bin-lib/claim-targets/claim-targets.test.js"`
+Run: `node --test "tests/bin-lib/claim-targets/claim-targets.test.js" "tests/issue-claims-stale-open-pr-conformance.test.js"`
 Expected: PASS, with every test green, including the existing `(c)` and `(k)`–`(k6)`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/bin/lib/issues/claim-store.js plugin/bin/lib/claim-targets/claim-targets.js plugin/skills/_shared/issue-claims.md plugin/skills/flow/claim-targets.md tests/bin-lib/claim-targets/claim-targets.test.js
+git add plugin/bin/lib/issues/claim-store.js plugin/bin/lib/claim-targets/claim-targets.js plugin/skills/_shared/issue-claims.md plugin/skills/flow/claim-targets.md tests/bin-lib/claim-targets/claim-targets.test.js tests/issue-claims-stale-open-pr-conformance.test.js
 git commit -m "Stop re-claiming a stale claim whose run has an open PR — staleClaimInFlightPr beside tombstoneInFlightPr (#4423)" -m "Claude-Session: https://claude.ai/code/session_01YPgdwTF5oxR7DnGFhhiX8r"
 ```
 
-### Task 2: Tidy's stale-claim proposal names the open PR
+### Task 2: Tidy's stale-claim finding names the open PR
+
+**Role:** integration
+**Review risk:** high
+
+Decided at plan review (Reading B): a stale claim with an open marked PR routes as `step-6-auto.md`'s **Unsettled run** row, Auto (no-op, always surfaced), in **Yours**. It is never staged, never gets a needs-decision comment, and is never released. `step-6-auto.md` stays unmodified, because the existing Unsettled run row already covers "recommends resuming via the reported command".
 
 **Files:**
 - Modify: `plugin/skills/tidy/scan-procedures.md` (Step 4.7 claim audit table row `Blob classified 'stale'` ~line 233, the Releasing paragraph ~line 240, the Collect line ~line 242)
+- Modify: `plugin/skills/tidy/actions-github-issues.md` (`## Release claim` executor, ~line 131)
 - Create: `tests/tidy-stale-claim-open-pr-conformance.test.js`
 
 **Interfaces:**
@@ -104,12 +116,14 @@ git commit -m "Stop re-claiming a stale claim whose run has an open PR — stale
 
 Write a new test file (AC2.1) in the `tests/tidy-plan-retention-conformance.test.js` style, using `readText` from `./helpers/read-skill` and a `findRow` helper. Slice the section from `## Step 4.7: Audit Issue Claims` to `### Backstops: issue-claim audit-trail integrity checks`, and assert both anchors exist. Assertions:
   - The `| Blob classified `'stale'`` row matches `/open PR/` and `/Resume/`.
-  - The section matches `/gh pr list --state open --json number,url,body/`.
+  - The section matches `/gh pr list --state open --json number,url,body/` and `/mcp__github__list_pull_requests/`.
   - The section matches `/claude-tweaks-run: \{runId\}/`.
   - The section matches the run-id shape literal `^\\d{4}-\\d{2}-\\d{2}T\\d{6}-[a-z0-9][a-z0-9-]*$`, as an escaped string match.
   - The section matches `/`### Resume` line/`.
-  - The section matches `/never release/i`, scoped to the open-PR case.
+  - The section matches `/\*\*Unsettled run\*\*/`, `/Yours/` and `/never staged/` (AC2.1 as clarified: the Yours row names the PR and its resume command).
+  - The section matches `/never released/i`.
   - The Collect line matches `/\[claim\] claims\/issue-\{n\}\.json — \{status\} — \{recommendation\}/` and the sentence after it names `PR #{number}`.
+  - `actions-github-issues.md`'s `## Release claim` section matches `/open marked PR/` and `/never a Release row/`.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -124,11 +138,13 @@ After the Releasing paragraph, add one paragraph headed `**Stale claim with an o
 - Before recommending Release for a `'stale'` blob, validate its `runId` against the run-id shape regex. A mismatch means plain Release.
 - List open PRs once per tidy run: `gh pr list --state open --json number,url,body --limit 1000`.
 - Look for a body line reading `claude-tweaks-run: {runId}`, bare or inside `<!-- … -->`. This is the marker `/claude-tweaks:flow`'s claim step also checks (`claim-store.js`'s `staleClaimInFlightPr`).
-- A match recommends **Resume** instead. The staged action and its needs-decision `Proposed:` line read `Resume open PR #{number} ({url}) instead of releasing — {its body's \`### Resume\` line}`. With no `### Resume` line, it reads `Resolve open PR #{number} ({url}) before releasing`.
-- Approving such an item never releases the claim. It reports the resume command for the human to run.
-- A failed listing degrades to plain Release, with one SKIP note.
+- With `gh` absent (the MCP path this step already supports), list through `mcp__github__list_pull_requests` (`state: open`) instead.
+- A match recommends **Resume** instead and routes as `step-6-auto.md`'s **Unsettled run** row: Auto (no-op, always surfaced), rendered in **Yours** as `Resume open PR #{number} ({url}) — {its body's \`### Resume\` line}`, or `Resolve open PR #{number} ({url}) before any release` when the body has no `### Resume` line. It is never staged, so it gets no needs-decision comment, and the claim is never released.
+- A failed listing on both transports degrades to plain Release, with one SKIP note.
 
 Then add a sentence after the Collect line: a Resume recommendation's `{recommendation}` carries `PR #{number}` and the resume command.
+
+In `actions-github-issues.md`'s `## Release claim` executor, add one sentence after the first: a `'stale'` row carrying an open marked PR (`scan-procedures.md` Step 4.7's Stale claim with an open PR) is never a Release row. It is a Yours no-op, so this executor never receives it.
 
 - [ ] **Step 4: Run the test to verify it passes, and check the byte budget**
 
@@ -141,6 +157,6 @@ Expected: below 50,250 bytes.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/skills/tidy/scan-procedures.md tests/tidy-stale-claim-open-pr-conformance.test.js
-git commit -m "Name the open PR in tidy's stale-claim proposal — recommend its resume line over a release (#4423)" -m "Claude-Session: https://claude.ai/code/session_01YPgdwTF5oxR7DnGFhhiX8r"
+git add plugin/skills/tidy/scan-procedures.md plugin/skills/tidy/actions-github-issues.md tests/tidy-stale-claim-open-pr-conformance.test.js
+git commit -m "Name the open PR in tidy's stale-claim finding — a Yours resume row, never a release (#4423)" -m "Claude-Session: https://claude.ai/code/session_01YPgdwTF5oxR7DnGFhhiX8r"
 ```
