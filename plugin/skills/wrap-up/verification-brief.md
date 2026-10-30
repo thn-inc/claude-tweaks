@@ -32,6 +32,8 @@ change the unit of acceptance.
 **Otherwise — no resolvable parent** (a record human-filed or `/capture`d directly, not
 produced by a `/specify` decomposition) — run the **Oversight-floor gate** below, then Steps 1-4,
 applying `demo:pending` to the record itself only when the gate says the record clears the floor.
+The exception is `_shared/pr-first-merge-post-merge.md` Step 4.0b's post-merge entry, for which
+no resolvable parent is a no-op: no labeling, no Try it.
 
 **Before either branch, on every record-holding entry** (a no-parent record, or a sub-issue-side
 entry into the Parent-Gate Procedure — not the parent-side `/claude-tweaks:tidy` entry below,

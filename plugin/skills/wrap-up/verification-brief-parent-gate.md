@@ -26,7 +26,9 @@ Every step from **Enumerate the parent's sub-issues** onward is shared, unchange
   `$CLOSING_SUB_ISSUES` — the set of sub-issue numbers its own run is closing, which the
   **Self-inclusion rule** below reads (one element for both wrap-up entries; the whole group for
   the dispatch gate; the PR's `Fixes` records for close-out; the merge's closing records for
-  Step 4.0b). Run every section below in order, starting with **Resolve the parent**.
+  Step 4.0b). Step 4.0b also passes `$MERGING_PR` — the merged PR's number, empty on a no-PR
+  local merge — which **Close the parent below the floor** reads for its listing lines. Run every
+  section below in order, starting with **Resolve the parent**.
 - **Parent-side entry** — **`/claude-tweaks:tidy`'s `Open parent gate` action**, on either
   driver: `tidy/actions-github-issues.md` executing on a `[parent-gate]` finding from
   `_shared/github-pr-scan-acceptance.md`'s `parent-gate` scope, or `tidy/actions-local-files.md` executing
@@ -113,7 +115,9 @@ from this sub-issue's own side; `work-backend: github-issues` + `work-links: bod
 **No parent resolvable** (a record human-filed or `/capture`d directly, or one produced by a
 `/specify` decomposition whose Step 2.6 collapse decision created no parent —
 `specify/decomposition-mode.md`) — skip this section entirely: fall through to Steps 1-4 in
-`verification-brief.md` and apply `demo:pending` to this record itself, exactly as today.
+`verification-brief.md` and apply `demo:pending` to this record itself, exactly as today. The
+exception is `_shared/pr-first-merge-post-merge.md` Step 4.0b's post-merge entry, for which no
+resolvable parent is a no-op: no labeling, no Try it.
 
 ## Enumerate the parent's sub-issues
 
@@ -279,7 +283,7 @@ regardless.
     **Close the parent below the floor** here. `/claude-tweaks:tidy`'s `parent-gate` backstop
     catches a merge no session saw land.
   - **Sub-issue-side entry, `work-backend: local-files`:** run **Close the parent below the floor**
-    now, and commit the parent record together with the sub-issue's own close. The parent reaches
+    now, and commit the parent record with the entry's own close commit. The parent reaches
     the integration branch only with the merge commit, so it is never closed ahead of the merge.
   - **Parent-side entry (`/claude-tweaks:tidy`):** run **Close the parent below the floor**.
 
@@ -296,7 +300,8 @@ regardless.
 ## Close the parent below the floor
 
 Runs only on `due` with `exceeds: false`, from the entries **Evaluate the gate**'s `exceeds: false`
-bullet names. It writes no acceptance label — never `demo:pending`, `demo:approved` or
+bullet names. A pre-merge sub-issue-side entry under `github-issues` never runs this section.
+It writes no acceptance label — never `demo:pending`, `demo:approved` or
 `demo:changes-requested` — and composes no Verification Brief: below the floor no sign-off is owed,
 so the closing comment records why the parent closed rather than asking anyone to accept it.
 
@@ -327,11 +332,13 @@ Every sub-issue of this decomposition is closed, and the highest sub-issue risk,
 
 One listing line per sub-issue **Enumerate the parent's sub-issues** returned, in number order.
 `{title}` and `{pr}` come from that section's per-sub-issue fetch: `{pr}` is the `number` of the
-sub-issue's `closedByPullRequestsReferences` entry (the last one when it lists several). A
-sub-issue with no reference is listed as `- #{n} {title}`, with no suffix. A
-`$CLOSING_SUB_ISSUES` member whose `closedByPullRequestsReferences` is still empty — GitHub links
-it a few seconds after the merge — uses the merging PR's number instead, which Step 4.0b passes;
-after a no-PR local merge there is no PR number, so it carries no suffix. Never write a merge SHA
+sub-issue's `closedByPullRequestsReferences` entry (the last one when it lists several — an
+entry carries only `id`, `number`, `repository` and `url`, no state or merged field, so the
+choice is arbitrary but deterministic). A sub-issue with no reference is listed as
+`- #{n} {title}`, with no suffix. A `$CLOSING_SUB_ISSUES` member whose
+`closedByPullRequestsReferences` is still empty — GitHub links it a few seconds after the merge —
+uses `$MERGING_PR` instead (**Two entry shapes** above); when `$MERGING_PR` is empty, a no-PR
+local merge, it carries no suffix. Never write a merge SHA
 in place of a missing PR number: a line names a PR or carries no suffix. Under
 `work-backend: local-files` each line is `- {id} {title}`, from `subIssueRecords` above
 (`r.id`, `r.title`) — no PR data exists there.
@@ -382,9 +389,10 @@ if (!parentRecord.facets.closed) {
 A parent whose `facets.closed` is already set is a no-op; a body already holding the heading means
 `closeRecord` alone. `closeRecord` re-reads the file, so calling it after `writeRecord` keeps the
 appended section. A filesystem error is a real failure to report, never a fail-open case. On a
-sub-issue-side entry, stage the parent record file into the same commit as the sub-issue's own
-close (`wrap-up/cleanup-procedures.md` item 5's commit), so the parent's closure reaches the
-integration branch only with that run's merge.
+sub-issue-side entry, commit the parent record file with the entry's own close commit — its next
+commit after labeling; for `/claude-tweaks:wrap-up` that is the execution step's summarizing
+commit (`wrap-up/execution-and-verification.md`). That commit is on the run's branch, so the
+parent's closure never reaches the integration branch ahead of the merge.
 
 ## Compose the parent brief
 

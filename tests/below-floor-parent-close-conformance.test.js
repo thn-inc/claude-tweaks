@@ -69,6 +69,7 @@ test('AC2.2: the exceeds: false bullet routes the close by entry and never close
   assert.match(below, /Step 4\.0b/);
   assert.match(below, /\*\*Close the parent below the floor\*\*/);
   assert.match(below, /never closed ahead of the merge/);
+  assert.match(below, /commit the parent record with the entry's own close commit/);
   assert.match(below, /end-to-end variant/, 'the Try-it walkthrough sentence is kept');
   assert.match(below, /Parent-side entry/);
 });
@@ -85,7 +86,15 @@ test('AC1.1: the close section composes the listing comment, then comments, then
   const closeRec = close.indexOf('closeRecord(parentPath)');
   assert.ok(write !== -1 && closeRec > write, `writeRecord (${write}) before closeRecord (${closeRec})`);
   assert.match(close, /which call failed/);
-  assert.match(close, /same commit/);
+  assert.match(close, /the entry's own close commit/);
+  assert.match(close, /never reaches the integration branch ahead of the merge/);
+  assert.ok(!collapse(close).includes("item 5's commit"), 'no claim of sharing cleanup item 5\'s commit');
+  assert.ok(
+    collapse(close).includes('A pre-merge sub-issue-side entry under `github-issues` never runs this section.'),
+    'the opener states the pre-merge exclusion',
+  );
+  assert.match(close, /uses `\$MERGING_PR` instead/);
+  assert.match(close, /arbitrary but deterministic/);
 });
 
 test('AC5.1: the close section is idempotent on a closed parent and a trusted heading comment', () => {
@@ -99,6 +108,10 @@ test('AC2.2: the entry shapes name Step 4.0b as the post-merge sub-issue-side en
   const shapes = entryShapes(gate);
   assert.ok(shapes.includes('Step 4.0b'));
   assert.ok(!collapse(shapes).includes('the four sub-issue callers'));
+  assert.ok(
+    collapse(shapes).includes('Step 4.0b also passes `$MERGING_PR` — the merged PR\'s number, empty on a no-PR local merge'),
+    'Step 4.0b declares its merging-PR input',
+  );
   assert.ok(paragraph(gate, '**Return to the Try it post').includes('Step 4.0b'), 'Return-to-Try-it exempts Step 4.0b');
   assert.ok(paragraph(gate, '**Fail open on every `gh` call').includes('Step 4.0b'), 'Fail open exempts Step 4.0b');
   const table = section(gate, '| Sub-issue-side caller |', 'The two wrap-up entries close exactly one record');
@@ -106,6 +119,14 @@ test('AC2.2: the entry shapes name Step 4.0b as the post-merge sub-issue-side en
   const routing = section(read('wrap-up/verification-brief.md'), '## Routing', '## Try it block');
   assert.ok(routing.includes('Six call sites exist today'));
   assert.ok(routing.includes('Step 4.0b'));
+});
+
+test('AC2.2: no resolvable parent is a no-op for the post-merge Step 4.0b entry on both no-parent branches', () => {
+  const NO_OP = 'Step 4.0b\'s post-merge entry, for which no resolvable parent is a no-op: no labeling, no Try it.';
+  const gateNoParent = collapse(paragraph(read(GATE_REL), '**No parent resolvable**'));
+  assert.ok(gateNoParent.includes(NO_OP), 'Resolve the parent\'s no-parent branch');
+  const routingOtherwise = collapse(paragraph(read('wrap-up/verification-brief.md'), '**Otherwise — no resolvable parent**'));
+  assert.ok(routingOtherwise.includes(NO_OP), 'Routing\'s Otherwise branch');
 });
 
 test('AC1.1: /demo no longer claims to be the only closer of a parent', () => {
