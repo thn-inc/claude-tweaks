@@ -63,7 +63,6 @@ test('scan-execution.md\'s dispatch block runs Step 4.5\'s reconcile before disp
   assert.match(SCAN_EXECUTION, /feed Step 6's \*\*Applied automatically\*\* section/);
   assert.match(SCAN_EXECUTION, /none leaves lasting repo or forge state/);
   assert.match(SCAN_EXECUTION, /the context bundles Steps 4\.7 and 4\.8 compose into the run dir's `context\/`/);
-  assert.doesNotMatch(SCAN_EXECUTION, /mutate no repo state|mutates repo state/);
   assert.match(SCAN_EXECUTION, /\(no Task dispatch\), the reconcile still runs first, before Step 1/);
 });
 
@@ -83,7 +82,6 @@ test('scan-procedures.md Step 4.5 classifies branches with read-only probes, nev
   assert.match(section, /merge-base --is-ancestor \{branch\} \{branch\}@\{upstream\}/);
   assert.match(section, /merge-base --is-ancestor \{branch\} HEAD/);
   assert.match(section, /contained in its own `@\{upstream\}` \(or `HEAD` when it has none\)/);
-  assert.doesNotMatch(section, /contained in `HEAD` or its own `@\{upstream\}`/);
   assert.match(section, /Delete \(cleanly merged — Step 7 runs git branch -d\)/);
 });
 

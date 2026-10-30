@@ -90,9 +90,10 @@ files:
 - **Action:** exclude the whole `Prune plan (archive)` item.
 - **Should feel:** heard. Saying no once is enough.
 - **Should understand:**
-  - Tidy records the decline from `{REPO_ROOT}`:
-    `printf '%s' '{"description":"tidy Prune plan (archive): docs/superpowers/plans/","reason":"{why}"}' | node "${CLAUDE_PLUGIN_ROOT}/bin/declined-learning.js" record-decline --source tidy`
-    `{why}` is JSON- and shell-escaped.
+  - Tidy records the decline from `{REPO_ROOT}`, and the maintainer's reason never touches a command line:
+    it resolves a payload path with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" D=tidy-plan-decline.json`,
+    writes `{"description":"tidy Prune plan (archive): docs/superpowers/plans/","reason":"{why}"}` to it with the `Write` tool (`{why}` JSON-escaped),
+    then runs `node "${CLAUDE_PLUGIN_ROOT}/bin/declined-learning.js" record-decline --source tidy < "{D}"`.
   - Later runs route the plans back to Keep until reconcile's 180-day `pruneDeclines` expires the decline.
   - Excluding only some rows records nothing.
   - A `Prune plan (ask)` exclusion never records a decline, because `ask` asks every run.
@@ -101,6 +102,7 @@ files:
   - A partial exclusion that silences the archive for 180 days.
   - An `ask` decline that later suppresses a `keep-forever` archive.
   - A declined archive back on the very next run.
+  - The maintainer's decline reason interpolated into a shell command (a `printf` or `echo` pipe) instead of a written payload file.
 
 ## Origin
 - Created during build of #4465. Tidy Step 4 used to auto-delete plans of closed records at `moderate`, which contradicted `superpowers-plans-retention`'s `keep-forever` default and ADR-0007's recent-work cutoff. The 30-plan threshold and the decline memory were decided by the user at plan review.
