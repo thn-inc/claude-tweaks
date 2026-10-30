@@ -1810,7 +1810,7 @@ test('AC3.1: acceptance-labeling skips a due parent below the oversight floor', 
     ],
   });
   assert.strictEqual(row.result, 'skip', row.detail);
-  assert.match(row.detail, /parent #898 below oversight floor/);
+  assert.match(row.detail, /parent #898 below oversight floor — closes after the merge lands \(Step 4\.0b\)/);
 });
 
 test('AC4.1: acceptance-labeling renders unknown when sub-issue enumeration throws, never reading the parent labels', () => {
@@ -1891,7 +1891,7 @@ test('acceptance-labeling falls back to the default high floor when policy.yml s
     ],
   });
   assert.strictEqual(row.result, 'skip', row.detail);
-  assert.match(row.detail, /parent #898 below oversight floor/);
+  assert.match(row.detail, /parent #898 below oversight floor — closes after the merge lands \(Step 4\.0b\)/);
 });
 
 // Two run records under different parents: #898 stays incomplete (open

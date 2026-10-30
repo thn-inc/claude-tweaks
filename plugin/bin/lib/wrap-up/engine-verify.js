@@ -804,7 +804,10 @@ function scanPrBrief(prComments, target) {
 // #3222: the parent path evaluates the Parent-Gate Procedure's gate state and
 // oversight floor first (verification-brief-parent-gate.md's "Evaluate the
 // gate"). An incomplete gate, or a due parent whose sub-issues sit below the
-// oversight floor, skips the parent instead of requiring its demo:pending.
+// oversight floor, skips the parent instead of requiring its demo:pending. The
+// below-floor skip detail names the post-merge close (#4466): that parent is
+// closed by pr-first-merge-post-merge.md's Step 4.0b once the merge lands, so
+// it never carries an acceptance label.
 // The gate input is the parent's enumerated sub-issues with every run record
 // counted as closed, since this run is what closes it.
 //
@@ -906,7 +909,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
         { riskFloor, sizeFloor: null },
       );
       if (!exceeds) {
-        skipped.push(`parent #${target} below oversight floor`);
+        skipped.push(`parent #${target} below oversight floor — closes after the merge lands (Step 4.0b)`);
         continue;
       }
     }
