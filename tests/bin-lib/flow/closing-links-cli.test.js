@@ -129,7 +129,8 @@ const PRE = ['--mode', 'pre-merge'];
 const POST = ['--mode', 'post-merge'];
 
 test('parseArgs: shapes and rejections', () => {
-  assert.deepEqual(parseArgs(['--run', 'r', '--mode', 'pre-merge']), { run: 'r', mode: 'pre-merge', settleMs: 15000, help: false });
+  assert.deepEqual(parseArgs(['--run', 'r', '--mode', 'pre-merge']), { run: 'r', mode: 'pre-merge', settleMs: 15000, bodyFile: null, help: false });
+  assert.equal(parseArgs(['--mode', 'screen', '--body-file', 'b']).bodyFile, 'b');
   assert.equal(parseArgs(['--run', 'r', '--mode', 'post-merge', '--settle-ms', '0']).settleMs, 0);
   assert.equal(parseArgs(['--help']).help, true);
   assert.ok(parseArgs(['--bogus']).error);
@@ -855,4 +856,66 @@ test('a failed SKIP append keeps every exit code, adds one stderr line, and mark
     assert.deepEqual(h.json(), { action: 'gh-absent', pr: 7, logFailed: true }, mode);
     assert.equal(h.err.join(''), 'closing-links.js: could not append the decisions.md entry: disk full\n', mode);
   }
+});
+
+// --mode screen (#4467): a not-yet-posted PR body that should close no record
+// (tidy's housekeeping PR) -- no run dir, no gh, rewritten in place.
+function screenDeps(overrides = {}) {
+  const out = [];
+  const err = [];
+  const deps = {
+    stdout: (s) => out.push(s),
+    stderr: (s) => err.push(s),
+    gh: () => { throw new Error('screen must not call gh'); },
+    ghAvailable: () => { throw new Error('screen must not probe gh'); },
+    ...overrides,
+  };
+  return { deps, out, err };
+}
+
+function bodyFile(text) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-closinglinks-screen-'));
+  created.push(dir);
+  const file = path.join(dir, 'body.md');
+  fs.writeFileSync(file, text);
+  return file;
+}
+
+test('screen neutralizes every closing phrase in a body file and rewrites it', () => {
+  const file = bodyFile('Tidy: closed #12 (stale), resolves owner/repo#7\r\nsee #9\r\n');
+  const h = screenDeps();
+  assert.equal(run(['--mode', 'screen', '--body-file', file], h.deps), 0);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'Tidy: closed issue #12 (stale), resolves issue owner/repo#7\r\nsee #9\r\n');
+  const j = JSON.parse(h.out.join(''));
+  assert.equal(j.action, 'neutralized');
+  assert.deepEqual(j.neutralized.map((x) => x.number), [12, 7]);
+  assert.equal(h.err.join(''), '');
+});
+
+test('screen leaves a clean body byte-identical and reports clean', () => {
+  const text = 'no keywords here, see #3\r\n';
+  const file = bodyFile(text);
+  const h = screenDeps({ writeFile: () => { throw new Error('a clean body must not be written'); } });
+  assert.equal(run(['--mode', 'screen', '--body-file', file], h.deps), 0);
+  assert.deepEqual(JSON.parse(h.out.join('')), { action: 'clean', neutralized: [] });
+  assert.equal(fs.readFileSync(file, 'utf8'), text);
+});
+
+test('screen invocation errors exit 2 with no stdout', () => {
+  const phrase = bodyFile('closes #4\n');
+  const cases = [
+    { name: 'no body file', argv: ['--mode', 'screen'] },
+    { name: 'screen with --run', argv: ['--mode', 'screen', '--body-file', phrase, '--run', 'r'] },
+    { name: 'screen with --settle-ms', argv: ['--mode', 'screen', '--body-file', phrase, '--settle-ms', '0'] },
+    { name: 'pre-merge with --body-file', argv: ['--run', 'r', '--mode', 'pre-merge', '--body-file', phrase] },
+    { name: 'unreadable body file', argv: ['--mode', 'screen', '--body-file', phrase], overrides: { readFile: () => { throw new Error('EACCES'); } } },
+    { name: 'unwritable body file', argv: ['--mode', 'screen', '--body-file', phrase], overrides: { writeFile: () => { throw new Error('EROFS'); } } },
+  ];
+  for (const c of cases) {
+    const h = screenDeps(c.overrides);
+    assert.equal(run(c.argv, h.deps), 2, c.name);
+    assert.equal(h.out.join(''), '', c.name);
+    assert.match(h.err.join(''), /^closing-links\.js: /, c.name);
+  }
+  assert.equal(fs.readFileSync(phrase, 'utf8'), 'closes #4\n');
 });
