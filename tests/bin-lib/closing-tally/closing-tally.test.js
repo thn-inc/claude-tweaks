@@ -22,6 +22,7 @@ const FIXTURE_DECISIONS = `## /backlog
 - AUTO 10:00:06 — Backlog refine: repaired dependency on #8 — wired native blocked-by referencing #9.
 - AUTO 10:00:07 — Backlog refine: stamped needs:decision on #10 — ambiguous RATIONALE.
 - AUTO 10:00:08 — Backlog refine: skipped #11 — premise changed since confirmation (lost ready label); dropped without writing.
+- AUTO 10:00:08 — refine #13: Backlog refine: resolved decision on #13 as keep — needs:decision removed. Reversibility: high.
 - FAILED 10:00:09 — Backlog refine: priority write failed on #12: gh exited 1.
 `;
 
@@ -34,7 +35,7 @@ test('computeClosingTally: matches a hand-count of the fixture, one of each docu
     flaggedBack: 1,
     dependencyRepair: 1,
     needsDecision: 1,
-    resolved: 0,
+    resolved: 1,
     skipped: 1,
     failed: 1,
   });
@@ -74,7 +75,7 @@ test('renderTallyLine: matches refine-closing-summary.md\'s documented tally-lin
   const { counts } = computeClosingTally(FIXTURE_DECISIONS);
   assert.equal(
     renderTallyLine(counts),
-    '2 priority set · 1 Related updated · 2 granted · 1 flagged back · 1 dependency-repair · 1 needs-decision · 0 resolved · 1 skipped · 1 failed',
+    '2 priority set · 1 Related updated · 2 granted · 1 flagged back · 1 dependency-repair · 1 needs-decision · 1 resolved · 1 skipped · 1 failed',
   );
 });
 
@@ -218,6 +219,8 @@ test('#3267: known /backlog narration (Resolve-lane "Backlog refine #N:" lines) 
 
 // #4566: the legacy `Backlog refine #N:` ignore pattern matches anywhere in a line, so it must never
 // outrank a current-form template line: a line that matches a PATTERNS entry is counted, not ignored.
+// Shape 1 puts the legacy token in the step location (an older build's or a hand-composed form, not
+// what Step 4 writes today); shape 2 is Step 4's own `refine #{n}` step with the token quoted in free text.
 test('#4566: a current-form resolve line that also contains "Backlog refine #N:" is counted, never ignored', () => {
   const shapes = [
     '- AUTO 10:00:00 — Backlog refine #70: Backlog refine: resolved decision on #70 as keep — needs:decision removed. Reversibility: high.',
@@ -324,8 +327,12 @@ test('#3267 Minor 2: a FAILED line whose message contains "apply-refine-labels: 
 // #4566: the tally's prose twins, read live from the skill files, never retyped. Each pin is a
 // function of the text it reads, so a go-red control can run the same function over a mutated copy.
 const SKILLS_DIR = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'backlog');
-const readSummary = () => readText(path.join(SKILLS_DIR, 'refine-closing-summary.md'));
-const readRecord = () => readText(path.join(SKILLS_DIR, 'refine-record.md'));
+function readSummary() {
+  return readText(path.join(SKILLS_DIR, 'refine-closing-summary.md'));
+}
+function readRecord() {
+  return readText(path.join(SKILLS_DIR, 'refine-record.md'));
+}
 
 // The trimmed body lines of every ``` fence, one array per fence (fences may be list-indented).
 function fences(text) {
@@ -370,7 +377,7 @@ function proseLogDecisionFlags(record) {
   assert.equal(blocks.length, 1, 'refine-record.md must carry exactly one fenced log-decision.js command');
   const flags = {};
   const cmd = blocks[0].join(' ').replace(/\\\s+/g, ' ');
-  for (const m of cmd.matchAll(/--([\w-]+)\s+(?:"([^"]*)"|(\S+))/g)) flags[m[1]] = m[2] !== undefined ? m[2] : m[3];
+  for (const m of cmd.matchAll(/--([\w-]+)\s+(?:"([^"]*)"|(\S+))/g)) flags[m[1]] = m[2] ?? m[3];
   for (const k of ['status', 'section', 'step', 'reversibility']) assert.ok(flags[k], `the log-decision.js fence must carry --${k}`);
   return flags;
 }
@@ -433,11 +440,19 @@ test('#4566 go-red: a reordered prose label, a reworded template and a changed -
     assert.ok(text.includes(from), `mutation target not found: ${from}`);
     return text.replace(from, to);
   };
-  assert.throws(() => assertLabelTwin(mutate(summary, '34 priority set · 2 Related updated', '2 Related updated · 34 priority set')));
-  assert.throws(() => assertTemplatesCounted(mutate(summary, 'Backlog refine: set priority:', 'Backlog refine: assigned priority:')));
-  assert.throws(() => assertTemplatesCounted(mutate(summary, 'resolved decision on #{n}', 'settled decision on #{n}')));
-  assert.throws(() => resolveLaneDecisions(mutate(summary, 'resolved decision on #{n}', 'settled decision on #{n}'), record));
-  assert.throws(() => proseLogDecisionFlags(mutate(record, '--step "refine #{n}"', '')));
-  assert.throws(() => resolveLaneDecisions(summary, mutate(record, '--status AUTO', '--status BOGUS')));
-  assert.throws(() => failedResolveLine(mutate(summary, ' | resolve} write failed', '} write failed')));
+  // Every mutation is built before its assert.throws, so a vanished target fails this test loudly
+  // instead of satisfying the bare assert.throws below with the helper's own "target not found".
+  const reorderedLabels = mutate(summary, '34 priority set · 2 Related updated', '2 Related updated · 34 priority set');
+  const rewordedPriority = mutate(summary, 'Backlog refine: set priority:', 'Backlog refine: assigned priority:');
+  const rewordedResolve = mutate(summary, 'resolved decision on #{n}', 'settled decision on #{n}');
+  const noStep = mutate(record, '--step "refine #{n}"', '');
+  const bogusStatus = mutate(record, '--status AUTO', '--status BOGUS');
+  const noResolveType = mutate(summary, ' | resolve} write failed', '} write failed');
+  assert.throws(() => assertLabelTwin(reorderedLabels));
+  assert.throws(() => assertTemplatesCounted(rewordedPriority));
+  assert.throws(() => assertTemplatesCounted(rewordedResolve));
+  assert.throws(() => resolveLaneDecisions(rewordedResolve, record));
+  assert.throws(() => proseLogDecisionFlags(noStep));
+  assert.throws(() => resolveLaneDecisions(summary, bogusStatus));
+  assert.throws(() => failedResolveLine(noResolveType));
 });

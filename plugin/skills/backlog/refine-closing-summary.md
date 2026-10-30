@@ -102,7 +102,9 @@ second bookkeeping channel:
    label remains — safe when the removal already landed and only the add failed; before any
    removal it leaves two contradictory labels, exactly what the swap above exists to prevent.
    Grant rows (up to four chained `gh` calls) and Related/Flag-back rows (a `--body-file` edit)
-   retry as the single failed call from that row's own mechanics, not the whole row.
+   retry as the single failed call from that row's own mechanics, not the whole row. A `resolve`
+   failure (the Resolve lane's writes live in `refine-record.md` Step 4, not this file's apply
+   pass) retries the same way, as the single failed call from that step's items 2-4.
 
 3. **One line per skipped write** — the record ref and what changed, informational only (no retry command needed — the human re-runs refine to pick it up fresh next time):
 
