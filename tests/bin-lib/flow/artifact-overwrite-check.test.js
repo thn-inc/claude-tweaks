@@ -29,6 +29,7 @@ const {
   normalizeStepMarkup,
   isStepMarkupReformat,
   isStepRenumber,
+  isReferencePreservingOriginLine,
   ArtifactOverwriteCheckError,
 } = require(MOD);
 
@@ -603,7 +604,21 @@ test('isStepRenumber: a deletion-only hunk is not a renumber', () => {
   assert.strictEqual(isStepRenumber(hunks[0]), false);
 });
 
-test('the real #4488/#4484 journey step insertion (729a5ae5e..4706f21db) passes with no manual ruling', () => {
+test('isStepRenumber: identical heading text needs a real matching, not a first-fit pass (3→5 and 5→4, not 3→4)', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5,2 +5,2 @@',
+    '-### 3. X',
+    '-### 5. X',
+    '+### 4. X',
+    '+### 5. X',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepRenumber(hunks[0]), true);
+});
+
+test('the real #4488/#4484 journey step insertion (729a5ae5e..4706f21db) passes with no manual ruling', (t) => {
   const repoRoot = path.join(__dirname, '..', '..', '..');
   let head;
   try {
@@ -612,8 +627,10 @@ test('the real #4488/#4484 journey step insertion (729a5ae5e..4706f21db) passes 
     head = null;
   }
   if (head !== 'commit') {
-    // Same environment-precondition skip as the replay tests above: the
-    // commit is not reachable in this checkout, so there is nothing to replay.
+    // Same environment-precondition as the replay tests above, but reported as
+    // a visible skip: the commit is not reachable in this checkout, so there
+    // is nothing to replay, and a silent pass would read as a verified replay.
+    t.skip('4706f21db not reachable in this checkout');
     return;
   }
   const result = checkArtifactOverwrite({
@@ -623,4 +640,139 @@ test('the real #4488/#4484 journey step insertion (729a5ae5e..4706f21db) passes 
     cwd: repoRoot,
   });
   assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+// Commit A for the Origin-line fixtures: one heading-form step and a closing
+// `Origin:` line citing #10.
+const ORIGIN_JOURNEY = [
+  '# Demo',
+  '',
+  '### 1. Read the banner — A session starts.',
+  '- **Action:** Open it.',
+  '',
+  'Origin: created during build of #10',
+  '',
+].join('\n');
+
+function originJourneyWithStep2(originLine) {
+  return [
+    '# Demo',
+    '',
+    '### 1. Read the banner — A session starts.',
+    '- **Action:** Open it.',
+    '',
+    '### 2. Read the footer — A session ends.',
+    '- **Action:** Close it.',
+    '',
+    originLine,
+    '',
+  ].join('\n');
+}
+
+test('AC3.1: an Origin: line that gains a #N reference and keeps the existing one passes clean', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', ORIGIN_JOURNEY);
+  commit(fx, 'Add demo journey (refs #10)');
+  write(fx.dir, 'docs/journeys/demo.md',
+    originJourneyWithStep2('Origin: created during build of #10; step 2 added during build of #11'));
+  commit(fx, 'Append a footer step and cite this build in the Origin line (refs #11)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+test('AC3.2: an Origin: line rewrite that drops the existing #N reference reports an overwrite', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', ORIGIN_JOURNEY);
+  commit(fx, 'Add demo journey (refs #10)');
+  write(fx.dir, 'docs/journeys/demo.md', originJourneyWithStep2('Origin: step 2 added during build of #11'));
+  const commitB = commit(fx, 'Append a footer step and replace the Origin line (refs #11)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].commit, commitB);
+});
+
+test('parseHunks + isReferencePreservingOriginLine: a rewrite that keeps #10 and adds #11 is reference-preserving', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -6 +6 @@',
+    '-Origin: built in #10',
+    '+Origin: built in #10 and #11',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), true);
+});
+
+test('isReferencePreservingOriginLine: a deleted Origin: line with no added Origin: line is not reference-preserving', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -6 +6 @@',
+    '-Origin: built in #10',
+    '+Something else.',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: a deleted non-Origin line beside the Origin rewrite is not reference-preserving', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5,2 +5 @@',
+    '-Body line.',
+    '-Origin: built in #10',
+    '+Origin: built in #10 and #11',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: a reference is matched as a whole number (#10 is not kept by #101)', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -6 +6 @@',
+    '-Origin: built in #10',
+    '+Origin: built in #101',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: two deleted Origin: lines need two added Origin: lines, paired in order', () => {
+  const lessAdded = parseHunks([
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6,2 +6 @@',
+    '-Origin: built in #10',
+    '-Origin: extended in #11',
+    '+Origin: built in #10, extended in #11',
+  ].join('\n'));
+  assert.strictEqual(isReferencePreservingOriginLine(lessAdded[0]), false);
+
+  const swapped = parseHunks([
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6,2 +6,2 @@',
+    '-Origin: built in #10',
+    '-Origin: extended in #11',
+    '+Origin: extended in #11',
+    '+Origin: built in #10',
+  ].join('\n'));
+  assert.strictEqual(isReferencePreservingOriginLine(swapped[0]), false);
+});
+
+test('isReferencePreservingOriginLine: a deletion-only hunk is not reference-preserving', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6 +5,0 @@',
+    '-Origin: built in #10',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
 });
