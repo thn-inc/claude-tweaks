@@ -295,8 +295,9 @@ When mechanizing a prose heuristic into a deterministic check:
     back to a default on an invalid value is not the hard error "When not to use" exempts.
 15. **A transform in front of a scanner owes its own could-not-parse verdict.** A scan over
     transformed text reads whatever the transform wrongly removed as "nothing here", so a
-    transform that mis-parses produces a clean scan. `tests/helpers/strip-comments.js`'s
-    `stripComments` blanks comments to spaces before its callers' scans count tokens. Its
+    transform that mis-parses produces a clean scan. `stripComments` (implemented in
+    `plugin/bin/lib/strip-comments.js`, re-exported by `tests/helpers/strip-comments.js`)
+    blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `backfill-cli`, `cli`, `exit-code`, `git-status-optional-locks`,
     `hooks-harness-refusal`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`,
     `raw-markdown-read`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
@@ -313,7 +314,7 @@ When mechanizing a prose heuristic into a deterministic check:
     `unparseable`, its own outcome and never `ok`. Every scan except exit-code reports either one
     as an offender. The exit-code scan never calls `stripperVerdict`; it reports a `require.main`
     guard the stripper blanked, through its own `guardBlankedByStripper(raw, stripped)` detector.
-    State what the oracle cannot see, as the helper's header does: a mis-parse whose stripped text
+    State what the oracle cannot see, as the implementation's header does: a mis-parse whose stripped text
     still compiles passes unseen. Pin the planted mis-parse through every scan that calls the
     verdict, not only through the helper's own tests.
     To settle how accurate the heuristic transform is, measure it against an exact parser that is
