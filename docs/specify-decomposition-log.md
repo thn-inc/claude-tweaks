@@ -13,3 +13,4 @@ Append-only, git-tracked record of every `/claude-tweaks:specify` decomposition 
 - Sub-issues in this batch: 17
 - `ceremony:standard` sub-issues (17): #4609, #4610, #4611, #4612, #4613, #4614, #4615, #4616, #4617, #4618, #4619, #4620, #4621, #4622, #4623, #4624, #4625
 - Transcript pointer (this session): sessionId 2f77026a-6c35-4008-baaf-d64858b2d66f, host Thomass-MacBook-Pro-3376.local, cwd /Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/design-human-in-control-acceptance
+- Added to the same parent after red-team resolution: #4627 (`ceremony:standard`), bringing the batch to 18
