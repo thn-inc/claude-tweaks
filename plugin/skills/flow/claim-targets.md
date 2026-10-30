@@ -149,7 +149,8 @@ mechanism — and the `@base64d`+sha single-read (one `gh api` call decoding Git
 newline-embedded base64 and keeping the blob sha the conditional write needs) live inside that
 one module, not restated here. It classifies each
 read exactly per `_shared/issue-claims.md`'s "Failure posture" table: `'absent'` → create-only
-write; `'tombstone'`/`'stale'` → conditional write (a legitimate re-claim, not a contest);
+write; `'tombstone'`/`'stale'` → conditional write (a legitimate re-claim, not a contest) unless
+the in-flight check below finds an open PR (exit 3);
 `'live'` → contested, holder identity attached; `'unreadable'` → fails closed to contested with no
 holder identity (`null`). It also applies the per-target self-owned check first, scoped to
 `'live'`/`'stale'` blobs: a target whose live or stale claim blob already reads
@@ -391,7 +392,8 @@ Failure-posture table — the CLI's own `ABORT_REASON`, not something this flow 
 unverified write is downgraded to a `skipped` entry in the exit-0 JSON envelope
 (`{issue, reason: 'contested', holder}`, `{issue, reason: 'transient', error}`,
 `{issue, reason: 'unverified'}` (#2073), or, for a pr-opened tombstone whose linked PR is still open
-(#315), `{issue, reason: 'in-flight', link}`) and the CLI proceeds to the remaining targets rather
+(#315) or a stale claim whose run marker sits on an open PR (#4423), `{issue, reason: 'in-flight',
+link}`) and the CLI proceeds to the remaining targets rather
 than releasing and aborting — consistent with `--keep-going`'s existing meaning elsewhere in flow
 (`multi-spec.md`): continue past a per-target failure rather than aborting the whole run. Drop each
 skipped target from the target list for Step 3 onward. For a `reason: 'contested'` entry, gather

@@ -91,7 +91,8 @@ leaving it implicit. Two PR reads are documented exceptions, made directly rathe
 this table: `mcp__github__pull_request_read`
 (`get`), used by `_shared/issue-claims.md`'s "The lock" step 4 tombstone check, by
 `_shared/pr-checklist-refresh.md`, and by others; and `mcp__github__list_pull_requests`
-(open PRs, #4423), used by that step 4's stale check.
+(open PRs, #4423), used by that step 4's stale check and by `tidy/scan-procedures.md`'s Step 4.7
+stale-claim audit.
 
 **Exception: PR create/update (#929).** Create and update *are* covered, just not by a table
 row — `gh pr create --body-file`/`gh pr edit --body-file` locally,

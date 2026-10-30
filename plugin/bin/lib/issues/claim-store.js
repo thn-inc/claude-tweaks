@@ -533,15 +533,25 @@ function tombstoneInFlightPr(content, gh, owner, repo) {
 // comment; a match is a trimmed LINE equal to either form, never a substring,
 // so a body merely mentioning a run id does not count. `runId` is untrusted
 // (any session with registry-branch write access can set it) and is shape-
-// checked before it can reach a `gh` call, and the matched PR's url must be a
-// same-repo PR url. One `pr list` serves every stale target of a claim run
-// (the caller memoizes `gh`). Fails open like its tombstone twin — a broken
-// check must never block a legitimate reclaim — but a failed check (a thrown
-// `gh`, an unparseable or non-array listing) is not a clean "no marked PR", so
-// the optional trailing `onError(err)` lets the caller surface it (#4423). An
+// checked before it can reach a `gh` call, and the matched PR must be a
+// same-repo PR url from a same-repo branch (`isCrossRepository: false`) — a
+// fork PR can carry any body, but a run's own draft PR is never cross-repo.
+// One `pr list` serves every stale target of a claim run (the caller memoizes
+// `gh`). Fails open like its tombstone twin — a broken check must never block
+// a legitimate reclaim — but a failed check (a thrown `gh`, an unparseable or
+// non-array listing, or a no-match listing that hit OPEN_PR_LIST_LIMIT and so
+// may have cut the marked PR off) is not a clean "no marked PR", so the
+// optional trailing `onError(err)` lets the caller surface it (#4423). An
 // `onError` that itself throws is swallowed — this function always returns null
 // on failure.
+//
+// RUN_ID_SHAPE is the canonical run-id shape (`_shared/run-dir-resolution.md`'s
+// ISO-timestamp + kebab spec-slug convention). Agents execute it as prose in
+// `_shared/issue-claims.md`, `tidy/scan-procedures.md` and
+// `flow/claim-targets.md`; tests/issue-claims-stale-open-pr-conformance.test.js
+// pins every copy to this constant's `.source`.
 const RUN_ID_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$/;
+const OPEN_PR_LIST_LIMIT = 1000;
 
 function staleClaimInFlightPr(content, gh, owner, repo, onError) {
   try {
@@ -549,10 +559,16 @@ function staleClaimInFlightPr(content, gh, owner, repo, onError) {
     const runId = parsed && parsed.runId;
     if (typeof runId !== 'string' || !RUN_ID_SHAPE.test(runId)) return null;
     const markers = [`claude-tweaks-run: ${runId}`, `<!-- claude-tweaks-run: ${runId} -->`];
-    const prs = JSON.parse(gh(['pr', 'list', '--repo', `${owner}/${repo}`, '--state', 'open', '--json', 'url,body', '--limit', '1000']));
+    const prs = JSON.parse(gh(['pr', 'list', '--repo', `${owner}/${repo}`, '--state', 'open',
+      '--json', 'url,body,isCrossRepository', '--limit', String(OPEN_PR_LIST_LIMIT)]));
+    if (!Array.isArray(prs)) throw new Error('open-PR listing is not an array');
     for (const pr of prs) {
-      if (!pr || typeof pr.body !== 'string' || !isSameRepoPrUrl(pr.url, owner, repo)) continue;
+      if (!pr || typeof pr.body !== 'string' || pr.isCrossRepository !== false) continue;
+      if (!isSameRepoPrUrl(pr.url, owner, repo)) continue;
       if (pr.body.split('\n').some((line) => markers.includes(line.trim()))) return { link: pr.url };
+    }
+    if (prs.length >= OPEN_PR_LIST_LIMIT) {
+      throw new Error(`open-PR listing hit its ${OPEN_PR_LIST_LIMIT}-entry limit — a marked PR may lie past it`);
     }
     return null;
   } catch (e) {
@@ -573,6 +589,8 @@ module.exports = {
   classifyGhApiError,
   tombstoneInFlightPr,
   staleClaimInFlightPr,
+  RUN_ID_SHAPE,
+  OPEN_PR_LIST_LIMIT,
   isSameRepoPrUrl,
   casBackoffMs,
   defaultSleep,

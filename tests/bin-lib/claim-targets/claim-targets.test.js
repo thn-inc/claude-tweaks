@@ -599,7 +599,7 @@ test('(k6) two targets sharing the identical in-flight link: only one `gh pr vie
 // tombstone uses.
 const RUN = '2026-10-22T001546-record-3315';
 const PR_URL = 'https://github.com/acme/w/pull/3927';
-const markedPr = { url: PR_URL, body: `## Spec\n<!-- claude-tweaks-run: ${RUN} -->\n` };
+const markedPr = { url: PR_URL, body: `## Spec\n<!-- claude-tweaks-run: ${RUN} -->\n`, isCrossRepository: false };
 
 test('(stale-pr) stale claim whose run has an open marked PR, default mode: exit 3, inFlight envelope, no write', () => {
   const { ghApi, calls } = makeGhApi({
@@ -671,18 +671,57 @@ test('(stale-pr-4) the gh pr list call itself fails: fails open, reclaims AND wr
   assert.match(lines[0], /^claim-targets: stale-claim open-PR check failed for #773 \(reclaiming\) — pr list failed\n$/);
 });
 
+test('(stale-pr-4c) two stale targets and a failing gh pr list: one call, both reclaim, one stderr line each', () => {
+  const { ghApi } = makeGhApi({
+    reads: {
+      777: [readOk(staleMarker(RUN), 'sha777'), confirmRead()],
+      778: [readOk(staleMarker(RUN), 'sha778'), confirmRead()],
+    },
+    writes: { 777: [writeOk], 778: [writeOk] },
+  });
+  const { gh, calls: ghCalls } = makeGh({ fail: { prList: true } });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '777,778'], deps);
+
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [777, 778]);
+  const prListCalls = ghCalls.filter((a) => a[0] === 'pr' && a[1] === 'list');
+  assert.equal(prListCalls.length, 1, 'a failed gh pr list is cached too, so a hanging gh costs one timeout per run');
+  assert.equal(io.err.filter((s) => s.includes('#777')).length, 1);
+  assert.equal(io.err.filter((s) => s.includes('#778')).length, 1);
+});
+
 test('staleClaimInFlightPr: onError receives the error of a thrown gh, an unparseable listing, and a non-array result', () => {
   const errors = [];
   const onError = (e) => errors.push(e);
   assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => { throw new Error('boom'); }, 'acme', 'w', onError), null);
   assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => 'not json', 'acme', 'w', onError), null);
   assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify({}), 'acme', 'w', onError), null);
-  assert.equal(errors.length, 3, 'each failure mode reaches onError');
+  // A JSON string is iterable: without an array check it walks characters and returns a clean null.
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify('[]'), 'acme', 'w', onError), null);
+  assert.equal(errors.length, 4, 'each failure mode reaches onError');
   assert.equal(errors[0].message, 'boom');
+  assert.equal(errors[3].message, 'open-PR listing is not an array');
   // A clean no-match, and a non-run-id-shaped runId, are not failures.
   assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => '[]', 'acme', 'w', onError), null);
   assert.equal(claimStore.staleClaimInFlightPr(staleMarker('otherRun'), () => '[]', 'acme', 'w', onError), null);
-  assert.equal(errors.length, 3, 'a no-match is not reported as a failure');
+  assert.equal(errors.length, 4, 'a no-match is not reported as a failure');
+});
+
+test('staleClaimInFlightPr: a no-match listing at the 1000-entry limit reaches onError; a match inside it still returns', () => {
+  const filler = Array.from({ length: 1000 }, (_, i) => (
+    { url: `https://github.com/acme/w/pull/${i + 1}`, body: 'unrelated', isCrossRepository: false }));
+  const errors = [];
+  const onError = (e) => errors.push(e);
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify(filler), 'acme', 'w', onError), null);
+  assert.equal(errors.length, 1, 'a capped listing may have cut the marked PR off — not a clean no-match');
+  assert.match(errors[0].message, /1000-entry limit/);
+  const withMatch = [...filler.slice(0, 999), markedPr];
+  assert.deepEqual(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify(withMatch), 'acme', 'w', onError), { link: PR_URL });
+  assert.equal(errors.length, 1);
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify(filler.slice(0, 999)), 'acme', 'w', onError), null);
+  assert.equal(errors.length, 1, 'a no-match listing under the limit is a clean no-match');
 });
 
 test('staleClaimInFlightPr: a throwing onError is swallowed — the check still returns null (fail open)', () => {
@@ -748,8 +787,8 @@ test('(stale-pr-7) stale blob owned by THIS run: alreadyOwned, never consults th
   assert.ok(!calls.some((a) => isWrite(a, '776')));
 });
 
-test('staleClaimInFlightPr: an HTML-comment and a plain marker line both match; a cross-repo url never returns', () => {
-  const prListArgs = ['pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body', '--limit', '1000'];
+test('staleClaimInFlightPr: an HTML-comment and a plain marker line both match; a cross-repo url or fork PR never returns', () => {
+  const prListArgs = ['pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000'];
   const seen = [];
   const ghWith = (prs) => (args) => { seen.push(args); return JSON.stringify(prs); };
 
@@ -760,7 +799,7 @@ test('staleClaimInFlightPr: an HTML-comment and a plain marker line both match; 
   );
   assert.deepEqual(seen[0], prListArgs, 'the gh call is exactly the documented open-PR listing');
   assert.deepEqual(
-    claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([{ url: PR_URL, body: `intro\n  claude-tweaks-run: ${RUN}  \n` }]), 'acme', 'w'),
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([{ url: PR_URL, body: `intro\n  claude-tweaks-run: ${RUN}  \n`, isCrossRepository: false }]), 'acme', 'w'),
     { link: PR_URL },
     'the plain marker form, trimmed, matches',
   );
@@ -773,6 +812,16 @@ test('staleClaimInFlightPr: an HTML-comment and a plain marker line both match; 
     claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([{ url: 'https://github.com/evil/x/pull/1', body: `claude-tweaks-run: ${RUN}\n` }]), 'acme', 'w'),
     null,
     'a cross-repo PR url never returns',
+  );
+  assert.equal(
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([{ ...markedPr, isCrossRepository: true }]), 'acme', 'w'),
+    null,
+    'a fork PR into this repo never returns, whatever its body carries',
+  );
+  assert.equal(
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([{ url: PR_URL, body: markedPr.body }]), 'acme', 'w'),
+    null,
+    'a PR with no isCrossRepository field is not proven same-repo',
   );
 });
 

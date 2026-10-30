@@ -39,9 +39,15 @@ test('the stale-blob row offers Resume when an open PR carries the run marker (#
 
 test('the stale-claim paragraph lists open PRs on both transports and matches the run marker (#4423)', () => {
   const s = claimAuditSection();
-  assert.match(s, /gh pr list --state open --json number,url,body/);
+  assert.match(s, /gh pr list --state open --json number,url,body,isCrossRepository/);
   assert.match(s, /mcp__github__list_pull_requests/);
   assert.match(s, /claude-tweaks-run: \{runId\}/);
+  const flat = s.replace(/\s+/g, ' '); // prose wraps at ~98 columns
+  assert.ok(
+    flat.includes('trimmed line equal to `claude-tweaks-run: {runId}` or `<!-- claude-tweaks-run: {runId} -->`'),
+    'the marker match is exact-line, as claim-store.js\'s',
+  );
+  assert.match(flat, /`isCrossRepository: false`; MCP: `head\.repo\.full_name` is this repo/);
   assert.ok(
     s.includes('^\\d{4}-\\d{2}-\\d{2}T\\d{6}-[a-z0-9][a-z0-9-]*$'),
     'the run-id shape regex is stated literally',
@@ -57,6 +63,10 @@ test('a matching PR routes as the Yours Unsettled run no-op, never staged and ne
   // Step 4.7's table rows already say "Manual review", so a bare match proves nothing: pin the
   // failed-listing sentence itself.
   assert.match(s, /failed listing[^.]*Manual review[^.]*never an unchecked Release/);
+  assert.match(s, /a `gh` listing of 1000 entries with no match[^.]*Manual review/);
+  // The Resume line is rendered as a paste command, so its untrusted tail is held to the composer's exact shape.
+  assert.ok(s.includes('`` `PIPELINE_RUN_DIR="{dir}/{runId}" /claude-tweaks:flow "{target}" {steps}` ``'));
+  assert.match(s, /free of `` ` ``, `\$`, `"`, `\\` and line breaks, `\{steps\}` matching `\[a-z\]\[a-z,-\]\*`, nothing after it/);
   assert.match(s, /\*\*Unsettled run\*\*/);
   assert.match(s, /Yours/);
   assert.match(s, /never staged/);
