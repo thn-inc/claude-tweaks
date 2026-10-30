@@ -521,12 +521,13 @@ function tiebreakModel(snapshot) {
   const latestById = new Map();
   lines.forEach((line, index) => {
     const t = parseTiebreakLine(line);
+    const debateKeys = debateConvergedKeys(line);
     if (t) {
       const v = { index, ...t };
       latestById.set(v.id, v);
       if (v.key) settledByKey.set(v.key, v);
-    } else if (debateConvergedKeys(line).length > 0) { // #4563: a converged-positive debate confirms every finding it names
-      for (const key of debateConvergedKeys(line)) settledByKey.set(key, { index, kind: 'confirmed', id: null, key, via: 'debate' });
+    } else if (debateKeys.length > 0) { // #4563: a converged-positive debate confirms every finding it names
+      for (const key of debateKeys) settledByKey.set(key, { index, kind: 'confirmed', id: null, key, via: 'debate' });
     } else if (/^- AUTO /.test(line) && /\bConfirmed\b/.test(line)) { // #3772: the producer's own elevation sentence
       const key = findingKey(line);
       if (key) settledByKey.set(key, { index, kind: 'confirmed', id: null, key });
@@ -647,9 +648,9 @@ function engineItems(snapshot, stagedIds) {
 // (lens + path:line; tiebreakModel's lineKeys) is settled by a LATER tiebreak
 // verdict line, by the producer's own `Confirmed` AUTO sentence — review
 // step 3 stages a finding as low-confidence, then logs the elevation as AUTO
-// once reproduced (#3772) — or by a converged-positive debate AUTO line that
-// names it in its lens list (debateConvergedKeys, #4563). Case-sensitive so `not confirmed` never matches; a
-// keyless line is never superseded. A can't-tell `console` verdict supersedes
+// once reproduced (#3772; case-sensitive so `not confirmed` never matches) —
+// or by a converged-positive debate AUTO line that names it in its lens list
+// (debateConvergedKeys, #4563). A keyless line is never superseded. A can't-tell `console` verdict supersedes
 // its STAGED line too, and re-enters as one `tiebreak:{id}` item (#3949).
 function findingKey(line) {
   const lens = /\blens\s+"?([A-Za-z0-9_-]+)"?/i.exec(line);
