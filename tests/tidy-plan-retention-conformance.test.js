@@ -102,7 +102,8 @@ test('step-6-auto.md routes orphan plans through the judgment Delete row, not th
   assert.match(auto, /the plan's related spec is still complete and no repo file cites/);
   assert.doesNotMatch(auto, /orphan plan|no related spec/);
   assert.match(judgment, /orphan plans with no related spec/);
-  assert.match(judgment, /an orphan still has no related spec/);
+  assert.match(judgment, /\(`plan-citation-check\.md`\) and an orphan still has no related spec/);
+  assert.doesNotMatch(judgment, /plan-citation-check\.md`; an orphan/);
   assert.match(judgment, /\| Stage \| Auto-apply \| Auto-apply/);
 });
 
@@ -139,11 +140,11 @@ test('SKILL.md Action Vocabulary defines Prune plan execution and re-verify (#44
   const row = TIDY_SKILL.split('\n').find((l) => l.startsWith('| **Prune plan**'));
   assert.ok(row, 'Prune plan Action Vocabulary row is present');
   assert.match(row, /`git rm` each listed plan, one commit/);
-  assert.match(row, /`plan-citation-check\.md` still clean, its classification still holds \(related spec still complete, or for an orphan still none\), and `superpowers-plans-retention` still the value that staged it/);
+  assert.match(row, /`plan-citation-check\.md` still clean, its classification still holds \(related spec still complete; for an orphan, still none; for a very-old plan, its spec still not started\), and `superpowers-plans-retention` still the value that staged it/);
   assert.match(row, /`Prune plan \(archive\)` also re-checks the plan is still past the 7-day cutoff, `Prune plan \(ask\)` that it is still committed/);
   assert.doesNotMatch(row, /still clean, still past the 7-day cutoff/);
   assert.match(row, /`stale — skipped`/);
-  assert.match(row, /records its decline per Step 4's Plan retention/);
+  assert.match(row, /An entirely excluded `Prune plan \(archive\)` item records its decline per Step 4's Plan retention/);
 });
 
 test('policy-schema.md names tidy Step 4 as a superpowers-plans-retention consumer and describes its routing (#4465)', () => {
