@@ -35,6 +35,7 @@
 ### Task 1: The composer accepts a record-proposal stage path
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/log-decision/review-routing.js:20` (`STAGE_PATH_RE`) and `:58` (error message)
@@ -96,12 +97,13 @@ git commit -m "Accept a review-followup record-proposal stage path in the routin
 **The step3-routing.md paragraph must state:**
 1. Heading: `**Staging a record proposal — a confirmed finding with no patch.**`
 2. When it applies: a finding the table routes AUTO or STAGED that fails `_shared/deferral-gate.md`'s fix-now criteria with a valid `Defer-reason:`. Its fix is a new work record (the Defer bullet below), not a diff. Critical keeps its KEPT-PROMPT row.
-3. The file: the record composed exactly as the Defer bullet composes it (`specShapedBody` body, `recordPayload` labels). It is written as `Title:`/`Type:`/`Labels:`/`Defer-reason:` header lines, a blank line, then the body. That is the header `wrap-up/review-console.md`'s "On approval" step 7 reads.
-4. The stage call: `node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$PIPELINE_RUN_DIR" --id review-followup-{n} --file {proposal} --allocate`, with `{n}` taken from the path its first stdout line prints. Never `review-{n}.md`: stage-item.js refuses that id (`unmapped-prefix`).
+3. The file: the record composed exactly as the Defer bullet composes it (`specShapedBody` body, `recordPayload` labels). It is written as `Title:`/`Type:`/`Labels:`/`Defer-reason:` header lines, then a `Finding: {severity} {category} — {one line}` line (plan-review clarification: disposition's `proposal` row reads severity from it), a blank line, then the body. That is the header `wrap-up/review-console.md`'s "On approval" step 7 reads. `Finding:` is a bookkeeping key the console's header parser keeps out of the filed body (`plugin/bin/lib/console/backfill.js`'s `STAGED_BOOKKEEPING_KEYS`).
+4. The stage call: write the proposal to a `.md` scratch path. stage-item.js takes the staged file's extension from `--file` (`plugin/bin/lib/stage-item/write.js`), so resolve the path with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value review-followup-proposal.md`. Then run `node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$PIPELINE_RUN_DIR" --id review-followup-{n} --file {proposal} --allocate`, with `{n}` taken from the path its first stdout line prints. Never `review-{n}.md`: stage-item.js refuses that id (`unmapped-prefix`).
 5. The log, as its own backticked command: `node "${CLAUDE_PLUGIN_ROOT}/bin/review-routing-line.js" --run "$PIPELINE_RUN_DIR" --route staged --severity {severity} --category '{category}' --at '{file:line}' --stage-path staged/review-followup-{n}.md`
-6. Nothing is filed here. Work-record creation is never silenced in `auto` (`_shared/auto-mode-contract.md`), so the console files the record on approval.
+6. The ledger row: the finding's open-items ledger row is written `deferred`, its Resolution naming `staged/review-followup-{n}.md`. This mirrors `_shared/ledger-format.md`'s `ledger-record-*` Defer ("Update ledger status to `deferred`, the Resolution naming the staged path"), so ledger resolve never re-fixes or re-defers a finding the console is already filing. It is the one exception to the "status `open` for staged" sentence below the paragraph.
+7. Nothing is filed here. Work-record creation is never silenced in `auto` (`_shared/auto-mode-contract.md`), so the console files the record on approval.
 
-**The disposition.md row** (5 columns): `` | `review-followup-` | `staged/review-followup-{n}.md` | `review/step3-routing.md` (Step 3; a confirmed finding whose fix is a new record, not a patch) | one finding per file | `proposal` | ``. The `review-{n}` row's Example cell becomes `` `staged/review-{n}.patch` ``.
+**The disposition.md row** (5 columns): `` | `review-followup-` | `staged/review-followup-{n}.md` | `review/step3-routing.md` (Step 3; a confirmed finding whose fix is a new record, not a patch) | one finding per file, its severity read from the file's `Finding: {severity} {category} — …` line | `proposal` | ``. The `review-{n}` row's Example cell becomes `` `staged/review-{n}.patch` ``.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -118,11 +120,16 @@ In `tests/release-run-dir-lifecycle-conformance.test.js`, add to the roster sect
 
 In `tests/bin-lib/stage-item/cli.test.js`:
 - `test('AC1.1: --id review-followup-1 (.md) stages with no refusal (#4484)', …)` in the shape of the `AC1.2: cli: a canonical id` test. It expects exit 0, `staged/review-followup-1.md` to exist under the realpath'd run dir, and empty stderr.
-- `test('#4484: a header+specShapedBody record proposal classifies to Queue writes', …)`. Build the body with the real `specShapedBody({ currentState, deliverables, acceptanceCriteria: ['x'], releaseNote: 'No user-visible change.', filedBy: 'review', provenance: { origin: 'spec #1 review (3a)', deferReason: 'genuinely-larger' } })`. Prefix `Title: t\nType: task\nLabels: ready\nDefer-reason: genuinely-larger\n\n`. Assert `classifyStagedItem('review-followup-1.md', text)` deepEquals `{ section: 'Queue writes' }` (Review Focus 1).
+- `test('#4484: a header+specShapedBody record proposal classifies to Queue writes', …)`. Build the body with the real `specShapedBody({ currentState, deliverables, acceptanceCriteria: ['x'], releaseNote: 'No user-visible change.', filedBy: 'review', provenance: { origin: 'spec #1 review (3a)', deferReason: 'genuinely-larger' } })`. Prefix `Title: t\nType: task\nLabels: ready\nDefer-reason: genuinely-larger\nFinding: high security — x\n\n`. Assert `classifyStagedItem('review-followup-1.md', text)` deepEquals `{ section: 'Queue writes' }` (Review Focus 1).
 
 In `tests/review-routing-line-prose-conformance.test.js`:
 - `test('#4484: the record-proposal paragraph cites a composer command that stages a review-followup line', …)`. Find the line starting `**Staging a record proposal`. Take its backticked `review-routing-line.js` command, `instantiate(command, 'high', runDir)`, run it, and assert exit 0 and that the appended line contains `high-severity finding` and `Stage path: staged/review-followup-3.md`.
-- In the same test, assert the paragraph contains `--id review-followup-{n}`, `--allocate`, and `from the path its first stdout line prints` (Review Focus 2).
+- In the same test, assert the paragraph contains each of these, so each item is pinned:
+  - `--id review-followup-{n}`, `--allocate`, and `from the path its first stdout line prints` (Review Focus 2)
+  - `Finding: {severity} {category}` (item 3)
+  - `session-tmp-resolve.js" --value review-followup-proposal.md` (item 4)
+  - `` written `deferred` `` (item 6)
+- Go-red: one test runs the paragraph-clause assertions (factored into one function) against the paragraph with the `deferred` clause removed, and expects a throw.
 
 - [ ] **Step 2: Run to verify they fail**
 
