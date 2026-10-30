@@ -58,6 +58,15 @@ function paragraph(text, opener) {
   return text.slice(start, end === -1 ? undefined : end);
 }
 
+// The local-files close-timing invariant, stated identically in the exceeds: false bullet and the
+// close section, and the two false merge-mechanism claims it replaced.
+const CLOSE_TIMING =
+  "The parent is never closed ahead of the merge: on wrap-up's execution step the commit follows item 4's merge, and on the auto-merge short-circuit labeling and the commit happen on the run's branch before its merge.";
+const FALSE_MERGE_CLAIMS = [
+  'reaches the integration branch only with the merge commit',
+  'never reaches the integration branch ahead of the merge',
+];
+
 const belowFloorBullet = (gate) => section(gate, '**`exceeds: false`**', '**`exceeds: true`**');
 const entryShapes = (gate) => section(gate, '## Two entry shapes', '## What this path deliberately does not run');
 const closeSection = (gate) => section(gate, '## Close the parent below the floor', '## Compose the parent brief');
@@ -70,6 +79,8 @@ test('AC2.2: the exceeds: false bullet routes the close by entry and never close
   assert.match(below, /\*\*Close the parent below the floor\*\*/);
   assert.match(below, /never closed ahead of the merge/);
   assert.match(below, /commit the parent record with the entry's own close commit/);
+  assert.ok(collapse(below).includes(CLOSE_TIMING), 'per-path close-timing invariant');
+  for (const claim of FALSE_MERGE_CLAIMS) assert.ok(!collapse(below).includes(claim), `false claim gone: ${claim}`);
   assert.match(below, /end-to-end variant/, 'the Try-it walkthrough sentence is kept');
   assert.match(below, /Parent-side entry/);
 });
@@ -87,7 +98,14 @@ test('AC1.1: the close section composes the listing comment, then comments, then
   assert.ok(write !== -1 && closeRec > write, `writeRecord (${write}) before closeRecord (${closeRec})`);
   assert.match(close, /which call failed/);
   assert.match(close, /the entry's own close commit/);
-  assert.match(close, /never reaches the integration branch ahead of the merge/);
+  assert.ok(collapse(close).includes(CLOSE_TIMING), 'per-path close-timing invariant');
+  for (const claim of FALSE_MERGE_CLAIMS) assert.ok(!collapse(close).includes(claim), `false claim gone: ${claim}`);
+  assert.ok(
+    collapse(close).includes(
+      'When the entry has no later commit before its merge (the auto-merge short-circuit), commit the parent record file itself before the merge, with a `{Verb} … — refs #{parent}` subject.',
+    ),
+    'the short-circuit commits the parent record itself',
+  );
   assert.ok(!collapse(close).includes("item 5's commit"), 'no claim of sharing cleanup item 5\'s commit');
   assert.ok(
     collapse(close).includes('A pre-merge sub-issue-side entry under `github-issues` never runs this section.'),

@@ -283,8 +283,10 @@ regardless.
     **Close the parent below the floor** here. `/claude-tweaks:tidy`'s `parent-gate` backstop
     catches a merge no session saw land.
   - **Sub-issue-side entry, `work-backend: local-files`:** run **Close the parent below the floor**
-    now, and commit the parent record with the entry's own close commit. The parent reaches
-    the integration branch only with the merge commit, so it is never closed ahead of the merge.
+    now, and commit the parent record with the entry's own close commit. The parent is
+    never closed ahead of the merge: on wrap-up's execution step the commit follows item 4's
+    merge, and on the auto-merge short-circuit labeling and the commit happen on the run's branch
+    before its merge.
   - **Parent-side entry (`/claude-tweaks:tidy`):** run **Close the parent below the floor**.
 
   The walkthrough is not gated (#2821): on a sub-issue-side entry other than Step 4.0b, compose
@@ -391,8 +393,11 @@ A parent whose `facets.closed` is already set is a no-op; a body already holding
 appended section. A filesystem error is a real failure to report, never a fail-open case. On a
 sub-issue-side entry, commit the parent record file with the entry's own close commit — its next
 commit after labeling; for `/claude-tweaks:wrap-up` that is the execution step's summarizing
-commit (`wrap-up/execution-and-verification.md`). That commit is on the run's branch, so the
-parent's closure never reaches the integration branch ahead of the merge.
+commit (`wrap-up/execution-and-verification.md`). When the entry has no later commit before its
+merge (the auto-merge short-circuit), commit the parent record file itself before the merge, with
+a `{Verb} … — refs #{parent}` subject. The parent is never closed ahead of the merge: on wrap-up's
+execution step the commit follows item 4's merge, and on the auto-merge short-circuit labeling and
+the commit happen on the run's branch before its merge.
 
 ## Compose the parent brief
 
