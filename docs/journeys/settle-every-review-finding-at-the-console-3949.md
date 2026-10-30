@@ -15,6 +15,7 @@ files:
   - plugin/skills/wrap-up/review-console-interactive.md
   - plugin/skills/_shared/console-on-pr.md
   - plugin/skills/_shared/auto-mode-contract.md
+  - plugin/skills/review/step3-debate-and-refutation.md
 ---
 
 # Settle Every Review Finding at the Review Console
