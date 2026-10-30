@@ -187,10 +187,13 @@ test('AC1.1: an OPEN head-branch match whose body names another run is rebound t
   const h = harness({ list: [{ number: 7, url: URL7, state: 'OPEN', isDraft: true, body: bodyFor(OTHER_RUN) }] });
   const res = await openPrEarly(OPTS, h.deps);
   assert.deepEqual(res, { outcome: 'reused', number: 7, url: URL7 });
+  assert.deepEqual(h.calls.find((c) => c[0] === 'gh' && c[2] === 'list'),
+    ['gh', 'pr', 'list', '--repo', REPO, '--head', BRANCH, '--state', 'all', '--json', 'number,url,state,isDraft,body']);
   const bodyPath = path.join(h.bodyDir, `pr-early-body-${RUN_ID}.md`);
   const editAt = idx(h.calls, (c) => c[0] === 'gh' && c[2] === 'edit');
   assert.deepEqual(h.calls[editAt], ['gh', 'pr', 'edit', '7', '--repo', REPO, '--body-file', bodyPath]);
   assert.ok(editAt < idx(h.calls, isPush), 'rebind precedes the push');
+  assert.ok(editAt < idx(h.calls, (c) => c[0] === 'record' && c[1] === 7), 'rebind precedes the record');
   assert.equal(fs.readFileSync(bodyPath, 'utf8').split('\n')[0], `<!-- claude-tweaks-run: ${RUN_ID} -->`);
   assert.ok(h.lines.some((l) => l.includes(`PR-early run lifecycle: rebound reused PR #7 to run ${RUN_ID}.`)));
   assert.ok(h.lines[0].includes(`reusing open PR #7 for ${BRANCH}.`), 'the Step 1 line stays first');

@@ -105,11 +105,11 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   absent, `mcp__github__update_pull_request`, per the same `_shared/github-write-transport.md`
   section that paragraph cites). Log
   `AUTO {time} — PR-early run lifecycle: rebound reused PR #{number} to run {run-id}. Reversibility: high.`
-  A failed rebind is a degrade, never a stop: keep the PR, record it via `record-pr`, and log
-  `SKIP {time} — PR-early run lifecycle: rebind of reused PR #{number} failed ({error}); phase-checklist
-  updates will exit 4 until its body names run {run-id}. Reversibility: n/a.` A body that already
-  names this run, or that carries no run marker at all (pr-checklist's own repair adds this run's),
-  is left untouched.
+  A failed rebind is a degrade, never a stop: keep the PR, record it via `record-pr` (already
+  recorded on the Resume path), and log `SKIP {time} — PR-early run lifecycle: rebind of reused PR
+  #{number} failed ({error}); phase-checklist updates will exit 4 until its body names run
+  {run-id}. Reversibility: n/a.` A body that already names this run, or that carries no run
+  marker at all (pr-checklist's own repair adds this run's), is left untouched.
 - **A match with `state: CLOSED`**: this is a retry — by construction, nothing else in this
   design closes a run's PR except `_shared/pr-run-comments.md`'s failure tombstone (a prior
   attempt's HARD-GATE failure). Reopen it rather than starting fresh, so the new attempt's
