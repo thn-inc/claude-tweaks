@@ -62,11 +62,20 @@ test('AC2.1: a high finding routed staged produces the literal "high-severity fi
   assert.equal(streamOf(out, 'out'), decisionsOf(runDir).split('\n').slice(1).join('\n'));
 });
 
+test('#4484: --route staged accepts a staged/review-followup-{n}.md stage path', () => {
+  const { main, runDir } = fixture();
+  const out = [];
+  const code = run(['--run', runDir, '--route', 'staged', '--severity', 'medium', '--category', 'security', '--at', 'src/a.js:12', '--stage-path', 'staged/review-followup-2.md'], deps(main, out));
+  assert.equal(code, 0, streamOf(out, 'err'));
+  assert.equal(decisionsOf(runDir), '## /review\n- STAGED 09:05:07 — Step 3 Routing: medium-severity finding security at src/a.js:12. Stage path: staged/review-followup-2.md. Reversibility: high.\n');
+});
+
 test('release Step 3 classifies composed lines as the release gate table says', () => {
   assert.deepEqual(BLOCKING, ['critical finding', 'high-severity finding']);
   assert.deepEqual(FINDINGS, ['medium-severity finding', 'applied low-severity']);
   const cases = [
     { label: 'STAGED high', argv: ['--route', 'staged', '--severity', 'high', '--category', 'security', '--at', 'src/a.js:12', '--stage-path', 'staged/review-3.patch'], verdict: 'review: blocking' },
+    { label: 'STAGED high record proposal', argv: ['--route', 'staged', '--severity', 'high', '--category', 'security', '--at', 'src/a.js:12', '--stage-path', 'staged/review-followup-1.md'], verdict: 'review: blocking' },
     { label: 'KEPT-PROMPT critical', argv: ['--route', 'kept-prompt', '--severity', 'critical', '--category', 'security', '--at', 'src/a.js:12'], verdict: 'review: blocking' },
     { label: 'STAGED medium', argv: ['--route', 'staged', '--severity', 'medium', '--category', 'naming', '--at', 'src/b.js:4', '--stage-path', 'staged/review-4.patch'], verdict: 'review: findings' },
     { label: 'AUTO low', argv: ['--route', 'auto', '--severity', 'low', '--category', 'Convention', '--at', 'src/a.js:3', '--commit', 'abc1234'], verdict: 'review: findings' },
@@ -163,6 +172,9 @@ test('every invalid route, severity or flag combination exits 2 and writes nothi
     'auto without --commit': ['--route', 'auto', '--severity', 'low', ...COMMON],
     'staged without --stage-path': ['--route', 'staged', '--severity', 'high', ...COMMON],
     'staged with a non-matching --stage-path': ['--route', 'staged', '--severity', 'high', ...COMMON, '--stage-path', 'staged/review-x.patch'],
+    'staged with a non-numeric review-followup --stage-path': ['--route', 'staged', '--severity', 'high', ...COMMON, '--stage-path', 'staged/review-followup-x.md'],
+    'staged with a review-followup .patch --stage-path': ['--route', 'staged', '--severity', 'high', ...COMMON, '--stage-path', 'staged/review-followup-3.patch'],
+    'staged with a review-{n}.md --stage-path': ['--route', 'staged', '--severity', 'high', ...COMMON, '--stage-path', 'staged/review-3.md'],
     'unknown --severity': ['--route', 'staged', '--severity', 'severe', ...COMMON, '--stage-path', 'staged/review-3.patch'],
     'auto with --stage-path': ['--route', 'auto', '--severity', 'low', ...COMMON, '--commit', 'abc1234', '--stage-path', 'staged/review-3.patch'],
     'staged with --commit': ['--route', 'staged', '--severity', 'high', ...COMMON, '--stage-path', 'staged/review-3.patch', '--commit', 'abc1234'],

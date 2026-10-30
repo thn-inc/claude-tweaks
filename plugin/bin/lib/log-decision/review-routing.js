@@ -17,7 +17,8 @@ const ALLOWED_SEVERITIES = {
   staged: ['low', 'medium', 'high'],
   'kept-prompt': ['critical'],
 };
-const STAGE_PATH_RE = /^staged\/review-\d+\.patch$/;
+// Two staging shapes: a patch (review-{n}.patch), or a record proposal (review-followup-{n}.md, #4484).
+const STAGE_PATH_RE = /^staged\/(?:review-\d+\.patch|review-followup-\d+\.md)$/;
 // An abbreviated (7) through full SHA-1 (40) commit sha, the bound the repo's other sha validators use.
 const COMMIT_RE = /^[0-9a-f]{7,40}$/;
 // The release gate classifies Step 3 lines by these literals; --category and --at are written into the line, so neither may inject one.
@@ -55,7 +56,7 @@ function composeRoutingLine({ route, severity, category, at, stagePath, commit, 
   if (route === 'staged') {
     if (commit != null) return { error: '--commit is not valid with --route staged' };
     if (typeof stagePath !== 'string' || !STAGE_PATH_RE.test(stagePath)) {
-      return { error: '--stage-path must match staged/review-{n}.patch with --route staged' };
+      return { error: '--stage-path must match staged/review-{n}.patch or staged/review-followup-{n}.md with --route staged' };
     }
     return { status: 'STAGED', text: `${sev}-severity finding ${category} at ${at}. Stage path: ${stagePath}`, reversibility: 'high' };
   }

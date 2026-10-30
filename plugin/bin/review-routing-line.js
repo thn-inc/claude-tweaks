@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bin/review-routing-line.js — compose one /review Step 3 Routing line and append it to a run's decisions.md (#4488).
 //   node bin/review-routing-line.js --run <run-dir> --route auto|staged|kept-prompt --severity low|medium|high|critical \
-//     --category <text> --at <file:line> [--stage-path staged/review-{n}.patch] [--commit <sha>] [--spec <n>] [--lever "<k>=<v> (<source>)"] [--help]
+//     --category <text> --at <file:line> [--stage-path staged/review-{n}.patch|staged/review-followup-{n}.md] [--commit <sha>] [--spec <n>] [--lever "<k>=<v> (<source>)"] [--help]
 // The composer (bin/lib/log-decision/review-routing.js) fixes the text, so the literal tokens /claude-tweaks:release
 // Step 3 classifies by are never hand-typed. The write is log-decision.js's, under the `## /review` section.
 // Exit 0 appended (line echoed to stdout); 2 malformed invocation or an invalid route/severity/flag combination; 3 run dir
@@ -11,7 +11,7 @@
 const { composeRoutingLine, ROUTING_STEP } = require('./lib/log-decision/review-routing');
 const { run: logDecision } = require('./log-decision');
 
-const USAGE = 'usage: review-routing-line.js --run <run-dir> --route auto|staged|kept-prompt --severity low|medium|high|critical --category <text> --at <file:line> [--stage-path staged/review-{n}.patch] [--commit <sha>] [--spec <n>] [--lever "<k>=<v> (<source>)"] [--help]\n';
+const USAGE = 'usage: review-routing-line.js --run <run-dir> --route auto|staged|kept-prompt --severity low|medium|high|critical --category <text> --at <file:line> [--stage-path staged/review-{n}.patch|staged/review-followup-{n}.md] [--commit <sha>] [--spec <n>] [--lever "<k>=<v> (<source>)"] [--help]\n';
 
 const FLAGS = {
   '--run': 'run',
