@@ -223,6 +223,17 @@ test('AC2.1: a reused PR whose body already names this run gets no gh pr edit, o
   }
 });
 
+test('AC2.1: a reused PR whose body field is absent cannot be judged: no gh pr edit, no rebind line, on either reuse path', async () => {
+  const listed = harness({ list: [{ number: 7, url: URL7, state: 'OPEN' }] });
+  assert.deepEqual(await openPrEarly(OPTS, listed.deps), { outcome: 'reused', number: 7, url: URL7 });
+  const recorded = harness({ runState: { pr: { number: 9, url: URL7 } }, view: { state: 'OPEN', url: URL7 } });
+  assert.deepEqual(await openPrEarly(OPTS, recorded.deps), { outcome: 'reused', number: 9, url: URL7 });
+  for (const h of [listed, recorded]) {
+    assert.equal(h.calls.find((c) => c[0] === 'gh' && c[2] === 'edit'), undefined, 'no edit when the body was not read');
+    assert.ok(!h.lines.some((l) => l.includes('rebound') || l.includes('rebind')));
+  }
+});
+
 test('AC4.1: a failing gh pr edit on a reused PR logs the SKIP degrade and still returns the reused PR, recorded', async () => {
   const h = harness({ list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }], edit: new Error('HTTP 422') });
   const res = await openPrEarly(OPTS, h.deps);
