@@ -27,7 +27,7 @@ AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmat
 AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmation (flag-back concurrent grant agreed: live {live grant}, this run RECOMMEND_BUILD=true); dropped without writing.
 AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmation (flag-back concurrent grant DIVERGED: live {live grant}, this run discarded RECOMMEND_BUILD=false — {grant-check RATIONALE}); dropped without writing.
 AUTO {time} — Backlog refine: resolved decision on #{n} as {choice(s)} — {labels/state changed}.
-FAILED {time} — Backlog refine: {priority | Related | grant | dependency-repair | flag-back | needs-decision} write failed on #{n}: {error}.
+FAILED {time} — Backlog refine: {priority | Related | grant | dependency-repair | flag-back | needs-decision | resolve} write failed on #{n}: {error}.
 ```
 
 The closing summary below counts these lines by type — `FAILED` feeds the tally's `failed` count and per-failure lines; `AUTO … skipped …` (including a reverify-fetch failure) feeds `skipped` and its per-skip lines; a write with no matching line was never attempted and counts toward neither. The `resolved decision` line is written by `refine-record.md`'s Step 4 (the Resolve lane), not this file's apply pass, and feeds the tally's `resolved` count.

@@ -69,7 +69,11 @@ const APPLY_COMMENT_FAILED_RE = /^comment failed: /;
 // Resolve-lane per-record line (`Backlog refine #{n}: …`), retained so a run
 // dir written by an older installed build does not surface it as drift — the
 // current form is refine-closing-summary.md's `resolved decision on #{n}`
-// template, counted under `resolved`.
+// template, counted under `resolved`. Removal condition: drop the legacy
+// `Backlog refine #\d+:` entry once the release carrying #4566 is the oldest
+// installed build that writes /backlog run dirs. A line that matches a PATTERNS
+// entry is counted before this list is consulted (see computeClosingTally), so
+// this broad, anywhere-in-the-line legacy match can never swallow a current-form line.
 const IGNORED_PATTERNS = [
   /Backlog refine: batch auto-applied/,
   /Backlog refine: merge-lane circuit breaker RESET/,
@@ -140,7 +144,7 @@ function computeClosingTally(decisionsText) {
     if (!line) continue;
     const heading = line.match(/^## (.+)$/);
     if (heading) { section = heading[1].trim(); continue; }
-    if (isIgnoredLine(line)) continue;
+    if (!PATTERNS.some(({ re }) => re.test(line)) && isIgnoredLine(line)) continue;
 
     const template = line.indexOf('Backlog refine:');
     if (template !== -1) {

@@ -211,6 +211,8 @@ For each resolved row (skip a row the human's answer left untouched):
 
    `{text-file}` holds one line: `refine-closing-summary.md`'s Resolve-lane template minus its `AUTO {time} — ` prefix (log-decision.js writes that), filled with the record, the choice(s) applied and the labels/state changed — written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — an override is the user's free text, so the choices never pass through shell quoting.
 
+   When a Resolve-lane write exits non-zero, log `refine-closing-summary.md`'s FAILED template (`resolve` as the write type) instead of the resolve line — hand-composed, since `log-decision.js` has no `FAILED` status (`_shared/auto-decision-log.md`'s `FAILED` exception) — so the tally counts it under `failed`, never `resolved`.
+
 ## Anti-Patterns
 
 | Pattern | Why It Fails |

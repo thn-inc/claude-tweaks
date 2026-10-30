@@ -4,8 +4,9 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('../../helpers/read-skill');
 const {
-  FIELDS, computeClosingTally, renderTallyLine,
+  FIELDS, LABELS, computeClosingTally, renderTallyLine,
 } = require('../../../plugin/bin/lib/closing-tally/closing-tally');
+const { formatEntry, normalizeSection } = require('../../../plugin/bin/lib/log-decision/append');
 
 // #2729: a fixture decisions.md carrying one of each documented
 // refine-closing-summary.md write-type line, plus a FAILED line and a
@@ -215,6 +216,20 @@ test('#3267: known /backlog narration (Resolve-lane "Backlog refine #N:" lines) 
   assert.deepEqual(unclassified, []);
 });
 
+// #4566: the legacy `Backlog refine #N:` ignore pattern matches anywhere in a line, so it must never
+// outrank a current-form template line: a line that matches a PATTERNS entry is counted, not ignored.
+test('#4566: a current-form resolve line that also contains "Backlog refine #N:" is counted, never ignored', () => {
+  const shapes = [
+    '- AUTO 10:00:00 — Backlog refine #70: Backlog refine: resolved decision on #70 as keep — needs:decision removed. Reversibility: high.',
+    '- AUTO 10:00:00 — refine #69: Backlog refine: resolved decision on #69 as override: see Backlog refine #69: earlier — needs:decision removed. Reversibility: high.',
+  ];
+  for (const shape of shapes) {
+    const { counts, unclassified } = computeClosingTally(`## /backlog\n${shape}\n`);
+    assert.deepEqual(counts, { ...ZERO, resolved: 1 }, shape);
+    assert.deepEqual(unclassified, [], shape);
+  }
+});
+
 // #3267 Important 1: a partial flag-back (the `-ready` edit lands, the
 // explanatory comment fails) must count once, under `failed` — never also
 // under `flaggedBack`, which the edit's own success would otherwise imply.
@@ -306,27 +321,123 @@ test('#3267 Minor 2: a FAILED line whose message contains "apply-refine-labels: 
   assert.deepEqual(unclassified, []);
 });
 
-// #4566: the Resolve lane's log line is written by refine-record.md Step 4 via
-// `log-decision.js --step "refine #{n}"`, whose text file holds the live template from
-// refine-closing-summary.md. Read it from the file, never a retyped copy, so rewording the
-// template without updating closing-tally.js's PATTERNS goes red here instead of falling
-// back to `unclassified` at run time.
-test('#4566: refine-closing-summary.md\'s live Resolve-lane template counts as resolved, not unclassified', () => {
-  const root = path.join(__dirname, '..', '..', '..');
-  const summary = readText(path.join(root, 'plugin', 'skills', 'backlog', 'refine-closing-summary.md'));
+// #4566: the tally's prose twins, read live from the skill files, never retyped. Each pin is a
+// function of the text it reads, so a go-red control can run the same function over a mutated copy.
+const SKILLS_DIR = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'backlog');
+const readSummary = () => readText(path.join(SKILLS_DIR, 'refine-closing-summary.md'));
+const readRecord = () => readText(path.join(SKILLS_DIR, 'refine-record.md'));
+
+// The trimmed body lines of every ``` fence, one array per fence (fences may be list-indented).
+function fences(text) {
+  const out = [];
+  let cur = null;
+  for (const l of text.split('\n')) {
+    if (/^\s*```/.test(l)) {
+      if (cur) { out.push(cur); cur = null; } else cur = [];
+    } else if (cur) cur.push(l.trim());
+  }
+  return out;
+}
+
+// The tally-line example's label sequence, parsed out of the one fenced `{n} {label} · …` line.
+function proseTallyLabels(summary) {
+  const lines = fences(summary).flat().filter((l) => /^\d+ [^·]+ · /.test(l));
+  assert.equal(lines.length, 1, 'refine-closing-summary.md must carry exactly one fenced tally-line example');
+  return lines[0].split(' · ').map((part) => part.replace(/^\d+ /, ''));
+}
+function assertLabelTwin(summary) {
+  assert.deepEqual(proseTallyLabels(summary), FIELDS.map((f) => LABELS[f]));
+}
+
+// Every `AUTO|FAILED {time} — …` line in the template fence, placeholders filled.
+const TEMPLATE_LINE_COUNT = 14;
+function filledTemplateLines(summary) {
+  const lines = fences(summary).flat().filter((l) => /^(AUTO|FAILED) \{time\} — /.test(l));
+  assert.equal(lines.length, TEMPLATE_LINE_COUNT, 'refine-closing-summary.md template fence line count changed: update TEMPLATE_LINE_COUNT and the tally PATTERNS together');
+  return lines.map((l) => `- ${l}`.replace('{time}', '10:00:00').replaceAll('{n}', '7').replaceAll('{m}', '8'));
+}
+function assertTemplatesCounted(summary) {
+  for (const line of filledTemplateLines(summary)) {
+    const { counts, unclassified } = computeClosingTally(`## /backlog\n${line}\n`);
+    assert.deepEqual(unclassified, [], line);
+    assert.equal(FIELDS.reduce((sum, f) => sum + counts[f], 0), 1, `counted exactly once: ${line}`);
+  }
+}
+
+// The flags of the one fenced `log-decision.js` command in refine-record.md (Step 4 item 5).
+function proseLogDecisionFlags(record) {
+  const blocks = fences(record).filter((b) => b.join(' ').includes('log-decision.js'));
+  assert.equal(blocks.length, 1, 'refine-record.md must carry exactly one fenced log-decision.js command');
+  const flags = {};
+  const cmd = blocks[0].join(' ').replace(/\\\s+/g, ' ');
+  for (const m of cmd.matchAll(/--([\w-]+)\s+(?:"([^"]*)"|(\S+))/g)) flags[m[1]] = m[2] !== undefined ? m[2] : m[3];
+  for (const k of ['status', 'section', 'step', 'reversibility']) assert.ok(flags[k], `the log-decision.js fence must carry --${k}`);
+  return flags;
+}
+
+// A decisions.md written the way refine-record.md Step 4 item 5 writes it: log-decision.js's own
+// line formatter, the fence's own --step/--section/--reversibility, the live template as the text.
+function resolveLaneDecisions(summary, record) {
+  const flags = proseLogDecisionFlags(record);
   const templates = summary.split('\n').filter((l) => l.startsWith('AUTO {time} — Backlog refine: resolved decision on'));
   assert.equal(templates.length, 1, 'refine-closing-summary.md must carry exactly one Resolve-lane template line');
-
-  const fill = (n) => '- AUTO 10:00:00 — refine #{n}: '.replaceAll('{n}', n)
-    + templates[0].replace('AUTO {time} — ', '')
+  const entry = (n) => formatEntry({
+    status: flags.status,
+    now: new Date(2026, 9, 30, 10, 0, 0).getTime(),
+    step: flags.step.replaceAll('{n}', n),
+    text: templates[0].replace('AUTO {time} — ', '')
       .replaceAll('{n}', n)
       .replace('{choice(s)}', 'keep')
-      .replace('{labels/state changed}', 'needs:decision removed');
-  const text = `## /backlog\n${fill('70')}\n${fill('71')}\n`;
-  const { counts, unclassified } = computeClosingTally(text);
+      .replace('{labels/state changed}', 'needs:decision removed'),
+    reversibility: flags.reversibility,
+  });
+  return `## ${normalizeSection(flags.section)}\n${entry('70')}\n${entry('71')}\n`;
+}
+
+test('#4566: refine-closing-summary.md\'s tally-line example names the labels of FIELDS, in order', () => {
+  assertLabelTwin(readSummary());
+});
+
+test('#4566: every AUTO/FAILED template line in refine-closing-summary.md is counted by exactly one field, never unclassified', () => {
+  assertTemplatesCounted(readSummary());
+});
+
+test('#4566: Resolve-lane lines written as refine-record.md Step 4 item 5 writes them count as resolved, not unclassified', () => {
+  const { counts, unclassified } = computeClosingTally(resolveLaneDecisions(readSummary(), readRecord()));
   assert.deepEqual(counts, { ...ZERO, resolved: 2 });
   assert.deepEqual(unclassified, []);
+  assert.match(readRecord(), /refine-closing-summary\.md`'s Resolve-lane template/);
+});
 
-  const record = readText(path.join(root, 'plugin', 'skills', 'backlog', 'refine-record.md'));
-  assert.match(record, /refine-closing-summary\.md`'s Resolve-lane template/);
+// FAILED is hand-composed (log-decision.js has no FAILED status), so the fixture is the live FAILED
+// template itself, with its `resolve` alternative chosen.
+function failedResolveLine(summary) {
+  const templates = summary.split('\n').filter((l) => /^FAILED \{time\} — Backlog refine: \{[^}]*\| resolve\} write failed on #/.test(l));
+  assert.equal(templates.length, 1, 'refine-closing-summary.md\'s FAILED template must offer `resolve` as a write type');
+  return `- ${templates[0]}`.replace('{time}', '10:00:00').replace(/\{[^}]*\| resolve\}/, 'resolve')
+    .replace('{n}', '70').replace('{error}', 'gh exited 1');
+}
+
+test('#4566: a failed Resolve-lane write logs the FAILED template with `resolve` and counts under failed, not resolved', () => {
+  assert.match(readRecord(), /refine-closing-summary\.md`'s FAILED template/);
+  const { counts, unclassified } = computeClosingTally(`## /backlog\n${failedResolveLine(readSummary())}\n`);
+  assert.deepEqual(counts, { ...ZERO, failed: 1 });
+  assert.deepEqual(unclassified, []);
+});
+
+// Go-red controls: the same pin functions must throw over a mutated copy of the live text.
+test('#4566 go-red: a reordered prose label, a reworded template and a changed --step each fail their pin', () => {
+  const summary = readSummary();
+  const record = readRecord();
+  const mutate = (text, from, to) => {
+    assert.ok(text.includes(from), `mutation target not found: ${from}`);
+    return text.replace(from, to);
+  };
+  assert.throws(() => assertLabelTwin(mutate(summary, '34 priority set · 2 Related updated', '2 Related updated · 34 priority set')));
+  assert.throws(() => assertTemplatesCounted(mutate(summary, 'Backlog refine: set priority:', 'Backlog refine: assigned priority:')));
+  assert.throws(() => assertTemplatesCounted(mutate(summary, 'resolved decision on #{n}', 'settled decision on #{n}')));
+  assert.throws(() => resolveLaneDecisions(mutate(summary, 'resolved decision on #{n}', 'settled decision on #{n}'), record));
+  assert.throws(() => proseLogDecisionFlags(mutate(record, '--step "refine #{n}"', '')));
+  assert.throws(() => resolveLaneDecisions(summary, mutate(record, '--status AUTO', '--status BOGUS')));
+  assert.throws(() => failedResolveLine(mutate(summary, ' | resolve} write failed', '} write failed')));
 });

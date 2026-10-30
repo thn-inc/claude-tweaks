@@ -19,8 +19,9 @@ const CANONICAL = 'Text from git or a user';
 const WINDOW = 400;
 
 // `content` is the exact text-file line (= the former `--text` argument); for a prose-only site
-// (D2/B1/B2/C1/E1/Q1 — no inline fence, the former form named no text at all) it is the unique
-// anchor the clause introduces for the text-file line.
+// (D2/B1/C1/E1/Q1 — no inline fence, the former form named no text at all) it is the unique
+// anchor the clause introduces for the text-file line. B2's anchor is instead the citation of
+// refine-closing-summary.md's Resolve-lane template (its former form named `Backlog refine #{n}: …`).
 const SITES = [
   { id: 'W1', file: 'plugin/skills/flow/multispec-parallel-waves.md', content: 'condition: preflight-records.js --waves exited non-zero ({stderr reason}) → fallback: sequential run.' },
   { id: 'W2', file: 'plugin/skills/flow/multispec-parallel-waves.md', content: '#{N} merged; git worktree remove refused ({reason}); {worktreePath} and {worktreeBranch} left for manual cleanup.' },
