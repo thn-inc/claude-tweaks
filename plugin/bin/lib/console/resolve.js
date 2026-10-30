@@ -502,10 +502,8 @@ const DEBATE_CONVERGED_RE = /^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Deb
 function debateConvergedKeys(line) {
   const m = DEBATE_CONVERGED_RE.exec(line);
   if (!m) return [];
-  const keys = [];
   const entry = /\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)?:(\d+)/gi;
-  for (let e = entry.exec(m[3]); e; e = entry.exec(m[3])) keys.push(`${e[1]}|${e[2] || m[1]}:${e[3]}`);
-  return keys;
+  return Array.from(m[3].matchAll(entry), (e) => `${e[1]}|${e[2] || m[1]}:${e[3]}`);
 }
 
 const FINDING_SECTIONS = [SECTIONS.LOW, SECTIONS.CONTESTED];
@@ -560,7 +558,7 @@ function tiebreakModel(snapshot) {
     if (!m || !stagedNames.has(m[1])) return;
     naming.set(m[1], [...(naming.get(m[1]) || []), { index, keys: lineKeys(line) }]);
   });
-  const computeSettledFiles = () => {
+  function computeSettledFiles() {
     const settledFiles = new Map();
     const absorbed = new Set();
     for (const [name, refs] of naming) {
@@ -580,7 +578,7 @@ function tiebreakModel(snapshot) {
       settledFiles.set(name, chosen);
     }
     return { settledFiles, absorbed };
-  };
+  }
   // #4563: a settled contested file settles its partner finding too. The partner takes the pair's
   // verdict (and its index) only where no verdict names its key at all: one tiebreak wave logs in
   // arbitrary order, so a direct verdict wins whatever its position relative to the pair's.
