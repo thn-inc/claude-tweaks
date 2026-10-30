@@ -231,7 +231,8 @@ stays best-effort and the claim read stays the authoritative hold check:
 **Branch on exit code:**
 
 - **0** — every target claimed (default mode), or every non-skipped target claimed
-  (`--keep-going` — see below). Proceed to Step 3.
+  (`--keep-going` — see below). Proceed to Step 3. A failed stale-claim open-PR check (#4423)
+  does not change this: that target reclaims, with one stderr warning.
 - **3** — contested. The CLI ran without `--keep-going` and stopped at the first target it could
   not claim; stdout carries `{contested: [{issue, holder}], released, releaseFailed}` —
   `released` lists every target *this invocation* had already claimed and successfully released
@@ -265,13 +266,13 @@ stays best-effort and the claim read stays the authoritative hold check:
   the card above is the terminal output for that form. Otherwise, parse the PR number from the
   trailing path segment of `link` (already validated same-repo-PR-URL-shaped by
   `tombstoneInFlightPr` or `staleClaimInFlightPr` before this branch is ever reached) and
-  `gh pr view {number} --json body`, reading the body for both the `claude-tweaks-run: {run-id}` marker
-  (`_shared/pr-early-run-lifecycle.md`'s dual-marker scheme — the plain-text form, since this read
-  has no preference for the HTML-comment one) and, on the same read, that file's `### Resume`
-  section — the exact command line `` `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}"
-  {next-step}` `` composed once at PR-open time (that file's Step 3), carrying the found run's
-  *actual* record composition — single- or multi-spec (`flow/multi-spec.md`'s "Multi-spec runs
-  share one PR"). **Validate `{run-id}` before using it for anything**: a PR body is editable by
+  `gh pr view {number} --json body`, reading the body for both the `claude-tweaks-run: {run-id}`
+  marker (`_shared/pr-early-run-lifecycle.md`'s dual-marker scheme — the plain-text form, since
+  this read has no preference for the HTML-comment one) and, on the same read, that file's
+  `### Resume` section — the exact command line `` `PIPELINE_RUN_DIR="{run-dir}"
+  /claude-tweaks:flow "{target}" {next-step}` `` composed once at PR-open time (that file's
+  Step 3), carrying the found run's *actual* record composition — single- or multi-spec
+  (`flow/multi-spec.md`'s "Multi-spec runs share one PR"). **Validate `{run-id}` before using it for anything**: a PR body is editable by
   anyone with write access to it, so this value is exactly as untrusted as `link`, and gets the
   same reject-rather-than-sanitize treatment `tombstoneInFlightPr` already applies there — require
   it to match `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$` (the canonical run-id shape,

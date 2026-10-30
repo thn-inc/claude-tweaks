@@ -538,7 +538,9 @@ function tombstoneInFlightPr(content, gh, owner, repo) {
 // (the caller memoizes `gh`). Fails open like its tombstone twin — a broken
 // check must never block a legitimate reclaim — but a failed check (a thrown
 // `gh`, an unparseable or non-array listing) is not a clean "no marked PR", so
-// the optional trailing `onError(err)` lets the caller surface it (#4423).
+// the optional trailing `onError(err)` lets the caller surface it (#4423). An
+// `onError` that itself throws is swallowed — this function always returns null
+// on failure.
 const RUN_ID_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$/;
 
 function staleClaimInFlightPr(content, gh, owner, repo, onError) {
@@ -554,7 +556,9 @@ function staleClaimInFlightPr(content, gh, owner, repo, onError) {
     }
     return null;
   } catch (e) {
-    if (typeof onError === 'function') onError(e);
+    if (typeof onError === 'function') {
+      try { onError(e); } catch { /* a failing reporter must not break the fail-open return */ }
+    }
     return null; // fail open — a broken check must never block a legitimate reclaim
   }
 }

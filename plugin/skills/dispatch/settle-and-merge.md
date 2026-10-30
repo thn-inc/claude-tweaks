@@ -40,9 +40,10 @@ its own — either `flow/claim-targets.md`'s "Claim contested" stop, or its "Cla
 (#315/#958/#974's in-flight variant, tombstone or stale claim (#4423) — reached here only when
 that card's own routing into `dispatch/resume-confirmation.md` was itself skipped under
 `DISPATCH_HEADLESS=1`, since that routing's own headless skip is what leaves the card as this Task
-call's terminal output) — no build or test ever ran, the pipeline stopped before the Config Manifesto, this record was never
-claimed by this run at all, so step 1 below's ownership check will correctly find no claim to
-release (skip is the right outcome there, not an error). The one thing this case adds: **when
+call's terminal output) — no build or test ever ran, the pipeline stopped before the Config
+Manifesto, this record was never claimed by this run at all, so step 1 below's ownership check
+will correctly find no claim to release (skip is the right outcome there, not an error). The one
+thing this case adds: **when
 `DISPATCH_HEADLESS=1` was set on this Task call's invocation** (`dispatch/task-prompt.md`'s first
 template — set only for a Routine-fired headless firing (bare drain or its `next` alias), where
 nobody is present to read the stop directly),

@@ -83,11 +83,12 @@ is no `list_pull_requests`/`pr_read`/`pr_write` row, and none is planned here: P
 reads (`gh api graphql`) and CI-check reads (`gh pr checks`) have no MCP equivalent today; PR
 list/view reads (`gh pr list`/`gh pr view`) have one only through the two exceptions below. A
 `gh`-absent consumer that needs a PR read degrades that read individually rather than treating
-the missing mapping as a reason to skip everything it does — `_shared/github-pr-scan.md`'s Transport section is the canonical example: issue-backed
-items in a scope route through this file's `list_issues` row, PR-backed items in the same scope
-degrade per-item with a narrower message instead. This resolves the gap deliberately (a
-documented per-item degrade) rather than leaving it implicit. Two PR reads are documented
-exceptions, made directly rather than through this table: `mcp__github__pull_request_read`
+the missing mapping as a reason to skip everything it does — `_shared/github-pr-scan.md`'s
+Transport section is the canonical example: issue-backed items in a scope route through this
+file's `list_issues` row, PR-backed items in the same scope degrade per-item with a narrower
+message instead. This resolves the gap deliberately (a documented per-item degrade) rather than
+leaving it implicit. Two PR reads are documented exceptions, made directly rather than through
+this table: `mcp__github__pull_request_read`
 (`get`), used by `_shared/issue-claims.md`'s "The lock" step 4 tombstone check, by
 `_shared/pr-checklist-refresh.md`, and by others; and `mcp__github__list_pull_requests`
 (open PRs, #4423), used by that step 4's stale check.

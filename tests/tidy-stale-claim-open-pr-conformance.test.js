@@ -54,7 +54,9 @@ test('a matching PR routes as the Yours Unsettled run no-op, never staged and ne
   assert.ok(s.includes('Resume open PR #{number} ({url})'), 'the Resume rendering names the PR');
   assert.ok(s.includes('Resolve open PR #{number} ({url})'), 'the Resolve fallback names the PR');
   assert.match(s, /basename equals\s+the matched `runId`/);
-  assert.match(s, /Manual review/);
+  // Step 4.7's table rows already say "Manual review", so a bare match proves nothing: pin the
+  // failed-listing sentence itself.
+  assert.match(s, /failed listing[^.]*Manual review[^.]*never an unchecked Release/);
   assert.match(s, /\*\*Unsettled run\*\*/);
   assert.match(s, /Yours/);
   assert.match(s, /never staged/);

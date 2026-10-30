@@ -699,6 +699,14 @@ test('staleClaimInFlightPr: onError receives the error of a thrown gh, an unpars
   assert.equal(errors.length, 3, 'a no-match is not reported as a failure');
 });
 
+test('staleClaimInFlightPr: a throwing onError is swallowed — the check still returns null (fail open)', () => {
+  const throwingOnError = () => { throw new Error('reporter broke'); };
+  assert.equal(
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), () => { throw new Error('boom'); }, 'acme', 'w', throwingOnError),
+    null,
+  );
+});
+
 test('(stale-pr-5) stale blob whose runId is not a run-id shape: reclaims and never lists PRs', () => {
   const { ghApi } = makeGhApi({
     reads: { 774: [readOk(staleMarker('otherRun'), 'sha774'), confirmRead()] },

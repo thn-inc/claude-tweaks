@@ -495,7 +495,8 @@ with registry-branch write access can set it), so `tombstoneInFlightPr` validate
 claimed — before ever calling `gh pr view`; anything else (wrong repo, malformed, non-string) is
 treated the same as a missing `link` and never reaches `gh` at all. A `'stale'` claim whose `runId`
 matches an open same-repo PR's `claude-tweaks-run:` marker is in flight too (#4423,
-`staleClaimInFlightPr`) — same `inFlight` envelope, same fail-open.
+`staleClaimInFlightPr`) — same `inFlight` envelope, same fail-open (the gh-CLI path also writes
+one stderr warning on a failed check).
 `bin/lib/claim-targets/claim-targets.js` — the group-claim loop `/claude-tweaks:flow` Step 2.8 and
 `/claude-tweaks:dispatch` actually call — imports this same `tombstoneInFlightPr` from
 `claim-store.js` and reports the stopped target via `inFlight`/`reason: 'in-flight'` instead of
