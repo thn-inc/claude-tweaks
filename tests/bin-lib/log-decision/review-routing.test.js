@@ -46,10 +46,12 @@ const skill = readText(SKILL);
 const BLOCKING = gateTokens(skill, '| `review: blocking` |');
 const FINDINGS = gateTokens(skill, '| `review: findings').filter((t) => t !== 'Step 3 Routing:');
 
-// The release gate's classification (the brief's definition): blocking on a blocking token, findings on any Step 3 Routing line, else clean.
+// The release gate's classification, token for token: blocking on a blocking token, findings on a findings token,
+// clean on no Step 3 Routing line — a routing line carrying neither falls through every row.
 function classify(lines) {
   if (lines.some((l) => BLOCKING.some((t) => l.includes(t)))) return 'review: blocking';
-  if (lines.some((l) => l.includes('Step 3 Routing:'))) return 'review: findings';
+  if (lines.some((l) => FINDINGS.some((t) => l.includes(t)))) return 'review: findings';
+  if (lines.some((l) => l.includes('Step 3 Routing:'))) return 'unclassified';
   return 'review: clean';
 }
 
@@ -100,7 +102,7 @@ test('a stacked check that could not run names its exit code and keeps the patch
 
 test('release Step 3 classifies composed lines as the release gate table says', () => {
   assert.deepEqual(BLOCKING, ['critical finding', 'high-severity finding']);
-  assert.deepEqual(FINDINGS, ['medium-severity finding', 'applied low-severity']);
+  assert.deepEqual(FINDINGS, ['medium-severity finding', 'low-severity finding', 'applied medium-severity', 'applied low-severity']);
   const cases = [
     { label: 'STAGED high', argv: ['--route', 'staged', '--severity', 'high', '--category', 'security', '--at', 'src/a.js:12', '--stage-path', 'staged/review-3.patch'], verdict: 'review: blocking' },
     { label: 'STAGED high record proposal', argv: ['--route', 'staged', '--severity', 'high', '--category', 'security', '--at', 'src/a.js:12', '--stage-path', 'staged/review-followup-1.md'], verdict: 'review: blocking' },

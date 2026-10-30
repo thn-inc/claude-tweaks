@@ -1,7 +1,7 @@
 // Compose one /review Step 3 Routing log line (#4488) — pure, no I/O.
 // The gate in /claude-tweaks:release Step 3 classifies these lines by the literal
 // tokens `critical finding` and `high-severity finding` (blocking) and
-// `medium-severity finding` / `applied low-severity` (findings), so the text is
+// `medium-severity finding` / `low-severity finding` / `applied medium-severity` / `applied low-severity` (findings), so the text is
 // fixed here rather than hand-typed per routing site. The write itself is
 // log-decision.js's (bin/review-routing-line.js wires the two together).
 'use strict';

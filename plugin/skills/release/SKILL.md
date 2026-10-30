@@ -196,7 +196,7 @@ A critical finding's line carries **no** stage-path clause — it is surfaced in
 | Verdict | Condition |
 |---------|-----------|
 | `review: blocking` | The lines after the marker contain one carrying the literal token `critical finding` or the literal token `high-severity finding` |
-| `review: findings (n medium/low, staged)` | No such line, but they contain any other routed finding — a `Step 3 Routing:` line at `medium-severity finding` or `applied low-severity` |
+| `review: findings (n medium/low, staged)` | No such line, but they contain any other routed finding — a `Step 3 Routing:` line at `medium-severity finding`, `low-severity finding`, `applied medium-severity` or `applied low-severity` |
 | `review: clean` | They contain no `Step 3 Routing:` line at all |
 
 A `## /review` block that is absent, empty, unparseable, or carrying no new lines at all after the marker is **not** `review: clean` — it means the review did not complete, which is a stop, not a pass. Report which of the three it was and stop before Step 4; Step 8's close-out still runs for a created directory.
