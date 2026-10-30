@@ -197,7 +197,7 @@ const POLICY_KEYS = [
   // item 1. Default keep-forever preserves today's unconditional-retention
   // behavior (ADR-0007's own convention) for every project that never sets
   // this — the ADR describes this plugin's own repo, not every consumer.
-  { key: 'superpowers-plans-retention', type: 'enum', values: ['keep-forever', 'prune-after-wrapup', 'ask'], default: 'keep-forever', summary: "Decides whether finished planning files are kept forever, pruned once a run wraps up, or decided case by case.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'superpowers-plans-retention', type: 'enum', values: ['keep-forever', 'prune-after-wrapup', 'ask'], default: 'keep-forever', summary: "Decides whether finished planning files are kept (tidy may propose a bulk prune), pruned after wrap-up, or decided case by case.", category: 'housekeeping', tier: 'advanced' },
   // Model-profile resolver levers (#216's bin/lib/model-profiles/profiles.js is
   // the runtime reader for these four key names — POLICY_KEYS_READ pins them;
   // registration here is schema/audit only, deliberately shallow (#219): this

@@ -42,7 +42,8 @@ const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep
   + '  --run <run-dir>: writes the Step 2.8 claim-log line to that run dir\'s decisions.md for every claimed target\n'
   + '  exit 0 = all claimed (or, with --keep-going, partial; or the --steps skip-guard)\n'
   + '  exit 2 = malformed invocation or missing dependency\n'
-  + '  exit 3 = contested, or a pr-opened tombstone whose linked PR is still open\n'
+  + '  exit 3 = contested, or in flight: a pr-opened tombstone whose linked PR is still open,\n'
+  + '           or a stale claim whose run marker sits on an open same-repo PR\n'
   + '           (contested: {contested:[{issue,holder}], ...}; in-flight: {inFlight:[{issue,link}], ...})\n'
   + '  exit 4 = transient gh failure\n'
   + '  exit 5 = claim write reported success but the post-write read-back did not\n'
@@ -407,23 +408,32 @@ function run(argv, deps) {
     return abort({ [envelopeKey]: [{ issue, ...extra }] }, exitCode, releaseThisIssue ? [issue] : []);
   }
 
-  // Per-`$LINK` memoization of `tombstoneInFlightPr`'s `gh pr view` call,
-  // scoped to this one `run()` invocation (a fresh Map every call — never a
+  // Per-argv memoization of the in-flight checks' PR reads, scoped to this
+  // one `run()` invocation (a fresh Map every call — never a
   // cross-invocation cache). Issues released together from one multi-spec
   // build commonly tombstone with the identical `link`, so this collapses
-  // what would otherwise be one `gh pr view` per tombstoned target down to
-  // one per distinct link (#977). Wraps only this call site's `gh`, not
-  // `deps.gh` itself, so every other `deps.gh` call (label list/create, issue
-  // edit, issue comment) is untouched. Only successful calls are cached — a
-  // thrown failure is left uncached and re-thrown so `tombstoneInFlightPr`'s
-  // own fail-open catch still applies per-target, exactly as before.
-  const prViewCache = new Map();
-  function cachedGhForPrView(args) {
+  // what would otherwise be one `tombstoneInFlightPr` `gh pr view` per
+  // tombstoned target down to one per distinct link (#977), and
+  // `staleClaimInFlightPr`'s `gh pr list` — identical for every stale target
+  // of a repo — to one call per run (#4423). Wraps only this call site's
+  // `gh`, not `deps.gh` itself, so every other `deps.gh` call (label
+  // list/create, issue edit, issue comment) is untouched. A thrown failure is
+  // cached too and re-thrown on every hit, so each helper's own fail-open
+  // catch still applies per target, but a hanging `gh` costs one timeout per
+  // run, not one per target.
+  const prReadCache = new Map();
+  function cachedPrReadGh(args) {
     const key = JSON.stringify(args);
-    if (prViewCache.has(key)) return prViewCache.get(key);
-    const result = deps.gh(args);
-    prViewCache.set(key, result);
-    return result;
+    if (!prReadCache.has(key)) {
+      try {
+        prReadCache.set(key, { result: deps.gh(args) });
+      } catch (error) {
+        prReadCache.set(key, { error });
+      }
+    }
+    const hit = prReadCache.get(key);
+    if (hit.error) throw hit.error;
+    return hit.result;
   }
 
   for (const issue of targets) {
@@ -451,7 +461,7 @@ function run(argv, deps) {
     // the check itself, falls straight through unchanged (fail open) —
     // see `tombstoneInFlightPr`'s own doc comment in claim-store.js.
     if (classified.state === 'tombstone') {
-      const inFlight = tombstoneInFlightPr(content, cachedGhForPrView, repoOwner, repoName);
+      const inFlight = tombstoneInFlightPr(content, cachedPrReadGh, repoOwner, repoName);
       if (inFlight) {
         const stop = stopOrSkip(issue, 'in-flight', 'inFlight', 3, { link: inFlight.link });
         if (stop !== null) return stop;
@@ -483,6 +493,23 @@ function run(argv, deps) {
       const stop = stopOrSkip(issue, 'contested', 'contested', 3, { holder });
       if (stop !== null) return stop;
       continue;
+    }
+
+    // A 'stale' claim (TTL-expired, not self-owned) whose run's marker still
+    // sits on an open same-repo PR is in flight, not abandoned — reclaiming it
+    // would rebuild finished work (#4423). Same stop/skip path as the
+    // `pr-opened:` tombstone above; fails open the same way. Called through
+    // `claimStore.` so the module-level spy pattern reaches it. A failed check
+    // reclaims but says so on stderr, so it is not mistaken for "no marked PR".
+    if (classified.state === 'stale') {
+      const inFlight = claimStore.staleClaimInFlightPr(content, cachedPrReadGh, repoOwner, repoName, (e) => {
+        deps.stderr(`claim-targets: stale-claim open-PR check failed for #${issue} (reclaiming) — ${errText(e)}\n`);
+      });
+      if (inFlight) {
+        const stop = stopOrSkip(issue, 'in-flight', 'inFlight', 3, { link: inFlight.link });
+        if (stop !== null) return stop;
+        continue;
+      }
     }
 
     // Reclaimable: 'absent' (create-only) or 'tombstone'/'stale' not self-owned

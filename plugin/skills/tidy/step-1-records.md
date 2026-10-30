@@ -141,7 +141,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" scan --driver {work-back
 
 `{work-backend}` is the driver this step resolved; `{release-note-candidates-file}` is the absolute
 path the dispatcher substituted into this prompt (`SKILL.md`'s Step 1 note). The scan writes every
-candidate there — this agent's 15-row table cap never truncates the repair list — and prints at
+candidate there — the candidates file, not the table, carries the full repair list — and prints at
 most one summary line. Exit 2 (an unusable records file or `--out`): report one
 `[release-note] scan failed` row, severity `medium`.
 
@@ -303,8 +303,8 @@ a gate due. No fetch-limit or truncation warning applies, unlike the API-paging 
 → Collect each as: `[parent-gate] {id}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo {id}`, or below the floor: `[parent-gate] {id}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`
 
 Severity `info` — with several open decompositions this is a standing backlog, not a defect
-count, and Step 6 caps rows highest-severity-first (the same tier and reason as its
-`github-issues` twin). The recommendation is the `Open parent gate` action, staged at every
+count, and tidy reads a row's severity as recommendation urgency, so any tier above `info` would
+overstate it (the same tier and reason as its `github-issues` twin). The recommendation is the `Open parent gate` action, staged at every
 aggressiveness tier and never writing `demo:approved`/`demo:changes-requested`, which is why an
 above-floor row still ends with `/claude-tweaks:demo {id}`; `actions-local-files.md`'s `## Open parent gate`
 and `step-6-auto.md`'s row carry that action's execution, its staging reasoning, and what it
@@ -414,9 +414,9 @@ are excluded past 30 days like the other driver.
 → Collect each as: `[acceptance-gap] {id}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo {id}`
 
 Severity `info` — the same tier and the same reason as its `github-issues` twin: on a project that
-closes records ad hoc this is a standing backlog rather than a defect count, and Step 6 caps rows
-highest-severity-first, so any tier above `info` would permanently evict actionable rows beneath
-it. Unlike Shape 7, the recommendation is **not** one of the Action Vocabulary's atomic actions —
+closes records ad hoc this is a standing backlog rather than a defect count, and tidy reads a
+row's severity as recommendation urgency, so any tier above `info` would overstate a standing
+backlog. Unlike Shape 7, the recommendation is **not** one of the Action Vocabulary's atomic actions —
 this shape mutates nothing at all, on either driver. It recommends `/claude-tweaks:demo {id}` and
 stops there, because disposing a closed record is a human judgment about whether shipped work
 solved the problem. It is staged at every aggressiveness tier for that reason (`step-6-auto.md`'s

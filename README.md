@@ -80,8 +80,9 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
   wrap-up ──────────────►  Done               ◄───  finishing-a-dev-branch ⚙
      │  calls: reflect
      │         (full)
-                           (deletes plans, ledger, design caches; legacy spec file
-                            deleted too — a record-mode build's materialized file
+                           (deletes ledger, design caches, and plans only under
+                            superpowers-plans-retention: prune-after-wrapup;
+                            legacy spec file deleted too — a record-mode build's materialized file
                             stays on the branch as committed audit trail instead;
                             applies demo:pending + posts a Verification Brief on
                             the record — or, for a sub-issue of a /specify

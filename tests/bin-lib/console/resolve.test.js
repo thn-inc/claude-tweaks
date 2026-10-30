@@ -13,6 +13,7 @@ const { unresolvedItems, readRunResidue, formatResidueLines } = require(path.joi
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
 const { formatEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'append'));
 const { readText } = require('../../helpers/read-skill');
+const { DEFER_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'record'));
 
 function fixture({
   decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {},
@@ -1472,7 +1473,7 @@ test('defers-no-resolves-apply: Defers: no keeps the Pending-review stance (#388
 });
 
 test('defers-yes-valid-reason-resolves-apply: Defers: yes with one valid Defer-reason keeps the stance (#3880 AC3)', () => {
-  assert.strictEqual(resolveStaged('sdd-ruling-1.md', RULING('Defers: yes\nDefer-reason: needs-human-decision\n')).resolution, 'apply');
+  assert.strictEqual(resolveStaged('sdd-ruling-1.md', RULING('Defers: yes\nDefer-reason: blocked-external\n')).resolution, 'apply');
 });
 
 test('defers-yes-no-reason-pending: Defers: yes with no Defer-reason resolves pending (#3880 AC3)', () => {
@@ -1537,7 +1538,37 @@ test('AC1.1 AC2.1: SDD_RULING_REASONS gains UNREADABLE; sddRulingDeferralReason(
     NO_DEFER_REASON: 'sdd-ruling-deferral-no-defer-reason',
     UNCLASSIFIED: 'sdd-ruling-unclassified',
     UNREADABLE: 'sdd-ruling-unreadable',
+    NEEDS_HUMAN_DECISION: 'sdd-ruling-needs-human-decision',
   });
+});
+
+test('AC1.1: a Defers: yes ruling whose one Defer-reason is needs-human-decision resolves pending — sdd-ruling-needs-human-decision under console-auto (#4587)', () => {
+  const item = resolveStaged('sdd-ruling-1.md', RULING('Defers: yes\nDefer-reason: needs-human-decision\n'));
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-needs-human-decision');
+  assert.strictEqual(item.section, 'Pending review');
+});
+
+test('AC1.1: Defers: no with Defer-reason: needs-human-decision is still a deferral and resolves pending (#4587)', () => {
+  const item = resolveStaged('sdd-ruling-1.md', RULING('Defers: no\nDefer-reason: needs-human-decision\n'));
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-needs-human-decision');
+});
+
+test('AC2.1: every other valid Defer-reason still ratifies, tangential included (#4587)', () => {
+  const others = DEFER_REASONS.filter((r) => r !== 'needs-human-decision');
+  assert.ok(others.includes('tangential') && others.length === DEFER_REASONS.length - 1);
+  for (const r of others) {
+    assert.strictEqual(resolveStaged('sdd-ruling-1.md', RULING(`Defers: yes\nDefer-reason: ${r}\n`)).resolution, 'apply', r);
+  }
+});
+
+test('AC2.1: a duplicated or mis-cased needs-human-decision reason keeps its existing no-defer-reason resolution (#4587)', () => {
+  for (const header of ['Defers: yes\nDefer-reason: needs-human-decision\nDefer-reason: tangential\n', 'Defers: yes\nDefer-reason: Needs-Human-Decision\n']) {
+    const item = resolveStaged('sdd-ruling-1.md', RULING(header));
+    assert.strictEqual(item.resolution, 'pending', header);
+    assert.strictEqual(item.reason, 'sdd-ruling-deferral-no-defer-reason', header);
+  }
 });
 
 test('AC6.1 AC2.2: an sdd-ruling-*.md whose read throws resolves pending — sdd-ruling-unreadable, even when its content would ratify (#4049)', () => {
