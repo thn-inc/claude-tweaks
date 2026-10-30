@@ -102,8 +102,11 @@ procedure — no row is left unrouted:
   `apply` (ratify) only when its staged header shows it is safe (#3880): `Defers: no` with no
   `Defer-reason:` header line — a settled design decision, resolved exactly as before — or a
   deferral (`Defers: yes`, or any `Defer-reason:` header line) with exactly one `Defer-reason:`
-  header line whose bare value is in `_shared/deferral-gate.md`'s vocabulary, other than `needs-human-decision`. A deferral without a
-  valid reason resolves `pending — sdd-ruling-deferral-no-defer-reason`; a deferral whose one reason is `needs-human-decision` resolves `pending — sdd-ruling-needs-human-decision`, since its own reason says a human must decide (#4587); a header with no `Defers:`
+  header line whose bare value is in `_shared/deferral-gate.md`'s vocabulary, other than
+  `needs-human-decision`. A deferral without a valid reason resolves
+  `pending — sdd-ruling-deferral-no-defer-reason`; a deferral whose one reason is
+  `needs-human-decision` resolves `pending — sdd-ruling-needs-human-decision`, since its own
+  reason says a human must decide (#4587); a header with no `Defers:`
   line, more than one, or a value other than `yes`/`no` resolves `pending — sdd-ruling-unclassified`,
   since the console cannot tell whether it defers; a staged file that cannot be read at all resolves
   `pending — sdd-ruling-unreadable` (the reconciler's gap names why: `no-staged-path`, `path-rejected`,

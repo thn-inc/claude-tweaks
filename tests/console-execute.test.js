@@ -607,7 +607,9 @@ test('AC1.1: decideConsoleExecute withholds a needs-human-decision ruling as a g
 });
 
 test('AC2.1: decideConsoleExecute leaves every other valid Defer-reason ruling floor-clearing, tangential included (#4587)', () => {
-  for (const r of DEFER_REASONS.filter((x) => x !== 'needs-human-decision')) {
+  const others = DEFER_REASONS.filter((x) => x !== 'needs-human-decision');
+  assert.ok(others.includes('tangential') && others.length === DEFER_REASONS.length - 1);
+  for (const r of others) {
     const text = `Title: r\nKind: sdd-ruling\nDefers: yes\nDefer-reason: ${r}\nStaged-at: abc\n\nbody\n`;
     const cj = rulingConsoleJson([{ id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true }]);
     assert.deepStrictEqual(decideConsoleExecute(cj, tickedComment(['staged-1']), Date.now(), { rulingTexts: { 'staged-1': text } }).rulingGateGaps, [], r);
