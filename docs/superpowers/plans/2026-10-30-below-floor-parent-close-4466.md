@@ -79,18 +79,18 @@ Scope keywords: closes cleanly, ever closes a parent, never closes the parent, b
 - Produces: `needsBackstop({ state, labels, hasParent, isParent, stateReason })`. `isParent: true` returns `false`, and absent means no change in behavior.
 
 - [ ] **Step 1: Write the failing tests.**
-  - In `acceptance.test.js`, add test `needsBackstop excludes a decomposition parent`. It asserts:
+  - In `acceptance.test.js`, add test `AC4.1: needsBackstop excludes a decomposition parent`. It asserts:
     - `needsBackstop({ state: 'CLOSED', labels: [], isParent: true })` is `false`;
     - `needsBackstop({ state: 'CLOSED', labels: [], isParent: false })` is `true`;
     - `needsBackstop({ state: 'CLOSED', labels: [] })` is `true`.
-  - Create `tests/below-floor-parent-close-conformance.test.js` (style: `tests/acceptance-scan-server-filter.test.js`, `readText` from `tests/helpers/read-skill.js`) with test `AC4: both acceptance-gap scans pass isParent to needsBackstop`. It asserts:
+  - Create `tests/below-floor-parent-close-conformance.test.js` (style: `tests/acceptance-scan-server-filter.test.js`, `readText` from `tests/helpers/read-skill.js`) with test `AC4.1: both acceptance-gap scans pass isParent to needsBackstop`. It asserts:
     - the GitHub fence matches `/isParent: parseRecordFacets\(r\.labels\)\.isParentIssue,/`;
     - Shape 8 matches `/isParent: r\.facets\.isParentIssue === true,/`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `node --test tests/bin-lib/issues/acceptance.test.js tests/below-floor-parent-close-conformance.test.js`
-Expected: FAIL (`isParent: true` returns `true`; patterns not found)
+Expected: FAIL after Step 1 (`isParent: true` returns `true`; patterns not found)
 
 - [ ] **Step 3: Implement** the three edits above.
 
@@ -136,7 +136,13 @@ Expected: PASS, 0 failures
 - Consumes: Task 1 — none.
 - Produces: the section name `## Close the parent below the floor`, the heading `## Closed below the oversight floor`, and the step `### Step 4.0b: Close below-floor parents (#4466)`. Task 3 cites the section, and Task 4 cites Step 4.0b.
 
-- [ ] **Step 1: Write the failing tests** (names prefixed `AC1:`/`AC2:`/`AC5:`):
+- [ ] **Step 1: Write the failing tests.** Each test name carries its clause id:
+  - `AC1.1:` the close section and its comment shape;
+  - `AC2.1:` Step 4.0b, merged-only;
+  - `AC2.2:` the pre-merge-callers-never-close-`github-issues` bullet;
+  - `AC5.1:` the idempotence clauses.
+
+  The test cases:
   - **`exceeds: false` slice:** `between(gate, '**`exceeds: false`**', '**`exceeds: true`**')` does not match `/closes cleanly/`. It matches `/Step 4\.0b/`, `/\*\*Close the parent below the floor\*\*/`, and the kept Try-it pins `/end-to-end variant/` and `/Parent-side entry/`.
   - **Close section** (`between(gate, '## Close the parent below the floor', '## Compose the parent brief')`):
     - it includes `## Closed below the oversight floor` and `closed by PR #{pr}`, states the no-SHA rule (matches `/never[^.]*merge SHA/i`), and does not include `mergeCommit`;
@@ -190,7 +196,7 @@ Expected: PASS, 0 failures
 - Consumes: Task 2's `## Close the parent below the floor`.
 - Produces: the two row texts above.
 
-- [ ] **Step 1: Write the failing tests** (names prefixed `AC3:`).
+- [ ] **Step 1: Write the failing tests** (names prefixed `AC3.1:`).
   - **Extraction:** extract each scan's `node -e "…"` block with the `extractNodeScripts` regex from `tests/help-acceptance-queue-local-files.test.js`, substitute `${CLAUDE_PLUGIN_ROOT}` with the repo's `plugin` path, and run it with `execFileSync('node', ['-e', script, '--', 'high'])`.
   - **GitHub scan** (`$GATES` substituted with a temp JSON file), three due parents with every sub-issue `CLOSED` and no parent labels:
     - `risk:medium` sub-issues print the below-floor row;
@@ -221,7 +227,7 @@ Expected: PASS, 0 failures
 
 ### Task 4: engine-verify names the post-merge close
 
-**Role:** mechanical
+**Role:** transcription
 
 **Files:**
 - Modify: `plugin/bin/lib/wrap-up/engine-verify.js:909`: `skipped.push(\`parent #${target} below oversight floor\`)` becomes `` `parent #${target} below oversight floor — closes after the merge lands (Step 4.0b)` ``. Update the #3222 comment above `registerCheck('acceptance-labeling', …)` to match.
@@ -233,7 +239,7 @@ Expected: PASS, 0 failures
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `node --test --test-name-pattern "below the oversight floor|invalid risk-floor" tests/bin-lib/wrap-up/engine-verify.test.js`
-Expected: FAIL (detail is still the bare `parent #898 below oversight floor`)
+Expected: FAIL after Step 1 (detail is still the bare `parent #898 below oversight floor`)
 
 - [ ] **Step 3: Implement** the `engine-verify.js` string, the comment, and the journey bullet.
 
