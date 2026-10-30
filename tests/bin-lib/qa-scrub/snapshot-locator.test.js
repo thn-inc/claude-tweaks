@@ -1,11 +1,11 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('../../helpers/read-skill');
 const { resolveLocatorValues } = require('../../../plugin/bin/lib/qa-scrub/snapshot-locator');
 
-const YAML = fs.readFileSync(path.join(__dirname, '..', '..', 'fixtures', 'qa-scrub', 'page-reveal.yml'), 'utf8');
+const YAML = readText(path.join(__dirname, '..', '..', 'fixtures', 'qa-scrub', 'page-reveal.yml'));
 
 test('AC6.1: role+name resolves the inline value from fixture snapshot YAML', () => {
   assert.deepEqual(resolveLocatorValues(YAML, { role: 'textbox', name: 'API key' }), ['FAKE-QA-KEY-9999']);
