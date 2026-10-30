@@ -34,10 +34,12 @@ Candidate (b): a `ledger-residue` check in the reconcile family
   rule (`plugin/skills/tidy/scan-procedures.md`) to each candidate's blob at the tip. A candidate
   is kept, and reported as a per-path skip, when it lacks the ledger signature (`not-a-ledger`),
   has an `open` row (`ledger-has-open-rows`) or an unrecognized status
-  (`ledger-status-unrecognized`), or a non-archived run directory is attributed to it
-  (`run-live`). Rows are parsed by `wrap-up/pack.js`'s `parseLedger`. Without this rule, a run
-  whose ledger reached main mid-run would lose its unresolved items, as would a ledger left with
-  open rows. At the time of writing two of the three ledgers above had open rows.
+  (`ledger-status-unrecognized`), a non-archived run directory is attributed to it
+  (`run-live`), or an open work record references it (`referenced-by-open-record`,
+  carrying the referencing record numbers). Rows are parsed by `wrap-up/pack.js`'s
+  `parseLedger`. Without this rule, a run whose ledger reached main mid-run would lose its
+  unresolved items, as would a ledger left with open rows. At the time of writing two of the
+  three ledgers above had open rows.
 - **PR state comes from one list, enumerated by ref prefix.** One `gh api` matching-refs call
   names every branch starting `build/ledger-residue-`, then one `gh pr list --head` per branch
   returns that branch's PRs, in any state, with their bodies. No recency window applies, so a PR
@@ -84,9 +86,10 @@ Candidate (b): a `ledger-residue` check in the reconcile family
   deleted after merge (by `remote-prune` or GitHub's auto-delete), so that reason fires only
   while the branch survives. After that, a ledger the merged PR deleted but that reappears is
   treated as new residue.
-- A ledger with open rows or a live run stays on the integration branch until a human or
-  `/claude-tweaks:tidy` resolves it. The check reports it each pass, and the background summary
-  surfaces it at the next SessionStart.
+- A ledger with open rows or an unrecognized status, a live run, or an open work record
+  referencing it stays on the integration branch until a human or `/claude-tweaks:tidy`
+  resolves it. The check reports it each pass, and the background summary surfaces it at the
+  next SessionStart.
 - tidy's orphan-ledger scan and this check can both propose deleting the same ledger, because
   they share one rule. The duplicate is benign: whichever PR merges first removes the file, and
   the other is left with nothing to delete. If the leftover is this check's removal PR, close it.
