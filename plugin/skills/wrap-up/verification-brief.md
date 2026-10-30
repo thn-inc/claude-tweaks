@@ -9,7 +9,7 @@ work has no work record to label, so this procedure does not run for it.
 
 **The routing below is this file's decision, not its caller's.** Every call site lands here
 first and inherits it, so a new one never has to re-derive the condition (and cannot get it
-wrong by omission). Five call sites exist today:
+wrong by omission). Six call sites exist today:
 
 | Caller | Arrives holding |
 |---|---|
@@ -17,6 +17,7 @@ wrong by omission). Five call sites exist today:
 | `/claude-tweaks:wrap-up`'s auto-merge short-circuit (`wrap-up/review-console.md`) | one **sub-issue**, mid-close |
 | `/claude-tweaks:dispatch`'s group auto-merge gate (`dispatch/settle-and-merge.md`) | one **sub-issue** per group member, mid-close — plus the group's whole closing sub-issue set (see the Self-inclusion rule) |
 | `/claude-tweaks:dispatch`'s close-out step 3 (`dispatch/close-out.md`) | one or more **sub-issues** (the PR's `Fixes` records), at a later human-confirmed merge |
+| `_shared/pr-first-merge-post-merge.md` Step 4.0b (post-merge) | one or more **sub-issues** (the merge's closing records), after the merge landed — runs only the below-floor close |
 | `/claude-tweaks:tidy`'s `Open parent gate` action (`tidy/actions-github-issues.md`, or `tidy/actions-local-files.md` on that driver) | a **parent** number (`$PARENT_NUM`) directly |
 
 **Whatever invoked this file: if the record in hand has a resolvable parent, run the
@@ -34,7 +35,8 @@ applying `demo:pending` to the record itself only when the gate says the record 
 
 **Before either branch, on every record-holding entry** (a no-parent record, or a sub-issue-side
 entry into the Parent-Gate Procedure — not the parent-side `/claude-tweaks:tidy` entry below,
-which holds no delivering record of its own): compose this record's Try it block — the next section. Neither the Parent-Gate Procedure nor the Oversight-floor gate gates it (#2821); they decide only where it lands.
+which holds no delivering record of its own, nor the post-merge Step 4.0b entry, whose delivering
+runs already posted theirs): compose this record's Try it block — the next section. Neither the Parent-Gate Procedure nor the Oversight-floor gate gates it (#2821); they decide only where it lands.
 
 A caller that already holds a **parent** number is inside the Parent-Gate Procedure by
 construction — there is no sub-issue to resolve, so it starts at **Enumerate the parent's
@@ -84,8 +86,8 @@ not the general one-off record) — read `verification-brief-parent-gate.md` in 
 directory and follow it in full, in place of the rest of this file, whenever that condition
 holds. It covers, in order: the two entry shapes, what it deliberately skips (Step 2.5's
 visual-review safety net), Resolve the parent, Enumerate the parent's sub-issues, the
-Self-inclusion rule, Evaluate the gate (including its own Oversight-floor check), Compose the
-parent brief, and Apply the gate.
+Self-inclusion rule, Evaluate the gate (including its own Oversight-floor check), Close the
+parent below the floor, Compose the parent brief, and Apply the gate.
 
 **No parent resolvable** — skip straight to Steps 1-4 below and apply `demo:pending` to this
 record itself, exactly as the non-parent path always has.

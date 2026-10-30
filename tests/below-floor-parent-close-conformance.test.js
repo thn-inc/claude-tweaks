@@ -7,8 +7,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
+const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 
+const ROOT = path.join(__dirname, '..');
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 
 function read(rel) {
@@ -41,4 +43,92 @@ test('AC4.1: both acceptance-gap scans pass isParent to needsBackstop', () => {
     'Each line is `{path}<TAB>{finding}`, the same shape Shape 7 emits',
   );
   assert.match(shape8, /isParent: r\.facets\.isParentIssue === true,/);
+});
+
+// ---- Task 2: the Parent-Gate Procedure's below-floor close section ----
+
+const GATE_REL = 'wrap-up/verification-brief-parent-gate.md';
+const collapse = (s) => s.replace(/\s+/g, ' ');
+
+// The paragraph opening with `opener`, up to the next blank line.
+function paragraph(text, opener) {
+  const start = text.indexOf(opener);
+  assert.ok(start !== -1, `paragraph not found: ${opener}`);
+  const end = text.indexOf('\n\n', start);
+  return text.slice(start, end === -1 ? undefined : end);
+}
+
+const belowFloorBullet = (gate) => section(gate, '**`exceeds: false`**', '**`exceeds: true`**');
+const entryShapes = (gate) => section(gate, '## Two entry shapes', '## What this path deliberately does not run');
+const closeSection = (gate) => section(gate, '## Close the parent below the floor', '## Compose the parent brief');
+
+test('AC2.2: the exceeds: false bullet routes the close by entry and never closes ahead of the merge', () => {
+  const below = belowFloorBullet(read(GATE_REL));
+  assert.ok(!collapse(below).includes('closes cleanly'), 'the unbacked "closes cleanly" claim is gone');
+  assert.match(below, /no `demo:pending`, no brief/);
+  assert.match(below, /Step 4\.0b/);
+  assert.match(below, /\*\*Close the parent below the floor\*\*/);
+  assert.match(below, /never closed ahead of the merge/);
+  assert.match(below, /end-to-end variant/, 'the Try-it walkthrough sentence is kept');
+  assert.match(below, /Parent-side entry/);
+});
+
+test('AC1.1: the close section composes the listing comment, then comments, then closes', () => {
+  const close = closeSection(read(GATE_REL));
+  assert.ok(close.includes('## Closed below the oversight floor'), 'marker heading');
+  assert.ok(close.includes('closed by PR #{pr}'), 'listing line suffix');
+  assert.match(close, /Never[^.]*merge SHA/);
+  const comment = close.indexOf('gh issue comment $PARENT_NUM --body-file');
+  const shut = close.indexOf('gh issue close $PARENT_NUM --reason completed');
+  assert.ok(comment !== -1 && shut > comment, `comment (${comment}) before close (${shut})`);
+  const write = close.indexOf('writeRecord(parentPath');
+  const closeRec = close.indexOf('closeRecord(parentPath)');
+  assert.ok(write !== -1 && closeRec > write, `writeRecord (${write}) before closeRecord (${closeRec})`);
+  assert.match(close, /which call failed/);
+  assert.match(close, /same commit/);
+});
+
+test('AC5.1: the close section is idempotent on a closed parent and a trusted heading comment', () => {
+  const close = closeSection(read(GATE_REL));
+  assert.match(close, /already `CLOSED`/);
+  assert.match(close, /Trusted authors/);
+});
+
+test('AC2.2: the entry shapes name Step 4.0b as the post-merge sub-issue-side entry', () => {
+  const gate = read(GATE_REL);
+  const shapes = entryShapes(gate);
+  assert.ok(shapes.includes('Step 4.0b'));
+  assert.ok(!collapse(shapes).includes('the four sub-issue callers'));
+  assert.ok(paragraph(gate, '**Return to the Try it post').includes('Step 4.0b'), 'Return-to-Try-it exempts Step 4.0b');
+  assert.ok(paragraph(gate, '**Fail open on every `gh` call').includes('Step 4.0b'), 'Fail open exempts Step 4.0b');
+  const table = section(gate, '| Sub-issue-side caller |', 'The two wrap-up entries close exactly one record');
+  assert.ok(table.includes('Step 4.0b'), 'Self-inclusion table row');
+  const routing = section(read('wrap-up/verification-brief.md'), '## Routing', '## Try it block');
+  assert.ok(routing.includes('Six call sites exist today'));
+  assert.ok(routing.includes('Step 4.0b'));
+});
+
+test('AC1.1: /demo no longer claims to be the only closer of a parent', () => {
+  const demo = read('demo/SKILL.md');
+  assert.ok(!collapse(demo).includes('nothing else in the system ever closes a parent'));
+  assert.match(demo, /Close the parent below the floor/);
+});
+
+// Go-red control: the pre-change gate file carries both literals the absence assertions above
+// reject, so those assertions can fail. Guarded so an unreachable commit skips only this test.
+const PRE_CHANGE_SHA = '1ab4e17d9';
+let preChangeGate = null;
+let goRedSkip = false;
+try {
+  preChangeGate = execFileSync('git', ['show', `${PRE_CHANGE_SHA}:plugin/skills/${GATE_REL}`], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  }).replace(/\r\n/g, '\n');
+} catch (err) {
+  goRedSkip = `commit ${PRE_CHANGE_SHA} is not reachable in this checkout's git history — the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
+}
+
+test('go-red control: the pre-change gate says "closes cleanly" and counts four callers', { skip: goRedSkip }, () => {
+  assert.ok(collapse(belowFloorBullet(preChangeGate)).includes('closes cleanly'));
+  assert.ok(collapse(entryShapes(preChangeGate)).includes('the four sub-issue callers'));
 });
