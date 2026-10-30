@@ -96,6 +96,17 @@ evidence for that record, not merge evidence.
   is CLOSED counts as satisfied (a failed probe keeps it unclosed), and an empty references array
   (GitHub links no keyword into a non-default base) trusts only the manifest's pending/running
   specs. The `status: clean` sweep is exempt, and `work-backend: local-files` turns the check off.
+- **Prove it against the checkout the action mutates (#4387).** Run archival `git mv`s the tracked
+  `work/` subtree in the main checkout's working tree, and that tree holds the spec only once the
+  local integration branch has the merge. Ancestry on `origin/{integration}` (the squash proof, or
+  `checkRunIntegrity`'s shipped evidence) can be true while the checkout is still behind, so
+  `localHasMerge` in `archive-merged.js` answers from `refs/heads/{integration}` and takes the
+  `origin/` fallback only when the main checkout is not on the integration branch (parked or
+  detached, #2565) or under `--dry-run`, whose preview assumes mirror's fast-forward lands. The
+  abandoned-interrupted path re-asks the same question against the local ref
+  (`runBehindLocalIntegration`, through `mergedEvidence`). A branch probe that goes unanswered
+  (timeout, spawn failure) resolves to the retryable skip `local-behind-merge`, never to proven;
+  an ordinary git error (a git too old for `--show-current`) keeps the fallback.
 
 ## Recurrences this skill exists to stop
 

@@ -34,7 +34,7 @@
 const fs = require('fs');
 const path = require('path');
 const { GUARDED_PROGRAM_WORDS, forEachShellSegment, redirectRawTargets, resolveWriteTarget } = require('./git-command');
-const { REFUSAL_SIGNATURE } = require('./harness-refusal');
+const { REFUSAL_SIGNATURES } = require('./harness-refusal');
 
 // Both word sets come from git-command.js, where the parsers that key on these
 // words live (#3092): pre-tool-use runs every guard family, post-tool-use only the
@@ -147,13 +147,15 @@ function shouldRunFull(event, input) {
 
 // #2783: post-tool-use-failure fires on EVERY failed Bash call, yet its handler
 // only acts on the harness worktree-isolation refusal, whose text always carries
-// this phrase (harness-refusal.js's REFUSAL_SIGNATURE, the tail of
-// post-tool-use-failure.js's HARNESS_ISOLATION_REFUSAL_RE). Matched
-// on the raw payload OR the parsed `error`, so a JSON-escaped spelling still runs.
+// one of these phrases (harness-refusal.js's REFUSAL_SIGNATURES, the tails of
+// post-tool-use-failure.js's HARNESS_ISOLATION_REFUSAL_RE; #3819 added the
+// worktree-gone one). Matched on the raw payload OR the parsed `error`, so a
+// JSON-escaped spelling still runs.
 // Unparseable input skips: the handler does nothing with it either.
 function failureCarriesRefusal(raw, input) {
-  if (raw.includes(REFUSAL_SIGNATURE)) return true;
-  return Boolean(input && typeof input.error === 'string' && input.error.includes(REFUSAL_SIGNATURE));
+  const carriesSignature = (text) => REFUSAL_SIGNATURES.some((signature) => text.includes(signature));
+  if (carriesSignature(raw)) return true;
+  return Boolean(input && typeof input.error === 'string' && carriesSignature(input.error));
 }
 
 // Reads stdin once — the caller must hand `raw` on to the full handler, since
