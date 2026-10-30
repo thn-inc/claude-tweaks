@@ -512,6 +512,22 @@ const FINDING_SECTIONS = [SECTIONS.LOW, SECTIONS.CONTESTED];
 // Which verdict decides a staged file settled by several: the one needing a human first.
 const VERDICT_PRECEDENCE = ['console', 'confirmed', 'digested', 'dropped'];
 
+// The finding keys a staged contested file's `## Positions` section names: one per `- ` bullet,
+// up to the next `## ` heading (#4563). Null text or no such section names none.
+function contestedPositionKeys(text) {
+  if (typeof text !== 'string') return [];
+  const keys = [];
+  let inPositions = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^## /.test(line)) inPositions = /^## Positions\s*$/.test(line);
+    else if (inPositions && line.startsWith('- ')) {
+      const key = findingKey(line);
+      if (key) keys.push(key);
+    }
+  }
+  return keys;
+}
+
 // Every tiebreak verdict in decisions.md, indexed by the finding key it settles (latest wins) and by
 // its id, plus which staged review-* files those verdicts settle. A key is settled for a STAGED line
 // only by a verdict logged AFTER it; a keyless line is never settled.
@@ -544,24 +560,39 @@ function tiebreakModel(snapshot) {
     if (!m || !stagedNames.has(m[1])) return;
     naming.set(m[1], [...(naming.get(m[1]) || []), { index, keys: lineKeys(line) }]);
   });
-  const settledFiles = new Map();
-  const absorbed = new Set();
-  for (const [name, refs] of naming) {
-    const cls = classifyStagedItem(name);
-    if (refused.has(name) || cls.outcome || cls.reason || !FINDING_SECTIONS.includes(cls.section)) continue;
-    // A console verdict a linked file carries is never its own item, settled file or not: an
-    // unsettled file stays keep-staged until all its keys settle, so the finding is not lost.
-    for (const r of refs) {
-      for (const k of r.keys) {
-        const v = settledByKey.get(k);
-        if (v && v.kind === 'console' && v.index > r.index) absorbed.add(v.id);
+  const computeSettledFiles = () => {
+    const settledFiles = new Map();
+    const absorbed = new Set();
+    for (const [name, refs] of naming) {
+      const cls = classifyStagedItem(name);
+      if (refused.has(name) || cls.outcome || cls.reason || !FINDING_SECTIONS.includes(cls.section)) continue;
+      // A console verdict a linked file carries is never its own item, settled file or not: an
+      // unsettled file stays keep-staged until all its keys settle, so the finding is not lost.
+      for (const r of refs) {
+        for (const k of r.keys) {
+          const v = settledByKey.get(k);
+          if (v && v.kind === 'console' && v.index > r.index) absorbed.add(v.id);
+        }
       }
+      if (!refs.every((r) => settledAfter(r.index, r.keys))) continue;
+      const verdicts = refs.flatMap((r) => r.keys.map((k) => settledByKey.get(k)));
+      const chosen = VERDICT_PRECEDENCE.map((kind) => verdicts.find((v) => v.kind === kind)).find(Boolean);
+      settledFiles.set(name, chosen);
     }
-    if (!refs.every((r) => settledAfter(r.index, r.keys))) continue;
-    const verdicts = refs.flatMap((r) => r.keys.map((k) => settledByKey.get(k)));
-    const chosen = VERDICT_PRECEDENCE.map((kind) => verdicts.find((v) => v.kind === kind)).find(Boolean);
-    settledFiles.set(name, chosen);
+    return { settledFiles, absorbed };
+  };
+  // #4563: a settled contested file settles its partner finding too. The partner takes the pair's
+  // verdict (and its index) only where no verdict names its key at all: one tiebreak wave logs in
+  // arbitrary order, so a direct verdict wins whatever its position relative to the pair's.
+  const stagedText = new Map(snapshot.staged.map((s) => [s.name, s.text]));
+  for (const [name, chosen] of computeSettledFiles().settledFiles) {
+    if (classifyStagedItem(name).section !== SECTIONS.CONTESTED) continue;
+    for (const key of contestedPositionKeys(stagedText.get(name))) {
+      if (!settledByKey.has(key)) settledByKey.set(key, { ...chosen, key, inheritedFrom: name });
+    }
   }
+  // A second pass: a partner's own staged file may settle now that its key does.
+  const { settledFiles, absorbed } = computeSettledFiles();
   return { lines, latestById, settledAfter, settledFiles, absorbed };
 }
 
@@ -574,6 +605,8 @@ function consoleVerdictResolution(v) {
 
 // The final outcome a settled staged file takes instead of keep-staged.
 function settledFileResolution(v) {
+  // An inherited can't-tell verdict files once, on the contested file that carries it (#4563).
+  if (v.inheritedFrom && v.kind === 'console') return { resolution: 'dismissed', reason: `covered by ${v.inheritedFrom} — its contested pair's tiebreak item carries the verdict` };
   if (v.kind === 'confirmed' && v.via === 'debate') return { resolution: 'dismissed', reason: 'superseded — cross-lens debate confirmed it; routed through Step 3 Routing' };
   if (v.kind === 'confirmed') return { resolution: 'dismissed', reason: 'superseded — tiebreak confirmed it; routed through Step 3 Routing' };
   if (v.kind === 'dropped') return { resolution: 'dropped', reason: 'refuted by tiebreak' };
@@ -650,8 +683,9 @@ function engineItems(snapshot, stagedIds) {
 // step 3 stages a finding as low-confidence, then logs the elevation as AUTO
 // once reproduced (#3772; case-sensitive so `not confirmed` never matches) —
 // or by a converged-positive debate AUTO line that names it in its lens list
-// (debateConvergedKeys, #4563). A keyless line is never superseded. A can't-tell `console` verdict supersedes
-// its STAGED line too, and re-enters as one `tiebreak:{id}` item (#3949).
+// (debateConvergedKeys, #4563). A keyless line is never superseded. A
+// can't-tell `console` verdict supersedes its STAGED line too, and re-enters
+// as one `tiebreak:{id}` item (#3949).
 function findingKey(line) {
   const lens = /\blens\s+"?([A-Za-z0-9_-]+)"?/i.exec(line);
   const loc = /([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+)/.exec(line);

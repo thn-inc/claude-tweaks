@@ -1006,6 +1006,62 @@ test('a converged-positive debate logged before the STAGED line does not superse
   assert.deepStrictEqual(findings(d).map((i) => i.resolution), ['keep-staged']);
 });
 
+// ---- #4563: a settled contested file settles its partner finding ----
+const positions = (a, b) => `# Review — contested finding\n\n## Positions\n\n- **Finding A (lens ${a.lens}, low)** — ${a.path}:${a.line}: claim A\n- **Finding B (lens ${b.lens}, medium)** — ${b.path}:${b.line}: claim B\n\n## Judge 1 (partial)\n\nx\n`;
+const partner = { lens: '3f', path: 'src/a.js', line: 7 };
+
+test('a tiebreak confirming a contested pair settles the partner finding too (#4563 AC2)', () => {
+  const f = tbFinding();
+  const v = tbVerdict(f, { verdict: 'confirmed' });
+  const d = [stagedLow('3f', 'src/a.js:7'), tbDebate(f, 'review-contested-1.md'), v.entry].join('\n');
+  assert.deepStrictEqual(findings(d, { 'review-contested-1.md': positions(f, partner) }).map((i) => [i.id, i.resolution]),
+    [['review-contested-1.md', 'dismissed']]);
+});
+test('a refuted contested pair drops the partner too (#4563 AC2)', () => {
+  const f = tbFinding({ reporterSeverity: 'low' });
+  const v = tbVerdict(f, { verdict: 'refuted', severity: 'low' });
+  const d = [stagedLow('3f', 'src/a.js:7'), tbDebate(f, 'review-contested-1.md'), v.entry].join('\n');
+  assert.deepStrictEqual(findings(d, { 'review-contested-1.md': positions(f, partner) }).map((i) => [i.id, i.resolution]),
+    [['review-contested-1.md', 'dropped']]);
+});
+test('an unsettled contested file leaves its partner keep-staged (#4563 AC4)', () => {
+  const f = tbFinding();
+  const d = [stagedLow('3f', 'src/a.js:7'), tbDebate(f, 'review-contested-1.md')].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(f, partner) });
+  assert.deepStrictEqual(items.map((i) => i.resolution).sort(), ['keep-staged', 'keep-staged']);
+});
+test('a partner with its own later verdict keeps it over the inherited one (#4563)', () => {
+  const f = tbFinding();
+  const p = tbFinding({ lens: '3f', line: 7, claim: 'partner claim' });
+  const d = [stagedLow('3f', 'src/a.js:7'), tbDebate(f, 'review-contested-1.md'),
+    tbVerdict(f, { verdict: 'confirmed' }).entry, tbVerdict(p, { recommendation: 'file' }).entry].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(f, partner) });
+  assert.ok(items.some((i) => i.id.startsWith('tiebreak:') && i.resolution === 'filed'), 'the partner\'s own console verdict still surfaces');
+});
+test('a partner\'s own verdict logged BEFORE the pair\'s verdict still wins over inheritance (#4563)', () => {
+  const f = tbFinding();
+  const p = tbFinding({ lens: '3f', line: 7, claim: 'partner claim', reporterSeverity: 'low' });
+  const d = [`${stagedLow('3f', 'src/a.js:7')} Stage path: staged/review-unconfirmed-2.md.`, tbDebate(f, 'review-contested-1.md'),
+    tbVerdict(p, { verdict: 'refuted', severity: 'low' }).entry, tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(f, partner), 'review-unconfirmed-2.md': 'x' });
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]).sort(), [['review-contested-1.md', 'dismissed'], ['review-unconfirmed-2.md', 'dropped']]);
+});
+test('an inherited can\'t-tell verdict files once: the partner\'s own staged file is dismissed as covered (#4563)', () => {
+  const f = tbFinding();
+  const d = [`${stagedLow('3f', 'src/a.js:7')} Stage path: staged/review-unconfirmed-2.md.`, tbDebate(f, 'review-contested-1.md'),
+    tbVerdict(f, { recommendation: 'file' }).entry].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(f, partner), 'review-unconfirmed-2.md': 'x' });
+  assert.strictEqual(items.filter((i) => i.resolution === 'filed').length, 1, 'one filing for one tiebreak id');
+  const p = items.find((i) => i.id === 'review-unconfirmed-2.md');
+  assert.deepStrictEqual([p.resolution, p.reason], ['dismissed', 'covered by review-contested-1.md — its contested pair\'s tiebreak item carries the verdict']);
+});
+test('run 2026-10-28T060616-spec-4304 (real excerpt) resolves with zero keep-staged items (#4563 AC3)', () => {
+  const dir = path.join(__dirname, 'fixtures', 'debate-settlement-4304');
+  const { items } = findingItems({ runDir: dir, deps: bareDeps() });
+  assert.deepStrictEqual(items.filter((i) => OPEN.includes(i.resolution)).map((i) => i.id), []);
+  assert.deepStrictEqual(items.filter((i) => i.id.startsWith('review-contested-')).map((i) => i.resolution), ['dismissed', 'dismissed']);
+});
+
 test('parseTiebreakLine reads all four resolver shapes and nothing else (#3949)', () => {
   const f = tbFinding();
   const parsed = (opts) => parseTiebreakLine(tbVerdict(f, opts).entry);
