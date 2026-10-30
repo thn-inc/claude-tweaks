@@ -76,6 +76,11 @@ const SECTION_MAP = [
   // SECTIONS.CONFIG the engine-row path (ENGINE_ROW_SECTIONS below) already
   // uses for an `applied` finding from either registry row.
   [/^(wrap-up-claude-md|wrap-up-adr)-/, SECTIONS.CONFIG],
+  // wrap-up-reference- (#4585): the curation engine's `references` registry row
+  // stages each reference repair under this prefix — reference-sweep.md Step 4
+  // names the exact filename. Routes to SECTIONS.REF, the same section the
+  // engine-row path (ENGINE_ROW_SECTIONS below) uses for a `references` finding.
+  [/^wrap-up-reference-/, SECTIONS.REF],
   [/^(wrap-up-journey|journeys)(-|\b)/, SECTIONS.JOURNEY],
   // premise-satisfied- (#3488): bin/materialize.js stages a proposal to close a record
   // whose premise check already passes; closing is a human call, so it resolves pending.
@@ -108,6 +113,7 @@ const CANONICAL_PREFIXES = [
   'wrap-up-skill-', 'skills-',
   'wrap-up-doc-', 'tidy-doc-', 'docs-',
   'wrap-up-claude-md-', 'wrap-up-adr-',
+  'wrap-up-reference-',
   'wrap-up-journey-', 'journeys-',
   'reflect-', 'digest-promotion-', 'leftover-', 'ledger-record-', 'upstream-unfiled-', 'red-team-',
   'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'efficiency-budget-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
