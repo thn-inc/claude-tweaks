@@ -47,7 +47,9 @@
 - Modify: `tests/plan-citations-resolve.test.js:75` (the pinned "Before any plan Delete:" regex)
 - Create: `tests/tidy-plan-retention-conformance.test.js`
 
-**Review risk:** high: decision logic that decides whether a plan file may be deleted. It branches on the policy value, a git-derived age against the cutoff, the 30-plan threshold, and a decline lookup, with fail-closed handling.
+**Review risk:** high
+
+Why high: decision logic that decides whether a plan file may be deleted. It branches on the policy value, a git-derived age against the cutoff, the 30-plan threshold, and a decline lookup, with fail-closed handling.
 
 **Covers:** AC1.1 — with `superpowers-plans-retention` unset (`keep-forever`), a plan within the cutoff is Keep (the route and fail-closed tests), and Task 2 confines auto-applied plan Deletes to `prune-after-wrapup`, so a `moderate` run deletes no plan created within the cutoff.
 
