@@ -12,7 +12,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { POLICY_KEYS, resolvePolicyKeys, parseRiskPathGlobs, auditPolicy, BUILTIN_RISK_CATEGORIES } = require('../plugin/bin/lib/policy-schema');
+const { POLICY_KEYS, resolvePolicyKeys, auditPolicy, BUILTIN_RISK_CATEGORIES } = require('../plugin/bin/lib/policy-schema');
+const { parseRiskPathGlobs } = require('../plugin/bin/lib/risk-path-globs');
 const { isControlModeOn } = require('../plugin/bin/lib/policy');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
@@ -639,6 +640,9 @@ test('parseRiskPathGlobs returns its three shapes', () => {
   // The allowed slugs are exactly what the caller passes: the parser knows no built-ins.
   assert.deepStrictEqual(parseRiskPathGlobs('risk-path-globs:\n  pii: [a]\n', ['pii']).value, { pii: ['a'] });
   assert.strictEqual(parseRiskPathGlobs('risk-path-globs:\n  auth: [a]\n', ['pii']).ok, false);
+  // It requires nothing, so it cannot close a cycle with policy-schema.js, its caller.
+  assert.deepStrictEqual(require.cache[require.resolve('../plugin/bin/lib/risk-path-globs')].children, []);
+  assert.strictEqual(require('../plugin/bin/lib/policy-schema').parseRiskPathGlobs, undefined, 'no facade');
 });
 
 test('auditPolicy reports an invalid block once, and nothing for a valid one', () => {
