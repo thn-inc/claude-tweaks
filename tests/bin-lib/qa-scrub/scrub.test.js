@@ -16,6 +16,9 @@ const T0 = 1761818400; // story start, seconds
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
 
+const created = [];
+test.after(() => { for (const d of created) fs.rmSync(d, { recursive: true, force: true }); });
+
 function put(file, content, mtime) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content);
@@ -27,6 +30,7 @@ function put(file, content, mtime) {
 // screenshots, a relocated trace, and the shared .playwright-cli output dir.
 function makeTree() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-scrub-'));
+  created.push(root);
   const screenshots = path.join(root, 'shots', 'tokens', 'reveal-once');
   const traces = path.join(root, 'traces', 'reveal-once');
   const cliDir = path.join(root, '.playwright-cli');
