@@ -171,7 +171,7 @@ node -e "
   // Number-keyed dedup across the two label fetches — identical rows, either fetch may win.
   const parents = [...new Map(fetched.flat().map((p) => [p.number, p])).values()];
   if (fetched.some((f) => f.length >= Math.min(LIMIT, 1000))) {
-    console.error('WARNING: a parent fetch reached its cap of ' + Math.min(LIMIT, 1000) + ' records (the smaller of backlog-fetch-limit and the 1000-result ceiling) — older parents were dropped, so their sub-issues re-enter this scope as false acceptance-gap rows. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before acting on any row below.');
+    console.error('WARNING: a parent fetch reached its cap of ' + Math.min(LIMIT, 1000) + ' records (the smaller of backlog-fetch-limit and the 1000-result ceiling) — older parents were dropped, so their sub-issues re-enter this scope as false acceptance-gap rows. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before acting on any row below (raising it past 1000 does not help).');
   }
   const subIssueNumbers = parents.flatMap((p) => parseSubIssues(p.body));
   fs.writeFileSync('$GAP_SUBS', JSON.stringify(subIssueNumbers));
@@ -202,7 +202,7 @@ node -e "
   // Number-keyed dedup across the two label fetches — identical rows, either fetch may win.
   const parents = [...new Map(fetched.flat().map((p) => [p.number, p])).values()];
   if (fetched.some((f) => f.length >= Math.min(Number(process.env.FETCH_LIMIT), 1000))) {
-    console.error('WARNING: a parent fetch reached its cap of ' + Math.min(Number(process.env.FETCH_LIMIT), 1000) + ' records (the smaller of backlog-fetch-limit and the 1000-result ceiling) — older parents were dropped, so their sub-issues re-enter this scope as false acceptance-gap rows. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before acting on any row below.');
+    console.error('WARNING: a parent fetch reached its cap of ' + Math.min(Number(process.env.FETCH_LIMIT), 1000) + ' records (the smaller of backlog-fetch-limit and the 1000-result ceiling) — older parents were dropped, so their sub-issues re-enter this scope as false acceptance-gap rows. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before acting on any row below (raising it past 1000 does not help).');
   }
   fs.writeFileSync('$PFG', JSON.stringify(parents));
 "
@@ -450,7 +450,7 @@ node -e "
   fs.writeFileSync('$PARENTS', JSON.stringify(parents));
   const states = require('$ALL_STATES');
   if (fetched.some((f) => f.length >= Math.min(LIMIT, 1000))) {
-    console.error('WARNING: a parent fetch reached its cap of ' + Math.min(LIMIT, 1000) + ' records (the smaller of backlog-fetch-limit and the 1000-result ceiling) — older parents were dropped and are invisible to this scope entirely. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete.');
+    console.error('WARNING: a parent fetch reached its cap of ' + Math.min(LIMIT, 1000) + ' records (the smaller of backlog-fetch-limit and the 1000-result ceiling) — older parents were dropped and are invisible to this scope entirely. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete (raising it past 1000 does not help).');
   }
   const STATE_CAP = process.env.STATE_SEARCH ? Math.min(LIMIT, 1000) : LIMIT;
   if (states.length >= STATE_CAP) {
@@ -487,9 +487,9 @@ REST responses (the `sub_issues` endpoint included) report lowercase `open`/`clo
 `parentGateState` and the state map both use the `gh issue list --json state` uppercase
 `OPEN`/`CLOSED` form; reading from one source only avoids a silent casing mismatch. A sub-issue
 number absent from the state map (the fetch above truncated before reaching it, warned above; or,
-under `native`, the search index lagged a just-linked one, unwarned) defaults to `OPEN`, the fail-safe direction — an unresolved
-sub-issue must never let a parent read as `due` (mirrors `parentGateState`'s own "never reports
-`due` for a parent with no discoverable sub-issues" rule).
+under `native`, the search index lagged a just-linked one, unwarned) defaults to `OPEN`, the
+fail-safe direction — an unresolved sub-issue must never let a parent read as `due` (mirrors
+`parentGateState`'s own "never reports `due` for a parent with no discoverable sub-issues" rule).
 
 **`work-links: body-text`** — every parent's task list is already in hand from the first fetch
 above; no further `gh` calls. Resolve session-scoped paths first (`_shared/session-tmp-root.md`):

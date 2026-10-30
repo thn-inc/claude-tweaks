@@ -343,13 +343,30 @@ test('label-filtered parent fetches warn at the search ceiling', () => {
   assert.equal('if (fetched.some((f) => f.length > Math.min(LIMIT, 1000)))'.match(PARENT_CEILING_TEST), null);
 });
 
+// The predicate expressions as shipped: the text inside `fetched.some((f) => …)`, one per distinct live form.
+const PARENT_CEILING_EXPR = /if \(fetched\.some\(\(f\) => (f\.length >= Math\.min\((?:LIMIT|Number\(process\.env\.FETCH_LIMIT\)), 1000\))\)\)/g;
+const ceilingExprs = (text) => [...new Set([...text.matchAll(PARENT_CEILING_EXPR)].map((m) => m[1]))];
+// Evaluates an extracted predicate for `rows` fetched rows under `limit` (both the LIMIT and the env form).
+const evalCeiling = (expr, limit, rows) =>
+  new Function('f', 'LIMIT', 'process', `return ${expr};`)({ length: rows }, limit, { env: { FETCH_LIMIT: String(limit) } });
+const CEILING_TABLE = [
+  [1500, 1000, true, 'limit above 1000, ceiling reached'],
+  [1000, 743, false, 'under the cap stays silent'],
+  [500, 500, true, 'limit below 1000, limit reached'],
+  [500, 499, false, 'one under the cap stays silent'],
+];
+const ceilingMisses = (expr) => CEILING_TABLE.filter(([limit, rows, want]) => evalCeiling(expr, limit, rows) !== want);
+
 test('ceiling arithmetic', () => {
-  const cap = (limit) => Math.min(limit, 1000);
-  const warns = (limit, rows) => rows >= cap(limit);
-  assert.equal(warns(1500, 1000), true, 'limit above 1000, ceiling reached');
-  assert.equal(warns(1000, 743), false, 'under the cap stays silent');
-  assert.equal(warns(500, 500), true, 'limit below 1000, limit reached');
-  assert.equal(warns(500, 499), false, 'one under the cap stays silent');
+  const exprs = ceilingExprs(LIVE);
+  assert.equal(exprs.length, 2, 'the LIMIT form and the process.env.FETCH_LIMIT form are both evaluated');
+  for (const expr of exprs) assert.deepEqual(ceilingMisses(expr), [], `the shipped predicate must satisfy the table: ${expr}`);
+  // Go-red control: the same evaluation over a `>` slip must miss rows (the ceiling and the exact-limit rows).
+  for (const expr of exprs) {
+    const slipped = expr.replace('>=', '>');
+    assert.notEqual(slipped, expr);
+    assert.deepEqual(ceilingMisses(slipped).map(([limit, rows]) => `${limit}/${rows}`), ['1500/1000', '500/500']);
+  }
 });
 
 // The parent-fetch warning lines (the `console.error` calls naming "a parent fetch") and what each must say.
@@ -357,17 +374,18 @@ const parentWarnings = (text) => text.split('\n').filter((l) => l.includes('cons
 const parentWarnParts = (line) => ({
   cap: /reached\s+its\s+cap\s+of\s+'\s*\+/.test(line),
   ceiling: /1000-result\s+ceiling/.test(line),
+  futile: /raising\s+it\s+past\s+1000\s+does\s+not\s+help/.test(line),
 });
-const PRE_CHANGE_PARENT_MESSAGE = "    console.error('WARNING: a parent fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped and are invisible to this scope entirely.');";
+const PRE_CHANGE_PARENT_MESSAGE ="    console.error('WARNING: a parent fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped and are invisible to this scope entirely.');";
 
 test('parent-fetch warnings name the cap and the label-filtered ceiling', () => {
   const lines = parentWarnings(LIVE);
   assert.equal(lines.length, 3);
-  for (const line of lines) assert.deepEqual(parentWarnParts(line), { cap: true, ceiling: true });
-  // Controls: the pre-change message names neither; a bare cap without the ceiling is caught; rewrapping is tolerated.
-  assert.deepEqual(parentWarnParts(PRE_CHANGE_PARENT_MESSAGE), { cap: false, ceiling: false });
-  assert.deepEqual(parentWarnParts("console.error('a parent fetch reached its cap of ' + CAP);"), { cap: true, ceiling: false });
-  assert.deepEqual(parentWarnParts("reached its\n cap of ' + CAP 1000-result\n ceiling"), { cap: true, ceiling: true });
+  for (const line of lines) assert.deepEqual(parentWarnParts(line), { cap: true, ceiling: true, futile: true });
+  // Controls: the pre-change message names none; a bare cap without the ceiling is caught; rewrapping is tolerated.
+  assert.deepEqual(parentWarnParts(PRE_CHANGE_PARENT_MESSAGE), { cap: false, ceiling: false, futile: false });
+  assert.deepEqual(parentWarnParts("console.error('a parent fetch reached its cap of ' + CAP);"), { cap: true, ceiling: false, futile: false });
+  assert.deepEqual(parentWarnParts("reached its\n cap of ' + CAP 1000-result\n ceiling raising it past\n 1000 does not help"), { cap: true, ceiling: true, futile: true });
 });
 
 // The parent-fetch half of the acceptance-gap "Fetch limit" paragraph as it read before #4469.
