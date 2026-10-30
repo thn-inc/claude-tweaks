@@ -9,6 +9,7 @@ files:
   - plugin/bin/lib/dispatch/ceremony-derive.js
   - plugin/skills/wrap-up/review-console.md
   - plugin/skills/wrap-up/ceremony-derivation.md
+  - plugin/skills/wrap-up/reference-sweep.md
   - plugin/skills/wrap-up/auto-merge-short-circuit.md
   - plugin/skills/dispatch/settle-and-merge.md
   - plugin/skills/dispatch/drain-pr-overlap.md
