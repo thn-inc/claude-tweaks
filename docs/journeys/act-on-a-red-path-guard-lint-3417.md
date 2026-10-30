@@ -2,6 +2,7 @@
 files:
   - tests/path-guard-conformance.test.js
   - tests/helpers/strip-comments.js
+  - plugin/bin/lib/strip-comments.js
   - plugin/bin/lib/path-guard/index.js
   - docs/donts.md
 ---

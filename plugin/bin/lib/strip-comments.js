@@ -4,7 +4,8 @@ const vm = require('node:vm');
 // ways: the source-scan conformance tests through tests/helpers/strip-comments.js
 // (whose header keeps the caller list tests/strip-comments-callers-twin.test.js pins),
 // and plugin code by requiring this file directly (today
-// plugin/bin/lib/code-health/candidates-experiment-cleanup.js's `normalizeBranch`,
+// plugin/bin/lib/code-health/candidates-experiment-cleanup.js's `normalizeBranch`
+// and plugin/bin/lib/code-health/candidates-scale-readiness.js's brace tracker,
 // #3903). Comments are blanked, never deleted:
 // every non-newline character of a comment becomes a space, so offsets and line numbers
 // stay stable.
