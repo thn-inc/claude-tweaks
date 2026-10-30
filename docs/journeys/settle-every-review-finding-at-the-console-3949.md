@@ -37,6 +37,7 @@ files:
 - **Should understand:**
   - A finding the tiebreak confirmed is no longer here; it went through Step 3 Routing. A refuted one is gone too.
   - A finding logged to the digest (low/info can't-tell) is not here either.
+  - A finding a converged-positive cross-lens debate confirmed is gone; the partner in a tiebroken contested pair takes the pair's outcome, and an inherited can't-tell partner is dismissed as covered by the carrier file.
   - The staged review file a finding's STAGED line names (`staged/review-contested-{N}.md`, for example) takes that verdict's outcome instead of lingering.
   - A row with no recommendation at all is the legacy shape: it stays undecided.
 - **Red flags:**
@@ -127,6 +128,7 @@ files:
 - Updated during the build of #4172: a PR console's `filing-failed`/`reverse-failed` outcome now holds the run out of archival (step 5).
 - Step 6 added during the build of #4136. A filed can't-tell record now carries the staged finding's title, body and own severity, and omits an absent line instead of printing `:unknown`.
 - Updated during the build of #4170: a planned can't-tell filing with no logged filed line, and a Queue write whose execution failed, now hold an unattended run out of archival too (step 5).
+- Updated during the build of #4563: step 1's "Should understand" list gained the two new ways a finding leaves the console, a confirmed cross-lens debate and a settled contested pair's partner.
 - Related journeys:
   - `get-a-verdict-on-every-unverified-review-finding-3947.md`: how each finding gets the verdict this console acts on.
   - `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`: the archive refusal for a finding with no verdict line at all.

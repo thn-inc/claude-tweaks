@@ -503,7 +503,7 @@ function debateConvergedKeys(line) {
   const m = DEBATE_CONVERGED_RE.exec(line);
   if (!m) return [];
   const keys = [];
-  const entry = /\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)?:(\d+)/g;
+  const entry = /\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)?:(\d+)/gi;
   for (let e = entry.exec(m[3]); e; e = entry.exec(m[3])) keys.push(`${e[1]}|${e[2] || m[1]}:${e[3]}`);
   return keys;
 }
@@ -586,13 +586,15 @@ function tiebreakModel(snapshot) {
   // arbitrary order, so a direct verdict wins whatever its position relative to the pair's.
   // A partner's own contested file may settle only once its key is inherited, and then passes the
   // verdict on to its own partners: repeat until a pass adds no entry. Passes only add entries and
-  // the key set is finite, so it terminates. A chained file keeps the original carrier's name.
+  // the key set is finite, so it terminates; the `has()` guard is what ends the loop (removing it
+  // hangs rather than fails). A chained file keeps the original carrier's name. Only
+  // `review-contested-*` files carry a Positions section (SECTIONS.CONTESTED also holds `review-debate-*`).
   const stagedText = new Map(snapshot.staged.map((s) => [s.name, s.text]));
   let result = computeSettledFiles();
   for (let added = true; added;) {
     added = false;
     for (const [name, chosen] of result.settledFiles) {
-      if (classifyStagedItem(name).section !== SECTIONS.CONTESTED) continue;
+      if (!/^review-contested-/.test(name)) continue;
       for (const key of contestedPositionKeys(stagedText.get(name))) {
         if (settledByKey.has(key)) continue;
         settledByKey.set(key, { ...chosen, key, inheritedFrom: chosen.inheritedFrom || name });
@@ -615,10 +617,12 @@ function consoleVerdictResolution(v) {
 function settledFileResolution(v) {
   // An inherited can't-tell verdict files once, on the contested file that carries it (#4563).
   if (v.inheritedFrom && v.kind === 'console') return { resolution: 'dismissed', reason: `covered by ${v.inheritedFrom} — its contested pair's tiebreak item carries the verdict` };
-  if (v.kind === 'confirmed' && v.via === 'debate') return { resolution: 'dismissed', reason: 'superseded — cross-lens debate confirmed it; routed through Step 3 Routing' };
-  if (v.kind === 'confirmed') return { resolution: 'dismissed', reason: 'superseded — tiebreak confirmed it; routed through Step 3 Routing' };
-  if (v.kind === 'dropped') return { resolution: 'dropped', reason: 'refuted by tiebreak' };
-  if (v.kind === 'digested') return { resolution: 'dismissed', reason: 'can\'t-tell below medium — logged to the materiality digest' };
+  // An inherited verdict was judged under the carrier's key, so its reason names the pair.
+  const via = v.inheritedFrom ? ` (via contested pair ${v.inheritedFrom})` : '';
+  if (v.kind === 'confirmed' && v.via === 'debate') return { resolution: 'dismissed', reason: `superseded — cross-lens debate confirmed it; routed through Step 3 Routing${via}` };
+  if (v.kind === 'confirmed') return { resolution: 'dismissed', reason: `superseded — tiebreak confirmed it; routed through Step 3 Routing${via}` };
+  if (v.kind === 'dropped') return { resolution: 'dropped', reason: `refuted by tiebreak${via}` };
+  if (v.kind === 'digested') return { resolution: 'dismissed', reason: `can't-tell below medium — logged to the materiality digest${via}` };
   return consoleVerdictResolution(v);
 }
 

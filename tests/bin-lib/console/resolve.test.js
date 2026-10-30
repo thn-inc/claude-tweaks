@@ -1016,6 +1016,10 @@ test('a tiebreak confirming a contested pair settles the partner finding too (#4
   const d = [stagedLow('3f', 'src/a.js:7'), tbDebate(f, 'review-contested-1.md'), v.entry].join('\n');
   assert.deepStrictEqual(findings(d, { 'review-contested-1.md': positions(f, partner) }).map((i) => [i.id, i.resolution]),
     [['review-contested-1.md', 'dismissed']]);
+  // The partner's own staged file takes the pair's outcome, and its reason names the pair that carried it.
+  const withFile = [`${stagedLow('3f', 'src/a.js:7')} Stage path: staged/review-unconfirmed-2.md.`, tbDebate(f, 'review-contested-1.md'), v.entry].join('\n');
+  const p = findings(withFile, { 'review-contested-1.md': positions(f, partner), 'review-unconfirmed-2.md': 'x' }).find((i) => i.id === 'review-unconfirmed-2.md');
+  assert.deepStrictEqual([p.resolution, p.reason], ['dismissed', 'superseded — tiebreak confirmed it; routed through Step 3 Routing (via contested pair review-contested-1.md)']);
 });
 test('a refuted contested pair drops the partner too (#4563 AC2)', () => {
   const f = tbFinding({ reporterSeverity: 'low' });
@@ -1023,6 +1027,24 @@ test('a refuted contested pair drops the partner too (#4563 AC2)', () => {
   const d = [stagedLow('3f', 'src/a.js:7'), tbDebate(f, 'review-contested-1.md'), v.entry].join('\n');
   assert.deepStrictEqual(findings(d, { 'review-contested-1.md': positions(f, partner) }).map((i) => [i.id, i.resolution]),
     [['review-contested-1.md', 'dropped']]);
+});
+test('a settled review-debate file passes nothing to a listed partner: only review-contested files carry Positions (#4563)', () => {
+  const f = tbFinding();
+  const d = [stagedLow('3f', 'src/a.js:7'), tbDebate(f, 'review-debate-1.md'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n');
+  assert.deepStrictEqual(findings(d, { 'review-debate-1.md': positions(f, partner) }).map((i) => i.resolution).sort(), ['dismissed', 'keep-staged']);
+});
+test('the Positions read stops at the next heading: a bullet under a later section names no partner (#4563)', () => {
+  const f = tbFinding();
+  const text = positions(f, partner).replace('\nx\n', '\n- lens 3z src/a.js:2 an extra bullet\n');
+  assert.ok(text.includes('- lens 3z src/a.js:2'), 'the extra bullet is in the fixture');
+  const d = [stagedLow('3f', 'src/a.js:7'), stagedLow('3z', 'src/a.js:2'), tbDebate(f, 'review-contested-1.md'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n');
+  const items = findings(d, { 'review-contested-1.md': text });
+  assert.deepStrictEqual(items.map((i) => i.resolution).sort(), ['dismissed', 'keep-staged']);
+  assert.ok(items.find((i) => i.resolution === 'keep-staged').id.includes('lens "3z"'), 'the 3z line is the one left open; the Positions partner 3f settled');
+});
+test('a lens token in a converged-positive debate entry matches case-insensitively, like findingKey (#4563)', () => {
+  const d = [stagedLow('3a', 'src/a.js:5'), debatePositive(' (Lens "3a" finding src/a.js:5 — confirmed)')].join('\n');
+  assert.deepStrictEqual(findings(d), []);
 });
 test('an unsettled contested file leaves its partner keep-staged (#4563 AC4)', () => {
   const f = tbFinding();
