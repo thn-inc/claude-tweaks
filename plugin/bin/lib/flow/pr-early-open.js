@@ -114,10 +114,11 @@ async function openPrEarly(opts, deps) {
     return bodyPath;
   };
   // A body names another run when pr-checklist.js would refuse it (exit 4): its
-  // first line, after the same marker repair, is not this run's id. A body
-  // that is not a string was not read, so there is nothing to compare.
-  const namesOtherRun = (body) => typeof body === 'string'
-    && firstLineRunId(repairPrBody({ body, runId, fixesLines: [] }).body) !== runId;
+  // first line, after the same marker repair, is not this run's id. An absent
+  // or non-string body never rebinds: repairPrBody treats it as empty and adds
+  // this run's marker, the same way pr-checklist.js would repair it, so there
+  // is nothing to rebind.
+  const namesOtherRun = (body) => firstLineRunId(repairPrBody({ body, runId, fixesLines: [] }).body) !== runId;
   // Rebind a reopened or reused PR's body to this run before anything pushes
   // (#3887, #4580). Any failure here, a first-line mismatch included, is a
   // logged degrade, never a stop.
