@@ -235,5 +235,8 @@
   },
   "doc:decisions/0025-merge-subject-scope-is-repo-policy-resolved-in-the-composer": {
     "lastAuditedMs": 1793081522487
+  },
+  "doc:decisions/0026-ledger-residue-converges-in-reconcile": {
+    "lastAuditedMs": 1793340992319
   }
 }
