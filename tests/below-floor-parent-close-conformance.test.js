@@ -422,7 +422,7 @@ function extractNodeScripts(text) {
 function scanScript(text, needle) {
   const found = extractNodeScripts(text).filter((s) => s.includes(needle));
   assert.equal(found.length, 1, `exactly one node -e block carries ${needle}`);
-  return found[0].split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_ROOT);
+  return found[0].split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_ROOT.replace(/\\/g, '/'));
 }
 
 const tmpRoots = [];

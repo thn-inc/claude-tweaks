@@ -58,12 +58,12 @@ files:
 - **Action:** the maintainer runs `/claude-tweaks:tidy`. A merge no session saw land (for example an armed auto-merge that GitHub completed later) leaves the parent open. It appears as `[parent-gate] #{n}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`.
 - **Should feel:** a one-click cleanup, not an investigation.
 - **Should understand:**
-  - The row is staged at every autonomy tier. Approving it runs the same **Close the parent below the floor** section, with the same comment and idempotence checks.
-  - Tidy's Step 7 checklist verifies the parent as `CLOSED`, carrying the heading comment and no `demo:*` label.
+  - The row is staged at every `tidy-aggressiveness` tier. Approving it runs the same **Close the parent below the floor** section, with the same comment and idempotence checks.
+  - Tidy's Step 7.5 checklist verifies the parent as `CLOSED`, carrying the heading comment and no `demo:*` label.
   - A parent above the floor still gets the brief-and-`/claude-tweaks:demo` row instead.
 - **Red flags:**
   - A stranded below-floor parent that tidy reports nowhere.
-  - An approved row that Step 7 reports as FAILED.
+  - An approved row that Step 7.5 reports as FAILED.
 
 ### 4. The closed parent stays out of the acceptance-gap scope
 - **URL:** `github-pr-scan-acceptance.md`, `## Scope: \`acceptance-gap\``, the `needsBackstop({…})` call's `isParent` field

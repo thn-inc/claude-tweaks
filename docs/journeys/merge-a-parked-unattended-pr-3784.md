@@ -91,10 +91,12 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 ### 6. Read the outcome and the cleanup
 - **URL:** the closing report (`merged`, `armed`, or `pending-review`) and `{run-dir}/decisions.md`
 - **Action:** on `merged`, the agent works through the cleanup in this order:
-  1. Release-carrier tracking (Step 4.1).
-  2. The worktree teardown, which covers close-run, the containment proof, `ExitWorktree`, and the remote-ref delete.
-  3. The claim release.
-  4. Step 4.2's reconcile, last.
+  1. The post-merge reopen pass (Step 4.0), which reopens any record the merge closed that the PR body kept open.
+  2. The below-floor parent close (Step 4.0b), which closes a decomposition parent whose last sub-issue this merge closed, when no sub-issue exceeds the oversight floor.
+  3. Release-carrier tracking (Step 4.1).
+  4. The worktree teardown, which covers close-run, the containment proof, `ExitWorktree`, and the remote-ref delete.
+  5. The claim release.
+  6. Step 4.2's reconcile, last.
 - **Should feel:** finished. Nothing is left for a later session to tidy.
 - **Should understand:** the reconcile runs last because its archive check moves the run dir, and a `decisions.md` line written after it would recreate it.
 - **Red flags:** a run dir re-created under `.claude-tweaks/pipelines/` after archival, or a worktree removed without the containment proof.
