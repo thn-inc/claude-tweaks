@@ -14,7 +14,7 @@ files:
 **Persona:** The SDD controller running inside `/claude-tweaks:build` decides to defer a finding instead of fixing it. A typical case is "pre-existing, outside the diff, routed to a follow-up record". Later, the maintainer of an `autonomy: unattended` run reads the auto-resolved Review Console and needs to trust that nothing fixable was waved through.
 **Goal:** A deferral that qualifies for an immediate fix is fixed in the build and never reaches the console. A deferral that genuinely can't be fixed now carries exactly one valid `Defer-reason:`. An unattended console never auto-ratifies a deferral without one.
 **Entry point:** The SDD controller is about to write a `Ruling:` line whose decision leaves a finding or a required change unfixed. This can happen at pre-flight, inside a task's fix loop, at the round-5 breaker, or for a residual left after the final fix wave's scoped re-review.
-**Success state:** Either the finding is fixed by a commit in this build, or `staged/sdd-ruling-{N}.md` carries `Defers: yes` plus one valid `Defer-reason:` and resolves `apply` (ratify) at the console. Anything else waits as `pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-needs-human-decision`, `pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` for a human.
+**Success state:** Either the finding is fixed by a commit in this build, or `staged/sdd-ruling-{N}.md` carries `Defers: yes` plus one valid `Defer-reason:` other than `needs-human-decision` and resolves `apply` (ratify) at the console. Anything else waits as `pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-needs-human-decision`, `pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` for a human.
 
 ## Steps
 
