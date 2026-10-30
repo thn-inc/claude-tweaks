@@ -192,14 +192,34 @@ test('AC2.1: Step 4.0b sits between Step 4.0 and Step 4.1 and reads the merge\'s
     'work-backend: github-issues',
     '$CLOSING_SUB_ISSUES',
     '$MERGING_PR',
+    'gh pr view {pr-number} --repo {owner}/{repo} --json closingIssuesReferences',
   ]) {
     assert.ok(body.includes(lit), `Step 4.0b names ${lit}`);
   }
+  assert.ok(
+    collapse(body).includes(
+      "A merge no session sees land (an `armed` PR that GitHub merges later) never reaches it either, by design: `/claude-tweaks:tidy`'s `parent-gate` backstop recovers that parent.",
+    ),
+    'an unseen armed merge is the backstop\'s by design',
+  );
+  assert.ok(
+    collapse(body).includes(
+      'It is also a no-op unless the branch the merge landed on — the integration branch (`_shared/integration-branch.md`) — is the repo\'s default branch',
+    ),
+    'non-default integration branch is a no-op',
+  );
+});
+
+test('AC2.1: issue-claims\' Close-via-merge names the below-floor parent close as an exception', () => {
+  const cvm = section(read('_shared/issue-claims.md'), '## Close-via-merge', '## Dispatch authorization');
+  assert.ok(collapse(cvm).includes('except where a procedure names its own exception'));
+  assert.ok(cvm.includes('**Close the parent below the floor**'));
 });
 
 test('AC2.1: close-out step 7 and merge-mode step 3 run Step 4.0b on `merged`', () => {
   assert.ok(section(read('dispatch/close-out.md'), '7. **On `merged`', '\n## ').includes('Step 4.0b'), 'close-out step 7');
-  assert.ok(section(read('wrap-up/merge-mode.md'), '3. On `merged`:', '\n## ').includes('Step 4.0b'), 'merge-mode step 3');
+  const mergeStep = section(read('wrap-up/merge-mode.md'), '3. On `merged`:', '\n## ');
+  assert.ok(mergeStep.includes('then Step 4.1. Run Step 4.0b of'), 'merge-mode step 3: Step 4.0b directly follows the pinned sentence');
 });
 
 // Each local-merge push site runs Step 4.1 against its pushed merge commit; Step 4.0b runs first.
@@ -217,6 +237,12 @@ test('AC2.1: every local-merge push site runs Step 4.0b before its Step 4.1', ()
     const b = para.indexOf('Step 4.1');
     assert.ok(a !== -1 && b > a, `${rel}: Step 4.0b (${a}) before Step 4.1 (${b})`);
   }
+  // local-merge-auto-finish runs no Step 4.1; its push step runs Step 4.0b alone.
+  const autoFinish = paragraph(
+    read('_shared/local-merge-auto-finish.md'),
+    'After a successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.0b',
+  );
+  assert.ok(collapse(autoFinish).includes('against the pushed merge commit (no PR, so `$MERGING_PR` is empty)'), 'local-merge-auto-finish step 7');
 });
 
 let preChangePostMerge = null;

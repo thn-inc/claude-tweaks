@@ -77,7 +77,7 @@ const BLOCKS = {
   postMerge: ['### Step 4.0', '### Step 4.1'],
   lifecycle: ['`{reason}` may name the record freely', 'anywhere else in the body.\n'],
   keepOpen: ['--keep-open {keep-open} --pr', '--pr'],
-  mergeMode: ['Step 4.0 (', 'Step 4.1. When'],
+  mergeMode: ['Step 4.0 (', ' When `{run-dir}/wrap-up-pack.json`'],
   closeOut: ['First run\n', 'Then reuse'],
 };
 

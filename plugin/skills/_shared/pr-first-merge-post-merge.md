@@ -34,7 +34,16 @@ Development-sidebar link can still close a kept-open record there, a gap tracked
 Applies only under `work-backend: github-issues`. Under `local-files` the pre-merge entries
 already closed the parent in-branch, so this step is a no-op there. It runs once the merge has
 landed: after outcome `merged`, or after a no-PR local merge's successful push at the call sites
-that cite it. A merge that never lands never reaches it, so its parent stays open.
+that cite it. A merge that never lands never reaches it, so its parent stays open. A merge no
+session sees land (an `armed` PR that GitHub merges later) never reaches it either, by design:
+`/claude-tweaks:tidy`'s `parent-gate` backstop recovers that parent.
+
+It is also a no-op unless the branch the merge landed on — the integration branch
+(`_shared/integration-branch.md`) — is the repo's default branch
+(`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`). GitHub closes `Fixes #N`
+records and `closingIssuesReferences` only on the default branch, so a merge into any other branch
+leaves its sub-issues open: counting them `CLOSED` would close the parent early. Left open, they
+keep both this close and the backstop from firing early.
 
 This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
 (`wrap-up/verification-brief-parent-gate.md`'s **Two entry shapes**). Set its two inputs:
@@ -45,7 +54,7 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
   PR merge, read the PR's closing records:
 
   ```bash
-  gh pr view {pr-number} --json closingIssuesReferences --jq '[.closingIssuesReferences[].number]'
+  gh pr view {pr-number} --repo {owner}/{repo} --json closingIssuesReferences --jq '[.closingIssuesReferences[].number]'
   ```
 
   After a no-PR local merge, read the `Fixes #{n}` lines of the pushed merge commit's message,

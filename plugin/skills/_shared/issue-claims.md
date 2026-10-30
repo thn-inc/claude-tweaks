@@ -501,7 +501,10 @@ tombstone) — `bin/release-claim.js` appends its own line; claim-side entries g
 ## Close-via-merge
 
 The agent never runs `gh issue close` (non-reversible network write — see
-`_shared/auto-mode-contract.md`). Issues close through the user's own merge action instead, by
+`_shared/auto-mode-contract.md`), except where a procedure names its own exception — among them the
+Parent-Gate Procedure's **Close the parent below the floor**
+(`wrap-up/verification-brief-parent-gate.md`), which closes a decomposition parent after its
+sub-issues' merge has landed. Issues close through the user's own merge action instead, by
 ensuring the closing keyword already exists in a commit that will reach the default branch:
 
 - **Worktree path (single-spec, the common case):** before handing off to

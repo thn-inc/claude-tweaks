@@ -198,6 +198,9 @@ it literally into the next call; never carry it in a shell variable across calls
    git -C "{worktree-path}" push origin {base-branch}
    ```
 
+   After a successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.0b against the pushed
+   merge commit (no PR, so `$MERGING_PR` is empty), logging to `$RUN_DIR/decisions.md`.
+
    **On push failure** (non-zero exit — a rejected fast-forward, network failure, or permission
    error): the merge already landed locally in the main checkout, but nothing reached `origin` — do
    NOT report `merged`, since the caller's downstream steps (worktree removal, issue-claim release)
