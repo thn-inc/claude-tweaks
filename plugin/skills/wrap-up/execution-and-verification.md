@@ -1,12 +1,14 @@
 # Phase 4 execution — Execute Approved Actions and Verify
 
-Loaded by `/claude-tweaks:wrap-up`'s Phase 4 execution step when at least one approved action exists. Holds the dry-run preview branch, the `MULTISPEC_REVIEW_DEFER` skip list, the full apply list, the closing-keyword carrier commit, and the verification checklist that gates the closure line.
+Loaded by `/claude-tweaks:wrap-up`'s Phase 4 execution step when at least one approved action exists. Holds the dry-run preview branch, the `MULTISPEC_REVIEW_DEFER` skip list, the full apply list, the closing-keyword carrier commit, the `pr-first` Branch finish, and the verification checklist that gates the closure line.
 
 **Dry-run mode.** When `--dry-run` was passed (Phase 1's Flags), skip actual execution entirely — print each planned cleanup / configuration / skill / acceptance-labeling action as a preview line instead of running it, skip the final commit and the closing line, and stop after the phase-trace report. This applies whether the Review Console rendered (which already previewed instead of applied — see `review-console.md`'s "Dry-run mode") or was skipped — and the console has only two skips: `MULTISPEC_REVIEW_DEFER=1`, and the empty-console fast path.
 
 Execute the cleanup planned in Phase 4's cleanup-planning step (canonical list in `cleanup-procedures.md`) plus the configuration / skill updates approved at the Review Console — the console is the sole approval gate, in every mode. The 8 cleanup items, in execution order, are defined in `cleanup-procedures.md`'s canonical list — do not re-enumerate here. Filter rows by Condition.
 
 **MULTISPEC_REVIEW_DEFER branch:** When `$MULTISPEC_REVIEW_DEFER=1` is set, this step SKIPS the state-changing cleanups marked deferred in `cleanup-procedures.md` (items 2 Open items ledger, 3 Design caches, 4 Git worktree, 6 Ephemeral dev server, 7 Issue claim release, 8 Pipeline run dir archival). Those defer to `/flow`'s consolidated multi-spec Review Console at end-of-run, which has authority to apply or override them across all specs in the run. This step still executes the idempotent cleanups (items 1 Execution plans, 5 Record/spec lifecycle) — those do not interact with parent-orchestrated cleanup. The skip list covers those six cleanup items only; nothing else in this step is deferred by it. In particular, the **Acceptance labeling** bullet below still runs for every spec (its Try it block, the oversight-floor gate, `--oversight-exempt`); `_shared/pr-run-comments.md`'s "Multi-spec brief and timing comments (#2970)" section keys each spec's brief to its own marker on the shared PR. **Verify execution** still runs too: its `worktree-removed` and `run-dir-archived` rows read `skip (deferred to parent console)`, because the defer protocol (`review-console-appendix.md`) recorded those items in `verify-expectations.json`'s `deferred` list.
+
+**`integration-model: pr-first` in `worktree` mode — one finish point after the last tree writer (#3813).** The cleanup pass above splits around the run's one branch finish, so every tree-changing wrap-up action reaches the PR head before `gh pr merge`: run items 1, 3 and 5 now (item 2 already ran at `review-console.md`'s "On approval" step 13 and reports `not found` here), then the apply list below, its commit and the phase-exit push, then the Branch finish paragraph below — the merge or leave-open — and only then items 4, 6, 7 and 8, item 8 still last. Under `local-merge`, and in `current-branch` mode, the cleanup pass runs whole, here, before the apply list, as before.
 
 After the cleanup, also apply:
 
@@ -48,6 +50,23 @@ and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. This is 
 push of the run; it does not mark the PR ready for merge or touch its draft state — that
 transition belongs to the merge-path sub-issue, not this one (Non-Goals).
 
+**Branch finish (`worktree` mode, `integration-model: pr-first`, #3813).** The run's one branch
+finish, reached on every path through this step: after the commit and phase-exit push above, so
+the PR head holds every wrap-up change, and before cleanup item 4 removes the worktree. Skip it
+under `MULTISPEC_REVIEW_DEFER=1` — `/claude-tweaks:flow`'s Shared teardown finishes the shared
+branch — and it is never reached after the auto-merge short-circuit, which merges on its own path
+and bypasses this step. Merge only when the `phase-exit.js` call above printed `push.state`
+`pushed`: any other state skips the merge, landing on `pending-review` as leave-open does, with
+one `SKIP` line via `log-decision.js` naming the state and its reason — never merge a remote head
+that lacks this step's commit. Otherwise route on the Review Console's merge half: "Approve all +
+merge", or `console.json`'s `merge.resolution` `merge`, runs `_shared/pr-first-merge.md`'s
+procedure — read as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`,
+then read `$PIPELINE_RUN_DIR/context/merge.md` (source files directly if compose is unavailable).
+"Approve all, leave PR open", Override, and a console the empty-console fast path skipped carry
+no merge decision: they skip the merge, landing on `pending-review`. Then run cleanup items 4, 6,
+7 and 8 in canonical order (`cleanup-procedures-execution.md` Sections C, D, E, B) — item 4's
+Section C step 3 finds the merge already routed.
+
 **Leave-open mergeability re-check (`worktree` mode, `integration-model: pr-first`, #3483).** When
 the Review Console's merge half resolved leave-open — `console.json`'s `merge.resolution` reads
 `leave-open`, or an attended console chose "Approve all, leave PR open" — the merge path
@@ -60,7 +79,7 @@ that check's `pr-merge-state.js --phase wrap-up` read just printed (`phase-exit.
 `mergeState`) — never a second read — unless
 it printed `unknown` (GitHub's mergeability computation, which that request started, not finished
 straight after the push), exited 3 because cleanup item 8 (`cleanup-procedures.md`) had already
-archived `$PIPELINE_RUN_DIR` — item 8 runs before this step's commit and push — or never printed
+archived `$PIPELINE_RUN_DIR` (a resumed wrap-up — item 8 now runs after the Branch finish) — or never printed
 one: `mergeState.exit` is `null` (the sub-CLI threw). Then take one read
 of its own, as the last call of this execution step — after the `phase-exit.js` call, before the
 Verify execution section:
