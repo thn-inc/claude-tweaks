@@ -36,6 +36,38 @@ No such test → flag it: either the vocabulary needs a pinning test (model it o
 examples below), or the "table" isn't actually a closed vocabulary and the prose should say so
 plainly instead of reading like one.
 
+When one vocabulary lives in three or more hand-kept places, list every pair. Pin each pair a real
+failure can travel along, or say why that pair cannot drift. #4484 keeps review staging names in
+three places:
+
+- the release roster (`plugin/skills/release/disposition.md`);
+- the console's `SECTION_MAP`/`CANONICAL_PREFIXES` (`plugin/bin/lib/console/resolve.js`);
+- the composer's `STAGE_PATH_RE` (`plugin/bin/lib/log-decision/review-routing.js`).
+
+The build pinned only roster↔SECTION_MAP. Review then found roster↔composer unpinned, the same drift
+the record itself fixed. The fix (`9a22084c2`) added `unloggableReviewExamples` in
+`tests/release-run-dir-lifecycle-conformance.test.js`.
+
+The roster↔SECTION_MAP edge is neither full set equality nor the containment-only exemption in the
+Anti-Patterns one-direction row below. Full equality is wrong because `SECTION_MAP` is a superset
+router. Containment of one producer is not enough either, because the console can map a `review-*`
+prefix that the roster omits. The pin works in both directions, with each side filtered first:
+
+- Every roster Example on a row a review producer stages goes through the live
+  `classifyStagedItem`, and must not come back `unmapped-prefix`.
+- Every `review-*` entry in `CANONICAL_PREFIXES` must have a roster row
+  (`assertRosterMatchesSectionMap`).
+
+When the code side routes more than one vocabulary, restrict it to the prefix namespace the prose
+owns, and assert equality inside that namespace.
+
+When the extractor expands brace alternatives (`staged/review-{n}.{md,patch}`), the go-red control
+must put the offending alternative second (`{patch,md}`). The roster's own `stagedNamesIn` keeps only
+the first alternative. If a regression made the new expander do the same, an offender in first
+position would still be caught, so the control would pass and prove nothing about the expander.
+#4484 recorded the plan override as SDD ruling ledger row 25. Pin the expander's cross product
+directly as well: `exampleNames('`staged/x-{a,b}.{c,d}`')` must give all four names.
+
 ## Worked examples
 
 The first two instances below are the two records the originating reflect finding named — one
@@ -153,6 +185,44 @@ bullet with `includes`). Step 1's key/case/array-literal grep misses this twin; 
 a property value (`grep -rn "state: 'no-pr'" plugin/bin/`). The fix is the one above: export a
 frozen list from the CLI and `deepEqual` it against the words parsed from the prose.
 
+**Projected-twin instance (#4488):** the code side need not be a row-for-row copy of the table. It
+can be a per-cell projection of it. `plugin/bin/lib/log-decision/review-routing.js`'s
+`ALLOWED_SEVERITIES` maps each route (`auto`, `staged`, `kept-prompt`) to the severities that route
+takes across all three ceiling columns of `plugin/skills/review/step3-routing.md`'s ceiling-keyed
+routing table. No table row equals any map entry, so step 2's "parsed row-for-row" reading finds
+nothing to compare. `tests/bin-lib/log-decision/review-routing.test.js`'s "the composer allows
+exactly the route/severity pairings step3-routing.md's ceiling-keyed table produces" test
+(`b5669aa6f`) builds the projection from the prose instead:
+
+1. It parses the four severity rows.
+2. It takes each cell's first word as the route. The Low row's `STAGED (unless …)` cell reads as
+   `staged`.
+3. It collects `{route → Set(severity)}`.
+4. It `deepEqual`s that, sorted, against the imported map.
+
+It went red under an `auto: ['low','medium','high']` mutant. When the code side is a projection,
+apply the same projection to the prose, and compare at that level.
+
+**Regex-constant and detector-over-composer instance (#4423):** two twin shapes that are neither a
+table nor a vocabulary.
+
+- *A validation regex that agents run from prose.* `plugin/bin/lib/issues/claim-store.js`'s
+  `RUN_ID_SHAPE` is restated verbatim in three skill files, and on the gh-absent MCP path that prose
+  copy is the implementation. Export the constant. Build the copy list by `grep -rlF` on a
+  distinctive fragment, never by memory. Assert every copy `includes(RUN_ID_SHAPE.source)`:
+  `tests/issue-claims-stale-open-pr-conformance.test.js`'s "every prose copy of the run-id shape
+  equals claim-store.js's RUN_ID_SHAPE" test.
+- *A code detector whose input line is produced by a code composer.* `staleClaimInFlightPr` matches
+  a run marker that `plugin/bin/lib/flow/pr-body.js` writes. It shipped pinned only against
+  hand-typed markers, which agree with the detector by construction. Pin the detector to the
+  composer instead: run `composePrEarlyBody`/`composeExpressBody` output through it, each marker
+  form alone, including the body with every HTML comment stripped (what a gh-absent MCP read
+  returns): `tests/bin-lib/claim-targets/claim-targets.test.js`'s "matches the run marker
+  pr-body.js composes, in either form alone" test.
+
+Both pins were proven red by mutation (a reworded prose copy; a reworded composer marker) before
+they landed.
+
 **Candidate instance (a live, currently-unpinned gap this check surfaces today):**
 `plugin/bin/lib/compose-subject.js:69`'s `TYPE_PRECEDENCE = ['feature', 'bug', 'task']` is a
 *third* copy of the same closed vocabulary `TYPES`/`TYPE_PREFIX` above already key off — used to
@@ -216,3 +286,4 @@ dependency's code.
 | Taking step 1's no-twin exit because the code side is a chain of early `return 'reason'` guards, not a key, case or array, and its terms differ from the prose's | A comment claiming parity with a skill's table (`follows tidy's orphan-ledger rule`) marks the twin. `plugin/bin/lib/reconcile/ledger-residue.js`'s `classifyLedgerCandidate` claimed parity with `tidy/scan-procedures.md`'s Orphaned-ledger table and lacked its referencing-record keep until a release review (#4061); its `tidy alignment:` tests never read the prose. Grep `plugin/bin/` for such comments, map each Keep row to its reason string, pin both ways |
 | Searching only `plugin/skills/` for the producers of a line a `plugin/bin/` detector reads | A recovery hint in code is a producer too. #4171 pins `review-console.md`'s two `filed as #{number} (work-fingerprint {fingerprint})` templates against `FILED_LINE_RE` (`plugin/bin/lib/console/finding-outcomes.js`), but `archive-merged.js`'s `CANT_TELL_UNFILED_HINT` and `escalate-residue.js`'s `cant-tell-unfiled` paragraph restate the line unpinned, so a template and regex reworded together leave the unstick instructions stale with every suite green. Grep both trees (`grep -rn 'filed as #' plugin/bin/ plugin/skills/`) and run each hint's filled template through the detector |
 | Leaving a vocabulary unpinned because the prose restates it as a comma-run inside one sentence, not a table or list | A sentence has no rows for a parser to walk, so it reads as plain prose, yet it is the same twin. #4149's build restated `plugin/bin/lib/hooks/git-command.js`'s four heredoc reader vocabularies (`DATA_READER_WORDS`, `READER_WRAPPER_WORDS`, `GIT_DATA_SUBCOMMANDS`, `INERT_NEIGHBOUR_WORDS`, the Sets its reader check decides by) inside one paragraph of `_shared/policy-schema-coverage.md`, and only the review pinned them (`fdaf34850`). `tests/hooks-gate-coverage.test.js`'s `proseList` slices each list between two anchor phrases: the opening phrase must occur exactly once and the closing one must follow it, so a reworded sentence fails loud instead of parsing nothing. It takes the backtick-quoted words in between, requires at least one and no duplicates, and `deepStrictEqual`s them sorted against the exported Set. Pick anchors that leave every non-member backticked token outside the slice: the data-reader slice ends at ` given a data subcommand (`, so the git subcommand list after it is not swept in. Export the Sets the decision reads, never a display copy (the decoy row above) |
+| Finding a detector's producers only by grepping the template's canonical continuation | A shared contract can restate the same event in older words, and a test can pin that copy against its own prose, so it stays green while contradicting the reader. #4563 taught `plugin/bin/lib/console/resolve.js`'s `DEBATE_CONVERGED_RE` to read `review/step3-debate-and-refutation.md`'s converged-positive template, and `grep -rn 'converged positive' plugin/skills/` finds only that producer. `_shared/multi-agent-coordination.md`'s Mode 2 "Decision-log entry format" still documents `AUTO {HH:MM:SS} — /review debate: {path}:{line} confirmed (both agreed)`, a lens-less line the reader can never settle, and `tests/multi-agent-coordination.test.js`'s "matching the documented schema" tests check a hand-typed instance of it with `decisionLogPattern(PRIMITIVE_DOC, …)`, never through the reader. Only the whole-branch review found it. Grep the event's noun too (`grep -rn -i 'debate:' plugin/skills/`), then grep `tests/` for each hit's distinctive phrase: run every copy's filled template through the real detector, or make the copy cite the canonical producer instead of restating the line |

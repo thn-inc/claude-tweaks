@@ -169,14 +169,24 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      a well-formed `https://github.com/{owner}/{repo}/pull/{number}` URL for the SAME owner/repo
      as the issue being claimed (anything else — missing link, wrong repo, malformed value — skip
      this check and proceed to the write below, the identical fail-open posture
-     `tombstoneInFlightPr` uses), read that PR's state via `mcp__github__pull_request_read`
-     (`get` method) — the one documented PR-read exception to `_shared/github-write-transport.md`'s
-     "Pull requests are not covered by this mapping" note, already used the same way by
-     `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A still-`OPEN` state
-     means a build for this issue already exists and reclaiming would race it — stop here, do not
-     write, and report it the same way `flow/claim-targets.md`'s in-flight card does. Any other
-     state (closed, merged) or a failed read falls through to the write below unchanged. Otherwise,
-     write **conditionally** (**with** `sha` = the current file's blob sha from step 1):
+     `tombstoneInFlightPr` uses), read that PR's state via `mcp__github__pull_request_read` (`get`
+     method) — one of two documented PR-read exceptions (the other is the stale listing below) to
+     `_shared/github-write-transport.md`'s "Pull requests are not covered by this mapping" note,
+     already used the same way by `_shared/pr-checklist-refresh.md`'s Phase-checklist update
+     section. A still-`OPEN` state means a build for this issue already exists and reclaiming
+     would race it — stop here, do not write, and report it the same way `flow/claim-targets.md`'s
+     in-flight card does. Any other state (closed, merged) or a failed read falls through to the
+     write below unchanged. For a `'stale'` blob, the counterpart (#4423; gh-CLI twin:
+     `claim-store.js`'s `staleClaimInFlightPr`): validate its `runId` against
+     `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$` (a mismatch skips the check), then list the
+     repo's open PRs once per claim run via `mcp__github__list_pull_requests` (`state: open`,
+     `perPage: 100`, paging until exhausted) and look for a PR whose `html_url` is a same-repo PR
+     URL, whose `head.repo.full_name` is this repo (a fork PR's body proves nothing), and whose
+     body has a trimmed line equal to `claude-tweaks-run: {runId}` or
+     `<!-- claude-tweaks-run: {runId} -->`. A match stops the claim and writes nothing, as the
+     tombstone case does. A failed or unparseable listing falls through to the write (fail open),
+     after one line saying the check failed — never silently, so it is not read as no marked PR.
+     Otherwise, write **conditionally** (**with** `sha` = the current file's blob sha from step 1):
 <!-- when: transport=gh -->
      - **gh CLI:** the same `PUT contents` call as step 3, adding `-f "sha=${CURRENT_SHA}"`. (This
        transport's in-flight check runs inside `bin/claim-targets.js` itself, not this manual
@@ -485,7 +495,10 @@ falls through to the reclaim behavior below unchanged (fail open). `link` is unt
 with registry-branch write access can set it), so `tombstoneInFlightPr` validates it — a well-formed
 `https://github.com/{owner}/{repo}/pull/{number}` URL for the SAME owner/repo as the issue being
 claimed — before ever calling `gh pr view`; anything else (wrong repo, malformed, non-string) is
-treated the same as a missing `link` and never reaches `gh` at all.
+treated the same as a missing `link` and never reaches `gh` at all. A `'stale'` claim whose `runId`
+matches an open same-repo PR's `claude-tweaks-run:` marker is in flight too (#4423,
+`staleClaimInFlightPr`) — same `inFlight` envelope, same fail-open (the gh-CLI path also writes
+one stderr warning on a failed check).
 `bin/lib/claim-targets/claim-targets.js` — the group-claim loop `/claude-tweaks:flow` Step 2.8 and
 `/claude-tweaks:dispatch` actually call — imports this same `tombstoneInFlightPr` from
 `claim-store.js` and reports the stopped target via `inFlight`/`reason: 'in-flight'` instead of
@@ -501,7 +514,11 @@ tombstone) — `bin/release-claim.js` appends its own line; claim-side entries g
 ## Close-via-merge
 
 The agent never runs `gh issue close` (non-reversible network write — see
-`_shared/auto-mode-contract.md`). Issues close through the user's own merge action instead, by
+`_shared/auto-mode-contract.md`), except for the one record-closing exception that contract's
+Never-reversible list names: the Parent-Gate Procedure's **Close the parent below the floor**
+(`wrap-up/verification-brief-parent-gate.md`), which closes a decomposition parent after its
+sub-issues' merge has landed, under the restore contract that `_shared/auto-mode-contract.md`
+exception states. Issues close through the user's own merge action instead, by
 ensuring the closing keyword already exists in a commit that will reach the default branch:
 
 - **Worktree path (single-spec, the common case):** before handing off to

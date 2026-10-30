@@ -202,3 +202,12 @@ test('approvalProvenance ignores the batch marker on a non-approved record', () 
   assert.equal(approvalProvenance(['demo:approved-batch']), null);
   assert.equal(approvalProvenance(['demo:pending', 'demo:approved-batch']), null);
 });
+
+test('AC4.1: needsBackstop excludes a decomposition parent', () => {
+  // A parent closed below the oversight floor (#4466) is closed by the pipeline with its own
+  // closing comment — its acceptance is the parent gate's, never an acceptance-gap row.
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: true }), false);
+  // Controls: the same record without the flag (false or absent) is still a gap.
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: false }), true);
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [] }), true);
+});

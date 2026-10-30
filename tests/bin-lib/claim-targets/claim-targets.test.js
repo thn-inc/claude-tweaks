@@ -25,6 +25,7 @@ const { hasClaimLogFor, classifyDecisions } = require('../../../plugin/bin/lib/l
 // a `gitRunner`, so claim-store.js never consults the field) while silently
 // reintroducing the I1/C1 false-contest / lost-update bug in production.
 const claimStore = require('../../../plugin/bin/lib/issues/claim-store');
+const { composePrEarlyBody, composeExpressBody } = require('../../../plugin/bin/lib/flow/pr-body');
 
 const REPO = 'acme/w';
 const NOW = Date.parse('2026-08-17T00:00:00.000Z');
@@ -37,6 +38,9 @@ function isRead(args, issue) {
 }
 function isWrite(args, issue) {
   return args[0] === '--method' && args[1] === 'PUT' && args[2] === `repos/${REPO}/contents/claims/issue-${issue}.json`;
+}
+function isPrList(args) {
+  return args[0] === 'pr' && args[1] === 'list';
 }
 function fieldOf(args, name) {
   for (let k = 0; k < args.length; k++) {
@@ -57,6 +61,10 @@ function liveMarker(runId, claimedAtIso = new Date(NOW).toISOString(), ttlHours 
   return JSON.stringify({
     runId, sessionId: 's', claimedAt: claimedAtIso, ttlHours, host: 'h',
   });
+}
+// #4423 — a TTL-expired ('stale') claim blob, 100h old against a 72h ttl.
+function staleMarker(runId) {
+  return liveMarker(runId, new Date(NOW - 100 * 3600 * 1000).toISOString());
 }
 function tombstoneMarker(runId) {
   return JSON.stringify({
@@ -114,7 +122,7 @@ function makeGhApi({ reads = {}, writes = {} } = {}) {
 
 // gh: throwing-style generic runner. `fail` names which call classes throw.
 function makeGh({
-  repoSlug = REPO, labelExists = false, fail = {}, prState = null,
+  repoSlug = REPO, labelExists = false, fail = {}, prState = null, openPrs = null,
 } = {}) {
   const calls = [];
   function gh(args) {
@@ -137,6 +145,10 @@ function makeGh({
     if (args[0] === 'pr' && args[1] === 'view') {
       if (fail.prView) throw new Error('pr view failed');
       return `${prState}\n`;
+    }
+    if (args[0] === 'pr' && args[1] === 'list') {
+      if (fail.prList) throw new Error('pr list failed');
+      return JSON.stringify(openPrs || []);
     }
     throw new Error(`unexpected gh ${args.join(' ')}`);
   }
@@ -582,6 +594,258 @@ test('(k6) two targets sharing the identical in-flight link: only one `gh pr vie
   ]);
   const prViewCalls = ghCalls.filter((a) => a[0] === 'pr' && a[1] === 'view');
   assert.equal(prViewCalls.length, 1, 'the second target must reuse the first target\'s cached gh pr view result');
+});
+
+// #4423: a TTL-expired ('stale') claim whose run's draft PR is still open is
+// in flight, not abandoned — `staleClaimInFlightPr` (claim-store.js) looks for
+// the run's `claude-tweaks-run: {runId}` marker on an open same-repo PR, and
+// `run()` stops/skips through the same `inFlight` path a `pr-opened:`
+// tombstone uses.
+const RUN = '2026-10-22T001546-record-3315';
+const PR_URL = 'https://github.com/acme/w/pull/3927';
+const markedPr = { url: PR_URL, body: `## Spec\n<!-- claude-tweaks-run: ${RUN} -->\n`, isCrossRepository: false };
+
+test('(stale-pr) stale claim whose run has an open marked PR, default mode: exit 3, inFlight envelope, no write', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 770: [readOk(staleMarker(RUN), 'sha770')] },
+    writes: {},
+  });
+  const { gh } = makeGh({ openPrs: [markedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 3);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.inFlight, [{ issue: 770, link: PR_URL }]);
+  assert.ok(!calls.some((a) => isWrite(a, '770')), 'must not re-claim a stale claim whose run has an open PR');
+});
+
+test('(stale-pr-2) same fixture with --keep-going: skipped in-flight with the PR link, no write, exit 0', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 771: [readOk(staleMarker(RUN), 'sha771')] },
+    writes: {},
+  });
+  const { gh } = makeGh({ openPrs: [markedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '771', '--keep-going'], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.skipped[0], { issue: 771, reason: 'in-flight', link: PR_URL });
+  assert.ok(!calls.some((a) => isWrite(a, '771')), 'must not re-claim a stale claim whose run has an open PR');
+});
+
+test('(stale-pr-3) open PR carries a different run id, or only an inline mention of this one: reclaims', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 772: [readOk(staleMarker(RUN), 'sha772'), confirmRead()] },
+    writes: { 772: [writeOk] },
+  });
+  const { gh } = makeGh({
+    openPrs: [
+      { url: 'https://github.com/acme/w/pull/3928', body: '<!-- claude-tweaks-run: 2026-10-22T999999-other -->\n' },
+      { url: 'https://github.com/acme/w/pull/3929', body: `see claude-tweaks-run: ${RUN} in #12\n` },
+    ],
+  });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '772'], deps);
+
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [772]);
+  const w = calls.find((a) => isWrite(a, '772'));
+  assert.equal(fieldOf(w, 'sha'), 'sha772', 'an unmatched marker must fall through to the ordinary conditional reclaim write');
+});
+
+test('(stale-pr-4) the gh pr list call itself fails: fails open, reclaims AND writes one stderr line naming the issue and error', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 773: [readOk(staleMarker(RUN), 'sha773'), confirmRead()] },
+    writes: { 773: [writeOk] },
+  });
+  const { gh } = makeGh({ fail: { prList: true }, openPrs: [markedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '773'], deps);
+
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [773], 'a gh failure on the stale in-flight check must never wedge the claim path');
+  const lines = io.err.filter((s) => s.includes('#773'));
+  assert.equal(lines.length, 1, 'exactly one stderr line names the issue');
+  assert.match(lines[0], /^claim-targets: stale-claim open-PR check failed for #773 \(reclaiming\) — pr list failed\n$/);
+});
+
+test('(stale-pr-4c) two stale targets and a failing gh pr list: one call, both reclaim, one stderr line each', () => {
+  const { ghApi } = makeGhApi({
+    reads: {
+      777: [readOk(staleMarker(RUN), 'sha777'), confirmRead()],
+      778: [readOk(staleMarker(RUN), 'sha778'), confirmRead()],
+    },
+    writes: { 777: [writeOk], 778: [writeOk] },
+  });
+  const { gh, calls: ghCalls } = makeGh({ fail: { prList: true } });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '777,778'], deps);
+
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [777, 778]);
+  const prListCalls = ghCalls.filter(isPrList);
+  assert.equal(prListCalls.length, 1, 'a failed gh pr list is cached too, so a hanging gh costs one timeout per run');
+  assert.equal(io.err.filter((s) => s.includes('#777')).length, 1);
+  assert.equal(io.err.filter((s) => s.includes('#778')).length, 1);
+});
+
+test('staleClaimInFlightPr: onError receives the error of a thrown gh, an unparseable listing, and a non-array result', () => {
+  const errors = [];
+  const onError = (e) => errors.push(e);
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => { throw new Error('boom'); }, 'acme', 'w', onError), null);
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => 'not json', 'acme', 'w', onError), null);
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify({}), 'acme', 'w', onError), null);
+  // A JSON string is iterable: without an array check it walks characters and returns a clean null.
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify('[]'), 'acme', 'w', onError), null);
+  assert.equal(errors.length, 4, 'each failure mode reaches onError');
+  assert.equal(errors[0].message, 'boom');
+  assert.equal(errors[3].message, 'open-PR listing is not an array');
+  // A clean no-match, and a non-run-id-shaped runId, are not failures.
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => '[]', 'acme', 'w', onError), null);
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker('otherRun'), () => '[]', 'acme', 'w', onError), null);
+  assert.equal(errors.length, 4, 'a no-match is not reported as a failure');
+});
+
+test('staleClaimInFlightPr: a no-match listing at the 1000-entry limit reaches onError; a match inside it still returns', () => {
+  const filler = Array.from({ length: 1000 }, (_, i) => (
+    { url: `https://github.com/acme/w/pull/${i + 1}`, body: 'unrelated', isCrossRepository: false }));
+  const errors = [];
+  const onError = (e) => errors.push(e);
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify(filler), 'acme', 'w', onError), null);
+  assert.equal(errors.length, 1, 'a capped listing may have cut the marked PR off — not a clean no-match');
+  assert.match(errors[0].message, /1000-entry limit/);
+  const withMatch = [...filler.slice(0, 999), markedPr];
+  assert.deepEqual(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify(withMatch), 'acme', 'w', onError), { link: PR_URL });
+  assert.equal(errors.length, 1);
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify(filler.slice(0, 999)), 'acme', 'w', onError), null);
+  assert.equal(errors.length, 1, 'a no-match listing under the limit is a clean no-match');
+});
+
+test('staleClaimInFlightPr: a throwing onError is swallowed — the check still returns null (fail open)', () => {
+  const throwingOnError = () => { throw new Error('reporter broke'); };
+  assert.equal(
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), () => { throw new Error('boom'); }, 'acme', 'w', throwingOnError),
+    null,
+  );
+});
+
+test('(stale-pr-5) stale blob whose runId is not a run-id shape: reclaims and never lists PRs', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 774: [readOk(staleMarker('otherRun'), 'sha774'), confirmRead()] },
+    writes: { 774: [writeOk] },
+  });
+  const { gh, calls: ghCalls } = makeGh({
+    openPrs: [{ url: PR_URL, body: '<!-- claude-tweaks-run: otherRun -->\n' }],
+  });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '774'], deps);
+
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [774]);
+  assert.ok(!ghCalls.some(isPrList), 'a runId that fails the shape check must never reach gh');
+});
+
+test('(stale-pr-6) two stale targets of the same run: both skipped in-flight, only one gh pr list call', () => {
+  const { ghApi } = makeGhApi({
+    reads: {
+      774: [readOk(staleMarker(RUN), 'sha774')],
+      775: [readOk(staleMarker(RUN), 'sha775')],
+    },
+    writes: {},
+  });
+  const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '774,775', '--keep-going'], deps);
+
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(io.out[0]).skipped, [
+    { issue: 774, reason: 'in-flight', link: PR_URL },
+    { issue: 775, reason: 'in-flight', link: PR_URL },
+  ]);
+  const prListCalls = ghCalls.filter(isPrList);
+  assert.equal(prListCalls.length, 1, 'the second target must reuse the first target\'s cached gh pr list result');
+});
+
+test('(stale-pr-7) stale blob owned by THIS run: alreadyOwned, never consults the open-PR check', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 776: [readOk(staleMarker(RUN), 'sha776')] },
+    writes: {},
+  });
+  const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', RUN, '--targets', '776'], deps);
+
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(io.out[0]).alreadyOwned, [776]);
+  assert.ok(!ghCalls.some(isPrList), 'a self-owned stale claim is never in flight against itself');
+  assert.ok(!calls.some((a) => isWrite(a, '776')));
+});
+
+test('staleClaimInFlightPr: an HTML-comment and a plain marker line both match; a cross-repo url or fork PR never returns', () => {
+  const prListArgs = ['pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000'];
+  const seen = [];
+  const ghWith = (prs) => (args) => { seen.push(args); return JSON.stringify(prs); };
+
+  assert.deepEqual(
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([markedPr]), 'acme', 'w'),
+    { link: PR_URL },
+    'the HTML-comment marker form matches',
+  );
+  assert.deepEqual(seen[0], prListArgs, 'the gh call is exactly the documented open-PR listing');
+  assert.deepEqual(
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([{ url: PR_URL, body: `intro\n  claude-tweaks-run: ${RUN}  \n`, isCrossRepository: false }]), 'acme', 'w'),
+    { link: PR_URL },
+    'the plain marker form, trimmed, matches',
+  );
+  assert.equal(
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify({}), 'acme', 'w'),
+    null,
+    'a non-array pr list result fails open to null',
+  );
+  assert.equal(
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([{ url: 'https://github.com/evil/x/pull/1', body: `claude-tweaks-run: ${RUN}\n` }]), 'acme', 'w'),
+    null,
+    'a cross-repo PR url never returns',
+  );
+  assert.equal(
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([{ ...markedPr, isCrossRepository: true }]), 'acme', 'w'),
+    null,
+    'a fork PR into this repo never returns, whatever its body carries',
+  );
+  assert.equal(
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([{ url: PR_URL, body: markedPr.body }]), 'acme', 'w'),
+    null,
+    'a PR with no isCrossRepository field is not proven same-repo',
+  );
+});
+
+// The matcher is a detector over a line pr-body.js composes, so it is pinned against the composer's own
+// output, not a hand-typed marker: a reworded marker would otherwise switch the stale check off silently.
+test('staleClaimInFlightPr matches the run marker pr-body.js composes, in either form alone', () => {
+  const bodies = {
+    'PR-early': composePrEarlyBody({ runId: RUN, specSummary: 's', target: '#1', nextStep: 'build', fixesLines: [] }),
+    express: composeExpressBody({ runId: RUN, specSummary: 's', fixesLines: [] }),
+  };
+  const match = (body) => claimStore.staleClaimInFlightPr(
+    staleMarker(RUN), () => JSON.stringify([{ url: PR_URL, body, isCrossRepository: false }]), 'acme', 'w');
+  for (const [name, body] of Object.entries(bodies)) {
+    assert.deepEqual(match(body), { link: PR_URL }, `${name} body`);
+    // A gh-absent MCP read strips every HTML comment, leaving the plain companion.
+    assert.deepEqual(match(body.replace(/<!--[\s\S]*?-->/g, '')), { link: PR_URL }, `${name} body, HTML comments stripped`);
+    const withoutPlain = body.split('\n').filter((l) => !l.startsWith('claude-tweaks-run:')).join('\n');
+    assert.notEqual(withoutPlain, body, `${name} body carries the plain marker`);
+    assert.deepEqual(match(withoutPlain), { link: PR_URL }, `${name} body, HTML-comment marker alone`);
+  }
 });
 
 // (c) stale target -> conditional PUT (re-claim)

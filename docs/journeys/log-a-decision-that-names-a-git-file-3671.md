@@ -50,7 +50,8 @@ files:
   - `--text` and `--text-file` were both given (they are mutually exclusive);
   - the file is missing or unreadable (stderr names the path);
   - the file is blank;
-  - the file contains an interior line break.
+  - the file contains an interior line break;
+  - the text begins with the entry's own `--step` value followed by `:` (the CLI writes `{step}: ` itself — #4488).
 
   Nothing is written on exit 2. Exit 3 still means the run dir is missing or not anchored under the main checkout.
 - **Red flags:** The entry differs from what `--text` would write, or an `$(...)` in the content ran. A failed `--text-file` read still appends a partial or empty entry. The two flags are given together and one of them is silently ignored.
@@ -60,3 +61,4 @@ files:
 - Steps 1-4 built in this session; step 1's two call sites were migrated off hand-escaping in the same build
 - Related: #3014 (CONFLICTING-PR adoption abort), #3483 (leave-open mergeability re-check)
 - Updated during build of #3792: the remaining git- and user-text `--text` call sites across `plugin/skills/**` were migrated to `--text-file`. `tests/log-decision-text-file-sites-conformance.test.js` pins each site with a go-red and sweeps the corpus, so step 1's red flag ("the step still shows `--text "... {paths} ..."`") now fails CI rather than relying on a reader to notice it.
+- Updated during build of #4488: step 4's exit-2 list gains the step-prefix refusal (a text that repeats its own `--step` + `:`).

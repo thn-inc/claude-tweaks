@@ -46,8 +46,10 @@ patch is `git apply --check`ed first — stacked on the earlier patches in apply
 no longer applies, never applied blind, per `_shared/staged-patch.md`; an unrecognized staged
 prefix lands in Pending review as `pending — unmapped-prefix`, never auto-approved; an
 `sdd-ruling-*` item whose staged header does not show it safe lands as
-`pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-unclassified`, or
-`pending — sdd-ruling-unreadable` (the `sdd-ruling-*` bullet below); a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
+`pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-needs-human-decision`,
+`pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` (the `sdd-ruling-*` bullet below); a `wrap-up-reference-*` item whose header
+carries a `Held:` line (`reference-sweep.md` Step 4), or whose file cannot be read, lands as
+`pending — reference-repair-held` or `pending — reference-repair-unreadable`, never auto-approved; a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
 before any prefix rule runs and resolves to `refused` — those rows are in the CLI's table like
 every other row, and a `refused` item is never applied, at any tier, per `refused-proposals.md`.
 The CLI also computes the merge half with both carve-outs (`merge.resolution` = `merge` |
@@ -102,8 +104,11 @@ procedure — no row is left unrouted:
   `apply` (ratify) only when its staged header shows it is safe (#3880): `Defers: no` with no
   `Defer-reason:` header line — a settled design decision, resolved exactly as before — or a
   deferral (`Defers: yes`, or any `Defer-reason:` header line) with exactly one `Defer-reason:`
-  header line whose bare value is in `_shared/deferral-gate.md`'s vocabulary. A deferral without a
-  valid reason resolves `pending — sdd-ruling-deferral-no-defer-reason`; a header with no `Defers:`
+  header line whose bare value is in `_shared/deferral-gate.md`'s vocabulary, other than
+  `needs-human-decision`. A deferral without a valid reason resolves
+  `pending — sdd-ruling-deferral-no-defer-reason`; a deferral whose one reason is
+  `needs-human-decision` resolves `pending — sdd-ruling-needs-human-decision`, since its own
+  reason says a human must decide (#4587); a header with no `Defers:`
   line, more than one, or a value other than `yes`/`no` resolves `pending — sdd-ruling-unclassified`,
   since the console cannot tell whether it defers; a staged file that cannot be read at all resolves
   `pending — sdd-ruling-unreadable` (the reconciler's gap names why: `no-staged-path`, `path-rejected`,
@@ -132,7 +137,8 @@ procedure — no row is left unrouted:
   byte-identical to its anchor (`shadow-dup-duplicate`): the anchor is its own item, routed on
   its own, and the copy stays in `staged/` like every other staged file. A Low-confidence or
   Contested staged file a later tiebreak verdict superseded — confirmed (the finding went through
-  Step 3 Routing) or digested (the materiality digest holds it) — also resolves `dismissed`.
+  Step 3 Routing) or digested (the materiality digest holds it) — also resolves `dismissed`, as does
+  one a cross-lens debate confirmed, or an inherited can't-tell partner (`covered by {carrier}`).
 - `keep-staged`, `pending`, and `refused` — execute **nothing**. They stay in `staged/`, are named
   in the closing pointer, and are never applied; `refused` rows have no default at any tier
   (`refused-proposals.md`).

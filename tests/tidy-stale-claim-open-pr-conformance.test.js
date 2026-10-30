@@ -1,0 +1,99 @@
+// tests/tidy-stale-claim-open-pr-conformance.test.js
+// Pins /tidy Step 4.7's stale-claim routing (record #4423): a 'stale' claim blob whose run still has an
+// open PR carrying the run marker is a Yours Resume no-op naming the PR, never a Release.
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const path = require('path');
+
+const { readText } = require('./helpers/read-skill');
+
+const REPO_ROOT = path.join(__dirname, '..');
+
+function read(rel) {
+  return readText(path.join(REPO_ROOT, rel));
+}
+
+function findRow(text, prefix) {
+  return text.split('\n').find((line) => line.startsWith(prefix));
+}
+
+const SCAN_PROCEDURES = read('plugin/skills/tidy/scan-procedures.md');
+const ACTIONS = read('plugin/skills/tidy/actions-github-issues.md');
+const COLLECTION_ROUTING = read('plugin/skills/tidy/collection-routing.md');
+
+function claimAuditSection() {
+  const start = SCAN_PROCEDURES.indexOf('## Step 4.7: Audit Issue Claims');
+  const end = SCAN_PROCEDURES.indexOf('### Backstops: issue-claim audit-trail integrity checks');
+  assert.notEqual(start, -1, 'scan-procedures.md must carry the Step 4.7 heading');
+  assert.notEqual(end, -1, 'scan-procedures.md must carry the Backstops heading');
+  return SCAN_PROCEDURES.slice(start, end);
+}
+
+test('the stale-blob row offers Resume when an open PR carries the run marker (#4423)', () => {
+  const row = findRow(claimAuditSection(), '| Blob classified `\'stale\'`');
+  assert.ok(row, 'the stale-blob row is present');
+  assert.match(row, /open PR/);
+  assert.match(row, /Resume/);
+});
+
+test('the stale-claim paragraph lists open PRs on both transports and matches the run marker (#4423)', () => {
+  const s = claimAuditSection();
+  assert.match(s, /gh pr list --state open --json number,url,body,isCrossRepository/);
+  assert.match(s, /mcp__github__list_pull_requests/);
+  assert.match(s, /claude-tweaks-run: \{runId\}/);
+  const flat = s.replace(/\s+/g, ' '); // prose wraps at ~98 columns
+  assert.ok(
+    flat.includes('trimmed line equal to `claude-tweaks-run: {runId}` or `<!-- claude-tweaks-run: {runId} -->`'),
+    'the marker match is exact-line, as claim-store.js\'s',
+  );
+  assert.match(flat, /`isCrossRepository: false`; MCP: `head\.repo\.full_name` is this repo/);
+  assert.ok(
+    s.includes('^\\d{4}-\\d{2}-\\d{2}T\\d{6}-[a-z0-9][a-z0-9-]*$'),
+    'the run-id shape regex is stated literally',
+  );
+});
+
+test('a matching PR routes as the Yours Unsettled run no-op, never staged and never released (#4423)', () => {
+  const s = claimAuditSection().replace(/\s+/g, ' '); // prose wraps at ~98 columns
+  assert.match(s, /`### Resume` heading/);
+  assert.ok(s.includes('Resume open PR #{number} ({url})'), 'the Resume rendering names the PR');
+  assert.ok(s.includes('Resolve open PR #{number} ({url})'), 'the Resolve fallback names the PR');
+  assert.match(s, /basename equals\s+the matched `runId`/);
+  // Step 4.7's table rows already say "Manual review", so a bare match proves nothing: pin the
+  // failed-listing sentence itself.
+  assert.match(s, /failed listing[^.]*Manual review[^.]*never an unchecked Release/);
+  assert.match(s, /a `gh` listing of 1000 entries with no match[^.]*Manual review/);
+  // The Resume line is rendered as a paste command, so its untrusted tail is held to the composer's exact shape.
+  assert.ok(s.includes('`` `PIPELINE_RUN_DIR="{dir}/{runId}" /claude-tweaks:flow "{target}" {steps}` ``'));
+  assert.match(s, /free of `` ` ``, `\$`, `"`, `\\` and line breaks, `\{steps\}` matching `\[a-z\]\[a-z,-\]\*`, nothing after it/);
+  assert.match(s, /\*\*Unsettled run\*\*/);
+  assert.match(s, /Yours/);
+  assert.match(s, /never staged/);
+  assert.match(s, /never released/i);
+});
+
+test('the Collect line carries the PR number and resume command for a Resume recommendation (#4423)', () => {
+  const s = claimAuditSection();
+  const collect = '→ Collect each as: `[claim] claims/issue-{n}.json — {status} — {recommendation}`';
+  const at = s.indexOf(collect);
+  assert.notEqual(at, -1, 'Step 4.7 keeps its Collect line');
+  assert.match(s.slice(at + collect.length), /^\s*A Resume recommendation[^\n]*PR #\{number\}/);
+});
+
+test('the Release claim executor never receives an open-PR stale row (#4423)', () => {
+  const start = ACTIONS.indexOf('## Release claim');
+  const end = ACTIONS.indexOf('## Sync to GitHub');
+  assert.ok(start !== -1 && end > start, 'actions-github-issues.md carries both headings');
+  const s = ACTIONS.slice(start, end);
+  assert.match(s, /open marked PR/);
+  assert.match(s, /never a Release row/);
+});
+
+test('collection-routing routes a [claim] Resume/Resolve outcome to Yours and supersedes [unsettled] (#4423)', () => {
+  const row = findRow(COLLECTION_ROUTING, '| `[backlog]`, `[parked]`');
+  assert.ok(row, 'the Approve routing row is present');
+  assert.match(row, /`\[claim\]` Resume\/Resolve outcome/);
+  assert.match(row, /lands in \*\*Yours \(\{N\}\)\*\* as an Auto no-op, never staged/);
+  assert.match(row, /supersedes an `\[unsettled\]` row for the same `#\{n\}`/);
+});
