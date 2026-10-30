@@ -64,6 +64,10 @@ test('materiality-floor.md states both overrides', () => {
   assert.ok(FLOOR.toLowerCase().includes('out of this contract') || FLOOR.toLowerCase().includes('/capture'));
 });
 
+test('materiality-floor.md states the severity override: a high or critical finding always clears the floor', () => {
+  assert.ok(FLOOR.includes('A finding carrying severity `high` or `critical` always clears the floor'));
+});
+
 test('materiality-floor.md states the entry format line', () => {
   assert.ok(FLOOR.includes('- [{area}] {one-line finding} — {file refs} — Defer-reason: {value} — {provenance}'));
 });

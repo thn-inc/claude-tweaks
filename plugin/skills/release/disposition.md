@@ -54,7 +54,7 @@ The Recommended column is what the batch table below pre-fills for each row.
 
 | Finding | Recommended disposition |
 |---|---|
-| A `confirmed` file, any severity | Defer per `review/step3-routing.md`'s Defer bullet: compose the body with `specShapedBody`, file it with `recordPayload`, born-ready. Apply that bullet's materiality-floor test (`_shared/materiality-floor.md`) first: a finding that fails the floor is `Digest — below floor`, appended only once the row is approved, after the dedup check. Use `Defer-reason: pre-existing-outside-diff` — a release reviews already-merged history and has no diff of its own — and `provenance.origin: /claude-tweaks:release v{version} release-gate review (run {run-id})`. |
+| A `confirmed` file, any severity | Defer per `review/step3-routing.md`'s Defer bullet: compose the body with `specShapedBody`, file it with `recordPayload`, born-ready. Apply that bullet's materiality-floor test (`_shared/materiality-floor.md`) first — a `high` or `critical` finding clears it by that file's severity override: a finding that fails the floor is `Digest — below floor`, appended only once the row is approved, after the dedup check. Use `Defer-reason: pre-existing-outside-diff` — a release reviews already-merged history and has no diff of its own — and `provenance.origin: /claude-tweaks:release v{version} release-gate review (run {run-id})`. |
 | An `unconfirmed` entry at critical/high | The same Defer |
 | A `contested` file at critical/high in either verdict | The same Defer, both verdicts quoted in the body |
 | An `unconfirmed` entry at medium/low/info | `declined (unconfirmed: one reproduction agent of the pair)` |

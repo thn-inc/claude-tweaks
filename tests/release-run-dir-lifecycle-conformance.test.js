@@ -373,6 +373,7 @@ const DISPOSITION_ROUTING = [
   [/pre-existing-outside-diff/, 'the Defer-reason is pre-existing-outside-diff'],
   [/_shared\/materiality-floor\.md/, 'the materiality floor is cited'],
   [/Digest — below floor/, 'a below-floor finding is Digest — below floor'],
+  [/a `high` or `critical` finding clears it by that file's severity override/, 'a high or critical confirmed finding clears the floor by its severity override'],
   [/unconfirmed[\s\S]{0,80}critical\/high[\s\S]{0,80}Defer/, 'an unconfirmed critical/high finding takes the same Defer'],
   [/declined \(unconfirmed: one reproduction agent of the pair\)/, 'an unconfirmed medium/low/info finding is declined, naming the pair'],
   [/declined \(contested: \{verdicts\}\)/, 'a contested finding is declined, naming the verdicts'],
