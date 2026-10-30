@@ -1,0 +1,6 @@
+{"version":8,"type":"context-options","browserName":"chromium","platform":"linux","wallTime":1761818402000,"monotonicTime":0,"sdkLanguage":"javascript"}
+{"type":"before","callId":"call@5","startTime":120.5,"class":"Frame","method":"click","params":{"selector":"internal:role=button[name=\"Reveal\"i]"}}
+{"type":"frame-snapshot","snapshot":{"callId":"call@5","snapshotName":"after@call@5","pageId":"page@1","frameId":"frame@1","frameUrl":"http://localhost:3000/tokens","html":["HTML",{},["BODY",{},["CODE",{"data-testid":"tok"},"FAKE-QA-TOKEN-0000-not-a-real-secret"],["INPUT",{"aria-label":"API key","value":"FAKE-QA-KEY-9999"}]]],"viewport":{"width":1440,"height":1600},"timestamp":130.2}}
+{"type":"console","time":131,"pageId":"page@1","messageType":"log","text":"token issued: FAKE-QA-TOKEN-0000-not-a-real-secret","args":[],"location":{"url":"","lineNumber":0,"columnNumber":0}}
+{"type":"screencast-frame","pageId":"page@1","sha1":"frame1","width":1440,"height":1600,"timestamp":135.0}
+{"type":"after","callId":"call@5","endTime":140.1,"result":{}}
