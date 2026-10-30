@@ -230,7 +230,7 @@ Registered by #4029; read by `readEfficiencyCeilings` in `bin/lib/policy.js` for
 
 ## Control mode
 
-Inert flat keys (#4609, #4608). `control-mode: on` implies its levers at skill-default precedence: an explicitly set lever wins, and `autonomy` is unchanged. Every other key here is consulted only when it is `on`. `isControlModeOn` in `bin/lib/policy.js` is the one comparison site (exactly `on`). Built-in risk slugs: `migrations`, `auth`, `public-contract`, `irreversible-side-effect`. A list is written on one line as `a,b`: a quoted or bracketed list is rejected and a dash-style block is ignored. `owned-owners` and `trusted-authors` entries are logins, compared case-insensitively by consumers; `risk-categories` entries are slugs. An entry is never empty and holds no bracket, `@`, `/` or inner space (`a, b` is fine). A `#` ends a value even inside quotes, so `deploy-command` stops there, and a quoted string key here (`deploy-command`, `deploy-live-workflow`, `dev-test-account`) whose opening quote is never closed is rejected, as is any quoted string key blank inside its quotes (`release-hook` included); URL keys are written unquoted.
+Inert flat keys (#4609, #4608). `control-mode: on` implies its levers at skill-default precedence: an explicitly set lever wins, and `autonomy` is unchanged. Every other key here is consulted only when it is `on`. `isControlModeOn` in `bin/lib/policy.js` is the one comparison site (exactly `on`). Built-in risk slugs: `migrations`, `auth`, `public-contract`, `irreversible-side-effect`. A list is written on one line as `a,b`: a quoted or bracketed list is rejected and a dash-style block is ignored. `owned-owners` and `trusted-authors` entries are logins, compared case-insensitively by consumers; `risk-categories` entries are slugs. An entry is never empty and holds no `@`, `/`, inner space or bracket other than a trailing `[bot]` (`a, b` is fine). A `#` ends a value even inside quotes, so `deploy-command` stops there; `deploy-command`, `deploy-live-workflow` and `dev-test-account` reject a value left inside an unclosed quote, and every quoted string key rejects a blank one (`release-hook` too). URL keys are written unquoted.
 
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|
@@ -247,7 +247,7 @@ Inert flat keys (#4609, #4608). `control-mode: on` implies its levers at skill-d
 | `owned-owners` | `policy.yml` | none yet (#4608) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]` |
 | `trusted-authors` | `policy.yml` | none yet (#4608) | `[]` | Logins, as `owned-owners` |
 | `risk-categories` | `policy.yml` | none yet (#4608) | `[]` | Extra lowercase slugs |
-| `risk-path-globs` | `policy.yml`, block | none yet (#4608) | `{}` | Slug to glob list, indented; rows are `slug: [a, b]` or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (`{a,b}` needs quotes) |
+| `risk-path-globs` | `policy.yml`, block | none yet (#4608) | `{}` | Slug to glob list, indented: `slug: [a, b,]` (one trailing comma; may span lines) or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (quote `{a,b}`, `k: v`). Not read, and the block is rejected whole: quoted keys, `slug : [a]`, doubled-quote escapes |
 
 ## Additional levers
 

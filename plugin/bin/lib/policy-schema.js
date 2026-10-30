@@ -407,6 +407,26 @@ function parseFlatLines(raw) {
   return result;
 }
 
+// True when `value` ends inside a quote — what a `#` inside quotes leaves
+// behind once parseFlatLines cuts the line there. Shell-style: a quote opens at
+// the start of a word (line start, after whitespace, `=`, `(`, `;`, `|`, `&`),
+// so an apostrophe inside a word (`Bob's`) opens none; `\` escapes the next
+// character except inside single quotes.
+function endsInsideQuote(value) {
+  let quote = null;
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i];
+    if (ch === '\\' && quote !== "'") {
+      i += 1;
+    } else if (quote !== null) {
+      if (ch === quote) quote = null;
+    } else if ((ch === '"' || ch === "'") && (i === 0 || /[\s=(;|&]/.test(value[i - 1]))) {
+      quote = ch;
+    }
+  }
+  return quote !== null;
+}
+
 function isValidValue(schemaEntry, value) {
   switch (schemaEntry.type) {
     case 'boolean':
@@ -437,7 +457,7 @@ function isValidValue(schemaEntry, value) {
         const trimmed = value.trim();
         // closedQuote: true (the #4609 keys only — release-hook's pinned F6/#2253
         // contract keeps an unbalanced quote as an ordinary value).
-        if (schemaEntry.closedQuote === true && (trimmed[0] === '"' || trimmed[0] === "'") && trimmed.indexOf(trimmed[0], 1) === -1) return false;
+        if (schemaEntry.closedQuote === true && endsInsideQuote(trimmed)) return false;
         if (stripMatchedQuotes(trimmed).trim().length === 0) return false;
       }
       return value.trim().length > 0 && (schemaEntry.allowWhitespace === true || !/\s/.test(value))
@@ -698,24 +718,52 @@ function riskExtraSlugs(policyRaw) {
 // A YAML scalar that is not a string when written bare: a boolean, null, or a number.
 const YAML_NON_STRING = /^(?:true|false|null|~|[-+]?(?:\d[\d_]*(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?|0x[0-9a-f]+|0o[0-7]+|[-+]?\.(?:inf|nan))$/i;
 
-// One glob element -> its string, or null when it is not an acceptable glob:
-// empty, a nested list or a mapping, a non-string scalar (unless quoted), or
-// braces that do not balance.
-function acceptGlob(text, quoted) {
-  if (text === '') return null;
-  if (!quoted && (YAML_NON_STRING.test(text) || text.startsWith('[') || text.startsWith('{'))) return null;
+// True when every `close` in `text` follows a matching `open` and none is left open.
+function isBalanced(text, open, close) {
   let depth = 0;
   for (const ch of text) {
-    if (ch === '{') depth += 1;
-    else if (ch === '}') depth -= 1;
-    if (depth < 0) return null;
+    if (ch === open) depth += 1;
+    else if (ch === close) depth -= 1;
+    if (depth < 0) return false;
   }
-  return depth === 0 ? text : null;
+  return depth === 0;
+}
+
+// One glob element -> its string, or null when it is not an acceptable glob:
+// empty, a nested list, a mapping (`k: v`, bare), a non-string scalar (unless
+// quoted), or braces that do not balance; a bare element's `[`/`]` must balance
+// too (`src/[ab]/**` is a glob, `a]` is a typo).
+function acceptGlob(text, quoted) {
+  if (text === '') return null;
+  if (!quoted && (YAML_NON_STRING.test(text) || text.startsWith('[') || text.startsWith('{') || /:(\s|$)/.test(text))) return null;
+  if (!quoted && !isBalanced(text, '[', ']')) return null;
+  return isBalanced(text, '{', '}') ? text : null;
+}
+
+// One line with a trailing `# comment` cut. A quote opens only at the start of
+// a token (line start, after whitespace, `[` or `,`), so an apostrophe inside
+// a word opens none; a `#` inside a quote is text, and a bare `#` starts a
+// comment only after whitespace.
+function stripComment(line) {
+  let quote = null;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if ((ch === '"' || ch === "'") && (i === 0 || /[\s[,]/.test(line[i - 1]))) {
+      quote = ch;
+    } else if (ch === '#' && (i === 0 || /\s/.test(line[i - 1]))) {
+      return line.slice(0, i).trimEnd();
+    }
+  }
+  return line.trimEnd();
 }
 
 // The inside of an inline `[…]` list -> [{ text, quoted }], or null when a
 // quote never closes or has text after it. A quoted element may hold a comma;
 // a bare one is cut at every comma, so a brace group like {a,b} must be quoted.
+// One trailing comma is tolerated (`[a, b,]`); a doubled one leaves an empty
+// element, which acceptGlob rejects.
 function splitInlineList(inner) {
   if (inner.trim() === '') return [];
   const items = [];
@@ -736,7 +784,9 @@ function splitInlineList(inner) {
       i = end;
     }
     if (i >= inner.length) return items;
-    i += 1; // past the comma — a trailing one leaves an empty last element, rejected by acceptGlob
+    i += 1; // past the comma
+    while (i < inner.length && /\s/.test(inner[i])) i += 1;
+    if (i >= inner.length) return items; // the one trailing comma
   }
 }
 
@@ -759,7 +809,12 @@ function parseRiskPathGlobs(policyRaw, extraSlugs = []) {
   if (start === -1) return { present: false };
   let end = start + 1;
   while (end < lines.length && (lines[end] === '' || /^\s/.test(lines[end]) || lines[end].startsWith('#'))) end += 1;
-  const fail = () => ({ present: true, ok: false, raw: lines.slice(start, end).join('\n').trimEnd() });
+  // A column-0 `- x` straight under the key is a root-level sequence, not a map
+  // (and a second column-0 block is ambiguous): reject both rather than resolve {}.
+  const dashUnderKey = end < lines.length && /^-(\s|$)/.test(lines[end]) && lines.slice(start + 1, end).every((l) => stripComment(l) === '');
+  const secondBlock = lines.some((line, i) => i > start && line.startsWith('risk-path-globs:'));
+  const fail = () => ({ present: true, ok: false, raw: lines.slice(start, dashUnderKey ? end + 1 : end).join('\n').trimEnd() });
+  if (dashUnderKey || secondBlock) return fail();
 
   // Nothing but a comment may follow the colon: an inline value is not a block.
   if (lines[start].slice('risk-path-globs:'.length).replace(/(^|\s)#.*$/, '').trim() !== '') return fail();
@@ -767,10 +822,10 @@ function parseRiskPathGlobs(policyRaw, extraSlugs = []) {
   const allowed = new Set([...BUILTIN_RISK_CATEGORIES, ...extraSlugs]);
   const value = {};
   let rowIndent = null; // every row shares the first row's indent
-  let open = null; // the row whose value is empty, collecting `- item` lines
+  let open = null; // the row whose value is empty, collecting `- item` lines at one indent
   for (let i = start + 1; i < end; i += 1) {
-    const line = lines[i].replace(/\s+#.*$/, '').trimEnd();
-    if (line.trim() === '' || /^\s*#/.test(line)) continue;
+    const line = stripComment(lines[i]);
+    if (line === '') continue;
     const row = /^(\s+)([A-Za-z0-9_-]+):(?:\s+(.*))?$/.exec(line);
     const item = /^(\s+)-(?:\s+(.*))?$/.exec(line);
     if (row) {
@@ -780,10 +835,16 @@ function parseRiskPathGlobs(policyRaw, extraSlugs = []) {
       if (row[1].length !== rowIndent || !allowed.has(slug) || Object.prototype.hasOwnProperty.call(value, slug)) return fail();
       value[slug] = [];
       open = null;
-      const rest = (row[3] || '').trim();
+      let rest = (row[3] || '').trim();
       if (rest === '') {
-        open = { list: value[slug] };
-      } else if (rest.startsWith('[') && rest.endsWith(']')) {
+        open = { list: value[slug], indent: null };
+      } else if (rest.startsWith('[')) {
+        // A flow list may continue over following lines until its closing `]`.
+        while (!rest.endsWith(']')) {
+          i += 1;
+          if (i >= end) return fail();
+          rest += ` ${stripComment(lines[i]).trim()}`;
+        }
         const elements = splitInlineList(rest.slice(1, -1));
         if (elements === null) return fail();
         for (const { text, quoted } of elements) {
@@ -795,10 +856,13 @@ function parseRiskPathGlobs(policyRaw, extraSlugs = []) {
         return fail();
       }
     } else if (item && open && item[1].length >= rowIndent) {
+      if (open.indent === null) open.indent = item[1].length;
+      else if (item[1].length !== open.indent) return fail(); // uneven sequence indent
       const text = (item[2] || '').trim();
       const unquoted = stripMatchedQuotes(text);
       const quoted = unquoted !== text;
       if (!quoted && (text.startsWith('"') || text.startsWith("'"))) return fail(); // an unterminated quote
+      if (quoted && unquoted.includes(text[0])) return fail(); // `"a" "b"`: no escapes are read
       const glob = acceptGlob(unquoted, quoted);
       if (glob === null) return fail();
       open.list.push(glob);
