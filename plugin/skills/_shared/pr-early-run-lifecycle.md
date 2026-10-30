@@ -85,7 +85,7 @@ No recorded `pr` field: check GitHub directly before creating anything, so a res
 run against the same branch never duplicates:
 
 ```bash
-gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json number,url,state,isDraft
+gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json number,url,state,isDraft,body
 ```
 
 - **A match with `state: OPEN`** (draft or not): reuse it. Record via `record-pr` (below) and
@@ -95,6 +95,20 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   from "Step 1 never ran").** Log to `decisions.md`:
 
   `AUTO {time} — PR-early run lifecycle: reusing open PR #{number} for {branch}. Reversibility: high.`
+
+  **Rebind a reused body (#4580).** When the reused PR's body names a run other than this one (the
+  run adopted a prior attempt's branch, or resumed against a PR an earlier run opened), so that
+  `bin/pr-checklist.js` would refuse it with exit 4, rebind it before Step 2's push, as **Rebind a
+  retry's body (#3887)** below does: compose this run's body per Step 3 and write it with
+  `gh pr edit {number} --repo {host}/{owner}/{repo} --body-file "$PR_EARLY_BODY"` (with `gh` absent,
+  `mcp__github__update_pull_request`, per the same `_shared/github-write-transport.md` section that
+  paragraph cites). Log
+  `AUTO {time} — PR-early run lifecycle: rebound reused PR #{number} to run {run-id}. Reversibility: high.`
+  A failed rebind is a degrade, never a stop: keep the PR, record it via `record-pr`, and log
+  `SKIP {time} — PR-early run lifecycle: rebind of reused PR #{number} failed ({error}); phase-checklist
+  updates will exit 4 until its body names run {run-id}. Reversibility: n/a.` A body that already names
+  this run, or that carries no run marker at all (pr-checklist's own repair adds this run's), is left
+  untouched.
 - **A match with `state: CLOSED`**: this is a retry — by construction, nothing else in this
   design closes a run's PR except `_shared/pr-run-comments.md`'s failure tombstone (a prior
   attempt's HARD-GATE failure). Reopen it rather than starting fresh, so the new attempt's
@@ -444,10 +458,10 @@ before trusting the recorded value — the PR could have been closed or the bran
 out from under it since:
 
 ```bash
-gh pr view {recorded-number} --repo {host}/{owner}/{repo} --json state,isDraft,url
+gh pr view {recorded-number} --repo {host}/{owner}/{repo} --json state,isDraft,url,body
 ```
 
-- **Still open**: nothing to do — proceed to whichever phase this resume targets.
+- **Still open**: when its body names another run, rebind it per Step 1's **Rebind a reused body (#4580)**; then proceed to whichever phase this resume targets.
 - **Closed or gone** (404): the recorded PR is stale. Fall through to Step 1's `gh pr list --head`
   check above — reuse a different open PR for the branch if one exists, otherwise create a fresh
   one (Step 3) and re-`record-pr` (Step 4) to overwrite the stale value. Log:
