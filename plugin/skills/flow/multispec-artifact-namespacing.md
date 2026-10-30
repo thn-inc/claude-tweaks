@@ -70,11 +70,12 @@ one is enough to call the commit an extension rather than an overwrite:
    heading shifts while its text stays put (#4590). A deleted body line, or a renumbered heading
    whose text also changed, fails this test.
 5. **Reference-preserving `Origin:` line.** Every non-blank deleted line is an `Origin:` line citing
-   at least one `#{N}` (blank deleted lines are ignored), and the hunk re-adds each as an `Origin:` line that still cites every `#{N}` the deleted one did — a later
-   spec recording its own build in a journey's closing `Origin:` line while keeping the earlier
-   spec's reference (#4590). An `Origin:` rewrite that drops a reference fails this test. This test
-   covers inline `Origin:` lines (plain, `_italic_` or `**bold**`); the template's bulleted
-   `## Origin` section falls under test 2's list reflow, which does not check references.
+   at least one `#{N}` (blank deleted lines are ignored), and the hunk re-adds each as an `Origin:`
+   line that still cites every `#{N}` the deleted one did — a later spec recording its own build in
+   a journey's closing `Origin:` line while keeping the earlier spec's reference (#4590). An
+   `Origin:` rewrite that drops a reference fails this test. This test covers inline `Origin:`
+   lines (plain, `_italic_` or `**bold**`); the template's bulleted `## Origin` section falls under
+   test 2's list reflow, which does not check references.
 
 Only a commit that deletes lines failing *all five* tests — non-list content it did not itself
 add, a list it shrinks rather than reflows, a step-markup change that also alters step text, a

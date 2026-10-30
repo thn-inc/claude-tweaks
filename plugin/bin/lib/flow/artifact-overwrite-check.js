@@ -240,22 +240,30 @@ function parseNumberedStepHeading(line) {
 // matching (augmenting paths), not a first-fit pass: headings sharing text can
 // pair in more than one way, and only some pairings cover every deletion.
 function isStepRenumber(hunk) {
-  const deleted = hunk.deletedLines.filter((d) => d.content.trim().length > 0).map((d) => parseNumberedStepHeading(d.content));
-  if (deleted.length === 0 || deleted.some((g) => !g)) return false;
+  const deleted = hunk.deletedLines
+    .filter((d) => d.content.trim().length > 0)
+    .map((d) => parseNumberedStepHeading(d.content));
+  if (deleted.length === 0 || deleted.some((heading) => !heading)) return false;
   const added = hunk.addedLines.map(parseNumberedStepHeading).filter(Boolean);
   const matchedTo = new Array(added.length).fill(-1); // added index -> deleted index
-  const tryMatch = (di, seen) => {
-    for (let ai = 0; ai < added.length; ai += 1) {
-      if (seen.has(ai) || added[ai].number === deleted[di].number || added[ai].text !== deleted[di].text) continue;
-      seen.add(ai);
-      if (matchedTo[ai] === -1 || tryMatch(matchedTo[ai], seen)) {
-        matchedTo[ai] = di;
+
+  function isRenumberOf(addedHeading, deletedHeading) {
+    return addedHeading.number !== deletedHeading.number && addedHeading.text === deletedHeading.text;
+  }
+
+  function tryMatch(deletedIndex, seen) {
+    for (let addedIndex = 0; addedIndex < added.length; addedIndex += 1) {
+      if (seen.has(addedIndex) || !isRenumberOf(added[addedIndex], deleted[deletedIndex])) continue;
+      seen.add(addedIndex);
+      if (matchedTo[addedIndex] === -1 || tryMatch(matchedTo[addedIndex], seen)) {
+        matchedTo[addedIndex] = deletedIndex;
         return true;
       }
     }
     return false;
-  };
-  return deleted.every((_, di) => tryMatch(di, new Set()));
+  }
+
+  return deleted.every((_, deletedIndex) => tryMatch(deletedIndex, new Set()));
 }
 
 // A plain `Origin:` line, or one wrapped in emphasis: the italic `_Origin: ..._`
