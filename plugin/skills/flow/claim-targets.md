@@ -244,10 +244,10 @@ stays best-effort and the claim read stays the authoritative hold check:
 - **3 (in-flight variant, #315)** — stdout instead carries `{inFlight: [{issue, link}], released,
   releaseFailed}` when the stopped target's blob was a `pr-opened:` tombstone whose linked PR
   `gh pr view` still reports `OPEN` (`_shared/issue-claims.md`'s in-flight detection, moved from
-  `claim-engine.js` into `claim-store.js`'s `tombstoneInFlightPr` — see #787), or a `'stale'` claim
-  whose run's marker sits on an open PR (#4423, `claim-store.js`'s `staleClaimInFlightPr`) — a
-  build for this issue already exists, not a competing claim. There is no `holder` to report; skip the
-  liveness-evidence steps below and render instead:
+  `claim-engine.js` into `claim-store.js`'s `tombstoneInFlightPr` — see #787), or a `'stale'`
+  claim whose run's marker sits on an open PR (#4423, `claim-store.js`'s `staleClaimInFlightPr`)
+  — a build for this issue already exists, not a competing claim. There is no `holder` to
+  report; skip the liveness-evidence steps below and render instead:
 
   ```markdown
   ## Flow: Claim in-flight
