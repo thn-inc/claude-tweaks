@@ -75,6 +75,7 @@ test('classifyStagedItem maps every known prefix to its console section and unkn
     'wrap-up-skill-1.md': 'Skill updates', 'wrap-up-skill-new-auth.md': 'Skill updates', 'wrap-up-skill-restructure.md': 'Skill updates',
     'wrap-up-doc-1.md': 'Documentation updates', 'tidy-doc-1.md': 'Documentation updates',
     'wrap-up-claude-md-1.md': 'Configuration updates', 'wrap-up-adr-1.md': 'Configuration updates',
+    'wrap-up-reference-1.md': 'Reference repairs',
     'wrap-up-journey-1.md': 'Journey updates', 'journeys-convention.md': 'Journey updates',
     'tidy-claude-md-rule-1.md': 'Queue writes',
     'reflect-1.md': 'Queue writes', 'digest-promotion-1.md': 'Queue writes', 'leftover-add-oauth.md': 'Queue writes', 'ledger-record-1.md': 'Queue writes', 'ledger-record-sdd-ruling-1.md': 'Queue writes',
@@ -245,7 +246,7 @@ test('every registry row whose own judge file documents a literal staged/{prefix
   // Pin the exact set of rows this scan is expected to find a literal convention in today —
   // a loose `checked >= 3` floor would still pass if a row's naming line regressed out of the
   // scan (exactly the kind of drift #2773 fixed), as long as 3 others still matched.
-  assert.deepStrictEqual(checkedIds.sort(), ['claude-md', 'decision-records', 'journeys', 'memory', 'skills', 'upstream'], 'the set of registry rows documenting a literal staged/{prefix}-{n} convention changed — update this list deliberately, don\'t let it silently narrow');
+  assert.deepStrictEqual(checkedIds.sort(), ['claude-md', 'decision-records', 'journeys', 'memory', 'references', 'skills', 'upstream'], 'the set of registry rows documenting a literal staged/{prefix}-{n} convention changed — update this list deliberately, don\'t let it silently narrow');
 });
 
 test('a staged item named on a REFUSED line in decisions.md resolves to refused, never its section stance (#1932 I2)', () => {
@@ -343,6 +344,43 @@ test('every ENGINE_ROW_SECTIONS row classifies a staged finding into its own con
     assert.strictEqual(item.resolution, SECTION_STANCES[section].resolution, rowId);
   }
   assert.strictEqual(r.items.length, Object.keys(rows).length);
+});
+
+test('AC1.1: a staged wrap-up-reference- repair the engine names resolves once, in Reference repairs, with approve (#4585)', () => {
+  const engineState = { results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath: 'staged/wrap-up-reference-1.md' }] } } };
+  const r = resolveAll({ runDir: fixture({ engineState, staged: { 'wrap-up-reference-1.md': 'repair' }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  assert.strictEqual(r.items.length, 1, 'the engine finding and its staged file are one item');
+  assert.strictEqual(r.items[0].id, 'wrap-up-reference-1.md');
+  assert.strictEqual(r.items[0].section, 'Reference repairs');
+  assert.strictEqual(r.items[0].resolution, 'approve');
+});
+
+test('a staged reference repair whose header carries Held: waits for a human, whatever the header value (#4585)', () => {
+  const held = ['Held: test file\nTarget: tests/a.test.js\n\nbody', 'Target: tests/a.test.js\nheld: ambiguous\n\nbody', 'Held:\n\nbody'];
+  for (const text of held) {
+    const r = resolveAll({ runDir: fixture({ staged: { 'wrap-up-reference-1.md': text }, headers: [7] }), policy: 'console-auto', deps: deps() });
+    assert.strictEqual(r.items[0].section, 'Reference repairs', text);
+    assert.strictEqual(r.items[0].resolution, 'pending', text);
+    assert.strictEqual(r.items[0].reason, 'reference-repair-held', text);
+  }
+});
+
+test('a Held: line past the staged reference repair header does not hold it (#4585)', () => {
+  const r = resolveAll({ runDir: fixture({ staged: { 'wrap-up-reference-1.md': 'Target: docs/a.md\n\nHeld: quoted from the repaired file' }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  assert.strictEqual(r.items[0].resolution, 'approve');
+});
+
+test('an unreadable staged reference repair waits for a human (#4585)', () => {
+  const runDir = fixture({ staged: { 'wrap-up-reference-1.md': 'Target: docs/a.md\n\nbody' }, headers: [7] });
+  const failing = deps({
+    readFile: (p) => {
+      if (path.basename(p) === 'wrap-up-reference-1.md') { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }
+      return fs.readFileSync(p, 'utf8');
+    },
+  });
+  const item = resolveAll({ runDir, policy: 'console-auto', deps: failing }).items.find((i) => i.id === 'wrap-up-reference-1.md');
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'reference-repair-unreadable');
 });
 
 test('renderTable escapes a pipe in the item id, not only in the reason (#1932 M6)', () => {
