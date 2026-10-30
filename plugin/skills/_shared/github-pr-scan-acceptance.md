@@ -377,7 +377,7 @@ this sweep lives in `tidy/step-1-records.md` (Shape 7), reading the record store
 
 Record set: open records carrying `parent-issue` (`/claude-tweaks:specify` labels every
 decomposition parent this way — see `specify/record-creation.md`'s Parent record section),
-plus every issue's current state, fetched once.
+plus the state map, fetched once (every issue under `body-text`, every native sub-issue under `native`).
 
 ### `work-links` resolution
 
@@ -457,9 +457,10 @@ node -e "
 "
 ```
 
-Substitute `{state-map-search}`: `has:parent-issue` under `native` (exactly the native sub-issue
-population), the empty string under `body-text` (task-list children are not native links, and an
-empty `--search` keeps `gh issue list` off the search API, so no 1000 ceiling applies).
+Substitute `{state-map-search}`: `has:parent-issue` under `native` (the native sub-issue
+population; a just-linked one the search index lags on defaults to `OPEN`), the empty string under
+`body-text` (task-list children are not native links, and an empty `--search` keeps `gh issue list`
+off the search API, so no 1000 ceiling applies).
 
 When the state-map-search guard throws, the scope stops: report no `[parent-gate]` rows at all
 and quote the error verbatim. Never read `$PARENTS` or `$ALL_STATES` afterwards — a 0-row state

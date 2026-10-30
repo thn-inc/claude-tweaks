@@ -171,7 +171,7 @@ test('since-date is validated', () => {
 });
 
 test('since-date guard failure stops the scope', () => {
-  const stops = /since-date[^\n]*throws[\s\S]{0,300}report no `\[acceptance-gap\]` rows at all/;
+  const stops = /since-date[^\n]*throws[\s\S]{0,300}report\s+no\s+`\[acceptance-gap\]`\s+rows\s+at\s+all/;
   const sentence = 'When the since-date guard throws, the scope stops: ';
   const outcome = 'report no `[acceptance-gap]` rows at all and quote the error verbatim.';
   // The control carries the anchor and the outcome sentence, with the sentence pushed past 300 chars.
@@ -272,6 +272,33 @@ test('state-map warning honours the search ceiling', () => {
   assert.ok(!PG.includes('states.length === LIMIT'), 'the exact-equality state-map test must be gone');
 });
 
+// The three things the state-map warning must name: the cap value, the default-to-OPEN consequence,
+// and that raising backlog-fetch-limit past 1000 does not help a searched map.
+const warningParts = (line) => ({
+  cap: /reaching\s+the\s+state-map\s+cap\s+of\s+'\s*\+\s*STATE_CAP/.test(line),
+  open: /defaults\s+to\s+OPEN/.test(line),
+  ceiling: /raising\s+it\s+past\s+1000\s+does\s+not\s+help\s+a\s+searched\s+map/.test(line),
+});
+
+// The state-map warning's `console.error(…)` line, found by its distinguishing phrase.
+function stateMapWarningLine(text) {
+  const line = text.split('\n').find((l) => l.includes('console.error') && l.includes('issue states'));
+  assert.ok(line, 'the state-map warning line must be present');
+  return line;
+}
+
+// The warning as it read before #4469: it named the default-to-OPEN consequence and nothing else of the three.
+const PRE_CHANGE_STATE_WARNING = "    console.error('WARNING: fetched exactly ' + states.length + ' issue states (the configured backlog-fetch-limit) — every sub-issue beyond this cap defaults to OPEN, so any parent containing one reads incomplete and this backstop silently never fires for it. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete.');";
+
+test('state-map warning names the cap, the default-to-OPEN consequence and the ceiling', () => {
+  assert.deepEqual(warningParts(stateMapWarningLine(PG)), { cap: true, open: true, ceiling: true });
+  // Controls: the pre-change warning names only the consequence; a stripped message names none of them.
+  assert.deepEqual(warningParts(stateMapWarningLine(PRE_CHANGE_STATE_WARNING)), { cap: false, open: true, ceiling: false });
+  assert.deepEqual(warningParts("console.error('WARNING: fetched ' + states.length + ' issue states');"), { cap: false, open: false, ceiling: false });
+  // Whitespace tolerance: a rewrapped phrase still counts.
+  assert.equal(warningParts('raising it past 1000\n  does not help a searched map').ceiling, true);
+});
+
 test('state-map search is validated', () => {
   assertClaimPinned(
     PG,
@@ -282,7 +309,7 @@ test('state-map search is validated', () => {
 });
 
 test('state-map guard failure stops the scope', () => {
-  const stops = /state-map-search[^\n]*throws[\s\S]{0,300}report no `\[parent-gate\]` rows at all/;
+  const stops = /state-map-search[^\n]*throws[\s\S]{0,300}report\s+no\s+`\[parent-gate\]`\s+rows\s+at\s+all/;
   const sentence = 'When the state-map-search guard throws, the scope stops: ';
   const outcome = 'report no `[parent-gate]` rows at all and quote the error verbatim.';
   // The control carries the anchor and the outcome sentence, with the sentence pushed past 300 chars.
