@@ -1059,6 +1059,34 @@ test('a converged-positive debate logged before the STAGED line does not superse
   assert.deepStrictEqual(findings(d).map((i) => i.resolution), ['keep-staged']);
 });
 
+// ---- #4582: the finding-key path class covers @ [ ] ( ) $ + ~ % ----
+test('a confirmed verdict for a scoped-package path supersedes its STAGED line (#4582 AC1)', () => {
+  const f = tbFinding({ path: 'packages/@scope/x.ts', line: 4 });
+  assert.deepStrictEqual(findings([stagedLow('3a', 'packages/@scope/x.ts:4'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n')), []);
+});
+test('a converged-positive debate naming a bracketed route path settles that finding (#4582 AC2)', () => {
+  const debate = '- AUTO 10:00:00 — Debate: cross-lens disagreement on app/[id]/page.tsx:9 converged positive after 1 round (lens "3a" finding app/[id]/page.tsx:9 — confirmed). Reversibility: high.';
+  assert.deepStrictEqual(findings([stagedLow('3a', 'app/[id]/page.tsx:9'), debate].join('\n')), []);
+});
+test('a verdict for one dynamic-route or scoped path never settles a sibling at the same lens and line (#4582)', () => {
+  const settle = (staged, other) => findings([stagedLow('3a', staged.path + ':' + staged.line), tbVerdict(tbFinding(other), { verdict: 'confirmed' }).entry].join('\n')).map((i) => i.resolution);
+  assert.deepStrictEqual(settle({ path: 'app/[id]/page.tsx', line: 9 }, { path: 'blog/[id]/page.tsx', line: 9 }), ['keep-staged']);
+  assert.deepStrictEqual(settle({ path: 'packages/@a/x.ts', line: 4 }, { path: 'packages/@b/x.ts', line: 4 }), ['keep-staged']);
+  // Control: the same path does settle.
+  assert.deepStrictEqual(settle({ path: 'app/[id]/page.tsx', line: 9 }, { path: 'app/[id]/page.tsx', line: 9 }), []);
+});
+test('a citation wrapped in brackets or parentheses keys the bare path (#4582)', () => {
+  const f = tbFinding({ path: 'src/a.ts', line: 4 });
+  const verdict = tbVerdict(f, { verdict: 'confirmed' }).entry;
+  assert.deepStrictEqual(findings([stagedLow('3a', '[src/a.ts:4]'), verdict].join('\n')), []);
+  assert.deepStrictEqual(findings([stagedLow('3a', '(src/a.ts:4)'), verdict].join('\n')), []);
+});
+test('a tiebreak verdict line for a $-path round-trips through parseTiebreakLine (#4582)', () => {
+  const f = tbFinding({ path: 'routes/$id.tsx', line: 7 });
+  const parsed = parseTiebreakLine(tbVerdict(f, { verdict: 'confirmed' }).entry);
+  assert.deepStrictEqual([parsed.kind, parsed.path, parsed.key], ['confirmed', 'routes/$id.tsx', '3a|routes/$id.tsx:7']);
+});
+
 // ---- #4563: a settled contested file settles its partner finding ----
 const positions = (a, b) => `# Review — contested finding\n\n## Positions\n\n- **Finding A (lens ${a.lens}, low)** — ${a.path}:${a.line}: claim A\n- **Finding B (lens ${b.lens}, medium)** — ${b.path}:${b.line}: claim B\n\n## Judge 1 (partial)\n\nx\n`;
 const partner = { lens: '3f', path: 'src/a.js', line: 7 };
