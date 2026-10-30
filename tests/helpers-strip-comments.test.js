@@ -322,12 +322,34 @@ test('AC3.1: stripperVerdict is ok for every plugin/bin file', () => {
   assert.deepEqual(bad, []);
 });
 
-test('AC4.1: the helper requires only node: built-ins', () => {
-  const text = readText(path.join(__dirname, 'helpers', 'strip-comments.js'));
+test('AC4.1: the implementation requires only node: built-ins', () => {
+  const text = readText(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'strip-comments.js'));
   const required = [...text.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
   assert.ok(required.length > 0);
   assert.deepEqual(
     required.filter((r) => !r.startsWith('node:')),
     [],
   );
+});
+
+test('#3903 review: template nesting past the depth cap never overflows the stack; nesting under it still blanks a comment inside the innermost substitution', () => {
+  const nested = (n, inner) => '`${'.repeat(n) + inner + '}`'.repeat(n);
+  const pathological = '`${'.repeat(5000);
+  let out;
+  assert.doesNotThrow(() => {
+    out = stripComments(pathological);
+  });
+  assert.equal(out.length, pathological.length);
+  assert.ok(!stripComments(nested(50, '1 /* zzz */')).includes('zzz'));
+});
+
+test('#3903 AC2.1: the test helper re-exports the plugin/bin/lib implementation — one implementation', () => {
+  const lib = require('../plugin/bin/lib/strip-comments');
+  const helper = require('./helpers/strip-comments');
+  assert.equal(helper, lib);
+  assert.equal(typeof lib.stripComments, 'function');
+  const helperText = readText(path.join(__dirname, 'helpers', 'strip-comments.js'));
+  const required = [...helperText.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
+  assert.deepEqual(required, ['../../plugin/bin/lib/strip-comments']);
+  assert.ok(!/function stripComments/.test(helperText), 'the helper must not keep a second copy of the scanner');
 });

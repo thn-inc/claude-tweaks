@@ -45,9 +45,9 @@ Pipeline config snapshot:
 - AUTO 14:34:02 — profile capable resolved opus/high via policy. Reversibility: n/a (dispatch-time model selection, not a code mutation).
 
 ## /review
-- AUTO 14:41:02 — Step 3 Routing: applied 3 severity:low findings (formatting nits). Files: src/auth/login.ts:42, src/auth/logout.ts:18, src/auth/session.ts:91. Reversibility: high (commit `def5678`).
-- STAGED 14:41:15 — Step 3 Routing: 2 severity:medium findings. Patches at `staged/review-2.patch`, `staged/review-3.patch`. Surface at Review Console.
-- KEPT-PROMPT 14:41:22 — Step 3 Routing: 1 severity:high finding (potential race condition in src/auth/session.ts:140). Required user input — surfaced inline.
+- AUTO 14:41:02 — Step 3 Routing: applied low-severity Convention fix at src/auth/login.ts:42. Reversibility: high (commit def5678).
+- STAGED 14:41:15 — Step 3 Routing: high-severity finding Concurrency at src/auth/session.ts:140. Stage path: staged/review-2.patch. Reversibility: high.
+- KEPT-PROMPT 14:41:22 — Step 3 Routing: critical finding Security at src/auth/session.ts:88. Surfaced inline. Reversibility: high.
 
 ## /test
 - AUTO 14:48:31 — Step 1 fix mode: auto-fixed 4 lint failures (per `auto-fix-threshold: lint+type`). Commit `ghi9012`. Reversibility: high.
@@ -135,7 +135,7 @@ Worked examples:
 ```
 - AUTO 14:32:14 — Step 1.5: scope-creep — added 2 files to plan (src/utils/cache.ts, src/utils/keys.ts). Reversibility: high (commit abc1234). [lever: scope-creep=add-to-plan (policy)]
 - AUTO 15:41:09 — Auto-merge: group [42], assess-agent-autonomy verdict auto-merge for every member. Merge commit: def5678. Reversibility: high (git revert). [lever: auto-merge-max-lines=40 (default); auto-merge-max-files=2 (policy)]
-- STAGED 14:41:15 — Step 3 Routing: 2 severity:medium findings staged. Surface at Review Console. [lever: review-auto-apply-ceiling=low (default)]
+- STAGED 14:41:15 — Step 3 Routing: medium-severity finding Convention at src/auth/login.ts:42. Stage path: staged/review-2.patch. Reversibility: high. [lever: review-auto-apply-ceiling=low (default)]
 - KEPT-PROMPT 14:12:40 — Step 2.6 shape check: cross-task dependency chain > 3 deep. Surfaced inline.
 ```
 
@@ -212,6 +212,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
   --section "/{skill-name}" --step "{step or location}" --text "{short action}" --reversibility high \
   [--spec <n>] [--lever "<key>=<value> (<source>)"]
 ```
+
+A text (`--text`, `--text-file`, or an `--entries` element) that begins with its own `--step` plus `:` exits `2` — the step prefix is written for you, so pass the text without it.
 
 Prefer it over composing the line by hand or via a scratch `node -e` at every AUTO/STAGED site.
 

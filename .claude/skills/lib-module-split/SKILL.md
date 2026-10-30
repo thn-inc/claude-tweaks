@@ -1,6 +1,6 @@
 ---
 name: lib-module-split
-description: Use when splitting a shared `plugin/bin/lib/` module into sub-modules behind a re-export facade, or reviewing such a split. Covers when a facade beats migrating call sites, the three-check pure-move proof (export surface, verbatim declarations, require cycles), and the stale-location sweep that finds claims the split made false (code comments, pointers to non-exported internals, skill bullets, journey `files:` frontmatter), plus the `docs/plugin-structure.md` update. Keywords - facade, re-export, split, pure move, export surface, require cycle, stale location, journey files, plugin-structure, record.js, #2805, #2822.
+description: Use when splitting a shared `plugin/bin/lib/` module into sub-modules behind a re-export facade, or moving a module to a new home with a re-export left at its old path (a `tests/helpers/` module promoted into `plugin/bin/lib/`), or reviewing either. Covers when a facade beats migrating call sites, the three-check pure-move proof (export surface, verbatim declarations, require cycles), and the stale-location sweep that finds claims the split made false (code comments, pointers to non-exported internals, skill bullets, journey `files:` frontmatter), plus the `docs/plugin-structure.md` update. Keywords - facade, re-export, split, pure move, export surface, require cycle, stale location, journey files, plugin-structure, record.js, #2805, #2822.
 ---
 
 # Lib Module Split: prove the move was pure, then find the claims it made false
@@ -335,6 +335,18 @@ still applies. The leaf's requires-nothing property is what the proof does not s
 its own test: strip comments with the shared stripper, assert no `require(` remains, and assert the
 export keys (`tests/bin-lib/run-liveness/owner-pid-probe.test.js`). Register that test as a
 stripper caller (`bin-source-scan-conformance`).
+
+## A whole-module move with a re-export at the old path
+
+Moving a module to a new home and leaving its old path as a one-line re-export is a split with one
+sub-module, and it owes the same checks. Pin the re-export with a test that the old path's
+`module.exports` is the very object the new file returns and that the old file keeps no second
+copy (`tests/helpers-strip-comments.test.js`, #3903 AC2.1). Then run all four sweep shapes against
+the old path. Classify prose hits with the import-path test above, but treat journey `files:`
+entries as shape 4: keep the old path and add the new file, because edits now land there. #3903
+promoted `tests/helpers/strip-comments.js` into `plugin/bin/lib/strip-comments.js`; its plan
+classified every journey citing the helper as "no change", so the three journeys whose `files:`
+name the helper were left without the implementation path.
 
 ## Update `docs/plugin-structure.md`
 
