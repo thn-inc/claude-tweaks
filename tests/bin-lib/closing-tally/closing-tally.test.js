@@ -1,6 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const { readText } = require('../../helpers/read-skill');
 const {
   FIELDS, computeClosingTally, renderTallyLine,
 } = require('../../../plugin/bin/lib/closing-tally/closing-tally');
@@ -302,4 +304,29 @@ test('#3267 Minor 2: a FAILED line whose message contains "apply-refine-labels: 
   const { counts, unclassified } = computeClosingTally(text);
   assert.deepEqual(counts, { ...ZERO, failed: 1 });
   assert.deepEqual(unclassified, []);
+});
+
+// #4566: the Resolve lane's log line is written by refine-record.md Step 4 via
+// `log-decision.js --step "refine #{n}"`, whose text file holds the live template from
+// refine-closing-summary.md. Read it from the file, never a retyped copy, so rewording the
+// template without updating closing-tally.js's PATTERNS goes red here instead of falling
+// back to `unclassified` at run time.
+test('#4566: refine-closing-summary.md\'s live Resolve-lane template counts as resolved, not unclassified', () => {
+  const root = path.join(__dirname, '..', '..', '..');
+  const summary = readText(path.join(root, 'plugin', 'skills', 'backlog', 'refine-closing-summary.md'));
+  const templates = summary.split('\n').filter((l) => l.startsWith('AUTO {time} — Backlog refine: resolved decision on'));
+  assert.equal(templates.length, 1, 'refine-closing-summary.md must carry exactly one Resolve-lane template line');
+
+  const fill = (n) => '- AUTO 10:00:00 — refine #{n}: '.replaceAll('{n}', n)
+    + templates[0].replace('AUTO {time} — ', '')
+      .replaceAll('{n}', n)
+      .replace('{choice(s)}', 'keep')
+      .replace('{labels/state changed}', 'needs:decision removed');
+  const text = `## /backlog\n${fill('70')}\n${fill('71')}\n`;
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, { ...ZERO, resolved: 2 });
+  assert.deepEqual(unclassified, []);
+
+  const record = readText(path.join(root, 'plugin', 'skills', 'backlog', 'refine-record.md'));
+  assert.match(record, /refine-closing-summary\.md`'s Resolve-lane template/);
 });

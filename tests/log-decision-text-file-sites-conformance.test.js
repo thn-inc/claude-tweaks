@@ -19,7 +19,7 @@ const CANONICAL = 'Text from git or a user';
 const WINDOW = 400;
 
 // `content` is the exact text-file line (= the former `--text` argument); for a prose-only site
-// (D2/B1/C1/E1/Q1 — no inline fence, the former form named no text at all) it is the unique
+// (D2/B1/B2/C1/E1/Q1 — no inline fence, the former form named no text at all) it is the unique
 // anchor the clause introduces for the text-file line.
 const SITES = [
   { id: 'W1', file: 'plugin/skills/flow/multispec-parallel-waves.md', content: 'condition: preflight-records.js --waves exited non-zero ({stderr reason}) → fallback: sequential run.' },
@@ -42,7 +42,7 @@ const SITES = [
   { id: 'R2', file: 'plugin/skills/build/plan-audit.md', content: 'amended plan for {N} unlisted spec path(s) — listed {paths}; waived {paths}' },
   { id: 'D2', file: 'plugin/skills/dispatch/two-call-gate.md', content: 'condition: {stderr line} → fallback: PR-bookend check not run' },
   { id: 'B1', file: 'plugin/skills/dispatch/task-prompt.md', content: 'condition: {stderr line} → fallback: PR-bookend check not run' },
-  { id: 'B2', file: 'plugin/skills/backlog/refine-record.md', content: 'Backlog refine #{n}: {choice(s)} — {labels/state changed}' },
+  { id: 'B2', file: 'plugin/skills/backlog/refine-record.md', content: "`refine-closing-summary.md`'s Resolve-lane template minus its `AUTO {time} — ` prefix" },
   { id: 'C1', file: 'plugin/skills/flow/claim-targets.md', content: 'condition: {stderr line} → fallback: PR-bookend check not run' },
   { id: 'E1', file: 'plugin/skills/_shared/pr-early-run-lifecycle.md', content: 'holding that one line' },
   { id: 'Q1', file: 'plugin/skills/build/plan-authoring-checks.md', content: 'holding one line carrying the criterion it covers' },

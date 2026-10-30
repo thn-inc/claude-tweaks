@@ -209,7 +209,7 @@ For each resolved row (skip a row the human's answer left untouched):
      --reversibility high --text-file "{text-file}"
    ```
 
-   `{text-file}` holds one line, `Backlog refine #{n}: {choice(s)} — {labels/state changed}`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — an override is the user's free text, so the choices never pass through shell quoting.
+   `{text-file}` holds one line: `refine-closing-summary.md`'s Resolve-lane template minus its `AUTO {time} — ` prefix (log-decision.js writes that), filled with the record, the choice(s) applied and the labels/state changed — written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — an override is the user's free text, so the choices never pass through shell quoting.
 
 ## Anti-Patterns
 
