@@ -450,11 +450,11 @@ function isValidValue(schemaEntry, value) {
       // release-hook) out of the whitespace-free rule, but not out of the
       // non-blank rule — a whitespace-only value is still invalid.
       // An optional `pattern` (#4609) must also match — e.g. a URL key.
-      // A `closedQuote` key also rejects an opening quote that never closes —
-      // what a `#` inside the quotes leaves behind, since parseFlatLines cuts
-      // at any `#` — and a blank value inside its quotes (`""`).
-      // closedQuote: true (the #4609 keys only — release-hook's pinned F6/#2253
-      // contract keeps an unbalanced quote as an ordinary value).
+      // A `closedQuote` key (the #4609 keys only — release-hook's pinned F6/#2253
+      // contract keeps an unbalanced quote as an ordinary value) also rejects an
+      // opening quote that never closes — what a `#` inside the quotes leaves
+      // behind, since parseFlatLines cuts at any `#` — and a blank value inside
+      // its quotes (`""`).
       if (schemaEntry.closedQuote === true) {
         const trimmed = value.trim();
         if (endsInsideQuote(trimmed)) return false;
@@ -629,9 +629,11 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
     // uses too, unlike the flat keys' schema default.
     if (requested === 'risk-path-globs') {
       const parsed = parseRiskPathGlobs(policyRaw, riskAllowedSlugs(policyRaw));
-      if (!parsed.present) result[requested] = { value: {}, source: 'default' };
-      else if (parsed.ok) result[requested] = { value: parsed.value, source: 'policy' };
-      else {
+      if (!parsed.present) {
+        result[requested] = { value: {}, source: 'default' };
+      } else if (parsed.ok) {
+        result[requested] = { value: parsed.value, source: 'policy' };
+      } else {
         result[requested] = { value: null, source: 'default', invalid: true };
         if (onInvalid) onInvalid(requested, parsed.raw);
       }

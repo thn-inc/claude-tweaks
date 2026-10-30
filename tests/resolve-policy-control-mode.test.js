@@ -1,9 +1,10 @@
 // tests/resolve-policy-control-mode.test.js — #4609: the thirteen flat
 // control-mode policy keys, the `element` list validation they introduced,
-// isControlModeOn, and the `risk-path-globs` block key. Every test builds a throwaway fixture repo under
-// os.tmpdir() (never inside this repo — IL-80), writes policy.yml into it, and
-// spawns bin/resolve-policy.js with cwd set there. The keys are inert: nothing
-// reads them yet, so this file pins only resolution and validation.
+// isControlModeOn, and the `risk-path-globs` block key. Every test builds a
+// throwaway fixture repo under os.tmpdir() (never inside this repo — IL-80),
+// writes policy.yml into it, and spawns bin/resolve-policy.js with cwd set
+// there. The keys are inert: nothing reads them yet, so this file pins only
+// resolution and validation.
 'use strict';
 const { test, after } = require('node:test');
 const assert = require('node:assert');
