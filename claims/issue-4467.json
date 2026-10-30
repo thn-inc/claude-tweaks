@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-10-28T201924-record-4467",
-  "reason": "failed: plan-review-needs-human",
-  "releasedAt": "2026-10-28T20:29:52.742Z"
+  "runId": "2026-10-30T082500-record-4467",
+  "sessionId": "72bd01f2-5f10-5eb7-a3e0-c9a5c42dcbbb",
+  "claimedAt": "2026-10-30T08:28:36.766Z",
+  "ttlHours": 72,
+  "host": "vm"
 }
