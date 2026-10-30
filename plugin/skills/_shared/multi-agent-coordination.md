@@ -153,7 +153,7 @@ from the general singleton-only rule; see `_shared/subagent-output-contract.md`.
 - STAGED {HH:MM:SS} — Debate: lens "{lensA}" cross-lens disagreement on {path}:{line} inconclusive ({verdicts}). Both verdicts staged. Stage path: staged/review-contested-{N}.md. Reversibility: high.
 ```
 
-These are `review/step3-debate-and-refutation.md`'s three lines, byte for byte. `{lensA}` is the first position's lens — the key the tiebreak verdict carries for a contested finding. The `confirmed` line names every confirmed finding because the Review Console settles only the findings a line names (`bin/lib/console/resolve.js`'s `debateConvergedKeys`). An older run may still hold a `staged/review-debate-{n}.md` file from this section's earlier shape: nothing writes one now, and the Review Console and `/release`'s disposition still read it.
+These are `review/step3-debate-and-refutation.md`'s three lines, byte for byte. `{lensA}` is the first position's lens — the key the tiebreak verdict carries for a contested finding. The `confirmed` line names every confirmed finding because the Review Console settles only the findings a line names (`bin/lib/console/resolve.js`'s `debateConvergedKeys`). An older run may still hold a `staged/review-debate-{n}.md` file from this section's earlier shape: nothing writes one now, and the Review Console and `/release`'s disposition still read it. Remove that prefix from both, and this sentence, once `.claude-tweaks/pipelines/` and its `archive/` hold no such file.
 
 ### Review Console staging format
 
