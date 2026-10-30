@@ -76,6 +76,16 @@ function closedSearchString(gap) {
   return m[1];
 }
 
+// Offsets of every `gh issue list --state closed` in `text` with no `--search` within 120 chars.
+function closedFetchesWithoutSearch(text) {
+  return [...text.matchAll(/gh issue list --state closed/g)]
+    .filter((m) => !text.slice(m.index, m.index + 120).includes('--search'))
+    .map((m) => m.index);
+}
+
+const hasPositiveReason = (search) => /(?<!-)reason:/.test(search);
+const hasOversightFloor = (search) => /label:(risk|size):/.test(search);
+
 test('the frozen excerpt carries the anchors the discrimination checks rely on', () => {
   assert.ok(PRE_CHANGE_GAP_FETCH.includes('gh issue list --state closed --limit "$LIMIT" \\\n'));
   assert.ok(PRE_CHANGE_GAP_FETCH.includes('  if (raw.length === LIMIT) {'));
@@ -91,12 +101,17 @@ test('closed-record fetch is server-filtered', () => {
   );
   const occurrences = [...GAP.matchAll(/gh issue list --state closed/g)];
   assert.ok(occurrences.length >= 1, 'the anchor `gh issue list --state closed` must be present in the scope');
-  for (const m of occurrences) {
-    assert.ok(
-      GAP.slice(m.index, m.index + 120).includes('--search'),
-      `every closed-record fetch must carry --search within 120 chars (at offset ${m.index})`
-    );
-  }
+  assert.deepEqual(closedFetchesWithoutSearch(GAP), [], 'every closed-record fetch must carry --search within 120 chars');
+});
+
+test('the unsearched-fetch detector rejects a fetch with no --search within 120 chars', () => {
+  // Unfiltered: the frozen pre-change fence carries the anchor and no --search at all.
+  assert.equal(closedFetchesWithoutSearch(PRE_CHANGE_GAP_FETCH).length, 1);
+  // Anchor present, --search pushed past the window.
+  const far = `gh issue list --state closed --limit "$LIMIT" \\\n  --json ${'x'.repeat(130)} \\\n  --search "closed:>=$SINCE"`;
+  assert.equal(closedFetchesWithoutSearch(far).length, 1);
+  // Control: the same fetch with --search on the next line is accepted.
+  assert.equal(closedFetchesWithoutSearch('gh issue list --state closed --limit "$LIMIT" \\\n  --search "closed:>=$SINCE" \\\n  --json number').length, 0);
 });
 
 test('negated labels are exactly needsBackstop dispositions', () => {
@@ -110,14 +125,23 @@ test('negated labels are exactly needsBackstop dispositions', () => {
 
 test('never filters on a positive reason', () => {
   const search = closedSearchString(GAP);
-  assert.ok(!/(?<!-)reason:/.test(search), `a positive reason: qualifier would drop null-stateReason records: ${search}`);
+  assert.ok(!hasPositiveReason(search), `a positive reason: qualifier would drop null-stateReason records: ${search}`);
   // The negated forms are what keep a null stateReason in; guard that they are really there.
   assert.ok(/-reason:\\"not planned\\"/.test(search) && /-reason:duplicate/.test(search));
+  // Controls: the predicate rejects a positive reason and accepts the negated forms.
+  assert.ok(hasPositiveReason('closed:>=$SINCE reason:completed'));
+  assert.ok(hasPositiveReason('-reason:duplicate reason:completed'));
+  assert.ok(!hasPositiveReason('-reason:duplicate -reason:\\"not planned\\"'));
 });
 
 test('oversight floor is not in the search string', () => {
   const search = closedSearchString(GAP);
-  assert.ok(!/label:(risk|size):/.test(search), `the oversight floor stays client-side: ${search}`);
+  assert.ok(!hasOversightFloor(search), `the oversight floor stays client-side: ${search}`);
+  // Controls: negated and positive risk/size qualifiers are both caught; a disposition label is not.
+  assert.ok(hasOversightFloor('closed:>=$SINCE -label:risk:high'));
+  assert.ok(hasOversightFloor('closed:>=$SINCE -label:size:small'));
+  assert.ok(hasOversightFloor('label:risk:low'));
+  assert.ok(!hasOversightFloor('-label:demo:approved'));
 });
 
 test('searched fetches warn at the search ceiling', () => {
@@ -147,12 +171,16 @@ test('since-date is validated', () => {
 });
 
 test('since-date guard failure stops the scope', () => {
-  assertClaimPinned(
-    GAP,
-    PRE_CHANGE_GAP_FETCH,
-    /since-date[^\n]*throws[\s\S]{0,300}report no `\[acceptance-gap\]` rows at all/,
-    'a failing since-date guard must stop the scope with no rows'
-  );
+  const stops = /since-date[^\n]*throws[\s\S]{0,300}report no `\[acceptance-gap\]` rows at all/;
+  const sentence = 'When the since-date guard throws, the scope stops: ';
+  const outcome = 'report no `[acceptance-gap]` rows at all and quote the error verbatim.';
+  // The control carries the anchor and the outcome sentence, with the sentence pushed past 300 chars.
+  const FAR_CONTROL = `${sentence}${'filler words '.repeat(30)}${outcome}`;
+  assert.ok(FAR_CONTROL.indexOf(outcome) - sentence.length > 300);
+  assertClaimPinned(GAP, FAR_CONTROL, stops, 'a failing since-date guard must stop the scope with no rows');
+  assert.ok(!stops.test(PRE_CHANGE_GAP_FETCH));
+  // Control for the control: the same sentences adjacent do match, so the window is what rejects the far one.
+  assert.ok(stops.test(`${sentence}${outcome}`));
 });
 
 test('trust-table no longer says the window does not bound the closed fetch', () => {

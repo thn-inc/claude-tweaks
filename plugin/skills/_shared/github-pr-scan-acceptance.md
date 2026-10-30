@@ -74,12 +74,12 @@ gh issue list --state closed --limit "$LIMIT" \
   > "$RAW"
 node -e "
   const fs = require('fs');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '')) throw new Error('{since-date} was not substituted with a YYYY-MM-DD date — an empty date makes the search return zero rows.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '')) throw new Error('SINCE is not a YYYY-MM-DD date — the since-date placeholder was not substituted; an empty date returns zero rows.');
   const raw = require('$RAW');
   const LIMIT = $LIMIT;
   const CAP = Math.min(LIMIT, 1000);
   if (raw.length >= CAP) {
-    console.error('WARNING: the server-filtered closed-record fetch returned ' + raw.length + ' records, reaching its cap of ' + CAP + ' (the smaller of backlog-fetch-limit and the 1000-result search ceiling) — records past the cap are invisible to this scope. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run when it is below 1000; at 1000 or above, the 30-day undisposed set itself exceeds the search ceiling and this scope cannot be complete.');
+    console.error('WARNING: the server-filtered closed-record fetch returned ' + raw.length + ' records, reaching its cap of ' + CAP + ' (the smaller of backlog-fetch-limit and the 1000-result search ceiling) — records past it are invisible to this scope. Below 1000, raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run; at 1000 or above, the 30-day undisposed set itself reaches or exceeds the search ceiling and this scope cannot be complete.');
   }
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   fs.writeFileSync('$CLOSED', JSON.stringify(raw.filter((r) => r.closedAt > cutoff)));
