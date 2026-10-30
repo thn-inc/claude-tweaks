@@ -36,7 +36,7 @@ const MERGE_MODE_FACTS = {
   'precondition-pr': /`run-state\.json` carries no `pr` object/,
   'precondition-model': /`integration-model: pr-first`/,
   'steps-1-4': /`_shared\/pr-first-merge\.md` Steps 1 through 4/,
-  'step-4-1': /Step 4\.1/,
+  'step-4-1': /then Step 4\.0b \(`\{pr-number\}` = `\{pr\}`\), then Step 4\.1\./,
   'section-c': /Section C steps 3\.5-5\.5/,
   'pack-before-teardown': /When `\{run-dir\}\/wrap-up-pack\.json` is absent, produce it before any teardown/,
   'release-reason': /with reason `merged: spec \{n\}` and `\$LINK` set to the merge commit sha/,
