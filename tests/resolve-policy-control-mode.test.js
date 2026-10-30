@@ -13,7 +13,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { POLICY_KEYS, resolvePolicyKeys, auditPolicy, BUILTIN_RISK_CATEGORIES } = require('../plugin/bin/lib/policy-schema');
+const { POLICY_KEYS, resolvePolicyKeys, resolveValue, auditPolicy, BUILTIN_RISK_CATEGORIES } = require('../plugin/bin/lib/policy-schema');
+const { readText } = require('./helpers/read-skill');
 const { parseRiskPathGlobs } = require('../plugin/bin/lib/risk-path-globs');
 const { isControlModeOn } = require('../plugin/bin/lib/policy');
 
@@ -171,12 +172,16 @@ test('a list is read from one line only: a dash-style block is ignored, a quoted
 
 test('the built-in risk slugs are the four from the spec, and the prose section names each', () => {
   assert.deepStrictEqual(BUILTIN_RISK_CATEGORIES, ['migrations', 'auth', 'public-contract', 'irreversible-side-effect']);
-  const md = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema.md'), 'utf8');
+  const md = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema.md'));
   const start = md.indexOf('\n## Control mode\n');
   assert.notStrictEqual(start, -1, 'policy-schema.md has no "## Control mode" section');
   const next = md.indexOf('\n## ', start + 1);
   const section = md.slice(start, next === -1 ? md.length : next);
   for (const slug of BUILTIN_RISK_CATEGORIES) assert.ok(section.includes(`\`${slug}\``), `the Control mode section does not name \`${slug}\``);
+});
+
+test('resolveValue returns the schema default for a closedQuote value left inside a quote', () => {
+  assert.strictEqual(resolveValue('deploy-command', '"never closed'), undefined);
 });
 
 test('login rule accepts a bot login and an underscore login', () => {
