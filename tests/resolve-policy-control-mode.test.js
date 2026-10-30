@@ -211,6 +211,10 @@ test('quoting does not protect a #: a quoted value cut mid-quote is rejected, no
     for (const raw of [
       '"curl https://x/#y"', "'curl https://x/#y'", '"never closed',
       'curl "https://x/#y"', "deploy --note 'a#b' --prod", '"a" "b#c"', "deploy --note='a#b'",
+      // A double quote glued to a word opens too.
+      'git commit -m"fix #12"', 'curl -H"X: a#b" http://x', 'cmd >"a#b"',
+      // A backslash escapes the next character, so this `"` does not close the quote.
+      'x "a\\"#b"',
     ]) {
       const out = json(`${key}: ${raw}\n`, key);
       assert.deepStrictEqual(out[key], { value: null, source: 'default', invalid: true }, `${key}: ${raw}`);
@@ -224,6 +228,9 @@ test('closed quotes in the middle of a value stay valid, and an apostrophe insid
   assert.deepStrictEqual(resolve('deploy-command', "deploy --note='a b' --prod"), { value: "deploy --note='a b' --prod", source: 'policy' });
   assert.deepStrictEqual(resolve('deploy-command', "sh -c 'echo \"x\"'"), { value: "sh -c 'echo \"x\"'", source: 'policy' });
   assert.deepStrictEqual(resolve('deploy-live-workflow', "Deploy Bob's app"), { value: "Deploy Bob's app", source: 'policy' });
+  // Inside single quotes a backslash is not an escape, so this `'` closes the quote.
+  assert.deepStrictEqual(resolve('deploy-command', "x 'a\\'"), { value: "x 'a\\'", source: 'policy' });
+  assert.deepStrictEqual(resolve('deploy-command', 'git commit -m"fix it" --all'), { value: 'git commit -m"fix it" --all', source: 'policy' });
 });
 
 // Characterization (pre-existing, pinned by tests/policy-schema.test.js F6/#2253):
@@ -363,13 +370,17 @@ test('AC4.4: a non-list value is rejected', () => {
 
 test('AC4.5: a non-string glob is rejected, inline and as a sequence item; a quoted one is a string', () => {
   // `path: src/**` and `a:` are mappings, not strings, unquoted; a colon inside a path is fine.
-  for (const bad of ['1', 'true', 'false', 'null', '~', '1.5', 'True', '{a: 1}', 'path: src/**', 'a:']) {
+  // `{a}` is a flow mapping too, and the others are block-sequence, block-scalar, anchor and tag syntax.
+  for (const bad of ['1', 'true', 'false', 'null', '~', '1.5', 'True', '{a: 1}', '{a}', 'path: src/**', 'a:', '- a', '|', '>', '&a x', '!!str x']) {
     assert.deepStrictEqual(globs(`risk-path-globs:\n  auth: [${bad}]\n`), REJECTED, `[${bad}]`);
     assert.deepStrictEqual(globs(`risk-path-globs:\n  auth:\n    - ${bad}\n`), REJECTED, `- ${bad}`);
   }
   assert.deepStrictEqual(globs('risk-path-globs:\n  auth: ["1", \'true\']\n').value, { auth: ['1', 'true'] });
   assert.deepStrictEqual(globs('risk-path-globs:\n  auth:\n    - "null"\n').value, { auth: ['null'] });
   assert.deepStrictEqual(globs('risk-path-globs:\n  auth: ["path: src/**", C:/x, src/a:b/**]\n').value, { auth: ['path: src/**', 'C:/x', 'src/a:b/**'] });
+  // Ordinary globs that merely look like YAML indicators stay valid, inline and as items.
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [*.sql, "**/x", -x/**]\n').value, { auth: ['*.sql', '**/x', '-x/**'] });
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth:\n    - *.sql\n    - **/x\n    - -x/**\n').value, { auth: ['*.sql', '**/x', '-x/**'] });
 });
 
 // Valid YAML must not fall into the empty-map path (the plan-review ruling).
@@ -396,6 +407,12 @@ test('a multi-line flow list parses, with comments and CRLF', () => {
   assert.deepStrictEqual(globs(policy.replace(/\n/g, '\r\n')), { value: expected, source: 'policy' });
   assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [\n    a,\n    b,\n  ]\n').value, { auth: ['a', 'b'] });
   assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [\n  ]\n').value, { auth: [] });
+  // The list closes on bracket balance, not on a line that ends in `]`: an element may end in a character class.
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [\n    src/[ab],\n    src/[cd]\n  ]\n').value, { auth: ['src/[ab]', 'src/[cd]'] });
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [\n    a,\n    src/*.[ch]\n  ]\n  migrations: [x]\n').value, { auth: ['a', 'src/*.[ch]'], migrations: ['x'] });
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [a,\n    "b]", c]\n').value, { auth: ['a', 'b]', 'c'] });
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [\n    src/[ab]\n'), REJECTED);
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [a] x\n'), REJECTED);
   // A list that never closes inside the block is rejected.
   assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [\n    a,\n    b\nautonomy: trusted\n'), REJECTED);
   assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [\n    a,\n  migrations: [b]\n'), REJECTED);
@@ -406,6 +423,10 @@ test('a # inside a quoted item is not a comment', () => {
   assert.deepStrictEqual(globs('risk-path-globs:\n  auth: ["a #b", c]   # real comment\n').value, { auth: ['a #b', 'c'] });
   // A bare # after whitespace still starts a comment; an apostrophe inside a bare glob opens no quote.
   assert.deepStrictEqual(globs("risk-path-globs:\n  auth:\n    - it's/**   # comment\n    - a#b\n").value, { auth: ["it's/**", 'a#b'] });
+  // A stray, unmatched quote opens nothing, so it cannot swallow the comment after it.
+  assert.deepStrictEqual(globs("risk-path-globs:\n  auth:\n    - foo 'bar   # note\n").value, { auth: ["foo 'bar"] });
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth:\n    - foo "bar   # note\n').value, { auth: ['foo "bar'] });
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth:\n    - "bar   # note\n'), REJECTED);
 });
 
 test('quoted keys, a space before the colon and doubled-quote escapes are not read', () => {
@@ -430,6 +451,11 @@ test('unbalanced brackets in an unquoted element are rejected; a character class
 test('a column-0 sequence under the key, a second block and uneven sequence indent are rejected', () => {
   assert.deepStrictEqual(globs('risk-path-globs:\n- x\n'), REJECTED);
   assert.deepStrictEqual(globs('risk-path-globs:\n# note\n- x\n'), REJECTED);
+  // A column-0 dash ending the block is rejected after rows too, never read as the end of a valid map.
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [a]\n- x\n'), REJECTED);
+  assert.deepStrictEqual(globs('risk-path-globs:\n  auth:\n    - a\n# note\n- x\nautonomy: trusted\n'), REJECTED);
+  // An item left of its row's indent is not that row's sequence.
+  assert.deepStrictEqual(globs('risk-path-globs:\n    auth:\n  - a\n'), REJECTED);
   assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [a]\nrisk-path-globs:\n  migrations: [b]\n'), REJECTED);
   assert.deepStrictEqual(globs('risk-path-globs:\n  auth: [a]\nrisk-path-globs: x\n'), REJECTED);
   assert.deepStrictEqual(globs('risk-path-globs:\n  auth:\n      - a\n    - b\n'), REJECTED);
@@ -522,6 +548,14 @@ test('auditPolicy reports an invalid block once, and nothing for a valid one', (
   assert.strictEqual(flagged('risk-path-globs:\n  auth:\n').length, 1);
   assert.strictEqual(flagged('risk-path-globs:\n- x\n').length, 1, 'a column-0 sequence under the key is not silently an empty map');
   assert.strictEqual(flagged('risk-path-globs:\n  auth: [a]\nrisk-path-globs:\n  migrations: [b]\n').length, 1, 'a second block');
+  assert.strictEqual(flagged('risk-path-globs:\n  auth: [a]\n- x\n').length, 1, 'a column-0 dash after rows');
+  // The reported value carries the offending text, not just the first block.
+  const rowText = (policy) => flagged(policy)[0].value;
+  assert.strictEqual(rowText('risk-path-globs:\n  auth: [a]\nrisk-path-globs:\n  migrations: [b]\n'), 'risk-path-globs:\n  auth: [a]\nrisk-path-globs:\n  migrations: [b]');
+  assert.strictEqual(rowText('risk-path-globs:\n  auth: [a]\nautonomy: trusted\nrisk-path-globs:\n  migrations: [b]\n'), 'risk-path-globs:\n  auth: [a]\nrisk-path-globs:\n  migrations: [b]');
+  assert.strictEqual(rowText('risk-path-globs:\n  auth: [a]\n- x\nautonomy: trusted\n'), 'risk-path-globs:\n  auth: [a]\n- x');
+  assert.strictEqual(rowText('risk-path-globs:\n  auth: [a]\n  nope: [b]\nautonomy: trusted\n'), 'risk-path-globs:\n  auth: [a]\n  nope: [b]');
+  assert.strictEqual(parseRiskPathGlobs('risk-path-globs:\n  auth: [a]\nrisk-path-globs:\n  nope: [b]\n', []).raw, 'risk-path-globs:\n  auth: [a]\nrisk-path-globs:\n  nope: [b]');
   assert.strictEqual(flagged(BLOCK).length, 0);
   assert.strictEqual(flagged('autonomy: trusted\n').length, 0);
   const report = auditPolicy(makeRepo(BLOCK));

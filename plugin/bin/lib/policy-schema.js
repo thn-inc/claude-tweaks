@@ -408,10 +408,11 @@ function parseFlatLines(raw) {
 }
 
 // True when `value` ends inside a quote — what a `#` inside quotes leaves
-// behind once parseFlatLines cuts the line there. Shell-style: a quote opens at
-// the start of a word (line start, after whitespace, `=`, `(`, `;`, `|`, `&`),
-// so an apostrophe inside a word (`Bob's`) opens none; `\` escapes the next
-// character except inside single quotes.
+// behind once parseFlatLines cuts the line there. Shell-style: a `"` opens
+// anywhere (`-m"fix #12"`, `>"a#b"`); a `'` only at the start of a word (line
+// start, after whitespace, `=`, `(`, `;`, `|`, `&`), so an apostrophe inside a
+// word (`Bob's`) opens none; `\` escapes the next character except inside
+// single quotes.
 function endsInsideQuote(value) {
   let quote = null;
   for (let i = 0; i < value.length; i += 1) {
@@ -420,7 +421,7 @@ function endsInsideQuote(value) {
       i += 1;
     } else if (quote !== null) {
       if (ch === quote) quote = null;
-    } else if ((ch === '"' || ch === "'") && (i === 0 || /[\s=(;|&]/.test(value[i - 1]))) {
+    } else if (ch === '"' || (ch === "'" && (i === 0 || /[\s=(;|&]/.test(value[i - 1])))) {
       quote = ch;
     }
   }
@@ -730,33 +731,49 @@ function isBalanced(text, open, close) {
 }
 
 // One glob element -> its string, or null when it is not an acceptable glob:
-// empty, a nested list, a mapping (`k: v`, bare), a non-string scalar (unless
-// quoted), or braces that do not balance; a bare element's `[`/`]` must balance
-// too (`src/[ab]/**` is a glob, `a]` is a typo).
+// empty, a nested list, a mapping (`k: v`, bare), a block-sequence dash, a
+// block scalar, anchor or tag (`- a`, `|`, `>`, `&a`, `!t`), a non-string scalar
+// (unless quoted), or braces that do not balance; a bare element's `[`/`]` must
+// balance too (`src/[ab]/**` is a glob, `a]` is a typo). `*.sql` and `-x/**`
+// are ordinary globs.
 function acceptGlob(text, quoted) {
   if (text === '') return null;
-  if (!quoted && (YAML_NON_STRING.test(text) || text.startsWith('[') || text.startsWith('{') || /:(\s|$)/.test(text))) return null;
+  if (!quoted && (YAML_NON_STRING.test(text) || /^(?:-(?:\s|$)|[[{|>&!])/.test(text) || /:(\s|$)/.test(text))) return null;
   if (!quoted && !isBalanced(text, '[', ']')) return null;
   return isBalanced(text, '{', '}') ? text : null;
 }
 
-// One line with a trailing `# comment` cut. A quote opens only at the start of
-// a token (line start, after whitespace, `[` or `,`), so an apostrophe inside
-// a word opens none; a `#` inside a quote is text, and a bare `#` starts a
-// comment only after whitespace.
+// Where the quote opening at line[i] closes, or -1 when none opens there. A
+// quote opens only at the start of a token (line start, after whitespace, `[`
+// or `,`) and only when a matching one follows, so an apostrophe inside a word,
+// or a stray unmatched one, opens nothing. No escapes are read.
+function quoteClose(line, i) {
+  const ch = line[i];
+  if ((ch !== '"' && ch !== "'") || !(i === 0 || /[\s[,]/.test(line[i - 1]))) return -1;
+  return line.indexOf(ch, i + 1);
+}
+
+// One line with a trailing `# comment` cut: a `#` inside a quote is text, and
+// a bare `#` starts a comment only after whitespace.
 function stripComment(line) {
-  let quote = null;
   for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i];
-    if (quote) {
-      if (ch === quote) quote = null;
-    } else if ((ch === '"' || ch === "'") && (i === 0 || /[\s[,]/.test(line[i - 1]))) {
-      quote = ch;
-    } else if (ch === '#' && (i === 0 || /\s/.test(line[i - 1]))) {
-      return line.slice(0, i).trimEnd();
-    }
+    const close = quoteClose(line, i);
+    if (close !== -1) i = close;
+    else if (line[i] === '#' && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i).trimEnd();
   }
   return line.trimEnd();
+}
+
+// Unclosed `[` in `text`, outside quotes (a negative result: a stray `]`).
+function bracketDepth(text) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const close = quoteClose(text, i);
+    if (close !== -1) i = close;
+    else if (text[i] === '[') depth += 1;
+    else if (text[i] === ']') depth -= 1;
+  }
+  return depth;
 }
 
 // The inside of an inline `[…]` list -> [{ text, quoted }], or null when a
@@ -807,14 +824,23 @@ function parseRiskPathGlobs(policyRaw, extraSlugs = []) {
   const lines = policyRaw.split('\n').map((line) => line.trimEnd()); // trimming also drops a CRLF's \r
   const start = lines.findIndex((line) => line.startsWith('risk-path-globs:'));
   if (start === -1) return { present: false };
-  let end = start + 1;
-  while (end < lines.length && (lines[end] === '' || /^\s/.test(lines[end]) || lines[end].startsWith('#'))) end += 1;
-  // A column-0 `- x` straight under the key is a root-level sequence, not a map
-  // (and a second column-0 block is ambiguous): reject both rather than resolve {}.
-  const dashUnderKey = end < lines.length && /^-(\s|$)/.test(lines[end]) && lines.slice(start + 1, end).every((l) => stripComment(l) === '');
-  const secondBlock = lines.some((line, i) => i > start && line.startsWith('risk-path-globs:'));
-  const fail = () => ({ present: true, ok: false, raw: lines.slice(start, dashUnderKey ? end + 1 : end).join('\n').trimEnd() });
-  if (dashUnderKey || secondBlock) return fail();
+  const blockEnd = (from) => {
+    let stop = from + 1;
+    while (stop < lines.length && (lines[stop] === '' || /^\s/.test(lines[stop]) || lines[stop].startsWith('#'))) stop += 1;
+    return stop;
+  };
+  const end = blockEnd(start);
+  // A column-0 `- x` ending the block is a root-level sequence, not a map, and a
+  // second column-0 block is ambiguous: reject both rather than resolve {}. `raw`
+  // then also carries the offending dash line or the second block.
+  const dashEnds = end < lines.length && /^-(\s|$)/.test(lines[end]);
+  const second = lines.findIndex((line, i) => i > start && line.startsWith('risk-path-globs:'));
+  const fail = () => {
+    const parts = [lines.slice(start, dashEnds ? end + 1 : end)];
+    if (second !== -1) parts.push(lines.slice(second, blockEnd(second)));
+    return { present: true, ok: false, raw: parts.map((part) => part.join('\n').trimEnd()).join('\n') };
+  };
+  if (dashEnds || second !== -1) return fail();
 
   // Nothing but a comment may follow the colon: an inline value is not a block.
   if (lines[start].slice('risk-path-globs:'.length).replace(/(^|\s)#.*$/, '').trim() !== '') return fail();
@@ -839,8 +865,9 @@ function parseRiskPathGlobs(policyRaw, extraSlugs = []) {
       if (rest === '') {
         open = { list: value[slug], indent: null };
       } else if (rest.startsWith('[')) {
-        // A flow list may continue over following lines until its closing `]`.
-        while (!rest.endsWith(']')) {
+        // A flow list may continue over following lines until its brackets balance
+        // (a last element like `src/*.[ch]` ends in `]` without closing the list).
+        while (bracketDepth(rest) > 0) {
           i += 1;
           if (i >= end) return fail();
           rest += ` ${stripComment(lines[i]).trim()}`;
