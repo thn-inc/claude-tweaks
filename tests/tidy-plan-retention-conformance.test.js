@@ -10,7 +10,14 @@ const path = require('path');
 const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const read = (rel) => readText(path.join(REPO_ROOT, rel));
+
+function read(rel) {
+  return readText(path.join(REPO_ROOT, rel));
+}
+
+function findRow(text, prefix) {
+  return text.split('\n').find((line) => line.startsWith(prefix));
+}
 
 const SCAN_PROCEDURES = read('plugin/skills/tidy/scan-procedures.md');
 const PLAN_CITATION = read('plugin/skills/tidy/plan-citation-check.md');
@@ -70,7 +77,7 @@ test('tidy Step 4 collects the recommendation after retention routing, not befor
   const collect = s.indexOf('→ Collect each as: `[plan] {filename} — {recommendation}`');
   assert.notEqual(collect, -1, 'Step 4 must keep its Collect line');
   const retention = s.indexOf('**Plan retention (#4465).**');
-  assert.notStrictEqual(retention, -1, 'Step 4 must keep its Plan retention paragraph');
+  assert.notEqual(retention, -1, 'Step 4 must keep its Plan retention paragraph');
   assert.ok(collect > retention, 'the Collect line must sit below the Plan retention paragraph');
   assert.match(s, /the recommendation being the one after Plan retention routing and the citation check/);
 });
@@ -81,7 +88,7 @@ test('the plan citation check runs before a Prune plan recommendation too (#4465
 });
 
 test('step-6-auto.md stages Prune plan at every tier (#4465)', () => {
-  const row = STEP6_AUTO.split('\n').find((l) => l.startsWith('| **Prune plan**'));
+  const row = findRow(STEP6_AUTO, '| **Prune plan**');
   assert.ok(row, 'Prune plan row is present');
   assert.match(row, /\| Stage \| Stage \| Stage/);
   assert.match(row, /`scan-procedures\.md` Step 4's Plan retention/);
@@ -95,9 +102,8 @@ test('step-6-auto.md auto-deletes plans only under prune-after-wrapup (#4465)', 
 });
 
 test('step-6-auto.md routes orphan plans through the judgment Delete row, not the every-tier Auto row (#4465)', () => {
-  const rows = STEP6_AUTO.split('\n');
-  const auto = rows.find((l) => l.startsWith('| **Delete** (marked-as-specified design docs'));
-  const judgment = rows.find((l) => l.startsWith('| **Delete** (any case requiring judgment'));
+  const auto = findRow(STEP6_AUTO, '| **Delete** (marked-as-specified design docs');
+  const judgment = findRow(STEP6_AUTO, '| **Delete** (any case requiring judgment');
   assert.ok(auto && judgment);
   assert.match(auto, /the plan's related spec is still complete and no repo file cites/);
   assert.doesNotMatch(auto, /orphan plan|no related spec/);
@@ -108,7 +114,7 @@ test('step-6-auto.md routes orphan plans through the judgment Delete row, not th
 });
 
 test('SKILL.md Prune plan row says the 30 threshold gates staging, not execution (#4465)', () => {
-  const row = TIDY_SKILL.split('\n').find((l) => l.startsWith('| **Prune plan**'));
+  const row = findRow(TIDY_SKILL, '| **Prune plan**');
   assert.ok(row);
   assert.match(row, /The 30 threshold gates staging, not execution: an approved archive still executes after `stale — skipped` drops leave fewer than 30/);
 });
@@ -131,13 +137,13 @@ test('both approval paths record an excluded Prune plan (archive) decline, never
 test('approve-mode.md puts the decline sentence after the paragraph it ends, not mid-paragraph (#4465)', () => {
   const decline = APPROVE_MODE.indexOf('An entirely excluded `Prune plan (archive)` item');
   const tail = APPROVE_MODE.indexOf('precisely because an earlier auto or interactive run left items staged rather than applied.');
-  assert.notStrictEqual(decline, -1);
-  assert.notStrictEqual(tail, -1);
+  assert.notEqual(decline, -1);
+  assert.notEqual(tail, -1);
   assert.ok(decline > tail, 'the decline sentence must follow the "never reached from auto mode" sentence');
 });
 
 test('SKILL.md Action Vocabulary defines Prune plan execution and re-verify (#4465)', () => {
-  const row = TIDY_SKILL.split('\n').find((l) => l.startsWith('| **Prune plan**'));
+  const row = findRow(TIDY_SKILL, '| **Prune plan**');
   assert.ok(row, 'Prune plan Action Vocabulary row is present');
   assert.match(row, /`git rm` each listed plan, one commit/);
   assert.match(row, /`plan-citation-check\.md` still clean, its classification still holds \(related spec still complete; for an orphan, still none; for a very-old plan, its spec still not started\), and `superpowers-plans-retention` still the value that staged it/);
@@ -148,7 +154,7 @@ test('SKILL.md Action Vocabulary defines Prune plan execution and re-verify (#44
 });
 
 test('policy-schema.md names tidy Step 4 as a superpowers-plans-retention consumer and describes its routing (#4465)', () => {
-  const row = POLICY_SCHEMA.split('\n').find((l) => l.startsWith('| `superpowers-plans-retention`'));
+  const row = findRow(POLICY_SCHEMA, '| `superpowers-plans-retention`');
   assert.ok(row);
   assert.match(row, /`\/claude-tweaks:tidy` Step 4 \(`tidy\/scan-procedures\.md`\)/);
   assert.match(row, /tidy keeps them until 30 or more are past a 7-day cutoff, then stages one bulk prune/);
@@ -178,7 +184,7 @@ test('skill-graph.md tidy section names the declined-learning store row (#4465)'
   const start = SKILL_GRAPH.indexOf('\n## tidy\n');
   const end = SKILL_GRAPH.indexOf('\n## visual-review\n');
   assert.ok(start !== -1 && end > start);
-  const row = SKILL_GRAPH.slice(start, end).split('\n').find((l) => l.startsWith('| `bin/lib/declined-learning/store.js`'));
+  const row = findRow(SKILL_GRAPH.slice(start, end), '| `bin/lib/declined-learning/store.js`');
   assert.ok(row, 'tidy section carries the declined-learning store row');
   assert.match(row, /Step 4's Plan retention looks up a `keep-forever` `Prune plan \(archive\)` decline via `bin\/declined-learning\.js lookup --source tidy`/);
   assert.match(row, /records one via `record-decline --source tidy` when a human excludes that item entirely at Step 6's approval or `--approve`/);
