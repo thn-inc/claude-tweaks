@@ -2,11 +2,12 @@
 //
 // Run with: npm run test:perf
 //
-// scanScaleReadiness runs line- and chain-anchored regexes over every source file. Two inputs expose
-// quadratic backtracking: a file opening with a long run of slashes (the "use server" directive
-// check) and a long `a.a.a.` dotted run (the Prisma receiver-chain match). Each must scan under a
+// scanScaleReadiness runs line- and chain-anchored regexes and a brace scan over every source file.
+// Three inputs expose quadratic cost: a file opening with a long run of slashes (the "use server"
+// directive check), one large route file with many client matches (the per-request-client brace
+// scan) and a long `a.a.a.` dotted run (the Prisma receiver-chain match). Each must scan under a
 // generous 1 s bound. Lives outside tests/ because a wall-clock assertion flakes under sibling-suite
-// load; the functional halves of both checks stay in tests/bin-lib/code-health/candidates-scale-readiness.test.js.
+// load; the functional halves of the checks stay in tests/bin-lib/code-health/candidates-scale-readiness.test.js.
 'use strict';
 
 const { test } = require('node:test');

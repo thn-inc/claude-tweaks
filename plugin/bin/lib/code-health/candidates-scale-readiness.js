@@ -149,12 +149,22 @@
 //     called only once (`const make = () => ({ db: new X() })`) reads as
 //     per-request, and so does everything after a semicolon-less module-scope
 //     arrow expression (`const f = x => x` then a newline) until the next `;`
-//     or `,` at that level. The scan runs from the start of the file with no
+//     or `,` at that level. Any `=>` counts, including a TypeScript function
+//     type (`const r: Record<string, (q: Req) => Res> = { db: new X() };`, or
+//     a semicolon-less `type H = (r: Req) => Res` before a module-scope
+//     object), so a module-scope object after one reads as per-request; and
+//     commas inside TypeScript generic arguments `<…>` are not told apart
+//     from commas at the marked level, so `=> handle<A, B>(req, { db: … })`
+//     is missed. The scan runs from the start of the file with no
 //     string or comment awareness (a stray closer is ignored); a module-scope
 //     `if`/`try` block or IIFE reads as a handler, and a parameter-default
 //     object (`function f(o = { db: new X() })`) reads as module scope.
 //     `new Client(` matches any class of that name. A client built in a
-//     module-scope factory called per request is not seen.
+//     module-scope factory called per request is not seen, and neither is
+//     one built directly in an arrow expression body with no `{` around it
+//     (`app.get('/', (req, res) => new Pool().query(…))`).
+//   - `unbounded-pool` scans all source for `new Pool(` without a `max`
+//     option, `createPool(` without `connectionLimit` and `new MongoClient(`
 //     without `maxPoolSize`, and names the driver default in its evidence. It
 //     inspects only the literal call arguments: a config held in a variable
 //     reads as uncapped. It runs only when a dependency in `DATA_DEPS` is

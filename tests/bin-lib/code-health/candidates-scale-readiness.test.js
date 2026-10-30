@@ -718,10 +718,80 @@ test('#3903 per-request-db-client: an array of objects an arrow function returns
       "router.get('/', async (req, res) => res.json(await deps.db.item.findMany({ take: 5 })));",
       '',
     ].join('\n'),
-    // U+2003 EM SPACE and U+3000 between `=>` and `(` count as whitespace, as /\s/ does.
-    'routes/unicode-space.js': 'const makeDeps = () => 　({ db: new PrismaClient() });\n',
+    // The same spread inside a handler body sits in a block brace: still flagged.
+    'routes/spread-handler.js': [
+      "router.get('/', async (req, res) => {",
+      '  const deps = { ...base, ...{ db: new PrismaClient() } };',
+      '});',
+      '',
+    ].join('\n'),
   });
-  assert.deepEqual(ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]), ['routes/factory.js:2', 'routes/unicode-space.js:1']);
+  assert.deepEqual(ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]), ['routes/factory.js:2', 'routes/spread-handler.js:2']);
+});
+
+test('#3903 per-request-db-client: Unicode whitespace (U+2003, U+3000) counts as whitespace before `{` and after `=>`, as /\\s/ does', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    // Positive; flagged either way, so it does not exercise isSpaceCode (the two skipped fixtures below do).
+    'routes/unicode-space.js': 'const makeDeps = () => 　({ db: new PrismaClient() });\n',
+    // `=` then U+3000 then `{`: the previous non-whitespace character is `=`, a module-scope object literal; skipped.
+    'routes/unicode-eq.js': 'const deps =　{ db: new PrismaClient() };\n',
+    // `=>` then U+2003 then `{` is a block body, not an expression body: nothing is marked, so the semicolon-less module-scope object after it is skipped.
+    'routes/unicode-arrow.js': 'const h = () => {\n}\nconst e = { db: new PrismaClient() }\n',
+    // Positive pair: the same spacing in front of a real expression body marks the level, so the object after it is flagged.
+    'routes/unicode-arrow-expr.js': 'const h = () => x\nconst e = { db: new PrismaClient() }\n',
+  });
+  assert.deepEqual(
+    ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]),
+    ['routes/unicode-arrow-expr.js:2', 'routes/unicode-space.js:1'],
+  );
+});
+
+test('#3903 per-request-db-client: a `=>` followed by a newline then `{` is a block body, not an expression body; a real expression body still marks', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    // Skipped: no mark is set, so the semicolon-less module-scope object after the empty body stays module scope.
+    'routes/newline-block.js': 'const h = () =>\n{\n}\nconst e = { db: new PrismaClient() }\n',
+    // Positive pair: `=> x` is an expression body, so the object after it (no `;` yet) reads as per-request.
+    'routes/newline-expr.js': 'const h = () =>\nx\nconst e = { db: new PrismaClient() }\n',
+  });
+  assert.deepEqual(ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]), ['routes/newline-expr.js:3']);
+});
+
+test('#3903 per-request-db-client: closers match their own opener within the current `{` scope; a `}` discards unclosed groups above its `{`', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    // An unclosed `(` in a comment inside the handler is discarded by the handler's `}`; the module-scope object after it is skipped. The handler client is the positive.
+    'routes/comment-paren.js': [
+      "router.get('/', async (req, res) => {",
+      '  // TODO (later',
+      '  const prisma = new PrismaClient();',
+      '});',
+      'const deps = { db: new PrismaClient() };',
+      '',
+    ].join('\n'),
+    // A mismatched `foo(a[ )` closes both groups; the module-scope object after it is skipped, the handler client is flagged.
+    'routes/mismatch.js': [
+      'foo(a[ );',
+      'const deps = { db: new PrismaClient() };',
+      "router.get('/', async (req, res) => {",
+      '  const prisma = new PrismaClient();',
+      '});',
+      '',
+    ].join('\n'),
+    // A stray `]` inside the handler has no `[` in its own scope, so it must not close the enclosing array and the handler with it.
+    'routes/scoped-closer.js': [
+      'const routes = [',
+      '  async (req, res) => {',
+      '    foo(a( ];',
+      '    const prisma = new PrismaClient();',
+      '  },',
+      '];',
+      'const deps = { db: new PrismaClient() };',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(
+    ofKind(root, 'per-request-db-client').map((c) => c.evidence.match(/^(\S+:\d+) /)[1]),
+    ['routes/comment-paren.js:3', 'routes/mismatch.js:4', 'routes/scoped-closer.js:4'],
+  );
 });
 
 test('#3903 per-request-db-client: an object inside an arrow expression body is per-call until the group closes or a `,`/`;` at its level; module-scope objects after it are skipped', () => {
