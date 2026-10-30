@@ -633,6 +633,21 @@ function settledFileResolution(v) {
   return consoleVerdictResolution(v);
 }
 
+// #4585: approving a reference repair at `unattended` applies it with no click,
+// so one the initiative budget's floor keeps from running unapproved (a test
+// file, a merge-sensitive path) or whose target is ambiguous stays pending. The
+// sweep marks those with a `Held:` line in the header — the lines before the
+// first blank line — and a file that could not be read proves nothing either.
+// Prose twin: wrap-up/reference-sweep.md Step 4.
+function referenceRepairHoldReason(item) {
+  if (item.readError || item.text === null) return 'reference-repair-unreadable';
+  for (const line of item.text.split(/\r?\n/)) {
+    if (line.trim() === '') return null;
+    if (/^held:/i.test(line)) return 'reference-repair-held';
+  }
+  return null;
+}
+
 function stagedItems(snapshot) {
   const model = tiebreakModel(snapshot);
   // Refusal is a decisions.md fact about the item, not a fact about its name —
@@ -651,6 +666,10 @@ function stagedItems(snapshot) {
     if (reason) return { id: s.name, section, resolution: 'pending', reason };
     if (/^sdd-ruling-/.test(s.name)) {
       const r = s.readError ? SDD_RULING_REASONS.UNREADABLE : sddRulingDeferralReason(s.text);
+      if (r) return { id: s.name, section, resolution: 'pending', reason: r };
+    }
+    if (/^wrap-up-reference-/.test(s.name)) {
+      const r = referenceRepairHoldReason(s);
       if (r) return { id: s.name, section, resolution: 'pending', reason: r };
     }
     const settled = model.settledFiles.get(s.name);

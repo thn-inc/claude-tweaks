@@ -354,6 +354,34 @@ test('AC1.1: a staged wrap-up-reference- repair the engine names resolves once, 
   assert.strictEqual(r.items[0].resolution, 'approve');
 });
 
+test('a staged reference repair whose header carries Held: waits for a human, whatever the header value (#4585)', () => {
+  const held = ['Held: test file\nTarget: tests/a.test.js\n\nbody', 'Target: tests/a.test.js\nheld: ambiguous\n\nbody', 'Held:\n\nbody'];
+  for (const text of held) {
+    const r = resolveAll({ runDir: fixture({ staged: { 'wrap-up-reference-1.md': text }, headers: [7] }), policy: 'console-auto', deps: deps() });
+    assert.strictEqual(r.items[0].section, 'Reference repairs', text);
+    assert.strictEqual(r.items[0].resolution, 'pending', text);
+    assert.strictEqual(r.items[0].reason, 'reference-repair-held', text);
+  }
+});
+
+test('a Held: line past the staged reference repair header does not hold it (#4585)', () => {
+  const r = resolveAll({ runDir: fixture({ staged: { 'wrap-up-reference-1.md': 'Target: docs/a.md\n\nHeld: quoted from the repaired file' }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  assert.strictEqual(r.items[0].resolution, 'approve');
+});
+
+test('an unreadable staged reference repair waits for a human (#4585)', () => {
+  const runDir = fixture({ staged: { 'wrap-up-reference-1.md': 'Target: docs/a.md\n\nbody' }, headers: [7] });
+  const failing = deps({
+    readFile: (p) => {
+      if (path.basename(p) === 'wrap-up-reference-1.md') { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }
+      return fs.readFileSync(p, 'utf8');
+    },
+  });
+  const item = resolveAll({ runDir, policy: 'console-auto', deps: failing }).items.find((i) => i.id === 'wrap-up-reference-1.md');
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'reference-repair-unreadable');
+});
+
 test('renderTable escapes a pipe in the item id, not only in the reason (#1932 M6)', () => {
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps() });
   const table = renderTable({ ...r, items: r.items.map((it) => ({ ...it, id: 'reflect-a|b.md' })) });
