@@ -80,10 +80,10 @@ read and this write would otherwise be silently reverted by the stale array.
 
 **Pull requests are not covered by this mapping.** Every row above is an issue operation — there
 is no `list_pull_requests`/`pr_read`/`pr_write` row, and none is planned here: PR review-thread
-reads (`gh api graphql`), CI-check reads (`gh pr checks`), and PR list/view reads (`gh pr list`/
-`gh pr view`) have no MCP equivalent today. A `gh`-absent consumer that needs a PR read degrades
-that read individually rather than treating the missing mapping as a reason to skip everything
-it does — `_shared/github-pr-scan.md`'s Transport section is the canonical example: issue-backed
+reads (`gh api graphql`) and CI-check reads (`gh pr checks`) have no MCP equivalent today; PR
+list/view reads (`gh pr list`/`gh pr view`) have one only through the two exceptions below. A
+`gh`-absent consumer that needs a PR read degrades that read individually rather than treating
+the missing mapping as a reason to skip everything it does — `_shared/github-pr-scan.md`'s Transport section is the canonical example: issue-backed
 items in a scope route through this file's `list_issues` row, PR-backed items in the same scope
 degrade per-item with a narrower message instead. This resolves the gap deliberately (a
 documented per-item degrade) rather than leaving it implicit. Two PR reads are documented

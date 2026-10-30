@@ -20,6 +20,7 @@ function findRow(text, prefix) {
 
 const SCAN_PROCEDURES = read('plugin/skills/tidy/scan-procedures.md');
 const ACTIONS = read('plugin/skills/tidy/actions-github-issues.md');
+const COLLECTION_ROUTING = read('plugin/skills/tidy/collection-routing.md');
 
 function claimAuditSection() {
   const start = SCAN_PROCEDURES.indexOf('## Step 4.7: Audit Issue Claims');
@@ -48,8 +49,12 @@ test('the stale-claim paragraph lists open PRs on both transports and matches th
 });
 
 test('a matching PR routes as the Yours Unsettled run no-op, never staged and never released (#4423)', () => {
-  const s = claimAuditSection();
-  assert.match(s, /`### Resume` line/);
+  const s = claimAuditSection().replace(/\s+/g, ' '); // prose wraps at ~98 columns
+  assert.match(s, /`### Resume` heading/);
+  assert.ok(s.includes('Resume open PR #{number} ({url})'), 'the Resume rendering names the PR');
+  assert.ok(s.includes('Resolve open PR #{number} ({url})'), 'the Resolve fallback names the PR');
+  assert.match(s, /basename equals\s+the matched `runId`/);
+  assert.match(s, /Manual review/);
   assert.match(s, /\*\*Unsettled run\*\*/);
   assert.match(s, /Yours/);
   assert.match(s, /never staged/);
@@ -71,4 +76,12 @@ test('the Release claim executor never receives an open-PR stale row (#4423)', (
   const s = ACTIONS.slice(start, end);
   assert.match(s, /open marked PR/);
   assert.match(s, /never a Release row/);
+});
+
+test('collection-routing routes a [claim] Resume/Resolve outcome to Yours and supersedes [unsettled] (#4423)', () => {
+  const row = findRow(COLLECTION_ROUTING, '| `[backlog]`, `[parked]`');
+  assert.ok(row, 'the Approve routing row is present');
+  assert.match(row, /`\[claim\]` Resume\/Resolve outcome/);
+  assert.match(row, /lands in \*\*Yours \(\{N\}\)\*\* as an Auto no-op, never staged/);
+  assert.match(row, /supersedes an `\[unsettled\]` row for the same `#\{n\}`/);
 });

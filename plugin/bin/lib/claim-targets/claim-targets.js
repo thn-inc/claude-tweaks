@@ -492,9 +492,12 @@ function run(argv, deps) {
     // sits on an open same-repo PR is in flight, not abandoned — reclaiming it
     // would rebuild finished work (#4423). Same stop/skip path as the
     // `pr-opened:` tombstone above; fails open the same way. Called through
-    // `claimStore.` so the module-level spy pattern reaches it.
+    // `claimStore.` so the module-level spy pattern reaches it. A failed check
+    // reclaims but says so on stderr, so it is not mistaken for "no marked PR".
     if (classified.state === 'stale') {
-      const inFlight = claimStore.staleClaimInFlightPr(content, cachedGhForPrView, repoOwner, repoName);
+      const inFlight = claimStore.staleClaimInFlightPr(content, cachedGhForPrView, repoOwner, repoName, (e) => {
+        deps.stderr(`claim-targets: stale-claim open-PR check failed for #${issue} (reclaiming) — ${errText(e)}\n`);
+      });
       if (inFlight) {
         const stop = stopOrSkip(issue, 'in-flight', 'inFlight', 3, { link: inFlight.link });
         if (stop !== null) return stop;

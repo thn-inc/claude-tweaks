@@ -264,8 +264,8 @@ stays best-effort and the claim read stays the authoritative hold check:
   stops for this exact stop shape — nobody headless is present to answer a resume confirmation);
   the card above is the terminal output for that form. Otherwise, parse the PR number from the
   trailing path segment of `link` (already validated same-repo-PR-URL-shaped by
-  `tombstoneInFlightPr` before this branch is ever reached) and `gh pr view {number} --json body`,
-  reading the body for both the `claude-tweaks-run: {run-id}` marker
+  `tombstoneInFlightPr` or `staleClaimInFlightPr` before this branch is ever reached) and
+  `gh pr view {number} --json body`, reading the body for both the `claude-tweaks-run: {run-id}` marker
   (`_shared/pr-early-run-lifecycle.md`'s dual-marker scheme — the plain-text form, since this read
   has no preference for the HTML-comment one) and, on the same read, that file's `### Resume`
   section — the exact command line `` `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}"

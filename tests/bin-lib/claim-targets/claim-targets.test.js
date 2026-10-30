@@ -668,6 +668,37 @@ test('(stale-pr-4) the gh pr list call itself fails: fails open, reclaims as bef
   assert.deepEqual(JSON.parse(io.out[0]).claimed, [773], 'a gh failure on the stale in-flight check must never wedge the claim path');
 });
 
+test('(stale-pr-4b) a failed stale in-flight check reclaims AND writes one stderr line naming the issue and error', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 773: [readOk(staleMarker(RUN), 'sha773'), confirmRead()] },
+    writes: { 773: [writeOk] },
+  });
+  const { gh } = makeGh({ fail: { prList: true }, openPrs: [markedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '773'], deps);
+
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [773], 'the claim still reclaims');
+  const lines = io.err.filter((s) => s.includes('#773'));
+  assert.equal(lines.length, 1, 'exactly one stderr line names the issue');
+  assert.match(lines[0], /^claim-targets: stale-claim open-PR check failed for #773 \(reclaiming\) — pr list failed\n$/);
+});
+
+test('staleClaimInFlightPr: onError receives the error of a thrown gh, an unparseable listing, and a non-array result', () => {
+  const errors = [];
+  const onError = (e) => errors.push(e);
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => { throw new Error('boom'); }, 'acme', 'w', onError), null);
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => 'not json', 'acme', 'w', onError), null);
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify({}), 'acme', 'w', onError), null);
+  assert.equal(errors.length, 3, 'each failure mode reaches onError');
+  assert.equal(errors[0].message, 'boom');
+  // A clean no-match, and a non-run-id-shaped runId, are not failures.
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => '[]', 'acme', 'w', onError), null);
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker('otherRun'), () => '[]', 'acme', 'w', onError), null);
+  assert.equal(errors.length, 3, 'a no-match is not reported as a failure');
+});
+
 test('(stale-pr-5) stale blob whose runId is not a run-id shape: reclaims and never lists PRs', () => {
   const { ghApi } = makeGhApi({
     reads: { 774: [readOk(staleMarker('otherRun'), 'sha774'), confirmRead()] },

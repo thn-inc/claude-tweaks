@@ -536,10 +536,12 @@ function tombstoneInFlightPr(content, gh, owner, repo) {
 // checked before it can reach a `gh` call, and the matched PR's url must be a
 // same-repo PR url. One `pr list` serves every stale target of a claim run
 // (the caller memoizes `gh`). Fails open like its tombstone twin — a broken
-// check must never block a legitimate reclaim.
+// check must never block a legitimate reclaim — but a failed check (a thrown
+// `gh`, an unparseable or non-array listing) is not a clean "no marked PR", so
+// the optional trailing `onError(err)` lets the caller surface it (#4423).
 const RUN_ID_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$/;
 
-function staleClaimInFlightPr(content, gh, owner, repo) {
+function staleClaimInFlightPr(content, gh, owner, repo, onError) {
   try {
     const parsed = JSON.parse(content);
     const runId = parsed && parsed.runId;
@@ -551,7 +553,8 @@ function staleClaimInFlightPr(content, gh, owner, repo) {
       if (pr.body.split('\n').some((line) => markers.includes(line.trim()))) return { link: pr.url };
     }
     return null;
-  } catch {
+  } catch (e) {
+    if (typeof onError === 'function') onError(e);
     return null; // fail open — a broken check must never block a legitimate reclaim
   }
 }

@@ -4,13 +4,13 @@ Canonical procedure for "Confirm before resuming" (`SKILL.md`'s Reporting sectio
 file whenever the report or a conversational request ("resume it", "merge!") is about to trigger
 a re-invocation of a parked run.
 
-**Second caller (#958):** `flow/claim-targets.md`'s in-flight-tombstone branch (Step 2.8's exit-3
-in-flight variant, #315) also follows this procedure directly, resolving `{run-dir}` from the
-linked open PR's `claude-tweaks-run:` body marker rather than from a dispatch report. Its own
-"no automated caller" reasoning below still holds for that entry point too — the routing there
-skips outright under `DISPATCH_HEADLESS=1` (no human present to answer) and otherwise lands on
-this file's own `AskUserQuestion`, exactly as the dispatch-report entry point does; it is a second
-*entry point* into this human-gated procedure, not a second automated resumer.
+**Second caller (#958):** `flow/claim-targets.md`'s in-flight branch (tombstone or stale
+claim, #4423; Step 2.8's exit-3 in-flight variant, #315) also follows this procedure directly,
+resolving `{run-dir}` from the linked open PR's `claude-tweaks-run:` body marker rather than from
+a dispatch report. Its own "no automated caller" reasoning below still holds for that entry point
+too — the routing there skips outright under `DISPATCH_HEADLESS=1` (no human present to answer)
+and otherwise lands on this file's own `AskUserQuestion`, exactly as the dispatch-report entry
+point does; it is a second *entry point* into this human-gated procedure, not a second automated resumer.
 
 **Confirm before resuming.** Before running the re-invocation below — including when a human triggers the resume conversationally (e.g. replying "merge!" in chat) rather than by typing the command directly — call `AskUserQuestion`. Under `integration-model: pr-first`:
 - `question`: `"Resume {target} toward merge? PR #{number} ({url}), CI: {status}, files changed: {count-or-list}. Declining leaves the run parked."`, `header`: `"Resume run"`, `multiSelect`: `false`
