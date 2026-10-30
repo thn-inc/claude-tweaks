@@ -3,8 +3,9 @@
 //   node bin/claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--help]
 // --steps with neither build nor test claims nothing (skipGuard: no-build-or-test).
 // Exit 0 = all claimed (or, with --keep-going, partial; or skip-guarded); 2 = malformed
-// invocation or missing dependency; 3 = contested, or a pr-opened tombstone
-// whose linked PR is still open (JSON on stdout — {contested:[...]} or
+// invocation or missing dependency; 3 = contested, or in flight — a pr-opened
+// tombstone whose linked PR is still open, or a stale claim whose run marker
+// sits on an open same-repo PR (JSON on stdout — {contested:[...]} or
 // {inFlight:[{issue,link}]}); 4 = transient gh failure; 5 = a claim write
 // reported success but the post-write read-back did not confirm it
 // ({unverified:[{issue}]}). See bin/lib/claim-targets/claim-targets.js for
@@ -16,12 +17,15 @@ const { execFileSync } = require('child_process');
 const claimStore = require('./lib/issues/claim-store');
 const { run, defaultAppendClaimLog } = require('./lib/claim-targets/claim-targets');
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
-const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
+const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
+// maxBuffer: the stale-claim check's `gh pr list --json url,body,...` carries
+// every open PR's body, which overflows Node's 1 MiB default (ENOBUFS) well
+// before its 1000-PR limit.
 function defaultGh(args) {
   return execFileSync('gh', args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
-    windowsHide: true,
+    maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
   });
 }
 

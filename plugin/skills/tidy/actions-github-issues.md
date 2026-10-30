@@ -37,7 +37,10 @@ and the parent's labels fresh, and re-run **Evaluate the gate** — do not reuse
 snapshot, since time has passed since Step 4.8 ran). If the re-verified gate no longer reads
 `due` (another process already gated the parent, or a sub-issue reopened), this is a silent no-op —
 skip it, don't error, and don't recommend `/claude-tweaks:demo #{n}` for it in the applied-report
-either. If it still reads `due`, compose the parent brief and apply the gate exactly as that
+either. If it still reads `due` and **Evaluate the gate** reads `exceeds: false` (below the
+oversight floor), run that procedure's **Close the parent below the floor** instead of composing a
+brief: it comments and closes the parent, writes no `demo:*` label, and a parent already closed is
+a no-op; it stays staged, per the paragraph below. Otherwise compose the parent brief and apply the gate exactly as that
 procedure's own **Compose the parent brief** and **Apply the gate** sections describe — posting
 the brief comment before adding `demo:pending`, matching that same invariant.
 
@@ -49,13 +52,17 @@ that table. Posting a comment and adding a label is an outward-facing GitHub API
 reversibility floor requires `high` — "undoable via file edit or `git revert`" — and its
 never-reversible list separately forbids "network calls beyond reads (no API writes, no message
 sends)" at every tier regardless of mode. Neither bar is clearable by this write, however
-mechanical or precondition-only it is. `_shared/github-pr-scan-acceptance.md`'s `parent-gate` scope states
-the same reasoning at the scope level.
+mechanical or precondition-only it is. The below-floor close is staged on different grounds: that contract's exception for its
+comment and close covers only the Parent-Gate Procedure's sub-issue-side entries, and this
+parent-side backstop is not one of them. Here it is an outward-facing write that
+closes the parent and asserts every sub-issue is complete. `_shared/auto-mode-contract.md`'s
+Never-reversible list states that exception's scope.
 
 This action never applies `demo:approved` or `demo:changes-requested` — those two labels stay
 exclusively `/claude-tweaks:demo`'s job, applied only after an explicit human verdict. Opening
-the gate is the precondition for that verdict, not the verdict itself, which is why the
-recommendation still ends with `/claude-tweaks:demo #{n}` even once the gate is open.
+the gate is the precondition for that verdict, not the verdict itself, which is why
+an above-floor recommendation still ends with `/claude-tweaks:demo #{n}` even once the gate is
+open. The below-floor close has no verdict to await, so its row does not end with it.
 
 ## Arm ready PR
 
@@ -129,7 +136,9 @@ already-green PR), never the `wait` row.
 ## Release claim
 
 Executor for a `[claim]` Release row from Step 4.7's claim audit (`scan-procedures.md`) — both
-the `Blob classified 'stale'` and the `Issue closed (any claim state)` recommendation rows.
+the `Blob classified 'stale'` and the `Issue closed (any claim state)` recommendation rows. A
+`'stale'` row carrying an open marked PR (`scan-procedures.md` Step 4.7's Stale claim with an open
+PR) is never a Release row: it is a Yours no-op, so this executor never receives it.
 `node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" <n> --run <tidy-run-dir> --sweep --reason
 "swept: stale claim"` (or `"swept: issue closed"`). `--sweep` is required — this run's `--run`
 basename is never the crashed dispatcher's `runId`, so without it `release-claim.js`'s ordinary

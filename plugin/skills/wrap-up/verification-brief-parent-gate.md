@@ -11,18 +11,25 @@ the record in hand has a resolvable parent.
 
 ## Two entry shapes
 
-Every step from **Enumerate the parent's sub-issues** onward is shared, unchanged, by every caller
-— only how the caller arrives at `$PARENT_NUM` differs, and there are exactly two shapes:
+Every caller runs **Enumerate the parent's sub-issues** through **Evaluate the gate** unchanged.
+The two shapes differ in how a caller arrives at `$PARENT_NUM`; past the gate, the post-merge
+Step 4.0b entry also differs, as its bullet and the paragraphs after this list state:
 
-- **Sub-issue-side entry** — the four sub-issue callers in the Routing table at the top of
+- **Sub-issue-side entry** — the five sub-issue callers in the Routing table at the top of
   `verification-brief.md`: the three mid-close ones (`/claude-tweaks:wrap-up`'s Phase 4 execution
   step, `/claude-tweaks:wrap-up`'s auto-merge short-circuit, and `/claude-tweaks:dispatch`'s group
-  auto-merge gate, the last running this procedure once per group member) and
+  auto-merge gate, the last running this procedure once per group member),
   `/claude-tweaks:dispatch`'s close-out step 3, at a later human-confirmed merge whose run never
-  landed labeling. Each arrives holding a **sub-issue** number, plus
+  landed labeling, and `_shared/pr-first-merge-post-merge.md` Step 4.0b, the one **post-merge**
+  entry. The first four run before their merge lands; Step 4.0b runs after it has landed and acts
+  only on `due` with `exceeds: false`, where it runs **Close the parent below the floor** — every
+  other gate outcome is a no-op for it. Each arrives holding a **sub-issue** number, plus
   `$CLOSING_SUB_ISSUES` — the set of sub-issue numbers its own run is closing, which the
   **Self-inclusion rule** below reads (one element for both wrap-up entries; the whole group for
-  the dispatch gate; the PR's `Fixes` records for close-out). Run every section below in order, starting with **Resolve the parent**.
+  the dispatch gate; the PR's `Fixes` records for close-out; the merge's closing records for
+  Step 4.0b). Step 4.0b also passes `$MERGING_PR` — the merged PR's number, empty on a no-PR
+  local merge — which **Close the parent below the floor** reads for its listing lines. Run every
+  section below in order, starting with **Resolve the parent**.
 - **Parent-side entry** — **`/claude-tweaks:tidy`'s `Open parent gate` action**, on either
   driver: `tidy/actions-github-issues.md` executing on a `[parent-gate]` finding from
   `_shared/github-pr-scan-acceptance.md`'s `parent-gate` scope, or `tidy/actions-local-files.md` executing
@@ -46,13 +53,20 @@ returns to `verification-brief.md`'s **Posting it alone** and posts this sub-iss
 below, which hands this record to the no-parent path, so the block lands where that path's
 Oversight-floor gate puts it: embedded in the record's own brief (Step 4's template) when it clears
 the floor, posted alone (**Posting it alone**) when it does not. The parent-side
-(`/claude-tweaks:tidy`) entry does not post one.
+(`/claude-tweaks:tidy`) entry does not post one, and neither does the post-merge
+`_shared/pr-first-merge-post-merge.md` Step 4.0b entry: it posts no Try it block and appends
+nothing to `"$TRY_IT"`, since the run that delivered each sub-issue already posted its own.
 
 **Fail open on every `gh` call in this section.** If `gh` is unavailable, unauthenticated, the
 repo has no GitHub remote, or any parent-gate `gh` call below fails: a **sub-issue-side** entry
 skips the Parent-Gate Procedure entirely and falls back to the no-parent path (`verification-brief.md`'s
 Oversight-floor gate, then Steps 1-4 on this record itself when it clears the floor) — never blocking the wrap-up, the
-auto-merge short-circuit, or the dispatched group's merge gate. The **parent-side** entry skips
+auto-merge short-circuit, or the dispatched group's merge gate. The post-merge
+`_shared/pr-first-merge-post-merge.md` Step 4.0b entry is the sub-issue-side exception: on any
+failing `gh` call it skips that parent — or the whole step, when the call reads Step 4.0b's own
+input — names each skipped parent in the closing summary, and never falls back to the no-parent
+path — its merge has already landed, so there is no wrap-up or merge left to protect, and
+`/claude-tweaks:tidy`'s `parent-gate` backstop is the recovery. The **parent-side** entry skips
 this one parent for this run, leaving its `[parent-gate]` finding surfaced and unmutated — never
 failing the whole `/tidy` run over one parent's `gh` call. This paragraph is moot under
 `work-backend: local-files`, whose branches below make no `gh` call at all; a filesystem error
@@ -103,7 +117,9 @@ from this sub-issue's own side; `work-backend: github-issues` + `work-links: bod
 **No parent resolvable** (a record human-filed or `/capture`d directly, or one produced by a
 `/specify` decomposition whose Step 2.6 collapse decision created no parent —
 `specify/decomposition-mode.md`) — skip this section entirely: fall through to Steps 1-4 in
-`verification-brief.md` and apply `demo:pending` to this record itself, exactly as today.
+`verification-brief.md` and apply `demo:pending` to this record itself, exactly as today. The
+exception is `_shared/pr-first-merge-post-merge.md` Step 4.0b's post-merge entry, for which no
+resolvable parent is a no-op: no labeling, no Try it.
 
 ## Enumerate the parent's sub-issues
 
@@ -121,7 +137,7 @@ WORK_LINKS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values work-li
 
 ```bash
 # work-links: native
-gh api "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues" --jq '.[].number'
+gh api --paginate "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues" --jq '.[].number'
 
 # work-links: body-text — parse the parent's own task list. Resolve this run's
 # session-scoped temp path first (_shared/session-tmp-root.md, cited throughout
@@ -147,11 +163,13 @@ const subIssues = subIssueRecords.map((r) => ({ number: r.id, state: r.facets.cl
 ```
 
 For each sub-issue number resolved above (`work-backend: github-issues`), fetch its current state
-**and labels** in one call — `gh issue view {n} --json state,labels` — to build the `subIssues`
+**and labels** in one call — `gh issue view {n} --json state,stateReason,labels,title,closedByPullRequestsReferences` — to build the `subIssues`
 array `parentGateState({subIssues, parentLabels})` (`bin/lib/issues/acceptance.js`) reads, with each
 sub-issue's `facets` (`parseRecordFacets(labels)`, `bin/lib/issues/record.js`) attached alongside
 `state`. `facets` is fetched here, once, and reused by the Oversight-floor check's `maxRiskTier`
-call below — no second per-sub-issue round-trip.
+call below — no second per-sub-issue round-trip. `title` and `closedByPullRequestsReferences`
+are kept for the listing lines of **Close the parent below the floor**, and `stateReason` for its
+close reason, for the same reason.
 
 Then fetch the **parent's** own current labels — the other argument that predicate takes, and
 the one nothing above has produced yet. Both entry shapes need this: the parent-side entry
@@ -186,7 +204,7 @@ one-element set `{the sub-issue in hand}` — never to the empty set.** That def
 this rule a strict widening of the self-contained one it replaced rather than a replacement for
 it: a caller that names no set still gets exactly the old behavior. The empty set would instead
 make every sub-issue evaluate `incomplete` and label nothing, which is precisely the silent no-op
-this rule exists to prevent and the `[IL-65]` mode named below — so a future fifth caller that
+this rule exists to prevent and the `[IL-65]` mode named below — so a future sixth caller that
 forgets to pass one degrades to correct-for-one-sub-issue, not to silence.
 
 **Sizing the set to the run, not to the invocation.** There is one path here, not two: the
@@ -198,6 +216,7 @@ single-sub-issue case is the one-element set.
 | `/claude-tweaks:wrap-up`'s auto-merge short-circuit (`wrap-up/review-console.md`) | the one sub-issue this run is closing |
 | `/claude-tweaks:dispatch`'s group auto-merge gate (`dispatch/settle-and-merge.md`) | **every** member of the group, on every one of its per-member invocations — that gate's single merge carries one `Fixes #{issue}` line per record, so the whole group closes together |
 | `/claude-tweaks:dispatch`'s close-out step 3 (`dispatch/close-out.md`) | the PR's `Fixes` record numbers — the one merge it confirms closes them all |
+| `_shared/pr-first-merge-post-merge.md` Step 4.0b | the merge's closing records — GitHub can still report a just-merged sub-issue `OPEN` for a few seconds after the merge |
 
 The two wrap-up entries close exactly one record per run, so their set has exactly one member —
 the sub-issue in hand — and this rule reduces to "the sub-issue being closed counts as `CLOSED`".
@@ -205,9 +224,10 @@ For the group gate the set's size is the difference between the eager gate firin
 at all: count only the sub-issue in hand and a group holding two or more sub-issues of one parent
 evaluates `incomplete` on every one of them, labeling nothing — not the sub-issues, not the parent.
 
-**Ruling (`#205`): stays a prose contract, not a shared helper.** A fifth caller inherits the
-"default to `{the sub-issue in hand}`, never `{}`" rule above with nothing to catch a wrong value
-if it passes one — the risk this table exists to flag. When three callers existed, each
+**Ruling (`#205`): stays a prose contract, not a shared helper.** Each caller added
+since inherits the "default to `{the sub-issue in hand}`, never `{}`" rule above with nothing to
+catch a wrong value if it passes one — the fifth, Step 4.0b (#4466), did inherit it — the risk this table
+exists to flag. When three callers existed, each
 already reading this table before writing its own `$CLOSING_SUB_ISSUES` line, and a shared helper
 would mean threading a new call through every one of them for a hazard the default clause already
 closes (an omitted set can no longer silently label nothing — see above), the cost didn't clear
@@ -258,17 +278,163 @@ axis that was never meant to be evaluated at the parent level — parents carry 
 own (`specify/record-creation.md`'s Parent record section), so there is nothing to read there
 regardless.
 
-- **`exceeds: false`** — the parent closes cleanly: no `demo:pending`, no brief, same as a
-  below-floor sub-issue record on the non-parent path. Do not compose the parent brief. The
-  walkthrough is not gated (#2821): on a sub-issue-side entry, compose the end-to-end variant
-  (`_shared/try-it.md`) across the assembled sub-issues and append it to this run's `"$TRY_IT"`
-  file (`verification-brief.md`'s **Try it block**), so it posts with the sub-issue's own block and
-  reaches the Pipeline Summary. Parent-side entry (`/claude-tweaks:tidy`): stop here — no delivering
-  run exists to carry it.
+- **`exceeds: false`** — no `demo:pending`, no brief, same as a below-floor sub-issue record on
+  the non-parent path. Do not compose the parent brief. The parent still has to be closed, and
+  the entry decides when:
+  - **Sub-issue-side entry, `work-backend: github-issues`:** a pre-merge caller leaves the parent
+    open, because this run's merge has not landed yet. `_shared/pr-first-merge-post-merge.md`'s
+    Step 4.0b closes it after the merge lands: that post-merge entry runs
+    **Close the parent below the floor** here. `/claude-tweaks:tidy`'s `parent-gate` backstop
+    catches a merge no session saw land.
+  - **Sub-issue-side entry, `work-backend: local-files`:** run **Close the parent below the floor**
+    now, and commit the parent record with the entry's own close commit. The parent is
+    never closed ahead of the merge, per that section's step 5.
+  - **Parent-side entry (`/claude-tweaks:tidy`):** run **Close the parent below the floor**.
+
+  The walkthrough is not gated (#2821): on a sub-issue-side entry other than Step 4.0b, compose
+  the end-to-end variant (`_shared/try-it.md`) across the assembled sub-issues and append it to
+  this run's `"$TRY_IT"` file (`verification-brief.md`'s **Try it block**), so it posts with the
+  sub-issue's own block and reaches the Pipeline Summary. Parent-side entry
+  (`/claude-tweaks:tidy`): no walkthrough — no delivering run exists to carry it.
 - **`exceeds: true`** — proceed to **Compose the parent brief** below, exactly as `due` alone
   used to trigger before this gate existed. On a sub-issue-side entry, append the same end-to-end
   variant that brief carries to `"$TRY_IT"` too, as on `exceeds: false` — one rule for both
   outcomes, so the run that opens the parent gate shows the end-to-end path in its Pipeline Summary.
+
+## Close the parent below the floor
+
+Runs only on `due` with `exceeds: false`, from the entries **Evaluate the gate**'s `exceeds: false`
+bullet names. A pre-merge sub-issue-side entry under `github-issues` never runs this section.
+It writes no acceptance label — never `demo:pending`, `demo:approved` or
+`demo:changes-requested` — and composes no Verification Brief: below the floor no sign-off is owed,
+so the closing comment records why the parent closed rather than asking anyone to accept it.
+
+**1. Idempotence — check before writing anything.** `work-backend: github-issues`:
+
+```bash
+gh issue view $PARENT_NUM --json state,stateReason,comments
+```
+
+```bash
+gh api user --jq .login
+```
+
+- A parent already `CLOSED` is a no-op: an earlier entry, or a human, closed it.
+- An open parent whose `stateReason` is `REOPENED` is a no-op too, reported in the output and
+  never re-closed: a human reopened it after an earlier close.
+- Otherwise test whether **any** comment carries a `## Closed below the oversight floor` heading
+  line, counting only a comment from a trusted author
+  (`_shared/pr-run-comments.md`'s Trusted authors) or from the current `gh` identity (the login
+  printed above), since the plugin's own bot or app token can post under an untrusted author
+  association. Any other comment carrying the heading
+  reads as no comment posted, and each one skipped is named in that section's skip notice in the
+  output, since planting a heading must not suppress the real comment. A counted one means an
+  earlier run posted the comment and its close then failed: run only step 3's close call, with no
+  second comment.
+
+**2. Compose the closing comment:**
+
+```markdown
+## Closed below the oversight floor
+
+Every sub-issue of this decomposition is closed, and the highest sub-issue risk, `risk:{maxTier}`, does not exceed the resolved `risk-floor` (`{riskFloor}`), so no Verification Brief or `demo:pending` sign-off is owed.
+
+- #{n} {title} — closed by PR #{pr}
+```
+
+When step 3 closes with `"not planned"`, add the line `No sub-issue closed as completed, so this
+parent closes as not planned.` after the template's first paragraph.
+
+One listing line per sub-issue **Enumerate the parent's sub-issues** returned, in number order.
+`{title}` comes from that section's per-sub-issue fetch. For a `$CLOSING_SUB_ISSUES` member,
+`{pr}` is `$MERGING_PR` when it is non-empty (**Two entry shapes** above): that PR's merge is the
+one that closed it, and GitHub may not have linked it yet a few seconds after the merge.
+Otherwise `{pr}` is the `number` of the sub-issue's `closedByPullRequestsReferences` entry from
+that fetch (the last one when it lists several — an entry carries only `id`, `number`,
+`repository` and `url`, no state or merged field, so this fallback is arbitrary but
+deterministic). A sub-issue left with no `{pr}` either way is listed as `- #{n} {title}`, with
+no suffix. Never write a merge SHA
+in place of a missing PR number: a line names a PR or carries no suffix. Under
+`work-backend: local-files` each line is `- {id} {title}`, from `subIssueRecords` above
+(`r.id`, `r.title`) — no PR data exists there.
+
+**3. Write, comment, close** (`work-backend: github-issues`). Resolve this run's session-scoped
+temp path (`_shared/session-tmp-root.md`):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value parent-close-comment.md
+```
+
+Write the composed comment to the printed path with the Write tool, then run each call below as
+its own command, with that literal path in place of `{parent-close-comment}`:
+
+```bash
+gh issue comment $PARENT_NUM --body-file "{parent-close-comment}"
+```
+
+Close with `--reason completed` only when at least one sub-issue closed `COMPLETED` (its
+`stateReason`, from **Enumerate the parent's sub-issues**; a `$CLOSING_SUB_ISSUES` member counts
+as `COMPLETED`, since its merge closes it):
+
+```bash
+gh issue close $PARENT_NUM --reason completed
+```
+
+Otherwise every sub-issue closed not planned or duplicate — nothing shipped, which
+`bin/lib/issues/acceptance.js`'s `needsBackstop` likewise treats as nothing to accept — so close
+with:
+
+```bash
+gh issue close $PARENT_NUM --reason "not planned"
+```
+
+Comment first, then close, so a reader of the closed parent always finds the reason attached.
+
+**4. Partial state.** These are two independent `gh` calls. If one fails, report exactly
+which call failed — don't assume all-or-nothing — and never fall back to the no-parent path: no
+record of the entry's own is waiting on this close. A comment that posted before a failed close
+leaves the parent open with a heading comment step 1 counts, so a rerun's step-1 check closes it
+without a second comment; when no session reruns it, `/claude-tweaks:tidy`'s `parent-gate`
+backstop surfaces the still-open parent and finishes it.
+
+**5. `work-backend: local-files`** — the same steps through the store, with no `gh` call.
+`parentPath` is resolved exactly as **Apply the gate** below resolves it. Resolve
+`{parent-close-comment}` and Write the comment composed in step 2, with `- {id} {title}` listing
+lines, to it with the Write tool, as step 3 does, so no record title passes through JS source:
+
+```js
+const fs = require('fs');
+const { readRecord, writeRecord, closeRecord } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
+const parentCloseSection = fs.readFileSync('{parent-close-comment}', 'utf8').trimEnd();
+const parentRecord = readRecord(parentPath);
+if (!parentRecord.facets.closed) {
+  if (!/^## Closed below the oversight floor\s*$/m.test(parentRecord.body)) {
+    parentRecord.body = parentRecord.body + '\n\n' + parentCloseSection;
+    writeRecord(parentPath, parentRecord);
+  }
+  closeRecord(parentPath);
+}
+```
+
+A parent whose `facets.closed` is already set is a no-op; a body already holding the heading means
+`closeRecord` alone. `closeRecord` re-reads the file, so calling it after `writeRecord` keeps the
+appended section. A filesystem error is a real failure to report, never a fail-open case. On a
+sub-issue-side entry, log the close when a run directory is set — it is an auto-resolution under
+`_shared/auto-mode-contract.md`'s exception, so it carries the same audit line as Step 4.0b's:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "Parent-Gate local-files close" --reversibility "high (clear the parent record's closed facets)" --text "closed parent {id} below the oversight floor (risk:{maxTier}, risk-floor {riskFloor})"
+```
+
+Then commit the parent record file with the entry's own close commit — its next
+commit after labeling; for `/claude-tweaks:wrap-up` that is the execution step's summarizing
+commit (`wrap-up/execution-and-verification.md`). When the entry has no later commit before its
+merge (the auto-merge short-circuit), commit the parent record file itself before the merge, with
+a `{Verb} … — refs #{parent}` subject, and, under `pr-first`, push it before the merge, so the
+squash carries it. The parent is never closed ahead of the merge: on wrap-up's
+execution step the commit follows the merge of `wrap-up/cleanup-procedures.md`'s item 4 (Git
+worktree), and on the auto-merge short-circuit labeling and the commit happen on the run's branch
+before its merge.
 
 ## Compose the parent brief
 

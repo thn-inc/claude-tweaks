@@ -203,6 +203,26 @@ exactly the route/severity pairings step3-routing.md's ceiling-keyed table produ
 It went red under an `auto: ['low','medium','high']` mutant. When the code side is a projection,
 apply the same projection to the prose, and compare at that level.
 
+**Regex-constant and detector-over-composer instance (#4423):** two twin shapes that are neither a
+table nor a vocabulary.
+
+- *A validation regex that agents run from prose.* `plugin/bin/lib/issues/claim-store.js`'s
+  `RUN_ID_SHAPE` is restated verbatim in three skill files, and on the gh-absent MCP path that prose
+  copy is the implementation. Export the constant. Build the copy list by `grep -rlF` on a
+  distinctive fragment, never by memory. Assert every copy `includes(RUN_ID_SHAPE.source)`:
+  `tests/issue-claims-stale-open-pr-conformance.test.js`'s "every prose copy of the run-id shape
+  equals claim-store.js's RUN_ID_SHAPE" test.
+- *A code detector whose input line is produced by a code composer.* `staleClaimInFlightPr` matches
+  a run marker that `plugin/bin/lib/flow/pr-body.js` writes. It shipped pinned only against
+  hand-typed markers, which agree with the detector by construction. Pin the detector to the
+  composer instead: run `composePrEarlyBody`/`composeExpressBody` output through it, each marker
+  form alone, including the body with every HTML comment stripped (what a gh-absent MCP read
+  returns): `tests/bin-lib/claim-targets/claim-targets.test.js`'s "matches the run marker
+  pr-body.js composes, in either form alone" test.
+
+Both pins were proven red by mutation (a reworded prose copy; a reworded composer marker) before
+they landed.
+
 **Candidate instance (a live, currently-unpinned gap this check surfaces today):**
 `plugin/bin/lib/compose-subject.js:69`'s `TYPE_PRECEDENCE = ['feature', 'bug', 'task']` is a
 *third* copy of the same closed vocabulary `TYPES`/`TYPE_PREFIX` above already key off — used to

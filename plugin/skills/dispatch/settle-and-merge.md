@@ -37,18 +37,19 @@ When a handed-off `/flow` run fails a HARD-GATE (never reaches `/wrap-up`):
 **Claim-contest special case (before the numbered steps below).** When the failure this call is
 settling is a Step 2.8 claim-loop stop that renders as a static card with no `AskUserQuestion` of
 its own — either `flow/claim-targets.md`'s "Claim contested" stop, or its "Claim in-flight" stop
-(#315/#958/#974's in-flight-tombstone variant — reached here only when that card's own routing into
-`dispatch/resume-confirmation.md` was itself skipped under `DISPATCH_HEADLESS=1`, since that
-routing's own headless skip is what leaves the card as this Task call's terminal output) — no
-build or test ever ran, the pipeline stopped before the Config Manifesto, this record was never
-claimed by this run at all, so step 1 below's ownership check will correctly find no claim to
-release (skip is the right outcome there, not an error). The one thing this case adds: **when
+(#315/#958/#974's in-flight variant, tombstone or stale claim (#4423) — reached here only when
+that card's own routing into `dispatch/resume-confirmation.md` was itself skipped under
+`DISPATCH_HEADLESS=1`, since that routing's own headless skip is what leaves the card as this Task
+call's terminal output) — no build or test ever ran, the pipeline stopped before the Config
+Manifesto, this record was never claimed by this run at all, so step 1 below's ownership check
+will correctly find no claim to release (skip is the right outcome there, not an error). The one
+thing this case adds: **when
 `DISPATCH_HEADLESS=1` was set on this Task call's invocation** (`dispatch/task-prompt.md`'s first
 template — set only for a Routine-fired headless firing (bare drain or its `next` alias), where
 nobody is present to read the stop directly),
 read `_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller =
 `dispatch`), using failing-check-name `flow-step-2.8-claim-contest` for the contested-claim stop
-or `flow-step-2.8-claim-in-flight` for the in-flight-tombstone stop — distinct names, since the
+or `flow-step-2.8-claim-in-flight` for the in-flight stop — distinct names, since the
 two are different stop shapes and must dedup separately — and that stop's own card text as the
 diagnostic body. This is the one Settle branch that runs *before* any release/classification
 logic, since there is nothing to release or classify — it is a pre-flight stop, not a build/test
@@ -394,7 +395,7 @@ git -C "{group-worktree}" push origin {integration-branch}
 
 The composer emits one `Fixes #{issue}` line per record passed. The explicit `--no-ff` guarantees a real merge commit even when the branch would fast-forward — the `[auto-merge]` tag lands on it, and its message carries the closing keyword per "Close-via-merge" in `_shared/issue-claims.md`, so no separate carrier commit is needed.
 
-After a successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.1 against the local merge commit (`git rev-parse {integration-branch}` immediately after the merge) with `--ref {integration-branch}` — same outcomes and staged file, closing-report line only (no PR to comment on).
+After a successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.0b against the pushed merge commit (no PR, so `$MERGING_PR` is empty). Then run `_shared/pr-first-merge-post-merge.md` Step 4.1 against the local merge commit (`git rev-parse {integration-branch}` immediately after the merge) with `--ref {integration-branch}` — same outcomes and staged file, closing-report line only (no PR to comment on).
 
 **On success**, this call still owes the cleanup the second Task call deliberately skipped (worktree removal, claim release, run-dir archival — Items 4, 7, 8, all merge-dependent). Run them directly: remove the worktree per `wrap-up/cleanup-procedures-execution.md` Section C (`ExitWorktree`, or `git worktree remove` once unlocked), release the claim per that file's Section E, and archive the run directory per its Section B. Required: `dispatch/SKILL.md` Step 5 only enters the next group's worktree once this one "has been torn down," so skipping this stalls every later group in the same firing.
 
@@ -415,6 +416,6 @@ Attach the full Review-Console-equivalent summary (whatever `/wrap-up` already p
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "{run-dir}" "{group-worktree}"
 ```
 
-`record-worktree` restores the worktree assignment and `active` status. It prints `claude-tweaks: worktree recorded for …` when it worked; log any other line to `{run-dir}/decisions.md` (the run dir may be archived). On a push failure also log the merge commit as unpushed; Step 4.1 and the success cleanup do not run. Park as below.
+`record-worktree` restores the worktree assignment and `active` status. It prints `claude-tweaks: worktree recorded for …` when it worked; log any other line to `{run-dir}/decisions.md` (the run dir may be archived). On a push failure also log the merge commit as unpushed; Steps 4.0b and 4.1 and the success cleanup do not run. Park as below.
 
 **Parking, any case.** A headless run can't supply the judgment conflict resolution needs. This session could tear the worktree down but doesn't: the run isn't finished, and a human must resolve the conflict (or push the merge) before worktree removal, claim release, or run-dir archival is safe — the ordinary un-pushed `pending-review` case `dispatch/SKILL.md`'s Reporting section parks for. Leave the worktree and run dir parked. Report `pending-review` (not `ready-to-merge`, never terminal) for this group, and log why the auto-merge path was abandoned.

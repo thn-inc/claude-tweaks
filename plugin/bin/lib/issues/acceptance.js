@@ -91,6 +91,8 @@ function needsBackstop(record) {
   if (record.stateReason === 'NOT_PLANNED' || record.stateReason === 'DUPLICATE') return false;
   // A decomposed sub-issue's acceptance lives on its parent issue, not on itself.
   if (record.hasParent === true) return false;
+  // A decomposition parent's acceptance is the parent gate's, never an acceptance-gap row.
+  if (record.isParent === true) return false;
   return dispositionState(record.labels) === 'none';
 }
 

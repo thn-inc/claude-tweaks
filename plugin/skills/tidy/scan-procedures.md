@@ -47,9 +47,24 @@ Scan `docs/superpowers/plans/` for execution plan files and `~/.claude/plans/`.
 | No related spec found | Delete (orphan) |
 | Very old, spec not started | Delete |
 
-→ Collect each as: `[plan] {filename} — {recommendation}`
+**Plan retention (#4465).** The table above classifies; the `superpowers-plans-retention` policy (`_shared/policy-schema.md`) decides what happens to a would-be Delete.
 
-**Before any plan Delete:** run `plan-citation-check.md`.
+- **Resolve** it once — `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values superpowers-plans-retention` (default `keep-forever`). It governs `docs/superpowers/plans/` only; `~/.claude/plans/` (native plan-mode scratch) keeps the table's recommendation as-is.
+- **Route.** Within `docs/superpowers/plans/`, only a would-be Delete is routed — a Keep row stays Keep under every value:
+  - `prune-after-wrapup` → Delete, unchanged.
+  - `ask` → `Prune plan (ask)`, regardless of age. Asking every run is what `ask` means, so it has no cutoff, no threshold, and no decline memory. An uncommitted plan (the cutoff command below prints nothing or exits non-zero) still stays Keep, because `git rm` would fail on it.
+  - `keep-forever` (the default) → Keep, unless 30 or more plans are past the cutoff and no live decline exists — then one `Prune plan (archive)` listing them all. The 30 counts only uncited would-be-Delete plans (after the citation check), so a staged archive never lists fewer than 30; fewer uncited than that, and every candidate stays Keep. 30 is where the archive counts as ADR-0007's "large enough to be noise itself" — below it, a kept plan costs a reader nothing worth an approval prompt.
+- **Cutoff** (`keep-forever` only). The cutoff is 7 days (ADR-0007's "last ~week"), counted from the plan's first-add commit date — `git -C "{REPO_ROOT}" log --diff-filter=A --format=%cs -1 -- {plan}`; empty output or a non-zero exit counts as within the cutoff — Keep.
+- **Citation check** (`keep-forever` only). Run it on past-cutoff candidates only once their pre-check count reaches 30; below 30 the count can never yield 30 uncited, so a cited plan is a plain Keep, never a Yours row. At 30 or more, a cited candidate renders per `plan-citation-check.md` and does not count toward the 30.
+- **Decline memory** (`keep-forever` only — excluding a `Prune plan (ask)` item records nothing). Run both commands from `{REPO_ROOT}` — the store path is relative to the working directory.
+  - Before staging a `Prune plan (archive)`, look up a decline — `printf '%s' '{"description":"tidy Prune plan (archive): docs/superpowers/plans/"}' | node "${CLAUDE_PLUGIN_ROOT}/bin/declined-learning.js" lookup --source tidy`: a non-null `decline`, or a lookup that exits non-zero, routes them to Keep.
+  - When a human excludes every row of a `Prune plan (archive)` `tidy-prune-plan-{n}` item at Step 6's approval or `--approve`, record it; excluding some rows records nothing. The human's reason never touches a command line: resolve a payload path with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" D=tidy-plan-decline.json`, `Write` `{"description":"tidy Prune plan (archive): docs/superpowers/plans/","reason":"{why}"}` to it (`{why}` JSON-escaped), then run `node "${CLAUDE_PLUGIN_ROOT}/bin/declined-learning.js" record-decline --source tidy < "{D}"`. A `record-decline` failure degrades open: log one SKIP note and continue — the proposal may recur.
+  - A recorded decline stays live for 180 days (reconcile's `pruneDeclines` expires it); until then the next run does not re-stage the archive.
+- **Stage.** Every `Prune plan` finding in one run is collected into a single staged proposal (`step-6-auto.md`'s Prune plan row), one `tidy-prune-plan-{n}` item per run.
+
+**Before any plan Delete or `Prune plan`:** run `plan-citation-check.md`.
+
+→ Collect each as: `[plan] {filename} — {recommendation}`, the recommendation being the one after Plan retention routing and the citation check.
 
 Also glob `docs/plans/*-ledger.md` — the per-feature pipeline ledgers `/claude-tweaks:ledger` creates (`docs/plans/YYYY-MM-DD-{feature}-ledger.md`, `_shared/ledger-format.md`) and `/claude-tweaks:wrap-up`'s Phase 4 execution step deletes on successful completion. A pipeline that never reaches wrap-up leaves its ledger behind permanently; nothing else sweeps for it (the run-dir-scoped alternate location, `_shared/ledger-format.md`'s Location section, is gitignored and outside this glob's scope by design — it is cleaned up with the rest of its run directory, not by this sweep).
 
@@ -72,9 +87,9 @@ Before recommending Delete, run a mechanical pass over Step 1's already-fetched 
 
 ## Step 4.5: Audit Git Worktrees, Build Branches, and Artifact Residue
 
-**Working-directory discipline:** every `git` command in this step (and in any dispatched parallel agent) MUST be anchored with `git -C "{REPO_ROOT}"` (or run after `cd "{REPO_ROOT}"`). `{REPO_ROOT}` resolves via `git rev-parse --show-toplevel` in the dispatcher before any agent fires. See `_shared/git-discipline.md` and the Working Directory Discipline section in `_shared/subagent-dispatch-core.md`. CWD does not propagate reliably across parallel agents — without the anchor, branch deletions and worktree removals can land in the wrong checkout.
+**Working-directory discipline:** every `git` command in this step (and in any dispatched parallel agent) MUST be anchored with `git -C "{REPO_ROOT}"` (or run after `cd "{REPO_ROOT}"`). `{REPO_ROOT}` resolves via `git rev-parse --show-toplevel` in the dispatcher before any agent fires. See `_shared/git-discipline.md` and the Working Directory Discipline section in `_shared/subagent-dispatch-core.md`. CWD does not propagate reliably across parallel agents — without the anchor, probes can read the wrong checkout, and Step 7's branch deletions and worktree removals (which cite this rule) can land in it.
 
-**Reconcile first:** before any probe below, run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" reconcile --checks mirror,red-tip,reap,release,archive,archive-branches,remote-prune,ledger-residue,console --json` — converges `{REPO_ROOT}` toward origin (`bin/lib/reconcile`, #407) so this step's worktree/branch audit reads already-current state instead of racing a stale mirror, the same placement `dispatch/SKILL.md` Step 2 uses for its own queue pull. The check list is explicit (all nine, `ALL_CHECKS` order) because the unscoped call defers `archive-branches`, `remote-prune` and `ledger-residue` to the background pass (#4032), and this audit needs those converged inline; an explicit `--checks` runs unbounded (#3026), so give it a generous timeout (150000ms+). `--json` is required here, not the plain `reconcile` default (#638's compact summary) — this step parses the result's `console.ready` array below. Log the JSON result to this run's `decisions.md`. A non-empty `console.ready` array names answered consoles this sweep is well-placed to close out — follow `_shared/console-execution.md` for each before continuing.
+**Reconcile first — main thread, before the scan batch:** the dispatcher runs this before it dispatches the scan batch (`scan-execution.md`, #4468), and the Step 4.5 scan agent never runs it — the agent's inlined section skips this paragraph, reading converged state. Run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" reconcile --checks mirror,red-tip,reap,release,archive,archive-branches,remote-prune,ledger-residue,console --json` — converges `{REPO_ROOT}` toward origin (`bin/lib/reconcile`, #407) so this step's worktree/branch audit reads already-current state instead of racing a stale mirror, the same placement `dispatch/SKILL.md` Step 2 uses for its own queue pull. The check list is explicit (all nine, `ALL_CHECKS` order) because the unscoped call defers `archive-branches`, `remote-prune` and `ledger-residue` to the background pass (#4032), and this audit needs those converged inline; an explicit `--checks` runs unbounded (#3026), so give it a generous timeout (150000ms+). `--json` is required here, not the plain `reconcile` default (#638's compact summary) — this step parses the result's `console.ready` array below. Log the JSON result to this run's `decisions.md`; on a standalone run with no run dir yet, hold the JSON and log it when Step 6 mints one (Standalone auto or `--dry-run`); an interactive standalone run that mints none logs nothing. A non-empty `console.ready` array names answered consoles this sweep is well-placed to close out — follow `_shared/console-execution.md` for each before continuing. When the reconcile exits non-zero, times out, prints no parseable JSON, or its `skipped` list carries `check: "all"` (the `reconcile-threw` fallback), nothing converged: log `SKIP {HH:MM:SS} — Step 4.5 reconcile: condition: {reason} → fallback: scans read unconverged state. Reversibility: n/a.` (held like the JSON when no run dir exists yet), render **Applied automatically** as the one line `Reconcile failed ({reason}) — worktree and branch findings below read unconverged state` rather than omitting it, and continue the scan batch (#4468).
 
 **Worktrees and merged remote branches — shared probe.** Resolve `{integration-branch}`: policy value when pinned, else repo default (`git -C "{REPO_ROOT}" symbolic-ref --quiet --short refs/remotes/origin/HEAD | sed 's@^origin/@@'`) — `_shared/integration-branch.md`. Run, anchored at `{REPO_ROOT}`:
 
@@ -120,7 +135,7 @@ gh pr view {pr-number} --repo {owner}/{repo} --json state,isDraft
 | PR state | Row |
 |---|---|
 | `OPEN` (draft or not) | **in-flight** — keep, PR #{number} open |
-| `MERGED` | Same as "Related spec complete + changes merged" — the reconciler (`bin/lib/reconcile`) should have already reaped this; a survivor here means the reconciler hasn't run recently, not a different disposition |
+| `MERGED` | Same as "Related spec complete + changes merged" — the reconciler (`bin/lib/reconcile`) should have already reaped this; it runs just before this audit, so a survivor here means `reap` skipped it this run (the reconcile JSON's `skipped` entry names why), not a different disposition |
 | `CLOSED` (unmerged) — check for the tombstone marker: `gh pr view {pr-number} --json comments --jq '.comments[] \| select(.body \| startswith("<!-- run-comment: failure -->")) \| select((.authorAssociation // .author_association) == "OWNER" or (.authorAssociation // .author_association) == "MEMBER" or (.authorAssociation // .author_association) == "COLLABORATOR")'` (trusted authors only; name each skipped one per `_shared/pr-run-comments.md`'s skip notice) — in a worktree-isolated session use that file's Find-step worktree-safe form instead (plain `gh pr view {pr-number} --json comments > {file}`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/find-run-comment.js" --comments-file {file} --kind failure`; non-empty `ids` = tombstoned) | **Non-empty result → tombstoned.** Keep — same as `bin/lib/reconcile/reap-merged.js`'s own `pr-closed-unmerged` skip decision. Recommendation: `Keep (tombstoned — retry via /claude-tweaks:dispatch or /claude-tweaks:flow, PR #{number})`. **Empty result → abandoned**, not tombstoned — a human closed the draft without the run ever reaching the failure path. Recommendation: `Keep (abandoned — closed PR #{number} carries no failure marker; manual review before removing worktree)`. Never auto-remove either case — `/tidy` never escalates a "manual review" row to a destructive delete on its own. |
 
 Absent a `pr` object (`local-merge`, or a degraded `pr-first` run), or when the `gh` calls above
@@ -128,12 +143,12 @@ fail, fall back to the table above unchanged.
 
 → Collect each as: `[git] {worktree/branch} — {recommendation}`
 
-Use `git -C "{REPO_ROOT}" branch -d {branch}` (safe delete). `-d` only proves containment in `HEAD`/the branch's own `@{upstream}` — it refuses identically whether the branch is genuinely unmerged or merged into a *different* long-lived base (a `dev` → `staging` → `main` promotion chain is the common shape). Treat a refusal as **ambiguous**, not as proof of unmerged work: before surfacing anything, resolve every other configured base to a **plain branch name** — `{integration-branch}` (above) plus repo default when it differs, deduped when equal. **Never use the raw `origin/HEAD` form as `{base}` below** — substituting it into `origin/{base}` yields the malformed ref `origin/origin/HEAD`. For each resolved `{base}`, check `{branch}`'s membership **both** ways — this repo's own dominant merge shape for worktree-derived branches (the pattern the `kind: branch` paragraph above names) leaves no remote-tracking ref, so checking that form alone reproduces the exact false negative this fix exists to eliminate:
+Classify each branch with read-only probes — the scan never deletes; Step 7 runs `git branch -d` on an approved finding. `-d` checks containment in the branch's own `@{upstream}` when one is set and resolves, and in `HEAD` only when there is none, so probe exactly that: when `{branch}@{upstream}` resolves, `git -C "{REPO_ROOT}" merge-base --is-ancestor {branch} {branch}@{upstream}`; otherwise `git -C "{REPO_ROOT}" merge-base --is-ancestor {branch} HEAD` (exit 0 = contained). Not contained is identical whether the branch is genuinely unmerged or merged into a *different* long-lived base (a `dev` → `staging` → `main` promotion chain is the common shape). Treat not-contained as **ambiguous**, not as proof of unmerged work: before surfacing anything, resolve every other configured base to a **plain branch name** — `{integration-branch}` (above) plus repo default when it differs, deduped when equal. **Never use the raw `origin/HEAD` form as `{base}` below** — substituting it into `origin/{base}` yields the malformed ref `origin/origin/HEAD`. For each resolved `{base}`, check `{branch}`'s membership **both** ways — this repo's own dominant merge shape for worktree-derived branches (the pattern the `kind: branch` paragraph above names) leaves no remote-tracking ref, so checking that form alone reproduces the exact false negative this fix exists to eliminate:
 
 - `git -C "{REPO_ROOT}" branch --merged origin/{base}` (remote-tracking ref, when it exists)
 - `git -C "{REPO_ROOT}" branch --merged {base}` (local branch, when it exists)
 
-Before classifying a `-d` refusal by merge state at all, check whether `{branch}` is currently
+Before classifying a branch by merge state at all, check whether `{branch}` is currently
 checked out in another worktree (`git -C "{REPO_ROOT}" worktree list --porcelain`, scanning for
 `branch refs/heads/{branch}`) — a checked-out branch refuses `-d`/`-D` alike regardless of merge
 state, and since this step deliberately keeps locked worktrees (see below), that refusal reason is
@@ -143,11 +158,11 @@ otherwise indistinguishable from "needs -D" and would get the wrong remedy.
 
 | Outcome | Recommendation |
 |---|---|
-| `{branch}` is checked out in another worktree | **`checked out in {worktree-path} — remove worktree first, then re-run`**. `-D` would refuse for the same reason `-d` did; this is not a merge-state question |
-| `-d` succeeds | Deleted — no further action |
-| `-d` refuses, but `{branch}` is merged into some other configured `{other-base}` (either form above) | **`merged into {other-base} — needs -D, manual review required`**. Safe in principle (no unmerged work), but `-d` cannot delete it and `-D` is not autonomous for this outcome — surface for manual approval, never auto-escalate |
-| `-d` refuses, no configured base, net-empty vs. fork point (#613) | **`net-empty — delete via -D`** |
-| `-d` refuses, no configured base, not net-empty | **`unmerged — manual review required`** — the only unmerged case |
+| `{branch}` is checked out in another worktree | **`checked out in {worktree-path} — remove worktree first, then re-run`**. Step 7's `-d` and `-D` would both refuse a checked-out branch; this is not a merge-state question |
+| `{branch}` is contained in its own `@{upstream}` (or `HEAD` when it has none) | **`Delete (cleanly merged — Step 7 runs git branch -d)`** |
+| Not contained in its `@{upstream}` (or `HEAD` when it has none), but `{branch}` is merged into some other configured `{other-base}` (either form above) | **`merged into {other-base} — needs -D, manual review required`**. Safe in principle (no unmerged work), but `-d` cannot delete it and `-D` is not autonomous for this outcome — surface for manual approval, never auto-escalate |
+| Not contained in its `@{upstream}` (or `HEAD` when it has none), no configured base, net-empty vs. fork point (#613) | **`net-empty — delete via -D`** |
+| Not contained in its `@{upstream}` (or `HEAD` when it has none), no configured base, not net-empty | **`unmerged — manual review required`** — the only unmerged case |
 
 **Dirty-worktree override** (#1424, before `Remove/delete`): `dirty: true` routes to
 `dirty — manual review required` with the changed files (`git -C {path} status --porcelain`) —
@@ -155,7 +170,7 @@ never `Remove/delete` or `--force`. `dirty: unknown` (the status check itself fa
 **not** trigger the override — a read failure is never proof of uncommitted work
 (`probes/worktrees.js`) — but still appears in the evidence line.
 
-Use `git -C "{REPO_ROOT}" worktree remove {path}` for worktrees. After a successful removal, best-effort release its port lease: `node "${CLAUDE_PLUGIN_ROOT}/bin/ports.js" release --path {path}` — on failure, print to stderr only; never blocks the finding.
+On an approved Remove/delete finding, Step 7 (never this scan) runs `git -C "{REPO_ROOT}" worktree remove {path}` for worktrees. After a successful removal, Step 7 best-effort releases its port lease: `node "${CLAUDE_PLUGIN_ROOT}/bin/ports.js" release --path {path}` — on failure, print to stderr only; never blocks the finding.
 
 A **locked** worktree will refuse to remove. Do not force it: a live lock means a session
 is using it. Surface it as `locked — manual review required`.
@@ -217,14 +232,37 @@ instead of `gh api`.)
 | Status | Recommendation |
 |--------|---------------|
 | Issue closed (any claim state) | Release (orphan — the work is done or dismissed) |
-| Blob classified `'stale'` | Release (crashed or abandoned run) |
+| Blob classified `'stale'` | Release (crashed or abandoned run) — or, when an open PR carries its run marker, Resume that PR (below) |
 | Blob classified `'unreadable'` | Manual review (never break a claim you cannot read) |
 | Live claim (`'live'`), but its `claimedAt` fails to parse as a date | Manual review (per `bin/lib/issues/claims.js`'s `isStale` fail-closed contract — a corrupted-but-JSON-valid claim is never automatically stale; flag it explicitly rather than keeping it silently forever) |
 | Blob classified `'live'`, issue open | Keep |
 
 Releasing (#2090): `node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" <n> --run <tidy-run-dir> --sweep --reason "swept: stale claim"` (or `--reason "swept: issue closed"` for the closed-issue row) — the `--sweep` flag is what lets a tidy run release a claim it does not itself own: without it, `release-claim.js`'s ordinary ownership check refuses every one of these as `skipped-not-owner`, since a tidy run's `--run` basename is never the crashed dispatcher's `runId`. The flag performs the same read → classify → tombstone `PUT` → conflict re-verify → comment → label-removal sequence as an ordinary release, resolving the issue's own open/closed state itself for the `'live'`-on-a-closed-issue row (never sweeping a `'live'` claim on an issue that is still open). Releases execute only after Step 6 batch approval — the flag makes an approved release executable, it does not make the decision autonomous.
 
+**Stale claim with an open PR (#4423).** Before recommending Release for a `'stale'` blob, check
+its `runId` against `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$`; a mismatch means plain Release.
+List open PRs once per tidy run (`gh pr list --state open --json number,url,body,isCrossRepository
+--limit 1000`; with `gh` absent, `mcp__github__list_pull_requests` with `state: open`, paged,
+reading `html_url` as `{url}`) and look for a same-repo PR (`isCrossRepository: false`; MCP:
+`head.repo.full_name` is this repo — a fork PR's body proves nothing) whose body has a trimmed
+line equal to `claude-tweaks-run: {runId}` or `<!-- claude-tweaks-run: {runId} -->` — the marker
+`/claude-tweaks:flow`'s claim step checks too (`claim-store.js`'s `staleClaimInFlightPr`). A
+match recommends Resume instead and routes as `step-6-auto.md`'s **Unsettled run** row: Auto
+(no-op, always surfaced), rendered in **Yours** as "Resume open PR #{number} ({url}) — {the line
+under its body's `### Resume` heading}", only when that line is exactly
+`` `PIPELINE_RUN_DIR="{dir}/{runId}" /claude-tweaks:flow "{target}" {steps}` `` — `{dir}` and
+`{target}` free of `` ` ``, `$`, `"`, `\` and line breaks, `{steps}` matching `[a-z][a-z,-]*`,
+nothing after it — so its run-dir basename equals the matched `runId`; otherwise (no heading, an
+unrendered `{run-dir}` placeholder, any other shape or trailing text — PR bodies are untrusted, and
+this line is rendered as a paste command) "Resolve open PR #{number} ({url}) before any release".
+It is never staged, so it gets no needs-decision comment, and the claim is never released. A failed
+listing (on whichever transport ran — the MCP listing applies only when `gh` is absent, never after
+a `gh` failure — or a `gh` listing of 1000 entries with no match, which may have cut the PR off)
+degrades to **Manual review** with one SKIP note, never an unchecked Release.
+
 → Collect each as: `[claim] claims/issue-{n}.json — {status} — {recommendation}`
+
+A Resume recommendation's `{recommendation}` carries `PR #{number}` and the resume command.
 
 ### Backstops: issue-claim audit-trail integrity checks
 
@@ -258,14 +296,15 @@ The `repo-wide` findings table maps each finding to a recommendation from the Ac
 
 The `acceptance-gap` scope finds closed records with no acceptance label at all — a different gap than the `acceptance-queue` scope `/help` Stage 4.7 uses, which only sees records already flagged `demo:pending`. Its recommendation is always "run `/claude-tweaks:demo #{n}`" — never one of the Action Vocabulary's atomic actions, since disposing a closed record is a judgment call for a human, not this step. It covers `work-backend: github-issues` only; under `local-files` the same finding comes from Step 1's **Shape 8** (`step-1-records.md`), exactly as `parent-gate` comes from Shape 7 there.
 
-The `parent-gate` scope finds decomposition parents whose every sub-issue has closed but which carry no acceptance disposition — the backstop for a parent that missed `/claude-tweaks:wrap-up`'s eager gate (a sub-issue closed via `auto:merge`, by hand, or by a dispatch run that ended early never reaches that eager path). Unlike `acceptance-gap`, its recommendation **is** one of the Action Vocabulary's atomic actions — `Open parent gate` — which composes and posts the parent's Verification Brief and applies `demo:pending`, reusing `wrap-up/verification-brief.md`'s Parent-Gate Procedure rather than a second copy of that logic (`tidy/actions-github-issues.md`'s `## Open parent gate`). It never applies `demo:approved`/`demo:changes-requested` — that verdict stays exclusively `/claude-tweaks:demo`'s job, so the finding still ends with "then run `/claude-tweaks:demo #{n}`" even once approved.
+The `parent-gate` scope finds decomposition parents whose every sub-issue has closed but which carry no acceptance disposition — the backstop for a parent that missed `/claude-tweaks:wrap-up`'s eager gate (a sub-issue closed via `auto:merge`, by hand, or by a dispatch run that ended early never reaches that eager path). Unlike `acceptance-gap`, its recommendation **is** one of the Action Vocabulary's atomic actions — `Open parent gate` — which, above the oversight floor, composes and posts the parent's Verification Brief and applies `demo:pending`, reusing `wrap-up/verification-brief.md`'s Parent-Gate Procedure rather than a second copy of that logic (`tidy/actions-github-issues.md`'s `## Open parent gate`). It never applies `demo:approved`/`demo:changes-requested` — that verdict stays exclusively `/claude-tweaks:demo`'s job, so an above-floor finding still ends with "then run `/claude-tweaks:demo #{n}`" even once approved. Below the oversight floor the action closes the parent instead (**Close the parent below the floor**, no brief).
 
-GitHub mutations recommended here (Close (GitHub), Resolve thread), `acceptance-gap` findings, and `parent-gate`'s `Open parent gate` action all execute only after Step 6 batch approval and are staged at every aggressiveness level in auto mode — outward-facing actions are never autonomous in /tidy. See `_shared/github-pr-scan-acceptance.md`'s `acceptance-gap` scope for why. `Open parent gate` posts a comment and adds a label, an outward-facing GitHub API write that fails the auto-mode contract's reversibility floor regardless of how mechanical or precondition-only the write is — see `_shared/github-pr-scan-acceptance.md`'s `parent-gate` scope and `tidy/step-6-auto.md`'s Open parent gate row for the full reasoning. Staging governs the write itself here, not just the disposition it precedes; the disposition (`demo:approved`/`demo:changes-requested`) stays exclusively `/claude-tweaks:demo`'s job either way.
+GitHub mutations recommended here (Close (GitHub), Resolve thread), `acceptance-gap` findings, and `parent-gate`'s `Open parent gate` action all execute only after Step 6 batch approval and are staged at every aggressiveness level in auto mode — outward-facing actions are never autonomous in /tidy. See `_shared/github-pr-scan-acceptance.md`'s `acceptance-gap` scope for why. `Open parent gate` posts a comment and adds a label, an outward-facing GitHub API write that fails the auto-mode contract's reversibility floor regardless of how mechanical or precondition-only the write is. Below the oversight floor it instead posts a comment and closes the parent: the contract's exception for that write covers only the Parent-Gate Procedure's sub-issue-side entries, and this parent-side backstop is not one of them, so it stays staged — see `_shared/auto-mode-contract.md`'s Never-reversible list for that exception's scope and `tidy/step-6-auto.md`'s Open parent gate row for the full reasoning. Staging governs the write itself here, not just the disposition it precedes; the disposition (`demo:approved`/`demo:changes-requested`) stays exclusively `/claude-tweaks:demo`'s job either way.
 
 → Collect each as: `[pr] PR #{n}: {title} — {issue} — {recommendation}`
 → Collect each as: `[gh-issue] #{n}: {title} — {issue} — {recommendation}`
 → Collect each as: `[acceptance-gap] #{n}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo #{n}`
 → Collect each as: `[parent-gate] #{n}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #{n}`
+→ Collect each as: `[parent-gate] #{n}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`
 
 ## Step 4.9: Audit Impeccable Design Record
 
