@@ -12,7 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
-const { dispositionState } = require('../plugin/bin/lib/issues/acceptance');
+const { dispositionState, needsBackstop } = require('../plugin/bin/lib/issues/acceptance');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 
@@ -134,6 +134,18 @@ test('never filters on a positive reason', () => {
   assert.ok(!hasPositiveReason('-reason:duplicate -reason:\\"not planned\\"'));
 });
 
+test('negated reasons are exactly needsBackstop exclusions', () => {
+  const search = closedSearchString(GAP);
+  const negated = [...search.matchAll(/-reason:(?:\\"([^\\]+)\\"|(\S+))/g)]
+    .map((m) => (m[1] || m[2]).toUpperCase().replace(/ /g, '_')).sort();
+  assert.deepEqual(negated, ['DUPLICATE', 'NOT_PLANNED']);
+  for (const stateReason of negated) {
+    assert.equal(needsBackstop({ state: 'CLOSED', stateReason, labels: [] }), false, `${stateReason} must be a reason needsBackstop excludes`);
+  }
+  // Control: a completed closure with no disposition is a gap, so the check above can fail.
+  assert.equal(needsBackstop({ state: 'CLOSED', stateReason: 'COMPLETED', labels: [] }), true);
+});
+
 test('oversight floor is not in the search string', () => {
   const search = closedSearchString(GAP);
   assert.ok(!hasOversightFloor(search), `the oversight floor stays client-side: ${search}`);
@@ -162,7 +174,7 @@ test('since-date is validated', () => {
   assertClaimPinned(
     GAP,
     PRE_CHANGE_GAP_FETCH,
-    /\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\/\.test\(process\.env\.SINCE/,
+    /if \(!\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\/\.test\(process\.env\.SINCE/,
     'the node block must validate SINCE as YYYY-MM-DD'
   );
   // The server window is one date wider than the client cutoff, on purpose: the timezone of GitHub's
@@ -202,13 +214,14 @@ test('since-date guard failure stops the scope', () => {
 test('trust-table no longer says the window does not bound the closed fetch', () => {
   const live = read('_shared/trust-table.md');
   const parenthetical = (text) => {
-    const m = /\(`acceptance-gap`'s own \*closed-record\* fetch[\s\S]*?\)/.exec(text);
+    const m = /\(`acceptance-gap`'s own \*closed-record\* fetch[\s\S]*?hardcoded cap\.\)/.exec(text);
     assert.ok(m, 'the acceptance-gap closed-record parenthetical must be present');
     return m[0];
   };
   const STALE = 'a 30-day window does not bound it';
   assert.ok(!live.includes(STALE), 'trust-table.md must not say the 30-day window does not bound the closed fetch');
   assert.ok(parenthetical(live).includes('server'), 'the parenthetical must name the server-side bound');
+  assert.ok(parenthetical(live).includes('still carries the same `{resolved-limit}`'), 'the parenthetical must keep the resolved-limit clause');
   // Discrimination: the same two checks run over the frozen parenthetical must come out the other way.
   assert.ok(PRE_CHANGE_TRUST.includes(STALE));
   assert.ok(!parenthetical(PRE_CHANGE_TRUST).includes('server'));
@@ -325,9 +338,34 @@ test('state-map search is validated', () => {
   assertClaimPinned(
     PG,
     PRE_CHANGE_PG,
-    /\['', 'has:parent-issue'\]\.includes\(process\.env\.STATE_SEARCH\)/,
+    /if \(!\['', 'has:parent-issue'\]\.includes\(process\.env\.STATE_SEARCH\)\)/,
     'the node block must validate STATE_SEARCH against the two branch values'
   );
+});
+
+// A placeholder guard: the fence line naming the env var that throws.
+const guardLine = (text, name) => text.split('\n').find((l) => l.includes(`process.env.${name}`) && l.includes('throw new Error')).trim();
+const guardThrows = (line, env) => {
+  try { new Function('process', line)({ env }); return false; } catch { return true; }
+};
+
+test('both placeholder guards throw on bad values and pass good ones', () => {
+  const day = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+  const since = guardLine(closedFetchBlock(GAP), 'SINCE');
+  assert.equal(guardThrows(since, { SINCE: day(31) }), false, 'the 31-day since-date must pass');
+  for (const bad of ['', '{since-date}', day(0), day(29)]) assert.equal(guardThrows(since, { SINCE: bad }), true, `SINCE=${bad} must throw`);
+  const state = guardLine(PG, 'STATE_SEARCH');
+  for (const good of ['', 'has:parent-issue']) assert.equal(guardThrows(state, { STATE_SEARCH: good }), false, `STATE_SEARCH=${good} must pass`);
+  assert.equal(guardThrows(state, { STATE_SEARCH: '{state-map-search}' }), true);
+  // Control: each guard with its polarity inverted comes out the other way on a good value.
+  const invert = (line) => line.replace('if (!', 'if (');
+  assert.equal(guardThrows(invert(since), { SINCE: day(31) }), true);
+  assert.equal(guardThrows(invert(state), { STATE_SEARCH: '' }), true);
+});
+
+test('an empty searched state map warns', () => {
+  const warns = /if \(process\.env\.STATE_SEARCH && !states\.length && parents\.length\)\s*\{\s*console\.error\('WARNING: the searched state map is empty/;
+  assertClaimPinned(PG, PRE_CHANGE_PG, warns, 'a 0-row searched state map with parents present must warn');
 });
 
 test('state-map guard failure stops the scope', () => {
@@ -492,7 +530,7 @@ test('the {state-map-search} substitution rule is explained before the fence it 
   assert.ok(ruleSitsAboveItsFence(`${SUBSTITUTION_RULE} x\n\n\`\`\`bash\n${STATE_FENCE_LINE}\n\`\`\``));
   assert.ok(!ruleSitsAboveItsFence(`${SUBSTITUTION_RULE} x\n\n\`\`\`bash\nother\n\`\`\`\n\n\`\`\`bash\n${STATE_FENCE_LINE}\n\`\`\``));
   // The guard-failure sentence still follows the fence.
-  assert.ok(PG.indexOf('When the state-map-search guard throws') > PG.indexOf(STATE_FENCE_LINE));
+  assert.ok(PG.indexOf('the state-map-search guard throws') > PG.indexOf(STATE_FENCE_LINE));
 });
 
 // The closed-record half of the acceptance-gap "Fetch limit" paragraph as it read before the final review.

@@ -37,13 +37,13 @@ files:
   - An empty search keeps the ordinary listing, which has no 1000-result ceiling. Body-text repos are unchanged.
   - A sub-issue missing from the map defaults to `OPEN`, which is the safe direction. That happens through truncation (warned) or, under `native`, through search-index lag (unwarned, and corrected on the next run).
 - **Red flags:**
-  - `has:parent-issue` substituted on a `body-text` repo. Task-list children are not native links, so every sub-issue would read `OPEN`.
+  - `has:parent-issue` substituted on a `body-text` repo. Task-list children are not native links, so every sub-issue would read `OPEN`; the empty-state-map warning names this cause.
   - The rule placed below the fence it governs.
 
 ### 3. A real truncation still warns, with an honest remedy
 - **URL:** each fetch's node warning block (closed records, state map, and the three label-filtered parent fetches)
 - **Action:** a fetch whose row count reaches `Math.min(backlog-fetch-limit, 1000)` prints its WARNING. The maintainer reports it verbatim beside the scope's rows.
-- **Should feel:** trustworthy. Silence means complete, and a warning means act.
+- **Should feel:** trustworthy. Silence means nothing was truncated, and a warning means act. Search-index lag can still hide a record changed seconds before the run; the next run picks it up.
 - **Should understand:** GitHub caps searched and label-filtered lists at 1000 whatever `--limit` says, so a limit set above 1000 still warns at 1000. Each warning says that raising the limit past 1000 does not help.
 - **Red flags:**
   - An `=== LIMIT` comparison, which stays silent at the ceiling once the limit is above 1000.
@@ -51,7 +51,7 @@ files:
 
 ### 4. A bad placeholder stops the scope instead of passing silently
 - **URL:** the first statement of each node block (`SINCE` guard and `STATE_SEARCH` guard), plus the sentence after each fence
-- **Action:** an empty or unsubstituted `{since-date}` / `{state-map-search}` throws before any file is written.
+- **Action:** an empty, unsubstituted or too-recent `{since-date}`, or an unknown `{state-map-search}`, throws before the scope writes its output file (which was emptied first).
 - **Should feel:** loud. A mistake costs one visibly failed scope, never a silently clean one.
 - **Should understand:** the scope then reports no rows at all and quotes the error. Later blocks never read a missing or stale file.
 - **Red flags:** zero `[acceptance-gap]` or `[parent-gate]` rows reported after a guard threw, as though the scope were clean.

@@ -65,6 +65,7 @@ Resolve session-scoped paths first (`_shared/session-tmp-root.md`, cited through
 ```bash
 RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records-raw.json)"
 CLOSED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records.json)"
+: > "$CLOSED"
 LIMIT="{resolved-limit}"
 SINCE="{since-date}"
 export SINCE
@@ -74,7 +75,7 @@ gh issue list --state closed --limit "$LIMIT" \
   > "$RAW"
 node -e "
   const fs = require('fs');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '')) throw new Error('SINCE is not a YYYY-MM-DD date — the since-date placeholder was not substituted; an empty date returns zero rows.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '') || new Date(process.env.SINCE) > new Date(Date.now() - 30 * 864e5)) throw new Error('SINCE is not a YYYY-MM-DD date over 30 days back — the since-date placeholder was not substituted or was resolved wrong; an empty date returns zero rows, a later one drops records.');
   const raw = require('$RAW');
   const LIMIT = $LIMIT;
   const CAP = Math.min(LIMIT, 1000);
@@ -86,9 +87,9 @@ node -e "
 "
 ```
 
-When the since-date guard throws, the scope stops: report no `[acceptance-gap]` rows at all and
-quote the error verbatim, as for an exit-3 sub-issue fetch below. Later blocks never read a
-missing or stale `$CLOSED` file.
+When this block fails — the since-date guard throws, or a failed `gh` call leaves `$RAW` unreadable —
+the scope stops: report no `[acceptance-gap]` rows at all and quote the error verbatim, as for an
+exit-3 sub-issue fetch below. `$CLOSED` is emptied first, so a later block never reads a stale one.
 
 A closed record whose acceptance lives on a `/claude-tweaks:specify` decomposition parent must
 not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it. Resolving
@@ -431,6 +432,7 @@ PI_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-p
 PI_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-legacy.json)"
 ALL_STATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-all-issue-states.json)"
 PARENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues.json)"
+: > "$PARENTS"
 LIMIT="{resolved-limit}"
 export FETCH_LIMIT="$LIMIT"
 STATE_SEARCH='{state-map-search}'
@@ -461,12 +463,16 @@ node -e "
   if (states.length >= STATE_CAP) {
     console.error('WARNING: fetched ' + states.length + ' issue states, reaching the state-map cap of ' + STATE_CAP + ' — every sub-issue beyond it defaults to OPEN, so any parent containing one reads incomplete and this backstop silently never fires for it. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete (raising it past 1000 does not help a searched map).');
   }
+  if (process.env.STATE_SEARCH && !states.length && parents.length) {
+    console.error('WARNING: the searched state map is empty while ' + parents.length + ' parents exist — every sub-issue reads OPEN, so this backstop cannot fire. Check that work-links resolved native (task-list children are not native links) and re-run.');
+  }
 "
 ```
 
-When the state-map-search guard throws, the scope stops: report no `[parent-gate]` rows at all
-and quote the error verbatim. Never read `$PARENTS` or `$ALL_STATES` afterwards — a 0-row state
-map would read every sub-issue as `OPEN`.
+When this block fails — the state-map-search guard throws, or a failed `gh` call leaves a fetch file
+unreadable — the scope stops: report no `[parent-gate]` rows at all and quote the error verbatim.
+`$PARENTS` is emptied first; never read it or `$ALL_STATES` afterwards — a 0-row state map would
+read every sub-issue as `OPEN`.
 
 The state map's `labels` field (added alongside `number`/`state`) is what lets the oversight-floor
 pre-filter below read each sub-issue's `risk:*` label from data already fetched here — no second
