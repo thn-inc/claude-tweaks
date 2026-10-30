@@ -30,6 +30,8 @@ A section is not shipped until every applicable row lands in the same change. Si
 
 **A new prefix in an existing section is a smaller change.** The section, its stance and its templates already exist, so only sites 2 and 3 move, plus the known-prefix case in `resolve.test.js`. #4029 added `efficiency-budget-` to the Queue writes row that way: two lines in `resolve.js` and one in the test.
 
+**A prefix a curation row's judge file spells out moves one more pin.** When a registry row's judge file first writes the literal `staged/{prefix}-{n}`, add that row's id to the exact list in `resolve.test.js`'s "every registry row whose own judge file documents a literal staged/{prefix}-{n} naming convention" test, which fails until the id is there. #4585 added `references` that way, when `reference-sweep.md` first named `staged/wrap-up-reference-{n}.md`.
+
 Find the prose sites by grep rather than from this table alone: `git grep -l -F 'Reference repairs' -- plugin docs tests` lists every file that enumerates the sections. Add the new section to each hit that lists its siblings.
 
 ## Decisions each section owes
