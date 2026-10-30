@@ -585,9 +585,9 @@ function tiebreakModel(snapshot) {
   // #4563: a settled contested file settles its partner finding too. The partner's key comes from the
   // staged file's `## Positions` text, not from tiebreak.js's verdict line, whose one-key-per-id shape
   // stays unchanged on purpose: only the staged file also covers runs already on disk (decided at
-  // #4563's plan review). The partner takes the pair's
-  // verdict (and its index) only where no verdict names its key at all: one tiebreak wave logs in
-  // arbitrary order, so a direct verdict wins whatever its position relative to the pair's.
+  // #4563's plan review). The partner takes the pair's verdict (and its index) only where no verdict
+  // names its key at all: one tiebreak wave logs in arbitrary order, so a direct verdict wins
+  // whatever its position relative to the pair's.
   // A partner's own contested file may settle only once its key is inherited, and then passes the
   // verdict on to its own partners: repeat until a pass adds no entry. Passes only add entries and
   // the key set is finite, so it terminates; the `has()` guard is what ends the loop (removing it
