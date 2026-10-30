@@ -1,0 +1,1 @@
+[{"tag":"digest","record":4405,"title":"Settle 10 below-floor digest findings in hooks","action":"Absorb 4 new hooks-area digest entries; mark each digest line promoted","command":"gh issue edit 4405 --repo thn-inc/claude-tweaks --body-file {composed body}"}]

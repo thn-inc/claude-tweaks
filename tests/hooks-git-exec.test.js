@@ -11,6 +11,14 @@ const { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoP
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
 const { splitNul } = require('../plugin/bin/lib/git-z');
 
+// git's own answer for `repo`, spelled the way git prints it (forward slashes on Git for
+// Windows), so an expected value matches runGit's stdout on every platform. The pinned env
+// keeps an inherited GIT_DIR from redirecting it to another repo. Shared helper for
+// expected `rev-parse` values in this file (#4299; #4289's --show-toplevel tests reuse it).
+function gitRevParse(repo, flag) {
+  return fixtureGit(['-C', repo, 'rev-parse', flag], { encoding: 'utf8', env: repoPinnedEnv() }).trim();
+}
+
 test('runGit: success returns trimmed stdout and a null failure', () => {
   const dir = gitRepo();
   const { stdout, failure } = runGit(['rev-parse', '--show-toplevel'], dir);
@@ -336,9 +344,9 @@ test('runGit: opts.env is the spawn environment — a pinned env restores -C rep
   const b = gitRepo();
   const foreign = { ...process.env, GIT_DIR: path.join(b, '.git') };
   const redirected = runGit(['rev-parse', '--absolute-git-dir'], a, { env: foreign });
-  assert.strictEqual(redirected.stdout, fs.realpathSync(path.join(b, '.git')), 'opts.env must reach the child');
+  assert.strictEqual(redirected.stdout, gitRevParse(b, '--absolute-git-dir'), 'opts.env must reach the child');
   const pinned = runGit(['rev-parse', '--absolute-git-dir'], a, { env: repoPinnedEnv(foreign) });
-  assert.strictEqual(pinned.stdout, fs.realpathSync(path.join(a, '.git')));
+  assert.strictEqual(pinned.stdout, gitRevParse(a, '--absolute-git-dir'));
 });
 
 test('runGitAsync: opts.env is the spawn environment, same as runGit (#3900)', async () => {
@@ -346,9 +354,9 @@ test('runGitAsync: opts.env is the spawn environment, same as runGit (#3900)', a
   const b = gitRepo();
   const foreign = { ...process.env, GIT_DIR: path.join(b, '.git') };
   const redirected = await runGitAsync(['rev-parse', '--absolute-git-dir'], a, { env: foreign });
-  assert.strictEqual(redirected.stdout, fs.realpathSync(path.join(b, '.git')), 'opts.env must reach the async child');
+  assert.strictEqual(redirected.stdout, gitRevParse(b, '--absolute-git-dir'), 'opts.env must reach the async child');
   const pinned = await runGitAsync(['rev-parse', '--absolute-git-dir'], a, { env: repoPinnedEnv(foreign) });
-  assert.strictEqual(pinned.stdout, fs.realpathSync(path.join(a, '.git')));
+  assert.strictEqual(pinned.stdout, gitRevParse(a, '--absolute-git-dir'));
 });
 
 test('repoPinnedEnv: with no argument it reads process.env, dropping the four vars and keeping the rest (#4178)', () => {

@@ -363,6 +363,44 @@ test('premise: the runner receives the resolved checkout root as cwd', () => {
   });
 });
 
+// #4368: a Premise-check: line quoted inside a fenced block is content, never
+// the record's own command — materialize.js must not run it.
+const QUOTED_PREMISE_FENCE = ['```', 'Premise-check: echo QUOTED', '```'].join('\n');
+
+test('AC2.1 (#4368): a trusted record whose only Premise-check: line is fenced runs nothing — runner never called, premise null', () => {
+  const repo = gitRepo();
+  withCwd(repo, () => {
+    const seen = [];
+    const body = SHAPED_BODY_NO_PREMISE_CHECK.replace('## Current State\n', `## Current State\n${QUOTED_PREMISE_FENCE}\n`);
+    assert.ok(body.includes('Premise-check: echo QUOTED'), 'fixture carries the fenced command line');
+    const deps = fakeDeps(repo, {
+      body,
+      runPremiseCheck: (c) => { seen.push(c); return 0; },
+    });
+    const exitCode = run(['1829', '--run-dir', runDirFor(repo), '--repo', 'owner/repo'], deps);
+    assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+    const envelope = JSON.parse(deps.calls.stdout.join(''));
+    assert.strictEqual(envelope.premise, null);
+    assert.strictEqual(seen.length, 0);
+  });
+});
+
+test('AC1.1 (#4368): a trusted record with a fenced command before its own runs only its own', () => {
+  const repo = gitRepo();
+  withCwd(repo, () => {
+    const seen = [];
+    const deps = fakeDeps(repo, {
+      body: `${QUOTED_PREMISE_FENCE}\n\n${shapedBodyWithPremiseCheck('echo REAL')}`,
+      runPremiseCheck: (c) => { seen.push(c); return 0; },
+    });
+    const exitCode = run(['1829', '--run-dir', runDirFor(repo), '--repo', 'owner/repo'], deps);
+    assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+    const envelope = JSON.parse(deps.calls.stdout.join(''));
+    assert.deepStrictEqual(seen, ['echo REAL']);
+    assert.strictEqual(envelope.premise.command, 'echo REAL');
+  });
+});
+
 test('AC5.1: a command composed under root A reads unresolved from checkout B until B\'s file carries the anchor, then resolved', () => {
   const A = fs.mkdtempSync(path.join(require('os').tmpdir(), 'premise-root-a-'));
   const command = buildPremiseCheck(

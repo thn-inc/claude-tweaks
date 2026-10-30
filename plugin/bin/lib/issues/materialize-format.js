@@ -7,7 +7,7 @@
 'use strict';
 
 const { POLICY_KEYS } = require('../policy-schema');
-const { fencedLineRanges } = require('./record-payload');
+const { fencedLineRanges, findSection } = require('./record-payload');
 
 const REQUIRED_SECTIONS = ['## Current State', '## Deliverables', '## Acceptance Criteria', '## Release Note'];
 // The Design-intent enum, read once from the policy schema (never restated here).
@@ -72,45 +72,13 @@ function stripCodeSpans(text) {
   return out.join('\n').replace(/(`+)([\s\S]{0,2000}?)\1/g, '');
 }
 
-// body -> the text of section `## {name}` up to the next `## ` heading outside a
-// fenced block (or end of body). null when the heading is absent outside fences.
-// Fenced blocks are skipped as quoted content (#4169): a body whose Current State
-// quotes a spec-shaped copy must not have that copy's headings read as its own.
+// body -> the trimmed text of section `## {name}` up to the next `## ` heading, or
+// null when the body has no such heading. The heading must be its own line, whole
+// name (#4367): an inline-code or blockquote mention, or a `## Release Notes` prefix,
+// does not match. Headings inside fenced blocks are quoted content (#4169). Delegates
+// to findSection, the same rule extractSection uses.
 function sectionText(body, name) {
-  const heading = `## ${name}`;
-  const lines = body.split('\n');
-  const lineStarts = [];
-  let offset = 0;
-  for (const line of lines) {
-    lineStarts.push(offset);
-    offset += line.length + 1;
-  }
-  const fencedSpans = fencedLineRanges(lines).map(([s, e]) => [lineStarts[s], lineStarts[e] + lines[e].length]);
-  // Spans are sorted and disjoint, so a binary search keeps a body packed with fences linear-ish.
-  function inFence(pos) {
-    let lo = 0;
-    let hi = fencedSpans.length - 1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      const [from, to] = fencedSpans[mid];
-      if (pos < from) hi = mid - 1;
-      else if (pos >= to) lo = mid + 1;
-      else return true;
-    }
-    return false;
-  }
-  let start = body.indexOf(heading);
-  while (start !== -1 && inFence(start)) start = body.indexOf(heading, start + 1);
-  if (start === -1) return null;
-  const afterHeading = start + heading.length;
-  let end = body.length;
-  for (let nl = body.indexOf('\n## ', afterHeading); nl !== -1; nl = body.indexOf('\n## ', nl + 1)) {
-    if (!inFence(nl + 1)) {
-      end = nl;
-      break;
-    }
-  }
-  return body.slice(afterHeading, end).trim();
+  return findSection(body, name, { levelPattern: '2', stopPattern: '2', trim: true });
 }
 
 // body -> { ok: true } | { ok: false, missing: string[] }. `missing` names
