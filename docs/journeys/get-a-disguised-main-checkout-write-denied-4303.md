@@ -28,6 +28,8 @@ files:
   - `cd ../main | true; …`
   - `x=$(cd Q) cd ../main; echo hi | tee f`
   - `cp -rt ../main src`
+  - `cp src ../main/f -S .bak` and `mv src ../main/f --suffix .bak`
+  - `cp a b -t d ../main`
   - `perl -0pi -e 's/a/b/' ../main/f`
   - `echo x >& ../main/f`
   - `x=$(true; cd ../main && y=$(( (1 & 3) )) && git commit -am x)`
@@ -41,6 +43,7 @@ files:
   - A cd in a pipeline element runs in a subshell and does not carry over.
   - An assignment-prefixed cd still runs.
   - `-t` inside a flag cluster, and a glued `-tDIR`, name the target dir.
+  - A cp or mv value option after the operands (`-S .bak`, `--suffix .bak`) takes the word after it. GNU coreutils writes the last real operand. macOS's BSD cp and mv stop option parsing at the first operand and write into that last word, a dash word and a `-t` after the first operand included (`cp a b -t d ../main` writes `../main/a` and `../main/b` under BSD). The walk reports both destinations when they differ, and drops the BSD one when an option BSD lacks (`-t`, `-S`, a long option) comes before the first operand.
   - A digit in a perl cluster (`-0pi`) does not hide `-i`.
   - `>& word` and `>&word` write to the file `word`.
   - An `&` inside arithmetic parentheses is not a background.
@@ -93,6 +96,7 @@ files:
 ## Origin
 - Created during the build of #4303. That build fixed the seven fail-opens #4149's review left (U1–U6, S49, S50), then made the cwd cap affordable. Losing track of the cwd past the cap led to the `lost` marker and its consumers, which were settled on base parity by the user's decision.
 - Updated during the build of #4481: a `case` compound that starts a pipeline, a redirect on a case compound, nested cases, and `x=()` no longer leak a main-checkout write.
+- Updated during the build of #4449: a cp or mv backup-suffix value after the operands (`-S`, `--suffix`) no longer hides the real destination.
 - Related journeys:
   - `write-a-glued-redirect-from-the-main-checkout-4015.md`, the redirect scan the same walk feeds.
   - `run-a-heredoc-node-script-from-the-main-checkout-3989.md`, the heredoc carve-out.
