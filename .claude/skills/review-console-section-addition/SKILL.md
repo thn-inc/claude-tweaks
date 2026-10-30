@@ -1,6 +1,6 @@
 ---
 name: review-console-section-addition
-description: Use when adding a section to the Wrap-Up Review Console, moving a staged-id prefix into a different section, or changing a section's default (its stance) — every code and prose site the section must land in so the unattended resolver, the interactive render, the multi-spec render and the approval executor agree, and which of those sites a test pins. Keywords - Review Console, console section, SECTIONS, SECTION_MAP, CANONICAL_PREFIXES, SECTION_STANCES, ENGINE_ROW_SECTIONS, SECTION_SPECS, console-template, Resolution-to-step mapping, staged prefix, stance.
+description: Use when adding a section to the Wrap-Up Review Console, moving a staged-id prefix into a different section, or changing a section's default (its stance), or adding a reason an existing row resolves `pending` under — every code and prose site the section must land in so the unattended resolver, the interactive render, the multi-spec render and the approval executor agree, and which of those sites a test pins. Keywords - Review Console, console section, SECTIONS, SECTION_MAP, CANONICAL_PREFIXES, SECTION_STANCES, ENGINE_ROW_SECTIONS, SECTION_SPECS, console-template, Resolution-to-step mapping, staged prefix, stance.
 ---
 
 # Review Console section addition
@@ -31,6 +31,8 @@ A section is not shipped until every applicable row lands in the same change. Si
 **A new prefix in an existing section is a smaller change.** The section, its stance and its templates already exist, so only sites 2 and 3 move, plus the known-prefix case in `resolve.test.js`. #4029 added `efficiency-budget-` to the Queue writes row that way: two lines in `resolve.js` and one in the test.
 
 Find the prose sites by grep rather than from this table alone: `git grep -l -F 'Reference repairs' -- plugin docs tests` lists every file that enumerates the sections. Add the new section to each hit that lists its siblings.
+
+**A new `pending` reason on an existing row needs the same sibling grep.** None of sites 1–5 moves when a row gains a reason it resolves pending under: #4587 added `sdd-ruling-needs-human-decision` to `SDD_RULING_REASONS` in `plugin/bin/lib/console/sdd-ruling.js` and to `review-console-appendix.md`'s `sdd-ruling-*` bullet, which `tests/build-sdd-ruling-deferral-gate.test.js` pins by iterating the export. The prose that lists the reasons also lives in `docs/journeys/`, where no test pins the reason list. Grep a sibling reason's literal (`git grep -l -F 'sdd-ruling-unclassified' -- plugin docs tests`), not the module's identifiers: #4587's plan swept `SDD_RULING_REASONS` and `sddRulingDeferralReason`, found one of the four journeys that list the reasons, and the other three went stale until the final review.
 
 ## Decisions each section owes
 
