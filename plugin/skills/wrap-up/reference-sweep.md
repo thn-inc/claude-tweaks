@@ -74,7 +74,9 @@ Resolve the `autonomy` ceiling per `_shared/autonomy-ceiling.md`.
   trailer. Stage every denial with its reason — over budget, over a cap, test file, merge-sensitive
   path.
 
-When staging a candidate, write its full proposal to `staged/wrap-up-reference-{n}.md` and name that path in the finding's `stagePath`, so the Review Console files it under Reference repairs. Pack the repair (`{old} → {new}`), the `brokenBy` path, and — at
+When staging a candidate, write its full proposal to `staged/wrap-up-reference-{n}.md` and name
+that path in the finding's `stagePath`, so the Review Console files it under Reference repairs.
+Pack the repair (`{old} → {new}`), the `brokenBy` path, and — at
 `trusted`/`unattended` — `permittedInitiative`'s own reason string into the finding's `summary`
 field. `engine-render.js`'s Change column is a plain string copy of `summary`; that column is the
 only place this detail can surface on an engine-rendered console.
