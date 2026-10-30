@@ -221,9 +221,10 @@ For the group gate the set's size is the difference between the eager gate firin
 at all: count only the sub-issue in hand and a group holding two or more sub-issues of one parent
 evaluates `incomplete` on every one of them, labeling nothing — not the sub-issues, not the parent.
 
-**Ruling (`#205`): stays a prose contract, not a shared helper.** A fifth caller inherits the
-"default to `{the sub-issue in hand}`, never `{}`" rule above with nothing to catch a wrong value
-if it passes one — the risk this table exists to flag. When three callers existed, each
+**Ruling (`#205`): stays a prose contract, not a shared helper.** Each caller added
+since inherits the "default to `{the sub-issue in hand}`, never `{}`" rule above with nothing to
+catch a wrong value if it passes one — the fifth, Step 4.0b (#4466), did — the risk this table
+exists to flag. When three callers existed, each
 already reading this table before writing its own `$CLOSING_SUB_ISSUES` line, and a shared helper
 would mean threading a new call through every one of them for a hazard the default clause already
 closes (an omitted set can no longer silently label nothing — see above), the cost didn't clear
@@ -333,14 +334,14 @@ Every sub-issue of this decomposition is closed, and the highest sub-issue risk,
 ```
 
 One listing line per sub-issue **Enumerate the parent's sub-issues** returned, in number order.
-`{title}` and `{pr}` come from that section's per-sub-issue fetch: `{pr}` is the `number` of the
-sub-issue's `closedByPullRequestsReferences` entry (the last one when it lists several — an
-entry carries only `id`, `number`, `repository` and `url`, no state or merged field, so the
-choice is arbitrary but deterministic). A sub-issue with no reference is listed as
-`- #{n} {title}`, with no suffix. A `$CLOSING_SUB_ISSUES` member whose
-`closedByPullRequestsReferences` is still empty — GitHub links it a few seconds after the merge —
-uses `$MERGING_PR` instead (**Two entry shapes** above); when `$MERGING_PR` is empty, a no-PR
-local merge, it carries no suffix. Never write a merge SHA
+`{title}` comes from that section's per-sub-issue fetch. For a `$CLOSING_SUB_ISSUES` member,
+`{pr}` is `$MERGING_PR` when it is non-empty (**Two entry shapes** above): that PR's merge is the
+one that closed it, and GitHub may not have linked it yet a few seconds after the merge.
+Otherwise `{pr}` is the `number` of the sub-issue's `closedByPullRequestsReferences` entry from
+that fetch (the last one when it lists several — an entry carries only `id`, `number`,
+`repository` and `url`, no state or merged field, so this fallback is arbitrary but
+deterministic). A sub-issue left with no `{pr}` either way is listed as `- #{n} {title}`, with
+no suffix. Never write a merge SHA
 in place of a missing PR number: a line names a PR or carries no suffix. Under
 `work-backend: local-files` each line is `- {id} {title}`, from `subIssueRecords` above
 (`r.id`, `r.title`) — no PR data exists there.
@@ -395,7 +396,8 @@ sub-issue-side entry, commit the parent record file with the entry's own close c
 commit after labeling; for `/claude-tweaks:wrap-up` that is the execution step's summarizing
 commit (`wrap-up/execution-and-verification.md`). When the entry has no later commit before its
 merge (the auto-merge short-circuit), commit the parent record file itself before the merge, with
-a `{Verb} … — refs #{parent}` subject. The parent is never closed ahead of the merge: on wrap-up's
+a `{Verb} … — refs #{parent}` subject, and, under `pr-first`, push it before the merge, so the
+squash carries it. The parent is never closed ahead of the merge: on wrap-up's
 execution step the commit follows item 4's merge, and on the auto-merge short-circuit labeling and
 the commit happen on the run's branch before its merge.
 

@@ -50,7 +50,12 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
 
 - `$MERGING_PR` — the merged PR's number (`{pr-number}`) after a PR merge; empty after a no-PR
   local merge.
-- `$CLOSING_SUB_ISSUES` — the merge's closing records, minus any record Step 4.0 reopened. After a
+- `$CLOSING_SUB_ISSUES` — the merge's closing records, minus every record Step 4.0 handled: each
+  number in its output's `reopened[]` and `pendingClose[]`, and each `failed[]` entry's `issue`.
+  Step 4.0 handles a record because the merge should not have closed it, so it counts by its live
+  state, never as `CLOSED` by this set. A `failed[]` record still reads `CLOSED` live, so skip any
+  parent whose enumerated sub-issues include one, and name that parent in the closing summary: it
+  waits on the hand reopen. After a
   PR merge, read the PR's closing records:
 
   ```bash
@@ -69,7 +74,9 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
 
 For each record in `$CLOSING_SUB_ISSUES`, run that procedure from **Resolve the parent** through
 **Evaluate the gate**. On `due` with `exceeds: false`, run **Close the parent below the floor**.
-Every other outcome is a no-op, as is a record with no resolvable parent. Evaluate each parent
+Every other outcome is a no-op, as is a record with no resolvable parent. Skip a parent carrying
+a `needs:*` label (the parent labels **Enumerate the parent's sub-issues** fetches) and name it in
+the closing summary, per `_shared/work-record.md`'s Worklist rule. Evaluate each parent
 once: skip a record whose parent this step already handled, so a parent with several sub-issues
 in the set is closed once. The procedure's **Return to the Try it post** and **Fail open on every
 `gh` call** paragraphs state what this entry does not do (no Try it block, no fallback to the

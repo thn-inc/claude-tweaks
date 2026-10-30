@@ -293,7 +293,8 @@ carry `#{n}`), the rest is the finding.
 
 Both `queryRecords` shapes are deliberate. `{ isParentIssue: true }` returns **open** parents only
 (closed records are excluded unless the filter names `closed`) — the right set, since a closed
-parent was already dispositioned and closed by `/claude-tweaks:demo`, and it mirrors the
+parent was already dispositioned and closed — by `/claude-tweaks:demo` above the oversight floor, by
+**Close the parent below the floor** below it — and it mirrors the
 `github-issues` scope's `--state open` fetch. The sub-issue listing is the open+closed two-call
 merge for the same reason: one call alone drops every closed sub-issue, exactly the ones that make
 a gate due. No fetch-limit or truncation warning applies, unlike the API-paging twin —

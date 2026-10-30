@@ -6,6 +6,7 @@ files:
   - plugin/bin/wrap-up-engine.js
   - plugin/skills/wrap-up/execution-and-verification.md
   - plugin/skills/wrap-up/review-console.md
+  - plugin/skills/_shared/pr-first-merge-post-merge.md
 ---
 
 # Verify a Wrap-Up Run's Closure Checklist Through wrap-up-engine.js verify

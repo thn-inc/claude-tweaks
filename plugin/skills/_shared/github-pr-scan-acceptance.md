@@ -93,7 +93,7 @@ exit-3 sub-issue fetch below. `$CLOSED` is emptied first, so a later block never
 
 A closed record whose acceptance lives on a `/claude-tweaks:specify` decomposition parent must
 not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it, and its
-`isParent` field excludes every parent: its acceptance is the parent gate's: the below-floor close
+`isParent` field excludes every parent — its acceptance is the parent gate's: the below-floor close
 (#4466) or `/claude-tweaks:demo` above it. Resolving
 which closed records are sub-issues reuses the same parent-side enumeration the `parent-gate` scope
 below already documents in full — never the sub-issue side, which works under one `work-links` mode

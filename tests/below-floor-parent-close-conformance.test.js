@@ -104,17 +104,21 @@ test('AC1.1: the close section composes the listing comment, then comments, then
   for (const claim of FALSE_MERGE_CLAIMS) assert.ok(!collapse(close).includes(claim), `false claim gone: ${claim}`);
   assert.ok(
     collapse(close).includes(
-      'When the entry has no later commit before its merge (the auto-merge short-circuit), commit the parent record file itself before the merge, with a `{Verb} … — refs #{parent}` subject.',
+      'When the entry has no later commit before its merge (the auto-merge short-circuit), commit the parent record file itself before the merge, with a `{Verb} … — refs #{parent}` subject, and, under `pr-first`, push it before the merge, so the squash carries it.',
     ),
-    'the short-circuit commits the parent record itself',
+    'the short-circuit commits the parent record itself and pushes it under pr-first',
   );
   assert.ok(!collapse(close).includes("item 5's commit"), 'no claim of sharing cleanup item 5\'s commit');
   assert.ok(
     collapse(close).includes('A pre-merge sub-issue-side entry under `github-issues` never runs this section.'),
     'the opener states the pre-merge exclusion',
   );
-  assert.match(close, /uses `\$MERGING_PR` instead/);
-  assert.match(close, /arbitrary but deterministic/);
+  const prChoice = collapse(close);
+  const mergingFirst = prChoice.indexOf('For a `$CLOSING_SUB_ISSUES` member, `{pr}` is `$MERGING_PR` when it is non-empty');
+  const fallback = prChoice.indexOf("Otherwise `{pr}` is the `number` of the sub-issue's `closedByPullRequestsReferences` entry");
+  assert.ok(mergingFirst !== -1 && fallback > mergingFirst, `$MERGING_PR first (${mergingFirst}), last reference as fallback (${fallback})`);
+  assert.ok(prChoice.includes('so this fallback is arbitrary but deterministic'), 'the fallback keeps its honest note');
+  assert.ok(!prChoice.includes('uses `$MERGING_PR` instead'), 'MERGING_PR is no longer only the empty-references fallback');
 });
 
 test('AC5.1: the close section is idempotent on a closed parent and a trusted heading comment', () => {
@@ -212,16 +216,58 @@ test('AC2.1: Step 4.0b sits between Step 4.0 and Step 4.1 and reads the merge\'s
   );
 });
 
+test('AC2.1: Step 4.0b subtracts every record Step 4.0 handled and skips a needs:* parent', () => {
+  const body = collapse(section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1'));
+  assert.ok(
+    body.includes(
+      "`$CLOSING_SUB_ISSUES` — the merge's closing records, minus every record Step 4.0 handled: each number in its output's `reopened[]` and `pendingClose[]`, and each `failed[]` entry's `issue`.",
+    ),
+    'the set subtracts reopened, pendingClose and failed',
+  );
+  assert.ok(
+    body.includes('A `failed[]` record still reads `CLOSED` live, so skip any parent whose enumerated sub-issues include one'),
+    'a failed reopen holds its parent open',
+  );
+  assert.ok(!body.includes('minus any record Step 4.0 reopened'), 'the reopened-only subtraction is gone');
+  assert.ok(
+    body.includes(
+      "Skip a parent carrying a `needs:*` label (the parent labels **Enumerate the parent's sub-issues** fetches) and name it in the closing summary, per `_shared/work-record.md`'s Worklist rule.",
+    ),
+    'Step 4.0b honours the Worklist rule',
+  );
+});
+
 test('AC2.1: issue-claims\' Close-via-merge names the below-floor parent close as an exception', () => {
   const cvm = section(read('_shared/issue-claims.md'), '## Close-via-merge', '## Dispatch authorization');
-  assert.ok(collapse(cvm).includes('except where a procedure names its own exception'));
+  assert.ok(
+    collapse(cvm).includes("except for the one record-closing exception that contract's Never-reversible list names:"),
+    'Close-via-merge points at the one named exception',
+  );
+  assert.ok(!collapse(cvm).includes('except where a procedure names its own exception'), 'the open-ended exception wording is gone');
   assert.ok(cvm.includes('**Close the parent below the floor**'));
+});
+
+test('AC2.1: the auto-mode contract names the below-floor parent close as an exception with its restore contract', () => {
+  const contract = read('_shared/auto-mode-contract.md');
+  const never = collapse(section(contract, '### Never-reversible (auto-FORBIDDEN, regardless of mode)', '## What `auto` silences'));
+  for (const lit of [
+    "- Closing or deleting work records — except the Parent-Gate Procedure's **Close the parent below the floor** (`wrap-up/verification-brief-parent-gate.md`), run by `_shared/pr-first-merge-post-merge.md` Step 4.0b's post-merge entry:",
+    'Its restore contract: a human runs `gh issue reopen {parent}` and may delete that comment — the pipeline never restores automatically.',
+    'The precondition is that the parent still holds only this close: no comment, label or state change has landed on it since.',
+    'When that precondition does not hold, the restore is not mechanical: the human reads what changed on the parent before reopening it, and deletes no comment but the `## Closed below the oversight floor` one',
+    'The below-floor parent close the first bullet names is the other exception: its comment and its close are its two writes, under that bullet\'s restore contract',
+  ]) {
+    assert.ok(never.includes(lit), `Never-reversible list carries: ${lit}`);
+  }
 });
 
 test('AC2.1: close-out step 7 and merge-mode step 3 run Step 4.0b on `merged`', () => {
   assert.ok(section(read('dispatch/close-out.md'), '7. **On `merged`', '\n## ').includes('Step 4.0b'), 'close-out step 7');
   const mergeStep = section(read('wrap-up/merge-mode.md'), '3. On `merged`:', '\n## ');
-  assert.ok(mergeStep.includes('then Step 4.1. Run Step 4.0b of'), 'merge-mode step 3: Step 4.0b directly follows the pinned sentence');
+  assert.ok(
+    mergeStep.includes('run Step 4.0 (`_shared/pr-first-merge-post-merge.md`), then Step 4.0b (`{pr-number}` = `{pr}`), then Step 4.1.'),
+    'merge-mode step 3: one sequence, Step 4.0 then Step 4.0b then Step 4.1',
+  );
 });
 
 // Each local-merge push site runs Step 4.1 against its pushed merge commit; Step 4.0b runs first.
@@ -405,6 +451,8 @@ test('AC3.1: the Step 7 checklist verifies a below-floor close on both drivers',
   assert.ok(gh.includes('no `demo:*` label'));
   assert.ok(local.includes('`facets.closed`') && local.includes('## Closed below the oversight floor'));
   assert.ok(local.includes('no `acceptance` facet'));
+  assert.ok(gh.includes('A parent re-queried as `CLOSED` with no such comment also passes, as the no-op case'), 'github: already-closed no-op passes');
+  assert.ok(local.includes('A parent with `facets.closed` set and no such section also passes, as the no-op case'), 'local: already-closed no-op passes');
   // The brief-path forms stay, so an above-floor gate is still verified by a brief.
   assert.equal(skill.split('\n').filter((l) => l.startsWith('- [x] Opened parent gate:')).length, 2);
 });
@@ -425,4 +473,50 @@ test('AC3.1: stale brief-only restatements name the below-floor close', () => {
   const wr = collapse(read('_shared/work-record.md'));
   assert.ok(wr.includes('below the oversight floor it instead closes the parent (' + floorPtr + ')'), 'work-record backstop bullet');
   assert.ok(wr.includes('which applies `demo:pending` to the parent and attaches its Verification Brief above the oversight floor'), 'work-record /tidy row');
+});
+
+// ---- AC5: the local-files close fence, executed against a real store ----
+
+const HEADING = '## Closed below the oversight floor';
+
+// Step 5's ```js fence, with its two free inputs bound ahead of it.
+function localCloseScript(parentPath, parentCloseSection) {
+  const step5 = section(closeSection(read(GATE_REL)), '**5. `work-backend: local-files`**', null);
+  const fence = /```js\n([\s\S]*?)\n```/.exec(step5);
+  assert.ok(fence, 'step 5 carries a js fence');
+  const body = fence[1].split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_ROOT.replace(/\\/g, '/'));
+  return `const parentPath = ${JSON.stringify(parentPath)};\nconst parentCloseSection = ${JSON.stringify(parentCloseSection)};\n${body}`;
+}
+
+test('AC5.2: the local-files close fence closes the parent once with one heading section, however often it runs', () => {
+  const { writeRecord, readRecord, closeRecord, defaultFacets } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'local-store.js'));
+  const cwd = mkTmp('bf-local-close-');
+  const closeSectionText = `${HEADING}\n\nEvery sub-issue of this decomposition is closed.\n\n- 2 Only sub`;
+  const headings = (file) => readRecord(file).body.split('\n').filter((l) => l.trim() === HEADING).length;
+  const run = (file) => execFileSync('node', ['-e', localCloseScript(file, closeSectionText)], { cwd, encoding: 'utf8' });
+  const parentFile = (name) => path.join(cwd, 'specs', name);
+  const parentFacets = { ...defaultFacets(), isParentIssue: true };
+
+  // Open, no heading: two runs append once and close once.
+  const fresh = parentFile('01-fresh-parent.md');
+  writeRecord(fresh, { title: 'Fresh parent', body: 'Parent body.', facets: parentFacets });
+  run(fresh);
+  run(fresh);
+  assert.equal(readRecord(fresh).facets.closed, true, 'fresh parent ends closed');
+  assert.equal(headings(fresh), 1, 'fresh parent carries exactly one heading section');
+
+  // Open with the heading already appended (a close that failed after the write): close only.
+  const halfDone = parentFile('03-half-done-parent.md');
+  writeRecord(halfDone, { title: 'Half-done parent', body: `Parent body.\n\n${closeSectionText}`, facets: parentFacets });
+  run(halfDone);
+  assert.equal(readRecord(halfDone).facets.closed, true, 'half-done parent ends closed');
+  assert.equal(headings(halfDone), 1, 'half-done parent gains no second heading section');
+
+  // Already closed with no heading (a human closed it first): a no-op.
+  const humanClosed = parentFile('05-human-closed-parent.md');
+  writeRecord(humanClosed, { title: 'Human-closed parent', body: 'Parent body.', facets: parentFacets });
+  closeRecord(humanClosed);
+  const before = fs.readFileSync(humanClosed, 'utf8');
+  run(humanClosed);
+  assert.equal(fs.readFileSync(humanClosed, 'utf8'), before, 'an already-closed parent is left untouched');
 });

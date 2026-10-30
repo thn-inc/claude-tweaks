@@ -807,7 +807,9 @@ function scanPrBrief(prComments, target) {
 // oversight floor, skips the parent instead of requiring its demo:pending. The
 // below-floor skip detail names the post-merge close (#4466): that parent is
 // closed by pr-first-merge-post-merge.md's Step 4.0b once the merge lands, so
-// it never carries an acceptance label.
+// it never carries an acceptance label. That detail is `github-issues` wording:
+// a `local-files` parent closes in-branch instead, and local-files is out of
+// scope for this check (see the gap note below).
 // The gate input is the parent's enumerated sub-issues with every run record
 // counted as closed, since this run is what closes it.
 //
