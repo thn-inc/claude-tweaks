@@ -49,9 +49,9 @@
 
 In the test file, extend `makeGh` with an `openPrs = null` option and a `fail.prList` flag. On `args[0] === 'pr' && args[1] === 'list'`, throw `'pr list failed'` when `fail.prList`, otherwise return `JSON.stringify(openPrs || [])`. Add a helper `staleMarker(runId)` returning `liveMarker(runId, new Date(NOW - 100 * 3600 * 1000).toISOString())`. Use `const RUN = '2026-10-22T001546-record-3315'`. Add these tests after `(k6)`:
 
-- `(stale-pr) stale claim whose run has an open marked PR, default mode`. Reads: `{ 770: [readOk(staleMarker(RUN), 'sha770')] }`. Writes: `{}`. `openPrs: [{ url: 'https://github.com/acme/w/pull/3927', body: `## Spec\n<!-- claude-tweaks-run: ${RUN} -->\n` }]`. Assert: `code === 3`; `body.inFlight` deep-equals `[{ issue: 770, link: 'https://github.com/acme/w/pull/3927' }]`; no `isWrite(a, '770')` call.
+- `(stale-pr) stale claim whose run has an open marked PR, default mode` (AC1.1). Reads: `{ 770: [readOk(staleMarker(RUN), 'sha770')] }`. Writes: `{}`. `openPrs: [{ url: 'https://github.com/acme/w/pull/3927', body: `## Spec\n<!-- claude-tweaks-run: ${RUN} -->\n` }]`. Assert: `code === 3`; `body.inFlight` deep-equals `[{ issue: 770, link: 'https://github.com/acme/w/pull/3927' }]`; no `isWrite(a, '770')` call.
 - `(stale-pr-2)`: same fixture with `--keep-going`. Assert: `code === 0`; `body.skipped[0]` deep-equals `{ issue: 771, reason: 'in-flight', link: 'https://github.com/acme/w/pull/3927' }`; no write.
-- `(stale-pr-3)`: the open PR's body carries a different run id, plus the inline-mention body `see claude-tweaks-run: ${RUN} in #12`. Assert: reclaims (`claimed` = `[772]`, the write `sha` is `sha772`).
+- `(stale-pr-3)` (AC1.2): the open PR's body carries a different run id, plus the inline-mention body `see claude-tweaks-run: ${RUN} in #12`. Assert: reclaims (`claimed` = `[772]`, the write `sha` is `sha772`).
 - `(stale-pr-4)`: `fail: { prList: true }`. Assert: reclaims (`claimed` = `[773]`).
 - `(stale-pr-5)`: `staleMarker('otherRun')` with an `openPrs` body carrying `claude-tweaks-run: otherRun`. Assert: reclaims, and `ghCalls` has no `pr list` call.
 - `(stale-pr-6)`: two stale targets 774 and 775, both with `RUN`, under `--keep-going`. Assert: both are skipped `in-flight`, and exactly one `pr list` call is made.
@@ -61,7 +61,7 @@ In the test file, extend `makeGh` with an `openPrs = null` option and a `fail.pr
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test --test-name-pattern "stale-pr|staleClaimInFlightPr" "tests/bin-lib/claim-targets/claim-targets.test.js"`
-Expected: FAIL. `(stale-pr)` exits 0 and claims `770` instead of exiting 3, and the unit test throws `staleClaimInFlightPr is not a function`.
+Expected: FAIL after Step 1. `(stale-pr)` exits 0 and claims `770` instead of exiting 3, and the unit test throws `staleClaimInFlightPr is not a function`. Before Step 1 no test matches the pattern.
 
 - [ ] **Step 3: Implement `staleClaimInFlightPr` in `claim-store.js` and call it from `claim-targets.js`**
 
@@ -102,7 +102,7 @@ git commit -m "Stop re-claiming a stale claim whose run has an open PR — stale
 
 - [ ] **Step 1: Write the failing test**
 
-Write a new test file in the `tests/tidy-plan-retention-conformance.test.js` style, using `readText` from `./helpers/read-skill` and a `findRow` helper. Slice the section from `## Step 4.7: Audit Issue Claims` to `### Backstops: issue-claim audit-trail integrity checks`, and assert both anchors exist. Assertions:
+Write a new test file (AC2.1) in the `tests/tidy-plan-retention-conformance.test.js` style, using `readText` from `./helpers/read-skill` and a `findRow` helper. Slice the section from `## Step 4.7: Audit Issue Claims` to `### Backstops: issue-claim audit-trail integrity checks`, and assert both anchors exist. Assertions:
   - The `| Blob classified `'stale'`` row matches `/open PR/` and `/Resume/`.
   - The section matches `/gh pr list --state open --json number,url,body/`.
   - The section matches `/claude-tweaks-run: \{runId\}/`.
