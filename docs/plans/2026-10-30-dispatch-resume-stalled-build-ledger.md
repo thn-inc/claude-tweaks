@@ -2,3 +2,4 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | ops | Pre-flight branch-divergence (resumed call): origin/main was 5 commits ahead of the run branch at 436d3e0ab (reason-not-auto: requires-judgment — a divergence is surfaced, not silently merged) | fixed | Caught up by the adopt-path post-creation catch-up merge 38512c042 (origin/main 184f77448) |
