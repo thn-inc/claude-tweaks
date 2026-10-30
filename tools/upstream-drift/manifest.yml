@@ -357,18 +357,22 @@ dependencies:
   # claude-code: the harness itself. post-tool-use-failure.js and
   # bash-prefilter.js recognize Claude Code's worktree-isolation Bash refusal by
   # its text, so a reworded refusal would silently zero the `wd-guard-refusal`
-  # events friction-events.js counts (#3304). Five assertions, two kinds:
-  # - The first three are the fragments plugin/bin/lib/hooks/harness-refusal.js
+  # events friction-events.js counts (#3304, #3819). Nine assertions, two kinds:
+  # - The first five are the fragments plugin/bin/lib/hooks/harness-refusal.js
   #   matches on; keep each `must-match` in lockstep with it —
   #   tests/harness-refusal-drift-pin.test.js enforces that. They are not unique
   #   to the matched templates: at 2.1.302 `noun:"This session"` occurs 1x,
-  #   ` is isolated in the worktree ` 9x and `Refusing to run it` 5x, the rest in
+  #   `noun:"This agent"` 1x, ` is isolated in the worktree ` 9x,
+  #   `Refusing to run it` 5x and `Refusing to run there` 3x, the rest in
   #   unrelated messages. So rewording only the templates the hook matches would
-  #   leave all three passing.
-  # - The last two anchor on text unique to those templates: `Refusing to run it`
+  #   leave all five passing.
+  # - The last four anchor on text unique to those templates: `Refusing to run it`
   #   + a dash occurs 1x (the git-operations refusal, the "too complex to verify"
   #   family the hook logs), `Refusing to run it there` 2x (the two cwd-escape
-  #   refusals). The dash is the minified source's six-character backslash-u2014
+  #   refusals), `Refusing to run there` + a dash 1x (the fixed-noun worktree-gone
+  #   refusal) and `outside that worktree. Refusing to run there.` 2x (the
+  #   `${noun}` worktree-gone refusal: the template plus a compiled string-table
+  #   copy). The dash is the minified source's six-character backslash-u2014
   #   escape, which is how the binary holds it; a toolchain change that emits a
   #   raw em dash instead shows up as loud false drift, never a silent miss.
   # Limit: literal substring matching cannot prove how a message is assembled, so
@@ -408,13 +412,21 @@ dependencies:
         upstream-path: "."
         must-match: 'noun:"This session"'
       - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the isolation refusal's noun for an agent-owned worktree is This agent (AGENT_NOUN)"
+        upstream-path: "."
+        must-match: 'noun:"This agent"'
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
         claims: "the refusal names its worktree with the clause ' is isolated in the worktree ' (ISOLATION_CLAUSE)"
         upstream-path: "."
         must-match: " is isolated in the worktree "
       - file: "plugin/bin/lib/hooks/harness-refusal.js"
-        claims: "every isolation refusal carries Refusing to run it (REFUSAL_SIGNATURE, the prefilter's gate)"
+        claims: "the command-shape and cwd-escape isolation refusals carry Refusing to run it (REFUSAL_SIGNATURE, one of the prefilter's two signatures)"
         upstream-path: "."
         must-match: "Refusing to run it"
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the worktree-gone refusals carry Refusing to run there (WORKTREE_GONE_SIGNATURE, the prefilter's gate and the worktree-gone variant)"
+        upstream-path: "."
+        must-match: "Refusing to run there"
       - file: "plugin/bin/lib/hooks/harness-refusal.js"
         claims: "the git-operations refusal the hook logs keeps its Refusing to run it + dash wording"
         upstream-path: "."
@@ -423,4 +435,12 @@ dependencies:
         claims: "the cwd-escape refusals the hook logs keep their Refusing to run it there wording"
         upstream-path: "."
         must-match: "Refusing to run it there"
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the fixed worktree-gone refusal the hook logs keeps its Refusing to run there + dash wording"
+        upstream-path: "."
+        must-match: 'Refusing to run there \u2014 '
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the noun worktree-gone refusal the hook logs keeps its outside that worktree. Refusing to run there. wording"
+        upstream-path: "."
+        must-match: "outside that worktree. Refusing to run there."
     fixtures: []

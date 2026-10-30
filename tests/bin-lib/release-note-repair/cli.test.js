@@ -148,10 +148,10 @@ test('repair: an MCP-shaped live read (lowercase state, string labels) is not st
   assert.equal(githubRepair(fx, { extra: { state: 'open', labels: ['ready', 'auto:build'] } }).code, 0);
 });
 
-test('repair: a mid-line Acceptance Criteria mention the gate accepts is a repair failure (exit 6), nothing written', () => {
+test('repair: a mid-line Acceptance Criteria mention is no AC section, so the body is stale (exit 5), nothing written (#4367)', () => {
   const fx = fixture();
   const { code, out } = githubRepair(fx, { body: F.MIDLINE_AC, sha: bodySha(F.MIDLINE_AC) });
-  assert.equal(code, 6);
+  assert.equal(code, 5);
   assert.equal(fs.existsSync(out), false);
   assert.equal(fs.existsSync(path.join(fx.runDir, 'snapshots')), false);
 });
