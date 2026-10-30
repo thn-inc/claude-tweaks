@@ -988,8 +988,10 @@ test('a converged-positive line with no lens list settles nothing (#4563 AC4)', 
 test('negative and inconclusive debate lines settle nothing (#4563 AC4)', () => {
   const neg = '- STAGED 10:00:00 — Debate: lens "3a" finding src/a.js:5 — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.';
   const fakeAuto = '- AUTO 10:00:00 — Debate: cross-lens disagreement on src/a.js:5 converged negative after 1 round (lens "3a" finding src/a.js:5). Reversibility: high.';
-  // The STAGED negative line is itself an unconfirmed item, so it adds one keep-staged beside the Reproduction line's; the AUTO line adds none.
-  for (const [later, expected] of [[neg, ['keep-staged', 'keep-staged']], [fakeAuto, ['keep-staged']]]) {
+  // A STAGED line of the converged-positive shape: the `^- AUTO` gate is what keeps it from settling.
+  const stagedPositive = debatePositive(' (lens "3a" finding src/a.js:5 — confirmed)').replace('- AUTO', '- STAGED');
+  // A STAGED later line is itself an item, so it adds one keep-staged beside the Reproduction line's; the AUTO line adds none.
+  for (const [later, expected] of [[neg, ['keep-staged', 'keep-staged']], [fakeAuto, ['keep-staged']], [stagedPositive, ['keep-staged', 'keep-staged']]]) {
     const items = findings([stagedLow('3a', 'src/a.js:5'), later].join('\n'));
     assert.ok(items.some((i) => i.id.includes('Reproduction: lens "3a"')), 'the Reproduction STAGED line is still an open item');
     assert.deepStrictEqual(items.map((i) => i.resolution), expected);
