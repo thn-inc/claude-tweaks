@@ -58,7 +58,7 @@ cutoff, `needsBackstop` and the oversight floor still run on that narrowed set, 
 the risk or the size axis and fails closed on unscored records, which negated `-label:` qualifiers
 cannot express.
 
-Resolve `{since-date}` first, as its own call, with `node -e "console.log(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))"` (cross-platform, no shell `date` variant needed), and substitute its `YYYY-MM-DD` output literally.
+Resolve `{since-date}` first, as its own call, with `node -e "console.log(new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))"` (cross-platform, no shell `date` variant needed), and substitute its `YYYY-MM-DD` output literally. The server date is one date wider than the 30-day client cutoff below, on purpose: the `closed:` qualifier's timezone is unprobed, so the extra day keeps the server set a superset.
 
 Resolve session-scoped paths first (`_shared/session-tmp-root.md`, cited throughout this file rather than restated), then resolve `backlog-fetch-limit` and substitute it into the fetch below (per this file's "Fetch limit" section):
 
@@ -132,13 +132,13 @@ block and never carry it across blocks in a shell variable — shell environment
 between Bash calls and never reaches a subagent, so a cross-block `export` silently resolves
 empty (the same discipline `_shared/trust-table.md` states for its own identical fetches).
 
-The closed-record fetch is bounded on the server by the 30-day window and the disposition filter,
+The closed-record fetch is bounded on the server by the window (one date wider than the 30-day cutoff) and the disposition filter,
 which is why it no longer fills the cap with already-dispositioned records: a busy repo can close
 far more than any reasonable hardcoded cap within 30 days (971 closed issues in 30 days was
 observed on this repo alone), and a cap on that unfiltered stream silently dropped the **oldest**
 closed records first — exactly the quiet-failure a backstop scope must never have, so the cap (the
 smaller of the limit and GitHub search's 1000-result ceiling) and its warning still apply to the
-narrowed set. The parent fetches share the same
+narrowed set. The closed-record fetch is a search too: a record closed or relabelled seconds before the run can be missing while the search index lags — unwarned, and picked up by the next run. The parent fetches share the same
 exposure for a different reason — they are `--state all` over the repo's entire history, and
 `gh issue list` returns newest-first, so a fixed cap drops the **oldest** parents first. Those are
 precisely the parents whose sub-issues have already closed, so truncation silently re-floods this
@@ -419,6 +419,11 @@ which is why it cannot carry a fixed cap: past that cap every truncated sub-issu
 permanently, and with nothing on the output to say it did. Under `native` the map is searched,
 so GitHub search's 1000-result ceiling also applies.
 
+Substitute `{state-map-search}`: `has:parent-issue` under `native` (the native sub-issue
+population; a just-linked one the search index lags on defaults to `OPEN`), the empty string under
+`body-text` (task-list children are not native links, and an empty `--search` keeps `gh issue list`
+off the search API, so no 1000 ceiling applies).
+
 Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
 
 ```bash
@@ -458,11 +463,6 @@ node -e "
   }
 "
 ```
-
-Substitute `{state-map-search}`: `has:parent-issue` under `native` (the native sub-issue
-population; a just-linked one the search index lags on defaults to `OPEN`), the empty string under
-`body-text` (task-list children are not native links, and an empty `--search` keeps `gh issue list`
-off the search API, so no 1000 ceiling applies).
 
 When the state-map-search guard throws, the scope stops: report no `[parent-gate]` rows at all
 and quote the error verbatim. Never read `$PARENTS` or `$ALL_STATES` afterwards — a 0-row state

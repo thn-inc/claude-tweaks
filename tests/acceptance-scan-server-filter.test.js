@@ -165,9 +165,21 @@ test('since-date is validated', () => {
     /\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\/\.test\(process\.env\.SINCE/,
     'the node block must validate SINCE as YYYY-MM-DD'
   );
-  const oneLiner = 'new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)';
-  assert.ok(GAP.includes(oneLiner), 'the scope must name the one-liner that resolves {since-date}');
+  // The server window is one date wider than the client cutoff, on purpose: the timezone of GitHub's
+  // `closed:>=` qualifier is unprobed, so a 31-day date keeps the server set a superset of the 30-day set.
+  const oneLiner = 'new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)';
+  const FROZEN_30_ONE_LINER = oneLiner.replace('- 31 *', '- 30 *');
+  assert.notEqual(FROZEN_30_ONE_LINER, oneLiner);
+  assert.ok(GAP.includes(oneLiner), 'the scope must name the 31-day one-liner that resolves {since-date}');
+  assert.ok(!GAP.includes(FROZEN_30_ONE_LINER), 'the frozen 30-day one-liner must be gone');
   assert.ok(!PRE_CHANGE_GAP_FETCH.includes(oneLiner));
+  // The client-side cutoff stays exactly 30 days.
+  assert.ok(GAP.includes('const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();'), 'the client-side closedAt cutoff stays 30 days');
+  assert.ok(!GAP.includes('const cutoff = new Date(Date.now() - 31'), 'the client-side cutoff must not widen');
+  // The prose says the server date is wider on purpose.
+  const widerSaid = /one\s+date\s+wider[\s\S]{0,160}on\s+purpose/;
+  assert.ok(widerSaid.test(GAP), 'the scope must say the server date is one date wider than the client cutoff, on purpose');
+  assert.ok(!widerSaid.test(PRE_CHANGE_GAP_FETCH));
 });
 
 test('since-date guard failure stops the scope', () => {
@@ -343,9 +355,11 @@ test('label-filtered parent fetches warn at the search ceiling', () => {
   assert.equal('if (fetched.some((f) => f.length > Math.min(LIMIT, 1000)))'.match(PARENT_CEILING_TEST), null);
 });
 
-// The predicate expressions as shipped: the text inside `fetched.some((f) => …)`, one per distinct live form.
-const PARENT_CEILING_EXPR = /if \(fetched\.some\(\(f\) => (f\.length >= Math\.min\((?:LIMIT|Number\(process\.env\.FETCH_LIMIT\)), 1000\))\)\)/g;
-const ceilingExprs = (text) => [...new Set([...text.matchAll(PARENT_CEILING_EXPR)].map((m) => m[1]))];
+// The predicate expressions as shipped: the text inside `fetched.some((f) => …)`, one per live site, in
+// file order. Extraction is deliberately shape-agnostic (no `>=` / `Math.min` in the pattern), so a slipped
+// operator or constant in any one site is still extracted and judged by the table rather than skipped.
+const PARENT_CEILING_EXPR = /if \(fetched\.some\(\(f\) => (.+?)\)\) \{/g;
+const ceilingExprs = (text) => [...text.matchAll(PARENT_CEILING_EXPR)].map((m) => m[1]);
 // Evaluates an extracted predicate for `rows` fetched rows under `limit` (both the LIMIT and the env form).
 const evalCeiling = (expr, limit, rows) =>
   new Function('f', 'LIMIT', 'process', `return ${expr};`)({ length: rows }, limit, { env: { FETCH_LIMIT: String(limit) } });
@@ -355,18 +369,46 @@ const CEILING_TABLE = [
   [500, 500, true, 'limit below 1000, limit reached'],
   [500, 499, false, 'one under the cap stays silent'],
 ];
-const ceilingMisses = (expr) => CEILING_TABLE.filter(([limit, rows, want]) => evalCeiling(expr, limit, rows) !== want);
+// The rows a predicate gets wrong, named `limit/rows (description)`.
+const ceilingMisses = (expr) =>
+  CEILING_TABLE.filter(([limit, rows, want]) => evalCeiling(expr, limit, rows) !== want).map(([limit, rows, , why]) => `${limit}/${rows} (${why})`);
+// `text` with the `n`th (0-based) occurrence of `needle` replaced.
+function mutateNth(text, needle, n, replacement) {
+  let at = -1;
+  for (let i = 0; i <= n; i++) {
+    at = text.indexOf(needle, at + 1);
+    assert.ok(at !== -1, `occurrence ${n} of ${needle} not found`);
+  }
+  return text.slice(0, at) + replacement + text.slice(at + needle.length);
+}
 
 test('ceiling arithmetic', () => {
   const exprs = ceilingExprs(LIVE);
-  assert.equal(exprs.length, 2, 'the LIMIT form and the process.env.FETCH_LIMIT form are both evaluated');
+  assert.equal(exprs.length, 3, 'all three parent-fetch predicates are extracted and evaluated, none de-duplicated');
   for (const expr of exprs) assert.deepEqual(ceilingMisses(expr), [], `the shipped predicate must satisfy the table: ${expr}`);
-  // Go-red control: the same evaluation over a `>` slip must miss rows (the ceiling and the exact-limit rows).
+  // Go-red controls on the predicate: a `>` slip and a 1000 -> 100 slip each miss named rows.
   for (const expr of exprs) {
     const slipped = expr.replace('>=', '>');
     assert.notEqual(slipped, expr);
-    assert.deepEqual(ceilingMisses(slipped).map(([limit, rows]) => `${limit}/${rows}`), ['1500/1000', '500/500']);
+    assert.deepEqual(ceilingMisses(slipped).map((m) => m.split(' ')[0]), ['1500/1000', '500/500']);
+    const lowered = expr.replace('1000', '100');
+    assert.notEqual(lowered, expr);
+    assert.deepEqual(ceilingMisses(lowered).map((m) => m.split(' ')[0]), ['1000/743', '500/499']);
   }
+  // Go-red controls on the extraction: the same table run over the whole live file with ONE site mutated
+  // must find a table miss in exactly that site, whichever of the three sites and whichever mutation.
+  for (let site = 0; site < 3; site++) {
+    for (const [needle, replacement] of [['>= Math.min(', '> Math.min('], ['1000))) {', '100))) {']]) {
+      const exprsM = ceilingExprs(mutateNth(LIVE, needle, site, replacement));
+      assert.equal(exprsM.length, 3);
+      const missed = exprsM.map((e) => ceilingMisses(e).length > 0);
+      assert.deepEqual(missed, [0, 1, 2].map((i) => i === site), `mutating ${needle} in site ${site} must miss table rows in that site only`);
+    }
+  }
+  // The frozen exact-equality predicates fail the table too (they are not the ceiling comparison).
+  const frozen = ceilingExprs(PRE_CHANGE_PARENT_WARN);
+  assert.equal(frozen.length, 3);
+  for (const expr of frozen) assert.notDeepEqual(ceilingMisses(expr), [], `the frozen predicate must miss rows: ${expr}`);
 });
 
 // The parent-fetch warning lines (the `console.error` calls naming "a parent fetch") and what each must say.
@@ -376,7 +418,7 @@ const parentWarnParts = (line) => ({
   ceiling: /1000-result\s+ceiling/.test(line),
   futile: /raising\s+it\s+past\s+1000\s+does\s+not\s+help/.test(line),
 });
-const PRE_CHANGE_PARENT_MESSAGE ="    console.error('WARNING: a parent fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped and are invisible to this scope entirely.');";
+const PRE_CHANGE_PARENT_MESSAGE = "    console.error('WARNING: a parent fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped and are invisible to this scope entirely.');";
 
 test('parent-fetch warnings name the cap and the label-filtered ceiling', () => {
   const lines = parentWarnings(LIVE);
@@ -415,4 +457,42 @@ test('state-map absence names both causes and keeps the OPEN default', () => {
   assert.equal(bothCauses(absent(pre)), false);
   assert.equal(bothCauses(absent('absent from the state map (search index lagged) defaults to `OPEN`')), false);
   assert.equal(bothCauses('truncated, or the search\n index lagged'), true);
+});
+
+// ---- final-review fixes (#4469) ----------------------------------------------------------------
+
+const SUBSTITUTION_RULE = 'Substitute `{state-map-search}`:';
+const STATE_FENCE_LINE = "STATE_SEARCH='{state-map-search}'";
+
+// True when the substitution rule precedes the state-map fence and no other fence sits between them
+// (the only backtick fence after the rule is the state-map fence's own opening).
+function ruleSitsAboveItsFence(text) {
+  const rule = text.indexOf(SUBSTITUTION_RULE);
+  const line = text.indexOf(STATE_FENCE_LINE);
+  if (rule === -1 || line === -1 || rule > line) return false;
+  const opening = text.lastIndexOf('```bash', line);
+  return opening > rule && (text.slice(rule, opening).match(/```/g) || []).length === 0;
+}
+
+test('the {state-map-search} substitution rule is explained before the fence it governs', () => {
+  assert.ok(ruleSitsAboveItsFence(PG), 'the rule must sit above the parent-gate state-map fence, with no other fence between');
+  // Controls: the same two anchors in the pre-move order (fence first, rule after), and a rule separated by another fence.
+  const preMove = `\`\`\`bash\n${STATE_FENCE_LINE}\n\`\`\`\n\n${SUBSTITUTION_RULE} has:parent-issue under native.`;
+  assert.ok(!ruleSitsAboveItsFence(preMove));
+  assert.ok(ruleSitsAboveItsFence(`${SUBSTITUTION_RULE} x\n\n\`\`\`bash\n${STATE_FENCE_LINE}\n\`\`\``));
+  assert.ok(!ruleSitsAboveItsFence(`${SUBSTITUTION_RULE} x\n\n\`\`\`bash\nother\n\`\`\`\n\n\`\`\`bash\n${STATE_FENCE_LINE}\n\`\`\``));
+  // The guard-failure sentence still follows the fence.
+  assert.ok(PG.indexOf('When the state-map-search guard throws') > PG.indexOf(STATE_FENCE_LINE));
+});
+
+// The closed-record half of the acceptance-gap "Fetch limit" paragraph as it read before the final review.
+const PRE_CHANGE_CLOSED_PARAGRAPH = `closed records first — exactly the quiet-failure a backstop scope must never have, so the cap (the
+smaller of the limit and GitHub search's 1000-result ceiling) and its warning still apply to the
+narrowed set. The parent fetches share the same`;
+
+test('the closed-record fetch names search-index lag as an unwarned, self-correcting gap', () => {
+  const lag = /closed-record\s+fetch\s+is\s+a\s+search\s+too[\s\S]{0,200}index\s+lag[\s\S]{0,120}unwarned/;
+  assertClaimPinned(GAP, PRE_CHANGE_CLOSED_PARAGRAPH, lag, 'the closed-record fetch must name the search-index lag');
+  // Control: the lag named without the closed-record anchor is not enough.
+  assert.ok(!lag.test('the state map may miss a just-linked sub-issue while the search index lags — unwarned'));
 });
