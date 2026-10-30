@@ -190,10 +190,12 @@ Expected: PASS, 0 failures
     The input never comes from a run-dir fact pack: a multi-spec merge runs against the parent run dir, which has no per-spec pack.
   - **Per record with a resolvable parent:** run the Parent-Gate Procedure as its post-merge sub-issue-side entry (Task 2), from **Resolve the parent** through **Evaluate the gate**, and on `due` with `exceeds: false` run **Close the parent below the floor**. Every other outcome is a no-op. One parent is closed once, even when several of its sub-issues are in the set.
   - **Logging and failure:** log one `decisions.md` line per parent closed. A failing `gh` call skips that parent, is reported in the closing summary, and is never a stop. Tidy's backstop is the recovery.
-- Modify the call sites so each runs Step 4.0b right after Step 4.0, or before its Step 4.1 where it runs no Step 4.0:
-  - `plugin/skills/dispatch/close-out.md` step 7 ("First run `_shared/pr-first-merge-post-merge.md`'s Step 4.0, …"): keep the substring `` pr-first-merge-post-merge.md`'s Step 4.0 `` (`tests/closing-links-prose-conformance.test.js` pins it), then add "then Step 4.0b".
-  - `plugin/skills/wrap-up/merge-mode.md` step 3 ("run Step 4.0 (…), then Step 4.1"): keep the pinned substring `` Step 4.0 (`_shared/pr-first-merge-post-merge.md`), then Step 4.1 ``, adding Step 4.0b before Step 4.1 in a following sentence.
-  - `plugin/skills/dispatch/settle-and-merge.md:397`, `plugin/skills/wrap-up/auto-merge-short-circuit.md:363`, `plugin/skills/flow/worktree-merge.md:141` (the local-merge push sites that already run Step 4.1): run Step 4.0b first, against the pushed merge commit.
+- Call sites — each runs Step 4.0b right after Step 4.0, or before its Step 4.1 where it runs no Step 4.0:
+- Modify: `plugin/skills/dispatch/close-out.md` step 7 ("First run `_shared/pr-first-merge-post-merge.md`'s Step 4.0, …"): keep the substring `` pr-first-merge-post-merge.md`'s Step 4.0 `` (`tests/closing-links-prose-conformance.test.js` pins it), then add "then Step 4.0b".
+- Modify: `plugin/skills/wrap-up/merge-mode.md` step 3 ("run Step 4.0 (…), then Step 4.1"): keep the pinned substring `` Step 4.0 (`_shared/pr-first-merge-post-merge.md`), then Step 4.1 ``, adding Step 4.0b before Step 4.1 in a following sentence.
+- Modify: `plugin/skills/dispatch/settle-and-merge.md:397` (local-merge push site that already runs Step 4.1): run Step 4.0b first, against the pushed merge commit.
+- Modify: `plugin/skills/wrap-up/auto-merge-short-circuit.md:363` (same).
+- Modify: `plugin/skills/flow/worktree-merge.md:141` (same).
 - Test: `tests/below-floor-parent-close-conformance.test.js` (append).
 
 **Interfaces:**
