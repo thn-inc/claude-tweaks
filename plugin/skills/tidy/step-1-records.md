@@ -324,10 +324,10 @@ that path, and with no sweep here would stay invisible permanently.
 
 Classification is entirely `needsBackstop`'s (`bin/lib/issues/acceptance.js`) — do not reimplement
 the disposition taxonomy. That predicate is backend-agnostic: it reads `{state, labels,
-hasParent, stateReason}`, and a local record translates as `facets.closed === true` → `state: 'CLOSED'`,
+hasParent, isParent, stateReason}`, and a local record translates as `facets.closed === true` → `state: 'CLOSED'`,
 `facets.acceptance` → the one-element `['demo:' + facets.acceptance]` and empty when unset (the
 identical translation Shape 7 and `wrap-up/verification-brief.md`'s `local-files` paths already
-use), and `facets.parent !== null` → `hasParent`.
+use), `facets.parent !== null` → `hasParent`, and `facets.isParentIssue === true` → `isParent`.
 
 `facets.notPlanned` → `stateReason: 'NOT_PLANNED'` is the same translation, added so a
 record closed not-planned is excluded from this shape exactly as its `github-issues` counterpart
@@ -345,7 +345,8 @@ not-planned route.
 issue — Shape 7's population — and never on the sub-issue. Drop that translation and every
 sub-issue of every closed decomposition lands here as a row, flooding the report with exactly the
 records another shape already covers. That is the same reason the `github-issues` scope resolves
-its own sub-issue set before filtering.
+its own sub-issue set before filtering. `isParent` excludes the parent itself for the mirror reason: a
+parent's acceptance is Shape 7's parent gate, or the below-floor close (#4466) — never a row here.
 
 It needs its own query, not Step 1's shared fetch: that fetch returns open records only, and every
 record this shape looks at is closed by definition. `risk-floor`/`size-floor` are resolved again

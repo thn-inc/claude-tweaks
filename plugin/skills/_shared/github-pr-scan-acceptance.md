@@ -45,7 +45,7 @@ label taxonomy; see that module or `_shared/work-record.md` for what the labels 
 `parent-gate` scope below does: it reads GitHub labels, and the Detection Ladder above skips this
 whole file whenever `gh` is unreachable — it checks remote/install/auth, never `work-backend`. The
 `local-files` twin of this sweep is `tidy/step-1-records.md`'s Shape 8, reading the record store
-through `queryRecords` and translating `facets.closed`/`facets.acceptance`/`facets.parent`/`facets.notPlanned` into
+through `queryRecords` and translating `facets.closed`/`facets.acceptance`/`facets.parent`/`facets.isParentIssue`/`facets.notPlanned` into
 the same `needsBackstop` call. It emits the identical `[acceptance-gap]` row at the identical
 severity and recommends the identical `/claude-tweaks:demo` invocation, so no consumer
 distinguishes the two.
@@ -93,7 +93,8 @@ exit-3 sub-issue fetch below. `$CLOSED` is emptied first, so a later block never
 
 A closed record whose acceptance lives on a `/claude-tweaks:specify` decomposition parent must
 not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it, and its
-`isParent` field likewise keeps a parent closed below the oversight floor (#4466) out of this scope. Resolving
+`isParent` field excludes every parent: its acceptance is the parent gate's: the below-floor close
+(#4466) or `/claude-tweaks:demo` above it. Resolving
 which closed records are sub-issues reuses the same parent-side enumeration the `parent-gate` scope
 below already documents in full — never the sub-issue side, which works under one `work-links` mode
 and silently returns nothing under the other. This step only needs sub-issue *existence*, not

@@ -38,7 +38,7 @@ test('AC4.1: both acceptance-gap scans pass isParent to needsBackstop', () => {
   const shape8 = section(
     read('tidy/step-1-records.md'),
     '### Shape 8 — closed record with no acceptance disposition',
-    null,
+    'Each line is `{path}<TAB>{finding}`, the same shape Shape 7 emits',
   );
   assert.match(shape8, /isParent: r\.facets\.isParentIssue === true,/);
 });
