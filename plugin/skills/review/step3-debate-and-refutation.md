@@ -35,6 +35,7 @@ After per-lens reproduction completes, scan for contradictions across lenses bef
 >    [Use: Frontier — debate agent. Independent run; do not see the other judge's reasoning.
 >    Degrades per the resolver's preconditions (contract § Model Selection).]
 >    [... READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section ...]
+>    [... SHELL DISCIPLINE line, verbatim from the review-dispatch bundle's Working Directory Discipline section ...]
 >    ```
 
 4. **Resolve.** Apply `resolveDebate`:
@@ -100,6 +101,7 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 >    Diff scope: {base}...{branch}, or the own-work file list path when the Merge-Provenance Check found merge commits
 >
 >    [... READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section ...]
+>    [... SHELL DISCIPLINE line, verbatim from the review-dispatch bundle's Working Directory Discipline section ...]
 >
 >    SCRATCH: {ctx-dir}/agent-scratch/{agent-id} — any probe script or fixture you create to verify this finding goes there (never in the repository tree) and must be deleted before your status word (`_shared/subagent-output-contract.md`'s Scratch rule). If this path lies outside your own worktree (`worktree-always`, or any `EnterWorktree`-isolated dispatch), create and delete it via Bash, one plain command per call — `mkdir -p` as its own call, the file written by one plain `printf` redirect or `node -e` call, `rm` as its own call; never a heredoc or an `&&` chain, which the harness Bash guard refuses by shape, nor a `;` sequence, and no shell variable carried between calls: spell the scratch path out as a literal absolute path in every call — never `Write`/`Edit`, which the worktree-pinning guard refuses for a path outside your worktree.
 >
@@ -133,6 +135,7 @@ already cover. If you find nothing beyond what's already flagged, return "No fin
 in step3-lens-dispatch.md ...]
 
 [... READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section ...]
+[... SHELL DISCIPLINE line, verbatim from the review-dispatch bundle's Working Directory Discipline section ...]
 
 SCRATCH: {ctx-dir}/agent-scratch/gap-sweep — any probe script or fixture you create to verify a finding goes there (never in the repository tree) and must be deleted before your status word (`_shared/subagent-output-contract.md`'s Scratch rule). If this path lies outside your own worktree (`worktree-always`, or any `EnterWorktree`-isolated dispatch), create and delete it via Bash, one plain command per call — `mkdir -p` as its own call, the file written by one plain `printf` redirect or `node -e` call, `rm` as its own call; never a heredoc or an `&&` chain, which the harness Bash guard refuses by shape, nor a `;` sequence, and no shell variable carried between calls: spell the scratch path out as a literal absolute path in every call — never `Write`/`Edit`, which the worktree-pinning guard refuses for a path outside your worktree.
 

@@ -110,7 +110,7 @@ Read `review/step3-tiebreak.md` and inline the fenced template under its `## Dis
 - `Location:` = `{path}:{line}` from `finding`, or `{path}` when `line` is null.
 - `Diff scope:` replaced by `Current code: {scratch worktree} at {mainSha} — decide whether this finding still holds today`.
 - No `Positions:` lines — the stored finding carries none, whatever its `kind`.
-- The bracketed READ-ONLY REVIEW line becomes `_shared/subagent-dispatch-core.md`'s `READ-ONLY REVIEW:` line, verbatim; `SCRATCH:` becomes a per-agent path from `session-tmp-resolve.js` (`SCRATCH=console-backfill-agent-{k}.d`); the model bracket line becomes the resolved profile.
+- The bracketed READ-ONLY REVIEW line becomes `_shared/subagent-dispatch-core.md`'s `READ-ONLY REVIEW:` line, verbatim, and the bracketed SHELL DISCIPLINE line becomes its `SHELL DISCIPLINE:` line, verbatim; `SCRATCH:` becomes a per-agent path from `session-tmp-resolve.js` (`SCRATCH=console-backfill-agent-{k}.d`); the model bracket line becomes the resolved profile.
 
 A `BLOCKED`, `NEEDS_CONTEXT` or empty reply is re-dispatched once as a fresh agent, then passed as an empty reply — the resolver turns it into can't-tell, so a failed dispatch fails toward scrutiny, never toward a drop. Never log verdict lines into the closed run's `decisions.md`.
 

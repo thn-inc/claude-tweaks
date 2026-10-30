@@ -7,6 +7,7 @@ const { readTsv } = require('./lib/calibration/tsv-reader.js');
 const { readEventsKinds } = require('./lib/calibration/events-reader.js');
 const { aggregate } = require('./lib/calibration/aggregate.js');
 const { ROW_IDS } = require('./lib/wrap-up/registry.js');
+const { lstatType } = require('./lib/path-guard/index.js');
 
 function parseArgs(argv) {
   const out = { runs: 20, json: false, root: process.cwd() };
@@ -59,6 +60,23 @@ function loadRuns(root) {
   });
 }
 
+// A finished run still awaiting archival has a live dir under
+// pipelines/{runId}/ — load it so the newest runs aren't empty stubs. Only a
+// single path segment is a dir name, and lstat (not stat) keeps a symlink at
+// pipelines/{runId} from redirecting the read; anything else stays an empty stub.
+function loadLiveRun(root, runId) {
+  const emptyRun = { runId, decisionLines: [], events: { counts: {} } };
+  const isDirName = /^[^/\\]+$/.test(runId) && runId !== '.' && runId !== '..';
+  if (!isDirName) return emptyRun;
+  const liveDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  if (lstatType(liveDir).type !== 'directory') return emptyRun;
+  return {
+    runId,
+    decisionLines: readDecisionLines(path.join(liveDir, 'decisions.md')),
+    events: readEventsKinds(path.join(liveDir, 'events.jsonl')) || { counts: {} },
+  };
+}
+
 // resolve-policy.js resolves its project root via `git rev-parse
 // --show-toplevel` at ITS OWN process cwd (never from a --run value or a
 // positional argument — see that file's own header comment: "--run" there
@@ -77,7 +95,11 @@ function renderText(result, ceiling) {
   const lines = [];
   lines.push('## Calibration read-out');
   lines.push('');
-  lines.push(`Window: last ${result.window.runIds.length} archived run(s).`);
+  const { excluded } = result.window;
+  const excludedNote = excluded > 0
+    ? `; ${excluded} run id${excluded === 1 ? '' : 's'} without a timestamp excluded`
+    : '';
+  lines.push(`Window: last ${result.window.runIds.length} archived run(s)${excludedNote}.`);
   lines.push('');
   lines.push('### Per-registry-row finding rate');
   for (const [rowId, v] of Object.entries(result.perRow)) {
@@ -134,12 +156,12 @@ function main() {
     process.exitCode = 0;
     return;
   }
-  const runs = loadRuns(args.root);
-  if (!runs) {
-    process.stdout.write('no archived runs found\n');
-    process.exitCode = 0;
-    return;
-  }
+  const loaded = loadRuns(args.root);
+  // No archive dir yet is a normal state (a project's first run awaits its
+  // first archival): live-dir stubs below still apply, so only an empty
+  // result after them is "no archived runs".
+  const archiveAbsent = loaded === null;
+  const runs = loaded || [];
   if (tsv.rows.length > 0) {
     // #917: a partially-pruned archive (older run dirs archived-then-deleted
     // while wrap-up-outcomes.tsv persists) must not silently drop TSV rows
@@ -151,9 +173,14 @@ function main() {
     const tsvRunIds = new Set(tsv.rows.map((r) => r.runId));
     for (const runId of tsvRunIds) {
       if (!existingRunIds.has(runId)) {
-        runs.push({ runId, decisionLines: [], events: { counts: {} } });
+        runs.push(loadLiveRun(args.root, runId));
       }
     }
+  }
+  if (archiveAbsent && runs.length === 0) {
+    process.stdout.write('no archived runs found\n');
+    process.exitCode = 0;
+    return;
   }
   const result = aggregate({ tsv, runs, rowIds: ROW_IDS, windowN: args.runs });
   const ceiling = resolveAutonomyCeiling(args.root);

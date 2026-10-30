@@ -19,6 +19,7 @@
 const { extractKeyFiles } = require('./grouping');
 const { normalizeLabelNames, partitionByOpenLinkedPR } = require('./record');
 const { classifyClaimBlob } = require('./claims');
+const { fencedLineMask } = require('./record-payload');
 
 // Jaccard similarity over lowercased word tokens, at or above this
 // threshold, is the title-similarity signal (#2 below). A screen, not a
@@ -114,15 +115,20 @@ function isGenericAnchor(value) {
 // record contract's own convention — `spec-template.md`'s `### Key Files`
 // bullets and prose both use backticks for exactly this) found under a
 // body's `## Current State` section, stopping at the next heading of any
-// level. Returns a Set; empty when the body has no such section.
-// Generic vocabulary spans (isGenericAnchor) are skipped (#3141).
+// level outside a fenced block. Returns a Set; empty when the body has no such
+// section. Generic vocabulary spans (isGenericAnchor) are skipped (#3141).
+// CRLF-normalized first, as extractSection does, so CURRENT_STATE_HEADING_RE's
+// `[ \t]*$` can match a CRLF body's heading line.
 function extractCurrentStateAnchors(body) {
-  const lines = (body || '').split('\n');
-  const start = lines.findIndex((line) => CURRENT_STATE_HEADING_RE.test(line));
+  const lines = (body || '').replace(/\r\n/g, '\n').split('\n');
+  // A heading-shaped line inside a fenced block is quoted content, not a
+  // section boundary (#4369) — it stays section content, minus its heading role.
+  const fenced = fencedLineMask(lines);
+  const start = lines.findIndex((line, idx) => !fenced[idx] && CURRENT_STATE_HEADING_RE.test(line));
   if (start === -1) return new Set();
   const anchors = new Set();
   for (let i = start + 1; i < lines.length; i += 1) {
-    if (ANY_HEADING_RE.test(lines[i])) break;
+    if (!fenced[i] && ANY_HEADING_RE.test(lines[i])) break;
     const matches = lines[i].match(/`([^`]+)`/g) || [];
     for (const m of matches) {
       const value = m.slice(1, -1).trim();
