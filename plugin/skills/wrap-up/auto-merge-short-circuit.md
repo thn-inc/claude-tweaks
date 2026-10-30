@@ -360,7 +360,8 @@ this console's full content (Auto-applied / Skill updates / Configuration
 updates sections, per `review-console-interactive.md`'s "Present the console", plus the finding sections `node "${CLAUDE_PLUGIN_ROOT}/bin/console-filings.js" --run "$PIPELINE_RUN_DIR" --fyi` prints — Low-confidence, Contested, Dropped by tiebreak) and attach it to a
 `PushNotification` as a non-blocking FYI. Nothing this console would have
 shown is discarded — only the wait for a live approval is skipped. After a
-successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.1 with `--ref {integration-branch}` (staged file + closing-report line only).
+successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.0b against the pushed merge
+commit (no PR, so `$MERGING_PR` is empty). Then run `_shared/pr-first-merge-post-merge.md` Step 4.1 with `--ref {integration-branch}` (staged file + closing-report line only).
 
 Console content is not all of Phase 4's execution step — acceptance labeling is neither console
 content nor a `cleanup-procedures.md` cleanup item, which is why it was silently dropped from
@@ -393,7 +394,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$RUN_DIR" "{wor
 when it worked; log any other line to `decisions.md` rather than ignoring it (the run dir may have
 been archived underneath). Then fall back to rendering the console normally, exactly as for a
 failed pre-merge check, logging why the auto-merge path was abandoned — for a push failure, that the
-local merge commit exists but is unpushed. Step 4.1 above is not run when the push failed.
+local merge commit exists but is unpushed. Steps 4.0b and 4.1 above are not run when the push failed.
 
 Log to `decisions.md`:
 `AUTO {time} — Fast-lane auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE). Merge commit: {sha}. Reversibility: high (git revert). [lever: auto-merge-max-lines={value} ({source}); auto-merge-max-files={value} ({source}); merge-sensitive-paths={value} ({source})]` — or, on the `manifesto-authorized-merge.md` path, its own tag and log line instead

@@ -57,7 +57,7 @@ function assertStep40Cited(text, anchor, end) {
   const s = text.indexOf(anchor);
   assert.notEqual(s, -1, `anchor missing: ${anchor}`);
   const step = text.slice(s, text.indexOf(end, s));
-  assert.ok(/pr-first-merge-post-merge\.md`(?:'s Step 4\.0|\), then Step 4\.1)/.test(step) && step.includes('Step 4.0'),
+  assert.ok(/pr-first-merge-post-merge\.md`(?:'s Step 4\.0|\), then Step 4\.0b)/.test(step) && step.includes('Step 4.0'),
     `${anchor.trim()} does not cite Step 4.0`);
 }
 const MERGE_MODE = ['3. On `merged`:', '\n## '];
@@ -77,7 +77,7 @@ const BLOCKS = {
   postMerge: ['### Step 4.0', '### Step 4.1'],
   lifecycle: ['`{reason}` may name the record freely', 'anywhere else in the body.\n'],
   keepOpen: ['--keep-open {keep-open} --pr', '--pr'],
-  mergeMode: ['Step 4.0 (', 'Step 4.1. When'],
+  mergeMode: ['Step 4.0 (', ' When `{run-dir}/wrap-up-pack.json`'],
   closeOut: ['First run\n', 'Then reuse'],
 };
 

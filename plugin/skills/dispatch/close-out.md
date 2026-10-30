@@ -96,7 +96,7 @@ touching shared state runs one member at a time.
    covered by the confirmation gate above (a project whose deploy step needs its own confirmation
    should say so in its own docs; this mode does not add a second gate on top of step 4's).
 7. **On `merged` — release the claim and clean up.** First run
-   `_shared/pr-first-merge-post-merge.md`'s Step 4.0, with `PIPELINE_RUN_DIR` = step 3's resolved run dir. Then reuse
+   `_shared/pr-first-merge-post-merge.md`'s Step 4.0, then Step 4.0b (`{pr-number}` = `{number}`), with `PIPELINE_RUN_DIR` = step 3's resolved run dir. Then reuse
    `wrap-up/cleanup-procedures-execution.md` Section E (claim release, `bot:in-progress` removal)
    and Section B (run-dir archival) exactly as they are cited elsewhere in this skill — never
    hand-roll the bookkeeping a canonical procedure already owns. Worktree removal (Section C, if
