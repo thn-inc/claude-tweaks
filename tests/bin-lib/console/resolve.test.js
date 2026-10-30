@@ -1033,10 +1033,21 @@ test('an unsettled contested file leaves its partner keep-staged (#4563 AC4)', (
 test('a partner with its own later verdict keeps it over the inherited one (#4563)', () => {
   const f = tbFinding();
   const p = tbFinding({ lens: '3f', line: 7, claim: 'partner claim' });
-  const d = [stagedLow('3f', 'src/a.js:7'), tbDebate(f, 'review-contested-1.md'),
+  const d = [`${stagedLow('3f', 'src/a.js:7')} Stage path: staged/review-unconfirmed-2.md.`, tbDebate(f, 'review-contested-1.md'),
     tbVerdict(f, { verdict: 'confirmed' }).entry, tbVerdict(p, { recommendation: 'file' }).entry].join('\n');
-  const items = findings(d, { 'review-contested-1.md': positions(f, partner) });
-  assert.ok(items.some((i) => i.id.startsWith('tiebreak:') && i.resolution === 'filed'), 'the partner\'s own console verdict still surfaces');
+  const items = findings(d, { 'review-contested-1.md': positions(f, partner), 'review-unconfirmed-2.md': 'x' });
+  // The partner's staged file follows its OWN console verdict (filed), not the inherited confirmed one (dismissed).
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]).sort(), [['review-contested-1.md', 'dismissed'], ['review-unconfirmed-2.md', 'filed']]);
+});
+test('inheritance chains: a contested file settled by inheritance passes the verdict to its own partner (#4563)', () => {
+  const f = tbFinding();
+  const mid = { lens: '3f', path: 'src/a.js', line: 7 };
+  const third = { lens: '3g', path: 'src/a.js', line: 3 };
+  const d = [`${stagedLow('3g', 'src/a.js:3')} Stage path: staged/review-unconfirmed-3.md.`, tbDebate(f, 'review-contested-1.md'), tbDebate(mid, 'review-contested-2.md'),
+    tbVerdict(f, { recommendation: 'file' }).entry].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(f, mid), 'review-contested-2.md': positions(mid, third), 'review-unconfirmed-3.md': 'x' });
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]).sort(), [['review-contested-1.md', 'filed'], ['review-contested-2.md', 'dismissed'], ['review-unconfirmed-3.md', 'dismissed']]);
+  assert.strictEqual(items.find((i) => i.id === 'review-unconfirmed-3.md').reason, 'covered by review-contested-1.md — its contested pair\'s tiebreak item carries the verdict', 'the reason names the file that carries the filing');
 });
 test('a partner\'s own verdict logged BEFORE the pair\'s verdict still wins over inheritance (#4563)', () => {
   const f = tbFinding();

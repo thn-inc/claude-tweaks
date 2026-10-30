@@ -584,16 +584,24 @@ function tiebreakModel(snapshot) {
   // #4563: a settled contested file settles its partner finding too. The partner takes the pair's
   // verdict (and its index) only where no verdict names its key at all: one tiebreak wave logs in
   // arbitrary order, so a direct verdict wins whatever its position relative to the pair's.
+  // A partner's own contested file may settle only once its key is inherited, and then passes the
+  // verdict on to its own partners: repeat until a pass adds no entry. Passes only add entries and
+  // the key set is finite, so it terminates. A chained file keeps the original carrier's name.
   const stagedText = new Map(snapshot.staged.map((s) => [s.name, s.text]));
-  for (const [name, chosen] of computeSettledFiles().settledFiles) {
-    if (classifyStagedItem(name).section !== SECTIONS.CONTESTED) continue;
-    for (const key of contestedPositionKeys(stagedText.get(name))) {
-      if (!settledByKey.has(key)) settledByKey.set(key, { ...chosen, key, inheritedFrom: name });
+  let result = computeSettledFiles();
+  for (let added = true; added;) {
+    added = false;
+    for (const [name, chosen] of result.settledFiles) {
+      if (classifyStagedItem(name).section !== SECTIONS.CONTESTED) continue;
+      for (const key of contestedPositionKeys(stagedText.get(name))) {
+        if (settledByKey.has(key)) continue;
+        settledByKey.set(key, { ...chosen, key, inheritedFrom: chosen.inheritedFrom || name });
+        added = true;
+      }
     }
+    if (added) result = computeSettledFiles();
   }
-  // A second pass: a partner's own staged file may settle now that its key does.
-  const { settledFiles, absorbed } = computeSettledFiles();
-  return { lines, latestById, settledAfter, settledFiles, absorbed };
+  return { lines, latestById, settledAfter, settledFiles: result.settledFiles, absorbed: result.absorbed };
 }
 
 const tiebreakField = (v) => ({ id: v.id, key: v.key, lens: v.lens, path: v.path, line: v.line, severity: v.severity, recommendation: v.recommendation, reason: v.reason });
