@@ -28,6 +28,7 @@ const {
   parseNameStatusLog,
   normalizeStepMarkup,
   isStepMarkupReformat,
+  isStepRenumber,
   ArtifactOverwriteCheckError,
 } = require(MOD);
 
@@ -478,4 +479,148 @@ test('the real #2702/#2727/#2776 journey reformat (d81250829..80e3dad2d) passes 
   });
   assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
   assert.deepStrictEqual(result.overwrites, []);
+});
+
+// Commit A for the step-renumber fixtures: two `### N.` heading-form steps.
+const HEADING_STEPS = [
+  '# Demo',
+  '',
+  '### 1. Read the banner — A session starts.',
+  '- **Action:** Open it.',
+  '',
+  '### 2. Read the footer — A session ends.',
+  '- **Action:** Close it.',
+  '',
+].join('\n');
+
+test('AC1.1: inserting a step ahead of two existing ### N. steps (headings renumbered, text unchanged) passes clean', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', HEADING_STEPS);
+  commit(fx, 'Add demo journey steps (refs #10)');
+  write(fx.dir, 'docs/journeys/demo.md', [
+    '# Demo',
+    '',
+    '### 1. Sign in — A session begins.',
+    '- **Action:** Log in.',
+    '',
+    '### 2. Read the banner — A session starts.',
+    '- **Action:** Open it.',
+    '',
+    '### 3. Read the footer — A session ends.',
+    '- **Action:** Close it.',
+    '',
+  ].join('\n'));
+  commit(fx, 'Insert a sign-in step ahead of the existing steps (refs #11)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+test('AC2.1: a renumbered heading whose text also changes still reports an overwrite', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', HEADING_STEPS);
+  commit(fx, 'Add demo journey steps (refs #10)');
+  write(fx.dir, 'docs/journeys/demo.md', [
+    '# Demo',
+    '',
+    '### 1. Sign in — A session begins.',
+    '- **Action:** Log in.',
+    '',
+    '### 2. Read the banner — A session starts.',
+    '- **Action:** Open it.',
+    '',
+    '### 3. Read the footer — A session closes.',
+    '- **Action:** Close it.',
+    '',
+  ].join('\n'));
+  const commitB = commit(fx, 'Insert a sign-in step and reword the footer step (refs #11)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].commit, commitB);
+});
+
+test('parseHunks + isStepRenumber: a deleted ### N. heading re-added with a different number and the same text is a renumber', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5 +5 @@',
+    '-### 3. X',
+    '+### 4. X',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepRenumber(hunks[0]), true);
+});
+
+test('isStepRenumber: two deleted headings against one added heading is not a renumber (one added line serves one deletion)', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5,2 +5 @@',
+    '-### 2. X',
+    '-### 3. X',
+    '+### 4. X',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepRenumber(hunks[0]), false);
+});
+
+test('isStepRenumber: a heading re-added as a list-form step is not a renumber (the added line must itself be a heading)', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5 +5 @@',
+    '-### 3. X',
+    '+4. **X**',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(normalizeStepMarkup(hunks[0].addedLines[0]), '4. X');
+  assert.strictEqual(isStepRenumber(hunks[0]), false);
+});
+
+test('isStepRenumber: a deleted body line beside the renumbered heading is not a renumber', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5,2 +5 @@',
+    '-### 3. X',
+    '-Body line.',
+    '+### 4. X',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepRenumber(hunks[0]), false);
+});
+
+test('isStepRenumber: a deletion-only hunk is not a renumber', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5 +4,0 @@',
+    '-### 3. X',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepRenumber(hunks[0]), false);
+});
+
+test('the real #4488/#4484 journey step insertion (729a5ae5e..4706f21db) passes with no manual ruling', () => {
+  const repoRoot = path.join(__dirname, '..', '..', '..');
+  let head;
+  try {
+    head = execFileSync('git', ['-C', repoRoot, 'cat-file', '-t', '4706f21db'], { encoding: 'utf8' }).trim();
+  } catch {
+    head = null;
+  }
+  if (head !== 'commit') {
+    // Same environment-precondition skip as the replay tests above: the
+    // commit is not reachable in this checkout, so there is nothing to replay.
+    return;
+  }
+  const result = checkArtifactOverwrite({
+    base: '729a5ae5e',
+    head: '4706f21db',
+    paths: ['docs/journeys/route-a-review-finding-the-release-gate-can-see-4488.md'],
+    cwd: repoRoot,
+  });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
 });
