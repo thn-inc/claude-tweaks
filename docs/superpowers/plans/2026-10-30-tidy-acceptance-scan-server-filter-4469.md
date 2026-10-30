@@ -23,6 +23,7 @@ This plan adds Task 3, which the amended Deliverable 3 requires, plus live evide
 
 - Keep the truncation warning for the narrowed fetch (spec Deliverables: "Keep the truncation warning for the narrowed fetch.").
 - The oversight floor stays client-side (spec Deliverable 1). No `-label:risk:*` or `-label:size:*` qualifier may appear in any search string.
+- Deliverable 3 covers the fetches in `plugin/skills/_shared/github-pr-scan-acceptance.md` only. This is the user's plan-review decision, recorded in the spec's `## Plan Review Clarifications`. Label-filtered `=== FETCH_LIMIT` warnings in `_shared/trust-table.md` and `backlog/refine-mode.md` are a separate follow-up record and are not touched here.
 - `{resolved-limit}`, `{since-date}` and `{state-map-search}` are substituted as literals per block. They are never carried across Bash calls in a shell variable (the file's existing "Fetch limit" discipline). Inside a block, a literal assigned to a variable (`SINCE="{since-date}"`) is fine. That is the existing `LIMIT="{resolved-limit}"` pattern, and the fence-guard detector treats such names as static.
 - No fence may add a shape that `tests/skill-fence-guard-shapes.test.js` flags, and no new allowlist entry may be added.
 - `plugin/skills/_shared/github-pr-scan-acceptance.md` stays under `RAIL_BYTES` (52500). It is 41783 bytes at the merge base. Record #4466, built next on this same branch, also edits this file, so this plan's net growth must stay at or below 3000 bytes.
@@ -64,12 +65,14 @@ This plan adds Task 3, which the amended Deliverable 3 requires, plus live evide
 ### Task 1: Server-filter the acceptance-gap closed-record fetch
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/_shared/github-pr-scan-acceptance.md`, in two places:
   - the `acceptance-gap` scope's "Record set" paragraph and closed-record fetch fence (lines 53-75);
   - the "Fetch limit" paragraph beginning "A 30-day window does not bound…" (lines 119-126).
   The scope's two parent-fetch blocks belong to Task 3.
+- Modify: `plugin/skills/_shared/trust-table.md` — the parenthetical at lines 66-68 restating `acceptance-gap`'s closed-record fetch contract ("a 30-day window does not bound it").
 - Create: `tests/acceptance-scan-server-filter.test.js`
 
 **Interfaces:**
@@ -90,6 +93,8 @@ This plan adds Task 3, which the amended Deliverable 3 requires, plus live evide
   - `oversight floor is not in the search string`: the live search string has no `/label:(risk|size):/` match.
   - `searched fetches warn at the search ceiling`: `assertClaimPinned` on `/const CAP = Math\.min\(LIMIT, 1000\);\s*if \(raw\.length >= CAP\)/`. Also assert that `GAP`'s closed-record node block no longer contains `raw.length === LIMIT`.
   - `since-date is validated`: `assertClaimPinned` on `/SINCE="\{since-date\}"/` and on `/\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\/\.test\(process\.env\.SINCE/`. Also assert that `GAP` names the one-liner text `new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)`.
+  - `since-date guard failure stops the scope`: `assertClaimPinned(GAP, PRE_CHANGE_GAP_FETCH, /since-date[^\n]*throws[\s\S]{0,300}report no `\[acceptance-gap\]` rows at all/, …)`. The sentence the regex matches must be within 300 chars of the guard's mention.
+  - `trust-table no longer says the window does not bound the closed fetch`: read `plugin/skills/_shared/trust-table.md` live. Assert that it does not contain `a 30-day window does not bound it`, and that it does name `server` within its `acceptance-gap` *closed-record* parenthetical. Freeze the old parenthetical as `PRE_CHANGE_TRUST`, and run the same two checks over it to prove they discriminate: the substring is present in it, and `server` is absent from it.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -104,6 +109,8 @@ Expected: FAIL — `closed-record fetch is server-filtered` fails because there 
   - **Explanatory sentences.** Negated `-reason:` qualifiers are used rather than `reason:completed`, so that a closed record with a null `stateReason` stays in. The oversight floor stays client-side because it passes a record meeting either the risk or the size axis and fails closed on unscored records, which negated `-label:` qualifiers cannot express.
   - **Fence.** Add `SINCE="{since-date}"` and `export SINCE`. Insert `--search "closed:>=$SINCE -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending" \` as the line after `gh issue list --state closed --limit "$LIMIT" \`. Keep the `--json` fields and the redirect.
   - **Node block, first statement.** Throw unless `/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '')`. The message says `{since-date}` was not substituted and that an empty date returns zero rows.
+  - **Guard-failure outcome (one sentence after the fence).** When the since-date guard throws, the scope stops: report no `[acceptance-gap]` rows at all and quote the error verbatim. This mirrors the file's existing fail-loud wording for an exit-3 sub-issue fetch. Later blocks never read a missing or stale `$CLOSED` file.
+  - **`trust-table.md`.** Rewrite the parenthetical at lines 66-68. It now says `acceptance-gap`'s closed-record fetch is bounded server-side by the 30-day window and the disposition filter, and still carries the same `{resolved-limit}` and truncation-warning discipline, per that file's "Fetch limit" section. It is not a separate hardcoded cap. Keep it one parenthetical, with no growth beyond about 60 bytes.
   - **Node block, warning.** Replace `if (raw.length === LIMIT)` with `const CAP = Math.min(LIMIT, 1000); if (raw.length >= CAP)`. The message says:
     - the server-filtered fetch reached its cap, which is the smaller of `backlog-fetch-limit` and GitHub search's 1000-result ceiling;
     - records past the cap are invisible, so raise `backlog-fetch-limit` when it is below 1000;
@@ -120,13 +127,14 @@ Expected: PASS (all five files, 0 failures)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/acceptance-scan-server-filter.test.js plugin/skills/_shared/github-pr-scan-acceptance.md
+git add tests/acceptance-scan-server-filter.test.js plugin/skills/_shared/github-pr-scan-acceptance.md plugin/skills/_shared/trust-table.md
 git commit -m "Server-filter tidy acceptance-gap closed fetch — refs #4469"
 ```
 
 ### Task 2: Narrow the parent-gate state map under native work-links
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/_shared/github-pr-scan-acceptance.md`, in the `parent-gate` scope:
@@ -158,6 +166,7 @@ git commit -m "Server-filter tidy acceptance-gap closed fetch — refs #4469"
   - `work-links resolved before the state-map fetch`: an `orderOk(text)` helper returns true when both anchors are found and `text.indexOf('### \`work-links\` resolution') < text.indexOf('### Fetch limit')`. Assert `assert.ok(orderOk(PG))` and `assert.ok(!orderOk(PRE_CHANGE_PG))`. The same extraction runs on both, and the control carries both anchors.
   - `state-map warning honours the search ceiling`: `assertClaimPinned` on `/const STATE_CAP = process\.env\.STATE_SEARCH \? Math\.min\(LIMIT, 1000\) : LIMIT;\s*if \(states\.length >= STATE_CAP\)/`.
   - `state-map search is validated`: `assertClaimPinned` on `/\['', 'has:parent-issue'\]\.includes\(process\.env\.STATE_SEARCH\)/`.
+  - `state-map guard failure stops the scope`: `assertClaimPinned(PG, PRE_CHANGE_PG, /state-map-search[^\n]*throws[\s\S]{0,300}report no `\[parent-gate\]` rows at all/, …)`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -169,6 +178,7 @@ Expected: FAIL — `state map search is branch-resolved` fails because there is 
   - **Fetch-limit paragraph.** Scope "`--state all` over the repo's entire lifetime with no recency bound" to `body-text`. Under `native` the map is searched, so the 1000-result ceiling also applies.
   - **Fence.** Add `STATE_SEARCH='{state-map-search}'` and `export STATE_SEARCH`. Change the state-map call to `gh issue list --state all --search "$STATE_SEARCH" --json number,state,labels --limit "$LIMIT" \`.
   - **Node block, first statement.** Throw unless `['', 'has:parent-issue'].includes(process.env.STATE_SEARCH)`. The message says the placeholder was not substituted.
+  - **Guard-failure outcome (one sentence after the fence).** When the state-map-search guard throws, the scope stops: report no `[parent-gate]` rows at all and quote the error verbatim. Never read `$PARENTS` or `$ALL_STATES` afterwards. A 0-row state map would read every sub-issue as OPEN.
   - **Node block, state-map warning.** The warning becomes `const STATE_CAP = process.env.STATE_SEARCH ? Math.min(LIMIT, 1000) : LIMIT; if (states.length >= STATE_CAP)`. Its message names three things:
     - the cap;
     - the default-to-OPEN consequence;
