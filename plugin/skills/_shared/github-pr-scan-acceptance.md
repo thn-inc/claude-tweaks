@@ -92,7 +92,8 @@ the scope stops: report no `[acceptance-gap]` rows at all and quote the error ve
 exit-3 sub-issue fetch below. `$CLOSED` is emptied first, so a later block never reads a stale one.
 
 A closed record whose acceptance lives on a `/claude-tweaks:specify` decomposition parent must
-not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it. Resolving
+not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it, and its
+`isParent` field likewise keeps a parent closed below the oversight floor (#4466) out of this scope. Resolving
 which closed records are sub-issues reuses the same parent-side enumeration the `parent-gate` scope
 below already documents in full — never the sub-issue side, which works under one `work-links` mode
 and silently returns nothing under the other. This step only needs sub-issue *existence*, not
@@ -325,6 +326,7 @@ node -e "
       state: 'CLOSED',
       labels: r.labels,
       hasParent: r.hasParent,
+      isParent: parseRecordFacets(r.labels).isParentIssue,
       stateReason: r.stateReason,
     }));
   gaps.forEach(r => console.log('[acceptance-gap] #' + r.number + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo #' + r.number));

@@ -372,6 +372,7 @@ node -e "
       state: r.facets.closed ? 'CLOSED' : 'OPEN',
       labels: r.facets.acceptance ? ['demo:' + r.facets.acceptance] : [],
       hasParent: r.facets.parent !== null,
+      isParent: r.facets.isParentIssue === true,
       // local-files has no native stateReason — facets.notPlanned already conflates
       // wontfix/duplicate/absorbed into one flag (_shared/work-record.md's lifecycle
       // spine), so it maps onto NOT_PLANNED only; there is no local-files DUPLICATE case.
