@@ -40,7 +40,10 @@ concurrent `/claude-tweaks:wrap-up` may already have gated the same parent. If t
 gate no longer reads `due` (already gated, or a sub-issue reopened), this is a silent no-op — skip it,
 don't error, and don't recommend `/claude-tweaks:demo {id}` for it in the applied report either.
 
-If it still reads `due`, compose the parent brief and apply the gate exactly as that procedure's
+If it still reads `due` and **Evaluate the gate** reads `exceeds: false` (below the oversight
+floor), run that procedure's **Close the parent below the floor** instead of composing a brief: it
+appends the listing section and calls `closeRecord`, writes no `facets.acceptance`, and a parent
+already closed is a no-op; it stays staged, per the paragraph below. Otherwise compose the parent brief and apply the gate exactly as that procedure's
 **Compose the parent brief** and **Apply the gate** sections describe for this driver: append the
 brief to the parent record's body and set `facets.acceptance = 'pending'`, written through a
 single `writeRecord` call. That is one composed write, not two, so this action has no
@@ -65,13 +68,16 @@ input a human signs off against, with nothing left in the data to show a machine
 the bytes; it does not undo a verdict already given against them, which is why clearing the
 reversibility floor is not sufficient here.
 
+The below-floor close composes no brief and writes no `acceptance` facet, so it has no latch; it
+stays staged because it closes the parent and asserts every sub-issue is complete.
+
 Keeping both drivers on the same tier is also what keeps `[parent-gate]` one finding with one
 behavior rather than two that diverge by store.
 
 This action never sets `acceptance: approved` or `acceptance: changes-requested` — those stay
 exclusively `/claude-tweaks:demo`'s job, applied only after an explicit human verdict. Opening
 the gate is the precondition for that verdict, not the verdict itself, which is why the
-recommendation still ends with `/claude-tweaks:demo {id}` even once the gate is open.
+above-floor recommendation still ends with `/claude-tweaks:demo {id}` even once the gate is open.
 
 **What this does not cover.** Only decomposition parents. The sibling backstop — `acceptance-gap`,
 closed records with no disposition that are *not* decomposed sub-issues — is a scan, not an action: it has a

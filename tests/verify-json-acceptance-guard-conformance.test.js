@@ -103,7 +103,7 @@ const briefRouting = slice(BRIEF, '## Routing', '## Try it block');
 const CLOSE_OUT_ROW = /\| `\/claude-tweaks:dispatch`'s close-out step 3 \(`dispatch\/close-out\.md`\) \| one or more \*\*sub-issues\*\* \(the PR's `Fixes` records\)/;
 
 test('final review: verification-brief.md routing table lists close-out step 3 as a caller', () => {
-  assert.match(briefRouting, /Five call sites exist today/);
+  assert.match(briefRouting, /Six call sites exist today/);
   assert.match(briefRouting, CLOSE_OUT_ROW);
 });
 

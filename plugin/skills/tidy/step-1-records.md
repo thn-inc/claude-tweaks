@@ -208,8 +208,10 @@ when it closes a parent's last sub-issue. A parent whose last sub-issue closes a
 hand, or by a run that ended before wrap-up — never reaches that eager path; this shape catches it
 after.
 
-Both backstop shapes below (this one and Shape 8) filter out below-floor candidates the same way
-their `github-issues` counterparts do — the same `bin/lib/issues/oversight-floor.js` predicate
+This shape surfaces a due below-floor parent as a Close row (`Open parent gate` closes it, no brief
+owed — `wrap-up/verification-brief-parent-gate.md`'s **Close the parent below the floor**), like its
+`github-issues` counterpart. Shape 8 filters out below-floor candidates the same way its counterpart
+does. Both use the same `bin/lib/issues/oversight-floor.js` predicate
 (#366), mirrored here rather than reimplemented. Each shape resolves `risk-floor`/`size-floor`
 **once, inside its own code block** (one `resolve-policy.js` call regardless of population size,
 never resolved per record) and passes the printed values as literal `process.argv` arguments to
@@ -278,9 +280,10 @@ node -e "
   }
   gates
     .filter((f) => !f.needsDefinition)
-    .filter((f) => exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds)
     .filter((f) => parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) === 'due')
-    .forEach((f) => console.log(f.path + '\t[parent-gate] ' + f.id + ': ' + f.title + ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ' + f.id));
+    .forEach((f) => console.log(f.path + '\t[parent-gate] ' + f.id + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
+      ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ' + f.id
+      : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)')));
 " -- "$RISK_FLOOR"
 ```
 
@@ -290,19 +293,20 @@ carry `#{n}`), the rest is the finding.
 
 Both `queryRecords` shapes are deliberate. `{ isParentIssue: true }` returns **open** parents only
 (closed records are excluded unless the filter names `closed`) — the right set, since a closed
-parent was already dispositioned and closed by `/claude-tweaks:demo`, and it mirrors the
+parent was already dispositioned and closed — by `/claude-tweaks:demo` above the oversight floor, by
+**Close the parent below the floor** below it — and it mirrors the
 `github-issues` scope's `--state open` fetch. The sub-issue listing is the open+closed two-call
 merge for the same reason: one call alone drops every closed sub-issue, exactly the ones that make
 a gate due. No fetch-limit or truncation warning applies, unlike the API-paging twin —
 `queryRecords` reads the whole `specs/` directory every call.
 
-→ Collect each as: `[parent-gate] {id}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo {id}`
+→ Collect each as: `[parent-gate] {id}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo {id}`, or below the floor: `[parent-gate] {id}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`
 
 Severity `info` — with several open decompositions this is a standing backlog, not a defect
 count, and tidy reads a row's severity as recommendation urgency, so any tier above `info` would
 overstate it (the same tier and reason as its `github-issues` twin). The recommendation is the `Open parent gate` action, staged at every
-aggressiveness tier and never writing `demo:approved`/`demo:changes-requested`, which is why the
-row still ends with `/claude-tweaks:demo {id}`; `actions-local-files.md`'s `## Open parent gate`
+aggressiveness tier and never writing `demo:approved`/`demo:changes-requested`, which is why an
+above-floor row still ends with `/claude-tweaks:demo {id}`; `actions-local-files.md`'s `## Open parent gate`
 and `step-6-auto.md`'s row carry that action's execution, its staging reasoning, and what it
 does not cover.
 
@@ -324,10 +328,10 @@ that path, and with no sweep here would stay invisible permanently.
 
 Classification is entirely `needsBackstop`'s (`bin/lib/issues/acceptance.js`) — do not reimplement
 the disposition taxonomy. That predicate is backend-agnostic: it reads `{state, labels,
-hasParent, stateReason}`, and a local record translates as `facets.closed === true` → `state: 'CLOSED'`,
+hasParent, isParent, stateReason}`, and a local record translates as `facets.closed === true` → `state: 'CLOSED'`,
 `facets.acceptance` → the one-element `['demo:' + facets.acceptance]` and empty when unset (the
 identical translation Shape 7 and `wrap-up/verification-brief.md`'s `local-files` paths already
-use), and `facets.parent !== null` → `hasParent`.
+use), `facets.parent !== null` → `hasParent`, and `facets.isParentIssue === true` → `isParent`.
 
 `facets.notPlanned` → `stateReason: 'NOT_PLANNED'` is the same translation, added so a
 record closed not-planned is excluded from this shape exactly as its `github-issues` counterpart
@@ -345,7 +349,8 @@ not-planned route.
 issue — Shape 7's population — and never on the sub-issue. Drop that translation and every
 sub-issue of every closed decomposition lands here as a row, flooding the report with exactly the
 records another shape already covers. That is the same reason the `github-issues` scope resolves
-its own sub-issue set before filtering.
+its own sub-issue set before filtering. `isParent` excludes the parent itself for the mirror reason: a
+parent's acceptance is Shape 7's parent gate, or the below-floor close (#4466) — never a row here.
 
 It needs its own query, not Step 1's shared fetch: that fetch returns open records only, and every
 record this shape looks at is closed by definition. `risk-floor`/`size-floor` are resolved again
@@ -372,6 +377,7 @@ node -e "
       state: r.facets.closed ? 'CLOSED' : 'OPEN',
       labels: r.facets.acceptance ? ['demo:' + r.facets.acceptance] : [],
       hasParent: r.facets.parent !== null,
+      isParent: r.facets.isParentIssue === true,
       // local-files has no native stateReason — facets.notPlanned already conflates
       // wontfix/duplicate/absorbed into one flag (_shared/work-record.md's lifecycle
       // spine), so it maps onto NOT_PLANNED only; there is no local-files DUPLICATE case.
