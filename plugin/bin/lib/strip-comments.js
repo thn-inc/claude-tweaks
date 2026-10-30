@@ -14,7 +14,9 @@ const vm = require('node:vm');
 // verbatim — a quote, backtick, `//` or `/*` inside one stays code and never opens
 // a fake string or comment. A hashbang first line is kept as is. An unterminated
 // string, template, regex or block comment ends at the end of its line or of the
-// input and never throws. `{ literals: 'blank' }` also blanks string, template-text
+// input and never throws. Template nesting is recursed into only MAX_TEMPLATE_DEPTH
+// levels deep; past that a `${` is plain template text, so a pathological file
+// cannot overflow the stack. `{ literals: 'blank' }` also blanks string, template-text
 // and regex literal bodies, for operator scans that must not read literal text as
 // code (a `\` directly before a newline, a string's line continuation, stays); the
 // default `'keep'` leaves them verbatim. Any other `literals` value throws a TypeError.
@@ -37,6 +39,7 @@ const REGEX_KEYWORDS = new Set([
   'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await',
 ]);
 const LITERAL = { kind: 'literal' };
+const MAX_TEMPLATE_DEPTH = 100;
 
 function isIdentChar(ch) {
   return /[A-Za-z0-9_$]/.test(ch) || (ch >= '\u0080' && !/\s/.test(ch));
@@ -178,7 +181,9 @@ function stripComments(src, { literals = 'keep' } = {}) {
     return n;
   }
 
-  // Scans the template literal opening at `i`, recursing into each `${…}`.
+  // Scans the template literal opening at `i`, recursing into each `${…}` up to
+  // MAX_TEMPLATE_DEPTH levels deep.
+  let templateDepth = 0;
   function scanTemplate(i) {
     i++;
     while (i < n) {
@@ -187,8 +192,11 @@ function stripComments(src, { literals = 'keep' } = {}) {
         blankBody(i, Math.min(i + 2, n));
         i += 2;
       } else if (ch === '`') return i + 1;
-      else if (ch === '$' && src[i + 1] === '{') i = scanCode(i + 2, true);
-      else {
+      else if (ch === '$' && src[i + 1] === '{' && templateDepth < MAX_TEMPLATE_DEPTH) {
+        templateDepth++;
+        i = scanCode(i + 2, true);
+        templateDepth--;
+      } else {
         blankBody(i, i + 1);
         i++;
       }

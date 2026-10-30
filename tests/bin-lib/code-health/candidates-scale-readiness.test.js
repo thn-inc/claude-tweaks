@@ -799,6 +799,45 @@ test('#3903 per-request-db-client: closers match their own opener within the cur
   );
 });
 
+test('#3903 per-request-db-client: a `}` discards an unclosed group that carries an arrow mark, so the mark does not leak into module scope', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    // `foo(` stays unclosed inside the handler and `=> 1` marks it as an arrow expression body; the handler's `}` must discard that mark, or the module-scope object after it reads as per-call.
+    'routes/marked-leftover.js': [
+      "router.get('/', async (req, res) => {",
+      '  foo( () => 1',
+      '});',
+      'const deps = { db: new PrismaClient() };',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), []);
+});
+
+test('#3903 review: a brace inside a string or comment is not counted — a string `{` does not flag a module-scope object, a string `}` or comment `}` does not hide a handler client', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    'routes/string-brace.js': [
+      "const OPEN = '{';",
+      'const deps = { db: new PrismaClient() };',
+      '',
+    ].join('\n'),
+    'routes/string-close.js': [
+      "router.get('/', async (req, res) => {",
+      "  const s = '}';",
+      '  const prisma = new PrismaClient();',
+      '});',
+      '',
+    ].join('\n'),
+    'routes/comment-brace.js': [
+      "router.get('/', async (req, res) => {",
+      '  // } stray close in a comment',
+      '  const prisma = new PrismaClient();',
+      '});',
+      '',
+    ].join('\n'),
+  });
+  assert.deepEqual(sitesOf(root, 'per-request-db-client'), ['routes/comment-brace.js:3', 'routes/string-close.js:3']);
+});
+
 test('#3903 per-request-db-client: an object inside an arrow expression body is per-call until the group closes or a `,`/`;` at its level; module-scope objects after it are skipped', () => {
   const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
     'routes/server.js': [

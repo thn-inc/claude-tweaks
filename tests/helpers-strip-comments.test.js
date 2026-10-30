@@ -332,6 +332,17 @@ test('AC4.1: the implementation requires only node: built-ins', () => {
   );
 });
 
+test('#3903 review: template nesting past the depth cap never overflows the stack; nesting under it still blanks a comment inside the innermost substitution', () => {
+  const nested = (n, inner) => '`${'.repeat(n) + inner + '}`'.repeat(n);
+  const pathological = '`${'.repeat(5000);
+  let out;
+  assert.doesNotThrow(() => {
+    out = stripComments(pathological);
+  });
+  assert.equal(out.length, pathological.length);
+  assert.ok(!stripComments(nested(50, '1 /* zzz */')).includes('zzz'));
+});
+
 test('#3903 AC2.1: the test helper re-exports the plugin/bin/lib implementation — one implementation', () => {
   const lib = require('../plugin/bin/lib/strip-comments');
   const helper = require('./helpers/strip-comments');

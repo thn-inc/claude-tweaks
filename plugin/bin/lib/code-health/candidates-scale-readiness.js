@@ -155,8 +155,9 @@
 //     object), so a module-scope object after one reads as per-request; and
 //     commas inside TypeScript generic arguments `<…>` are not told apart
 //     from commas at the marked level, so `=> handle<A, B>(req, { db: … })`
-//     is missed. The scan runs from the start of the file with no
-//     string or comment awareness (a stray closer is ignored); a module-scope
+//     is missed. The scan runs from the start of the file over the text with
+//     comments and string, template-text and regex bodies blanked, so a brace
+//     inside one is not counted (a stray closer is ignored); a module-scope
 //     `if`/`try` block or IIFE reads as a handler, and a parameter-default
 //     object (`function f(o = { db: new X() })`) reads as module scope.
 //     `new Client(` matches any class of that name. A client built in a
@@ -196,6 +197,7 @@ const fs = require('fs');
 const path = require('path');
 const { registerGenerator } = require('./focus-generators');
 const { listTrackedFiles } = require('./source-scan');
+const { stripComments } = require('../strip-comments');
 
 // Directory segments whose contents never ship as the app itself — the
 // prelaunch vertical's NON_SITE_SEGMENT_RE plus mocks and framework build
@@ -850,8 +852,10 @@ const OBJECT_BRACE_PREFIX = '=(,:[?|&.';
 // expression body, and any `{` opened while a mark is active is a block brace.
 // A mark clears when its group closes, or at a `,` or `;` at its own level.
 // Closers match their own opener within the current `{` scope: a stray or
-// mismatched `)`, `]` or `}` (no string or comment awareness) is ignored, and
-// a `}` discards any unclosed `(` or `[` above its `{`. One left-to-right pass
+// mismatched `)`, `]` or `}` is ignored, and a `}` discards any unclosed `(` or
+// `[` above its `{`. The caller passes the file text with comments and string,
+// template-text and regex bodies blanked (`stripComments`, same offsets), so a
+// brace inside one is never counted. One left-to-right pass
 // from the start of the file, not a window before the match: a handler longer
 // than MAX_SCAN_CHARS would otherwise lose its opening brace and read as
 // module scope. The scan position persists across calls, so the per-file cost
@@ -957,7 +961,7 @@ function scanPooling(ctx, candidates) {
       routeChecked++;
       const seen = new Set();
       const calls = new RegExp(REQUEST_CLIENT_RE.source, 'g');
-      const insideNonObjectBrace = braceTracker(text);
+      const insideNonObjectBrace = braceTracker(stripComments(text, { literals: 'blank' }));
       let m;
       while ((m = calls.exec(text)) !== null) {
         if (!insideNonObjectBrace(m.index)) continue;
