@@ -1136,6 +1136,113 @@ test('extractTemplateStamp: null when absent, when body is empty, and for non-st
   assert.strictEqual(extractTemplateStamp(undefined), null);
 });
 
+// --- fence-blind metadata (#4368) ---
+
+const fenced = (line, fence = '```') => [fence, line, fence].join('\n');
+
+test('AC1.1: extractPremiseCheck — fenced command before the record\'s own yields the unfenced one', () => {
+  const body = [fenced('Premise-check: echo QUOTED'), '', 'Premise-check: echo REAL', '', '## Current State', 'x'].join('\n');
+  assert.strictEqual(extractPremiseCheck(body), 'echo REAL');
+});
+
+test('AC2.1: extractPremiseCheck — a body whose only command line is fenced yields null', () => {
+  const body = ['## Current State', fenced('Premise-check: echo QUOTED'), 'x'].join('\n');
+  assert.strictEqual(extractPremiseCheck(body), null);
+});
+
+test('extractPremiseCheck — real-only body is unchanged', () => {
+  assert.strictEqual(extractPremiseCheck('Premise-check: echo REAL\n\n## Current State\nx'), 'echo REAL');
+});
+
+test('AC3.1: extractVerifiedAsOf — fenced-before-real, fenced-only, real-only', () => {
+  assert.strictEqual(extractVerifiedAsOf([fenced('Verified-as-of: aaaaaaa'), 'Verified-as-of: bbbbbbb'].join('\n')), 'bbbbbbb');
+  assert.strictEqual(extractVerifiedAsOf(['## Current State', fenced('Verified-as-of: aaaaaaa')].join('\n')), null);
+  assert.strictEqual(extractVerifiedAsOf('Verified-as-of: bbbbbbb\n\n## Current State'), 'bbbbbbb');
+});
+
+test('AC3.1: extractTemplateStamp — fenced-before-real, fenced-only, real-only', () => {
+  assert.deepStrictEqual(
+    extractTemplateStamp([fenced('Template: quoted.md @ 1.0.0'), 'Template: real.md @ 2.0.0'].join('\n')),
+    { path: 'real.md', version: '2.0.0' },
+  );
+  assert.strictEqual(extractTemplateStamp(['## Current State', fenced('Template: quoted.md @ 1.0.0')].join('\n')), null);
+  assert.deepStrictEqual(extractTemplateStamp('Template: real.md @ 2.0.0\n'), { path: 'real.md', version: '2.0.0' });
+});
+
+test('fence-blind metadata (#4368): tilde and longer backtick fences hide the line too', () => {
+  assert.strictEqual(extractPremiseCheck(fenced('Premise-check: echo QUOTED', '~~~')), null);
+  assert.strictEqual(extractPremiseCheck(fenced('Premise-check: echo QUOTED', '````')), null);
+});
+
+test('fence-blind metadata (#4368): an unclosed fence hides every later metadata line', () => {
+  assert.strictEqual(extractPremiseCheck('```\nquoted\n\nPremise-check: echo REAL'), null);
+});
+
+test('fence-blind metadata (#4368): CRLF body — fenced line skipped, real command read and trimmed', () => {
+  const body = ['```', 'Premise-check: echo QUOTED', '```', 'Premise-check: echo REAL', '## Current State'].join('\r\n');
+  assert.strictEqual(extractPremiseCheck(body), 'echo REAL');
+});
+
+test('fence-blind metadata (#4368): bare-CR line endings — a CR-separated fence hides its line too', () => {
+  assert.strictEqual(extractPremiseCheck('intro\r```\rPremise-check: echo QUOTED\r```'), null);
+  assert.strictEqual(extractPremiseCheck('```\rPremise-check: echo QUOTED\r```\rPremise-check: echo REAL\r'), 'echo REAL');
+  assert.strictEqual(extractVerifiedAsOf('```\rVerified-as-of: aaaaaaa\r```'), null);
+});
+
+test('fence-blind metadata (#4368): a fence indented 1–3 spaces hides its line; 4 spaces is not a fence', () => {
+  for (const pad of [' ', '  ', '   ']) {
+    assert.strictEqual(extractPremiseCheck(`${pad}\`\`\`\nPremise-check: echo QUOTED\n${pad}\`\`\``), null, `pad ${pad.length}`);
+  }
+  // An indented opener closed by a column-0 closer still pairs.
+  assert.strictEqual(extractPremiseCheck('  ```\nPremise-check: echo QUOTED\n```\nPremise-check: echo REAL'), 'echo REAL');
+  // A column-0 opener closed by an indented closer still pairs (pins the closer's indent allowance).
+  assert.strictEqual(extractPremiseCheck('```\nPremise-check: echo QUOTED\n  ```\nPremise-check: echo REAL'), 'echo REAL');
+  // Four spaces is an indented code block, not a fence opener — the following column-0 line is read.
+  assert.strictEqual(extractPremiseCheck('    ```\nPremise-check: echo REAL'), 'echo REAL');
+  // A 4-space-indented ``` inside a fence is content, not a closer — the closer's upper bound.
+  assert.strictEqual(extractPremiseCheck('```\n    ```\nPremise-check: echo QUOTED\n```'), null);
+  // Indented tilde fences hide their line too.
+  assert.strictEqual(extractPremiseCheck('  ~~~\nPremise-check: echo QUOTED\n  ~~~'), null);
+});
+
+test('fence-blind metadata (#4368): a closer trailed by a non-space/tab character is not a closer', () => {
+  // NBSP after the backticks: GitHub keeps the fence open, so the line after it is still quoted.
+  assert.strictEqual(extractPremiseCheck('```\nx\n```\u00a0\nPremise-check: echo QUOTED\n```'), null);
+  assert.strictEqual(extractPremiseCheck('```\nx\n```\u000b\nPremise-check: echo QUOTED\n```'), null);
+  // A trailing space/tab still closes.
+  assert.strictEqual(extractPremiseCheck('```\nx\n``` \t\nPremise-check: echo REAL'), 'echo REAL');
+});
+
+test('fence-blind metadata (#4368): a backtick opener whose info string holds a backtick is an inline code span, not a fence', () => {
+  // CommonMark: "```a`b" is a paragraph, so the real fence opens at the third line and the
+  // line after it is quoted. Reading the first line as an opener pairs the fences wrongly
+  // and would run the quoted command.
+  const body = ['```a`b', 'Premise-check: echo REAL', '```', 'Premise-check: echo QUOTED', '```'].join('\n');
+  assert.strictEqual(extractPremiseCheck(body), 'echo REAL');
+  // A backtick-free info string still opens a fence, and tilde fences take any info string.
+  assert.strictEqual(extractPremiseCheck(['```js', 'Premise-check: echo QUOTED', '```'].join('\n')), null);
+  assert.strictEqual(extractPremiseCheck(['~~~a`b', 'Premise-check: echo QUOTED', '~~~'].join('\n')), null);
+});
+
+test('fence-blind metadata (#4368): a leading byte-order mark does not hide a fence opener', () => {
+  assert.strictEqual(extractPremiseCheck('\uFEFF```\nPremise-check: echo QUOTED\n```'), null);
+  assert.strictEqual(extractPremiseCheck('\uFEFF```\nPremise-check: echo QUOTED\n```\nPremise-check: echo REAL'), 'echo REAL');
+});
+
+test('recordPayload (#4368): a Defer-reason: line quoted inside a fenced block is not the body\'s own', () => {
+  // A different fenced value neither throws nor suppresses the insert of the real first line.
+  const fencedOther = recordPayload({ title: 't', body: fenced('Defer-reason: genuinely-larger'), type: 'task', deferReason: 'tangential' });
+  assert.ok(fencedOther.body.startsWith('Defer-reason: tangential\n\n'));
+  // A fenced value equal to deferReason still gets the real line inserted ahead of it.
+  const fencedSame = recordPayload({ title: 't', body: fenced('Defer-reason: tangential'), type: 'task', deferReason: 'tangential' });
+  assert.ok(fencedSame.body.startsWith('Defer-reason: tangential\n\n'));
+  // An unfenced contradicting line still throws.
+  assert.throws(
+    () => recordPayload({ title: 't', body: 'Defer-reason: genuinely-larger\n\n## Current State\nx', type: 'task', deferReason: 'tangential' }),
+    /already carries/,
+  );
+});
+
 test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {
   assert.strictEqual(parseRecordFacets(['breaking']).breaking, true);
   assert.strictEqual(parseRecordFacets([{ name: 'breaking' }]).breaking, true);
@@ -1347,4 +1454,14 @@ test('extractSection: an unclosed fence hides every later heading (CommonMark: i
   const body = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
   assert.strictEqual(extractSection(body, 'Deliverables'), '');
   assert.ok(extractSection(body, 'Current State').endsWith('- [ ] d'));
+});
+
+test('extractSection: 1- to 3-space-indented fences hide a heading; a 4-space pad is not a fence (#4368)', () => {
+  const bodyFor = (pad) => ['## Current State', 'x', `${pad}\`\`\``, '## Deliverables', 'quoted', `${pad}\`\`\``, '', '## Release Note', 'n'].join('\n');
+  for (const pad of [' ', '  ', '   ']) {
+    assert.strictEqual(extractSection(bodyFor(pad), 'Deliverables'), '', `pad ${pad.length}`);
+  }
+  const four = extractSection(bodyFor('    '), 'Deliverables');
+  assert.ok(four.length > 0);
+  assert.ok(four.startsWith('quoted'));
 });

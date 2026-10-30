@@ -32,12 +32,12 @@ files:
 - **URL:** any Bash call the harness's worktree-isolation guard refuses, or any claude-tweaks deny gate (worktree-required, shadow-run-dir, teardown)
 - **Action:** Claude runs a command the guard can't prove isn't a git operation on another checkout, such as `d=.; sed -n 1,2p $d/README.md`. It sees "This session is isolated in the worktree … Refusing to run it", then retries with a plainer command.
 - **Should feel:** the same friction as before this change. The refusal text and the retry path are unchanged; the hook only observes it.
-- **Should understand:** the refusal is now recorded as a `wd-guard-refusal` event with `reason: harness-worktree-isolation` and a 200-character command excerpt. It is recorded by the `PostToolUseFailure` hook, the one event Claude Code fires for its own guard's refusals. An ordinary non-zero exit fires the same event and is ignored. A plugin gate denial logs `gate-denial` / `wd-guard-refusal` into the same session-owned dir via `resolveDenialRunDir`, never into a guessed run. On Windows too: that dir is keyed on the cwd's entry in `git worktree list`, matched with the same slash- and case-tolerant compare (#3811).
+- **Should understand:** the refusal is now recorded as a `wd-guard-refusal` event with `reason: harness-worktree-isolation`, `actor: session`, `variant: guard` and a 200-character command excerpt. The `This agent` noun and worktree-gone refusals are covered too (#3819, `count-dispatched-agents-isolation-refusals-3819.md`). It is recorded by the `PostToolUseFailure` hook, the one event Claude Code fires for its own guard's refusals. An ordinary non-zero exit fires the same event and is ignored. A plugin gate denial logs `gate-denial` / `wd-guard-refusal` into the same session-owned dir via `resolveDenialRunDir`, never into a guessed run. On Windows too: that dir is keyed on the cwd's entry in `git worktree list`, matched with the same slash- and case-tolerant compare (#3811).
 - **Red flags:**
   - an ordinary failing command (e.g. `Exit code 128`) shows up as a guard refusal;
   - a denial lands in another session's run dir (that run's `events.jsonl` grows);
   - on Windows, a denial with no owned run dir leaves no `-adhoc-standalone` dir behind (the pre-#3811 failure);
-  - every failing Bash call becomes noticeably slower. The prefilter skips this hook unless the payload carries `Refusing to run it`.
+  - every failing Bash call becomes noticeably slower. The prefilter skips this hook unless the payload carries `Refusing to run it` or `Refusing to run there`.
 
 ### 3. Remove the worktree: same session
 - **URL:** `ExitWorktree` with `action: "remove"`
@@ -64,4 +64,5 @@ files:
 - Updated during build of #3836: step 4's worktree-path lookup (`findRunsByWorktreePath`) compares case-canonical real paths
 - Updated during build of #3304: step 2's refusal text now lives in `plugin/bin/lib/hooks/harness-refusal.js`, and a Claude Code rewording surfaces as upstream drift (see `notice-a-reworded-isolation-refusal-3304.md`)
 - Updated during build of #3811: steps 1-2's porcelain worktree lookups now go through worktree-reap.js's shared `findWorktreeEntry`, so they match on Windows
+- Updated during build of #3819: step 2's event now carries `actor`/`variant`, and the prefilter passes either refusal signature
 - Updated during build of #4179: step 4 names the read window that reconcile's two ad-hoc sweeps bound (`adhoc-superseded` for a linked worktree, `adhoc-session-ended` for the main checkout)

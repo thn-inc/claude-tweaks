@@ -111,10 +111,17 @@ probe with scratch hooks showed that Claude Code's own worktree-isolation refusa
 fires `PreToolUse` before and `PostToolUseFailure` after, with `error` holding the full refusal
 text; the module's header comment records the result and its measurement date. When the captured
 value is prose rather than a structured field, two limits follow. The match pattern
-(`HARNESS_ISOLATION_REFUSAL_RE`) fits only that one wording, so a harness rewording stops the
-logging until the constant is updated; it now surfaces as upstream drift on the `claude-code`
-manifest entry (assertions anchored in `plugin/bin/lib/hooks/harness-refusal.js`) when the
-upstream-drift sweep runs. And the wording differs by tool: the Write/Edit refusal reads "Edit the
+(`HARNESS_ISOLATION_REFUSAL_RE`) fits only the wordings someone captured, so a harness rewording,
+or a sibling template nobody probed, goes unlogged until the constant is updated. #2783 captured
+the session template alone; #3819 found two siblings on 2.1.302 (the `This agent` noun in a
+dispatched agent's worktree, and the worktree-gone `Refusing to run there` ending) and widened the
+pattern from `harness-refusal.js`'s fragments, while a third 2.1.302 template ("The
+working-directory isolation context for this agent was lost…") carries neither noun and is still
+unmatched. So before trusting a prose matcher, search the installed binary for the refusal's
+shared tail (`Refusing to run`) to list every sibling template, not only the one captured. A
+rewording surfaces as upstream drift on the `claude-code` manifest entry (assertions anchored in
+`plugin/bin/lib/hooks/harness-refusal.js`) when the upstream-drift sweep runs. And the wording
+differs by tool: the Write/Edit refusal reads "Edit the
 worktree copy…", not "Refusing to run it" — and it does **not** fire `PostToolUseFailure` at all.
 A throwaway-hook probe during #3301 (2026-10-21) showed a `Write` refused with that wording
 produced zero captured events, reproduced twice, while the identical setup correctly captured a
