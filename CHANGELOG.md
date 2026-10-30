@@ -53,6 +53,57 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.157.0](https://github.com/thn-inc/claude-tweaks/compare/v6.156.3...v6.157.0) (2026-10-30)
+
+
+### Features
+
+* Catch up with the integration branch before the… ([#4304](https://github.com/thn-inc/claude-tweaks/issues/4304)) ([cb8763b](https://github.com/thn-inc/claude-tweaks/commit/cb8763b7e569a27b1de809888160b93733c76876))
+
+
+### Bug Fixes
+
+* Below-floor decomposition parents are never closed: the… ([#4466](https://github.com/thn-inc/claude-tweaks/issues/4466)) ([4508def](https://github.com/thn-inc/claude-tweaks/commit/4508defcaf30ef39411d6cb20b5294bfd6c627aa)), closes [#4469](https://github.com/thn-inc/claude-tweaks/issues/4469)
+* calibration-report: the "last N runs" window sorts run… ([#4464](https://github.com/thn-inc/claude-tweaks/issues/4464)) ([fae7a76](https://github.com/thn-inc/claude-tweaks/commit/fae7a76ba07ab63f36b14e63e047d93283424d71))
+* checkResumeFreshness reads an unreadable worktree path as… ([#4435](https://github.com/thn-inc/claude-tweaks/issues/4435)) ([e245c30](https://github.com/thn-inc/claude-tweaks/commit/e245c300a49c201ed5e2cd3b4ae39b197e67c884))
+* Claim step re-claims a TTL-expired claim whose run still… ([#4423](https://github.com/thn-inc/claude-tweaks/issues/4423)) ([9d59ce0](https://github.com/thn-inc/claude-tweaks/commit/9d59ce045e0d40f85260d8b14540aa080c7940ca)), closes [#4465](https://github.com/thn-inc/claude-tweaks/issues/4465) [#4468](https://github.com/thn-inc/claude-tweaks/issues/4468)
+* Hold needs-human-decision SDD rulings for a human at the… ([#4587](https://github.com/thn-inc/claude-tweaks/issues/4587)) ([53638f0](https://github.com/thn-inc/claude-tweaks/commit/53638f039beb394aa4d9849e954e542b64304d81))
+* Make the merge gate and near-duplicate Current State… ([#4369](https://github.com/thn-inc/claude-tweaks/issues/4369)) ([f86eb8b](https://github.com/thn-inc/claude-tweaks/commit/f86eb8b14d5b00be964c8f3969e78c1f3959853b))
+* Match a record section heading only when it starts its… ([#4367](https://github.com/thn-inc/claude-tweaks/issues/4367)) ([84e3352](https://github.com/thn-inc/claude-tweaks/commit/84e33527b384ce3438a614a20a4ce5f89338e96f))
+* Read a record's Premise-check, Verified-as-of and… ([#4368](https://github.com/thn-inc/claude-tweaks/issues/4368)) ([76bf9df](https://github.com/thn-inc/claude-tweaks/commit/76bf9dfffe5379313e9cf97458c86a1c8f9bda9e))
+* reconcile archive-merged strands tracked work/ specs when… ([#4387](https://github.com/thn-inc/claude-tweaks/issues/4387)) ([74c1662](https://github.com/thn-inc/claude-tweaks/commit/74c1662d4957d65ab06371b180a5801812e25af2))
+* Release disposition roster and review staging disagree on… ([#4484](https://github.com/thn-inc/claude-tweaks/issues/4484)) ([f0b6f24](https://github.com/thn-inc/claude-tweaks/commit/f0b6f24cbf505ae964c069b7a54784cdd8dbe20c)), closes [#4488](https://github.com/thn-inc/claude-tweaks/issues/4488)
+* Review Console files every staged reference repair under… ([#4585](https://github.com/thn-inc/claude-tweaks/issues/4585)) ([6531fef](https://github.com/thn-inc/claude-tweaks/commit/6531feff376b6f2b77d47a689375f7d986b542ba))
+* Review Console leaves debate-settled findings keep-staged… ([#4563](https://github.com/thn-inc/claude-tweaks/issues/4563)) ([729a5ae](https://github.com/thn-inc/claude-tweaks/commit/729a5ae5e03223e9c28e2db1da25e21f95141daa))
+* Review Console settles nothing for a finding whose path… ([#4582](https://github.com/thn-inc/claude-tweaks/issues/4582)) ([844e0d7](https://github.com/thn-inc/claude-tweaks/commit/844e0d7eb989d907fa6cc7c5d77067dea1507835))
+* Windows regression: 1 test file(s) newly failing after… ([#4287](https://github.com/thn-inc/claude-tweaks/issues/4287)) ([7cf500f](https://github.com/thn-inc/claude-tweaks/commit/7cf500f633642789fe2cc3daf46546d2461a444c)), closes [#4299](https://github.com/thn-inc/claude-tweaks/issues/4299) [#4301](https://github.com/thn-inc/claude-tweaks/issues/4301)
+* Write gate misreads cp/mv value-taking options… ([#4449](https://github.com/thn-inc/claude-tweaks/issues/4449)) ([d1be775](https://github.com/thn-inc/claude-tweaks/commit/d1be775ae07f17b802a7ab89f2fa064897a36f73))
+* Write gate reads a case compound that starts a pipeline… ([#4481](https://github.com/thn-inc/claude-tweaks/issues/4481)) ([fbffbd0](https://github.com/thn-inc/claude-tweaks/commit/fbffbd0e3c255a0fe74d996e87022cb9b84c5dfc))
+
+### Highlights
+* Review findings in files whose paths contain characters such as `@` or brackets are now settled at the Review Console like any other.
+* Broken-reference repairs found at wrap-up now show in the Review Console's Reference repairs section instead of waiting for you as unreviewed items.
+* No user-visible change.
+* Review findings that a cross-lens debate already settled no longer wait at the end of a run for you to acknowledge them.
+* Code-health's scale-readiness and experiment-cleanup screens raise fewer false candidates for non-database pools, module-scope clients and comment-like text inside strings.
+* A record that only mentions a required section heading in passing no longer passes the shape gate as if it had that section.
+* Reflect's friction report now counts worktree-guard refusals hit by dispatched agents, not just by the main session.
+* A command quoted inside a code block in a work record can no longer be picked up and run as that record's own premise check.
+* No user-visible change: fixes a Windows-only test failure.
+* Build plans now carry any project-skill rule that governs the files they touch, so subagents implementing a task see it.
+* Build: operational fixes for schema, env and shared-constant changes no longer land after the final verification, so /test stops re-running the full suite on those builds.
+* Reconcile no longer half-archives a merged run while the main checkout is behind, so its spec file is never left stranded.
+* No user-visible change.
+* The worktree-always guard now reads cp and mv backup-suffix options correctly.
+* No user-visible change.
+* Resuming an interrupted pipeline run no longer treats a worktree path it cannot read as deleted, so it waits instead of resuming over a possibly live run.
+* No user-visible change.
+* Long builds now pick up overlapping changes from main before the final review, so conflicts surface during the build instead of at merge.
+* Records that quote code or markdown in their Deliverables or Current State no longer confuse merge-order checks or duplicate detection.
+* the calibration read-out in /claude-tweaks:tidy now reflects your most recent runs.
+* No user-visible change — documentation accuracy fix.
+* The worktree-always guard now blocks a write into the main checkout that follows a piped case statement whose arm changes directory.
+
 ## [6.156.3](https://github.com/thn-inc/claude-tweaks/compare/v6.156.2...v6.156.3) (2026-10-27)
 
 

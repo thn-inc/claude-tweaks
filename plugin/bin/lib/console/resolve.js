@@ -505,12 +505,16 @@ function lineKeys(line) {
 // every finding its lens list names (#4563). A list entry's path defaults to the region path P (the
 // as-recorded `lens 3a :5` shape). A line with no lens list, or any other debate outcome, names nothing.
 // The optional `Step N: ` prefix is the shape log-decision.js writes when the line is logged with `--step`.
-const DEBATE_CONVERGED_RE = /^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on ([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+) converged positive\b(.*)$/;
+// The path of a finding key `{lens}|{path}:{line}` (#4582): `@ + ~ % $` join the plain class, and `[id]` / `(group)` count only as a
+// closed group inside one segment, so a citation wrapped in them (`[src/a.ts:4]`) still keys the bare path. A space, `=` and `,` stay out.
+const FINDING_PATH = String.raw`(?:[A-Za-z0-9_./@+~%$-]|\[{1,2}[A-Za-z0-9_.@+~%$-]+\]{1,2}|\([A-Za-z0-9_.@+~%$-]+\))+\.[A-Za-z0-9]+`;
+const DEBATE_CONVERGED_RE = new RegExp(String.raw`^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on (${FINDING_PATH}):(\d+) converged positive\b(.*)$`);
+const DEBATE_ENTRY_RE = new RegExp(String.raw`\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
+const FINDING_LOC_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
 function debateConvergedKeys(line) {
   const m = DEBATE_CONVERGED_RE.exec(line);
   if (!m) return [];
-  const entry = /\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)?:(\d+)/gi;
-  return Array.from(m[3].matchAll(entry), (e) => `${e[1]}|${e[2] || m[1]}:${e[3]}`);
+  return Array.from(m[3].matchAll(DEBATE_ENTRY_RE), (e) => `${e[1]}|${e[2] || m[1]}:${e[3]}`);
 }
 
 const FINDING_SECTIONS = [SECTIONS.LOW, SECTIONS.CONTESTED];
@@ -594,22 +598,39 @@ function tiebreakModel(snapshot) {
   // #4563: a settled contested file settles its partner finding too. The partner's key comes from the
   // staged file's `## Positions` text, not from tiebreak.js's verdict line, whose one-key-per-id shape
   // stays unchanged on purpose: only the staged file also covers runs already on disk (decided at
-  // #4563's plan review). The partner takes the pair's verdict (and its index) only where no verdict
-  // names its key at all: one tiebreak wave logs in arbitrary order, so a direct verdict wins
-  // whatever its position relative to the pair's.
+  // #4563's plan review). The partner takes the pair's verdict (and its index) where no verdict
+  // names its key at all, or where its own verdict predates its latest STAGED line (#4583: a
+  // re-stage) and the pair's verdict follows that line: one tiebreak wave logs in arbitrary order,
+  // so a direct verdict wins whatever its position relative to the pair's, except that a verdict
+  // the re-stage outdated settles nothing, and a pair verdict that also predates it settles nothing
+  // either, so it must not replace the partner's own.
   // Inheritance is one hop: only a contested file settled by its own tiebreak verdict passes it on,
   // and computeSettledFiles never settles a contested file on an inherited verdict, so a pair whose
   // own tiebreak logged nothing stays keep-staged instead of taking a neighbouring pair's outcome.
   // The second pass settles the partners' own staged files. Only `review-contested-*` files carry a
   // Positions section (SECTIONS.CONTESTED also holds `review-debate-*`).
   const stagedText = new Map(snapshot.staged.map((s) => [s.name, s.text]));
+  // key -> index of its latest STAGED line: `naming`'s STAGED filter, but no named staged file is
+  // required, so a keyless-file re-flag counts too.
+  const latestStaged = new Map();
+  lines.forEach((line, index) => {
+    if (!/^- STAGED /.test(line) || parseTiebreakLine(line)) return;
+    for (const key of lineKeys(line)) latestStaged.set(key, index);
+  });
+  const superseded = new Set(); // ids of console verdicts a re-stage outdated and a pair's verdict replaced
   for (const [name, chosen] of computeSettledFiles().settledFiles) {
     if (!/^review-contested-/.test(name)) continue;
     for (const key of contestedPositionKeys(stagedText.get(name))) {
-      if (!settledByKey.has(key)) settledByKey.set(key, { ...chosen, key, inheritedFrom: name });
+      const own = settledByKey.get(key);
+      const stagedAt = latestStaged.get(key);
+      if (!own || (own.index < stagedAt && chosen.index > stagedAt)) {
+        if (own && own.kind === 'console') superseded.add(own.id);
+        settledByKey.set(key, { ...chosen, key, inheritedFrom: name });
+      }
     }
   }
   const result = computeSettledFiles();
+  for (const id of superseded) result.absorbed.add(id);
   return { lines, latestById, settledAfter, settledFiles: result.settledFiles, absorbed: result.absorbed };
 }
 
@@ -728,7 +749,7 @@ function engineItems(snapshot, stagedIds) {
 // as one `tiebreak:{id}` item (#3949).
 function findingKey(line) {
   const lens = /\blens\s+"?([A-Za-z0-9_-]+)"?/i.exec(line);
-  const loc = /([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+)/.exec(line);
+  const loc = FINDING_LOC_RE.exec(line);
   return lens && loc ? `${lens[1]}|${loc[1]}:${loc[2]}` : null;
 }
 

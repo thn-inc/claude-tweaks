@@ -1059,6 +1059,40 @@ test('a converged-positive debate logged before the STAGED line does not superse
   assert.deepStrictEqual(findings(d).map((i) => i.resolution), ['keep-staged']);
 });
 
+// ---- #4582: the finding-key path class covers @ [ ] ( ) $ + ~ % ----
+test('a confirmed verdict for a scoped-package path supersedes its STAGED line (#4582 AC1)', () => {
+  const f = tbFinding({ path: 'packages/@scope/x.ts', line: 4 });
+  assert.deepStrictEqual(findings([stagedLow('3a', 'packages/@scope/x.ts:4'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n')), []);
+  // Direct key: both sides truncate to `scope/x.ts:4` without the fix, so the settle above passes either way.
+  assert.strictEqual(parseTiebreakLine(tbVerdict(f, { verdict: 'confirmed' }).entry).key, '3a|packages/@scope/x.ts:4');
+});
+test('a converged-positive debate naming a bracketed route path settles that finding (#4582 AC2)', () => {
+  const debate = '- AUTO 10:00:00 — Debate: cross-lens disagreement on app/[id]/page.tsx:9 converged positive after 1 round (lens "3a" finding app/[id]/page.tsx:9 — confirmed). Reversibility: high.';
+  assert.deepStrictEqual(findings([stagedLow('3a', 'app/[id]/page.tsx:9'), debate].join('\n')), []);
+});
+test('a verdict for one dynamic-route or scoped path never settles a sibling at the same lens and line (#4582)', () => {
+  const settle = (staged, other) => findings([stagedLow('3a', `${staged.path}:${staged.line}`), tbVerdict(tbFinding(other), { verdict: 'confirmed' }).entry].join('\n')).map((i) => i.resolution);
+  assert.deepStrictEqual(settle({ path: 'app/[id]/page.tsx', line: 9 }, { path: 'blog/[id]/page.tsx', line: 9 }), ['keep-staged']);
+  assert.deepStrictEqual(settle({ path: 'packages/@a/x.ts', line: 4 }, { path: 'packages/@b/x.ts', line: 4 }), ['keep-staged']);
+  // Control: the same path does settle.
+  assert.deepStrictEqual(settle({ path: 'app/[id]/page.tsx', line: 9 }, { path: 'app/[id]/page.tsx', line: 9 }), []);
+});
+test('a citation wrapped in brackets or parentheses keys the bare path (#4582)', () => {
+  const f = tbFinding({ path: 'src/a.ts', line: 4 });
+  const verdict = tbVerdict(f, { verdict: 'confirmed' }).entry;
+  assert.deepStrictEqual(findings([stagedLow('3a', '[src/a.ts:4]'), verdict].join('\n')), []);
+  assert.deepStrictEqual(findings([stagedLow('3a', '(src/a.ts:4)'), verdict].join('\n')), []);
+});
+test('a STAGED citation with a leading + keys whole, so a verdict for the bare path leaves it open (#4582, fail-safe direction)', () => {
+  const verdict = tbVerdict(tbFinding({ path: 'src/a.ts', line: 4 }), { verdict: 'confirmed' }).entry;
+  assert.deepStrictEqual(findings([stagedLow('3a', '+src/a.ts:4'), verdict].join('\n')).map((i) => i.resolution), ['keep-staged']);
+});
+test('a tiebreak verdict line for a $-path round-trips through parseTiebreakLine (#4582)', () => {
+  const f = tbFinding({ path: 'routes/$id.tsx', line: 7 });
+  const parsed = parseTiebreakLine(tbVerdict(f, { verdict: 'confirmed' }).entry);
+  assert.deepStrictEqual([parsed.kind, parsed.path, parsed.key], ['confirmed', 'routes/$id.tsx', '3a|routes/$id.tsx:7']);
+});
+
 // ---- #4563: a settled contested file settles its partner finding ----
 const positions = (a, b) => `# Review — contested finding\n\n## Positions\n\n- **Finding A (lens ${a.lens}, low)** — ${a.path}:${a.line}: claim A\n- **Finding B (lens ${b.lens}, medium)** — ${b.path}:${b.line}: claim B\n\n## Judge 1 (partial)\n\nx\n`;
 const partner = { lens: '3f', path: 'src/a.js', line: 7 };
@@ -1151,6 +1185,49 @@ test('a partner\'s own verdict logged BEFORE the pair\'s verdict still wins over
     tbVerdict(p, { verdict: 'refuted', severity: 'low' }).entry, tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n');
   const items = findings(d, { 'review-contested-1.md': positions(f, partner), 'review-unconfirmed-2.md': 'x' });
   assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]).sort(), [['review-contested-1.md', 'dismissed'], ['review-unconfirmed-2.md', 'dropped']]);
+});
+const restagePartner = tbFinding({ lens: '3f', line: 7, claim: 'partner claim', reporterSeverity: 'low' });
+test('a partner re-staged after its own verdict inherits the pair\'s later verdict (#4583 AC1)', () => {
+  const f = tbFinding();
+  const d = [stagedLow('3f', 'src/a.js:7'), tbVerdict(restagePartner, { verdict: 'refuted', severity: 'low' }).entry, stagedLow('3f', 'src/a.js:7'),
+    tbDebate(f, 'review-contested-1.md'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n');
+  assert.deepStrictEqual(findings(d, { 'review-contested-1.md': positions(f, partner) }).map((i) => [i.id, i.resolution]), [['review-contested-1.md', 'dismissed']]);
+});
+test('a re-staged partner stays open when no verdict follows its re-stage: the pair\'s predates it (#4583)', () => {
+  const f = tbFinding();
+  // The pair's verdict is logged first, so it must not replace the partner's own verdict that settles the first STAGED line.
+  const d = [tbDebate(f, 'review-contested-1.md'), tbVerdict(f, { verdict: 'confirmed' }).entry, stagedLow('3f', 'src/a.js:7'),
+    tbVerdict(restagePartner, { verdict: 'refuted', severity: 'low' }).entry, stagedLow('3f', 'src/a.js:7')].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(f, partner) });
+  assert.deepStrictEqual(items.map((i) => i.resolution).sort(), ['dismissed', 'keep-staged']);
+  assert.ok(items.find((i) => i.resolution === 'keep-staged').id.includes('lens "3f"'), 'the partner\'s re-STAGED line is the one left open');
+});
+// ---- #4583 fix round 1: a console verdict the re-stage outdated is superseded by the pair's, never filed on its own ----
+const stagedFile = (n) => `${stagedLow('3f', 'src/a.js:7')} Stage path: staged/review-unconfirmed-${n}.md.`;
+test('a can\'t-tell verdict a re-stage outdated is superseded by the pair\'s confirmed one: no tiebreak item, both files dismissed (#4583)', () => {
+  const f = tbFinding();
+  const d = [stagedFile(2), tbVerdict(restagePartner, { recommendation: 'file' }).entry, stagedFile(2), tbDebate(f, 'review-contested-1.md'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(f, partner), 'review-unconfirmed-2.md': 'x' });
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]).sort(), [['review-contested-1.md', 'dismissed'], ['review-unconfirmed-2.md', 'dismissed']]);
+});
+test('a re-flagged finding files once when the pair\'s verdict is also can\'t-tell: the outdated verdict files nothing (#4583)', () => {
+  const f = tbFinding();
+  const d = [stagedFile(2), tbVerdict(restagePartner, { recommendation: 'file' }).entry, stagedFile(2), tbDebate(f, 'review-contested-1.md'), tbVerdict(f, { recommendation: 'file' }).entry].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(f, partner), 'review-unconfirmed-2.md': 'x' });
+  // The pair's own staged file carries the one filing; the partner's file is covered by it.
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]).sort(), [['review-contested-1.md', 'filed'], ['review-unconfirmed-2.md', 'dismissed']]);
+});
+test('a keyless-file re-flag: a can\'t-tell verdict the re-stage outdated files nothing when the pair\'s confirmed verdict follows (#4583)', () => {
+  const f = tbFinding();
+  const d = [stagedLow('3f', 'src/a.js:7'), tbVerdict(restagePartner, { recommendation: 'file' }).entry, stagedLow('3f', 'src/a.js:7'), tbDebate(f, 'review-contested-1.md'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(f, partner) });
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]), [['review-contested-1.md', 'dismissed']]);
+});
+test('a refuted verdict a re-stage outdated: the partner\'s own staged file resolves dismissed on the pair\'s confirmed verdict (#4583)', () => {
+  const f = tbFinding();
+  const d = [stagedFile(2), tbVerdict(restagePartner, { verdict: 'refuted', severity: 'low' }).entry, stagedFile(2), tbDebate(f, 'review-contested-1.md'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(f, partner), 'review-unconfirmed-2.md': 'x' });
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]).sort(), [['review-contested-1.md', 'dismissed'], ['review-unconfirmed-2.md', 'dismissed']]);
 });
 test('an inherited can\'t-tell verdict files once: the partner\'s own staged file is dismissed as covered (#4563)', () => {
   const f = tbFinding();
