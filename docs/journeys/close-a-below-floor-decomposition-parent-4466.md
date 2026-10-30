@@ -35,6 +35,7 @@ files:
 - **Should understand:**
   - Under `github-issues` the parent stays open at this point; Step 4.0b closes it after the merge.
   - Under `local-files` the run closes the parent record in its own commit, so the closure reaches the integration branch no earlier than the merge.
+  - Under `github-issues`, wrap-up's closure check agrees: the `acceptance-labeling` row of `wrap-up-engine.js verify` (`plugin/bin/lib/wrap-up/engine-verify.js`) reads `skip (parent #P below oversight floor — closes after the merge lands (Step 4.0b))`, never a fail for the parent's missing `demo:pending`.
 - **Red flags:** a `github-issues` parent closed by wrap-up Phase 4, the auto-merge short-circuit or dispatch's group gate, all of which run before the merge lands. A merge that never lands would then leave a closed parent over an open sub-issue.
 
 ### 2. The merge lands and Step 4.0b closes the parent with a listing comment
