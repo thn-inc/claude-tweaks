@@ -1077,10 +1077,10 @@ test('debate: both agree → confirmed with AUTO entry matching the documented s
   assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['converged positive after 1 round']));
 });
 
-test('debate: both disagree → unconfirmed with AUTO entry matching the documented schema', () => {
+test('debate: both disagree → unconfirmed with STAGED entry matching the documented schema', () => {
   assert.strictEqual(c.resolveDebate('disagree', 'disagree'), 'unconfirmed');
-  const entry = `- AUTO 14:41:05 — /review debate: src/auth.ts:42 unconfirmed (both disagreed). Reversibility: high.`;
-  assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['unconfirmed (both disagreed)']));
+  const entry = `- STAGED 14:41:05 — Debate: lens "security" finding src/auth.ts:42 — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.`;
+  assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['converged negative after 1 round']));
 });
 
 test('debate: mixed/partial verdicts → contested with STAGED entry matching the documented schema', () => {
@@ -1088,8 +1088,16 @@ test('debate: mixed/partial verdicts → contested with STAGED entry matching th
   assert.strictEqual(c.resolveDebate('agree', 'partial'), 'contested');
   assert.strictEqual(c.resolveDebate('disagree', 'partial'), 'contested');
   assert.strictEqual(c.resolveDebate('partial', 'partial'), 'contested');
-  const entry = `- STAGED 14:41:08 — /review debate: lens "security" src/auth.ts:42 contested (mixed verdicts). Stage path: staged/review-debate-1.md.`;
-  assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['contested (mixed verdicts)']));
+  const entry = `- STAGED 14:41:08 — Debate: lens "security" cross-lens disagreement on src/auth.ts:42 inconclusive (agree, partial). Both verdicts staged. Stage path: staged/review-contested-1.md. Reversibility: high.`;
+  assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['inconclusive ({verdicts})']));
+});
+
+test('debate: Mode 2 restates the three lines /review writes, so the guide cannot drift from them', () => {
+  for (const marker of ['Both `agree`', 'Both `disagree`', 'Mixed / partial']) {
+    const producerLine = REVIEW_SKILL.split('\n').find((line) => line.includes(marker));
+    const template = producerLine.match(/`([^`]*\{HH:MM:SS\}[^`]*)`/)[1];
+    assert.ok(PRIMITIVE_DOC.split('\n').includes(`- ${template}`), `Mode 2 does not carry: ${template}`);
+  }
 });
 
 // ============================================================

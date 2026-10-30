@@ -37,7 +37,7 @@ SCANNED {HH:MM:SS} — Step 8 disposition: no staged review findings. Reversibil
 | `review-followup-` | `staged/review-followup-{n}.md` | `review/step3-routing.md` (Step 3; a confirmed finding whose fix is a new record, not a patch) | one finding per file, its severity read from the file's `Finding: {severity} {category} — …` line | `proposal` |
 | `review-unconfirmed-` | `staged/review-unconfirmed-{n}.md` | `_shared/multi-agent-coordination.md` (Step 3 tiebreak) | one finding per entry line | `unconfirmed` |
 | `review-contested-` | `staged/review-contested-{n}.md` | `review/step3-debate-and-refutation.md` (Step 3) | one finding per file, both verdicts side by side | `contested` |
-| `review-debate-` | `staged/review-debate-{n}.md` | `_shared/multi-agent-coordination.md` (Step 3) | one finding per file, both verdicts side by side | `contested` |
+| `review-debate-` | `staged/review-debate-{n}.md` | no current writer — an older run's `_shared/multi-agent-coordination.md` Mode 2 file; `/review` now writes `review-contested-` | one finding per file, both verdicts side by side | `contested` |
 | `reflect-` | `staged/reflect-{n}.md` | `reflect/SKILL.md` (Step 4's hindsight pass) | one finding per file | `proposal` |
 | `simplify-` | `staged/simplify-{n}.md` | `simplify/SKILL.md` (Step 5) | one finding per file | `proposal` |
 | `deepen-` | `staged/deepen-{n}.md`, `staged/deepen-collapse-{n}.patch` | `deepen/SKILL.md` (any deepen candidate list) | one finding per file | `proposal` |

@@ -121,7 +121,7 @@ Two judging agents each return a verdict. Resolution table:
 | Verdict A | Verdict B | Outcome | Status |
 |---|---|---|---|
 | agree | agree | `confirmed` | AUTO |
-| disagree | disagree | `unconfirmed` | AUTO |
+| disagree | disagree | `unconfirmed` | STAGED |
 | any other combination (incl. `partial`) | — | `contested` | STAGED |
 
 ### Auto-resolution
@@ -149,11 +149,11 @@ from the general singleton-only rule; see `_shared/subagent-output-contract.md`.
 
 ```
 - AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged positive after 1 round (lens "{lensA}" finding {pathA}:{lineA}; lens "{lensB}" finding {pathB}:{lineB} — both confirmed). Reversibility: high.
-- AUTO {HH:MM:SS} — /review debate: {path}:{line} unconfirmed (both disagreed). Reversibility: high.
-- STAGED {HH:MM:SS} — /review debate: lens "{lens}" {path}:{line} contested (mixed verdicts). Stage path: staged/review-debate-{n}.md.
+- STAGED {HH:MM:SS} — Debate: lens "{lensA}" finding {path}:{line} — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.
+- STAGED {HH:MM:SS} — Debate: lens "{lensA}" cross-lens disagreement on {path}:{line} inconclusive ({verdicts}). Both verdicts staged. Stage path: staged/review-contested-{N}.md. Reversibility: high.
 ```
 
-`{lens}` is the first position's lens — the key the tiebreak verdict carries for a contested finding. The `confirmed` line is `review/step3-debate-and-refutation.md`'s, and it names every confirmed finding because the Review Console settles only the findings a line names (`bin/lib/console/resolve.js`'s `debateConvergedKeys`).
+These are `review/step3-debate-and-refutation.md`'s three lines, byte for byte. `{lensA}` is the first position's lens — the key the tiebreak verdict carries for a contested finding. The `confirmed` line names every confirmed finding because the Review Console settles only the findings a line names (`bin/lib/console/resolve.js`'s `debateConvergedKeys`). An older run may still hold a `staged/review-debate-{n}.md` file from this section's earlier shape: nothing writes one now, and the Review Console and `/release`'s disposition still read it.
 
 ### Review Console staging format
 
