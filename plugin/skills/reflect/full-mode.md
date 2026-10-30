@@ -52,7 +52,7 @@ before any `PreToolUse` hook ever runs — see `docs/hooks.md`'s "Observed here,
 harness's own compound-Bash refusal" — or any other denial whose own `appendEvent` call failed or was never
 reached). Before concluding "no friction," resolve this session's own transcript per
 `_shared/transcript-judge.md`'s Transcript resolution section and grep it for the deny-message
-signatures `Refusing to run it` and `requires an isolated worktree` (the literal substrings a
+signatures `Refusing to run it`, `Refusing to run there` and `requires an isolated worktree` (the literal substrings a
 harness-level or gate-level refusal's own message carries). Each match is one denial the log
 missed — report it as its own Friction-lens line (quoting the matched turn), distinct from and
 never merged into `friction-events.js`'s own aggregate count, since a raw transcript hit carries
@@ -119,10 +119,13 @@ events). A formal `/claude-tweaks:build`/`/claude-tweaks:flow` run is unaffected
 ad-hoc dir of the same session only once that formal run is bound to the caller's own worktree
 (`classifyOwnership` `'mine'`) — an older formal run whose binding is merely unprovable never
 displaces the ad-hoc dir. The harness's own worktree-isolation Bash
-guard ("This session is isolated in the worktree … Refusing to run it") is captured too: it reaches
-no `PreToolUse`/`PostToolUse` consumer, so `bin/lib/hooks/post-tool-use-failure.js` reads Claude
-Code's `PostToolUseFailure` event and logs `wd-guard-refusal` (`reason: harness-worktree-isolation`)
-when the error carries that refusal text. Because the ordinary ad-hoc order is `ExitWorktree remove`
+guard ("This session/This agent is isolated in the worktree … Refusing to run it", or "… Refusing
+to run there") is captured too: it reaches no `PreToolUse`/`PostToolUse` consumer, so
+`bin/lib/hooks/post-tool-use-failure.js` reads Claude Code's `PostToolUseFailure` event and logs
+`wd-guard-refusal` (`reason: harness-worktree-isolation`, plus `actor` and `variant`) when the error
+carries that refusal text. A dispatched agent's refusal reaches the same hook (measured 2026-10-28:
+an `isolation: "worktree"` agent's refused Bash call fires the parent session's
+`PostToolUseFailure`). Because the ordinary ad-hoc order is `ExitWorktree remove`
 before wrap-up — after which the recorded worktree path matches nothing — `friction-events.js` also
 unions every ad-hoc dir owned by the current session id (`--session`, default
 `CLAUDE_CODE_SESSION_ID`). **Known limitation:** a session whose id changes between the friction and
@@ -232,6 +235,17 @@ plugin should have had a default for):
 stop count looks disproportionate to its own scope — weighed against the record's own `Estimated
 tasks`/Deliverables count as a rough proportionality anchor (a 2-task record with 8 stops reads
 differently than an 8-task record with 8 stops), never against a hardcoded number.
+
+**Isolation-refusal breakdown (#3819).** For `wd-guard-refusal` events with `reason:
+harness-worktree-isolation`, report the count split by `actor`: `session` is the operator's own,
+`agent` a dispatched agent's (still the run's friction, usually traceable to the dispatch prompt the
+run wrote). Name every `variant: worktree-gone` event individually: the refused actor's isolation worktree
+was removed under it — lost isolation, not a command-shape refusal. An event with no `actor`/`variant`
+(logged before #3819) counts as `actor: session`, `variant: guard`. **Known limitation:** an agent
+refusal from its own still-live isolation worktree lands in an ad-hoc dir keyed to that worktree,
+which `friction-events.js` merges only once that worktree is removed (`findAdHocRunsBySessionId`); a
+worktree-gone refusal in a session with no trusted owned run has no listed cwd to key a stamp on, so
+it lands on the fallback guess the primary read drops. Both counts are lower bounds.
 
 A finding from either judgment is an ordinary reflect insight from here on — route it through
 Step 3's `_shared/learning-routing.md` classifier exactly like every other lens's finding. A

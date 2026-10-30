@@ -500,7 +500,8 @@ for (const [cmd, dir] of [
 // #4303: the -t forms that resolved before the cluster reading still resolve. bash 3.2 and 5 with
 // GNU coreutils write M/a or M/f for `cp -t M a`, `mv -t M a`, `cp --target-directory=M a`,
 // `cp --target-directory M a`, `install -t M f`, `install -m644 -t M f`, `install -m 644 -t M f`
-// and `ln -t M a`, and for `cp a -tM` (getopt permutes, so an option after the operands counts).
+// and `ln -t M a`; `cp a -tM` (getopt permutes, so an option after the operands counts) is pinned in
+// #4449's two-destination rows below, where macOS's BSD reading is reported too.
 // The first value-taking letter ends the cluster: `cp -St M/g a` and `cp -S -t M/g a` copy M/g
 // to a (`t`, then the word `-t`, is -S's backup suffix), `cp -S -tfoo a M/g` writes M/g, and
 // `cp -S .bak -t M a` writes M/a; `install -m -t M/g h` writes h (`-t` is the mode), and
@@ -508,7 +509,7 @@ for (const [cmd, dir] of [
 for (const [cmd, file] of [
   ['cp -t /main a', '/main'], ['mv -t /main a', '/main'], ['cp --target-directory=/main a', '/main'],
   ['cp --target-directory /main a', '/main'], ['install -t /main f', '/main'], ['install -m644 -t /main f', '/main'],
-  ['install -m 644 -t /main f', '/main'], ['ln -t /main a', '/main'], ['cp a -t/main', '/main'],
+  ['install -m 644 -t /main f', '/main'], ['ln -t /main a', '/main'],
   ['cp -St /main/f.js a', 'a'], ['cp -S -t /main/f.js a', 'a'], ['cp -S -tfoo a /main/f.js', '/main/f.js'],
   ['cp -S .bak -t /main a', '/main'], ['install -m -t /main/f.js g', 'g'], ['ln -St /main/f.js a', 'a'],
 ]) {
@@ -529,16 +530,24 @@ for (const [cmd, file] of [
   });
 }
 // #4303: a GNU long option that takes a value takes the next word when no `=` follows, abbreviated
-// or not, so a `-t` there is that value and no option. bash 3.2 and 5 with GNU coreutils 9.12 write
-// M/g for each row (`cp --suffix -t a M/g` copies a to M/g); `install --strip -t M g` writes M/g
-// (`--strip` is an exact name, so it takes no value though it abbreviates `--strip-program`), and
-// `cp --backup -t M a` writes M/a (`--backup` takes a value only after `=`). macOS's BSD tools
-// reject each long option and write nothing.
+// or not, so a `-t` there is that value and no option. With GNU coreutils 9.12 under bash 3.2 and 5,
+// every row below except the exceptions named here writes its target: `cp --suffix -t a /main/f.js`
+// copies a to /main/f.js, `install --strip -t /main g` installs g into /main, and `cp --backup -t /main a`
+// copies a into /main. `--strip` is an exact name, so it takes no value though it abbreviates
+// `--strip-program`. `--backup` takes a value only after `=`. macOS's BSD tools reject each long option
+// and write nothing. The exceptions: `install --gro staff -d` and `install --own root -d` create the
+// directory they name, not a file (`-d` makes every positional a directory, so a dropped value shows up
+// as an extra one; `--own` as a non-root user creates it, then fails the chown). `cp --no-preserve` and
+// `cp --sparse` are rejected by GNU (`invalid argument`), so nothing is written; their rows pin the
+// reading that keeps `-t` from naming the target. `install --mo -t` writes its file, since `-t` is a
+// valid symbolic mode.
 for (const [cmd, file] of [
   ['cp --suffix -t a /main/f.js', '/main/f.js'], ['cp --suf -t a /main/f.js', '/main/f.js'], ['mv --suffix -t a /main/f.js', '/main/f.js'],
   ['ln --suffix -t a /main/f.js', '/main/f.js'], ['install --suffix -t a /main/f.js', '/main/f.js'], ['install --mode -t a /main/f.js', '/main/f.js'],
   ['install --strip-program -t a /main/f.js', '/main/f.js'], ['install --suf -t a /main/f.js', '/main/f.js'], ['ln --suf -t a /main/f.js', '/main/f.js'],
   ['install --strip -t /main g', '/main'], ['cp --backup -t /main a', '/main'],
+  ['cp --no-preserve -t a /main/f.js', '/main/f.js'], ['cp --sparse -t a /main/f.js', '/main/f.js'], ['install --mo -t a /main/f.js', '/main/f.js'],
+  ['install --gro staff -d /main/x', '/main/x'], ['install --own root -d /main/x', '/main/x'],
 ]) {
   test(`#4303: \`${cmd}\` reads a long option's value as no operand`, () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', file)]);
@@ -550,6 +559,55 @@ for (const [cmd, file] of [
 for (const cmd of ['install a b --suf /main', 'ln -s a b --suf /main']) {
   test(`#4303: \`${cmd}\` keeps the BSD reading of a long option after an operand`, () => {
     assert.ok(fileWriteTargets(cmd, '/r').some((t) => t.file === MAIN_ROOT), JSON.stringify(fileWriteTargets(cmd, '/r')));
+  });
+}
+// #4449: a cp or mv value option (-S, --suffix, --suf, -bS) takes the word after it, so that word is
+// no operand. bash 3.2 probed on macOS: GNU coreutils cp and mv write b for each row (`cp a b -S .bak`
+// copies a to b), while macOS's BSD /bin/cp and /bin/mv stop option parsing at the first operand and
+// write .bak/a and .bak/b. The GNU reading is reported first, then the BSD one.
+//
+// The BSD reading takes every word from the first operand on as an operand, so its destination is
+// the literal last word, a dash word included. bash 3.2 probed on macOS (/bin/cp, /bin/mv against
+// gcp, gmv, with directories d, e, -v and --suffix=.bak present): `cp a b -t d e` writes e/a and
+// e/b under BSD and d/a and d/b under GNU; `cp a b -v` writes -v/a and -v/b under BSD; `cp a b
+// --suffix=.bak` writes --suffix=.bak/a and /b under BSD; `cp a b --sparse always` has the BSD
+// destination always. A dash word is a file here, so it is reported as ./-v.
+for (const [cmd, files] of [
+  ['cp a b -S .bak', ['b', '.bak']], ['cp a b --suffix .bak', ['b', '.bak']], ['cp a b --suf .bak', ['b', '.bak']],
+  ['mv a b -S .bak', ['b', '.bak']], ['cp a b -bS .bak', ['b', '.bak']],
+  ['cp a b -t d e', ['d', 'e']], ['mv a b -t d e', ['d', 'e']], ['cp a -t/main', ['/main', '-t/main']],
+  ['cp a b -v', ['b', '-v']], ['cp a b --suffix=.bak', ['b', '--suffix=.bak']],
+  ['cp a b --sparse always', ['b', 'always']], ['cp a b --no-preserve mode', ['b', 'mode']],
+  ['cp a b -S', ['b', '-S']], ['cp a b --suffix', ['b', '--suffix']],
+]) {
+  test(`#4449: \`${cmd}\` reports the GNU destination and the BSD destination`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), files.map((f) => path.resolve('/r', f)));
+  });
+}
+// #4449: each row resolves exactly one destination. `cp --suffix -t X a` copies X to a under GNU (the
+// -t is --suffix's value); macOS's BSD cp rejects --suffix as an illegal option and writes nothing, so
+// its reading is dropped. `cp -t d a b` is the same: BSD has no -t (illegal option, nothing written), so
+// only the -t directory is reported. `cp -S .bak a b` writes b. `cp -- a -x b -S .bak` writes .bak:
+// after `--` every word is an operand, so the readings agree. `cp a -S .bak` has one GNU operand, so
+// GNU writes nothing (no destination) and only the BSD reading, .bak, is reported. A lone `-` is a
+// file operand for GNU and BSD alike: `cp a -` writes the file ./-, `cp - /x/y` writes /x/y, and
+// `cp -- a -v` writes ./-v.
+for (const [cmd, file] of [
+  ['cp --suffix -t X a', 'a'], ['cp -S .bak a b', 'b'], ['cp -t d a b', 'd'],
+  ['cp -- a -x b -S .bak', '.bak'], ['cp a -S .bak', '.bak'],
+  ['cp a -', '-'], ['mv a -', '-'], ['cp - /x/y', '/x/y'], ['cp -- a -v', '-v'],
+  ['cp - -S', '-S'], ['cp -S .bak a -', '-'], ['cp -S .bak -- a b', 'b'],
+]) {
+  test(`#4449: \`${cmd}\` resolves exactly one destination`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r', file)]);
+  });
+}
+// #4449: one operand and a value option leave no destination under either reading: GNU needs two
+// operands once the option's value is skipped, and BSD rejects the option (illegal option, nothing
+// written), so its reading is dropped.
+for (const cmd of ['cp --sparse always a', 'cp -S .bak a', 'cp --suffix .bak a']) {
+  test(`#4449: \`${cmd}\` reports no destination`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), []);
   });
 }
 // #4303: a digit or a backup suffix in a cluster does not hide -i. bash 3.2 and 5: perl -0pi,
@@ -883,8 +941,8 @@ test('#4210 F1: a closed "$( … )" or "${ … }" still lets a later redirect re
   }
 });
 
-// #4210 review: two shapes the nesting walk used to leave nested for the rest of the
-// command, hiding a later genuine redirect that main resolved. A heredoc opened inside
+// #4210 review: two shapes the nesting walk must not leave nested for the rest of the
+// command, hiding a later genuine redirect that main resolved (before #4210 it did). A heredoc opened inside
 // "$( … )" is found by stripHeredocBodies, so its body's `'` or backtick is data; a `(`,
 // `)` or `'` inside "${ … }" is literal word text, so only the `}` closes it.
 test('#4210 review: a heredoc body inside "$( … )" does not leave the nesting state open', () => {
@@ -1026,7 +1084,7 @@ test('#3989: a body fed to a shell is still scanned (bash, pipe into sh, unresol
   assert.deepStrictEqual(fileWriteTargets('$SHELL <<EOF\necho x > f.js\nEOF', '/r'), expected);
 });
 
-// Fix round 1 (#3989): bash expands `$(...)` and backticks in an unquoted body, so
+// #3989: bash expands `$(...)` and backticks in an unquoted body, so
 // those bodies stay visible; a quoted delimiter's body is never expanded.
 // The parser is token-based, so the closing `)` stays on the target name (`f.js)`),
 // exactly as a one-line `echo $(echo x > f.js)` already does on main. The gate
@@ -1049,7 +1107,7 @@ test('#3989: a quoted heredoc delimiter is never expanded, so its body command s
   assert.deepStrictEqual(fileWriteTargets('node x.js <<"EOF"\n$(echo x > f.js)\nEOF', '/r'), []);
 });
 
-// Fix round 1 (#3989): an opener bash reads differently from this parser (or a
+// #3989: an opener bash reads differently from this parser (or a
 // body with no closing line) must not swallow the commands after it. Each opener
 // below is a real command in bash; the trailing redirect must still resolve.
 test('#3989: a body with no closing delimiter keeps the text from its opener on, so a trailing redirect resolves', () => {
@@ -1068,7 +1126,7 @@ test('#3989: a delimiter with a backslash ends at its own spelling, as bash read
   assert.deepStrictEqual(fileWriteTargets('cat <<"E\\F"\nx > a\nE\\F\necho x > f.js', '/r'), f);
 });
 
-// Fix round 1 (#3989): a line ending in a continuation operator hands its bodies to
+// #3989: a line ending in a continuation operator hands its bodies to
 // the next command, so they stay visible.
 test('#3989: an opener line ending in |, && or || keeps its bodies, since the next command receives them', () => {
   const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
@@ -1077,7 +1135,7 @@ test('#3989: an opener line ending in |, && or || keeps its bodies, since the ne
   assert.deepStrictEqual(fileWriteTargets('cat <<EOF ||   # piped on\necho x > f.js\nEOF\nsh', '/r'), f);
 });
 
-// Fix round 1 (#3989): the shell carve-out covers the wider shell family and the
+// #3989: the shell carve-out covers the wider shell family and the
 // wrappers that run a program, and a backslash no longer hides a shell's name.
 test('#3989: the shell carve-out covers su, tcsh, versioned shells, backslash-escaped names, and wrapped shells', () => {
   const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
@@ -1090,7 +1148,7 @@ test('#3989: the shell carve-out covers su, tcsh, versioned shells, backslash-es
   assert.deepStrictEqual(fileWriteTargets('sudo node x.js <<EOF\nif (a > 0) b();\nEOF', '/r'), [], 'a wrapper running a non-shell program is not widened');
 });
 
-// Fix round 2 (#3989): a shell reader the carve-out must still recognize, in the shapes
+// #3989: a shell reader the carve-out must still recognize, in the shapes
 // a glued operator, a group, or a process substitution gives it. Each body runs as
 // shell in bash, so its `echo x > f.js` must still resolve.
 test('#3989: a shell glued to its heredoc operator (`sh<<EOF`, `bash<<-EOF`) keeps its body visible', () => {
@@ -1108,14 +1166,14 @@ test('#3989: a shell in a group or process substitution (`(bash)`, `| (bash)`, `
   assert.ok(fileWriteTargets('cat <<EOF | tee >(bash)\necho x > f.js\nEOF', '/r').some((t) => t.file === path.resolve('/r', 'f.js')));
 });
 
-// Fix round 2 (#3989): bash decodes `$'...'`/`$"..."`, which this parser does not, so
+// #3989: bash decodes `$'...'`/`$"..."`, which this parser does not, so
 // a terminator here is unprovable. The text from the opener on stays visible.
 test('#3989: a `$\'...\'` heredoc delimiter is unprovable, so a planted terminator cannot strip a real command', () => {
   assert.deepStrictEqual(fileWriteTargets("cat <<$'EOF'\nEOF\necho x > f.js\n$EOF", '/r'), [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
   assert.deepStrictEqual(fileWriteTargets('cat <<$"EOF"\nEOF\necho x > f.js\n$EOF', '/r'), [{ action: 'write', file: path.resolve('/r', 'f.js') }]);
 });
 
-// Fix round 3 (#3989): bash decodes `$'...'`/`$"..."` anywhere in the delimiter word,
+// #3989: bash decodes `$'...'`/`$"..."` anywhere in the delimiter word,
 // not only at its start, so `a$'EOF'` ends at `aEOF`. Any `$'`/`$"` is unprovable.
 test('#3989: a `$\'...\'` or `$"..."` delimiter mid-word is unprovable too, so the trailing redirect resolves', () => {
   const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
@@ -1674,14 +1732,18 @@ test('#4303: the `]` of `$[ … ]` ends the arithmetic', () => {
   // bash 3.2 and 5 write M/f.js.
   assert.ok(fileWriteTargets('x=$[ $(true; true) + 1 ] cd /main; cp a f.js', '/r').some((t) => t.file === MAIN_F));
 });
-// #4303: a `$[` opened on an earlier line keeps its subscript count across a segment whose pass is
-// read again flat (a `${` nest past NEST_LEVEL_CAP), so the second pass starts from the count the
-// first began with and the `] ]` on the next line still closes the `$[`. bash 3.2 and 5 write f.js
-// in the starting directory for both rows (the `&` backgrounds the cd).
-test('#4303: a flat second pass inside a multi-line `$[ … ]` restarts its subscript count', () => {
+// #4303: a multi-line `$[ … ]` ends at the `]` that matches its `$[`, not at a subscript's `]`. With
+// the `] ]` on the next line the `$[` closes and the `&` backgrounds the cd, so bash 3.2 and 5 write
+// f.js in the starting directory. With one `]` the subscript closes and the `$[` stays open to the
+// end: bash reads the rest as arithmetic and fails the whole command (a syntax error, nothing runs,
+// so no write). The deep rows nest `${` past NEST_LEVEL_CAP, so their pass reads flat.
+test('#4303: a multi-line `$[ … ]` closes only on its own `]`, flat second pass or not', () => {
   const deep = `"${'${x:-'.repeat(40)}x${'}'.repeat(40)}"`;
   for (const cmd of [`y=$[ 1 +\na[${deep}\n] ]; cd /tmp & cp a f.js`, 'y=$[ 1 +\na[1\n] ]; cd /tmp & cp a f.js']) {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'copy', file: path.resolve('/r/f.js') }], cmd.slice(0, 40));
+  }
+  for (const cmd of [`y=$[ 1 +\na[${deep}\n]; cd /tmp & cp a f.js`, 'y=$[ 1 +\na[1\n]; cd /tmp & cp a f.js']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd.slice(0, 40));
   }
 });
 // #4303: a process substitution is a command list, and a bare `(` outside arithmetic may be a
@@ -1918,7 +1980,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     assert.ok(got.includes(path.resolve('/r/f')), 'bash: /r/f');
     assert.ok(got.includes(path.resolve('/wt/f')), 'the arm cwd, kept as a superset');
   });
-  // #4481 round 2: a first-element case whose arm holds a group with its own pipe. bash 3.2, bash 5
+  // #4481: a first-element case whose arm holds a group with its own pipe. bash 3.2, bash 5
   // and zsh write /r/f for each: the group's `|` belongs to the group, so the pipeline still starts at /r.
   for (const cmd of [
     'case a in a) ( cd /q | cat ); cd /wt;; esac | cat; echo x > f',
@@ -1928,20 +1990,20 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       assert.ok(files(cmd).includes(path.resolve('/r/f')), 'bash 3.2, bash 5 and zsh: /r/f');
     });
   }
-  // #4481 round 2: a group's pipe inside a first-element arm adds no cwd of its own: bash 3.2, bash 5
-  // and zsh write /r/f only, so /q/f is a spurious target. Guard: passes on origin/main too; it pins the
-  // rule against an earlier review round's regression.
+  // #4481: a group's pipe inside a first-element arm adds no cwd of its own: bash 3.2, bash 5
+  // and zsh write /r/f only, so /q/f is a spurious target. Guard: passes on origin/main too; it pins
+  // the rule against a regression that would carry the group pipe's cwd out of the arm.
   test('#4481 case: `case a in a) { cd /q | cat; };; esac | cat; echo x > f` does not carry the group pipe cwd out', () => {
     assert.deepStrictEqual(files('case a in a) { cd /q | cat; };; esac | cat; echo x > f'), [path.resolve('/r/f')]);
   });
-  // #4481 round 2: a leading-paren pattern's arm keeps its own `cd` for its later commands. bash 3.2,
+  // #4481: a leading-paren pattern's arm keeps its own `cd` for its later commands. bash 3.2,
   // bash 5 and zsh write /wt/g for each (the arm's redirect runs after its cd).
   for (const cmd of ['case a in (a) cd /wt; echo y > g;; esac', 'case a in (a) cd /wt; echo y > g;; esac | cat; echo x > f']) {
     test(`#4481 case: \`${cmd}\` keeps the arm's cd for its own writes`, () => {
       assert.ok(files(cmd).includes(path.resolve('/wt/g')), 'bash: /wt/g');
     });
   }
-  // #4481 round 3: a first-element case pipeline inside an outer case's arm, with no group wrapper. The
+  // #4481: a first-element case pipeline inside an outer case's arm, with no group wrapper. The
   // inner `esac` returns the walk to the outer arm, which is still open. bash 3.2, bash 5 and zsh write
   // /r/g for each, and /r/f for the trailing write.
   for (const [cmd, wants] of [
@@ -1955,7 +2017,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   test('#4481 case: a first-element case pipeline inside an outer arm ends under its start at a newline', () => {
     assert.ok(files('case a in a) case b in b) cd /wt;; esac | cat\necho y > g;; esac').includes(path.resolve('/r/g')), 'bash 3.2, bash 5 and zsh: /r/g');
   });
-  // #4481 round 3: the `||` branch of a first-element case pipeline ends at the pipeline's start cwd. The
+  // #4481: the `||` branch of a first-element case pipeline ends at the pipeline's start cwd. The
   // pipeline ends in `false`, so it fails and `|| …` runs: bash 3.2, bash 5 and zsh write the `||` branch's
   // target at /r (bash 3.2 cannot parse the `$( )` row's unparenthesized pattern, so bash 5 and zsh decide it).
   test('#4481 case: `case a in a) cd /m;; esac | false || echo x > f` ends its pipeline under the start cwd', () => {
@@ -1967,7 +2029,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   test('#4481 substitution: `echo $(case a in a) cd /q;; esac | false || echo y > g)` ends its pipeline under the start cwd', () => {
     assert.ok(files('echo $(case a in a) cd /q;; esac | false || echo y > g)').includes(path.resolve('/r/g')), 'bash 5 and zsh: /r/g when the pipeline fails');
   });
-  // #4481 round 3: a leading-paren arm's group, subshell and function body keep their cd for the commands
+  // #4481: a leading-paren arm's group, subshell and function body keep their cd for the commands
   // after them. bash 3.2, bash 5 and zsh write /wt/f and /wt/g for the first, /wt/g for the others.
   for (const [cmd, wants] of [
     ['case a in (a) { cd /wt; echo y > g; };; esac; echo x > f', ['/wt/f', '/wt/g']],
@@ -2004,7 +2066,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   // #4481: the arm's `;;` merges into the arm's cwd the cwds the list was skipping past, and a pipeline drops
   // the cwd in effect, so a first-element case pipeline takes them back from its record. bash 3.2, bash 5 and
   // zsh write /m/f (`cd /m` succeeds, so the whole pipeline is skipped). Guard: passes on origin/main too;
-  // it pins the rule against an earlier review round's regression.
+  // it pins the rule against a regression that would lose the skipped cwd at a first-element case
+  // pipeline.
   test('#4481 case: `cd /m || case a in a) true;; esac | cat | case a in a) true;; esac; echo x > f` keeps the skipped cwd', () => {
     assert.ok(files('cd /m || case a in a) true;; esac | cat | case a in a) true;; esac; echo x > f').includes(path.resolve('/m/f')), 'bash: /m/f');
   });
@@ -2082,9 +2145,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     const got = files('function f { case a in a) cd /wt;; esac > k; }; f; f');
     for (const want of ['/r/k', '/wt/k']) assert.ok(got.includes(path.resolve(want)), `bash: ${want}`);
   });
-  // The redirect goes where the case its `esac` closes began, not an outer case: bash 3.2, bash 5 and zsh
-  // write /q/k for the armless inner case. Guard: passes on origin/main too; it pins the rule against an
-  // earlier review round's regression.
+  // #4481: the redirect goes where the case its `esac` closes began, not an outer case: bash 3.2, bash 5
+  // and zsh write /q/k for the armless inner case. Guard: passes on origin/main too; it pins the rule
+  // against a regression that would resolve the redirect to an outer case.
   test('#4481 case: `case a in a) cd /q; case x in esac > k;; esac` resolves the redirect where the inner case began', () => {
     assert.deepStrictEqual(files('case a in a) cd /q; case x in esac > k;; esac'), [path.resolve('/q/k')]);
   });
@@ -2109,9 +2172,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   test('#4481 case: `case x in esac; cd /q; echo y > g` keeps the cd after an armless case', () => {
     assert.deepStrictEqual(files('case x in esac; cd /q; echo y > g'), [path.resolve('/q/g')]);
   });
-  // An armless case that is a later pipeline element is born and closed at the `|` after it, and the
-  // pipeline goes on from its own start: bash 3.2, bash 5 and zsh write /r/g only. Guard: passes on
-  // origin/main too; it pins the rule against an earlier review round's regression.
+  // #4481: an armless case that is a later pipeline element is born and closed at the `|` after it, and
+  // the pipeline goes on from its own start: bash 3.2, bash 5 and zsh write /r/g only. Guard: passes on
+  // origin/main too; it pins the rule against a regression that would restart the pipeline at the case.
   test('#4481 case: `true | { cd /q; } | case x in esac | cat; echo y > g` keeps the pipeline\'s start', () => {
     assert.deepStrictEqual(files('true | { cd /q; } | case x in esac | cat; echo y > g'), [path.resolve('/r/g')]);
   });
@@ -2388,9 +2451,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     });
     // #4303: without an overflowCwd (the pipeline shadow guard) the collapse is a lost cwd at the
     // start, so a relative target resolves under the start, never above it. With every /aN and
-    // /r/sub present, bash 3.2 and 5 create /r/.claude-tweaks/pipelines/2026-x and write /r/ok.out;
-    // an earlier revision of this branch collapsed to the real start and reported
-    // /.claude-tweaks/pipelines/2026-x and /ok.out. The && chain is the walk's own branching: base d9aa6b82d took every cd to succeed and never
+    // /r/sub present, bash 3.2 and 5 create /r/.claude-tweaks/pipelines/2026-x and write /r/ok.out.
+    // Resolving from the real start instead would report /.claude-tweaks/pipelines/2026-x and /ok.out.
+    // The && chain is the walk's own branching: base d9aa6b82d took every cd to succeed and never
     // collapsed there, so base's own reading of the command, a known target marked `reading`, is
     // the path bash writes, beside the lost one.
     test('#4303 cwd cap: without an overflowCwd a relative target past the cap resolves under the start, never above it', () => {
@@ -2452,7 +2515,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // #4303: an `||` ok-join past the cap drops the cwd an earlier `cd` in the list succeeded
     // in. With every /bN and M/q present, bash 3.2 and 5 write M/f.js (`cd q` succeeds in M and
     // `cd ../q` is skipped; with M/q absent they write /f.js). Base d9aa6b82d never collapses here and
-    // denies; an earlier revision of this branch reported only /f.js (allowed).
+    // denies. Reporting only /f.js would allow the write.
     test('#4303 cwd cap: an || ok-join collapse still resolves into the main checkout where an earlier cd succeeded', () => {
       const cmd = distinct((i) => `{ cd /b${i}; }; `, 14) + '{ cd /main; }; cd q || cd ../q; echo x > ../f.js';
       const files = fileWriteTargets(cmd, '/r', opts).map((t) => t.file);
@@ -2476,14 +2539,15 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // #4303: those paths are stand-ins, so every target resolved from a lost cwd also carries an
     // additive marker, `lost: true` (a write or mkdir target also `rel`, its text as written), beside
     // the fields it always had, with an overflowCwd and without one. An absolute target, and a git
-    // command after an absolute cd or `-C`, is known and carries none. A command with a lost target also comes back with base d9aa6b82d's own readings of it: the
-    // targets base's walk resolves, as this branch's other scanner fixes correct them (every command taken to succeed; past the cap the set
+    // command after an absolute cd or `-C`, is known and carries none. A command with a lost target
+    // also comes back with base d9aa6b82d's own readings of it: the targets base's walk resolves, as
+    // the other #4303 scanner fixes correct them (every command taken to succeed; past the cap the set
     // collapses to the overflow cwd and the start, as real paths), each a known target marked
     // `reading`, after the walk's own and once each, unless the walk already resolved it (after
     // `cd q`, ../w/f.js reads /main/w/f.js and /r/w/f.js; from /r alone, /w/f.js). Accepted gap, user
-    // decision 2026-10-26 (base parity): an earlier revision of this branch also read every cwd the
-    // collapse dropped (each /aN), moved and unmoved, and kept them on each lost target; the scanner
-    // now marks only base's readings `reading: true`. A lost commit also carries its message's `subject`.
+    // decision 2026-10-26 (base parity): only base's readings are marked `reading: true`; the cwds the
+    // collapse dropped (each /aN), moved and unmoved, are not read. A lost commit also carries its
+    // message's `subject`.
     test('#4303 cwd cap: a target resolved from a lost cwd carries lost: true beside its stand-in path', () => {
       const past = distinct((i) => `{ cd /a${i}; }; `, 16);
       const lostAt = (file, rel, action = 'write') => ({ action, file, lost: true, rel });
@@ -2507,11 +2571,10 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       ]);
       assert.deepStrictEqual(gitTargets(`${past}cd /t; git commit -m m`, '/r', opts), [{ action: 'commit', dir: path.resolve('/t') }]);
       assert.deepStrictEqual(gitTargets(`${past}git commit -m m`, '/r'), [{ action: 'commit', dir: path.resolve('/r'), lost: true, subject: 'm' }, dirReading('commit', '/r')]);
-      // A relative cd from the lost cwd that spells `.claude-tweaks` and then `pipelines` (here split
-      // across two cds, with other components between) is kept in `rel`, so `mkdir 2026-x` names it.
-      // An earlier revision of this branch also kept each cd's failing (unmoved) variant: `2026-x`,
-      // `.claude-tweaks/2026-x` and `pipelines/2026-x` beside it (accepted gap, user decision
-      // 2026-10-26, base parity).
+      // #4303: a relative cd from the lost cwd that spells `.claude-tweaks` and then `pipelines` (here
+      // split across two cds, with other components between) is kept in `rel`, so `mkdir 2026-x` names
+      // it. Each cd's failing (unmoved) variant is not kept: `2026-x`, `.claude-tweaks/2026-x` and
+      // `pipelines/2026-x` are not added beside it (accepted gap, user decision 2026-10-26, base parity).
       const lostRels = (cmd) => mkdirTargets(cmd, '/r').filter((t) => t.lost).map((t) => t.rel);
       assert.deepStrictEqual(lostRels(`${past}cd ../w/.Claude-Tweaks; cd x/../Pipelines; mkdir 2026-x`), ['.claude-tweaks/pipelines/2026-x']);
       assert.deepStrictEqual(lostRels(`${past}cd ../w/pipelines/.claude-tweaks; mkdir pipelines/2026-x`), ['.claude-tweaks/pipelines/2026-x']);
@@ -2519,9 +2582,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // #4303: a collapse that drops a cwd the walk could not read (`cd $(x)` leaves it unknown) drops it
     // as base d9aa6b82d's collapse did: the readings are base's own (from the overflow cwd and the
     // start), and no target is marked `capped`. Accepted gap, user decision 2026-10-26 (base parity):
-    // an earlier revision of this branch marked both lost targets `capped: true` and denied on them
-    // whatever the session's policy. Now: the two lost targets and the readings /main/f and /r/f
-    // (base: /main/f and /r/f as plain targets).
+    // the two lost targets are not marked `capped: true`, which would deny them whatever the session's
+    // policy. They stand as the two lost targets and the readings /main/f and /r/f (base: /main/f and
+    // /r/f as plain targets).
     test('#4303 cwd cap: a collapse that drops a cwd the walk could not read gives base\'s readings, uncapped', () => {
       const past = distinct((i) => `{ cd /a${i}; }; `, 16);
       assert.deepStrictEqual(fileWriteTargets(`cd $(x); ${past}echo x > f`, '/r', opts), [
@@ -2535,8 +2598,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // 140 groups `{ cd /mN; }`, `{ cd /q/sub; }` and 16 more, then `cd .. && echo x > f`: base's
     // collapse leaves /main and /r, both / after `..`, so f reads /f (the walk's own known /aN reach
     // it too). 70 groups, then `echo x > f` or `cd s; echo x > f`: /main/f and /r/f, or /main/s/f
-    // and /r/s/f. Accepted gap, user decision 2026-10-26 (base parity): an earlier revision of this
-    // branch read every dropped cwd and capped the first and third past 128 readings. Now, for the
+    // and /r/s/f. Accepted gap, user decision 2026-10-26 (base parity): the dropped cwds are not read
+    // and none is capped; reading each would cap the first and third past 128 readings. For the
     // three commands in turn, beside the two lost targets: /f, then readings /main/f and /r/f, then
     // /main/s/f and /r/s/f (base: the same as plain targets).
     test('#4303 cwd cap: a command with a lost target carries base\'s readings however many cwds the walk dropped', () => {
@@ -2581,11 +2644,11 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // ../f.js`: bash 3.2 and 5 write /r/f.js; with /r/a/b present instead, /r/a/f.js. The readings hold
     // both and /f.js (no cd taken), and the same from /main, unclamped, each once. A relative `git -C`
     // or `env -C` moves the reading as it moves bash: `{ cd a; }; git -C ../M commit` runs in /r/M
-    // with /r/a present and in /M without. Accepted gap, user decision 2026-10-26 (base parity):
-    // An earlier revision of this branch also read every /aN the collapse dropped (bash writes
-    // /a15/f.js with /a15 present). Now, for the write and the commit: the two lost targets with
-    // readings /f.js, /main/f.js, /r/f.js, /main/a/f.js and /r/a/f.js, and /M, /main/M and /r/M
-    // (base: the five write paths and the three commit dirs as plain targets).
+    // with /r/a present and in /M without. Accepted gap, user decision 2026-10-26 (base parity): the
+    // /aN the collapse dropped are not read (bash writes /a15/f.js with /a15 present). For the write
+    // and the commit, the two lost targets carry the readings /f.js, /main/f.js, /r/f.js, /main/a/f.js
+    // and /r/a/f.js, and /M, /main/M and /r/M (base: the five write paths and the three commit dirs as
+    // plain targets).
     test('#4303 cwd cap: a command with a lost target carries base\'s reading under every cwd base\'s walk may be in', () => {
       const past = distinct((i) => `{ cd /a${i}; }; `, 16);
       const abs = (...ps) => ps.map((p) => path.resolve(p));
@@ -2603,8 +2666,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // #4303: a later collapse keeps the furthest trail the collapsing set had spelled. From /r with
     // /r/.claude-tweaks/pipelines present, `G16 cd .claude-tweaks/pipelines; G16 mkdir 2026-x`, and
     // the split `cd .claude-tweaks; G16 mkdir pipelines/2026-x`: bash 3.2 and 5 create
-    // /r/.claude-tweaks/pipelines/2026-x. An earlier revision of this branch restarted the trail at
-    // the second collapse and reported `2026-x` and `pipelines/2026-x`, naming no segment.
+    // /r/.claude-tweaks/pipelines/2026-x. Restarting the trail at the second collapse would report
+    // `2026-x` and `pipelines/2026-x`, naming no segment.
     test('#4303 cwd cap: a second collapse keeps the .claude-tweaks/pipelines trail spelled before it', () => {
       const past = distinct((i) => `{ cd /a${i}; }; `, 16);
       const lostRels = (cmd) => mkdirTargets(cmd, '/r').filter((t) => t.lost).map((t) => t.rel);
@@ -2621,9 +2684,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // cd before the loss seeds nothing (`cd .claude-tweaks/pipelines; cd /r/sub; G16 mkdir 2026-x`
     // creates /r/sub/2026-x), and a `.claude-tweaks` cwd alone names no `pipelines` for a target
     // that adds none (`cd .claude-tweaks; G16 mkdir other-x` creates /r/.claude-tweaks/other-x).
-    // An earlier revision of this branch seeded no trail from a known cwd: it reported `2026-x`,
-    // `pipelines/2026-x`, `2026-x` and `.claude-tweaks/2026-x` for the first four rows below, and
-    // `other-x` for the sixth.
+    // Seeding no trail from a known cwd would report `2026-x`, `pipelines/2026-x`, `2026-x` and
+    // `.claude-tweaks/2026-x` for the first four rows below, and `other-x` for the sixth.
     test('#4303 cwd cap: a known cwd in the collapsing set seeds the .claude-tweaks/pipelines trail its path spells', () => {
       const past = distinct((i) => `{ cd /a${i}; }; `, 16);
       const lostRels = (cmd, cwd = '/r') => mkdirTargets(cmd, cwd).filter((t) => t.lost).map((t) => t.rel);
@@ -2636,9 +2698,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       assert.deepStrictEqual(lostRels(`${past}cd .claude-tweaks; { cd /w/.claude-tweaks/pipelines; }; ${past}mkdir 2026-x`), ['.claude-tweaks/pipelines/2026-x']);
       assert.deepStrictEqual(lostRels(`cd .claude-tweaks/pipelines; cd /r/sub; ${past}mkdir 2026-x`), ['2026-x']);
       assert.deepStrictEqual(lostRels(`cd .claude-tweaks; ${past}mkdir other-x`), ['.claude-tweaks/other-x']);
-      // The seed reaches the overflow cwd's lost target too, so every lost cwd of the collapse agrees
-      // (bash 3.2 and 5 write /r/.claude-tweaks/pipelines/f; an earlier revision of this branch
-      // reported `f` for both).
+      // #4303: the seed reaches the overflow cwd's lost target too, so every lost cwd of the collapse
+      // agrees (bash 3.2 and 5 write /r/.claude-tweaks/pipelines/f; a collapse that seeds no trail
+      // would report `f` for both).
       assert.deepStrictEqual(fileWriteTargets(`cd .claude-tweaks/pipelines; ${past}echo x > f`, '/r', opts).filter((t) => t.lost).map((t) => t.rel),
         ['.claude-tweaks/pipelines/f', '.claude-tweaks/pipelines/f']);
     });
@@ -2686,9 +2748,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     });
     // #4303: the walk follows a cwd past 4,096 characters and back. From a tree of 2,100 nested `d`
     // directories in the worktree, seven 300-level descents, seven 300-level climbs and `cd ../M`
-    // (10.6 KB) end in M: bash 5 writes M/leak.out (bash 3.2 did not finish within 1,000 s on the
-    // oracle machine; it was later seen to write M/leak.out too). A length bound that collapsed the
-    // cwd onto the overflow path started the climbs from M and missed it.
+    // (10.6 KB) end in M: bash 5 writes M/leak.out, and bash 3.2 also writes M/leak.out, though it
+    // takes over 1,000 s on the oracle machine. A length bound that collapsed the cwd onto the overflow
+    // path would start the climbs from M and miss it.
     test('#4303 cwd cap: a cwd that descends past 4,096 characters and climbs back resolves where bash is', () => {
       const cmd = `cd ${'d/'.repeat(300)}; `.repeat(7) + `cd ${'../'.repeat(300)}; `.repeat(7) + 'cd ../M; echo x > leak.out';
       assert.deepStrictEqual(boundedTargets('fileWriteTargets', cmd, '/s/wt', { overflowCwd: '/s/M' }).map((t) => t.file), [path.resolve('/s/M/leak.out')]);
@@ -2697,9 +2759,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     // checkout. N groups `{ cd /nonexistK; }` (each cd fails, so bash stays in the worktree) then
     // `{ cd OTHER; }; echo x > ../../M/leak.out`: bash 3.2 and 5 write M/leak.out for N = 20, 2002,
     // 2017, 3007, 3022, 4012 and 4027. A cap on the number of collapses that fell back to the overflow
-    // path alone dropped OTHER at some phases and allowed it. Now the phase only decides whether
-    // OTHER is still known (M/leak.out) or the group overflowed the cap and the lost cwd stands for
-    // it (M itself, the overflow root); every N from 1 to 60 is checked.
+    // path alone would drop OTHER at some phases and allow the write. The phase decides instead: OTHER
+    // is still known (M/leak.out) or the group overflowed the cap and the lost cwd stands for it (M
+    // itself, the overflow root); every N from 1 to 60 is checked.
     test('#4303 cwd cap: a write after any number of collapses resolves into the main checkout', () => {
       const M = path.resolve('/s/M');
       const ns = [...Array.from({ length: 60 }, (_, i) => i + 1), 2002, 2017, 3007, 3022, 4012, 4027];
@@ -3025,10 +3087,10 @@ const groups4303 = (n) => Array.from({ length: n }, (_, i) => `{ cd /tmp/ct-4303
 //   A (20 and 50 groups)  M/.claude/.claude/worktrees/x/leak.out
 //   B                     M/.claude/.claude-tweaks/pipelines/r/leak.out
 //   C                     M/.claude/.claude/worktrees/x, then `git commit` in M
-// An earlier revision of this branch clamped each one to a single path under M, which landed in the
-// linked worktree (A, C) or the exempt `.claude-tweaks/pipelines/` (B), and allowed all four; base
-// d9aa6b82d denies each. An absolute write into the worktree, or a write after an absolute cd back
-// into it, stays allowed at every version (bash writes only the worktree).
+// Clamping each one to a single path under M would land it in the linked worktree (A, C) or the
+// exempt `.claude-tweaks/pipelines/` (B), and allow all four; base d9aa6b82d denies each. An absolute
+// write into the worktree, or a write after an absolute cd back into it, stays allowed (bash writes
+// only the worktree).
 test('e2e #4303: past the cwd cap, a relative write or git -C aimed at a nested worktree or the pipelines dir is DENIED', () => {
   const { wt, decisionFor } = linkedWorktree4303({ nested: true });
   const wtPath = '../../.claude/worktrees/x';
@@ -3049,10 +3111,9 @@ test('e2e #4303: past the cwd cap, a relative write or git -C aimed at a nested 
 //   B2  M/sub/.claude-tweaks/pipelines/r/leak.out
 //   S50 M/sub/f.js (15 and 50 groups before it)
 // Base d9aa6b82d allows A2 and B2 in both layouts and C2 nested; in the sibling layout
-// M/.claude/worktrees/x, where an earlier revision of this branch resolved C2's `git -C`, is no
-// worktree, and every version denies C2. S50 with 15 groups: base allows, now denies; with 50
-// groups every version denies. Skipped on win32, as AC1.1 is: the commands splice the native temp
-// path.
+// M/.claude/worktrees/x, where resolving C2's `git -C` finds no worktree, the gate denies C2.
+// S50 with 15 groups: base allows and the gate denies; with 50 groups the gate denies too.
+// Skipped on win32, as AC1.1 is: the commands splice the native temp path.
 test('e2e #4303: past the cwd cap, a write after an overflowing group that cds into the main checkout is DENIED', {
   skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
 }, () => {
@@ -3086,11 +3147,11 @@ test('e2e #4303: past the cwd cap from the main checkout, a relative write aimed
 // #4303: from a session cwd outside any repo (a directory beside the main checkout), after
 // `groups4303(16)` (every cd fails), bash 3.2 and 5 write M/leak.out for `echo x > ../main/leak.out`
 // and commit in M for `git -C ../main commit`. The overflow cwd is then the session cwd itself, which
-// is no repo, so the lost cwd's stand-in named no worktree-always repo: earlier revisions of this
-// branch allowed both, base d9aa6b82d denies. The gate now denies a lost target
-// whose stand-in proves no repo opted out. A worktree-always repo that opted out (policy off) has
-// nothing to enforce, so the same lost write from its worktree stays allowed, as at every version.
-// No path is spliced in, so this runs on every platform.
+// is no repo, so the lost cwd's stand-in named no worktree-always repo, and a lost target there
+// would allow both; base d9aa6b82d denies. The gate denies a lost target whose stand-in proves no
+// repo opted out. A worktree-always repo that opted out (policy off) has nothing to enforce, so the
+// same lost write from its worktree stays allowed, as at every version. No path is spliced in, so
+// this runs on every platform.
 test('e2e #4303: past the cwd cap from a cwd outside any repo, a relative write or git -C into the main checkout is DENIED', () => {
   const { main, decisionFor } = linkedWorktree4303();
   const outside = path.join(path.dirname(main), 'a0');
@@ -3106,10 +3167,10 @@ test('e2e #4303: past the cwd cap from a cwd outside any repo, a relative write 
 // policy proved nothing about the worktree-always main checkout its relative path climbs into. From
 // N, an unrelated repo beside the main checkout, and from VN, a repo nested at main/vendor/N, after
 // `groups4303(16)` (every cd fails), bash 3.2 and 5 write main/leak.out, main/f or the main/tmp link,
-// or commit in main, for each row. Earlier revisions of this branch allowed every row; base
-// d9aa6b82d denies each, having read the path from the real start cwd. A lost target now
-// also carries that reading (base's), checked as an ordinary target. Each command spells only
-// relative paths, so this runs on every platform.
+// or commit in main, for each row. A lost target with no reading of its own allows every row; base
+// d9aa6b82d denies each, having read the path from the real start cwd. A lost target carries that
+// reading too (base's), checked as an ordinary target. Each command spells only relative paths, so
+// this runs on every platform.
 test('e2e #4303: past the cwd cap from a repo with no policy, a relative write or git -C into a worktree-always main checkout is DENIED', () => {
   const { main, decisionFor } = linkedWorktree4303();
   const { execFileSync } = require('child_process');
@@ -3140,8 +3201,8 @@ test('e2e #4303: past the cwd cap from a repo with no policy, a relative write o
 // Base d9aa6b82d allows both, from N and from outside any repo. Accepted gap, user decision
 // 2026-10-26 (base parity): neither session's own repo has worktree-always on, so the lost target
 // is checked by base's readings alone (N/leak.out, x0/…), and the write or commit stays allowed
-// wherever base allowed it (earlier revisions of this branch denied some of these). Skipped on
-// win32: the commands splice the native temp path.
+// wherever base allowed it (denying some of these would go beyond base). Skipped on win32: the
+// commands splice the native temp path.
 test('e2e #4303: past the cwd cap, a relative write or commit after the collapse dropped a cwd in the main checkout stays allowed from a session not opted in, as at base', {
   skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
 }, () => {
@@ -3174,8 +3235,8 @@ test('e2e #4303: past the cwd cap, a relative write or commit after the collapse
 // the stand-in a0, and base's reading from a0 lands above main). The same from N itself
 // (`{ cd sub; }` first) is allowed at base too. Accepted gap, user decision 2026-10-26 (base
 // parity): neither a0 nor N has worktree-always on, so the lost target is checked by base's
-// readings alone, and all four stay allowed, as at base (earlier revisions of this branch denied
-// some of them). Only relative paths are spliced in, so this runs on every platform.
+// readings alone, and all four stay allowed, as at base (denying some of them would go beyond
+// base). Only relative paths are spliced in, so this runs on every platform.
 test('e2e #4303: past the cwd cap, a write or commit from a dropped cwd in another repo into the main checkout stays allowed from a session not opted in, as at base', () => {
   const { main, decisionFor } = linkedWorktree4303();
   const { execFileSync } = require('child_process');
@@ -3198,8 +3259,8 @@ test('e2e #4303: past the cwd cap, a write or commit from a dropped cwd in anoth
 // and write main/leak.out or commit in main. Base d9aa6b82d allows both: the readings moved by
 // `nope` all land outside main (N/main, above the parent). Accepted gap, user decision 2026-10-26
 // (base parity): a0 is no repo, so the lost target is checked by base's readings alone and both
-// stay allowed, as at base (an earlier revision of this branch denied them). Only relative paths
-// are spliced in, so this runs on every platform.
+// stay allowed, as at base (denying them would go beyond base). Only relative paths are spliced in,
+// so this runs on every platform.
 test('e2e #4303: past the cwd cap, a write or commit after a relative cd that fails stays allowed from a session not opted in, as at base', () => {
   const { main, decisionFor } = linkedWorktree4303();
   const { execFileSync } = require('child_process');
@@ -3217,8 +3278,8 @@ test('e2e #4303: past the cwd cap, a write or commit after a relative cd that fa
 // the walk cannot read), `groups4303(16)` and `echo x > leak.out`: bash 3.2 and 5 write
 // main/leak.out. Base d9aa6b82d allows it from both. Accepted gap, user decision 2026-10-26 (base
 // parity): the unreadable cwd is dropped by the collapse as base dropped it, and neither session's
-// own repo has worktree-always on, so it stays allowed, as at base (an earlier revision of this
-// branch denied it from a0). Only relative paths are spliced in, so this runs on every platform.
+// own repo has worktree-always on, so it stays allowed, as at base (denying it from a0 would go
+// beyond base). Only relative paths are spliced in, so this runs on every platform.
 test('e2e #4303: past the cwd cap after a cd the walk cannot read, a relative write stays allowed from a session not opted in, as at base', () => {
   const { main, decisionFor } = linkedWorktree4303();
   const { execFileSync } = require('child_process');
@@ -3233,8 +3294,8 @@ test('e2e #4303: past the cwd cap after a cd the walk cannot read, a relative wr
 // (the dropped cwd comes after the 140), or `{ cd main/sub; }` first (it comes before them), then
 // `echo x > leak.out`: bash 3.2 and 5 write main/sub/leak.out for both. Base d9aa6b82d allows both.
 // Accepted gap, user decision 2026-10-26 (base parity): a0 is no repo, so the lost target is
-// checked by base's readings alone (a0/leak.out) and both stay allowed, as at base (earlier
-// revisions of this branch denied both). Skipped on win32: the commands splice the native temp path.
+// checked by base's readings alone (a0/leak.out) and both stay allowed, as at base (denying both
+// would go beyond base). Skipped on win32: the commands splice the native temp path.
 test('e2e #4303: past the cwd cap after many dropped cwds, a relative write stays allowed from a session not opted in, as at base', {
   skip: process.platform === 'win32' && 'win32: the command splices a native temp path, whose backslashes the scanner reads as escapes',
 }, () => {
@@ -3249,10 +3310,10 @@ test('e2e #4303: past the cwd cap after many dropped cwds, a relative write stay
 // #4303: from a subdirectory of a repo with no policy (N/sub), 16 groups `{ cd P/aK; }` (every
 // aK beside the main checkout present, each cd succeeding) overflow the cap with the cwd lost from
 // N, the overflow cwd: bash is in a15, and `echo x > ../main/leak.out`, `git -C ../main commit` and
-// `cd ../main && git commit` write main/leak.out or commit in main (bash 3.2 and 5). Earlier
-// revisions of this branch allowed all three, the lost cwd at the overflow root carrying no
-// reading; base d9aa6b82d denies. Each lost target now carries base's readings, the
-// overflow cwd's (N/../main) among them. Skipped on win32: the commands splice the native temp path.
+// `cd ../main && git commit` write main/leak.out or commit in main (bash 3.2 and 5). Without a
+// reading on the lost cwd at the overflow root, all three would be allowed; base d9aa6b82d denies.
+// Each lost target carries base's readings, the overflow cwd's (N/../main) among them. Skipped on
+// win32: the commands splice the native temp path.
 test('e2e #4303: past the cwd cap from a subdirectory of a repo with no policy, a write or commit into the main checkout is DENIED', {
   skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
 }, () => {
@@ -3277,8 +3338,8 @@ test('e2e #4303: past the cwd cap from a subdirectory of a repo with no policy, 
 // write main/sub/leak.out. The relative cd moves the lost cwd's base reading into main/sub, and the
 // second collapse drops it. Base d9aa6b82d allows it. Accepted gap, user decision 2026-10-26 (base
 // parity): N has no policy, so the lost target is checked by base's readings alone (N/leak.out) and
-// it stays allowed, as at base (an earlier revision of this branch denied it). Only relative paths
-// are spliced in, so this runs on every platform.
+// it stays allowed, as at base (denying it would go beyond base). Only relative paths are spliced
+// in, so this runs on every platform.
 test('e2e #4303: past a second cwd-cap collapse, a write after a relative cd into the main checkout stays allowed from a session not opted in, as at base', () => {
   const { main, decisionFor } = linkedWorktree4303();
   const { execFileSync } = require('child_process');
@@ -3295,8 +3356,8 @@ test('e2e #4303: past a second cwd-cap collapse, a write after a relative cd int
 // main/sub/leak.out or commit in main. Base reads main/sub and denies each. This walk's failure
 // branches overflow the cap where base's walk never did; base's own reading of the command, a known
 // target, still names main/sub, so a session that has not opted in never turns base's deny into an
-// allow (an earlier revision of this branch, checking the collapse's readings alone from N, allowed
-// all three). Now and at base: deny. Skipped on win32: the commands splice the native temp path.
+// allow (checking the collapse's readings alone from N would allow all three). Denied here and at
+// base. Skipped on win32: the commands splice the native temp path.
 test('e2e #4303: past the cwd cap in an && chain, a write or commit into the main checkout is DENIED from a session not opted in, as at base', {
   skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
 }, () => {
@@ -3327,9 +3388,9 @@ test('e2e #4303: past the cwd cap in an && chain, a write or commit into the mai
 //   SPmany     five such groups, then `cd build; cd ..; cd docs; cd ..; cd src; cd ..; cd build;
 //              echo x > out.txt`
 // Bash 3.2 and 5 write X/pkg-a/results.txt, commit in X, or write X/build/out.txt, for each session
-// cwd X. An earlier revision of this branch capped the first two (a dropped cwd it could not read)
-// and the third (past 128 readings), and denied every one whatever the policy. Now and at base:
-// allow. Skipped on win32: the fixture's paths are native.
+// cwd X. Capping the first two (a dropped cwd the walk cannot read) and the third (past 128
+// readings) would deny every one whatever the policy. Allowed here and at base. Skipped on win32:
+// the fixture's paths are native.
 test('e2e #4303: past the cwd cap with the policy off or absent, realistic writes and commits are not denied', {
   skip: process.platform === 'win32' && 'win32: the fixture splices native temp paths',
 }, () => {
@@ -3366,11 +3427,11 @@ test('e2e #4303: past the cwd cap with the policy off or absent, realistic write
 // beside the main checkout (worktree-always on), 16 groups `{ cd main/vendor/dK; }`, one failing
 // group, then 400 `echo x > fK;` (a vendor-heavy cost shape): bash 3.2 and 5 write fK in
 // main/vendor/d15. Base d9aa6b82d read each write from N alone and asked git nothing for them;
-// an earlier revision of this branch also read each from every dropped main/vendor/dK and asked git
-// about each reading, about 112 s against base's 7 s. The gate now asks git about the session's own
-// repo once. The write stays allowed, as at base, whose readings from N land in N: accepted gap,
-// user decision 2026-10-26 (base parity). Timing-free: the pin counts repoInfo calls, each a git spawn. Skipped on win32: the
-// command splices the native temp path.
+// reading each from every dropped main/vendor/dK and asking git about each reading would take
+// about 112 s against base's 7 s. The gate asks git about the session's own repo once. The write
+// stays allowed, as at base, whose readings from N land in N: accepted gap, user decision
+// 2026-10-26 (base parity). Timing-free: the pin counts repoInfo calls, each a git spawn. Skipped
+// on win32: the command splices the native temp path.
 test('#4303: past the cwd cap, a lost target\'s readings ask git no more than base\'s', {
   skip: process.platform === 'win32' && 'win32: the command splices a native temp path, whose backslashes the scanner reads as escapes',
 }, () => {
@@ -3402,8 +3463,8 @@ test('#4303: past the cwd cap, a lost target\'s readings ask git no more than ba
 });
 // #4303: with no policy file anywhere above a session cwd outside any repo, a lost target has
 // nothing to enforce. `groups4303(16)` then `echo x > out.txt`: bash 3.2 and 5 write out.txt in the
-// session cwd. An earlier revision of this branch denied it, citing a worktree-always policy that
-// does not exist; base d9aa6b82d allows it.
+// session cwd. Denying it would cite a worktree-always policy that does not exist; base
+// d9aa6b82d allows it.
 test('e2e #4303: past the cwd cap with no policy file anywhere, a relative write is not denied', () => {
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const plain = tmpDir4303('ct-4303-plain-');
@@ -3417,10 +3478,9 @@ test('e2e #4303: past the cwd cap with no policy file anywhere, a relative write
 // walk's start, so a relative target resolves under the start. An && chain of 16 cds
 // (`cd /tmp/ct-4303-aK && …`), then `cd WT/sub; mkdir -p ../.claude-tweaks/pipelines/2026-x`: with
 // every aK present (each cd succeeds), bash 3.2 and 5 create the shadow run dir
-// WT/.claude-tweaks/pipelines/2026-x (b3 also writes
-// decisions.md in it), nested and sibling layout alike. An earlier revision of this branch collapsed
-// to the real start and resolved `../` above it, so the shadow guard allowed both; base d9aa6b82d
-// denies. Skipped on win32: the commands splice the native temp path.
+// WT/.claude-tweaks/pipelines/2026-x (b3 also writes decisions.md in it), nested and sibling layout
+// alike. Collapsing to the real start and resolving `../` above it would let the shadow guard allow
+// both; base d9aa6b82d denies. Skipped on win32: the commands splice the native temp path.
 test('e2e #4303: the pipeline shadow guard denies a shadow run dir made after an && chain past the cwd cap', {
   skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
 }, () => {
@@ -3481,11 +3541,11 @@ test('e2e #4303: the pipeline shadow guard denies a run dir made from a pipeline
 });
 // #4303: from a worktree nested at M/.claude/worktrees/x, `G20 cd ..; git worktree remove [--force]
 // x`: bash 3.2 and 5 run it in M/.claude/worktrees, and the --force one removes the session's own
-// worktree. An earlier revision of this branch handed the lost cwd's root, resolved M/x and
-// M/.claude/worktrees/x/x, and allowed both; base d9aa6b82d denies both through the own-cwd guard (#693).
-// The teardown walk now keeps the lost cwd, so the relative path from it is marked lost (its path
-// only the lost cwd's stand-in) and the gate denies it as unprovable. The groups after the 16th are
-// known again (each an absolute cd), so `/tmp/x` is resolved from them as before.
+// worktree. Handing the lost cwd's root, resolving M/x and M/.claude/worktrees/x/x, would allow
+// both; base d9aa6b82d denies both through the own-cwd guard (#693). The teardown walk keeps the lost
+// cwd, so the relative path from it is marked lost (its path only the lost cwd's stand-in) and the
+// gate denies it as unprovable. The groups after the 16th are known again (each an absolute cd), so
+// `/tmp/x` is resolved from them as before.
 test('e2e #4303: past the cwd cap, a relative `git worktree remove` of the session\'s own nested worktree is DENIED', () => {
   const { wt, decisionFor, teardownTargets } = linkedWorktree4303({ nested: true });
   for (const command of [`${groups4303(20)}cd ..; git worktree remove --force x`, `${groups4303(20)}cd ..; git worktree remove x`]) {

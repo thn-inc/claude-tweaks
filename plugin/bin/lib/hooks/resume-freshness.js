@@ -28,8 +28,8 @@
 // section: "A normal turn end is not a session end, so the hooks layer's
 // interruption stamp... never runs, and run-state.json stays status: active".
 'use strict';
-const fs = require('fs');
 const ctxLib = require('./context');
+const { lstatType } = require('../path-guard');
 const { runLiveness, blocksResume, resumeEntries } = require('../run-liveness');
 const { DEFAULT_PROBES } = require('../run-liveness/probes');
 const { LIVE_WINDOW_MS } = require('../run-liveness/constants');
@@ -70,7 +70,7 @@ function checkResumeFreshness(runDir, opts = {}) {
 
   const worktree = typeof state.worktree === 'string' ? state.worktree : null;
   if (!worktree) return { safe: true, verdict: 'no-worktree' };
-  if (!fs.existsSync(worktree)) return { safe: true, verdict: 'worktree-gone' };
+  if (lstatType(worktree).type === 'missing') return { safe: true, verdict: 'worktree-gone' };
 
   // The worktree lock and last-commit answers come from run-liveness's
   // `worktree-lock` and `last-commit` evidence, read through `blocksResume`
