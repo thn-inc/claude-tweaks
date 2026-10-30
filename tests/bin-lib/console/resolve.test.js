@@ -960,6 +960,43 @@ test('a staged file settled by a dropped verdict (no tiebreak field) stays dropp
   assert.deepStrictEqual(result.filings, []);
 });
 
+// ---- #4563: a converged-positive cross-lens debate settles every finding it names ----
+const debatePositive = (rest) => `- AUTO 10:00:00 — Debate: cross-lens disagreement on src/a.js:5 converged positive after 1 round${rest}. Reversibility: high.`;
+const stagedLow = (lens, loc) => `- STAGED 09:59:00 — Reproduction: lens "${lens}" finding ${loc} not reproduced. Staged to Review Console as low-confidence. Reversibility: high.`;
+
+test('a converged-positive debate naming both findings supersedes both STAGED lines (#4563 AC1)', () => {
+  const d = [stagedLow('3a', 'src/a.js:5'), stagedLow('3e', 'src/a.js:9'),
+    debatePositive(' (lens "3a" finding src/a.js:5; lens "3e" finding src/a.js:9 — both confirmed)')].join('\n');
+  assert.deepStrictEqual(findings(d), []);
+});
+test('the as-recorded 4304 shape (bare :n against the region path) settles both (#4563 AC1)', () => {
+  const d = [stagedLow('3a', 'src/a.js:5'), stagedLow('3e', 'src/a.js:9'),
+    debatePositive(' (lens 3a :5 narrative, low; lens 3e :9 duplication, medium — both confirmed)')].join('\n');
+  assert.deepStrictEqual(findings(d), []);
+});
+test('a staged review-unconfirmed file whose line the debate settles resolves dismissed (#4563 AC1)', () => {
+  const d = [`${stagedLow('3a', 'src/a.js:5')} Stage path: staged/review-unconfirmed-1.md.`,
+    debatePositive(' (lens "3a" finding src/a.js:5; lens "3e" finding src/a.js:9 — both confirmed)')].join('\n');
+  const items = findings(d, { 'review-unconfirmed-1.md': 'x' });
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]), [['review-unconfirmed-1.md', 'dismissed']]);
+  assert.strictEqual(items[0].reason, 'superseded — cross-lens debate confirmed it; routed through Step 3 Routing');
+});
+test('a converged-positive line with no lens list settles nothing (#4563 AC4)', () => {
+  const d = [stagedLow('3a', 'src/a.js:5'), debatePositive('')].join('\n');
+  assert.deepStrictEqual(findings(d).map((i) => i.resolution), ['keep-staged']);
+});
+test('negative and inconclusive debate lines settle nothing (#4563 AC4)', () => {
+  const neg = '- STAGED 10:00:00 — Debate: lens "3a" finding src/a.js:5 — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.';
+  const fakeAuto = '- AUTO 10:00:00 — Debate: cross-lens disagreement on src/a.js:5 converged negative after 1 round (lens "3a" finding src/a.js:5). Reversibility: high.';
+  for (const later of [neg, fakeAuto]) {
+    assert.ok(findings([stagedLow('3a', 'src/a.js:5'), later].join('\n')).some((i) => i.resolution === 'keep-staged'));
+  }
+});
+test('a converged-positive debate logged before the STAGED line does not supersede it (#4563)', () => {
+  const d = [debatePositive(' (lens "3a" finding src/a.js:5 — confirmed)'), stagedLow('3a', 'src/a.js:5')].join('\n');
+  assert.deepStrictEqual(findings(d).map((i) => i.resolution), ['keep-staged']);
+});
+
 test('parseTiebreakLine reads all four resolver shapes and nothing else (#3949)', () => {
   const f = tbFinding();
   const parsed = (opts) => parseTiebreakLine(tbVerdict(f, opts).entry);

@@ -494,6 +494,20 @@ function lineKeys(line) {
   return keys.filter(Boolean);
 }
 
+// A converged-positive cross-lens debate (review step 3: `AUTO … Debate: cross-lens disagreement on P:N
+// converged positive after R round(s) (lens "L" finding P:N; lens "M" finding P:M — both confirmed)`) settles
+// every finding its lens list names (#4563). A list entry's path defaults to the region path P (the
+// as-recorded `lens 3a :5` shape). A line with no lens list, or any other debate outcome, names nothing.
+const DEBATE_CONVERGED_RE = /^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on ([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+) converged positive\b(.*)$/;
+function debateConvergedKeys(line) {
+  const m = DEBATE_CONVERGED_RE.exec(line);
+  if (!m) return [];
+  const keys = [];
+  const entry = /\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)?:(\d+)/g;
+  for (let e = entry.exec(m[3]); e; e = entry.exec(m[3])) keys.push(`${e[1]}|${e[2] || m[1]}:${e[3]}`);
+  return keys;
+}
+
 const FINDING_SECTIONS = [SECTIONS.LOW, SECTIONS.CONTESTED];
 // Which verdict decides a staged file settled by several: the one needing a human first.
 const VERDICT_PRECEDENCE = ['console', 'confirmed', 'digested', 'dropped'];
@@ -511,6 +525,8 @@ function tiebreakModel(snapshot) {
       const v = { index, ...t };
       latestById.set(v.id, v);
       if (v.key) settledByKey.set(v.key, v);
+    } else if (debateConvergedKeys(line).length > 0) { // #4563: a converged-positive debate confirms every finding it names
+      for (const key of debateConvergedKeys(line)) settledByKey.set(key, { index, kind: 'confirmed', id: null, key, via: 'debate' });
     } else if (/^- AUTO /.test(line) && /\bConfirmed\b/.test(line)) { // #3772: the producer's own elevation sentence
       const key = findingKey(line);
       if (key) settledByKey.set(key, { index, kind: 'confirmed', id: null, key });
@@ -557,6 +573,7 @@ function consoleVerdictResolution(v) {
 
 // The final outcome a settled staged file takes instead of keep-staged.
 function settledFileResolution(v) {
+  if (v.kind === 'confirmed' && v.via === 'debate') return { resolution: 'dismissed', reason: 'superseded — cross-lens debate confirmed it; routed through Step 3 Routing' };
   if (v.kind === 'confirmed') return { resolution: 'dismissed', reason: 'superseded — tiebreak confirmed it; routed through Step 3 Routing' };
   if (v.kind === 'dropped') return { resolution: 'dropped', reason: 'refuted by tiebreak' };
   if (v.kind === 'digested') return { resolution: 'dismissed', reason: 'can\'t-tell below medium — logged to the materiality digest' };
@@ -628,9 +645,10 @@ function engineItems(snapshot, stagedIds) {
 //
 // A STAGED line is superseded (no item) when every one of its finding keys
 // (lens + path:line; tiebreakModel's lineKeys) is settled by a LATER tiebreak
-// verdict line, or by the producer's own `Confirmed` AUTO sentence — review
+// verdict line, by the producer's own `Confirmed` AUTO sentence — review
 // step 3 stages a finding as low-confidence, then logs the elevation as AUTO
-// once reproduced (#3772). Case-sensitive so `not confirmed` never matches; a
+// once reproduced (#3772) — or by a converged-positive debate AUTO line that
+// names it in its lens list (debateConvergedKeys, #4563). Case-sensitive so `not confirmed` never matches; a
 // keyless line is never superseded. A can't-tell `console` verdict supersedes
 // its STAGED line too, and re-enters as one `tiebreak:{id}` item (#3949).
 function findingKey(line) {
