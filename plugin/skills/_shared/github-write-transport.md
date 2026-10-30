@@ -79,14 +79,17 @@ read-immediately-before-write is required, since a concurrent label change betwe
 read and this write would otherwise be silently reverted by the stale array.
 
 **Pull requests are not covered by this mapping.** Every row above is an issue operation — there
-is no `list_pull_requests`/`pr_read`/`pr_write` row, and none is planned: PR review-thread reads
+is no `list_pull_requests`/`pr_read`/`pr_write` row, and none is planned here: PR review-thread reads
 (`gh api graphql`), CI-check reads (`gh pr checks`), and PR list/view reads (`gh pr list`/
 `gh pr view`) have no MCP equivalent today. A `gh`-absent consumer that needs a PR read degrades
 that read individually rather than treating the missing mapping as a reason to skip everything
 it does — `_shared/github-pr-scan.md`'s Transport section is the canonical example: issue-backed
 items in a scope route through this file's `list_issues` row, PR-backed items in the same scope
 degrade per-item with a narrower message instead. This resolves the gap deliberately (a
-documented per-item degrade) rather than leaving it implicit.
+documented per-item degrade) rather than leaving it implicit. Two PR reads are documented
+exceptions, each made directly by its one consumer rather than through this table:
+`mcp__github__pull_request_read` (`get`) and `mcp__github__list_pull_requests` (open PRs, #4423) —
+both in `_shared/issue-claims.md`'s "The lock" step 4 in-flight checks.
 
 **Exception: PR create/update (#929).** Create and update *are* covered, just not by a table
 row — `gh pr create --body-file`/`gh pr edit --body-file` locally,

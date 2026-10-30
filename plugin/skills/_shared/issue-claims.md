@@ -170,19 +170,22 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      as the issue being claimed (anything else — missing link, wrong repo, malformed value — skip
      this check and proceed to the write below, the identical fail-open posture
      `tombstoneInFlightPr` uses), read that PR's state via `mcp__github__pull_request_read`
-     (`get` method) — the one documented PR-read exception to `_shared/github-write-transport.md`'s
-     "Pull requests are not covered by this mapping" note, already used the same way by
+     (`get` method) — one of two documented PR-read exceptions (the other is the stale listing
+     below) to `_shared/github-write-transport.md`'s "Pull requests are not covered by this
+     mapping" note, already used the same way by
      `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A still-`OPEN` state
      means a build for this issue already exists and reclaiming would race it — stop here, do not
      write, and report it the same way `flow/claim-targets.md`'s in-flight card does. Any other
      state (closed, merged) or a failed read falls through to the write below unchanged. For a
      `'stale'` blob, the counterpart (#4423; gh-CLI twin: `claim-store.js`'s
-     `staleClaimInFlightPr`): validate its `runId` against `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$`
-     (a mismatch skips the check), then list the repo's open PRs once per claim run via
-     `mcp__github__list_pull_requests` (`state: open`) and look for a same-repo PR URL whose body
-     has a trimmed line equal to `claude-tweaks-run: {runId}` or `<!-- claude-tweaks-run: {runId} -->`.
-     A match stops the claim and writes nothing, reported as the tombstone case is; a
-     failed or unparseable listing falls through to the write (fail open). Otherwise,
+     `staleClaimInFlightPr`): validate its `runId` against
+     `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$` (a mismatch skips the check), then list the
+     repo's open PRs once per claim run via `mcp__github__list_pull_requests` (`state: open`,
+     `perPage: 100`, paging until exhausted) and look for a PR whose `html_url` is a same-repo PR
+     URL and whose body has a trimmed line equal to `claude-tweaks-run: {runId}` or
+     `<!-- claude-tweaks-run: {runId} -->`. A match stops the claim and writes nothing, reported
+     as the tombstone case is;
+     a failed or unparseable listing falls through to the write (fail open). Otherwise,
      write **conditionally** (**with** `sha` = the current file's blob sha from step 1):
 <!-- when: transport=gh -->
      - **gh CLI:** the same `PUT contents` call as step 3, adding `-f "sha=${CURRENT_SHA}"`. (This

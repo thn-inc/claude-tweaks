@@ -740,6 +740,11 @@ test('staleClaimInFlightPr: an HTML-comment and a plain marker line both match; 
     'the plain marker form, trimmed, matches',
   );
   assert.equal(
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify({}), 'acme', 'w'),
+    null,
+    'a non-array pr list result fails open to null',
+  );
+  assert.equal(
     claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([{ url: 'https://github.com/evil/x/pull/1', body: `claude-tweaks-run: ${RUN}\n` }]), 'acme', 'w'),
     null,
     'a cross-repo PR url never returns',
