@@ -2,8 +2,8 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
-| 1 | build | SDD ruling — B2 text-file-sites pin repointed to the Resolve-lane template citation: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
-| 2 | build | SDD ruling — auto-decision-log.md FAILED writer count raised to five (refine-record.md): ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
+| 1 | build | SDD ruling — B2 text-file-sites pin repointed to the Resolve-lane template citation: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | accepted | ratified at Review Console — the spec's Deliverable 1 requires citing the Resolve-lane template from Step 4, which retires the old line, so the B2 pin must follow it |
+| 2 | build | SDD ruling — auto-decision-log.md FAILED writer count raised to five (refine-record.md): ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | accepted | ratified at Review Console — refine-record.md Step 4 item 5 hand-composes FAILED after the final-review fix wave, so the shared writer count was stale and was fixed in this build (522d07350) |
 | 3 | build | tests/console-shadow-dup-outcomes-conformance.test.js:292 comment says FAILED has "only two named writers" (stale since before this branch; now five) — unasserted comment in a file this build never touched | fixed | Passed the fix-now test at wrap-up (one comment line, no behavior); comment reworded to "its named writers" at tests/console-shadow-dup-outcomes-conformance.test.js:292, suite 55/55 |
 | 4 | review | 3f: closing-tally.test.js go-red controls use a bare `assert.throws` with `mutate`'s target-found assertion inside the callback, so a vanished target passes vacuously (medium) | fixed | Mutations built before each `assert.throws` — `5df4a8c21` |
 | 5 | review | 3f: hand-count fixture pins `resolved: 0` while its header claims one of each documented write type (low) | fixed | Added a Resolve-lane line to the fixture, `resolved: 1` — `5df4a8c21` |
