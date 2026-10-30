@@ -974,6 +974,11 @@ test('the as-recorded 4304 shape (bare :n against the region path) settles both 
     debatePositive(' (lens 3a :5 narrative, low; lens 3e :9 duplication, medium — both confirmed)')].join('\n');
   assert.deepStrictEqual(findings(d), []);
 });
+test('a CRLF decisions.md settles debate-confirmed findings the same as an LF one (#4563, Windows checkout)', () => {
+  const d = [stagedLow('3a', 'src/a.js:5'), stagedLow('3e', 'src/a.js:9'),
+    debatePositive(' (lens "3a" finding src/a.js:5; lens "3e" finding src/a.js:9 — both confirmed)'), ''].join('\r\n');
+  assert.deepStrictEqual(findings(d), []);
+});
 test('a staged review-unconfirmed file whose line the debate settles resolves dismissed (#4563 AC1)', () => {
   const d = [`${stagedLow('3a', 'src/a.js:5')} Stage path: staged/review-unconfirmed-1.md.`,
     debatePositive(' (lens "3a" finding src/a.js:5; lens "3e" finding src/a.js:9 — both confirmed)')].join('\n');

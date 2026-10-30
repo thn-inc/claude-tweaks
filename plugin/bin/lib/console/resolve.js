@@ -347,7 +347,7 @@ function readSnapshot({ runDir, deps }) {
 }
 
 function decisionLines(decisions) {
-  return decisions.split('\n').filter((l) => /^- (AUTO|STAGED|SKIP|KEPT-PROMPT|SCANNED|REFUSED|FAILED) /.test(l));
+  return decisions.split(/\r?\n/).filter((l) => /^- (AUTO|STAGED|SKIP|KEPT-PROMPT|SCANNED|REFUSED|FAILED) /.test(l));
 }
 
 // `refused-proposals.md`'s refused row, logged as
