@@ -34,7 +34,7 @@ files:
 3. **Read the outcome** — The firing logs the JSON result to `decisions.md`.
    - **Action:** The maintainer (or the next session) reads the termination reconcile entry and `git worktree list`.
    - **Should feel:** Confident the firing left nothing of its own behind.
-   - **Should understand:** Any remaining skip carries its own stated reason (a locked worktree with a live owner, `local-behind-merge` if the narrow fetch itself failed), never a silent budget cut.
+   - **Should understand:** Any remaining skip carries its own stated reason (a locked worktree with a live owner, `local-behind-merge` if the narrow fetch itself failed, or, with the main checkout on the integration branch, if mirror's fast-forward is refused, e.g. by a dirty tree), never a silent budget cut.
    - **Red flags:** Merged groups' worktrees survive the firing with no skip reason; run dirs of async-merged PRs stay unarchived although their merge commit is on `origin`.
 
 ## Outcome

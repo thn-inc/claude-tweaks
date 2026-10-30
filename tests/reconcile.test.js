@@ -461,6 +461,112 @@ test('localHasMerge: checked out ON the integration branch — passing integrati
   assert.strictEqual(localHasMerge(root, { oid: 'f'.repeat(40) }, branch), localHasMerge(root, { oid: 'f'.repeat(40) }));
 });
 
+// #4387 fixtures: origin holds a merge commit pushed from seedDir; mainDir is untouched until a test fetches.
+function pairedFixtureWithPushedMerge() {
+  const fixture = pairedFixture();
+  const { seedDir } = fixture;
+  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
+  git(['add', 'b.txt'], seedDir);
+  git(['commit', '-q', '-m', 'merge commit'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
+  return { ...fixture, mergeOid: git(['rev-parse', 'main'], seedDir).trim() };
+}
+
+// Fails every `git branch --show-current` probe with `error`; the returned counter records how many ran.
+function failBranchProbe(t, error) {
+  const counter = { calls: 0 };
+  t.mock.method(require('child_process'), 'execFileSync', (file, args, opts) => {
+    if (Array.isArray(args) && args.includes('branch') && args.includes('--show-current')) {
+      counter.calls += 1;
+      throw error;
+    }
+    return execFileSync(file, args, opts); // the real one, destructured at load before the mock
+  });
+  return counter;
+}
+
+// #4387: on the integration branch the archive's `git mv` runs against this
+// checkout's working tree, so a behind local branch must not borrow origin's
+// ancestry — the tracked work/ only arrives with the local fast-forward.
+test('localHasMerge: on the integration branch with local behind origin — reports false (no origin fallback, #4387)', () => {
+  const { mainDir, mergeOid } = pairedFixtureWithPushedMerge();
+
+  git(['fetch', '-q', 'origin', 'main'], mainDir); // only origin/main advances; mainDir stays on main
+  assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), false);
+
+  git(['merge', '-q', '--ff-only', 'origin/main'], mainDir);
+  assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), true);
+});
+
+// #4387: a dry-run previews the fast-forward the real pass's mirror runs first,
+// so on the integration branch it keeps the origin fallback.
+test('localHasMerge: dry-run on the integration branch with local behind origin keeps the origin fallback (#4387)', () => {
+  const { mainDir, mergeOid } = pairedFixtureWithPushedMerge();
+
+  git(['fetch', '-q', 'origin', 'main'], mainDir); // only origin/main advances; mainDir stays on main
+  assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main', { dryRun: true }), true);
+});
+
+// #4387: when the branch probe itself fails with an ordinary git error (a git too old to
+// know `--show-current`), the integration-branch rule cannot apply, so localHasMerge
+// falls through to the origin fallback.
+test('localHasMerge: a failed `git branch --show-current` probe falls through to the origin fallback (#4387)', (t) => {
+  const { mainDir, mergeOid } = pairedFixtureWithPushedMerge();
+  git(['fetch', '-q', 'origin', 'main'], mainDir);
+
+  const probe = failBranchProbe(t, Object.assign(new Error('simulated probe failure'), { status: 128, stderr: 'fatal: simulated probe failure\n' }));
+  assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), true);
+  assert.strictEqual(probe.calls, 1, 'the probe must have run and failed');
+});
+
+// #4387 (final-review M2): an indeterminate probe failure (timeout / spawn failure) means
+// the question went unanswered, so the guard answers in the retryable direction (false)
+// instead of falling toward the origin fallback and an archive.
+test('localHasMerge: an indeterminate `git branch --show-current` probe failure answers false, not the origin fallback (#4387)', (t) => {
+  const { mainDir, mergeOid } = pairedFixtureWithPushedMerge();
+  git(['fetch', '-q', 'origin', 'main'], mainDir);
+
+  const probe = failBranchProbe(t, Object.assign(new Error('simulated probe timeout'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' }));
+  assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), false);
+  assert.strictEqual(probe.calls, 1, 'the probe must have run and failed');
+});
+
+// #4387: the origin fallback's false direction with `integration` supplied — a parked
+// checkout (not on main) and a merge that neither local main nor origin/main holds
+// (a commit that exists only in another, unpushed clone) is not locally present.
+test('localHasMerge: parked checkout, integration supplied, merge held by neither local main nor origin/main — reports false (#4387)', () => {
+  const { seedDir, mainDir } = pairedFixture();
+  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
+  git(['add', 'b.txt'], seedDir);
+  git(['commit', '-q', '-m', 'unpushed commit'], seedDir); // never pushed
+  const unpushedOid = git(['rev-parse', 'HEAD'], seedDir).trim();
+
+  git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
+  assert.strictEqual(localHasMerge(mainDir, { oid: unpushedOid }, 'main'), false);
+  assert.strictEqual(localHasMerge(mainDir, { oid: 'f'.repeat(40) }, 'main'), false);
+});
+
+// #2565 parked shape with no local integration ref at all: the origin fallback
+// is still the only path that can see the merge.
+test('AC3.1: localHasMerge parked with no local integration ref — still falls back to origin (#2565)', () => {
+  const { mainDir, mergeOid } = pairedFixtureWithPushedMerge();
+
+  git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
+  git(['branch', '-q', '-D', 'main'], mainDir);
+  git(['fetch', '-q', 'origin', 'main'], mainDir);
+  assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), true);
+});
+
+// Detached HEAD names no branch, so the integration-branch rule does not apply
+// and the origin fallback still answers.
+test('localHasMerge: detached HEAD with local behind — still falls back to origin', () => {
+  const { mainDir, mergeOid } = pairedFixtureWithPushedMerge();
+
+  git(['fetch', '-q', 'origin', 'main'], mainDir);
+  git(['checkout', '-q', '--detach'], mainDir);
+  assert.strictEqual(localHasMerge(mainDir, { oid: mergeOid }, 'main'), true);
+});
+
 // --- archiveRunDir: real git fixture — the actual move/commit I/O, not just the pure decision table ---
 
 function runDirFixture() {
@@ -1445,7 +1551,7 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
     out.archiveCalled = true;
     out.seenAtArchive = {
       localMain: git(['rev-parse', 'main'], mainDir).trim(),
-      hasMerge: localHasMerge(mainDir, { oid: NEW }, 'main'),
+      hasMerge: localHasMerge(mainDir, { oid: NEW }, 'main', { dryRun: !!extra.dryRun }),
     };
     return { archived: [], skipped: [] };
   };
@@ -1505,7 +1611,8 @@ async function archiveAsyncMergedRun(checks, extra = {}) {
   const NEW = git(['rev-parse', 'HEAD'], seedDir).trim();
   git(['branch', 'feat-async'], mainDir);
   // Real checkouts gitignore run dirs; without this the untracked run dir makes mirror read the tree as dirty.
-  fs.appendFileSync(path.join(mainDir, '.git', 'info', 'exclude'), '.claude-tweaks/pipelines/\n');
+  // The reconcile cache is gitignored too (.gitignore); without it the stuck-residue fixture dirties the tree and mirror refuses to fast-forward.
+  fs.appendFileSync(path.join(mainDir, '.git', 'info', 'exclude'), '.claude-tweaks/pipelines/\n.claude-tweaks/reconcile-cache.json\n');
   const runDir = path.join(mainDir, '.claude-tweaks', 'pipelines', '2026-10-17T062549-spec-3630');
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');

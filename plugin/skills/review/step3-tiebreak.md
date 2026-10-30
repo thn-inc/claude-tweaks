@@ -60,6 +60,7 @@ A vacuity claim — that a test cannot fail, or that its cases are vacuous — c
 Produce your response first; the last non-empty line of your reply must then read exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled `STATUS: {WORD}`.
 
 [... READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section ...]
+[... SHELL DISCIPLINE line, verbatim from the review-dispatch bundle's Working Directory Discipline section ...]
 
 SCRATCH: {ctx-dir}/agent-scratch/{agent-id} — any probe script or fixture you create to verify this finding goes there (never in the repository tree) and must be deleted before your status word (`_shared/subagent-output-contract.md`'s Scratch rule). If this path lies outside your own worktree (`worktree-always`, or any `EnterWorktree`-isolated dispatch), create and delete it via Bash, one plain command per call — `mkdir -p` as its own call, the file written by one plain `printf` redirect or `node -e` call, `rm` as its own call; never a heredoc or an `&&` chain, which the harness Bash guard refuses by shape — never `Write`/`Edit`, which the worktree-pinning guard refuses for a path outside your worktree.
 
