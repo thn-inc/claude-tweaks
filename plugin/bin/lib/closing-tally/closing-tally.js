@@ -70,8 +70,11 @@ const APPLY_COMMENT_FAILED_RE = /^comment failed: /;
 // dir written by an older installed build does not surface it as drift — the
 // current form is refine-closing-summary.md's `resolved decision on #{n}`
 // template, counted under `resolved`. Removal condition: drop the legacy
-// `Backlog refine #\d+:` entry once the release carrying #4566 is the oldest
-// installed build that writes /backlog run dirs. A line that matches a PATTERNS
+// `Backlog refine #\d+:` entry once the release that first shipped #4566 is at
+// least 6 months old (resolve #4566's merge to its plugin version, then that
+// version's ship date via `git log -1 --format=%aI v{version}`), checked at the
+// next minor release — the marketplace grace period
+// `_shared/policy-deprecations.md`'s shared predicate (b) uses. A line that matches a PATTERNS
 // entry is counted before this list is consulted (see computeClosingTally), so
 // this broad, anywhere-in-the-line legacy match can never swallow a current-form line.
 const IGNORED_PATTERNS = [
