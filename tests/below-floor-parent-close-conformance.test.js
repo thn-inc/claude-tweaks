@@ -13,7 +13,8 @@ const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
+const PLUGIN_ROOT = path.join(ROOT, 'plugin');
+const SKILLS_DIR = path.join(PLUGIN_ROOT, 'skills');
 
 function read(rel) {
   return readText(path.join(SKILLS_DIR, rel));
@@ -159,23 +160,29 @@ test('AC1.1: /demo no longer claims to be the only closer of a parent', () => {
   assert.match(demo, /Close the parent below the floor/);
 });
 
-// Go-red control: the pre-change gate file carries both literals the absence assertions above
-// reject, so those assertions can fail. Guarded so an unreachable commit skips only this test.
+// Go-red controls: the pre-change files carry the literals the absence assertions above reject, so
+// those assertions can fail. Guarded so an unreachable commit skips only the control tests.
 const PRE_CHANGE_SHA = '1ab4e17d9';
-let preChangeGate = null;
-let goRedSkip = false;
-try {
-  preChangeGate = execFileSync('git', ['show', `${PRE_CHANGE_SHA}:plugin/skills/${GATE_REL}`], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  }).replace(/\r\n/g, '\n');
-} catch (err) {
-  goRedSkip = `commit ${PRE_CHANGE_SHA} is not reachable in this checkout's git history — the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
+
+// The skill file as of PRE_CHANGE_SHA: { text, skip } where skip is false or the skip reason.
+function preChangeSkillFile(rel) {
+  try {
+    const text = execFileSync('git', ['show', `${PRE_CHANGE_SHA}:plugin/skills/${rel}`], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    }).replace(/\r\n/g, '\n');
+    return { text, skip: false };
+  } catch (err) {
+    const skip = `commit ${PRE_CHANGE_SHA} is not reachable in this checkout's git history — the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
+    return { text: null, skip };
+  }
 }
 
-test('go-red control: the pre-change gate says "closes cleanly" and counts four callers', { skip: goRedSkip }, () => {
-  assert.ok(collapse(belowFloorBullet(preChangeGate)).includes('closes cleanly'));
-  assert.ok(collapse(entryShapes(preChangeGate)).includes('the four sub-issue callers'));
+const preChangeGate = preChangeSkillFile(GATE_REL);
+
+test('go-red control: the pre-change gate says "closes cleanly" and counts four callers', { skip: preChangeGate.skip }, () => {
+  assert.ok(collapse(belowFloorBullet(preChangeGate.text)).includes('closes cleanly'));
+  assert.ok(collapse(entryShapes(preChangeGate.text)).includes('the four sub-issue callers'));
 });
 
 // ---- Task 3: post-merge Step 4.0b closes below-floor parents on every merge path ----
@@ -322,24 +329,14 @@ test('AC2.1: every local-merge push site runs Step 4.0b before its Step 4.1', ()
   assert.ok(collapse(autoFinish).includes('against the pushed merge commit (no PR, so `$MERGING_PR` is empty)'), 'local-merge-auto-finish step 7');
 });
 
-let preChangePostMerge = null;
-let postMergeGoRedSkip = false;
-try {
-  preChangePostMerge = execFileSync('git', ['show', `${PRE_CHANGE_SHA}:plugin/skills/${POST_MERGE_REL}`], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  }).replace(/\r\n/g, '\n');
-} catch (err) {
-  postMergeGoRedSkip = `commit ${PRE_CHANGE_SHA} is not reachable in this checkout's git history — the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
-}
+const preChangePostMerge = preChangeSkillFile(POST_MERGE_REL);
 
-test('go-red control: the pre-change post-merge file has no Step 4.0b', { skip: postMergeGoRedSkip }, () => {
-  assert.ok(!preChangePostMerge.includes('Step 4.0b'));
+test('go-red control: the pre-change post-merge file has no Step 4.0b', { skip: preChangePostMerge.skip }, () => {
+  assert.ok(!preChangePostMerge.text.includes('Step 4.0b'));
 });
 
 // ---- Task 4: tidy's parent-gate backstop surfaces stranded below-floor parents ----
 
-const PLUGIN_ROOT = path.join(ROOT, 'plugin');
 const ABOVE_ROW_TAIL = ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ';
 const BELOW_ROW_TAIL = ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)';
 
@@ -491,7 +488,7 @@ test('AC3.1: stale brief-only restatements name the below-floor close', () => {
   assert.ok(read('_shared/github-pr-scan.md').includes(BELOW), 'Output Contract row form');
   const floorPtr = '**Close the parent below the floor**';
   const gate = read('tidy/SKILL.md').split('\n').find((l) => l.startsWith('| **Open parent gate** |'));
-  assert.ok(gate.includes('below the oversight floor') && gate.includes(floorPtr),'SKILL.md What It Means column');
+  assert.ok(gate.includes('below the oversight floor') && gate.includes(floorPtr), 'SKILL.md What It Means column');
   const procedures = collapse(read('tidy/scan-procedures.md'));
   assert.ok(procedures.includes('so an above-floor finding still ends with "then run `/claude-tweaks:demo #{n}`"'), 'scan-procedures above-floor only');
   const actions = collapse(read('tidy/actions-github-issues.md'));
