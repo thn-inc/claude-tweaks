@@ -289,6 +289,8 @@ function preFetchSkipReason(consoleJson, now) {
 // without a rulingTexts object withholds as sdd-ruling-unclassified. A console with neither
 // row kind needs no ctx (mergeGrantGap: null, rulingGateGaps: []). rulingGateGaps elements
 // are { id, reason } or, for an unreadable ruling row (#4049), { id, reason: 'sdd-ruling-unreadable', detail: cause }.
+// A ruling gap's reason is any SDD_RULING_REASONS value sddRulingDeferralReason returns,
+// sdd-ruling-needs-human-decision included (#4587).
 function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
   const skipReason = preFetchSkipReason(consoleJson, now);
   if (skipReason) return { action: 'skip', reason: skipReason };
