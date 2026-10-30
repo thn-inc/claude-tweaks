@@ -109,6 +109,46 @@ test('the finish is reached when the execution step has nothing else to do', () 
   assert.ok(fp.includes('Branch finish'), 'the empty-console fast path names the Branch finish it still reaches');
 });
 
+// AC2.1: console steps 2-5 already applied these under pr-first; the execution step only confirms.
+const CONFIRM_ONLY = '**`pr-first`: confirm-only**';
+const CONSOLE_APPLIED = [
+  '- **Documentation**',
+  '- **CLAUDE.md, rules**',
+  '- **New docs from missing-doc detection**',
+  '- **Docs-health restructural filings**',
+  '- **Decision records (ADRs)**',
+  '- **Skill updates**',
+];
+const EXECUTION_APPLIED = ['- **Reference repairs**', '- **Genre convention resolution**'];
+
+function bullet(text, prefix) {
+  const start = text.indexOf(prefix);
+  assert.ok(start !== -1, `apply-list bullet ${prefix} not found`);
+  const end = text.indexOf(' - **', start + prefix.length);
+  return text.slice(start, end === -1 ? undefined : end);
+}
+
+function assertConfirmOnly(execText) {
+  for (const prefix of CONSOLE_APPLIED) {
+    assert.ok(bullet(execText, prefix).includes(CONFIRM_ONLY), `${prefix} must be confirm-only under pr-first — a console step already applied it`);
+  }
+  for (const prefix of EXECUTION_APPLIED) {
+    assert.ok(!bullet(execText, prefix).includes(CONFIRM_ONLY), `${prefix} is applied by the execution step itself, never confirm-only`);
+  }
+}
+
+test('AC2.1: the console-applied apply-list entries are confirm-only under pr-first', () => {
+  assertConfirmOnly(read('wrap-up/execution-and-verification.md'));
+});
+
+test('AC2.1 go-red: one console-applied bullet without the marker fails the pin', () => {
+  const exec = read('wrap-up/execution-and-verification.md');
+  const at = exec.indexOf(CONFIRM_ONLY, exec.indexOf('- **Docs-health restructural filings**'));
+  const mutated = exec.slice(0, at) + exec.slice(at + CONFIRM_ONLY.length);
+  assert.notStrictEqual(mutated, exec);
+  assert.throws(() => assertConfirmOnly(mutated), /Docs-health restructural filings/);
+});
+
 test('every other step-13 citation now names the execution step\'s Branch finish', () => {
   const sectionC = read('wrap-up/cleanup-procedures-execution.md');
   assert.ok(!sectionC.includes('"On approval" step 13 ran'), 'Section C step 3 no longer says console step 13 merged');
