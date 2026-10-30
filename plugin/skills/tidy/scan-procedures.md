@@ -232,14 +232,28 @@ instead of `gh api`.)
 | Status | Recommendation |
 |--------|---------------|
 | Issue closed (any claim state) | Release (orphan — the work is done or dismissed) |
-| Blob classified `'stale'` | Release (crashed or abandoned run) |
+| Blob classified `'stale'` | Release (crashed or abandoned run) — or, when an open PR carries its run marker, Resume that PR (below) |
 | Blob classified `'unreadable'` | Manual review (never break a claim you cannot read) |
 | Live claim (`'live'`), but its `claimedAt` fails to parse as a date | Manual review (per `bin/lib/issues/claims.js`'s `isStale` fail-closed contract — a corrupted-but-JSON-valid claim is never automatically stale; flag it explicitly rather than keeping it silently forever) |
 | Blob classified `'live'`, issue open | Keep |
 
 Releasing (#2090): `node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" <n> --run <tidy-run-dir> --sweep --reason "swept: stale claim"` (or `--reason "swept: issue closed"` for the closed-issue row) — the `--sweep` flag is what lets a tidy run release a claim it does not itself own: without it, `release-claim.js`'s ordinary ownership check refuses every one of these as `skipped-not-owner`, since a tidy run's `--run` basename is never the crashed dispatcher's `runId`. The flag performs the same read → classify → tombstone `PUT` → conflict re-verify → comment → label-removal sequence as an ordinary release, resolving the issue's own open/closed state itself for the `'live'`-on-a-closed-issue row (never sweeping a `'live'` claim on an issue that is still open). Releases execute only after Step 6 batch approval — the flag makes an approved release executable, it does not make the decision autonomous.
 
+**Stale claim with an open PR (#4423).** Before recommending Release for a `'stale'` blob, check
+its `runId` against `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$`; a mismatch means plain Release.
+List open PRs once per tidy run (`gh pr list --state open --json number,url,body --limit 1000`; with
+`gh` absent, `mcp__github__list_pull_requests` with `state: open`, paged, comparing `html_url`) and
+look for a body line reading `claude-tweaks-run: {runId}`, bare or inside `<!-- … -->` — the marker
+`/claude-tweaks:flow`'s claim step checks too (`claim-store.js`'s `staleClaimInFlightPr`). A match
+recommends Resume instead and routes as `step-6-auto.md`'s **Unsettled run** row: Auto (no-op,
+always surfaced), rendered in **Yours** as "Resume open PR #{number} ({url}) — {its body's
+`### Resume` line}", or "Resolve open PR #{number} ({url}) before any release" when the body has
+none. It is never staged, so it gets no needs-decision comment, and the claim is never released. A
+failed listing on both transports degrades to plain Release, with one SKIP note.
+
 → Collect each as: `[claim] claims/issue-{n}.json — {status} — {recommendation}`
+
+A Resume recommendation's `{recommendation}` carries `PR #{number}` and the resume command.
 
 ### Backstops: issue-claim audit-trail integrity checks
 
