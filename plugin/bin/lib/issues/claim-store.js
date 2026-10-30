@@ -523,6 +523,14 @@ function tombstoneInFlightPr(content, gh, owner, repo) {
   }
 }
 
+// RUN_ID_SHAPE is the canonical run-id shape (`_shared/run-dir-resolution.md`'s
+// ISO-timestamp + kebab spec-slug convention). Agents execute it as prose in
+// `_shared/issue-claims.md`, `tidy/scan-procedures.md` and
+// `flow/claim-targets.md`; tests/issue-claims-stale-open-pr-conformance.test.js
+// pins every copy to this constant's `.source`.
+const RUN_ID_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$/;
+const OPEN_PR_LIST_LIMIT = 1000;
+
 // content: the raw TTL-expired ('stale') claim blob text just read. gh: the
 // generic throwing gh runner. owner/repo: the SAME owner/repo as the issue
 // being claimed. The 'stale' counterpart of `tombstoneInFlightPr` (#4423): a
@@ -544,15 +552,6 @@ function tombstoneInFlightPr(content, gh, owner, repo) {
 // optional trailing `onError(err)` lets the caller surface it (#4423). An
 // `onError` that itself throws is swallowed — this function always returns null
 // on failure.
-//
-// RUN_ID_SHAPE is the canonical run-id shape (`_shared/run-dir-resolution.md`'s
-// ISO-timestamp + kebab spec-slug convention). Agents execute it as prose in
-// `_shared/issue-claims.md`, `tidy/scan-procedures.md` and
-// `flow/claim-targets.md`; tests/issue-claims-stale-open-pr-conformance.test.js
-// pins every copy to this constant's `.source`.
-const RUN_ID_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$/;
-const OPEN_PR_LIST_LIMIT = 1000;
-
 function staleClaimInFlightPr(content, gh, owner, repo, onError) {
   try {
     const parsed = JSON.parse(content);

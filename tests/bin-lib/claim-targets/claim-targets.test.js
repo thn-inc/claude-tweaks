@@ -39,6 +39,9 @@ function isRead(args, issue) {
 function isWrite(args, issue) {
   return args[0] === '--method' && args[1] === 'PUT' && args[2] === `repos/${REPO}/contents/claims/issue-${issue}.json`;
 }
+function isPrList(args) {
+  return args[0] === 'pr' && args[1] === 'list';
+}
 function fieldOf(args, name) {
   for (let k = 0; k < args.length; k++) {
     if (args[k] === '-f' && String(args[k + 1]).startsWith(`${name}=`)) return args[k + 1].slice(name.length + 1);
@@ -687,7 +690,7 @@ test('(stale-pr-4c) two stale targets and a failing gh pr list: one call, both r
 
   assert.equal(code, 0);
   assert.deepEqual(JSON.parse(io.out[0]).claimed, [777, 778]);
-  const prListCalls = ghCalls.filter((a) => a[0] === 'pr' && a[1] === 'list');
+  const prListCalls = ghCalls.filter(isPrList);
   assert.equal(prListCalls.length, 1, 'a failed gh pr list is cached too, so a hanging gh costs one timeout per run');
   assert.equal(io.err.filter((s) => s.includes('#777')).length, 1);
   assert.equal(io.err.filter((s) => s.includes('#778')).length, 1);
@@ -747,7 +750,7 @@ test('(stale-pr-5) stale blob whose runId is not a run-id shape: reclaims and ne
 
   assert.equal(code, 0);
   assert.deepEqual(JSON.parse(io.out[0]).claimed, [774]);
-  assert.ok(!ghCalls.some((a) => a[0] === 'pr' && a[1] === 'list'), 'a runId that fails the shape check must never reach gh');
+  assert.ok(!ghCalls.some(isPrList), 'a runId that fails the shape check must never reach gh');
 });
 
 test('(stale-pr-6) two stale targets of the same run: both skipped in-flight, only one gh pr list call', () => {
@@ -768,7 +771,7 @@ test('(stale-pr-6) two stale targets of the same run: both skipped in-flight, on
     { issue: 774, reason: 'in-flight', link: PR_URL },
     { issue: 775, reason: 'in-flight', link: PR_URL },
   ]);
-  const prListCalls = ghCalls.filter((a) => a[0] === 'pr' && a[1] === 'list');
+  const prListCalls = ghCalls.filter(isPrList);
   assert.equal(prListCalls.length, 1, 'the second target must reuse the first target\'s cached gh pr list result');
 });
 
@@ -784,7 +787,7 @@ test('(stale-pr-7) stale blob owned by THIS run: alreadyOwned, never consults th
 
   assert.equal(code, 0);
   assert.deepEqual(JSON.parse(io.out[0]).alreadyOwned, [776]);
-  assert.ok(!ghCalls.some((a) => a[0] === 'pr' && a[1] === 'list'), 'a self-owned stale claim is never in flight against itself');
+  assert.ok(!ghCalls.some(isPrList), 'a self-owned stale claim is never in flight against itself');
   assert.ok(!calls.some((a) => isWrite(a, '776')));
 });
 
