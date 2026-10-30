@@ -59,6 +59,7 @@ files:
 - **Should understand:**
   - A verdict replaces the console item when the earlier STAGED line carries `lens "{lens}"` and `{path}:{line}`.
   - A staged review file that line names (`staged/review-contested-{N}.md`, for example) takes the verdict's outcome too, and does not linger on the console.
+  - Two kinds of finding leave the console with no verdict line of their own. A finding a converged-positive cross-lens debate confirmed never reaches this step: the debate's `AUTO` line names each finding by `lens "{lens}"` and `{path}:{line}`. The partner in a contested pair, listed in the staged contested file's `## Positions` section, takes the verdict a tiebreak logged for the other position (`settle-every-review-finding-at-the-console-3949.md`).
   - The run cannot archive while a listed finding lacks a verdict line (`clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`).
   - A finding has no verdict when its `resolve-tiebreak` call exits non-zero, or when its line never lands: the resolver's own append fails, and then `log-decision.js` fails twice. Standalone, it is listed as `no verdict (resolve-tiebreak exited {exit})`. In a pipeline run, the summary names it and the archive gate refuses the run.
 - **Red flags:**
@@ -68,6 +69,7 @@ files:
 
 ## Origin
 - Created during the build of #3947, the second step of the unconfirmed-findings tiebreak project. The first step, #3945, built the resolver, the findings artifact and the archive coverage check.
+- Updated during the wrap-up of #4563: step 3 notes the two kinds of finding the console now settles with no verdict line of their own, a debate-confirmed finding and a contested pair's partner.
 - Related journeys:
   - `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`: the archive side.
   - `settle-every-review-finding-at-the-console-3949.md`: what the Review Console then does with each can't-tell finding.

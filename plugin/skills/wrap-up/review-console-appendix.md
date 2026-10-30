@@ -132,7 +132,8 @@ procedure — no row is left unrouted:
   byte-identical to its anchor (`shadow-dup-duplicate`): the anchor is its own item, routed on
   its own, and the copy stays in `staged/` like every other staged file. A Low-confidence or
   Contested staged file a later tiebreak verdict superseded — confirmed (the finding went through
-  Step 3 Routing) or digested (the materiality digest holds it) — also resolves `dismissed`.
+  Step 3 Routing) or digested (the materiality digest holds it) — also resolves `dismissed`, as does
+  one a cross-lens debate confirmed, or an inherited can't-tell partner (`covered by {carrier}`).
 - `keep-staged`, `pending`, and `refused` — execute **nothing**. They stay in `staged/`, are named
   in the closing pointer, and are never applied; `refused` rows have no default at any tier
   (`refused-proposals.md`).
