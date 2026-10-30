@@ -52,7 +52,9 @@ that table. Posting a comment and adding a label is an outward-facing GitHub API
 reversibility floor requires `high` — "undoable via file edit or `git revert`" — and its
 never-reversible list separately forbids "network calls beyond reads (no API writes, no message
 sends)" at every tier regardless of mode. Neither bar is clearable by this write, however
-mechanical or precondition-only it is. The below-floor close is staged on the same grounds: it is an outward-facing write that
+mechanical or precondition-only it is. The below-floor close is staged on different grounds: that contract's exception for its
+comment and close covers only `_shared/pr-first-merge-post-merge.md` Step 4.0b's post-merge
+entry, and this parent-side backstop is not that entry. Here it is an outward-facing write that
 closes the parent and asserts every sub-issue is complete. `_shared/github-pr-scan-acceptance.md`'s `parent-gate` scope states
 the same reasoning at the scope level.
 

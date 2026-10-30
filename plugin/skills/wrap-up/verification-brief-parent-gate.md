@@ -223,7 +223,7 @@ evaluates `incomplete` on every one of them, labeling nothing — not the sub-is
 
 **Ruling (`#205`): stays a prose contract, not a shared helper.** Each caller added
 since inherits the "default to `{the sub-issue in hand}`, never `{}`" rule above with nothing to
-catch a wrong value if it passes one — the fifth, Step 4.0b (#4466), did — the risk this table
+catch a wrong value if it passes one — the fifth, Step 4.0b (#4466), did inherit it — the risk this table
 exists to flag. When three callers existed, each
 already reading this table before writing its own `$CLOSING_SUB_ISSUES` line, and a shared helper
 would mean threading a new call through every one of them for a hazard the default clause already

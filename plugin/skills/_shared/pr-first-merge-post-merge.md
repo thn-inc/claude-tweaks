@@ -53,9 +53,10 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
 - `$CLOSING_SUB_ISSUES` — the merge's closing records, minus every record Step 4.0 handled: each
   number in its output's `reopened[]` and `pendingClose[]`, and each `failed[]` entry's `issue`.
   Step 4.0 handles a record because the merge should not have closed it, so it counts by its live
-  state, never as `CLOSED` by this set. A `failed[]` record still reads `CLOSED` live, so skip any
-  parent whose enumerated sub-issues include one, and name that parent in the closing summary: it
-  waits on the hand reopen. After a
+  state, never as `CLOSED` by this set. A `failed[]` or `pendingClose[]` record's live state may
+  still read `CLOSED` — a failed reopen, an unknown state after a failed read, or a close that
+  lands after Step 4.0's poll — so skip any parent whose enumerated sub-issues include one, and
+  name that parent in the closing summary: it waits on the hand reopen. After a
   PR merge, read the PR's closing records:
 
   ```bash

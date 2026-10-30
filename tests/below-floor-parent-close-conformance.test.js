@@ -225,15 +225,43 @@ test('AC2.1: Step 4.0b subtracts every record Step 4.0 handled and skips a needs
     'the set subtracts reopened, pendingClose and failed',
   );
   assert.ok(
-    body.includes('A `failed[]` record still reads `CLOSED` live, so skip any parent whose enumerated sub-issues include one'),
-    'a failed reopen holds its parent open',
+    body.includes(
+      "A `failed[]` or `pendingClose[]` record's live state may still read `CLOSED` — a failed reopen, an unknown state after a failed read, or a close that lands after Step 4.0's poll — so skip any parent whose enumerated sub-issues include one",
+    ),
+    'a failed or pending record holds its parent open',
   );
+  assert.ok(!body.includes('A `failed[]` record still reads `CLOSED` live'), 'the unconditional failed[] claim is gone');
   assert.ok(!body.includes('minus any record Step 4.0 reopened'), 'the reopened-only subtraction is gone');
   assert.ok(
     body.includes(
       "Skip a parent carrying a `needs:*` label (the parent labels **Enumerate the parent's sub-issues** fetches) and name it in the closing summary, per `_shared/work-record.md`'s Worklist rule.",
     ),
     'Step 4.0b honours the Worklist rule',
+  );
+});
+
+test('AC2.1: Step 4.0b acts only on a below-floor due gate, once per parent, and skips on a failing gh call', () => {
+  const body = collapse(section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1'));
+  for (const [lit, why] of [
+    ['On `due` with `exceeds: false`, run **Close the parent below the floor**.', 'acts only on due with exceeds: false'],
+    ['Every other outcome is a no-op, as is a record with no resolvable parent.', 'every other outcome is a no-op'],
+    [
+      'Evaluate each parent once: skip a record whose parent this step already handled, so a parent with several sub-issues in the set is closed once.',
+      'each parent evaluated once',
+    ],
+    [
+      'A failing `gh` call skips that parent, or the whole step when the input read above fails. Name each skipped parent in the closing summary.',
+      'a failing gh call skips that parent',
+    ],
+  ]) {
+    assert.ok(body.includes(lit), `Step 4.0b: ${why}`);
+  }
+  const shapes = collapse(entryShapes(read(GATE_REL)));
+  assert.ok(
+    shapes.includes(
+      'Step 4.0b runs after it has landed and acts only on `due` with `exceeds: false`, where it runs **Close the parent below the floor** — every other gate outcome is a no-op for it.',
+    ),
+    'the gate file states Step 4.0b acts only on due with exceeds: false',
   );
 });
 
@@ -256,6 +284,7 @@ test('AC2.1: the auto-mode contract names the below-floor parent close as an exc
     'The precondition is that the parent still holds only this close: no comment, label or state change has landed on it since.',
     'When that precondition does not hold, the restore is not mechanical: the human reads what changed on the parent before reopening it, and deletes no comment but the `## Closed below the oversight floor` one',
     'The below-floor parent close the first bullet names is the other exception: its comment and its close are its two writes, under that bullet\'s restore contract',
+    "This restore contract is what satisfies the Reversibility floor's `high` for this one write, and only for Step 4.0b's entry: `/claude-tweaks:tidy`'s parent-side `Open parent gate` runs the same section but is not this exception, so it stays staged",
   ]) {
     assert.ok(never.includes(lit), `Never-reversible list carries: ${lit}`);
   }
@@ -473,6 +502,40 @@ test('AC3.1: stale brief-only restatements name the below-floor close', () => {
   const wr = collapse(read('_shared/work-record.md'));
   assert.ok(wr.includes('below the oversight floor it instead closes the parent (' + floorPtr + ')'), 'work-record backstop bullet');
   assert.ok(wr.includes('which applies `demo:pending` to the parent and attaches its Verification Brief above the oversight floor'), 'work-record /tidy row');
+});
+
+// The below-floor clause runs from its opener to the next sentence or clause end.
+function clauseFrom(text, opener) {
+  const start = text.indexOf(opener);
+  assert.ok(start !== -1, `below-floor clause not found: ${opener}`);
+  const rest = text.slice(start + opener.length);
+  const end = rest.search(/[.;] /);
+  return opener + (end === -1 ? rest : rest.slice(0, end));
+}
+
+test('AC3.1: tidy stages the below-floor close because the contract exception covers only Step 4.0b', () => {
+  const sites = [
+    [
+      collapse(read('tidy/scan-procedures.md')),
+      'Below the oversight floor it instead posts a comment and closes the parent: the contract\'s exception for that write covers only `_shared/pr-first-merge-post-merge.md` Step 4.0b\'s post-merge entry, and this parent-side backstop is not that entry, so it stays staged',
+      'or, below the oversight floor, posts a comment and closes the parent — an outward-facing GitHub API write that fails',
+    ],
+    [
+      collapse(readText(path.join(ROOT, 'docs', 'skill-graph.md'))),
+      'and, below the floor, because the contract\'s exception for posting a comment and closing the parent covers only `_shared/pr-first-merge-post-merge.md` Step 4.0b\'s post-merge entry, never this parent-side backstop',
+      'or, below the floor, posting a comment and closing the parent — is an outward-facing API write that fails',
+    ],
+    [
+      collapse(read('tidy/actions-github-issues.md')),
+      'The below-floor close is staged on different grounds: that contract\'s exception for its comment and close covers only `_shared/pr-first-merge-post-merge.md` Step 4.0b\'s post-merge entry, and this parent-side backstop is not that entry.',
+      'The below-floor close is staged on the same grounds',
+    ],
+  ];
+  for (const [text, clause, stale] of sites) {
+    assert.ok(text.includes(clause), `below-floor staging reason: ${clause}`);
+    assert.ok(!clauseFrom(text, clause).includes('regardless of how mechanical'), `no reversibility-floor claim in: ${clause}`);
+    assert.ok(!text.includes(stale), `stale reason gone: ${stale}`);
+  }
 });
 
 // ---- AC5: the local-files close fence, executed against a real store ----
