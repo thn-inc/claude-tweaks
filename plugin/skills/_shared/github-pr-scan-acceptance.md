@@ -379,67 +379,6 @@ Record set: open records carrying `parent-issue` (`/claude-tweaks:specify` label
 decomposition parent this way — see `specify/record-creation.md`'s Parent record section),
 plus every issue's current state, fetched once.
 
-### Fetch limit
-
-**Every fetch below is bounded by `{resolved-limit}`, never a hardcoded cap.** Resolve
-`backlog-fetch-limit` with
-`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit`
-(`_shared/work-record-config.md`'s key table; the resolver applies the schema default when the
-key is absent) and substitute the literal number into **every**
-block below that names it. Substitute it independently per
-block and never carry it across blocks in a shell variable — shell environment does not survive
-between Bash calls and never reaches a subagent, so a cross-block `export` silently resolves
-empty (the same discipline `_shared/trust-table.md` states for its own identical fetches). The
-state map in particular is `--state all` over the repo's entire lifetime with no recency bound,
-which is why it cannot carry a fixed cap: past that cap every truncated sub-issue defaults to
-`OPEN`, so every parent containing one reads `incomplete` and this backstop stops firing —
-permanently, and with nothing on the output to say it did.
-
-Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
-
-```bash
-PI_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-new.json)"
-PI_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-legacy.json)"
-ALL_STATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-all-issue-states.json)"
-PARENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues.json)"
-LIMIT="{resolved-limit}"
-export FETCH_LIMIT="$LIMIT"
-gh issue list --label parent-issue --state open --json number,title,body,labels --limit "$LIMIT" \
-  > "$PI_NEW"
-# Legacy-label fetch — PERMANENT cross-project support for adopter repos that haven't migrated;
-# removable only at a major version dropping pre-rename repo support. [IL-85]
-gh issue list --label family:parent --state open --json number,title,body,labels --limit "$LIMIT" \
-  > "$PI_LEG"
-
-gh issue list --state all --json number,state,labels --limit "$LIMIT" \
-  > "$ALL_STATES"
-
-node -e "
-  const fs = require('fs');
-  const LIMIT = Number(process.env.FETCH_LIMIT);
-  const fetched = ['$PI_NEW', '$PI_LEG'].map(require);
-  // Number-keyed dedup across the two label fetches — identical rows, either fetch may win.
-  const parents = [...new Map(fetched.flat().map((p) => [p.number, p])).values()];
-  fs.writeFileSync('$PARENTS', JSON.stringify(parents));
-  const states = require('$ALL_STATES');
-  if (fetched.some((f) => f.length === LIMIT)) {
-    console.error('WARNING: a parent fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped and are invisible to this scope entirely. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete.');
-  }
-  if (states.length === LIMIT) {
-    console.error('WARNING: fetched exactly ' + states.length + ' issue states (the configured backlog-fetch-limit) — every sub-issue beyond this cap defaults to OPEN, so any parent containing one reads incomplete and this backstop silently never fires for it. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete.');
-  }
-"
-```
-
-The state map's `labels` field (added alongside `number`/`state`) is what lets the oversight-floor
-pre-filter below read each sub-issue's `risk:*` label from data already fetched here — no second
-`gh` round-trip per parent or per sub-issue.
-
-**Report every warning emitted above verbatim beside this scope's rows, and never suppress
-either of them.** Both truncations fail in the *quiet* direction — fewer rows, not wrong ones —
-which is exactly the direction a backstop must never fail in silently, since a scope that emits
-nothing is indistinguishable from a repo with no un-gated parents.
-
 ### `work-links` resolution
 
 **Read `work-links` before choosing between the two branches below** — they are mutually
@@ -458,7 +397,82 @@ is not a degraded read but a silent total failure: a native parent's body carrie
 construction, so `parseSubIssues` returns `[]` for every parent, every parent reads
 `incomplete` (`parentGateState` never reports `due` for a parent with no discoverable sub-issues),
 and this backstop emits nothing at all — on a repo where it is the only thing that gates a
-parent whose last sub-issue closed outside `/claude-tweaks:wrap-up`.
+parent whose last sub-issue closed outside `/claude-tweaks:wrap-up`. Its value also selects the
+state map's `{state-map-search}` below.
+
+### Fetch limit
+
+**Every fetch below is bounded by `{resolved-limit}`, never a hardcoded cap.** Resolve
+`backlog-fetch-limit` with
+`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit`
+(`_shared/work-record-config.md`'s key table; the resolver applies the schema default when the
+key is absent) and substitute the literal number into **every**
+block below that names it. Substitute it independently per
+block and never carry it across blocks in a shell variable — shell environment does not survive
+between Bash calls and never reaches a subagent, so a cross-block `export` silently resolves
+empty (the same discipline `_shared/trust-table.md` states for its own identical fetches). Under
+`body-text` the state map is `--state all` over the repo's entire lifetime with no recency bound,
+which is why it cannot carry a fixed cap: past that cap every truncated sub-issue defaults to
+`OPEN`, so every parent containing one reads `incomplete` and this backstop stops firing —
+permanently, and with nothing on the output to say it did. Under `native` the map is searched,
+so GitHub search's 1000-result ceiling also applies.
+
+Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
+
+```bash
+PI_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-new.json)"
+PI_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-legacy.json)"
+ALL_STATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-all-issue-states.json)"
+PARENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues.json)"
+LIMIT="{resolved-limit}"
+export FETCH_LIMIT="$LIMIT"
+STATE_SEARCH='{state-map-search}'
+export STATE_SEARCH
+gh issue list --label parent-issue --state open --json number,title,body,labels --limit "$LIMIT" \
+  > "$PI_NEW"
+# Legacy-label fetch — PERMANENT cross-project support for adopter repos that haven't migrated;
+# removable only at a major version dropping pre-rename repo support. [IL-85]
+gh issue list --label family:parent --state open --json number,title,body,labels --limit "$LIMIT" \
+  > "$PI_LEG"
+
+gh issue list --state all --search "$STATE_SEARCH" --json number,state,labels --limit "$LIMIT" \
+  > "$ALL_STATES"
+
+node -e "
+  const fs = require('fs');
+  if (!['', 'has:parent-issue'].includes(process.env.STATE_SEARCH)) throw new Error('STATE_SEARCH is not a known value — the state-map-search placeholder was not substituted.');
+  const LIMIT = Number(process.env.FETCH_LIMIT);
+  const fetched = ['$PI_NEW', '$PI_LEG'].map(require);
+  // Number-keyed dedup across the two label fetches — identical rows, either fetch may win.
+  const parents = [...new Map(fetched.flat().map((p) => [p.number, p])).values()];
+  fs.writeFileSync('$PARENTS', JSON.stringify(parents));
+  const states = require('$ALL_STATES');
+  if (fetched.some((f) => f.length === LIMIT)) {
+    console.error('WARNING: a parent fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped and are invisible to this scope entirely. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete.');
+  }
+  const STATE_CAP = process.env.STATE_SEARCH ? Math.min(LIMIT, 1000) : LIMIT;
+  if (states.length >= STATE_CAP) {
+    console.error('WARNING: fetched ' + states.length + ' issue states, reaching the state-map cap of ' + STATE_CAP + ' — every sub-issue beyond it defaults to OPEN, so any parent containing one reads incomplete and this backstop silently never fires for it. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete (raising it past 1000 does not help a searched map).');
+  }
+"
+```
+
+Substitute `{state-map-search}`: `has:parent-issue` under `native` (exactly the native sub-issue
+population), the empty string under `body-text` (task-list children are not native links, and an
+empty `--search` keeps `gh issue list` off the search API, so no 1000 ceiling applies).
+
+When the state-map-search guard throws, the scope stops: report no `[parent-gate]` rows at all
+and quote the error verbatim. Never read `$PARENTS` or `$ALL_STATES` afterwards — a 0-row state
+map would read every sub-issue as `OPEN`.
+
+The state map's `labels` field (added alongside `number`/`state`) is what lets the oversight-floor
+pre-filter below read each sub-issue's `risk:*` label from data already fetched here — no second
+`gh` round-trip per parent or per sub-issue.
+
+**Report every warning emitted above verbatim beside this scope's rows, and never suppress
+either of them.** Both truncations fail in the *quiet* direction — fewer rows, not wrong ones —
+which is exactly the direction a backstop must never fail in silently, since a scope that emits
+nothing is indistinguishable from a repo with no un-gated parents.
 
 ### Sub-issue enumeration
 

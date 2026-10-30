@@ -197,3 +197,99 @@ test('trust-table no longer says the window does not bound the closed fetch', ()
   assert.ok(PRE_CHANGE_TRUST.includes(STALE));
   assert.ok(!parenthetical(PRE_CHANGE_TRUST).includes('server'));
 });
+
+// ---- parent-gate state map (#4469 Task 2) ----------------------------------------------------
+
+const PG = section(LIVE, '## Scope: `parent-gate`', null);
+
+// The parent-gate bytes the change replaced, in their pre-change order: the old `### Fetch limit`
+// heading, the unsearched state-map call, the exact-equality warning test, and the old
+// `### \`work-links\` resolution` heading (which sat below the Fetch-limit section).
+const PRE_CHANGE_PG = [
+  '### Fetch limit',
+  'gh issue list --state all --json number,state,labels --limit "$LIMIT" \\',
+  '  if (states.length === LIMIT) {',
+  '### `work-links` resolution',
+].join('\n');
+
+const WORK_LINKS_HEADING = '### `work-links` resolution';
+const FETCH_LIMIT_HEADING = '### Fetch limit';
+
+// True when both ordering anchors are present and `work-links` resolves before the state-map fetch.
+function workLinksFirst(text) {
+  const wl = text.indexOf(WORK_LINKS_HEADING);
+  const fl = text.indexOf(FETCH_LIMIT_HEADING);
+  return wl !== -1 && fl !== -1 && wl < fl;
+}
+
+// True when some `{state-map-search}` placeholder has both branch values named within `radius` chars.
+function namesBothValuesNearPlaceholder(text, radius) {
+  return [...text.matchAll(/\{state-map-search\}/g)].some((m) => {
+    const window = text.slice(Math.max(0, m.index - radius), m.index + radius);
+    return window.includes('has:parent-issue') && window.includes('body-text');
+  });
+}
+
+test('the frozen parent-gate excerpt carries the anchors the discrimination checks rely on', () => {
+  assert.ok(PRE_CHANGE_PG.includes(FETCH_LIMIT_HEADING) && PRE_CHANGE_PG.includes(WORK_LINKS_HEADING));
+  assert.ok(PRE_CHANGE_PG.includes('  if (states.length === LIMIT) {'));
+  assert.ok(!PRE_CHANGE_PG.includes('STATE_SEARCH') && !PRE_CHANGE_PG.includes('--search'));
+});
+
+test('state map search is branch-resolved', () => {
+  assertClaimPinned(PG, PRE_CHANGE_PG, /STATE_SEARCH='\{state-map-search\}'/, 'the fence must substitute {state-map-search} literally');
+  assertClaimPinned(PG, PRE_CHANGE_PG, /export STATE_SEARCH/, 'the fence must export STATE_SEARCH for the node block');
+  assertClaimPinned(
+    PG,
+    PRE_CHANGE_PG,
+    /gh issue list --state all --search "\$STATE_SEARCH" --json number,state,labels --limit "\$LIMIT"/,
+    'the state-map call must carry the resolved search'
+  );
+  assert.ok(namesBothValuesNearPlaceholder(PG, 400), 'the prose must name has:parent-issue and body-text within 400 chars of {state-map-search}');
+  // Controls: the anchor with the values pushed past the window, the values without the anchor, and the adjacent form.
+  const far = `{state-map-search}${' filler'.repeat(80)} has:parent-issue body-text`;
+  assert.ok(!namesBothValuesNearPlaceholder(far, 400));
+  assert.ok(!namesBothValuesNearPlaceholder('has:parent-issue body-text', 400));
+  assert.ok(!namesBothValuesNearPlaceholder('{state-map-search} has:parent-issue only', 400));
+  assert.ok(namesBothValuesNearPlaceholder('{state-map-search} has:parent-issue or body-text', 400));
+});
+
+test('work-links resolved before the state-map fetch', () => {
+  assert.ok(workLinksFirst(PG), 'the work-links resolution must sit above the Fetch limit section');
+  assert.ok(!workLinksFirst(PRE_CHANGE_PG), 'the frozen excerpt carries both anchors in the pre-change order');
+  // Control for the predicate: a missing anchor is not "ordered".
+  assert.ok(!workLinksFirst(WORK_LINKS_HEADING));
+  assert.ok(workLinksFirst(`${WORK_LINKS_HEADING}\n${FETCH_LIMIT_HEADING}`));
+});
+
+test('state-map warning honours the search ceiling', () => {
+  assertClaimPinned(
+    PG,
+    PRE_CHANGE_PG,
+    /const STATE_CAP = process\.env\.STATE_SEARCH \? Math\.min\(LIMIT, 1000\) : LIMIT;\s*if \(states\.length >= STATE_CAP\)/,
+    'the state-map warning must compare against the search ceiling only for a searched map'
+  );
+  assert.ok(!PG.includes('states.length === LIMIT'), 'the exact-equality state-map test must be gone');
+});
+
+test('state-map search is validated', () => {
+  assertClaimPinned(
+    PG,
+    PRE_CHANGE_PG,
+    /\['', 'has:parent-issue'\]\.includes\(process\.env\.STATE_SEARCH\)/,
+    'the node block must validate STATE_SEARCH against the two branch values'
+  );
+});
+
+test('state-map guard failure stops the scope', () => {
+  const stops = /state-map-search[^\n]*throws[\s\S]{0,300}report no `\[parent-gate\]` rows at all/;
+  const sentence = 'When the state-map-search guard throws, the scope stops: ';
+  const outcome = 'report no `[parent-gate]` rows at all and quote the error verbatim.';
+  // The control carries the anchor and the outcome sentence, with the sentence pushed past 300 chars.
+  const FAR_CONTROL = `${sentence}${'filler words '.repeat(30)}${outcome}`;
+  assert.ok(FAR_CONTROL.indexOf(outcome) - sentence.length > 300);
+  assertClaimPinned(PG, FAR_CONTROL, stops, 'a failing state-map-search guard must stop the scope with no rows');
+  assert.ok(!stops.test(PRE_CHANGE_PG));
+  // Control for the control: the same sentences adjacent do match, so the window is what rejects the far one.
+  assert.ok(stops.test(`${sentence}${outcome}`));
+});
