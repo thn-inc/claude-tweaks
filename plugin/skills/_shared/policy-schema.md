@@ -22,11 +22,12 @@ Output is a single JSON object keyed by requested key. Each key resolves to the 
 - `"invalid": true` — a present-but-rejected value degraded to the schema default; distinct from known-but-unset, which is `source: "default"` with no flag
 - `{"error": "unknown-key"}` — the requested key is not in the schema (no value/source)
 
-Two carve-outs:
+Carve-outs:
 
 - The PreToolUse hook's `worktree-always` read stays an in-process `bin/lib/policy.js` call — hot path, never shells out.
 - `model-profiles` is policy-only (the `--run` overlay never applies) and returns `{value: null, source: "default"}` when the block is absent. Any fragment-reader failure — a malformed block, or a malformed sibling model key such as `frontier-run-cap` (the reader parses all four model keys; its throws aren't sub-classified) — degrades to `{value: null, source: "default", invalid: true}`.
-- `risk-path-globs` is policy-only too (never reads `--run`) and returns `{value: {}, source: "default"}` when absent; a malformed block degrades to `{value: {}, source: "default", invalid: true}`, never a partial map.
+- `risk-path-globs` is policy-only too (never reads `--run`) and returns `{value: {}, source: "default"}` when absent; a malformed block degrades to `{value: null, source: "default", invalid: true}`, never a partial map.
+- `deploy-command`, `owned-owners`, `trusted-authors` and `risk-categories` are `policyOnly`: the `--run` overlay never applies.
 
 **Derived-default keys** come in two shapes; both are live, so a new derived key picks one deliberately and states the choice in its row.
 
@@ -239,13 +240,13 @@ Inert flat keys (#4609, #4608). `control-mode: on` implies its levers at skill-d
 | `deploy-reach` | `policy.yml` | none yet (#4608) | `none` | `on-merge`/`command`/`none` |
 | `deploy-command` | `policy.yml`, base branch only | none yet (#4608) | unset | Executed command; spaces allowed |
 | `deploy-live-workflow` | `policy.yml` | none yet (#4608) | unset | CI workflow name; spaces allowed |
-| `deploy-version-url` | `policy.yml` | none yet (#4608) | unset | `http(s)` URL |
-| `dev-base-url` | `policy.yml` | none yet (#4608) | unset | `http(s)` URL |
+| `deploy-version-url` | `policy.yml` | none yet (#4608) | unset | `http(s)` URL, no `user:pw@` |
+| `dev-base-url` | `policy.yml` | none yet (#4608) | unset | `http(s)` URL, no `user:pw@` |
 | `dev-test-account` | `policy.yml` | none yet (#4608) | unset | Vault entry name, never a credential |
 | `deploy-wait-seconds` | `policy.yml` | none yet (#4608) | `900` | Integer >= 0 |
 | `deploy-poll-seconds` | `policy.yml` | none yet (#4608) | `30` | Integer >= 1 |
-| `owned-owners` | `policy.yml` | none yet (#4608) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]` |
-| `trusted-authors` | `policy.yml` | none yet (#4608) | `[]` | Logins, as `owned-owners` |
+| `owned-owners` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]` |
+| `trusted-authors` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, as `owned-owners` |
 | `risk-categories` | `policy.yml` | none yet (#4608) | `[]` | Extra lowercase slugs |
 | `risk-path-globs` | `policy.yml`, block | none yet (#4608) | `{}` | Slug to glob list, indented: `slug: [a, b,]` (one trailing comma; may span lines) or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (quote `{a,b}`, `k: v`; a quoted one is literal, no escapes). Rejected whole: a respelled key line, a column-0 row, quoted keys, `slug : [a]`, doubled-quote escapes. Read it only through the resolver, never `resolveValue`: `null` with `invalid` means malformed, never unset |
 

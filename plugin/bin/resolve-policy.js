@@ -41,8 +41,8 @@ const { computeDerivedDefaults } = require('./lib/policy-derived-defaults');
 const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
 
-// The nested-block keys: no scalar form under --values, and policy-only.
-const BLOCK_KEYS = ['model-profiles', 'risk-path-globs'];
+// The nested-block keys: no scalar form under --values.
+const BLOCK_KEYS = POLICY_KEYS.filter((row) => row.type === 'map').map((row) => row.key);
 
 function fail(msg) {
   process.stderr.write(`resolve-policy: ${msg}\n`);
