@@ -63,9 +63,9 @@ and older parents are exactly the ones most likely to already sit inside a `tota
 truncation would reopen the exact defect this filter exists to close, with no warning. The
 parent-issue fetches below therefore use the same `{resolved-limit}` and the same
 truncation-warning discipline as the main record fetch further down, not a separate hardcoded cap.
-(`acceptance-gap`'s own *closed-record* fetch is bounded by the same `{resolved-limit}` and
-carries the same truncation-warning discipline — a 30-day window does not bound it, per that
-file's "Fetch limit" section — not a separate hardcoded cap.)
+(`acceptance-gap`'s own *closed-record* fetch is bounded server-side by its 30-day window and
+disposition filter, and still carries the same `{resolved-limit}` and truncation-warning
+discipline, per that file's "Fetch limit" section — not a separate hardcoded cap.)
 
 Every intermediate file this procedure writes below lands in the session scratchpad, never bare
 `/tmp` — per `_shared/session-tmp-root.md`'s convention (cited, not restated): a literal

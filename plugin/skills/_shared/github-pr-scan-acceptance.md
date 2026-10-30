@@ -50,8 +50,15 @@ the same `needsBackstop` call. It emits the identical `[acceptance-gap]` row at 
 severity and recommends the identical `/claude-tweaks:demo` invocation, so no consumer
 distinguishes the two.
 
-Record set: closed records from the last 30 days, computed as `Date.now() - 30 days` in the
-`node` step below — cross-platform, no shell `date` variant needed.
+Record set: closed records from the last 30 days. The fetch applies the window and the disposition,
+not-planned and duplicate exclusions server-side through `--search`; the client-side `closedAt`
+cutoff, `needsBackstop` and the oversight floor still run on that narrowed set, unchanged. Negated
+`-reason:` qualifiers are used rather than `reason:completed`, so a closed record with a null
+`stateReason` stays in. The oversight floor stays client-side: it passes a record meeting either
+the risk or the size axis and fails closed on unscored records, which negated `-label:` qualifiers
+cannot express.
+
+Resolve `{since-date}` first, as its own call, with `node -e "console.log(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))"` (cross-platform, no shell `date` variant needed), and substitute its `YYYY-MM-DD` output literally.
 
 Resolve session-scoped paths first (`_shared/session-tmp-root.md`, cited throughout this file rather than restated), then resolve `backlog-fetch-limit` and substitute it into the fetch below (per this file's "Fetch limit" section):
 
@@ -59,20 +66,29 @@ Resolve session-scoped paths first (`_shared/session-tmp-root.md`, cited through
 RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records-raw.json)"
 CLOSED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records.json)"
 LIMIT="{resolved-limit}"
+SINCE="{since-date}"
+export SINCE
 gh issue list --state closed --limit "$LIMIT" \
+  --search "closed:>=$SINCE -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending" \
   --json number,title,state,labels,closedAt,stateReason \
   > "$RAW"
 node -e "
   const fs = require('fs');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '')) throw new Error('{since-date} was not substituted with a YYYY-MM-DD date — an empty date makes the search return zero rows.');
   const raw = require('$RAW');
   const LIMIT = $LIMIT;
-  if (raw.length === LIMIT) {
-    console.error('WARNING: the closed-record fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — closed records older than the newest ' + LIMIT + ' are invisible to this scope, even within the 30-day window. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete.');
+  const CAP = Math.min(LIMIT, 1000);
+  if (raw.length >= CAP) {
+    console.error('WARNING: the server-filtered closed-record fetch returned ' + raw.length + ' records, reaching its cap of ' + CAP + ' (the smaller of backlog-fetch-limit and the 1000-result search ceiling) — records past the cap are invisible to this scope. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run when it is below 1000; at 1000 or above, the 30-day undisposed set itself exceeds the search ceiling and this scope cannot be complete.');
   }
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   fs.writeFileSync('$CLOSED', JSON.stringify(raw.filter((r) => r.closedAt > cutoff)));
 "
 ```
+
+When the since-date guard throws, the scope stops: report no `[acceptance-gap]` rows at all and
+quote the error verbatim, as for an exit-3 sub-issue fetch below. Later blocks never read a
+missing or stale `$CLOSED` file.
 
 A closed record whose acceptance lives on a `/claude-tweaks:specify` decomposition parent must
 not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it. Resolving
@@ -116,10 +132,13 @@ block and never carry it across blocks in a shell variable — shell environment
 between Bash calls and never reaches a subagent, so a cross-block `export` silently resolves
 empty (the same discipline `_shared/trust-table.md` states for its own identical fetches).
 
-A 30-day window does not bound the closed-record fetch the way it might seem to: a busy repo can
-close far more than any reasonable hardcoded cap within 30 days (971 closed issues in 30 days was
-observed on this repo alone), so a fixed limit silently drops the **oldest** closed records first —
-exactly the quiet-failure a backstop scope must never have. The parent fetches share the same
+The closed-record fetch is bounded on the server by the 30-day window and the disposition filter,
+which is why it no longer fills the cap with already-dispositioned records: a busy repo can close
+far more than any reasonable hardcoded cap within 30 days (971 closed issues in 30 days was
+observed on this repo alone), and a cap on that unfiltered stream silently dropped the **oldest**
+closed records first — exactly the quiet-failure a backstop scope must never have, so the cap (the
+smaller of the limit and GitHub search's 1000-result ceiling) and its warning still apply to the
+narrowed set. The parent fetches share the same
 exposure for a different reason — they are `--state all` over the repo's entire history, and
 `gh issue list` returns newest-first, so a fixed cap drops the **oldest** parents first. Those are
 precisely the parents whose sub-issues have already closed, so truncation silently re-floods this
