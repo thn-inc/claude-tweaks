@@ -149,7 +149,8 @@ mechanism — and the `@base64d`+sha single-read (one `gh api` call decoding Git
 newline-embedded base64 and keeping the blob sha the conditional write needs) live inside that
 one module, not restated here. It classifies each
 read exactly per `_shared/issue-claims.md`'s "Failure posture" table: `'absent'` → create-only
-write; `'tombstone'`/`'stale'` → conditional write (a legitimate re-claim, not a contest);
+write; `'tombstone'`/`'stale'` → conditional write (a legitimate re-claim, not a contest) unless
+the in-flight check below finds an open PR (exit 3);
 `'live'` → contested, holder identity attached; `'unreadable'` → fails closed to contested with no
 holder identity (`null`). It also applies the per-target self-owned check first, scoped to
 `'live'`/`'stale'` blobs: a target whose live or stale claim blob already reads
@@ -231,7 +232,8 @@ stays best-effort and the claim read stays the authoritative hold check:
 **Branch on exit code:**
 
 - **0** — every target claimed (default mode), or every non-skipped target claimed
-  (`--keep-going` — see below). Proceed to Step 3.
+  (`--keep-going` — see below). Proceed to Step 3. A failed stale-claim open-PR check (#4423)
+  does not change this: that target reclaims, with one stderr warning.
 - **3** — contested. The CLI ran without `--keep-going` and stopped at the first target it could
   not claim; stdout carries `{contested: [{issue, holder}], released, releaseFailed}` —
   `released` lists every target *this invocation* had already claimed and successfully released
@@ -244,9 +246,10 @@ stays best-effort and the claim read stays the authoritative hold check:
 - **3 (in-flight variant, #315)** — stdout instead carries `{inFlight: [{issue, link}], released,
   releaseFailed}` when the stopped target's blob was a `pr-opened:` tombstone whose linked PR
   `gh pr view` still reports `OPEN` (`_shared/issue-claims.md`'s in-flight detection, moved from
-  `claim-engine.js` into `claim-store.js`'s `tombstoneInFlightPr` — see #787) — a build for this
-  issue already exists, not a competing claim. There is no `holder` to report; skip the
-  liveness-evidence steps below and render instead:
+  `claim-engine.js` into `claim-store.js`'s `tombstoneInFlightPr` — see #787), or a `'stale'`
+  claim whose run's marker sits on an open PR (#4423, `claim-store.js`'s `staleClaimInFlightPr`)
+  — a build for this issue already exists, not a competing claim. There is no `holder` to
+  report; skip the liveness-evidence steps below and render instead:
 
   ```markdown
   ## Flow: Claim in-flight
@@ -263,14 +266,14 @@ stays best-effort and the claim read stays the authoritative hold check:
   stops for this exact stop shape — nobody headless is present to answer a resume confirmation);
   the card above is the terminal output for that form. Otherwise, parse the PR number from the
   trailing path segment of `link` (already validated same-repo-PR-URL-shaped by
-  `tombstoneInFlightPr` before this branch is ever reached) and `gh pr view {number} --json body`,
-  reading the body for both the `claude-tweaks-run: {run-id}` marker
-  (`_shared/pr-early-run-lifecycle.md`'s dual-marker scheme — the plain-text form, since this read
-  has no preference for the HTML-comment one) and, on the same read, that file's `### Resume`
-  section — the exact command line `` `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}"
-  {next-step}` `` composed once at PR-open time (that file's Step 3), carrying the found run's
-  *actual* record composition — single- or multi-spec (`flow/multi-spec.md`'s "Multi-spec runs
-  share one PR"). **Validate `{run-id}` before using it for anything**: a PR body is editable by
+  `tombstoneInFlightPr` or `staleClaimInFlightPr` before this branch is ever reached) and
+  `gh pr view {number} --json body`, reading the body for both the `claude-tweaks-run: {run-id}`
+  marker (`_shared/pr-early-run-lifecycle.md`'s dual-marker scheme — the plain-text form, since
+  this read has no preference for the HTML-comment one) and, on the same read, that file's
+  `### Resume` section — the exact command line `` `PIPELINE_RUN_DIR="{run-dir}"
+  /claude-tweaks:flow "{target}" {next-step}` `` composed once at PR-open time (that file's
+  Step 3), carrying the found run's *actual* record composition — single- or multi-spec
+  (`flow/multi-spec.md`'s "Multi-spec runs share one PR"). **Validate `{run-id}` before using it for anything**: a PR body is editable by
   anyone with write access to it, so this value is exactly as untrusted as `link`, and gets the
   same reject-rather-than-sanitize treatment `tombstoneInFlightPr` already applies there — require
   it to match `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$` (the canonical run-id shape,
@@ -389,7 +392,8 @@ Failure-posture table — the CLI's own `ABORT_REASON`, not something this flow 
 unverified write is downgraded to a `skipped` entry in the exit-0 JSON envelope
 (`{issue, reason: 'contested', holder}`, `{issue, reason: 'transient', error}`,
 `{issue, reason: 'unverified'}` (#2073), or, for a pr-opened tombstone whose linked PR is still open
-(#315), `{issue, reason: 'in-flight', link}`) and the CLI proceeds to the remaining targets rather
+(#315) or a stale claim whose run marker sits on an open PR (#4423), `{issue, reason: 'in-flight',
+link}`) and the CLI proceeds to the remaining targets rather
 than releasing and aborting — consistent with `--keep-going`'s existing meaning elsewhere in flow
 (`multi-spec.md`): continue past a per-target failure rather than aborting the whole run. Drop each
 skipped target from the target list for Step 3 onward. For a `reason: 'contested'` entry, gather

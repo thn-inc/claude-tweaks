@@ -37,18 +37,19 @@ When a handed-off `/flow` run fails a HARD-GATE (never reaches `/wrap-up`):
 **Claim-contest special case (before the numbered steps below).** When the failure this call is
 settling is a Step 2.8 claim-loop stop that renders as a static card with no `AskUserQuestion` of
 its own — either `flow/claim-targets.md`'s "Claim contested" stop, or its "Claim in-flight" stop
-(#315/#958/#974's in-flight-tombstone variant — reached here only when that card's own routing into
-`dispatch/resume-confirmation.md` was itself skipped under `DISPATCH_HEADLESS=1`, since that
-routing's own headless skip is what leaves the card as this Task call's terminal output) — no
-build or test ever ran, the pipeline stopped before the Config Manifesto, this record was never
-claimed by this run at all, so step 1 below's ownership check will correctly find no claim to
-release (skip is the right outcome there, not an error). The one thing this case adds: **when
+(#315/#958/#974's in-flight variant, tombstone or stale claim (#4423) — reached here only when
+that card's own routing into `dispatch/resume-confirmation.md` was itself skipped under
+`DISPATCH_HEADLESS=1`, since that routing's own headless skip is what leaves the card as this Task
+call's terminal output) — no build or test ever ran, the pipeline stopped before the Config
+Manifesto, this record was never claimed by this run at all, so step 1 below's ownership check
+will correctly find no claim to release (skip is the right outcome there, not an error). The one
+thing this case adds: **when
 `DISPATCH_HEADLESS=1` was set on this Task call's invocation** (`dispatch/task-prompt.md`'s first
 template — set only for a Routine-fired headless firing (bare drain or its `next` alias), where
 nobody is present to read the stop directly),
 read `_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller =
 `dispatch`), using failing-check-name `flow-step-2.8-claim-contest` for the contested-claim stop
-or `flow-step-2.8-claim-in-flight` for the in-flight-tombstone stop — distinct names, since the
+or `flow-step-2.8-claim-in-flight` for the in-flight stop — distinct names, since the
 two are different stop shapes and must dedup separately — and that stop's own card text as the
 diagnostic body. This is the one Settle branch that runs *before* any release/classification
 logic, since there is nothing to release or classify — it is a pre-flight stop, not a build/test
