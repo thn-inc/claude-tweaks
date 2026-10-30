@@ -45,7 +45,7 @@ Under `MULTISPEC_REVIEW_DEFER=1`, Phase 4's execution step SKIPS state-changing 
 The full list of execution's deferred-under-MULTISPEC actions:
 
 - Item 2 (Open items ledger) — parent /flow deletes the shared ledger once, in `flow/multispec-review-console.md`'s Shared teardown step 0, after the batch curation pass and the consolidated console (#3420)
-- Item 3 (Design caches) — parent /flow owns design-cache archival across all specs
+- Item 3 (Design caches) — parent /flow deletes every spec's design caches once, in `flow/multispec-review-console.md`'s Shared teardown step 0, committed and pushed before the shared branch is finished (#3813)
 - Item 4 (Worktree removal) — parent /flow handles worktree teardown after consolidated console approves cross-spec changes
 - Item 6 (Ephemeral dev server) — the auto-started server is shared across all specs in the run; parent /flow kills it once after the consolidated console (killing it per-spec would force every later spec's visual review to restart it)
 - Item 7 (Issue claim release) — parent /flow releases all claims once, after the consolidated console and worktree merge decide each spec's outcome

@@ -149,6 +149,32 @@ test('AC2.1 go-red: one console-applied bullet without the marker fails the pin'
   assert.throws(() => assertConfirmOnly(mutated), /Docs-health restructural filings/);
 });
 
+// Gotcha: MULTISPEC_REVIEW_DEFER=1 defers item 3 to /flow's Shared teardown, which had no
+// design-cache step at all; it now deletes them in step 0, committed and pushed before step 2's merge.
+function assertMultispecCachesBeforeMerge(text) {
+  const step0At = text.indexOf('0. **Delete the shared open-items ledger (#3420).**');
+  const step2At = text.indexOf('2. **Finish the shared branch.**', step0At);
+  assert.ok(step0At !== -1 && step2At > step0At, 'Shared teardown steps 0 and 2 must exist in order');
+  const step0 = text.slice(step0At, step2At);
+  assert.ok(step0.includes('Section A') && step0.includes('item 3'), 'step 0 deletes the design-wrapper caches (item 3, Section A) before step 2 merges');
+  assert.ok(step0.includes('even when the ledger was not deleted'), 'the cache deletion commits and pushes whatever the ledger report was');
+}
+
+test('Gotcha: the multi-spec Shared teardown deletes design caches before the shared merge', () => {
+  assertMultispecCachesBeforeMerge(read('flow/multispec-review-console.md'));
+  assert.ok(read('wrap-up/cleanup-procedures.md').includes('Shared teardown step 0'), "cleanup-procedures.md's deferred item-3 bullet names Shared teardown step 0");
+  const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets.js');
+  const bytes = Buffer.byteLength(readText(path.join(SKILLS, 'flow', 'multispec-review-console.md')));
+  assert.ok(bytes <= RAIL_BYTES, `multispec-review-console.md is ${bytes} bytes, over the ${RAIL_BYTES}-byte rail`);
+});
+
+test('Gotcha go-red: step 0 without the design-cache delete fails the pin', () => {
+  const text = read('flow/multispec-review-console.md');
+  const mutated = text.split('Section A').join('Section Z');
+  assert.notStrictEqual(mutated, text);
+  assert.throws(() => assertMultispecCachesBeforeMerge(mutated), /design-wrapper caches/);
+});
+
 test('every other step-13 citation now names the execution step\'s Branch finish', () => {
   const sectionC = read('wrap-up/cleanup-procedures-execution.md');
   assert.ok(!sectionC.includes('"On approval" step 13 ran'), 'Section C step 3 no longer says console step 13 merged');
