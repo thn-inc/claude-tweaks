@@ -13,10 +13,11 @@
 // regex is case-insensitive, so a line on a path that can leave the run
 // PR-less must not contain "failed" unless it is that degrade: this is why
 // the reopen-rejected line carries no reason. The one other line containing
-// "failed" is the spec's own rebind SKIP wording. It does read as a degrade,
-// and that is harmless only because the reopened PR is recorded right after
-// the rebind attempt, whatever its outcome, and before the push, so that run
-// is never PR-less.
+// "failed" is the spec's own rebind SKIP wording, shared by the reopened and
+// reused paths. It does read as a degrade, and that is harmless only because
+// the PR is recorded right after the rebind attempt, whatever its outcome,
+// and before the push (Step 1's paths), or already is (the recorded-PR path),
+// so that run is never PR-less.
 //
 // deps: { gh(args) -> stdout (throws on failure), git(args, {cwd}) -> stdout,
 //   sleep(ms), now(), appendDecision(line), recordPr({number, url}),
@@ -29,7 +30,8 @@
 'use strict';
 
 const path = require('path');
-const { composePrEarlyBody } = require('./pr-body');
+const { composePrEarlyBody, repairPrBody } = require('./pr-body');
+const { firstLineRunId } = require('./pr-checklist');
 const { formatEntry } = require('../log-decision/append');
 
 const RETRY_WAIT_MS = 15000;
@@ -90,11 +92,43 @@ async function openPrEarly(opts, deps) {
   }));
   const listPrs = () => {
     const v = parseJson(deps.gh(['pr', 'list', '--repo', repo, '--head', branch, '--state', 'all',
-      '--json', 'number,url,state,isDraft']), 'gh pr list');
+      '--json', 'number,url,state,isDraft,body']), 'gh pr list');
     if (!Array.isArray(v)) throw new Error('gh pr list did not return an array');
     return v;
   };
   const record = (number, url) => deps.recordPr({ number, url });
+
+  // Step 3's body: session temp file keyed on this run id, first line re-read
+  // and checked before anything consumes it.
+  const writeBody = () => {
+    const body = composePrEarlyBody({
+      runId, specSummary: summary, target, nextStep, runDir,
+      fixesLines: fixes.map((n) => `Fixes #${String(n).replace(/^#/, '')}`),
+    });
+    const bodyPath = deps.writeBodyFile(`pr-early-body-${runId}.md`, body);
+    const expected = `<!-- claude-tweaks-run: ${runId} -->`;
+    const first = String(deps.readFile(bodyPath)).split(/\r?\n/)[0];
+    if (first !== expected) {
+      throw new Error(`PR body first line is "${first}", expected "${expected}" — refusing to write a body naming another run (${bodyPath})`);
+    }
+    return bodyPath;
+  };
+  // A body names another run when pr-checklist.js would refuse it (exit 4): its
+  // first line, after the same marker repair, is not this run's id. A body
+  // that is not a string was not read, so there is nothing to compare.
+  const namesOtherRun = (body) => typeof body === 'string'
+    && firstLineRunId(repairPrBody({ body, runId, fixesLines: [] }).body) !== runId;
+  // Rebind a reopened or reused PR's body to this run before anything pushes
+  // (#3887, #4580). Any failure here, a first-line mismatch included, is a
+  // logged degrade, never a stop.
+  const rebind = (number, kind) => {
+    try {
+      deps.gh(['pr', 'edit', String(number), '--repo', repo, '--body-file', writeBody()]);
+      log(`rebound ${kind} PR #${number} to run ${runId}`, 'high');
+    } catch (e) {
+      log(`rebind of ${kind} PR #${number} failed (${oneLine(errText(e))}); phase-checklist updates will exit 4 until its body names run ${runId}`, 'n/a', 'SKIP');
+    }
+  };
 
   // Resume: a recorded PR is re-verified before it is trusted.
   const state = deps.readRunState ? deps.readRunState() : null;
@@ -103,11 +137,14 @@ async function openPrEarly(opts, deps) {
   if (recorded) {
     let view = null;
     try {
-      view = parseJson(deps.gh(['pr', 'view', String(recorded.number), '--repo', repo, '--json', 'state,isDraft,url']), 'gh pr view');
+      view = parseJson(deps.gh(['pr', 'view', String(recorded.number), '--repo', repo, '--json', 'state,isDraft,url,body']), 'gh pr view');
     } catch (e) {
       if (!NOT_FOUND_RE.test(errText(e))) throw e;
     }
-    if (view && view.state === 'OPEN') return { outcome: 'reused', number: recorded.number, url: view.url || recorded.url };
+    if (view && view.state === 'OPEN') {
+      if (namesOtherRun(view.body)) rebind(recorded.number, 'reused');
+      return { outcome: 'reused', number: recorded.number, url: view.url || recorded.url };
+    }
     stale = recorded.number;
   }
   const logStale = (verb, number) => {
@@ -131,27 +168,12 @@ async function openPrEarly(opts, deps) {
     }
   };
 
-  // Step 3's body: session temp file keyed on this run id, first line re-read
-  // and checked before anything consumes it.
-  const writeBody = () => {
-    const body = composePrEarlyBody({
-      runId, specSummary: summary, target, nextStep, runDir,
-      fixesLines: fixes.map((n) => `Fixes #${String(n).replace(/^#/, '')}`),
-    });
-    const bodyPath = deps.writeBodyFile(`pr-early-body-${runId}.md`, body);
-    const expected = `<!-- claude-tweaks-run: ${runId} -->`;
-    const first = String(deps.readFile(bodyPath)).split(/\r?\n/)[0];
-    if (first !== expected) {
-      throw new Error(`PR body first line is "${first}", expected "${expected}" — refusing to write a body naming another run (${bodyPath})`);
-    }
-    return bodyPath;
-  };
-
   // Step 1: check GitHub before creating anything.
   const prs = listPrs();
   const open = prs.find((p) => p.state === 'OPEN');
   if (open) {
     log(`reusing open PR #${open.number} for ${branch}`, 'high');
+    if (namesOtherRun(open.body)) rebind(open.number, 'reused');
     record(open.number, open.url);
     logStale('reused', open.number);
     const failed = await push();
@@ -174,16 +196,8 @@ async function openPrEarly(opts, deps) {
     if (reopenRejected === null) {
       log(`reopened PR #${pick.number} for ${branch} (retry)`, 'high');
       // A reopened prior attempt's body names the old run: rebind it before
-      // the push (#3887). Any failure here, a first-line mismatch included,
-      // is a logged degrade, never a stop.
-      if (adopted === pick.number) {
-        try {
-          deps.gh(['pr', 'edit', String(pick.number), '--repo', repo, '--body-file', writeBody()]);
-          log(`rebound reopened PR #${pick.number} to run ${runId}`, 'high');
-        } catch (e) {
-          log(`rebind of reopened PR #${pick.number} failed (${oneLine(errText(e))}); phase-checklist updates will exit 4 until its body names run ${runId}`, 'n/a', 'SKIP');
-        }
-      }
+      // the push (#3887).
+      if (adopted === pick.number) rebind(pick.number, 'reopened');
       record(pick.number, pick.url);
       logStale('reused', pick.number);
       const failed = await push();
