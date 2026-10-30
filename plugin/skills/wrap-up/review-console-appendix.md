@@ -46,8 +46,8 @@ patch is `git apply --check`ed first — stacked on the earlier patches in apply
 no longer applies, never applied blind, per `_shared/staged-patch.md`; an unrecognized staged
 prefix lands in Pending review as `pending — unmapped-prefix`, never auto-approved; an
 `sdd-ruling-*` item whose staged header does not show it safe lands as
-`pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-unclassified`, or
-`pending — sdd-ruling-unreadable` (the `sdd-ruling-*` bullet below); a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
+`pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-needs-human-decision`,
+`pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` (the `sdd-ruling-*` bullet below); a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
 before any prefix rule runs and resolves to `refused` — those rows are in the CLI's table like
 every other row, and a `refused` item is never applied, at any tier, per `refused-proposals.md`.
 The CLI also computes the merge half with both carve-outs (`merge.resolution` = `merge` |
@@ -102,8 +102,8 @@ procedure — no row is left unrouted:
   `apply` (ratify) only when its staged header shows it is safe (#3880): `Defers: no` with no
   `Defer-reason:` header line — a settled design decision, resolved exactly as before — or a
   deferral (`Defers: yes`, or any `Defer-reason:` header line) with exactly one `Defer-reason:`
-  header line whose bare value is in `_shared/deferral-gate.md`'s vocabulary. A deferral without a
-  valid reason resolves `pending — sdd-ruling-deferral-no-defer-reason`; a header with no `Defers:`
+  header line whose bare value is in `_shared/deferral-gate.md`'s vocabulary, other than `needs-human-decision`. A deferral without a
+  valid reason resolves `pending — sdd-ruling-deferral-no-defer-reason`; a deferral whose one reason is `needs-human-decision` resolves `pending — sdd-ruling-needs-human-decision`, since its own reason says a human must decide (#4587); a header with no `Defers:`
   line, more than one, or a value other than `yes`/`no` resolves `pending — sdd-ruling-unclassified`,
   since the console cannot tell whether it defers; a staged file that cannot be read at all resolves
   `pending — sdd-ruling-unreadable` (the reconciler's gap names why: `no-staged-path`, `path-rejected`,
