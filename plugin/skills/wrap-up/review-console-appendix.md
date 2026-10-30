@@ -47,7 +47,9 @@ no longer applies, never applied blind, per `_shared/staged-patch.md`; an unreco
 prefix lands in Pending review as `pending — unmapped-prefix`, never auto-approved; an
 `sdd-ruling-*` item whose staged header does not show it safe lands as
 `pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-needs-human-decision`,
-`pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` (the `sdd-ruling-*` bullet below); a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
+`pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` (the `sdd-ruling-*` bullet below); a `wrap-up-reference-*` item whose header
+carries a `Held:` line (`reference-sweep.md` Step 4), or whose file cannot be read, lands as
+`pending — reference-repair-held` or `pending — reference-repair-unreadable`, never auto-approved; a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
 before any prefix rule runs and resolves to `refused` — those rows are in the CLI's table like
 every other row, and a `refused` item is never applied, at any tier, per `refused-proposals.md`.
 The CLI also computes the merge half with both carve-outs (`merge.resolution` = `merge` |
