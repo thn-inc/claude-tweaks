@@ -27,12 +27,18 @@ Waived plugin/bin/lib/tiebreak.js: read only — the plan leaves the verdict-lin
 - A converged-positive debate line written in the old template shape (no lens list) must settle nothing: both findings stay `keep-staged`, never silently dropped.
 - A debate line converging **negative** or **inconclusive** must never settle anything, even though it names a lens and location.
 - A contested file whose own key has no verdict leaves both its finding and its partner `keep-staged`.
-- A partner key that already carries its own later verdict keeps that verdict (e.g. its own `dropped`), not the inherited one.
+- A partner key that carries its own verdict keeps that verdict (e.g. its own `dropped`), not the inherited one, whether it was logged before or after the pair's verdict.
+- An inherited can't-tell verdict must not file twice: the contested file carries the one filing, and the partner's own staged file is dismissed as covered.
 - A `lens …:line` mention in the free text before `converged positive` (the region itself) must not be double-counted into a wrong key; only keys after the region are read, with a bare `:n` meaning the region's path.
 
 ---
 
 ### Task 1: Converged-positive debate line settles every finding it names
+
+**Role:** integration
+**Review risk:** high
+
+Risk signal: decision logic — branches on a parsed debate outcome to decide which findings are settled, ahead of the #3772 `Confirmed` branch.
 
 **Files:**
 - Modify: `plugin/bin/lib/console/resolve.js` (`tiebreakModel`, ~line 504; new helper beside `lineKeys` ~line 490)
@@ -60,7 +66,9 @@ test('the as-recorded 4304 shape (bare :n against the region path) settles both 
 test('a staged review-unconfirmed file whose line the debate settles resolves dismissed (#4563 AC1)', () => {
   const d = [`${stagedLow('3a', 'src/a.js:5')} Stage path: staged/review-unconfirmed-1.md.`,
     debatePositive(' (lens "3a" finding src/a.js:5; lens "3e" finding src/a.js:9 — both confirmed)')].join('\n');
-  assert.deepStrictEqual(findings(d, { 'review-unconfirmed-1.md': 'x' }).map((i) => [i.id, i.resolution]), [['review-unconfirmed-1.md', 'dismissed']]);
+  const items = findings(d, { 'review-unconfirmed-1.md': 'x' });
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]), [['review-unconfirmed-1.md', 'dismissed']]);
+  assert.strictEqual(items[0].reason, 'superseded — cross-lens debate confirmed it; routed through Step 3 Routing');
 });
 test('a converged-positive line with no lens list settles nothing (#4563 AC4)', () => {
   const d = [stagedLow('3a', 'src/a.js:5'), debatePositive('')].join('\n');
@@ -86,7 +94,7 @@ Expected: FAIL after Step 1 — the AC1.1/AC1.2 tests report keep-staged items w
 
 - [ ] **Step 3: Implement `debateConvergedKeys` and wire it into `tiebreakModel`**
 
-Match the line with `^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on ([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+) converged positive\b(.*)$`. From group 3 (the text after `converged positive`) collect every `\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)?:(\d+)` match as `${lens}|${path || regionPath}:${n}`. In `tiebreakModel`'s first loop, check this before the `#3772` `Confirmed` branch: for each key, run `settledByKey.set(key, { index, kind: 'confirmed', id: null, key })`, then skip the `Confirmed` branch for this line. Update the comment above `findingKey` (~line 630), which lists what supersedes a STAGED line, to name the debate route.
+Match the line with `^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on ([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+) converged positive\b(.*)$`. From group 3 (the text after `converged positive`) collect every `\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)?:(\d+)` match as `${lens}|${path || regionPath}:${n}`. In `tiebreakModel`'s first loop, check this before the `#3772` `Confirmed` branch: for each key, run `settledByKey.set(key, { index, kind: 'confirmed', id: null, key, via: 'debate' })`, then skip the `Confirmed` branch for this line. In `settledFileResolution`, a `confirmed` verdict with `via === 'debate'` returns reason `superseded — cross-lens debate confirmed it; routed through Step 3 Routing` (resolution `dismissed`, unchanged); every other `confirmed` keeps today's reason. Update the comment above `findingKey` (~line 630), which lists what supersedes a STAGED line, to name the debate route.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -101,6 +109,11 @@ git commit -m "Settle debate-confirmed findings in the Review Console — a conv
 ```
 
 ### Task 2: A settled contested file settles its partner finding
+
+**Role:** integration
+**Review risk:** high
+
+Risk signal: decision logic — verdict-inheritance precedence and a two-pass `computeSettledFiles()` re-settlement.
 
 **Files:**
 - Modify: `plugin/bin/lib/console/resolve.js` (`tiebreakModel`; new helper `contestedPositionKeys`)
@@ -146,6 +159,23 @@ test('a partner with its own later verdict keeps it over the inherited one (#456
   const items = findings(d, { 'review-contested-1.md': positions(f, partner) });
   assert.ok(items.some((i) => i.id.startsWith('tiebreak:') && i.resolution === 'filed'), 'the partner\'s own console verdict still surfaces');
 });
+test('a partner\'s own verdict logged BEFORE the pair\'s verdict still wins over inheritance (#4563)', () => {
+  const f = tbFinding();
+  const p = tbFinding({ lens: '3f', line: 7, claim: 'partner claim', reporterSeverity: 'low' });
+  const d = [`${stagedLow('3f', 'src/a.js:7')} Stage path: staged/review-unconfirmed-2.md.`, tbDebate(f, 'review-contested-1.md'),
+    tbVerdict(p, { verdict: 'refuted', severity: 'low' }).entry, tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(f, partner), 'review-unconfirmed-2.md': 'x' });
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]).sort(), [['review-contested-1.md', 'dismissed'], ['review-unconfirmed-2.md', 'dropped']]);
+});
+test('an inherited can\'t-tell verdict files once: the partner\'s own staged file is dismissed as covered (#4563)', () => {
+  const f = tbFinding();
+  const d = [`${stagedLow('3f', 'src/a.js:7')} Stage path: staged/review-unconfirmed-2.md.`, tbDebate(f, 'review-contested-1.md'),
+    tbVerdict(f, { recommendation: 'file' }).entry].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(f, partner), 'review-unconfirmed-2.md': 'x' });
+  assert.strictEqual(items.filter((i) => i.resolution === 'filed').length, 1, 'one filing for one tiebreak id');
+  const p = items.find((i) => i.id === 'review-unconfirmed-2.md');
+  assert.deepStrictEqual([p.resolution, p.reason], ['dismissed', 'covered by review-contested-1.md — its contested pair\'s tiebreak item carries the verdict']);
+});
 test('run 2026-10-28T060616-spec-4304 (real excerpt) resolves with zero keep-staged items (#4563 AC3)', () => {
   const dir = path.join(__dirname, 'fixtures', 'debate-settlement-4304');
   const { items } = findingItems({ runDir: dir, deps: bareDeps() });
@@ -161,7 +191,7 @@ Expected: FAIL after Step 1 — the partner's STAGED line still appears as a `ke
 
 - [ ] **Step 3: Implement partner inheritance in `tiebreakModel`**
 
-Move the settled-file loop into a local `computeSettledFiles()` closure that returns `{ settledFiles, absorbed }`. Call it once. Then, for each settled file whose `classifyStagedItem(name).section === SECTIONS.CONTESTED`, take its staged text (from `snapshot.staged`) and run `contestedPositionKeys` on it. For every key that has no `settledByKey` entry whose index is greater than the chosen verdict's, set `settledByKey.set(key, { ...chosen, key })`, keeping the verdict's index. Then call `computeSettledFiles()` a second time, so a partner's own staged file can settle. Return the result of the second call.
+Move the settled-file loop into a local `computeSettledFiles()` closure that returns `{ settledFiles, absorbed }`. Call it once. Then, for each settled file whose `classifyStagedItem(name).section === SECTIONS.CONTESTED`, take its staged text (from `snapshot.staged`) and run `contestedPositionKeys` on it. For every key that has no `settledByKey` entry at all, set `settledByKey.set(key, { ...chosen, key, inheritedFrom: name })`, keeping the verdict's index. A direct verdict or `Confirmed` line for the partner key wins whatever its order relative to the pair's verdict: one tiebreak wave logs in arbitrary order. In `settledFileResolution`, a verdict with `inheritedFrom` and `kind === 'console'` returns `{ resolution: 'dismissed', reason: \`covered by ${inheritedFrom} — its contested pair's tiebreak item carries the verdict\` }`, so one tiebreak id files once. Inherited `confirmed`/`dropped`/`digested` resolve as their kind does today. Then call `computeSettledFiles()` a second time, so a partner's own staged file can settle. Return the result of the second call.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -176,6 +206,8 @@ git commit -m "Settle a tiebroken contested pair's partner — the verdict reach
 ```
 
 ### Task 3: Producer prose — the debate line names both findings; the contested file's Positions shape is fixed
+
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/skills/review/step3-debate-and-refutation.md:45` (Both `agree` bullet) and `:47` (Mixed / partial bullet)
