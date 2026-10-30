@@ -88,9 +88,10 @@ const REUSED_AUTO_LINE = /`AUTO \{time\} — PR-early run lifecycle: rebound reu
 
 function assertReusedRebind(text) {
   const t = norm(text);
-  const start = t.search(REUSED_REBIND_SENTENCE);
-  assert.ok(start !== -1, 'the #4580 rebind paragraph is missing');
-  const para = t.match(REUSED_REBIND_SENTENCE)[0];
+  const match = t.match(REUSED_REBIND_SENTENCE);
+  assert.ok(match, 'the #4580 rebind paragraph is missing');
+  const para = match[0];
+  const start = match.index;
   const step1 = t.indexOf('### Step 1:');
   const step2 = t.indexOf('### Step 2: Push the branch');
   assert.ok(step1 !== -1 && start > step1 && start < step2, 'the #4580 paragraph must sit inside Step 1, before Step 2');
