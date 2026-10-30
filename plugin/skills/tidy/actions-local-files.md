@@ -68,13 +68,16 @@ input a human signs off against, with nothing left in the data to show a machine
 the bytes; it does not undo a verdict already given against them, which is why clearing the
 reversibility floor is not sufficient here.
 
+The below-floor close composes no brief and writes no `acceptance` facet, so it has no latch; it
+stays staged because it closes the parent and asserts every sub-issue is complete.
+
 Keeping both drivers on the same tier is also what keeps `[parent-gate]` one finding with one
 behavior rather than two that diverge by store.
 
 This action never sets `acceptance: approved` or `acceptance: changes-requested` — those stay
 exclusively `/claude-tweaks:demo`'s job, applied only after an explicit human verdict. Opening
 the gate is the precondition for that verdict, not the verdict itself, which is why the
-recommendation still ends with `/claude-tweaks:demo {id}` even once the gate is open.
+above-floor recommendation still ends with `/claude-tweaks:demo {id}` even once the gate is open.
 
 **What this does not cover.** Only decomposition parents. The sibling backstop — `acceptance-gap`,
 closed records with no disposition that are *not* decomposed sub-issues — is a scan, not an action: it has a

@@ -52,13 +52,15 @@ that table. Posting a comment and adding a label is an outward-facing GitHub API
 reversibility floor requires `high` — "undoable via file edit or `git revert`" — and its
 never-reversible list separately forbids "network calls beyond reads (no API writes, no message
 sends)" at every tier regardless of mode. Neither bar is clearable by this write, however
-mechanical or precondition-only it is. `_shared/github-pr-scan-acceptance.md`'s `parent-gate` scope states
+mechanical or precondition-only it is. The below-floor close is staged on the same grounds: it is an outward-facing write that
+closes the parent and asserts every sub-issue is complete. `_shared/github-pr-scan-acceptance.md`'s `parent-gate` scope states
 the same reasoning at the scope level.
 
 This action never applies `demo:approved` or `demo:changes-requested` — those two labels stay
 exclusively `/claude-tweaks:demo`'s job, applied only after an explicit human verdict. Opening
-the gate is the precondition for that verdict, not the verdict itself, which is why the
-recommendation still ends with `/claude-tweaks:demo #{n}` even once the gate is open.
+the gate is the precondition for that verdict, not the verdict itself, which is why
+an above-floor recommendation still ends with `/claude-tweaks:demo #{n}` even once the gate is
+open. The below-floor close has no verdict to await, so its row does not end with it.
 
 ## Arm ready PR
 

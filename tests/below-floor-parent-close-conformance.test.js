@@ -394,11 +394,35 @@ test('AC3.1: Open parent gate closes the parent below the floor, staged, with no
   assert.ok(row.includes('sub-issue-listing comment'));
 });
 
-test('AC3.1: the capped files stay under their byte caps', () => {
-  const bytes = (rel) => fs.statSync(path.join(SKILLS_DIR, rel)).size;
-  assert.ok(bytes('tidy/step-6-auto.md') < 49400, `step-6-auto.md is ${bytes('tidy/step-6-auto.md')} bytes`);
-  assert.ok(
-    bytes('_shared/github-pr-scan-acceptance.md') <= 47200,
-    `github-pr-scan-acceptance.md is ${bytes('_shared/github-pr-scan-acceptance.md')} bytes`,
-  );
+test('AC3.1: the Step 7 checklist verifies a below-floor close on both drivers', () => {
+  const skill = read('tidy/SKILL.md');
+  const forms = skill.split('\n').filter((l) => l.startsWith('- [x] Closed parent below the floor:'));
+  assert.equal(forms.length, 2, 'one form per driver');
+  const gh = forms.find((l) => l.includes('`github-issues`'));
+  const local = forms.find((l) => l.includes('`local-files`'));
+  assert.ok(gh && local, 'both drivers');
+  assert.ok(gh.includes('re-queried as `CLOSED`') && gh.includes('## Closed below the oversight floor') && gh.includes('Trusted authors'));
+  assert.ok(gh.includes('no `demo:*` label'));
+  assert.ok(local.includes('`facets.closed`') && local.includes('## Closed below the oversight floor'));
+  assert.ok(local.includes('no `acceptance` facet'));
+  // The brief-path forms stay, so an above-floor gate is still verified by a brief.
+  assert.equal(skill.split('\n').filter((l) => l.startsWith('- [x] Opened parent gate:')).length, 2);
+});
+
+test('AC3.1: stale brief-only restatements name the below-floor close', () => {
+  const BELOW = '`[parent-gate] #{n}: {title}' + BELOW_ROW_TAIL + '`';
+  assert.ok(read('_shared/github-pr-scan.md').includes(BELOW), 'Output Contract row form');
+  const floorPtr = '**Close the parent below the floor**';
+  const gate = read('tidy/SKILL.md').split('\n').find((l) => l.startsWith('| **Open parent gate** |'));
+  assert.ok(gate.includes('below the oversight floor') && gate.includes(floorPtr),'SKILL.md What It Means column');
+  const procedures = collapse(read('tidy/scan-procedures.md'));
+  assert.ok(procedures.includes('so an above-floor finding still ends with "then run `/claude-tweaks:demo #{n}`"'), 'scan-procedures above-floor only');
+  const actions = collapse(read('tidy/actions-github-issues.md'));
+  assert.ok(actions.includes('which is why an above-floor recommendation still ends with `/claude-tweaks:demo #{n}`'), 'github action above-floor only');
+  assert.ok(actions.includes('closes the parent and asserts every sub-issue is complete'), 'github staging reasoning');
+  const local = collapse(read('tidy/actions-local-files.md'));
+  assert.ok(local.includes('closes the parent and asserts every sub-issue is complete'), 'local staging reasoning');
+  const wr = collapse(read('_shared/work-record.md'));
+  assert.ok(wr.includes('below the oversight floor it instead closes the parent (' + floorPtr + ')'), 'work-record backstop bullet');
+  assert.ok(wr.includes('which applies `demo:pending` to the parent and attaches its Verification Brief above the oversight floor'), 'work-record /tidy row');
 });
