@@ -9,8 +9,8 @@
 
 // Canonical field order — matches refine-closing-summary.md's tally-line
 // example ("34 priority set · 2 Related updated · 7 granted · 5 flagged
-// back · 1 dependency-repair · 1 needs-decision · 0 skipped · 0 failed").
-const FIELDS = ['priority', 'related', 'granted', 'flaggedBack', 'dependencyRepair', 'needsDecision', 'skipped', 'failed'];
+// back · 1 dependency-repair · 1 needs-decision · 0 resolved · 0 skipped · 0 failed").
+const FIELDS = ['priority', 'related', 'granted', 'flaggedBack', 'dependencyRepair', 'needsDecision', 'resolved', 'skipped', 'failed'];
 
 // One label per field, exactly as refine-closing-summary.md's tally-line
 // template renders it.
@@ -21,6 +21,7 @@ const LABELS = {
   flaggedBack: 'flagged back',
   dependencyRepair: 'dependency-repair',
   needsDecision: 'needs-decision',
+  resolved: 'resolved',
   skipped: 'skipped',
   failed: 'failed',
 };
@@ -38,6 +39,7 @@ const PATTERNS = [
   { field: 'flaggedBack', re: /Backlog refine: flagged back #/ },
   { field: 'dependencyRepair', re: /Backlog refine: repaired dependency on/ },
   { field: 'needsDecision', re: /Backlog refine: stamped needs:decision on/ },
+  { field: 'resolved', re: /Backlog refine: resolved decision on #/ },
   { field: 'skipped', re: /Backlog refine: skipped #/ },
   { field: 'failed', re: /Backlog refine: .* write failed on #/ },
 ];
@@ -63,8 +65,11 @@ const APPLY_COMMENT_FAILED_RE = /^comment failed: /;
 // `unclassified` drift: refine-lanes.md's unattended batch-summary line,
 // merge-lane-reset.md's circuit-breaker reset, apply-refine-labels' own
 // `comment posted` line (the second half of a flag-back/needs-decision write
-// its label line already counts), and refine-record.md Step 5's Resolve-lane
-// per-record line (`Backlog refine #{n}: …` — no tally field exists for it).
+// its label line already counts), and refine-record.md Step 4's pre-#4566
+// Resolve-lane per-record line (`Backlog refine #{n}: …`), retained so a run
+// dir written by an older installed build does not surface it as drift — the
+// current form is refine-closing-summary.md's `resolved decision on #{n}`
+// template, counted under `resolved`.
 const IGNORED_PATTERNS = [
   /Backlog refine: batch auto-applied/,
   /Backlog refine: merge-lane circuit breaker RESET/,
@@ -195,7 +200,7 @@ function computeClosingTally(decisionsText) {
 
 // counts -> the canonical tally-line string, e.g.
 // "34 priority set · 2 Related updated · 7 granted · 5 flagged back ·
-// 1 dependency-repair · 1 needs-decision · 0 skipped · 0 failed".
+// 1 dependency-repair · 1 needs-decision · 0 resolved · 0 skipped · 0 failed".
 function renderTallyLine(counts) {
   return FIELDS.map((f) => `${counts[f] || 0} ${LABELS[f]}`).join(' · ');
 }

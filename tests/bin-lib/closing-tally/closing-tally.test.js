@@ -31,6 +31,7 @@ test('computeClosingTally: matches a hand-count of the fixture, one of each docu
     flaggedBack: 1,
     dependencyRepair: 1,
     needsDecision: 1,
+    resolved: 0,
     skipped: 1,
     failed: 1,
   });
@@ -70,7 +71,7 @@ test('renderTallyLine: matches refine-closing-summary.md\'s documented tally-lin
   const { counts } = computeClosingTally(FIXTURE_DECISIONS);
   assert.equal(
     renderTallyLine(counts),
-    '2 priority set · 1 Related updated · 2 granted · 1 flagged back · 1 dependency-repair · 1 needs-decision · 1 skipped · 1 failed',
+    '2 priority set · 1 Related updated · 2 granted · 1 flagged back · 1 dependency-repair · 1 needs-decision · 0 resolved · 1 skipped · 1 failed',
   );
 });
 
@@ -78,7 +79,7 @@ test('renderTallyLine: a fully clean run renders every field at 0', () => {
   const { counts } = computeClosingTally('## /backlog\n');
   assert.equal(
     renderTallyLine(counts),
-    '0 priority set · 0 Related updated · 0 granted · 0 flagged back · 0 dependency-repair · 0 needs-decision · 0 skipped · 0 failed',
+    '0 priority set · 0 Related updated · 0 granted · 0 flagged back · 0 dependency-repair · 0 needs-decision · 0 resolved · 0 skipped · 0 failed',
   );
 });
 
@@ -138,7 +139,7 @@ const REAL_RUN_2026_10_16 = `## /backlog
 - AUTO 19:33:17 — refine apply: Backlog refine: stamped needs:decision on #3225 — PreToolUse deny gate spec carries a contradicted ordering premise (materialize commit precedes config.yml in clean first calls); amend before granting. Reversibility: high.
 `;
 
-const ZERO = { priority: 0, related: 0, granted: 0, flaggedBack: 0, dependencyRepair: 0, needsDecision: 0, skipped: 0, failed: 0 };
+const ZERO = { priority: 0, related: 0, granted: 0, flaggedBack: 0, dependencyRepair: 0, needsDecision: 0, resolved: 0, skipped: 0, failed: 0 };
 
 test('#3267 AC1: a decisions.md written only by apply-refine-labels.js reports the true per-type counts', () => {
   const text = applyLines([
