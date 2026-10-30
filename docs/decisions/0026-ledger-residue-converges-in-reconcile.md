@@ -86,9 +86,9 @@ Candidate (b): a `ledger-residue` check in the reconcile family
   deleted after merge (by `remote-prune` or GitHub's auto-delete), so that reason fires only
   while the branch survives. After that, a ledger the merged PR deleted but that reappears is
   treated as new residue.
-- A ledger with open rows or a live run stays on the integration branch until a human or
-  `/claude-tweaks:tidy` resolves it. The check reports it each pass, and the background summary
-  surfaces it at the next SessionStart.
+- A ledger with open rows, a live run, or an open work record referencing it stays on the
+  integration branch until a human or `/claude-tweaks:tidy` resolves it. The check reports it
+  each pass, and the background summary surfaces it at the next SessionStart.
 - tidy's orphan-ledger scan and this check can both propose deleting the same ledger, because
   they share one rule. The duplicate is benign: whichever PR merges first removes the file, and
   the other is left with nothing to delete. If the leftover is this check's removal PR, close it.
