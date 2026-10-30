@@ -11,6 +11,20 @@ const PROFILE_NAMES = Object.keys(PROFILES);
 
 const POLICY_CATEGORIES = ['autonomy-trust', 'pipeline-behavior', 'merge-safety', 'health-sweeps', 'models', 'housekeeping'];
 
+// Control mode (#4609). The four built-in invisible-risk category slugs, verbatim;
+// `risk-categories` entries are additional slugs beside these.
+const BUILTIN_RISK_CATEGORIES = ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'];
+
+// A `list` row's optional `element` names the rule every comma-separated entry
+// must match (isValidValue). A list row with no `element` accepts any text.
+const LIST_ELEMENT_PATTERNS = {
+  login: /^[A-Za-z0-9][A-Za-z0-9_-]*(\[bot\])?$/, // a GitHub user/org login, bot logins included
+  slug: /^[a-z0-9][a-z0-9-]*$/,
+};
+
+// A `string` row's optional `pattern` the whole value must also match.
+const HTTP_URL = /^https?:\/\/\S+$/;
+
 // A `type: 'boolean'` entry's value — in policy.yml examples, routing-table prose, and
 // tests — must use the literal strings 'true'/'false', never 'on'/'off': resolveValue()
 // below does a strict string match and silently falls back to the entry's `default` on
@@ -74,6 +88,8 @@ const POLICY_KEYS = [
   { key: 'auto-merge-max-lines', type: 'integer', default: 40, summary: "Bounds how large a diff an unattended merge will accept before a human is required — a weighted guideline, not a hard cutoff.", category: 'merge-safety', tier: 'core' },
   { key: 'auto-merge-max-files', type: 'integer', default: 2, summary: "Bounds how many changed files an unattended merge will accept before a human is required — the same weighted guideline, by file count.", category: 'merge-safety', tier: 'core' },
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
+  // risk-categories (#4609): project-added invisible-risk slugs, beside the four BUILTIN_RISK_CATEGORIES. `element: 'slug'` validates each comma-separated entry.
+  { key: 'risk-categories', type: 'list', default: [], element: 'slug', summary: "Read only with control mode on: extra risk categories added to the four built-in ones; pairs with risk-path-globs.", category: 'merge-safety', tier: 'advanced' },
   // commit-scope / commit-scope-paths (#3298): the merge-subject scope source bin/compose-subject.js resolves when --scope is absent — explicit flag > a commit-scope-paths match over the changed files > commit-scope > unscoped. Both advanced: the core tier is at its cap.
   { key: 'commit-scope', type: 'string', summary: "Names the one Conventional-Commits scope every merge subject carries, and the fallback when a path rule is ambiguous.", category: 'merge-safety', tier: 'advanced' },
   { key: 'commit-scope-paths', type: 'list', default: [], summary: "Maps changed-path prefixes to the Conventional-Commits scope a merge subject carries when the matched files all agree on one scope.", category: 'merge-safety', tier: 'advanced' },
@@ -155,6 +171,20 @@ const POLICY_KEYS = [
   // semantics live in _shared/record-batch-input.md, not restated here.
   { key: 'specify-budget', type: 'integer', default: 5, summary: "Caps how many eligible backlog records one bare /specify drain attempts before stopping.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'autonomy', type: 'enum', values: ['supervised', 'trusted', 'unattended'], default: 'supervised', summary: "Caps how much the pipeline may do without a human — trust that classes earn can never exceed this ceiling.", category: 'autonomy-trust', tier: 'core' },
+  // Control mode (#4609, human-in-control #4608): thirteen inert flat keys. Nothing reads them yet; later records consume them, always behind isControlModeOn (bin/lib/policy.js). Every key below `control-mode` is consulted only with control mode on. All advanced — the core tier is at its cap.
+  { key: 'control-mode', type: 'enum', values: ['off', 'on'], default: 'off', summary: "The single human-in-control switch; implied levers default at skill-default precedence, so any explicitly set lever wins.", category: 'autonomy-trust', tier: 'advanced' },
+  { key: 'acceptance-target', type: 'enum', values: ['local', 'dev'], default: 'local', summary: "Read only with control mode on: where a human accepts work, locally or on the dev environment; pairs with deploy-reach when dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-reach', type: 'enum', values: ['on-merge', 'command', 'none'], default: 'none', summary: "Read only with control mode on: how a merge reaches the dev environment, if at all; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  // deploy-command is an executed string: consumers read it from the base branch's policy only (never from a PR's own copy). allowWhitespace — it is a shell command, like release-hook.
+  { key: 'deploy-command', type: 'string', allowWhitespace: true, summary: "Executed string, read only from the base branch's policy; meaningful only with deploy-reach command and control mode on.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-live-workflow', type: 'string', allowWhitespace: true, summary: "Read only with control mode on: names the CI workflow whose success means dev is live; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-version-url', type: 'string', pattern: HTTP_URL, summary: "Read only with control mode on: a URL returning the deployed version; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'dev-base-url', type: 'string', pattern: HTTP_URL, summary: "Read only with control mode on: the dev environment's base URL, where acceptance runs; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'dev-test-account', type: 'string', allowWhitespace: true, summary: "Read only with control mode on: the vault entry name of the dedicated test account the smoke check signs in with; pairs with dev-base-url.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-wait-seconds', type: 'integer', min: 0, default: 900, summary: "Read only with control mode on: how long to wait for a deploy to go live; 0 skips the wait. Pairs with a live signal.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-poll-seconds', type: 'integer', min: 1, default: 30, summary: "Read only with control mode on: how often the live signal is polled while waiting; pairs with deploy-wait-seconds.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'owned-owners', type: 'list', default: [], element: 'login', summary: "Read only with control mode on: GitHub users and orgs, beside the repo's own owner, whose repos count as owned. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
+  { key: 'trusted-authors', type: 'list', default: [], element: 'login', summary: "Read only with control mode on: GitHub logins trusted as record roots, beside the repo owner. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
   { key: 'trust-revert-window-days', type: 'integer', min: 1, default: 14, summary: "Sets how many days a closed record must age before its outcome counts as proven-good evidence toward earned trust.", category: 'autonomy-trust', tier: 'advanced' },
   // The reserved second opt-in named by skills/_shared/autonomy-ceiling.md —
   // read by permittedGrants as grantOriginationEnabled. false by default: the
@@ -395,8 +425,15 @@ function isValidValue(schemaEntry, value) {
       // against. allowWhitespace: true opts a command-shaped key (e.g.
       // release-hook) out of the whitespace-free rule, but not out of the
       // non-blank rule — a whitespace-only value is still invalid.
-      return value.trim().length > 0 && (schemaEntry.allowWhitespace === true || !/\s/.test(value));
+      // An optional `pattern` (#4609) must also match — e.g. a URL key.
+      return value.trim().length > 0 && (schemaEntry.allowWhitespace === true || !/\s/.test(value))
+        && (schemaEntry.pattern === undefined || schemaEntry.pattern.test(value));
     case 'list':
+      // An optional `element` (#4609) names the rule each comma-separated entry
+      // must match; an empty entry (a trailing or doubled comma) never does.
+      // A row with no `element` accepts anything, as before.
+      if (schemaEntry.element === undefined) return true;
+      return value.split(',').every((entry) => LIST_ELEMENT_PATTERNS[schemaEntry.element].test(entry.trim()));
     case 'opaque':
       return true;
     case 'map':
@@ -780,6 +817,6 @@ function auditPolicy(repoRoot) {
 }
 
 module.exports = {
-  POLICY_KEYS, POLICY_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
+  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
 };

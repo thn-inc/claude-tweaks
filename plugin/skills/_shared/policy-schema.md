@@ -65,6 +65,7 @@ Every `POLICY_KEYS` row carries three human-facing fields alongside its shape: `
 | Worktree & execution | `pipeline-behavior` |
 | Integration model | `merge-safety` |
 | Project facts | `autonomy-trust` |
+| Control mode | `autonomy-trust` |
 | Dispatch & merge | `merge-safety` |
 | Review | `pipeline-behavior` |
 | Documentation | `housekeeping` |
@@ -225,6 +226,26 @@ Registered by #4029; read by `readEfficiencyCeilings` in `bin/lib/policy.js` for
 | `standard-run-round-trip-ceiling` |
 | `standard-run-procedure-kb-ceiling` |
 | `standard-run-verify-minutes-ceiling` |
+
+## Control mode
+
+Inert flat keys (#4609, #4608). `control-mode: on` implies its levers at skill-default precedence: an explicitly set lever wins, and `autonomy` is unchanged. Every other key here is consulted only when it is `on`. `isControlModeOn` in `bin/lib/policy.js` is the one comparison site (exactly `on`). Built-in risk slugs: `migrations`, `auth`, `public-contract`, `irreversible-side-effect`. List entries are logins written `a,b` (no brackets, `@`, `/`, spaces or empty entries), compared case-insensitively by consumers. A `#` ends a value, so `deploy-command` stops there; URL keys are written unquoted.
+
+| Key | Canonical home | Owner skill(s) | Default | Meaning |
+|---|---|---|---|---|
+| `control-mode` | `policy.yml` | none yet (#4608) | `off` | `off`/`on` |
+| `acceptance-target` | `policy.yml` | none yet (#4608) | `local` | `local`/`dev` |
+| `deploy-reach` | `policy.yml` | none yet (#4608) | `none` | `on-merge`/`command`/`none` |
+| `deploy-command` | `policy.yml`, base branch only | none yet (#4608) | unset | Executed command; spaces allowed |
+| `deploy-live-workflow` | `policy.yml` | none yet (#4608) | unset | CI workflow name; spaces allowed |
+| `deploy-version-url` | `policy.yml` | none yet (#4608) | unset | `http(s)` URL |
+| `dev-base-url` | `policy.yml` | none yet (#4608) | unset | `http(s)` URL |
+| `dev-test-account` | `policy.yml` | none yet (#4608) | unset | Vault entry name, never a credential |
+| `deploy-wait-seconds` | `policy.yml` | none yet (#4608) | `900` | Integer >= 0 |
+| `deploy-poll-seconds` | `policy.yml` | none yet (#4608) | `30` | Integer >= 1 |
+| `owned-owners` | `policy.yml` | none yet (#4608) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]` |
+| `trusted-authors` | `policy.yml` | none yet (#4608) | `[]` | Logins, as `owned-owners` |
+| `risk-categories` | `policy.yml` | none yet (#4608) | `[]` | Extra lowercase slugs |
 
 ## Additional levers
 
