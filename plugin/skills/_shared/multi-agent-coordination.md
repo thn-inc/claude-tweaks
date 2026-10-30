@@ -148,12 +148,12 @@ from the general singleton-only rule; see `_shared/subagent-output-contract.md`.
 ### Decision-log entry format
 
 ```
-- AUTO {HH:MM:SS} — /review debate: {path}:{line} confirmed (both agreed). Reversibility: high.
+- AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged positive after 1 round (lens "{lensA}" finding {pathA}:{lineA}; lens "{lensB}" finding {pathB}:{lineB} — both confirmed). Reversibility: high.
 - AUTO {HH:MM:SS} — /review debate: {path}:{line} unconfirmed (both disagreed). Reversibility: high.
 - STAGED {HH:MM:SS} — /review debate: lens "{lens}" {path}:{line} contested (mixed verdicts). Stage path: staged/review-debate-{n}.md.
 ```
 
-`{lens}` is the first position's lens — the key the tiebreak verdict carries for a contested finding.
+`{lens}` is the first position's lens — the key the tiebreak verdict carries for a contested finding. The `confirmed` line is `review/step3-debate-and-refutation.md`'s, and it names every confirmed finding because the Review Console settles only the findings a line names (`bin/lib/console/resolve.js`'s `debateConvergedKeys`).
 
 ### Review Console staging format
 

@@ -1072,8 +1072,9 @@ test('debate: returns a `profile` field (not `tier`) and the bare [Use: {Profile
 
 test('debate: both agree → confirmed with AUTO entry matching the documented schema', () => {
   assert.strictEqual(c.resolveDebate('agree', 'agree'), 'confirmed');
-  const entry = `- AUTO 14:41:02 — /review debate: src/auth.ts:42 confirmed (both agreed). Reversibility: high.`;
-  assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['confirmed (both agreed)']));
+  const entry =
+    `- AUTO 14:41:02 — Debate: cross-lens disagreement on src/auth.ts:42 converged positive after 1 round (lens "security" finding src/auth.ts:42; lens "quality" finding src/auth.ts:44 — both confirmed). Reversibility: high.`;
+  assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['converged positive after 1 round']));
 });
 
 test('debate: both disagree → unconfirmed with AUTO entry matching the documented schema', () => {
