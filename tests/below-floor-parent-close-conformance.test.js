@@ -61,10 +61,10 @@ function paragraph(text, opener) {
   return text.slice(start, end === -1 ? undefined : end);
 }
 
-// The local-files close-timing invariant, stated identically in the exceeds: false bullet and the
-// close section, and the two false merge-mechanism claims it replaced.
+// The local-files close-timing invariant, stated once in the close section's step 5 (the
+// exceeds: false bullet points at it), and the two false merge-mechanism claims it replaced.
 const CLOSE_TIMING =
-  "The parent is never closed ahead of the merge: on wrap-up's execution step the commit follows item 4's merge, and on the auto-merge short-circuit labeling and the commit happen on the run's branch before its merge.";
+  "The parent is never closed ahead of the merge: on wrap-up's execution step the commit follows the merge of `wrap-up/cleanup-procedures.md`'s item 4 (Git worktree), and on the auto-merge short-circuit labeling and the commit happen on the run's branch before its merge.";
 const FALSE_MERGE_CLAIMS = [
   'reaches the integration branch only with the merge commit',
   'never reaches the integration branch ahead of the merge',
@@ -82,13 +82,14 @@ test('AC2.2: the exceeds: false bullet routes the close by entry and never close
   assert.match(below, /\*\*Close the parent below the floor\*\*/);
   assert.match(below, /never closed ahead of the merge/);
   assert.match(below, /commit the parent record with the entry's own close commit/);
-  assert.ok(collapse(below).includes(CLOSE_TIMING), 'per-path close-timing invariant');
+  assert.ok(collapse(below).includes("never closed ahead of the merge, per that section's step 5."), 'points at step 5');
+  assert.ok(!collapse(below).includes(CLOSE_TIMING), 'the close-timing invariant is not restated in the bullet');
   for (const claim of FALSE_MERGE_CLAIMS) assert.ok(!collapse(below).includes(claim), `false claim gone: ${claim}`);
   assert.match(below, /end-to-end variant/, 'the Try-it walkthrough sentence is kept');
   assert.match(below, /Parent-side entry/);
 });
 
-test('AC1.1: the close section composes the listing comment, then comments, then closes', () => {
+test('AC1.1: the close section excludes pre-merge github entries, lists sub-issues with $MERGING_PR first, comments before closing, and commits a short-circuit close itself', () => {
   const close = closeSection(read(GATE_REL));
   assert.ok(close.includes('## Closed below the oversight floor'), 'marker heading');
   assert.ok(close.includes('closed by PR #{pr}'), 'listing line suffix');
@@ -122,10 +123,33 @@ test('AC1.1: the close section composes the listing comment, then comments, then
   assert.ok(!prChoice.includes('uses `$MERGING_PR` instead'), 'MERGING_PR is no longer only the empty-references fallback');
 });
 
-test('AC5.1: the close section is idempotent on a closed parent and a trusted heading comment', () => {
-  const close = closeSection(read(GATE_REL));
+test('AC5.1: the close section is idempotent on a closed parent, a human reopen and a counted heading comment', () => {
+  const close = collapse(closeSection(read(GATE_REL)));
   assert.match(close, /already `CLOSED`/);
-  assert.match(close, /Trusted authors/);
+  assert.ok(close.includes('gh issue view $PARENT_NUM --json state,stateReason,comments'), 'reads stateReason with the comments');
+  assert.ok(
+    close.includes('An open parent whose `stateReason` is `REOPENED` is a no-op too, reported in the output and never re-closed'),
+    'a human reopen is never re-closed',
+  );
+  assert.ok(close.includes('gh api user --jq .login'), 'reads the current gh identity');
+  assert.ok(
+    close.includes(
+      "counting only a comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors) or from the current `gh` identity (the login printed above)",
+    ),
+    'a trusted or own-identity heading comment counts',
+  );
+  assert.ok(close.includes('Any other comment carrying the heading reads as no comment posted'), 'any other heading comment reads as absent');
+});
+
+test('AC1.1: the close reason follows the sub-issues\' stateReason, and the enumeration is paginated', () => {
+  const gate = read(GATE_REL);
+  const close = collapse(closeSection(gate));
+  assert.ok(close.includes('Close with `--reason completed` only when at least one sub-issue closed `COMPLETED`'), 'completed only with a completed sub-issue');
+  assert.ok(close.includes('gh issue close $PARENT_NUM --reason "not planned"'), 'not planned otherwise');
+  assert.ok(close.includes('No sub-issue closed as completed, so this parent closes as not planned.'), 'the comment says so');
+  const enumerate = section(gate, "## Enumerate the parent's sub-issues", '## Self-inclusion rule');
+  assert.ok(enumerate.includes('gh issue view {n} --json state,stateReason,labels,title,closedByPullRequestsReferences'), 'fetches stateReason');
+  assert.ok(enumerate.includes('gh api --paginate "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues"'), 'native enumeration is paginated');
 });
 
 test('AC2.2: the entry shapes name Step 4.0b as the post-merge sub-issue-side entry', () => {
@@ -146,12 +170,19 @@ test('AC2.2: the entry shapes name Step 4.0b as the post-merge sub-issue-side en
   assert.ok(routing.includes('Step 4.0b'));
 });
 
-test('AC2.2: no resolvable parent is a no-op for the post-merge Step 4.0b entry on both no-parent branches', () => {
+test('AC2.2: no resolvable parent is a no-op for the post-merge Step 4.0b entry, stated once and pointed at', () => {
   const NO_OP = 'Step 4.0b\'s post-merge entry, for which no resolvable parent is a no-op: no labeling, no Try it.';
   const gateNoParent = collapse(paragraph(read(GATE_REL), '**No parent resolvable**'));
   assert.ok(gateNoParent.includes(NO_OP), 'Resolve the parent\'s no-parent branch');
   const routingOtherwise = collapse(paragraph(read('wrap-up/verification-brief.md'), '**Otherwise — no resolvable parent**'));
-  assert.ok(routingOtherwise.includes(NO_OP), 'Routing\'s Otherwise branch');
+  assert.ok(!routingOtherwise.includes(NO_OP), 'Routing\'s Otherwise branch does not restate it');
+  assert.ok(
+    routingOtherwise.includes("The post-merge Step 4.0b entry is the exception, per `verification-brief-parent-gate.md`'s **Resolve the parent** no-parent branch."),
+    'Routing\'s Otherwise branch points at it',
+  );
+  const step40b = collapse(section(read('_shared/pr-first-merge-post-merge.md'), '### Step 4.0b', '### Step 4.1'));
+  assert.ok(!step40b.includes('as is a record with no resolvable parent'), 'Step 4.0b does not restate it');
+  assert.ok(step40b.includes("a record with no resolvable parent follows **Resolve the parent**'s no-parent branch."), 'Step 4.0b points at it');
 });
 
 test('AC1.1: /demo no longer claims to be the only closer of a parent', () => {
@@ -251,18 +282,24 @@ test('AC2.1: Step 4.0b acts only on a below-floor due gate, once per parent, and
   const body = collapse(section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1'));
   for (const [lit, why] of [
     ['On `due` with `exceeds: false`, run **Close the parent below the floor**.', 'acts only on due with exceeds: false'],
-    ['Every other outcome is a no-op, as is a record with no resolvable parent.', 'every other outcome is a no-op'],
+    ['Every other outcome is a no-op;', 'every other outcome is a no-op'],
     [
       'Evaluate each parent once: skip a record whose parent this step already handled, so a parent with several sub-issues in the set is closed once.',
       'each parent evaluated once',
     ],
     [
-      'A failing `gh` call skips that parent, or the whole step when the input read above fails. Name each skipped parent in the closing summary.',
-      'a failing gh call skips that parent',
+      'and how it skips on a failing `gh` call — never a stop, and never a reason to report anything other than `merged`.',
+      'a failing gh call follows the gate\'s Fail open paragraph',
     ],
   ]) {
     assert.ok(body.includes(lit), `Step 4.0b: ${why}`);
   }
+  assert.ok(!body.includes('A failing `gh` call skips that parent'), 'the fail-open rule is not restated in Step 4.0b');
+  const failOpen = collapse(paragraph(read(GATE_REL), '**Fail open on every `gh` call'));
+  assert.ok(
+    failOpen.includes("on any failing `gh` call it skips that parent — or the whole step, when the call reads Step 4.0b's own input — names each skipped parent in the closing summary"),
+    'the gate states the Step 4.0b fail-open rule once',
+  );
   const shapes = collapse(entryShapes(read(GATE_REL)));
   assert.ok(
     shapes.includes(
@@ -270,6 +307,35 @@ test('AC2.1: Step 4.0b acts only on a below-floor due gate, once per parent, and
     ),
     'the gate file states Step 4.0b acts only on due with exceeds: false',
   );
+});
+
+test('AC2.1: Step 4.0b keeps same-repo closing records, skips without Step 4.0\'s lists, needs parent-issue, and logs through log-decision.js', () => {
+  const raw = section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1');
+  const body = collapse(raw);
+  assert.ok(
+    raw.includes(
+      `--jq '[.closingIssuesReferences[] | select((.repository.owner.login // "" | ascii_downcase) == ("{owner}" | ascii_downcase) and (.repository.name // "" | ascii_downcase) == ("{repo}" | ascii_downcase)) | .number]'`,
+    ),
+    'the closing-records read keeps same-repo references only',
+  );
+  assert.ok(!raw.includes("--jq '[.closingIssuesReferences[].number]'"), 'the unfiltered number read is gone');
+  assert.ok(
+    body.includes('which only an exit-0 `post-merge` action carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`)'),
+    'only an exit-0 post-merge action carries the lists',
+  );
+  assert.ok(body.includes('skip this step entirely, never subtracting nothing, and log it'), 'skips the whole step without the lists');
+  assert.ok(raw.includes('--status SKIP --step "pr-first-merge Step 4.0b (skipped)"'), 'the skip is logged through log-decision.js');
+  assert.ok(
+    body.includes('A parent whose labels lack `parent-issue` — the label tidy\'s `parent-gate` backstop selects on — is a no-op too, named in the closing summary.'),
+    'a parent without the parent-issue label is a no-op',
+  );
+  assert.ok(
+    raw.includes(
+      'node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility "high (gh issue reopen)"',
+    ),
+    'each closed parent is logged through log-decision.js',
+  );
+  assert.ok(!body.includes('AUTO {time} — pr-first-merge Step 4.0b'), 'no hand-composed decisions.md line');
 });
 
 test('AC2.1: issue-claims\' Close-via-merge names the below-floor parent close as an exception', () => {
@@ -280,21 +346,24 @@ test('AC2.1: issue-claims\' Close-via-merge names the below-floor parent close a
   );
   assert.ok(!collapse(cvm).includes('except where a procedure names its own exception'), 'the open-ended exception wording is gone');
   assert.ok(cvm.includes('**Close the parent below the floor**'));
+  assert.ok(collapse(cvm).includes('under the restore contract that `_shared/auto-mode-contract.md` exception states'), 'points at the contract for the restore');
+  assert.ok(!collapse(cvm).includes('under the restore contract stated there'), 'the referent-less pointer is gone');
 });
 
 test('AC2.1: the auto-mode contract names the below-floor parent close as an exception with its restore contract', () => {
   const contract = read('_shared/auto-mode-contract.md');
   const never = collapse(section(contract, '### Never-reversible (auto-FORBIDDEN, regardless of mode)', '## What `auto` silences'));
   for (const lit of [
-    "- Closing or deleting work records — except the Parent-Gate Procedure's **Close the parent below the floor** (`wrap-up/verification-brief-parent-gate.md`), run by `_shared/pr-first-merge-post-merge.md` Step 4.0b's post-merge entry:",
-    'Its restore contract: a human runs `gh issue reopen {parent}` and may delete that comment — the pipeline never restores automatically.',
-    'The precondition is that the parent still holds only this close: no comment, label or state change has landed on it since.',
-    'When that precondition does not hold, the restore is not mechanical: the human reads what changed on the parent before reopening it, and deletes no comment but the `## Closed below the oversight floor` one',
+    "- Closing or deleting work records — except the Parent-Gate Procedure's **Close the parent below the floor** (`wrap-up/verification-brief-parent-gate.md`) on a sub-issue-side entry: `_shared/pr-first-merge-post-merge.md` Step 4.0b's post-merge entry under `work-backend: github-issues`, or, under `work-backend: local-files`, wrap-up's execution step, the auto-merge short-circuit and dispatch's group auto-merge gate.",
+    'Its restore contract — the pipeline never restores automatically: under `github-issues` a human runs `gh issue reopen {parent}` and the comment stays as the audit trail; a reopen deletes nothing, so it restores the parent whatever else has landed on it since, as long as this close is still its latest.',
+    'Under `local-files` the close is an ordinary commit on the run\'s branch and `bin/lib/issues/local-store.js` has no reopen primitive, so a human clears the parent record\'s `closed`/`closedAt` facets',
     'The below-floor parent close the first bullet names is the other exception: its comment and its close are its two writes, under that bullet\'s restore contract',
-    "This restore contract is what satisfies the Reversibility floor's `high` for this one write, and only for Step 4.0b's entry: `/claude-tweaks:tidy`'s parent-side `Open parent gate` runs the same section but is not this exception, so it stays staged",
+    "This restore contract is what satisfies the Reversibility floor's `high` for this one write, and only for those sub-issue-side entries: `/claude-tweaks:tidy`'s parent-side `Open parent gate` runs the same section but is not this exception, so it stays staged",
   ]) {
     assert.ok(never.includes(lit), `Never-reversible list carries: ${lit}`);
   }
+  assert.ok(!never.includes('may delete that comment'), 'the restore no longer deletes the audit-trail comment');
+  assert.ok(!never.includes("and only for Step 4.0b's entry"), 'the exception is no longer scoped to Step 4.0b alone');
 });
 
 test('AC2.1: close-out step 7 and merge-mode step 3 run Step 4.0b on `merged`', () => {
@@ -366,17 +435,20 @@ function mkTmp(prefix) {
 }
 
 // Three due parents against a `high` floor: #1's sub-issues are risk:medium (below), #2's risk:high
-// (above), #3 has one unscored sub-issue (fails closed, above).
+// (above), #3 has one unscored sub-issue (fails closed, above). #4 is below the floor but one of its
+// sub-issues is still open, so it is not due and prints no row: dropping the scan's `due` filter
+// would surface it.
 test('AC3.1: the GitHub parent-gate scan prints a Close row for a due below-floor parent', () => {
   const script = scanScript(
     section(read('_shared/github-pr-scan-acceptance.md'), '## Scope: `parent-gate`', null),
     "'[parent-gate] #'",
   );
-  const sub = (number, risk) => ({ number, state: 'CLOSED', labels: risk ? [{ name: `risk:${risk}` }] : [] });
+  const sub = (number, risk, state = 'CLOSED') => ({ number, state, labels: risk ? [{ name: `risk:${risk}` }] : [] });
   const gates = [
     { number: 1, title: 'Medium parent', parentLabels: [], subIssues: [sub(11, 'medium'), sub(12, 'low')] },
     { number: 2, title: 'High parent', parentLabels: [], subIssues: [sub(21, 'high')] },
     { number: 3, title: 'Unscored parent', parentLabels: [], subIssues: [sub(31, 'medium'), sub(32, null)] },
+    { number: 4, title: 'Open-sub parent', parentLabels: [], subIssues: [sub(41, 'medium'), sub(42, 'low', 'OPEN')] },
   ];
   const gatesFile = path.join(mkTmp('bf-parent-gate-gh-'), 'gates.json');
   fs.writeFileSync(gatesFile, JSON.stringify(gates));
@@ -412,6 +484,10 @@ test('AC3.1: Shape 7 prints a Close row for a due below-floor local parent', () 
   closedSub(5, 'sub-high', 2, 'high');
   closedSub(6, 'sub-medium-b', 3, 'medium');
   closedSub(7, 'sub-unscored', 3, null);
+  // A below-floor parent with one sub-issue left open: not due, so no row.
+  parent(8, 'open-sub-parent', 'Open-sub parent');
+  closedSub(9, 'sub-medium-c', 8, 'medium');
+  writeRecord(recordFile(10, 'sub-open'), { title: 'sub-open', body: 'Sub body.', facets: { ...defaultFacets(), parent: 8, risk: 'low' } });
 
   const out = execFileSync('node', ['-e', script, '--', 'high'], { cwd, encoding: 'utf8' });
   const lines = out.trim().split('\n').map((line) => line.split('\t'));
@@ -451,9 +527,13 @@ test('AC3.1: the Collect lines and the pre-filter prose carry the below-floor fo
 
 test('AC3.1: Open parent gate closes the parent below the floor, staged, with no brief', () => {
   const FLOOR = '**Close the parent below the floor**';
-  for (const rel of ['tidy/actions-github-issues.md', 'tidy/actions-local-files.md']) {
-    const text = read(rel);
-    const action = section(text, '## Open parent gate', text.includes('## Arm ready PR') ? '## Arm ready PR' : null);
+  // The end anchor is chosen per file, never from the text: '## Open parent gate' is the last H2 of
+  // actions-local-files.md only, so a renamed heading fails loudly instead of widening the slice.
+  for (const [rel, endHeading] of [
+    ['tidy/actions-github-issues.md', '## Arm ready PR'],
+    ['tidy/actions-local-files.md', null],
+  ]) {
+    const action = section(read(rel), '## Open parent gate', endHeading);
     assert.ok(collapse(action).includes(FLOOR), `${rel}: runs Close the parent below the floor`);
     assert.ok(collapse(action).includes('instead of composing a brief'), `${rel}: no brief below the floor`);
   }
@@ -510,21 +590,27 @@ function clauseFrom(text, opener) {
   return opener + (end === -1 ? rest : rest.slice(0, end));
 }
 
-test('AC3.1: tidy stages the below-floor close because the contract exception covers only Step 4.0b', () => {
+test('AC3.1: tidy stages the below-floor close because the contract exception covers only sub-issue-side entries', () => {
+  // The contract's own scope line: a change to it must fail here, not only in the restatements.
+  const contract = collapse(read('_shared/auto-mode-contract.md'));
+  assert.ok(
+    contract.includes("and only for those sub-issue-side entries: `/claude-tweaks:tidy`'s parent-side `Open parent gate` runs the same section but is not this exception, so it stays staged"),
+    'the contract scopes the exception to sub-issue-side entries and excludes tidy',
+  );
   const sites = [
     [
       collapse(read('tidy/scan-procedures.md')),
-      'Below the oversight floor it instead posts a comment and closes the parent: the contract\'s exception for that write covers only `_shared/pr-first-merge-post-merge.md` Step 4.0b\'s post-merge entry, and this parent-side backstop is not that entry, so it stays staged',
+      'Below the oversight floor it instead posts a comment and closes the parent: the contract\'s exception for that write covers only the Parent-Gate Procedure\'s sub-issue-side entries, and this parent-side backstop is not one of them, so it stays staged',
       'or, below the oversight floor, posts a comment and closes the parent — an outward-facing GitHub API write that fails',
     ],
     [
       collapse(readText(path.join(ROOT, 'docs', 'skill-graph.md'))),
-      'and, below the floor, because the contract\'s exception for posting a comment and closing the parent covers only `_shared/pr-first-merge-post-merge.md` Step 4.0b\'s post-merge entry, never this parent-side backstop',
+      'and, below the floor, because the contract\'s exception for posting a comment and closing the parent covers only the Parent-Gate Procedure\'s sub-issue-side entries (`_shared/pr-first-merge-post-merge.md` Step 4.0b\'s post-merge entry, and the pre-merge entries under `local-files`), never this parent-side backstop',
       'or, below the floor, posting a comment and closing the parent — is an outward-facing API write that fails',
     ],
     [
       collapse(read('tidy/actions-github-issues.md')),
-      'The below-floor close is staged on different grounds: that contract\'s exception for its comment and close covers only `_shared/pr-first-merge-post-merge.md` Step 4.0b\'s post-merge entry, and this parent-side backstop is not that entry.',
+      'The below-floor close is staged on different grounds: that contract\'s exception for its comment and close covers only the Parent-Gate Procedure\'s sub-issue-side entries, and this parent-side backstop is not one of them.',
       'The below-floor close is staged on the same grounds',
     ],
   ];
@@ -532,28 +618,45 @@ test('AC3.1: tidy stages the below-floor close because the contract exception co
     assert.ok(text.includes(clause), `below-floor staging reason: ${clause}`);
     assert.ok(!clauseFrom(text, clause).includes('regardless of how mechanical'), `no reversibility-floor claim in: ${clause}`);
     assert.ok(!text.includes(stale), `stale reason gone: ${stale}`);
+    assert.ok(!text.includes("covers only `_shared/pr-first-merge-post-merge.md` Step 4.0b's post-merge entry"), 'the Step 4.0b-only scope is gone');
   }
+  // The two tidy pointers name the contract for that exception, not the scan scope that never states it.
+  assert.ok(
+    collapse(read('tidy/scan-procedures.md')).includes("see `_shared/auto-mode-contract.md`'s Never-reversible list for that exception's scope"),
+    'scan-procedures points at the contract',
+  );
+  assert.ok(
+    collapse(read('tidy/actions-github-issues.md')).includes("`_shared/auto-mode-contract.md`'s Never-reversible list states that exception's scope."),
+    'actions-github-issues points at the contract',
+  );
 });
 
 // ---- AC5: the local-files close fence, executed against a real store ----
 
 const HEADING = '## Closed below the oversight floor';
 
-// Step 5's ```js fence, with its two free inputs bound ahead of it.
-function localCloseScript(parentPath, parentCloseSection) {
+// Step 5's ```js fence: parentPath bound ahead of it, and the section handed over as a file the
+// fence reads at `{parent-close-comment}` (the Write-tool handoff), never inlined into the source.
+function localCloseScript(parentPath, sectionFile) {
   const step5 = section(closeSection(read(GATE_REL)), '**5. `work-backend: local-files`**', null);
   const fence = /```js\n([\s\S]*?)\n```/.exec(step5);
   assert.ok(fence, 'step 5 carries a js fence');
-  const body = fence[1].split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_ROOT.replace(/\\/g, '/'));
-  return `const parentPath = ${JSON.stringify(parentPath)};\nconst parentCloseSection = ${JSON.stringify(parentCloseSection)};\n${body}`;
+  assert.ok(fence[1].includes("fs.readFileSync('{parent-close-comment}', 'utf8')"), 'the fence reads the section from the handoff file');
+  const body = fence[1]
+    .split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_ROOT.replace(/\\/g, '/'))
+    .split('{parent-close-comment}').join(sectionFile.replace(/\\/g, '/'));
+  return `const parentPath = ${JSON.stringify(parentPath)};\n${body}`;
 }
 
 test('AC5.2: the local-files close fence closes the parent once with one heading section, however often it runs', () => {
   const { writeRecord, readRecord, closeRecord, defaultFacets } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'local-store.js'));
   const cwd = mkTmp('bf-local-close-');
-  const closeSectionText = `${HEADING}\n\nEvery sub-issue of this decomposition is closed.\n\n- 2 Only sub`;
+  // A title carrying a quote, a backtick and `${` — the characters inlining into JS source breaks on.
+  const closeSectionText = `${HEADING}\n\nEvery sub-issue of this decomposition is closed.\n\n- 2 Only sub's \`code\` \${x}`;
+  const sectionFile = path.join(cwd, 'parent-close-comment.md');
+  fs.writeFileSync(sectionFile, `${closeSectionText}\n`);
   const headings = (file) => readRecord(file).body.split('\n').filter((l) => l.trim() === HEADING).length;
-  const run = (file) => execFileSync('node', ['-e', localCloseScript(file, closeSectionText)], { cwd, encoding: 'utf8' });
+  const run = (file) => execFileSync('node', ['-e', localCloseScript(file, sectionFile)], { cwd, encoding: 'utf8' });
   const parentFile = (name) => path.join(cwd, 'specs', name);
   const parentFacets = { ...defaultFacets(), isParentIssue: true };
 
@@ -564,6 +667,7 @@ test('AC5.2: the local-files close fence closes the parent once with one heading
   run(fresh);
   assert.equal(readRecord(fresh).facets.closed, true, 'fresh parent ends closed');
   assert.equal(headings(fresh), 1, 'fresh parent carries exactly one heading section');
+  assert.ok(readRecord(fresh).body.includes("- 2 Only sub's `code` ${x}"), 'the listing line lands verbatim');
 
   // Open with the heading already appended (a close that failed after the write): close only.
   const halfDone = parentFile('03-half-done-parent.md');
@@ -579,4 +683,10 @@ test('AC5.2: the local-files close fence closes the parent once with one heading
   const before = fs.readFileSync(humanClosed, 'utf8');
   run(humanClosed);
   assert.equal(fs.readFileSync(humanClosed, 'utf8'), before, 'an already-closed parent is left untouched');
+});
+
+test('AC5.2: a sub-issue-side local-files close logs its auto-resolution through log-decision.js', () => {
+  const step5 = section(closeSection(read(GATE_REL)), '**5. `work-backend: local-files`**', null);
+  assert.match(step5, /log-decision\.js" --run "\$PIPELINE_RUN_DIR" --status AUTO --step "Parent-Gate local-files close"/);
+  assert.match(step5, /--reversibility "high \(clear the parent record's closed facets\)"/);
 });

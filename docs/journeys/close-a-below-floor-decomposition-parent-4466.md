@@ -5,7 +5,15 @@ files:
   - plugin/skills/_shared/github-pr-scan-acceptance.md
   - plugin/skills/tidy/actions-github-issues.md
   - plugin/skills/tidy/actions-local-files.md
+  - plugin/skills/tidy/step-1-records.md
+  - plugin/skills/dispatch/close-out.md
+  - plugin/skills/dispatch/settle-and-merge.md
+  - plugin/skills/wrap-up/merge-mode.md
+  - plugin/skills/wrap-up/auto-merge-short-circuit.md
+  - plugin/skills/flow/worktree-merge.md
+  - plugin/skills/_shared/local-merge-auto-finish.md
   - plugin/bin/lib/issues/acceptance.js
+  - plugin/bin/lib/wrap-up/engine-verify.js
 ---
 
 # Close a Below-Floor Decomposition Parent
@@ -31,7 +39,7 @@ files:
 
 ### 2. The merge lands and Step 4.0b closes the parent with a listing comment
 - **URL:** `_shared/pr-first-merge-post-merge.md`, `### Step 4.0b`, then the gate file's `## Close the parent below the floor`
-- **Action:** Step 4.0b reads the merge's closing records: the PR's `closingIssuesReferences`, or the merge commit's `Fixes #N` lines when there was no PR. It re-runs the gate, then posts the comment and closes the parent with `--reason completed`.
+- **Action:** Step 4.0b reads the merge's closing records: the PR's `closingIssuesReferences`, or the merge commit's `Fixes #N` lines when there was no PR. It re-runs the gate, then posts the comment and closes the parent with `--reason completed` (`"not planned"` when no sub-issue closed as completed).
 - **Should feel:** finished. The parent reads like a changelog entry, with one line per sub-issue and its PR.
 - **Should understand:**
   - The comment never cites a merge SHA, only PR numbers.

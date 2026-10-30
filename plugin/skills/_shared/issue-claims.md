@@ -504,7 +504,8 @@ The agent never runs `gh issue close` (non-reversible network write — see
 `_shared/auto-mode-contract.md`), except for the one record-closing exception that contract's
 Never-reversible list names: the Parent-Gate Procedure's **Close the parent below the floor**
 (`wrap-up/verification-brief-parent-gate.md`), which closes a decomposition parent after its
-sub-issues' merge has landed, under the restore contract stated there. Issues close through the user's own merge action instead, by
+sub-issues' merge has landed, under the restore contract that `_shared/auto-mode-contract.md`
+exception states. Issues close through the user's own merge action instead, by
 ensuring the closing keyword already exists in a commit that will reach the default branch:
 
 - **Worktree path (single-spec, the common case):** before handing off to

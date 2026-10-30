@@ -56,11 +56,23 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
   state, never as `CLOSED` by this set. A `failed[]` or `pendingClose[]` record's live state may
   still read `CLOSED` — a failed reopen, an unknown state after a failed read, or a close that
   lands after Step 4.0's poll — so skip any parent whose enumerated sub-issues include one, and
-  name that parent in the closing summary: it waits on the hand reopen. After a
-  PR merge, read the PR's closing records:
+  name that parent in the closing summary: it waits on the hand reopen. After a PR merge, the
+  subtraction needs those lists, which only an exit-0 `post-merge` action carries
+  (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`). On any other Step 4.0 result
+  — a non-zero exit, `not-merged`, `no-fixes-span`, `no-pr`, `gh-absent`, or no parseable output —
+  skip this step entirely, never subtracting nothing, and log it (after exit 3, name it in the
+  closing summary instead); tidy's `parent-gate` backstop recovers those parents:
 
   ```bash
-  gh pr view {pr-number} --repo {owner}/{repo} --json closingIssuesReferences --jq '[.closingIssuesReferences[].number]'
+  node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --step "pr-first-merge Step 4.0b (skipped)" --reversibility n/a --text "condition: Step 4.0 returned {result}, not its result lists → fallback: no parent closed; the tidy parent-gate backstop recovers them"
+  ```
+
+  Otherwise, after a PR merge, read the PR's same-repo closing records. Like `sameRepoNumbers`
+  (`bin/lib/flow/closing-links.js`), the filter drops a reference to another repository, whose
+  `Fixes other/repo#N` would otherwise read as this repo's #N:
+
+  ```bash
+  gh pr view {pr-number} --repo {owner}/{repo} --json closingIssuesReferences --jq '[.closingIssuesReferences[] | select((.repository.owner.login // "" | ascii_downcase) == ("{owner}" | ascii_downcase) and (.repository.name // "" | ascii_downcase) == ("{repo}" | ascii_downcase)) | .number]'
   ```
 
   After a no-PR local merge, read the `Fixes #{n}` lines of the pushed merge commit's message,
@@ -75,20 +87,22 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
 
 For each record in `$CLOSING_SUB_ISSUES`, run that procedure from **Resolve the parent** through
 **Evaluate the gate**. On `due` with `exceeds: false`, run **Close the parent below the floor**.
-Every other outcome is a no-op, as is a record with no resolvable parent. Skip a parent carrying
+Every other outcome is a no-op; a record with no resolvable parent follows **Resolve the
+parent**'s no-parent branch. A parent whose labels lack `parent-issue` — the label tidy's
+`parent-gate` backstop selects on — is a no-op too, named in the closing summary. Skip a parent carrying
 a `needs:*` label (the parent labels **Enumerate the parent's sub-issues** fetches) and name it in
 the closing summary, per `_shared/work-record.md`'s Worklist rule. Evaluate each parent
 once: skip a record whose parent this step already handled, so a parent with several sub-issues
 in the set is closed once. The procedure's **Return to the Try it post** and **Fail open on every
 `gh` call** paragraphs state what this entry does not do (no Try it block, no fallback to the
-no-parent path).
+no-parent path) and how it skips on a failing `gh` call — never a stop, and never a reason to
+report anything other than `merged`.
 
-Log one `decisions.md` line per parent closed: `AUTO {time} — pr-first-merge Step 4.0b: closed
-parent #{parent} below the oversight floor (risk:{maxTier}, risk-floor {riskFloor}). Reversibility:
-high (gh issue reopen).` A failing `gh` call skips that parent, or the whole step when the input
-read above fails. Name each skipped parent in the closing summary. It is never a stop and never a
-reason to report anything other than `merged`; `/claude-tweaks:tidy`'s `parent-gate` backstop is
-the recovery.
+Log each parent closed:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility "high (gh issue reopen)" --text "closed parent #{parent} below the oversight floor (risk:{maxTier}, risk-floor {riskFloor})"
+```
 
 ### Step 4.1: Which release carried this? (before reconcile)
 
