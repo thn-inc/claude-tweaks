@@ -3,7 +3,9 @@
 - **Status:** accepted
 - **Date:** 2026-10-30
 - **Context:** #4475 (reflect finding from #4303); supersedes in part ADR 0027
-- **Design:** `docs/superpowers/specs/2026-10-30-write-gate-recognised-shapes-design.md`
+- **Design:** decomposed from #4475 into its sub-issues, which carry the shape lists, the
+  per-consumer posture and the phases (the working design doc is removed at decomposition, per the
+  pipeline's spec close-out)
 
 ## Context
 
@@ -65,9 +67,10 @@ deny message names what was unreadable and a rewrite that passes. Everywhere els
 allowed.
 
 A scanner exception or an indeterminate repo status still allows, so a hook bug never breaks a
-session (`docs/hooks.md`). The design document holds the full shape lists, the per-consumer
-posture, the phases and the re-triage of the open gap records. This record holds the reason for
-the direction.
+session (`docs/hooks.md`). #4475's sub-issues hold the full shape lists, the per-consumer posture,
+the phases and the re-triage of the open gap records. Once built,
+`_shared/policy-schema-coverage.md` holds the rule itself. This record holds the reason for the
+direction.
 
 ## Alternatives considered
 

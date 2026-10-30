@@ -277,8 +277,23 @@ The grants on these were pulled on 2026-10-30, pending this design.
 | #4447 arithmetic `>` read as a redirect | recognised-shape misread | unchanged, grant kept |
 | #4460 quoted `(x` target, `cd>f DIR` | recognised-shape misread | unchanged, grant kept |
 
-Draft PRs #4504 (#4246, heredoc inside `${…}`) and #4507 (escaped-blank targets) fix recognised
-shapes and are unaffected.
+A file-overlap scan during decomposition found more open shell-model records than #4475 named:
+
+| Record | Under this design | Action |
+|---|---|---|
+| #4486 case arm cd hides a write | cd in a conditional → unresolved cwd | close as superseded by Phase 1 (grant pulled 2026-10-30) |
+| #4487 function body walked only where defined | function call is an unrecognised word; the body is read at its definition | re-triage at Phase 1 exit; close if Phase 1's tests cover its example (grant pulled 2026-10-30) |
+| #4489 deepen the and-or list walk into a case-aware model (needs:decision) | the multi-cwd walk is deleted in Phase 2 | resolve its decision as superseded by this design; close |
+| #4309 substitution split by backslash-newline in an unquoted heredoc | substitution body unreadable | close as superseded by Phase 1 |
+| #4248 unquoted variable holding whitespace as an ambiguous target | literal-assigned variables stay recognised | keep, narrowed to literal assignments |
+| #4211 every target of chained redirects (`echo a>b>c`) | recognised redirect shape | unchanged |
+| #4245 command after a backslash-newline continuation | recognised quoting shape | unchanged, grants kept |
+| #4246 `<<` inside `${…}` or a same-line `$(… <<EOF)` | recognised heredoc shape | unchanged, grant kept; draft PR #4504 continues |
+| #4294 escaped-blank and line-continuation redirect targets | recognised literal target | unchanged, grant kept; draft PR #4507 continues |
+| #4310 heredoc reader shadowed by a shell function | recognised heredoc rule | unchanged |
+| #4328 quoted, escaped and MSYS-spelled shapes | recognised quoting shapes | unchanged |
+| #4329 `"$( #"` perf case 3x over budget | substitution walking deleted in Phase 2 | re-measure and close with Phase 2 |
+| #4242 split the bash lexer out of git-command.js | the module shrinks in Phase 2 | Blocked by Phase 2; re-scope to what is left after it |
 
 ## Left to the builder
 
