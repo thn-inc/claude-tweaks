@@ -523,6 +523,39 @@ function tombstoneInFlightPr(content, gh, owner, repo) {
   }
 }
 
+// content: the raw TTL-expired ('stale') claim blob text just read. gh: the
+// generic throwing gh runner. owner/repo: the SAME owner/repo as the issue
+// being claimed. The 'stale' counterpart of `tombstoneInFlightPr` (#4423): a
+// claim that outlived its TTL is not necessarily abandoned — the run may still
+// hold an open draft PR (the PR-first integration model makes every worktree
+// run born public), and re-claiming would rebuild finished work. The PR's body
+// carries the run's `claude-tweaks-run: {runId}` marker, bare or as an HTML
+// comment; a match is a trimmed LINE equal to either form, never a substring,
+// so a body merely mentioning a run id does not count. `runId` is untrusted
+// (any session with registry-branch write access can set it) and is shape-
+// checked before it can reach a `gh` call, and the matched PR's url must be a
+// same-repo PR url. One `pr list` serves every stale target of a claim run
+// (the caller memoizes `gh`). Fails open like its tombstone twin — a broken
+// check must never block a legitimate reclaim.
+const RUN_ID_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$/;
+
+function staleClaimInFlightPr(content, gh, owner, repo) {
+  try {
+    const parsed = JSON.parse(content);
+    const runId = parsed && parsed.runId;
+    if (typeof runId !== 'string' || !RUN_ID_SHAPE.test(runId)) return null;
+    const markers = [`claude-tweaks-run: ${runId}`, `<!-- claude-tweaks-run: ${runId} -->`];
+    const prs = JSON.parse(gh(['pr', 'list', '--repo', `${owner}/${repo}`, '--state', 'open', '--json', 'url,body', '--limit', '1000']));
+    for (const pr of prs) {
+      if (!pr || typeof pr.body !== 'string' || !isSameRepoPrUrl(pr.url, owner, repo)) continue;
+      if (pr.body.split('\n').some((line) => markers.includes(line.trim()))) return { link: pr.url };
+    }
+    return null;
+  } catch {
+    return null; // fail open — a broken check must never block a legitimate reclaim
+  }
+}
+
 module.exports = {
   listClaimEntries,
   listClaimNames,
@@ -532,6 +565,7 @@ module.exports = {
   claimPath,
   classifyGhApiError,
   tombstoneInFlightPr,
+  staleClaimInFlightPr,
   isSameRepoPrUrl,
   casBackoffMs,
   defaultSleep,

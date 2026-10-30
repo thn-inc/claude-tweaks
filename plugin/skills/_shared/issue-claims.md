@@ -175,7 +175,14 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A still-`OPEN` state
      means a build for this issue already exists and reclaiming would race it — stop here, do not
      write, and report it the same way `flow/claim-targets.md`'s in-flight card does. Any other
-     state (closed, merged) or a failed read falls through to the write below unchanged. Otherwise,
+     state (closed, merged) or a failed read falls through to the write below unchanged. For a
+     `'stale'` blob, the counterpart (#4423; gh-CLI twin: `claim-store.js`'s
+     `staleClaimInFlightPr`): validate its `runId` against `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$`
+     (a mismatch skips the check), then list the repo's open PRs once per claim run via
+     `mcp__github__list_pull_requests` (`state: open`) and look for a same-repo PR URL whose body
+     has a trimmed line equal to `claude-tweaks-run: {runId}` or `<!-- claude-tweaks-run: {runId} -->`.
+     A match stops the claim and writes nothing, reported as the tombstone case is; a
+     failed or unparseable listing falls through to the write (fail open). Otherwise,
      write **conditionally** (**with** `sha` = the current file's blob sha from step 1):
 <!-- when: transport=gh -->
      - **gh CLI:** the same `PUT contents` call as step 3, adding `-f "sha=${CURRENT_SHA}"`. (This
@@ -485,7 +492,9 @@ falls through to the reclaim behavior below unchanged (fail open). `link` is unt
 with registry-branch write access can set it), so `tombstoneInFlightPr` validates it — a well-formed
 `https://github.com/{owner}/{repo}/pull/{number}` URL for the SAME owner/repo as the issue being
 claimed — before ever calling `gh pr view`; anything else (wrong repo, malformed, non-string) is
-treated the same as a missing `link` and never reaches `gh` at all.
+treated the same as a missing `link` and never reaches `gh` at all. A `'stale'` claim whose `runId`
+matches an open same-repo PR's `claude-tweaks-run:` marker is in flight too (#4423,
+`staleClaimInFlightPr`) — same `inFlight` envelope, same fail-open.
 `bin/lib/claim-targets/claim-targets.js` — the group-claim loop `/claude-tweaks:flow` Step 2.8 and
 `/claude-tweaks:dispatch` actually call — imports this same `tombstoneInFlightPr` from
 `claim-store.js` and reports the stopped target via `inFlight`/`reason: 'in-flight'` instead of

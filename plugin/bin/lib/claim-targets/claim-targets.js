@@ -412,11 +412,14 @@ function run(argv, deps) {
   // cross-invocation cache). Issues released together from one multi-spec
   // build commonly tombstone with the identical `link`, so this collapses
   // what would otherwise be one `gh pr view` per tombstoned target down to
-  // one per distinct link (#977). Wraps only this call site's `gh`, not
-  // `deps.gh` itself, so every other `deps.gh` call (label list/create, issue
-  // edit, issue comment) is untouched. Only successful calls are cached — a
-  // thrown failure is left uncached and re-thrown so `tombstoneInFlightPr`'s
-  // own fail-open catch still applies per-target, exactly as before.
+  // one per distinct link (#977). The same memo (keyed on the whole argv)
+  // also collapses `staleClaimInFlightPr`'s `gh pr list` — identical for
+  // every stale target of a repo — to one call per run (#4423). Wraps only
+  // this call site's `gh`, not `deps.gh` itself, so every other `deps.gh`
+  // call (label list/create, issue edit, issue comment) is untouched. Only
+  // successful calls are cached — a thrown failure is left uncached and
+  // re-thrown so each helper's own fail-open catch still applies per-target,
+  // exactly as before.
   const prViewCache = new Map();
   function cachedGhForPrView(args) {
     const key = JSON.stringify(args);
@@ -483,6 +486,20 @@ function run(argv, deps) {
       const stop = stopOrSkip(issue, 'contested', 'contested', 3, { holder });
       if (stop !== null) return stop;
       continue;
+    }
+
+    // A 'stale' claim (TTL-expired, not self-owned) whose run's marker still
+    // sits on an open same-repo PR is in flight, not abandoned — reclaiming it
+    // would rebuild finished work (#4423). Same stop/skip path as the
+    // `pr-opened:` tombstone above; fails open the same way. Called through
+    // `claimStore.` so the module-level spy pattern reaches it.
+    if (classified.state === 'stale') {
+      const inFlight = claimStore.staleClaimInFlightPr(content, cachedGhForPrView, repoOwner, repoName);
+      if (inFlight) {
+        const stop = stopOrSkip(issue, 'in-flight', 'inFlight', 3, { link: inFlight.link });
+        if (stop !== null) return stop;
+        continue;
+      }
     }
 
     // Reclaimable: 'absent' (create-only) or 'tombstone'/'stale' not self-owned
