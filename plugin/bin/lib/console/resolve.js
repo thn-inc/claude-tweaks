@@ -498,6 +498,7 @@ function lineKeys(line) {
 // converged positive after R round(s) (lens "L" finding P:N; lens "M" finding P:M — both confirmed)`) settles
 // every finding its lens list names (#4563). A list entry's path defaults to the region path P (the
 // as-recorded `lens 3a :5` shape). A line with no lens list, or any other debate outcome, names nothing.
+// The optional `Step N: ` prefix is the shape log-decision.js writes when the line is logged with `--step`.
 const DEBATE_CONVERGED_RE = /^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on ([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+) converged positive\b(.*)$/;
 function debateConvergedKeys(line) {
   const m = DEBATE_CONVERGED_RE.exec(line);
@@ -510,15 +511,17 @@ const FINDING_SECTIONS = [SECTIONS.LOW, SECTIONS.CONTESTED];
 // Which verdict decides a staged file settled by several: the one needing a human first.
 const VERDICT_PRECEDENCE = ['console', 'confirmed', 'digested', 'dropped'];
 
-// The finding keys a staged contested file's `## Positions` section names: one per `- ` bullet,
-// up to the next `## ` heading (#4563). Null text or no such section names none.
+// The finding keys a staged contested file's `## Positions` section names: one per
+// `- **Finding X (lens …)**` bullet (step3-debate-and-refutation.md's Mixed / partial shape), up to
+// the next `## ` heading (#4563). Any other list line there — one inside a quoted claim — names
+// nothing. Null text or no such section names none.
 function contestedPositionKeys(text) {
   if (typeof text !== 'string') return [];
   const keys = [];
   let inPositions = false;
   for (const line of text.split(/\r?\n/)) {
     if (/^## /.test(line)) inPositions = /^## Positions\s*$/.test(line);
-    else if (inPositions && line.startsWith('- ')) {
+    else if (inPositions && /^- \*\*Finding [A-Z]\b/.test(line)) {
       const key = findingKey(line);
       if (key) keys.push(key);
     }
@@ -579,7 +582,10 @@ function tiebreakModel(snapshot) {
     }
     return { settledFiles, absorbed };
   }
-  // #4563: a settled contested file settles its partner finding too. The partner takes the pair's
+  // #4563: a settled contested file settles its partner finding too. The partner's key comes from the
+  // staged file's `## Positions` text, not from tiebreak.js's verdict line, whose one-key-per-id shape
+  // stays unchanged on purpose: only the staged file also covers runs already on disk (decided at
+  // #4563's plan review). The partner takes the pair's
   // verdict (and its index) only where no verdict names its key at all: one tiebreak wave logs in
   // arbitrary order, so a direct verdict wins whatever its position relative to the pair's.
   // A partner's own contested file may settle only once its key is inherited, and then passes the
@@ -693,7 +699,9 @@ function engineItems(snapshot, stagedIds) {
 // step 3 stages a finding as low-confidence, then logs the elevation as AUTO
 // once reproduced (#3772; case-sensitive so `not confirmed` never matches) —
 // or by a converged-positive debate AUTO line that names it in its lens list
-// (debateConvergedKeys, #4563). A keyless line is never superseded. A
+// (debateConvergedKeys, #4563), or by the verdict of a settled
+// review-contested file that lists it in its `## Positions` section (partner
+// inheritance in tiebreakModel, #4563). A keyless line is never superseded. A
 // can't-tell `console` verdict supersedes its STAGED line too, and re-enters
 // as one `tiebreak:{id}` item (#3949).
 function findingKey(line) {

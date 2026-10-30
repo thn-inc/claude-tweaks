@@ -16,6 +16,8 @@ files:
   - plugin/skills/_shared/console-on-pr.md
   - plugin/skills/_shared/auto-mode-contract.md
   - plugin/skills/review/step3-debate-and-refutation.md
+  - plugin/skills/review/step3-tiebreak.md
+  - plugin/skills/wrap-up/review-console-appendix.md
 ---
 
 # Settle Every Review Finding at the Review Console

@@ -988,10 +988,11 @@ test('a converged-positive line with no lens list settles nothing (#4563 AC4)', 
 test('negative and inconclusive debate lines settle nothing (#4563 AC4)', () => {
   const neg = '- STAGED 10:00:00 — Debate: lens "3a" finding src/a.js:5 — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.';
   const fakeAuto = '- AUTO 10:00:00 — Debate: cross-lens disagreement on src/a.js:5 converged negative after 1 round (lens "3a" finding src/a.js:5). Reversibility: high.';
+  const inconclusive = '- STAGED 10:00:00 — Debate: lens "3a" cross-lens disagreement on src/a.js:5 inconclusive (agree, partial). Both verdicts staged. Stage path: staged/review-contested-9.md. Reversibility: high.';
   // A STAGED line of the converged-positive shape: the `^- AUTO` gate is what keeps it from settling.
   const stagedPositive = debatePositive(' (lens "3a" finding src/a.js:5 — confirmed)').replace('- AUTO', '- STAGED');
   // A STAGED later line is itself an item, so it adds one keep-staged beside the Reproduction line's; the AUTO line adds none.
-  for (const [later, expected] of [[neg, ['keep-staged', 'keep-staged']], [fakeAuto, ['keep-staged']], [stagedPositive, ['keep-staged', 'keep-staged']]]) {
+  for (const [later, expected] of [[neg, ['keep-staged', 'keep-staged']], [fakeAuto, ['keep-staged']], [inconclusive, ['keep-staged', 'keep-staged']], [stagedPositive, ['keep-staged', 'keep-staged']]]) {
     const items = findings([stagedLow('3a', 'src/a.js:5'), later].join('\n'));
     assert.ok(items.some((i) => i.id.includes('Reproduction: lens "3a"')), 'the Reproduction STAGED line is still an open item');
     assert.deepStrictEqual(items.map((i) => i.resolution), expected);
@@ -1000,6 +1001,14 @@ test('negative and inconclusive debate lines settle nothing (#4563 AC4)', () => 
 test('the optional "Step 3.5: " prefix on a converged-positive debate line still settles (#4563)', () => {
   const auto = '- AUTO 10:00:00 — Step 3.5: Debate: cross-lens disagreement on src/a.js:5 converged positive after 1 round (lens "3a" finding src/a.js:5 — confirmed). Reversibility: high.';
   assert.deepStrictEqual(findings([stagedLow('3a', 'src/a.js:5'), auto].join('\n')), []);
+});
+test('a debate list entry naming its own path settles that path, not the region path (#4563)', () => {
+  const d = [stagedLow('3a', 'src/a.js:5'), stagedLow('3e', 'src/b.js:9'),
+    debatePositive(' (lens "3a" finding src/a.js:5; lens "3e" finding src/b.js:9 — both confirmed)')].join('\n');
+  assert.deepStrictEqual(findings(d), []);
+  // Control: the region path at the partner's line is another key, so the src/b.js STAGED line stays open.
+  const regionOnly = [stagedLow('3e', 'src/b.js:9'), debatePositive(' (lens "3e" finding src/a.js:9 — confirmed)')].join('\n');
+  assert.deepStrictEqual(findings(regionOnly).map((i) => i.resolution), ['keep-staged']);
 });
 test('a converged-positive debate logged before the STAGED line does not supersede it (#4563)', () => {
   const d = [debatePositive(' (lens "3a" finding src/a.js:5 — confirmed)'), stagedLow('3a', 'src/a.js:5')].join('\n');
@@ -1027,6 +1036,23 @@ test('a refuted contested pair drops the partner too (#4563 AC2)', () => {
   const d = [stagedLow('3f', 'src/a.js:7'), tbDebate(f, 'review-contested-1.md'), v.entry].join('\n');
   assert.deepStrictEqual(findings(d, { 'review-contested-1.md': positions(f, partner) }).map((i) => [i.id, i.resolution]),
     [['review-contested-1.md', 'dropped']]);
+  // The partner's own staged file is dropped too, its reason naming the pair that carried the verdict.
+  const withFile = [`${stagedLow('3f', 'src/a.js:7')} Stage path: staged/review-unconfirmed-2.md.`, tbDebate(f, 'review-contested-1.md'), v.entry].join('\n');
+  const p = findings(withFile, { 'review-contested-1.md': positions(f, partner), 'review-unconfirmed-2.md': 'x' }).find((i) => i.id === 'review-unconfirmed-2.md');
+  assert.deepStrictEqual([p.resolution, p.reason], ['dropped', 'refuted by tiebreak (via contested pair review-contested-1.md)']);
+});
+test('a digested contested pair dismisses the partner\'s own staged file as digested (#4563)', () => {
+  const f = tbFinding({ reporterSeverity: 'low' });
+  const v = tbVerdict(f, { verdict: 'cant-tell', severity: 'low' });
+  const withFile = [`${stagedLow('3f', 'src/a.js:7')} Stage path: staged/review-unconfirmed-2.md.`, tbDebate(f, 'review-contested-1.md'), v.entry].join('\n');
+  const p = findings(withFile, { 'review-contested-1.md': positions(f, partner), 'review-unconfirmed-2.md': 'x' }).find((i) => i.id === 'review-unconfirmed-2.md');
+  assert.deepStrictEqual([p.resolution, p.reason], ['dismissed', 'can\'t-tell below medium — logged to the materiality digest (via contested pair review-contested-1.md)']);
+});
+test('a list line inside a quoted claim under Positions names no partner: only Finding bullets do (#4563)', () => {
+  const f = tbFinding();
+  const quoted = positions(f, partner).replace('\n\n## Judge 1', '\n- lens 3g src/a.js:30 quoted inside claim B\n\n## Judge 1');
+  const d = [stagedLow('3g', 'src/a.js:30'), tbDebate(f, 'review-contested-1.md'), tbVerdict(f, { verdict: 'refuted', severity: 'low' }).entry].join('\n');
+  assert.deepStrictEqual(findings(d, { 'review-contested-1.md': quoted }).map((i) => i.resolution).sort(), ['dropped', 'keep-staged']);
 });
 test('a settled review-debate file passes nothing to a listed partner: only review-contested files carry Positions (#4563)', () => {
   const f = tbFinding();
@@ -1090,7 +1116,7 @@ test('an inherited can\'t-tell verdict files once: the partner\'s own staged fil
 });
 // ---- #4563: producer pin — the review skill's shipped templates are the shapes the reader settles on ----
 const DEBATE_DOC = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-debate-and-refutation.md'));
-const docLine = (prefix) => DEBATE_DOC.split('\n').filter((l) => l.startsWith(prefix));
+const docLine = (prefix) => DEBATE_DOC.split('\n').filter((l) => l.trimStart().startsWith(prefix.trimStart()));
 // The pre-change Both-`agree` template (names no lens): the control that proves the pin can go red.
 const PRE_CHANGE_AGREE_TPL = 'AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged positive after 1 round. Reversibility: high.';
 const instantiateAgree = (tpl) => `- ${tpl.replace('{HH:MM:SS}', '10:00:00').replace(/\{lensA\}/g, '3a').replace(/\{lensB\}/g, '3e')
@@ -1132,7 +1158,7 @@ test('the Mixed / partial bullet\'s Positions bullet templates, instantiated, le
 test('run 2026-10-28T060616-spec-4304 (real excerpt) resolves with zero keep-staged items (#4563 AC3)', () => {
   const dir = path.join(__dirname, 'fixtures', 'debate-settlement-4304');
   const { items } = findingItems({ runDir: dir, deps: bareDeps() });
-  assert.deepStrictEqual(items.filter((i) => OPEN.includes(i.resolution)).map((i) => i.id), []);
+  assert.deepStrictEqual(unresolvedItems({ items }).map((i) => i.id), []);
   assert.deepStrictEqual(items.filter((i) => i.id.startsWith('review-contested-')).map((i) => i.resolution), ['dismissed', 'dismissed']);
 });
 
