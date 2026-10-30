@@ -171,3 +171,65 @@ test('go-red control: the pre-change gate says "closes cleanly" and counts four 
   assert.ok(collapse(belowFloorBullet(preChangeGate)).includes('closes cleanly'));
   assert.ok(collapse(entryShapes(preChangeGate)).includes('the four sub-issue callers'));
 });
+
+// ---- Task 3: post-merge Step 4.0b closes below-floor parents on every merge path ----
+
+const POST_MERGE_REL = '_shared/pr-first-merge-post-merge.md';
+const STEP_40B = '### Step 4.0b: Close below-floor parents (#4466)';
+
+test('AC2.1: Step 4.0b sits between Step 4.0 and Step 4.1 and reads the merge\'s closing records', () => {
+  const pm = read(POST_MERGE_REL);
+  const s40 = pm.indexOf('### Step 4.0:');
+  const s40b = pm.indexOf(STEP_40B);
+  const s41 = pm.indexOf('### Step 4.1');
+  assert.ok(s40 !== -1 && s40b > s40 && s41 > s40b, `Step 4.0 (${s40}) < Step 4.0b (${s40b}) < Step 4.1 (${s41})`);
+  const body = section(pm, STEP_40B, '### Step 4.1');
+  for (const lit of [
+    'closingIssuesReferences',
+    'git log -1 --format=%B',
+    '**Close the parent below the floor**',
+    '`merged`',
+    'work-backend: github-issues',
+    '$CLOSING_SUB_ISSUES',
+    '$MERGING_PR',
+  ]) {
+    assert.ok(body.includes(lit), `Step 4.0b names ${lit}`);
+  }
+});
+
+test('AC2.1: close-out step 7 and merge-mode step 3 run Step 4.0b on `merged`', () => {
+  assert.ok(section(read('dispatch/close-out.md'), '7. **On `merged`', '\n## ').includes('Step 4.0b'), 'close-out step 7');
+  assert.ok(section(read('wrap-up/merge-mode.md'), '3. On `merged`:', '\n## ').includes('Step 4.0b'), 'merge-mode step 3');
+});
+
+// Each local-merge push site runs Step 4.1 against its pushed merge commit; Step 4.0b runs first.
+const LOCAL_MERGE_SITES = [
+  ['dispatch/settle-and-merge.md', 'After a successful push, run `_shared/pr-first-merge-post-merge.md`'],
+  ['wrap-up/auto-merge-short-circuit.md', 'The explicit `--no-ff` guarantees a real merge commit exists even when the'],
+  ['flow/worktree-merge.md', '6. **Push the base branch once'],
+];
+
+test('AC2.1: every local-merge push site runs Step 4.0b before its Step 4.1', () => {
+  for (const [rel, opener] of LOCAL_MERGE_SITES) {
+    const para = paragraph(read(rel), opener);
+    assert.ok(para.includes('--ref {integration-branch}'), `${rel}: the Step 4.1 invocation paragraph`);
+    const a = para.indexOf('Step 4.0b');
+    const b = para.indexOf('Step 4.1');
+    assert.ok(a !== -1 && b > a, `${rel}: Step 4.0b (${a}) before Step 4.1 (${b})`);
+  }
+});
+
+let preChangePostMerge = null;
+let postMergeGoRedSkip = false;
+try {
+  preChangePostMerge = execFileSync('git', ['show', `${PRE_CHANGE_SHA}:plugin/skills/${POST_MERGE_REL}`], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  }).replace(/\r\n/g, '\n');
+} catch (err) {
+  postMergeGoRedSkip = `commit ${PRE_CHANGE_SHA} is not reachable in this checkout's git history — the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
+}
+
+test('go-red control: the pre-change post-merge file has no Step 4.0b', { skip: postMergeGoRedSkip }, () => {
+  assert.ok(!preChangePostMerge.includes('Step 4.0b'));
+});

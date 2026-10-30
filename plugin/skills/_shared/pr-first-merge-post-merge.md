@@ -25,9 +25,53 @@ will-close record up to 15 s, since GitHub closes it about 2 s after the merge, 
 #{n}` per record to `decisions.md`. Whatever the `action`, report each `failed[]` record (reopen it
 by hand) and each `pendingClose[]` record (the merge may still close it — re-run the step once,
 then reopen it by hand if it closed) in the closing summary, never as anything but `merged`. Exit
-5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.1. An `armed` outcome never reaches
+5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.0b. An `armed` outcome never reaches
 this step, and the reconciler does not run the CLI; with `--keep-open` on the composer, only a
 Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
+
+### Step 4.0b: Close below-floor parents (#4466)
+
+Applies only under `work-backend: github-issues`. Under `local-files` the pre-merge entries
+already closed the parent in-branch, so this step is a no-op there. It runs once the merge has
+landed: after outcome `merged`, or after a no-PR local merge's successful push at the call sites
+that cite it. A merge that never lands never reaches it, so its parent stays open.
+
+This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
+(`wrap-up/verification-brief-parent-gate.md`'s **Two entry shapes**). Set its two inputs:
+
+- `$MERGING_PR` — the merged PR's number (`{pr-number}`) after a PR merge; empty after a no-PR
+  local merge.
+- `$CLOSING_SUB_ISSUES` — the merge's closing records, minus any record Step 4.0 reopened. After a
+  PR merge, read the PR's closing records:
+
+  ```bash
+  gh pr view {pr-number} --json closingIssuesReferences --jq '[.closingIssuesReferences[].number]'
+  ```
+
+  After a no-PR local merge, read the `Fixes #{n}` lines of the pushed merge commit's message,
+  taking the union across every merge commit when a call site pushes several:
+
+  ```bash
+  git log -1 --format=%B {merge-sha}
+  ```
+
+  Never read the set from a run-dir fact pack: a multi-spec merge runs against the parent run dir,
+  which holds no per-spec pack.
+
+For each record in `$CLOSING_SUB_ISSUES`, run that procedure from **Resolve the parent** through
+**Evaluate the gate**. On `due` with `exceeds: false`, run **Close the parent below the floor**.
+Every other outcome is a no-op, as is a record with no resolvable parent. Evaluate each parent
+once: skip a record whose parent this step already handled, so a parent with several sub-issues
+in the set is closed once. The procedure's **Return to the Try it post** and **Fail open on every
+`gh` call** paragraphs state what this entry does not do (no Try it block, no fallback to the
+no-parent path).
+
+Log one `decisions.md` line per parent closed: `AUTO {time} — pr-first-merge Step 4.0b: closed
+parent #{parent} below the oversight floor (risk:{maxTier}, risk-floor {riskFloor}). Reversibility:
+high (gh issue reopen).` A failing `gh` call skips that parent, or the whole step when the input
+read above fails. Name each skipped parent in the closing summary. It is never a stop and never a
+reason to report anything other than `merged`; `/claude-tweaks:tidy`'s `parent-gate` backstop is
+the recovery.
 
 ### Step 4.1: Which release carried this? (before reconcile)
 
