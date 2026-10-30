@@ -1,7 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-10-28T231420-record-3903",
-  "reason": "pr-opened: spec 3903 (build blocked before test gate; fix child committed ee9793270; draft PR #4541 open, grants kept)",
-  "releasedAt": "2026-10-29T00:08:05.003Z",
-  "link": "4541"
+  "runId": "2026-10-30T063836-record-3903",
+  "sessionId": "6632f468-fb30-4491-bfde-ec591460a9c3",
+  "claimedAt": "2026-10-30T06:41:40.296Z",
+  "ttlHours": 72,
+  "host": "Thomass-MacBook-Pro-3376.local"
 }
