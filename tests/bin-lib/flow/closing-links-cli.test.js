@@ -975,6 +975,24 @@ test('post-merge non-default: a failed state read is closeFailed with stage read
   assert.match(h.log(runDir), /^- SKIP .*Closing links \(degraded\): condition: could not read #3997 after PR #7 merged into develop .*→ fallback: check it and close it by hand if it is still open/m);
 });
 
+test('post-merge non-default: an issue view with no string state is closeFailed with stage read, never closed or counted', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [], NON_DEFAULT)],
+    issues: { 3997: [{}] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(h.closes().length, 0);
+  assert.equal(j.closeFailed.length, 1);
+  assert.equal(j.closeFailed[0].issue, 3997);
+  assert.equal(j.closeFailed[0].stage, 'read');
+  assert.match(j.closeFailed[0].error, /no state field/);
+  assert.deepEqual(j.closed, []);
+  assert.deepEqual(j.closingSet, []);
+  assert.equal(j.action, 'close-failed');
+});
+
 // ---- #4026: gh-absent, exit 4 and exit 5 log their own SKIP line ----
 
 // Characterization (pre-#4026 behaviour that must not move): each refusal and
