@@ -143,7 +143,48 @@ function newestMatch(pipelinesRoot, specSlug) {
   return null;
 }
 
-// opts: { cwd, env, specSlug, mode, standalone, create, rootOnly, now }
+// #4677: `--archived`'s read-only fallback, for wrap-up/merge-mode.md. wrap-up closes and archives a
+// pr-first leave-open run before the human types `merge`, so the merge step needs a run that records
+// its `pr` but that step 2 can no longer adopt (archived, or `clean`). Candidates: every canonical
+// run-id dir for `specSlug` under archive/, plus every such dir directly under pipelines/ whose status
+// is exactly `clean` and not archived (#208). Walked newest-first, an archived dir winning a name tie;
+// the first whose run-state.json is a plain object recording a `pr` object is returned. A read error
+// on either listing contributes no candidates. Read-only: nothing is created, renamed or written.
+function closedPrMatch(pipelinesRoot, specSlug) {
+  const readState = (dir) => {
+    try {
+      const state = JSON.parse(fs.readFileSync(path.join(dir, 'run-state.json'), 'utf8'));
+      return state && typeof state === 'object' && !Array.isArray(state) ? state : null;
+    } catch { return null; }
+  };
+  const runNames = (root) => {
+    try {
+      return fs.readdirSync(root, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name) && hasSegment(e.name, specSlug))
+        .map((e) => e.name);
+    } catch { return []; }
+  };
+  const archiveRoot = path.join(pipelinesRoot, 'archive');
+  const candidates = runNames(archiveRoot).map((name) => {
+    const dir = path.join(archiveRoot, name);
+    return { name, dir, archived: true, state: readState(dir) };
+  });
+  for (const name of runNames(pipelinesRoot)) {
+    const dir = path.join(pipelinesRoot, name);
+    const state = readState(dir);
+    if (state && state.status === 'clean' && archiveStatus(pipelinesRoot, name) !== 'archived') {
+      candidates.push({ name, dir, archived: false, state });
+    }
+  }
+  candidates.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : Number(a.archived) - Number(b.archived)));
+  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    const pr = candidates[i].state && candidates[i].state.pr;
+    if (pr && typeof pr === 'object' && !Array.isArray(pr)) return candidates[i].dir;
+  }
+  return null;
+}
+
+// opts: { cwd, env, specSlug, mode, standalone, create, rootOnly, archived, now }
 function resolve(opts = {}) {
   const cwd = opts.cwd || process.cwd();
   const env = opts.env || {};
@@ -163,6 +204,19 @@ function resolve(opts = {}) {
   // backstop scoped to the whole pipelines/ tree, the wrap-up transitional
   // copy-out guard's DEST computation), not a specific run's directory.
   if (opts.rootOnly) return ok(mainRoot, false);
+
+  // #4677: `--archived` is read-only — it returns an existing run dir or fails, never mints one —
+  // and it needs a slug to name the run it looks up. Both refusals come before step 1 so a valid
+  // PIPELINE_RUN_DIR cannot mask them.
+  if (opts.archived && opts.create) {
+    return fail(
+      'archived-create',
+      '--archived is read-only and refuses --create — it returns an existing run dir or fails, never mints one.',
+    );
+  }
+  if (opts.archived && !opts.specSlug) {
+    return fail('archived-unnamed', '--archived needs --spec-slug to name the run it looks up.');
+  }
 
   const pipelinesRoot = path.join(mainRoot, '.claude-tweaks', 'pipelines');
 
@@ -225,6 +279,13 @@ function resolve(opts = {}) {
     // #208: same invariant as Step 1 — never reuse a live directory whose run-id already has
     // an archived counterpart (a resurrected copy). Fall through to create/fail below instead.
     if (match && archiveStatus(pipelinesRoot, path.basename(match)) !== 'archived') return ok(match, false);
+  }
+
+  // #4677: `--archived` only, and after step 2 so an adoptable live match always wins. Read-only —
+  // see closedPrMatch.
+  if (opts.archived) {
+    const closed = closedPrMatch(pipelinesRoot, opts.specSlug);
+    if (closed) return ok(closed, false);
   }
 
   // Standalone-fallback-shaped creation. Never runs unless --create was

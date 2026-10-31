@@ -77,3 +77,16 @@ test('--root-only prints the anchored main checkout root from inside a linked wo
   assert.strictEqual(out.code, 0);
   assert.strictEqual(out.stdout.trim(), main);
 });
+
+// #4677: the CLI surface of `resolve({ archived: true })` — `--archived` must reach the resolver.
+test('AC3.1 #4677: CLI --archived prints the archived run path, exit 0; the same args without --archived do not', () => {
+  const main = gitRepo();
+  const archived = path.join(main, '.claude-tweaks', 'pipelines', 'archive', '2026-01-01T000000-spec-48');
+  fs.mkdirSync(archived, { recursive: true });
+  fs.writeFileSync(path.join(archived, 'run-state.json'), JSON.stringify({ status: 'clean', pr: { number: 12, url: 'u' } }));
+  const out = run(['--archived', '--spec-slug', 'spec-48'], main, { PIPELINE_RUN_DIR: '' });
+  assert.strictEqual(out.code, 0);
+  assert.strictEqual(out.stdout.trim(), archived);
+  const plain = run(['--spec-slug', 'spec-48'], main, { PIPELINE_RUN_DIR: '' });
+  assert.notStrictEqual(plain.code, 0);
+});

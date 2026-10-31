@@ -16,6 +16,7 @@ const { gitRepo, linkedWorktreeOf, harnessWorktreeOf, fixtureGit } = require('./
 const { resolve, formatTimestamp, adoptionRefusal } = require('../plugin/bin/lib/hooks/run-dir-resolve');
 const { ownerBlock } = require('../plugin/bin/lib/hooks/context');
 const { runLiveness } = require('../plugin/bin/lib/run-liveness');
+const { closeRunState } = require('../plugin/bin/lib/hooks/close-run-state');
 
 function mkRunDir(main, name) {
   const dir = path.join(main, '.claude-tweaks', 'pipelines', name);
@@ -25,6 +26,12 @@ function mkRunDir(main, name) {
 
 function writeRunState(dir, state) {
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify(state));
+}
+
+function mkArchived(main, name) {
+  const dir = path.join(main, '.claude-tweaks', 'pipelines', 'archive', name);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 test('main-checkout cwd, spec-slug matches an existing run: resolves that run\'s absolute path', () => {
@@ -510,4 +517,164 @@ test('not a git repo at all: fails loud rather than silently resolving to someth
   const out = resolve({ cwd: dir, env: {} });
   assert.strictEqual(out.ok, false);
   assert.match(out.message, /git repo|not a git/i);
+});
+
+// #4677: `--archived` is a read-only fallback for `wrap-up/merge-mode.md`. wrap-up closes and
+// archives a pr-first leave-open run before the human types `merge`, so the run the merge
+// step needs may sit under archive/ (or be closed-but-unarchived) with its `pr` recorded.
+test('#4677 AC1.1: --archived resolves an archived-only spec run carrying a pr object', () => {
+  const main = gitRepo();
+  const dir = mkArchived(main, '2026-01-01T000000-spec-42');
+  writeRunState(dir, { status: 'clean', worktree: null, worktreeAtClose: '/gone', pr: { number: 7, url: 'u', branch: 'b' } });
+  fs.writeFileSync(path.join(dir, 'config.yml'), 'spec: 42\n');
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-42', archived: true });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.path, dir);
+  assert.strictEqual(out.created, false);
+});
+
+test('#4677 AC1.1 real writer: a run closed by closeRunState then moved to archive/ resolves', () => {
+  const main = gitRepo();
+  const dir = mkRunDir(main, '2026-01-02T000000-spec-43');
+  writeRunState(dir, { status: 'active', worktree: null, pr: { number: 8, url: 'u' } });
+  closeRunState(dir, { explicit: true, callerIdentity: { sessionId: 's-4677' }, checkLiveWorktree: false });
+  const archived = path.join(main, '.claude-tweaks', 'pipelines', 'archive', path.basename(dir));
+  fs.mkdirSync(path.dirname(archived), { recursive: true });
+  fs.renameSync(dir, archived);
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-43', archived: true });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.path, archived);
+});
+
+test('#4677 AC1.2: --archived skips an archived match with no pr object', () => {
+  const main = gitRepo();
+  writeRunState(mkArchived(main, '2026-01-01T000000-spec-44'), { status: 'clean' });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-44', archived: true });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
+});
+
+test('#4677 AC2.1: a live match still wins over an archived one under --archived', () => {
+  const main = gitRepo();
+  const live = mkRunDir(main, '2026-01-01T000000-spec-45');
+  const archived = mkArchived(main, '2026-02-01T000000-spec-45');
+  writeRunState(archived, { status: 'clean', worktree: null, pr: { number: 3, url: 'u' } });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-45', archived: true });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.path, live);
+});
+
+test('#4677: without --archived an archived-only fixture stays unresolved', () => {
+  const main = gitRepo();
+  const dir = mkArchived(main, '2026-01-01T000000-spec-42');
+  writeRunState(dir, { status: 'clean', worktree: null, pr: { number: 7, url: 'u', branch: 'b' } });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-42' });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
+});
+
+test('#4677: --archived with --create is refused before any mkdir, even with a valid PIPELINE_RUN_DIR', () => {
+  const main = gitRepo();
+  const pipelines = path.join(main, '.claude-tweaks', 'pipelines');
+  const names = () => (fs.existsSync(pipelines) ? fs.readdirSync(pipelines) : []);
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-46', archived: true, create: true });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'archived-create');
+  assert.ok(!names().some((n) => n.endsWith('-spec-46')), 'must never mint a spec-46 directory');
+  const live = mkRunDir(main, '2026-01-07T000000-spec-46');
+  const withEnv = resolve({ cwd: main, env: { PIPELINE_RUN_DIR: live }, specSlug: 'spec-46', archived: true, create: true });
+  assert.strictEqual(withEnv.ok, false);
+  assert.strictEqual(withEnv.reason, 'archived-create');
+});
+
+test('#4677: --archived without --spec-slug is refused', () => {
+  const main = gitRepo();
+  const out = resolve({ cwd: main, env: {}, archived: true });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'archived-unnamed');
+});
+
+test('#4677 AC1.1 clarification: --archived adopts a live clean run that archive-run refused', () => {
+  const main = gitRepo();
+  const live = mkRunDir(main, '2026-01-03T000000-spec-49');
+  writeRunState(live, { status: 'clean', worktree: null, pr: { number: 9, url: 'u' } });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-49', archived: true });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.path, live);
+  const plain = resolve({ cwd: main, env: {}, specSlug: 'spec-49' });
+  assert.strictEqual(plain.ok, false);
+  assert.strictEqual(plain.reason, 'unresolved');
+});
+
+test('#4677: newest closed match wins across live-clean and archived (newer name wins, either order)', () => {
+  const main = gitRepo();
+  const archivedOld = mkArchived(main, '2026-01-01T000000-spec-50');
+  writeRunState(archivedOld, { status: 'clean', pr: { number: 1, url: 'u' } });
+  const liveNew = mkRunDir(main, '2026-02-01T000000-spec-50');
+  writeRunState(liveNew, { status: 'clean', worktree: null, pr: { number: 2, url: 'u' } });
+  assert.strictEqual(resolve({ cwd: main, env: {}, specSlug: 'spec-50', archived: true }).path, liveNew);
+
+  const main2 = gitRepo();
+  const liveOld = mkRunDir(main2, '2026-01-01T000000-spec-50');
+  writeRunState(liveOld, { status: 'clean', worktree: null, pr: { number: 1, url: 'u' } });
+  const archivedNew = mkArchived(main2, '2026-02-01T000000-spec-50');
+  writeRunState(archivedNew, { status: 'clean', pr: { number: 2, url: 'u' } });
+  assert.strictEqual(resolve({ cwd: main2, env: {}, specSlug: 'spec-50', archived: true }).path, archivedNew);
+});
+
+test('#4677 #208: a live clean dir whose run-id also exists under archive/ is never adopted', () => {
+  const main = gitRepo();
+  const live = mkRunDir(main, '2026-01-04T000000-spec-51');
+  writeRunState(live, { status: 'clean', worktree: null, pr: { number: 4, url: 'u' } });
+  const archived = mkArchived(main, '2026-01-04T000000-spec-51');
+  writeRunState(archived, { status: 'clean', pr: { number: 4, url: 'u' } });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-51', archived: true });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.path, archived);
+});
+
+test('#4677: --archived skips a malformed archived run-state.json in favor of an older valid archived match', () => {
+  const main = gitRepo();
+  const older = mkArchived(main, '2026-01-01T000000-spec-52');
+  writeRunState(older, { status: 'clean', pr: { number: 5, url: 'u' } });
+  const newer = mkArchived(main, '2026-02-01T000000-spec-52');
+  fs.writeFileSync(path.join(newer, 'run-state.json'), '{');
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-52', archived: true });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.path, older);
+});
+
+test('#4677: --archived picks the newest match that records a pr, not the newest match outright', () => {
+  const main = gitRepo();
+  const older = mkArchived(main, '2026-01-01T000000-spec-53');
+  writeRunState(older, { status: 'clean', pr: { number: 6, url: 'u' } });
+  const newer = mkArchived(main, '2026-02-01T000000-spec-53');
+  writeRunState(newer, { status: 'clean' });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-53', archived: true });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.path, older);
+});
+
+test('#4677: --archived matches the slug as a whole segment (spec-378 never adopts an archived spec-3784)', () => {
+  const main = gitRepo();
+  writeRunState(mkArchived(main, '2026-01-01T000000-spec-3784'), { status: 'clean', pr: { number: 10, url: 'u' } });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-378', archived: true });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
+});
+
+test('#4677: --archived ignores a non-canonical archived dir name even when it records a pr', () => {
+  const main = gitRepo();
+  writeRunState(mkArchived(main, '20260101T000000-spec-47'), { status: 'clean', pr: { number: 11, url: 'u' } });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-47', archived: true });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
+});
+
+test('#4677: --archived with no archive/ directory present is unresolved, not a throw', () => {
+  const main = gitRepo();
+  fs.mkdirSync(path.join(main, '.claude-tweaks', 'pipelines'), { recursive: true });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-55', archived: true });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
 });
