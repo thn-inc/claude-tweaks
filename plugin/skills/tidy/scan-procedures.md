@@ -251,8 +251,8 @@ means plain Release.
 `"match": true` recommends Resume instead and routes as `step-6-auto.md`'s **Unsettled run** row:
 Auto (no-op, always surfaced), rendered in **Yours** as "Resume open PR #{number} ({url}) —
 {resume}" when the output carries `resume` (the PR body's resume line, already validated as a
-paste-safe command naming this same run — or `/claude-tweaks:dispatch resume #{n}` when that run's
-directory is absent or archived), otherwise — it carries `resolve` — "Resolve open PR
+paste-safe command naming this same run — or, for a dispatched run (`record-{n}`),
+`/claude-tweaks:dispatch resume #{n}` when its directory is absent or archived), otherwise — it carries `resolve` — "Resolve open PR
 #{number} ({url}) before any release"; `{url}` is `link` and `{number}` its trailing `/pull/`
 number. It is never staged, so it gets no needs-decision comment, and the claim is never released.
 A non-null `failure` — a failed listing (on whichever transport ran — the MCP listing applies only

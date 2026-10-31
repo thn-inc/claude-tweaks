@@ -7,7 +7,10 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { run, parseArgs } = require('../plugin/bin/stale-claim-pr');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { run, parseArgs, realDeps } = require('../plugin/bin/stale-claim-pr');
 const { parseRepo } = require('../plugin/bin/lib/repo-resolve');
 const { composePrEarlyBody, composeResumeLine } = require('../plugin/bin/lib/flow/pr-body');
 
@@ -79,7 +82,11 @@ const present = (...paths) => {
   const set = new Set(paths);
   return { pipelinesRoot: () => ROOT, exists: (p) => set.has(p) };
 };
-const ARCHIVE_STATE = `${ROOT}/archive/${RUN}/run-state.json`;
+// ROOT-relative paths go through path.join, as the CLI builds them (a hand-written `/` breaks on win32).
+const ROOT_RUN = path.join(ROOT, RUN);
+const ROOT_STATE = path.join(ROOT_RUN, 'run-state.json');
+const ARCHIVE_RUN = path.join(ROOT, 'archive', RUN);
+const ARCHIVE_STATE = path.join(ARCHIVE_RUN, 'run-state.json');
 const archiveState = (status) => ({ [ARCHIVE_STATE]: JSON.stringify({ status }) });
 const RESUME_ARGS = ['--resume', '--issue', '4596'];
 
@@ -369,7 +376,7 @@ test('--repo owner/name is the repo the same-repo check runs against', () => {
 
 test('AC1.1: an archived run dir yields the dispatch resume line', () => {
   const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
-    present(`${ROOT}/archive/${RUN}`), archiveState('clean'));
+    present(ARCHIVE_RUN), archiveState('clean'));
   for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: DISPATCH, failure: null });
   assert.equal(r.ghCode, 0);
   assert.equal(r.mcpCode, 0);
@@ -382,7 +389,7 @@ test('AC1.1: an absent run dir yields the dispatch resume line', () => {
 
 test('AC1.1: a real archive wins over a root work/ stub', () => {
   const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
-    present(`${ROOT}/${RUN}`, `${ROOT}/archive/${RUN}`), archiveState('clean'));
+    present(ROOT_RUN, ROOT_STATE, ARCHIVE_RUN), archiveState('clean'));
   for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: DISPATCH, failure: null });
 });
 
@@ -395,33 +402,69 @@ test('AC1.1: a gone run dir supersedes resolve', () => {
 });
 
 test('AC2.1: a present run dir keeps the PR body\'s resume line', () => {
-  const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS, present(`${ROOT}/${RUN}`));
+  const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS, present(ROOT_RUN));
   for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: RESUME, failure: null });
 });
 
 test('a present run dir keeps resolve when the PR body has no usable Resume line', () => {
-  const r = runBoth([ghEntry({ body: MARKED })], [mcpEntry({ body: MARKED })], RESUME_ARGS, present(`${ROOT}/${RUN}`));
+  const r = runBoth([ghEntry({ body: MARKED })], [mcpEntry({ body: MARKED })], RESUME_ARGS, present(ROOT_RUN));
   for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resolve: 'no-resume-line', failure: null });
 });
 
 test('an archiving-marker archive beside a present root is not gone', () => {
   const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
-    present(`${ROOT}/${RUN}`, `${ROOT}/archive/${RUN}`), archiveState('archiving'));
+    present(ROOT_RUN, ROOT_STATE, ARCHIVE_RUN), archiveState('archiving'));
   for (const v of [r.gh, r.mcp]) assert.equal(v.resume, RESUME);
 });
 
-test('an archive with an unreadable or non-object run-state beside an absent root is gone (late-write stub rule)', () => {
+test('an archive with a missing, unreadable or non-object run-state beside an absent root is gone', () => {
   for (const files of [{}, { [ARCHIVE_STATE]: '{not json' }, { [ARCHIVE_STATE]: '[]' }]) {
     const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
-      present(`${ROOT}/archive/${RUN}`), files);
+      present(ARCHIVE_RUN), files);
     for (const v of [r.gh, r.mcp]) assert.equal(v.resume, DISPATCH, JSON.stringify(files));
   }
 });
 
-test('an archive with an unreadable run-state beside a present root is not gone', () => {
+test('an archive with an unreadable or non-object run-state beside a present root holding run-state.json is not gone', () => {
+  for (const state of ['{not json', '[]']) {
+    const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
+      present(ROOT_RUN, ROOT_STATE, ARCHIVE_RUN), { [ARCHIVE_STATE]: state });
+    for (const v of [r.gh, r.mcp]) assert.equal(v.resume, RESUME, state);
+  }
+});
+
+test('AC1.1: a root dir with no run-state.json beside an archive dir is gone, whatever the archive holds (late-write stub rule)', () => {
+  for (const status of ['archiving', 'clean']) {
+    const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
+      present(ROOT_RUN, ARCHIVE_RUN), archiveState(status));
+    for (const v of [r.gh, r.mcp]) assert.equal(v.resume, DISPATCH, status);
+  }
+});
+
+test('a root dir holding run-state.json beside an archiving archive is not gone', () => {
   const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
-    present(`${ROOT}/${RUN}`, `${ROOT}/archive/${RUN}`), { [ARCHIVE_STATE]: '{not json' });
+    present(ROOT_RUN, ROOT_STATE, ARCHIVE_RUN), archiveState('archiving'));
   for (const v of [r.gh, r.mcp]) assert.equal(v.resume, RESUME);
+});
+
+test('AC1.1: a gone run dir whose slug is not record-{n} is resolve run-dir-gone, never the dispatch line', () => {
+  const direct = '2026-10-30T200217-spec-4596';
+  const dispatched = '2026-10-31T005940-record-4597';
+  for (const runId of [direct, dispatched]) {
+    const body = composePrEarlyBody({
+      runId, specSummary: 'a summary', target: '#4596', nextStep: 'review',
+      runDir: `/repo/.claude-tweaks/pipelines/${runId}`,
+    });
+    const files = claimFile(runId);
+    const ghDeps = fakeDeps(files, { ...present(), gh: () => JSON.stringify([ghEntry({ body })]) });
+    assert.equal(run(['--claim-file', CLAIM, ...RESUME_ARGS], ghDeps), 0, runId);
+    const mcpDeps = fakeDeps({ ...files, [LISTING]: JSON.stringify([mcpEntry({ body })]) }, present());
+    assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING, ...RESUME_ARGS], mcpDeps), 0, runId);
+    for (const d of [ghDeps, mcpDeps]) {
+      assert.deepEqual(verdictOf(d), { match: true, link: PR_URL, resolve: 'run-dir-gone', failure: null }, runId);
+      assert.equal('resume' in verdictOf(d), false, runId);
+    }
+  }
 });
 
 test('an unresolved main checkout keeps the PR body\'s resume line', () => {
@@ -436,13 +479,19 @@ test('a throwing run-dir probe keeps the PR body\'s resume line', () => {
   for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: RESUME, failure: null });
 });
 
-test('--issue without --resume, or on a no-match, never probes the run dir', () => {
-  const plain = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], ['--issue', '4596']);
-  for (const v of [plain.gh, plain.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, failure: null });
+test('--issue without --resume is a malformed invocation that probes nothing; --issue on a no-match never probes the run dir', () => {
+  const deps = fakeDeps(claimFile());
+  assert.equal(run(['--claim-file', CLAIM, '--issue', '4596'], deps), 1);
+  assert.match(deps.calls.stderr.join(''), /--issue requires --resume/);
+  assert.match(deps.calls.stderr.join(''), /usage: stale-claim-pr\.js/);
+  assert.equal(out(deps), '');
+  assert.equal(deps.calls.readFile.length, 0);
+  assert.equal(deps.calls.pipelinesRoot, 0);
+  assert.equal(deps.calls.exists, 0);
   const none = runBoth([], [], RESUME_ARGS);
   assert.deepEqual(none.gh, NO_MATCH);
   assert.deepEqual(none.mcp, NO_MATCH);
-  for (const d of [plain.ghDeps, plain.mcpDeps, none.ghDeps, none.mcpDeps]) {
+  for (const d of [none.ghDeps, none.mcpDeps]) {
     assert.equal(d.calls.pipelinesRoot, 0);
     assert.equal(d.calls.exists, 0);
   }
@@ -471,6 +520,9 @@ test('malformed invocations exit 1 with usage on stderr and no stdout', () => {
     ['--issue -3', ['--claim-file', CLAIM, '--issue', '-3']],
     ['--issue 12x', ['--claim-file', CLAIM, '--issue', '12x']],
     ['--issue abc', ['--claim-file', CLAIM, '--issue', 'abc']],
+    ['--issue 400 digits (Infinity)', ['--claim-file', CLAIM, '--resume', '--issue', '9'.repeat(400)]],
+    ['--issue past Number.MAX_SAFE_INTEGER', ['--claim-file', CLAIM, '--resume', '--issue', '9007199254740993']],
+    ['--issue without --resume', ['--claim-file', CLAIM, '--issue', '4596']],
   ];
   for (const [name, argv] of bad) {
     const deps = fakeDeps(claimFile());
@@ -478,6 +530,34 @@ test('malformed invocations exit 1 with usage on stderr and no stdout', () => {
     assert.match(deps.calls.stderr.join(''), /usage: stale-claim-pr\.js/, name);
     assert.equal(out(deps), '', name);
     assert.equal(deps.calls.readFile.length, 0, `${name}: nothing read`);
+  }
+});
+
+test('AC1.1: the real pipelinesRoot and exists resolve an archived run in a temp repo from the cwd', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'stale-claim-pr-'));
+  const cwd = process.cwd();
+  try {
+    fs.mkdirSync(path.join(tmp, '.git'));
+    const archive = path.join(tmp, '.claude-tweaks', 'pipelines', 'archive', RUN);
+    fs.mkdirSync(archive, { recursive: true });
+    fs.writeFileSync(path.join(archive, 'run-state.json'), JSON.stringify({ status: 'clean' }));
+    const files = { ...claimFile(), [LISTING]: JSON.stringify([ghEntry({ body: composed() })]) };
+    const deps = fakeDeps(files, { pipelinesRoot: realDeps.pipelinesRoot, exists: realDeps.exists,
+      readFile: (p) => (p in files ? files[p] : realDeps.readFile(p)) });
+    process.chdir(tmp);
+    assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING, ...RESUME_ARGS], deps), 0);
+    assert.deepEqual(verdictOf(deps), { match: true, link: PR_URL, resume: DISPATCH, failure: null });
+    // The same temp repo with the run dir present (run-state.json and no archive) keeps the PR body's line.
+    fs.rmSync(path.join(tmp, '.claude-tweaks', 'pipelines', 'archive'), { recursive: true });
+    const root = path.join(tmp, '.claude-tweaks', 'pipelines', RUN);
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, 'run-state.json'), JSON.stringify({ status: 'running' }));
+    const live = fakeDeps(files, { pipelinesRoot: realDeps.pipelinesRoot, exists: realDeps.exists });
+    assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING, ...RESUME_ARGS], live), 0);
+    assert.equal(verdictOf(live).resume, RESUME);
+  } finally {
+    process.chdir(cwd);
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 

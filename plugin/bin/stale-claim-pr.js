@@ -8,7 +8,7 @@
 // listing on both transports, so the verdict cannot differ between them.
 //
 // Usage: stale-claim-pr.js --claim-file <path> [--listing <path>]
-//        [--repo owner/name] [--resume] [--issue <n>] [--help]
+//        [--repo owner/name] [--resume [--issue <n>]] [--help]
 //   --claim-file  the stale claim blob's raw JSON text, read from this file.
 //   --listing     a JSON array of open PRs the agent already fetched (the
 //                 GitHub MCP `list_pull_requests` shape, or the
@@ -25,17 +25,22 @@
 //                 --issue, when the matched run's directory is absent or
 //                 archived, `resume` is instead the dispatch-resume command
 //                 (`/claude-tweaks:dispatch resume #<n>`), since the PR body's
-//                 line names a directory that is gone (#4673).
-//   --issue       the claim's issue number (a positive integer). Opt-in, and
-//                 consulted only with --resume on a match. The run directory is
+//                 line names a directory that is gone (#4673). That command finds
+//                 only a dispatched run, so it is printed only when the run id's
+//                 slug is `record-<n>`; any other gone run (a direct /flow run's
+//                 `spec-<n>`) is `resolve`: `run-dir-gone` — its PR body line is
+//                 broken too, and dispatch resume could not find it.
+//   --issue       the claim's issue number (a positive integer; requires --resume,
+//                 else exit 1). Consulted only on a match. The run directory is
 //                 gone when archive/{runId} holds a run-state.json whose status is
-//                 not 'archiving', or when pipelines/{runId} is absent; a probe
-//                 that cannot tell (no main checkout, a throw) is not gone.
+//                 not 'archiving'; when archive/{runId} exists and pipelines/{runId}
+//                 holds no run-state.json; or when pipelines/{runId} is absent. A
+//                 probe that cannot tell (no main checkout, a throw) is not gone.
 // Output: one JSON line, exit 0, for every verdict — failure included:
 //   {"match":false,"link":null,"failure":null}                     no match
 //   {"match":true,"link":"<url>","failure":null}                   match
 //   {"match":true,"link":"<url>","resume":"<line>","failure":null} --resume
-//   {"match":true,"link":"<url>","resolve":"no-resume-line"|"resume-line-shape","failure":null}
+//   {"match":true,"link":"<url>","resolve":"no-resume-line"|"resume-line-shape"|"run-dir-gone","failure":null}
 //   {"match":false,"link":null,"failure":"<message>"}              a failed read
 // A failure (unreadable claim or listing, unparseable JSON, a `gh` error, a
 // listing that is not an array of PRs or hit the 1000-entry limit) is data the
@@ -49,7 +54,8 @@
 // Exit codes (a CLI-specific vocabulary — verdicts are data on stdout, so the
 // codes only cover what stops a verdict being reached; no JSON on 1-3):
 //   1  malformed invocation (unknown flag, a flag missing its value, an
-//      --issue that is not a positive integer, no --claim-file); usage on stderr.
+//      --issue that is not a positive integer or comes without --resume, no
+//      --claim-file); usage on stderr.
 //   2  no --listing and `gh` is absent — and only that, so a caller can route
 //      exit 2 to its MCP listing path; stderr names --listing.
 //   3  owner/repo could not be resolved (no --repo, no parseable `origin`
@@ -69,7 +75,7 @@ const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { lstatType } = require('./lib/path-guard');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
-const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo owner/name] [--resume] [--issue <n>] [--help]\n';
+const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo owner/name] [--resume [--issue <n>]] [--help]\n';
 
 function parseArgs(argv) {
   const o = { claimFile: null, listing: null, repo: null, resume: false, issue: null, help: false };
@@ -85,7 +91,7 @@ function parseArgs(argv) {
     else if (a === '--resume') o.resume = true;
     else if (a === '--issue') {
       const v = value();
-      if (v === undefined || !/^[1-9]\d*$/.test(v)) return { error: '--issue requires a positive integer' };
+      if (v === undefined || !/^[1-9]\d*$/.test(v) || !Number.isSafeInteger(Number(v))) return { error: '--issue requires a positive integer' };
       o.issue = Number(v);
     } else if (a === '--claim-file' || a === '--listing' || a === '--repo') {
       const v = value();
@@ -93,6 +99,7 @@ function parseArgs(argv) {
       o[a === '--claim-file' ? 'claimFile' : a.slice(2)] = v;
     } else return { error: `unknown argument: ${a}` };
   }
+  if (o.issue !== null && !o.resume && !o.help) return { error: '--issue requires --resume' };
   return o;
 }
 
@@ -125,10 +132,16 @@ function resumeFields(body, runId) {
   return parseResumeLine(line, runId) ? { resume: line } : { resolve: 'resume-line-shape' };
 }
 
+// The run-id timestamp prefix `YYYY-MM-DDTHHMMSS-` (18 chars), so runId.slice(18) is the slug
+// `record-{n}` of a dispatched run — resume-eligibility.js's RUN_ID_PREFIX_LENGTH, whose selectResumePr
+// is what `dispatch resume #n` uses to find the run's PR; a direct /flow run's slug is `spec-{n}`.
+const RUN_ID_PREFIX_LENGTH = 18;
+
 // Is the matched run's directory gone — archived or absent — so the PR body's Resume line names
-// nothing a session can resume from? The archived/absent subset of dispatch-resume.js's
-// classifyPriorRun: a real archive (run-state.json an object whose status is not 'archiving', the
-// marker archiveRunDir writes before moving anything) wins; otherwise the root dir's absence decides.
+// nothing a session can resume from? Exactly dispatch-resume.js's classifyPriorRun cases that return
+// `archived` or `absent`: archive/{runId} holds a run-state.json object whose status is not
+// 'archiving' (the marker archiveRunDir writes before moving anything); or archive/{runId} exists and
+// the root dir holds no run-state.json (a late-write stub); or the root dir is absent.
 // A probe that cannot tell (no main checkout, a throw) is "not gone": today's PR-body route.
 function runDirGone(deps, runId) {
   try {
@@ -140,6 +153,7 @@ function runDirGone(deps, runId) {
         const state = JSON.parse(deps.readFile(path.join(archiveDir, 'run-state.json')));
         if (state !== null && typeof state === 'object' && !Array.isArray(state) && state.status !== 'archiving') return true;
       } catch { /* an unreadable archive state is not a real archive: fall through to the root check */ }
+      if (!deps.exists(path.join(root, runId, 'run-state.json'))) return true;
     }
     return !deps.exists(path.join(root, runId));
   } catch {
@@ -147,10 +161,14 @@ function runDirGone(deps, runId) {
   }
 }
 
-// The Resume half of a --resume verdict: the dispatch-resume command when --issue names the claim and
-// its run dir is gone (whatever the PR body says), else the PR body's own line.
+// The Resume half of a --resume verdict: when --issue names the claim and its run dir is gone
+// (whatever the PR body says), the dispatch-resume command for a dispatched run (slug `record-{n}`),
+// else `run-dir-gone` (dispatch resume could not find the run); otherwise the PR body's own line.
 function resumeFor(opts, body, runId, deps) {
-  if (opts.issue !== null && runDirGone(deps, runId)) return { resume: `\`/claude-tweaks:dispatch resume #${opts.issue}\`` };
+  if (opts.issue !== null && runDirGone(deps, runId)) {
+    if (runId.slice(RUN_ID_PREFIX_LENGTH) !== `record-${opts.issue}`) return { resolve: 'run-dir-gone' };
+    return { resume: `\`/claude-tweaks:dispatch resume #${opts.issue}\`` };
+  }
   return resumeFields(body, runId);
 }
 
