@@ -796,6 +796,21 @@ test('CLI: an internal error (unparseable gh output) exits 1', async () => {
   h.deps.gh = ((inner) => (args, opts) => (args[1] === 'list' ? 'not json' : inner(args, opts)))(h.deps.gh);
   assert.equal(await run(cliArgv(fx), h.deps), 1);
   assert.match(h.err.join(''), /pr-early-open\.js:/);
+  assert.doesNotMatch(h.err.join(''), /gh-timeout-ms/);
+});
+
+test('CLI: a gh timeout exits 1 with the timeout hint, never the gh-absent message (#4554)', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  h.deps.gh = ((inner) => (args, opts) => {
+    if (args[0] === 'repo' && args[1] === 'view') throw Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' });
+    return inner(args, opts);
+  })(h.deps.gh);
+  assert.equal(await run(cliArgv(fx), h.deps), 1);
+  assert.match(h.err.join(''), /CLAUDE_TWEAKS_GH_TIMEOUT_MS/);
+  assert.match(h.err.join(''), /gh-timeout-ms/);
+  assert.match(h.err.join(''), /timed out after \d+ ms/);
+  assert.doesNotMatch(h.err.join(''), /gh is not available/);
 });
 
 test('CLI: --help prints usage and exits 0 before any probe', async () => {

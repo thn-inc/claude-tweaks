@@ -62,7 +62,7 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
 const { ghAvailable, parseRepo, repoSlug } = require('./lib/repo-resolve');
 const { sessionTmpPath } = require('./lib/session-tmp');
-const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
+const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, isTimeoutError } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: pr-early-open.js --run <run-dir> --target "#N[,#M]" --fixes N[,M] --title <text> --summary-file <path>\n'
   + '         [--worktree <path>] [--base <branch>] [--next-step build] [--help]\n'
@@ -241,6 +241,9 @@ async function run(argv, overrides = {}) {
     deps.stdout(`${JSON.stringify(res)}\n`);
     return OK_OUTCOMES.has(res.outcome) ? 0 : 3;
   } catch (e) {
+    if (isTimeoutError(e)) {
+      return internal(`${errText(e)}\ngh timed out after ${GH_TIMEOUT_MS} ms — override via the gh-timeout-ms policy key or the CLAUDE_TWEAKS_GH_TIMEOUT_MS env var (max 60000)`);
+    }
     return internal(errText(e));
   }
 }
