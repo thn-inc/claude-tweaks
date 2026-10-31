@@ -6243,3 +6243,62 @@ test('archiveMerged: a dry run, a pass with no main checkout and an unreadable p
   assert.equal(countOwnerlessNonClean(blocked), null);
   assert.equal('ownerlessNonClean' in archiveMerged({ cwd: blocked, runVerdict: DEAD }), false);
 });
+
+// --- #4599: postMergeDeferred — runs the post-merge check skipped for a retryable reason ---
+
+// The guard sits at the top of both run-dir loops: a deferred dir is skipped `post-merge-pending`
+// before any per-run work, and the skip is never fed to the stuck-skip tracker, because it is
+// transient and must never escalate as residue.
+test('archiveMerged: a run dir in postMergeDeferred is skipped post-merge-pending, untracked, and left in place (#4599)', () => {
+  const root = fs.realpathSync(makeRepo());
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  const dir = seedStuckDir4180(root, '2026-01-01T000000-pending-4599');
+  const runner = () => { throw new Error('no gh in this test'); };
+
+  // Control: without the guard the same dir is a tracked structurally-stuck skip.
+  const control = archiveMerged({ cwd: root, runner });
+  assert.deepEqual(control.skipped, [{ runDir: dir, reason: 'no-branch' }]);
+  assert.equal(listResidueFailures(root).filter((e) => e.path === dir).length, 1, 'the control pass tracks the stuck skip');
+  fs.rmSync(cachePath(root), { force: true });
+
+  // The deferred path is compared resolved, so an un-normalized spelling of it still matches.
+  const unnormalized = `${path.dirname(dir)}${path.sep}.${path.sep}${path.basename(dir)}`;
+  const result = archiveMerged({ cwd: root, runner, postMergeDeferred: [unnormalized] });
+  assert.deepEqual(result.skipped, [{ runDir: dir, reason: 'post-merge-pending' }]);
+  assert.deepEqual(result.archived, []);
+  assert.equal(fs.existsSync(dir), true, 'the deferred run dir stays at its top-level path');
+  assert.deepEqual(listResidueFailures(root), [], 'the stuck-skip cache gains no entry for a deferred dir');
+});
+
+test('archiveMerged: postMergeDeferred also guards the clean-status sweep, and only the listed dir (#4599)', () => {
+  const root = fs.realpathSync(makeRepo());
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  const mkClean = (id) => {
+    const d = path.join(pipelines, id);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'run-state.json'), JSON.stringify({ status: 'clean', worktree: null }));
+    return d;
+  };
+  const deferred = mkClean('2026-01-01T000001-clean-deferred-4599');
+  const other = mkClean('2026-01-01T000002-clean-other-4599');
+  const byDir = (a, b) => a.runDir.localeCompare(b.runDir);
+
+  // Control: a clean run with no branch to resolve skips `no-branch` — the sweep reaches it.
+  assert.deepEqual(
+    archiveMerged({ cwd: root }).skipped.slice().sort(byDir),
+    [{ runDir: deferred, reason: 'no-branch' }, { runDir: other, reason: 'no-branch' }],
+  );
+  const result = archiveMerged({ cwd: root, postMergeDeferred: [deferred] });
+  assert.deepEqual(
+    result.skipped.slice().sort(byDir),
+    [{ runDir: deferred, reason: 'post-merge-pending' }, { runDir: other, reason: 'no-branch' }],
+  );
+});
+
+test('archiveMerged: an empty or absent postMergeDeferred changes nothing (#4599)', () => {
+  const root = fs.realpathSync(makeRepo());
+  const dir = seedStuckDir4180(root, '2026-01-01T000000-pending-none-4599');
+  for (const extra of [{}, { postMergeDeferred: [] }]) {
+    assert.deepEqual(archiveMerged({ cwd: root, ...extra }).skipped, [{ runDir: dir, reason: 'no-branch' }]);
+  }
+});

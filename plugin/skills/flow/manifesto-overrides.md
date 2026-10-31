@@ -21,7 +21,7 @@ This Override semantics table is loaded only when the Manifesto runs as an appro
 | Model stance | `max-rigor` | Every profile's resolved effort rises one notch, capped at `max`; never promotes a profile's model upward |
 | Merge verification | `merge-when-green` | Merge sites arm `--auto` and let the forge merge once checks are green (the derived recommendation on a default-branch pr-first repo with PR CI) |
 | Merge verification | `wait` | Merge sites block on the checks before merging — explicit-config-only, never derived |
-| Merge verification | `off` | Merge sites merge without consulting CI (the derived value for local-merge, no-PR-CI, or non-default-integration-branch repos) |
+| Merge verification | `off` | An explicit `off` (this override over any other project value, or `merge-verification: off` in `policy.yml`) merges without waiting on CI; a derived `off` (local-merge, no-PR-CI, or non-default-integration-branch repos) still waits on and parks on the PR's own reported checks (`_shared/pr-first-merge.md` Step 2.5) — only `merge-verification: off` in `policy.yml` skips that too, since an override over a derived `off` is indistinguishable from it |
 | Design critique | `full` | Every web-track UI diff gets the full critic roster at review time regardless of `DESIGN.md` presence |
 | Design critique | `off` | No project-local critics run at review time; Impeccable's own `critique`/`audit` and the finish reviewer are unaffected |
 | Merge authorization | `pre-authorized` | Pre-authorizes this run's own terminal merge — see `wrap-up/review-console.md`'s Auto-merge short-circuit. A live, explicit answer — this override or the `pre-authorize-merge` invocation token; never a standing default. |

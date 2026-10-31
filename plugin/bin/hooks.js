@@ -65,7 +65,7 @@ const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', '
 // export) so a test can assert the two lists partition ALL_CHECKS exactly —
 // no overlap, nothing silently dropped when a check is added to one list and
 // not the other.
-const BACKGROUND_CHECKS = ['release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
+const BACKGROUND_CHECKS = ['release', 'post-merge', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
 
 // The janitorial checks an UNSCOPED `reconcile` CLI call hands to the detached
 // background pass instead of running inline (#4032) — the three whose cost
@@ -1713,7 +1713,7 @@ async function runReconcile(argv) {
       out.background = background;
     }
   } catch {
-    out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
+    out = { mirror: null, redTip: null, worktrees: null, claims: null, postMerge: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
     if (!checksList.length) out.background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
   }
   if (jsonOut) {
@@ -1733,7 +1733,7 @@ async function runReconcile(argv) {
 async function runReconcileSummary(argv) {
   // #644 Deliverable 3 — the plain one-line residue summary
   // `/claude-tweaks:flow`'s closing report shells out for. Composed
-  // without re-running the background checks (release/archive/
+  // without re-running the background checks (release/post-merge/archive/
   // archive-branches/remote-prune/ledger-residue/reap already ran off the hot path via
   // `reconcile-background`, most recently under `session-start.js`) —
   // this reads that persisted `summary.archived` count plus the residue
@@ -1813,7 +1813,7 @@ async function runReconcileBackground(argv) {
   // also stamps it moments before this process starts — reusing it here
   // would make this process (and the spawn-gate that decided to launch it)
   // see a false "fresh" from a pass that never touched
-  // release/archive/archive-branches/remote-prune/ledger-residue/reap, and the
+  // release/post-merge/archive/archive-branches/remote-prune/ledger-residue/reap, and the
   // background checks would never run. Caught by task review against a
   // real pr-first remote (#820 Task 10 fix-up); reconcile()'s own
   // lastRunAt/cache.js contract is untouched by this fix.
@@ -1849,8 +1849,25 @@ async function runReconcileBackground(argv) {
   let summary = {};
   try {
     const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
+    const postMergeEntries = r.postMerge || [];
+    const parentsClosedBy = (counts) => postMergeEntries
+      .filter(counts)
+      .reduce((n, e) => n + (Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0);
     summary = {
       released: (r.claims || []).filter((c) => c.action === 'released').length,
+      // Merged runs whose Steps 4.0/4.0b this pass ran late (#4599) and the parents it closed below
+      // the oversight floor: the background pass is the only place those closes happen unattended,
+      // so without a count the next SessionStart would never mention one.
+      postMergeRan: postMergeEntries.filter((e) => e.action === 'ran' && !e.step40Failed).length,
+      // Runs whose steps did not complete: Step 4.0 itself failed (non-zero exit, unreadable envelope: a SKIP
+      // marker was written, Step 4.0b never ran), or the check threw (no marker, and the run is not deferred).
+      // Either way the parent waits for tidy's backstop, so they are never counted as ran.
+      postMergeFailed: postMergeEntries.filter((e) => (e.action === 'ran' && e.step40Failed) || e.reason === 'error').length,
+      // Two disjoint counts, so SessionStart credits each close once and does no arithmetic: the parents
+      // closed by runs that wrote their marker, and those closed by runs whose marker write failed
+      // (closed on GitHub all the same, only the decisions.md marker is missing).
+      postMergeParentsClosed: parentsClosedBy((e) => e.action === 'ran'),
+      postMergeUnmarkedParentsClosed: parentsClosedBy((e) => e.reason === 'marker-write-failed'),
       archived: (r.runs || []).filter((x) => x.action === 'archived').length,
       archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,
       prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,
