@@ -10,8 +10,8 @@ sections).
 
 Remove this file (and `SKILL.md`'s routing branch to it) when no open record still carries a
 pre-schema brief — observable as `/claude-tweaks:tidy`'s acceptance-gap sweep and
-`/claude-tweaks:help`'s outstanding-sign-off list (Stage 4.7) surfacing zero `demo:pending`
-records whose brief predates the `### Observation plan` schema (shipped with #323 and its
+`/claude-tweaks:help`'s outstanding-sign-off list (Stage 4.7) surfacing zero pending acceptance
+records (`_shared/work-record.md`) whose brief predates the `### Observation plan` schema (shipped with #323 and its
 sub-issues, v6.78.0).
 
 Call `AskUserQuestion` with `question`: `"Does {title} do what you asked
@@ -20,7 +20,7 @@ for?"`, `header`: `"Verdict"`, `multiSelect`: `false`:
 - Option 1 — `label`: `"Approve"`, `description`: `"This does what was asked"`
 - Option 2 — the label names the section it actually walks: `"See it yourself"` when the brief's `### See it yourself` entry point resolved and browser tools are available, `"Verify it yourself"` when the brief carries `### Verify it yourself (manual)`. Offer it under either condition, never both labels at once; `description`: `"Check this before deciding"`
 - Option 3 — `label`: `"Request changes"`, `description`: `"There's a gap — I'll describe it"`
-- Option 4 — `label`: `"Skip for now"`, `description`: `"Leave demo:pending — I'll come back to this"` (this branch only ever reaches label-backed entries — a closing-commit reconstruction always composes an Observation plan, per `SKILL.md` Step 1's rewrite, and a session-recall entry composes one too whenever recall yields a path list; only when recall yields no path list does session-recall omit the section, and in that case Step 2's routing takes the brief straight to the Verdict question rather than through this branch).
+- Option 4 — `label`: `"Skip for now"`, `description`: `"Leave it pending — I'll come back to this"` (this branch only ever reaches label-backed entries — a closing-commit reconstruction always composes an Observation plan, per `SKILL.md` Step 1's rewrite, and a session-recall entry composes one too whenever recall yields a path list; only when recall yields no path list does session-recall omit the section, and in that case Step 2's routing takes the brief straight to the Verdict question rather than through this branch).
 
 **Non-interactive record** (the brief carries `### Verify it yourself (manual)` instead of
 `### See it yourself` — the classifier that composed this brief judged the changed paths as

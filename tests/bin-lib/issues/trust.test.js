@@ -795,6 +795,64 @@ test('approvedBatch is tallied from the demo:approved-batch marker, and only fro
   assert.equal(rows[0].approvedBatch, 1, 'only the batch-marked record counts toward approvedBatch');
 });
 
+test('AC3.2: accept:approved-batch counts as approvedBatch and batchOnly, exactly as demo:approved-batch does', () => {
+  const rows = trustRows([
+    { number: 1, labels: ['by:capture', 'risk:low', 'accept:approved', 'accept:approved-batch'], body: '', state: 'CLOSED' },
+    { number: 2, labels: ['by:capture', 'risk:low', 'accept:approved'], body: '', state: 'CLOSED' },
+    { number: 3, labels: ['by:capture', 'risk:low', 'demo:approved', 'accept:approved-batch'], body: '', state: 'CLOSED' },
+  ]);
+  assert.equal(rows[0].approved, 3, 'all three records are approved regardless of spelling');
+  assert.equal(rows[0].approvedBatch, 2, 'both accept:approved-batch markers count, beside a demo:approved verdict too');
+
+  const batchOnly = trustRows(Array.from({ length: MIN_SAMPLES }, (_, i) => ({
+    number: i + 1,
+    labels: ['by:capture', 'risk:low', 'accept:approved', 'accept:approved-batch'],
+    body: '', state: 'CLOSED',
+  })))[0];
+  assert.equal(batchOnly.approved, MIN_SAMPLES);
+  assert.equal(batchOnly.approvedBatch, MIN_SAMPLES);
+  assert.equal(batchOnly.batchOnly, true);
+  assert.equal(batchOnly.verdict, 'mixed');
+
+  // Mixed provenance keeps the cell eligible for clean, as the demo:* twin does.
+  const walkthroughBacked = trustRows(Array.from({ length: MIN_SAMPLES }, (_, i) => ({
+    number: i + 1,
+    labels: i === 0 ? ['by:capture', 'risk:low', 'accept:approved'] : ['by:capture', 'risk:low', 'accept:approved', 'accept:approved-batch'],
+    body: '', state: 'CLOSED',
+  })))[0];
+  assert.equal(walkthroughBacked.approvedBatch, MIN_SAMPLES - 1);
+  assert.equal(walkthroughBacked.batchOnly, false);
+  assert.equal(walkthroughBacked.verdict, 'clean');
+});
+
+test('AC3.2: accept:* verdicts land in the same buckets as their demo:* twins', () => {
+  // The fixture carries operational evidence (an old closed record with a closing
+  // commit), so a label read as "no acceptance state" lands in operationalGood and
+  // is told apart from a pending one.
+  const bucket = (labels) => {
+    const record = { ...operationalFixture(1, 30), labels: ['by:capture', 'risk:low', ...labels] };
+    const [row] = trustRows([record], [commitFor(1)], NOW, {});
+    return { approved: row.approved, changesRequested: row.changesRequested, undispositioned: row.undispositioned, operationalGood: row.operationalGood };
+  };
+  assert.deepEqual(bucket(['accept:approved']), bucket(['demo:approved']));
+  assert.deepEqual(bucket(['accept:changes-requested']), bucket(['demo:changes-requested']));
+  assert.deepEqual(bucket(['accept:pending']), bucket(['demo:pending']));
+  assert.deepEqual(bucket([]), { approved: 0, changesRequested: 0, undispositioned: 0, operationalGood: 1 });
+  assert.equal(bucket(['accept:approved']).approved, 1);
+  assert.equal(bucket(['accept:changes-requested']).changesRequested, 1);
+  assert.equal(bucket(['accept:pending']).undispositioned, 1);
+  assert.equal(bucket(['accept:pending']).operationalGood, 0);
+});
+
+test('AC3.2: an accept:pending record is never promoted to operational known-good', () => {
+  const record = { ...operationalFixture(1, 30), labels: ['by:capture', 'risk:low', 'accept:pending'] };
+  const rows = trustRows([record], [commitFor(1)], NOW, {});
+  assert.equal(rows[0].operationalGood, 0);
+  assert.equal(rows[0].undispositioned, 1);
+  assert.equal(rows[0].approved, 0);
+  assert.equal(rows[0].changesRequested, 0);
+});
+
 test('#431: a cell resting entirely on batch sign-offs demotes from clean to mixed', () => {
   // Every closed record here is demo:approved AND demo:approved-batch — no
   // walkthrough-backed approval, no operational corroboration. The shipped

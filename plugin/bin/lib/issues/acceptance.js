@@ -1,14 +1,6 @@
 'use strict';
 
-// Resolved verdicts are listed before `pending` deliberately: /claude-tweaks:demo
-// removes demo:pending in the same operation it adds the verdict, but a partial
-// write or a concurrent edit can leave both on the record. First-match-wins over
-// this order means a resolved record is never re-swept as un-dispositioned.
-const ACCEPTANCE_BY_LABEL = [
-  ['demo:approved', 'approved'],
-  ['demo:changes-requested', 'changes-requested'],
-  ['demo:pending', 'pending'],
-];
+const { acceptanceOf } = require('./record-vocabulary');
 
 // Paths with no interactive verification surface. This module is the source of that
 // classification — skills/demo/SKILL.md Step 1's closing-commit reconstruction fallback,
@@ -51,15 +43,12 @@ const INTERACTIVE_PATHS = [/^stories\//, /^docs\/journeys\//];
 
 function dispositionState(labels) {
   const names = Array.isArray(labels) ? labels : [];
-  for (const [label, state] of ACCEPTANCE_BY_LABEL) {
-    if (names.includes(label)) return state;
-  }
-  return 'none';
+  return acceptanceOf(names) ?? 'none';
 }
 
 // Provenance modifier for an 'approved' disposition — always stacked alongside
-// demo:approved, never its own disposition state (see ACCEPTANCE_BY_LABEL above,
-// which never matches it). /claude-tweaks:demo's Step 3 Approve action applies
+// demo:approved or accept:approved, never its own disposition state (acceptanceOf
+// never matches it). /claude-tweaks:demo's Step 3 Approve action applies
 // this label only for a #N,#M batch-invocation verdict; a single-record verdict
 // (bare #N, or no-argument session-recall) leaves it off — both run the same
 // per-item walkthrough, so this marks which invocation shape produced the
@@ -69,11 +58,14 @@ function dispositionState(labels) {
 // promoting an unlabeled historical approval to 'batch' would understate
 // coverage rather than overstate it (bin/lib/issues/trust.js's sole consumer).
 const APPROVAL_PROVENANCE_LABEL = 'demo:approved-batch';
+// Both spellings of the batch marker are read until the contract step (#4625)
+// retires demo:*, on the condition #4613 records.
+const APPROVAL_PROVENANCE_LABELS = [APPROVAL_PROVENANCE_LABEL, 'accept:approved-batch'];
 
 function approvalProvenance(labels) {
   if (dispositionState(labels) !== 'approved') return null;
   const names = Array.isArray(labels) ? labels : [];
-  return names.includes(APPROVAL_PROVENANCE_LABEL) ? 'batch' : 'walkthrough';
+  return APPROVAL_PROVENANCE_LABELS.some((label) => names.includes(label)) ? 'batch' : 'walkthrough';
 }
 
 function verificationSurface(changedPaths) {
@@ -111,5 +103,5 @@ function parentGateState({ subIssues, parentLabels } = {}) {
 
 module.exports = {
   dispositionState, verificationSurface, needsBackstop, parentGateState,
-  approvalProvenance, APPROVAL_PROVENANCE_LABEL,
+  approvalProvenance, APPROVAL_PROVENANCE_LABEL, APPROVAL_PROVENANCE_LABELS,
 };

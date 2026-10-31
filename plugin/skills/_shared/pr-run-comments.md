@@ -39,11 +39,49 @@ so it skips this gate, and a failed find or write stops the update instead of fa
 | `release-status` | `_shared/pr-first-merge-post-merge.md` Step 4.1, on outcome `merged` when a CHANGELOG backfill is needed | `<!-- run-comment: release-status -->` |
 | `close-out-update` | `/claude-tweaks:dispatch close-out`, before the call that lands an update (`dispatch/close-out-update.md`'s Update marker) | `<!-- run-comment: close-out-update -->` — one per PR, rewritten `cleared (…)` after the verified merge, a decline, or a landing that landed nothing |
 | `express-review` | `_shared/express-lane.md`'s Post-merge sampling, once per sampled merged express PR, findings or none | `<!-- run-comment: express-review -->` — the review-done marker `express-lane.js samples` reads (trusted authors only), so a reviewed PR is never sampled again |
+| `accept-verdict` | Dispatch, or the human — never the plugin. Registered here so the format has one home; it is not a `run-comment` kind and no skill posts or finds it by the Post-or-update procedure | `<!-- accept-verdict: {"v":1,"verdict":"…"} -->` — one single-line comment alone on its line at column 0, read only against the record's current verdict label; see "The `accept-verdict` comment" below |
 
-Each kind's marker is the **first line** of its comment body, unconditionally — the same
+Each run-comment kind's marker is the **first line** of its comment body, unconditionally — the same
 first-line-marker convention `_shared/pr-early-run-lifecycle.md`'s PR body uses for its own
 `claude-tweaks-run` marker, for the same reason: a reader (or a scan) must be able to identify
-the kind without parsing prose.
+the kind without parsing prose. `accept-verdict` is the one marker outside that rule: it is not
+first-line, it is column 0 and before any code block, for the reason given in its section.
+
+## The `accept-verdict` comment
+
+The human's acceptance verdict as a machine-readable comment. Dispatch (a separate repository)
+and a human both write it, so the format below is a cross-repository contract:
+`bin/lib/issues/accept-verdict.js` parses and renders it, and a marker that breaks any rule is
+rejected with a reason, never half-read.
+
+```
+<!-- accept-verdict: {"v":1,"verdict":"changes-requested","choice":"fix-forward","note":"text"} -->
+```
+
+- **Shape.** One single-line HTML comment, alone on its own line, at column 0, so it must come
+  before any code block in the comment: a run of 3 or more backticks or tildes before the
+  marker is a rejection. This is deliberate; a marker shown as code must never count, and the
+  parser does not model Markdown to tell. One block per comment. A marker that follows an
+  unclosed `<!--` comment earlier in the same comment is also rejected (`verdict marker inside
+  another HTML comment`): close any earlier HTML comment with `-->` before the marker line.
+- **Fields.** `v` is `1`. `verdict` is `approved` or `changes-requested`. `choice` is
+  `fix-forward` or `revert-now`, required with `changes-requested` and rejected with
+  `approved`. `note` is optional, a string of at most 2000 UTF-16 code units (`String.length`).
+  Unknown fields and repeated keys are rejected.
+- **Choice.** `fix-forward` files a follow-up record carrying the original's context, the note
+  and a regression-test requirement. `revert-now` (dev target only) opens and merges a revert PR
+  immediately, then files that follow-up record. #4614 acts on both.
+- **Escaping.** The JSON escapes `<` as `\u003c` and `>` as `\u003e` (a backslash, then `u003c` /
+  `u003e`); a raw `<` or `>` anywhere in the JSON is rejected, so the line can never close its own
+  comment early.
+- **Trust.** Only a comment from an author with an association of `OWNER`, `MEMBER` or
+  `COLLABORATOR` counts (the Trusted authors section below, `bin/lib/issues/comment-trust.js`).
+- **Agreement.** A marker counts only when its `verdict` equals the record's current verdict
+  label (`_shared/work-record.md`, Acceptance semantics). A mismatch yields no action and a
+  visible "verdict label and comment disagree" note.
+- **Trust limit (#3358).** The author-association gate cannot tell the maintainer from an agent
+  running under the maintainer's account. The plugin never authors a verdict marker itself; only
+  Dispatch or the human does. The residual risk is the one `comment-trust.js` documents.
 
 ## Multi-spec verdict comments (#2592)
 

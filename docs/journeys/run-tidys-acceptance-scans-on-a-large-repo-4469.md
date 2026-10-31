@@ -19,7 +19,7 @@ files:
 
 ### 1. The acceptance-gap scope fetches only the closed records it can flag
 - **URL:** `github-pr-scan-acceptance.md`, `## Scope: \`acceptance-gap\``, the "Record set" paragraph and the closed-record fence
-- **Action:** the scan agent resolves `{since-date}` (now minus 31 days) and `{resolved-limit}` as literals, then runs the fetch. The fetch filters server-side with `--search "closed:>=$SINCE -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending"`.
+- **Action:** the scan agent resolves `{since-date}` (now minus 31 days) and `{resolved-limit}` as literals, then runs the fetch. The fetch filters server-side with `--search "closed:>=$SINCE -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending -label:accept:approved -label:accept:changes-requested -label:accept:pending"` — both acceptance-label spellings (`_shared/work-record.md`), since `dispositionState` reads either as a disposition.
 - **Should feel:** proportionate: the scan asks GitHub only for what `needsBackstop` could ever flag.
 - **Should understand:**
   - The server excludes only records that `needsBackstop` already rejects.
@@ -59,3 +59,5 @@ files:
 ## Origin
 
 Built by `/claude-tweaks:flow` record #4469 (run `2026-10-30T045550-spec-4469-4466`).
+
+Step 1's quoted search updated during build of #4610: it also excludes the three `accept:*` labels.
