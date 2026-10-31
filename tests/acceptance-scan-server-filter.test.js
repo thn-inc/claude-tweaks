@@ -546,6 +546,8 @@ const PLUGIN_DIR = path.join(__dirname, '..', 'plugin');
 const forwardSlashes = (p) => p.split(path.sep).join('/');
 const daysAgo = (n) => new Date(Date.now() - n * 864e5);
 const dateOnly = (d) => d.toISOString().slice(0, 10);
+const FENCE_SINCE = dateOnly(daysAgo(31));
+const FENCE_MID = dateOnly(daysAgo(15));
 
 // The acceptance-gap closed-record bash fence, from its RAW_OLD resolution line to the closing fence.
 function closedRecordFence(gap) {
@@ -557,7 +559,7 @@ function closedRecordFence(gap) {
 // Runs the extracted fence with its placeholders substituted. `gh` becomes a shell function serving one
 // fixture per slice (the newer slice is the one whose --search starts `closed:>`), so no network is touched
 // and no PATH shim is needed. Returns the exit status, stderr and the $CLOSED file's parsed rows ('' when emptied, null when absent).
-function runClosedFence({ limit, since, mid, older, newer }) {
+function runClosedFence({ older, newer, limit = 1000, since = FENCE_SINCE, mid = FENCE_MID }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acceptance-fence-'));
   const sessionId = `acceptance-fence-${path.basename(dir)}`;
   try {
@@ -590,12 +592,7 @@ const row = (number, closedDaysAgo, extra = {}) => ({ number, title: `r${number}
 const sliceWarningLines = (stderr) => stderr.split('\n').filter((l) => l.startsWith('WARNING: the closed-record slice'));
 
 test('the extracted closed-record fence merges both slices number-keyed and applies the 30-day cutoff', () => {
-  const since = dateOnly(daysAgo(31));
-  const mid = dateOnly(daysAgo(15));
   const run = runClosedFence({
-    limit: 1000,
-    since,
-    mid,
     // #1 closed 30.5 days ago: inside the server window (31 days) but outside the client cutoff (30 days).
     // #3 appears in both slices; the newer slice's copy carries a different title and must win.
     older: [row(1, 30.5), row(2, 20), row(3, 16, { title: 'older-copy' })],
@@ -603,47 +600,44 @@ test('the extracted closed-record fence merges both slices number-keyed and appl
   });
   assert.equal(run.status, 0, `the fence must run clean: ${run.stderr}`);
   assert.equal(run.stderr, '', 'no slice reached its cap, so nothing may warn');
-  assert.deepEqual(run.closed.map((r) => r.number).sort((a, b) => a - b), [2, 3, 4], 'the cutoff drops #1 and #3 counts once');
+  assert.deepEqual(run.closed.map((r) => r.number).sort((a, b) => a - b), [2, 3, 4], 'the cutoff drops #1, and #3 (in both slices) counts once');
   assert.equal(run.closed.find((r) => r.number === 3).title, 'newer-copy', 'the newer slice copy wins');
 });
 
 test('the extracted closed-record fence warns per slice at the cap, naming the slice that reached it', () => {
-  const since = dateOnly(daysAgo(31));
-  const mid = dateOnly(daysAgo(15));
   const rows = (from, count, closedDaysAgo) => Array.from({ length: count }, (_, i) => row(from + i, closedDaysAgo));
+  const onlyWarning = (run) => {
+    const lines = sliceWarningLines(run.stderr);
+    assert.equal(lines.length, 1, 'only the slice at its cap warns');
+    return lines[0];
+  };
   // Boundary at the search ceiling: 999 rows is silent, 1000 warns; the merged total (1999) never warns on its own.
-  const quiet = runClosedFence({ limit: 1000, since, mid, older: rows(1, 999, 20), newer: rows(5000, 999, 5) });
+  const quiet = runClosedFence({ older: rows(1, 999, 20), newer: rows(5000, 999, 5) });
   assert.equal(quiet.status, 0, quiet.stderr);
   assert.deepEqual(sliceWarningLines(quiet.stderr), [], 'two slices under the cap must not warn, however large their sum');
   assert.equal(quiet.closed.length, 1998, 'both full slices survive the merge');
-  const newerFull = runClosedFence({ limit: 1000, since, mid, older: rows(1, 999, 20), newer: rows(5000, 1000, 5) });
-  const newerWarnings = sliceWarningLines(newerFull.stderr);
-  assert.equal(newerWarnings.length, 1, 'only the slice at its cap warns');
-  assert.ok(newerWarnings[0].includes(`closed:>${mid} returned 1000 records, reaching its cap of 1000`), `the warning must name the newer slice: ${newerWarnings[0]}`);
-  const olderFull = runClosedFence({ limit: 1000, since, mid, older: rows(1, 1000, 20), newer: rows(5000, 999, 5) });
-  const olderWarnings = sliceWarningLines(olderFull.stderr);
-  assert.equal(olderWarnings.length, 1);
-  assert.ok(olderWarnings[0].includes(`closed:${since}..${mid} returned 1000 records, reaching its cap of 1000`), `the warning must name the older slice: ${olderWarnings[0]}`);
+  const newerWarning = onlyWarning(runClosedFence({ older: rows(1, 999, 20), newer: rows(5000, 1000, 5) }));
+  assert.ok(newerWarning.includes(`closed:>${FENCE_MID} returned 1000 records, reaching its cap of 1000`), `the warning must name the newer slice: ${newerWarning}`);
+  const olderWarning = onlyWarning(runClosedFence({ older: rows(1, 1000, 20), newer: rows(5000, 999, 5) }));
+  assert.ok(olderWarning.includes(`closed:${FENCE_SINCE}..${FENCE_MID} returned 1000 records, reaching its cap of 1000`), `the warning must name the older slice: ${olderWarning}`);
   // A limit below the search ceiling is the cap: three rows reach a limit of 3.
-  const lowLimit = runClosedFence({ limit: 3, since, mid, older: rows(1, 3, 20), newer: rows(5000, 2, 5) });
-  const lowWarnings = sliceWarningLines(lowLimit.stderr);
-  assert.equal(lowWarnings.length, 1);
-  assert.ok(lowWarnings[0].includes('returned 3 records, reaching its cap of 3'), lowWarnings[0]);
+  const lowWarning = onlyWarning(runClosedFence({ limit: 3, older: rows(1, 3, 20), newer: rows(5000, 2, 5) }));
+  assert.ok(lowWarning.includes('returned 3 records, reaching its cap of 3'), lowWarning);
 });
 
 test('the extracted closed-record fence stops with an empty output file when a date guard throws', () => {
-  const since = dateOnly(daysAgo(31));
-  const bad = runClosedFence({ limit: 1000, since, mid: dateOnly(daysAgo(40)), older: [row(2, 20)], newer: [row(4, 5)] });
+  const fixtures = { older: [row(2, 20)], newer: [row(4, 5)] };
+  const bad = runClosedFence({ ...fixtures, mid: dateOnly(daysAgo(40)) });
   assert.notEqual(bad.status, 0, 'a mid-date earlier than since-date must fail the fence');
   assert.match(bad.stderr, /MID is not a YYYY-MM-DD date later than SINCE/);
   assert.equal(bad.closed, '', 'the output file is emptied first and never written after a guard throws');
   // Control: the same run with a good mid-date succeeds, so the failure above comes from the guard.
-  const good = runClosedFence({ limit: 1000, since, mid: dateOnly(daysAgo(15)), older: [row(2, 20)], newer: [row(4, 5)] });
+  const good = runClosedFence(fixtures);
   assert.equal(good.status, 0, good.stderr);
 });
 
 test('the mid-date guard throws on bad values and passes a good one, and both date guards run before the slices are built', () => {
-  const day = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+  const day = (n) => dateOnly(daysAgo(n));
   const block = closedFetchBlock(GAP);
   const since = guardLine(block, 'SINCE');
   const mid = guardLine(block, 'MID');
