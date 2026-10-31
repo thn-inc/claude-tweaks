@@ -11,3 +11,4 @@
 | 7 | build | verification-brief.md Step 1's own label bootstrap has no stated MCP-path behavior (the Transport paragraph scopes to the Parent-Gate Procedure) — pre-existing, surfaced by the #205 rewording | observation | — |
 | 8 | build | The MCP body-text sentence in the Transport paragraph implies but does not say the agent runs the session-tmp-resolve.js line first to get $WRAPUP_PARENT_BODY's path | observation | — |
 | 9 | build | brokenSpanLines guard misses double-backtick spans and `gh -R x issue …` flag-first shapes (neither occurs in the guarded text today) | observation | — |
+| 10 | build/skill | Extends `mcp-agent-fetch-node-compute`: on an MCP path the agent must normalize MCP's lowercase `state`/`state_reason` (and string-vs-object labels) before feeding a Node predicate that matches gh's uppercase enum exactly (`parentGateState`'s `'CLOSED'`), a wrinkle the skill does not yet name | observation | — |
