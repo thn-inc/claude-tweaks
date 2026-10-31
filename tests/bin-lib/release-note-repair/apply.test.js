@@ -5,6 +5,7 @@ const {
   RepairError, applyReleaseNote, onlyReleaseNoteAdded, prepareRepair, verifyWritten,
 } = require('../../../plugin/bin/lib/release-note-repair/apply');
 const { bodySha, checkBody } = require('../../../plugin/bin/lib/release-note-repair/detect');
+const { findSection } = require('../../../plugin/bin/lib/issues/record-payload');
 const F = require('./fixtures');
 
 test('applyReleaseNote inserts the section right after Acceptance Criteria, before the next heading', () => {
@@ -87,6 +88,30 @@ test('applyReleaseNote never mistakes a shorter nested fence for the close of a 
   const outerClose = out.body.indexOf('````\n', out.body.indexOf('## Example'));
   const rnAt = out.body.indexOf('## Release Note');
   assert.ok(rnAt > outerClose, 'Release Note must land after the outer fence closes, never inside the nested block');
+});
+
+test('AC3.1: a fenced ## Original request is not the boundary — the closed fence no longer reads as unterminated (#4561)', () => {
+  const body = `${F.join(F.CS, F.DEL, F.AC)}\n\`\`\`markdown\n## Original request\n\`\`\`\n`;
+  const out = applyReleaseNote(body, F.LINE);
+  assert.equal(out.mode, 'inserted');
+  assert.equal(checkBody(out.body).verdict, 'conforming');
+});
+
+test('AC2.1: a Release Note heading only inside a fence is absent — inserted, never filled (#4561)', () => {
+  const body = F.join(F.CS, F.DEL, F.AC, '```markdown\n## Release Note\n```\n', F.TA);
+  assert.equal(applyReleaseNote(body, F.LINE).mode, 'inserted');
+});
+
+test('Deliverable 2: a 4-space-indented ``` is not a fence for the repair writer, as for findSection (#4561)', () => {
+  const body = F.join(F.CS, F.DEL, '## Acceptance Criteria\n\n- [ ] x\n\n    ```\n## Example\n    ```\n');
+  const out = applyReleaseNote(body, F.LINE);
+  assert.ok(out.body.indexOf('## Release Note') < out.body.indexOf('## Example'));
+  assert.notEqual(findSection(body, 'Example', { levelPattern: '2' }), null);
+});
+
+test('a fence opened after ## Original request and never closed does not refuse the repair (#4561)', () => {
+  const body = `${F.join(F.CS, F.DEL, F.AC)}\n## Original request\n\n\`\`\`\nnever closed\n`;
+  assert.equal(applyReleaseNote(body, F.LINE).mode, 'inserted');
 });
 
 test('onlyReleaseNoteAdded accepts exactly the section and rejects any other change', () => {

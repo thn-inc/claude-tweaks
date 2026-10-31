@@ -1,77 +1,55 @@
 // plugin/bin/lib/release-note-repair/apply.js — /tidy Shape 4.5's repair half (#2828): insert (or
 // fill) exactly one `## Release Note` section, prove by line diff that nothing else changed, and
-// verify a written body. Headings are matched line-anchored and only before the verbatim
-// `## Original request` section; every gate verdict goes through detect.js's checkBody, so a body
-// the insert gets wrong is caught by the gate's own post-check rather than written.
+// verify a written body. Headings and fences follow record-payload.js's one shared rule (#4561):
+// headingLine for what a section-heading line is, scanFences/fencedLineMask for which lines are
+// fenced (CommonMark: 0-3 leading spaces open a fence; 4+ spaces or a tab is an indented code
+// block, not a fence). Headings are matched only before the verbatim `## Original request`
+// section — the first unfenced level-2 heading with that exact text; every gate verdict goes
+// through detect.js's checkBody, so a body the insert gets wrong is caught by the gate's own
+// post-check rather than written.
 'use strict';
 
 const { isDeepStrictEqual } = require('util');
 const { sectionText } = require('../issues/materialize-format');
+const { headingLine, findHeadingLine, scanFences, fencedLineMask } = require('../issues/record-payload');
 const { checkBody, checkReleaseNoteLine, bodySha, labelNames } = require('./detect');
 
 class RepairError extends Error {}
-
-const AC_HEADING = /^## Acceptance Criteria[ \t]*$/;
-const RN_HEADING = /^## Release Note[ \t]*$/;
-const ORIGINAL_REQUEST = /^## Original request[ \t]*$/;
-const H2 = /^## /;
-// An opener is optional leading whitespace (a fence indented under a list item, common in
-// Acceptance Criteria) plus a run of 3+ backticks or 3+ tildes — the info string, if any, is
-// ignored. A fence closes only on a line whose run of the SAME character is at least as long as
-// the opener's, followed by nothing but whitespace to end of line: a shorter run, the other
-// character, or one followed by more text (an info string, prose) never closes it. This is what
-// lets a longer fence (e.g. ````) hold a shorter one (```) as literal content instead of being
-// prematurely closed by it.
-const FENCE_OPEN = /^[ \t]*(`{3,}|~{3,})/;
-const FENCE_CLOSE = /^[ \t]*(`{3,}|~{3,})[ \t]*$/;
 
 // Lines keep their own terminators so every untouched byte round-trips exactly.
 const splitKeepingEol = (text) => text.match(/[^\n]*\n|[^\n]+$/g) || [];
 const bare = (line) => line.replace(/\r?\n$/, '');
 
-// Fence state per line, computed only over the authored region (before ## Original request):
-// true when a line sits inside — or is itself a delimiter of — a fenced code block, so a
-// `## `-looking line typed into a fenced markdown example is never mistaken for a real heading,
-// however that example is indented or nested. An unterminated fence (opened, never closed, before
-// the insert point) leaves `open` non-null — callers refuse to guess a boundary past that point.
-function fenceInfo(authoredLines) {
-  const inFence = [];
-  let open = null; // { ch, len } | null
-  for (const raw of authoredLines) {
-    const l = bare(raw);
-    if (open) {
-      inFence.push(true);
-      const m = FENCE_CLOSE.exec(l);
-      if (m && m[1][0] === open.ch && m[1].length >= open.len) open = null;
-    } else {
-      const m = FENCE_OPEN.exec(l);
-      if (m) {
-        inFence.push(true);
-        open = { ch: m[1][0], len: m[1].length };
-      } else {
-        inFence.push(false);
-      }
-    }
-  }
-  return { inFence, unterminated: open !== null };
-}
+const isReleaseNoteHeading = (l) => {
+  const h = headingLine(l);
+  return h !== null && h.level === 2 && h.text === 'Release Note';
+};
 
 function applyReleaseNote(body, rawLine) {
   const text = String(body);
   const line = String(rawLine).trim();
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const lines = splitKeepingEol(text);
-  const originalAt = lines.findIndex((l) => ORIGINAL_REQUEST.test(bare(l)));
+  const bareLines = lines.map(bare);
+  const fenced = fencedLineMask(bareLines);
+  const originalAt = findHeadingLine(bareLines, 'Original request', { levelPattern: '2', fenced });
   const authoredEnd = originalAt === -1 ? lines.length : originalAt;
-  const { inFence, unterminated } = fenceInfo(lines.slice(0, authoredEnd));
-  if (unterminated) throw new RepairError('an unterminated fenced code block precedes the insert point');
+  // An unterminated fence opened before the insert point leaves no boundary to trust — refuse
+  // rather than guess. One opened after ## Original request sits in verbatim text and never refuses.
+  const { ranges, unclosed } = scanFences(bareLines);
+  if (unclosed && ranges[ranges.length - 1][0] < authoredEnd) {
+    throw new RepairError('an unterminated fenced code block precedes the insert point');
+  }
+  const isH2 = (k) => !fenced[k] && headingLine(bareLines[k])?.level === 2;
   const nextH2 = (from) => {
-    for (let k = from; k < lines.length; k += 1) if (!inFence[k] && H2.test(lines[k])) return k;
+    for (let k = from; k < lines.length; k += 1) if (isH2(k)) return k;
     return lines.length;
   };
   const terminate = (k) => { if (k >= 0 && !lines[k].endsWith('\n')) lines[k] += eol; };
+  const authored = bareLines.slice(0, authoredEnd);
+  const authoredFenced = fenced.slice(0, authoredEnd);
 
-  const rn = lines.slice(0, authoredEnd).findIndex((l, idx) => !inFence[idx] && RN_HEADING.test(bare(l)));
+  const rn = findHeadingLine(authored, 'Release Note', { levelPattern: '2', fenced: authoredFenced });
   if (rn !== -1) {
     const end = nextH2(rn + 1);
     if (lines.slice(rn + 1, end).some((l) => bare(l).trim() !== '')) {
@@ -82,7 +60,7 @@ function applyReleaseNote(body, rawLine) {
     lines.splice(rn + 1, end - (rn + 1), ...fill);
     return { body: lines.join(''), mode: 'filled' };
   }
-  const ac = lines.slice(0, authoredEnd).findIndex((l, idx) => !inFence[idx] && AC_HEADING.test(bare(l)));
+  const ac = findHeadingLine(authored, 'Acceptance Criteria', { levelPattern: '2', fenced: authoredFenced });
   if (ac === -1) throw new RepairError('no line-anchored ## Acceptance Criteria heading to insert after');
   const at = nextH2(ac + 1);
   if (at < lines.length) {
@@ -106,9 +84,9 @@ function onlyReleaseNoteAdded(original, repaired, rawLine) {
   while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s += 1;
   if (a.slice(p, a.length - s).some((l) => l.trim() !== '')) return false;
   const added = b.slice(p, b.length - s).filter((l) => l.trim() !== '');
-  if (added.length === 2) return RN_HEADING.test(added[0]) && added[1] === line;
+  if (added.length === 2) return isReleaseNoteHeading(added[0]) && added[1] === line;
   if (added.length !== 1 || added[0] !== line) return false;
-  for (let k = p - 1; k >= 0; k -= 1) if (b[k].trim() !== '') return RN_HEADING.test(b[k]);
+  for (let k = p - 1; k >= 0; k -= 1) if (b[k].trim() !== '') return isReleaseNoteHeading(b[k]);
   return false;
 }
 
