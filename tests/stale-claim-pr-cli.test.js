@@ -17,6 +17,8 @@ const CLAIM = '/scratch/claim.json';
 const LISTING = '/scratch/listing.json';
 const PR_URL = 'https://github.com/acme/w/pull/7';
 const MARKED = `claude-tweaks-run: ${RUN}\n\n### Spec summary\n`;
+const ROOT = '/repo/.claude-tweaks/pipelines';
+const DISPATCH = '`/claude-tweaks:dispatch resume #4596`';
 
 function composed(extra = {}) {
   return composePrEarlyBody({
@@ -33,7 +35,7 @@ function mcpEntry({ url = PR_URL, body, fullName = 'acme/w' }) {
 }
 
 function fakeDeps(files, overrides = {}) {
-  const calls = { gh: [], readFile: [], stdout: [], stderr: [], ghAvailable: 0 };
+  const calls = { gh: [], readFile: [], stdout: [], stderr: [], ghAvailable: 0, pipelinesRoot: 0, exists: 0 };
   return {
     calls,
     ghAvailable: () => { calls.ghAvailable++; return true; },
@@ -45,6 +47,8 @@ function fakeDeps(files, overrides = {}) {
       if (!(p in files)) throw new Error(`ENOENT: ${p}`);
       return files[p];
     },
+    pipelinesRoot: () => { calls.pipelinesRoot++; throw new Error('must not probe the run dir'); },
+    exists: () => { calls.exists++; throw new Error('must not probe the run dir'); },
     stdout: (s) => calls.stdout.push(s),
     stderr: (s) => calls.stderr.push(s),
     ...overrides,
@@ -58,15 +62,26 @@ const verdictOf = (deps) => JSON.parse(out(deps));
 // One CLI run per transport: gh (a fake gh returning the gh-shaped listing, no
 // --listing) and MCP (--listing naming a file of the MCP-shaped listing, gh
 // throwing if touched).
-function runBoth(entriesGh, entriesMcp, extraArgs = []) {
-  const ghDeps = fakeDeps(claimFile(), { gh: (args) => { ghDeps.calls.gh.push(args); return JSON.stringify(entriesGh); } });
+function runBoth(entriesGh, entriesMcp, extraArgs = [], overrides = {}, files = {}) {
+  const ghDeps = fakeDeps({ ...claimFile(), ...files }, {
+    gh: (args) => { ghDeps.calls.gh.push(args); return JSON.stringify(entriesGh); }, ...overrides,
+  });
   const ghCode = run(['--claim-file', CLAIM, ...extraArgs], ghDeps);
-  const mcpDeps = fakeDeps({ ...claimFile(), [LISTING]: JSON.stringify(entriesMcp) });
+  const mcpDeps = fakeDeps({ ...claimFile(), ...files, [LISTING]: JSON.stringify(entriesMcp) }, overrides);
   const mcpCode = run(['--claim-file', CLAIM, '--listing', LISTING, ...extraArgs], mcpDeps);
   return { ghCode, mcpCode, gh: verdictOf(ghDeps), mcp: verdictOf(mcpDeps), ghDeps, mcpDeps };
 }
 
 const NO_MATCH = { match: false, link: null, failure: null };
+
+// Run-dir seams over a set of present paths; the archive's run-state.json goes in through `files`.
+const present = (...paths) => {
+  const set = new Set(paths);
+  return { pipelinesRoot: () => ROOT, exists: (p) => set.has(p) };
+};
+const ARCHIVE_STATE = `${ROOT}/archive/${RUN}/run-state.json`;
+const archiveState = (status) => ({ [ARCHIVE_STATE]: JSON.stringify({ status }) });
+const RESUME_ARGS = ['--resume', '--issue', '4596'];
 
 test('AC2.1: gh- and MCP-shaped listings give the same verdict', () => {
   const unmarked = (i) => ({ url: `https://github.com/acme/w/pull/${i + 100}`, body: 'nothing here' });
@@ -126,6 +141,12 @@ test('each transport reads only its own source', () => {
 test('the verdict is one JSON line with keys in contract order', () => {
   const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], ['--resume']);
   assert.match(r.ghDeps.calls.stdout.join(''), /^\{"match":true,"link":"[^"]+","resume":"[^\n]+","failure":null\}\n$/);
+  assert.deepEqual(Object.keys(r.gh), ['match', 'link', 'resume', 'failure']);
+});
+
+test('the verdict for a gone run dir keeps the contract key order', () => {
+  const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS, present());
+  assert.match(r.ghDeps.calls.stdout.join(''), /^\{"match":true,"link":"[^"]+","resume":"`\/claude-tweaks:dispatch resume #4596`","failure":null\}\n$/);
   assert.deepEqual(Object.keys(r.gh), ['match', 'link', 'resume', 'failure']);
 });
 
@@ -346,6 +367,96 @@ test('--repo owner/name is the repo the same-repo check runs against', () => {
   assert.deepEqual(verdictOf(deps), { match: true, link: 'https://github.com/other/x/pull/3', failure: null });
 });
 
+test('AC1.1: an archived run dir yields the dispatch resume line', () => {
+  const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
+    present(`${ROOT}/archive/${RUN}`), archiveState('clean'));
+  for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: DISPATCH, failure: null });
+  assert.equal(r.ghCode, 0);
+  assert.equal(r.mcpCode, 0);
+});
+
+test('AC1.1: an absent run dir yields the dispatch resume line', () => {
+  const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS, present());
+  for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: DISPATCH, failure: null });
+});
+
+test('AC1.1: a real archive wins over a root work/ stub', () => {
+  const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
+    present(`${ROOT}/${RUN}`, `${ROOT}/archive/${RUN}`), archiveState('clean'));
+  for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: DISPATCH, failure: null });
+});
+
+test('AC1.1: a gone run dir supersedes resolve', () => {
+  const r = runBoth([ghEntry({ body: MARKED })], [mcpEntry({ body: MARKED })], RESUME_ARGS, present());
+  for (const v of [r.gh, r.mcp]) {
+    assert.equal(v.resume, DISPATCH);
+    assert.equal('resolve' in v, false);
+  }
+});
+
+test('AC2.1: a present run dir keeps the PR body\'s resume line', () => {
+  const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS, present(`${ROOT}/${RUN}`));
+  for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: RESUME, failure: null });
+});
+
+test('a present run dir keeps resolve when the PR body has no usable Resume line', () => {
+  const r = runBoth([ghEntry({ body: MARKED })], [mcpEntry({ body: MARKED })], RESUME_ARGS, present(`${ROOT}/${RUN}`));
+  for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resolve: 'no-resume-line', failure: null });
+});
+
+test('an archiving-marker archive beside a present root is not gone', () => {
+  const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
+    present(`${ROOT}/${RUN}`, `${ROOT}/archive/${RUN}`), archiveState('archiving'));
+  for (const v of [r.gh, r.mcp]) assert.equal(v.resume, RESUME);
+});
+
+test('an archive with an unreadable or non-object run-state beside an absent root is gone (late-write stub rule)', () => {
+  for (const files of [{}, { [ARCHIVE_STATE]: '{not json' }, { [ARCHIVE_STATE]: '[]' }]) {
+    const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
+      present(`${ROOT}/archive/${RUN}`), files);
+    for (const v of [r.gh, r.mcp]) assert.equal(v.resume, DISPATCH, JSON.stringify(files));
+  }
+});
+
+test('an archive with an unreadable run-state beside a present root is not gone', () => {
+  const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
+    present(`${ROOT}/${RUN}`, `${ROOT}/archive/${RUN}`), { [ARCHIVE_STATE]: '{not json' });
+  for (const v of [r.gh, r.mcp]) assert.equal(v.resume, RESUME);
+});
+
+test('an unresolved main checkout keeps the PR body\'s resume line', () => {
+  const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
+    { pipelinesRoot: () => null, exists: () => false });
+  for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: RESUME, failure: null });
+});
+
+test('a throwing run-dir probe keeps the PR body\'s resume line', () => {
+  const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], RESUME_ARGS,
+    { pipelinesRoot: () => ROOT, exists: () => { throw new Error('EACCES'); } });
+  for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: RESUME, failure: null });
+});
+
+test('--issue without --resume, or on a no-match, never probes the run dir', () => {
+  const plain = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], ['--issue', '4596']);
+  for (const v of [plain.gh, plain.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, failure: null });
+  const none = runBoth([], [], RESUME_ARGS);
+  assert.deepEqual(none.gh, NO_MATCH);
+  assert.deepEqual(none.mcp, NO_MATCH);
+  for (const d of [plain.ghDeps, plain.mcpDeps, none.ghDeps, none.mcpDeps]) {
+    assert.equal(d.calls.pipelinesRoot, 0);
+    assert.equal(d.calls.exists, 0);
+  }
+});
+
+test('--resume without --issue never probes the run dir', () => {
+  const r = runBoth([ghEntry({ body: composed() })], [mcpEntry({ body: composed() })], ['--resume']);
+  for (const d of [r.ghDeps, r.mcpDeps]) {
+    assert.equal(d.calls.pipelinesRoot, 0);
+    assert.equal(d.calls.exists, 0);
+  }
+  assert.equal(r.gh.resume, RESUME);
+});
+
 test('malformed invocations exit 1 with usage on stderr and no stdout', () => {
   const bad = [
     ['no --claim-file', []],
@@ -355,6 +466,11 @@ test('malformed invocations exit 1 with usage on stderr and no stdout', () => {
     ['--repo with no value', ['--claim-file', CLAIM, '--repo']],
     ['a flag in place of a value', ['--claim-file', '--resume']],
     ['an empty value', ['--claim-file', '']],
+    ['--issue with no value', ['--claim-file', CLAIM, '--issue']],
+    ['--issue 0', ['--claim-file', CLAIM, '--issue', '0']],
+    ['--issue -3', ['--claim-file', CLAIM, '--issue', '-3']],
+    ['--issue 12x', ['--claim-file', CLAIM, '--issue', '12x']],
+    ['--issue abc', ['--claim-file', CLAIM, '--issue', 'abc']],
   ];
   for (const [name, argv] of bad) {
     const deps = fakeDeps(claimFile());
@@ -376,6 +492,8 @@ test('--help prints usage and probes nothing', () => {
 });
 
 test('parseArgs reads the documented flags', () => {
-  assert.deepEqual(parseArgs(['--claim-file', 'c', '--listing', 'l', '--repo', 'a/b', '--resume']),
-    { claimFile: 'c', listing: 'l', repo: 'a/b', resume: true, help: false });
+  assert.deepEqual(parseArgs(['--claim-file', 'c', '--listing', 'l', '--repo', 'a/b', '--resume', '--issue', '7']),
+    { claimFile: 'c', listing: 'l', repo: 'a/b', resume: true, issue: 7, help: false });
+  assert.deepEqual(parseArgs(['--claim-file', 'c']),
+    { claimFile: 'c', listing: null, repo: null, resume: false, issue: null, help: false });
 });

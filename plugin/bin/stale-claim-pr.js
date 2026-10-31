@@ -8,7 +8,7 @@
 // listing on both transports, so the verdict cannot differ between them.
 //
 // Usage: stale-claim-pr.js --claim-file <path> [--listing <path>]
-//        [--repo owner/name] [--resume] [--help]
+//        [--repo owner/name] [--resume] [--issue <n>] [--help]
 //   --claim-file  the stale claim blob's raw JSON text, read from this file.
 //   --listing     a JSON array of open PRs the agent already fetched (the
 //                 GitHub MCP `list_pull_requests` shape, or the
@@ -21,7 +21,16 @@
 //                 shape` — one is there but is not exactly the line
 //                 composeResumeLine emits for this run). A Resume line is
 //                 untrusted input rendered as a paste command, so only a line
-//                 parseResumeLine accepts is ever printed as `resume`.
+//                 parseResumeLine accepts is ever printed as `resume`. With
+//                 --issue, when the matched run's directory is absent or
+//                 archived, `resume` is instead the dispatch-resume command
+//                 (`/claude-tweaks:dispatch resume #<n>`), since the PR body's
+//                 line names a directory that is gone (#4673).
+//   --issue       the claim's issue number (a positive integer). Opt-in, and
+//                 consulted only with --resume on a match. The run directory is
+//                 gone when archive/{runId} holds a run-state.json whose status is
+//                 not 'archiving', or when pipelines/{runId} is absent; a probe
+//                 that cannot tell (no main checkout, a throw) is not gone.
 // Output: one JSON line, exit 0, for every verdict — failure included:
 //   {"match":false,"link":null,"failure":null}                     no match
 //   {"match":true,"link":"<url>","failure":null}                   match
@@ -39,8 +48,8 @@
 // without this the matcher would report a clean no-match for a marked PR.
 // Exit codes (a CLI-specific vocabulary — verdicts are data on stdout, so the
 // codes only cover what stops a verdict being reached; no JSON on 1-3):
-//   1  malformed invocation (unknown flag, a flag missing its value, no
-//      --claim-file); usage on stderr.
+//   1  malformed invocation (unknown flag, a flag missing its value, an
+//      --issue that is not a positive integer, no --claim-file); usage on stderr.
 //   2  no --listing and `gh` is absent — and only that, so a caller can route
 //      exit 2 to its MCP listing path; stderr names --listing.
 //   3  owner/repo could not be resolved (no --repo, no parseable `origin`
@@ -50,17 +59,20 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const { execFileSync } = require('child_process');
 const { openPrListArgs, staleClaimRunId, matchStaleClaimPr } = require('./lib/issues/claim-store');
 const { normalizePrListing } = require('./lib/issues/mcp-pr-shape');
 const { resumeLineUnder, parseResumeLine } = require('./lib/flow/pr-body');
 const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
+const { lstatType } = require('./lib/path-guard');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
-const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo owner/name] [--resume] [--help]\n';
+const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo owner/name] [--resume] [--issue <n>] [--help]\n';
 
 function parseArgs(argv) {
-  const o = { claimFile: null, listing: null, repo: null, resume: false, help: false };
+  const o = { claimFile: null, listing: null, repo: null, resume: false, issue: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     // A value-taking flag given last, empty, or followed by another flag reads
@@ -71,7 +83,11 @@ function parseArgs(argv) {
     };
     if (a === '--help' || a === '-h') o.help = true;
     else if (a === '--resume') o.resume = true;
-    else if (a === '--claim-file' || a === '--listing' || a === '--repo') {
+    else if (a === '--issue') {
+      const v = value();
+      if (v === undefined || !/^[1-9]\d*$/.test(v)) return { error: '--issue requires a positive integer' };
+      o.issue = Number(v);
+    } else if (a === '--claim-file' || a === '--listing' || a === '--repo') {
       const v = value();
       if (v === undefined) return { error: `${a} requires a value` };
       o[a === '--claim-file' ? 'claimFile' : a.slice(2)] = v;
@@ -93,6 +109,11 @@ const realDeps = {
   ghAvailable, remoteUrl, parseRepo,
   gh: defaultGh,
   readFile: (p) => fs.readFileSync(p, 'utf8'),
+  pipelinesRoot: () => {
+    const root = mainCheckoutRoot(process.cwd());
+    return root ? path.join(root, '.claude-tweaks', 'pipelines') : null;
+  },
+  exists: (p) => lstatType(p).type !== 'missing',
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -102,6 +123,35 @@ function resumeFields(body, runId) {
   const line = resumeLineUnder(body);
   if (line === null) return { resolve: 'no-resume-line' };
   return parseResumeLine(line, runId) ? { resume: line } : { resolve: 'resume-line-shape' };
+}
+
+// Is the matched run's directory gone — archived or absent — so the PR body's Resume line names
+// nothing a session can resume from? The archived/absent subset of dispatch-resume.js's
+// classifyPriorRun: a real archive (run-state.json an object whose status is not 'archiving', the
+// marker archiveRunDir writes before moving anything) wins; otherwise the root dir's absence decides.
+// A probe that cannot tell (no main checkout, a throw) is "not gone": today's PR-body route.
+function runDirGone(deps, runId) {
+  try {
+    const root = deps.pipelinesRoot();
+    if (!root) return false;
+    const archiveDir = path.join(root, 'archive', runId);
+    if (deps.exists(archiveDir)) {
+      try {
+        const state = JSON.parse(deps.readFile(path.join(archiveDir, 'run-state.json')));
+        if (state !== null && typeof state === 'object' && !Array.isArray(state) && state.status !== 'archiving') return true;
+      } catch { /* an unreadable archive state is not a real archive: fall through to the root check */ }
+    }
+    return !deps.exists(path.join(root, runId));
+  } catch {
+    return false;
+  }
+}
+
+// The Resume half of a --resume verdict: the dispatch-resume command when --issue names the claim and
+// its run dir is gone (whatever the PR body says), else the PR body's own line.
+function resumeFor(opts, body, runId, deps) {
+  if (opts.issue !== null && runDirGone(deps, runId)) return { resume: `\`/claude-tweaks:dispatch resume #${opts.issue}\`` };
+  return resumeFields(body, runId);
 }
 
 function noMatch(failure = null) {
@@ -144,7 +194,7 @@ function run(argv, deps) {
       }
       const match = matchStaleClaimPr(runId, normalizePrListing(JSON.parse(raw), owner, repo), owner, repo);
       verdict = match
-        ? { match: true, link: match.url, ...(opts.resume ? resumeFields(match.body, runId) : {}), failure: null }
+        ? { match: true, link: match.url, ...(opts.resume ? resumeFor(opts, match.body, runId, deps) : {}), failure: null }
         : noMatch();
     }
   } catch (e) {
