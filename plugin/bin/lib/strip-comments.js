@@ -1,9 +1,9 @@
 'use strict';
-const vm = require('node:vm');
 // Shared literal-aware comment stripper (#3536, #3585, #3903). Callers reach it two
 // ways: the source-scan conformance tests through tests/helpers/strip-comments.js
-// (whose header keeps the caller list tests/strip-comments-callers-twin.test.js pins),
-// and plugin code by requiring this file directly (today
+// (which re-exports `stripComments` and itself defines the `stripperVerdict` compile
+// oracle; its header keeps the caller list tests/strip-comments-callers-twin.test.js
+// pins), and plugin code by requiring this file directly (today
 // plugin/bin/lib/code-health/candidates-experiment-cleanup.js's `normalizeBranch`
 // and plugin/bin/lib/code-health/candidates-scale-readiness.js's brace tracker,
 // #3903). Comments are blanked, never deleted:
@@ -31,10 +31,13 @@ const vm = require('node:vm');
 //
 // Known ambiguity: a `/` right after `)` or `}` is read as division, so a regex
 // there — `if (x) /re/.test(y)`, or one opening a statement after a block-closing
-// `}` — is misread. No such shape exists in plugin/bin or tests/ at the time of
-// writing. `stripperVerdict` is the backstop for the compile-breaking direction:
-// blanked code cuts a literal short, so the stripped text stops compiling. A misread
-// that still compiles goes unseen: it can keep a comment's text, or blank text
+// `}` — is misread. The stripper also runs over a project's own JS/TS through the
+// code-health generators named above, so no survey of plugin/bin or tests/ can rule
+// that shape out. A plugin caller gets no mis-parse signal, so it must treat its scan
+// as a heuristic. The source-scan tests' backstop is `stripperVerdict` in
+// tests/helpers/strip-comments.js: it catches only the compile-breaking direction,
+// where blanked code cuts a literal short and the stripped text stops compiling. A
+// misread that still compiles goes unseen: it can keep a comment's text, or blank text
 // inside a multi-line template literal.
 const REGEX_KEYWORDS = new Set([
   'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await',
@@ -214,35 +217,4 @@ function stripComments(src, { literals = 'keep' } = {}) {
   return out.join('');
 }
 
-// Does `src` compile as a CommonJS module body? The wrapper matches how Node
-// compiles a required file, so a hashbang and a top-level `return` are both valid.
-// vm.Script compiles without running; a SyntaxError means "does not compile".
-function compiles(src) {
-  try {
-    new vm.Script(
-      '(function (exports, require, module, __filename, __dirname) {' + src.replace(/^#![^\n]*/, '') + '\n})',
-    );
-    return true;
-  } catch (e) {
-    if (e.name === 'SyntaxError') return false;
-    throw e;
-  }
-}
-
-// 'unparseable': the raw file does not compile, so no stripper verdict applies.
-// 'misparsed': the raw file compiles but the stripped text does not, so the
-// stripper blanked live code. 'ok': neither.
-function stripperVerdict(raw, stripped = stripComments(raw)) {
-  if (!compiles(raw)) return 'unparseable';
-  if (!compiles(stripped)) return 'misparsed';
-  return 'ok';
-}
-
-const STRIPPER_VERDICT_MESSAGES = {
-  misparsed:
-    'the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned — see tests/helpers/strip-comments.js',
-  unparseable:
-    'this file does not compile as a CommonJS module, so the comment-stripper check cannot judge it — see tests/helpers/strip-comments.js',
-};
-
-module.exports = { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES };
+module.exports = { stripComments };

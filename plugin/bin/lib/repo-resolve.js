@@ -11,7 +11,7 @@
 // `gh --version` probe (the six-call-site consolidation).
 'use strict';
 const { execFileSync } = require('child_process');
-const { GH_TIMEOUT_MS } = require('./shared-primitives');
+const { GH_TIMEOUT_MS, isTimeoutError } = require('./shared-primitives');
 
 // A git remote URL (SSH or HTTPS, with or without .git, on github.com or an
 // arbitrary GitHub Enterprise Server host, or an `owner/name` string wrapped
@@ -31,14 +31,16 @@ function parseRepo(url) {
 // options object every call site below now shares. #2567: shared, not a
 // local re-derivation of the same 5000 default, so a project's
 // `gh-timeout-ms` policy override (or CLAUDE_TWEAKS_GH_TIMEOUT_MS env
-// override) reaches this call too.
+// override) reaches this call too. A timed-out probe proves the binary
+// spawned (#4554), so it reads as present — the next real call surfaces the
+// timeout.
 function ghAvailable(deps = {}) {
   const exec = deps.execFileSync || execFileSync;
   try {
     exec('gh', ['--version'], { stdio: 'ignore', timeout: GH_TIMEOUT_MS, windowsHide: true });
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    return isTimeoutError(err);
   }
 }
 
