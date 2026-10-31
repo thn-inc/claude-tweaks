@@ -286,14 +286,14 @@ node -e "
     }
     return hasUnscored ? undefined : TIERS[maxIndex];
   }
-  let noSubIssues = 0;
+  const bad = {};
   gates
     .filter((f) => !f.needsDefinition)
     .forEach((f) => {
       if (f.closed) {
         const v = closedParentGap({ parentLabels: f.parentLabels, stateReason: f.notPlanned ? 'NOT_PLANNED' : undefined, belowFloorClose: f.belowFloorClose, subIssues: f.subIssues, riskFloor });
         if (v === 'gap') console.log(f.path + '\t[acceptance-gap] ' + f.id + ': ' + f.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo ' + f.id);
-        else if (v === 'no-sub-issues') noSubIssues++;
+        else if (v !== 'none') bad[v] = (bad[v] || 0) + 1;
         return;
       }
       if (parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) !== 'due') return;
@@ -301,7 +301,7 @@ node -e "
         ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ' + f.id
         : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)'));
     });
-  if (noSubIssues) console.error('WARNING: ' + noSubIssues + ' closed parent(s) print no [acceptance-gap] row (no-sub-issues) — risk unreadable; check the sub-issue records parent facet, then re-run.');
+  for (const v in bad) console.error('WARNING: ' + bad[v] + ' closed parent(s) print no [acceptance-gap] row (' + v + ') — risk unreadable; check the sub-issue records\' parent facet, then re-run.');
 " -- "$RISK_FLOOR"
 ```
 

@@ -249,10 +249,10 @@ function localFixture() {
   const { writeRecord, closeRecord, defaultFacets } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'local-store.js'));
   const cwd = mkTmp('cp-local-');
   const file = (n, slug) => path.join(cwd, 'specs', `${String(n).padStart(2, '0')}-${slug}.md`);
-  const parent = (n, title, { closed: isClosed = false, notPlanned = false, acceptance = null, closedAt, body = 'Parent body.' } = {}) => {
+  const parent = (n, title, { closed: isClosed = false, notPlanned = false, acceptance = null, closedAt, noClosedAt = false, body = 'Parent body.' } = {}) => {
     const facets = { ...defaultFacets(), isParentIssue: true, ...(notPlanned ? { notPlanned: true } : {}), ...(acceptance ? { acceptance } : {}) };
     const f = file(n, 'parent');
-    if (closedAt) writeRecord(f, { title, body, facets: { ...facets, closed: true, closedAt } });
+    if (closedAt || noClosedAt) writeRecord(f, { title, body, facets: { ...facets, closed: true, ...(closedAt ? { closedAt } : {}) } });
     else {
       writeRecord(f, { title, body, facets });
       if (isClosed) closeRecord(f);
@@ -325,4 +325,18 @@ test('Q2: Shape 7 counts a closed local parent with no sub-issues in one warning
   quiet.parent(1, 'Open', {});
   quiet.subIssue(11, 1, 'high');
   assert.equal(quiet.run().stderr, '');
+});
+
+test('Q3: Shape 7 keeps a closed local parent whose closedAt is missing or unparseable', () => {
+  const t = localFixture();
+  const missing = t.parent(1, 'Closed, no closedAt', { noClosedAt: true });
+  t.subIssue(11, 1, 'high');
+  t.parent(2, 'Closed, unparseable closedAt', { closedAt: 'not-a-date' });
+  t.subIssue(21, 2, 'high');
+  t.parent(3, 'Closed long ago', { closedAt: daysAgo(40) });
+  t.subIssue(31, 3, 'high');
+  assert.ok(!fs.readFileSync(missing, 'utf8').includes('closed-at:'), 'fixture 1 carries no closed-at line');
+  const r = t.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(localCols(r.stdout).map((c) => c[1]), [localRow(1, 'Closed, no closedAt'), localRow(2, 'Closed, unparseable closedAt')]);
 });
