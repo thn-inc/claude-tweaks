@@ -808,6 +808,31 @@ test('AC3.2 (real italic shape): an _Origin:_ line rewrite that drops #3026 repo
   assert.strictEqual(result.overwrites[0].commit, commitB);
 });
 
+test('the real #3630 _Origin:_ line extension (cdf6627d9~1..c31b0e07c) passes with no manual ruling', (t) => {
+  const repoRoot = path.join(__dirname, '..', '..', '..');
+  let head;
+  try {
+    head = execFileSync('git', ['-C', repoRoot, 'cat-file', '-t', 'c31b0e07c'], { encoding: 'utf8' }).trim();
+  } catch {
+    head = null;
+  }
+  if (head !== 'commit') {
+    // Same environment-precondition as the #4488/#4484 replay above: the commit
+    // is not reachable in this checkout, so there is nothing to replay.
+    t.skip('c31b0e07c not reachable in this checkout');
+    return;
+  }
+  // The base is the parent of the commit that added the journey: the check
+  // skips a file whose add commit falls outside the range.
+  const result = checkArtifactOverwrite({
+    base: 'cdf6627d9~1',
+    head: 'c31b0e07c',
+    paths: ['docs/journeys/reap-merged-worktrees-at-drain-end-3026.md'],
+    cwd: repoRoot,
+  });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
 test('isReferencePreservingOriginLine: the bold **Origin:** form that keeps its reference and adds one is reference-preserving', () => {
   const diff = [
     '--- a/f.md',
