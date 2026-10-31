@@ -85,6 +85,10 @@ after its push (`_shared/git-discipline.md`), as `checklist`. By `run-state.json
   "{body-file}"`; on non-empty `uncovered`, re-run with `--summary-file "{file}" --out "{body-file}"`; a
   non-zero exit → warn, write checklist-only. Re-read that file's first line back before the write and
   confirm it still names this run's `{run-id}`; hard-stop on a mismatch rather than push a wrong body.
+  Also assert the literal substrings `<!--` and `-->` are present around each expected marker (run
+  marker, phases markers, fixes markers) in that same read-back — a composed-body edit that typed
+  HTML entities instead of literal angle brackets silently corrupts the markers with no other check
+  catching it (#4467); hard-stop and retry the write on a mismatch, the same posture as the run-id check.
 
 <!-- when: transport=mcp -->
   `gh`-absent: `mcp__github__update_pull_request` with the same composed body — unsanitized

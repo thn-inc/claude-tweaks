@@ -10,6 +10,13 @@
 //
 //   node bin/closing-links.js --run <run-dir> --mode <pre-merge|post-merge>
 //     [--settle-ms <n>] [--help]
+//   node bin/closing-links.js --mode screen --body-file <path>
+//
+// screen (#4467): for a PR that should close no record (tidy's Step 7.5
+// housekeeping PR), neutralizes every closing-keyword phrase in a
+// not-yet-posted body file before `gh pr create`; no run dir, no gh. Rewrites
+// the file only when a phrase changed and prints {action: clean | neutralized,
+// neutralized}. An unreadable or unwritable file is exit 2, no stdout.
 //
 // pre-merge: reads the PR, takes the same-repo closingIssuesReferences minus
 // the body's `Fixes #N` span (the unwanted links), inserts `issue ` into every
@@ -55,6 +62,7 @@
 // an exit change. Exit 3 cannot log: the run dir is not trusted.
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
@@ -67,26 +75,29 @@ const { ghAvailable } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-merge> [--settle-ms <n>] [--help]\n'
+  + '       closing-links.js --mode screen --body-file <path>\n'
   + '  pre-merge: unlinks closing references to records the PR\'s Fixes block does not name\n'
   + '  post-merge: reopens a keep-open record the merge closed anyway (--settle-ms: poll budget, default 15000, max 60000, 0 = no re-read)\n'
+  + '  screen: neutralizes every closing-keyword phrase in a not-yet-posted PR body file (a PR that should close no record); no run dir, no gh\n'
   + '  prints one JSON line; action:\n'
   + '    pre-merge: unlinked | still-linked | clean | no-fixes-span | no-pr | gh-absent\n'
   + '    post-merge (worst wins): reopen-failed > close-pending > reopened > nothing-closed; or not-merged | no-fixes-span | no-pr | gh-absent\n'
+  + '    screen: clean | neutralized\n'
   + '  exit 0 done or status-as-data\n'
-  + '       2 malformed invocation\n'
+  + '       2 malformed invocation (screen: also an unreadable or unwritable --body-file)\n'
   + '       3 run dir missing or not anchored under the main checkout\n'
   + '       4 run marker mismatch (pre-merge) -- refused, nothing written\n'
   + '       5 gh pr view / gh pr edit failed, or a required read came back malformed\n'
   + '  gh-absent, 4 and 5 append their own SKIP line to decisions.md (## /wrap-up)\n';
 
-const MODES = ['pre-merge', 'post-merge'];
-const VALUE_FLAGS = { '--run': 'run', '--mode': 'mode', '--settle-ms': 'settleMs' };
+const MODES = ['pre-merge', 'post-merge', 'screen'];
+const VALUE_FLAGS = { '--run': 'run', '--mode': 'mode', '--settle-ms': 'settleMs', '--body-file': 'bodyFile' };
 const DEFAULT_SETTLE_MS = 15000;
 const MAX_SETTLE_MS = 60000;
 const POLL_STEP_MS = 3000;
 
 function parseArgs(argv) {
-  const o = { run: null, mode: null, settleMs: DEFAULT_SETTLE_MS, help: false };
+  const o = { run: null, mode: null, settleMs: DEFAULT_SETTLE_MS, bodyFile: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { o.help = true; continue; }
@@ -114,6 +125,8 @@ const realDeps = {
     encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
   }),
   readRunState: (runDir) => readRunStateWithParent(runDir, { requireRunIdParent: true }),
+  readFile: (p) => fs.readFileSync(p, 'utf8'),
+  writeFile: (p, s) => fs.writeFileSync(p, s),
   appendDecision: ({ runDir, section, entry }) => appendEntry({ runDir, section, entry }),
   now: () => new Date(),
   sleep: (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); },
@@ -141,6 +154,29 @@ function uniqueSorted(numbers) {
   return [...new Set(numbers)].sort((a, b) => a - b);
 }
 
+// screen (#4467): a PR that should close no record (tidy's housekeeping PR)
+// gets every closing-keyword phrase in its not-yet-posted body neutralized
+// before `gh pr create`. No run dir and no gh; the file is written only when
+// a phrase changed, and any read or write failure is exit 2 with no stdout.
+function screen(o, argv, deps, usageError, print) {
+  if (o.run !== null) return usageError('--run is not valid with --mode screen');
+  if (argv.includes('--settle-ms')) return usageError('--settle-ms is not valid with --mode screen');
+  if (o.bodyFile === null) return usageError('--body-file <path> is required with --mode screen');
+  let text;
+  try { text = deps.readFile(o.bodyFile); } catch (e) {
+    deps.stderr(`closing-links.js: could not read --body-file ${o.bodyFile}: ${(e && e.message) || e}\n`);
+    return 2;
+  }
+  const { text: screened, neutralized } = neutralizeClosingPhrases(text);
+  if (screened !== text) {
+    try { deps.writeFile(o.bodyFile, screened); } catch (e) {
+      deps.stderr(`closing-links.js: could not write --body-file ${o.bodyFile}: ${(e && e.message) || e}\n`);
+      return 2;
+    }
+  }
+  return print({ action: neutralized.length ? 'neutralized' : 'clean', neutralized });
+}
+
 function run(argv, overrides = {}) {
   // Tests pass only the seams they fake; the rest stay real.
   const deps = { ...realDeps, ...overrides };
@@ -151,8 +187,10 @@ function run(argv, overrides = {}) {
   const o = parseArgs(argv);
   if (o.error) return usageError(o.error);
   if (o.help) { deps.stdout(USAGE); return 0; }
+  if (o.mode === 'screen') return screen(o, argv, deps, usageError, print);
+  if (o.bodyFile !== null) return usageError('--body-file is only valid with --mode screen');
   if (!o.run) return usageError('--run <run-dir> is required');
-  if (!o.mode) return usageError('--mode <pre-merge|post-merge> is required');
+  if (!o.mode) return usageError('--mode <pre-merge|post-merge|screen> is required');
 
   // 2. The run dir must be the main checkout's, never a worktree-local shadow.
   const target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot });
