@@ -21,7 +21,18 @@ const HEADING = '## Untrusted text into a shell or paste command';
 const PREV_HEADING = '## Reading a marker comment back from GitHub';
 const NEXT_HEADING = '## Deriving a CLI argument from earlier prose';
 const CLASS_PHRASE = 'never reaches a shell command line';
+const PROCESS_ARGV_PHRASE = 'through `process.argv`';
+const WRITE_PHRASE = '`Write` it to a file and feed that file on stdin or as a path argument';
+const EXACT_GRAMMAR_PHRASE = "matches the composer's exact grammar";
 const FALLBACK_PHRASE = 'falls back to a non-command line';
+// Each phrase occurs once in the section, so removing it from the section fails its own assertion.
+const RULE_PINS = [
+  { phrase: CLASS_PHRASE, message: `section must name the class ${JSON.stringify(CLASS_PHRASE)}` },
+  { phrase: PROCESS_ARGV_PHRASE, message: `section must name the process.argv fix ${JSON.stringify(PROCESS_ARGV_PHRASE)}` },
+  { phrase: WRITE_PHRASE, message: `section must name the Write-produced file fix ${JSON.stringify(WRITE_PHRASE)}` },
+  { phrase: EXACT_GRAMMAR_PHRASE, message: `section must require a rendered paste command to match an exact grammar ${JSON.stringify(EXACT_GRAMMAR_PHRASE)}` },
+  { phrase: FALLBACK_PHRASE, message: `section must name the non-command fallback ${JSON.stringify(FALLBACK_PHRASE)}` },
+];
 const RECORD_REFS = ['#4465', '#4423'];
 const FIX_SHAS = ['5a3494874', '48d8c550e'];
 const LENS_HEADING = '### 3b: Security';
@@ -40,11 +51,9 @@ function sliceSection(text, heading, nextMarker) {
 function assertRuleSection(text) {
   const body = sliceSection(text, HEADING, '\n## ');
   assert.ok(body, `heading not found: ${HEADING}`);
-  assert.ok(body.includes(CLASS_PHRASE), `section must name the class ${JSON.stringify(CLASS_PHRASE)}`);
-  assert.ok(body.includes('process.argv'), 'section must name the process.argv fix');
-  assert.ok(body.includes('Write'), 'section must name the Write-produced file fix');
-  assert.ok(body.includes('exact grammar'), 'section must require a rendered paste command to match an exact grammar');
-  assert.ok(body.includes(FALLBACK_PHRASE), `section must name the non-command fallback ${JSON.stringify(FALLBACK_PHRASE)}`);
+  for (const pin of RULE_PINS) {
+    assert.ok(body.includes(pin.phrase), pin.message);
+  }
   for (const ref of RECORD_REFS) {
     assert.ok(body.includes(ref), `section must cite record ${ref}`);
   }
@@ -105,6 +114,17 @@ test('sliceSection refuses a section whose end anchor is missing instead of wide
 test('rule section go-red: removing the section fails the same assertion', () => {
   const body = sliceSection(AUTHORING, HEADING, '\n## ');
   expectRed(assertRuleSection, AUTHORING, AUTHORING.replace(body, () => ''), 'heading not found');
+});
+
+test('rule section go-red: removing any one rule phrase fails its own assertion', () => {
+  for (const pin of RULE_PINS) {
+    expectRed(
+      assertRuleSection,
+      AUTHORING,
+      mutateSection(AUTHORING, HEADING, '\n## ', pin.phrase, 'REMOVED'),
+      pin.message,
+    );
+  }
 });
 
 test('rule section go-red: removing either record ref fails the same assertion', () => {
