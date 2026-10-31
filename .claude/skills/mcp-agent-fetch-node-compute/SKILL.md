@@ -15,6 +15,7 @@ A Node subprocess cannot call MCP tools. On a `gh`-absent firing (typically the 
 | `bin/preflight-records.js --records-json <path>` (#3351) | records for the targets | pre-flight over the array |
 | `claimReaderFromMap` in `bin/lib/dispatch/in-flight-neighbours.js` (#3392), driven by `skills/dispatch/mcp-transport.md`'s neighbour-in-flight section | `list_issues` for the pool, then `claims/issue-{n}.json` per neighbour | `neighbourInFlightExclusions` through an injected `readClaimContent` |
 | `aliasMcpTimestamps` in `bin/lib/issues/mcp-issue-shape.js` (#3691), called by `queue-pull-script.md`'s `alias_mcp_timestamps` function | `list_issues` / `issue_read` (snake_case `created_at`/`updated_at`) | the same camelCase readers the `gh` branch feeds, after one unconditional alias step |
+| `bin/stale-claim-pr.js --listing <path>` (#4596), driven by `_shared/issue-claims.md`'s stale-claim check and `tidy/scan-procedures.md` when the CLI exits 2 (`gh` absent) | `list_pull_requests` (`state: open`, paged), every page written unreshaped as one JSON array | `normalizePrListing` in `bin/lib/issues/mcp-pr-shape.js` (a no-op on a `gh pr list --json` entry, so it runs on both transports; any element that is not a PR is a failure, never a skipped entry), then `claim-store.js`'s `matchStaleClaimPr` |
 
 ## Rules
 
@@ -33,6 +34,7 @@ A Node subprocess cannot call MCP tools. On a `gh`-absent firing (typically the 
 - Unit-test the reader over every entry state and the shape guard; prove the guard test is red with the guard disabled.
 - Extract-and-run the prose's heredoc snippets over fixture files (`tests/dispatch-neighbour-in-flight-mcp.test.js`), per the `skill-prose-conformance-tests` skill: the MCP-side fetch is fixtured as the file the agent would write, and the snippet is the one the agent actually runs. Register fixture temp dirs for cleanup with `t.after`.
 - Run the `gh` branch's fail-open fallback too: extract the fetch block and run it under `/bin/sh -c` with `PATH` set to an empty directory, so `gh` is absent, then assert the handoff file reads `[]` and the AUTO line printed (the pool-fetch test in `tests/dispatch-per-record-groups-prose.test.js`).
+- When a shape guard lands in front of an existing compute, re-check that compute's fixtures. A fixture missing a field the guard now requires fails the guard, a fail-open caller turns that into the outcome the test already expected, and the test stays green without reaching the rule it names. Give the fixtures the full shape and assert the fail-open line is absent (`tests/bin-lib/claim-targets/claim-targets.test.js`'s `(stale-pr-3)` case).
 
 ## Anti-patterns
 
@@ -41,3 +43,4 @@ A Node subprocess cannot call MCP tools. On a `gh`-absent firing (typically the 
 | Re-serialising any object the agent wrote as a claim | A read error becomes a live claim and a false exclusion (#3392 review) |
 | A test that pins a shapeless object (`{ runId: 'r' }`) as accepted | It encodes the bug; the suite stays green |
 | Letting a missing or malformed handoff file crash the compute step | `require` throws, the node exit stops the queue pull, and the fail-open promise breaks |
+| Deriving a normalised flag from a nested field whose absence falls into one of the flag's legitimate values | A non-null `head.repo` with no `full_name` read as cross-repository, so a marked same-repo PR was skipped as a clean no-match; `mcp-pr-shape.js` now throws on it (#4596 review) |

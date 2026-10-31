@@ -54,6 +54,38 @@ function composeResumeLine({ runDir, target, nextStep }) {
   return `\`PIPELINE_RUN_DIR="${runDir || '{run-dir}'}" /claude-tweaks:flow "${target}" ${nextStep}\``;
 }
 
+// composeResumeLine's parser twin, pinned by the round-trip test. Its untrusted
+// input is a PR body whose Resume line /tidy renders as a paste command, so
+// only the exact emitted shape passes (#4596). The dir and target classes are
+// allowlists, not exclusions, because the line is rendered as a paste command:
+// bash `!` history expansion runs inside double quotes, and a control byte
+// reaches the terminal as an escape sequence.
+const RESUME_LINE_RE = /^`PIPELINE_RUN_DIR="([A-Za-z0-9._~\/:@+, -]+)" \/claude-tweaks:flow "([A-Za-z0-9#,._ -]+)" ([a-z][a-z,-]*)`$/;
+
+// (line, runId) -> { runDir, target, steps } | null. The dir must also end in
+// `/{runId}` — a Resume line for another run is never this run's — and holds
+// no `..` segment, which the dir class admits but a run dir never carries.
+function parseResumeLine(line, runId) {
+  // A non-string id would coerce into the suffix ('/undefined', '/null'); an
+  // empty one would let any dir ending in `/` pass.
+  if (typeof runId !== 'string' || runId === '') return null;
+  const m = RESUME_LINE_RE.exec(line);
+  if (!m || !m[1].endsWith('/' + runId) || m[1].split('/').includes('..')) return null;
+  return { runDir: m[1], target: m[2], steps: m[3] };
+}
+
+// body -> the first non-blank line after the last `### Resume` heading, its
+// trailing whitespace (a CRLF body's `\r`) removed; null without a heading or
+// a line under it. The last heading, not the first: composePrEarlyBody writes
+// Resume after the Spec summary, so a summary quoting the heading can't shadow it.
+function resumeLineUnder(body) {
+  const lines = String(body || '').split('\n');
+  const at = lines.findLastIndex((l) => l.trim() === '### Resume');
+  if (at === -1) return null;
+  const line = lines.slice(at + 1).find((l) => l.trim() !== '');
+  return line === undefined ? null : line.trimEnd();
+}
+
 // { runId, specSummary, target, nextStep, fixesLines, runDir? } ->
 // the full PR-early body string, matching
 // _shared/pr-early-run-lifecycle.md's Step 3 template byte-for-byte in
@@ -295,6 +327,9 @@ module.exports = {
   composePhasesBlock,
   composeFixesSpan,
   composeResumeLine,
+  RESUME_LINE_RE,
+  parseResumeLine,
+  resumeLineUnder,
   hasRunMarker,
   hasPhasesPair,
   hasFixesPair,
