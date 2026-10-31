@@ -335,7 +335,7 @@ The `structurally-stuck` branch exempts every genuine ad-hoc dir at `no-branch`/
 
 A `runVerdict` that throws, returns no evidence array, or returns any other verdict reads as not abandoned. The `shipped-unclosed` gate at `archiveMerged`'s call site is unchanged.
 
-**The 24-hour floor.** `STALE_INTERRUPTED_TTL_MS` is unchanged (maintainer ruling 2026-10-22): a dead verdict still needs the same 24 hours of silence the kind needed before. Revisit trigger: revisit once the owner block has shipped for a release.
+**The 24-hour floor.** `STALE_INTERRUPTED_TTL_MS` is unchanged (maintainer ruling 2026-10-22, kept on revisit 2026-10-31, #4437): a dead verdict still needs the same 24 hours of silence the kind needed before. A dead verdict proves the owning session has ended, not that the run is abandoned, and interrupted runs are resumed by later sessions. Measured on this checkout on 2026-10-31 over 1,856 run directories with an `events.jsonl` (live and archived): 307 own `session-end` events, 134 of them followed by a later session's activity. For pipeline runs (no `-standalone` suffix), 108 of 180 resumed — 79 within an hour, 16 after 1–6 h, 3 after 6–12 h, 7 after 12–24 h, and 3 after 24–72 h — so a 12-hour floor would have archived 7 more of those resumed runs and a 6-hour floor 10 more. Only 4 of the events came from runs carrying an owner block, too few to judge owner-block runs on their own.
 
 **The bounded fallback (b).** Maintainer ruling 2026-10-26. Without it, owner-block runs that read `unknown` forever would never be archived, where they were archived at 24 hours before. The 72-hour floor is `LEGACY_DEAD_MS`, the same bound the legacy witness uses.
 
