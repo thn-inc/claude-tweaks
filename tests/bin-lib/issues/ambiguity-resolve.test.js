@@ -187,6 +187,16 @@ test('dropEmptyOpenQuestions leaves an empty Open Questions table that sits only
   assert.deepEqual(dropEmptyOpenQuestions(body), { body, removed: false });
 });
 
+test('dropEmptyOpenQuestions: the section-end walk stops at the next heading — the Original request copy survives (#4561)', () => {
+  const body = 'A\n\n## Open Questions\n\n| Q | A |\n|---|---|\n\n## Original request\n\nverbatim text\n';
+  assert.deepEqual(dropEmptyOpenQuestions(body), { body: 'A\n## Original request\n\nverbatim text\n', removed: true });
+});
+
+test('dropEmptyOpenQuestions: prose beside an empty table keeps the section (#4561)', () => {
+  const body = 'A\n\n## Open Questions\n\nsome prose\n\n| Q | A |\n|---|---|\n';
+  assert.deepEqual(dropEmptyOpenQuestions(body), { body, removed: false });
+});
+
 test('hasOpenQuestionsSection: a lone-CR body with an Open Questions heading is still detected, fail-closed (#4561)', () => {
   assert.equal(hasOpenQuestionsSection('A\r\r## Open Questions\r\r| Q | A |\r|---|---|\r| q | a |\r'), true);
 });
