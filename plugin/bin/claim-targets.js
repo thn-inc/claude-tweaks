@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 // bin/claim-targets.js — group-claim CLI on the shared claim store.
-//   node bin/claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--help]
+//   node bin/claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--resume-pr <url>] [--help]
 // --steps with neither build nor test claims nothing (skipGuard: no-build-or-test).
+// --resume-pr re-claims a stale claim whose in-flight PR is exactly <url> (dispatch resume, #4588).
 // Exit 0 = all claimed (or, with --keep-going, partial; or skip-guarded); 2 = malformed
 // invocation or missing dependency; 3 = contested, or in flight — a pr-opened
 // tombstone whose linked PR is still open, or a stale claim whose run marker
 // sits on an open same-repo PR (JSON on stdout — {contested:[...]} or
 // {inFlight:[{issue,link}]}); 4 = transient gh failure; 5 = a claim write
 // reported success but the post-write read-back did not confirm it
-// ({unverified:[{issue}]}). See bin/lib/claim-targets/claim-targets.js for
+// ({unverified:[{issue}]}); 6 = the claims-registry branch is missing on origin
+// and could not be created ({branchMissing:{branch,reason}}, with or without
+// --keep-going). See bin/lib/claim-targets/claim-targets.js for
 // the full contract and skills/_shared/issue-claims.md for the protocol.
 'use strict';
 

@@ -20,14 +20,20 @@
 // PIPELINE_RUN_DIR, so the merging session's Step 4.0b may log there).
 //
 // Transient failures retry, bounded. Step 4.0's `closing-links` exit 5 (a `gh pr
-// view`/`gh pr edit` failure or a malformed read: gh or its transport), and a
-// Step 4.0b call that failed as a whole on a gh read (`gh-failed` with no parent
-// and no record: the default-branch read), write an ATTEMPT_STEP line instead
-// of the marker — a location the marker rule never matches — and defer the run
-// as `transient-failure`. Once MAX_ATTEMPTS attempt lines exist, the next such
+// view`/`gh pr edit` failure or a malformed read: gh or its transport), and an
+// exit-0 envelope carrying `baseUnchecked: true` (the PR's base or the repo's
+// default branch could not be read, so Step 4.0 closed nothing and printed no
+// closing set, #4549), write an ATTEMPT_STEP line instead of the marker — a
+// location the marker rule never matches — and defer the run as
+// `transient-failure`. Once MAX_ATTEMPTS attempt lines exist, the next such
 // failure writes the marker as any other failure does. Every other exit is
 // deterministic (2 malformed invocation, 3 run dir not anchored, 4 pre-merge
 // only), as is an unreadable exit-0 envelope: those write the marker at once.
+//
+// Step 4.0b's after-a-PR-merge rules, from Step 4.0's envelope (#4549): there is
+// no default-branch check (on a non-default base Step 4.0 closes the `Fixes`
+// records itself and `closingSet` holds only the ones it confirmed closed), and
+// a `closeFailed[]` record holds its parent like a `failed[]` one does.
 //
 // The caller may pass `budgetExceeded` (the pass's wall-clock budget, index.js's
 // `budget.exceeded`). It is checked before each run's steps, never mid-run; once
@@ -40,8 +46,7 @@
 // reasons are retryable: `merge-grace`, `in-flight`, `claim-failed`, the
 // transient PR lookup failure `network-failure`, `transient-failure` and
 // `budget-exhausted`. Every other skip is NOT
-// deferred: `gh-absent`, `dry-run`, `marker-write-failed`, `integration-unknown`
-// and the definitive lookup failures (`pr-not-found` — confirmed by pr-state.js
+// deferred: `gh-absent`, `dry-run`, `marker-write-failed` and the definitive lookup failures (`pr-not-found` — confirmed by pr-state.js
 // before it answers, and one of archive's own structurally-stuck reasons —
 // `invalid-arguments`, `no-pr-state`), so archive's stuck-run surfacing for
 // them stays on. `failure` is `not-github-issues`, `no-remote`, or
@@ -230,7 +235,7 @@ async function prefetchPostMergePrStates(root, prStates) {
 }
 
 async function postMerge({
-  cwd, integration, prStates, dryRun = false, now = Date.now, budgetExceeded, deps = {},
+  cwd, prStates, dryRun = false, now = Date.now, budgetExceeded, deps = {},
 } = {}) {
   const entries = [];
   const deferred = [];
@@ -277,10 +282,6 @@ async function postMerge({
       deferred.push(dir);
       continue;
     }
-    if (!integration) {
-      entries.push({ runDir: dir, pr, action: 'skipped', reason: 'integration-unknown' });
-      continue;
-    }
     if (dryRun) {
       entries.push({ runDir: dir, pr, action: 'skipped', reason: 'dry-run' });
       continue;
@@ -303,7 +304,7 @@ async function postMerge({
       // A pass that finished between the first read and the claim wrote its marker already.
       if (runHasMarker(dir)) continue;
       const entry = processRun({
-        dir, pr, root, owner, repo, workLinks, riskFloor, integration, timedGh, runClosingLinks, closeParents, writeEntries, now,
+        dir, pr, root, owner, repo, workLinks, riskFloor, timedGh, runClosingLinks, closeParents, writeEntries, now,
       });
       entries.push(entry);
       if (entry.reason === TRANSIENT_REASON) deferred.push(dir);
@@ -318,7 +319,7 @@ async function postMerge({
 
 // Steps 4.0 and 4.0b for one claimed run; the one place the marker is written.
 function processRun({
-  dir, pr, root, owner, repo, workLinks, riskFloor, integration, timedGh, runClosingLinks, closeParents, writeEntries, now,
+  dir, pr, root, owner, repo, workLinks, riskFloor, timedGh, runClosingLinks, closeParents, writeEntries, now,
 }) {
   let out = '';
   const code = runClosingLinks(
@@ -356,15 +357,21 @@ function processRun({
     if (code !== 0) returned = `exit ${code}`;
     else if (unreadable) returned = 'an unreadable envelope';
     else returned = envelope.action;
+    // An unread base or default branch: Step 4.0 closed nothing and carries no closing set (#4549).
+    const baseUnchecked = code === 0 && Boolean(envelope && envelope.baseUnchecked === true);
     if (code === TRANSIENT_CLOSING_LINKS_EXIT) {
       const retried = retry(`Step 4.0 returned exit ${code} (a gh failure)`);
       if (retried) return retried;
     }
+    if (baseUnchecked) {
+      const retried = retry(`Step 4.0 returned ${returned} (the PR's base or the default branch could not be read)`);
+      if (retried) return retried;
+    }
     const item = { entry: formatEntry({ status: 'SKIP', now: stamp, step: MARKER_STEP, text: composeSkipText(returned), reversibility: 'n/a' }) };
-    // `step40Failed` is the structured signal that Step 4.0 itself failed (non-zero exit or an unreadable
-    // envelope), as opposed to an envelope that legitimately carries no closing set (`not-merged`, …).
+    // `step40Failed` is the structured signal that Step 4.0 itself failed (non-zero exit, an unreadable
+    // envelope, or an unread base), as opposed to an envelope that legitimately carries no closing set (`not-merged`, …).
     return write([item], {
-      runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0, ...(code !== 0 || unreadable ? { step40Failed: true } : {}),
+      runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0, ...(code !== 0 || unreadable || baseUnchecked ? { step40Failed: true } : {}),
     });
   }
 
@@ -372,22 +379,19 @@ function processRun({
   // state and stateReason (Step 4.0b's gate), never as a closing record of this merge.
   const afterWindow = new Set(numbers(envelope.closedAfterWindow));
   const closingSet = numbers(envelope.closingSet).filter((n) => !afterWindow.has(n));
+  // A `closeFailed[]` record (non-default base: Step 4.0 could not read or close it) is OPEN or unknown,
+  // so it holds its parent the way a `failed[]` one does (#4549).
+  const issuesOf = (list) => (Array.isArray(list) ? list : []).map((f) => f && f.issue).filter(Number.isInteger);
   const unsettled = [
     ...numbers(envelope.reopened), ...numbers(envelope.pendingClose),
-    ...(Array.isArray(envelope.failed) ? envelope.failed : []).map((f) => f && f.issue).filter(Number.isInteger),
+    ...issuesOf(envelope.failed), ...issuesOf(envelope.closeFailed),
   ];
   // selfInclude: false — this runs more than MERGE_GRACE_MS after the merge, so every closing record's live
   // state is the truth: a sub-issue a human reopened since keeps its parent open (#4599).
   const { closed, skipped } = closeParents({
-    closingSet, unsettled, mergingPr: pr, owner, repo, workLinks, riskFloor, integrationBranch: integration, gh: timedGh,
+    closingSet, unsettled, mergingPr: pr, owner, repo, workLinks, riskFloor, gh: timedGh,
     selfInclude: false,
   });
-  // The whole call failed on a gh read (no parent, no record: the default-branch read) before any write.
-  const wholeCallGhFailure = skipped.find((s) => s.reason === 'gh-failed' && s.parent == null && s.issue == null);
-  if (wholeCallGhFailure && closed.length === 0) {
-    const retried = retry(`Step 4.0b failed on a gh read (${wholeCallGhFailure.detail || 'no detail'})`);
-    if (retried) return retried;
-  }
   const items = closed.map((c) => ({
     entry: formatEntry({
       status: 'AUTO',

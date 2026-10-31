@@ -652,17 +652,18 @@ the source of truth; the module only decides when the steps run and records that
   | `pr-not-found`, `invalid-arguments`, `no-pr-state` and any other non-network PR-state failure string | no | A definitive answer a retry will not change. Archive keeps tracking the run as structurally stuck (#3543), so it is not hidden. |
   | `gh-absent`, `dry-run`, `error` | no | Not retryable within the pass. |
   | `marker-write-failed` | no | See the marker-write bullet below. |
-  | `integration-unknown` | no | See the bullet after that one. |
 
 - **Transient failures retry, bounded (`transient-failure`).** `closing-links`'s exit codes split
   in two. Exit 5 (`gh pr view` / `gh pr edit` failed, or a required read came back malformed) is gh
   or its transport, so it is transient. Exits 2 (malformed invocation) and 3 (run dir not anchored)
-  are deterministic, as is an unreadable exit-0 envelope; exit 4 is pre-merge only. Step 4.0b's
-  whole-call gh failure (`gh-failed` with no parent and no record: the default-branch read) is
-  transient too; a `gh-failed` skip for one parent or record is that parent's, and the marker is
-  written as usual. A transient failure appends a `SKIP … reconcile post-merge attempt` line
-  (`condition: … (attempt N of 3) → fallback: the next reconcile pass retries …`), never the
-  marker, and the run is deferred. Once three attempt lines exist, the next transient failure
+  are deterministic, as is an unreadable exit-0 envelope; exit 4 is pre-merge only. An exit-0
+  `baseUnchecked: true` envelope (`base-unchecked`, or `reopen-failed` with that flag: the PR's base
+  or the default branch could not be read, so Step 4.0 closed nothing and printed no closing set,
+  #4549) is a failed read, so it is transient too; once its retries are spent its marker entry
+  carries `step40Failed: true`. A `gh-failed` skip for one parent or record in Step 4.0b is that
+  parent's, and the marker is written as usual. A transient failure appends a `SKIP … reconcile
+  post-merge attempt` line (`condition: … (attempt N of 3) → fallback: the next reconcile pass
+  retries …`), never the marker, and the run is deferred. Once three attempt lines exist, the next transient failure
   writes the marker as a deterministic one does, so the retry is bounded and the parent falls to
   tidy's backstop. A retry re-runs Step 4.0 too, which is idempotent past the close window: a
   record it reopened last time reads open and is settled open.
@@ -680,10 +681,14 @@ the source of truth; the module only decides when the steps run and records that
   each pass while the write keeps failing. That is safe because both are idempotent: a parent
   already closed is a no-op, and an existing trusted heading comment means close only.
   Any parent still open falls to tidy's backstop.
-- **`integration-unknown`.** When `origin/HEAD` is unresolved, the run is skipped without a marker
-  and is not deferred. Step 4.0b needs the integration branch to judge a parent, so nothing is
-  guessed. Archive may archive that same run in the same pass, and then tidy's `parent-gate` backstop
-  is its only recovery.
+- **Step 4.0b's after-a-PR-merge rules (#4549).** The mirror applies Step 4.0b as it runs after a PR
+  merge, so it has no default-branch check and needs no integration branch. On a non-default base
+  the late Step 4.0 closes the PR's still-open `Fixes` records itself, and `closingSet` holds only
+  the ones it confirmed closed, so an armed merge into a non-default base closes its records and its
+  below-floor parent too. A `closeFailed[]` record (its close or its read failed) joins `reopened[]`,
+  `pendingClose[]` and `failed[]` as unsettled, so its parent is skipped `sibling-unsettled` even if
+  the close landed despite the error. A `base-unchecked` envelope carries no closing set, so Step
+  4.0b never runs for it (the transient-failure bullet above).
 - **`gh`-absent skip and fail-open posture.** The check is `gh`-only. `#4602`'s MCP transport covers
   in-session calls, not a Node subprocess, so a `gh`-absent environment gets `skipped` / `gh-absent`
   per run (or the preflight skip for the whole check, see the `gh`-absent section above), no marker,
@@ -702,8 +707,8 @@ the source of truth; the module only decides when the steps run and records that
   parents closed below the floor, by those runs and by `marker-write-failed` ones;
   `postMergeUnmarkedParentsClosed` is the `marker-write-failed` part) and `postMergeFailed` (runs
   whose Step 4.0 itself failed: the entry carries `step40Failed: true` for a non-zero
-  `closing-links` exit, exit 5 only once its retries are spent, or an unreadable envelope, a SKIP
-  marker is written, Step 4.0b never runs, and the parent waits for tidy's backstop; an envelope
+  `closing-links` exit, exit 5 or a `base-unchecked` envelope only once its retries are spent, or
+  an unreadable envelope, a SKIP marker is written, Step 4.0b never runs, and the parent waits for tidy's backstop; an envelope
   that merely carries no closing set, such as `not-merged`, is not a failure). A failure is never
   counted in `postMergeRan`, and a `transient-failure` retry is in none of them. The next
   SessionStart renders them in its prior-pass line (`post-merge steps ran for N merged run(s),

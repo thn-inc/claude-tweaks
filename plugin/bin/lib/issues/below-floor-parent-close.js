@@ -22,12 +22,20 @@
 // no-parent fallback and work-backend: local-files are out of scope too — this
 // entry runs after the merge has landed and never falls back to the no-parent path.
 //
+// It mirrors the entry after a PR merge, the only merge its caller sees, so it
+// has no default-branch check: that gate is the no-PR local merge's (#4549). On
+// a non-default base Step 4.0 closes the `Fixes` records itself and its
+// `closingSet` holds only the ones it confirmed closed, so the set is already
+// safe to count. `unsettled` is every record Step 4.0 handled or could not
+// settle — `reopened[]`, `pendingClose[]`, and each `failed[]` and
+// `closeFailed[]` entry's issue — and any parent whose sub-issues include one
+// is skipped (`sibling-unsettled`).
+//
 // Every gh call goes through the injected `gh(args, input?)`, which returns
 // stdout and throws on failure. A failing call skips that one parent (named in
 // `skipped`, reason `gh-failed`) and the next closing record is still
-// processed; a failing default-branch read skips the whole step, and so does a
-// `riskFloor` outside the policy schema's risk-floor enum (`invalid-risk-floor`, no gh call).
-// Never throws.
+// processed; a `riskFloor` outside the policy schema's risk-floor enum skips the
+// whole step (`invalid-risk-floor`, no gh call). Never throws.
 'use strict';
 
 const { fetchNativeParent } = require('./native-dependencies');
@@ -68,7 +76,7 @@ function normalizeSet(values) {
 }
 
 function closeBelowFloorParents({
-  closingSet, unsettled, mergingPr, owner, repo, workLinks, riskFloor, integrationBranch, gh, selfInclude = true,
+  closingSet, unsettled, mergingPr, owner, repo, workLinks, riskFloor, gh, selfInclude = true,
 } = {}) {
   const closed = [];
   const skipped = [];
@@ -95,25 +103,6 @@ function closeBelowFloorParents({
     const slug = `${owner}/${repo}`;
     const closing = normalizeSet(closingSet);
     const unsettledSet = normalizeSet(unsettled);
-
-    // Default-branch check, once: GitHub closes `Fixes #N` records only on the
-    // default branch, so a merge into any other branch leaves its sub-issues
-    // open and counting them CLOSED would close the parent early.
-    let defaultBranch;
-    try {
-      defaultBranch = String(call(['repo', 'view', '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'])).trim();
-    } catch (err) {
-      skipped.push({ reason: 'gh-failed', detail: err.message });
-      return { closed, skipped };
-    }
-    if (!defaultBranch) {
-      skipped.push({ reason: 'gh-failed', detail: 'empty default branch' });
-      return { closed, skipped };
-    }
-    if (defaultBranch !== integrationBranch) {
-      skipped.push({ reason: 'non-default-branch' });
-      return { closed, skipped };
-    }
 
     const resolveParent = (n) => {
       if (workLinks === 'body-text') {

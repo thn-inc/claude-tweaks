@@ -544,7 +544,7 @@ async function reconcileInner(opts, state) {
     const r = await timePhase('post-merge', async () => {
       await warm(prefetchPostMergePrStates);
       // The pass budget, checked between runs: a catch-up or several armed merges must not run past it.
-      return postMerge({ cwd: root, integration, prStates, dryRun, budgetExceeded: () => budget.exceeded() });
+      return postMerge({ cwd: root, prStates, dryRun, budgetExceeded: () => budget.exceeded() });
     });
     if (r.failure) {
       result.skipped.push({ check: 'post-merge', reason: r.failure });

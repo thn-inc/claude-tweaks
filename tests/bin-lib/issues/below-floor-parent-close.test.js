@@ -82,8 +82,9 @@ test('composeCloseComment adds the not-planned line after the first paragraph', 
   assert.equal(out, `${heading}\n\n${expectedIntro}\n\n${proseNotPlannedLine()}\n\n- #1 One\n`);
 });
 
-// A fake gh answering by exact argv shape; anything else throws. `world`:
-//   defaultBranch, parentOf {sub: parent}, subs {parent: [n]} (native list) or
+// A fake gh answering by exact argv shape; anything else throws (a default-branch read
+// included: after a PR merge Step 4.0b has no default-branch check, #4549). `world`:
+//   parentOf {sub: parent}, subs {parent: [n]} (native list) or
 //   bodies {n: text} (body-text), issues {n: {state, stateReason, labels, title, refs}},
 //   parentLabels {parent: [names]}, parentLive {parent: {state, stateReason, comments}},
 //   login, throwWhen(key) -> boolean.
@@ -93,7 +94,6 @@ function makeGh(world) {
     calls.push({ args, input });
     const key = args.join(' ');
     if (world.throwWhen && world.throwWhen(key)) throw new Error(`boom: ${key}`);
-    if (key === 'repo view --json defaultBranchRef -q .defaultBranchRef.name') return `${world.defaultBranch || 'main'}\n`;
     if (args[0] === 'api' && args[1] === 'graphql') {
       const n = Number(/i(\d+):/.exec(args[3])[1]);
       const parent = (world.parentOf || {})[n];
@@ -125,7 +125,7 @@ function makeGh(world) {
 }
 
 const base = (over) => ({
-  closingSet: [11], unsettled: [], mergingPr: 77, owner: 'o', repo: 'r', workLinks: 'native', riskFloor: 'high', integrationBranch: 'main', ...over,
+  closingSet: [11], unsettled: [], mergingPr: 77, owner: 'o', repo: 'r', workLinks: 'native', riskFloor: 'high', ...over,
 });
 
 const happyWorld = (over = {}) => ({
@@ -140,20 +140,13 @@ const happyWorld = (over = {}) => ({
 
 const writes = (calls) => calls.filter((c) => c.args[0] === 'issue' && (c.args[1] === 'comment' || c.args[1] === 'close'));
 
-test('default branch main != integration branch develop: skips the step with no other gh call', () => {
-  const { gh, calls } = makeGh(happyWorld({ defaultBranch: 'main' }));
-  const out = closeBelowFloorParents(base({ integrationBranch: 'develop', gh }));
-  assert.deepEqual(out, { closed: [], skipped: [{ reason: 'non-default-branch' }] });
-  assert.equal(calls.length, 1);
-});
-
-test('a failing default-branch read skips the whole step as gh-failed', () => {
-  const { gh, calls } = makeGh(happyWorld({ throwWhen: (k) => k.startsWith('repo view') }));
-  const out = closeBelowFloorParents(base({ gh }));
-  assert.deepEqual(out.closed, []);
-  assert.equal(out.skipped.length, 1);
-  assert.equal(out.skipped[0].reason, 'gh-failed');
-  assert.equal(calls.length, 1);
+test('#4549: after a PR merge there is no default-branch check — a non-default base\'s closingSet closes its parent, and no call reads the default branch', () => {
+  // A PR merged into `develop`: Step 4.0 closed #11 itself and lists it in closingSet. The
+  // caller passes no integration branch, and the fake answers no `repo view` call.
+  const { gh, calls } = makeGh(happyWorld({ issues: { 11: { state: 'CLOSED', stateReason: 'COMPLETED', title: 'Eleven' }, 12: { state: 'CLOSED', stateReason: 'COMPLETED', title: 'Twelve' } } }));
+  const out = closeBelowFloorParents(base({ gh, selfInclude: false }));
+  assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low' }], skipped: [] });
+  assert.ok(!calls.some((c) => c.args[0] === 'repo'), `no default-branch read: ${calls.map((c) => c.args.join(' ')).join(' | ')}`);
 });
 
 test('happy path, native: comments through stdin, then closes the parent completed', () => {

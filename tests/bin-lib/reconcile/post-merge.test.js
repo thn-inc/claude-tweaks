@@ -73,10 +73,9 @@ const ENVELOPE = {
 };
 const fakeGh = () => '';
 
-function run(root, { prs, links, close, integration = 'main', dryRun = false, extra = {} } = {}) {
+function run(root, { prs, links, close, dryRun = false, extra = {} } = {}) {
   return postMerge({
     cwd: root,
-    integration,
     prStates: fakePrStates(prs),
     dryRun,
     now,
@@ -117,7 +116,6 @@ test('merged unmarked run: Step 4.0 argv, Step 4.0b arguments, parent line plus 
     repo: 'w',
     workLinks: 'body-text',
     riskFloor: 'high',
-    integrationBranch: 'main',
     gh: d.gh,
     selfInclude: false,
   });
@@ -137,11 +135,26 @@ test('summary marker names every closed parent untrusted-comment note and a step
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const close = fakeCloseParents({
     closed: [{ parent: 77, maxTier: 'low', notes: ['skipped untrusted comment by mallory'] }],
-    skipped: [{ reason: 'non-default-branch' }],
+    skipped: [{ reason: 'invalid-risk-floor' }],
   });
   await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
   const marker = decisionsOf(dir).trim().split('\n').map(parseEntry).find((e) => e.location === MARKER_STEP);
-  assert.match(marker.action, /; notes on #77: skipped untrusted comment by mallory; skipped step \(non-default-branch\)\./);
+  assert.match(marker.action, /; notes on #77: skipped untrusted comment by mallory; skipped step \(invalid-risk-floor\)\./);
+});
+
+test('#4549: a closeFailed[] record holds its parent — it reaches Step 4.0b in unsettled, beside reopened, pendingClose and failed', async () => {
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090000-spec-1');
+  // A PR merged into a non-default base: Step 4.0 closed #101 itself, could not close #106.
+  const links = fakeClosingLinks({
+    ...ENVELOPE, action: 'close-failed', closingSet: [101], nonDefaultBase: true, closed: [101],
+    closeFailed: [{ issue: 106, error: 'boom' }, { issue: 107, error: 'no state field', stage: 'read' }],
+  });
+  const close = fakeCloseParents({ closed: [], skipped: [{ parent: 77, reason: 'sibling-unsettled' }] });
+  await run(root, { prs: { 11: merged() }, links, close });
+  assert.equal(close.calls.length, 1);
+  assert.deepEqual(close.calls[0].closingSet, [101]);
+  assert.deepEqual(close.calls[0].unsettled, [106, 107], 'both closeFailed[] entries (a failed close and a failed read) hold their parent');
 });
 
 test('a second postMerge call on the same fixture calls neither fake again', async () => {
@@ -216,7 +229,7 @@ test('a prStates call that throws is a transient network-failure, never a crash'
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const r = await postMerge({
-    cwd: root, integration: 'main', now, prStates: { byNumberAsync: async () => { throw new Error('boom'); } },
+    cwd: root, now, prStates: { byNumberAsync: async () => { throw new Error('boom'); } },
     deps: { gh: fakeGh, closingLinksRun: fakeClosingLinks(ENVELOPE), closeParents: fakeCloseParents() },
   });
   assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'network-failure' }]);
@@ -228,7 +241,7 @@ test('a missing or malformed prStates is a caller bug: failure no-pr-states up f
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const links = fakeClosingLinks(ENVELOPE);
   for (const prStates of [undefined, null, {}, { byNumberAsync: 'nope' }]) {
-    const r = await postMerge({ cwd: root, integration: 'main', now, prStates, deps: { gh: fakeGh, closingLinksRun: links, closeParents: fakeCloseParents() } });
+    const r = await postMerge({ cwd: root, now, prStates, deps: { gh: fakeGh, closingLinksRun: links, closeParents: fakeCloseParents() } });
     assert.deepEqual(r, { entries: [], deferred: [], failure: 'no-pr-states' });
   }
   assert.equal(links.calls.length, 0);
@@ -437,39 +450,46 @@ test('M7: a deterministic closing-links exit (2, 3) writes the marker at once an
   }
 });
 
-test('M7: a Step 4.0b whole-call gh failure (the default-branch read) retries like a Step 4.0 one; a per-parent one does not', async () => {
-  const root = mainCheckout();
-  const dir = addRun(root, '2026-10-30T090000-spec-1');
-  const whole = fakeCloseParents({ closed: [], skipped: [{ reason: 'gh-failed', detail: 'gh repo view: timeout' }] });
-  const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: whole });
-  assert.deepEqual(r.entries, [{
-    runDir: dir, pr: 11, action: 'skipped', reason: 'transient-failure', detail: 'Step 4.0b failed on a gh read (gh repo view: timeout)', attempt: 1,
-  }]);
-  assert.deepEqual(r.deferred, [dir]);
-  assert.deepEqual(entriesOf(dir).map((e) => e.location), [ATTEMPT_STEP]);
-  assert.equal(hasPostMergeMarker(decisionsOf(dir)), false);
+// Step 4.0's envelope when the PR's base or the default branch could not be read (#4549): no closingSet.
+const BASE_UNCHECKED = {
+  action: 'base-unchecked', pr: 11, candidates: [], willClose: [], reopened: [], failed: [], stillOpen: [], pendingClose: [],
+  closedBefore: [], baseUnchecked: true, unchecked: [101, 102],
+};
 
-  // A gh failure on one parent (or one record) is that parent's skip: the marker is written as today.
-  for (const skip of [{ parent: 88, reason: 'gh-failed', detail: 'x' }, { issue: 102, reason: 'gh-failed', detail: 'x' }]) {
-    const root2 = mainCheckout();
-    const dir2 = addRun(root2, '2026-10-30T090000-spec-1');
-    const r2 = await run(root2, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped: [skip] }) });
-    assert.equal(r2.entries[0].action, 'ran');
-    assert.deepEqual(r2.deferred, []);
-    assert.ok(hasPostMergeMarker(decisionsOf(dir2)));
+test('#4549: a base-unchecked envelope carries no closing set — Step 4.0b never runs, and the run retries like a gh failure; the bound then writes the SKIP marker', async () => {
+  for (const envelope of [BASE_UNCHECKED, { ...BASE_UNCHECKED, action: 'reopen-failed', failed: [{ issue: 103, error: 'x' }] }]) {
+    const root = mainCheckout();
+    const dir = addRun(root, '2026-10-30T090000-spec-1');
+    const close = fakeCloseParents();
+    const links = fakeClosingLinks(envelope);
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const r = await run(root, { prs: { 11: merged() }, links, close });
+      assert.deepEqual(r.entries, [{
+        runDir: dir, pr: 11, action: 'skipped', reason: 'transient-failure',
+        detail: `Step 4.0 returned ${envelope.action} (the PR's base or the default branch could not be read)`, attempt,
+      }]);
+      assert.deepEqual(r.deferred, [dir]);
+      assert.equal(hasPostMergeMarker(decisionsOf(dir)), false, 'an attempt line is never a marker');
+    }
+    const last = await run(root, { prs: { 11: merged() }, links, close });
+    assert.deepEqual(last, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: envelope.action, parentsClosed: 0, step40Failed: true }], deferred: [] });
+    const marker = entriesOf(dir).at(-1);
+    assert.equal(marker.status, 'SKIP');
+    assert.equal(marker.location, MARKER_STEP);
+    assert.match(marker.action, new RegExp(`^condition: Step 4\\.0 returned ${envelope.action}, no closingSet → fallback: no parent closed`));
+    assert.equal(close.calls.length, 0, `${envelope.action}: Step 4.0b never runs without a closing set`);
   }
 });
 
-test('M7: the attempt bound holds for Step 4.0b too: the fourth whole-call failure writes the summary marker', async () => {
-  const root = mainCheckout();
-  const prior = Array.from({ length: 3 }, (_, i) => formatEntry({ status: 'SKIP', now: NOW, step: ATTEMPT_STEP, text: `condition: attempt ${i + 1}`, reversibility: 'n/a' }));
-  const dir = addRun(root, '2026-10-30T090000-spec-1', { decisions: `${prior.join('\n')}\n` });
-  const whole = fakeCloseParents({ closed: [], skipped: [{ reason: 'gh-failed', detail: 'gh repo view: timeout' }] });
-  const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: whole });
-  assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 }], deferred: [] });
-  const marker = entriesOf(dir).at(-1);
-  assert.equal(marker.location, MARKER_STEP);
-  assert.match(marker.action, /; skipped step \(gh-failed: gh repo view: timeout\)\./);
+test('a gh failure on one parent or one record in Step 4.0b is that parent\'s skip: the marker is written and the run is not deferred', async () => {
+  for (const skip of [{ parent: 88, reason: 'gh-failed', detail: 'x' }, { issue: 102, reason: 'gh-failed', detail: 'x' }]) {
+    const root = mainCheckout();
+    const dir = addRun(root, '2026-10-30T090000-spec-1');
+    const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped: [skip] }) });
+    assert.equal(r.entries[0].action, 'ran');
+    assert.deepEqual(r.deferred, []);
+    assert.ok(hasPostMergeMarker(decisionsOf(dir)));
+  }
 });
 
 test('M7: hasPostMergeMarker never reads an attempt line as a marker', () => {
@@ -501,7 +521,7 @@ test('M3: a multi-spec run whose Step 4.0b logged its marker in spec-N/decisions
   const looked = [];
   const links = fakeClosingLinks(ENVELOPE);
   const r = await postMerge({
-    cwd: root, integration: 'main', now, prStates: { byNumberAsync: async (n) => { looked.push(n); return merged(); } },
+    cwd: root, now, prStates: { byNumberAsync: async (n) => { looked.push(n); return merged(); } },
     deps: { gh: fakeGh, closingLinksRun: links, closeParents: fakeCloseParents() },
   });
   assert.deepEqual(r, { entries: [], deferred: [] });
@@ -548,7 +568,7 @@ test('M4: once the pass budget reads exceeded, every remaining run that would ru
   // Exceeded as soon as one run's steps have run.
   const budgetExceeded = () => { checks.push(links.calls.length); return links.calls.length >= 1; };
   const r = await postMerge({
-    cwd: root, integration: 'main', now, budgetExceeded,
+    cwd: root, now, budgetExceeded,
     prStates: fakePrStates({ 11: merged(), 12: { number: 12, state: 'OPEN' }, 13: merged(), 14: merged() }),
     deps: { gh: fakeGh, closingLinksRun: links, closeParents: fakeCloseParents() },
   });
@@ -609,16 +629,6 @@ test('R1: closedAfterWindow records are subtracted from the set closeParents rec
   assert.deepEqual(close.calls[0].closingSet, [101, 103]);
 });
 
-test('R2: a null integration skips with integration-unknown before Step 4.0, writes no marker and is not deferred', async () => {
-  const root = mainCheckout();
-  const dir = addRun(root, '2026-10-30T090000-spec-1');
-  const links = fakeClosingLinks(ENVELOPE);
-  const r = await run(root, { prs: { 11: merged() }, links, close: fakeCloseParents(), integration: null });
-  assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'skipped', reason: 'integration-unknown' }], deferred: [] });
-  assert.equal(links.calls.length, 0);
-  assert.equal(decisionsOf(dir), '');
-});
-
 test('R2: the default gh runs through the timed wrapper with cwd at the main checkout, and risk-floor/work-links come from policy.yml', async (t) => {
   const root = mainCheckout();
   addRun(root, '2026-10-30T090000-spec-1');
@@ -635,7 +645,7 @@ test('R2: the default gh runs through the timed wrapper with cwd at the main che
   let received;
   const close = (args) => { received = args; args.gh(['issue', 'view', '7'], 'body'); return { closed: [], skipped: [] }; };
   await postMerge({
-    cwd: root, integration: 'main', now, prStates: fakePrStates({ 11: merged() }),
+    cwd: root, now, prStates: fakePrStates({ 11: merged() }),
     deps: { closingLinksRun: fakeClosingLinks(ENVELOPE), closeParents: close },
   });
   assert.equal(received.riskFloor, 'medium');
@@ -829,31 +839,45 @@ test('prefetchPostMergePrStates: nothing is looked up for a project postMerge wo
 
 // ---- M6: end to end — the real postMerge, closing-links run() and closeBelowFloorParents; only gh is faked ----
 
-// A merged PR #11 whose Fixes block names #101; #101 and #102 are the sub-issues of parent #100 (native links).
-// `live` is each sub-issue's state as GitHub reports it now, an hour after the merge.
-function e2eWorld(live) {
+// A merged PR #11 whose Fixes block names `fixes` (default #101); #101 and #102 are the sub-issues of parent
+// #100 (native links). `live` is each sub-issue's state as GitHub reports it now, an hour after the merge.
+// `base` is the PR's baseRefName against the default branch `main`: on another base Step 4.0 closes each
+// still-open Fixes record itself (#4549), and a closed record then reads CLOSED/COMPLETED. A record in
+// `closeErrors` makes that close call throw although the close landed (its live state still turns CLOSED).
+function e2eWorld(live, { base = 'main', fixes = [101], closeErrors = [] } = {}) {
   const mergedAt = new Date(NOW - 60 * 60 * 1000).toISOString();
   const repository = { name: 'w', owner: { login: 'acme' } };
   const calls = [];
+  const closedBy = new Set();
+  const liveOf = (n) => (closedBy.has(n) ? { state: 'CLOSED', stateReason: 'COMPLETED' } : live[n]);
+  const fixesBlock = fixes.map((n) => `Fixes #${n}`).join('\n');
   const gh = (args, input) => {
     const key = args.join(' ');
     calls.push({ key, input });
-    if (key === 'pr view 11 --json state,mergedAt,body,closingIssuesReferences,url,mergeCommit') {
+    if (key === 'pr view 11 --json state,mergedAt,body,closingIssuesReferences,url,mergeCommit,baseRefName') {
       return JSON.stringify({
-        state: 'MERGED', mergedAt, url: 'https://github.com/acme/w/pull/11', mergeCommit: { oid: 'abcdef1' },
-        body: '<!-- claude-tweaks-run: 2026-10-30T090000-spec-101 -->\n\n<!-- fixes-start -->\nFixes #101\n<!-- fixes-end -->\n',
-        closingIssuesReferences: [{ number: 101, repository }],
+        state: 'MERGED', mergedAt, url: 'https://github.com/acme/w/pull/11', mergeCommit: { oid: 'abcdef1' }, baseRefName: base,
+        body: `<!-- claude-tweaks-run: 2026-10-30T090000-spec-101 -->\n\n<!-- fixes-start -->\n${fixesBlock}\n<!-- fixes-end -->\n`,
+        closingIssuesReferences: base === 'main' ? fixes.map((number) => ({ number, repository })) : [],
       });
     }
-    if (key === 'api repos/{owner}/{repo}/commits/abcdef1 --jq .commit.message') return 'fix (#11)\n\nFixes #101\n';
-    if (key === 'repo view --json defaultBranchRef -q .defaultBranchRef.name') return 'main\n';
+    if (key === 'api repos/{owner}/{repo}/commits/abcdef1 --jq .commit.message') return `fix (#11)\n\n${fixesBlock}\n`;
+    if (key === 'repo view github.com/acme/w --json defaultBranchRef -q .defaultBranchRef.name') return 'main\n';
+    let m = /^issue view (10[12]) --json state,closedAt$/.exec(key);
+    if (m) return JSON.stringify({ state: liveOf(Number(m[1])).state, closedAt: null });
+    m = /^issue close (10[12]) --reason completed --comment /.exec(key);
+    if (m) {
+      closedBy.add(Number(m[1]));
+      if (closeErrors.includes(Number(m[1]))) throw new Error('HTTP 502 after the close landed');
+      return '';
+    }
     if (args[0] === 'api' && args[1] === 'graphql') {
       const n = Number(/i(\d+):/.exec(args[3])[1]);
       return JSON.stringify({ data: { repository: { [`i${n}`]: { number: n, parent: { number: 100 } } } } });
     }
     if (key === 'api --paginate repos/acme/w/issues/100/sub_issues --jq .[].number') return '101\n102\n';
-    const m = /^issue view (10[12]) --repo acme\/w --json state,stateReason,labels,title,closedByPullRequestsReferences$/.exec(key);
-    if (m) return JSON.stringify({ ...live[m[1]], title: `T${m[1]}`, labels: [{ name: 'risk:low' }], closedByPullRequestsReferences: [] });
+    m = /^issue view (10[12]) --repo acme\/w --json state,stateReason,labels,title,closedByPullRequestsReferences$/.exec(key);
+    if (m) return JSON.stringify({ ...liveOf(Number(m[1])), title: `T${m[1]}`, labels: [{ name: 'risk:low' }], closedByPullRequestsReferences: [] });
     if (key === 'issue view 100 --json labels -q [.labels[].name]') return JSON.stringify(['parent-issue']);
     if (key === 'issue view 100 --json state,stateReason,comments') {
       const closedYet = calls.some((c) => c.key.startsWith('issue close 100'));
@@ -868,7 +892,7 @@ function e2eWorld(live) {
 
 async function e2ePass(root, world) {
   return postMerge({
-    cwd: root, integration: 'main', now,
+    cwd: root, now,
     prStates: { byNumberAsync: async () => ({ number: 11, state: 'MERGED', mergedAt: world.mergedAt }) },
     deps: { gh: world.gh },
   });
@@ -883,6 +907,7 @@ function e2eCheckout() {
 }
 
 const writesOf = (calls) => calls.filter((c) => /^issue (comment|close|reopen) /.test(c.key));
+const parentWritesOf = (calls) => writesOf(calls).filter((c) => / 100 /.test(c.key));
 
 test('M6 end to end: an armed merge\'s last sub-issue closes its below-floor parent once — one comment, one close, the parent line and the marker; a second pass does nothing', async () => {
   const { root, dir } = e2eCheckout();
@@ -914,4 +939,31 @@ test('M6 end to end (I1): a closing record a human reopened after the merge keep
   const lines = entriesOf(dir);
   assert.deepEqual(lines.map((e) => e.location), [MARKER_STEP]);
   assert.match(lines[0].action, /0 parent\(s\) closed; skipped #100 \(incomplete\)\./);
+});
+
+test('#4549 end to end: an armed merge into a non-default base — the late Step 4.0 closes the Fixes record itself and Step 4.0b closes the parent, with no default-branch gate', async () => {
+  const { root, dir } = e2eCheckout();
+  const world = e2eWorld({ 101: { state: 'OPEN', stateReason: '' }, 102: { state: 'CLOSED', stateReason: 'COMPLETED' } }, { base: 'develop' });
+  const r = await e2ePass(root, world);
+  assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'closed', parentsClosed: 1 }], deferred: [] });
+  const writes = writesOf(world.calls).map((c) => c.key);
+  assert.match(writes[0], /^issue close 101 --reason completed --comment /, 'Step 4.0 closes the Fixes record itself');
+  assert.deepEqual(writes.slice(1), ['issue comment 100 --body-file -', 'issue close 100 --reason completed']);
+  assert.ok(!world.calls.some((c) => c.key === 'repo view --json defaultBranchRef -q .defaultBranchRef.name'), 'Step 4.0b reads no default branch');
+  const locations = entriesOf(dir).map((e) => e.location);
+  assert.ok(locations.includes('reconcile post-merge parent-close'), `the parent line is logged: ${locations.join(' | ')}`);
+  assert.equal(locations.at(-1), MARKER_STEP, 'the marker is written last');
+});
+
+test('#4549 end to end: a Fixes record Step 4.0 could not close (closeFailed[]) keeps its parent open even when its close landed', async () => {
+  const { root, dir } = e2eCheckout();
+  const world = e2eWorld(
+    { 101: { state: 'OPEN', stateReason: '' }, 102: { state: 'OPEN', stateReason: '' } },
+    { base: 'develop', fixes: [101, 102], closeErrors: [102] },
+  );
+  const r = await e2ePass(root, world);
+  assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0 }], deferred: [] });
+  assert.deepEqual(parentWritesOf(world.calls), [], 'no comment and no close on the parent');
+  const marker = entriesOf(dir).find((e) => e.location === MARKER_STEP);
+  assert.match(marker.action, /0 parent\(s\) closed; skipped #100 \(sibling-unsettled\)\./);
 });

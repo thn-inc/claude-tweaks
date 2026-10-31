@@ -22,13 +22,20 @@ It reopens every record the PR's fixes block names on a `Refs` line, and every s
 record, that the merge closed after `mergedAt`. That covers a closing link that survived the
 pre-merge check, and a squash message composed without `--keep-open` (Step 3). It polls a
 will-close record up to 15 s, since GitHub closes it about 2 s after the merge, and logs `reopened
-#{n}` per record to `decisions.md`. Whatever the `action`, report each `failed[]` record (reopen it
-by hand) and each `pendingClose[]` record (the merge may still close it — re-run the step once,
-then reopen it by hand if it closed) in the closing summary, never as anything but `merged`. Exit
+#{n}` per record to `decisions.md`. On a base other than the repo's default branch GitHub acts on
+none of the PR's closing keywords, so the CLI also closes each still-open `Fixes` record itself
+(`closed[]`, logged `closed #{n}`) and skips the polling. Whatever the `action`, report each
+`failed[]` record (reopen it by hand), each `closeFailed[]` record (close it by hand) and each
+`pendingClose[]` record (the merge may still close it — re-run the step once, then reopen it by
+hand if it closed) in the closing summary, never as anything but `merged`. A `baseUnchecked: true`
+envelope means the PR's base or the default branch could not be read, so nothing was closed and the
+`Fixes` records were not checked: name the envelope's `unchecked[]` records in the closing summary. Exit
 5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.0b. An `armed` outcome never reaches
 this step in-session: the reconciler's `post-merge` check (`gh` only) runs the CLI for that run once GitHub has merged the PR for 10 minutes (the merge grace),
 with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer, only a
 Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
+On a non-default base that late run closes an `armed` merge's still-open `Fixes` records the same
+way, so they no longer wait for a human (#4599).
 
 ### Step 4.0b: Close below-floor parents (#4466)
 
@@ -41,14 +48,15 @@ session sees land (an `armed` PR that GitHub merges later) never reaches it eith
 (`docs/reconcile-checks.md`'s Post-merge closes), and `/claude-tweaks:tidy`'s `parent-gate` backstop
 stays the last resort.
 
-It is also a no-op unless the branch the merge landed on — the integration branch
-(`_shared/integration-branch.md`) — is the repo's default branch
+After a no-PR local merge it is a no-op unless the branch the merge landed on — the integration
+branch (`_shared/integration-branch.md`) — is the repo's default branch
 (`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`). With `gh` absent, that read is
 `git remote show origin`'s `HEAD branch:` line (`_shared/github-write-transport.md`'s
 default-branch row). GitHub closes `Fixes #N` records and a PR's other closing links only on the
-default branch, so a merge into any other branch leaves its sub-issues open: counting them `CLOSED`
-would close the parent early. Left open, they keep both this close and the backstop from firing
-early.
+default branch, so a local merge into any other branch leaves its sub-issues open: counting them
+`CLOSED` would close the parent early. Left open, they keep both this close and the backstop from
+firing early. After a PR merge there is no such gate: on a non-default base Step 4.0 closes the
+`Fixes` records itself, and `closingSet[]` lists only the ones it confirmed `CLOSED`.
 
 This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
 (`wrap-up/verification-brief-parent-gate.md`'s **Two entry shapes**). Set its two inputs:
@@ -61,13 +69,18 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
   state, never as `CLOSED` by this set. A `failed[]` or `pendingClose[]` record's live state may
   still read `CLOSED` — a failed reopen, an unknown state after a failed read, or a close that
   lands after Step 4.0's poll — so skip any parent whose enumerated sub-issues include one, and
-  name that parent in the closing summary: it waits on the hand reopen. After a PR merge, the set
-  is Step 4.0's `closingSet[]`, which only an exit-0 `post-merge` action
-  carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`): the PR's same-repo
+  name that parent in the closing summary: it waits on the hand reopen. A `closeFailed[]` record
+  holds its parent the same way — its live state is `OPEN`, or unknown after a failed read — so
+  skip any parent whose enumerated sub-issues include one and name that parent in the closing
+  summary: it waits on the hand close. After a PR merge, the set is Step 4.0's `closingSet[]`, which
+  only an exit-0 `post-merge` action other than `base-unchecked` carries (`reopen-failed`,
+  `close-failed`, `close-pending`, `reopened`, `closed` or `nothing-closed`): the PR's same-repo
   closing records (`sameRepoNumbers`, `bin/lib/flow/closing-links.js`, which drops a
   `Fixes other/repo#N` that would otherwise read as this repo's #N) minus those three lists, already
-  subtracted. After a PR merge, when `closingSet[]` is absent — a non-zero exit, `not-merged`, `no-fixes-span`,
-  `no-pr`, `gh-absent`, or no parseable output — skip this step entirely, never subtracting nothing,
+  subtracted; on a non-default base it is instead the `Fixes` records Step 4.0 confirmed `CLOSED`
+  (closed by it, or already closed), never a `closeFailed[]` one. After a PR merge, when
+  `closingSet[]` is absent — a non-zero exit, `not-merged`, `no-fixes-span`, `no-pr`, `gh-absent`,
+  `base-unchecked`, a `reopen-failed` result that also carries `baseUnchecked: true`, or no parseable output — skip this step entirely, never subtracting nothing,
   and log it (after exit 3, name it in the closing summary instead); tidy's `parent-gate` backstop
   recovers those parents:
 
@@ -109,8 +122,8 @@ Log each parent closed:
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility "high (gh issue reopen)" --text "closed parent #{parent} below the oversight floor (risk:{maxTier}, risk-floor {riskFloor})"
 ```
 
-Then write one summary line when this step evaluated the closing set: after a PR merge that had a `closingSet[]`
-(the non-default-branch no-op included), or after a no-PR local merge, where `the pushed merge commit` replaces `PR #{pr-number}` in the text:
+Then write one summary line when this step evaluated the closing set: after a PR merge that had a `closingSet[]`,
+or after a no-PR local merge (its non-default-branch no-op included), where `the pushed merge commit` replaces `PR #{pr-number}` in the text:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility n/a --text "evaluated PR #{pr-number}'s closing records: {k} parent(s) closed"
