@@ -63,6 +63,13 @@ Three conventions follow from how this repo works, and all are visible below:
 * pr-first-merge: Fixes lines in the squash commit message… ([#4549](https://github.com/thn-inc/claude-tweaks/issues/4549)) ([22d287f](https://github.com/thn-inc/claude-tweaks/commit/22d287f46cf2c473782deceea59a6b0c73ca76cc)), closes [#4550](https://github.com/thn-inc/claude-tweaks/issues/4550) [#4556](https://github.com/thn-inc/claude-tweaks/issues/4556)
 * wrap-up Section C step 2's worktree-mirror fallback… ([#4740](https://github.com/thn-inc/claude-tweaks/issues/4740)) ([281847b](https://github.com/thn-inc/claude-tweaks/commit/281847b09d5cc1ef61909852bda886f76c4ea24b))
 
+### Highlights
+* Fix `/wrap-up`'s close-out failing loudly under zsh when it has no record to close, instead of skipping quietly.
+* Stop the Friction lens from counting other sessions' denials and questions as the current run's friction.
+* Records a run PR fixes now close when the PR merges into an integration branch that is not the repo's default branch, where GitHub would otherwise leave them open.
+* The first pipeline run in a new repository no longer reports a false "someone else is building this" claim conflict. The claim branch is now created automatically.
+* No user-visible change.
+
 ## [6.158.0](https://github.com/thn-inc/claude-tweaks/compare/v6.157.2...v6.158.0) (2026-10-31)
 
 
