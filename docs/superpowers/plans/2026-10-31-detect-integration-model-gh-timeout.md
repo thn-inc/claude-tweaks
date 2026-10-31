@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `detectIntegrationModel` bounds its `gh repo view` probe with the repo's resolved `gh` timeout, retries once on a timeout, and reports a degraded detection (through an opt-in callback) that `resolve-policy.js` surfaces on stderr and in its JSON; both lifecycle hooks (PreToolUse and SessionStart) pass an explicit hook bound instead.
+**Goal:** `detectIntegrationModel` bounds its `gh repo view` probe with the repo's resolved `gh` timeout, retries once on a timeout, and reports a degraded detection (through an opt-in callback) that `resolve-policy.js` surfaces on stderr and in its JSON — for the `integration-model` key and for a `merge-verification` request that runs its own forge detection; both lifecycle hooks (PreToolUse and SessionStart) pass an explicit hook bound instead, and the PreToolUse PR-stamp gate never caches a degraded detection as `prExempt`.
 
-**Architecture:** All detection logic stays in `plugin/bin/lib/policy-schema.js`: a new `resolveForgeProbeTimeoutMs(repoRoot, opts)` (explicit `opts.timeoutMs` > valid `CLAUDE_TWEAKS_GH_TIMEOUT_MS` > `{repoRoot}/.claude-tweaks/policy.yml`'s `gh-timeout-ms` > 5000), error classification, one retry after a timeout, and `opts.onDegrade(degrade)` when the retry fails too. The string return is unchanged for every caller. `policy-derived-defaults.js` threads the callback into an additive `degraded` field and `resolve-policy.js` prints one stderr line. `pre-tool-use.js`'s `resolveRunPinnedIntegrationModel` takes the timeout as a parameter (the hook passes `HOOK_FORGE_PROBE_TIMEOUT_MS`; `precondition.js` passes nothing), and `session-start.js` passes the same bound into `reconcile()`, which forwards it.
+**Architecture:** All detection logic stays in `plugin/bin/lib/policy-schema.js`: a new `resolveForgeProbeTimeoutMs(repoRoot, opts)` (explicit `opts.timeoutMs` > valid `CLAUDE_TWEAKS_GH_TIMEOUT_MS` > `{repoRoot}/.claude-tweaks/policy.yml`'s `gh-timeout-ms` > 5000), error classification, one retry after a timeout, and `opts.onDegrade(degrade)` when the retry fails too. The string return is unchanged for every caller. `policy-derived-defaults.js` threads the callback into an additive `degraded` field — on the `integration-model` entry, and on the `merge-verification` entry when its fallback ran detection itself — and `resolve-policy.js` prints one stderr line per degraded key. `pre-tool-use.js`'s `resolveRunPinnedIntegrationModel` takes `{ timeoutMs, onDegrade }` as a parameter (the hook passes `HOOK_FORGE_PROBE_TIMEOUT_MS` and a degrade flag; `precondition.js` passes nothing), the gate treats a degraded result like its catch branch (no `prExempt` cached), and `session-start.js` passes the same bound into `reconcile()`, which forwards it.
 
 **Tech Stack:** Node 18+ CommonJS, `child_process.execFileSync`, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-31T143830-record-4578/work/4578-spec.md` (record #4578, including its four `Decision (plan review, 2026-10-31)` bullets)
+**Spec:** `.claude-tweaks/pipelines/2026-10-31T153223-record-4578/work/4578-spec.md` (record #4578, including its seven `Decision (plan review, 2026-10-31)` bullets, Q1–Q7)
 
 **Scope keywords:** detectIntegrationModel, resolveRunPinnedIntegrationModel, gh-timeout-ms
 
@@ -25,6 +25,9 @@
 - `formatForgeDegrade` text (exact): reason `timeout` → `forge detection timed out after {ms} ms (x2)`; reason `timeout-then-exit` → `forge detection timed out after {ms} ms, then gh failed on retry`.
 - Stderr line (exact): `resolve-policy: degraded — integration-model: {formatForgeDegrade text}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms`, printed once per process, in every output mode.
 - JSON entry on a degraded detection: `{ value: 'local-merge', source: 'default', degraded: '{formatForgeDegrade text}' }`. Non-degraded entries keep exactly `{ value, source }`. `--values` stdout unchanged.
+- Decision Q6: each degrade reason has its own text and its own CLI test — `timeout` (two timeouts) keeps "(x2)"; `timeout-then-exit` prints "…, then gh failed on retry".
+- Decision Q7: when `merge-verification` is requested WITHOUT `integration-model`, `computeDerivedDefaults`'s fallback passes `onDegrade` into `resolveIntegrationModel`; a reported degrade adds `degraded: '{formatForgeDegrade text}'` to the `merge-verification` entry (its value stays whatever `deriveMergeVerification` derives from the degraded `local-merge`, i.e. `off`), and `resolve-policy.js` prints, once per process: `resolve-policy: degraded — merge-verification: {formatForgeDegrade text}; derived from integration-model local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms`. When both keys are requested, merge-verification reuses the integration-model value (no second detection), so only the `integration-model` entry and line report the degrade.
+- Decision Q5: `resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {})` forwards `opts.timeoutMs` and `opts.onDegrade` to `detectIntegrationModel` (each only when set). The PR-stamp gate passes `{ timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, onDegrade }`, where `onDegrade` sets a local `degraded` flag; after resolution, `degraded` → `modelResolved = false`, so no `prExempt` is written and the next covered call detects again. The test-only `deps.resolveIntegrationModel` override receives the same `{ onDegrade }` as a second argument (existing one-argument overrides ignore it).
 - Decision Q2: `HOOK_FORGE_PROBE_TIMEOUT_MS = 5000` (per gh attempt). Hook worst case `GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * HOOK_FORGE_PROBE_TIMEOUT_MS = 15000` ms — "the hook budget" is that 15 s bound. One constant, exported from `policy-schema.js`, imported by both hooks.
 - Decision Q3: `resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {})`; the PreToolUse gate passes `{ timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS }`; `plugin/bin/lib/pr-bookkeeping/precondition.js` keeps its two-argument call and follows the ladder.
 - Decision Q1: `session-start.js`'s inline `reconcile()` call passes `forgeProbeTimeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS`; `reconcile()` forwards it as `timeoutMs` to `resolveIntegrationModel` only when set (an unset option adds no key, so `{ mcpReachable }` stays the exact forwarded shape).
@@ -39,6 +42,7 @@
 - A caller requesting `integration-model` twice (`resolve-policy.js integration-model integration-model`) still prints exactly one degrade line — Task 2 test.
 - A pin (policy.yml or `--run` config.yml) short-circuits before any `gh` spawn — Task 1 and Task 2 each count fake-`gh` invocations under a pin and assert 0.
 - `CLAUDE_TWEAKS_GH_TIMEOUT_MS` set to a non-integer or out-of-range value falls through to policy, not to 5000 and not a throw — Task 1 test.
+- A degraded detection in the PR-stamp gate must leave `run-state.json` without `prExempt` (Decision Q5), while a clean `local-merge` still persists it — Task 3 tests both via the `deps.resolveIntegrationModel` override.
 - `reconcile()` callers that never set `forgeProbeTimeoutMs` (CLI verb, background pass, tests) keep the forwarded shape `{ mcpReachable }` exactly — the existing `#1558` test in `tests/reconcile.test.js` stays green and Task 4 adds the set case.
 
 ## Spec coverage
@@ -60,11 +64,17 @@
 | AC12.1, AC12.2 | Task 3 — budget assertion `GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * HOOK_FORGE_PROBE_TIMEOUT_MS <= 15000` and `HOOK_FORGE_PROBE_TIMEOUT_MS === 5000` |
 | AC13.1, AC13.2, AC13.3 | Task 3 — `resolveRunPinnedIntegrationModel forwards opts.timeoutMs`; `precondition.js keeps the two-argument call` |
 | AC14.1, AC14.2 | Task 1 — `timeout then non-zero exit on retry -> degraded, two invocations, one degrade` |
+| AC15.1, AC15.2 | Task 3 — `resolveRunPinnedIntegrationModel forwards opts.onDegrade`; `bookkeeping-stamps gate (#4578 Q5): a degraded detection never persists prExempt` |
+| AC16.1, AC16.2 | Task 1 — `formatForgeDegrade renders both exact degraded strings`; Task 2 — `degraded detection: timeout then a failed retry prints its own text (Q6)` |
+| AC17.1 | Task 2 — `computeDerivedDefaults: a merge-verification-only request reports a degraded fallback detection (Q7)` and `degraded detection: a merge-verification-only request prints its own degraded line and field (Q7)` |
 
 Waived AC11.3: provenance tag "(Plan-review Q1: Reading B.)" — no behavior to test.
 Waived AC12.3: provenance tag "(Q2: Reading B.)" — no behavior to test.
 Waived AC13.4: provenance tag "(Q3: Reading B.)" — no behavior to test.
 Waived AC14.3: provenance tag "(Q4: Reading B.)" — no behavior to test.
+Waived AC15.3: provenance tag "(Plan-review Q5: Reading B.)" — no behavior to test.
+Waived AC16.3: provenance tag "(Q6: Reading B.)" — no behavior to test.
+Waived AC17.2: provenance tag "(Q7: Reading B.)" — no behavior to test.
 
 Waived bin/verify-run-bookends.js: read-only style reference for the `degraded —` line.
 Waived plugin/bin/lib/shared-primitives.js: read-only reference for the env > policy > default ladder; not changed.
@@ -174,7 +184,7 @@ git commit -m "Honour gh-timeout-ms in detectIntegrationModel — retry once on 
 
 **Interfaces:**
 - Consumes: `detectIntegrationModel(root, { mcpReachable, onDegrade })`, `formatForgeDegrade(degrade)` from Task 1; `fakeGh` from `tests/helpers/fake-gh.js`.
-- Produces: `result['integration-model']` per Global Constraints (additive `degraded` field only on a degraded detection).
+- Produces: `result['integration-model']` and (merge-verification-only requests) `result['merge-verification']` per Global Constraints (additive `degraded` field only on a degraded detection).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -186,6 +196,11 @@ test('computeDerivedDefaults: a degraded forge detection adds the degraded field
   // deepEqual(out['integration-model'], { value: 'local-merge', source: 'default', degraded: 'forge detection timed out after 1000 ms (x2)' })
 test('computeDerivedDefaults: a non-degraded detection keeps the entry shape exactly { value, source }', ...)
   // deps.detectIntegrationModel = () => 'local-merge'; deepEqual(out['integration-model'], { value: 'local-merge', source: 'default' })
+test('computeDerivedDefaults: a merge-verification-only request reports a degraded fallback detection (Q7)', ...)
+  // keys ['merge-verification'] only; deps.resolveIntegrationModel = (root, opts) => { opts.onDegrade({ reason: 'timeout-then-exit', timeoutMs: 1000, attempts: 2 }); return 'local-merge'; }
+  // (real deriveMergeVerification: local-merge -> 'off')
+  // deepEqual(out['merge-verification'], { value: 'off', source: 'default', degraded: 'forge detection timed out after 1000 ms, then gh failed on retry' })
+  // and a second call whose resolveIntegrationModel never calls onDegrade keeps exactly { value: 'off', source: 'default' }
 ```
 
 `tests/resolve-policy-cli.test.js` (`{ skip: STUB_SKIP }`): a temp git repo under `os.tmpdir()` with `origin` = `https://github.com/o/n.git`, `fakeGh({ first: 'hang' })`, spawn the CLI from that repo with env `{ ...process.env, CLAUDE_TWEAKS_GH_TIMEOUT_MS: '1000' }`:
@@ -199,6 +214,14 @@ test('degraded detection: --values prints only local-merge on stdout (AC6.2)', .
   // stdout === 'local-merge\n'; stderr still has the one degraded line
 test('degraded detection: a key requested twice still prints one degraded line', ...)
   // args ['integration-model', 'integration-model']
+test('degraded detection: timeout then a failed retry prints its own text (Q6, AC16.2)', ...)
+  // fakeGh({ first: 'hang', rest: 'fail' }); args ['integration-model']
+  // parsed['integration-model'].degraded === 'forge detection timed out after 1000 ms, then gh failed on retry'
+  // exactly one stderr line, equal to the Global Constraints line with that text; gh.count() === 2
+test('degraded detection: a merge-verification-only request prints its own degraded line and field (Q7, AC17.1)', ...)
+  // fakeGh({ first: 'hang' }); args ['merge-verification']
+  // parsed['merge-verification'] deepEqual { value: 'off', source: 'default', degraded: 'forge detection timed out after 1000 ms (x2)' }
+  // exactly one stderr line matching /degraded — /, equal to the Global Constraints merge-verification line
 test('a policy.yml pin or a --run config.yml pin never invokes gh (AC7.1)', ...)
   // policy 'integration-model: pr-first\n' -> --values stdout 'pr-first\n', gh.count() 0;
   // no policy + --run {tmp run dir}/config.yml 'integration-model: pr-first\n' -> 'pr-first\n', gh.count() 0
@@ -213,8 +236,8 @@ Expected: FAIL — no `degraded` field, no stderr line.
 
 - [ ] **Step 3: Implement**
 
-- `computeDerivedDefaults`: pass `{ mcpReachable, onDegrade }` to `detectModel`, capture the degrade, and add `degraded: formatForgeDegrade(degrade)` only when one was reported. Update the header comment.
-- `resolve-policy.js`: after `computeDerivedDefaults`, when `result['integration-model']?.degraded` is set, write the Global Constraints stderr line once (all output modes; stdout unchanged). Extend the header comment's Output paragraph with the degrade line and the additive `degraded` field.
+- `computeDerivedDefaults`: pass `{ mcpReachable, onDegrade }` to `detectModel`, capture the degrade, and add `degraded: formatForgeDegrade(degrade)` only when one was reported. Do the same in the merge-verification fallback (`resolveModel(r, { mcpReachable, onDegrade })`, only on the branch where `integration-model` was not requested) and add `degraded` to the `merge-verification` entry. Update the header comment.
+- `resolve-policy.js`: after `computeDerivedDefaults`, for `integration-model` then `merge-verification`, when that entry's `degraded` is set, write its Global Constraints stderr line once (all output modes; stdout unchanged). Extend the header comment's Output paragraph with the degrade lines and the additive `degraded` field.
 - `docs/plugin-structure.md` line 234: add one clause naming the degraded stderr line and the additive `degraded` JSON field (#4578).
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -229,15 +252,16 @@ git add plugin/bin/lib/policy-derived-defaults.js plugin/bin/resolve-policy.js d
 git commit -m "Surface degraded integration-model detection in resolve-policy — stderr line plus JSON degraded field, refs #4578"
 ```
 
-### Task 3: Timeout parameter on `resolveRunPinnedIntegrationModel`; the PreToolUse gate passes the hook bound
+### Task 3: Timeout and degrade parameters on `resolveRunPinnedIntegrationModel`; the PreToolUse gate passes the hook bound and never caches a degrade
 
 **Files:**
-- Modify: `plugin/bin/lib/hooks/pre-tool-use.js` (import line 37, `resolveRunPinnedIntegrationModel` 1621-1660, gate call site 2073)
+- Modify: `plugin/bin/lib/hooks/pre-tool-use.js` (import line 37, `resolveRunPinnedIntegrationModel` 1621-1660, gate model resolution 2063-2077 and the `prExempt` write 2137-2148)
 - Test: `tests/hooks-pre-tool-use.test.js` (beside the existing `resolveRunPinnedIntegrationModel: exported …` test, ~1249)
+- Test: `tests/hooks-bookkeeping-stamps-gate.test.js` (beside the `#1258` `prExempt` tests, ~1752)
 
 **Interfaces:**
-- Consumes: `HOOK_FORGE_PROBE_TIMEOUT_MS`, `GIT_REMOTE_PROBE_TIMEOUT_MS`, the `timeoutMs` option from Task 1; `fakeGh`.
-- Produces: `resolveRunPinnedIntegrationModel(mainRoot: string, runDir: string, opts?: { timeoutMs?: number }) -> 'pr-first' | 'local-merge'`. `plugin/bin/lib/pr-bookkeeping/precondition.js:109` keeps `resolveRunPinnedIntegrationModel(mainRoot, runDir)` (no change).
+- Consumes: `HOOK_FORGE_PROBE_TIMEOUT_MS`, `GIT_REMOTE_PROBE_TIMEOUT_MS`, the `timeoutMs` and `onDegrade` options from Task 1; `fakeGh`.
+- Produces: `resolveRunPinnedIntegrationModel(mainRoot: string, runDir: string, opts?: { timeoutMs?: number, onDegrade?: (d) => void }) -> 'pr-first' | 'local-merge'`. `plugin/bin/lib/pr-bookkeeping/precondition.js:109` keeps `resolveRunPinnedIntegrationModel(mainRoot, runDir)` (no change). The test-only `deps.resolveIntegrationModel` override is called as `override(mainRoot, { onDegrade })`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -260,18 +284,39 @@ test('precondition.js keeps the two-argument resolveRunPinnedIntegrationModel ca
   // source scan of plugin/bin/lib/pr-bookkeeping/precondition.js:
   // match /resolveRunPinnedIntegrationModel\(mainRoot,\s*runDir\)/
 });
+test('resolveRunPinnedIntegrationModel forwards opts.onDegrade to forge detection (#4578 Q5, AC15.1)', { skip: STUB_SKIP }, () => {
+  // repo with origin, no pin; fakeGh({ first: 'hang' }); seen = []
+  // pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) }) === 'local-merge'
+  // deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }])
+});
 ```
 
-The third test is green before the change (it pins Decision Q3's "passes nothing" half against a future edit); the first two go red.
+The third test is green before the change (it pins Decision Q3's "passes nothing" half against a future edit); the others go red.
+
+Append to `tests/hooks-bookkeeping-stamps-gate.test.js`, beside `bookkeeping-stamps gate (#1258): a caught model-resolution exception never persists prExempt …` and using the same fixture helpers (`gitRepo`, `linkedWorktreeOf`, `commitMaterializedSpec`, `mkRunDir`, `editInput`):
+
+```js
+test('bookkeeping-stamps gate (#4578 Q5): a degraded detection never persists prExempt — the next call detects again (AC15.2)', () => {
+  // pre.run({ input: editInput(...), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+  //   { resolveIntegrationModel: (root, o) => { if (o && typeof o.onDegrade === 'function') o.onDegrade({ reason: 'timeout', timeoutMs: 5000, attempts: 2 }); return 'local-merge'; } })
+  // deepStrictEqual(out, {}) (fail-open allow); persisted.prExempt === undefined
+});
+test('bookkeeping-stamps gate (#4578 Q5): the override receives an onDegrade callback; a clean local-merge still persists prExempt', () => {
+  // let got; override = (root, o) => { got = o; return 'local-merge'; }
+  // typeof (got && got.onDegrade) === 'function'; persisted.prExempt === true
+});
+```
+
+Both gate tests go red before the change: the override's second argument is undefined today, so the first override returns a clean `local-merge` without degrading and the gate persists `prExempt: true`, and the second sees no `onDegrade`. The guard inside the first override keeps it from throwing, which would otherwise reach the catch branch and pass for the wrong reason.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `node --test tests/hooks-pre-tool-use.test.js`
-Expected: FAIL — the forwarding test takes ~10 s or more and fails its elapsed bound; the source scan does not match.
+Run: `node --test tests/hooks-pre-tool-use.test.js tests/hooks-bookkeeping-stamps-gate.test.js`
+Expected: FAIL — the forwarding test takes ~10 s or more and fails its elapsed bound; the onDegrade forwarding test sees no degrade; the source scan does not match; the gate tests see no `onDegrade` on the override's second argument.
 
 - [ ] **Step 3: Implement**
 
-Add the `opts = {}` parameter and pass `{ timeoutMs: opts.timeoutMs }` to `detectIntegrationModel` only when it is set; import `HOOK_FORGE_PROBE_TIMEOUT_MS` on line 37; change the gate call site at 2073 to `resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS })`. Extend the function's comment: the gate never inherits `gh-timeout-ms` (up to 60 s, retried once → 120 s) because it runs inside a PreToolUse lifecycle hook (no per-hook timeout in `hooks.json`, so Claude Code's default command-hook timeout applies) and must keep `docs/hooks.md`'s never-break-a-session invariant; 5000 ms per attempt gives a 15 s worst case (git 5 s + two 5 s attempts, record #4578 Decision Q2); `check-pr-bookkeeping.js` (via `precondition.js`) runs as a CLI, not a hook, and passes nothing, so it follows the ladder.
+Add the `opts = {}` parameter and pass `timeoutMs` / `onDegrade` to `detectIntegrationModel`, each only when set; import `HOOK_FORGE_PROBE_TIMEOUT_MS` on line 37; in the gate, declare `let degraded = false; const onDegrade = () => { degraded = true; };`, call `override ? override(mainRoot, { onDegrade }) : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, onDegrade })`, and after the try/catch set `if (degraded) modelResolved = false;` with a comment citing Decision Q5 (a degraded detection is a transient failure like the catch branch — never cached as `prExempt`). Extend the `modelResolved` comment and the `prExempt` comment block at 2137-2145 to name the degrade case. Extend the function's comment: the gate never inherits `gh-timeout-ms` (up to 60 s, retried once → 120 s) because it runs inside a PreToolUse lifecycle hook (no per-hook timeout in `hooks.json`, so Claude Code's default command-hook timeout applies) and must keep `docs/hooks.md`'s never-break-a-session invariant; 5000 ms per attempt gives a 15 s worst case (git 5 s + two 5 s attempts, record #4578 Decision Q2); `check-pr-bookkeeping.js` (via `precondition.js`) runs as a CLI, not a hook, and passes nothing, so it follows the ladder.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -281,8 +326,8 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/hooks/pre-tool-use.js tests/hooks-pre-tool-use.test.js
-git commit -m "Bound the PR-stamp gate's forge probe explicitly — timeout parameter, hook never inherits gh-timeout-ms, refs #4578"
+git add plugin/bin/lib/hooks/pre-tool-use.js tests/hooks-pre-tool-use.test.js tests/hooks-bookkeeping-stamps-gate.test.js
+git commit -m "Bound the PR-stamp gate's forge probe explicitly — timeout parameter, never cache a degraded detection as prExempt, refs #4578"
 ```
 
 ### Task 4: SessionStart passes the hook bound into `reconcile()`
