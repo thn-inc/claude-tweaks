@@ -49,6 +49,14 @@ test('the AC template asks for a matching run before any returns-nothing criteri
   assert.ok(ac.includes('prefer `grep -F` for literal code text'));
 });
 
+test('the AC template excludes the run directory from a repo-root absence search (#4579)', () => {
+  const ac = acSection();
+  assert.ok(ac.includes(":!.claude-tweaks/pipelines"), 'the AC section must name the run-directory pathspec');
+  assert.ok(ac.includes('#4579'), 'the AC section must cite #4579');
+  assert.ok(ac.includes('the control run applies to the excluded form'), 'the excluded search still gets the control run');
+  assert.ok(ac.includes('A search already scoped to named paths outside `.claude-tweaks/` needs no exclusion.'));
+});
+
 test('the tombstone section treats its scoped grep as an absence grep', () => {
   assert.ok(tombstoneSection().includes('Either way the grep, scoped or bare, is an absence grep: run it once against the pre-deletion tree and confirm it matches the symbol'));
 });
