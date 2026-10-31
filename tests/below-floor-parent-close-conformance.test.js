@@ -704,3 +704,17 @@ test('AC5.2: a sub-issue-side local-files close logs its auto-resolution through
   assert.match(step5, /log-decision\.js" --run "\$PIPELINE_RUN_DIR" --status AUTO --step "Parent-Gate local-files close"/);
   assert.match(step5, /--reversibility "high \(clear the parent record's closed facets\)"/);
 });
+
+test('#4602: the transport mapping carries every row the parent close needs', () => {
+  const t = read('_shared/github-write-transport.md');
+  const row = (op) => t.split('\n').find((l) => l.startsWith(`| ${op} |`)) || '';
+  assert.match(row('Close'), /`issue_write`/);
+  for (const lit of ['state_reason', '`completed`', '`not_planned`']) assert.ok(row('Close').includes(lit), `Close row: ${lit}`);
+  for (const lit of ['state_reason', 'closed_by_pull_requests']) assert.ok(row('Get a single issue by number').includes(lit), `Get row: ${lit}`);
+  assert.ok(row("List an issue's native sub-issues").includes('`get_sub_issues`'));
+  assert.ok(row("List an issue's native sub-issues").includes('sub_issues'));
+  assert.ok(row("Get an issue's native parent").includes('`get_parent`'));
+  assert.ok(row("Read the current identity's login").includes('gh api user') && row("Read the current identity's login").includes('`get_me`'));
+  const db = row("Read the repo's default branch");
+  assert.ok(db.includes('defaultBranchRef') && db.includes('git remote show origin') && db.includes('_shared/integration-branch.md'));
+});
