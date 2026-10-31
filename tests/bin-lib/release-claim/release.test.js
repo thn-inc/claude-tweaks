@@ -544,7 +544,7 @@ test('#2090: a sweep write conflict whose re-read shows the ORIGINAL holder stil
 // #4495: a remote with no claims-registry branch has no claim to release — the
 // release path reports that as already-released with a note and never creates
 // the branch (claim-targets alone bootstraps it).
-test('releaseClaim against a branchless remote: nothing to release, no write of any kind', () => {
+test('releaseClaim against a branchless remote: nothing to release, no registry write', () => {
   const ghCalls = [];
   const gitCalls = [];
   const gitRunner = (args) => { gitCalls.push(args); if (args[0] === 'fetch') { const e = new Error('x'); e.stderr = "fatal: couldn't find remote ref claims-registry"; throw e; } return ''; };

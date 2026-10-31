@@ -61,8 +61,9 @@ function readClaimBlob({
   };
   const result = claimStore.readClaimBlob({ ghApi, gitRunner }, `${owner}/${repo}`, issueNumber);
   if (result.failure) { const e = new Error(`claim-store read failure: ${result.failure}`); throw e; }
-  if (result.absent) return result.branchMissing ? { content: null, sha: null, absent: true, branchMissing: true } : { content: null, sha: null, absent: true };
-  return { content: result.content, sha: result.sha };
+  return result.absent
+    ? { content: null, sha: null, absent: true, ...(result.branchMissing ? { branchMissing: true } : {}) }
+    : { content: result.content, sha: result.sha };
 }
 
 // Conditional overwrite (sha = the blob's current sha from the read) — now
