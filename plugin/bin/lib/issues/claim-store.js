@@ -97,6 +97,12 @@ function isWellFormedClaimContent(content) {
   return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed);
 }
 
+// The text of a caught execFileSync error: message, stderr and stdout joined.
+// `classifyGhApiError` matches on it; `defaultGhApi` returns it as `error`.
+function ghErrorText(e) {
+  return [e && e.message, e && e.stderr, e && e.stdout].filter(Boolean).map(String).join(' ');
+}
+
 // Pure: classify a caught execFileSync error into {failure, status} — split
 // out from defaultGhApi's catch block so the text-matching regexes below are
 // unit-testable without touching the real `gh` binary. `defaultGhApi` is the
@@ -139,10 +145,6 @@ function isWellFormedClaimContent(content) {
 // generic network failure (record-697's incident read exactly that way
 // before diagnosis; #787's amendment requires this to classify as its own
 // distinct, transient outcome).
-function ghErrorText(e) {
-  return [e && e.message, e && e.stderr, e && e.stdout].filter(Boolean).map(String).join(' ');
-}
-
 function classifyGhApiError(e) {
   if (e && e.code === 'ENOENT') return { failure: 'gh-absent', status: null };
   const text = ghErrorText(e);
