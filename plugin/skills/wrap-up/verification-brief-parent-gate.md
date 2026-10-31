@@ -312,8 +312,10 @@ regardless.
   - **Sub-issue-side entry, `work-backend: github-issues`:** a pre-merge caller leaves the parent
     open, because this run's merge has not landed yet. `_shared/pr-first-merge-post-merge.md`'s
     Step 4.0b closes it after the merge lands: that post-merge entry runs
-    **Close the parent below the floor** here. `/claude-tweaks:tidy`'s `parent-gate` backstop
-    catches a merge no session saw land.
+    **Close the parent below the floor** here. A merge no session saw land is closed by the
+    reconciler's `post-merge` check, a code mirror of this entry
+    (`bin/lib/issues/below-floor-parent-close.js`); `/claude-tweaks:tidy`'s `parent-gate` backstop
+    catches whatever that leaves open.
   - **Sub-issue-side entry, `work-backend: local-files`:** run **Close the parent below the floor**
     now, and commit the parent record with the entry's own close commit. The parent is
     never closed ahead of the merge, per that section's step 5.

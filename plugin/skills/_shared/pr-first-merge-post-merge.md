@@ -26,7 +26,8 @@ will-close record up to 15 s, since GitHub closes it about 2 s after the merge, 
 by hand) and each `pendingClose[]` record (the merge may still close it — re-run the step once,
 then reopen it by hand if it closed) in the closing summary, never as anything but `merged`. Exit
 5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.0b. An `armed` outcome never reaches
-this step, and the reconciler does not run the CLI; with `--keep-open` on the composer, only a
+this step in-session: the reconciler's `post-merge` check runs the CLI for that run once GitHub merges the PR,
+with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer, only a
 Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
 
 ### Step 4.0b: Close below-floor parents (#4466)
@@ -35,8 +36,10 @@ Applies only under `work-backend: github-issues`. Under `local-files` the pre-me
 already closed the parent in-branch, so this step is a no-op there. It runs once the merge has
 landed: after outcome `merged`, or after a no-PR local merge's successful push at the call sites
 that cite it. A merge that never lands never reaches it, so its parent stays open. A merge no
-session sees land (an `armed` PR that GitHub merges later) never reaches it either, by design:
-`/claude-tweaks:tidy`'s `parent-gate` backstop recovers that parent.
+session sees land (an `armed` PR that GitHub merges later) never reaches it either: the reconciler's
+`post-merge` check runs Steps 4.0 and 4.0b for that run once, keyed on its recorded PR
+(`docs/reconcile-checks.md`'s Post-merge closes), and `/claude-tweaks:tidy`'s `parent-gate` backstop
+stays the last resort.
 
 It is also a no-op unless the branch the merge landed on — the integration branch
 (`_shared/integration-branch.md`) — is the repo's default branch
@@ -106,6 +109,17 @@ Log each parent closed:
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility "high (gh issue reopen)" --text "closed parent #{parent} below the oversight floor (risk:{maxTier}, risk-floor {riskFloor})"
 ```
 
+Then write one summary line, whatever happened above, once this step is reached after a PR merge
+(the non-default-branch no-op included):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility n/a --text "evaluated PR #{pr-number}'s closing records: {k} parent(s) closed"
+```
+
+The reconciler's `post-merge` check reads this line as the marker that the step already ran, so it
+does not run Steps 4.0 and 4.0b a second time for this run. Under `local-files`, or after exit 3,
+there is no summary line.
+
 ### Step 4.1: Which release carried this? (before reconcile)
 
 A merge can land minutes before a sibling session's version bump and be swept into it with no
@@ -162,7 +176,7 @@ auto-backgrounding on the harness's default command timeout (#1543 — a full un
 was observed taking ~2 minutes, at or past that default, twice tripping it in one dispatch
 firing and once stranding a firing whose one-shot turn ended waiting on the backgrounded call).
 
-`--checks mirror,release,archive` scopes the sweep to exactly what this step needs — the full
+`--checks mirror,release,archive` scopes the sweep to what this step needs, plus `post-merge`, which `archive` requires and the check expansion adds; Step 4.0b's summary line marks this run, so `post-merge` skips it — the full
 unscoped default also runs `red-tip`/`reap`/`console` inline (and hands `archive-branches`/
 `remote-prune`/`ledger-residue` to the background pass), none of which this step's own next
 paragraph describes needing, and `remote-prune`'s inclusion is what forces the full

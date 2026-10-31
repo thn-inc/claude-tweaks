@@ -242,9 +242,13 @@ test('AC2.1: Step 4.0b sits between Step 4.0 and Step 4.1 and reads the merge\'s
   }
   assert.ok(
     collapse(body).includes(
-      "A merge no session sees land (an `armed` PR that GitHub merges later) never reaches it either, by design: `/claude-tweaks:tidy`'s `parent-gate` backstop recovers that parent.",
+      "A merge no session sees land (an `armed` PR that GitHub merges later) never reaches it either: the reconciler's `post-merge` check runs Steps 4.0 and 4.0b for that run once, keyed on its recorded PR (`docs/reconcile-checks.md`'s Post-merge closes), and `/claude-tweaks:tidy`'s `parent-gate` backstop stays the last resort.",
     ),
-    'an unseen armed merge is the backstop\'s by design',
+    'an unseen armed merge is the reconciler\'s, with tidy as the last resort',
+  );
+  assert.ok(
+    !collapse(body).includes('by design: `/claude-tweaks:tidy`'),
+    'the "tidy recovers it by design" sentence is gone',
   );
   assert.ok(
     collapse(body).includes(
@@ -350,6 +354,83 @@ test('AC2.1: Step 4.0b keeps same-repo closing records, skips without Step 4.0\'
     'each closed parent is logged through log-decision.js',
   );
   assert.ok(!body.includes('AUTO {time} — pr-first-merge Step 4.0b'), 'no hand-composed decisions.md line');
+});
+
+// ---- #4599: the reconciler runs Steps 4.0 and 4.0b for a merge no session saw land ----
+
+const SUMMARY_LINE_START = 'node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility n/a --text "evaluated PR #{pr-number}\'s closing records: {k} parent(s) closed"';
+
+// The always-written summary command's line, found by its text rather than by position.
+function summaryCommand(step40b) {
+  const lines = step40b.split('\n').filter((l) => l.includes('log-decision.js') && l.includes('evaluated PR #{pr-number}'));
+  assert.equal(lines.length, 1, 'exactly one always-written summary command in Step 4.0b');
+  return lines[0];
+}
+
+test('#4599: Step 4.0 says the reconciler\'s post-merge check runs the CLI for an armed merge', () => {
+  const pm = read(POST_MERGE_REL);
+  const body = collapse(section(pm, '### Step 4.0:', STEP_40B));
+  assert.ok(
+    body.includes(
+      "An `armed` outcome never reaches this step in-session: the reconciler's `post-merge` check runs the CLI for that run once GitHub merges the PR, with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer,",
+    ),
+    'Step 4.0 names the reconciler\'s post-merge check, no settle poll, and the 10-minute reopen bound',
+  );
+  assert.ok(!body.includes('the reconciler does not run the CLI'), 'the "reconciler does not run the CLI" claim is gone');
+  assert.ok(body.includes('only a Development-sidebar link can still close a kept-open record there'), 'the --keep-open clause is kept');
+  // The numbers the prose states are the module's.
+  const { CLOSE_WINDOW_MS } = require('../plugin/bin/lib/reconcile/post-merge');
+  assert.equal(CLOSE_WINDOW_MS, 10 * 60 * 1000, 'the 10 minutes the prose states is CLOSE_WINDOW_MS');
+});
+
+test('#4599: the Step 4.2 reconcile call states that post-merge rides along as archive\'s prerequisite', () => {
+  const pm = collapse(read(POST_MERGE_REL));
+  assert.ok(
+    pm.includes(
+      '`--checks mirror,release,archive` scopes the sweep to what this step needs, plus `post-merge`, which `archive` requires and the check expansion adds; Step 4.0b\'s summary line marks this run, so `post-merge` skips it —',
+    ),
+    'the --checks sentence names the post-merge expansion',
+  );
+  assert.ok(!pm.includes('scopes the sweep to exactly what this step needs'), 'the "exactly what this step needs" claim is gone');
+});
+
+test('#4599: Step 4.0b writes an always-on summary line, after the per-parent line, that the reconciler parses as its marker', () => {
+  const { hasPostMergeMarker } = require('../plugin/bin/lib/reconcile/post-merge');
+  const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
+  const raw = section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1');
+  const line = summaryCommand(raw);
+  assert.ok(line.startsWith(SUMMARY_LINE_START), `the summary command is byte-exact: ${line}`);
+  const parentLine = raw.indexOf('--reversibility "high (gh issue reopen)"');
+  assert.ok(parentLine !== -1 && raw.indexOf(line) > parentLine, 'the summary line follows the per-parent line');
+  assert.ok(
+    collapse(raw).includes('Under `local-files`, or after exit 3, there is no summary line'),
+    'the no-line cases are stated',
+  );
+  assert.ok(
+    collapse(raw).includes('reconciler\'s `post-merge` check reads this line as the marker that the step already ran'),
+    'the line is explained as the reconciler\'s marker',
+  );
+  // Tie the prose to the parser: build the entry the real writer would from the command's own --step.
+  const step = /--step "([^"]+)"/.exec(line)[1];
+  const text = /--text "([^"]+)"/.exec(line)[1].replace('{pr-number}', '4601').replace('{k}', '0');
+  const now = new Date('2026-10-31T12:00:00Z');
+  const bare = formatEntry({ status: 'AUTO', now, step, text, reversibility: 'n/a' });
+  const withSpec = formatEntry({ status: 'AUTO', now, step, spec: 4599, text, reversibility: 'n/a' });
+  assert.equal(hasPostMergeMarker(bare), true, `the marker parser reads: ${bare}`);
+  assert.equal(hasPostMergeMarker(withSpec), true, `the marker parser reads: ${withSpec}`);
+  // Go-red control: a renamed --step is no marker.
+  assert.equal(hasPostMergeMarker(formatEntry({ status: 'AUTO', now, step: 'pr-first-merge Step 4.0c', text, reversibility: 'n/a' })), false);
+});
+
+test('#4599: the Parent-Gate Procedure says the reconciler closes a merge no session saw land', () => {
+  const below = collapse(belowFloorBullet(read(GATE_REL)));
+  assert.ok(
+    below.includes(
+      "A merge no session saw land is closed by the reconciler's `post-merge` check, a code mirror of this entry (`bin/lib/issues/below-floor-parent-close.js`); `/claude-tweaks:tidy`'s `parent-gate` backstop catches whatever that leaves open.",
+    ),
+    'the sub-issue-side bullet names the reconciler check',
+  );
+  assert.ok(!below.includes('backstop catches a merge no session saw land'), 'the "backstop catches the unseen merge" claim is gone');
 });
 
 test('AC2.1: issue-claims\' Close-via-merge names the below-floor parent close as an exception', () => {
