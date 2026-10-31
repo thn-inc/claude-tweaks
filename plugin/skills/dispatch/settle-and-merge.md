@@ -40,7 +40,8 @@ its own — either `flow/claim-targets.md`'s "Claim contested" stop, or its "Cla
 (#315/#958/#974's in-flight variant, tombstone or stale claim (#4423) — reached here only when
 that card's own routing into `dispatch/resume-confirmation.md` was itself skipped under
 `DISPATCH_HEADLESS=1`, since that routing's own headless skip is what leaves the card as this Task
-call's terminal output) — no build or test ever ran, the pipeline stopped before the Config
+call's terminal output), or its "Claims branch missing" stop (`claim-targets.js` exit 6, #4495: the
+`claims-registry` branch is missing on origin and could not be created) — no build or test ever ran, the pipeline stopped before the Config
 Manifesto, this record was never claimed by this run at all, so step 1 below's ownership check
 will correctly find no claim to release (skip is the right outcome there, not an error). The one
 thing this case adds: **when
@@ -48,12 +49,15 @@ thing this case adds: **when
 template — set only for a Routine-fired headless firing (bare drain or its `next` alias), where
 nobody is present to read the stop directly),
 read `_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller =
-`dispatch`), using failing-check-name `flow-step-2.8-claim-contest` for the contested-claim stop
-or `flow-step-2.8-claim-in-flight` for the in-flight stop — distinct names, since the
-two are different stop shapes and must dedup separately — and that stop's own card text as the
-diagnostic body. This is the one Settle branch that runs *before* any release/classification
+`dispatch`), using failing-check-name `flow-step-2.8-claim-contest` for the contested-claim stop,
+`flow-step-2.8-claim-in-flight` for the in-flight stop, or `flow-step-2.8-claims-branch-missing`
+for the claims-branch-missing stop — distinct names, since the three are different stop shapes and
+must dedup separately — and that stop's own card text as the diagnostic body. This is the one Settle branch that runs *before* any release/classification
 logic, since there is nothing to release or classify — it is a pre-flight stop, not a build/test
-failure. When `DISPATCH_HEADLESS` is unset (a human-present dispatch form), skip this — the stop
+failure. For the claims-branch-missing stop, skip steps 3-7 below: no `failure-check`
+classification, no attempt counted against `dispatch-retry-ceiling`, and no failure comment — a
+repository whose claims branch cannot be created would otherwise exhaust the ceiling on a record
+that was never at fault. When `DISPATCH_HEADLESS` is unset (a human-present dispatch form), skip this — the stop
 message the Task call already produced is sufficient; nobody headless needs a durable trace of
 it.
 
