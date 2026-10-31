@@ -17,6 +17,7 @@ const { composePrEarlyBody, composeResumeLine } = require('../plugin/bin/lib/flo
 const RUN = '2026-10-31T005940-record-4659';
 const DIR = `/repo/.claude-tweaks/pipelines/${RUN}`;
 const BODY = '/scratch/body.md';
+const RESUME = composeResumeLine({ runDir: DIR, target: '#4659', nextStep: 'review,polish,wrap-up' });
 
 function composed(extra = {}) {
   return composePrEarlyBody({
@@ -54,7 +55,7 @@ test('a composed body yields resume, runDir, target and steps', () => {
   assert.equal(run(ARGS, deps), 0);
   const v = verdictOf(deps);
   assert.deepEqual(v, {
-    resume: composeResumeLine({ runDir: DIR, target: '#4659', nextStep: 'review,polish,wrap-up' }),
+    resume: RESUME,
     runDir: DIR, target: '#4659', steps: 'review,polish,wrap-up', failure: null,
   });
   assert.deepEqual(Object.keys(v), ['resume', 'runDir', 'target', 'steps', 'failure']);
@@ -102,7 +103,7 @@ test('the real process reads a real body file, and a missing one is a failure ve
     fs.writeFileSync(file, composed());
     const ok = spawnSync(process.execPath, [cli, '--body-file', file, '--run-id', RUN], { encoding: 'utf8' });
     assert.equal(ok.status, 0);
-    assert.equal(JSON.parse(ok.stdout).resume, composeResumeLine({ runDir: DIR, target: '#4659', nextStep: 'review,polish,wrap-up' }));
+    assert.equal(JSON.parse(ok.stdout).resume, RESUME);
     const missing = spawnSync(process.execPath, [cli, '--body-file', path.join(dir, 'missing.md'), '--run-id', RUN], { encoding: 'utf8' });
     assert.equal(missing.status, 0);
     const v = JSON.parse(missing.stdout);
