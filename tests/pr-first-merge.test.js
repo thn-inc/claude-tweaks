@@ -512,13 +512,13 @@ const DERIVED_OFF_NEEDLES = [
   ['read failure counts as derived', 'or the read fails'],
   ['explicit: policy source', '`source: policy`'],
   ['explicit: run-level off over another project value', 'a run-level `off` over another project value'],
-  ['off row pending → watch', 'Derived `off` with a non-empty rollup or a head run not yet `completed` → **Bounded watch** below'],
+  ['off row pending → watch', 'Derived `off` → **Bounded watch** below'],
   ['off row pending explicit → Step 3', 'Explicit `off` → Step 3 as written |'],
   ['off row red split', '| Derived `off` → **Red path**. Explicit `off` → Step 3 as written; the red read is logged for the summary |'],
   ['red bullet: explicit merges, derived parks', 'but an explicit `off` merges anyway; a derived `off` takes the **Red path**'],
   ['AUTO line', 'derived off with pending checks on PR #{n} — bounded watch'],
   ['watch heading names derived off', 'and a derived `off` with pending checks)'],
-  ['AUTO lever field', 'bounded watch. Reversibility: high. [lever: merge-verification=off (default)]'],
+  ['AUTO lever field', 'bounded watch. Reversibility: n/a. [lever: merge-verification=off (default)]'],
 ];
 
 // Frozen pre-#4550 text (git show 47f5ad905) — go-red controls for the heading and the red bullet.

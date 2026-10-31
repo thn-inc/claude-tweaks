@@ -110,6 +110,30 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
   assert.ok(zeroBranch.includes('"${PENDING_RUNS:-x}" = 0 ] && break') && zeroBranch.includes('RC=2; break'), 'bounded-watch 0) branch must gate its break on zero pending head runs and stop on a failed read');
 });
 
+// #4550: `gh pr checks` on a PR whose checks have not registered yet prints "no checks reported on
+// the '<branch>' branch" and exits 1 — the watch must read that as pending (RC=8), not a failed check.
+const NO_CHECKS_MAPPING = "grep -q '^no checks reported'";
+
+function assertWatchReadsNoChecksAsPending(gateText) {
+  const step25 = gateText.indexOf('## Step 2.5: Merge-verification gate');
+  const section = gateText.slice(step25, gateText.indexOf('## Step 3:'));
+  const start = section.indexOf('DEADLINE=');
+  const watch = section.slice(start, section.indexOf('\n```', start));
+  const mapping = watch.indexOf(NO_CHECKS_MAPPING);
+  assert.ok(mapping !== -1, 'the watch loop must map "no checks reported" output');
+  assert.ok(/RC=8/.test(watch.slice(mapping, watch.indexOf('\n', mapping))), 'the mapping must set RC=8 (pending)');
+  assert.ok(mapping < watch.indexOf('case "$RC"'), 'the mapping must run before the case on RC');
+}
+
+test('the bounded watch reads "no checks reported" as pending, not failed (#4550)', () => {
+  const gate = readText(GATE_FILE);
+  assertWatchReadsNoChecksAsPending(gate);
+  const line = gate.split('\n').find((l) => l.includes(NO_CHECKS_MAPPING));
+  assert.ok(line, 'live text carries the mapping line');
+  assert.throws(() => assertWatchReadsNoChecksAsPending(gate.replace(line + '\n', '')), 'removing the mapping must fail the pin');
+  assert.throws(() => assertWatchReadsNoChecksAsPending(gate.replace('&& RC=8', '&& RC=1')), 'a mapping to the wrong code must fail the pin');
+});
+
 test('every consumer that restates the Step 2.5 CI read also reads the head-sha runs (#3405)', () => {
   for (const rel of ['release/execute.md', 'dispatch/resume-confirmation.md', 'dispatch/close-out.md', 'tidy/actions-github-issues.md']) {
     assert.ok(read(...rel.split('/')).includes('gh run list'), `${rel} restates the rollup read without the head-run read`);
@@ -139,7 +163,7 @@ test('pr-checklist-refresh.md carries the gh-absent-at-merge degrade row (procee
 
 // #4550: the derived-off rule is stated once (Step 2.5); the coverage block, the release path and
 // the PR-check gate point at it. Each pin is factored so its go-red control runs the same code.
-const COVERAGE_CITE = "`_shared/pr-first-merge.md` Step 2.5's derived-`off` rule — so branches 2 and 4 skip the wait only for a PR whose checks never report";
+const COVERAGE_CITE = "`_shared/pr-first-merge.md` Step 2.5's derived-`off` rule — so branches 2 and 4 skip the wait only for a PR whose checks have not reported at merge time";
 const RELEASE_PROJECT_READ = 'node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" merge-verification\n';
 const RELEASE_DELTA_2 = 'an explicit `off` still merges anyway; a derived `off` (Step 2.5) red is `failed`';
 const RELEASE_DELTA_3 = 'a derived `off` (Step 2.5) takes the bounded watch, an explicit one does not wait';
