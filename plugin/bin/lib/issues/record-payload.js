@@ -98,7 +98,9 @@ function fencedBlock(text) {
 // when unclosed (a truncated fence is quoted content, the safer direction).
 // The one fence rule shared by stripCodeSpans (materialize-format.js), sectionText
 // and extractSection (#4169), mergeStateDemands (merge-gate.js) and
-// extractCurrentStateAnchors (near-duplicate.js) (#4369), and the three
+// extractCurrentStateAnchors (near-duplicate.js, which now reaches the rule through
+// findSection) (#4369), apply.js's release-note-repair and authoredRegion
+// (materialize-format.js) (#4561), and the three
 // body-metadata extractors extractVerifiedAsOf / extractPremiseCheck /
 // extractTemplateStamp (#4368): an opener is an optional U+FEFF byte-order mark,
 // 0-3 leading spaces (CommonMark), then a run of 3+ backticks or tildes — a
@@ -307,7 +309,28 @@ function isRepoRelativeKeyFilePath(filePath) {
   return keyFilePathProblem(filePath) === null;
 }
 
-const ANY_HEADING_RE = /^#{1,6}[ \t]/;
+// line -> { level, text } | null. The one record section-heading-line rule (#4561):
+// 1-6 `#` at column 0, then a space or tab; text is the rest of the line with leading
+// and trailing spaces/tabs removed (only [ \t], never \r — callers normalize CRLF first,
+// as findSection does). Fence state is not this function's concern; see findHeadingLine.
+function headingLine(line) {
+  const m = /^(#{1,6})[ \t]([\s\S]*)$/.exec(line);
+  if (!m) return null;
+  return { level: m[1].length, text: m[2].replace(/^[ \t]+|[ \t]+$/g, '') };
+}
+
+// lines, heading text, options -> index of the first unfenced heading line whose level
+// matches `^#{levelPattern}$` (the same quantifier-body string findSection takes) and
+// whose text equals `heading`, or -1. `fenced` defaults to fencedLineMask(lines).
+function findHeadingLine(lines, heading, { levelPattern = '2,4', fenced } = {}) {
+  const mask = fenced || fencedLineMask(lines);
+  const levelRe = new RegExp(`^#{${levelPattern}}$`);
+  return lines.findIndex((line, idx) => {
+    if (mask[idx]) return false;
+    const h = headingLine(line);
+    return h !== null && levelRe.test('#'.repeat(h.level)) && h.text === heading;
+  });
+}
 
 // body, heading text, options -> the section text under that heading, or null
 // when absent. Shared line-boundary finder behind compose-subject.js's
@@ -331,16 +354,15 @@ const ANY_HEADING_RE = /^#{1,6}[ \t]/;
 // quoted content and never match (#4169); a fenced line never stops the section.
 function findSection(body, heading, { levelPattern = '2,4', stopPattern = '1,6', trim = false } = {}) {
   if (typeof body !== 'string') return null;
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const headingRe = new RegExp(`^#{${levelPattern}}[ \\t]+${escaped}[ \\t]*$`);
-  const stopRe = new RegExp(`^#{${stopPattern}}[ \\t]`);
+  const stopRe = new RegExp(`^#{${stopPattern}}$`);
   const lines = body.replace(/\r\n/g, '\n').split('\n');
   const fenced = fencedLineMask(lines);
-  const start = lines.findIndex((line, idx) => !fenced[idx] && headingRe.test(line));
+  const start = findHeadingLine(lines, heading, { levelPattern, fenced });
   if (start === -1) return null;
   const out = [];
   for (let i = start + 1; i < lines.length; i += 1) {
-    if (!fenced[i] && stopRe.test(lines[i])) break;
+    const h = fenced[i] ? null : headingLine(lines[i]);
+    if (h && stopRe.test('#'.repeat(h.level))) break;
     out.push(lines[i]);
   }
   const joined = out.join('\n');
@@ -496,5 +518,6 @@ function specShapedBody({
 module.exports = {
   DEFER_REASONS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
   extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp,
-  fenceFor, fencedBlock, fencedLineRanges, fencedLineMask, findSection, extractSection,
+  fenceFor, fencedBlock, fencedLineRanges, fencedLineMask, scanFences, headingLine, findHeadingLine,
+  findSection, extractSection,
 };

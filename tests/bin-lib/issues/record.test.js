@@ -1465,3 +1465,22 @@ test('extractSection: 1- to 3-space-indented fences hide a heading; a 4-space pa
   assert.ok(four.length > 0);
   assert.ok(four.startsWith('quoted'));
 });
+
+test('headingLine: the one heading-line rule (#4561)', () => {
+  const { headingLine } = require('../../../plugin/bin/lib/issues/record-payload');
+  assert.deepEqual(headingLine('## Release Note'), { level: 2, text: 'Release Note' });
+  assert.deepEqual(headingLine('###\t Current State \t'), { level: 3, text: 'Current State' });
+  assert.deepEqual(headingLine('## '), { level: 2, text: '' });
+  assert.equal(headingLine('##Release Note'), null);
+  assert.equal(headingLine(' ## Release Note'), null);
+  assert.equal(headingLine('####### Seven'), null);
+  assert.equal(headingLine('text ## not a heading'), null);
+});
+
+test('findHeadingLine: first unfenced match at the given level; fenced and wrong-level lines skipped (#4561)', () => {
+  const { findHeadingLine } = require('../../../plugin/bin/lib/issues/record-payload');
+  const lines = ['```', '## Original request', '```', '### Original request', '## Original request'];
+  assert.equal(findHeadingLine(lines, 'Original request', { levelPattern: '2' }), 4);
+  assert.equal(findHeadingLine(lines, 'Original request', { levelPattern: '2,4' }), 3);
+  assert.equal(findHeadingLine(['## Other'], 'Original request'), -1);
+});
