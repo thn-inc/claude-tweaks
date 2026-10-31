@@ -117,7 +117,8 @@ function runFallback(shell, block, specs, { workMode } = {}) {
       status: r.status,
       stderr: r.stderr,
       count: countLine ? Number(countLine[1]) : null,
-      els: [...r.stdout.matchAll(/^el=(.*)$/gm)].map((m) => m[1]),
+      // Split on \n only, as runBlock does: a regex `.` would drop a leaked \r.
+      els: r.stdout.split('\n').filter((l) => l.startsWith('el=')).map((l) => l.slice('el='.length)),
     };
   } finally {
     if (workMode !== undefined) fs.chmodSync(path.join(dir, 'mirror', 'work'), 0o755);
@@ -185,6 +186,15 @@ for (const shell of SHELLS) {
     const r = runFallback(shell, liveBlock(), { '101-spec.md': specHeader(101).replace(/\n/g, '\r\n') });
     assert.strictEqual(r.status, 0, r.stderr);
     assert.deepStrictEqual({ count: r.count, els: r.els }, { count: 1, els: ['101'] });
+  });
+  test(`${shell.name}: live block with no pack skips a non-numeric record: value and a non-numeric spec name (#4740)`, { skip }, () => {
+    const r = runFallback(shell, liveBlock(), {
+      '101-spec.md': specHeader('101 # note'),
+      '202-spec.md': specHeader(202),
+      'draft-spec.md': specHeader(303),
+    });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.deepStrictEqual({ count: r.count, els: r.els }, { count: 1, els: ['202'] });
   });
   test(`${shell.name}: live block with no pack skips a hidden .303-spec.md the old glob never matched (#4740)`, { skip }, () => {
     const r = runFallback(shell, liveBlock(), { '101-spec.md': specHeader(101), '.303-spec.md': specHeader(303) });
