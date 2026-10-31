@@ -32,9 +32,7 @@ test('the Closed rule makes the listed states exhaustive', () => {
 });
 
 test('the Closed rule refuses an unlisted state with a line naming its remedy', () => {
-  const section = closedRuleSection(TEMPLATE);
-  assert.match(section, /refused/);
-  assert.match(section, /remedy/);
+  assert.match(closedRuleSection(TEMPLATE), /refused with one line naming the state and its remedy/);
 });
 
 test('plan review applies the Closed rule as an amendment, never as a needs-human gap', () => {
@@ -51,4 +49,23 @@ test('go-red: the suite fails when the State-Classification section is removed',
   const section = closedRuleSection(TEMPLATE);
   const withoutSection = TEMPLATE.replace(section, '');
   assert.throws(() => closedRuleSection(withoutSection));
+});
+
+// Each Closed-rule part is pinned by its own bullet: removing only that bullet's
+// line must defeat that part's pattern.
+const PARTS = [
+  { bullet: '- **Exhaustive** — ', pattern: /exhaustive/i },
+  { bullet: '- **Refused with a named remedy** — ', pattern: /refused with one line naming the state and its remedy/ },
+  { bullet: '- **Amendment, not escalation** — ', pattern: /amendment/ },
+];
+
+test('go-red: each Closed-rule part is pinned by its own bullet line', () => {
+  const section = closedRuleSection(TEMPLATE);
+  for (const { bullet, pattern } of PARTS) {
+    const lines = section.split('\n');
+    assert.equal(lines.filter((line) => line.startsWith(bullet)).length, 1, `exactly one line starts with ${bullet}`);
+    const withoutBullet = lines.filter((line) => !line.startsWith(bullet)).join('\n');
+    assert.match(section, pattern);
+    assert.doesNotMatch(withoutBullet, pattern, `removing ${bullet} must defeat ${pattern}`);
+  }
 });
