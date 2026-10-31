@@ -53,6 +53,17 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.157.2](https://github.com/thn-inc/claude-tweaks/compare/v6.157.1...v6.157.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* wrap-up merge mode cannot resolve a pending-review run… ([#4677](https://github.com/thn-inc/claude-tweaks/issues/4677)) ([273a29a](https://github.com/thn-inc/claude-tweaks/commit/273a29a9255a48cced688f5f1e1b472fa472ade0))
+
+### Highlights
+* `/claude-tweaks:wrap-up #N merge` can merge a PR whose pipeline run wrap-up already archived, instead of stopping with "no pipeline run directory resolved".
+* No user-visible change.
+
 ## [6.157.1](https://github.com/thn-inc/claude-tweaks/compare/v6.157.0...v6.157.1) (2026-10-31)
 
 

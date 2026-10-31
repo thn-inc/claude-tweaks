@@ -22,8 +22,8 @@ never here. **Rendering and acting stay separate surfaces on purpose:** do not a
 step" suggestion to a verdict in this table, whatever the ceiling is set to. That is exactly the
 mid-flow autonomy the bookend architecture withholds.
 
-**Omit entirely under `work-backend: local-files`.** `demo:approved`/`demo:changes-requested` are
-GitHub Issue labels this table reads directly; there is no local-record equivalent to fetch.
+**Omit entirely under `work-backend: local-files`.** The approved and changes-requested acceptance labels
+(`_shared/work-record.md`, either spelling) are GitHub Issue labels this table reads directly; there is no local-record equivalent to fetch.
 
 ## Fetch
 
@@ -345,20 +345,20 @@ never cap or truncate the row count; see the row-count note below):
 Render `{coverage}` as a percentage with no decimals (`row.coverage`, e.g. `0.125` renders `13%`).
 
 **Undispositioned is never omitted, hidden, or folded into another column.** It is the count of
-closed records carrying no `demo:*` disposition at all — not a count of failures, a count of
+closed records carrying no acceptance disposition at all — not a count of failures, a count of
 unknowns. It is the measure of how blind the system currently is, and on a repo with no
 acceptance-verdict discipline yet it is the largest number on the table.
 
-**Operational is a second, independent evidence source** — a closed record with no `demo:*`
+**Operational is a second, independent evidence source** — a closed record with no acceptance
 disposition still counts as known-good when it was merged and stayed unreverted for at least
 `trust-revert-window-days` (applied by `bin/lib/issues/trust.js`; default in `_shared/policy-schema.md`). It folds into `Coverage`
 the same way `Approved`/`Changes Requested` do (it sums into `dispositioned`). A record with
-a `demo:*` verdict is never double-counted here — demo-descent evidence is tried first, and the
+an acceptance verdict is never double-counted here — demo-descent evidence is tried first, and the
 operational path only runs when it found nothing.
 
 **Negative Evidence is what pins a verdict below `clean` regardless of positive count**
 (`bin/lib/issues/trust.js`'s `negativeEvidence`, `_shared/autonomy-ceiling.md`'s Revocation
-section). Two sources feed it, both scoped to the same `demo:*`-absent records the Operational
+section). Two sources feed it, both scoped to the same acceptance-absent records the Operational
 column reads: a dispatch Settle failure classified `correctness`/`ambiguous`
 (`dispatch/settle-and-merge.md` Step 6.5's persisted marker), and a closing commit the Operational
 path would have counted known-good but discovers was reverted. It folds into `Coverage` the same
@@ -371,10 +371,10 @@ same precedence a `changes-requested` disposition already had.
 **Approved (Batch) is the subset of Approved that was sign-off via a `/claude-tweaks:demo`
 `#N,#M` batch invocation rather than a dedicated single-record session** — a legitimate,
 deliberately cheap path (`_shared/work-record.md`'s Acceptance provenance row), distinguished by
-the `demo:approved-batch` label `bin/lib/issues/acceptance.js`'s `approvalProvenance` reads back.
+the `-batch` provenance label `bin/lib/issues/acceptance.js`'s `approvalProvenance` reads back.
 Both invocation shapes run the same per-item walkthrough (`skills/demo/SKILL.md` Step 2) — the
 marker distinguishes a rapid multi-item pass from a single-record session, not whether a
-walkthrough happened. A pre-existing `demo:approved` with no marker reads as single-record-backed,
+walkthrough happened. A pre-existing approved label with no marker reads as single-record-backed,
 so this column is `0` for every cell graded before the signal existed. **A cell whose Approved
 evidence is entirely Approved (Batch), with no Operational corroboration, cannot reach `clean`**
 — it demotes to `mixed` the same way a non-zero Negative Evidence does (`trust.js`'s
