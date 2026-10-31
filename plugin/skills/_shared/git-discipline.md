@@ -215,7 +215,8 @@ and `/test`'s Skip-if-recent (`test/verification.md`'s Mismatch branch) would ru
 time. Unlike the Pre-review catch-up (`_shared/pre-review-catchup.md`), it is not overlap-gated:
 Common Step 5 runs the full suite anyway, so the merge adds no run. It runs once, before the
 first verification run — a re-run after a fix does not repeat it; a base that moves after it is
-the residual case the Post-push merge-state check above catches.
+the residual case the Post-push merge-state check above catches. Every `log-decision.js` call
+below takes `--run "$PIPELINE_RUN_DIR" --section "/build" --step "Pre-verification catch-up"`.
 
 Only a `pr-first` worktree run catches up (a `MULTISPEC_PARALLEL_WAVE=1` member in its own worktree included, as with the Pre-review catch-up). Resolve the model per `_shared/integration-model.md`:
 `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-model --run "$PIPELINE_RUN_DIR"`
@@ -228,36 +229,39 @@ A `pr-first` worktree run catches up in every mode — `auto`, `confirm`, `inter
 `hybrid` alike, and a standalone `/claude-tweaks:build` — and adds no stop. Run the Catch-up
 (`auto`) steps 1-4 above with `{worktree-path}` the build's worktree and `{integration-branch}`
 resolved at this call site per `_shared/integration-branch.md` — merge, never rebase, with the
-same conflict resolution and `merge --abort` — with these differences. Each `log-decision.js`
-call takes `--run "$PIPELINE_RUN_DIR" --section "/build" --step "Pre-verification catch-up"`.
+same conflict resolution and `merge --abort` — with these differences. Below, "Catch-up step N"
+is that list's own numbering and "difference N" is this list's.
 
 1. Nothing is pushed: the build phase exit pushes the merged branch.
-2. There is no PR conflict line to surface. Step 1's dirty tree logs `--status SKIP
+2. There is no PR conflict line to surface. Catch-up step 1's dirty tree logs `--status SKIP
    --reversibility n/a --text "condition: uncommitted changes in the worktree → fallback: catch-up
    not run; verifying the un-merged tree"`; a failed fetch logs the same with `--text "condition:
    fetch failed → fallback: catch-up not run; verifying the un-merged tree"`. Either way the
-   comparison in 5 does not run, and the verification run follows.
+   comparison in difference 5 does not run, and the verification run follows.
 3. Merge conflict resolution's "ask the user" fallback never applies, in any mode. A conflict it
    cannot resolve confidently: run `merge --abort` (its own Bash call), log `--status AUTO
    --reversibility high --text-file "{text-file}"`, `{text-file}` holding
    `pre-verification catch-up with origin/{integration-branch} aborted on a conflict it could not resolve confidently — verifying the un-merged tree`,
-   skip the comparison in 5, and run the verification on the un-merged tree; the build phase
+   skip the comparison in difference 5, and run the verification on the un-merged tree; the build phase
    exit's Post-push merge-state check and, past it, the merge path own the conflict.
 4. A merge that fails without a conflict (git refusing to overwrite untracked working tree
    files, say): run `merge --abort` (its own Bash call; a no-op error when no merge is in
    progress is fine), log `--status SKIP --reversibility n/a --text-file "{text-file}"`,
    `{text-file}` holding
    `condition: merge with origin/{integration-branch} failed ({reason}) → fallback: catch-up not run; verifying the un-merged tree`,
-   skip the comparison in 5 as well, and run the verification. Never move or delete the
+   skip the comparison in difference 5 as well, and run the verification. Never move or delete the
    untracked files to get past it.
-5. A resolved conflict is committed before HEAD is compared, as in step 4 above; Common Step 5's
-   own run is the verification after resolving. Then compare `git -C "{worktree-path}" rev-parse
-   --short HEAD` with step 3's `{before short}`. Unchanged: log `--status SKIP --reversibility n/a
+5. A resolved conflict is committed before HEAD is compared, as in Catch-up step 4 above; Common
+   Step 5's own run is the verification after resolving. Then compare `git -C "{worktree-path}"
+   rev-parse --short HEAD` with Catch-up step 3's `{before short}`. Unchanged: log `--status SKIP --reversibility n/a
    --text-file "{text-file}"`, `{text-file}` holding
    `condition: branch already contains origin/{integration-branch} → fallback: nothing merged`.
    Advanced: log `--status AUTO --reversibility high --text-file "{text-file}"`, `{text-file}`
    holding
    `merged origin/{integration-branch} before the verification run ({before short} → {after short})`.
+   A failed `rev-parse` logs `--status SKIP --reversibility n/a --text "condition: rev-parse failed →
+   fallback: catch-up outcome not compared; verifying the tree as it stands"`, and the verification
+   run follows.
 
 Every `{text-file}` above is written per `_shared/auto-decision-log.md`'s Text from git or a user
 paragraph (the integration branch name is git-supplied). With no run dir (a design-mode build)

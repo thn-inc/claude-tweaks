@@ -71,23 +71,25 @@ const GD_FACTS = [
   { name: 'no conflict line', needle: 'There is no PR conflict line to surface' },
   { name: 'dirty tree SKIP', needle: 'condition: uncommitted changes in the worktree → fallback: catch-up not run; verifying the un-merged tree' },
   { name: 'fetch failure fails open', needle: 'condition: fetch failed → fallback: catch-up not run; verifying the un-merged tree' },
-  { name: 'no comparison after a SKIP exit', needle: 'Either way the comparison in 5 does not run' },
+  { name: 'no comparison after a SKIP exit', needle: 'Either way the comparison in difference 5 does not run' },
   { name: 'never asks', needle: '"ask the user" fallback never applies, in any mode' },
   { name: 'abort verifies un-merged', needle: 'aborted on a conflict it could not resolve confidently — verifying the un-merged tree' },
-  { name: 'no comparison after an abort', needle: 'skip the comparison in 5, and run the verification on the un-merged tree' },
+  { name: 'no comparison after an abort', needle: 'skip the comparison in difference 5, and run the verification on the un-merged tree' },
   { name: 'non-conflict merge failure', needle: 'condition: merge with origin/{integration-branch} failed ({reason}) → fallback: catch-up not run; verifying the un-merged tree' },
-  { name: 'no comparison after a merge failure', needle: 'skip the comparison in 5 as well' },
+  { name: 'no comparison after a merge failure', needle: 'skip the comparison in difference 5 as well' },
   { name: 'resolved conflict committed first', needle: 'A resolved conflict is committed before HEAD is compared' },
   { name: 'already current is a SKIP', needle: 'condition: branch already contains origin/{integration-branch} → fallback: nothing merged' },
   { name: 'advanced logs before and after', needle: 'merged origin/{integration-branch} before the verification run ({before short} → {after short})' },
+  { name: 'rev-parse failure fails open', needle: 'condition: rev-parse failed → fallback: catch-up outcome not compared; verifying the tree as it stands' },
   { name: 'no run dir reports in handoff', needle: "each `SKIP` goes to the Step 7 handoff's Skipped steps section instead" },
   { name: 'post-push check stays', needle: 'The Post-push merge-state check above stays' },
 ];
 
 function assertPreVerifySubsection(text) {
   requireOrder(text, [POST_PUSH, CATCH_UP, HEADING, NEXT_HEADING]);
-  // The model gate precedes the fetch: the gate paragraph comes before the paragraph citing the steps.
-  requireOrder(subsection(text), ['Only a `pr-first` worktree run catches up', 'Run the Catch-up (`auto`) steps 1-4 above']);
+  // The log-decision flags (read by the gate SKIPs) open the subsection, and the model gate
+  // precedes the fetch: the gate paragraph comes before the paragraph citing the steps.
+  requireOrder(subsection(text), ['--step "Pre-verification catch-up"', 'Only a `pr-first` worktree run catches up', 'Run the Catch-up (`auto`) steps 1-4 above']);
   assert.deepEqual(missingFacts(GD_FACTS, subsection(text)), [], 'Pre-verification catch-up facts');
 }
 
@@ -159,6 +161,18 @@ test('AC2.1 go-red: the model gate placed after the Catch-up steps fails the ord
   const swapped = GD.slice(0, from) + swappedParas.join('\n\n') + GD.slice(to);
   assert.notEqual(swapped, GD);
   assert.throws(() => assertPreVerifySubsection(swapped), /Run the Catch-up \(`auto`\) steps 1-4 above must come after the previous marker/);
+  // Deletion control: the existence half of the second order check has its own message.
+  const GATE = 'Only a `pr-first` worktree run catches up';
+  const absent = GD.replace(GATE, 'Only a pr-first worktree run catching up');
+  assert.notEqual(absent, GD);
+  assert.throws(() => assertPreVerifySubsection(absent), /marker missing: Only a `pr-first` worktree run catches up/);
+});
+
+test('AC1.1 go-red: the log-decision flags placed after the gate SKIPs fail the order check', () => {
+  const STEP = '--step "Pre-verification catch-up"';
+  const moved = GD.replace(STEP, '--step "elsewhere"').replace(NEXT_HEADING, `${STEP}\n\n${NEXT_HEADING}`);
+  assert.notEqual(moved, GD);
+  assert.throws(() => assertPreVerifySubsection(moved), /Only a `pr-first` worktree run catches up must come after the previous marker/);
 });
 
 test('Deliverable 3: the Post-push merge-state check names the residual case', () => {

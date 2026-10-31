@@ -29,8 +29,12 @@ function assertMergeStateSection(text) {
     phaseExit !== -1 && phaseExit < start && start < catchUp,
     'AC1.1: the subsection sits after "## Phase exit — one `phase-exit.js` call" and before "## Catching a branch up with `main`"',
   );
+  // The Pre-verification catch-up subsection (#4343) states its own "merge, never rebase" and
+  // cites these steps, so the slice ends at its heading: the pins below stay on this section's own text.
+  const preVerify = text.indexOf('### Pre-verification catch-up', start);
+  const end = preVerify !== -1 && preVerify < catchUp ? preVerify : catchUp;
   // Whitespace-collapsed so a re-wrap of the prose never breaks a pin.
-  const section = text.slice(start, catchUp).replace(/\s+/g, ' ');
+  const section = text.slice(start, end).replace(/\s+/g, ' ');
 
   const has = (needle, msg) => assert.ok(section.includes(needle), `${msg}: missing ${JSON.stringify(needle)}`);
   const matches = (re, msg) => assert.match(section, re, msg);
@@ -43,7 +47,7 @@ function assertMergeStateSection(text) {
   has('After every successful phase-exit push', 'AC1.1: runs after every successful push');
   has('resolvePrStateByNumber', 'AC1.1: names the shared PR-state read');
   // The prose states and phases are the CLI's own lists (STATES, PHASE_SECTIONS keys), not a copy.
-  const rawSection = text.slice(start, catchUp);
+  const rawSection = text.slice(start, end);
   const bulletStates = [...rawSection.split('\n').filter((l) => l.startsWith('- **`')).join('\n')
     .matchAll(/\*\*`([a-z-]+)`\*\*/g)].map((m) => m[1]);
   assert.deepEqual([...bulletStates].sort(), [...STATES].sort(), 'the routing bullets name exactly the CLI states');
@@ -159,6 +163,15 @@ test('go-red control: dropping the --phase CLI invocation makes the shared asser
     .join('\n');
   assert.ok(mutated !== GIT_DISCIPLINE, 'the control must actually mutate the text');
   assert.throws(() => assertMergeStateSection(mutated), /AC1\.1: the CLI invocation/);
+});
+
+test('go-red control: the Pre-verification catch-up subsection cannot satisfy the Catch-up (`auto`) "never rebase" pin', () => {
+  const marker = 'Merge the integration branch in; never rebase — the run branch';
+  assert.equal(GIT_DISCIPLINE.split(marker).length, 2, 'the Catch-up (`auto`) opening sentence must occur exactly once');
+  const mutated = GIT_DISCIPLINE.replace(marker, 'Merge the integration branch in — the run branch');
+  assert.notEqual(mutated, GIT_DISCIPLINE, 'the control must actually mutate the text');
+  assert.ok(mutated.includes('merge, never rebase'), "the new subsection's own sentence is still in the mutated text");
+  assert.throws(() => assertMergeStateSection(mutated), /AC2\.1: merge, never rebase/);
 });
 
 test('go-red control: an unquoted branch in the catch-up push, or a state the CLI does not emit, makes the assertion throw', () => {
