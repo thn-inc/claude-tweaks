@@ -185,6 +185,30 @@ test('AC2.1 go-red: the multi-spec SKIP and reason moved after the Procedure par
   assert.throws(() => assertPreVerifyProcedure(alone), STEPS_MSG);
 });
 
+// Each guard marker carries its own permutation control: both controls above move the reason
+// sentence, so dropping UNRESOLVED_SKIP or MULTI_SKIP from the marker list would keep them green.
+// Moves the whole line carrying `needle` to the end of the file, behind the Procedure paragraph.
+function moveLineBehindProcedure(text, needle) {
+  const at = text.indexOf(needle);
+  assert.notStrictEqual(at, -1, `line not found: ${needle}`);
+  const start = text.lastIndexOf('\n', at) + 1;
+  const end = text.indexOf('\n', at);
+  assert.ok(end > at && end < text.indexOf('\n\n## Procedure'), 'line not found before the Procedure heading');
+  return `${text.slice(0, start)}${text.slice(end + 1)}\n${text.slice(start, end)}\n`;
+}
+
+test('AC2.1 go-red: the unresolved-model SKIP alone moved after the Procedure paragraph fails the order check', () => {
+  const mutated = moveLineBehindProcedure(PVC, UNRESOLVED_SKIP);
+  assert.notEqual(mutated, PVC);
+  assert.throws(() => assertPreVerifyProcedure(mutated), /condition: multi-spec shared branch must come after the previous marker/);
+});
+
+test('AC2.1 go-red: the multi-spec SKIP alone moved after the Procedure paragraph fails the order check', () => {
+  const mutated = moveLineBehindProcedure(PVC, '`--text "' + MULTI_SKIP);
+  assert.notEqual(mutated, PVC);
+  assert.throws(() => assertPreVerifyProcedure(mutated), /A multi-spec run skips even under `pr-first` because must come after the previous marker/);
+});
+
 test('AC1.1 go-red: the log-decision flags placed after the gate SKIPs fail the order check', () => {
   const moved = `${PVC.replace(STEP_FLAGS, '--step "elsewhere"')}\n${STEP_FLAGS}\n`;
   assert.notEqual(moved, PVC);
