@@ -375,6 +375,7 @@ function assertNeverNamesPostMergeClose(never) {
     "The second exception is the post-merge close of a PR's `Fixes` records: `_shared/pr-first-merge-post-merge.md` Step 4.0's `closing-links.js --mode post-merge` pass, after a confirmed PR merge into a base that is not the repo's default branch, closes each still-open `Fixes`-span record with a close comment (#4549).",
     'It reproduces what GitHub does itself on the default branch, where the closing keyword fires; it never closes a `Refs` record or any record the PR does not name.',
     "a human runs `gh issue reopen {record}`, and the close comment plus the pass's `AUTO` line in `decisions.md` stay as the audit trail",
+    'as long as this close is still its latest; a later promotion of the base into the default branch that carries the `Fixes` keyword can close it again, which is accepted',
     "satisfies the Reversibility floor's `high` for this one write, and only for that pass",
   ]) {
     assert.ok(never.includes(lit), `the Never-reversible list's second exception carries: ${lit}`);
@@ -400,7 +401,7 @@ test('AC2.1: issue-claims\' Close-via-merge names the below-floor parent close a
   assert.ok(!collapse(cvm).includes('under the restore contract stated there'), 'the referent-less pointer is gone');
 });
 
-test('AC2.1: the auto-mode contract names the below-floor parent close as an exception with its restore contract', () => {
+test('AC2.1: the auto-mode contract names both exceptions (the below-floor parent close and the non-default-base Fixes close), each with its restore contract', () => {
   const contract = read('_shared/auto-mode-contract.md');
   const never = collapse(section(contract, '### Never-reversible (auto-FORBIDDEN, regardless of mode)', '## What `auto` silences'));
   for (const lit of [
