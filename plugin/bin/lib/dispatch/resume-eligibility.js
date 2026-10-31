@@ -101,7 +101,9 @@ function parseClaim(content) {
 // worktreeBranch) must be the type the gatherer promises: a missing or mistyped one is never read
 // as "nothing to refuse", nor named in a refusal line as if it were a real state.
 function invalidInput(n, what, value) {
-  const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+  let kind = typeof value;
+  if (value === null) kind = 'null';
+  else if (Array.isArray(value)) kind = 'array';
   return refuse('invalid-input', `#${n}'s ${what} was not usable (${kind}) — not resumable on a malformed check; run /claude-tweaks:dispatch resume #${n} again, and report it if it repeats`);
 }
 

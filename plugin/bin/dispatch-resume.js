@@ -106,7 +106,8 @@ function resolveWorkLinks() {
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
   const { result } = resolvePolicyConfig({ git, readFile, keys: ['work-links'] });
   const entry = result['work-links'];
-  return !entry || entry.error !== undefined || entry.value === null || entry.value === undefined ? '' : String(entry.value);
+  if (!entry || entry.error !== undefined || entry.value === null || entry.value === undefined) return '';
+  return String(entry.value);
 }
 
 const realDeps = {
@@ -285,9 +286,14 @@ function classifyPriorRun(ctx, runId) {
   if (!parsed.ok) return { ...base, priorRunDir: 'unknown-owner' };
 
   const state = parsed.value;
-  const known = { ...base, state, priorRunOpen: NON_TERMINAL.has(state.status) };
   const priorRunDir = ownerClass(deps, state);
-  return { ...known, priorRunDir, priorRunOwnerHost: priorRunDir === 'other-host-owner' ? state.owner.host : null };
+  return {
+    ...base,
+    state,
+    priorRunOpen: NON_TERMINAL.has(state.status),
+    priorRunDir,
+    priorRunOwnerHost: priorRunDir === 'other-host-owner' ? state.owner.host : null,
+  };
 }
 
 // The owner ladder of a parsed run-state.json: 'dead-owner' | 'live-owner' | 'unknown-owner' |
@@ -459,7 +465,7 @@ function emit(ctx, obj) {
 function runVerdict(ctx) {
   const { deps, issue } = ctx;
   let available = false;
-  try { available = deps.ghAvailable(); } catch { available = false; }
+  try { available = deps.ghAvailable(); } catch { /* a throwing probe reads as gh absent */ }
   if (!available) throw new Exit(2, 'gh CLI not found on PATH — dispatch resume needs it to read the PR, labels and claim');
   try {
     ctx.slug = claimStore.resolveRepoSlugOrThrow(deps.gh);
@@ -576,7 +582,7 @@ function run(argv, deps) {
 
   try {
     let mainRoot = null;
-    try { mainRoot = deps.mainRoot(); } catch { mainRoot = null; }
+    try { mainRoot = deps.mainRoot(); } catch { /* an unresolvable main checkout is refused just below */ }
     if (!mainRoot) return fail(2, 'could not resolve the main checkout root');
     const ctx = {
       deps,
