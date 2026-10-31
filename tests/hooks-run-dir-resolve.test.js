@@ -633,6 +633,19 @@ test('#4677 #208: a live clean dir whose run-id also exists under archive/ is ne
   assert.strictEqual(out.path, archived);
 });
 
+// Discriminates the #208 archiveStatus filter on its own: the archived twin has no `pr`, so the
+// name-tie sort alone would walk past it to the resurrected live copy, which does record one.
+test('#4677 #208: a resurrected live clean copy is never adopted even when its archived twin has no pr', () => {
+  const main = gitRepo();
+  const live = mkRunDir(main, '2026-01-05T000000-spec-56');
+  writeRunState(live, { status: 'clean', worktree: null, pr: { number: 13, url: 'u' } });
+  const archived = mkArchived(main, '2026-01-05T000000-spec-56');
+  writeRunState(archived, { status: 'clean' });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-56', archived: true });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
+});
+
 test('#4677: --archived skips a malformed archived run-state.json in favor of an older valid archived match', () => {
   const main = gitRepo();
   const older = mkArchived(main, '2026-01-01T000000-spec-52');
