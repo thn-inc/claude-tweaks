@@ -7,6 +7,9 @@ const path = require('node:path');
 const { run, USAGE } = require('../plugin/bin/parent-gate');
 const { VERDICT_FIELDS, CLOSE_HEADING } = require('../plugin/bin/lib/issues/parent-gate');
 const { buildNativeParentQuery, buildNativeSubIssuesQuery } = require('../plugin/bin/lib/issues/record');
+const {
+  createRecord, closeRecord, readRecord, writeRecord, queryRecords,
+} = require('../plugin/bin/lib/issues/local-store');
 
 // The eight gh call shapes (the plan's Global Constraints), owner/repo o/r.
 const SHAPE = {
@@ -82,6 +85,7 @@ function go(argv, world = {}, over = {}) {
     readPolicyRaw: () => 'work-links: native\nrisk-floor: high\n',
     readWorkBackend: () => 'github-issues',
     readFile: (file) => fs.readFileSync(file, 'utf8'),
+    queryRecords,
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
     ...over,
@@ -292,18 +296,6 @@ test('exit 1 with nothing on stdout: a malformed invocation', () => {
   assert.match(go(['--sub-issue', '--closing', '11']).stderr, /missing value for --sub-issue/);
   assert.match(go(['--sub-issue', '11', '--closing', '']).stderr, /missing value for --closing/);
   assert.match(go(['--sub-issue', '11', '--risk-floor']).stderr, /missing value for --risk-floor/);
-});
-
-test('exit 1: local-files is refused', () => {
-  const flag = go(['--sub-issue', '11', '--backend', 'local-files']);
-  assert.equal(flag.code, 1);
-  assert.match(flag.stderr, /--backend local-files is not supported yet/);
-  assert.equal(flag.stdout, '');
-  const configured = go(['--sub-issue', '11'], {}, { readWorkBackend: () => 'local-files' });
-  assert.equal(configured.code, 1);
-  assert.match(configured.stderr, /--backend local-files is not supported yet/);
-  const other = go(['--sub-issue', '11'], {}, { readWorkBackend: () => null });
-  assert.equal(other.code, 0);
 });
 
 test('a throwing readWorkBackend reads as github-issues', () => {
@@ -628,4 +620,246 @@ test('--facts-json takes exactly one non-empty value, and USAGE names it', () =>
   assert.equal(twice.code, 1);
   assert.match(twice.stderr, /--facts-json given more than once/);
   assert.match(USAGE, /\[--facts-json <file>\]/);
+});
+
+// --- --backend local-files: the record store as the fact source ---
+
+// Writes one record with the real writers -> the read-back record. `closed` closes it through
+// closeRecord; `notPlanned` then sets the facet through writeRecord on the read-back record.
+function addRecord(dir, title, {
+  facets = {}, body = '', closed = false, notPlanned = false,
+} = {}) {
+  const created = createRecord(dir, { slug: 'rec', title, body, facets });
+  if (closed) closeRecord(created.path);
+  if (notPlanned) {
+    const read = readRecord(created.path);
+    writeRecord(read.path, { title: read.title, body: read.body, facets: { ...read.facets, notPlanned: true } });
+  }
+  return readRecord(created.path);
+}
+
+// A parent (is-parent-issue) with sub-issues at `risk: 'low'`, in a fresh temp root (records under
+// `<root>/<under>`, or the root itself) -> { root, dir, parent, subs }. Each `subs` entry is the
+// options addRecord takes (default: two closed ones).
+function family(t, { parent = {}, subs = [{ closed: true }, { closed: true }], under = '' } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'parent-gate-records-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, under);
+  const parentRecord = addRecord(dir, 'Parent', { ...parent, facets: { isParentIssue: true, ...parent.facets } });
+  const subRecords = subs.map((sub, i) => addRecord(dir, `Sub ${i + 1}`, {
+    ...sub, facets: { parent: parentRecord.id, risk: 'low', ...sub.facets },
+  }));
+  return {
+    root, dir, parent: parentRecord, subs: subRecords,
+  };
+}
+
+// go() over the local-files backend: gh, its probe and the remote all throw if reached.
+function goLocal(argv, dir, over = {}) {
+  return go([...argv, '--backend', 'local-files', '--records-dir', dir], {}, { ...NO_GH, remoteUrl: boom, ...over });
+}
+
+test('local-files: all sub-issues not planned closes not planned', (t) => {
+  const { dir, parent } = family(t, { subs: [{ closed: true, notPlanned: true }, { closed: true, notPlanned: true }] });
+  const r = goLocal(['--parent', String(parent.id)], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.state, 'due');
+  assert.equal(r.verdict.closeReason, 'not planned');
+  assert.deepEqual(r.verdict.subIssues.map((s) => [s.state, s.stateReason]), [['CLOSED', 'NOT_PLANNED'], ['CLOSED', 'NOT_PLANNED']]);
+});
+
+test('local-files: due below the floor closes completed', (t) => {
+  const { dir, parent } = family(t);
+  const r = goLocal(['--parent', String(parent.id), '--idempotence'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.stderr, '');
+  assert.equal(r.stdout.trimEnd().split('\n').length, 1);
+  assert.deepEqual(Object.keys(r.verdict), VERDICT_FIELDS);
+  assert.deepEqual(
+    { ...r.verdict, subIssues: undefined },
+    {
+      parent: parent.id, state: 'due', exceeds: false, closeReason: 'completed', idempotence: 'comment-and-close', maxTier: 'low', riskFloor: 'high', parentIssue: true, needs: [], held: [], subIssues: undefined, skipped: [],
+    },
+  );
+  assert.equal(goLocal(['--parent', String(parent.id)], dir).verdict.idempotence, null);
+});
+
+test('local-files: a sub-issue above the floor exceeds; the risk facet is the label', (t) => {
+  const { dir, parent } = family(t, { subs: [{ closed: true }, { closed: true, facets: { risk: 'high' } }] });
+  const r = goLocal(['--parent', String(parent.id), '--idempotence'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.state, 'due');
+  assert.equal(r.verdict.maxTier, 'high');
+  assert.equal(r.verdict.exceeds, true);
+  assert.equal(r.verdict.idempotence, null);
+});
+
+test('local-files: the sub-issues are the store entries naming the parent, open and closed, in id order', (t) => {
+  const { dir, parent, subs } = family(t, { subs: [{ closed: true }, {}] });
+  addRecord(dir, 'Unrelated', { facets: { parent: parent.id + 50 } });
+  const r = goLocal(['--parent', String(parent.id), '--held', String(subs[1].id)], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.state, 'incomplete');
+  assert.deepEqual(r.verdict.held, [subs[1].id]);
+  assert.deepEqual(r.verdict.subIssues, [
+    { number: subs[0].id, title: 'Sub 1', state: 'CLOSED', stateReason: 'COMPLETED', pr: null },
+    { number: subs[1].id, title: 'Sub 2', state: 'OPEN', stateReason: '', pr: null },
+  ]);
+});
+
+test('local-files: closing set counts the sub-issue in hand', (t) => {
+  const { dir, parent, subs } = family(t, { subs: [{ closed: true }, {}] });
+  const r = goLocal(['--sub-issue', String(subs[1].id)], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.parent, parent.id);
+  assert.equal(r.verdict.state, 'due');
+  assert.equal(goLocal(['--parent', String(parent.id)], dir).verdict.state, 'incomplete');
+});
+
+test('local-files: an explicit --closing id counts', (t) => {
+  const { dir, subs } = family(t, { subs: [{}, { closed: true }] });
+  const [a, b] = subs.map((s) => s.id);
+  const r = goLocal(['--sub-issue', String(b), '--closing', `${a},${b}`], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.state, 'due');
+  // Without the token, only the sub-issue in hand counts, and a stays open.
+  assert.equal(goLocal(['--sub-issue', String(b)], dir).verdict.state, 'incomplete');
+});
+
+test('local-files: a body heading means close only; a closed parent is a no-op', (t) => {
+  const marked = family(t, { parent: { body: `Overview\n\n${CLOSE_HEADING}\n` } });
+  const r = goLocal(['--sub-issue', String(marked.subs[0].id), '--idempotence'], marked.dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.state, 'due');
+  assert.equal(r.verdict.idempotence, 'close-only');
+  assert.deepEqual(r.verdict.skipped, []);
+  const done = family(t, { parent: { closed: true } });
+  const noop = goLocal(['--sub-issue', String(done.subs[0].id), '--idempotence'], done.dir);
+  assert.equal(noop.code, 0, noop.stderr);
+  assert.equal(noop.verdict.idempotence, 'already-closed');
+  // Without the flag nothing is read.
+  assert.equal(goLocal(['--sub-issue', String(done.subs[0].id)], done.dir).verdict.idempotence, null);
+});
+
+test('local-files: --parent', (t) => {
+  const closedParent = family(t, { parent: { closed: true } });
+  const closed = goLocal(['--parent', String(closedParent.parent.id), '--idempotence'], closedParent.dir);
+  assert.equal(closed.code, 0, closed.stderr);
+  assert.equal(closed.verdict.state, 'due');
+  assert.equal(closed.verdict.idempotence, 'already-closed');
+
+  const openParent = family(t);
+  const open = goLocal(['--parent', String(openParent.parent.id), '--idempotence'], openParent.dir);
+  assert.equal(open.code, 0, open.stderr);
+  assert.equal(open.verdict.state, 'due');
+  assert.equal(open.verdict.exceeds, false);
+  assert.equal(open.verdict.idempotence, 'comment-and-close');
+  assert.equal(open.verdict.parentIssue, true);
+
+  // A record without is-parent-issue still gets a verdict, with parentIssue: false.
+  const plain = family(t, { parent: { facets: { isParentIssue: false } } });
+  const unmarked = goLocal(['--parent', String(plain.parent.id)], plain.dir);
+  assert.equal(unmarked.code, 0, unmarked.stderr);
+  assert.equal(unmarked.verdict.parentIssue, false);
+  assert.equal(unmarked.verdict.state, 'due');
+
+  const missing = goLocal(['--parent', String(openParent.parent.id + 90)], openParent.dir);
+  assert.equal(missing.code, 1);
+  assert.equal(missing.stdout, '');
+  assert.match(missing.stderr, /^parent-gate\.js: parent #\d+ is not a record in /);
+});
+
+test('local-files: the acceptance facet gates', (t) => {
+  const pending = family(t, { parent: { facets: { acceptance: 'pending' } } });
+  const gated = goLocal(['--parent', String(pending.parent.id)], pending.dir);
+  assert.equal(gated.code, 0, gated.stderr);
+  assert.equal(gated.verdict.state, 'gated');
+  const approved = family(t, { parent: { facets: { acceptance: 'approved' } } });
+  assert.equal(goLocal(['--parent', String(approved.parent.id)], approved.dir).verdict.state, 'resolved');
+});
+
+test('local-files: a sub-issue with no parent facet is no-parent', (t) => {
+  const { dir } = family(t);
+  const loner = addRecord(dir, 'Loner');
+  const r = goLocal(['--sub-issue', String(loner.id)], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.parent, null);
+  assert.equal(r.verdict.state, 'no-parent');
+});
+
+test('local-files: never calls gh, ghAvailable or remoteUrl', (t) => {
+  const { dir, parent, subs } = family(t);
+  const dead = { ghAvailable: boom, remoteUrl: boom, runner: boom };
+  for (const argv of [['--parent', String(parent.id), '--idempotence'], ['--sub-issue', String(subs[0].id)]]) {
+    const r = go([...argv, '--backend', 'local-files', '--records-dir', dir], {}, dead);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.calls.length, 0);
+  }
+});
+
+test('local-files: a qualified closing token or an unknown id is exit 1', (t) => {
+  const { dir, parent, subs } = family(t);
+  const qualified = goLocal(['--sub-issue', String(subs[0].id), '--closing', `o/r#${subs[0].id}`], dir);
+  assert.equal(qualified.code, 1);
+  assert.equal(qualified.stdout, '');
+  assert.match(qualified.stderr, /names a repository.*--backend local-files takes plain ids/);
+
+  const unknown = goLocal(['--sub-issue', String(parent.id + 90)], dir);
+  assert.equal(unknown.code, 1);
+  assert.equal(unknown.stdout, '');
+  assert.match(unknown.stderr, /^parent-gate\.js: sub-issue #\d+ is not a record in /);
+
+  const orphan = addRecord(dir, 'Orphan', { facets: { parent: parent.id + 90 } });
+  const dangling = goLocal(['--sub-issue', String(orphan.id)], dir);
+  assert.equal(dangling.code, 1);
+  assert.equal(dangling.stdout, '');
+  assert.match(dangling.stderr, /^parent-gate\.js: parent #\d+ is not a record in /);
+
+  // A records dir that does not exist holds no record.
+  const absent = goLocal(['--sub-issue', '1'], path.join(dir, 'no-such-dir'));
+  assert.equal(absent.code, 1);
+  assert.match(absent.stderr, /sub-issue #1 is not a record in /);
+});
+
+test('local-files: a failing store read is exit 3 with nothing on stdout', (t) => {
+  const { dir, parent } = family(t);
+  const r = goLocal(['--parent', String(parent.id)], dir, { queryRecords: () => { throw new Error('EACCES: permission denied'); } });
+  assert.equal(r.code, 3);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /^parent-gate\.js: could not read the records in .*EACCES/);
+});
+
+test('local-files: the records dir defaults to specs under the repo root; --records-dir resolves against it', (t) => {
+  const { root, parent } = family(t, { under: 'specs' });
+  const deps = { ...NO_GH, remoteUrl: boom, repoRoot: () => root };
+  // The sub-issue titles tell the temp store from a `specs/` of the cwd, whose low ids may collide.
+  const titles = (r) => (r.verdict ? r.verdict.subIssues.map((s) => s.title) : r.stderr);
+  const byDefault = go(['--parent', String(parent.id), '--backend', 'local-files'], {}, deps);
+  assert.equal(byDefault.code, 0, byDefault.stderr);
+  assert.deepEqual(titles(byDefault), ['Sub 1', 'Sub 2']);
+  const relative = go(['--parent', String(parent.id), '--backend', 'local-files', '--records-dir', 'specs'], {}, deps);
+  assert.equal(relative.code, 0, relative.stderr);
+  assert.deepEqual(titles(relative), ['Sub 1', 'Sub 2']);
+  const elsewhere = go(['--parent', String(parent.id), '--backend', 'local-files', '--records-dir', 'other'], {}, deps);
+  assert.equal(elsewhere.code, 1);
+  assert.match(elsewhere.stderr, /parent #\d+ is not a record in /);
+});
+
+test('the configured work-backend selects local-files; a null one reads as github-issues', (t) => {
+  const { dir, parent } = family(t);
+  const configured = go(['--parent', String(parent.id), '--records-dir', dir], {}, { ...NO_GH, remoteUrl: boom, readWorkBackend: () => 'local-files' });
+  assert.equal(configured.code, 0, configured.stderr);
+  assert.equal(configured.verdict.parent, parent.id);
+  assert.equal(go(['--sub-issue', '11'], {}, { readWorkBackend: () => null }).code, 0);
+});
+
+test('--records-dir without local-files is exit 1; USAGE names both new flags', (t) => {
+  const { dir } = family(t);
+  const r = go(['--parent', '10', '--records-dir', dir]);
+  assert.equal(r.code, 1);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /--records-dir only applies to --backend local-files/);
+  assert.equal(r.calls.length, 0);
+  assert.match(go(['--parent', '10', '--records-dir']).stderr, /missing value for --records-dir/);
+  assert.match(USAGE, /\[--backend github-issues\|local-files\] \[--records-dir <dir>\]/);
 });

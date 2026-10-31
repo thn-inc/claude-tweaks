@@ -8,17 +8,24 @@
 //
 // Usage: parent-gate.js (--sub-issue <n> | --parent <n>) [--closing <tok>[,<tok>...]]
 //   [--held <n>[,<n>...]] [--merging-pr <n>] [--idempotence] [--work-links native|body-text]
-//   [--risk-floor low|medium|high|always] [--facts-json <file>] [--help]
+//   [--risk-floor low|medium|high|always] [--facts-json <file>]
+//   [--backend github-issues|local-files] [--records-dir <dir>] [--help]
 //   --closing    N or owner/repo#N; a foreign-repo token is dropped. --sub-issue N without
-//                --closing means {N}; --parent without it means {}.
+//                --closing means {N}; --parent without it means {}. Under --backend local-files
+//                only a plain N is accepted: a record id names no repository.
 //   --held       sub-issues Step 4.0b's caller has not settled; they come back in `held`.
 //   --idempotence  pass only when the caller will run Close the parent below the floor
 //                (Step 4.0b, tidy's parent-side entry): it adds the two idempotence reads
 //                (the parent's comments and the gh login), and only for a parent that is
 //                due below the floor. Without it `idempotence` is null and `skipped` is [].
 //   --work-links, --risk-floor  default to .claude-tweaks/policy.yml at the repo root.
-//   --backend    github-issues|local-files; defaults to CLAUDE.md's `work-backend:`.
-//                local-files is refused until its record reader exists.
+//   --backend    github-issues|local-files; defaults to CLAUDE.md's `work-backend:`. local-files
+//                reads the gate's facts from the record store (bin/lib/issues/local-store.js):
+//                no gh call, no gh probe, no remote read. A record's `parent` facet is its
+//                parent; `closed`/`not-planned` give a sub-issue's state; the `risk`,
+//                `is-parent-issue` and `acceptance` facets stand in for the labels.
+//   --records-dir  the record store for --backend local-files, resolved against the repo root;
+//                defaults to `specs`. Refused under any other backend.
 //   --facts-json the gh-absent fact source: the MCP `issue_read` results the calling skill
 //                fetched, written unreshaped (bin/lib/issues/mcp-parent-gate-shape.js's
 //                FACTS_KEYS), normalized in Node and then evaluated by the same functions
@@ -26,9 +33,9 @@
 //                `parentComments` and `me` are required and guarded only under --idempotence,
 //                and only for an open, non-reopened parent that is due below the floor (where
 //                the gh path makes its two reads); any other verdict never looks at them.
-//                owner/repo are
-//                read from the origin remote (a git read) only when a --closing token is
-//                qualified; otherwise no remote is read. Refused with --backend local-files.
+//                owner/repo are read from the origin remote (a git read) only when a
+//                --closing token is qualified; otherwise no remote is read. Refused with
+//                --backend local-files.
 //
 // Output: one JSON line on stdout, the verdict in the order of VERDICT_FIELDS
 // (bin/lib/issues/parent-gate.js): {parent, state, exceeds, closeReason, idempotence,
@@ -37,9 +44,11 @@
 //
 // Exit codes (Split-1/2, fetch-sub-issues.js's vocabulary): 0 a verdict was printed;
 // 1 a malformed invocation; 2 `gh` is absent, or owner/repo or the repo root cannot be
-// resolved; 3 a gh call failed (the message goes to stderr). On every non-zero exit nothing
-// goes to stdout. Only a GhFailure or a FactsError maps to an exit code: any other throw is a
-// bug and propagates.
+// resolved; 3 a gh call failed, or under --backend local-files the record store could not be
+// read (the message goes to stderr). On every non-zero exit nothing goes to stdout. Only a
+// GhFailure or a FactsError maps to an exit code, and a thrown store read under local-files:
+// any other throw is a bug and propagates. Under --backend local-files a sub-issue or parent
+// id the store does not hold, or a closing token that names a repository, is exit 1.
 //
 // --facts-json uses the same vocabulary, and splits the file's problems by what they mean:
 // 1 a facts file that will not read, parse or hold a JSON object, a required key that is
@@ -70,12 +79,20 @@ const {
   evaluateParentGate, evaluateIdempotence, parseClosingTokens,
 } = require('./lib/issues/parent-gate');
 const { FactsError, normalizeMcpFacts, withIdempotenceReads } = require('./lib/issues/mcp-parent-gate-shape');
+const { queryRecords, DEFAULT_DIR } = require('./lib/issues/local-store');
+const { LABELS } = require('./lib/issues/record-vocabulary');
 
-const USAGE = 'usage: parent-gate.js (--sub-issue <n> | --parent <n>) [--closing <tok>[,<tok>...]] [--held <n>[,<n>...]] [--merging-pr <n>] [--idempotence] [--work-links native|body-text] [--risk-floor low|medium|high|always] [--facts-json <file>] [--help]\n';
+const USAGE = 'usage: parent-gate.js (--sub-issue <n> | --parent <n>) [--closing <tok>[,<tok>...]] [--held <n>[,<n>...]] [--merging-pr <n>] [--idempotence] [--work-links native|body-text] [--risk-floor low|medium|high|always] [--facts-json <file>] [--backend github-issues|local-files] [--records-dir <dir>] [--help]\n';
 
 const WORK_LINKS = POLICY_KEYS.find((k) => k.key === 'work-links').values;
 const BACKENDS = ['github-issues', 'local-files'];
-const VALUE_FLAGS = new Set(['--sub-issue', '--parent', '--closing', '--held', '--merging-pr', '--work-links', '--risk-floor', '--backend', '--facts-json']);
+const VALUE_FLAGS = new Set(['--sub-issue', '--parent', '--closing', '--held', '--merging-pr', '--work-links', '--risk-floor', '--backend', '--facts-json', '--records-dir']);
+// A record's `acceptance` facet, as the label the gate reads it from.
+const ACCEPTANCE_LABELS = {
+  pending: LABELS.ACCEPT_PENDING,
+  approved: LABELS.ACCEPT_APPROVED,
+  'changes-requested': LABELS.ACCEPT_CHANGES_REQUESTED,
+};
 
 // A digit string -> its positive safe-integer value, or null (`Number('')` is 0, so test the digits first).
 function positive(text) {
@@ -108,6 +125,7 @@ function flagValue(flag, text) {
     case '--risk-floor':
       return VALID_RISK_FLOORS.includes(text) ? { value: text } : { error: `--risk-floor must be one of ${VALID_RISK_FLOORS.join(', ')}: ${text}` };
     case '--facts-json':
+    case '--records-dir':
       return { value: text };
     default:
       return BACKENDS.includes(text) ? { value: text } : { error: `--backend must be one of ${BACKENDS.join(', ')}: ${text}` };
@@ -124,11 +142,12 @@ const OPT_NAMES = {
   '--risk-floor': 'riskFloor',
   '--backend': 'backend',
   '--facts-json': 'factsJson',
+  '--records-dir': 'recordsDir',
 };
 
 function parseArgs(argv) {
   const opts = {
-    help: false, subIssue: null, parent: null, closing: null, held: [], mergingPr: null, idempotence: false, workLinks: null, riskFloor: null, backend: null, factsJson: null,
+    help: false, subIssue: null, parent: null, closing: null, held: [], mergingPr: null, idempotence: false, workLinks: null, riskFloor: null, backend: null, factsJson: null, recordsDir: null,
   };
   const given = new Set();
   for (let i = 0; i < argv.length; i++) {
@@ -173,9 +192,76 @@ const realDeps = {
   },
   readWorkBackend,
   readFile: (file) => fs.readFileSync(file, 'utf8'),
+  queryRecords,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
+
+function printVerdict(deps, verdict) {
+  deps.stdout(`${JSON.stringify(Object.fromEntries(VERDICT_FIELDS.map((key) => [key, verdict[key]])))}\n`);
+}
+
+// --backend local-files: the same gate over the record store -> exit code. A record's `parent`
+// facet is its parent, `closed`/`not-planned` give a sub-issue's state, and the `risk`,
+// `is-parent-issue` and `acceptance` facets stand in for the labels the gh path reads. The
+// store is read once, open then closed, so the sub-issues and the parent are one snapshot.
+function runLocalFiles(opts, deps, { root, tokens, riskFloor }) {
+  const closing = parseClosingTokens(tokens, { owner: null, repo: null });
+  if (closing.error) {
+    deps.stderr(`parent-gate.js: ${closing.error} (--backend local-files takes plain ids)\n${USAGE}`);
+    return 1;
+  }
+  const dir = path.resolve(root, opts.recordsDir !== null ? opts.recordsDir : DEFAULT_DIR);
+  let records;
+  try {
+    records = [...deps.queryRecords(dir, {}), ...deps.queryRecords(dir, { closed: true })];
+  } catch (err) {
+    deps.stderr(`parent-gate.js: could not read the records in ${dir}: ${err && err.message}\n`);
+    return 3;
+  }
+  const byId = new Map(records.map((record) => [record.id, record]));
+
+  let parentId = opts.parent;
+  if (parentId === null) {
+    const sub = byId.get(opts.subIssue);
+    if (!sub) { deps.stderr(`parent-gate.js: sub-issue #${opts.subIssue} is not a record in ${dir}\n`); return 1; }
+    parentId = sub.facets.parent;
+  }
+  let facts = { parent: null, parentLabels: [], subIssues: [] };
+  let parentRecord = null;
+  if (parentId !== null && parentId !== undefined) {
+    parentRecord = byId.get(parentId);
+    if (!parentRecord) { deps.stderr(`parent-gate.js: parent #${parentId} is not a record in ${dir}\n`); return 1; }
+    const parentLabels = [];
+    if (parentRecord.facets.isParentIssue === true) parentLabels.push(LABELS.PARENT_ISSUE);
+    const acceptance = parentRecord.facets.acceptance;
+    if (Object.prototype.hasOwnProperty.call(ACCEPTANCE_LABELS, acceptance)) parentLabels.push(ACCEPTANCE_LABELS[acceptance]);
+    facts = {
+      parent: parentId,
+      parentLabels,
+      subIssues: records.filter((r) => r.facets.parent === parentId).map((r) => ({
+        number: r.id,
+        title: r.title,
+        state: r.facets.closed ? 'CLOSED' : 'OPEN',
+        stateReason: r.facets.closed ? (r.facets.notPlanned ? 'NOT_PLANNED' : 'COMPLETED') : '',
+        labels: r.facets.risk ? [`risk:${r.facets.risk}`] : [],
+        closedBy: [],
+      })),
+    };
+  }
+
+  let verdict = evaluateParentGate({
+    ...facts, closingSet: closing.numbers, held: opts.held, mergingPr: opts.mergingPr, riskFloor,
+  });
+  if (opts.idempotence && verdict.state === 'due' && verdict.exceeds === false) {
+    const { idempotence, skipped } = evaluateIdempotence({
+      state: parentRecord.facets.closed ? 'CLOSED' : 'OPEN', body: parentRecord.body,
+    });
+    verdict = { ...verdict, idempotence, skipped };
+  }
+  printVerdict(deps, verdict);
+  return 0;
+}
 
 // argv -> exit code. All I/O goes through deps so tests never touch gh or git.
 function run(argv, deps = realDeps) {
@@ -199,16 +285,25 @@ function run(argv, deps = realDeps) {
     try { configured = deps.readWorkBackend(root); } catch { configured = null; }
     backend = configured === 'local-files' ? 'local-files' : 'github-issues';
   }
+  const tokens = opts.closing !== null ? opts.closing : opts.subIssue !== null ? [String(opts.subIssue)] : [];
+
+  let policyRaw = null;
+  try { policyRaw = deps.readPolicyRaw(root); } catch { policyRaw = null; }
+  const policy = resolvePolicyKeys(['work-links', 'risk-floor'], { policyRaw });
+  const workLinks = opts.workLinks || policy['work-links'].value;
+  const riskFloor = opts.riskFloor || policy['risk-floor'].value;
+
   if (backend === 'local-files') {
     if (opts.factsJson !== null) {
       deps.stderr('parent-gate.js: --facts-json cannot be combined with --backend local-files\n');
       return 1;
     }
-    deps.stderr('parent-gate.js: --backend local-files is not supported yet\n');
+    return runLocalFiles(opts, deps, { root, tokens, riskFloor });
+  }
+  if (opts.recordsDir !== null) {
+    deps.stderr('parent-gate.js: --records-dir only applies to --backend local-files\n');
     return 1;
   }
-
-  const tokens = opts.closing !== null ? opts.closing : opts.subIssue !== null ? [String(opts.subIssue)] : [];
 
   // The facts file path makes no gh call and never probes for gh. It needs owner/repo only to
   // judge a qualified --closing token (an unqualified one skips sameRepoNumbers), so it reads
@@ -237,12 +332,6 @@ function run(argv, deps = realDeps) {
       return 2;
     }
   }
-
-  let policyRaw = null;
-  try { policyRaw = deps.readPolicyRaw(root); } catch { policyRaw = null; }
-  const policy = resolvePolicyKeys(['work-links', 'risk-floor'], { policyRaw });
-  const workLinks = opts.workLinks || policy['work-links'].value;
-  const riskFloor = opts.riskFloor || policy['risk-floor'].value;
 
   const closing = parseClosingTokens(tokens, { owner, repo });
   if (closing.error) { deps.stderr(`parent-gate.js: ${closing.error}\n${USAGE}`); return 1; }
@@ -297,7 +386,7 @@ function run(argv, deps = realDeps) {
     deps.stderr(`parent-gate.js: ${err.message}\n`);
     return 3;
   }
-  deps.stdout(`${JSON.stringify(Object.fromEntries(VERDICT_FIELDS.map((key) => [key, verdict[key]])))}\n`);
+  printVerdict(deps, verdict);
   return 0;
 }
 
