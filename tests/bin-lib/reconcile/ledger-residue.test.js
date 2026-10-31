@@ -251,12 +251,16 @@ test('defaultCreatePr: parses the PR URL gh prints; bad output and failures are 
   assert.strictEqual(defaultCreatePr(arg, () => { throw new Error('HTTP 422'); }), 'network-failure');
 });
 
-const timeoutError = () => { const e = new Error('boom'); e.code = 'ETIMEDOUT'; throw e; };
+function throwTimeout() {
+  const error = new Error('boom');
+  error.code = 'ETIMEDOUT';
+  throw error;
+}
 
 test('timeout policy: defaultListOpenRecords retries once when the gh call times out', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-timeout-records-'));
   let calls = 0;
-  const exec = () => { calls += 1; if (calls === 1) timeoutError(); return '[]'; };
+  const exec = () => { calls += 1; if (calls === 1) throwTimeout(); return '[]'; };
   assert.deepStrictEqual(defaultListOpenRecords(root, exec), []);
   assert.strictEqual(calls, 2);
 });
@@ -269,7 +273,7 @@ test('timeout policy: defaultListRemovalPrs re-runs the whole enumeration once w
   const exec = (bin, args, opts) => {
     if (args.some((a) => a.includes('matching-refs'))) {
       refsReads += 1;
-      if (refsReads === 1) timeoutError();
+      if (refsReads === 1) throwTimeout();
     }
     return fake.exec(bin, args, opts);
   };
@@ -279,7 +283,7 @@ test('timeout policy: defaultListRemovalPrs re-runs the whole enumeration once w
 
 test('timeout policy: defaultCreatePr never retries — a timed-out create may already have opened the PR', () => {
   let calls = 0;
-  const exec = () => { calls += 1; timeoutError(); };
+  const exec = () => { calls += 1; throwTimeout(); };
   const arg = { root: '/r', base: 'main', head: 'build/ledger-residue-x', title: 'T', body: 'B' };
   assert.strictEqual(defaultCreatePr(arg, exec), 'network-failure');
   assert.strictEqual(calls, 1);
