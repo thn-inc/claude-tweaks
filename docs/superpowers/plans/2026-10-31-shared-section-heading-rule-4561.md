@@ -175,7 +175,7 @@ test('AC3.2: a fenced ## Original request does not hide a later ambiguity marker
   assert.equal(countAmbiguityMarkers(body), 1);
 });
 test('dropEmptyOpenQuestions ignores an Open Questions heading inside a fence; a CRLF heading still matches (#4561)', () => {
-  const fenced = 'A\n\n```\n## Open Questions\n\n| Q | A |\n|---|---|\n```\n';
+  const fenced = '```\n## Open Questions\n\n| Q | A |\n|---|---|\n## Other\n```\n';
   assert.deepEqual(dropEmptyOpenQuestions(fenced), { body: fenced, removed: false });
   const crlf = 'A\r\n\r\n## Open Questions\r\n\r\n| Q | A |\r\n|---|---|\r\n';
   assert.equal(dropEmptyOpenQuestions(crlf).removed, true);
@@ -186,7 +186,7 @@ test('dropEmptyOpenQuestions ignores an Open Questions heading inside a fence; a
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/issues/materialize-format.test.js tests/bin-lib/compose-record/compose.test.js tests/bin-lib/issues/ambiguity-resolve.test.js`
-Expected: FAIL after Step 1 — `authoredRegion` is not a function; the fenced-boundary tests fail (old regex is fence-blind); the fenced Open Questions case returns `removed: true`.
+Expected: FAIL after Step 1 — `authoredRegion` is not a function; the fenced-boundary tests fail (old regex is fence-blind); the fenced Open Questions case returns `removed: true` (old code ends the section at the fenced `## Other`, sees only table rows, and deletes fenced lines).
 
 - [ ] **Step 3: Implement** as described in Files/Interfaces. `grep -rn ORIGINAL_REQUEST_RE plugin tests` must then print only `tests/bin-lib/compose-record/compose.test.js`'s absence pin.
 
@@ -199,7 +199,7 @@ Expected: FAIL after Step 1 — `authoredRegion` is not a function; the fenced-b
 **Role:** integration
 
 **Files:**
-- Modify: `plugin/bin/lib/compose-record/compose.js:19-38` (CRLF-normalize, `fencedLineMask(lines)`, a line is a section heading when unfenced and `headingLine(line)` is level 2; keys are `headingLine(...).text`; content accumulation and final trim unchanged)
+- Modify: `plugin/bin/lib/compose-record/compose.js:16-38` (line 16: `h.replace(/^## /, '')` becomes `h.slice(3)` — every `REQUIRED_SECTIONS` entry starts with `## `, and Task 5's scan flags the regex; then `splitSections`: CRLF-normalize, `fencedLineMask(lines)`, a line is a section heading when unfenced and `headingLine(line)` is level 2; keys are `headingLine(...).text`; content accumulation and final trim unchanged)
 - Modify: `.claude/skills/shared-contract-extraction/SKILL.md:84` — the sentence "`splitSections` is still separate." becomes "#4561 then routed `splitSections` through the shared reader (`headingLine`)." (behavior-change prose sweep; no other prose names it — `git grep -n splitSections -- plugin docs .claude` lists only this line plus the unrelated `init/claude-md-conformance.js` twin)
 - Test: `tests/bin-lib/compose-record/compose.test.js`
 
@@ -266,7 +266,7 @@ for (const rel of ['release-note-repair/apply.js', 'issues/near-duplicate.js', '
   });
 }
 ```
-(`materialize-format.js` may reference `/^## /` in `REQUIRED_SECTIONS` handling? It does not — `heading.replace('## ', '')` is a string, not a regex; compose.js's `h.replace(/^## /, '')` at :16 IS matched — rewrite it as `h.slice(3)` in this task, since every `REQUIRED_SECTIONS` entry starts with `## `.)
+(`materialize-format.js` may reference `/^## /` in `REQUIRED_SECTIONS` handling? It does not — `heading.replace('## ', '')` is a string, not a regex; compose.js's `h.replace(/^## /, '')` at :16 IS matched — Task 4 rewrites it as `h.slice(3)`.)
 
 apply.test.js:
 ```js
