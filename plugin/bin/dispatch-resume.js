@@ -48,6 +48,7 @@ const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
 const { DEFAULT_PROBES } = require('./lib/run-liveness/probes');
 const { MAX_PID, probeOwnerPid } = require('./lib/run-liveness/owner-pid-probe');
 const { resolveTarget } = require('./lib/stage-item/write');
+const { lstatType } = require('./lib/path-guard');
 const { selectResumePr, resumeEligibility, resumeContext } = require('./lib/dispatch/resume-eligibility');
 
 const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--help]\n'
@@ -103,7 +104,9 @@ const realDeps = {
   readClaim: (slug, issue) => claimStore.readClaimBlob(
     { ghApi: claimStore.defaultGhApi, gitRunner: gitCasRunner }, slug, issue, null,
   ),
-  exists: (p) => fs.existsSync(p),
+  // path-guard's lstat: an unreadable or symlinked leaf reads as present, so the read that follows
+  // it fails closed (unknown-owner, or exit 4) instead of passing for an absent one.
+  exists: (p) => lstatType(p).type !== 'missing',
   readdir: (p) => fs.readdirSync(p),
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   findSibling: findConflictingSession,

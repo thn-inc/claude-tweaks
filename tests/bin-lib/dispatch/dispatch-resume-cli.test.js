@@ -6,7 +6,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { readText } = require('../../helpers/read-skill');
 const { run, realDeps } = require('../../../plugin/bin/dispatch-resume');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
 const { findConflictingSession } = require('../../../plugin/bin/lib/hooks/sibling-sessions');
@@ -202,7 +204,7 @@ test('the gh pr list argv pins the head branch, repo and a --json list that incl
 
 test('context is read from the archived decisions.md', () => {
   const env = makeEnv();
-  env.cfg.files[`${ARCH}/decisions.md`] = fs.readFileSync(DECISIONS, 'utf8');
+  env.cfg.files[`${ARCH}/decisions.md`] = readText(DECISIONS);
   const r = exec(env);
   assert.equal(r.code, 0);
   assert.deepStrictEqual(r.json.context.lastPhase, { section: '/build', step: 'Common Step 1.5' });
@@ -1253,6 +1255,20 @@ test('realDeps carries the production seams the CLI needs', () => {
 test('the real git dep runs a quiet read and throws on a failing command', () => {
   assert.equal(typeof realDeps.git(['--version']), 'string');
   assert.throws(() => realDeps.git(['rev-parse', '--verify', '--quiet', '--end-of-options', 'refs/heads/definitely-not-a-branch-4588']));
+});
+
+test('the real exists dep: a directory and a file are present, a missing path and a path under a file are not', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-dispatch-resume-'));
+  try {
+    const file = path.join(dir, 'run-state.json');
+    fs.writeFileSync(file, '{}');
+    assert.equal(realDeps.exists(dir), true);
+    assert.equal(realDeps.exists(file), true);
+    assert.equal(realDeps.exists(path.join(dir, 'absent')), false);
+    assert.equal(realDeps.exists(path.join(file, 'below-a-file')), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('the real workLinks dep resolves to a string', () => {

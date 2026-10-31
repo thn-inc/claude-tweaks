@@ -4,8 +4,8 @@
 // worktree-dispatch-record-4589, run 2026-10-30T101632-record-4589, a failed: tombstone.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText, crlfCheckoutRead } = require('../../helpers/read-skill');
 const {
   REFUSAL_REASONS, runIdFromPrBody, claimRunId, openPrLine, selectResumePr, resumeEligibility, resumeContext,
 } = require('../../../plugin/bin/lib/dispatch/resume-eligibility');
@@ -463,15 +463,16 @@ test('refusals evaluate in the listed order', () => {
 const FIXTURE = path.join(__dirname, '..', '..', 'fixtures', 'dispatch-resume', 'record-4589-decisions.md');
 
 test('resumeContext on the real archived #4589 run', () => {
-  const ctx = resumeContext(fs.readFileSync(FIXTURE, 'utf8'));
+  const ctx = resumeContext(readText(FIXTURE));
   assert.deepStrictEqual(ctx.lastPhase, { section: '/build', step: 'Common Step 1.5' });
   assert.equal(ctx.openDefects.length, 1);
   assert.ok(ctx.openDefects[0].startsWith('plan review: 2 needs-human spec gap(s)'), ctx.openDefects[0]);
 });
 
 test('resumeContext reads the same from CRLF text', () => {
-  const lf = fs.readFileSync(FIXTURE, 'utf8');
-  assert.deepStrictEqual(resumeContext(lf.replace(/\n/g, '\r\n')), resumeContext(lf));
+  const { raw } = crlfCheckoutRead(FIXTURE);
+  assert.ok(raw.includes('\r\n'), 'the CRLF copy carries CRLF line ends');
+  assert.deepStrictEqual(resumeContext(raw), resumeContext(readText(FIXTURE)));
 });
 
 test('resumeContext: /dispatch and /wrap-up entries are settle bookkeeping, never progress or defects', () => {
