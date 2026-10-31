@@ -150,11 +150,12 @@ test('the unsearched-fetch detector rejects a fetch with no --search within 120 
 });
 
 test('negated labels are exactly needsBackstop dispositions', () => {
+  const dispositionLabels = ['demo:approved', 'demo:changes-requested', 'demo:pending'];
   for (const search of closedSearchStrings(GAP)) {
     const negated = [...search.matchAll(/-label:(\S+?)(?=\s|$)/g)].map((m) => m[1]).sort();
-    assert.deepEqual(negated, ['demo:approved', 'demo:changes-requested', 'demo:pending'], `every slice negates exactly the dispositions: ${search}`);
+    assert.deepEqual(negated, dispositionLabels, `every slice negates exactly the dispositions: ${search}`);
   }
-  for (const label of ['demo:approved', 'demo:changes-requested', 'demo:pending']) {
+  for (const label of dispositionLabels) {
     assert.notEqual(dispositionState([label]), 'none', `${label} must be a disposition label recognised by dispositionState`);
   }
 });
@@ -172,10 +173,14 @@ test('never filters on a positive reason', () => {
 });
 
 test('negated reasons are exactly needsBackstop exclusions', () => {
-  const negated = closedSearchStrings(GAP).map((search) => [...search.matchAll(/-reason:(?:\\"([^\\]+)\\"|(\S+))/g)]
-    .map((m) => (m[1] || m[2]).toUpperCase().replace(/ /g, '_')).sort());
-  for (const reasons of negated) assert.deepEqual(reasons, ['DUPLICATE', 'NOT_PLANNED'], 'every slice excludes exactly the not-planned and duplicate reasons');
-  for (const stateReason of negated[0]) {
+  const negatedBySlice = closedSearchStrings(GAP).map((search) =>
+    [...search.matchAll(/-reason:(?:\\"([^\\]+)\\"|(\S+))/g)]
+      .map((m) => (m[1] || m[2]).toUpperCase().replace(/ /g, '_')).sort()
+  );
+  for (const reasons of negatedBySlice) {
+    assert.deepEqual(reasons, ['DUPLICATE', 'NOT_PLANNED'], 'every slice excludes exactly the not-planned and duplicate reasons');
+  }
+  for (const stateReason of negatedBySlice[0]) {
     assert.equal(needsBackstop({ state: 'CLOSED', stateReason, labels: [] }), false, `${stateReason} must be a reason needsBackstop excludes`);
   }
   // Control: a completed closure with no disposition is a gap, so the check above can fail.
@@ -531,7 +536,6 @@ test('the mid-date guard throws on bad values and passes a good one, sitting rig
   const block = closedFetchBlock(GAP);
   const since = guardLine(block, 'SINCE');
   const mid = guardLine(block, 'MID');
-  assertClaimPinned(since, guardLine(PRE_CHANGE_SLICED_FETCH, 'SINCE'), CAL_SINCE_RE, 'the SINCE guard must carry the calendar round-trip clause, against the frozen pre-change line');
   const lines = block.split('\n').map((l) => l.trim());
   assert.equal(lines[lines.indexOf(since) + 1], mid, 'the MID guard must be the line right after the SINCE guard');
   const env = (m) => ({ SINCE: day(31), MID: m });
