@@ -58,12 +58,18 @@ test('SKILL.md: argument-hint advertises `resume #N`', () => {
 });
 
 test('SKILL.md: the `#N` bullet is not edited to name the resume remedy', () => {
-  const bullets = nBullet(SKILL);
-  assert.strictEqual(bullets.length, 1, 'expected exactly one `#N` direct bullet (anchor)');
-  assert.doesNotMatch(bullets[0], /dispatch resume|\bresume\b/);
-  // go-red control: the same check on a bullet that did gain the remedy
-  const edited = `${bullets[0]} Remedy: dispatch resume #N.`;
-  assert.match(edited, /dispatch resume/);
+  const BULLET_MSG = '`#N` bullet names the resume remedy';
+  const assertBulletClean = (text) => {
+    const bullets = nBullet(text);
+    assert.strictEqual(bullets.length, 1, 'expected exactly one `#N` direct bullet (anchor)');
+    assert.doesNotMatch(bullets[0], /dispatch resume|\bresume\b/, BULLET_MSG);
+  };
+  assertBulletClean(SKILL);
+  // go-red control: the same assertion on a mutated copy of the live bullet
+  const [live] = nBullet(SKILL);
+  const mutated = SKILL.replace(live, `${live} Remedy: dispatch resume #N.`);
+  assert.notStrictEqual(mutated, SKILL);
+  assert.throws(() => assertBulletClean(mutated), (e) => e.message.includes(BULLET_MSG));
 });
 
 test('SKILL.md: `dispatch resume` appears only in the Input row and argument-hint', () => {
@@ -166,7 +172,7 @@ const ORDER = [
   ['gatherer run', 'dispatch-resume.js" --issue {N}'],
   ['archive-run before the mint', 'hooks.js" archive-run --run'],
   ['mint', 'resolve-run-dir --create'],
-  ['bind', 'record-worktree --dispatch'],
+  ['bind command', 'record-worktree --run "$GROUP_RUN_DIR"'],
   ['concurrency recheck', '--bound-run "{new run dir}"'],
   ['stateless log', 'log-decision.js'],
   ['dispatch', 'RESUME_PR="{prUrl}" '],
@@ -190,6 +196,56 @@ test('resume.md order control: a deleted marker goes red with its own message', 
   const absent = RESUME.split(ORDER[1][1]).join('zzz');
   assert.notStrictEqual(absent, RESUME);
   assert.throws(() => requireOrder(absent, ORDER.map((o) => o[1])), /marker missing/);
+});
+
+// ---- resume.md: per-step claims (fix round 1) ----------------------------------------------
+
+const stepParagraph = (text, label) => {
+  const ps = text.split(/\r?\n\r?\n/).filter((p) => p.startsWith(`**Step ${label} `));
+  assert.strictEqual(ps.length, 1, `expected exactly one **Step ${label}** paragraph`);
+  return ps[0];
+};
+
+const STEP_CLAIMS = [
+  // Step 6b: log-decision.js requires --status (exit 2 without it), so the line was never written.
+  ['6b', 'the log-decision command carries --status AUTO', /log-decision\.js" --run "\{new run dir\}" --status AUTO --section/],
+  // Step 6a: the stop path closes the bound run and covers every non-zero exit.
+  ['6a', 'a stop closes the new run via close-run on $GROUP_RUN_DIR', /hooks\.js" close-run --run "\$GROUP_RUN_DIR"/],
+  ['6a', 'exit 2 stops', /exit 2 \(`--bound-run` outside/],
+  ['6a', 'exit 4 stops', /exit 4 \(the run-dir listing failed\)/],
+  ['6a', 'exits fail closed', /Fail closed: exit 3, exit 2/],
+  ['6a', 'a stop prints the stderr for exit 2/4', /the stderr for exit 2\/4/],
+  // Step 4: only the mint runs.
+  ['4', 'only the mint runs, Step 2 replaces the sibling check', /Only the mint runs: Step 2's CLI replaces Step 4's `check-sibling-sessions`/],
+  // Step 3: a failed close-run is handled.
+  ['3', 'a failed close-run or archive-run stops before the mint', /if `close-run` or `archive-run` fails[\s\S]{0,80}stop before minting/],
+  // Step 2: exit 2 names the main checkout.
+  ['2', 'exit 2 names an unresolved main checkout', /main checkout or repo slug unresolved/],
+];
+
+for (const [step, label, re] of STEP_CLAIMS) {
+  test(`resume.md Step ${step}: ${label}`, () => assertPinned(stepParagraph(RESUME, step), re, label));
+}
+
+test('resume.md: {main} and {root} are defined before first use', () => {
+  const defIdx = RESUME.indexOf("`{main}` below is the main checkout's root and `{root}` its `.claude-tweaks/pipelines/`");
+  assert.notStrictEqual(defIdx, -1, 'placeholder definition missing');
+  assert.ok(defIdx < RESUME.indexOf('{main}', defIdx + 8) && defIdx < RESUME.indexOf('{root}', defIdx + 8));
+  assert.strictEqual(RESUME.slice(0, defIdx).includes('{root}'), false, '{root} used before it is defined');
+  assert.strictEqual(RESUME.slice(0, defIdx).includes('{main}'), false, '{main} used before it is defined');
+  // control: dropping the definition leaves the placeholders undefined
+  const stripped = RESUME.replace("`{main}` below is the main checkout's root and `{root}` its `.claude-tweaks/pipelines/`.", '');
+  assert.notStrictEqual(stripped, RESUME);
+  assert.strictEqual(stripped.indexOf('`{main}` below is'), -1);
+  assert.ok(stripped.indexOf('{main}') !== -1, 'control: placeholders are still used after stripping');
+});
+
+test('resume.md Step 6a: close-run runs before ExitWorktree on a stop', () => {
+  const par = stepParagraph(RESUME, '6a');
+  const markers = ['close-run --run "$GROUP_RUN_DIR"', 'ExitWorktree(action: "keep")'];
+  requireOrder(par, markers);
+  assert.throws(() => requireOrder(par, [...markers].reverse()), /must come after/);
+  assert.throws(() => requireOrder(par.replace(markers[0], 'zzz'), markers), /marker missing/);
 });
 
 // ---- resume.md: things it must not say ------------------------------------------------------
