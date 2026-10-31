@@ -143,7 +143,10 @@ function classifyWatchedRecord(entry, gitLog, now, windowDays) {
   // reason names the spelling the record carries, preferring demo:* so the
   // existing reason pin holds.
   if (dispositionState(labels) === 'changes-requested') {
-    return { action: 'trip', reason: labels.includes(LABELS.DEMO_CHANGES_REQUESTED) ? LABELS.DEMO_CHANGES_REQUESTED : LABELS.ACCEPT_CHANGES_REQUESTED };
+    const reason = labels.includes(LABELS.DEMO_CHANGES_REQUESTED)
+      ? LABELS.DEMO_CHANGES_REQUESTED
+      : LABELS.ACCEPT_CHANGES_REQUESTED;
+    return { action: 'trip', reason };
   }
 
   // Reopen detection: the watched.json entry's own last-observed state
