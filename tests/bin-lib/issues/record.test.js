@@ -1483,4 +1483,12 @@ test('findHeadingLine: first unfenced match at the given level; fenced and wrong
   assert.equal(findHeadingLine(lines, 'Original request', { levelPattern: '2' }), 4);
   assert.equal(findHeadingLine(lines, 'Original request', { levelPattern: '2,4' }), 3);
   assert.equal(findHeadingLine(['## Other'], 'Original request'), -1);
+  assert.equal(findHeadingLine(['## X'], 'X', { fenced: [true] }), -1);
+  assert.equal(findHeadingLine(['## X', '## X'], 'X', { fenced: [true, false] }), 1);
+  assert.equal(findHeadingLine(['```', '## X'], 'X'), -1);
+});
+
+test('findSection: an empty heading line still stops the section (#4561)', () => {
+  const { findSection } = require('../../../plugin/bin/lib/issues/record-payload');
+  assert.equal(findSection('## A\nx\n## \ny', 'A'), 'x');
 });

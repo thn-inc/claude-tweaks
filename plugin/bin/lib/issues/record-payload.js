@@ -319,16 +319,23 @@ function headingLine(line) {
   return { level: m[1].length, text: m[2].replace(/^[ \t]+|[ \t]+$/g, '') };
 }
 
+// levelPattern (a `{...}` regex-quantifier body, e.g. '2,4') -> (level: number) => boolean.
+// The one place a heading level is tested against a levelPattern/stopPattern.
+function levelMatcher(levelPattern) {
+  const re = new RegExp(`^#{${levelPattern}}$`);
+  return (level) => re.test('#'.repeat(level));
+}
+
 // lines, heading text, options -> index of the first unfenced heading line whose level
 // matches `^#{levelPattern}$` (the same quantifier-body string findSection takes) and
 // whose text equals `heading`, or -1. `fenced` defaults to fencedLineMask(lines).
 function findHeadingLine(lines, heading, { levelPattern = '2,4', fenced } = {}) {
   const mask = fenced || fencedLineMask(lines);
-  const levelRe = new RegExp(`^#{${levelPattern}}$`);
+  const levelMatches = levelMatcher(levelPattern);
   return lines.findIndex((line, idx) => {
     if (mask[idx]) return false;
     const h = headingLine(line);
-    return h !== null && levelRe.test('#'.repeat(h.level)) && h.text === heading;
+    return h !== null && levelMatches(h.level) && h.text === heading;
   });
 }
 
@@ -354,7 +361,7 @@ function findHeadingLine(lines, heading, { levelPattern = '2,4', fenced } = {}) 
 // quoted content and never match (#4169); a fenced line never stops the section.
 function findSection(body, heading, { levelPattern = '2,4', stopPattern = '1,6', trim = false } = {}) {
   if (typeof body !== 'string') return null;
-  const stopRe = new RegExp(`^#{${stopPattern}}$`);
+  const stopsAt = levelMatcher(stopPattern);
   const lines = body.replace(/\r\n/g, '\n').split('\n');
   const fenced = fencedLineMask(lines);
   const start = findHeadingLine(lines, heading, { levelPattern, fenced });
@@ -362,7 +369,7 @@ function findSection(body, heading, { levelPattern = '2,4', stopPattern = '1,6',
   const out = [];
   for (let i = start + 1; i < lines.length; i += 1) {
     const h = fenced[i] ? null : headingLine(lines[i]);
-    if (h && stopRe.test('#'.repeat(h.level))) break;
+    if (h && stopsAt(h.level)) break;
     out.push(lines[i]);
   }
   const joined = out.join('\n');
