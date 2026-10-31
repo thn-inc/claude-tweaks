@@ -237,3 +237,92 @@ test('AC1.1: every gate composer carries the parent\'s closed state and the unre
     assert.ok(fallback.includes(text), text);
   }
 });
+
+// ---- local-files Shape 7 ----
+
+const LOCAL = section(read('tidy/step-1-records.md'), '### Shape 7 — decomposition parent gate due', '### Shape 8 —');
+const MARKER_SECTION = '## Closed below the oversight floor\n\nEvery sub-issue …';
+
+// A temp cwd holding `specs/`, with helpers that write parents and sub-issues through the real
+// local store (the same driver the fence reads).
+function localFixture() {
+  const { writeRecord, closeRecord, defaultFacets } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'local-store.js'));
+  const cwd = mkTmp('cp-local-');
+  const file = (n, slug) => path.join(cwd, 'specs', `${String(n).padStart(2, '0')}-${slug}.md`);
+  const parent = (n, title, { closed: isClosed = false, notPlanned = false, acceptance = null, closedAt, body = 'Parent body.' } = {}) => {
+    const facets = { ...defaultFacets(), isParentIssue: true, ...(notPlanned ? { notPlanned: true } : {}), ...(acceptance ? { acceptance } : {}) };
+    const f = file(n, 'parent');
+    if (closedAt) writeRecord(f, { title, body, facets: { ...facets, closed: true, closedAt } });
+    else {
+      writeRecord(f, { title, body, facets });
+      if (isClosed) closeRecord(f);
+    }
+    return f;
+  };
+  const subIssue = (n, parentId, risk, { closed: isClosed = true } = {}) => {
+    const f = file(n, 'sub');
+    writeRecord(f, { title: 'sub ' + n, body: 'Sub body.', facets: { ...defaultFacets(), parent: parentId, ...(risk ? { risk } : {}) } });
+    if (isClosed) closeRecord(f);
+  };
+  const run = () => spawnSync('node', ['-e', scanScript(LOCAL, "'\\t[parent-gate] '"), '--', 'high'], { cwd, encoding: 'utf8' });
+  return { cwd, file, parent, subIssue, run };
+}
+const localRow = (id, title) => '[acceptance-gap] ' + id + ': ' + title + GAP_TAIL + id;
+const localCols = (stdout) => lines(stdout).map((l) => l.split('\t'));
+
+test('AC1.1: Shape 7 prints an acceptance-gap row for a hand-closed above-floor local parent', () => {
+  const t = localFixture();
+  const p1 = t.parent(1, 'Closed high parent', { closed: true });
+  t.subIssue(11, 1, 'high');
+  t.parent(2, 'Closed high, open sub', { closed: true });
+  t.subIssue(21, 2, 'high');
+  t.subIssue(22, 2, 'low', { closed: false });
+  t.parent(3, 'Closed high not planned', { closed: true, notPlanned: true });
+  t.subIssue(31, 3, 'high');
+  t.parent(4, 'Closed high approved', { closed: true, acceptance: 'approved' });
+  t.subIssue(41, 4, 'high');
+  t.parent(5, 'Closed high long ago', { closedAt: daysAgo(40) });
+  t.subIssue(51, 5, 'high');
+  t.parent(6, 'Open high parent');
+  t.subIssue(61, 6, 'high');
+  const r = t.run();
+  assert.equal(r.status, 0, r.stderr);
+  const cols = localCols(r.stdout);
+  assert.deepEqual(cols.map((c) => c[1]), [
+    localRow(1, 'Closed high parent'),
+    localRow(2, 'Closed high, open sub'),
+    '[parent-gate] 6: Open high parent' + ABOVE_ROW_TAIL + '6',
+  ]);
+  assert.ok(cols[0][0].endsWith(path.basename(p1)), cols[0][0]);
+});
+
+test('AC2.1: Shape 7 prints no row for a #4466-closed or below-floor local parent', () => {
+  const t = localFixture();
+  t.parent(7, 'Closed below floor, relabelled', { closed: true, body: 'Parent body.\n\n' + MARKER_SECTION });
+  t.subIssue(71, 7, 'high');
+  t.parent(8, 'Hand-closed below floor', { closed: true });
+  t.subIssue(81, 8, 'medium');
+  t.parent(9, 'Closed above floor', { closed: true });
+  t.subIssue(91, 9, 'high');
+  const r = t.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(localCols(r.stdout).map((c) => c[1]), [localRow(9, 'Closed above floor')]);
+});
+
+test('Q2: Shape 7 counts a closed local parent with no sub-issues in one warning line', () => {
+  const t = localFixture();
+  t.parent(10, 'No subs A', { closed: true });
+  t.parent(11, 'No subs B', { closed: true });
+  t.parent(12, 'Control high', { closed: true });
+  t.subIssue(121, 12, 'high');
+  const r = t.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(localCols(r.stdout).map((c) => c[1]), [localRow(12, 'Control high')]);
+  const warn = lines(r.stderr);
+  assert.equal(warn.length, 1, r.stderr);
+  assert.ok(warn[0].includes('2 closed parent') && warn[0].includes('no-sub-issues'), warn[0]);
+  const quiet = localFixture();
+  quiet.parent(1, 'Open', {});
+  quiet.subIssue(11, 1, 'high');
+  assert.equal(quiet.run().stderr, '');
+});
