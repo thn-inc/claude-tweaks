@@ -322,8 +322,9 @@ function archiveOrphanedMint(root, dir) {
 }
 
 // Same 24h window as ORPHAN_MINT_TTL_MS, and for the same reason — longer than
-// any plausible pause before a session resumes its own run, short enough that
-// a genuinely abandoned one is swept the next day. Deliberately not a second,
+// almost every pause before a run is resumed (#4437 measured one resume past 24h,
+// an undercount; docs/reconcile-checks.md has the counts), short enough that a
+// genuinely abandoned one is swept the next day. Deliberately not a second,
 // differently-tuned constant. Since #4421 it is the silence FLOOR below which no
 // run-liveness verdict is even asked, and the window a `dead` verdict must have
 // outlasted; an `unknown` verdict with no live positive waits LEGACY_DEAD_MS (72h).
@@ -2292,11 +2293,18 @@ function countOwnerlessNonClean(root) {
   return count;
 }
 
+// #4599: `postMergeDeferred` lists the run dirs the same pass's post-merge check skipped for a
+// RETRYABLE reason (post-merge.js's `deferred`). Archived runs are never walked again, so archiving
+// one would turn "a later pass" into never. Each listed dir is skipped `post-merge-pending` in both
+// loops, ahead of every other per-run step, and is deliberately NOT fed to the stuck-skip tracker:
+// the skip is transient and must never escalate as residue. Paths are compared resolved.
 function archiveMerged({
   cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration, prStates, cache, liveness, runVerdict,
+  postMergeDeferred = [],
 } = {}) {
   const archived = [];
   const skipped = [];
+  const postMergePending = new Set((Array.isArray(postMergeDeferred) ? postMergeDeferred : []).map((d) => path.resolve(d)));
   const start = cwd || process.cwd();
   const root = mainCheckoutRoot(start);
   if (!root) return { archived, skipped, residuePlan: dryRun ? [] : null, residueErrors: [] };
@@ -2327,6 +2335,12 @@ function archiveMerged({
   };
 
   for (const { dir, state } of iterRunDirsWithState(root)) {
+    // #4599: first, before any per-run work — see the header comment above archiveMerged.
+    if (postMergePending.has(path.resolve(dir))) {
+      skipped.push({ runDir: dir, reason: 'post-merge-pending' });
+      continue;
+    }
+
     // #1892 Deliverable 2: the split state — archive twin already exists,
     // live path holds only tracked `work/` headers — sits ahead of every
     // other branch below, regardless of age: `isOrphanedMint`'s own
@@ -2650,6 +2664,11 @@ function archiveMerged({
   // no-console staged-pending runs stay untracked (typically in-terminal
   // consoles that retain staged/ by design).
   for (const { dir, state } of iterCleanRunDirs(root)) {
+    // #4599: a closed run is the usual armed-auto-merge shape, so the sweep honors the same guard.
+    if (postMergePending.has(path.resolve(dir))) {
+      skipped.push({ runDir: dir, reason: 'post-merge-pending' });
+      continue;
+    }
     const branch = fallbackBranch(root, dir, state);
     if (!branch) { skipped.push({ runDir: dir, reason: 'no-branch' }); continue; }
 
