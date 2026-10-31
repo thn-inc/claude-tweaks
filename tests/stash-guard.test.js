@@ -85,6 +85,20 @@ function failingStore(trap = () => true) {
   };
 }
 
+// A runner that delegates to the real one, but on the second `stash list` (the pre-store
+// re-read) first stores `entry` itself -- a sibling guard restoring it in the race window.
+// Every `stash store` call it sees is pushed to `stores`.
+function racingRunner(dir, entry, stores = []) {
+  let lists = 0;
+  return (args) => {
+    if (args[2] === 'stash' && args[3] === 'list' && ++lists === 2) {
+      realGit(['-C', dir, 'stash', 'store', '-m', entry.subject, entry.sha]);
+    }
+    if (args[2] === 'stash' && args[3] === 'store') stores.push(args);
+    return realGit(args);
+  };
+}
+
 // A fake-.git anchored run dir, the shape resolveTarget accepts when mainRoot is its root
 // (the pre-review-catchup suite's withRunDir).
 function withRunDir() {
@@ -127,6 +141,123 @@ test('AC3.1: a git stash drop between snapshot and compare --restore exits 3, re
   assert.deepEqual(r.json.restored, [dropped.sha]);
   assert.deepEqual(r.json.added, []);
   assert.deepEqual(stack(dir), [dropped, kept]);
+});
+
+test('AC3.1: dropping stash@{1} (an entry under a surviving newer one) is detected and restored; the restored entry lands on top', () => {
+  const dir = fixture();
+  const oldest = stashPush(dir, 'oldest');
+  const middle = stashPush(dir, 'middle');
+  const newest = stashPush(dir, 'newest');
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'drop', 'stash@{1}');
+  assert.deepEqual(stack(dir), [newest, oldest]);
+  const r = compare(dir, baseline, ['--restore']);
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.removed, [middle]);
+  assert.deepEqual(r.json.restored, [middle.sha]);
+  // Presence only: `git stash store` always lands on stash@{0}, so the restored entry's position differs by design.
+  const after = stack(dir);
+  assert.equal(after.length, 3);
+  for (const e of [oldest, middle, newest]) assert.ok(after.some((a) => a.sha === e.sha && a.subject === e.subject), e.subject);
+  assert.deepEqual(after[0], middle);
+});
+
+// A stack holding the same sha twice, [x, y, x] newest first: `git stash store` of the
+// entry already on top is a no-op, so the copies must be separated by another entry.
+function doubledStack(dir) {
+  const x = stashPush(dir, 'twice');
+  const y = stashPush(dir, 'between');
+  git(dir, 'stash', 'store', '-m', x.subject, x.sha);
+  assert.deepEqual(stack(dir), [x, y, x]);
+  return { x, y };
+}
+
+test('a sha stored twice: dropping one copy is detected and restored', () => {
+  const dir = fixture();
+  const { x, y } = doubledStack(dir);
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'drop', 'stash@{0}');
+  assert.deepEqual(stack(dir), [y, x]);
+  const r = compare(dir, baseline, ['--restore']);
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.removed, [x]);
+  assert.deepEqual(r.json.restored, [x.sha]);
+  assert.deepEqual(r.json.added, []);
+  assert.deepEqual(stack(dir), [x, y, x]);
+});
+
+test('a sha stored twice: dropping one copy without --restore is detected and stores nothing', () => {
+  const dir = fixture();
+  const { x, y } = doubledStack(dir);
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'drop', 'stash@{0}');
+  const r = compare(dir, baseline);
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.removed, [x]);
+  assert.deepEqual(r.json.added, []);
+  assert.deepEqual(stack(dir), [y, x]);
+});
+
+test('a sha stored twice: adding a second copy is reported as added', () => {
+  const dir = fixture();
+  const x = stashPush(dir, 'once');
+  const y = stashPush(dir, 'between');
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'store', '-m', x.subject, x.sha);
+  const r = compare(dir, baseline);
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.added, [x]);
+  assert.deepEqual(r.json.removed, []);
+  assert.deepEqual(stack(dir), [x, y, x]);
+});
+
+test('a sha stored twice: clearing the stack restores every removed copy, each with its own outcome', () => {
+  const dir = fixture();
+  const { root, runDir } = withRunDir();
+  const { x, y } = doubledStack(dir);
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'clear');
+  const r = compare(dir, baseline, RUN_ARGS(runDir), { mainRoot: root, cwd: () => root });
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.removed, [x, y, x]);
+  assert.deepEqual(r.json.restored, [x.sha, y.sha, x.sha]);
+  assert.deepEqual(r.json.alreadyPresent, []);
+  assert.deepEqual(r.json.restoreFailed, []);
+  assert.deepEqual(stack(dir), [x, y, x]);
+  const line = decisionsOf(runDir).split('\n').find((l) => l.startsWith('- '));
+  assert.ok(line.includes(`removed stash entries ${x.sha} ${x.subject}, ${y.sha} ${y.subject}, ${x.sha} ${x.subject}; restored via git stash store.`), line);
+});
+
+test('a sha stored twice: one failed store and two successes report one outcome per removed copy', () => {
+  const dir = fixture();
+  const { x, y } = doubledStack(dir);
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'clear');
+  let stores = 0;
+  // Oldest first: the first store (the older copy of x) fails; y and the newer x succeed.
+  const r = compare(dir, baseline, ['--restore'], { git: failingStore(() => ++stores === 1) });
+  assert.equal(r.code, 3);
+  assert.equal(r.json.removed.length, 3);
+  assert.deepEqual(r.json.restored, [x.sha, y.sha]);
+  assert.equal(r.json.restoreFailed.length, 1);
+  assert.equal(r.json.restoreFailed[0].sha, x.sha);
+  assert.deepEqual(r.json.alreadyPresent, []);
+  assert.deepEqual(stack(dir), [x, y]);
+});
+
+test('a sha stored twice: a sibling restoring the older copy first leaves one alreadyPresent and the rest stored', () => {
+  const dir = fixture();
+  const { x, y } = doubledStack(dir);
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'clear');
+  const stores = [];
+  const r = compare(dir, baseline, ['--restore'], { git: racingRunner(dir, x, stores) });
+  assert.equal(r.code, 3);
+  assert.equal(r.json.removed.length, 3);
+  assert.deepEqual(r.json.alreadyPresent, [x.sha]);
+  assert.deepEqual(r.json.restored, [x.sha, y.sha]);
+  assert.equal(stores.length, 2);
+  assert.deepEqual(stack(dir), [x, y, x]);
 });
 
 test('AC3.2: without --restore the stack is left unchanged', () => {
@@ -201,17 +332,8 @@ test('a removed entry already back on the stack before its store is reported und
   const entry = stashPush(dir, 'raced');
   const baseline = snapshot(dir);
   git(dir, 'stash', 'drop', 'stash@{0}');
-  let lists = 0;
   const stores = [];
-  const racing = (args) => {
-    if (args[2] === 'stash' && args[3] === 'list' && ++lists === 2) {
-      // The pre-store re-read: a sibling guard restores the same entry just before it.
-      realGit(['-C', dir, 'stash', 'store', '-m', entry.subject, entry.sha]);
-    }
-    if (args[2] === 'stash' && args[3] === 'store') stores.push(args);
-    return realGit(args);
-  };
-  const r = compare(dir, baseline, ['--restore'], { git: racing });
+  const r = compare(dir, baseline, ['--restore'], { git: racingRunner(dir, entry, stores) });
   assert.equal(r.code, 3);
   assert.deepEqual(r.json.removed, [entry]);
   assert.deepEqual(r.json.alreadyPresent, [entry.sha]);
@@ -435,13 +557,8 @@ test('with --run, an alreadyPresent entry and an added entry each get their dete
   const gone = stashPush(dir, 'raced away');
   const baseline = snapshot(dir);
   git(dir, 'stash', 'drop', 'stash@{0}');
-  let lists = 0;
-  const racing = (args) => {
-    if (args[2] === 'stash' && args[3] === 'list' && ++lists === 2) realGit(['-C', dir, 'stash', 'store', '-m', gone.subject, gone.sha]);
-    return realGit(args);
-  };
   const extra = stashPush(dir, 'new from agent');
-  const r = compare(dir, baseline, RUN_ARGS(runDir), { mainRoot: root, cwd: () => root, git: racing });
+  const r = compare(dir, baseline, RUN_ARGS(runDir), { mainRoot: root, cwd: () => root, git: racingRunner(dir, gone) });
   assert.equal(r.code, 3);
   assert.deepEqual(r.json.alreadyPresent, [gone.sha]);
   assert.deepEqual(r.json.added, [extra]);
@@ -471,7 +588,8 @@ test('with --run and nothing changed, exit 0 and no line is written', () => {
   const baseline = snapshot(dir);
   const r = compare(dir, baseline, RUN_ARGS(runDir), { mainRoot: root, cwd: () => root });
   assert.equal(r.code, 0);
-  assert.equal(r.json.logged, false);
+  // No append was attempted, so neither logged nor logError is reported.
+  assert.equal('logged' in r.json, false);
   assert.equal('logError' in r.json, false);
   assert.deepEqual(r.json.restored, []);
   assert.equal(decisionsOf(runDir), '');

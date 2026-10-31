@@ -16,8 +16,19 @@
 // alreadyPresent (a removed sha the pre-store re-read found back on the stack, so it
 // is not stored twice) and restoreFailed [{sha, subject, error, command}] (each
 // command is also printed to stderr, paste-ready); --run adds logged, plus logError
-// when the append was refused or threw. logged:false with no logError means there was
-// nothing to log. An added entry is reported and left on the stack, never popped.
+// when the append was refused or threw. When nothing changed no append is attempted, so
+// logged and logError are omitted. An added entry is reported and left on the stack,
+// never popped. A sha can occur more than once on the stack: removed and added are
+// multiset differences, so dropping one copy of a doubled sha is detected, and every
+// removed copy gets its own restore outcome.
+//
+// Position limit: a restored entry always lands at stash@{0} (`git stash store` pushes),
+// so only the relative order among the restored entries comes back; entries that
+// survived keep their order but shift down by the number restored. Recovery commands
+// quote the subject in double quotes, so a subject containing "!" must be pasted with
+// history expansion off (`set +H` in bash, `setopt nobanghist` in zsh) or run
+// non-interactively; the CLI's own restore passes the subject as an argv element and is
+// unaffected.
 //
 // Exit codes: 0 the stack is unchanged, 3 it changed (the JSON line is the answer;
 // a restore failure is data too, not a different code), 2 malformed invocation, an
@@ -48,7 +59,7 @@ const USAGE = `usage: ${NAME} snapshot --repo <dir> --out <file>\n`
   + '                       [--run <run-dir> (--task <k> | --label <slug> | --task <k> --label <slug>)]\n'
   + '  snapshot: writes [{sha, subject}] to <file>; prints {"out","count"}\n'
   + '  compare: prints {removed, added}; with --restore also restored, alreadyPresent, restoreFailed;\n'
-  + '           with --run also logged (+ logError) and appends the decisions.md lines under /build\n'
+  + '           with --run, when something changed, also logged (+ logError) and appends the decisions.md lines under /build\n'
   + '  exit 0 unchanged; 3 changed; 2 malformed invocation, invalid baseline or git/write failure\n';
 
 const VALUE_FLAGS = {
@@ -188,44 +199,71 @@ function checkRunDir(deps, runDir) {
   }
 }
 
+// How many times each sha occurs in a list of entries.
+function countBySha(entries) {
+  const counts = new Map();
+  for (const e of entries) counts.set(e.sha, (counts.get(e.sha) || 0) + 1);
+  return counts;
+}
+
+// The entries of `from` not matched by an entry of `against`, as a multiset: a sha that
+// occurs twice in `from` and once in `against` leaves one copy (the later one) unmatched.
+function unmatched(from, against) {
+  const left = countBySha(against);
+  return from.filter((e) => {
+    const n = left.get(e.sha) || 0;
+    if (n > 0) { left.set(e.sha, n - 1); return false; }
+    return true;
+  });
+}
+
 // Store the removed entries back, oldest first (the list is newest first, so the
-// original relative order comes back). The stack is re-read right before each store:
-// a sibling guard may have restored the entry in between, and a duplicate would cost
-// a `git stash drop` where a skipped restore could cost the entry, so a failed
-// re-read falls through to the store. Returns each outcome keyed by sha.
-function restoreRemoved(deps, repo, removed) {
-  const outcome = new Map();
-  for (const entry of removed.slice().reverse()) {
+// relative order among the restored entries comes back). The stack is re-read right
+// before each store: a sibling guard may have restored the entry in between, and a
+// duplicate would cost a `git stash drop` where a skipped restore could cost the entry,
+// so a failed re-read falls through to the store. A sha can occur more than once, so
+// "back already" means the stack holds more copies than the compare saw plus the copies
+// handled so far. Returns one outcome per removed entry, at the entry's position.
+function restoreRemoved(deps, repo, removed, currentCounts) {
+  const outcomes = new Array(removed.length);
+  const handled = new Map();
+  for (let i = removed.length - 1; i >= 0; i--) {
+    const entry = removed[i];
+    const expected = (currentCounts.get(entry.sha) || 0) + (handled.get(entry.sha) || 0);
     let present = false;
     try {
-      present = readStack(deps.git, repo).some((e) => e.sha === entry.sha);
+      present = (countBySha(readStack(deps.git, repo)).get(entry.sha) || 0) > expected;
     } catch { /* fall through to the store */ }
-    if (present) { outcome.set(entry.sha, { alreadyPresent: true }); continue; }
+    if (present) {
+      outcomes[i] = { alreadyPresent: true };
+      handled.set(entry.sha, (handled.get(entry.sha) || 0) + 1);
+      continue;
+    }
     try {
       deps.git(['-C', repo, 'stash', 'store', '-m', entry.subject, entry.sha]);
-      outcome.set(entry.sha, { restored: true });
+      outcomes[i] = { restored: true };
+      handled.set(entry.sha, (handled.get(entry.sha) || 0) + 1);
     } catch (e) {
       const command = storeCommand(entry.subject, entry.sha);
       const error = oneLine((e && e.stderr && String(e.stderr).trim()) || messageOf(e));
-      outcome.set(entry.sha, { failed: { sha: entry.sha, subject: entry.subject, error, command } });
+      outcomes[i] = { failed: { sha: entry.sha, subject: entry.subject, error, command } };
       deps.stderr(`${NAME}: restore failed for ${entry.sha}; recover with:\n${command}\n`);
     }
   }
-  return outcome;
+  return outcomes;
 }
 
 const listOf = (entries) => entries.map((e) => `${e.sha} ${e.subject}`).join(', ');
 const entriesWord = (entries) => (entries.length === 1 ? 'entry' : 'entries');
 
-function logItems(deps, o, body) {
+// `groups` holds the removed entries by outcome: { restored, present } as entry lists.
+function logItems(deps, o, body, groups) {
   const now = deps.now();
   const name = who(o.task, o.label);
   const auto = (text, reversibility) => ({ section: SECTION, entry: formatEntry({ status: 'AUTO', now, step: STEP, text, reversibility }) });
   const items = [];
   const removedText = (entries) => `${name} removed stash ${entriesWord(entries)} ${listOf(entries)}`;
-  const byRemoval = (shas) => body.removed.filter((e) => shas.includes(e.sha));
-  const restored = byRemoval(body.restored);
-  const present = byRemoval(body.alreadyPresent);
+  const { restored, present } = groups;
   if (restored.length) items.push(auto(`${removedText(restored)}; restored via git stash store`, 'high'));
   if (present.length) items.push(auto(`${removedText(present)}; already back on the stack before restore, not stored again`, 'n/a (a detection, not a mutation)'));
   // formatEntry rejects FAILED, so these lines are composed by hand.
@@ -245,8 +283,8 @@ function compare(o, deps) {
   const baseline = loadBaseline(deps, o.baseline);
   if (baseline.error) { deps.stderr(`${NAME}: ${baseline.error}\n`); return 2; }
   const current = readStack(deps.git, o.repo);
-  const removed = baseline.entries.filter((b) => !current.some((c) => c.sha === b.sha));
-  const added = current.filter((c) => !baseline.entries.some((b) => b.sha === c.sha));
+  const removed = unmatched(baseline.entries, current);
+  const added = unmatched(current, baseline.entries);
   const changed = removed.length > 0 || added.length > 0;
   const body = { removed, added };
 
@@ -254,33 +292,35 @@ function compare(o, deps) {
   const target = o.run !== null && changed ? checkRunDir(deps, o.run) : null;
   if (target && !target.ok) deps.stderr(`${NAME}: warning: the decisions.md entry will not be written — ${target.error}\n`);
 
+  const groups = { restored: [], present: [] };
   if (o.restore) {
-    const outcome = restoreRemoved(deps, o.repo, removed);
-    const pick = (key) => removed.filter((e) => outcome.get(e.sha)[key]);
-    body.restored = pick('restored').map((e) => e.sha);
-    body.alreadyPresent = pick('alreadyPresent').map((e) => e.sha);
-    body.restoreFailed = pick('failed').map((e) => outcome.get(e.sha).failed);
+    const outcomes = restoreRemoved(deps, o.repo, removed, countBySha(current));
+    const pick = (key) => removed.filter((e, i) => outcomes[i][key]);
+    groups.restored = pick('restored');
+    groups.present = pick('alreadyPresent');
+    body.restored = groups.restored.map((e) => e.sha);
+    body.alreadyPresent = groups.present.map((e) => e.sha);
+    body.restoreFailed = outcomes.filter((x) => x.failed).map((x) => x.failed);
   }
 
-  if (o.run !== null) {
+  // Nothing changed: no append is attempted, so neither logged nor logError is reported.
+  if (o.run !== null && changed) {
     body.logged = false;
-    if (changed) {
-      let logError = '';
-      if (!target.ok) {
-        logError = target.error;
-      } else {
-        try {
-          deps.appendEntries({ runDir: o.run, items: logItems(deps, o, body) });
-        } catch (e) {
-          logError = messageOf(e);
-        }
+    let logError = '';
+    if (!target.ok) {
+      logError = target.error;
+    } else {
+      try {
+        deps.appendEntries({ runDir: o.run, items: logItems(deps, o, body, groups) });
+      } catch (e) {
+        logError = messageOf(e);
       }
-      if (logError) {
-        body.logError = logError;
-        deps.stderr(`${NAME}: could not append the decisions.md entry: ${logError}\n`);
-      } else {
-        body.logged = true;
-      }
+    }
+    if (logError) {
+      body.logError = logError;
+      deps.stderr(`${NAME}: could not append the decisions.md entry: ${logError}\n`);
+    } else {
+      body.logged = true;
     }
   }
   deps.stdout(`${JSON.stringify(body)}\n`);
