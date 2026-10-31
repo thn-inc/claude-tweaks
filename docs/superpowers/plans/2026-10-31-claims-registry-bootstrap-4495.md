@@ -41,7 +41,7 @@
 - Produces: `readClaimBlobGit(...)` on a missing remote branch returns `{ content: null, tipSha: null, absent: true, branchMissing: true, failure: null }`.
 - Produces: `bootstrapClaimsBranchGit({ remote = 'origin', branch = CLAIMS_BRANCH, runner = defaultRunner }) -> { ok: true, created: true } | { ok: true, created: false } | { ok: false, failure: 'transport-failure', reason: string }`.
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/bin-lib/issues/claims-git-cas.test.js`; import `bootstrapClaimsBranchGit` alongside the existing imports)
+- [ ] **Step 1: Write the failing tests** (covers AC5.1 for `claims-git-cas.js`; append to `tests/bin-lib/issues/claims-git-cas.test.js`; import `bootstrapClaimsBranchGit` alongside the existing imports)
 
 ```js
 test('classifyGitError: a missing remote ref is missing-branch, not transport-failure', () => {
@@ -141,7 +141,7 @@ git commit -m "Classify a missing claims-registry branch on the git transport �
 - Produces: `claimsBranchExists(ghApi, repoSlug) -> true | false | null` (`null` = could not tell).
 - Produces: `ensureClaimsBranch(deps: {ghApi, gitRunner?}, repoSlug) -> { ok: true, created: boolean, via: 'git' | 'contents-api' } | { ok: false, reason: string }`.
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/bin-lib/issues/claim-store.test.js`, adding `ensureClaimsBranch` to its existing destructured `require`; fake `ghApi` per the file's existing convention — never throws, returns `{stdout, failure, status}`)
+- [ ] **Step 1: Write the failing tests** (covers AC5.1 for `claim-store.js`; append to `tests/bin-lib/issues/claim-store.test.js`, adding `ensureClaimsBranch` to its existing destructured `require`; fake `ghApi` per the file's existing convention — never throws, returns `{stdout, failure, status}`)
 
 ```js
 test('readClaimBlob: a git read reporting branchMissing passes it through as absent, no contents-API call', () => {
@@ -229,15 +229,15 @@ git commit -m "Detect a missing claims-registry branch on the contents API — a
 - Consumes: `read.branchMissing` / `write.branchMissing` (Task 2), `claimStore.ensureClaimsBranch(deps, repoSlug)` (Task 2), `CLAIMS_BRANCH` from `../issues/claims`.
 - Produces: exit `6` with stdout `{ branchMissing: { branch: 'claims-registry', reason }, released, releaseFailed }` — with or without `--keep-going` (the failure is run-level: every target would hit it).
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/bin-lib/claim-targets/claim-targets.test.js`; build the fakes on the file's existing `readPath`/`isRead`/`isWrite` helpers and fake `gh`)
+- [ ] **Step 1: Write the failing tests** (covers AC1.1, AC2.1, AC2.2, AC3.1, AC3.2, AC4.1, AC5.1; append to `tests/bin-lib/claim-targets/claim-targets.test.js`; build the fakes on the file's existing `readPath`/`isRead`/`isWrite` helpers and fake `gh`)
 
-- `(bm1) branchless remote, git transport: bootstraps claims-registry from the default-branch tip, retries the target, exit 0, claim recorded` — stateful fake `gitRunner` with a `branchExists` flag: `fetch … claims-registry:…` throws `couldn't find remote ref` while false; the bootstrap push sets it true; afterwards fetch/rev-parse return a tip, `show` throws `does not exist in` until the claim push stores the blob, then returns it. Assert exit `0`, stdout `claimed` deep-equals `[N]`, `transportByIssue[N] === 'git'`, exactly one push whose refspec ends `:refs/heads/claims-registry` with `--force-with-lease=refs/heads/claims-registry:`.
-- `(bm2) branchless remote, contents-API transport (no gitRunner): PUT 404 + branches 404 → POST git/refs, retry, exit 0` — stateful fake `ghApi`: contents GET 404 until the claim PUT lands; PUT returns 404 while the branch is absent; `branches/claims-registry` 404 while absent; the `git/refs` POST flips it. Assert exit `0`, `claimed` `[N]`, exactly one `git/refs` POST.
-- `(bm3) two first claims (different records) against one branchless remote: both exit 0, exactly one branch creation wins, neither contested` — one shared fake remote (branch flag + blob map); run A (`--targets 11`) bootstraps; run B (`--targets 12`) starts from a stale view (its first fetch still fails `couldn't find remote ref`) and its bootstrap push is rejected `(stale info)` with `ls-remote` showing the branch. Assert both exit `0`, the remote's created-count is `1`, neither stdout contains `contested`.
-- `(bm4) bootstrap refused on both legs: exit 6, stderr names the missing branch and the remedy, stdout branchMissing.reason is verbatim, never exit 3` — git push stderr `remote: Permission to acme/w.git denied to bot.`, POST `{ failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' }`. Assert exit `6`; stderr includes `claim-targets: claims-registry branch missing on origin and could not be created:` and ends with `— create it from the default branch\n`; `JSON.parse(stdout).branchMissing.branch === 'claims-registry'`; `branchMissing.reason` matches both refusal texts.
+- [AC1.1] `(bm1) branchless remote, git transport: bootstraps claims-registry from the default-branch tip, retries the target, exit 0, claim recorded` — stateful fake `gitRunner` with a `branchExists` flag: `fetch … claims-registry:…` throws `couldn't find remote ref` while false; the bootstrap push sets it true; afterwards fetch/rev-parse return a tip, `show` throws `does not exist in` until the claim push stores the blob, then returns it. Assert exit `0`, stdout `claimed` deep-equals `[N]`, `transportByIssue[N] === 'git'`, exactly one push whose refspec ends `:refs/heads/claims-registry` with `--force-with-lease=refs/heads/claims-registry:`.
+- [AC1.1] `(bm2) branchless remote, contents-API transport (no gitRunner): PUT 404 + branches 404 → POST git/refs, retry, exit 0` — stateful fake `ghApi`: contents GET 404 until the claim PUT lands; PUT returns 404 while the branch is absent; `branches/claims-registry` 404 while absent; the `git/refs` POST flips it. Assert exit `0`, `claimed` `[N]`, exactly one `git/refs` POST.
+- [AC2.1, AC2.2] `(bm3) two first claims (different records) against one branchless remote: both exit 0, exactly one branch creation wins, neither contested` — one shared fake remote (branch flag + blob map); run A (`--targets 11`) bootstraps; run B (`--targets 12`) starts from a stale view (its first fetch still fails `couldn't find remote ref`) and its bootstrap push is rejected `(stale info)` with `ls-remote` showing the branch. Assert both exit `0`, the remote's created-count is `1`, neither stdout contains `contested`.
+- [AC3.1, AC3.2] `(bm4) bootstrap refused on both legs: exit 6, stderr names the missing branch and the remedy, stdout branchMissing.reason is verbatim, never exit 3` — git push stderr `remote: Permission to acme/w.git denied to bot.`, POST `{ failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' }`. Assert exit `6`; stderr includes `claim-targets: claims-registry branch missing on origin and could not be created:` and ends with `— create it from the default branch\n`; `JSON.parse(stdout).branchMissing.branch === 'claims-registry'`; `branchMissing.reason` matches both refusal texts.
 - `(bm5) --keep-going with a refused bootstrap still exits 6` — same fakes, `--keep-going`; assert exit `6`.
 - `(bm6) branch still missing after a successful bootstrap: one bootstrap only, transient exit 4` — bootstrap reports success but the fetch keeps failing `couldn't find remote ref`; assert exit `4`, `transient[0].error === 'claims-branch-missing'`, exactly one bootstrap push.
-- The existing `(d)` test (live holder → exit 3, holder named) stays green unchanged — it is this record's "genuine contest" acceptance case.
+- [AC4.1] The existing `(d)` test (live holder → exit 3, holder named) stays green unchanged — it is this record's "genuine contest" acceptance case.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -268,12 +268,15 @@ git commit -m "Bootstrap a missing claims-registry branch in claim-targets — d
 **Files:**
 - Modify: `plugin/bin/lib/release-claim/release.js` (`readClaimBlob` :43-64, `releaseClaim`'s not-held branch :245-250)
 - Test: `tests/bin-lib/release-claim/release.test.js`
+- Test: `tests/bin-lib/release-claim/cli.test.js`
+
+Waived plugin/bin/release-claim.js: no code change — the CLI already prints the library's `note` and maps `already-released` to exit 3; Task 4's CLI test verifies it end to end.
 
 **Interfaces:**
 - Consumes: `claimStore.readClaimBlob`'s `branchMissing` passthrough (Task 2).
 - Produces: `release.readClaimBlob` returns `{ content: null, sha: null, absent: true, branchMissing: true }` on a branchless remote; `releaseClaim` returns `outcome: 'already-released'` with `note: 'nothing to release — the claims-registry branch does not exist on origin'` (CLI exit 3, unchanged meaning "already released").
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests** (covers AC5.2; append to `tests/bin-lib/release-claim/release.test.js`, plus one CLI test appended to `tests/bin-lib/release-claim/cli.test.js` using that file's existing injected-deps fixture: `run(['7', '--run', {tmp run dir}, '--reason', 'done', '--repo', 'acme/w'], deps)` with the branchless `gitRunner` below and a recording `runner` → exit `3`, parsed stdout `note` matches `/nothing to release/`, `error` is `null`)
 
 ```js
 test('releaseClaim against a branchless remote: nothing to release, no write of any kind', () => {
@@ -305,7 +308,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/release-claim/release.js tests/bin-lib/release-claim/release.test.js
+git add plugin/bin/lib/release-claim/release.js tests/bin-lib/release-claim/release.test.js tests/bin-lib/release-claim/cli.test.js
 git commit -m "Report nothing to release on a branchless claims remote (refs #4495)"
 ```
 
