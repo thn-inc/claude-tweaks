@@ -11,7 +11,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { spawnSync } = require('child_process');
 const { readText } = require('./helpers/read-skill');
+const { sessionTmpRoot } = require('../plugin/bin/lib/session-tmp');
 const { dispositionState, needsBackstop } = require('../plugin/bin/lib/issues/acceptance');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
@@ -230,7 +234,7 @@ test('since-date is validated', () => {
     'the node block must validate SINCE as YYYY-MM-DD'
   );
   // The server window is one date wider than the client cutoff, on purpose: the timezone of GitHub's
-  // `closed:>=` qualifier is unprobed, so a 31-day date keeps the server set a superset of the 30-day set.
+  // `closed:` qualifier is unprobed, so a 31-day date keeps the server set a superset of the 30-day set.
   const oneLiner = 'new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)';
   const FROZEN_30_ONE_LINER = oneLiner.replace('- 31 *', '- 30 *');
   assert.notEqual(FROZEN_30_ONE_LINER, oneLiner);
@@ -404,7 +408,7 @@ const guardThrows = (line, env) => {
   try { new Function('process', line)({ env }); return false; } catch { return true; }
 };
 
-// The calendar round-trip clause each date guard gained (#4598, fix round 2): a value that parses to NaN,
+// The calendar round-trip clause each date guard gained (#4598): a value that parses to NaN,
 // or that round-trips through toISOString to a different day (2026-02-30 -> 2026-03-02), is rejected.
 const CAL_SINCE_TEXT = ' || Number.isNaN(Date.parse(process.env.SINCE)) || new Date(process.env.SINCE).toISOString().slice(0, 10) !== process.env.SINCE';
 const CAL_SINCE_RE = /Number\.isNaN\(Date\.parse\(process\.env\.SINCE\)\) \|\| new Date\(process\.env\.SINCE\)\.toISOString\(\)\.slice\(0, 10\) !== process\.env\.SINCE/;
@@ -441,7 +445,7 @@ test('both placeholder guards throw on bad values and pass good ones', () => {
 const PRE_CHANGE_RECORD_SET = `Record set: closed records from the last 30 days. The fetch applies the window and the disposition,
 not-planned and duplicate exclusions server-side through \`--search\`; the client-side \`closedAt\``;
 
-// The acceptance-gap guard-failure sentence as it read at base e5b8b8160, before the mid-date guard:
+// The acceptance-gap guard-failure sentence as it read before the mid-date guard (before #4598):
 // it names the since-date guard only.
 const PRE_CHANGE_GUARD_SENTENCE = `When this block fails — the since-date guard throws, or a failed \`gh\` call leaves \`$RAW\` unreadable —
 the scope stops: report no \`[acceptance-gap]\` rows at all and quote the error verbatim, as for an
@@ -499,7 +503,7 @@ test('the closed-record fetch is described as two date slices in the record set 
   assertClaimPinned(GAP, PRE_CHANGE_CLOSED_PARAGRAPH, /closed-record\s+fetch\s+is\s+split\s+into\s+two\s+date\s+slices/, 'the fetch-limit paragraph must say the closed-record fetch is split into two date slices');
 });
 
-test('a date slice that reaches its own cap warns with its range, count, cap and remedy', () => {
+test('the per-slice warning text names its slice range, row count, cap and remedy', () => {
   const lines = sliceWarnings(GAP);
   assert.equal(lines.length, 1, 'exactly one per-slice warning, run inside the loop over the slices');
   assert.deepEqual(sliceWarnParts(lines[0]), { count: true, cap: true, range: true, remedy: true, ceiling: true });
@@ -531,13 +535,121 @@ test('the two slices merge number-keyed, before the closedAt cutoff', () => {
   assert.ok(GAP.includes('JSON.stringify([...byNumber.values()].filter((r) => r.closedAt > cutoff))'), 'the cutoff must filter the merged set');
 });
 
-test('the mid-date guard throws on bad values and passes a good one, sitting right after the since-date guard', () => {
+// ---- the whole closed-record fence, extracted and run (#4598) -----------------------------------------
+//
+// docs/skill-authoring.md's "Executable snippets" rule: a fenced bash block a skill tells an agent to run is
+// bound to a test that executes it. The tests above pin the fence's text and run single lines of it; this one
+// extracts the whole fence from the live scope and runs it against fixtures, so the slice wiring, the
+// per-slice cap and the number-keyed merge are exercised as the agent would run them.
+
+const PLUGIN_DIR = path.join(__dirname, '..', 'plugin');
+const forwardSlashes = (p) => p.split(path.sep).join('/');
+const daysAgo = (n) => new Date(Date.now() - n * 864e5);
+const dateOnly = (d) => d.toISOString().slice(0, 10);
+
+// The acceptance-gap closed-record bash fence, from its RAW_OLD resolution line to the closing fence.
+function closedRecordFence(gap) {
+  const m = /```bash\n(RAW_OLD=[\s\S]*?)\n```/.exec(gap);
+  assert.ok(m, 'the acceptance-gap scope must carry a bash fence opening with RAW_OLD= — extraction pattern is out of sync with the doc');
+  return m[1];
+}
+
+// Runs the extracted fence with its placeholders substituted. `gh` becomes a shell function serving one
+// fixture per slice (the newer slice is the one whose --search starts `closed:>`), so no network is touched
+// and no PATH shim is needed. Returns the exit status, stderr and the $CLOSED file's parsed rows ('' when emptied, null when absent).
+function runClosedFence({ limit, since, mid, older, newer }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acceptance-fence-'));
+  const sessionId = `acceptance-fence-${path.basename(dir)}`;
+  try {
+    const oldFile = path.join(dir, 'older.json');
+    const newFile = path.join(dir, 'newer.json');
+    fs.writeFileSync(oldFile, JSON.stringify(older));
+    fs.writeFileSync(newFile, JSON.stringify(newer));
+    const fence = closedRecordFence(GAP)
+      .replace('{resolved-limit}', String(limit))
+      .replace('{since-date}', since)
+      .replace('{mid-date}', mid);
+    const script = `gh() { case "$*" in *'closed:>'*) cat "$FAKE_NEW" ;; *) cat "$FAKE_OLD" ;; esac; }\n${fence}`;
+    const run = spawnSync('bash', ['-c', script], {
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: forwardSlashes(PLUGIN_DIR), CLAUDE_CODE_SESSION_ID: sessionId, FAKE_OLD: forwardSlashes(oldFile), FAKE_NEW: forwardSlashes(newFile) },
+    });
+    let closed = null;
+    try {
+      const text = fs.readFileSync(path.join(sessionTmpRoot(sessionId), 'tidy-closed-records.json'), 'utf8');
+      closed = text === '' ? '' : JSON.parse(text);
+    } catch { closed = null; }
+    return { status: run.status, stderr: run.stderr, closed };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(sessionTmpRoot(sessionId), { recursive: true, force: true });
+  }
+}
+
+const row = (number, closedDaysAgo, extra = {}) => ({ number, title: `r${number}`, state: 'CLOSED', labels: [], closedAt: daysAgo(closedDaysAgo).toISOString(), stateReason: 'COMPLETED', ...extra });
+const sliceWarningLines = (stderr) => stderr.split('\n').filter((l) => l.startsWith('WARNING: the closed-record slice'));
+
+test('the extracted closed-record fence merges both slices number-keyed and applies the 30-day cutoff', () => {
+  const since = dateOnly(daysAgo(31));
+  const mid = dateOnly(daysAgo(15));
+  const run = runClosedFence({
+    limit: 1000,
+    since,
+    mid,
+    // #1 closed 30.5 days ago: inside the server window (31 days) but outside the client cutoff (30 days).
+    // #3 appears in both slices; the newer slice's copy carries a different title and must win.
+    older: [row(1, 30.5), row(2, 20), row(3, 16, { title: 'older-copy' })],
+    newer: [row(3, 16, { title: 'newer-copy' }), row(4, 5)],
+  });
+  assert.equal(run.status, 0, `the fence must run clean: ${run.stderr}`);
+  assert.equal(run.stderr, '', 'no slice reached its cap, so nothing may warn');
+  assert.deepEqual(run.closed.map((r) => r.number).sort((a, b) => a - b), [2, 3, 4], 'the cutoff drops #1 and #3 counts once');
+  assert.equal(run.closed.find((r) => r.number === 3).title, 'newer-copy', 'the newer slice copy wins');
+});
+
+test('the extracted closed-record fence warns per slice at the cap, naming the slice that reached it', () => {
+  const since = dateOnly(daysAgo(31));
+  const mid = dateOnly(daysAgo(15));
+  const rows = (from, count, closedDaysAgo) => Array.from({ length: count }, (_, i) => row(from + i, closedDaysAgo));
+  // Boundary at the search ceiling: 999 rows is silent, 1000 warns; the merged total (1999) never warns on its own.
+  const quiet = runClosedFence({ limit: 1000, since, mid, older: rows(1, 999, 20), newer: rows(5000, 999, 5) });
+  assert.equal(quiet.status, 0, quiet.stderr);
+  assert.deepEqual(sliceWarningLines(quiet.stderr), [], 'two slices under the cap must not warn, however large their sum');
+  assert.equal(quiet.closed.length, 1998, 'both full slices survive the merge');
+  const newerFull = runClosedFence({ limit: 1000, since, mid, older: rows(1, 999, 20), newer: rows(5000, 1000, 5) });
+  const newerWarnings = sliceWarningLines(newerFull.stderr);
+  assert.equal(newerWarnings.length, 1, 'only the slice at its cap warns');
+  assert.ok(newerWarnings[0].includes(`closed:>${mid} returned 1000 records, reaching its cap of 1000`), `the warning must name the newer slice: ${newerWarnings[0]}`);
+  const olderFull = runClosedFence({ limit: 1000, since, mid, older: rows(1, 1000, 20), newer: rows(5000, 999, 5) });
+  const olderWarnings = sliceWarningLines(olderFull.stderr);
+  assert.equal(olderWarnings.length, 1);
+  assert.ok(olderWarnings[0].includes(`closed:${since}..${mid} returned 1000 records, reaching its cap of 1000`), `the warning must name the older slice: ${olderWarnings[0]}`);
+  // A limit below the search ceiling is the cap: three rows reach a limit of 3.
+  const lowLimit = runClosedFence({ limit: 3, since, mid, older: rows(1, 3, 20), newer: rows(5000, 2, 5) });
+  const lowWarnings = sliceWarningLines(lowLimit.stderr);
+  assert.equal(lowWarnings.length, 1);
+  assert.ok(lowWarnings[0].includes('returned 3 records, reaching its cap of 3'), lowWarnings[0]);
+});
+
+test('the extracted closed-record fence stops with an empty output file when a date guard throws', () => {
+  const since = dateOnly(daysAgo(31));
+  const bad = runClosedFence({ limit: 1000, since, mid: dateOnly(daysAgo(40)), older: [row(2, 20)], newer: [row(4, 5)] });
+  assert.notEqual(bad.status, 0, 'a mid-date earlier than since-date must fail the fence');
+  assert.match(bad.stderr, /MID is not a YYYY-MM-DD date later than SINCE/);
+  assert.equal(bad.closed, '', 'the output file is emptied first and never written after a guard throws');
+  // Control: the same run with a good mid-date succeeds, so the failure above comes from the guard.
+  const good = runClosedFence({ limit: 1000, since, mid: dateOnly(daysAgo(15)), older: [row(2, 20)], newer: [row(4, 5)] });
+  assert.equal(good.status, 0, good.stderr);
+});
+
+test('the mid-date guard throws on bad values and passes a good one, and both date guards run before the slices are built', () => {
   const day = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
   const block = closedFetchBlock(GAP);
   const since = guardLine(block, 'SINCE');
   const mid = guardLine(block, 'MID');
-  const lines = block.split('\n').map((l) => l.trim());
-  assert.equal(lines[lines.indexOf(since) + 1], mid, 'the MID guard must be the line right after the SINCE guard');
+  const slicesAt = block.indexOf('const slices = [');
+  assert.ok(slicesAt !== -1, 'the slices array must be present');
+  assert.ok(block.indexOf(since) < slicesAt && block.indexOf(mid) < slicesAt, 'both date guards must run before the slice labels read SINCE and MID');
   const env = (m) => ({ SINCE: day(31), MID: m });
   assert.equal(guardThrows(mid, env(day(15))), false, 'a 15-day MID inside a 31-day SINCE must pass');
   for (const bad of ['', '{mid-date}', '2026-13-45', day(31), day(40), day(0), day(-1)]) {

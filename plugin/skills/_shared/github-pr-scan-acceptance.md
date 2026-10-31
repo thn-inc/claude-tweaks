@@ -84,8 +84,8 @@ node -e "
   const LIMIT = $LIMIT;
   const CAP = Math.min(LIMIT, 1000);
   const slices = [
-    ['closed:$SINCE..$MID', require('$RAW_OLD')],
-    ['closed:>$MID', require('$RAW_NEW')],
+    ['closed:' + process.env.SINCE + '..' + process.env.MID, require('$RAW_OLD')],
+    ['closed:>' + process.env.MID, require('$RAW_NEW')],
   ];
   for (const [qualifier, rows] of slices) {
     if (rows.length >= CAP) {
