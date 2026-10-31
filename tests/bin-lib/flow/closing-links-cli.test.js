@@ -617,6 +617,8 @@ test('post-merge reopen failure is data', () => {
   assert.equal(j.failed[0].issue, 2724);
   assert.match(j.failed[0].error, /forbidden/);
   assert.deepEqual(j.reopened, []);
+  // A failed reopen leaves the record closed: it is unsettled, never in the closing set.
+  assert.deepEqual(j.closingSet, [3997]);
   assert.match(h.log(runDir), /could not reopen #2724 after PR #7's merge/);
   assert.match(h.log(runDir), /reopen it by hand/);
   assert.match(h.log(runDir), /^- SKIP \d{2}:\d{2}:\d{2} — Closing links \(degraded\): condition: could not reopen #2724 .*Reversibility: n\/a\.$/m);
@@ -700,6 +702,63 @@ test('post-merge gh view failure is exit 5', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, { prReads: [new Error('network down')] });
   assert.equal(run(['--run', runDir, ...POST], h.deps), 5);
+});
+
+test('AC2.1: post-merge closingSet drops a cross-repo reference and a reopened record', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const crossRepo = { number: 4000, repository: { name: 'repo', owner: { login: 'other' } } };
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [], { closingIssuesReferences: [crossRepo, sameRepoRef(2724), sameRepoRef(3997)] })],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'reopened');
+  assert.deepEqual(j.reopened, [2724]);
+  assert.deepEqual(j.closingSet, [3997]);
+});
+
+test('post-merge closingSet drops pendingClose and failed records', () => {
+  const span = ['Fixes #3997', 'Refs #2724 — deferred: a', 'Refs #2725 — deferred: b'];
+  const a = fixture({ pr: { number: 7 } });
+  const pending = makeDeps(a.main, {
+    prReads: [mergedView(body({ span }), [2724, 2725, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_BEFORE }], 2725: [{ state: 'OPEN', closedAt: null }] },
+  });
+  assert.equal(run(['--run', a.runDir, ...POST, '--settle-ms', '0'], pending.deps), 0);
+  assert.deepEqual(pending.json().pendingClose, [2725]);
+  assert.deepEqual(pending.json().closingSet, [2724, 3997]);
+
+  const b = fixture({ pr: { number: 7 } });
+  const failed = makeDeps(b.main, {
+    prReads: [mergedView(body({ span }), [2724, 2725, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_BEFORE }] },
+    issueThrows: { 2725: true },
+  });
+  assert.equal(run(['--run', b.runDir, ...POST, '--settle-ms', '0'], failed.deps), 0);
+  assert.deepEqual(failed.json().failed.map((f) => f.issue), [2725]);
+  assert.deepEqual(failed.json().closingSet, [2724, 3997]);
+});
+
+test('post-merge closingSet keeps a linked record closed before the merge', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_BEFORE }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'nothing-closed');
+  assert.deepEqual(j.closedBefore, [2724]);
+  assert.deepEqual(j.closingSet, [2724, 3997]);
+});
+
+test('post-merge no-fixes-span carries no closingSet', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const noSpan = '<!-- claude-tweaks-run: 2026-10-25T000001-record-4199 -->\nNo span.\n';
+  const h = makeDeps(main, { prReads: [mergedView(noSpan, [3997])] });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  assert.deepEqual(h.json(), { action: 'no-fixes-span', pr: 7 });
 });
 
 // ---- #4026: gh-absent, exit 4 and exit 5 log their own SKIP line ----
