@@ -526,16 +526,16 @@ function claimsBranchExists(ghApi, repoSlug) {
   return true;
 }
 
-// A contents-API refusal's reason, verbatim: the response text when
-// `defaultGhApi` kept it, else the classified failure, else the bare status.
-function apiRefusalReason(r) {
-  return r.error || r.failure || `HTTP ${r.status}`;
-}
-
-// A contents-API refusal as a result. A secondary rate limit is the one
-// failure the classifier already knows is transient, so it is flagged.
+// A contents-API refusal as a result. The reason is verbatim: the response text
+// when `defaultGhApi` kept it, else the classified failure, else the bare
+// status. A secondary rate limit is the one failure the classifier already
+// knows is transient, so it is flagged.
 function apiRefusal(r) {
-  return { ok: false, reason: apiRefusalReason(r), ...(r.failure === 'secondary-rate-limit' ? { transient: true } : {}) };
+  return {
+    ok: false,
+    reason: r.error || r.failure || `HTTP ${r.status}`,
+    ...(r.failure === 'secondary-rate-limit' ? { transient: true } : {}),
+  };
 }
 
 // The contents-API leg of `ensureClaimsBranch`: create `CLAIMS_BRANCH` at the
