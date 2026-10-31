@@ -36,6 +36,37 @@
 - **`engine-render.js`.** The spec lists it as "render integration"; it renders the curation engine's Phase 2 trace and console sections and has no brief code. The packet gets its own renderer (`packet-render.js`); `engine-render.js` is not modified.
 - **Base URLs.** No `dev-base-url` / local-base-url policy key exists yet (a control-mode record adds policy keys); the CLI takes `--local-base-url` / `--dev-base-url` flags and the prose resolves the local one via `_shared/dev-url-detection.md`.
 
+## AC coverage map
+
+| Clause | Task | Test |
+|---|---|---|
+| AC1.1 | 3 | `AC1 skipped check under Couldn't test, failure under Tried to break, row count matches` |
+| AC1.2 | 3 | same test — check/story row count equals fact count |
+| AC2.1 | 2, 3 | `validatePacket drops a claim citing an absent fact`; `AC2 dropped line` |
+| AC2.2 | 2 | `drops a claim with no refs` |
+| AC2.3 | 2, 3 | `a verified claim citing a failed fact moves to tried-to-break`; render places moved claims under Tried to break |
+| AC2.4 | 2 | `a claim citing a skipped fact moves to couldnt-test` |
+| AC2.5 | 2, 3 | each clause above has its own named test |
+| AC2.6 | 3, 4 | `AC2a expected AC with no result renders not-run`; `AC2a not-run renders as not run` |
+| AC2.7 | 4 | `AC2b readPacket`; `AC2b stale run-dir copy is ignored` |
+| AC2.8 | 5, 6 | `AC2c post failure applies no label`; CLI `post` exit 1 records no `issue edit` |
+| AC2.9 | 3 | `AC2d truncation` |
+| AC3.1 | 5 | `AC3 second run edits the same comment` |
+| AC4.1 | 3 | `AC4 narrative is inert` |
+| AC5.1 | 1, 8 | `host not allowed` cases; contract conformance test pins `vault entry name` and the link rules |
+| AC5.2 | 1, 8 | `TOKEN=`, `tok%65n=`, `#sig=`, `user:pass@`, `sessionid=` cases; contract credential-list pin |
+| AC5.3 | 1 | `/docs/token-guide` accepted |
+| AC5.4 | 3, 4 | `AC5 infra lists commands, no links`; gather refuses url links under infra |
+| AC5.5 | 3 | `AC5 one-line reason for empty sections` |
+| AC6.1 | 7, 9 | engine-verify packet tests; wrap-up conformance test (post applies `demo:pending`, Routing untouched) |
+| AC6.2 | 9 | Task 9 Step 4 runs every wrap-up/brief-pinning suite |
+| AC7.1 | 11 | full suite at Common Step 5 |
+
+Waived plugin/bin/lib/issues/comment-trust.js: read-only dependency (Task 4 `readPacket` consumes `isTrustedComment`/`untrustedSkipNote`).
+Waived plugin/bin/lib/wrap-up/engine-render.js: not the packet's render point (premise decision above); unchanged.
+Waived plugin/bin/lib/activity/render.js: reference pattern only (spec: read, do not edit).
+Waived tests/try-it-contract-conformance.test.js: edited by Task 9 only where Step 1's probe finds a pin on changed text; run in Task 9 Step 4 either way.
+
 ## Review Focus
 
 1. A credential smuggled by case, percent-encoding (`tok%65n=`), a fragment (`#sig=`) or userinfo (`user:pass@`) is refused; a benign path `/docs/token-guide` is not — Task 1 tests.
