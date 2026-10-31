@@ -98,7 +98,7 @@ more, render a three-column table in the shaping output before proceeding —
 
 — and append every candidate as `#{n}` to the composed body's `**Related:**` line (creating the
 line if the record doesn't already carry one). A candidate surfaced here is worth a human's
-attention even when shaping proceeds normally.
+attention even when shaping proceeds normally. A candidate in `deepOverlapHits` (`bin/lib/issues/near-duplicate.js`, #4701: at least `DEEP_OVERLAP_MIN` shared Current State anchors) is a likely duplicate, so name it in the shaping output with its shared-anchor count and read that record's body before stamping `ready`; the finder ranks such a hit first even at score 1, and this call-out is surface-only, so shaping still proceeds and it never refuses on its own.
 
 Then decide refusal with `shapingRefusal` (`bin/lib/issues/near-duplicate.js`, #3141). It refuses
 only on a hit scoring **at least 2 signals** (`MIN_REFUSAL_SCORE`, #3366), `title-similarity` among
