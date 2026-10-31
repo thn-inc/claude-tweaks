@@ -586,8 +586,9 @@ for (const [cmd, files] of [
 // #4449: a trailing -S or --suffix with no value is not a GNU destination. GNU coreutils 9.12 `gcp a b
 // -S` and `gcp a b --suffix` exit 1 ("option requires an argument -- 'S'" and "option '--suffix'
 // requires an argument") and write nothing, while macOS's BSD /bin/cp a b -S exits 1 with `cp: -S: Not
-// a directory`, reading -S as its destination. So -S is the real BSD destination and b is the GNU
-// reading's over-read: the gate denies a write that GNU never makes, which only over-denies.
+// a directory`, reading -S as its destination. So -S is the BSD reading's destination (written only if
+// a directory -S exists) and b is the GNU reading's over-read: the gate denies a write that GNU never
+// makes, which only over-denies.
 for (const [cmd, files] of [
   ['cp a b -S', ['b', '-S']], ['cp a b --suffix', ['b', '--suffix']],
 ]) {
