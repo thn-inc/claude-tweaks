@@ -7,7 +7,7 @@
 
 const { recordPayload } = require('../issues/record');
 const {
-  REQUIRED_SECTIONS: GATE_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, sectionText, shapeGate, stripCodeSpans,
+  REQUIRED_SECTIONS: GATE_SECTIONS, PLACEHOLDER_PATTERNS, authoredRegion, sectionText, shapeGate, stripCodeSpans,
   liftMetadata, describeDesignIntentError,
 } = require('../issues/materialize-format');
 
@@ -52,8 +52,7 @@ function validateShaped(body) {
     gaps.push(sectionText(text, name) === null ? `missing section: ## ${name}` : `empty section: ## ${name}`);
   }
   if (gate.missing.includes('unresolved-placeholder')) {
-    const at = text.search(ORIGINAL_REQUEST_RE);
-    const authored = stripCodeSpans(at === -1 ? text : text.slice(0, at));
+    const authored = stripCodeSpans(authoredRegion(text));
     for (const { marker, re } of PLACEHOLDER_PATTERNS) {
       if (re.test(authored)) gaps.push(`unresolved placeholder marker: ${marker}`);
     }

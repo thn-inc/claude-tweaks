@@ -9,6 +9,7 @@ const {
   hasOpenQuestionsSection,
   readyRestorable,
   resolveAmbiguityMarker,
+  dropEmptyOpenQuestions,
 } = require('../../../plugin/bin/lib/issues/ambiguity-resolve');
 
 // A body that passes the spec-shaped gate; `extra` lands in Deliverables.
@@ -162,4 +163,16 @@ test('resolveAmbiguityMarker: rejects an empty markerText', () => {
 
 test('resolveAmbiguityMarker: rejects a non-string resolutionText', () => {
   assert.throws(() => resolveAmbiguityMarker('body', 'body', null), /resolutionText must be a string/);
+});
+
+test('AC3.2: a fenced ## Original request does not hide a later ambiguity marker (#4561)', () => {
+  const body = `${shaped('x')}\n\n\`\`\`\n## Original request\n\`\`\`\n\n<!-- ambiguity: open -->`;
+  assert.equal(countAmbiguityMarkers(body), 1);
+});
+
+test('dropEmptyOpenQuestions ignores an Open Questions heading inside a fence; a CRLF heading still matches (#4561)', () => {
+  const fenced = '```\n## Open Questions\n\n| Q | A |\n|---|---|\n## Other\n```\n';
+  assert.deepEqual(dropEmptyOpenQuestions(fenced), { body: fenced, removed: false });
+  const crlf = 'A\r\n\r\n## Open Questions\r\n\r\n| Q | A |\r\n|---|---|\r\n';
+  assert.equal(dropEmptyOpenQuestions(crlf).removed, true);
 });

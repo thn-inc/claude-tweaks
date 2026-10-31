@@ -7,7 +7,7 @@
 'use strict';
 
 const { POLICY_KEYS } = require('../policy-schema');
-const { fencedLineRanges, findSection } = require('./record-payload');
+const { fencedLineRanges, findHeadingLine, findSection } = require('./record-payload');
 
 const REQUIRED_SECTIONS = ['## Current State', '## Deliverables', '## Acceptance Criteria', '## Release Note'];
 // The Design-intent enum, read once from the policy schema (never restated here).
@@ -26,8 +26,16 @@ const PLACEHOLDER_RE = new RegExp(PLACEHOLDER_PATTERNS.map((p) => p.re.source).j
 // preservation rule — always the terminal section, and it may contain the
 // original body's own nested `## ` headings). Markers inside it are the
 // original capture's own text, never unresolved authored placeholders, so
-// the placeholder gate tests only the text before it (refs #1240).
-const ORIGINAL_REQUEST_RE = /^## Original request[ \t]*$/m;
+// the placeholder gate tests only the text before it (refs #1240). The
+// boundary is the first unfenced level-2 heading line whose text is exactly
+// `Original request` (#4561): a fenced `## Original request` is quoted content,
+// not the boundary.
+function authoredRegion(text) {
+  const parts = text.split(/(\r\n|\r|\n)/);
+  const lines = parts.filter((_, i) => i % 2 === 0);
+  const idx = findHeadingLine(lines, 'Original request', { levelPattern: '2' });
+  return idx === -1 ? text : parts.slice(0, idx * 2).join('');
+}
 
 // #1839: a fenced block or inline code span quotes content rather than
 // authoring it — a Deliverables fence quoting the exact CLAUDE.md line
@@ -95,9 +103,7 @@ function shapeGate(body) {
     const section = sectionText(text, name);
     if (section === null || section.length === 0) missing.push(name);
   }
-  const originalRequestAt = text.search(ORIGINAL_REQUEST_RE);
-  const authored = originalRequestAt === -1 ? text : text.slice(0, originalRequestAt);
-  if (PLACEHOLDER_RE.test(stripCodeSpans(authored))) missing.push('unresolved-placeholder');
+  if (PLACEHOLDER_RE.test(stripCodeSpans(authoredRegion(text)))) missing.push('unresolved-placeholder');
   return missing.length ? { ok: false, missing } : { ok: true, missing: [] };
 }
 
@@ -204,5 +210,5 @@ function composeFile({ header, n, title, body }) {
 }
 
 module.exports = {
-  REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, DESIGN_INTENT_VALUES, sectionText, shapeGate, normalizeDesignIntent, describeDesignIntentError, liftMetadata, composeHeader, composeFile, stripCodeSpans,
+  REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, DESIGN_INTENT_VALUES, authoredRegion, sectionText, shapeGate, normalizeDesignIntent, describeDesignIntentError, liftMetadata, composeHeader, composeFile, stripCodeSpans,
 };

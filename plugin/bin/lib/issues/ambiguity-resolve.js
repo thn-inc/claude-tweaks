@@ -5,8 +5,9 @@
 'use strict';
 
 const {
-  shapeGate, stripCodeSpans, ORIGINAL_REQUEST_RE,
+  shapeGate, stripCodeSpans, authoredRegion,
 } = require('./materialize-format');
+const { fencedLineMask, headingLine } = require('./record-payload');
 
 // The opening of a red-team marker (specify/red-team.md's write-back). Same
 // pattern the spec-shaped gate uses (materialize-format.js's
@@ -16,16 +17,16 @@ const AMBIGUITY_OPEN_RE = /<!--\s*ambiguity:/g;
 // spec-template.md's `## Open Questions (optional)` heading, at levels 2-4, in
 // any case, with or without a trailing qualifier. Matching loosely fails
 // closed: a surviving variant heading keeps `ready` off rather than letting it
-// back on.
-const OPEN_QUESTIONS_HEADING_RE = /^(#{2,4})[ \t]+open questions\b.*$/im;
+// back on. A name test applied to a heading line's text (headingLine decides
+// what a heading line is), never a heading-line pattern of its own.
+const OPEN_QUESTIONS_NAME_RE = /^open questions\b/i;
 
 // The authored part of a body — everything before `## Original request`, with
 // fenced blocks and inline code spans stripped — exactly the text
 // materialize-format.js's shapeGate tests for placeholders. A marker quoted
 // in a code span or inherited in the original request is not an open one.
 function authoredText(body) {
-  const at = body.search(ORIGINAL_REQUEST_RE);
-  return stripCodeSpans(at === -1 ? body : body.slice(0, at));
+  return stripCodeSpans(authoredRegion(body));
 }
 
 function countAmbiguityMarkers(body) {
@@ -34,9 +35,20 @@ function countAmbiguityMarkers(body) {
   return matches ? matches.length : 0;
 }
 
+// lines -> index of the first unfenced level 2-4 heading line named Open Questions, or -1.
+// A trailing \r is dropped first: headingLine's text trim is [ \t] only.
+function findOpenQuestionsStart(lines) {
+  const fenced = fencedLineMask(lines);
+  return lines.findIndex((l, i) => {
+    if (fenced[i]) return false;
+    const h = headingLine(l.replace(/\r$/, ''));
+    return h !== null && h.level >= 2 && h.level <= 4 && OPEN_QUESTIONS_NAME_RE.test(h.text);
+  });
+}
+
 function hasOpenQuestionsSection(body) {
   if (typeof body !== 'string') return false;
-  return OPEN_QUESTIONS_HEADING_RE.test(authoredText(body));
+  return findOpenQuestionsStart(authoredText(body).split('\n')) !== -1;
 }
 
 // `ready` is restorable when the body passes the spec-shaped gate `ready`
@@ -55,13 +67,14 @@ function readyRestorable(body) {
 // content is left alone.
 function dropEmptyOpenQuestions(body) {
   const lines = body.split('\n');
-  const start = lines.findIndex((l) => OPEN_QUESTIONS_HEADING_RE.test(l.replace(/\r$/, '')));
+  const start = findOpenQuestionsStart(lines);
   if (start === -1) return { body, removed: false };
-  const level = lines[start].match(/^#+/)[0].length;
+  const fenced = fencedLineMask(lines);
+  const level = headingLine(lines[start].replace(/\r$/, '')).level;
   let end = start + 1;
   while (end < lines.length) {
-    const m = lines[end].match(/^(#+)[ \t]/);
-    if (m && m[1].length <= level) break;
+    const h = fenced[end] ? null : headingLine(lines[end].replace(/\r$/, ''));
+    if (h && h.level <= level) break;
     end++;
   }
   const content = lines.slice(start + 1, end).map((l) => l.trim()).filter((l) => l !== '');
@@ -121,5 +134,6 @@ module.exports = {
   countAmbiguityMarkers,
   hasOpenQuestionsSection,
   readyRestorable,
+  dropEmptyOpenQuestions,
   resolveAmbiguityMarker,
 };

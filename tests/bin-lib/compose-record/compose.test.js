@@ -192,3 +192,10 @@ test('compose.js still exports REQUIRED_SECTIONS / PLACEHOLDER_MARKERS with thei
   assert.deepEqual(m.REQUIRED_SECTIONS, ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note']);
   assert.deepEqual(m.PLACEHOLDER_MARKERS, ['TBD', 'TODO', '<!-- ambiguity:']);
 });
+
+test('AC3.2: validateShaped flags a marker after a fenced ## Original request, agreeing with shapeGate (#4561)', () => {
+  const body = SHAPED + '\n\n```\n## Original request\n```\n\nTBD';
+  assert.equal(validateShaped(body).ok, false);
+  assert.ok(validateShaped(body).gaps.includes('unresolved placeholder marker: TBD'));
+  assert.equal(shapeGate(body).ok, false);
+});
