@@ -322,9 +322,9 @@ function archiveOrphanedMint(root, dir) {
 }
 
 // Same 24h window as ORPHAN_MINT_TTL_MS, and for the same reason — longer than
-// almost every pause before a run is resumed (#4437 measured a handful past 24h;
-// docs/reconcile-checks.md has the counts), short enough that a genuinely
-// abandoned one is swept the next day. Deliberately not a second,
+// almost every pause before a run is resumed (#4437 measured one resume past 24h,
+// an undercount; docs/reconcile-checks.md has the counts), short enough that a
+// genuinely abandoned one is swept the next day. Deliberately not a second,
 // differently-tuned constant. Since #4421 it is the silence FLOOR below which no
 // run-liveness verdict is even asked, and the window a `dead` verdict must have
 // outlasted; an `unknown` verdict with no live positive waits LEGACY_DEAD_MS (72h).

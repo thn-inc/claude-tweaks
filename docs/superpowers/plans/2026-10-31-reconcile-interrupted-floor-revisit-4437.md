@@ -17,6 +17,8 @@
 
 ## Measured data (inputs to Task 1 — do not re-derive)
 
+> **Superseded in part (b055661e4).** The whole-branch review found these counts treat session-end episodes as runs. The shipped ruling (`docs/reconcile-checks.md`) counts each resume once: 125 pipeline runs with a session-end, 82 distinct resumes (under 1 h 66, 1–6 h 10, 6–12 h 2, 12–24 h 3, 24–72 h 1), the 6–24 h resumes from 3 runs — output of the companion `floor-dedupe.js`, saved in the run's `evidence/floor-dedupe.txt`. The episode counts below, and Step 1's replacement text, are the pre-dedupe figures; the ruling paragraph states the counting method itself.
+
 Scratch script `/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/954d2677-d2ec-4142-9657-ef50a24dca98/scratchpad/floor-measure.js`, run 2026-10-31 over the main checkout's `.claude-tweaks/pipelines/` and `pipelines/archive/` (run-id-named directories with an `events.jsonl`: 1,856). It counts one episode per own (non-`fallback`) `session-end` event with a `sessionId`, and a resume as the next own `skill_invoked`/`commit`/`verify`/`ask-user-question`/`pre-compact` event after it, from any session.
 
 - All runs: 307 episodes in 220 runs; 134 resumed, 173 never.
@@ -46,7 +48,7 @@ Effect of a shorter floor on those 108 resumed pipeline runs: a 12-hour floor wo
 
 **Files:**
 - Modify: `docs/reconcile-checks.md:338`
-- Waived `plugin/bin/lib/reconcile/archive-merged.js`: read only — the floor is kept, so `STALE_INTERRUPTED_TTL_MS`/`ORPHAN_MINT_TTL_MS` and their comment stay as they are (AC2 does not apply).
+- Waived `plugin/bin/lib/reconcile/archive-merged.js`: no code change — the floor is kept, so `STALE_INTERRUPTED_TTL_MS`/`ORPHAN_MINT_TTL_MS` stay as they are (AC2 does not apply); their comment was later softened to match the measurement (d2c1f89d8).
 - Waived `tests/bin-lib/reconcile/archive-merged.test.js`: read only — the AC3 boundary tests already pin the kept 24-hour floor at lines 3001–3004.
 
 **Interfaces:**
