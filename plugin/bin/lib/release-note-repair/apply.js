@@ -34,17 +34,20 @@ function applyReleaseNote(body, rawLine) {
   const bareLines = lines.map(bare);
   const fenced = fencedLineMask(bareLines);
   const originalAt = findHeadingLine(bareLines, 'Original request', { levelPattern: '2', fenced });
-  // A fenced look-alike with no unfenced heading may be the real boundary swallowed by an authored
-  // fence that a fence line inside the verbatim text closes — refuse rather than write into it.
-  if (originalAt === -1 && bareLines.some((l, k) => fenced[k] && isLevel2Heading(l, 'Original request'))) {
-    throw new RepairError('a ## Original request heading sits inside a fenced block with no unfenced one — the verbatim boundary is ambiguous');
-  }
   const authoredEnd = originalAt === -1 ? lines.length : originalAt;
   // An unterminated fence opened before the insert point leaves no boundary to trust — refuse
   // rather than guess. One opened after ## Original request sits in verbatim text and never refuses.
+  // Checked first, so an unclosed authored fence that swallows the real boundary is reported as
+  // unterminated (with no unfenced boundary, authoredEnd is lines.length).
   const { ranges, unclosed } = scanFences(bareLines);
   if (unclosed && ranges[ranges.length - 1][0] < authoredEnd) {
     throw new RepairError('an unterminated fenced code block precedes the insert point');
+  }
+  // With no unfenced boundary, every fence is closed by now. A fenced look-alike may then be the real
+  // boundary swallowed by an authored fence that a fence line inside the verbatim text closes —
+  // refuse rather than write into it.
+  if (originalAt === -1 && bareLines.some((l, k) => fenced[k] && isLevel2Heading(l, 'Original request'))) {
+    throw new RepairError('a ## Original request heading sits inside a fenced block with no unfenced one — the verbatim boundary is ambiguous');
   }
   const isH2 = (k) => !fenced[k] && headingLine(bareLines[k])?.level === 2;
   const nextH2 = (from) => {

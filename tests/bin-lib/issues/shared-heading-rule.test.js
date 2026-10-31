@@ -5,9 +5,14 @@ const path = require('node:path');
 const { readText } = require('../../helpers/read-skill');
 
 // AC1.1/AC1.2: no record-body reader keeps its own heading or fence regex; each requires the shared rule.
+const WS_ATOM = String.raw`(?:\\s|\\t|\[[^\]\n]*\]| )`; // \s, \t, a [...] class, or a literal space
+const QUANT = String.raw`(?:[*+?]|\{\d*(?:,\d*)?\})?`;
+const WS_PREFIX = String.raw`(?:${WS_ATOM}${QUANT}|\((?:\?:)?(?:${WS_ATOM}${QUANT}|\|)+\)${QUANT})*`; // bare or grouped
+const LINE_START = String.raw`(?:\^|\((?:\?:)?(?:\^\|(?:\\r\??)?\\n|(?:\\r\??)?\\n\|\^)\))`; // ^, (^|\n), (?:\n|^)
 const OWN_RULE_RE = new RegExp([
-  // a regex literal anchored on '#', after an optional leading-whitespace prefix (\s*, [ \t]*, ' {0,3}')
-  String.raw`\/\^(?:(?:\\s|\\t|\[[^\]\n]*\]| )(?:[*+?]|\{\d*(?:,\d*)?\})?)*\(?(?:\?:)?\\?#`,
+  // a regex literal anchored on '#' at a line start, after an optional leading-whitespace prefix
+  // (\s*, [ \t]*, ' {0,3}', (?:\s{0,3}))
+  String.raw`\/${LINE_START}${WS_PREFIX}\(?(?:\?:)?\\?#`,
   String.raw`\/\^[^/\n]*(?:\x60{3}|~{3})`, // a '^'-anchored regex literal holding a literal fence run
   String.raw`\x60\{3|~\{3`, // a fence-run quantifier
 ].join('|'));
@@ -21,6 +26,8 @@ test('the matcher flags a planted heading regex and a planted fence regex (go-re
     'const H = /^\\s*## /;',
     'const H = /^ {0,3}## /;',
     'const H = /^[ \\t]*#/;',
+    'const H = /^(?:\\s{0,3})#/;',
+    'const H = /(^|\\n)## /;',
   ]) assert.equal(ownRuleOffenders(planted).length, 1, planted);
 });
 test('the matcher leaves non-heading regexes and prose fence mentions alone (false-positive control)', () => {

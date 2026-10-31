@@ -68,8 +68,16 @@ test('applyReleaseNote fills the real empty Release Note heading, never a fenced
   assert.ok(out.body.includes(fencedLookalike), 'the fenced example stays byte-identical');
 });
 
+// A RepairError whose message matches `re` — each refusal pins the reason it reports.
+const refusal = (re) => (err) => err instanceof RepairError && re.test(err.message);
+
 test('applyReleaseNote refuses an unterminated fenced code block preceding the insert point', () => {
-  assert.throws(() => applyReleaseNote(F.UNTERMINATED_FENCE_BODY, F.LINE), RepairError);
+  assert.throws(() => applyReleaseNote(F.UNTERMINATED_FENCE_BODY, F.LINE), refusal(/unterminated/));
+});
+
+test('an unclosed authored fence that swallows the real ## Original request is refused as unterminated, not ambiguous (#4561)', () => {
+  const body = `${F.join(F.CS, F.DEL, F.AC_UNTERMINATED_FENCE)}\n## Original request\n\nSee thread.\n`;
+  assert.throws(() => applyReleaseNote(body, F.LINE), refusal(/unterminated/));
 });
 
 test('applyReleaseNote never places the note inside a list-indented fence whose content is not itself reindented', () => {
@@ -104,12 +112,13 @@ test('AC3.1: a fenced ## Original request is not the boundary — the real unfen
 
 test('AC3.1: an authored unterminated fence closed inside the verbatim section hides the real boundary — refused (#4561)', () => {
   const body = `${F.join(F.CS, F.DEL, F.AC_UNTERMINATED_FENCE)}\n## Original request\n\nSome text\n\`\`\`\n\n## Original heading\n\nmore\n`;
-  assert.throws(() => applyReleaseNote(body, F.LINE), RepairError);
+  // The verbatim text's ``` closes the authored fence, so every fence is closed: ambiguous, not unterminated.
+  assert.throws(() => applyReleaseNote(body, F.LINE), refusal(/ambiguous/));
 });
 
 test('AC3.1: a body whose only ## Original request is inside a closed fence is refused, the boundary being ambiguous (#4561)', () => {
   const body = `${F.join(F.CS, F.DEL, F.AC)}\n\`\`\`markdown\n## Original request\n\`\`\`\n`;
-  assert.throws(() => applyReleaseNote(body, F.LINE), RepairError);
+  assert.throws(() => applyReleaseNote(body, F.LINE), refusal(/ambiguous/));
 });
 
 test('a tab after ## counts as the Release Note heading — filled, not inserted, per the shared headingLine (#4561)', () => {

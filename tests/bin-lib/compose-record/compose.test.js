@@ -131,6 +131,12 @@ test('AC2.1: splitSections ignores a heading inside a fence and agrees with sect
   assert.deepEqual(Object.keys(sections), ['Current State', 'Deliverables']);
   for (const [name, content] of Object.entries(sections)) assert.equal(content, sectionText(body, name));
   assert.equal(sectionText(body, 'Release Note'), null);
+
+  const tilde = body.replace('```markdown', '~~~markdown').replace('quoted\n```', 'quoted\n~~~');
+  const tildeSections = splitSections(tilde);
+  assert.deepEqual(Object.keys(tildeSections), ['Current State', 'Deliverables']);
+  for (const [name, content] of Object.entries(tildeSections)) assert.equal(content, sectionText(tilde, name));
+  assert.equal(sectionText(tilde, 'Release Note'), null);
 });
 
 test('validateShaped characterization: exact gaps, in order, for a multi-gap body', () => {

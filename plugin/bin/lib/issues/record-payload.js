@@ -99,8 +99,9 @@ function fencedBlock(text) {
 // The one fence rule shared by stripCodeSpans (materialize-format.js), sectionText
 // and extractSection (#4169), mergeStateDemands (merge-gate.js) and
 // extractCurrentStateAnchors (near-duplicate.js, which now reaches the rule through
-// findSection) (#4369), apply.js's release-note-repair and authoredRegion
-// (materialize-format.js) (#4561), and the three
+// findSection) (#4369), release-note-repair's apply.js, authoredRegion
+// (materialize-format.js), splitSections (compose-record/compose.js) and
+// ambiguity-resolve.js's Open Questions lookup (#4561), and the three
 // body-metadata extractors extractVerifiedAsOf / extractPremiseCheck /
 // extractTemplateStamp (#4368): an opener is an optional U+FEFF byte-order mark,
 // 0-3 leading spaces (CommonMark), then a run of 3+ backticks or tildes — a

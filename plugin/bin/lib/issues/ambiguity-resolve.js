@@ -63,12 +63,15 @@ function readyRestorable(body) {
 // Deletes an Open Questions section whose table has no data rows left (only
 // the header and separator rows, plus blank lines) — spec-template.md's "When
 // all rows are resolved, delete the section". A section with any other
-// content is left alone.
+// content is left alone. Only a heading in the authored region counts, the
+// scope hasOpenQuestionsSection reads: an Open Questions table inside the
+// verbatim `## Original request` copy is the original's text, never dropped.
 function dropEmptyOpenQuestions(body) {
   const lines = body.split('\n');
+  const authoredEnd = authoredRegion(body).split('\n').length;
   const fenced = fencedLineMask(lines);
   const start = findOpenQuestionsStart(lines, fenced);
-  if (start === -1) return { body, removed: false };
+  if (start === -1 || start >= authoredEnd) return { body, removed: false };
   const level = headingLine(lines[start].replace(/\r$/, '')).level;
   let end = start + 1;
   while (end < lines.length) {
