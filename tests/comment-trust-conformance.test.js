@@ -138,12 +138,13 @@ test('AC5.3: the Trusted authors section states the fixed facts', () => {
   }
   // Go-red control [IL-105]: deleting one fact sentence (never a global token replace — #4400)
   // must fail the pin.
-  for (const sentence of [
-    'A missing field is untrusted — a comment with neither field is skipped.',
-    'There is no viewer lookup.',
+  for (const [sentence, fact] of [
+    ['A missing field is untrusted — a comment with neither field is skipped.', 'A missing field is untrusted'],
+    ['There is no viewer lookup.', 'There is no viewer lookup'],
   ]) {
     const doctored = body.replace(sentence, '');
     assert.notStrictEqual(doctored, body, `doctoring must change the section: ${sentence}`);
+    assert.ok(!doctored.includes(fact), `deleting "${sentence}" must remove its own fact: ${fact}`);
     assert.ok(!statesAll(doctored), `deleting "${sentence}" must fail the fixed-facts pin`);
   }
 });
