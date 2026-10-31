@@ -235,6 +235,30 @@ stories:
         verify: "Cart shows 1 item"
 ```
 
+### Example 5: Reveal-once secret
+
+A story whose expected behavior is "show a secret exactly once" declares `secrets:` so the QA run scrubs the value from its own snapshots, traces and screenshots afterwards (`SKILL.md`'s Story schema section). Here the token's format is known, so a `pattern` covers it; the recovery code's is not, so a `locator` names the element that displays it.
+
+```yaml
+schema_version: 2
+stories:
+  - id: push-token-shown-once
+    description: Issue a push token and confirm the panel shows it only once
+    url: "/settings/push"
+    auth: { vault: "default-user" }
+    secrets:
+      - pattern: "pt_test_[A-Za-z0-9]{16}"
+      - locator: { role: code, name: "Recovery code" }
+    steps:
+      - action: click
+        locator: { role: button, name: "Generate token" }
+      - action: assert_visible
+        locator: { role: code, name: "Push token" }
+      - action: navigate
+        target: "/settings/push"
+      - verify: "The token is no longer displayed; only its last 4 characters are"
+```
+
 ### Locator-type quick reference
 
 | Locator | Use when | Example |
