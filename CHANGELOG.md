@@ -72,6 +72,19 @@ Three conventions follow from how this repo works, and all are visible below:
 * Windows regression: 2 test file(s) newly failing after… ([#4385](https://github.com/thn-inc/claude-tweaks/issues/4385)) ([dc6d92d](https://github.com/thn-inc/claude-tweaks/commit/dc6d92d11b8e89303ce37de40330f0a604009de4)), closes [#4554](https://github.com/thn-inc/claude-tweaks/issues/4554)
 * Write gate assumes a case arm always runs, so a cd in an… ([#4486](https://github.com/thn-inc/claude-tweaks/issues/4486)) ([ab2f509](https://github.com/thn-inc/claude-tweaks/commit/ab2f50978eb2dce272c92d55a516866996207ba9))
 
+### Highlights
+* No user-visible change: fixes two Windows-only test failures where a double-quoted Windows path in a test command never matched the delete-only push exemption.
+* Internal maintenance — settles below-floor digest findings in `run-liveness`; no user-facing change.
+* `/claude-tweaks:specify` now ranks likely duplicates by how much they actually overlap, so a duplicate with a differently worded title is no longer buried in the related-records list.
+* A pipeline run whose branch fell behind main during the build now merges main in before its final test run, so the full suite runs once instead of twice.
+* You can restart a dispatched build that stalled partway with one command, and it continues on its existing pull request.
+* Backfilled review findings in files whose paths contain characters such as `@` or brackets now name the right file.
+* Cloud Routines without the `gh` CLI now close a decomposed feature's parent once its last low-risk sub-issue merges, the same as local sessions.
+* Maintainer-only: the shell-scanner differential recipe's bash driver now stops a fuzz shape that keeps forking, so no case can leave processes running after its verdict returns.
+* The worktree write gate no longer assumes a `case` arm runs when no pattern may match.
+* Tidy's acceptance-gap scan stays complete on repos that close more than 1000 undisposed issues a month.
+* Added opt-in policy keys for control mode, acceptance target, the dev deploy declaration, owned owners, trusted authors, and per-category risk path globs, all defaulting to today's behavior.
+
 ## [6.157.2](https://github.com/thn-inc/claude-tweaks/compare/v6.157.1...v6.157.2) (2026-10-31)
 
 
