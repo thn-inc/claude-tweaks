@@ -139,21 +139,26 @@ const closedRow = (number, ageDays, comments) => ({
 });
 const comment = (body, authorAssociation, login) => ({ author: { login }, authorAssociation, body });
 
-function runFetchBlock(login) {
+function runFetchBlock(login, { raw = false } = {}) {
   const dir = mkTmp('cp-fetch-');
   const p = (name) => path.join(dir, name).replace(/\\/g, '/');
   const open10 = { number: 10, title: 'Parent 10', body: '', labels: [{ name: 'parent-issue' }] };
+  // Numbers 18 and 19 appear only in the legacy (`family:parent`) fetches, so dropping either
+  // legacy file from the block's `fetched` array changes the result.
+  const legacyOpen = { number: 18, title: 'Parent 18', body: '', labels: [{ name: 'family:parent' }] };
   const files = {
     $PI_NEW: [open10],
-    $PI_LEG: [open10],
+    $PI_LEG: [open10, legacyOpen],
     $PC_NEW: [
       closedRow(11, 5, [comment(MARKER, 'MEMBER', 'x')]),
       closedRow(12, 40, []),
       closedRow(13, 5, [comment(MARKER, 'NONE', 'stranger')]),
       closedRow(15, 5, [comment('see ## Closed below the oversight floor', 'MEMBER', 'x')]),
       closedRow(17, 5, [comment(MARKER, 'NONE', 'bot-self')]),
+      closedRow(20, 29, []),
+      closedRow(21, 31, []),
     ],
-    $PC_LEG: [closedRow(11, 5, [comment(MARKER, 'MEMBER', 'x')])],
+    $PC_LEG: [closedRow(11, 5, [comment(MARKER, 'MEMBER', 'x')]), closedRow(19, 5, [])],
     $ALL_STATES: [],
     $PARENTS: null,
   };
@@ -170,20 +175,27 @@ function runFetchBlock(login) {
   const res = spawnSync('node', ['-e', script], {
     encoding: 'utf8', env: { ...process.env, FETCH_LIMIT: '500', STATE_SEARCH: '' },
   });
+  if (raw) return { res, parentsFile: p('PARENTS.json') };
   assert.equal(res.status, 0, res.stderr);
   return JSON.parse(fs.readFileSync(p('PARENTS.json'), 'utf8'));
 }
 
 test('AC1.1: the parent-gate fetch block merges open and closed parents inside the 30-day window and marks the #4466 close', () => {
   const parents = runFetchBlock('bot-self');
-  assert.deepEqual(parents.map((x) => x.number).sort((a, b) => a - b), [10, 11, 13, 15, 17]);
+  assert.deepEqual(parents.map((x) => x.number).sort((a, b) => a - b), [10, 11, 13, 15, 17, 18, 19, 20]);
   const marked = parents.filter((x) => x.belowFloorClose === true).map((x) => x.number).sort((a, b) => a - b);
   assert.deepEqual(marked, [11, 17]);
   assert.equal(parents.find((x) => x.number === 11).state, 'CLOSED');
   for (const x of parents) assert.ok(!('comments' in x), '#' + x.number + ' carries no comments key');
-  const noLogin = runFetchBlock('');
-  assert.equal(noLogin.find((x) => x.number === 17).belowFloorClose, false);
-  assert.equal(noLogin.find((x) => x.number === 11).belowFloorClose, true);
+});
+
+test('AC2.1: the parent-gate fetch block stops, writing no parents, when the gh login is empty', () => {
+  // A failed `gh api user` leaves the login file empty; with no login a #4466 marker posted by the
+  // current identity would go unrecognised and a below-floor close would read as a gap.
+  const { res, parentsFile } = runFetchBlock('', { raw: true });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /gh api user returned no login/);
+  assert.equal(fs.existsSync(parentsFile), false, 'no parents file is written on the stop');
 });
 
 test('AC1.1: the closed-parent fetches are bounded to the window and carry what the gate reads', () => {
@@ -223,18 +235,32 @@ test('AC1.1: every gate composer carries the parent\'s closed state and the unre
     execFileSync('node', ['-e', script], { encoding: 'utf8' });
     return JSON.parse(fs.readFileSync(gatesFile, 'utf8'));
   };
-  for (const gates of [run('parseSubIssues(p.body)', 'gates-body.json'), run('batch.byParent', 'gates-native.json')]) {
+  // The REST fallback's composing block, executed on the same inputs (its jsonl is what the
+  // per-parent `gh api --paginate` loop appends, one row per parent).
+  fs.writeFileSync(p('sub-issues.jsonl'), '{"number":1,"subIssueNumbers":[101,102]}\n{"number":2,"subIssueNumbers":[101]}\n');
+  fs.writeFileSync(p('pg-fail.txt'), '');
+  const fallbackGates = (() => {
+    const gatesFile = p('gates-fallback.json');
+    const script = scanScript(PG, 'sub-issue REST fallback failed')
+      .split('$PARENTS').join(p('parents.json'))
+      .split('$ALL_STATES').join(p('states.json'))
+      .split('$SUB_ISSUES').join(p('sub-issues.jsonl'))
+      .split('$PG_FAIL').join(p('pg-fail.txt'))
+      .split('$GATES').join(gatesFile);
+    execFileSync('node', ['-e', script], { encoding: 'utf8' });
+    return JSON.parse(fs.readFileSync(gatesFile, 'utf8'));
+  })();
+  for (const gates of [run('parseSubIssues(p.body)', 'gates-body.json'), run('batch.byParent', 'gates-native.json'), fallbackGates]) {
     assert.equal(gates[0].state, 'CLOSED');
     assert.equal(gates[0].stateReason, 'COMPLETED');
     assert.equal(gates[0].belowFloorClose, true);
     assert.deepEqual(gates[0].subIssues.map((s) => s.unread), [false, true]);
+    // The state map's state and label names reach the prefilter's input; an id absent from it reads OPEN, unlabelled.
+    assert.deepEqual(gates[0].subIssues.map((s) => s.state), ['CLOSED', 'OPEN']);
+    assert.deepEqual(gates[0].subIssues.map((s) => s.labels), [['risk:low'], []]);
     assert.equal(gates[1].state, 'OPEN');
     assert.equal(gates[1].stateReason, null);
     assert.equal(gates[1].belowFloorClose, false);
-  }
-  const fallback = scanScript(PG, 'sub-issue REST fallback failed');
-  for (const text of ["state: p.state || 'OPEN'", 'stateReason: p.stateReason || null', 'belowFloorClose: p.belowFloorClose === true', 'unread: !info']) {
-    assert.ok(fallback.includes(text), text);
   }
 });
 

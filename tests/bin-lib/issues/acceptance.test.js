@@ -315,6 +315,15 @@ test('AC2.1: closedParentGap excludes a #4466-closed parent before the floor', (
   assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'medium' }], riskFloor: 'high' }), 'none');
 });
 
+test('AC1.1: closedParentGap applies the caller\'s risk floor, not a fixed one', () => {
+  const medium = [{ risk: 'medium' }];
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: medium, riskFloor: 'high' }), 'none');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: medium, riskFloor: 'medium' }), 'gap');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'low' }], riskFloor: 'always' }), 'gap');
+  // The marker still wins over every floor.
+  assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: true, subIssues: medium, riskFloor: 'always' }), 'none');
+});
+
 test('closedParentGap reports an unreadable parent instead of guessing', () => {
   assert.equal(closedParentGap({ parentLabels: [], subIssues: [], riskFloor: 'high' }), 'no-sub-issues');
   assert.equal(closedParentGap({ parentLabels: [], riskFloor: 'high' }), 'no-sub-issues');

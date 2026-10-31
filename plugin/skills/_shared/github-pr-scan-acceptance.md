@@ -110,7 +110,7 @@ exit-3 sub-issue fetch below. `$CLOSED` is emptied first, so a later block never
 
 A closed record whose acceptance lives on a `/claude-tweaks:specify` decomposition parent must
 not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it, and its
-`isParent` field excludes every parent — its acceptance is the parent gate's: the below-floor close
+`isParent` field excludes every parent here (only `parent-gate`'s closed branch passes `parentExceedsFloor`) — its acceptance is the parent gate's: the below-floor close
 (#4466) or `/claude-tweaks:demo` above it (a hand-closed one: `parent-gate` below). Resolving
 which closed records are sub-issues reuses the same parent-side enumeration the `parent-gate` scope
 below already documents in full — never the sub-issue side, which works under one `work-links` mode
@@ -484,6 +484,7 @@ node -e "
   const { isCloseMarkerComment } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/below-floor-parent-close.js');
   const fetched = ['$PI_NEW', '$PI_LEG', '$PC_NEW', '$PC_LEG'].map(require);
   const login = fs.readFileSync('$PARENTS.login', 'utf8').trim();
+  if (!login) throw new Error('gh api user returned no login — a close marker posted by the current identity could not be recognised.');
   const parents = [...new Map(fetched.flat().filter((p) => p.state !== 'CLOSED' || Date.now() - Date.parse(p.closedAt) < 30 * 864e5).map((p) => [p.number, { ...p, comments: undefined, belowFloorClose: (p.comments || []).some((c) => isCloseMarkerComment(c, login)) }])).values()];
   fs.writeFileSync('$PARENTS', JSON.stringify(parents));
   const states = require('$ALL_STATES');
@@ -500,8 +501,8 @@ node -e "
 "
 ```
 
-When this block fails — the state-map-search guard throws, or a failed `gh` call leaves a fetch file
-unreadable — the scope stops: report no `[parent-gate]` rows at all and quote the error verbatim.
+When this block fails — a guard throws (the state-map-search guard, or the empty-login guard above), or
+a failed `gh` call leaves a fetch file unreadable — the scope stops: report no `[parent-gate]` rows at all and quote the error verbatim.
 `$PARENTS` is emptied first; never read it or `$ALL_STATES` afterwards — a 0-row state map would
 read every sub-issue as `OPEN`.
 
