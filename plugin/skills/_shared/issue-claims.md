@@ -185,7 +185,13 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      until exhausted), Write every page's entries as one JSON array to the path
      `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value stale-claim-open-prs.json`
      prints, and re-run it adding `--listing "{that path}"` (it normalizes the MCP entries itself).
-     `"match": true` stops the claim and writes nothing, as the tombstone case does. A non-null
+     `"match": true` stops the claim and writes nothing, as the tombstone case does.
+     **Resume exception (#4588):** when the run carries `RESUME_PR=<url>` (`dispatch resume`) and
+     the verdict is `"match": true` with a `link` exactly equal to it, take the conditional write
+     below instead of stopping, and log the claim with the `resume-pr: {url}` suffix
+     (`flow/claim-targets.md`'s "Log the claim"). A `pr-opened:` tombstone above still stops
+     whatever `RESUME_PR` says, and so does a verdict whose `link` differs. A `failure` verdict
+     keeps its fail-open-with-a-line handling: a non-null
      `failure`, a non-zero exit other than the exit 2 that triggers the listing, or a listing that
      could not be fetched or written, falls through to the write (fail open), after one line saying
      the check failed — never silently, so it is not read as no marked PR.
@@ -501,7 +507,10 @@ claimed — before ever calling `gh pr view`; anything else (wrong repo, malform
 treated the same as a missing `link` and never reaches `gh` at all. A `'stale'` claim whose `runId`
 matches an open same-repo PR's `claude-tweaks-run:` marker is in flight too (#4423,
 `staleClaimInFlightPr`) — same `inFlight` envelope, same fail-open (the gh-CLI path also writes
-one stderr warning on a failed check).
+one stderr warning on a failed check). Under `dispatch resume`, #4588, passing
+`--resume-pr <url>` lets a `'stale'` claim whose in-flight link is exactly `<url>` re-claim; a
+`pr-opened:` tombstone still stops, and so does a stale claim whose link differs — "The lock" step 4
+mirrors this exception.
 `bin/lib/claim-targets/claim-targets.js` — the group-claim loop `/claude-tweaks:flow` Step 2.8 and
 `/claude-tweaks:dispatch` actually call — imports this same `tombstoneInFlightPr` from
 `claim-store.js` and reports the stopped target via `inFlight`/`reason: 'in-flight'` instead of

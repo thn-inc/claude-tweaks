@@ -385,3 +385,138 @@ test('task-prompt.md: the fenced first-call template carries no RESUME_PR or res
   assert.deepStrictEqual(fences.filter((f) => /RESUME_PR|resume-context/.test(f)), []);
   assert.deepStrictEqual(['```\nRESUME_PR="x"\n```'].filter((f) => /RESUME_PR|resume-context/.test(f)).length, 1);
 });
+
+// ---- flow Step 2.8 + claims contract: RESUME_PR forwarding and the in-flight exception (Task 5) --
+
+const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
+const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
+const { CLAIM_LOG_STEP, claimLogText, isClaimLogEntry } = require('../plugin/bin/lib/log-decision/claim-log');
+
+const SKILLS_DIR = path.join(ROOT, 'plugin/skills');
+const FLOW_SKILL_PATH = path.join(SKILLS_DIR, 'flow/SKILL.md');
+const CLAIM_TARGETS_PATH = path.join(SKILLS_DIR, 'flow/claim-targets.md');
+const ISSUE_CLAIMS_PATH = path.join(SKILLS_DIR, '_shared/issue-claims.md');
+const FLOW_SKILL = readText(FLOW_SKILL_PATH);
+const CLAIM_TARGETS = readText(CLAIM_TARGETS_PATH);
+const ISSUE_CLAIMS = readText(ISSUE_CLAIMS_PATH);
+
+// Slice [start, end) by two anchors, asserting both resolve and in order (a missing end anchor
+// must not widen the region to the rest of the file).
+function slice(text, startMarker, endMarker, what) {
+  const start = text.indexOf(startMarker);
+  const end = text.indexOf(endMarker);
+  assert.notStrictEqual(start, -1, `${what}: start anchor missing`);
+  assert.notStrictEqual(end, -1, `${what}: end anchor missing`);
+  assert.ok(end > start, `${what}: end anchor must follow the start anchor`);
+  return text.slice(start, end);
+}
+const flowStep28 = (t) => slice(t, '- 2.8 — Claim the targets.', '- 2.9 — ', 'flow Step 2.8');
+const claimCommandBlock = (t) => slice(t, '## Claim every named target, all-or-abort', '**Log the claim (mandatory, #2492).**', 'claim-targets command block');
+const inFlightVariant = (t) => slice(t, '- **3 (in-flight variant', '- **4** —', 'in-flight variant');
+const logTheClaim = (t) => slice(t, '**Log the claim (mandatory, #2492).**', '**Mechanical backstop', 'Log the claim');
+const lockStep4 = (t) => slice(t, "  4. **`state: 'tombstone'` or `'stale'`**", "  5. **`state: 'live'`**", 'The lock step 4');
+const inFlightDetection = (t) => slice(t, '**In-flight detection at claim time (#315).**', '## Close-via-merge', 'In-flight detection');
+
+const FLOW_CLAIMS = [
+  ['the command carries --resume-pr "$RESUME_PR"', /--steps \{steps\} \[--keep-going\] --run "\$PIPELINE_RUN_DIR" \[--resume-pr "\$RESUME_PR"\]/],
+  ['the flag is forwarded only when the invocation carries RESUME_PR=<url>', /only when the invocation carries `RESUME_PR=<url>` \(`dispatch resume`, #4588\)/],
+];
+for (const [label, re] of FLOW_CLAIMS) {
+  test(`flow SKILL.md Step 2.8: ${label}`, () => assertPinned(flowStep28(FLOW_SKILL), re, label));
+}
+
+test('flow SKILL.md Step 2.8: the exit-code branch is unchanged and never reads resumedPr', () => {
+  const step = flowStep28(FLOW_SKILL);
+  assertPinned(step, /Exit 0 → Step 3 \(claimed, or already this run's\)\. Exit 3\/4\/5 \(contested or in-flight \/ transient \/ unverified\) → stop before the Config Manifesto\./, 'exit-code branch');
+  assert.doesNotMatch(step, /resumedPr/);
+  assert.match(`${step}\nresumedPr`, /resumedPr/, 'control: the ban pattern detects a planted mention');
+});
+
+const TOMBSTONE_STOPS = /`pr-opened:` tombstone[\s\S]{0,200}still\s+stops/;
+const MISMATCH_STOPS = /link`?\s+differs[\s\S]{0,80}still\s+stops|still\s+stops[\s\S]{0,120}link`?\s+differs/;
+
+test('claim-targets.md: the claim command block carries --resume-pr "$RESUME_PR"', () => {
+  assertPinned(claimCommandBlock(CLAIM_TARGETS), /--run "\$PIPELINE_RUN_DIR" \[--resume-pr "\$RESUME_PR"\]/, 'command block flag');
+});
+
+const VARIANT_CLAIMS = [
+  ['names the exception', /\*\*Resume exception \(#4588\)\.\*\*/],
+  ['forwarding is keyed on RESUME_PR=<url> (dispatch resume)', /Only an invocation carrying `RESUME_PR=<url>` \(`dispatch resume`\)\s+forwards `--resume-pr "\$RESUME_PR"`/],
+  ['no RESUME_PR keeps the #4423 stop unchanged', /[Ww]ithout it[\s\S]{0,80}unchanged \(#4423\)/],
+  ['a stale claim whose link is exactly the url re-claims', /`'stale'` claim whose in-flight link is exactly `<url>`[\s\S]{0,120}ordinary conditional\s+write/],
+  ['a pr-opened: tombstone still stops', TOMBSTONE_STOPS],
+  ['a mismatched link still stops', MISMATCH_STOPS],
+  ['the run branches on the exit code, not resumedPr', /exit code[\s\S]{0,40}never[\s\S]{0,40}`resumedPr`/],
+];
+for (const [label, re] of VARIANT_CLAIMS) {
+  test(`claim-targets.md in-flight variant: ${label}`, () => assertPinned(inFlightVariant(CLAIM_TARGETS), re, label));
+}
+
+test('claim-targets.md: the #4423 in-flight stop is still stated without RESUME_PR (characterization)', () => {
+  const variant = inFlightVariant(CLAIM_TARGETS);
+  assertPinned(variant, /stdout instead carries `\{inFlight: \[\{issue, link\}\], released,\s+releaseFailed\}`/, 'inFlight envelope');
+  assertPinned(variant, /`'stale'`\s+claim whose run's marker sits on an open PR \(#4423, `claim-store\.js`'s `staleClaimInFlightPr`\)/, 'stale in-flight stop');
+  assertPinned(variant, /## Flow: Claim in-flight/, 'in-flight card');
+});
+
+test('claim-targets.md Log the claim: the MCP hand-logged line for a resumed reclaim names resume-pr: {url}', () => {
+  const block = logTheClaim(CLAIM_TARGETS);
+  const re = /claimed #\{n\} \(bin\/claim-targets\.js, transport: mcp, resume-pr: \{url\}\)/;
+  assertPinned(block, re, 'MCP resume-pr log line');
+  // The prose literal, with a sample url substituted, is a canonical claim entry for the shipped parser.
+  const url = 'https://github.com/o/r/pull/12';
+  const text = block.match(re)[0].replace('{n}', '4588').replace('{url}', url);
+  assert.ok(!/[{}]/.test(text), `placeholder survived: ${text}`);
+  const now = new Date(Date.UTC(2026, 9, 31, 12, 0, 0));
+  const line = formatEntry({ status: 'AUTO', now, step: CLAIM_LOG_STEP, text, reversibility: 'high' });
+  assert.strictEqual(isClaimLogEntry(line), true, line);
+  assert.strictEqual(text, claimLogText(4588, 'mcp', url), 'the prose literal equals what the CLI writer produces');
+  // go-red control: a respelled suffix is not a claim entry
+  const bad = formatEntry({ status: 'AUTO', now, step: CLAIM_LOG_STEP, text: text.replace('resume-pr:', 'resumed:'), reversibility: 'high' });
+  assert.strictEqual(isClaimLogEntry(bad), false);
+});
+
+const LOCK_CLAIMS = [
+  ['names the exception', /Resume exception \(#4588\)/],
+  ['keyed on RESUME_PR=<url> (dispatch resume)', /when the run carries `RESUME_PR=<url>` \(`dispatch resume`\)/],
+  ['the verdict link must equal it exactly', /`"match": true` with a `link` exactly equal to it[\s\S]{0,80}conditional write/],
+  ['a pr-opened: tombstone still stops', TOMBSTONE_STOPS],
+  ['a mismatched link still stops', MISMATCH_STOPS],
+  ['a failure verdict keeps its fail-open-with-a-line handling', /A `failure` verdict\s+keeps its fail-open-with-a-line handling/],
+  ['the reclaim is logged with the resume-pr suffix', /`resume-pr: \{url\}` suffix/],
+];
+for (const [label, re] of LOCK_CLAIMS) {
+  test(`issue-claims.md The lock step 4: ${label}`, () => assertPinned(lockStep4(ISSUE_CLAIMS), re, label));
+}
+
+test('issue-claims.md The lock step 4: the exception follows the stale-claim-pr.js call it modifies', () => {
+  const step = lockStep4(ISSUE_CLAIMS);
+  const call = step.indexOf('bin/stale-claim-pr.js');
+  const exception = step.indexOf('Resume exception (#4588)');
+  assert.notStrictEqual(call, -1, 'stale-claim-pr.js call missing');
+  assert.notStrictEqual(exception, -1, 'exception missing');
+  assert.ok(exception > call, 'the exception must follow the call it modifies');
+  assert.ok(exception - call < 2200, 'the exception must sit next to the call');
+  // control: the exception moved ahead of the call flips the comparison
+  const moved = `Resume exception (#4588)\n${step}`;
+  assert.ok(moved.indexOf('Resume exception (#4588)') < moved.indexOf('bin/stale-claim-pr.js'));
+});
+
+test('issue-claims.md In-flight detection: states the same narrowed exception', () => {
+  const section = inFlightDetection(ISSUE_CLAIMS);
+  assertPinned(section, /`--resume-pr <url>`/, 'flag');
+  assertPinned(section, /`dispatch resume`, #4588/, 'dispatch resume #4588');
+  assertPinned(section, TOMBSTONE_STOPS, 'tombstone still stops');
+  assertPinned(section, MISMATCH_STOPS, 'other link still stops');
+});
+
+test('issue-claims.md The lock step 4: the tombstone in-flight stop (#974) is kept (characterization)', () => {
+  assertPinned(lockStep4(ISSUE_CLAIMS), /A still-`OPEN` state means a build for this issue already exists and reclaiming\s+would race it — stop here, do not write/, 'tombstone stop');
+});
+
+test('flow SKILL.md, claim-targets.md and issue-claims.md stay under the skill-size rail', () => {
+  for (const p of [FLOW_SKILL_PATH, CLAIM_TARGETS_PATH, ISSUE_CLAIMS_PATH]) {
+    const bytes = fs.statSync(p).size;
+    assert.ok(bytes <= RAIL_BYTES, `${path.basename(p)} is ${bytes} B, over the ${RAIL_BYTES} B rail`);
+  }
+});
