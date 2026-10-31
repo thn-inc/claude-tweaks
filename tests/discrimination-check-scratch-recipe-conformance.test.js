@@ -65,6 +65,7 @@ const RECIPE_LITERALS = [
   'a link leaves a path into the shared tree',
   'or the dispatcher says to take it outright',
   'a failed delete reports `DONE_WITH_CONCERNS`',
+  'A failed teardown reports `DONE_WITH_CONCERNS`',
 ];
 
 // Outcome clauses: each must appear exactly once, so a reworded copy elsewhere cannot mask a mutated one.
@@ -74,6 +75,7 @@ const ONCE_LITERALS = [
   'otherwise tear down (step 6): the check has no evidence',
   'must print `{reviewed-sha}`',
   'Tear down before the status word',
+  'A failed teardown reports `DONE_WITH_CONCERNS`',
 ];
 
 // An affirmative link command (`ln -s "…"`, `ln -sfn {…}`, `mklink /J "…"`), as opposed to
@@ -137,6 +139,7 @@ test('the recipe pin goes red without the section or with a dropped step (go-red
     ['otherwise tear down (step 6): the check has no evidence', 'otherwise proceed anyway'],
     ['must print `{reviewed-sha}`', 'must print a SHA'],
     ['Tear down before the status word', 'Tear down when convenient'],
+    ['A failed teardown reports `DONE_WITH_CONCERNS`', 'A failed teardown is ignored'],
     ['already exists, report `BLOCKED`', 'already exists, reuse it'],
     ['once the unmutated checkout passes a step 4 run', 'once the checkout exists'],
   ]) {
