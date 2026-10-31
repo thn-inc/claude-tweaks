@@ -188,3 +188,18 @@ test('AC1.1: an unreadable claim is reported on the output and the happy path st
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('shaping-mode.md names deepOverlapHits candidates as likely duplicates before stamping ready (#4701)', () => {
+  const start = SHAPING_MODE.indexOf('Near-duplicate candidate check (#1944)');
+  const end = SHAPING_MODE.indexOf('### Dependency-narration check', start);
+  assert.ok(start !== -1 && end !== -1, 'near-duplicate section anchors must exist');
+  const section = SHAPING_MODE.slice(start, end);
+  assert.match(section, /`deepOverlapHits`/);
+  assert.match(refusalFenceBody().fence, /deepOverlapHits\(hits\)/);
+  assert.match(section, /likely\s+duplicate/);
+  assert.match(section, /before\s+stamping\s+`ready`/);
+  assert.match(section, /at\s+least\s+3\s+shared\s+Current\s+State\s+anchors\s+\(`DEEP_OVERLAP_MIN`/);
+  assert.strictEqual(require('../plugin/bin/lib/issues/near-duplicate').DEEP_OVERLAP_MIN, 3);
+  assert.match(section, /surface-only/);
+  assert.match(section, /never\s+refuses/);
+});

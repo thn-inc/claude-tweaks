@@ -57,20 +57,48 @@ the floor, posted alone (**Posting it alone**) when it does not. The parent-side
 `_shared/pr-first-merge-post-merge.md` Step 4.0b entry: it posts no Try it block and appends
 nothing to `"$TRY_IT"`, since the run that delivered each sub-issue already posted its own.
 
-**Fail open on every `gh` call in this section.** If `gh` is unavailable, unauthenticated, the
-repo has no GitHub remote, or any parent-gate `gh` call below fails: a **sub-issue-side** entry
-skips the Parent-Gate Procedure entirely and falls back to the no-parent path (`verification-brief.md`'s
-Oversight-floor gate, then Steps 1-4 on this record itself when it clears the floor) — never blocking the wrap-up, the
-auto-merge short-circuit, or the dispatched group's merge gate. The post-merge
-`_shared/pr-first-merge-post-merge.md` Step 4.0b entry is the sub-issue-side exception: on any
-failing `gh` call it skips that parent — or the whole step, when the call is Step 4.0b's
-default-branch check — names each skipped parent in the closing summary, and never falls back to the no-parent
-path — its merge has already landed, so there is no wrap-up or merge left to protect, and
-`/claude-tweaks:tidy`'s `parent-gate` backstop is the recovery. The **parent-side** entry skips
-this one parent for this run, leaving its `[parent-gate]` finding surfaced and unmutated — never
-failing the whole `/tidy` run over one parent's `gh` call. This paragraph is moot under
-`work-backend: local-files`, whose branches below make no `gh` call at all; a filesystem error
-there is a real failure to report, not a fail-open case.
+**Transport (#4602).** With `gh` present, every call in this section runs as written. With `gh`
+absent, each call runs through the GitHub MCP tool its `_shared/github-write-transport.md` row names
+(that file's Detection rule). Under **Resolve the parent**, the native parent read is `issue_read`
+(`get_parent`) and the body-text read is `issue_read` (`get`), whose `body` you write with the Write
+tool to the path the `session-tmp-resolve.js` line of the body-text fence under **Enumerate the
+parent's sub-issues** prints for `$WRAPUP_PARENT_BODY` (run it first, as its own call), then run the
+`parseSubIssues` script against that file. Under **Enumerate
+the parent's sub-issues**, the native list is `issue_read` (`get_sub_issues`, paged per its row),
+and every `gh issue view` read (the parent body, each sub-issue, the parent's labels, and the
+comment reads in **Close the parent below the floor** and **Apply the gate**) is `issue_read`
+(`get`, plus `get_comments` for comments, paged per its row). `gh api user` is `get_me`;
+`gh issue comment` is `add_issue_comment`; `gh issue close` and `gh issue edit --add-label` are
+`issue_write` (update mode), the latter under the Full-replace hazard's read-merge-write.
+`_shared/label-bootstrap.md`'s check-then-create loop has no MCP row: on the MCP path skip it, and a
+label write that then fails is a failing call under the paragraph below. Normalize the MCP shape
+before any rule below reads it: uppercase `state` and `state_reason` (`closed` → `CLOSED`,
+`completed` → `COMPLETED`, `not_planned` → `NOT_PLANNED`, `reopened` → `REOPENED`) before
+`subIssues` is built for `parentGateState` (which matches `CLOSED` exactly), before the close-reason
+test, and before the idempotence check; pass `parentLabels` as label names; and take `{pr}` from the
+last of the references `closed_by_pull_requests` returns (at most 5 — a deterministic truncation that
+can name a different PR than the `gh` path's uncapped list). On the MCP path a "`gh` call" in the
+paragraphs below means the tool its row names. The default-branch read in Step 4.0b is
+`git remote show origin` on that path (`_shared/integration-branch.md`'s rank-5 git read); when it
+fails, or prints an empty or `(unknown)` branch, it is a failing call under the paragraph below,
+which skips the whole of Step 4.0b.
+
+**Fail open on every `gh` call in this section.** If neither `gh` nor the GitHub MCP server is
+available, `gh` is present but unauthenticated (the Detection rule picks `gh` on presence alone, so
+there is no fallback to MCP), the repo has no GitHub remote, or any parent-gate `gh` call below
+fails: a **sub-issue-side** entry skips the Parent-Gate Procedure entirely and falls back to
+the no-parent path (`verification-brief.md`'s Oversight-floor gate, then Steps 1-4 on this record
+itself when it clears the floor) — never blocking the wrap-up, the auto-merge short-circuit, or
+the dispatched group's merge gate. The post-merge `_shared/pr-first-merge-post-merge.md` Step 4.0b
+entry is the sub-issue-side exception: on any failing `gh` call it skips that parent — or the
+whole step, when the call is Step 4.0b's default-branch check — names each skipped parent in the
+closing summary, and never falls back to the no-parent path — its merge has already landed, so
+there is no wrap-up or merge left to protect, and `/claude-tweaks:tidy`'s `parent-gate` backstop is
+the recovery. The **parent-side** entry skips this one parent for this run, leaving its
+`[parent-gate]` finding surfaced and unmutated — never failing the whole `/tidy` run over one
+parent's `gh` call. This paragraph is moot under `work-backend: local-files`, whose branches below
+make no `gh` call at all; a filesystem error there is a real failure to report, not a fail-open
+case.
 
 ## What this path deliberately does not run
 
@@ -319,6 +347,12 @@ gh issue view $PARENT_NUM --json state,stateReason,comments
 gh api user --jq .login
 ```
 
+With `gh` absent these are `issue_read` (`get`, then `get_comments`, paged per its row) and
+`get_me`, per `_shared/github-write-transport.md`; the **Transport (#4602).** paragraph's uppercase
+normalization applies (`reopened` → `REOPENED`), and the Trusted-authors test reads
+`author_association` on that shape. A comment's author login there is `user.login`, compared
+against `get_me`'s `login`.
+
 - A parent already `CLOSED` is a no-op: an earlier entry, or a human, closed it.
 - An open parent whose `stateReason` is `REOPENED` is a no-op too, reported in the output and
   never re-closed: a human reopened it after an earlier close.
@@ -342,8 +376,9 @@ Every sub-issue of this decomposition is closed, and the highest sub-issue risk,
 - #{n} {title} — closed by PR #{pr}
 ```
 
-When step 3 closes with `"not planned"`, add the line `No sub-issue closed as completed, so this
-parent closes as not planned.` after the template's first paragraph.
+When step 3 closes with `"not planned"`, add the line
+`No sub-issue closed as completed, so this parent closes as not planned.` after the template's
+first paragraph.
 
 One listing line per sub-issue **Enumerate the parent's sub-issues** returned, in number order.
 `{title}` comes from that section's per-sub-issue fetch. For a `$CLOSING_SUB_ISSUES` member,
@@ -387,6 +422,10 @@ with:
 ```bash
 gh issue close $PARENT_NUM --reason "not planned"
 ```
+
+With `gh` absent, post the same file's text with `add_issue_comment` and close with `issue_write`
+(`update` mode, `state: closed`, `state_reason` `completed` or `not_planned`), per
+`_shared/github-write-transport.md`'s Comment and Close rows; never pass `labels` on the close call.
 
 Comment first, then close, so a reader of the closed parent always finds the reason attached.
 
