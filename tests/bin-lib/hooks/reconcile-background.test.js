@@ -301,6 +301,18 @@ test('FAST_CHECKS (session-start.js) + BACKGROUND_CHECKS (bin/hooks.js) partitio
   );
 });
 
+// #4599: post-merge writes GitHub comments and a decisions.md marker, so it is a background (write)
+// check, never an inline SessionStart one. It is deliberately not CLI-deferred: it must run in the
+// same pass as archive, ahead of it, so the unscoped CLI keeps it inline beside archive.
+test('post-merge is a BACKGROUND_CHECKS member, not a FAST_CHECKS or CLI_DEFERRED_CHECKS one, and sits before archive (#4599)', () => {
+  const { FAST_CHECKS } = require('../../../plugin/bin/lib/hooks/session-start');
+  const { BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS } = require('../../../plugin/bin/hooks');
+  assert.ok(BACKGROUND_CHECKS.includes('post-merge'));
+  assert.ok(!FAST_CHECKS.includes('post-merge'));
+  assert.ok(!CLI_DEFERRED_CHECKS.includes('post-merge'));
+  assert.ok(BACKGROUND_CHECKS.indexOf('post-merge') < BACKGROUND_CHECKS.indexOf('archive'), 'post-merge precedes archive in the background list too');
+});
+
 // #4032: the unscoped `reconcile` CLI hands CLI_DEFERRED_CHECKS to the
 // background pass. A name there that BACKGROUND_CHECKS lacks would be excluded
 // from the inline set AND never run in the background — dropped entirely.

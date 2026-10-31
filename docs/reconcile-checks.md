@@ -8,10 +8,11 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 `plugin/bin/lib/hooks/`.
 
 - **Dispatch order is significant, not incidental.** `index.js` runs `mirror → red-tip → console →
-  release → archive → archive-branches → remote-prune → ledger-residue → reap`, reap deliberately
-  last because it physically removes worktrees — running it earlier would make every later check's
-  live `git worktree list`-derived branch lookup fail for exactly the runs `reap` just finished
-  with.
+  release → post-merge → archive → archive-branches → remote-prune → ledger-residue → reap`, reap
+  deliberately last because it physically removes worktrees — running it earlier would make every
+  later check's live `git worktree list`-derived branch lookup fail for exactly the runs `reap` just
+  finished with. `post-merge` sits immediately before `archive` because it hands archive the run
+  dirs it must leave in place this pass (see the Post-merge closes section below).
   `red-tip` runs immediately after `mirror` so it reads the ref the shared fetch just refreshed
   instead of fetching a second time. See the ordering comment directly above the dispatch block in
   `index.js` before reordering anything.
@@ -36,11 +37,14 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   | Check | Prerequisite | Satisfied by | Why |
   |---|---|---|---|
   | `archive` | `mirror` | `remote-prune` | `localHasMerge` reads `refs/heads/{integration}`, then `origin/{integration}` (the fallback only when the main checkout is not on `{integration}` or under `--dry-run`, whose preview assumes mirror's fast-forward succeeds — a dirty, diverged or ahead main skips in the real pass), and only the shared fetch refreshes the latter. Without it, a PR GitHub merged asynchronously skips as `local-behind-merge`; on `{integration}` itself the skip clears only when mirror's fast-forward lands (not just the fetch), so a refused fast-forward (e.g. a dirty tree) keeps it. |
+  | `archive` | `post-merge` | — | Archived runs are never walked again, so a run `post-merge` still owes its Steps 4.0 and 4.0b must not be archived first. `post-merge` returns the run dirs it deferred this pass and archive leaves exactly those in place (`post-merge-pending`); without the check in the pass, nothing is deferred. No other check provides that state. |
   | `red-tip` | `mirror` | `remote-prune` | It reads `origin/{integration}` right after the shared fetch, and otherwise skips as `no-fetch-this-pass`. |
 
-  `release,archive,reap` runs as `mirror,release,archive,reap`; `reap` alone stays `reap`; a
-  subset naming `remote-prune` is not widened, because its `--prune` shared fetch already refreshes
-  `origin/{integration}`; `FAST_CHECKS` and `BACKGROUND_CHECKS` expand to themselves. The added
+  `PREREQUISITES` holds one entry or an array of them per check; `archive` has two, one table row each.
+  `release,archive,reap` runs as `mirror,release,post-merge,archive,reap`; `reap` alone stays `reap`; a
+  subset naming `remote-prune` is not widened for `mirror`, because its `--prune` shared fetch already
+  refreshes `origin/{integration}` (it still gains `post-merge`: `archive,remote-prune` runs as
+  `post-merge,archive,remote-prune`); `FAST_CHECKS` and `BACKGROUND_CHECKS` expand to themselves. The added
   prerequisite runs in the same pass, so under the CLI's `--checks` path it shares the unbounded
   budget from the bullet above. `archive-branches` has no entry: when `git cherry` cannot prove
   equivalence it falls back to PR-state squash-merge evidence (#2252), so a stale local ref only
@@ -60,12 +64,12 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   the archive check runs).
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
-  `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `archive`, `archive-branches`, `remote-prune`,
+  `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `post-merge`, `archive`, `archive-branches`, `remote-prune`,
   `ledger-residue`, `reap` — write-only/janitorial, run in a detached `reconcile-background` child
   process) must **partition `ALL_CHECKS` exactly** — no overlap, nothing silently dropped. A new
   check has to join one list or the other.
-  The unscoped `hooks.js reconcile` CLI defers three of the six to that same background pass
-  (`CLI_DEFERRED_CHECKS`, #4032 — see the Timing contract below); an explicit `--checks` call is
+  The unscoped `hooks.js reconcile` CLI defers three of the seven to that same background pass
+  (`CLI_DEFERRED_CHECKS`, #4032 — see the Timing contract below; `post-merge` is not among them and runs inline beside `archive`); an explicit `--checks` call is
   never deferred.
 
 ## Adding a new check
@@ -91,7 +95,7 @@ against reality than trusting it in the abstract; do that for whichever check yo
    Reconcile-first call lists every check explicitly for that reason, and
    `tests/reconcile.test.js` pins that list to `ALL_CHECKS`.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
-   `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, runs, branches,
+   `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, postMerge, runs, branches,
    remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }`), substituted only when `reconcile()` itself
    throws. If the new check populates a new top-level result key, this literal needs that key
    added too — an omission here doesn't throw or fail a lint; it just silently under-reports on the
@@ -432,10 +436,10 @@ main loop, landed via #1962/#2226/#2228/#2231):
 `reconcile()` (`plugin/bin/lib/reconcile/index.js`) is a plain Node subprocess, not an agent-session
 skill — it cannot reach an agent session's MCP tools, only `gh`. When `gh` is absent (a cloud
 Routine sandbox with GitHub MCP tools instead of the CLI), every GitHub-dependent check —
-`red-tip`, `reap`, `release`, `archive`, `archive-branches`, `remote-prune`, `ledger-residue`,
+`red-tip`, `reap`, `release`, `post-merge`, `archive`, `archive-branches`, `remote-prune`, `ledger-residue`,
 `console` — is skipped
 via the preflight gate (`ghHealthCheck`/`ghHealthCheckAsync`, `preflight.js`), reported as
-`{"skipped":[{"check":"red-tip,reap,release,archive,archive-branches,remote-prune,ledger-residue,console","reason":"preflight-gh-absent"}]}`.
+`{"skipped":[{"check":"red-tip,reap,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console","reason":"preflight-gh-absent"}]}`.
 `mirror` is the one exception — pure git, no `gh` call — and keeps running.
 
 This is an **accepted gap, not a bug to fix here**: unlike `/claude-tweaks:dispatch`'s own queue-pull
@@ -572,6 +576,93 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
 - **Side.** `BACKGROUND_CHECKS` — it pushes a ref and opens a PR, so it never runs inline at
   SessionStart.
 
+## Post-merge closes (#4599)
+
+`post-merge.js` runs `_shared/pr-first-merge-post-merge.md`'s Step 4.0 (`bin/closing-links.js
+--mode post-merge`) and Step 4.0b (`lib/issues/below-floor-parent-close.js`) once for a PR GitHub
+merged after its session ended: an armed auto-merge, a merge-queue merge, or a human clicking merge
+in the browser. No session saw that merge, so no session ran the steps, and a below-floor parent
+whose last sub-issue merged this way used to wait for a human to approve a tidy row. The prose stays
+the source of truth; the module only decides when the steps run and records that they did. Tidy's
+`parent-gate` backstop is unchanged, and every fail-open path below leaves the parent open for it.
+
+- **Population (keyed on the recorded PR, exactly once).** Every top-level run dir, `clean` status
+  included (a closed run is the usual armed-auto-merge shape), whose `run-state.json` records a
+  positive integer `pr.number`, whose `decisions.md` holds no marker (below), and whose PR is
+  `MERGED` on GitHub. It is not limited to armed merges: whatever merged the PR, an unmarked merged
+  run gets the steps once. Only `github-issues` projects take part (`work-backend: github-issues`);
+  any other value, or none, skips the whole check as `not-github-issues` and writes nothing. A
+  checkout without an `origin` slug fails as `no-remote`, and a caller that passes no PR-state
+  resolver fails as `no-pr-states` (a programming error, handled like the other two).
+- **Marker rule.** A run is done when a `decisions.md` line, read through `parseEntry`, has the
+  location `reconcile post-merge` (this check's own summary entry) or one ending in `pr-first-merge
+  Step 4.0b` (the merging session's own marker, `(skipped)` form included). A heading or a hand-written
+  note never matches. The check appends its marker last, after one `AUTO … reconcile post-merge
+  parent-close` line per parent it closed (a different location, so it is not a marker), or a single
+  `SKIP` marker when Step 4.0 produced no closing set. The marker is re-read once more under the
+  claim, so a pass that finished in between is not repeated.
+- **One-time catch-up.** On the first reconcile after this ships, every run that merged without a
+  marker gets a late Step 4.0 and Step 4.0b pass once: legacy runs, and runs merged in-session by an
+  older installed build, which writes no summary marker. This is bounded two ways. Step 4.0 runs with
+  the 10-minute reopen window (`CLOSE_WINDOW_MS`) after `mergedAt`, so a record a human closed later
+  is never reopened and counts by its live state. Step 4.0b's own idempotence checks make a repeat
+  harmless: a parent already `CLOSED` is a no-op, and an existing trusted heading comment means close
+  only, never a second comment.
+- **Two concurrency guards.**
+  - *Merge grace* (`MERGE_GRACE_MS`, 10 minutes). The merging session runs both steps within seconds
+    of `mergedAt` and then writes its marker, so a run whose PR merged less than the grace ago is
+    skipped `merge-grace` with nothing written. A missing or unparseable `mergedAt` counts as inside
+    the window, never as old.
+  - *Per-run claim file* (`{runDir}/.post-merge.lock`, created `wx`). Background passes serialize on
+    `background-lock.js`, but inline passes (Step 4.2's `--checks mirror,release,archive`, tidy's
+    explicit list) do not. A live claim (under `CLAIM_STALE_MS`, 10 minutes) skips `in-flight`; a stale
+    one is taken over atomically (renamed aside, so of two takeovers only the rename winner retries
+    the create); any other I/O error skips `claim-failed`. The lock is removed after the marker write.
+    The dotfile name keeps it out of archive's `staged/` checks.
+- **Archive defers what post-merge deferred.** An archived run is never walked again, so a run
+  skipped for a retryable reason must not be archived in the same pass, or the "later pass" never
+  comes. `postMerge` returns `deferred`, `index.js` hands it to `archiveMerged` as
+  `postMergeDeferred`, and `archiveMerged` skips each listed run `post-merge-pending`, resolved-path
+  compared, in both the main loop and the clean-status sweep. That skip is never fed to the
+  stuck-skip tracker: it is transient, and must never escalate as residue. A run that post-merge
+  failed or did not run leaves `deferred` empty, so a failed check never holds archive back.
+- **Why the guard is bounded.** Exactly four reasons defer a run: `merge-grace`, `in-flight`,
+  `claim-failed` and `network-failure` (the transient PR-state failure). Each is cleared by a later
+  pass: a run leaves the set once `post-merge` acts on it, which for `merge-grace` is within one
+  grace window. Nothing else defers, so the guard cannot hold a run indefinitely:
+
+  | Skip reason | Deferred | Why |
+  |---|---|---|
+  | `merge-grace`, `in-flight`, `claim-failed`, `network-failure` | yes | Retryable: the next pass can act. |
+  | `pr-not-found`, `invalid-arguments`, `no-pr-state` and any other non-network PR-state failure string | no | A definitive answer a retry will not change. Archive keeps tracking the run as structurally stuck (#3543), so it is not hidden. |
+  | `gh-absent`, `dry-run`, `error` | no | Not retryable within the pass. |
+  | `marker-write-failed` | no | See the next bullet. |
+  | `integration-unknown` | no | See the bullet after it. |
+
+- **Marker-write failure means "nothing re-closes", not "nothing runs twice".** When appending the
+  marker fails, the entry is `skipped` / `marker-write-failed` and the run is not deferred. If
+  archive archives it in the same pass, archived runs are never walked again and the steps do not
+  repeat. If archive leaves the run in place for its own reasons, Steps 4.0 and 4.0b run again on
+  each pass while the write keeps failing. That is safe because both are idempotent: a parent
+  already closed is a no-op, and an existing trusted heading comment means close only.
+  Any parent still open falls to tidy's backstop.
+- **`integration-unknown`.** When `origin/HEAD` is unresolved, the run is skipped without a marker
+  and is not deferred. Step 4.0b needs the integration branch to judge a parent, so nothing is
+  guessed. Archive may archive that same run in the same pass, and then tidy's `parent-gate` backstop
+  is its only recovery.
+- **`gh`-absent skip and fail-open posture.** The check is `gh`-only. `#4602`'s MCP transport covers
+  in-session calls, not a Node subprocess, so a `gh`-absent environment gets `skipped` / `gh-absent`
+  per run (or the preflight skip for the whole check, see the `gh`-absent section above), no marker,
+  and tidy's backstop as the recovery. `--dry-run` writes nothing: no GitHub write and no
+  `decisions.md` line; a merged run past the grace window reports `skipped` / `dry-run`, while the
+  PR-state reads still run.
+- **Accepted residual risk: tidy-approval race.** A human approving a tidy `parent-gate` row for the
+  same parent in the seconds while a post-merge pass is mid-close can post a second `## Closed below
+  the oversight floor` comment, because the two writers share no lock beyond Step 4.0b's own
+  read-then-write idempotence check. The window is narrow (one close call), the result is a
+  duplicate comment on an already-closing parent, and the parent still ends `CLOSED` once. It is
+  accepted rather than closed by a cross-writer lock.
+
 ## Timing contract (#4032)
 
 An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is what brings it under
@@ -582,7 +673,7 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   { count, ms, maxMs } } } } }` (`timing.js`'s `summarizeTimings`, milliseconds to one decimal), or
   `null` when the summarizer itself faulted: measurement never changes what a pass does.
   `hooks.js`'s `reconcile-threw` fallback carries `timings: null` for the same shape reason.
-- **Phase names** are `setup`, `mirror`, `red-tip`, `console`, `release`, `archive`,
+- **Phase names** are `setup`, `mirror`, `red-tip`, `console`, `release`, `post-merge`, `archive`,
   `archive-branches`, `remote-prune`, `ledger-residue`, `reap` and `finalize`; only phases that ran
   appear. `setup` is the residual — wall time outside every timed phase — so an early return still
   reports where its time went. `subprocessMs` can exceed `ms` for a phase that runs subprocesses
@@ -660,7 +751,7 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   mirror-only-shaped, so the unscoped CLI now takes `mirror`'s single-ref `git fetch origin
   {integration}` (5 s `FETCH_TIMEOUT_MS`, concurrent with preflight) where it used to run
   `fetch --prune origin` (10 s); other `refs/remotes/origin/*` refs refresh when the background
-  pass's `--prune` fetch runs. `/tidy`'s Reconcile-first call names all nine
+  pass's `--prune` fetch runs. `/tidy`'s Reconcile-first call names all ten
   checks explicitly, because the unscoped call defers three.
 - **Measured (AC1.1, #4032).** `node plugin/bin/hooks.js reconcile --json`, 20 sequential unscoped
   calls against this repo's main checkout (live network, HEAD baf2964, 2026-10-25): wall time min

@@ -65,7 +65,7 @@ const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', '
 // export) so a test can assert the two lists partition ALL_CHECKS exactly —
 // no overlap, nothing silently dropped when a check is added to one list and
 // not the other.
-const BACKGROUND_CHECKS = ['release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
+const BACKGROUND_CHECKS = ['release', 'post-merge', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
 
 // The janitorial checks an UNSCOPED `reconcile` CLI call hands to the detached
 // background pass instead of running inline (#4032) — the three whose cost
@@ -1713,7 +1713,7 @@ async function runReconcile(argv) {
       out.background = background;
     }
   } catch {
-    out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
+    out = { mirror: null, redTip: null, worktrees: null, claims: null, postMerge: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
     if (!checksList.length) out.background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
   }
   if (jsonOut) {
