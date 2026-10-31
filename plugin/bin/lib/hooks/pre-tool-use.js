@@ -904,8 +904,10 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
 // `store` and `import`, which write onto the stack like `push`. This is a
 // WARN, never a deny: unlike E1/worktree-required, there is no provable "whose
 // stash entry is this" signal to gate on — only a heads-up pointing at a
-// non-mutating alternative. Only `list`/`show`/`apply` stay silent (`apply`
-// changes the worktree, not the stack) — mirroring git-command.js's own
+// non-mutating alternative. Subcommands that leave the stack untouched stay
+// silent — `list`, `show`, `apply` (which changes the worktree, not the stack),
+// `create` and `export` (/review relies on `git stash create`), and any
+// unrecognized token — mirroring git-command.js's own
 // PLUMBING_WRITE_SUBCOMMANDS comment on why `stash` was deliberately
 // excluded from its one-level subcommand check: a second token has to be
 // resolved to tell the mutating shape from a read-only one; `next.startsWith('-')`

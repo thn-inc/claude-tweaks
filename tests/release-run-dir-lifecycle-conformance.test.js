@@ -527,8 +527,14 @@ const FAILED_WRITER_FACTS = [
 
 test('AC3.1: auto-decision-log.md names every FAILED writer, release/bookkeeping.md, release/disposition.md and stash-guard.js included (with go-red)', () => {
   assertFactsAndGoRed(readText(DECISION_LOG), FAILED_WRITER_FACTS, 'auto-decision-log.md must name all six hand-composing FAILED writers');
-  assert.doesNotMatch(readText(DECISION_LOG), /its two writers/, 'no stale "two writers" count may remain');
-  assert.doesNotMatch(readText(DECISION_LOG), /its five writers/, 'no stale "five writers" count may remain');
+  for (const [stale, message] of [
+    [/its two writers/, 'no stale "two writers" count may remain'],
+    [/its five writers/, 'no stale "five writers" count may remain'],
+  ]) {
+    assert.doesNotMatch(readText(DECISION_LOG), stale, message);
+    // Go-red control: the same assertion over text that holds the phrase must throw.
+    assert.throws(() => assert.doesNotMatch(`${readText(DECISION_LOG)}\n${stale.source}`, stale, message), assert.AssertionError, `${message}: the control must go red`);
+  }
 });
 
 const GRAPH = path.join(ROOT, 'docs', 'skill-graph.md');
