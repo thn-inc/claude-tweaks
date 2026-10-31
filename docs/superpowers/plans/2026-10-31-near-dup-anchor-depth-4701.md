@@ -42,7 +42,9 @@ Plan-audit Check B's other keyword hits are prose that names `findNearDuplicates
 
 ### Task 1: Depth-first sort and `deepOverlapHits`
 
-**Review risk:** high (ranking decision logic; reorders the hits `shapingRefusal` scans first-match)
+**Review risk:** high
+
+Why high: ranking decision logic; reorders the hits `shapingRefusal` scans first-match.
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/near-duplicate.js:150-200` (doc comment, sort at :199), `:207-216` region (new constant + helper beside `STRONG_NEAR_DUPLICATE_MIN`), `:267-280` (exports)
