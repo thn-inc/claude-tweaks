@@ -15,7 +15,7 @@ const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
 const NEXT_ACTIONS = readText(path.join(ROOT, 'plugin/skills/specify/next-actions.md'));
 
-const BLOCKED_ROW = '| Any shaped or produced record has an open blocker (Blocker check above) | 1. `/claude-tweaks:flow #{unblocked Ns}` — pipeline only the unblocked records **(Recommended)** when some record is unblocked and the run has more than one record; omitted otherwise<br>2. `/claude-tweaks:flow #{blocker}` when the blocker carries `ready` and no `bot:in-progress` claim, otherwise `gh issue view #{blocker}` — clear the blocker first **(Recommended)** when every record is blocked; unmarked otherwise<br>3. `/claude-tweaks:flow #{N}` — once #{blocker} closes<br>4. `/claude-tweaks:help` — pipeline dashboard |';
+const BLOCKED_ROW = '| Any shaped or produced record has an open blocker (Blocker check above) | 1. `/claude-tweaks:flow #{unblocked Ns}` — pipeline only the unblocked records **(Recommended)** when some record is unblocked and the run has more than one record; omitted otherwise<br>2. `/claude-tweaks:flow #{blocker}` when the blocker carries `ready` and no `bot:in-progress` claim, otherwise `gh issue view {blocker}` — clear the blocker first **(Recommended)** when every record is blocked; unmarked otherwise<br>3. `/claude-tweaks:flow #{N}` — once #{blocker} closes<br>4. `/claude-tweaks:help` — pipeline dashboard |';
 
 const ROW_SHAPING_ONE = '| Shaping mode — one record shaped in place | 1. `/claude-tweaks:flow #{N}` — automated pipeline for record #{N}: "{title}" **(Recommended)**<br>2. `/claude-tweaks:build #{N}` — build only (no test/review/wrap-up)<br>3. `/claude-tweaks:help` — pipeline dashboard |';
 const ROW_SHAPING_MULTI = '| Shaping mode — multiple records shaped in place (a comma-separated list) | 1. `/claude-tweaks:flow #{N1},#{N2},...` — sequential pipeline for every record shaped this run **(Recommended)**<br>2. `/claude-tweaks:flow #{N1}` — pipeline just the first shaped record<br>3. `/claude-tweaks:help` — pipeline dashboard |';
@@ -54,10 +54,10 @@ function assertBlockedRow(text) {
   const unblockedOption = optionWith(row, '`/claude-tweaks:flow #{unblocked Ns}`');
   assert.ok(unblockedOption.includes(`${MARKER} when some record is unblocked`), 'the unblocked-records option must be (Recommended) only when some record is unblocked');
   assert.ok(unblockedOption.includes('omitted otherwise'), 'the unblocked-records option must be omitted when no record is unblocked or the run has a single record');
-  const blockerOption = optionWith(row, '`gh issue view #{blocker}`');
+  const blockerOption = optionWith(row, '`gh issue view {blocker}`');
   assert.ok(blockerOption.includes(`${MARKER} when every record is blocked`), 'the blocker option must be (Recommended) only when every record is blocked');
-  assert.ok(blockerOption.includes('`/claude-tweaks:flow #{blocker}` when the blocker carries `ready` and no `bot:in-progress` claim, otherwise `gh issue view #{blocker}`'), 'the blocker step must be one conditional command: /flow when ready and unclaimed, else gh issue view');
-  assert.ok(row.indexOf('`/claude-tweaks:flow #{unblocked Ns}`') < row.indexOf('`gh issue view #{blocker}`'), 'the blocker step must follow the unblocked-records option');
+  assert.ok(blockerOption.includes('`/claude-tweaks:flow #{blocker}` when the blocker carries `ready` and no `bot:in-progress` claim, otherwise `gh issue view {blocker}`'), 'the blocker step must be one conditional command: /flow when ready and unclaimed, else gh issue view');
+  assert.ok(row.indexOf('`/claude-tweaks:flow #{unblocked Ns}`') < row.indexOf('`gh issue view {blocker}`'), 'the blocker step must follow the unblocked-records option');
   const flowOption = optionWith(row, '`/claude-tweaks:flow #{N}`');
   assert.ok(flowOption.includes('once #{blocker} closes'), 'the /flow #{N} option must read "once #{blocker} closes"');
   assert.ok(!flowOption.includes(MARKER), 'the /flow #{N} option for a blocked record must never be (Recommended)');
@@ -69,11 +69,22 @@ test('Next Actions carries a blocker-aware row that reuses the blocked-by reader
   assertBlockedRow(NEXT_ACTIONS);
 });
 
-test('the Blocker check fails closed: a non-zero exit or unparseable output never reads as unblocked, and names the failure line (#4703)', () => {
+test('the Blocker check fails closed: a failed or unreadable read never reads as unblocked, and the failure line leads (#4703)', () => {
   const flat = blockerParagraph(NEXT_ACTIONS).replace(/\s+/g, ' ');
-  assert.ok(flat.includes('A non-zero exit or unparseable output never reads as unblocked'), 'the fail-closed rule must be stated');
-  assert.ok(flat.includes('render the matching mode row unchanged, then one line under it naming the failure'), 'the failure must keep the mode row and add one line under it');
-  assert.ok(flat.includes('`Blocker check failed ({reason}) — confirm with gh issue view #{N} before running /claude-tweaks:flow (under work-backend: local-files, read the record file instead).`'), 'the Blocker check failed line must carry the local-files override');
+  assert.ok(flat.includes('A non-zero exit, unparseable output, or a blocker whose state cannot be read (a dangling id, a missing record file) never reads as unblocked'), 'the fail-closed rule must cover an unreadable blocker state, not only exit/parse failures');
+  assert.ok(flat.includes('render one line naming the failure as the recommended entry'), 'on failure the confirm line must lead as the recommended entry');
+  assert.ok(flat.includes("then the matching mode row's options with none bolded or (Recommended)"), 'on failure no mode-row /flow line may stay bolded or (Recommended)');
+  assert.ok(flat.includes('`Blocker check failed ({reason}) — confirm with gh issue view {N} before running /claude-tweaks:flow (under work-backend: local-files, read the record file instead).`'), 'the Blocker check failed line must carry the local-files override');
+});
+
+test('an in-set blocker counts only while it is itself unblocked, to a fixed point (#4703)', () => {
+  const flat = blockerParagraph(NEXT_ACTIONS).replace(/\s+/g, ' ');
+  assert.ok(flat.includes('unless that blocker is itself blocked — repeat until nothing changes, so a record whose in-set blocker is blocked counts as blocked too'), 'the in-set exemption must propagate blocked state through in-set blockers');
+});
+
+test('no rendered gh command puts # before its number — the shell reads it as a comment (#4703)', () => {
+  assert.ok(!/gh issue view #/.test(NEXT_ACTIONS), 'a `gh issue view #…` command drops its argument in bash/zsh -c');
+  assert.ok(blockerParagraph(NEXT_ACTIONS).includes('A `gh` command never carries a `#` before the number'), 'the reason must be stated so a later edit does not reintroduce it');
 });
 
 test('the six pre-existing Next Actions rows stay byte-identical (#4703 AC3)', () => {
