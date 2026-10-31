@@ -1873,8 +1873,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
 // the current shell and its cd reaches the commands after it, as base d9aa6b82d read it. Bash 3.2
 // and 5 (M = /main, start = /r) write the file each row names; bash 3.2 cannot parse `;&`, `;;&` or
 // an unparenthesized pattern inside `$( )`, and bash 5 writes M/f for each (the pins side with 5).
-// A case with no catch-all pattern also ends where it began, since the walk does not evaluate a literal
-// subject against its patterns (#4486): `./f` on those rows is that fail-closed superset; bash writes M/f only.
+// A case with no catch-all pattern, or an arm that starts where the case began and moves no cwd (`*) true`),
+// also ends where the case began, since the walk does not evaluate a literal subject against its patterns
+// (#4486): `./f` on those rows is that fail-closed superset; bash writes M/f only.
 {
   const here = path.resolve('/r/f.js');
   const files = (cmd) => fileWriteTargets(cmd, '/r').map((t) => t.file).sort();

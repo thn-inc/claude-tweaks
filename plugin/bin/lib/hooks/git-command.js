@@ -2573,14 +2573,14 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     for (const info of opened) {
       // One record per case: nested cases each start their own pipeline and list, so a single per-list
       // `caseFrom`/`caseOpen` pair mixed an inner case's start with the outer's (an inner case first in an
-      // outer arm, a command before an inner case; #4481 review rounds 3-4).
+      // outer arm, a command before an inner case; #4481).
       L.cases.push({ level: info.level, info, from: L.spanStart, listStart: L.listStart, skipOk: L.skipOk, skipFail: L.skipFail, pipeStart: L.pipeStart, ends: [], armOpen: true });
       L.listStart = L.spanStart;
     }
     const popped = [];
     const closed = closeCases(L, openCases, popped);
-    if (closed) at = afterCases(popped, at);
     if (closed) {
+      at = afterCases(popped, at);
       L.skipOk = joinCwds(L.skipOk, closed.skipOk, overflow);
       L.skipFail = joinCwds(L.skipFail, closed.skipFail, overflow);
     }
